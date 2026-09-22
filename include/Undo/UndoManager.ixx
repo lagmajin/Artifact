@@ -64,6 +64,7 @@ import Geometry.ResolutionRemap;
 import Image.ImageF32x4_RGBA;
 import Color.Float;
 import Audio.Modulation.Router;
+import Animation.Value;
 
 export namespace Artifact {
  using namespace ArtifactCore;
@@ -341,6 +342,42 @@ private:
     ArtifactCore::Audio::Modulation::ModulationRouterSnapshot before_;
     ArtifactCore::Audio::Modulation::ModulationRouterSnapshot after_;
     QString label_;
+    bool lastOperationSucceeded_ = true;
+};
+
+// Phase 2 reusable automation clips: snapshots a layer's clip placements
+// (pattern data stays composition-owned and is not duplicated here).
+// The clip-ify flow additionally carries the created pattern so undo removes
+// the pattern and redo restores it with its stable id.
+class LayerAutomationClipInstancesCommand : public UndoCommand {
+public:
+    LayerAutomationClipInstancesCommand(
+        ArtifactAbstractLayerPtr layer,
+        std::vector<ArtifactCore::AutomationClipInstance> before,
+        std::vector<ArtifactCore::AutomationClipInstance> after,
+        QString label = QStringLiteral("Edit Automation Clips"));
+    // Optional: pattern created alongside the instances. The composition is
+    // resolved lazily by id so the command stays serializable.
+    void setCreatedPattern(const QString& compositionId,
+                           const ArtifactCore::AutomationClipPattern& pattern);
+    void clearCreatedPattern();
+    void undo() override;
+    void redo() override;
+    bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+    QString label() const override;
+    size_t estimatedMemoryBytes() const override;
+    QString commandType() const override { return QStringLiteral("LayerAutomationClipInstancesCommand"); }
+    bool canSerialize() const override;
+    QJsonObject serialize() const override;
+    bool deserialize(const QJsonObject& data) override;
+private:
+    ArtifactAbstractLayerWeak layer_;
+    QString layerId_;
+    std::vector<ArtifactCore::AutomationClipInstance> before_;
+    std::vector<ArtifactCore::AutomationClipInstance> after_;
+    QString label_;
+    QString compositionId_;
+    std::optional<ArtifactCore::AutomationClipPattern> createdPattern_;
     bool lastOperationSucceeded_ = true;
 };
 

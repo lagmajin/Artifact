@@ -1347,6 +1347,24 @@ public:
     add(QStringLiteral("View: Zoom 100%"), [this]() {
       if (controller_) controller_->zoom100();
     });
+    // P0-1 Box zoom/crop command (palette only). The actual marquee is
+    // driven by mouse press/release routed through ShortcutBindings; this
+    // entry cancels an in-flight interaction for users who lost the cursor.
+    add(QStringLiteral("View: Cancel Box Zoom"), [this]() {
+      if (controller_) controller_->cancelBoxZoomInteraction();
+    });
+    // P0-2 Tumble pivot toggle: setting it requires a viewport position so
+    // the palette action is the no-op clear path; UI handlers drive set.
+    add(QStringLiteral("View: Clear Tumble Pivot"), [this]() {
+      if (controller_) controller_->clearTumblePivot();
+    });
+    // P0-3a Interactive Render Region toggle / clear.
+    add(QStringLiteral("View: Toggle Interactive Render Region"), [this]() {
+      if (!controller_) return;
+      if (controller_->isInteractiveRenderRegionActive()) {
+        controller_->clearInteractiveRenderRegion();
+      }
+    });
     add(QStringLiteral("View: Toggle Quad Presentation"), [this]() {
       if (!controller_) return;
       const auto layout = controller_->presentationLayout();
@@ -4398,6 +4416,20 @@ public:
       add(QStringLiteral("Zoom 100%"), [this]() {
         if (controller_) controller_->zoom100();
       });
+      // P0-1 Box zoom: cancel an in-flight marquee from the right-click
+      // menu if the user lost the cursor or wants to abandon the zoom.
+      add(QStringLiteral("Cancel Box Zoom"), [this]() {
+        if (controller_) controller_->cancelBoxZoomInteraction();
+      }, controller_ && controller_->isBoxZoomInteractionActive());
+      // P0-2 Tumble pivot clear path.
+      add(QStringLiteral("Clear Tumble Pivot"), [this]() {
+        if (controller_) controller_->clearTumblePivot();
+      }, controller_ && controller_->isTumblePivotOverrideEnabled());
+      // P0-3a IRR toggle entry. The right-click menu does not own drag;
+      // press+drag remains the canonical way to draw the rectangle.
+      add(QStringLiteral("Clear Interactive Render Region"), [this]() {
+        if (controller_) controller_->clearInteractiveRenderRegion();
+      }, controller_ && controller_->isInteractiveRenderRegionActive());
       addSeparator();
       add(QStringLiteral("Paste Layers Here"), pasteLayersHere,
           clipboardHasLayerData);
@@ -5571,6 +5603,38 @@ protected:
     }
 
     if (controller_ && !spacePressed_) {
+      // P0-1 Box zoom: Houdini-style modifier + left-button begins a
+      // marquee. ShortcutBindings owns the binding so any user-customized
+      // modifier set will work the same way.
+      if (event->button() == Qt::LeftButton) {
+        QKeyEvent keyProbe(event->type(), event->key(),
+                           event->modifiers());
+        if (ArtifactCore::ShortcutBindings::instance().matches(
+                &keyProbe, ArtifactCore::ShortcutId::ViewBoxZoom) &&
+            controller_->beginBoxZoomInteraction(event->position())) {
+          if (QWidget::mouseGrabber() != this) {
+            grabMouse();
+          }
+          event->accept();
+          return;
+        }
+      }
+      // P0-3a IRR handle hit-test. If the cursor is over a handle or the
+      // interior of the rect, start a 2D drag.
+      if (event->button() == Qt::LeftButton &&
+          controller_->isInteractiveRenderRegionActive()) {
+        const int handle = controller_->interactiveRenderRegionHandleAt(
+            event->position());
+        if (handle != 0 &&
+            controller_->beginInteractiveRenderRegionDrag(
+                handle, event->position())) {
+          if (QWidget::mouseGrabber() != this) {
+            grabMouse();
+          }
+          event->accept();
+          return;
+        }
+      }
       controller_->handleMousePress(event);
       if (isSpatialGizmoDragging() || controller_->isPhysicsDragActive()) {
         if (QWidget::mouseGrabber() != this) {
@@ -6145,6 +6209,70 @@ protected:
       if (owner->handleImportPlacementKeyPress(event)) {
         return;
       }
+    }
+    // P0-1 Box zoom cancel via Escape while the marquee is active.
+    if (event->key() == Qt::Key_Escape && !event->isAutoRepeat() &&
+        controller_ && controller_->isBoxZoomInteractionActive()) {
+      controller_->cancelBoxZoomInteraction();
+      event->accept();
+      return;
+    }
+    // P0-2 Tumble pivot clear via Escape while the override is active.
+    if (event->key() == Qt::Key_Escape && !event->isAutoRepeat() &&
+        controller_ && controller_->isTumblePivotOverrideEnabled()) {
+      controller_->clearTumblePivot();
+      event->accept();
+      return;
+    }
+    // P0-3a Interactive Render Region Escape cancel while active.
+    if (event->key() == Qt::Key_Escape && !event->isAutoRepeat() &&
+        controller_ && controller_->isInteractiveRenderRegionActive()) {
+      controller_->clearInteractiveRenderRegion();
+      event->accept();
+      return;
+    }
+    // P0-3a IRR toggle via ShortcutBindings. A real press+drag flow is
+    // also wired through mousePressEvent for marquee definition; this is
+    // the palette-style on/off entry.
+    if (!event->isAutoRepeat() && controller_ &&
+        ArtifactCore::ShortcutBindings::instance().matches(
+            event,
+            ArtifactCore::ShortcutId::ViewInteractiveRenderRegion)) {
+      if (controller_->isInteractiveRenderRegionActive()) {
+        controller_->clearInteractiveRenderRegion();
+      } else {
+        // Begin with a default 60% canvas rect centered on the viewport.
+        const QPointF pointer = mapFromGlobal(QCursor::pos());
+        const float viewportW =
+            std::max(1.0f, static_cast<float>(width()));
+        const float viewportH =
+            std::max(1.0f, static_cast<float>(height()));
+        if (controller_->renderer()) {
+          const float zoom =
+              std::max(0.001f, controller_->renderer()->getZoom());
+          float panX = 0.0f;
+          float panY = 0.0f;
+          controller_->renderer()->getPan(panX, panY);
+          const QRectF canvasRect(
+              (pointer.x() - viewportW * 0.3f - panX) / zoom,
+              (pointer.y() - viewportH * 0.3f - panY) / zoom,
+              (viewportW * 0.6f) / zoom,
+              (viewportH * 0.6f) / zoom);
+          controller_->setInteractiveRenderRegion(canvasRect);
+        }
+      }
+      event->accept();
+      return;
+    }
+    // P0-2 Tumble pivot set on Space+Z while the cursor is over the
+    // viewport. ShortcutBindings is the canonical owner of the binding.
+    if (!event->isAutoRepeat() && controller_ &&
+        ArtifactCore::ShortcutBindings::instance().matches(
+            event, ArtifactCore::ShortcutId::ViewTumblePivotUnderCursor)) {
+      const QPointF pointer = mapFromGlobal(QCursor::pos());
+      controller_->setTumblePivotAtViewportPos(pointer);
+      event->accept();
+      return;
     }
     // Blender-style transform semantics: Esc restores the drag-start
     // transform instead of committing the in-progress frame gizmo edit.

@@ -647,6 +647,12 @@ public:
   void setOpacity(float value);
   ArtifactCore::Audio::Modulation::ModulationRouter& modulationRouter();
   QString modulationPropertyPath(const QString& propertyPath) const;
+  // Reusable automation-clip placements (Phase 2). Patterns live on the
+  // composition; instances only reference them by id and never mutate keys.
+  // Const-ref: hot-path evaluation must not copy per frame.
+  const std::vector<ArtifactCore::AutomationClipInstance>& automationClipInstances() const;
+  void setAutomationClipInstances(
+      const std::vector<ArtifactCore::AutomationClipInstance>& instances);
   const LayerEffectEnvelope& effectEnvelope() const;
   void setEffectEnvelope(const LayerEffectEnvelope& envelope);
 

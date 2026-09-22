@@ -113,6 +113,7 @@ import Artifact.Layer.Svg;
 import Artifact.Layer.Text;
 import Artifact.Layer.Video;
 import Property.Abstract;
+import Animation.Value;
 import Artifact.Effect.Abstract;
 import Frame.Position;
 import Undo.UndoManager;
@@ -7177,6 +7178,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
         QAction *copyEase = menu.addAction(QStringLiteral("Copy Easing"));
         QAction *pasteEase = menu.addAction(QStringLiteral("Paste Easing"));
         QAction *snippet = menu.addAction(QStringLiteral("Snippets..."));
+        QAction *toClip = menu.addAction(QStringLiteral("Convert Selection to Automation Clip"));
         menu.addSeparator();
         QAction *easeIn = menu.addAction(QStringLiteral("Ease In"));
         QAction *easeOut = menu.addAction(QStringLiteral("Ease Out"));
@@ -7191,6 +7193,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
         else if (chosen == copyEase) keyframeEaseCopyButton->click();
         else if (chosen == pasteEase) keyframeEasePasteButton->click();
         else if (chosen == snippet) keyframeSnippetButton->click();
+        else if (chosen == toClip) convertSelectedKeyframesToAutomationClip();
         else if (chosen == easeIn) keyframeEaseInButton->click();
         else if (chosen == easeOut) keyframeEaseOutButton->click();
         else if (chosen == easeInOut) keyframeEaseInOutButton->click();
@@ -11972,6 +11975,109 @@ void ArtifactTimelineWidget::copySelectedKeyframes()
           .arg(keyframes.size())
           .arg(keyframes.size() == 1 ? QStringLiteral("keyframe")
                                      : QStringLiteral("keyframes")));
+}
+
+void ArtifactTimelineWidget::convertSelectedKeyframesToAutomationClip()
+{
+  if (!impl_ || !impl_->painterTrackView_) {
+    return;
+  }
+
+  ArtifactCompositionPtr composition;
+  if (auto* svc = ArtifactProjectService::instance()) {
+    composition = svc->currentComposition().lock();
+  }
+  if (!composition) {
+    return;
+  }
+
+  auto markers = impl_->painterTrackView_->selectedKeyframeMarkers();
+  if (markers.isEmpty()) {
+    const auto hovered = impl_->painterTrackView_->hoveredKeyframeMarker();
+    if (hovered.trackIndex >= 0) {
+      markers.push_back(hovered);
+    }
+  }
+  if (markers.isEmpty()) {
+    return;
+  }
+
+  const double fps = timelineFrameRateFallback(composition);
+  if (!(fps > 0.0)) {
+    return;
+  }
+
+  // Group selected markers by (layer, property) so each curve becomes one clip.
+  QHash<QString, QVector<qint64>> framesByGroup;
+  QHash<QString, ArtifactCore::LayerID> layerByGroup;
+  QHash<QString, QString> pathByGroup;
+  for (const auto& marker : markers) {
+    const qint64 frame = static_cast<qint64>(std::llround(marker.frame));
+    const QString key =
+        QStringLiteral("%1|%2").arg(marker.layerId.toString(), marker.propertyPath);
+    framesByGroup[key].push_back(frame);
+    layerByGroup.insert(key, marker.layerId);
+    pathByGroup.insert(key, marker.propertyPath);
+  }
+
+  int created = 0;
+  int skipped = 0;
+  auto* undo = UndoManager::instance();
+  for (auto it = framesByGroup.constBegin(); it != framesByGroup.constEnd(); ++it) {
+    const auto layerId = layerByGroup.value(it.key());
+    const QString path = pathByGroup.value(it.key());
+    const auto layer = composition->layerById(layerId);
+    if (!layer || path.trimmed().isEmpty() || it.value().isEmpty() || !undo) {
+      ++skipped;
+      continue;
+    }
+    qint64 first = it.value().front();
+    qint64 last = it.value().front();
+    for (const qint64 frame : it.value()) {
+      first = std::min(first, frame);
+      last = std::max(last, frame);
+    }
+    const auto before = layer->automationClipInstances();
+    const std::uint32_t patternId = composition->createAutomationClipFromLayerKeys(
+        layerId, path, static_cast<double>(first) / fps,
+        static_cast<double>(last) / fps, path);
+    if (patternId == 0) {
+      ++skipped;
+      continue;
+    }
+    const auto* pattern = composition->findAutomationClipPattern(patternId);
+    if (!pattern) {
+      ++skipped;
+      continue;
+    }
+    const ArtifactCore::AutomationClipPattern createdPattern = *pattern;
+    const auto after = layer->automationClipInstances();
+    // Revert to before-state; push() performs the initial redo (apply).
+    composition->removeAutomationClipPattern(patternId);
+    layer->setAutomationClipInstances(before);
+    auto command = std::make_unique<LayerAutomationClipInstancesCommand>(
+        layer, before, after, QStringLiteral("Convert to Automation Clip"));
+    command->setCreatedPattern(
+        composition->id().toString(), createdPattern);
+    if (!undo->push(std::move(command))) {
+      ++skipped;
+      continue;
+    }
+    ++created;
+  }
+
+  if (created > 0) {
+    refreshTracks();
+    refreshCurveEditorTracks();
+    updateKeyframeState();
+    updateSelectionState();
+  }
+  timelineDebugMessage(
+      QStringLiteral("Converted %1 curve%2 to automation clips%3")
+          .arg(created)
+          .arg(created == 1 ? QString() : QStringLiteral("s"))
+          .arg(skipped > 0 ? QStringLiteral(" (%1 skipped)").arg(skipped)
+                           : QString()));
 }
 
 bool ArtifactTimelineWidget::saveKeyframeSnippet(const QString& name)

@@ -17,6 +17,7 @@ module;
 #include <memory>
 #include <utility>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <string>
 #include <unordered_set>
@@ -24,6 +25,7 @@ module;
 
 module Artifact.Widgets.ArtifactPropertyWidget;
 
+import Animation.Value;
 import Property;
 import Property.Abstract;
 import Property.Group;
@@ -1528,6 +1530,84 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
             keyframeChanged(propertyName);
           }
         });
+
+    // Phase 2 automation clips: assign a reusable composition pattern to this
+    // layer property, or remove all placements. Same pattern on another
+    // property/layer is reuse; per-instance edits stay non-destructive.
+    const bool isClipTargetProperty =
+        layer && layer->getProperty(propertyName) == propertyPtr &&
+        ArtifactCore::isAutomationClipEvaluatedPath(
+            propertyName.toStdString());
+    if (isClipTargetProperty) {
+      row->setAutomationClipMenuProvider([layer]() {
+        std::vector<std::pair<std::uint32_t, QString>> patterns;
+        if (!layer) {
+          return patterns;
+        }
+        const auto *composition = dynamic_cast<const ArtifactAbstractComposition *>(
+            layer->compositionObject());
+        if (!composition) {
+          return patterns;
+        }
+        for (const auto &pattern : composition->automationClipPatterns()) {
+          if (pattern.id == 0) {
+            continue;
+          }
+          QString label = QString::fromStdString(pattern.name).trimmed();
+          if (label.isEmpty()) {
+            label = QStringLiteral("Clip %1").arg(pattern.id);
+          }
+          patterns.emplace_back(pattern.id, label);
+        }
+        return patterns;
+      });
+      row->setAutomationClipActionHandler(
+          [layer, propertyName, keyframeChanged](std::uint32_t patternId) {
+            if (!layer) {
+              return;
+            }
+            const std::string target = propertyName.toStdString();
+            const auto before = layer->automationClipInstances();
+            auto after = before;
+            if (patternId == 0) {
+              std::erase_if(after,
+                  [&target](const ArtifactCore::AutomationClipInstance &instance) {
+                    return instance.targetPath == target;
+                  });
+            } else {
+              const auto existing = std::find_if(after.begin(), after.end(),
+                  [&](const ArtifactCore::AutomationClipInstance &instance) {
+                    return instance.patternId == patternId &&
+                           instance.targetPath == target;
+                  });
+              if (existing == after.end()) {
+                ArtifactCore::AutomationClipInstance instance;
+                instance.patternId = patternId;
+                instance.targetPath = target;
+                after.push_back(std::move(instance));
+              } else {
+                existing->enabled = true;
+                existing->weight = 1.0f;
+              }
+            }
+            if (ArtifactCore::automationClipInstancesEqual(before, after)) {
+              return;
+            }
+            layer->setAutomationClipInstances(after);
+            if (auto *mgr = UndoManager::instance()) {
+              if (!mgr->push(std::make_unique<LayerAutomationClipInstancesCommand>(
+                      layer, before, after,
+                      QStringLiteral("Assign Automation Clip")))) {
+                layer->setAutomationClipInstances(before);
+                notifyLayerPropertyAnimationChanged(layer);
+              }
+            }
+            notifyLayerPropertyAnimationChanged(layer);
+            if (keyframeChanged) {
+              keyframeChanged(propertyName);
+            }
+          });
+    }
 
     // ナビゲーション (◀ ▶ボタン)
     row->setNavigationHandler([propertyPtr, playback, currentTimeProvider](

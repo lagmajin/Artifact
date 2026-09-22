@@ -63,6 +63,16 @@ void LayerMaskMatteState::clearMasks() {
   }
 }
 
+std::vector<LayerMask> LayerMaskMatteState::masks() const {
+  return masks_.toStdVector();
+}
+
+void LayerMaskMatteState::setMasks(const std::vector<LayerMask> &masks) {
+  masks_ = NamedVector<LayerMask>::fromStdVector(ContainerName{"Layer.Masks"},
+                                                  masks);
+  ++maskRevision_;
+}
+
 std::uint64_t LayerMaskMatteState::maskRevision() const noexcept {
   return maskRevision_;
 }

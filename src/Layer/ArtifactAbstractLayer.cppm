@@ -60,6 +60,7 @@ import Artifact.Layer.Component.System;
 import Artifact.Layer.Modifier;
 import Artifact.Layer.Matte;
 import Artifact.Layer.MaskMatteState;
+import Artifact.Layer.Serialization;
 import Artifact.Layer.ThumbnailSupport;
 import Color.Float;
 import Geometry.Fracture;
@@ -217,6 +218,8 @@ public:
   FramePosition startTime_ = FramePosition(0);
   int64_t currentFrame_ = 0; // 現在のフレーム位置
   Audio::Modulation::ModulationRouter modulationRouter_;
+  // Phase 2 automation-clip placements (pattern data lives on the composition).
+  std::vector<ArtifactCore::AutomationClipInstance> automationClipInstances_;
   mutable QImage thumbnailCache_;
   mutable QSize thumbnailCacheSize_;
   int64_t currentFrame() const { return currentFrame_; }
@@ -1365,6 +1368,43 @@ QVariant evaluateAnimatedPropertyValue(const ArtifactCore::AbstractProperty& pro
   }
   return property.interpolateValue(time);
 }
+
+// Reusable automation-clip overlay (Phase 2): non-destructive, weight-mixed
+// over the base value. Dangling pattern references never break playback.
+// No allocation beyond the (cold) pattern lookup; instances are read by ref.
+float applyAutomationClipOverlay(const ArtifactAbstractLayer* layer,
+                                 const QString& targetPath, float baseValue,
+                                 double parentSeconds, double freeSeconds) {
+  if (!layer || targetPath.isEmpty() || !std::isfinite(baseValue)) {
+    return baseValue;
+  }
+  const auto& instances = layer->automationClipInstances();
+  if (instances.empty()) {
+    return baseValue;
+  }
+  auto* composition =
+      dynamic_cast<ArtifactAbstractComposition*>(layer->compositionObject());
+  if (!composition) {
+    return baseValue;
+  }
+  const std::string target = targetPath.toStdString();
+  float result = baseValue;
+  for (const auto& instance : instances) {
+    if (!instance.enabled || instance.targetPath != target) {
+      continue;
+    }
+    const ArtifactCore::AutomationClipPattern* pattern =
+        composition->findAutomationClipPattern(instance.patternId);
+    if (!pattern) {
+      continue;
+    }
+    const double clock =
+        instance.timePolicy == ArtifactCore::AutomationClipTimePolicy::FreeTime
+        ? freeSeconds : parentSeconds;
+    result = ArtifactCore::applyAutomationClipInstance(result, *pattern, instance, clock);
+  }
+  return result;
+}
 } // namespace
 
 QTransform ArtifactAbstractLayer::getLocalTransform() const {
@@ -1433,6 +1473,28 @@ QTransform ArtifactAbstractLayer::getLocalTransform() const {
     applyTransformModulation("transform.rotation", rotation);
     applyTransformModulation("transform.scale.x", scaleX);
     applyTransformModulation("transform.scale.y", scaleY);
+  }
+
+  // Phase 2 automation clips (same order as opacity(): keyframe -> modulation
+  // -> clips -> dynamics). ParentFollow uses composition time, FreeTime uses
+  // layer-local time; both are deterministic for preview and render queue.
+  if (!hasTransVar && !impl_->automationClipInstances_.empty()) {
+    const double clipParentSeconds = time.toDouble();
+    const double clipFreeSeconds = fps > 0.0
+        ? static_cast<double>(impl_->currentFrame_) / fps : 0.0;
+    auto applyClipChannel = [&](const char* channel, double& value) {
+      const float clipped = applyAutomationClipOverlay(
+          this, QString::fromLatin1(channel), static_cast<float>(value),
+          clipParentSeconds, clipFreeSeconds);
+      if (std::isfinite(clipped)) {
+        value = static_cast<double>(clipped);
+      }
+    };
+    applyClipChannel("transform.position.x", positionX);
+    applyClipChannel("transform.position.y", positionY);
+    applyClipChannel("transform.rotation", rotation);
+    applyClipChannel("transform.scale.x", scaleX);
+    applyClipChannel("transform.scale.y", scaleY);
   }
 
   if (impl_->motionDynamicsEnabled_) {
@@ -4255,6 +4317,13 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   if (!modulation.isEmpty()) {
     obj[QStringLiteral("modulation")] = modulation;
   }
+  if (!impl_->automationClipInstances_.empty()) {
+    QJsonArray clips;
+    for (const auto& instance : impl_->automationClipInstances_) {
+      clips.append(ArtifactCore::automationClipInstanceToJson(instance));
+    }
+    obj[QStringLiteral("automationClipInstances")] = clips;
+  }
 
   // Mattes
   QJsonArray mattesArr;
@@ -4629,98 +4698,9 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   obj["variants"] = variantsArr;
   obj["activeVariantIndex"] = static_cast<int>(impl_->activeVariantIndex_);
 
-  // Masks
-  if (hasMasks()) {
-    QJsonArray masksArr;
-    for (int maskIndex = 0; maskIndex < maskCount(); ++maskIndex) {
-      const auto layerMask = impl_->maskMatteState_.mask(maskIndex);
-      QJsonObject mobj;
-      mobj["enabled"] = layerMask.isEnabled();
-      mobj["locked"] = layerMask.isLocked();
-      {
-        const auto c = layerMask.color();
-        QJsonObject cobj;
-        cobj["r"] = c.r();
-        cobj["g"] = c.g();
-        cobj["b"] = c.b();
-        cobj["a"] = c.a();
-        mobj["color"] = cobj;
-      }
-
-      QJsonArray pathsArr;
-      for (int pathIndex = 0; pathIndex < layerMask.maskPathCount();
-           ++pathIndex) {
-        const auto path = layerMask.maskPath(pathIndex);
-        QJsonObject pobj;
-
-        // vertices: 各頂点は position / inTangent / outTangent（QPointF = x,y）
-        QJsonArray vertsArr;
-        for (int vi = 0; vi < path.vertexCount(); ++vi) {
-          const auto v = path.vertex(vi);
-          QJsonObject vobj;
-          vobj["px"] = v.position.x();
-          vobj["py"] = v.position.y();
-          vobj["ix"] = v.inTangent.x();
-          vobj["iy"] = v.inTangent.y();
-          vobj["ox"] = v.outTangent.x();
-          vobj["oy"] = v.outTangent.y();
-          vertsArr.append(vobj);
-        }
-        pobj["vertices"] = vertsArr;
-        pobj["closed"] = path.isClosed();
-        pobj["opacity"] = static_cast<double>(path.opacity());
-        pobj["feather"] = static_cast<double>(path.feather());
-        pobj["featherHorizontal"] = static_cast<double>(path.featherHorizontal());
-        pobj["featherVertical"] = static_cast<double>(path.featherVertical());
-        pobj["featherInner"] = static_cast<double>(path.featherInner());
-        pobj["featherOuter"] = static_cast<double>(path.featherOuter());
-        pobj["falloff"] = static_cast<int>(path.falloff());
-        pobj["expansion"] = static_cast<double>(path.expansion());
-        pobj["inverted"] = path.isInverted();
-        pobj["mode"] = static_cast<int>(path.mode());
-        pobj["name"] = path.name().toQString();
-
-        // animation keyframes
-        if (path.hasAnimationKeyframes()) {
-          QJsonArray kfArr;
-          for (const auto &kf : path.animationKeyframes()) {
-            QJsonObject kfobj;
-            kfobj["frame"] = static_cast<qint64>(kf.frame);
-            kfobj["closed"] = kf.closed;
-            kfobj["opacity"] = static_cast<double>(kf.opacity);
-            kfobj["feather"] = static_cast<double>(kf.feather);
-            kfobj["featherHorizontal"] = static_cast<double>(kf.featherHorizontal);
-            kfobj["featherVertical"] = static_cast<double>(kf.featherVertical);
-            kfobj["featherInner"] = static_cast<double>(kf.featherInner);
-            kfobj["featherOuter"] = static_cast<double>(kf.featherOuter);
-            kfobj["falloff"] = static_cast<int>(kf.falloff);
-            kfobj["expansion"] = static_cast<double>(kf.expansion);
-            kfobj["inverted"] = kf.inverted;
-            kfobj["mode"] = static_cast<int>(kf.mode);
-            kfobj["name"] = kf.name.toQString();
-
-            QJsonArray kfVertsArr;
-            for (const auto &v : kf.vertices) {
-              QJsonObject vobj;
-              vobj["px"] = v.position.x();
-              vobj["py"] = v.position.y();
-              vobj["ix"] = v.inTangent.x();
-              vobj["iy"] = v.inTangent.y();
-              vobj["ox"] = v.outTangent.x();
-              vobj["oy"] = v.outTangent.y();
-              kfVertsArr.append(vobj);
-            }
-            kfobj["vertices"] = kfVertsArr;
-            kfArr.append(kfobj);
-          }
-          pobj["animationKeyframes"] = kfArr;
-        }
-        pathsArr.append(pobj);
-      }
-      mobj["paths"] = pathsArr;
-      masksArr.append(mobj);
-    }
-    obj["masks"] = masksArr;
+  const QJsonArray masks = serializeLayerMasks(impl_->maskMatteState_.masks());
+  if (!masks.isEmpty()) {
+    obj["masks"] = masks;
   }
 
   return obj;
@@ -4748,6 +4728,19 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
   if (obj.value(QStringLiteral("modulation")).isObject()) {
     restoreLayerModulationRouter(obj.value(QStringLiteral("modulation")).toObject(),
                                  impl_->modulationRouter_);
+  }
+  impl_->automationClipInstances_.clear();
+  if (obj.value(QStringLiteral("automationClipInstances")).isArray()) {
+    for (const auto& value :
+         obj.value(QStringLiteral("automationClipInstances")).toArray()) {
+      if (!value.isObject()) {
+        continue;
+      }
+      ArtifactCore::AutomationClipInstance instance;
+      if (ArtifactCore::automationClipInstanceFromJson(value.toObject(), instance)) {
+        impl_->automationClipInstances_.push_back(std::move(instance));
+      }
+    }
   }
   if (obj.contains("animationLayers") && obj["animationLayers"].isObject())
     impl_->animationLayers_.fromJson(obj["animationLayers"].toObject());
@@ -5692,119 +5685,8 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
       }
   }
 
-  // Masks
   if (obj.contains("masks") && obj["masks"].isArray()) {
-    impl_->maskMatteState_.clearMasks();
-    const auto masksArr = obj["masks"].toArray();
-    for (const auto &maskVal : masksArr) {
-      if (!maskVal.isObject()) continue;
-      const auto mobj = maskVal.toObject();
-
-      LayerMask layerMask;
-      if (mobj.contains("enabled")) {
-        layerMask.setEnabled(mobj["enabled"].toBool(true));
-      }
-      if (mobj.contains("locked")) {
-        layerMask.setLocked(mobj["locked"].toBool(false));
-      }
-      if (mobj.contains("color") && mobj["color"].isObject()) {
-        const auto cobj = mobj["color"].toObject();
-        const float r = static_cast<float>(cobj.value("r").toDouble(0.28));
-        const float g = static_cast<float>(cobj.value("g").toDouble(0.88));
-        const float b = static_cast<float>(cobj.value("b").toDouble(1.0));
-        const float a = static_cast<float>(cobj.value("a").toDouble(0.95));
-        layerMask.setColor(FloatColor{r, g, b, a});
-      }
-
-      if (mobj.contains("paths") && mobj["paths"].isArray()) {
-        const auto pathsArr = mobj["paths"].toArray();
-        for (const auto &pathVal : pathsArr) {
-          if (!pathVal.isObject()) continue;
-          const auto pobj = pathVal.toObject();
-
-          MaskPath path;
-          path.clearVertices();
-          if (pobj.contains("vertices") && pobj["vertices"].isArray()) {
-            const auto vertsArr = pobj["vertices"].toArray();
-            for (const auto &vVal : vertsArr) {
-              if (!vVal.isObject()) continue;
-              const auto vobj = vVal.toObject();
-              MaskVertex v;
-              v.position = QPointF(vobj["px"].toDouble(), vobj["py"].toDouble());
-              v.inTangent = QPointF(vobj["ix"].toDouble(), vobj["iy"].toDouble());
-              v.outTangent = QPointF(vobj["ox"].toDouble(), vobj["oy"].toDouble());
-              path.addVertex(v);
-            }
-          }
-          if (pobj.contains("closed"))
-            path.setClosed(pobj["closed"].toBool(true));
-          if (pobj.contains("opacity"))
-            path.setOpacity(static_cast<float>(pobj["opacity"].toDouble(1.0)));
-          if (pobj.contains("feather"))
-            path.setFeather(static_cast<float>(pobj["feather"].toDouble(0.0)));
-          if (pobj.contains("featherHorizontal"))
-            path.setFeatherHorizontal(static_cast<float>(pobj["featherHorizontal"].toDouble(0.0)));
-          if (pobj.contains("featherVertical"))
-            path.setFeatherVertical(static_cast<float>(pobj["featherVertical"].toDouble(0.0)));
-          if (pobj.contains("featherInner"))
-            path.setFeatherInner(static_cast<float>(pobj["featherInner"].toDouble(0.0)));
-          if (pobj.contains("featherOuter"))
-            path.setFeatherOuter(static_cast<float>(pobj["featherOuter"].toDouble(0.0)));
-          if (pobj.contains("falloff"))
-            path.setFalloff(static_cast<MaskFeatherFalloff>(pobj["falloff"].toInt(0)));
-          if (pobj.contains("expansion"))
-            path.setExpansion(static_cast<float>(pobj["expansion"].toDouble(0.0)));
-          if (pobj.contains("inverted"))
-            path.setInverted(pobj["inverted"].toBool(false));
-          if (pobj.contains("mode"))
-            path.setMode(static_cast<MaskMode>(pobj["mode"].toInt(static_cast<int>(MaskMode::Add))));
-          if (pobj.contains("name"))
-            path.setName(UniString::fromQString(pobj["name"].toString()));
-
-          // animation keyframes
-          if (pobj.contains("animationKeyframes") && pobj["animationKeyframes"].isArray()) {
-            const auto kfArr = pobj["animationKeyframes"].toArray();
-            for (const auto &kfVal : kfArr) {
-              if (!kfVal.isObject()) continue;
-              const auto kfobj = kfVal.toObject();
-
-              MaskPathKeyframeSnapshot snap;
-              snap.frame = static_cast<int64_t>(kfobj["frame"].toVariant().toLongLong());
-              snap.closed = kfobj["closed"].toBool(true);
-              snap.opacity = static_cast<float>(kfobj["opacity"].toDouble(1.0));
-              snap.feather = static_cast<float>(kfobj["feather"].toDouble(0.0));
-              snap.featherHorizontal = static_cast<float>(kfobj["featherHorizontal"].toDouble(0.0));
-              snap.featherVertical = static_cast<float>(kfobj["featherVertical"].toDouble(0.0));
-              snap.featherInner = static_cast<float>(kfobj["featherInner"].toDouble(0.0));
-              snap.featherOuter = static_cast<float>(kfobj["featherOuter"].toDouble(0.0));
-              snap.falloff = static_cast<MaskFeatherFalloff>(kfobj["falloff"].toInt(0));
-              snap.expansion = static_cast<float>(kfobj["expansion"].toDouble(0.0));
-              snap.inverted = kfobj["inverted"].toBool(false);
-              snap.mode = static_cast<MaskMode>(kfobj["mode"].toInt(static_cast<int>(MaskMode::Add)));
-              snap.name = UniString::fromQString(kfobj["name"].toString());
-
-              if (kfobj.contains("vertices") && kfobj["vertices"].isArray()) {
-                const auto kfVertsArr = kfobj["vertices"].toArray();
-                for (const auto &vVal : kfVertsArr) {
-                  if (!vVal.isObject()) continue;
-                  const auto vobj = vVal.toObject();
-                  MaskVertex v;
-                  v.position = QPointF(vobj["px"].toDouble(), vobj["py"].toDouble());
-                  v.inTangent = QPointF(vobj["ix"].toDouble(), vobj["iy"].toDouble());
-                  v.outTangent = QPointF(vobj["ox"].toDouble(), vobj["oy"].toDouble());
-                  snap.vertices.push_back(v);
-                }
-              }
-              path.setAnimationKeyframe(snap.frame, snap);
-            }
-          }
-
-          layerMask.addMaskPath(path);
-        }
-      }
-
-      impl_->maskMatteState_.addMask(layerMask);
-    }
+    impl_->maskMatteState_.setMasks(deserializeLayerMasks(obj["masks"].toArray()));
     changed();
   }
 
@@ -10148,6 +10030,17 @@ float ArtifactAbstractLayer::opacity() const {
       }
     }
   }
+  // Phase 2 automation clips: weight-mixed over the modulated base, still
+  // before the effect envelope so envelope timing ownership is unchanged.
+  if (!impl_->automationClipInstances_.empty()) {
+    const double clipParentSeconds = currentTimelineTime(this).toDouble();
+    const double clipFps = effectiveLayerFrameRate(this);
+    const double clipFreeSeconds = clipFps > 0.0
+        ? static_cast<double>(impl_->currentFrame_) / clipFps : 0.0;
+    baseOpacity = applyAutomationClipOverlay(
+        this, QStringLiteral("layer.opacity"), baseOpacity,
+        clipParentSeconds, clipFreeSeconds);
+  }
   const float evaluatedOpacity = applyLayerEffectEnvelopeOpacity(
       impl_->effectEnvelope_, baseOpacity, impl_->currentFrame_,
       impl_->inPoint_, impl_->outPoint_, impl_->startTime_);
@@ -10158,6 +10051,18 @@ float ArtifactAbstractLayer::opacity() const {
 
 Audio::Modulation::ModulationRouter& ArtifactAbstractLayer::modulationRouter() {
   return impl_->modulationRouter_;
+}
+
+const std::vector<ArtifactCore::AutomationClipInstance>&
+ArtifactAbstractLayer::automationClipInstances() const {
+  return impl_->automationClipInstances_;
+}
+
+void ArtifactAbstractLayer::setAutomationClipInstances(
+    const std::vector<ArtifactCore::AutomationClipInstance>& instances) {
+  impl_->automationClipInstances_ = instances;
+  notifyLayerMutation(this, LayerDirtyFlag::Property,
+                      LayerDirtyReason::PropertyChanged);
 }
 
 QString ArtifactAbstractLayer::modulationPropertyPath(

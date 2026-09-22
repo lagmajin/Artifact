@@ -72,6 +72,7 @@ import Artifact.Layer.Video;
 import ArtifactCore.Control.External;
 import Memory.SharedPtr;
 import Property.SerializationBridge;
+import Animation.Value;
 import Audio.Modulation.Router;
 import Physics.System;
 import Physics.Mpm2D;
@@ -895,6 +896,190 @@ void restoreModulationRouter(const QJsonObject& object,
   }
 }
 
+// ---- Reusable automation-clip patterns (Phase 2, cold path only) ----
+
+std::vector<ArtifactCore::AutomationClipPattern>
+ArtifactAbstractComposition::automationClipPatterns() const {
+  if (!impl_) {
+    return {};
+  }
+  return impl_->automationClipPatterns_;
+}
+
+const ArtifactCore::AutomationClipPattern*
+ArtifactAbstractComposition::findAutomationClipPattern(
+    std::uint32_t patternId) const {
+  if (!impl_ || patternId == 0) {
+    return nullptr;
+  }
+  for (const auto& pattern : impl_->automationClipPatterns_) {
+    if (pattern.id == patternId) {
+      return &pattern;
+    }
+  }
+  return nullptr;
+}
+
+std::uint32_t ArtifactAbstractComposition::addAutomationClipPattern(
+    ArtifactCore::AutomationClipPattern pattern) {
+  if (!impl_ || !ArtifactCore::sanitizeAutomationClipPattern(pattern)) {
+    return 0;
+  }
+  if (pattern.id == 0) {
+    std::uint32_t candidate = impl_->nextAutomationClipId_ == 0
+        ? 1u : impl_->nextAutomationClipId_;
+    const std::uint32_t first = candidate;
+    auto idTaken = [&](std::uint32_t id) {
+      for (const auto& existing : impl_->automationClipPatterns_) {
+        if (existing.id == id) {
+          return true;
+        }
+      }
+      return false;
+    };
+    while (idTaken(candidate)) {
+      ++candidate;
+      if (candidate == 0) {
+        candidate = 1;
+      }
+      if (candidate == first) {
+        return 0;
+      }
+    }
+    pattern.id = candidate;
+    impl_->nextAutomationClipId_ = candidate + 1u;
+    if (impl_->nextAutomationClipId_ == 0) {
+      impl_->nextAutomationClipId_ = 1u;
+    }
+  } else {
+    for (const auto& existing : impl_->automationClipPatterns_) {
+      if (existing.id == pattern.id) {
+        return 0;  // stable ids are unique; restore path replaces wholesale
+      }
+    }
+    if (pattern.id >= impl_->nextAutomationClipId_) {
+      impl_->nextAutomationClipId_ = pattern.id + 1u;
+      if (impl_->nextAutomationClipId_ == 0) {
+        impl_->nextAutomationClipId_ = 1u;
+      }
+    }
+  }
+  const std::uint32_t assigned = pattern.id;
+  impl_->automationClipPatterns_.push_back(std::move(pattern));
+  changed();
+  return assigned;
+}
+
+bool ArtifactAbstractComposition::removeAutomationClipPattern(
+    std::uint32_t patternId) {
+  if (!impl_ || patternId == 0) {
+    return false;
+  }
+  auto& patterns = impl_->automationClipPatterns_;
+  const auto it = std::find_if(patterns.begin(), patterns.end(),
+      [patternId](const ArtifactCore::AutomationClipPattern& pattern) {
+        return pattern.id == patternId;
+      });
+  if (it == patterns.end()) {
+    return false;
+  }
+  patterns.erase(it);
+  // Purge dangling layer placements so playback never references a removed id.
+  for (const auto& layer : impl_->layerMultiIndex_.all()) {
+    if (!layer) {
+      continue;
+    }
+    auto instances = layer->automationClipInstances();
+    const std::size_t before = instances.size();
+    std::erase_if(instances, [patternId](
+        const ArtifactCore::AutomationClipInstance& instance) {
+      return instance.patternId == patternId;
+    });
+    if (instances.size() != before) {
+      layer->setAutomationClipInstances(instances);
+    }
+  }
+  changed();
+  return true;
+}
+
+std::uint32_t ArtifactAbstractComposition::createAutomationClipFromLayerKeys(
+    const ArtifactCore::LayerID& layerId, const QString& targetPath,
+    double startSeconds, double endSeconds, const QString& name) {
+  if (!impl_ || layerId.isNil() || targetPath.trimmed().isEmpty() ||
+      !std::isfinite(startSeconds) || !std::isfinite(endSeconds) ||
+      endSeconds <= startSeconds) {
+    return 0;
+  }
+  const std::string normalizedTarget = targetPath.trimmed().toStdString();
+  if (!ArtifactCore::isAutomationClipEvaluatedPath(normalizedTarget)) {
+    return 0;  // Phase 2 evaluates Transform/Opacity float channels only
+  }
+  const auto layer = layerById(layerId);
+  if (!layer) {
+    return 0;
+  }
+  const auto property = layer->getProperty(targetPath.trimmed());
+  if (!property) {
+    return 0;
+  }
+  ArtifactCore::AutomationClipPattern pattern;
+  pattern.name = name.trimmed().toStdString();
+  for (const auto& key : property->getKeyFrames()) {
+    const double keySeconds = key.time.toDouble();
+    if (!std::isfinite(keySeconds) || keySeconds < startSeconds ||
+        keySeconds > endSeconds) {
+      continue;
+    }
+    bool valueOk = false;
+    const double keyValue = key.value.toDouble(&valueOk);
+    if (!valueOk || !std::isfinite(keyValue)) {
+      continue;  // Phase 2 is float-channel only; Color remap is deferred
+    }
+    ArtifactCore::AutomationClipPoint point;
+    point.time = keySeconds - startSeconds;
+    point.value = static_cast<float>(keyValue);
+    point.interpolation = key.interpolation;
+    point.cp1_x = key.cp1_x;
+    point.cp1_y = key.cp1_y;
+    point.cp2_x = key.cp2_x;
+    point.cp2_y = key.cp2_y;
+    pattern.points.push_back(point);
+  }
+  const std::uint32_t assigned = addAutomationClipPattern(std::move(pattern));
+  if (assigned == 0) {
+    return 0;
+  }
+  // Non-destructive: source keys stay. The new instance overrides by weight.
+  ArtifactCore::AutomationClipInstance instance;
+  instance.patternId = assigned;
+  instance.targetPath = normalizedTarget;
+  instance.offsetSeconds = startSeconds;
+  auto instances = layer->automationClipInstances();
+  instances.push_back(std::move(instance));
+  layer->setAutomationClipInstances(instances);
+  return assigned;
+}
+
+bool ArtifactAbstractComposition::setLayerAutomationClipInstances(
+    const ArtifactCore::LayerID& layerId,
+    const std::vector<ArtifactCore::AutomationClipInstance>& instances) {
+  if (!impl_ || layerId.isNil()) {
+    return false;
+  }
+  const auto layer = layerById(layerId);
+  if (!layer) {
+    return false;
+  }
+  if (ArtifactCore::automationClipInstancesEqual(
+          layer->automationClipInstances(), instances)) {
+    return true;
+  }
+  layer->setAutomationClipInstances(instances);
+  changed();
+  return true;
+}
+
 QJsonObject serializeEffect(const SharedPtr<ArtifactAbstractEffect>& effect)
 {
   QJsonObject eobj;
@@ -1178,6 +1363,9 @@ class ArtifactAbstractComposition::Impl {
   uint64_t revision_ = 1;
   FloatColor backgroundColor_ = { 0.47f, 0.47f, 0.47f, 1.0f };
   std::vector<SharedPtr<ArtifactAbstractEffect>> effects_;
+  // Phase 2 reusable automation-clip patterns (composition-owned shared data).
+  std::vector<ArtifactCore::AutomationClipPattern> automationClipPatterns_;
+  std::uint32_t nextAutomationClipId_ = 1;
   mutable QImage thumbnailCache_;
   mutable QSize thumbnailCacheSize_;
   mutable bool thumbnailCacheValid_ = false;
@@ -5580,6 +5768,14 @@ QJsonDocument ArtifactAbstractComposition::toJson() const{
         }
     }
     obj["effects"] = effectsArray;
+    if (!impl_->automationClipPatterns_.empty()) {
+        QJsonArray clipsArray;
+        for (const auto& pattern : impl_->automationClipPatterns_) {
+            clipsArray.append(
+                ArtifactCore::automationClipPatternToJson(pattern));
+        }
+        obj["automationClips"] = clipsArray;
+    }
     QJsonArray layersArray;
     for (const auto& layer : impl_->layerMultiIndex_.all()) {
         if (layer) {
@@ -5773,6 +5969,38 @@ ArtifactCompositionPtr ArtifactAbstractComposition::fromJson(const QJsonDocument
             }
             comp->addEffect(deserializeEffect(value.toObject()));
         }
+    }
+
+    comp->impl_->automationClipPatterns_.clear();
+    comp->impl_->nextAutomationClipId_ = 1;
+    if (obj.contains("automationClips") && obj["automationClips"].isArray()) {
+        for (const auto& value : obj["automationClips"].toArray()) {
+            if (!value.isObject()) {
+                continue;
+            }
+            ArtifactCore::AutomationClipPattern pattern;
+            if (!ArtifactCore::automationClipPatternFromJson(
+                    value.toObject(), pattern)) {
+                continue;
+            }
+            bool duplicate = false;
+            for (const auto& existing : comp->impl_->automationClipPatterns_) {
+                if (existing.id == pattern.id) {
+                    duplicate = true;
+                    break;
+                }
+            }
+            if (duplicate) {
+                continue;
+            }
+            comp->impl_->automationClipPatterns_.push_back(std::move(pattern));
+        }
+        std::uint32_t largest = 0;
+        for (const auto& pattern : comp->impl_->automationClipPatterns_) {
+            largest = std::max(largest, pattern.id);
+        }
+        comp->impl_->nextAutomationClipId_ =
+            largest == std::numeric_limits<std::uint32_t>::max() ? 1u : largest + 1u;
     }
 
     if (obj.contains("layers") && obj["layers"].isArray()) {

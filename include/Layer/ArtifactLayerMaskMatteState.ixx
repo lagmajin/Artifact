@@ -21,6 +21,8 @@ public:
   LayerMask mask(int index) const;
   int maskCount() const;
   void clearMasks();
+  std::vector<LayerMask> masks() const;
+  void setMasks(const std::vector<LayerMask> &masks);
   std::uint64_t maskRevision() const noexcept;
 
   std::vector<LayerMatteReference> matteReferences() const;

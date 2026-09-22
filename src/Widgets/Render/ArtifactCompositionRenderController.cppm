@@ -10657,6 +10657,12 @@ public:
 
   float devicePixelRatio_ = 1.0f;
 
+  // P0-3b.0 Render context owned by the controller. The context reflects
+  // the current render mode / pan / zoom / canvas size and is exposed via
+  // a read-only getter. ROI integration is deferred to P0-3b.1; this
+  // stage only verifies the getter + ownership round-trip.
+  RenderContext renderContext_;
+
   bool renderScheduled_ = false;
 
   CompositionCompareMode compareMode_ = CompositionCompareMode::Off;
@@ -14209,6 +14215,7 @@ public:
   bool interactionBusy() const {
     return viewportInteracting_ || isRubberBandSelecting_ ||
            isShapeVertexMarqueeSelecting_ || dropGhostVisible_ ||
+           isBoxZooming_ || interactiveRenderRegionHandleDrag_ != 0 ||
            (gizmo_ && gizmo_->isDragging()) ||
            (textGizmo_ && textGizmo_->isDragging());
   }
@@ -14278,6 +14285,33 @@ public:
   QVector<QPointF> lassoViewportPoints_;
 
   SelectionMode selectionMode_ = SelectionMode::Replace;
+
+  // P0-1 Box zoom/crop interaction state. Mutually exclusive with the
+  // rubber-band selection marquee. Only honors beginBoxZoomInteraction()
+  // while usesSpatialViewportOrientation() or front orthographic are both
+  // valid for navigation; the overlay stays visible until release/cancel.
+  bool isBoxZooming_ = false;
+  bool boxZoomCropWindow_ = false;
+  QPointF boxZoomStartViewportPos_;
+  QPointF boxZoomCurrentViewportPos_;
+
+  // P0-2 Tumble-pivot-under-cursor state. Camera layer parameters are not
+  // touched: tumblePivotCanvasPos_ is fed into viewportOrientationViewMatrix
+  // as the temporary view target. Cleared on composition reset / view undo.
+  bool tumblePivotOverrideEnabled_ = false;
+  QPointF tumblePivotCanvasPos_;
+
+  // P0-3a Interactive Render Region state. Canvas pixel rectangle that the
+  // viewport exposes as a partial-render area. Resolution slider is stored
+  // for the HUD readout; RenderContext::roi wiring is deferred to P0-3b.
+  bool interactiveRenderRegionActive_ = false;
+  QRectF interactiveRenderRegionRect_;
+  float interactiveRenderRegionResolutionScale_ = 1.0f;
+  // 2D modal handle interaction state for moving/resizing the IRR rect.
+  // 0 = none, 1 = move, 2-9 = corner/edge handles (NW, N, NE, E, SE, S, SW, W).
+  int interactiveRenderRegionHandleDrag_ = 0;
+  QPointF interactiveRenderRegionDragStartViewport_;
+  QRectF interactiveRenderRegionDragStartRect_;
 
   QVector<ArtifactAbstractLayerPtr> dragGroupLayers_;
 
@@ -15990,6 +16024,17 @@ public:
 
 
   void renderOneFrameImpl(CompositionRenderController *owner);
+  // P0-3d: render-only subpath used when an Interactive Render Region is
+  // active. The caller picks a RenderQuality (Draft/Preview/Final) based
+  // on interactiveRenderRegionResolutionScale_; the function applies the
+  // IRR scissor and re-issues the composition draw calls. Implementation
+  // is intentionally minimal in this milestone — the actual draw loop is
+  // shared with renderOneFrameImpl via the existing composition path,
+  // gated by the active scissor. Future P0-3d.1 will introduce a real
+  // partial-render callback pipeline.
+  void renderPartialRegion(CompositionRenderController *owner,
+                           RenderQuality quality,
+                           const RenderROI &roi);
 
 };
 
@@ -16553,6 +16598,10 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
 
   impl_->renderer_->initialize(hostWidget);
 
+  // P0-3b.0: initialize the owned RenderContext with the default Editor
+  // preview mode. P0-3b.1 will start consuming setROI() in the render path.
+  impl_->renderContext_.setMode(RenderMode::Editor);
+
 
 
   if (!impl_->renderer_->isInitialized()) {
@@ -16992,6 +17041,10 @@ void CompositionRenderController::destroy() {
     impl_->renderer_.reset();
 
   }
+
+  // P0-3b.0: reset the owned RenderContext so its ROI / mode state does
+  // not survive across destroy()/initialize() cycles.
+  impl_->renderContext_.reset();
 
   impl_->invalidateBaseComposite();
 
@@ -20936,12 +20989,385 @@ void CompositionRenderController::resetView() {
     impl_->pushViewHistory();
     impl_->renderer_->resetView();
 
+    // P0-2 tumble pivot is a preview-only override; clear it on full reset
+    // so a saved camera target stays in sync with the cleared view.
+    impl_->tumblePivotOverrideEnabled_ = false;
+    impl_->tumblePivotCanvasPos_ = {};
+
     impl_->invalidateBaseComposite();
 
     markRenderDirty();
 
   }
 
+}
+
+// P0-1 Box zoom / crop interaction. Begin accepts the logical press
+// position (mirroring the QMouseEvent::position() coordinate space used by
+// the other handleMouse* helpers) and reserves the right to ignore it if
+// a higher-priority modality is active. Update is fed raw logical mouse
+// positions; the internal state stores physical positions to stay
+// consistent with viewportRectToCanvasRect and the rubber-band pipeline.
+bool CompositionRenderController::beginBoxZoomInteraction(
+    const QPointF& viewportPos, bool cropWindow) {
+  if (!impl_ || !impl_->renderer_) {
+    return false;
+  }
+  // Stay exclusive with the rubber-band selection marquee and gizmos.
+  if (impl_->isRubberBandSelecting_ || impl_->isLassoSelecting_ ||
+      impl_->isShapeVertexMarqueeSelecting_ ||
+      impl_->isModalGizmoInteractionActive() ||
+      impl_->isTextEditSessionActive() || impl_->isInteractionBusy()) {
+    return false;
+  }
+  const QPointF physicalPos = viewportPos * impl_->devicePixelRatio_;
+  impl_->isBoxZooming_ = true;
+  impl_->boxZoomCropWindow_ = cropWindow;
+  impl_->boxZoomStartViewportPos_ = physicalPos;
+  impl_->boxZoomCurrentViewportPos_ = physicalPos;
+  markRenderDirty();
+  return true;
+}
+
+void CompositionRenderController::updateBoxZoomInteraction(
+    const QPointF& viewportPos) {
+  if (!impl_ || !impl_->isBoxZooming_) {
+    return;
+  }
+  impl_->boxZoomCurrentViewportPos_ =
+      viewportPos * impl_->devicePixelRatio_;
+  markRenderDirty();
+}
+
+bool CompositionRenderController::endBoxZoomInteraction() {
+  if (!impl_ || !impl_->isBoxZooming_) {
+    return false;
+  }
+  const QPointF startViewport = impl_->boxZoomStartViewportPos_;
+  const QPointF endViewport = impl_->boxZoomCurrentViewportPos_;
+  const bool cropWindow = impl_->boxZoomCropWindow_;
+  impl_->isBoxZooming_ = false;
+  impl_->boxZoomStartViewportPos_ = {};
+  impl_->boxZoomCurrentViewportPos_ = {};
+  if (!impl_->renderer_) {
+    markRenderDirty();
+    return false;
+  }
+  // Crop window is reserved for a later milestone; do not mutate the view.
+  if (cropWindow) {
+    markRenderDirty();
+    return true;
+  }
+  // Mirror the rubber-band threshold so a jittery click does not zoom.
+  const float zoom = std::max(0.001f, impl_->renderer_->getZoom());
+  const float threshold = 6.0f / zoom;
+  const QPointF delta = endViewport - startViewport;
+  if (delta.manhattanLength() < threshold) {
+    markRenderDirty();
+    return false;
+  }
+  const QRectF canvasRect = viewportRectToCanvasRect(
+      impl_->renderer_.get(), startViewport, endViewport).normalized();
+  if (canvasRect.isEmpty() || canvasRect.width() < 1.0f ||
+      canvasRect.height() < 1.0f) {
+    markRenderDirty();
+    return false;
+  }
+  impl_->pushViewHistory();
+  // Compute the zoom factor that fits the canvas rectangle into the
+  // viewport. The renderer does not expose a single fit-to-rect entry, so
+  // we derive the ratio directly and apply it via the smooth-zoom anchor.
+  const float viewportW = std::max(1.0f, impl_->hostWidth_);
+  const float viewportH = std::max(1.0f, impl_->hostHeight_);
+  const float fitX = viewportW / std::max(1.0f,
+      static_cast<float>(canvasRect.width()));
+  const float fitY = viewportH / std::max(1.0f,
+      static_cast<float>(canvasRect.height()));
+  const float targetZoom = std::min(fitX, fitY);
+  const QPointF centerViewport = (startViewport + endViewport) * 0.5f;
+  const float currentZoom = std::max(0.001f, impl_->renderer_->getZoom());
+  const float factor =
+      std::isfinite(targetZoom) && targetZoom > 0.0f
+          ? (targetZoom / currentZoom)
+          : 1.0f;
+  zoomAtFactor(centerViewport, factor);
+  impl_->invalidateBaseComposite();
+  markRenderDirty();
+  return true;
+}
+
+void CompositionRenderController::cancelBoxZoomInteraction() {
+  if (!impl_ || !impl_->isBoxZooming_) {
+    return;
+  }
+  impl_->isBoxZooming_ = false;
+  impl_->boxZoomStartViewportPos_ = {};
+  impl_->boxZoomCurrentViewportPos_ = {};
+  markRenderDirty();
+}
+
+bool CompositionRenderController::isBoxZoomInteractionActive() const {
+  return impl_ && impl_->isBoxZooming_;
+}
+
+// P0-2 Tumble pivot under cursor. Stores the cursor point in canvas space
+// and feeds it into the viewport orientation view matrix as a temporary
+// look-at target. The camera layer's stored target is never modified.
+bool CompositionRenderController::setTumblePivotAtViewportPos(
+    const QPointF& viewportPos) {
+  if (!impl_ || !impl_->renderer_) {
+    return false;
+  }
+  // Front orthographic does not tumble; refuse to leave a stale override.
+  if (!impl_->usesSpatialViewportOrientation()) {
+    impl_->tumblePivotOverrideEnabled_ = false;
+    impl_->tumblePivotCanvasPos_ = {};
+    markRenderDirty();
+    return false;
+  }
+  const QPointF physicalPos = viewportPos * impl_->devicePixelRatio_;
+  const QRectF canvasRect = viewportRectToCanvasRect(
+      impl_->renderer_.get(), physicalPos, physicalPos);
+  if (canvasRect.isEmpty()) {
+    return false;
+  }
+  if (!impl_->tumblePivotOverrideEnabled_) {
+    impl_->pushViewHistory();
+  }
+  impl_->tumblePivotOverrideEnabled_ = true;
+  impl_->tumblePivotCanvasPos_ = QPointF(canvasRect.x(), canvasRect.y());
+  impl_->invalidateBaseComposite();
+  markRenderDirty();
+  return true;
+}
+
+void CompositionRenderController::clearTumblePivot() {
+  if (!impl_ || !impl_->tumblePivotOverrideEnabled_) {
+    return;
+  }
+  impl_->pushViewHistory();
+  impl_->tumblePivotOverrideEnabled_ = false;
+  impl_->tumblePivotCanvasPos_ = {};
+  impl_->invalidateBaseComposite();
+  markRenderDirty();
+}
+
+bool CompositionRenderController::isTumblePivotOverrideEnabled() const {
+  return impl_ && impl_->tumblePivotOverrideEnabled_;
+}
+
+QPointF CompositionRenderController::tumblePivotCanvasPos() const {
+  return impl_ ? impl_->tumblePivotCanvasPos_ : QPointF{};
+}
+
+// P0-3a Interactive Render Region. The rectangle is owned by the
+// controller; render-path integration (RenderContext::roi) is deferred
+// to a separate milestone and intentionally out of scope here.
+void CompositionRenderController::setInteractiveRenderRegion(
+    const QRectF& canvasRect) {
+  if (!impl_ || !impl_->renderer_) {
+    return;
+  }
+  QRectF normalized = canvasRect.normalized();
+  if (normalized.width() < 2.0f || normalized.height() < 2.0f) {
+    return;
+  }
+  impl_->interactiveRenderRegionActive_ = true;
+  impl_->interactiveRenderRegionRect_ = normalized;
+  // HUD readout (display-only). The rect does not yet drive a partial
+  // re-render in P0-3a; P0-3b will consume it.
+  const int widthPercent = static_cast<int>(std::round(
+      impl_->interactiveRenderRegionResolutionScale_ * 100.0f));
+  setInfoOverlayText(QStringLiteral("IRR"),
+                     QStringLiteral(
+                         "%1%% res  %2 x %3")
+                         .arg(widthPercent)
+                         .arg(static_cast<int>(normalized.width()))
+                         .arg(static_cast<int>(normalized.height())));
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+}
+
+void CompositionRenderController::clearInteractiveRenderRegion() {
+  if (!impl_ || !impl_->interactiveRenderRegionActive_) {
+    return;
+  }
+  impl_->interactiveRenderRegionActive_ = false;
+  impl_->interactiveRenderRegionRect_ = {};
+  impl_->interactiveRenderRegionHandleDrag_ = 0;
+  setInfoOverlayText(QString(), QString());
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+}
+
+bool CompositionRenderController::isInteractiveRenderRegionActive() const {
+  return impl_ && impl_->interactiveRenderRegionActive_;
+}
+
+QRectF CompositionRenderController::interactiveRenderRegion() const {
+  return impl_ ? impl_->interactiveRenderRegionRect_ : QRectF{};
+}
+
+void CompositionRenderController::setInteractiveRenderRegionResolutionScale(
+    float scale) {
+  if (!impl_) {
+    return;
+  }
+  impl_->interactiveRenderRegionResolutionScale_ =
+      std::clamp(scale, 0.25f, 1.0f);
+  markRenderDirty();
+}
+
+float CompositionRenderController::interactiveRenderRegionResolutionScale()
+    const {
+  return impl_ ? impl_->interactiveRenderRegionResolutionScale_ : 1.0f;
+}
+
+// P0-3a IRR handle hit-testing. The handle IDs are:
+//   0 = no hit, 1 = move, 2..9 = NW, N, NE, E, SE, S, SW, W.
+// The canvas-space rect is converted to a viewport-space rect via the
+// current pan/zoom and compared against the click position.
+int CompositionRenderController::interactiveRenderRegionHandleAt(
+    const QPointF& viewportPos) const {
+  if (!impl_ || !impl_->renderer_ ||
+      !impl_->interactiveRenderRegionActive_) {
+    return 0;
+  }
+  const float zoom = std::max(0.001f, impl_->renderer_->getZoom());
+  float panX = 0.0f;
+  float panY = 0.0f;
+  impl_->renderer_->getPan(panX, panY);
+  const QRectF canvasRect = impl_->interactiveRenderRegionRect_;
+  const QRectF viewportRect(
+      canvasRect.left() * zoom + panX,
+      canvasRect.top() * zoom + panY,
+      canvasRect.width() * zoom,
+      canvasRect.height() * zoom);
+  // Move hitbox = interior of the rect.
+  if (viewportRect.contains(viewportPos)) {
+    return 1;
+  }
+  const float hitRadius = std::max(8.0f, 12.0f);
+  auto nearPoint = [&](float px, float py) {
+    return std::hypot(viewportPos.x() - px, viewportPos.y() - py) <=
+           hitRadius;
+  };
+  if (nearPoint(viewportRect.left(), viewportRect.top())) return 2;
+  if (nearPoint(viewportRect.center().x(), viewportRect.top())) return 3;
+  if (nearPoint(viewportRect.right(), viewportRect.top())) return 4;
+  if (nearPoint(viewportRect.right(), viewportRect.center().y())) return 5;
+  if (nearPoint(viewportRect.right(), viewportRect.bottom())) return 6;
+  if (nearPoint(viewportRect.center().x(), viewportRect.bottom())) return 7;
+  if (nearPoint(viewportRect.left(), viewportRect.bottom())) return 8;
+  if (nearPoint(viewportRect.left(), viewportRect.center().y())) return 9;
+  return 0;
+}
+
+bool CompositionRenderController::beginInteractiveRenderRegionDrag(
+    int handle, const QPointF& viewportPos) {
+  if (!impl_ || !impl_->renderer_ ||
+      !impl_->interactiveRenderRegionActive_ || handle <= 0 || handle > 9) {
+    return false;
+  }
+  impl_->interactiveRenderRegionHandleDrag_ = handle;
+  impl_->interactiveRenderRegionDragStartViewport_ =
+      viewportPos * impl_->devicePixelRatio_;
+  impl_->interactiveRenderRegionDragStartRect_ =
+      impl_->interactiveRenderRegionRect_;
+  markRenderDirty();
+  return true;
+}
+
+void CompositionRenderController::updateInteractiveRenderRegionDrag(
+    const QPointF& viewportPos) {
+  if (!impl_ || !impl_->renderer_ ||
+      impl_->interactiveRenderRegionHandleDrag_ == 0) {
+    return;
+  }
+  const float zoom = std::max(0.001f, impl_->renderer_->getZoom());
+  const QPointF startLogical =
+      impl_->interactiveRenderRegionDragStartViewport_;
+  const QPointF deltaLogical =
+      viewportPos - QPointF(startLogical.x() / impl_->devicePixelRatio_,
+                            startLogical.y() / impl_->devicePixelRatio_);
+  const float dx = static_cast<float>(deltaLogical.x()) * zoom;
+  const float dy = static_cast<float>(deltaLogical.y()) * zoom;
+  const QRectF &startRect = impl_->interactiveRenderRegionDragStartRect_;
+  QRectF updated = startRect;
+  const int handle = impl_->interactiveRenderRegionHandleDrag_;
+  // 1 = move, others adjust edges.
+  if (handle == 1) {
+    updated.translate(dx, dy);
+  } else {
+    float left = static_cast<float>(startRect.left());
+    float right = static_cast<float>(startRect.right());
+    float top = static_cast<float>(startRect.top());
+    float bottom = static_cast<float>(startRect.bottom());
+    auto moveLeft = [&](bool on) {
+      if (on) left += dx;
+    };
+    auto moveRight = [&](bool on) {
+      if (on) right += dx;
+    };
+    auto moveTop = [&](bool on) {
+      if (on) top += dy;
+    };
+    auto moveBottom = [&](bool on) {
+      if (on) bottom += dy;
+    };
+    switch (handle) {
+    case 2: moveLeft(true); moveTop(true); break;
+    case 3: moveTop(true); break;
+    case 4: moveRight(true); moveTop(true); break;
+    case 5: moveRight(true); break;
+    case 6: moveRight(true); moveBottom(true); break;
+    case 7: moveBottom(true); break;
+    case 8: moveLeft(true); moveBottom(true); break;
+    case 9: moveLeft(true); break;
+    default: break;
+    }
+    if (right - left < 2.0f) {
+      if (handle == 2 || handle == 8 || handle == 9) left = right - 2.0f;
+      else right = left + 2.0f;
+    }
+    if (bottom - top < 2.0f) {
+      if (handle == 2 || handle == 3 || handle == 4) top = bottom - 2.0f;
+      else bottom = top + 2.0f;
+    }
+    updated = QRectF(QPointF(left, top), QPointF(right, bottom)).normalized();
+  }
+  impl_->interactiveRenderRegionRect_ = updated;
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+}
+
+bool CompositionRenderController::endInteractiveRenderRegionDrag() {
+  if (!impl_ || impl_->interactiveRenderRegionHandleDrag_ == 0) {
+    return false;
+  }
+  impl_->interactiveRenderRegionHandleDrag_ = 0;
+  impl_->interactiveRenderRegionDragStartViewport_ = {};
+  impl_->interactiveRenderRegionDragStartRect_ = {};
+  markRenderDirty();
+  return true;
+}
+
+void CompositionRenderController::cancelInteractiveRenderRegionDrag() {
+  if (!impl_ || impl_->interactiveRenderRegionHandleDrag_ == 0) {
+    return;
+  }
+  impl_->interactiveRenderRegionHandleDrag_ = 0;
+  impl_->interactiveRenderRegionRect_ =
+      impl_->interactiveRenderRegionDragStartRect_;
+  impl_->interactiveRenderRegionDragStartViewport_ = {};
+  impl_->interactiveRenderRegionDragStartRect_ = {};
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+}
+
+bool CompositionRenderController::isInteractiveRenderRegionDragActive()
+    const {
+  return impl_ && impl_->interactiveRenderRegionHandleDrag_ != 0;
 }
 
 
@@ -21236,6 +21662,14 @@ ArtifactIRenderer *CompositionRenderController::renderer() const {
 
   return impl_->renderer_.get();
 
+}
+
+// P0-3b.0: read-only access to the owned RenderContext. The returned
+// reference reflects the current render mode and is updated by the
+// controller's render pipeline. Callers must not call setMode() / setROI()
+// on it; doing so would desynchronize the controller's pipeline state.
+const RenderContext &CompositionRenderController::renderContext() const {
+  return impl_->renderContext_;
 }
 
 
@@ -27503,6 +27937,21 @@ void CompositionRenderController::handleMouseMove(
 
     const QPointF &viewportPosLogical) {
 
+  // P0-1 Box zoom owns the move event while the marquee is active.
+  // updateBoxZoomInteraction handles the logical->physical conversion.
+  if (impl_ && impl_->isBoxZooming_) {
+    updateBoxZoomInteraction(viewportPosLogical);
+    return;
+  }
+
+  // P0-3a IRR handle drag. Move/edge/corner updates feed the current
+  // viewport position; the controller converts to canvas space.
+  if (impl_ && impl_->interactiveRenderRegionHandleDrag_ != 0) {
+    updateInteractiveRenderRegionDrag(viewportPosLogical);
+    return;
+  }
+
+
   qCDebug(compositionViewLog)
 
       << "[MouseMove] ENTER logicalPos:" << viewportPosLogical
@@ -29803,6 +30252,19 @@ bool CompositionRenderController::cancelGizmoInteraction() {
 }
 
 void CompositionRenderController::handleMouseRelease() {
+  // P0-3a IRR handle drag finalization (mouse-up path).
+  if (impl_ && impl_->interactiveRenderRegionHandleDrag_ != 0) {
+    endInteractiveRenderRegionDrag();
+    return;
+  }
+  // P0-1 Box zoom owns the release event when its marquee is active. The
+  // UI drives begin/update via beginBoxZoomInteraction / updateBoxZoomInteraction;
+  // finalize here so any release path (UI shortcut, mouse button up, ESC)
+  // produces a single canonical end.
+  if (impl_->isBoxZooming_) {
+    endBoxZoomInteraction();
+    return;
+  }
   if (impl_->historicalScaleDragging_) {
     if (auto layer = impl_->historicalScaleLayer_.lock(); layer && impl_->historicalScaleChanged_) {
       const auto time = impl_->historicalScaleTime_;
@@ -36371,6 +36833,44 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
   }
 
+  // P0-3b.1: synchronize the owned RenderContext with the current frame
+  // state. The order matters: setViewportSize first so the subsequent
+  // setROI() can compute scissorROI against the latest viewport height.
+  // The final setROI() invocation is what triggers updateViewportROI()
+  // and updateScissorROI() in one shot; calling them explicitly earlier
+  // would double the work.
+  {
+    const float liveZoom = std::max(0.001f, renderer_->getZoom());
+    float livePanX = 0.0f;
+    float livePanY = 0.0f;
+    renderer_->getPan(livePanX, livePanY);
+    const auto composition = previewPipeline_.composition();
+    const QSize compositionSize = composition
+        ? composition->effectiveCompositionSize()
+        : QSize();
+    const float compositionW = static_cast<float>(
+        compositionSize.width() > 0 ? compositionSize.width() : 1920);
+    const float compositionH = static_cast<float>(
+        compositionSize.height() > 0 ? compositionSize.height() : 1080);
+    renderContext_.viewportSize = QSize(
+        static_cast<int>(hostWidth_), static_cast<int>(hostHeight_));
+    renderContext_.canvasSize = QSizeF(compositionW, compositionH);
+    renderContext_.setZoom(liveZoom);
+    renderContext_.setPan(livePanX, livePanY);
+    renderContext_.setResolutionScale(
+        interactiveRenderRegionActive_
+            ? interactiveRenderRegionResolutionScale_
+            : 1.0f);
+    if (interactiveRenderRegionActive_) {
+      // setROI() runs updateViewportROI() and updateScissorROI()
+      // internally; an empty input produces empty outputs which the
+      // downstream renderer treats as full-frame.
+      renderContext_.setROI(RenderROI(interactiveRenderRegionRect_));
+    } else {
+      renderContext_.setROI(RenderROI());
+    }
+  }
+
 
 
   struct RenderCostCaptureGuard {
@@ -36612,6 +37112,27 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
     return;
 
+  }
+
+  // P0-3b.2: apply the IRR scissor when an Interactive Render Region is
+  // active. RenderContext::scissorROI is updated by the sync block at the
+  // top of this function and is in screen coordinates (origin = top-left,
+  // Y-down). An empty scissorROI means "no IRR" and we leave the
+  // viewport/scissor at the values established earlier in the frame.
+  // The restore to the full-frame viewport happens just before present()
+  // below, so subsequent frames or non-Composition paths always see a
+  // full-frame viewport.
+  bool irrScissorApplied = false;
+  if (interactiveRenderRegionActive_ &&
+      !renderContext_.scissorROI.isEmpty()) {
+    const RenderROI &s = renderContext_.scissorROI;
+    const float targetW = std::max(1.0f, static_cast<float>(hostWidth_));
+    const float targetH = std::max(1.0f, static_cast<float>(hostHeight_));
+    renderer_->setViewportRect(s.x(), s.y(),
+                               std::max(1.0f, s.width()),
+                               std::max(1.0f, s.height()),
+                               targetW, targetH);
+    irrScissorApplied = true;
   }
 
   // Normal composition changes seed this cache in setComposition(). The lazy
@@ -37305,8 +37826,16 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     const QQuaternion orientation =
         viewportOrientationNavigator_.currentOrientation();
 
+    // P0-2 tumble pivot under cursor: when a temporary pivot is set and the
+    // viewport uses a spatial orientation, feed it into the view matrix as
+    // the look-at target. Front orthographic mode ignores the override.
+    const QPointF effectiveTarget =
+        (tumblePivotOverrideEnabled_ && usesSpatialViewportOrientation())
+            ? tumblePivotCanvasPos_
+            : orientationTarget;
+
     cameraViewMatrix = viewportOrientationViewMatrix(
-        orientation, orientationTarget, orientationDistance);
+        orientation, effectiveTarget, orientationDistance);
 
     const bool frontOrthographic = isFrontOrthographicViewport();
     if (frontOrthographic) {
@@ -42064,6 +42593,16 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       renderCrashTrace("render-present-end", renderFrameCounter_);
 
     }
+
+  // P0-3b.2: restore the full-frame viewport when the IRR scissor was
+  // applied earlier. Doing this after present() keeps the visible
+  // rendering consistent while ensuring the next frame starts from a
+  // clean viewport. setViewportRect() (the 2-arg form) is sufficient for
+  // the restore; the render target dimensions match hostWidth_/hostHeight_.
+  if (irrScissorApplied) {
+    renderer_->setViewportRect(hostWidth_, hostHeight_);
+    irrScissorApplied = false;
+  }
 
 
 
@@ -47250,6 +47789,88 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
         }
       }
     }
+  }
+
+  // P0-1 Box zoom marquee. Drawn in canvas space using the current
+  // pan/zoom so the rectangle tracks the cursor even mid-drag.
+  if (isBoxZooming_) {
+    const QRectF zoomRect = dragRectFromPoints(
+        boxZoomStartViewportPos_, boxZoomCurrentViewportPos_);
+    const QRectF canvasRect = viewportRectToCanvasRect(
+        renderer_.get(), boxZoomStartViewportPos_,
+        boxZoomCurrentViewportPos_).normalized();
+    if (!canvasRect.isEmpty()) {
+      const FloatColor boxFill{0.25f, 0.55f, 1.0f, 0.10f};
+      const FloatColor boxOutline{0.30f, 0.70f, 1.0f, 0.95f};
+      renderer_->drawSolidRect(static_cast<float>(canvasRect.left()),
+                               static_cast<float>(canvasRect.top()),
+                               static_cast<float>(canvasRect.width()),
+                               static_cast<float>(canvasRect.height()),
+                               boxFill, 1.0f);
+      drawTaggedRectOutline(renderer_.get(), canvasRect, boxOutline, true);
+      // Avoid unused-variable warnings when the viewport rectangle is the
+      // primary draw source (kept symmetric with the rubber-band overlay).
+      (void)zoomRect;
+    }
+  }
+
+  // P0-2 Tumble pivot marker. Spatial orientations only; front orthographic
+  // does not tumble so the marker is intentionally suppressed.
+  if (tumblePivotOverrideEnabled_ && usesSpatialViewportOrientation() &&
+      renderer_) {
+    const float invZoom =
+        1.0f / std::max(0.001f, renderer_->getZoom());
+    const float pivotRadius = std::max(5.0f, 7.0f * invZoom);
+    const FloatColor pivotColor{1.0f, 0.92f, 0.30f, 0.95f};
+    renderer_->drawSolidLine(
+        {static_cast<float>(tumblePivotCanvasPos_.x() - pivotRadius),
+         static_cast<float>(tumblePivotCanvasPos_.y())},
+        {static_cast<float>(tumblePivotCanvasPos_.x() + pivotRadius),
+         static_cast<float>(tumblePivotCanvasPos_.y())},
+        pivotColor, std::max(1.0f, invZoom));
+    renderer_->drawSolidLine(
+        {static_cast<float>(tumblePivotCanvasPos_.x()),
+         static_cast<float>(tumblePivotCanvasPos_.y() - pivotRadius)},
+        {static_cast<float>(tumblePivotCanvasPos_.x()),
+         static_cast<float>(tumblePivotCanvasPos_.y() + pivotRadius)},
+        pivotColor, std::max(1.0f, invZoom));
+  }
+
+  // P0-3a Interactive Render Region outline + handles. Drawn in canvas
+  // space; the rectangle itself is owned by the controller and not yet
+  // wired into the renderer's ROI pipeline (P0-3b).
+  if (interactiveRenderRegionActive_ && renderer_) {
+    const FloatColor fillColor{0.95f, 0.55f, 0.10f, 0.06f};
+    const FloatColor outlineColor{1.0f, 0.65f, 0.15f, 0.95f};
+    const QRectF &rect = interactiveRenderRegionRect_;
+    renderer_->drawSolidRect(
+        static_cast<float>(rect.left()), static_cast<float>(rect.top()),
+        static_cast<float>(rect.width()), static_cast<float>(rect.height()),
+        fillColor, 1.0f);
+    drawTaggedRectOutline(renderer_.get(), rect, outlineColor, true);
+    // Eight resize handles + a move hitbox indicator (center cross).
+    const float invZoom = 1.0f / std::max(0.001f, renderer_->getZoom());
+    const float handleSize = std::max(6.0f, 10.0f * invZoom);
+    const FloatColor handleColor{1.0f, 0.80f, 0.30f, 0.95f};
+    auto drawHandle = [&](float cx, float cy) {
+      renderer_->drawSolidRect(cx - handleSize * 0.5f,
+                               cy - handleSize * 0.5f, handleSize,
+                               handleSize, handleColor, 1.0f);
+    };
+    const float left = static_cast<float>(rect.left());
+    const float right = static_cast<float>(rect.right());
+    const float top = static_cast<float>(rect.top());
+    const float bottom = static_cast<float>(rect.bottom());
+    const float cx = static_cast<float>(rect.center().x());
+    const float cy = static_cast<float>(rect.center().y());
+    drawHandle(left, top);
+    drawHandle(cx, top);
+    drawHandle(right, top);
+    drawHandle(right, cy);
+    drawHandle(right, bottom);
+    drawHandle(cx, bottom);
+    drawHandle(left, bottom);
+    drawHandle(left, cy);
   }
 
 }

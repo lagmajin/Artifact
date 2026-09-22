@@ -96,6 +96,9 @@ class ArtifactTimelineWidget :public QWidget {
   void reverseAllKeyframesInSelectedLayers();
   void reverseAllKeyframesInComposition();
   void copySelectedKeyframes();
+  // Phase 2: converts each selected (layer, property) keyframe group into a
+  // reusable automation-clip pattern + instance. Non-destructive (keys stay).
+  void convertSelectedKeyframesToAutomationClip();
   bool saveKeyframeSnippet(const QString& name);
   bool applyKeyframeSnippet(const QString& name);
   bool removeKeyframeSnippet(const QString& name);

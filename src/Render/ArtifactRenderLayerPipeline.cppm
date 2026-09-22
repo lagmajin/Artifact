@@ -2190,7 +2190,8 @@ bool RenderPipeline::initialize(IRenderDevice* device,
   IDeviceContext* ctx,
   const std::vector<ArtifactAbstractLayerPtr>& layers,
   int64_t currentFrame,
-  ITextureView* outputRTV)
+  ITextureView* outputRTV,
+  const RenderROI& renderROI)
  {
   if (!ctx || !outputRTV || !ready())
   {
@@ -2204,6 +2205,19 @@ bool RenderPipeline::initialize(IRenderDevice* device,
   const float clearColor[] = {0.0f, 0.0f, 0.0f, 0.0f};
   ctx->SetRenderTargets(1, &outputRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
   ctx->ClearRenderTarget(outputRTV, clearColor, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+  // P0-3b.2: when the controller passes a non-empty RenderROI, propagate
+  // it as a hardware scissor so subsequent draw calls are clipped to the
+  // region. Empty ROI = full-frame (no scissor override). The render
+  // target dimensions come from impl_->width_/height_ which the
+  // controller keeps in sync with the active viewport.
+  if (!renderROI.isEmpty() && impl_->width_ > 0 && impl_->height_ > 0) {
+    const Rect scissor{
+        static_cast<Int32>(std::lround(renderROI.x())),
+        static_cast<Int32>(std::lround(renderROI.y())),
+        static_cast<Int32>(std::lround(renderROI.x() + renderROI.width())),
+        static_cast<Int32>(std::lround(renderROI.y() + renderROI.height()))};
+    ctx->SetScissorRects(1, &scissor, impl_->width_, impl_->height_);
+  }
   return true;
  }
 

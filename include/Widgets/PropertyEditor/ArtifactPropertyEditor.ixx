@@ -1,6 +1,7 @@
 module;
 #include <utility>
 
+#include <cstdint>
 #include <functional>
 #include <vector>
 
@@ -527,6 +528,13 @@ public:
     void setKeyframeAnchor(ArtifactCore::KeyFrame::Anchor anchor);
     void setKeyframeAnchorHandler(std::function<void(ArtifactCore::KeyFrame::Anchor)> handler);
     void setKeyframeColorLabelHandler(std::function<void(ArtifactCore::KeyFrame::ColorLabel)> handler);
+    // Phase 2 automation clips. provider lists (patternId, displayName) live
+    // from the composition; the action handler receives the chosen pattern id,
+    // or 0 to remove all placements from this property.
+    using AutomationClipMenuProvider =
+        std::function<std::vector<std::pair<std::uint32_t, QString>> ()>;
+    void setAutomationClipMenuProvider(AutomationClipMenuProvider provider);
+    void setAutomationClipActionHandler(std::function<void(std::uint32_t)> handler);
     bool isKeyframeModeEnabled() const;
     void setKeyframeEnabled(bool enabled);
     void setNavigationEnabled(bool enabled);
@@ -563,6 +571,8 @@ private:
     SelectionHandler selectionHandler_;
     std::function<void(ArtifactCore::KeyFrame::Anchor)> keyframeAnchorHandler_;
     std::function<void(ArtifactCore::KeyFrame::ColorLabel)> keyframeColorLabelHandler_;
+    AutomationClipMenuProvider automationClipMenuProvider_;
+    std::function<void(std::uint32_t)> automationClipActionHandler_;
     bool currentFrameKeyframed_ = false;
     ArtifactCore::KeyFrame::Anchor currentFrameKeyframeAnchor_ =
         ArtifactCore::KeyFrame::Anchor::Absolute;

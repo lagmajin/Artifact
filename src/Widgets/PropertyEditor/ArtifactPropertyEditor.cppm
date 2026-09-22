@@ -1,6 +1,8 @@
 module;
 #include <utility>
 #include <array>
+#include <cstdint>
+#include <vector>
 
 #include <QAbstractButton>
 #include <QAction>
@@ -654,6 +656,16 @@ void ArtifactPropertyEditorRowWidget::setKeyframeColorLabelHandler(
   keyframeColorLabelHandler_ = std::move(handler);
 }
 
+void ArtifactPropertyEditorRowWidget::setAutomationClipMenuProvider(
+    AutomationClipMenuProvider provider) {
+  automationClipMenuProvider_ = std::move(provider);
+}
+
+void ArtifactPropertyEditorRowWidget::setAutomationClipActionHandler(
+    std::function<void(std::uint32_t)> handler) {
+  automationClipActionHandler_ = std::move(handler);
+}
+
 void ArtifactPropertyEditorRowWidget::setNavigationHandler(
     NavigationHandler handler) {
   navigationHandler_ = std::move(handler);
@@ -1086,13 +1098,39 @@ void ArtifactPropertyEditorRowWidget::contextMenuEvent(
   }
   if (keyframeColorLabelHandler_) {
     colorMenu = menu.addMenu(propertyUiText(QStringLiteral("property.menu.color_label"), QStringLiteral("Keyframe Color Label")));
-    colorNoneAction = colorMenu->addAction(propertyUiText(QStringLiteral("property.menu.none"), QStringLiteral("None")));
-    colorRedAction = colorMenu->addAction(propertyUiText(QStringLiteral("property.menu.red"), QStringLiteral("Red")));
-    colorBlueAction = colorMenu->addAction(propertyUiText(QStringLiteral("property.menu.blue"), QStringLiteral("Blue")));
-    colorYellowAction = colorMenu->addAction(propertyUiText(QStringLiteral("property.menu.yellow"), QStringLiteral("Yellow")));
-    colorGreenAction = colorMenu->addAction(propertyUiText(QStringLiteral("property.menu.green"), QStringLiteral("Green")));
-    colorPurpleAction = colorMenu->addAction(propertyUiText(QStringLiteral("property.menu.purple"), QStringLiteral("Purple")));
-    colorGrayAction = colorMenu->addAction(propertyUiText(QStringLiteral("property.menu.gray"), QStringLiteral("Gray")));
+    colorNoneAction = menu.addAction(propertyUiText(QStringLiteral("property.menu.none"), QStringLiteral("None")));
+    colorRedAction = menu.addAction(propertyUiText(QStringLiteral("property.menu.red"), QStringLiteral("Red")));
+    colorBlueAction = menu.addAction(propertyUiText(QStringLiteral("property.menu.blue"), QStringLiteral("Blue")));
+    colorYellowAction = menu.addAction(propertyUiText(QStringLiteral("property.menu.yellow"), QStringLiteral("Yellow")));
+    colorGreenAction = menu.addAction(propertyUiText(QStringLiteral("property.menu.green"), QStringLiteral("Green")));
+    colorPurpleAction = menu.addAction(propertyUiText(QStringLiteral("property.menu.purple"), QStringLiteral("Purple")));
+    colorGrayAction = menu.addAction(propertyUiText(QStringLiteral("property.menu.gray"), QStringLiteral("Gray")));
+  }
+  // Phase 2 automation clips: assign a reusable pattern to this property, or
+  // remove all placements. The pattern list is provided live so Timeline-side
+  // conversions appear without a rebuild.
+  QMenu *clipMenu = nullptr;
+  std::vector<std::pair<std::uint32_t, QAction*>> clipActions;
+  QAction *clipRemoveAction = nullptr;
+  if (automationClipMenuProvider_ && automationClipActionHandler_) {
+    clipMenu = menu.addMenu(propertyUiText(QStringLiteral("property.menu.automation_clip"), QStringLiteral("Automation Clip")));
+    const auto patterns = automationClipMenuProvider_();
+    if (patterns.empty()) {
+      QAction *emptyAction = clipMenu->addAction(
+          propertyUiText(QStringLiteral("property.menu.no_automation_clips"), QStringLiteral("(No clips yet — convert keys in Timeline)")));
+      emptyAction->setEnabled(false);
+    }
+    for (const auto& entry : patterns) {
+      if (entry.first == 0 || entry.second.trimmed().isEmpty()) {
+        continue;
+      }
+      QAction *assignAction = clipMenu->addAction(
+          propertyUiText(QStringLiteral("property.menu.assign_automation_clip"), QStringLiteral("Assign: %1")).arg(entry.second));
+      clipActions.emplace_back(entry.first, assignAction);
+    }
+    clipMenu->addSeparator();
+    clipRemoveAction = clipMenu->addAction(
+        propertyUiText(QStringLiteral("property.menu.remove_automation_clips"), QStringLiteral("Remove All Clips from This Property")));
   }
 
   copyAction->setEnabled(editor_ != nullptr);
@@ -1163,8 +1201,19 @@ void ArtifactPropertyEditorRowWidget::contextMenuEvent(
           : (chosen == colorYellowAction) ? ArtifactCore::KeyFrame::ColorLabel::Yellow
           : (chosen == colorGreenAction)  ? ArtifactCore::KeyFrame::ColorLabel::Green
           : (chosen == colorPurpleAction) ? ArtifactCore::KeyFrame::ColorLabel::Purple
-                                         : ArtifactCore::KeyFrame::ColorLabel::Gray;
+                                          : ArtifactCore::KeyFrame::ColorLabel::Gray;
       keyframeColorLabelHandler_(label);
+    }
+  } else if (clipMenu && automationClipActionHandler_) {
+    if (chosen == clipRemoveAction) {
+      automationClipActionHandler_(0);
+    } else {
+      for (const auto& entry : clipActions) {
+        if (chosen == entry.second) {
+          automationClipActionHandler_(entry.first);
+          break;
+        }
+      }
     }
   }
   event->accept();

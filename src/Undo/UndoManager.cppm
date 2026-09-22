@@ -80,6 +80,7 @@ import Time.Rational;
 import Artifact.Layers.Selection.Manager;
 import Audio.Modulation.Modulator;
 import Audio.Modulation.Router;
+import Animation.Value;
 
 namespace Artifact {
 
@@ -1268,6 +1269,8 @@ QJsonObject encodeModulationRouterSnapshot(
             {QStringLiteral("smoothing"), static_cast<double>(source.smoothing)},
             {QStringLiteral("seed"), static_cast<qint64>(source.seed)},
             {QStringLiteral("macroValue"), static_cast<double>(source.macroValue)},
+            {QStringLiteral("constantValue"), static_cast<double>(source.constantValue)},
+            {QStringLiteral("stepCount"), static_cast<qint64>(source.stepCount)},
             {QStringLiteral("unipolar"), source.unipolar}});
     }
 
@@ -1324,7 +1327,7 @@ bool decodeModulationRouterSnapshot(
             return false;
         }
         if (!sourceIds.insert(id).second ||
-            type < 0 || type > static_cast<int>(SourceType::Macro) ||
+            type < 0 || type > static_cast<int>(SourceType::Steps) ||
             waveform < 0 || waveform > static_cast<int>(Waveform::SampleAndHold)) {
             return false;
         }
@@ -1347,6 +1350,22 @@ bool decodeModulationRouterSnapshot(
             !sourceObject.value(QStringLiteral("unipolar")).isBool()) {
             return false;
         }
+        // Phase 1 fields default for payloads written before Constant/Noise/Steps.
+        // Non-finite constants collapse to 0, matching ConstantSource::setValue.
+        const double rawConstant =
+            sourceObject.value(QStringLiteral("constantValue")).toDouble(0.0);
+        source.constantValue =
+            std::isfinite(rawConstant) ? static_cast<float>(rawConstant) : 0.0f;
+        std::uint32_t stepCount = 8u;
+        if (sourceObject.contains(QStringLiteral("stepCount"))) {
+            if (!jsonUInt32(sourceObject.value(QStringLiteral("stepCount")), stepCount)) {
+                return false;
+            }
+        }
+        if (stepCount < 1u || stepCount > 32u) {
+            return false;
+        }
+        source.stepCount = stepCount;
         source.unipolar = sourceObject.value(QStringLiteral("unipolar")).toBool();
         snapshot.sources.push_back(source);
     }
@@ -1558,6 +1577,209 @@ bool LayerModulationSnapshotCommand::deserialize(const QJsonObject& data) {
     if (!decodeModulationRouterSnapshot(data.value(QStringLiteral("before")).toObject(), before_) ||
         !decodeModulationRouterSnapshot(data.value(QStringLiteral("after")).toObject(), after_)) {
         return false;
+    }
+    auto* manager = UndoManager::instance();
+    if (!manager) return false;
+    layer_ = manager->resolveLayer(layerId_);
+    return canSerialize();
+}
+
+namespace {
+size_t automationClipInstancesBytes(
+    const std::vector<ArtifactCore::AutomationClipInstance>& instances) {
+    size_t bytes = sizeof(ArtifactCore::AutomationClipInstance) * instances.size();
+    for (const auto& instance : instances) {
+        bytes += instance.targetPath.size();
+    }
+    return bytes;
+}
+
+QJsonArray encodeAutomationClipInstances(
+    const std::vector<ArtifactCore::AutomationClipInstance>& instances) {
+    QJsonArray array;
+    for (const auto& instance : instances) {
+        array.append(ArtifactCore::automationClipInstanceToJson(instance));
+    }
+    return array;
+}
+
+bool decodeAutomationClipInstances(
+    const QJsonValue& value,
+    std::vector<ArtifactCore::AutomationClipInstance>& instances) {
+    if (!value.isArray()) {
+        return false;
+    }
+    std::vector<ArtifactCore::AutomationClipInstance> result;
+    for (const auto& entry : value.toArray()) {
+        if (!entry.isObject()) {
+            return false;
+        }
+        ArtifactCore::AutomationClipInstance instance;
+        if (!ArtifactCore::automationClipInstanceFromJson(
+                entry.toObject(), instance)) {
+            return false;
+        }
+        result.push_back(std::move(instance));
+    }
+    instances = std::move(result);
+    return true;
+}
+
+bool applyAutomationClipInstances(
+    const ArtifactAbstractLayerPtr& layer,
+    const std::vector<ArtifactCore::AutomationClipInstance>& target) {
+    if (!layer) {
+        return false;
+    }
+    layer->setAutomationClipInstances(target);
+    return ArtifactCore::automationClipInstancesEqual(
+        layer->automationClipInstances(), target);
+}
+} // namespace
+
+LayerAutomationClipInstancesCommand::LayerAutomationClipInstancesCommand(
+    ArtifactAbstractLayerPtr layer,
+    std::vector<ArtifactCore::AutomationClipInstance> before,
+    std::vector<ArtifactCore::AutomationClipInstance> after, QString label)
+    : layer_(layer), layerId_(layer ? layer->id().toQString() : QString()),
+      before_(std::move(before)), after_(std::move(after)),
+      label_(std::move(label)) {}
+
+void LayerAutomationClipInstancesCommand::setCreatedPattern(
+    const QString& compositionId,
+    const ArtifactCore::AutomationClipPattern& pattern) {
+    compositionId_ = compositionId;
+    createdPattern_ = pattern;
+}
+
+void LayerAutomationClipInstancesCommand::clearCreatedPattern() {
+    compositionId_.clear();
+    createdPattern_.reset();
+}
+
+void LayerAutomationClipInstancesCommand::undo() {
+    lastOperationSucceeded_ = false;
+    auto layer = layer_.lock();
+    if (!layer) {
+        return;
+    }
+    if (!applyAutomationClipInstances(layer, before_)) {
+        return;
+    }
+    if (createdPattern_.has_value()) {
+        auto* manager = UndoManager::instance();
+        auto comp = manager ? manager->resolveComposition(compositionId_)
+                            : ArtifactCompositionPtr{};
+        if (!comp ||
+            !comp->removeAutomationClipPattern(createdPattern_->id)) {
+            // Restore the instances even when pattern removal fails, then report.
+            lastOperationSucceeded_ = false;
+            return;
+        }
+        if (comp->findAutomationClipPattern(createdPattern_->id) != nullptr) {
+            return;
+        }
+    }
+    lastOperationSucceeded_ = true;
+    if (auto manager = UndoManager::instance()) manager->notifyAnythingChanged();
+}
+
+void LayerAutomationClipInstancesCommand::redo() {
+    lastOperationSucceeded_ = false;
+    auto layer = layer_.lock();
+    if (!layer) {
+        return;
+    }
+    if (createdPattern_.has_value()) {
+        auto* manager = UndoManager::instance();
+        auto comp = manager ? manager->resolveComposition(compositionId_)
+                            : ArtifactCompositionPtr{};
+        if (!comp) {
+            return;
+        }
+        if (comp->findAutomationClipPattern(createdPattern_->id) == nullptr) {
+            if (comp->addAutomationClipPattern(*createdPattern_) !=
+                createdPattern_->id) {
+                return;
+            }
+        }
+    }
+    if (!applyAutomationClipInstances(layer, after_)) {
+        return;
+    }
+    lastOperationSucceeded_ = true;
+    if (auto manager = UndoManager::instance()) manager->notifyAnythingChanged();
+}
+
+QString LayerAutomationClipInstancesCommand::label() const { return label_; }
+
+size_t LayerAutomationClipInstancesCommand::estimatedMemoryBytes() const {
+    size_t bytes = sizeof(*this) + automationClipInstancesBytes(before_) +
+           automationClipInstancesBytes(after_) +
+           static_cast<size_t>(label_.size()) * sizeof(QChar);
+    if (createdPattern_.has_value()) {
+        bytes += sizeof(ArtifactCore::AutomationClipPattern) +
+            createdPattern_->points.size() *
+                sizeof(ArtifactCore::AutomationClipPoint) +
+            createdPattern_->name.size();
+    }
+    return bytes;
+}
+
+bool LayerAutomationClipInstancesCommand::canSerialize() const {
+    if (layerId_.isEmpty() || layer_.expired()) {
+        return false;
+    }
+    if (createdPattern_.has_value()) {
+        if (compositionId_.isEmpty() || createdPattern_->id == 0 ||
+            createdPattern_->points.empty()) {
+            return false;
+        }
+        auto* manager = UndoManager::instance();
+        if (!manager ||
+            !manager->resolveComposition(compositionId_)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+QJsonObject LayerAutomationClipInstancesCommand::serialize() const {
+    QJsonObject object{{QStringLiteral("layerId"), layerId_},
+                       {QStringLiteral("before"), encodeAutomationClipInstances(before_)},
+                       {QStringLiteral("after"), encodeAutomationClipInstances(after_)},
+                       {QStringLiteral("label"), label_}};
+    if (createdPattern_.has_value()) {
+        object.insert(QStringLiteral("compositionId"), compositionId_);
+        object.insert(QStringLiteral("createdPattern"),
+                      ArtifactCore::automationClipPatternToJson(*createdPattern_));
+    }
+    return object;
+}
+
+bool LayerAutomationClipInstancesCommand::deserialize(const QJsonObject& data) {
+    layerId_ = data.value(QStringLiteral("layerId")).toString();
+    label_ = data.value(QStringLiteral("label")).toString();
+    if (!decodeAutomationClipInstances(data.value(QStringLiteral("before")), before_) ||
+        !decodeAutomationClipInstances(data.value(QStringLiteral("after")), after_)) {
+        return false;
+    }
+    clearCreatedPattern();
+    const QJsonValue patternValue = data.value(QStringLiteral("createdPattern"));
+    if (!patternValue.isUndefined()) {
+        if (!patternValue.isObject()) {
+            return false;
+        }
+        ArtifactCore::AutomationClipPattern pattern;
+        if (!ArtifactCore::automationClipPatternFromJson(
+                patternValue.toObject(), pattern)) {
+            return false;
+        }
+        compositionId_ = data.value(QStringLiteral("compositionId")).toString();
+        if (compositionId_.isEmpty()) {
+            return false;
+        }
+        createdPattern_ = std::move(pattern);
     }
     auto* manager = UndoManager::instance();
     if (!manager) return false;
@@ -4542,6 +4764,15 @@ UndoManager::UndoManager(): impl_(new Impl()) {
                 ArtifactAbstractLayerPtr{},
                 Audio::Modulation::ModulationRouterSnapshot{},
                 Audio::Modulation::ModulationRouterSnapshot{},
+                data.value(QStringLiteral("label")).toString());
+        });
+    impl_->commandFactories_.insert(
+        QStringLiteral("LayerAutomationClipInstancesCommand"),
+        [](const QJsonObject& data) {
+            return std::make_unique<LayerAutomationClipInstancesCommand>(
+                ArtifactAbstractLayerPtr{},
+                std::vector<ArtifactCore::AutomationClipInstance>{},
+                std::vector<ArtifactCore::AutomationClipInstance>{},
                 data.value(QStringLiteral("label")).toString());
         });
     impl_->commandFactories_.insert(

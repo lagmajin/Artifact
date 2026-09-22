@@ -1,6 +1,8 @@
 module;
 #include <utility>
 #include <memory>
+#include <cstdint>
+#include <string>
 #include <QObject>
 #include <QImage>
 #include <QJsonDocument>
@@ -19,6 +21,7 @@ import Utils;
 import Utils.Optional;
 import Utils.String.UniString;
 import Asset.File;
+import Animation.Value;
 
 import Color.Float;
 
@@ -250,6 +253,32 @@ export namespace Artifact {
   std::vector<SharedPtr<ArtifactAbstractEffect>> getEffects() const;
   SharedPtr<ArtifactAbstractEffect> getEffect(const UniString& effectID) const;
   int effectCount() const;
+
+  // Reusable automation-clip patterns (Phase 2, Bitwig-inspired). Patterns are
+  // composition-owned shared curve data; layers hold instances referencing a
+  // pattern id. All methods are cold-path (UI/serialization); per-frame
+  // evaluation uses findAutomationClipPattern + Animation.Value pure functions.
+  std::vector<ArtifactCore::AutomationClipPattern> automationClipPatterns() const;
+  const ArtifactCore::AutomationClipPattern* findAutomationClipPattern(
+      std::uint32_t patternId) const;
+  // Adds a pattern, assigning a fresh id when pattern.id == 0. Returns 0 when
+  // the pattern has no usable points.
+  std::uint32_t addAutomationClipPattern(
+      ArtifactCore::AutomationClipPattern pattern);
+  // Removes a pattern and purges layer instances referencing it.
+  bool removeAutomationClipPattern(std::uint32_t patternId);
+  // Builds a pattern from a layer property's keyframes in [startSeconds,
+  // endSeconds] (composition timeline seconds) and assigns an instance on the
+  // same layer/path with offsetSeconds = startSeconds. Returns the new pattern
+  // id, or 0 when no keyframes were found. Non-destructive: source keys stay.
+  std::uint32_t createAutomationClipFromLayerKeys(
+      const ArtifactCore::LayerID& layerId, const QString& targetPath,
+      double startSeconds, double endSeconds, const QString& name = QString());
+  // Direct (undo-free) instance replacement; UI wraps this in
+  // LayerAutomationClipInstancesCommand via UndoManager.
+  bool setLayerAutomationClipInstances(
+      const ArtifactCore::LayerID& layerId,
+      const std::vector<ArtifactCore::AutomationClipInstance>& instances);
 
   // Increments for every composition change. Preview caches must include this
   // value with composition id and frame number in their key.

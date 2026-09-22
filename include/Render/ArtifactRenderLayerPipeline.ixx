@@ -12,6 +12,7 @@ import Layer.Blend;
 import Artifact.Layer.Abstract;
 import Artifact.Effect.Abstract;
 import Artifact.Render.PointwiseEffectFusion;
+import Artifact.Render.ROI;
 import Graphics.LayerBlendPipeline;
 import Graphics.GPUcomputeContext;
 
@@ -74,7 +75,8 @@ export namespace Artifact
    IDeviceContext* ctx,
    const std::vector<ArtifactAbstractLayerPtr>& layers,
    int64_t currentFrame,
-   ITextureView* outputRTV
+   ITextureView* outputRTV,
+   const RenderROI& renderROI = RenderROI()
   );
 
   // Apply a pointwise effect stack to the current accumulation entirely on GPU.

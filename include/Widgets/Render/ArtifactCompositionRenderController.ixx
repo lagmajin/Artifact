@@ -25,6 +25,8 @@ import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Image;
 import Artifact.Render.IRenderer;
+import Artifact.Render.Context;
+import Artifact.Render.FrameCache;
 import Artifact.Widgets.Render.ViewportScaleOverlay;
 import Artifact.Grid.System;
 import Frame.Debug;
@@ -331,6 +333,50 @@ void zoomFitVisible();
 void zoomFitWorkArea();
 void zoomFill();
   void zoom100();
+
+// Houdini-style box zoom/crop. Begins a rubber-band marquee on the next
+// mouse press; release inside the rectangle zooms in, outside zooms out.
+// The crop variant (false = zoom, true = crop-window) is reserved for a
+// later milestone (P2-8 View Regions) and intentionally no-op today.
+bool beginBoxZoomInteraction(const QPointF& viewportPos, bool cropWindow = false);
+void updateBoxZoomInteraction(const QPointF& viewportPos);
+bool endBoxZoomInteraction();
+void cancelBoxZoomInteraction();
+bool isBoxZoomInteractionActive() const;
+
+// Houdini Space+Z / Maya cursor-tumble-pivot semantics. Stores the
+// cursor-under point as a temporary tumble pivot and feeds it into the
+// viewport orientation view matrix without touching the camera layer's
+// stored target. No-op while the viewport is in Front orthographic mode.
+bool setTumblePivotAtViewportPos(const QPointF& viewportPos);
+void clearTumblePivot();
+bool isTumblePivotOverrideEnabled() const;
+QPointF tumblePivotCanvasPos() const;
+
+// C4D Interactive Render Region / Nuke Pre-render Region analogue.
+// P0-3a scope is viewport-only: the rectangle is owned by the controller
+// and exposed via overlay + HUD. Wiring the rect into RenderContext::roi
+// requires a separate RenderContext integration pass (P0-3b) because the
+// current CompositionRenderController render loop does not consume the
+// RenderContext structure directly.
+void setInteractiveRenderRegion(const QRectF& canvasRect);
+void clearInteractiveRenderRegion();
+bool isInteractiveRenderRegionActive() const;
+QRectF interactiveRenderRegion() const;
+// Resolution slider value in the range [0.25, 1.0]. Affects the HUD
+// readout only in this milestone; future P0-3b will consume it.
+void setInteractiveRenderRegionResolutionScale(float scale);
+float interactiveRenderRegionResolutionScale() const;
+// 2D handle hit-testing + drag. Returns:
+//   0 = no handle (background click),
+//   1 = move (drag the whole rect),
+//   2..9 = corner/edge handles (NW, N, NE, E, SE, S, SW, W).
+int interactiveRenderRegionHandleAt(const QPointF& viewportPos) const;
+bool beginInteractiveRenderRegionDrag(int handle, const QPointF& viewportPos);
+void updateInteractiveRenderRegionDrag(const QPointF& viewportPos);
+bool endInteractiveRenderRegionDrag();
+void cancelInteractiveRenderRegionDrag();
+bool isInteractiveRenderRegionDragActive() const;
   void focusSelectedLayer();
   bool createFullLayerMaskForLayer(const ArtifactAbstractLayerPtr& layer);
   bool cyclePresetLayerMaskForLayer(const ArtifactAbstractLayerPtr& layer, bool reverse = false);
@@ -370,6 +416,10 @@ void zoomFill();
    void setContentEditMode(bool enabled);
    bool contentEditMode() const;
   ArtifactIRenderer* renderer() const;
+  // Read-only access to the render context. The context is owned by the
+  // controller and reflects its current render mode / pan / zoom / canvas
+  // size; external callers must not call setMode() / setROI() on it.
+  const Artifact::RenderContext& renderContext() const;
   QImage captureCurrentFrameImage() const;
   ArtifactCore::FrameDebugSnapshot frameDebugSnapshot() const;
   ArtifactCore::FrameDebugSnapshot frameDebugCounters() const;
