@@ -136,8 +136,11 @@ public:
 private:
   void applyTableToBindings();
   void applyShortcutProfile();
+  QString selectedShortcutContext() const;
+  void rebuildShortcutContextTree();
   void filterShortcutRows();
   void updateShortcutConflicts();
+  void resetSelectedShortcut();
   void exportPreset();
   void importPreset();
 };

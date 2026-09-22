@@ -40,12 +40,14 @@ module;
 #include <QVariant>
 #include <QStackedWidget>
 #include <QSettings>
+#include <QSplitter>
 #include <QStandardPaths>
 #include <QString>
 #include <QStringList>
 #include <QTableWidget>
 #include <QThread>
 #include <QTimer>
+#include <QTreeWidget>
 #include <QUrl>
 #include <QVBoxLayout>
 #include <utility>
@@ -1763,10 +1765,13 @@ public:
   QComboBox *profileCombo_ = nullptr;
   QComboBox *contextCombo_ = nullptr;
   QLineEdit *filterEdit_ = nullptr;
+  QCheckBox *conflictsOnlyCheckBox_ = nullptr;
   QLabel *conflictLabel_ = nullptr;
+  QTreeWidget *contextTree_ = nullptr;
   QTableWidget *table_ = nullptr;
   QPushButton *importPresetButton_ = nullptr;
   QPushButton *exportPresetButton_ = nullptr;
+  QPushButton *resetSelectedButton_ = nullptr;
   QPushButton *resetDefaultsButton_ = nullptr;
 };
 
@@ -1873,6 +1878,8 @@ ShortcutSettingPage::ShortcutSettingPage(QWidget *parent)
   impl_->profileCombo_->installEventFilter(this);
   impl_->profileCombo_->view()->viewport()->installEventFilter(this);
   controls->addWidget(impl_->profileCombo_);
+  controls->addWidget(impl_->importPresetButton_ = new QPushButton(QStringLiteral("Import Preset"), this));
+  controls->addWidget(impl_->exportPresetButton_ = new QPushButton(QStringLiteral("Export Preset"), this));
   impl_->contextCombo_ = new QComboBox(this);
   impl_->contextCombo_->setAccessibleName(QStringLiteral("Shortcut context filter"));
   impl_->contextCombo_->addItem(QStringLiteral("All contexts"));
@@ -1884,6 +1891,10 @@ ShortcutSettingPage::ShortcutSettingPage(QWidget *parent)
   impl_->filterEdit_->setAccessibleName(QStringLiteral("Search shortcuts"));
   impl_->filterEdit_->installEventFilter(this);
   controls->addWidget(impl_->filterEdit_, 1);
+  impl_->conflictsOnlyCheckBox_ = new QCheckBox(QStringLiteral("Show conflicts only"), this);
+  impl_->conflictsOnlyCheckBox_->setAccessibleName(QStringLiteral("Show shortcut conflicts only"));
+  impl_->conflictsOnlyCheckBox_->installEventFilter(this);
+  controls->addWidget(impl_->conflictsOnlyCheckBox_);
   impl_->layout_->addLayout(controls);
 
   impl_->conflictLabel_ = new QLabel(QStringLiteral("No context conflicts"), this);
@@ -1907,11 +1918,22 @@ ShortcutSettingPage::ShortcutSettingPage(QWidget *parent)
   impl_->table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
   impl_->table_->setSelectionBehavior(QAbstractItemView::SelectRows);
   impl_->table_->setSelectionMode(QAbstractItemView::SingleSelection);
-  impl_->layout_->addWidget(impl_->table_, 1);
+  auto *content = new QSplitter(Qt::Horizontal, this);
+  impl_->contextTree_ = new QTreeWidget(content);
+  impl_->contextTree_->setHeaderLabel(QStringLiteral("Contexts"));
+  impl_->contextTree_->setAccessibleName(QStringLiteral("Shortcut context tree"));
+  impl_->contextTree_->setAccessibleDescription(
+      QStringLiteral("Filter shortcut actions by the surface where they are active"));
+  impl_->contextTree_->setMinimumWidth(185);
+  impl_->contextTree_->installEventFilter(this);
+  content->addWidget(impl_->contextTree_);
+  content->addWidget(impl_->table_);
+  content->setStretchFactor(0, 0);
+  content->setStretchFactor(1, 1);
+  impl_->layout_->addWidget(content, 1);
 
   auto *footerLayout = new QHBoxLayout();
-  footerLayout->addWidget(impl_->importPresetButton_ = new QPushButton(QStringLiteral("Import Preset"), this));
-  footerLayout->addWidget(impl_->exportPresetButton_ = new QPushButton(QStringLiteral("Export Preset"), this));
+  footerLayout->addWidget(impl_->resetSelectedButton_ = new QPushButton(QStringLiteral("Reset Selected"), this));
   footerLayout->addWidget(impl_->resetDefaultsButton_ = new QPushButton(QStringLiteral("Reset to Defaults"), this));
   impl_->importPresetButton_->setAccessibleName(QStringLiteral("Import shortcut preset"));
   impl_->importPresetButton_->setAccessibleDescription(QStringLiteral("Load shortcut bindings from a preset"));
@@ -1919,9 +1941,13 @@ ShortcutSettingPage::ShortcutSettingPage(QWidget *parent)
   impl_->exportPresetButton_->setAccessibleDescription(QStringLiteral("Save current shortcut bindings as a preset"));
   impl_->resetDefaultsButton_->setAccessibleName(QStringLiteral("Reset shortcuts to defaults"));
   impl_->resetDefaultsButton_->setAccessibleDescription(QStringLiteral("Restore default shortcut bindings"));
+  impl_->resetSelectedButton_->setAccessibleName(QStringLiteral("Reset selected shortcut"));
+  impl_->resetSelectedButton_->setAccessibleDescription(
+      QStringLiteral("Restore the selected shortcut to its factory default"));
   footerLayout->addStretch();
   impl_->importPresetButton_->installEventFilter(this);
   impl_->exportPresetButton_->installEventFilter(this);
+  impl_->resetSelectedButton_->installEventFilter(this);
   impl_->resetDefaultsButton_->installEventFilter(this);
   impl_->layout_->addLayout(footerLayout);
 
@@ -1996,10 +2022,68 @@ void ShortcutSettingPage::applyShortcutProfile() {
   filterShortcutRows();
 }
 
+QString ShortcutSettingPage::selectedShortcutContext() const {
+  if (!impl_) return {};
+  if (impl_->contextTree_ && impl_->contextTree_->currentItem()) {
+    const QString selected = impl_->contextTree_->currentItem()->data(0, Qt::UserRole).toString();
+    if (!selected.isEmpty()) return selected;
+  }
+  return impl_->contextCombo_ ? impl_->contextCombo_->currentText() : QString();
+}
+
+void ShortcutSettingPage::rebuildShortcutContextTree() {
+  if (!impl_ || !impl_->contextTree_) return;
+
+  const QString previousContext = selectedShortcutContext();
+  impl_->contextTree_->clear();
+  for (const auto id : ArtifactCore::allShortcutIds()) {
+    const QString context = shortcutContext(id);
+    QTreeWidgetItem* parent = nullptr;
+    const QStringList parts = context.split(QLatin1Char('.'));
+    for (int depth = 0; depth < parts.size(); ++depth) {
+      const QString& label = parts.at(depth);
+      QTreeWidgetItem* current = nullptr;
+      const int candidateCount = parent ? parent->childCount() : impl_->contextTree_->topLevelItemCount();
+      for (int candidate = 0; candidate < candidateCount; ++candidate) {
+        QTreeWidgetItem* item = parent ? parent->child(candidate)
+                                       : impl_->contextTree_->topLevelItem(candidate);
+        if (item && item->text(0) == label) {
+          current = item;
+          break;
+        }
+      }
+      if (!current) {
+        current = parent ? new QTreeWidgetItem(parent, QStringList{label})
+                         : new QTreeWidgetItem(impl_->contextTree_, QStringList{label});
+      }
+      parent = current;
+      parent->setData(0, Qt::UserRole, parts.mid(0, depth + 1).join(QLatin1Char('.')));
+    }
+  }
+
+  impl_->contextTree_->expandAll();
+  const std::function<QTreeWidgetItem*(QTreeWidgetItem*)> findContext =
+      [&findContext, &previousContext](QTreeWidgetItem* item) -> QTreeWidgetItem* {
+        if (!item) return nullptr;
+        if (item->data(0, Qt::UserRole).toString() == previousContext) return item;
+        for (int child = 0; child < item->childCount(); ++child) {
+          if (auto* match = findContext(item->child(child))) return match;
+        }
+        return nullptr;
+      };
+  for (int topLevel = 0; topLevel < impl_->contextTree_->topLevelItemCount(); ++topLevel) {
+    if (auto* match = findContext(impl_->contextTree_->topLevelItem(topLevel))) {
+      impl_->contextTree_->setCurrentItem(match);
+      break;
+    }
+  }
+}
+
 void ShortcutSettingPage::filterShortcutRows() {
   if (!impl_ || !impl_->table_) return;
-  const QString context = impl_->contextCombo_ ? impl_->contextCombo_->currentText() : QString();
+  const QString context = selectedShortcutContext();
   const QString query = impl_->filterEdit_ ? impl_->filterEdit_->text().trimmed() : QString();
+  const bool conflictsOnly = impl_->conflictsOnlyCheckBox_ && impl_->conflictsOnlyCheckBox_->isChecked();
   for (int row = 0; row < impl_->table_->rowCount(); ++row) {
     const QString rowContext = impl_->table_->item(row, 1)
                                    ? impl_->table_->item(row, 1)->text() : QString();
@@ -2010,17 +2094,21 @@ void ShortcutSettingPage::filterShortcutRows() {
                                  ? editor->keySequence().toString(QKeySequence::NativeText)
                                  : QString();
     const bool contextMatches = context.isEmpty() || context == QStringLiteral("All contexts") ||
-                                rowContext == context;
+                                rowContext == context ||
+                                rowContext.startsWith(context + QLatin1Char('.'));
     const bool queryMatches = query.isEmpty() || action.contains(query, Qt::CaseInsensitive) ||
                               rowContext.contains(query, Qt::CaseInsensitive) ||
                               shortcut.contains(query, Qt::CaseInsensitive);
-    impl_->table_->setRowHidden(row, !contextMatches || !queryMatches);
+    const auto* status = impl_->table_->item(row, 5);
+    const bool hasConflict = status && status->data(Qt::UserRole).toBool();
+    impl_->table_->setRowHidden(row, !contextMatches || !queryMatches ||
+                                     (conflictsOnly && !hasConflict));
   }
 }
 
 void ShortcutSettingPage::updateShortcutConflicts() {
   if (!impl_ || !impl_->table_) return;
-  int conflicts = 0;
+  int conflictPairs = 0;
   for (int row = 0; row < impl_->table_->rowCount(); ++row) {
     auto* status = impl_->table_->item(row, 5);
     if (!status) {
@@ -2028,6 +2116,8 @@ void ShortcutSettingPage::updateShortcutConflicts() {
       impl_->table_->setItem(row, 5, status);
     }
     status->setText(QString());
+    status->setToolTip(QString());
+    status->setData(Qt::UserRole, false);
     const QString context = impl_->table_->item(row, 1)
                                 ? impl_->table_->item(row, 1)->text() : QString();
     const auto* editor = qobject_cast<QKeySequenceEdit*>(impl_->table_->cellWidget(row, 4));
@@ -2039,19 +2129,44 @@ void ShortcutSettingPage::updateShortcutConflicts() {
       const auto* otherEditor = qobject_cast<QKeySequenceEdit*>(
           impl_->table_->cellWidget(other, 4));
       if (context == otherContext && otherEditor && otherEditor->keySequence() == sequence) {
-        status->setText(QStringLiteral("Conflict"));
-        if (auto* otherStatus = impl_->table_->item(other, 5))
-          otherStatus->setText(QStringLiteral("Conflict"));
-        ++conflicts;
-        break;
+        const QString action = impl_->table_->item(row, 2)
+                                   ? impl_->table_->item(row, 2)->text() : QString();
+        const QString otherAction = impl_->table_->item(other, 2)
+                                        ? impl_->table_->item(other, 2)->text() : QString();
+        const auto appendConflict = [](QTableWidgetItem* item, const QString& counterpart) {
+          if (!item) return;
+          const QString existing = item->text();
+          item->setText(existing.isEmpty()
+                            ? QStringLiteral("Conflicts with %1").arg(counterpart)
+                            : QStringLiteral("%1, %2").arg(existing, counterpart));
+          item->setToolTip(item->text());
+          item->setData(Qt::UserRole, true);
+        };
+        appendConflict(status, otherAction);
+        appendConflict(impl_->table_->item(other, 5), action);
+        ++conflictPairs;
       }
     }
   }
   if (impl_->conflictLabel_) {
     impl_->conflictLabel_->setText(
-        conflicts == 0 ? QStringLiteral("No context conflicts")
-                       : QStringLiteral("%1 context conflict(s) — review rows marked Conflict before applying")
-                             .arg(conflicts));
+        conflictPairs == 0 ? QStringLiteral("No context conflicts")
+                           : QStringLiteral("%1 context conflict(s) — review the affected rows before applying")
+                                 .arg(conflictPairs));
+  }
+  filterShortcutRows();
+}
+
+void ShortcutSettingPage::resetSelectedShortcut() {
+  if (!impl_ || !impl_->table_) return;
+  const int row = impl_->table_->currentRow();
+  const auto* action = row >= 0 ? impl_->table_->item(row, 2) : nullptr;
+  if (!action) return;
+  const auto id = static_cast<ArtifactCore::ShortcutId>(action->data(Qt::UserRole).toInt());
+  if (auto* editor = qobject_cast<QKeySequenceEdit*>(impl_->table_->cellWidget(row, 4))) {
+    editor->setKeySequence(ArtifactCore::ShortcutBindings::instance().defaultShortcut(id));
+    if (impl_->profileCombo_) impl_->profileCombo_->setCurrentIndex(3);
+    updateShortcutConflicts();
   }
 }
 
@@ -2146,6 +2261,7 @@ void ShortcutSettingPage::loadSettings() {
     const int selectedIndex = impl_->contextCombo_->findText(selectedContext);
     impl_->contextCombo_->setCurrentIndex(selectedIndex >= 0 ? selectedIndex : 0);
   }
+  rebuildShortcutContextTree();
 
   for (int row = 0; row < static_cast<int>(ids.size()); ++row) {
     const auto id = ids[static_cast<std::size_t>(row)];
@@ -2156,7 +2272,9 @@ void ShortcutSettingPage::loadSettings() {
 
     impl_->table_->setItem(row, 0, new QTableWidgetItem(category));
     impl_->table_->setItem(row, 1, new QTableWidgetItem(context));
-    impl_->table_->setItem(row, 2, new QTableWidgetItem(actionLabel));
+    auto* actionItem = new QTableWidgetItem(actionLabel);
+    actionItem->setData(Qt::UserRole, static_cast<int>(id));
+    impl_->table_->setItem(row, 2, actionItem);
     impl_->table_->setItem(row, 3, new QTableWidgetItem(defaultShortcut));
     auto *editor = new QKeySequenceEdit(impl_->table_);
     editor->setKeySequence(bindings.shortcut(id));
@@ -2185,6 +2303,7 @@ bool ShortcutSettingPage::eventFilter(QObject *watched, QEvent *event) {
         (impl_->profileCombo_ && watched == impl_->profileCombo_->view()->viewport());
     const bool contextControl = watched == impl_->contextCombo_ ||
         (impl_->contextCombo_ && watched == impl_->contextCombo_->view()->viewport());
+    const bool contextTree = watched == impl_->contextTree_;
     if (watched == impl_->filterEdit_ &&
         (event->type() == QEvent::KeyRelease || event->type() == QEvent::FocusOut)) {
       filterShortcutRows();
@@ -2193,6 +2312,17 @@ bool ShortcutSettingPage::eventFilter(QObject *watched, QEvent *event) {
                 event->type() == QEvent::KeyRelease)) {
       QTimer::singleShot(0, this, [this]() { applyShortcutProfile(); });
     } else if (contextControl &&
+               (event->type() == QEvent::MouseButtonRelease ||
+                event->type() == QEvent::KeyRelease)) {
+      QTimer::singleShot(0, this, [this]() {
+        if (impl_ && impl_->contextTree_) impl_->contextTree_->setCurrentItem(nullptr);
+        filterShortcutRows();
+      });
+    } else if (contextTree &&
+               (event->type() == QEvent::MouseButtonRelease ||
+                event->type() == QEvent::KeyRelease)) {
+      QTimer::singleShot(0, this, [this]() { filterShortcutRows(); });
+    } else if (watched == impl_->conflictsOnlyCheckBox_ &&
                (event->type() == QEvent::MouseButtonRelease ||
                 event->type() == QEvent::KeyRelease)) {
       QTimer::singleShot(0, this, [this]() { filterShortcutRows(); });
@@ -2251,6 +2381,23 @@ bool ShortcutSettingPage::eventFilter(QObject *watched, QEvent *event) {
                          keyEvent->key() == Qt::Key_Enter ||
                          keyEvent->key() == Qt::Key_Space)) {
           resetToDefaults();
+          return true;
+        }
+      }
+    } else if (watched == impl_->resetSelectedButton_) {
+      const auto type = event->type();
+      if (type == QEvent::MouseButtonRelease) {
+        auto *mouseEvent = static_cast<QMouseEvent *>(event);
+        if (mouseEvent && mouseEvent->button() == Qt::LeftButton) {
+          resetSelectedShortcut();
+          return true;
+        }
+      } else if (type == QEvent::KeyRelease) {
+        auto *keyEvent = static_cast<QKeyEvent *>(event);
+        if (keyEvent && (keyEvent->key() == Qt::Key_Return ||
+                         keyEvent->key() == Qt::Key_Enter ||
+                         keyEvent->key() == Qt::Key_Space)) {
+          resetSelectedShortcut();
           return true;
         }
       }
