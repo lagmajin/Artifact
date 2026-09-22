@@ -127,8 +127,6 @@ void ArtifactAbstractLayer::applyPropertiesFromJson(const QJsonObject &obj) {
     }
   }
 }
-
 } // namespace Artifact
 
 #undef QStringLiteral
-
