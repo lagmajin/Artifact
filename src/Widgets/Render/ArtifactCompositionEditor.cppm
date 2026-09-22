@@ -1365,6 +1365,55 @@ public:
         controller_->clearInteractiveRenderRegion();
       }
     });
+    // P0-4 Layer category visibility toggles. The palette exposes each
+    // category so users can build the viewport mask without opening the
+    // View menu.
+    add(QStringLiteral("View: Show 3D Lights"), [this]() {
+      if (controller_)
+        controller_->toggleViewportLayerCategory(
+            CompositionViewportLayerCategory::Light3D);
+    });
+    add(QStringLiteral("View: Show 3D Cameras"), [this]() {
+      if (controller_)
+        controller_->toggleViewportLayerCategory(
+            CompositionViewportLayerCategory::Camera3D);
+    });
+    add(QStringLiteral("View: Show Audio Layers"), [this]() {
+      if (controller_)
+        controller_->toggleViewportLayerCategory(
+            CompositionViewportLayerCategory::Audio);
+    });
+    add(QStringLiteral("View: Show Particle Layers"), [this]() {
+      if (controller_)
+        controller_->toggleViewportLayerCategory(
+            CompositionViewportLayerCategory::Particle);
+    });
+    add(QStringLiteral("View: Reset Layer Category Filter"), [this]() {
+      if (controller_)
+        controller_->setViewportLayerCategoryMask(
+            static_cast<CompositionViewportLayerCategoryMask>(
+                CompositionViewportLayerCategory::All));
+    });
+    // P1-6: Autograph-style channel display variants. The post-process
+    // step that turns the RGB SRV into unpremultiplied / luminance /
+    // matte is owned by the readback overlay pass; the controller just
+    // stores the selected mode and the sync helper decides which SRV is
+    // active.
+    add(QStringLiteral("View: Channel Straight (Unpremultiplied)"), [this]() {
+      if (controller_)
+        controller_->setViewportChannelDisplayMode(
+            ViewportChannelDisplayMode::Unpremultiplied);
+    });
+    add(QStringLiteral("View: Channel Luminance"), [this]() {
+      if (controller_)
+        controller_->setViewportChannelDisplayMode(
+            ViewportChannelDisplayMode::Luminance);
+    });
+    add(QStringLiteral("View: Channel Matte"), [this]() {
+      if (controller_)
+        controller_->setViewportChannelDisplayMode(
+            ViewportChannelDisplayMode::Matte);
+    });
     add(QStringLiteral("View: Toggle Quad Presentation"), [this]() {
       if (!controller_) return;
       const auto layout = controller_->presentationLayout();
@@ -10028,6 +10077,15 @@ public:
       break;
     case ViewportChannelDisplayMode::V:
       tags << QStringLiteral("UV V");
+      break;
+    case ViewportChannelDisplayMode::Unpremultiplied:
+      tags << QStringLiteral("Straight");
+      break;
+    case ViewportChannelDisplayMode::Luminance:
+      tags << QStringLiteral("Luminance");
+      break;
+    case ViewportChannelDisplayMode::Matte:
+      tags << QStringLiteral("Matte");
       break;
     }
     if (xRayAction_ && xRayAction_->isChecked()) {

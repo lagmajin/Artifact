@@ -263,8 +263,6 @@ public:
     }
 };
 
-W_OBJECT_IMPL(FrameCache)
-
 FrameCache::FrameCache(QObject* parent)
     : QObject(parent)
     , impl_(new Impl())
@@ -577,7 +575,7 @@ class ProgressiveRenderer::Impl {
 public:
     RenderQuality quality_ = RenderQuality::Preview;
     RenderQuality renderedQuality_ = RenderQuality::Draft;
-    ProgressiveRenderer::RenderCallback renderCallback_;
+    RenderCallback renderCallback_;
     
     int draftDownsample_ = 4;
     int previewDownsample_ = 2;

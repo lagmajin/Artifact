@@ -62,6 +62,63 @@ enum class CompositionViewportPresentationLayout {
   SelectedOnly
  };
 
+ // P0-4: per-viewport visibility mask for layer categories. Independent
+ // from CompositionLayerRenderFilter (which is render-queue-scoped) so
+ // changing the mask never affects queued output. Categories are encoded
+ // as bit flags so multiple categories can be hidden at once.
+ enum class CompositionViewportLayerCategory : uint32_t {
+  None        = 0u,
+  Solid2D     = 1u << 0,
+  Text        = 1u << 1,
+  Image       = 1u << 2,
+  Shape       = 1u << 3,
+  Adjustment  = 1u << 4,
+  Null        = 1u << 5,
+  Mask        = 1u << 6,
+  Audio       = 1u << 7,
+  Particle    = 1u << 8,
+  Clone       = 1u << 9,
+  Light3D     = 1u << 10,
+  Camera3D    = 1u << 11,
+  Model3D     = 1u << 12,
+  All         = 0xFFFFFFFFu,
+ };
+ using CompositionViewportLayerCategoryMask = uint32_t;
+ constexpr CompositionViewportLayerCategory operator|(
+     CompositionViewportLayerCategory a,
+     CompositionViewportLayerCategory b) noexcept {
+   return static_cast<CompositionViewportLayerCategory>(
+       static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
+ }
+ constexpr CompositionViewportLayerCategory operator&(
+     CompositionViewportLayerCategory a,
+     CompositionViewportLayerCategory b) noexcept {
+   return static_cast<CompositionViewportLayerCategory>(
+       static_cast<uint32_t>(a) & static_cast<uint32_t>(b));
+ }
+ constexpr CompositionViewportLayerCategory operator~(
+     CompositionViewportLayerCategory a) noexcept {
+   return static_cast<CompositionViewportLayerCategory>(
+       ~static_cast<uint32_t>(a));
+ }
+ inline CompositionViewportLayerCategory &operator|=(
+     CompositionViewportLayerCategory &a,
+     CompositionViewportLayerCategory b) noexcept {
+   a = a | b;
+   return a;
+ }
+ inline CompositionViewportLayerCategory &operator&=(
+     CompositionViewportLayerCategory &a,
+     CompositionViewportLayerCategory b) noexcept {
+   a = a & b;
+   return a;
+ }
+ constexpr bool hasViewportLayerCategory(
+     CompositionViewportLayerCategoryMask mask,
+     CompositionViewportLayerCategory category) noexcept {
+   return (mask & static_cast<uint32_t>(category)) != 0u;
+ }
+
  enum class CompositionBackgroundMode {
   Solid,
   Checkerboard,
@@ -97,7 +154,14 @@ enum class CompositionViewportPresentationLayout {
   PositionZ,
   UV,
   U,
-  V
+  V,
+ // P1-6: Autograph-style channel display variants. Unpremultiplied
+ // divides RGB by alpha before display; Luminance applies Rec 709
+ // coefficients to produce a grayscale preview; Matte shows the alpha
+ // channel as a red overlay on top of a dark RGB.
+  Unpremultiplied,
+  Luminance,
+  Matte
  };
 
  enum class LineDebugKind : uint8_t {
@@ -168,6 +232,14 @@ LayerID selectedLayerId() const;
 void clearMotionPathSelection();
 void setLayerRenderFilter(CompositionLayerRenderFilter filter);
 CompositionLayerRenderFilter layerRenderFilter() const;
+// P0-4: per-viewport layer-category visibility mask. Independent from
+// setLayerRenderFilter (render-queue-scoped) so the mask never affects
+// queued output. Default is All (no filtering).
+void setViewportLayerCategoryMask(CompositionViewportLayerCategoryMask mask);
+CompositionViewportLayerCategoryMask viewportLayerCategoryMask() const;
+void toggleViewportLayerCategory(CompositionViewportLayerCategory category);
+bool isViewportLayerCategoryVisible(
+    CompositionViewportLayerCategory category) const;
 void setCompareMode(CompositionCompareMode mode);
 CompositionCompareMode compareMode() const;
 void setReferencePinned(bool pinned);
@@ -248,6 +320,7 @@ void setShowXRayOverlay(bool show);
 bool isShowXRayOverlay() const;
 void setShowIsolationOverlay(bool show);
 bool isShowIsolationOverlay() const;
+int isolatedLayerCount() const;
 void setShowOnionSkin(bool show);
 bool isShowOnionSkin() const;
 void setShowRigOverlay(bool show);

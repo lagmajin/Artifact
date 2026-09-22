@@ -5511,6 +5511,80 @@ bool passesLayerRenderFilter(CompositionLayerRenderFilter filter,
   return !selectedLayerId.isNil() && layer->id() == selectedLayerId;
 }
 
+// P0-4: classify a layer into a viewport category by className(). The
+// cache lives in the controller's Impl so we only re-classify when the
+// composition is replaced or the cache is invalidated.
+CompositionViewportLayerCategory classifyLayerCategory(
+    const ArtifactAbstractLayerPtr &layer) {
+  if (!layer) {
+    return CompositionViewportLayerCategory::Null;
+  }
+  const QString name = layer->className().toQString();
+  if (name == QStringLiteral("ArtifactLightLayer")) {
+    return CompositionViewportLayerCategory::Light3D;
+  }
+  if (name == QStringLiteral("ArtifactCameraLayer") ||
+      name == QStringLiteral("ArtifactCompositionBackgroundLayer") ||
+      name == QStringLiteral("ArtifactEnvironmentMapLayer")) {
+    return CompositionViewportLayerCategory::Camera3D;
+  }
+  if (name == QStringLiteral("Artifact3DModelLayer")) {
+    return CompositionViewportLayerCategory::Model3D;
+  }
+  if (name == QStringLiteral("ArtifactAdjustableLayer") ||
+      name == QStringLiteral("ArtifactSandSim2DLayer")) {
+    return CompositionViewportLayerCategory::Adjustment;
+  }
+  if (name == QStringLiteral("ArtifactNullLayer")) {
+    return CompositionViewportLayerCategory::Null;
+  }
+  if (name == QStringLiteral("ArtifactSpatialAudioLayer")) {
+    return CompositionViewportLayerCategory::Audio;
+  }
+  if (name == QStringLiteral("ArtifactParticleLayer")) {
+    return CompositionViewportLayerCategory::Particle;
+  }
+  if (name == QStringLiteral("ArtifactCloneLayer")) {
+    return CompositionViewportLayerCategory::Clone;
+  }
+  if (name == QStringLiteral("ArtifactTextLayer")) {
+    return CompositionViewportLayerCategory::Text;
+  }
+  if (name == QStringLiteral("ArtifactSolid2DLayer") ||
+      name == QStringLiteral("ArtifactNoiseLayer")) {
+    return CompositionViewportLayerCategory::Solid2D;
+  }
+  if (name == QStringLiteral("ArtifactImageLayer")) {
+    return CompositionViewportLayerCategory::Image;
+  }
+  if (name == QStringLiteral("ArtifactShapeLayer")) {
+    return CompositionViewportLayerCategory::Shape;
+  }
+  if (name == QStringLiteral("ArtifactMaskLayer")) {
+    return CompositionViewportLayerCategory::Mask;
+  }
+  // 2D cards (and unknown subclasses) are treated as 2D content so the
+  // viewport still has a sensible category for legacy layers.
+  if (layer->is3D()) {
+    return CompositionViewportLayerCategory::Model3D;
+  }
+  return CompositionViewportLayerCategory::Image;
+}
+
+bool passesLayerCategoryMask(CompositionViewportLayerCategoryMask mask,
+                             const ArtifactAbstractLayerPtr &layer,
+                             CompositionViewportLayerCategory category) {
+  if (!layer) {
+    return true;
+  }
+  if (mask == static_cast<CompositionViewportLayerCategoryMask>(
+                 CompositionViewportLayerCategory::All)) {
+    return true;
+  }
+  return (static_cast<CompositionViewportLayerCategoryMask>(category) &
+          mask) != 0;
+}
+
 
 
 // Motion-path interaction types and commands live in
@@ -8588,9 +8662,21 @@ void drawLayerForCompositionView(
           opacityOverride >= 0.0f ? opacityOverride : layer->opacity();
 
       Scoped3DLayerCamera layerCamera(renderer, cameraView, cameraProj);
+      if (layer->projectionEnabled() && !layer->projectionSourceLayerId().isEmpty()) {
+        if (auto* sourceLayer = composition->findLayer(layer->projectionSourceLayerId())) {
+          if (auto* projectorSRV = resolveLayerProjectionTexture(sourceLayer, cacheFrameNumber)) {
+            renderer->setProjectorSource(projectorSRV);
+            renderer->setProjectorMatrices(resolveLayerProjectionViewMatrix(sourceLayer),
+                                            resolveLayerProjectionProjMatrix(sourceLayer));
+            renderer->setProjectorEnabled(true);
+          }
+        }
+      }
       renderer->draw3DTexturedCard(localRect, globalTransform4x4,
                                    binding.srv, cardOpacity);
-
+      if (layer->projectionEnabled()) {
+        renderer->resetProjector();
+      }
       return;
 
     }
@@ -9808,6 +9894,63 @@ void drawLayerForCompositionView(
 
 
 
+// Project3D-style camera projection helper: resolves the authored source
+// layer's GPU texture SRV. Returns nullptr if no GPU texture is available.
+static ITextureView* resolveProjectorTexture(
+    ArtifactAbstractLayer* sourceLayer,
+    int64_t /*frame*/,
+    GPUTextureCacheManager* cacheManager)
+{
+  if (!sourceLayer || !cacheManager) {
+    return nullptr;
+  }
+  if (auto* imageLayer = dynamic_cast<ArtifactImageLayer*>(sourceLayer);
+      imageLayer && imageLayer->canShareSourceGpuTexture()) {
+    const QString textureKey = QStringLiteral("projection-src:%1")
+        .arg(imageLayer->sourceVersion());
+    const auto handle = cacheManager->acquireOrCreate(
+        sourceLayer->id().toString(), textureKey,
+        imageLayer->currentFrameBuffer());
+    if (cacheManager->isValid(handle)) {
+      return cacheManager->bindingRecord(handle).srv;
+    }
+  }
+  return nullptr;
+}
+
+// Project3D-style camera projection helpers. Source layers override the
+// camera via "projection.camera.view"/"proj" property blobs (64-byte
+// float16 row-major); otherwise the caller falls back to the render camera.
+static QMatrix4x4 resolveProjectorViewMatrix(ArtifactAbstractLayer* sourceLayer)
+{
+  if (sourceLayer) {
+    const QByteArray blob = sourceLayer->getLayerProperty(
+        QStringLiteral("projection.camera.view")).toByteArray();
+    if (!blob.isEmpty()) {
+      QMatrix4x4 m;
+      std::memcpy(m.data(), blob.constData(),
+                  std::min<int>(sizeof(float) * 16, blob.size()));
+      return m;
+    }
+  }
+  return QMatrix4x4();
+}
+
+static QMatrix4x4 resolveProjectorProjMatrix(ArtifactAbstractLayer* sourceLayer)
+{
+  if (sourceLayer) {
+    const QByteArray blob = sourceLayer->getLayerProperty(
+        QStringLiteral("projection.camera.proj")).toByteArray();
+    if (!blob.isEmpty()) {
+      QMatrix4x4 m;
+      std::memcpy(m.data(), blob.constData(),
+                  std::min<int>(sizeof(float) * 16, blob.size()));
+      return m;
+    }
+  }
+  return QMatrix4x4();
+}
+
 // Draws checkerboard in Viewport Space so transparent regions of the
 
 // composition reveal the pattern against the viewport background.
@@ -10668,6 +10811,17 @@ public:
   CompositionCompareMode compareMode_ = CompositionCompareMode::Off;
   CompositionLayerRenderFilter layerRenderFilter_ =
       CompositionLayerRenderFilter::All;
+  // P0-4: per-viewport category mask (independent from layerRenderFilter_
+  // so changing the mask never affects the render queue output). All is
+  // the default, meaning every category is rendered.
+  CompositionViewportLayerCategoryMask viewportLayerCategoryMask_ =
+      static_cast<CompositionViewportLayerCategoryMask>(
+          CompositionViewportLayerCategory::All);
+  // Cached layer-id -> category for the active composition. Invalidated
+  // when the composition changes; consulted by passesLayerCategoryMask
+  // so the per-frame check is a QHash lookup, not a string compare on
+  // every layer on every frame.
+  QHash<LayerID, CompositionViewportLayerCategory> layerCategoryCache_;
   QString compareRestoreStateId_;
   bool stateCompareSessionActive_ = false;
 
@@ -12920,6 +13074,10 @@ public:
   bool showXRayOverlay_ = false;
 
   bool showIsolationOverlay_ = false;
+  // P1-1: viewport-only isolate set captured at enter. Layer.visible is
+  // never mutated, so disabling isolation restores the previous draw set.
+  QSet<LayerID> isolatedLayerIds_;
+  uint32_t isolationSetRevision_ = 0;
 
   bool showCompositionRegionOverlay_ =
 
@@ -13746,6 +13904,8 @@ public:
 
     LayerID selectedLayerId;
 
+    uint32_t isolationSetRevision = 0;
+
 
 
     bool operator==(const RenderKeyState &o) const {
@@ -13805,7 +13965,8 @@ public:
 
               showIsolation == o.showIsolation &&
               channelDisplay == o.channelDisplay &&
-              selectedLayerId == o.selectedLayerId;
+              selectedLayerId == o.selectedLayerId &&
+              isolationSetRevision == o.isolationSetRevision;
 
     }
 
@@ -14199,6 +14360,15 @@ public:
   // Resolution scaling
 
   int previewDownsample_ = 1;
+  // P0-3d: remember the user-selected preset so D4 (Preview-only while IRR
+  // is active) can restore it on clear. Mirrors previewDownsample_ but
+  // keeps the enum so the downgrade/restore does not have to reverse-
+  // engineer the integer factor.
+  PreviewQualityPreset previewQualityPreset_ = PreviewQualityPreset::Final;
+  bool irrForcedPreview_ = false;
+  // Diagnostics-only counters exposed for future debug overlays.
+  RenderQuality lastPartialRenderQuality_ = RenderQuality::Final;
+  quint64 partialRenderCount_ = 0;
 
   int interactivePreviewDownsampleFloor_ = 4;
 
@@ -16035,6 +16205,10 @@ public:
   void renderPartialRegion(CompositionRenderController *owner,
                            RenderQuality quality,
                            const RenderROI &roi);
+  void captureIsolationLayerIds();
+  void clearIsolationLayerIds();
+  bool isolationHidesLayer(const LayerID &id) const;
+  void refreshIsolationOverlayHud(CompositionRenderController *owner);
 
 };
 
@@ -17230,6 +17404,8 @@ void CompositionRenderController::setPreviewQualityPreset(
 
     PreviewQualityPreset preset) {
 
+  impl_->previewQualityPreset_ = preset;
+
   int factor = 1;
 
   switch (preset) {
@@ -17531,6 +17707,11 @@ void CompositionRenderController::setComposition(
 
                                               : QStringLiteral("<null>"));
 
+  // P0-4: invalidate the per-layer category cache so the next frame
+  // re-classifies layers belonging to the new composition. Safe even
+  // when the composition pointer is unchanged (LayerID set is the same).
+  impl_->layerCategoryCache_.clear();
+
 
 
   auto currentComposition = impl_->previewPipeline_.composition();
@@ -17778,6 +17959,52 @@ void CompositionRenderController::setLayerRenderFilter(
 CompositionLayerRenderFilter
 CompositionRenderController::layerRenderFilter() const {
   return impl_->layerRenderFilter_;
+}
+
+// P0-4: per-viewport category mask. The mask only affects viewport
+// rendering; render queue output is unaffected.
+void CompositionRenderController::setViewportLayerCategoryMask(
+    CompositionViewportLayerCategoryMask mask) {
+  if (!impl_) {
+    return;
+  }
+  if (impl_->viewportLayerCategoryMask_ == mask) {
+    return;
+  }
+  impl_->viewportLayerCategoryMask_ = mask;
+  impl_->invalidateBaseComposite();
+  markRenderDirty();
+}
+
+CompositionViewportLayerCategoryMask
+CompositionRenderController::viewportLayerCategoryMask() const {
+  return impl_
+      ? impl_->viewportLayerCategoryMask_
+      : static_cast<CompositionViewportLayerCategoryMask>(
+            CompositionViewportLayerCategory::All);
+}
+
+void CompositionRenderController::toggleViewportLayerCategory(
+    CompositionViewportLayerCategory category) {
+  if (!impl_) {
+    return;
+  }
+  const auto bit = static_cast<CompositionViewportLayerCategoryMask>(category);
+  impl_->viewportLayerCategoryMask_ =
+      (impl_->viewportLayerCategoryMask_ & bit) != 0
+          ? (impl_->viewportLayerCategoryMask_ & ~bit)
+          : (impl_->viewportLayerCategoryMask_ | bit);
+  impl_->invalidateBaseComposite();
+  markRenderDirty();
+}
+
+bool CompositionRenderController::isViewportLayerCategoryVisible(
+    CompositionViewportLayerCategory category) const {
+  if (!impl_) {
+    return true;
+  }
+  const auto bit = static_cast<CompositionViewportLayerCategoryMask>(category);
+  return (impl_->viewportLayerCategoryMask_ & bit) != 0;
 }
 
 
@@ -21174,16 +21401,25 @@ void CompositionRenderController::setInteractiveRenderRegion(
   }
   impl_->interactiveRenderRegionActive_ = true;
   impl_->interactiveRenderRegionRect_ = normalized;
+  // P0-3d / decision doc D4: force quality preset to Preview while an
+  // IRR is active. The original preset is restored on clear.
+  if (!impl_->irrForcedPreview_ &&
+      impl_->previewQualityPreset_ == PreviewQualityPreset::Final) {
+    impl_->irrForcedPreview_ = true;
+    setPreviewQualityPreset(PreviewQualityPreset::Preview);
+  }
   // HUD readout (display-only). The rect does not yet drive a partial
   // re-render in P0-3a; P0-3b will consume it.
   const int widthPercent = static_cast<int>(std::round(
       impl_->interactiveRenderRegionResolutionScale_ * 100.0f));
-  setInfoOverlayText(QStringLiteral("IRR"),
-                     QStringLiteral(
-                         "%1%% res  %2 x %3")
-                         .arg(widthPercent)
-                         .arg(static_cast<int>(normalized.width()))
-                         .arg(static_cast<int>(normalized.height())));
+  QString detail = QStringLiteral(
+      "%1%% res  %2 x %3").arg(widthPercent)
+      .arg(static_cast<int>(normalized.width()))
+      .arg(static_cast<int>(normalized.height()));
+  if (impl_->irrForcedPreview_) {
+    detail += QStringLiteral("  (quality forced to Preview)");
+  }
+  setInfoOverlayText(QStringLiteral("IRR"), detail);
   impl_->invalidateOverlayComposite();
   markRenderDirty();
 }
@@ -21195,6 +21431,13 @@ void CompositionRenderController::clearInteractiveRenderRegion() {
   impl_->interactiveRenderRegionActive_ = false;
   impl_->interactiveRenderRegionRect_ = {};
   impl_->interactiveRenderRegionHandleDrag_ = 0;
+  // P0-3d / decision doc D4: restore the user-selected preset if it was
+  // downgraded by setInteractiveRenderRegion. The previous value lives
+  // in previewQualityPreset_ because setPreviewQualityPreset() saves it.
+  if (impl_->irrForcedPreview_) {
+    impl_->irrForcedPreview_ = false;
+    setPreviewQualityPreset(impl_->previewQualityPreset_);
+  }
   setInfoOverlayText(QString(), QString());
   impl_->invalidateOverlayComposite();
   markRenderDirty();
@@ -36857,6 +37100,13 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     renderContext_.canvasSize = QSizeF(compositionW, compositionH);
     renderContext_.setZoom(liveZoom);
     renderContext_.setPan(livePanX, livePanY);
+    // P0-3d: when an IRR is active, RenderContext::mode must reflect the
+    // forced Preview preset (decision doc D4). Otherwise the renderer's
+    // RenderModeSettings (useScissorTest/useROICache) would revert to the
+    // Final-mode defaults that disable ROI handling.
+    renderContext_.setMode(interactiveRenderRegionActive_
+                               ? RenderMode::Preview
+                               : RenderMode::Editor);
     renderContext_.setResolutionScale(
         interactiveRenderRegionActive_
             ? interactiveRenderRegionResolutionScale_
@@ -38971,6 +39221,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
     int skipRoiCount = 0;
 
+    int skipCategoryCount = 0;
+
     int skipLodCount = 0;
 
     int opacityZeroCount = 0;
@@ -39560,6 +39812,22 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                                          selectedLayerId_, layer)) {
               continue;
             }
+          }
+
+          // P0-4: per-viewport category mask. Lookup the cached
+          // category; if absent, classify once and store.
+          const auto cacheIt = layerCategoryCache_.constFind(layer->id());
+          CompositionViewportLayerCategory layerCategory;
+          if (cacheIt != layerCategoryCache_.constEnd()) {
+            layerCategory = cacheIt.value();
+          } else {
+            layerCategory = classifyLayerCategory(layer);
+            layerCategoryCache_.insert(layer->id(), layerCategory);
+          }
+          if (!passesLayerCategoryMask(viewportLayerCategoryMask_, layer,
+                                      layerCategory)) {
+            ++skipCategoryCount;
+            continue;
           }
 
           if (!isLayerEffectivelyVisible(layer)) {
@@ -42748,6 +43016,19 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
     }
 
+    // P0-3d: when an Interactive Render Region is active, drive one
+    // extra partial-region pass at the requested RenderQuality. The pass
+    // re-uses the IRR scissor applied earlier in this frame; this keeps
+    // the partial render inside the rectangle without disturbing the
+    // surrounding framebuffer contents.
+    if (interactiveRenderRegionActive_ && !interactiveRenderRegionRect_.isEmpty()) {
+      const float scale = interactiveRenderRegionResolutionScale_;
+      const RenderQuality quality = scale <= 0.34f
+          ? RenderQuality::Draft
+          : (scale <= 0.67f ? RenderQuality::Preview : RenderQuality::Final);
+      renderPartialRegion(owner, quality, interactiveRenderRegionRect_);
+    }
+
     ++renderFrameCounter_;
 
     const qint64 frameMs = frameTimer.elapsed();
@@ -43664,6 +43945,36 @@ void drawParticle2DControlOverlay(ArtifactIRenderer* renderer,
         FloatColor{color.r(), color.g(), color.b(), 0.28f},
         std::max(1.0f, inverseZoom));
   }
+}
+
+// P0-3d: re-render only the IRR rectangle at the requested quality. The
+// scissor is already active for the frame so subsequent drawSprite() /
+// clear() calls naturally stay within the region. The function
+// intentionally does not own a full re-render path yet; it triggers a
+// composition re-submit via the existing damage-tracking path so the
+// renderer fills the IRR with fresh contents at the new quality. A
+// future P0-3d.1 milestone will replace this with a true partial-render
+// pipeline driven by the ProgressiveRenderer callback.
+void CompositionRenderController::Impl::renderPartialRegion(
+    CompositionRenderController *owner, RenderQuality quality,
+    const RenderROI &roi) {
+  if (!owner || !renderer_) {
+    return;
+  }
+  // RenderQuality is recorded for diagnostics. A future progressive
+  // upgrade will translate this into a downsampling factor passed to
+  // the pipeline.
+  lastPartialRenderQuality_ = quality;
+  ++partialRenderCount_;
+  // The IRR scissor applied earlier already restricts writes to the
+  // rectangle. We trigger a fresh damage pass so the cache layer below
+  // the pipeline re-emits the contents inside the rectangle.
+  if (!roi.isEmpty()) {
+    damageTracker_.markFullRedraw(QString());
+    invalidateBaseComposite();
+    markRenderDirty();
+  }
+  (void)owner;
 }
 
 void CompositionRenderController::Impl::drawPieMenuOverlay() {
@@ -44813,7 +45124,11 @@ void CompositionRenderController::Impl::syncViewportChannelReadbackConfiguration
       viewportChannelDisplayMode_ != ViewportChannelDisplayMode::ColorAlpha &&
       viewportChannelDisplayMode_ != ViewportChannelDisplayMode::Red &&
       viewportChannelDisplayMode_ != ViewportChannelDisplayMode::Green &&
-      viewportChannelDisplayMode_ != ViewportChannelDisplayMode::Blue;
+      viewportChannelDisplayMode_ != ViewportChannelDisplayMode::Blue &&
+      // P1-6: Autograph-style variants only consume RGB/Alpha SRVs.
+      viewportChannelDisplayMode_ != ViewportChannelDisplayMode::Unpremultiplied &&
+      viewportChannelDisplayMode_ != ViewportChannelDisplayMode::Luminance &&
+      viewportChannelDisplayMode_ != ViewportChannelDisplayMode::Matte;
 
   // Reset stale channel flags first: without this, switching e.g. Normal ->
   // Depth leaves NormalX/Y/Z enabled, keeping aux pipeline targets allocated
@@ -44917,6 +45232,13 @@ void CompositionRenderController::Impl::syncViewportChannelReadbackConfiguration
   case ViewportChannelDisplayMode::Red:
   case ViewportChannelDisplayMode::Green:
   case ViewportChannelDisplayMode::Blue:
+  // P1-6: Autograph-style channel variants consume only the RGB and
+  // Alpha SRVs (no auxiliary channel). The post-process step that turns
+  // RGB into unpremultiplied / luminance / matte runs in the readback
+  // overlay pass instead of here.
+  case ViewportChannelDisplayMode::Unpremultiplied:
+  case ViewportChannelDisplayMode::Luminance:
+  case ViewportChannelDisplayMode::Matte:
     break;
   }
 
