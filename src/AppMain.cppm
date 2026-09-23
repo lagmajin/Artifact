@@ -170,6 +170,7 @@ import Artifact.Service.PlaybackShortcuts;
 import Artifact.Service.Project;
 import Artifact.Application.ProjectBundleIpc;
 import Artifact.Project.Roles;
+import Artifact.Project.Exporter;
 import Undo.UndoManager;
 import EnvironmentVariable;
 import Core.TaskSystem;
@@ -834,19 +835,28 @@ quint64 processWorkingSetMB() {
   return 0;
 }
 
-void bootstrapPythonScripts() {
-  auto &py = PythonEngine::instance();
-  if (!py.initialize()) {
-    return;
-  }
-
+void registerPythonApplicationAPI() {
   ArtifactCore::CorePythonAPI::registerAll();
   ArtifactCore::CorePythonAPI::setCompositionBridge(
       [](const std::string &method, const std::vector<std::string> &arguments) {
         QVariantList args;
+        QByteArray encodedArguments("[");
         for (const auto &argument : arguments) {
-          args.push_back(QString::fromStdString(argument));
+          if (encodedArguments.size() > 1) {
+            encodedArguments.append(',');
+          }
+          encodedArguments.append(argument.data(),
+                                  static_cast<qsizetype>(argument.size()));
         }
+        encodedArguments.append(']');
+        QJsonParseError parseError;
+        const QJsonDocument parsedArguments = QJsonDocument::fromJson(
+            encodedArguments, &parseError);
+        if (parseError.error != QJsonParseError::NoError ||
+            !parsedArguments.isArray()) {
+          return std::string("{\"success\":false,\"errorCode\":\"INVALID_ARGUMENTS\",\"message\":\"Workspace arguments must be JSON values\"}");
+        }
+        args = parsedArguments.array().toVariantList();
         const QVariant result = Artifact::WorkspaceAutomation::instance().invokeMethod(
             QString::fromStdString(method), args);
         const QJsonValue jsonValue = QJsonValue::fromVariant(result);
@@ -862,6 +872,15 @@ void bootstrapPythonScripts() {
       });
 
   ArtifactPythonAPI::registerAll();
+}
+
+void bootstrapPythonScripts() {
+  auto &py = PythonEngine::instance();
+  if (!py.initialize()) {
+    return;
+  }
+
+  registerPythonApplicationAPI();
 
   const QString appDir = QCoreApplication::applicationDirPath();
   const QStringList scriptDirs = {
@@ -2362,9 +2381,64 @@ static void configureWindowsBinaryConsole() {
     _setmode(stdoutFd, _O_BINARY);
   }
 }
+
+static void bindWindowsStandardHandleToCrt(DWORD standardHandleId,
+                                           int fileDescriptor) {
+  const HANDLE standardHandle = GetStdHandle(standardHandleId);
+  if (standardHandle == nullptr || standardHandle == INVALID_HANDLE_VALUE) {
+    return;
+  }
+  const intptr_t existingHandle = _get_osfhandle(fileDescriptor);
+  if (existingHandle != -1 && existingHandle != -2 &&
+      reinterpret_cast<HANDLE>(existingHandle) == standardHandle) {
+    return;
+  }
+
+  HANDLE duplicateHandle = INVALID_HANDLE_VALUE;
+  if (!DuplicateHandle(GetCurrentProcess(), standardHandle,
+                       GetCurrentProcess(), &duplicateHandle, 0, TRUE,
+                       DUPLICATE_SAME_ACCESS)) {
+    return;
+  }
+  const int duplicateDescriptor =
+      _open_osfhandle(reinterpret_cast<intptr_t>(duplicateHandle), _O_BINARY);
+  if (duplicateDescriptor < 0) {
+    CloseHandle(duplicateHandle);
+    return;
+  }
+  if (_dup2(duplicateDescriptor, fileDescriptor) != 0) {
+    _close(duplicateDescriptor);
+    return;
+  }
+  _close(duplicateDescriptor);
+}
+
+static void configureWindowsCliConsole() {
+  if (GetConsoleWindow() == nullptr) {
+    AttachConsole(ATTACH_PARENT_PROCESS);
+  }
+  bindWindowsStandardHandleToCrt(STD_INPUT_HANDLE, 0);
+  bindWindowsStandardHandleToCrt(STD_OUTPUT_HANDLE, 1);
+  bindWindowsStandardHandleToCrt(STD_ERROR_HANDLE, 2);
+  if (GetConsoleWindow() != nullptr) {
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
+  }
+  std::setlocale(LC_ALL, ".UTF-8");
+  const int standardDescriptors[] = {0, 1, 2};
+  for (const int descriptor : standardDescriptors) {
+    if (_get_osfhandle(descriptor) != -1 && _get_osfhandle(descriptor) != -2) {
+      _setmode(descriptor, _O_BINARY);
+    }
+  }
+  std::cin.clear();
+  std::cout.clear();
+  std::cerr.clear();
+}
 #else
 static void configureWindowsUtf8Console() {}
 static void configureWindowsBinaryConsole() {}
+static void configureWindowsCliConsole() {}
 #endif
 
 static int runMcpTcpServerMode(int argc, char *argv[], quint16 port) {
@@ -2434,6 +2508,532 @@ static int runMcpServerMode(int argc, char *argv[], quint16 tcpPort = 0) {
   return 0;
 }
 
+static int runPythonCli(int argc, char *argv[],
+                        const Artifact::CommandLine& commandLine) {
+  QCoreApplication app(argc, argv);
+  auto* applicationManager = Artifact::ArtifactApplicationManager::instance();
+  (void)applicationManager;
+  (void)Artifact::ArtifactProjectService::instance();
+
+  QString capturedStdout;
+  QString capturedStderr;
+  QString capturedValue;
+  const bool machineOutput = commandLine.gui.jsonOutput ||
+                             commandLine.python.jsonLines;
+  const bool machineRepl = commandLine.python.jsonLines;
+  const bool interactive = commandLine.python.action == QStringLiteral("repl");
+  auto& python = ArtifactCore::PythonEngine::instance();
+  python.setOutputCallback([&](const std::string& text, bool isError) {
+    const QString output = QString::fromUtf8(
+        text.data(), static_cast<qsizetype>(text.size()));
+    if (machineOutput) {
+      (isError ? capturedStderr : capturedStdout).append(output);
+    }
+    if (!machineOutput) {
+      std::ostream& stream = isError ? std::cerr : std::cout;
+      stream.write(text.data(), static_cast<std::streamsize>(text.size()));
+      stream.flush();
+    }
+  });
+  const auto pythonCleanup = qScopeGuard([&python]() {
+    python.setOutputCallback({});
+    if (python.isInitialized()) {
+      python.finalize();
+    }
+  });
+  Q_UNUSED(pythonCleanup);
+
+  const auto writeJsonResponse = [&](bool success, int exitCode,
+                                     const QString& errorCode,
+                                     const QString& errorMessage) {
+    QJsonObject response;
+    response[QStringLiteral("schemaVersion")] = 1;
+    response[QStringLiteral("ok")] = success;
+    response[QStringLiteral("command")] = QStringLiteral("python.%1").arg(
+        commandLine.python.action);
+    QJsonObject result;
+    result[QStringLiteral("stdout")] = capturedStdout;
+    result[QStringLiteral("stderr")] = capturedStderr;
+    if (commandLine.python.action == QStringLiteral("eval") && success) {
+      result[QStringLiteral("value")] = capturedValue;
+    }
+    response[QStringLiteral("result")] = result;
+    QJsonArray warnings;
+    if (python.isExternalRuntime()) {
+      warnings.append(QStringLiteral(
+          "External Python mode cannot call Artifact's in-process C++ API"));
+    }
+    response[QStringLiteral("warnings")] = warnings;
+    if (!success) {
+      QJsonObject error;
+      error[QStringLiteral("code")] = errorCode;
+      error[QStringLiteral("message")] = errorMessage;
+      error[QStringLiteral("details")] = QJsonObject{};
+      response[QStringLiteral("error")] = error;
+    }
+    const QByteArray json = QJsonDocument(response).toJson(QJsonDocument::Compact);
+    std::cout.write(json.constData(), static_cast<std::streamsize>(json.size()));
+    std::cout.put('\n');
+    std::cout.flush();
+    return exitCode;
+  };
+
+  if (!python.initialize()) {
+    const std::string error = python.getLastError();
+    const QString message = QString::fromUtf8(
+        error.data(), static_cast<qsizetype>(error.size()));
+    if (machineOutput) {
+      return writeJsonResponse(false, 3, QStringLiteral("python_unavailable"), message);
+    }
+    if (capturedStderr.isEmpty()) {
+      std::cerr << (message.isEmpty() ? "Python runtime is unavailable" : message.toStdString())
+                << '\n';
+    }
+    return 3;
+  }
+
+  if (python.isExternalRuntime() && interactive) {
+    const QString message = QStringLiteral(
+        "Interactive Python requires the embedded Python runtime");
+    if (machineOutput) {
+      return writeJsonResponse(false, 3, QStringLiteral("persistent_runtime_unavailable"), message);
+    }
+    std::cerr << message.toStdString() << '\n';
+    return 3;
+  }
+  if (python.isExternalRuntime() && !machineOutput) {
+    std::cerr << "Warning: external Python cannot call Artifact's in-process C++ API\n";
+  }
+
+  registerPythonApplicationAPI();
+  python.clearError();
+  if (!commandLine.python.projectPath.isEmpty() &&
+      !Artifact::ArtifactProjectManager::getInstance().loadFromFile(
+          commandLine.python.projectPath)) {
+    const QString message = QStringLiteral("Failed to load project: %1")
+                                .arg(commandLine.python.projectPath);
+    if (machineOutput) {
+      return writeJsonResponse(false, 1, QStringLiteral("project_load_failed"), message);
+    }
+    std::cerr << message.toStdString() << '\n';
+    return 1;
+  }
+
+  bool succeeded = true;
+  if (commandLine.python.action == QStringLiteral("run")) {
+    succeeded = python.executeFile(commandLine.python.target.toStdString());
+  } else if (commandLine.python.action == QStringLiteral("eval")) {
+    const std::string value = python.evaluate(commandLine.python.target.toStdString());
+    succeeded = !python.hasError();
+    if (succeeded && !machineOutput) {
+      std::cout << value << '\n';
+    }
+    if (succeeded && machineOutput) {
+      capturedValue = QString::fromUtf8(value.data(),
+                                        static_cast<qsizetype>(value.size()));
+    }
+  } else {
+    bool continuation = false;
+    bool hadFailure = false;
+    QString pendingRequestId;
+    while (true) {
+      if (!machineRepl) {
+        std::cout << (continuation ? "... " : ">>> ") << std::flush;
+      }
+      std::string line;
+      bool inputReady = false;
+      bool requestOverLimit = false;
+      if (machineRepl) {
+        constexpr size_t maximumRequestBytes = 1024 * 1024;
+        bool consumedInput = false;
+        char character = 0;
+        while (std::cin.get(character)) {
+          consumedInput = true;
+          if (character == '\n') {
+            break;
+          }
+          if (line.size() < maximumRequestBytes) {
+            line.push_back(character);
+          } else {
+            requestOverLimit = true;
+          }
+        }
+        inputReady = consumedInput;
+      } else {
+        inputReady = static_cast<bool>(std::getline(std::cin, line));
+      }
+      if (!inputReady) {
+        if (continuation) {
+          if (machineRepl) {
+            QJsonObject event;
+            event[QStringLiteral("schemaVersion")] = 1;
+            event[QStringLiteral("event")] = QStringLiteral("session_end");
+            event[QStringLiteral("ok")] = false;
+            event[QStringLiteral("status")] = QStringLiteral("incomplete_input");
+            if (!pendingRequestId.isEmpty()) {
+              event[QStringLiteral("requestId")] = pendingRequestId;
+            }
+            event[QStringLiteral("message")] = QStringLiteral(
+                "Input ended while Python was waiting for more lines");
+            const QByteArray json = QJsonDocument(event).toJson(QJsonDocument::Compact);
+            std::cout.write(json.constData(),
+                            static_cast<std::streamsize>(json.size()));
+            std::cout.put('\n');
+            std::cout.flush();
+          } else {
+            std::cerr << "Incomplete Python input at end of stream\n";
+          }
+          hadFailure = true;
+          python.resetConsole();
+        }
+        break;
+      }
+      if (machineRepl) {
+        capturedStdout.clear();
+        capturedStderr.clear();
+        const QByteArray requestBytes(line.data(),
+                                      static_cast<qsizetype>(line.size()));
+        QString requestId;
+        const auto writeJsonLineResponse = [&requestId](QJsonObject response) {
+          response[QStringLiteral("schemaVersion")] = 1;
+          if (!requestId.isEmpty()) {
+            response[QStringLiteral("requestId")] = requestId;
+          }
+          const QByteArray json = QJsonDocument(response).toJson(QJsonDocument::Compact);
+          std::cout.write(json.constData(), static_cast<std::streamsize>(json.size()));
+          std::cout.put('\n');
+          std::cout.flush();
+        };
+        if (requestOverLimit || requestBytes.size() > 1024 * 1024) {
+          QJsonObject response;
+          response[QStringLiteral("ok")] = false;
+          response[QStringLiteral("command")] = QStringLiteral("python.repl");
+          response[QStringLiteral("status")] = QStringLiteral("error");
+          QJsonObject error;
+          error[QStringLiteral("code")] = QStringLiteral("request_too_large");
+          error[QStringLiteral("message")] = QStringLiteral(
+              "JSON Lines request exceeds 1 MiB");
+          error[QStringLiteral("details")] = QJsonObject{};
+          response[QStringLiteral("error")] = error;
+          writeJsonLineResponse(response);
+          hadFailure = true;
+          continue;
+        }
+        QJsonParseError parseError;
+        const QJsonDocument requestDocument =
+            QJsonDocument::fromJson(requestBytes, &parseError);
+        const QJsonObject request = requestDocument.object();
+        const QJsonValue codeValue = request.value(QStringLiteral("code"));
+        const QJsonValue requestIdValue = request.value(QStringLiteral("requestId"));
+        requestId = requestIdValue.toString();
+        if (parseError.error != QJsonParseError::NoError ||
+            !requestDocument.isObject() || !codeValue.isString() ||
+            (!requestIdValue.isUndefined() &&
+             (!requestIdValue.isString() || requestId.size() > 256))) {
+          QJsonObject response;
+          response[QStringLiteral("ok")] = false;
+          response[QStringLiteral("command")] = QStringLiteral("python.repl");
+          response[QStringLiteral("status")] = QStringLiteral("error");
+          QJsonObject error;
+          error[QStringLiteral("code")] = QStringLiteral("invalid_request");
+          error[QStringLiteral("message")] = QStringLiteral(
+              "Each JSON Lines request requires a string code and optional requestId up to 256 characters");
+          error[QStringLiteral("details")] = QJsonObject{};
+          response[QStringLiteral("error")] = error;
+          writeJsonLineResponse(response);
+          hadFailure = true;
+          continue;
+        }
+        python.clearError();
+        continuation = python.pushConsoleLine(
+            codeValue.toString().toUtf8().toStdString());
+        pendingRequestId = continuation ? requestId : QString();
+        const bool lineFailed = !continuation && python.hasError();
+        if (lineFailed) {
+          hadFailure = true;
+          if (capturedStderr.isEmpty()) {
+            const std::string error = python.getLastError();
+            capturedStderr = QString::fromUtf8(
+                error.data(), static_cast<qsizetype>(error.size()));
+          }
+        }
+        QJsonObject response;
+        response[QStringLiteral("ok")] = !lineFailed;
+        response[QStringLiteral("command")] = QStringLiteral("python.repl");
+        response[QStringLiteral("status")] =
+            continuation ? QStringLiteral("needs_more_input")
+                         : (lineFailed ? QStringLiteral("error")
+                                       : QStringLiteral("executed"));
+        QJsonObject result;
+        result[QStringLiteral("stdout")] = capturedStdout;
+        result[QStringLiteral("stderr")] = capturedStderr;
+        response[QStringLiteral("result")] = result;
+        if (lineFailed) {
+          QJsonObject error;
+          error[QStringLiteral("code")] = QStringLiteral("python_execution_failed");
+          error[QStringLiteral("message")] = capturedStderr.trimmed();
+          error[QStringLiteral("details")] = QJsonObject{};
+          response[QStringLiteral("error")] = error;
+        }
+        writeJsonLineResponse(response);
+        continue;
+      }
+      if (!continuation &&
+          (line == "exit()" || line == "quit()" ||
+           line == "exit" || line == "quit")) {
+        break;
+      }
+      python.clearError();
+      continuation = python.pushConsoleLine(line);
+      if (!continuation && python.hasError()) {
+        hadFailure = true;
+      }
+    }
+    succeeded = !hadFailure;
+  }
+
+  if (!succeeded) {
+    const std::string lastError = python.getLastError();
+    if (capturedStderr.isEmpty() && !lastError.empty()) {
+      capturedStderr = QString::fromUtf8(lastError.data(),
+                                         static_cast<qsizetype>(lastError.size()));
+    }
+  }
+
+  int exitCode = succeeded ? 0 : 1;
+  if (machineRepl) {
+    return exitCode;
+  }
+  if (machineOutput) {
+    exitCode = writeJsonResponse(
+        succeeded, exitCode,
+        succeeded ? QString() : QStringLiteral("python_execution_failed"),
+        succeeded ? QString() : capturedStderr.trimmed());
+  }
+
+  return exitCode;
+}
+
+static int runCommandIRCli(int argc, char *argv[],
+                           const Artifact::CommandLine& commandLine) {
+  QCoreApplication app(argc, argv);
+  auto* applicationManager = Artifact::ArtifactApplicationManager::instance();
+  (void)applicationManager;
+  (void)Artifact::ArtifactProjectService::instance();
+  Artifact::WorkspaceAutomation::ensureRegistered();
+
+  struct ProcessedRequest {
+    QJsonObject response;
+    int exitCode = 0;
+  };
+  const auto makeError = [](const QString& code, const QString& message,
+                            const QString& requestId, int exitCode) {
+    QJsonObject response;
+    response[QStringLiteral("schemaVersion")] = 1;
+    response[QStringLiteral("ok")] = false;
+    response[QStringLiteral("command")] = QStringLiteral("command-ir");
+    if (!requestId.isEmpty()) {
+      response[QStringLiteral("requestId")] = requestId;
+    }
+    QJsonObject error;
+    error[QStringLiteral("code")] = code;
+    error[QStringLiteral("message")] = message;
+    error[QStringLiteral("details")] = QJsonObject{};
+    response[QStringLiteral("error")] = error;
+    response[QStringLiteral("warnings")] = QJsonArray{};
+    return ProcessedRequest{response, exitCode};
+  };
+
+  constexpr qint64 maximumRequestBytes = 1024 * 1024;
+  bool projectLoaded = false;
+  const auto processRequest = [&](const QByteArray& bytes) -> ProcessedRequest {
+    QJsonParseError parseError;
+    const QJsonDocument requestDocument = QJsonDocument::fromJson(bytes, &parseError);
+    if (parseError.error != QJsonParseError::NoError ||
+        !requestDocument.isObject()) {
+      return makeError(QStringLiteral("invalid_request"),
+                       QStringLiteral("Request must be a JSON object: %1")
+                           .arg(parseError.errorString()), {}, 2);
+    }
+
+    const QJsonObject request = requestDocument.object();
+    const QString requestId = request.value(QStringLiteral("requestId")).toString();
+    const QString operation = request.value(QStringLiteral("operation")).toString();
+    const QJsonValue saveProjectValue = request.value(QStringLiteral("saveProject"));
+    if (request.value(QStringLiteral("schemaVersion")).toInt(-1) != 1 ||
+        !request.value(QStringLiteral("operation")).isString() ||
+        (operation != QStringLiteral("catalog") &&
+         operation != QStringLiteral("validate") &&
+         operation != QStringLiteral("execute")) ||
+        (operation != QStringLiteral("catalog") &&
+         !request.value(QStringLiteral("command")).isObject()) ||
+        (operation == QStringLiteral("catalog") &&
+         !request.value(QStringLiteral("command")).isUndefined()) ||
+        (!saveProjectValue.isUndefined() && !saveProjectValue.isBool()) ||
+        (!saveProjectValue.isUndefined() &&
+         operation != QStringLiteral("execute")) ||
+        (!request.value(QStringLiteral("requestId")).isUndefined() &&
+         (!request.value(QStringLiteral("requestId")).isString() ||
+          requestId.size() > 256))) {
+      return makeError(QStringLiteral("invalid_request"),
+                       QStringLiteral("Request requires schemaVersion 1, operation catalog, validate, or execute; validate and execute require a command object; saveProject is an optional boolean for execute only; requestId is optional and limited to 256 characters"),
+                       requestId.left(256), 2);
+    }
+
+    if (operation == QStringLiteral("execute")) {
+      if (commandLine.commandIR.projectPath.isEmpty()) {
+        return makeError(QStringLiteral("project_required"),
+                         QStringLiteral("Command execution requires --project <file>"),
+                         requestId, 2);
+      }
+      if (!projectLoaded) {
+        const QString projectPath = commandLine.commandIR.projectPath;
+        if (!Artifact::ArtifactProjectManager::getInstance().loadFromFile(projectPath)) {
+          return makeError(QStringLiteral("project_load_failed"),
+                           QStringLiteral("Failed to load project: %1").arg(projectPath),
+                           requestId, 1);
+        }
+        projectLoaded = true;
+      }
+    }
+
+    const QString method = operation == QStringLiteral("catalog")
+        ? QStringLiteral("commandVocabulary")
+        : operation == QStringLiteral("validate")
+            ? QStringLiteral("validateCommand") : QStringLiteral("executeCommand");
+    QVariantList arguments;
+    if (operation != QStringLiteral("catalog")) {
+      arguments.append(request.value(QStringLiteral("command")).toObject().toVariantMap());
+    }
+    const QVariant returned = Artifact::WorkspaceAutomation::instance().invokeMethod(
+        method, arguments);
+    const QVariantMap result = returned.toMap();
+    const bool commandSucceeded = operation == QStringLiteral("catalog") ||
+        result.value(QStringLiteral("ok"), result.value(QStringLiteral("success"))).toBool();
+    bool projectSaved = false;
+    QString saveError;
+    QString saveErrorStage;
+    if (operation == QStringLiteral("execute") &&
+        saveProjectValue.toBool() && commandSucceeded) {
+      const ArtifactProjectExporterResult saveResult =
+          Artifact::ArtifactProjectManager::getInstance().saveToFile(
+              commandLine.commandIR.projectPath);
+      projectSaved = saveResult.success;
+      if (!projectSaved) {
+        saveErrorStage = saveResult.errorStage;
+        saveError = saveResult.errorMessage.isEmpty()
+            ? QStringLiteral("Project save failed at %1").arg(saveResult.errorStage)
+            : saveResult.errorMessage;
+      }
+    }
+    const bool succeeded = commandSucceeded &&
+        (!saveProjectValue.toBool() || projectSaved);
+    QJsonObject response;
+    response[QStringLiteral("schemaVersion")] = 1;
+    response[QStringLiteral("ok")] = succeeded;
+    response[QStringLiteral("command")] = QStringLiteral("command-ir.%1").arg(operation);
+    if (!requestId.isEmpty()) {
+      response[QStringLiteral("requestId")] = requestId;
+    }
+    if (operation == QStringLiteral("catalog")) {
+      response[QStringLiteral("result")] = QJsonValue::fromVariant(returned);
+    } else {
+      QVariantMap resultWithPersistence = result;
+      if (operation == QStringLiteral("execute")) {
+        resultWithPersistence.insert(QStringLiteral("projectSaved"), projectSaved);
+      }
+      response[QStringLiteral("result")] =
+          QJsonObject::fromVariantMap(resultWithPersistence);
+    }
+    response[QStringLiteral("warnings")] = QJsonArray{};
+    if (!succeeded) {
+      QJsonObject error;
+      error[QStringLiteral("code")] = !commandSucceeded
+          ? result.value(QStringLiteral("errorCode"), QStringLiteral("COMMAND_FAILED")).toString()
+          : QStringLiteral("PROJECT_SAVE_FAILED");
+      error[QStringLiteral("message")] = !commandSucceeded
+          ? result.value(QStringLiteral("error")).toString()
+          : QStringLiteral("Command executed but the project was not saved: %1").arg(saveError);
+      QJsonObject errorDetails = QJsonObject::fromVariantMap(
+          result.value(QStringLiteral("diagnostics")).toMap());
+      if (commandSucceeded && saveProjectValue.toBool()) {
+        errorDetails[QStringLiteral("projectPath")] = commandLine.commandIR.projectPath;
+        errorDetails[QStringLiteral("projectSaved")] = false;
+        errorDetails[QStringLiteral("saveStage")] = saveErrorStage;
+      }
+      error[QStringLiteral("details")] = errorDetails;
+      response[QStringLiteral("error")] = error;
+    }
+    return {response, succeeded ? 0 : 1};
+  };
+
+  const auto writeResponse = [](const QJsonObject& response) {
+    const QByteArray json = QJsonDocument(response).toJson(QJsonDocument::Compact);
+    std::cout.write(json.constData(), static_cast<std::streamsize>(json.size()));
+    std::cout.put('\n');
+    std::cout.flush();
+  };
+  const auto makeOversizedRequest = [&makeError]() {
+    return makeError(QStringLiteral("request_too_large"),
+                     QStringLiteral("Command IR request exceeds 1 MiB"), {}, 2);
+  };
+
+  if (commandLine.commandIR.requestPath == QStringLiteral("-")) {
+    int processExitCode = 0;
+    int processedRequestCount = 0;
+    while (true) {
+      QByteArray line;
+      bool consumedInput = false;
+      bool exceedsLimit = false;
+      char character = 0;
+      while (std::cin.get(character)) {
+        consumedInput = true;
+        if (character == '\n') {
+          break;
+        }
+        if (line.size() < maximumRequestBytes) {
+          line.append(character);
+        } else {
+          exceedsLimit = true;
+        }
+      }
+      if (!consumedInput) {
+        break;
+      }
+      const ProcessedRequest processed = exceedsLimit
+          ? makeOversizedRequest() : processRequest(line);
+      writeResponse(processed.response);
+      ++processedRequestCount;
+      processExitCode = std::max(processExitCode, processed.exitCode);
+    }
+    if (processedRequestCount == 0) {
+      const ProcessedRequest error = makeError(
+          QStringLiteral("empty_stream"),
+          QStringLiteral("No Command IR JSON Lines requests were received"), {}, 2);
+      writeResponse(error.response);
+      return error.exitCode;
+    }
+    return processExitCode;
+  }
+
+  QFile requestFile(commandLine.commandIR.requestPath);
+  if (!requestFile.open(QIODevice::ReadOnly)) {
+    const ProcessedRequest error = makeError(
+        QStringLiteral("request_unreadable"),
+        QStringLiteral("Unable to open Command IR request"), {}, 2);
+    writeResponse(error.response);
+    return error.exitCode;
+  }
+  if (requestFile.size() > maximumRequestBytes) {
+    const ProcessedRequest error = makeOversizedRequest();
+    writeResponse(error.response);
+    return error.exitCode;
+  }
+  const ProcessedRequest processed = processRequest(requestFile.readAll());
+  writeResponse(processed.response);
+  return processed.exitCode;
+}
+
 int main(int argc, char *argv[]) {
   // Registered before function-local services are constructed, so this runs
   // after their exit handlers. Its marker distinguishes a completed process
@@ -2476,8 +3076,13 @@ int main(int argc, char *argv[]) {
   for (int i = 0; i < argc; ++i) {
     appArgs << QString::fromLocal8Bit(argv[i]);
   }
+  const Artifact::CommandLine parsedCommandLine =
+      Artifact::parseCommandLine(appArgs);
+  if (parsedCommandLine.type != Artifact::CommandType::Gui) {
+    configureWindowsCliConsole();
+  }
   const Artifact::CommandLineResult commandLineResult =
-      Artifact::validateCommandLine(Artifact::parseCommandLine(appArgs));
+      Artifact::validateCommandLine(parsedCommandLine);
   if (!commandLineResult.isValid()) {
     fprintf(stderr, "%s\n",
             commandLineResult.errorMessage.toLocal8Bit().constData());
@@ -2495,7 +3100,15 @@ int main(int argc, char *argv[]) {
     printf("  --lang <code>       Set UI language (ja/en/zh/zh-tw)\n");
     printf("  --renderer <api>    Select renderer (auto/dx12/vulkan)\n");
     printf("  -i, --interactive   Start the interactive command shell\n");
+    printf("  --command <command> Execute one shell command and exit\n");
+    printf("  --request <file|-> Execute one JSON request or a stdin JSONL stream\n");
+    printf("  command-ir <request.json|-> [--project <file>] Execute Command IR JSON requests\n");
+    printf("  --json              Wrap single command result as JSON\n");
     printf("  --script <file>     Execute an interactive command file\n");
+    printf("  python run <file>   Execute a Python script\n");
+    printf("  python eval <expr>  Evaluate a Python expression\n");
+    printf("  python repl         Start an interactive Python session\n");
+    printf("  python repl --jsonl Use JSON Lines input/output in the Python REPL\n");
     printf("  --threads <count>   Set render worker thread count\n");
     printf("  --safe-mode         Start with optional integrations disabled\n");
     printf("  --verbose           Enable verbose startup diagnostics\n");
@@ -2532,12 +3145,21 @@ int main(int argc, char *argv[]) {
     }
     return runMcpServerMode(argc, argv, mcpPort);
   }
+  if (commandLine.type == Artifact::CommandType::CommandIR) {
+    return runCommandIRCli(argc, argv, commandLine);
+  }
   const QStringList launchProjectPaths = commandLine.gui.projectPaths;
 
   if (commandLine.type == Artifact::CommandType::Interactive) {
     const Artifact::InteractiveShellResult result = Artifact::runInteractiveShell(
-        launchProjectPaths, commandLine.gui.scriptPath);
+        launchProjectPaths, commandLine.gui.scriptPath,
+        commandLine.gui.singleCommand, commandLine.gui.jsonOutput,
+        commandLine.gui.requestPath);
     return result.exitCode;
+  }
+
+  if (commandLine.type == Artifact::CommandType::Python) {
+    return runPythonCli(argc, argv, commandLine);
   }
 
   if (commandLine.type == Artifact::CommandType::Render) {

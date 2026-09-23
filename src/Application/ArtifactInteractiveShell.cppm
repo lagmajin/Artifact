@@ -18,6 +18,7 @@ module;
 #include <QStringList>
 #include <functional>
 #include <map>
+#include <iostream>
 
 module Artifact.Application.InteractiveShell;
 
@@ -39,7 +40,7 @@ void printHelp(QTextStream& out)
       << "  render.start <job>    Mark a render job running\n"
       << "  render.finish <job>   Mark a render job completed\n"
       << "  render.cancel <job>    Cancel a queued render job\n"
-      << "  project.validate     Validate project JSON\n"
+      << "  project.validate [--json] Validate project JSON\n"
       << "  project.save [path]  Save project JSON\n"
       << "  composition.list [--json]  List compositions\n"
       << "  composition.select <name>  Select a composition\n"
@@ -60,6 +61,98 @@ QString commandName(const QString& line)
 {
   const int separator = line.indexOf(QRegularExpression(QStringLiteral("\\s")));
   return (separator < 0 ? line : line.left(separator)).toLower();
+}
+
+struct CommandDescription {
+  QString name;
+  QString usage;
+  QString description;
+  QString effect;
+};
+
+const std::vector<CommandDescription>& commandDescriptions()
+{
+  static const std::vector<CommandDescription> descriptions = {
+      {QStringLiteral("help"), QStringLiteral("help [--json]"),
+       QStringLiteral("Show command help and the machine-readable catalog"), QStringLiteral("read")},
+      {QStringLiteral("project.info"), QStringLiteral("project.info"),
+       QStringLiteral("Show the launch project path"), QStringLiteral("read")},
+      {QStringLiteral("project.open"), QStringLiteral("project.open <path>"),
+       QStringLiteral("Open a nested project command session"), QStringLiteral("interactive-only")},
+      {QStringLiteral("project.json"), QStringLiteral("project.json"),
+       QStringLiteral("Print the project JSON"), QStringLiteral("read")},
+      {QStringLiteral("project.stats"), QStringLiteral("project.stats [--json]"),
+       QStringLiteral("Count project compositions, layers, and assets"), QStringLiteral("read")},
+      {QStringLiteral("project.validate"), QStringLiteral("project.validate [--json]"),
+       QStringLiteral("Check the project JSON structure"), QStringLiteral("read")},
+      {QStringLiteral("project.save"), QStringLiteral("project.save [path]"),
+       QStringLiteral("Save the project JSON"), QStringLiteral("write-project")},
+      {QStringLiteral("composition.list"), QStringLiteral("composition.list [--json]"),
+       QStringLiteral("List project compositions"), QStringLiteral("read")},
+      {QStringLiteral("composition.select"), QStringLiteral("composition.select <name>"),
+       QStringLiteral("Select a composition for subsequent shell commands"), QStringLiteral("session")},
+      {QStringLiteral("layer.list"), QStringLiteral("layer.list [composition] [--json]"),
+       QStringLiteral("List layers in one or all compositions"), QStringLiteral("read")},
+      {QStringLiteral("layer.select"), QStringLiteral("layer.select <name>"),
+       QStringLiteral("Select a layer for subsequent property commands"), QStringLiteral("session")},
+      {QStringLiteral("property.get"), QStringLiteral("property.get <name> [--json]"),
+       QStringLiteral("Read a selected layer property"), QStringLiteral("read")},
+      {QStringLiteral("property.set"), QStringLiteral("property.set <name> <value> [--json]"),
+       QStringLiteral("Change and save an editable selected layer property"), QStringLiteral("write-project")},
+      {QStringLiteral("undo"), QStringLiteral("undo"),
+       QStringLiteral("Restore the previous shell property edit"), QStringLiteral("write-project")},
+      {QStringLiteral("redo"), QStringLiteral("redo"),
+       QStringLiteral("Reapply the last undone shell property edit"), QStringLiteral("write-project")},
+      {QStringLiteral("history"), QStringLiteral("history"),
+       QStringLiteral("Show shell undo and redo depths"), QStringLiteral("read")},
+      {QStringLiteral("render.plan"), QStringLiteral("render.plan [--json]"),
+       QStringLiteral("Describe composition frame ranges and output settings"), QStringLiteral("read")},
+      {QStringLiteral("render.enqueue"), QStringLiteral("render.enqueue <job> [options] [--json]"),
+       QStringLiteral("Write a render job manifest"), QStringLiteral("write-manifest")},
+      {QStringLiteral("render.list"), QStringLiteral("render.list [--json]"),
+       QStringLiteral("List render job manifests"), QStringLiteral("read")},
+      {QStringLiteral("render.status"), QStringLiteral("render.status <job> [--json]"),
+       QStringLiteral("Read a render job status"), QStringLiteral("read")},
+      {QStringLiteral("render.start"), QStringLiteral("render.start <job>"),
+       QStringLiteral("Mark a render job as running"), QStringLiteral("write-manifest")},
+      {QStringLiteral("render.finish"), QStringLiteral("render.finish <job>"),
+       QStringLiteral("Mark a render job as completed"), QStringLiteral("write-manifest")},
+      {QStringLiteral("render.cancel"), QStringLiteral("render.cancel <job>"),
+       QStringLiteral("Cancel a queued render job"), QStringLiteral("write-manifest")},
+      {QStringLiteral("source"), QStringLiteral("source <file>"),
+       QStringLiteral("Execute commands from a command file"), QStringLiteral("batch")},
+      {QStringLiteral("complete"), QStringLiteral("complete [prefix]"),
+       QStringLiteral("List command names matching a prefix"), QStringLiteral("read")},
+      {QStringLiteral("open"), QStringLiteral("open <path>"),
+       QStringLiteral("Alias for project.open"), QStringLiteral("interactive-only")},
+      {QStringLiteral("save"), QStringLiteral("save [path]"),
+       QStringLiteral("Alias for project.save"), QStringLiteral("write-project")},
+      {QStringLiteral("ls"), QStringLiteral("ls [--json]"),
+       QStringLiteral("Alias for composition.list"), QStringLiteral("read")},
+      {QStringLiteral("select"), QStringLiteral("select <name>"),
+       QStringLiteral("Alias for composition.select"), QStringLiteral("session")},
+      {QStringLiteral("get"), QStringLiteral("get <name> [--json]"),
+       QStringLiteral("Alias for property.get"), QStringLiteral("read")},
+      {QStringLiteral("set"), QStringLiteral("set <name> <value> [--json]"),
+       QStringLiteral("Alias for property.set"), QStringLiteral("write-project")},
+      {QStringLiteral("echo"), QStringLiteral("echo <text>"),
+       QStringLiteral("Write text to command output"), QStringLiteral("read")},
+      {QStringLiteral("quit"), QStringLiteral("quit"),
+       QStringLiteral("Leave interactive mode"), QStringLiteral("session")},
+      {QStringLiteral("exit"), QStringLiteral("exit"),
+       QStringLiteral("Alias for quit"), QStringLiteral("session")},
+  };
+  return descriptions;
+}
+
+const CommandDescription* findCommandDescription(const QString& name)
+{
+  for (const CommandDescription& description : commandDescriptions()) {
+    if (description.name == name) {
+      return &description;
+    }
+  }
+  return nullptr;
 }
 
 using CommandHandler = std::function<void(const QString&, QTextStream&, QTextStream&)>;
@@ -102,7 +195,8 @@ bool saveProjectJson(const QStringList& projectPaths, const QJsonObject& project
 
 std::map<QString, CommandHandler> createCommandRegistry(const QStringList& projectPaths,
                                                          const std::shared_ptr<bool>& scriptFailed,
-                                                         const std::shared_ptr<QSet<QString>>& activeScripts)
+                                                         const std::shared_ptr<QSet<QString>>& activeScripts,
+                                                         bool blockNestedInteractiveSessions)
 {
   std::map<QString, CommandHandler> commands;
   const auto selectedComposition = std::make_shared<QString>();
@@ -114,9 +208,25 @@ std::map<QString, CommandHandler> createCommandRegistry(const QStringList& proje
   const auto dispatch = std::make_shared<std::function<void(const QString&, QTextStream&, QTextStream&)>>();
   commands.emplace(QStringLiteral("help"), [commandNames](const QString& line, QTextStream& out, QTextStream&) {
     if (line.contains(QStringLiteral("--json"))) {
-      QJsonArray names;
-      for (const QString& command : *commandNames) names.append(command);
-      out << QString::fromUtf8(QJsonDocument(names).toJson(QJsonDocument::Compact)) << "\n";
+      QJsonArray entries;
+      for (const QString& command : *commandNames) {
+        QJsonObject entry;
+        entry[QStringLiteral("name")] = command;
+        if (const CommandDescription* description = findCommandDescription(command)) {
+          entry[QStringLiteral("usage")] = description->usage;
+          entry[QStringLiteral("description")] = description->description;
+          entry[QStringLiteral("effect")] = description->effect;
+        } else {
+          entry[QStringLiteral("usage")] = command;
+          entry[QStringLiteral("description")] = QStringLiteral("No description registered");
+          entry[QStringLiteral("effect")] = QStringLiteral("unknown");
+        }
+        entries.append(entry);
+      }
+      QJsonObject catalog;
+      catalog[QStringLiteral("catalogVersion")] = 1;
+      catalog[QStringLiteral("commands")] = entries;
+      out << QString::fromUtf8(QJsonDocument(catalog).toJson(QJsonDocument::Compact)) << "\n";
     } else {
       printHelp(out);
     }
@@ -126,7 +236,11 @@ std::map<QString, CommandHandler> createCommandRegistry(const QStringList& proje
     out << (projectPaths.isEmpty() ? QStringLiteral("No project is open.\n")
                                    : QStringLiteral("Project: %1\n").arg(projectPaths.constFirst()));
   });
-  commands.emplace(QStringLiteral("project.open"), [scriptFailed](const QString& line, QTextStream& out, QTextStream& err) {
+  commands.emplace(QStringLiteral("project.open"), [scriptFailed, blockNestedInteractiveSessions](const QString& line, QTextStream& out, QTextStream& err) {
+    if (blockNestedInteractiveSessions) {
+      err << "project.open cannot start a nested prompt during machine command execution\n";
+      return;
+    }
     const int separator = line.indexOf(QRegularExpression(QStringLiteral("\\s")));
     const QString arguments = separator < 0 ? QString() : line.mid(separator).trimmed();
     const QString path = arguments.section(QRegularExpression(QStringLiteral("\\s+")), 0, 0);
@@ -390,15 +504,32 @@ std::map<QString, CommandHandler> createCommandRegistry(const QStringList& proje
     const int separator = line.indexOf(QRegularExpression(QStringLiteral("\\s")));
     out << (separator < 0 ? QString() : line.mid(separator).trimmed()) << "\n";
   });
-  commands.emplace(QStringLiteral("project.validate"), [projectPaths](const QString&, QTextStream& out,
-                                                                        QTextStream& err) {
+  commands.emplace(QStringLiteral("project.validate"), [projectPaths, scriptFailed](const QString& line, QTextStream& out,
+                                                                                      QTextStream& err) {
     const QJsonObject project = loadProjectJson(projectPaths, err);
     if (project.isEmpty()) {
+      *scriptFailed = true;
+      if (line.contains(QStringLiteral("--json"))) {
+        QJsonObject result;
+        result[QStringLiteral("ok")] = false;
+        result[QStringLiteral("error")] = QStringLiteral("Unable to load project JSON");
+        out << QString::fromUtf8(QJsonDocument(result).toJson(QJsonDocument::Compact)) << "\n";
+      }
       return;
     }
     const bool hasCompositions = project.value(QStringLiteral("compositions")).isArray();
-    out << (hasCompositions ? "Project JSON is valid.\n"
-                            : "Project JSON is valid, but has no compositions array.\n");
+    if (line.contains(QStringLiteral("--json"))) {
+      QJsonObject result;
+      result[QStringLiteral("ok")] = true;
+      result[QStringLiteral("hasCompositions")] = hasCompositions;
+      if (!hasCompositions) {
+        result[QStringLiteral("warning")] = QStringLiteral("Project has no compositions array");
+      }
+      out << QString::fromUtf8(QJsonDocument(result).toJson(QJsonDocument::Compact)) << "\n";
+    } else {
+      out << (hasCompositions ? "Project JSON is valid.\n"
+                              : "Project JSON is valid, but has no compositions array.\n");
+    }
   });
   commands.emplace(QStringLiteral("project.save"), [projectPaths](const QString& line, QTextStream& out,
                                                                      QTextStream& err) {
@@ -633,7 +764,14 @@ std::map<QString, CommandHandler> createCommandRegistry(const QStringList& proje
       return;
     }
     if (const auto command = commandStore->find(name); command != commandStore->end()) {
-      command->second(line, out, err);
+      QString commandErrorText;
+      QTextStream commandError(&commandErrorText, QIODevice::WriteOnly);
+      command->second(line, out, commandError);
+      commandError.flush();
+      if (!commandErrorText.isEmpty()) {
+        *scriptFailed = true;
+        err << commandErrorText;
+      }
     } else {
       *scriptFailed = true;
       err << "Unknown command: " << line << "\n";
@@ -699,18 +837,90 @@ std::map<QString, CommandHandler> createCommandRegistry(const QStringList& proje
   for (const auto& command : commands) {
     commandNames->append(command.first);
   }
+  commandNames->append(QStringLiteral("quit"));
+  commandNames->append(QStringLiteral("exit"));
   *commandStore = commands;
   return commands;
 }
 
 } // namespace
 
-InteractiveShellResult runInteractiveShell(const QStringList& projectPaths, const QString& scriptPath)
+InteractiveShellResult runInteractiveShell(const QStringList& projectPaths,
+                                           const QString& scriptPath,
+                                           const QString& singleCommand,
+                                           bool jsonOutput,
+                                           const QString& requestPath)
 {
   QTextStream in(stdin);
   QTextStream out(stdout);
   QTextStream err(stderr);
-  const bool scriptedMode = !scriptPath.isEmpty();
+  QString requestedCommand = singleCommand;
+  QString requestId;
+  const bool requestStreamMode = requestPath == QStringLiteral("-");
+  const bool requestMode = !requestPath.isEmpty() && !requestStreamMode;
+  const bool scriptedMode = !scriptPath.isEmpty() || !singleCommand.isEmpty() ||
+                            !requestPath.isEmpty();
+  const auto writeRequestError = [&out](const QString& code,
+                                        const QString& message,
+                                        const QString& id) {
+    QJsonObject response;
+    response[QStringLiteral("schemaVersion")] = 1;
+    response[QStringLiteral("ok")] = false;
+    response[QStringLiteral("command")] = QString();
+    if (!id.isEmpty()) {
+      response[QStringLiteral("requestId")] = id;
+    }
+    QJsonObject error;
+    error[QStringLiteral("code")] = code;
+    error[QStringLiteral("message")] = message;
+    error[QStringLiteral("details")] = QJsonObject{};
+    response[QStringLiteral("error")] = error;
+    response[QStringLiteral("warnings")] = QJsonArray{};
+    out << QString::fromUtf8(QJsonDocument(response).toJson(QJsonDocument::Compact))
+        << "\n" << Qt::flush;
+  };
+  if (requestMode) {
+    QFile requestFile(requestPath);
+    if (!requestFile.open(QIODevice::ReadOnly)) {
+      writeRequestError(QStringLiteral("request_unreadable"),
+                        QStringLiteral("Unable to open request file: %1").arg(requestPath),
+                        {});
+      return {2, false};
+    }
+    constexpr qint64 maximumRequestBytes = 1024 * 1024;
+    if (requestFile.size() > maximumRequestBytes) {
+      writeRequestError(QStringLiteral("request_too_large"),
+                        QStringLiteral("Request file exceeds 1 MiB"), {});
+      return {2, false};
+    }
+    QJsonParseError parseError;
+    const QJsonDocument requestDocument = QJsonDocument::fromJson(
+        requestFile.readAll(), &parseError);
+    if (parseError.error != QJsonParseError::NoError ||
+        !requestDocument.isObject()) {
+      writeRequestError(QStringLiteral("invalid_request"),
+                        QStringLiteral("Request must be a valid JSON object: %1")
+                            .arg(parseError.errorString()), {});
+      return {2, false};
+    }
+    const QJsonObject request = requestDocument.object();
+    const QJsonValue schemaVersion = request.value(QStringLiteral("schemaVersion"));
+    const QJsonValue commandValue = request.value(QStringLiteral("command"));
+    const QJsonValue requestIdValue = request.value(QStringLiteral("requestId"));
+    if (requestIdValue.isString() && requestIdValue.toString().size() <= 256) {
+      requestId = requestIdValue.toString();
+    }
+    if (!schemaVersion.isDouble() || schemaVersion.toInt(-1) != 1 ||
+        !commandValue.isString() || commandValue.toString().trimmed().isEmpty() ||
+        (!requestIdValue.isUndefined() &&
+         (!requestIdValue.isString() || requestIdValue.toString().size() > 256))) {
+      writeRequestError(QStringLiteral("invalid_request"),
+                        QStringLiteral("Request requires schemaVersion 1, a non-empty command, and an optional requestId up to 256 characters"),
+                        requestId);
+      return {2, false};
+    }
+    requestedCommand = commandValue.toString();
+  }
   if (!scriptedMode) {
     out << "Artifact interactive mode. Type 'help' for commands.\n";
   }
@@ -719,19 +929,156 @@ InteractiveShellResult runInteractiveShell(const QStringList& projectPaths, cons
   }
   const auto scriptFailed = std::make_shared<bool>(false);
   const auto activeScripts = std::make_shared<QSet<QString>>();
-  const auto commands = createCommandRegistry(projectPaths, scriptFailed, activeScripts);
+  const auto commands = createCommandRegistry(projectPaths, scriptFailed, activeScripts,
+                                               jsonOutput);
   const auto dispatchLine = [&commands, scriptFailed](const QString& line, QTextStream& output, QTextStream& error) {
     const QString name = commandName(line);
     if (name == QStringLiteral("quit") || name == QStringLiteral("exit")) {
       return;
     }
     if (const auto command = commands.find(name); command != commands.end()) {
-      command->second(line, output, error);
+      QString commandErrorText;
+      QTextStream commandError(&commandErrorText, QIODevice::WriteOnly);
+      command->second(line, output, commandError);
+      commandError.flush();
+      if (!commandErrorText.isEmpty()) {
+        *scriptFailed = true;
+        error << commandErrorText;
+      }
     } else {
       *scriptFailed = true;
       error << "Unknown command: " << line << "\n";
     }
   };
+
+  const auto executeJsonCommand = [&](const QString& command,
+                                      const QString& id,
+                                      bool& succeeded) {
+    *scriptFailed = false;
+    QString commandOutputText;
+    QString commandErrorText;
+    QTextStream commandOutput(&commandOutputText, QIODevice::WriteOnly);
+    QTextStream commandError(&commandErrorText, QIODevice::WriteOnly);
+    dispatchLine(command.trimmed(), commandOutput, commandError);
+    commandOutput.flush();
+    commandError.flush();
+
+    succeeded = !*scriptFailed;
+    QJsonObject response;
+    response[QStringLiteral("schemaVersion")] = 1;
+    response[QStringLiteral("ok")] = succeeded;
+    response[QStringLiteral("command")] = commandName(command);
+    if (!id.isEmpty()) {
+      response[QStringLiteral("requestId")] = id;
+    }
+    response[QStringLiteral("warnings")] = QJsonArray{};
+    if (succeeded) {
+      QJsonParseError parseError;
+      const QJsonDocument commandResult = QJsonDocument::fromJson(
+          commandOutputText.trimmed().toUtf8(), &parseError);
+      if (parseError.error == QJsonParseError::NoError && commandResult.isObject()) {
+        response[QStringLiteral("result")] = commandResult.object();
+      } else if (parseError.error == QJsonParseError::NoError && commandResult.isArray()) {
+        response[QStringLiteral("result")] = commandResult.array();
+      } else {
+        QJsonObject result;
+        result[QStringLiteral("text")] = commandOutputText.trimmed();
+        response[QStringLiteral("result")] = result;
+      }
+    } else {
+      QJsonObject error;
+      error[QStringLiteral("code")] = QStringLiteral("command_failed");
+      error[QStringLiteral("message")] = commandErrorText.trimmed().isEmpty()
+          ? QStringLiteral("Command failed") : commandErrorText.trimmed();
+      error[QStringLiteral("details")] = QJsonObject{};
+      response[QStringLiteral("error")] = error;
+      if (!commandErrorText.isEmpty()) {
+        err << commandErrorText;
+        err.flush();
+      }
+    }
+    return response;
+  };
+
+  if (requestStreamMode) {
+    bool hadFailure = false;
+    constexpr size_t maximumRequestBytes = 1024 * 1024;
+    while (true) {
+      std::string requestLine;
+      bool overLimit = false;
+      bool consumedInput = false;
+      char character = 0;
+      while (std::cin.get(character)) {
+        consumedInput = true;
+        if (character == '\n') {
+          break;
+        }
+        if (requestLine.size() < maximumRequestBytes) {
+          requestLine.push_back(character);
+        } else {
+          overLimit = true;
+        }
+      }
+      if (!consumedInput) {
+        break;
+      }
+      if (overLimit) {
+        writeRequestError(QStringLiteral("request_too_large"),
+                          QStringLiteral("JSON Lines request exceeds 1 MiB"), {});
+        hadFailure = true;
+        continue;
+      }
+
+      QJsonParseError parseError;
+      const QByteArray requestBytes(requestLine.data(),
+                                    static_cast<qsizetype>(requestLine.size()));
+      const QJsonDocument requestDocument =
+          QJsonDocument::fromJson(requestBytes, &parseError);
+      const QJsonObject request = requestDocument.object();
+      const QJsonValue schemaVersion = request.value(QStringLiteral("schemaVersion"));
+      const QJsonValue commandValue = request.value(QStringLiteral("command"));
+      const QJsonValue requestIdValue = request.value(QStringLiteral("requestId"));
+      const QString id = requestIdValue.toString();
+      if (parseError.error != QJsonParseError::NoError ||
+          !requestDocument.isObject() || !schemaVersion.isDouble() ||
+          schemaVersion.toInt(-1) != 1 || !commandValue.isString() ||
+          commandValue.toString().trimmed().isEmpty() ||
+          (!requestIdValue.isUndefined() &&
+           (!requestIdValue.isString() || id.size() > 256))) {
+        writeRequestError(QStringLiteral("invalid_request"),
+                          QStringLiteral("Each JSON Lines request requires schemaVersion 1, a non-empty command, and an optional requestId up to 256 characters"),
+                          requestIdValue.isString() && id.size() <= 256 ? id : QString());
+        hadFailure = true;
+        continue;
+      }
+
+      bool succeeded = false;
+      const QJsonObject response = executeJsonCommand(commandValue.toString(),
+                                                      id, succeeded);
+      out << QString::fromUtf8(QJsonDocument(response).toJson(QJsonDocument::Compact))
+          << "\n" << Qt::flush;
+      hadFailure = hadFailure || !succeeded;
+      const QString requestCommand = commandName(commandValue.toString());
+      if (requestCommand == QStringLiteral("quit") ||
+          requestCommand == QStringLiteral("exit")) {
+        return {hadFailure ? 1 : 0, false};
+      }
+    }
+    return {hadFailure ? 1 : 0, false};
+  }
+
+  if (!requestedCommand.isEmpty()) {
+    if (!jsonOutput) {
+      dispatchLine(requestedCommand.trimmed(), out, err);
+      return {*scriptFailed ? 1 : 0, false};
+    }
+
+    bool succeeded = false;
+    const QJsonObject response = executeJsonCommand(requestedCommand, requestId,
+                                                    succeeded);
+    out << QString::fromUtf8(QJsonDocument(response).toJson(QJsonDocument::Compact)) << "\n";
+    return {succeeded ? 0 : 1, false};
+  }
 
   if (!scriptPath.isEmpty()) {
     QFile file(scriptPath);
