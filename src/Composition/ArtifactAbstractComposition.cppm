@@ -1080,6 +1080,8 @@ bool ArtifactAbstractComposition::setLayerAutomationClipInstances(
   return true;
 }
 
+namespace {
+
 QJsonObject serializeEffect(const SharedPtr<ArtifactAbstractEffect>& effect)
 {
   QJsonObject eobj;

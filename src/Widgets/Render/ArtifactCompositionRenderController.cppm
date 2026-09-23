@@ -8392,6 +8392,14 @@ private:
   }
 };
 
+static ITextureView* resolveProjectorTexture(
+    ArtifactAbstractLayer* sourceLayer, int64_t frame,
+    GPUTextureCacheManager* cacheManager);
+static QMatrix4x4 resolveProjectorViewMatrix(
+    ArtifactAbstractLayer* sourceLayer);
+static QMatrix4x4 resolveProjectorProjMatrix(
+    ArtifactAbstractLayer* sourceLayer);
+
 void drawLayerForCompositionView(
 
     ArtifactAbstractLayer *layer, ArtifactIRenderer *renderer,
@@ -8663,12 +8671,19 @@ void drawLayerForCompositionView(
 
       Scoped3DLayerCamera layerCamera(renderer, cameraView, cameraProj);
       if (layer->projectionEnabled() && !layer->projectionSourceLayerId().isEmpty()) {
-        if (auto* sourceLayer = composition->findLayer(layer->projectionSourceLayerId())) {
-          if (auto* projectorSRV = resolveLayerProjectionTexture(sourceLayer, cacheFrameNumber)) {
-            renderer->setProjectorSource(projectorSRV);
-            renderer->setProjectorMatrices(resolveLayerProjectionViewMatrix(sourceLayer),
-                                            resolveLayerProjectionProjMatrix(sourceLayer));
-            renderer->setProjectorEnabled(true);
+        if (auto* composition = static_cast<ArtifactAbstractComposition*>(
+                layer->composition())) {
+          const auto sourceLayer = composition->layerById(
+              ArtifactCore::LayerID(layer->projectionSourceLayerId()));
+          if (sourceLayer) {
+            if (auto* projectorSRV = resolveProjectorTexture(
+                    sourceLayer.get(), cacheFrameNumber, gpuTextureCacheManager)) {
+              renderer->setProjectorSource(projectorSRV);
+              renderer->setProjectorMatrices(
+                  resolveProjectorViewMatrix(sourceLayer.get()),
+                  resolveProjectorProjMatrix(sourceLayer.get()));
+              renderer->setProjectorEnabled(true);
+            }
           }
         }
       }
@@ -9957,8 +9972,10 @@ static ITextureView* resolveProjectorTexture(
 static QMatrix4x4 resolveProjectorViewMatrix(ArtifactAbstractLayer* sourceLayer)
 {
   if (sourceLayer) {
-    const QByteArray blob = sourceLayer->getLayerProperty(
-        QStringLiteral("projection.camera.view")).toByteArray();
+    const auto property = sourceLayer->getProperty(
+        QStringLiteral("projection.camera.view"));
+    const QByteArray blob = property ? property->getValue().toByteArray()
+                                     : QByteArray{};
     if (!blob.isEmpty()) {
       QMatrix4x4 m;
       std::memcpy(m.data(), blob.constData(),
@@ -9972,8 +9989,10 @@ static QMatrix4x4 resolveProjectorViewMatrix(ArtifactAbstractLayer* sourceLayer)
 static QMatrix4x4 resolveProjectorProjMatrix(ArtifactAbstractLayer* sourceLayer)
 {
   if (sourceLayer) {
-    const QByteArray blob = sourceLayer->getLayerProperty(
-        QStringLiteral("projection.camera.proj")).toByteArray();
+    const auto property = sourceLayer->getProperty(
+        QStringLiteral("projection.camera.proj"));
+    const QByteArray blob = property ? property->getValue().toByteArray()
+                                     : QByteArray{};
     if (!blob.isEmpty()) {
       QMatrix4x4 m;
       std::memcpy(m.data(), blob.constData(),
@@ -16582,7 +16601,8 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
                     invalidatesFinalPreview = true;
                     if (auto *playback = ArtifactPlaybackService::instance()) {
                       playback->invalidateRamPreviewRange(
-                          FrameRange(layer->inPoint(), layer->outPoint()),
+                          ArtifactCore::FrameRange(layer->inPoint(),
+                                                   layer->outPoint()),
                           QStringLiteral("layer-content-changed"));
                       // The RAM preview entry was invalidated precisely above;
                       // retain the conservative full-cache fallback only for
@@ -21279,8 +21299,8 @@ bool CompositionRenderController::beginBoxZoomInteraction(
   // Stay exclusive with the rubber-band selection marquee and gizmos.
   if (impl_->isRubberBandSelecting_ || impl_->isLassoSelecting_ ||
       impl_->isShapeVertexMarqueeSelecting_ ||
-      impl_->isModalGizmoInteractionActive() ||
-      impl_->isTextEditSessionActive() || impl_->isInteractionBusy()) {
+      isModalGizmoInteractionActive() || isTextEditSessionActive() ||
+      isInteractionBusy()) {
     return false;
   }
   const QPointF physicalPos = viewportPos * impl_->devicePixelRatio_;
@@ -43195,7 +43215,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       const RenderQuality quality = scale <= 0.34f
           ? RenderQuality::Draft
           : (scale <= 0.67f ? RenderQuality::Preview : RenderQuality::Final);
-      renderPartialRegion(owner, quality, interactiveRenderRegionRect_);
+      renderPartialRegion(owner, quality,
+                          RenderROI(interactiveRenderRegionRect_));
     }
 
     ++renderFrameCounter_;

@@ -5656,8 +5656,11 @@ protected:
       // marquee. ShortcutBindings owns the binding so any user-customized
       // modifier set will work the same way.
       if (event->button() == Qt::LeftButton) {
-        QKeyEvent keyProbe(event->type(), event->key(),
-                           event->modifiers());
+        const auto binding = ArtifactCore::ShortcutBindings::instance().shortcut(
+            ArtifactCore::ShortcutId::ViewBoxZoom);
+        const auto bindingKey =
+            QKeyCombination::fromCombined(binding[0]).key();
+        QKeyEvent keyProbe(QEvent::KeyPress, bindingKey, event->modifiers());
         if (ArtifactCore::ShortcutBindings::instance().matches(
                 &keyProbe, ArtifactCore::ShortcutId::ViewBoxZoom) &&
             controller_->beginBoxZoomInteraction(event->position())) {

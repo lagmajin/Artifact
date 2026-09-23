@@ -1764,6 +1764,54 @@ namespace Artifact {
    previewMenu->addSeparator();
    previewMenu->addAction(useDisplayColorManagementAction);
 
+   // P0-4: per-viewport layer-category Show submenu. Each entry toggles a
+   // single category in the viewport mask; the "All" entry resets the
+   // mask to CompositionViewportLayerCategory::All.
+   auto *showMenu = menu->addMenu(TranslationManager::instance().tr(QStringLiteral("menu.view.show"), QStringLiteral("表示(&W)")));
+   showMenu->setAccessibleName(QStringLiteral("Viewport Show"));
+   showMenu->setAccessibleDescription(QStringLiteral("Per-category viewport visibility toggles"));
+   auto *showCategories = showMenu->addMenu(TranslationManager::instance().tr(QStringLiteral("menu.view.show.categories"), QStringLiteral("レイヤー種別(&L)")));
+   showCategories->setAccessibleName(QStringLiteral("Layer Categories"));
+   auto addShowToggle = [showCategories, menu](const QString &translationKey,
+                                       const QString &defaultText,
+                                       CompositionViewportLayerCategory category) {
+     auto *action = new QAction(TranslationManager::instance().tr(translationKey, defaultText));
+     QObject::connect(action, &QAction::triggered, [category, menu]() {
+       if (auto *editor = activeCompositionEditor(menu->window())) {
+         if (auto *controller = editor->renderController()) {
+           controller->toggleViewportLayerCategory(category);
+         }
+       }
+     });
+     showCategories->addAction(action);
+   };
+   addShowToggle(QStringLiteral("menu.view.show.3d_lights"),
+                 QStringLiteral("3D ライト(&L)"),
+                 CompositionViewportLayerCategory::Light3D);
+   addShowToggle(QStringLiteral("menu.view.show.3d_cameras"),
+                 QStringLiteral("3D カメラ(&C)"),
+                 CompositionViewportLayerCategory::Camera3D);
+   addShowToggle(QStringLiteral("menu.view.show.audio"),
+                 QStringLiteral("オーディオ(&A)"),
+                 CompositionViewportLayerCategory::Audio);
+   addShowToggle(QStringLiteral("menu.view.show.particle"),
+                 QStringLiteral("パーティクル(&P)"),
+                 CompositionViewportLayerCategory::Particle);
+   auto *showAllAction = new QAction(TranslationManager::instance().tr(
+       QStringLiteral("menu.view.show.all_categories"),
+       QStringLiteral("すべて表示(&S)")));
+   QObject::connect(showAllAction, &QAction::triggered, [menu]() {
+     if (auto *editor = activeCompositionEditor(menu->window())) {
+       if (auto *controller = editor->renderController()) {
+         controller->setViewportLayerCategoryMask(
+             static_cast<CompositionViewportLayerCategoryMask>(
+                 CompositionViewportLayerCategory::All));
+       }
+     }
+   });
+   showCategories->addSeparator();
+   showCategories->addAction(showAllAction);
+
    auto *overlaysMenu = menu->addMenu(TranslationManager::instance().tr(QStringLiteral("menu.view.overlay"), QStringLiteral("オーバーレイ(&O)")));
    overlaysMenu->setAccessibleName(QStringLiteral("Viewport Overlays"));
    overlaysMenu->setAccessibleDescription(QStringLiteral("Grid, guides, rulers, and display overlays"));
@@ -3382,4 +3430,3 @@ void ArtifactViewMenu::Impl::showDetachedTaskTray()
  }
 
 } // namespace Artifact
-

@@ -41,7 +41,6 @@ module;
 #include <QString>
 #include <QStringList>
 #include <QMutex>
-#include <QWaitCondition>
 
 export module Artifact.Render.FrameCache;
 
