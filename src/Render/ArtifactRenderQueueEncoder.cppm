@@ -449,9 +449,23 @@ namespace Artifact {
         return args;
     }
 
+    // XPU P3: エンコードスレッド数。0=encoder default（現行動作）。
+    // プリセット・画質設定には触らない（NFR-6）。
+    static int xpuEncoderThreadCount()
+    {
+        bool ok = false;
+        const int value = qEnvironmentVariable(
+            "ARTIFACT_XPU_ENCODER_THREADS").trimmed().toInt(&ok);
+        if (!ok) {
+            return 0;
+        }
+        return std::clamp(value, 0, 64);
+    }
+
     static ArtifactCore::FFmpegEncoderSettings buildNativeVideoSettings(const ArtifactRenderJob& job)
     {
         ArtifactCore::FFmpegEncoderSettings settings;
+        settings.threadCount = xpuEncoderThreadCount();
         settings.width = std::max(1, job.resolutionWidth);
         settings.height = std::max(1, job.resolutionHeight);
         settings.fps = job.frameRate > 0.0 ? job.frameRate : 30.0;
@@ -790,14 +804,15 @@ namespace Artifact {
             }
 
             qInfo() << "[Encode][Native] opened"
-                    << "output=" << job.outputPath
-                    << "codec=" << settings.videoCodec
-                    << "encoder=" << settings.encoderName
-                    << "container=" << settings.container
-                    << "resolution=" << settings.width << "x"
-                    << settings.height
-                    << "fps=" << settings.fps
-                    << "bitrateKbps=" << settings.bitrateKbps;
+                     << "output=" << job.outputPath
+                     << "codec=" << settings.videoCodec
+                     << "encoder=" << settings.encoderName
+                     << "container=" << settings.container
+                     << "resolution=" << settings.width << "x"
+                     << settings.height
+                     << "fps=" << settings.fps
+                     << "bitrateKbps=" << settings.bitrateKbps
+                     << "threads=" << settings.threadCount;
             lastError_.clear();
             return true;
         }
