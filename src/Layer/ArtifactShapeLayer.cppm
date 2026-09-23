@@ -33,6 +33,7 @@ module;
 module Artifact.Layer.Shape;
 
 import Artifact.Layers.Abstract._2D;
+import Artifact.Layer.Abstract;
 import Artifact.Layer.CloneEffectSupport;
 import Artifact.Mask.LayerMask;
 import Artifact.Mask.Path;
@@ -49,6 +50,7 @@ import Physics.System;
 import Physics.SoftBody;
 import Physics.Mpm2D;
 import Artifact.Render.IRenderer;
+import Artifact.Tool.PuppetTool;
 import Artifact.Composition.Abstract;
 import Time.Rational;
 import Container.NamedVector;
@@ -110,6 +112,16 @@ QPointF mapPoint(const QMatrix4x4& transform, const QPointF& point) {
   return QPointF(v.x() / v.w(), v.y() / v.w());
  }
  return QPointF(v.x(), v.y());
+}
+
+QPointF mapDeformerPoint(const QMatrix4x4& transform, const QPointF& point,
+                         void* deformerContext,
+                         Artifact::ShapeDeformerPointMapper pointMapper,
+                         Artifact::ArtifactAbstractLayer* layer) {
+ if (deformerContext && pointMapper && layer) {
+  return mapPoint(transform, pointMapper(deformerContext, layer, point));
+ }
+ return mapPoint(transform, point);
 }
 
 void drawDashedNativeStroke(
@@ -4438,7 +4450,10 @@ static void paintGpuPaintItems(Artifact::ArtifactIRenderer* renderer,
                                float baseOpacity,
                                const std::vector<GpuPaintItem>& items,
                                double tolerance,
-                               float renderScale) {
+                               float renderScale,
+                               void* deformerContext = nullptr,
+                               Artifact::ShapeDeformerPointMapper pointMapper = nullptr,
+                               Artifact::ArtifactAbstractLayer* layer = nullptr) {
   if (!renderer || items.empty()) {
     return;
   }
@@ -4460,9 +4475,9 @@ static void paintGpuPaintItems(Artifact::ArtifactIRenderer* renderer,
           ArtifactCore::FloatColor c = contentGradientColorAt(
               item.fill, static_cast<float>(cx), static_cast<float>(cy), gradW, gradH);
           c = ArtifactCore::FloatColor(c.r(), c.g(), c.b(), c.a() * opacity);
-          const QPointF p0 = mapPoint(transform, tri.p0);
-          const QPointF p1 = mapPoint(transform, tri.p1);
-          const QPointF p2 = mapPoint(transform, tri.p2);
+          const QPointF p0 = mapDeformerPoint(transform, tri.p0, deformerContext, pointMapper, layer);
+          const QPointF p1 = mapDeformerPoint(transform, tri.p1, deformerContext, pointMapper, layer);
+          const QPointF p2 = mapDeformerPoint(transform, tri.p2, deformerContext, pointMapper, layer);
           renderer->drawSolidTriangleLocal(
               {static_cast<float>(p0.x()), static_cast<float>(p0.y())},
               {static_cast<float>(p1.x()), static_cast<float>(p1.y())},
@@ -4501,10 +4516,11 @@ static void paintGpuPaintItems(Artifact::ArtifactIRenderer* renderer,
           std::vector<Artifact::Detail::float2> points;
           points.reserve(segments.size() + 1);
           for (const auto& segment : segments) {
-            const QPointF p = mapPoint(transform, segment.p0);
+            const QPointF p = mapDeformerPoint(transform, segment.p0, deformerContext, pointMapper, layer);
             points.push_back({static_cast<float>(p.x()), static_cast<float>(p.y())});
           }
-          const QPointF end = mapPoint(transform, segments.back().p1);
+          const QPointF end = mapDeformerPoint(transform, segments.back().p1,
+                                               deformerContext, pointMapper, layer);
           points.push_back({static_cast<float>(end.x()), static_cast<float>(end.y())});
           const bool closed = points.size() > 2 &&
               std::hypot(points.front().x - points.back().x,
@@ -4544,9 +4560,18 @@ static void paintGpuPaintItems(Artifact::ArtifactIRenderer* renderer,
 // ============================================================
 
 void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
+ draw(renderer, nullptr, nullptr, nullptr);
+}
+
+void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer,
+                              void* deformerContext,
+                              ShapeDeformerPointMapper pointMapper,
+                              ShapeDeformerPrepare prepareDeformer) {
  if (!renderer) {
   return;
  }
+ void* activeDeformerContext = deformerContext && prepareDeformer &&
+     prepareDeformer(deformerContext, this) ? deformerContext : nullptr;
   const QMatrix4x4 baseTransform = getGlobalTransform4x4();
    const float contentFieldWeight = compositionFieldContentWeight(this);
   auto* impl = impl_;
@@ -4618,7 +4643,7 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
    for (const auto& lensPass : twoPointFiveDRenderPasses(baseTransform)) {
     drawWithClonerEffect(
         this, lensPass.transform,
-        [renderer, this, &contentItems, contentFieldWeight,
+         [renderer, this, activeDeformerContext, pointMapper, &contentItems, contentFieldWeight,
          lensOpacity = lensPass.opacity](const QMatrix4x4& transform, float weight) {
          const float baseOpacity =
              this->opacity() * weight * contentFieldWeight * lensOpacity;
@@ -4628,7 +4653,8 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
                                           static_cast<double>(transform(1, 1)));
          const double renderScale = std::max({1.0, scaleX, scaleY});
          paintGpuPaintItems(renderer, transform, baseOpacity, contentItems,
-                             0.25 / renderScale, static_cast<float>(renderScale));
+                             0.25 / renderScale, static_cast<float>(renderScale),
+                             activeDeformerContext, pointMapper, this);
         });
    }
    drawFractureOverlay(renderer, baseTransform, localBounds().size(),
@@ -4683,7 +4709,7 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
    for (const auto& lensPass : twoPointFiveDRenderPasses(baseTransform)) {
    drawWithClonerEffect(
        this, lensPass.transform,
-        [renderer, impl, &processedOperatorPaths, fill, stroke,
+        [renderer, impl, this, activeDeformerContext, pointMapper, &processedOperatorPaths, fill, stroke,
         contentFieldWeight, this, geomAnimated, pathAnimated, lensOpacity = lensPass.opacity](const QMatrix4x4& transform, float weight) {
         const float opacity = this->opacity() * weight * contentFieldWeight * lensOpacity;
         const FloatColor drawFill(fill.r(), fill.g(), fill.b(), fill.a() * opacity);
@@ -4699,9 +4725,9 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
         for (const auto& pathGeometry : geometry) {
          if (impl->fillEnabled_) {
           for (const auto& triangle : pathGeometry.triangles) {
-           const QPointF p0 = mapPoint(transform, triangle.p0);
-           const QPointF p1 = mapPoint(transform, triangle.p1);
-           const QPointF p2 = mapPoint(transform, triangle.p2);
+           const QPointF p0 = mapDeformerPoint(transform, triangle.p0, activeDeformerContext, pointMapper, this);
+           const QPointF p1 = mapDeformerPoint(transform, triangle.p1, activeDeformerContext, pointMapper, this);
+           const QPointF p2 = mapDeformerPoint(transform, triangle.p2, activeDeformerContext, pointMapper, this);
            renderer->drawSolidTriangleLocal(
                {static_cast<float>(p0.x()), static_cast<float>(p0.y())},
                {static_cast<float>(p1.x()), static_cast<float>(p1.y())},
@@ -4713,10 +4739,11 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
           std::vector<Detail::float2> points;
           points.reserve(segments.size() + 1);
           for (const auto& segment : segments) {
-           const QPointF p = mapPoint(transform, segment.p0);
+           const QPointF p = mapDeformerPoint(transform, segment.p0, activeDeformerContext, pointMapper, this);
            points.push_back({static_cast<float>(p.x()), static_cast<float>(p.y())});
           }
-          const QPointF end = mapPoint(transform, segments.back().p1);
+          const QPointF end = mapDeformerPoint(transform, segments.back().p1,
+                                               activeDeformerContext, pointMapper, this);
           points.push_back({static_cast<float>(end.x()), static_cast<float>(end.y())});
           const bool closed = points.size() > 2 &&
                               std::hypot(points.front().x - points.back().x,
@@ -4818,7 +4845,7 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
    for (const auto& lensPass : twoPointFiveDRenderPasses(baseTransform)) {
     drawWithClonerEffect(
         this, lensPass.transform,
-        [renderer, this, &legacyItems, contentFieldWeight,
+        [renderer, this, activeDeformerContext, pointMapper, &legacyItems, contentFieldWeight,
          lensOpacity = lensPass.opacity](const QMatrix4x4& transform, float weight) {
          const float baseOpacity =
              this->opacity() * weight * contentFieldWeight * lensOpacity;
@@ -4828,7 +4855,8 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
                                           static_cast<double>(transform(1, 1)));
          const double renderScale = std::max({1.0, scaleX, scaleY});
          paintGpuPaintItems(renderer, transform, baseOpacity, legacyItems,
-                             0.25 / renderScale, static_cast<float>(renderScale));
+                             0.25 / renderScale, static_cast<float>(renderScale),
+                             activeDeformerContext, pointMapper, this);
         });
    }
    drawFractureOverlay(renderer, baseTransform,
@@ -4838,7 +4866,7 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
   }
   for (const auto& lensPass : twoPointFiveDRenderPasses(baseTransform)) {
   drawWithClonerEffect(this, lensPass.transform,
-                       [renderer, impl, this, contentFieldWeight, geomDims,
+                       [renderer, impl, this, activeDeformerContext, pointMapper, contentFieldWeight, geomDims,
                         pathAnimated, &evaluatedPathVertices, lensOpacity = lensPass.opacity](const QMatrix4x4& transform, float weight) {
     const auto fill = FloatColor(
         impl->fillColor_.r(), impl->fillColor_.g(), impl->fillColor_.b(),
@@ -4850,13 +4878,15 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
     // A soft-body grid owns the rectangle's local vertices.  Keep all other
     // shape types on their existing path until they have a matching topology
     // bridge instead of approximating curves with an unrelated cloth mesh.
-    if (impl->shapeType_ == Artifact::ShapeType::Rect &&
+    if ((!activeDeformerContext || !pointMapper) &&
+        impl->shapeType_ == Artifact::ShapeType::Rect &&
         drawMaterialGrid(this, renderer, transform, fill, stroke,
                          std::max(1.0f, impl->strokeWidth_),
                          impl->strokeEnabled_)) {
      return;
     }
-    if (impl->shapeType_ == Artifact::ShapeType::Rect &&
+    if ((!activeDeformerContext || !pointMapper) &&
+        impl->shapeType_ == Artifact::ShapeType::Rect &&
         drawSoftBodyGrid(this, renderer, transform, fill, stroke,
                          std::max(1.0f, impl->strokeWidth_),
                          impl->strokeEnabled_)) {
@@ -4875,9 +4905,9 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
 
     if (impl->fillEnabled_) {
      for (const auto& triangle : geometry.triangles) {
-      const QPointF t0 = mapPoint(transform, triangle.p0);
-      const QPointF t1 = mapPoint(transform, triangle.p1);
-      const QPointF t2 = mapPoint(transform, triangle.p2);
+      const QPointF t0 = mapDeformerPoint(transform, triangle.p0, activeDeformerContext, pointMapper, this);
+      const QPointF t1 = mapDeformerPoint(transform, triangle.p1, activeDeformerContext, pointMapper, this);
+      const QPointF t2 = mapDeformerPoint(transform, triangle.p2, activeDeformerContext, pointMapper, this);
       renderer->drawSolidTriangleLocal(
           {static_cast<float>(t0.x()), static_cast<float>(t0.y())},
           {static_cast<float>(t1.x()), static_cast<float>(t1.y())},
@@ -4891,11 +4921,12 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
       std::vector<Detail::float2> points;
       points.reserve(segments.size() + 1);
       for (const auto& segment : segments) {
-       const QPointF point = mapPoint(transform, segment.p0);
+       const QPointF point = mapDeformerPoint(transform, segment.p0, activeDeformerContext, pointMapper, this);
        points.push_back({static_cast<float>(point.x()),
                          static_cast<float>(point.y())});
       }
-      const QPointF end = mapPoint(transform, segments.back().p1);
+      const QPointF end = mapDeformerPoint(transform, segments.back().p1,
+                                           activeDeformerContext, pointMapper, this);
       points.push_back({static_cast<float>(end.x()),
                         static_cast<float>(end.y())});
       const bool closed = points.size() > 2 &&

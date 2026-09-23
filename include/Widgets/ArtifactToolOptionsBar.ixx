@@ -1,10 +1,12 @@
-﻿module;
+module;
 #include <utility>
 
 #include <wobjectdefs.h>
 #include <QString>
 #include <QWidget>
 #include <QVariant>
+
+class QEvent;
 export module Widgets.ToolOptionsBar;
 
 
@@ -34,6 +36,9 @@ public:
                        int starPoints, int starInnerRadiusPercent,
                        int polygonSides, bool enabled = true);
   void clearShapeOptions();
+  void setPuppetOptions(int mode, int columns, int rows, bool enabled = true,
+                        bool deformerEnabled = true);
+  bool eventFilter(QObject *watched, QEvent *event) override;
 
   void optionChanged(const QString &toolName, const QString &optionName,
                      const QVariant &value);

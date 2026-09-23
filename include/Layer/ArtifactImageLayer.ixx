@@ -2,6 +2,8 @@
 #include <utility>
 #include <cstdint>
 #include <QImage>
+#include <QMatrix4x4>
+#include <QRect>
 #include <QJsonObject>
 #include <QRectF>
 #include <QStringList>
@@ -22,6 +24,13 @@ export module Artifact.Layer.Image;
  import Artifact.Layer.SourceCrop;
 
 export namespace Artifact {
+
+struct SourceCropDrawLayout {
+  QRect sourcePixelRect;
+  QRectF outputLocalRect;
+  QMatrix4x4 localTransform;
+  bool cropped = false;
+};
 
  class ArtifactImageLayer:public ArtifactAbstract2DLayer {
  W_OBJECT(ArtifactImageLayer)
@@ -69,6 +78,7 @@ export namespace Artifact {
    // sourceCrop.* property paths so clamping and keyframes stay consistent.
    SourceCrop sourceCrop() const;
    QString sourceCropSignature() const;
+  SourceCropDrawLayout sourceCropDrawLayout() const;
   void refreshAnimatedSourceCrop();
   bool localizeSourceIdentity();
   bool relinkSourceIdentityToShared();

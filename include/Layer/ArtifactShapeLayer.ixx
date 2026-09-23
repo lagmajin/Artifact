@@ -1,5 +1,6 @@
 module;
 #include <utility>
+
 #include <algorithm>
 #include <cmath>
 #include <memory>
@@ -14,6 +15,7 @@ export module Artifact.Layer.Shape;
 
 import Color.Float;
 import Artifact.Layer.InitParams;
+import Artifact.Layer.Abstract;
 import Artifact.Layers.Abstract._2D;
 import Artifact.Mask.LayerMask;
 import Artifact.Render.IRenderer;
@@ -26,6 +28,10 @@ import Container.NamedVector;
 
 export namespace Artifact {
 using namespace ArtifactCore;
+
+using ShapeDeformerPointMapper = QPointF (*)(
+    void*, ArtifactAbstractLayer*, const QPointF&);
+using ShapeDeformerPrepare = bool (*)(void*, ArtifactAbstractLayer*);
 
 enum class ShapeType { Rect = 0, Ellipse = 1, Star = 2, Polygon = 3, Line = 4, Triangle = 5, Square = 6 };
 
@@ -395,6 +401,9 @@ public:
   bool setLayerPropertyValue(const QString &propertyPath,
                               const QVariant &value) override;
   void draw(ArtifactIRenderer *renderer) override;
+  void draw(ArtifactIRenderer *renderer, void *deformerContext,
+            ShapeDeformerPointMapper pointMapper,
+            ShapeDeformerPrepare prepareDeformer);
   QImage toQImage() const;
   QImage getThumbnail(int width = 128, int height = 128) const override;
   QJsonObject toJson() const override;

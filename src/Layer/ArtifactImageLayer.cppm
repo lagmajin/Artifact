@@ -1770,6 +1770,56 @@ QString ArtifactImageLayer::sourceCropSignature() const
         .arg(impl_->sourceCrop_.preserveAspect() ? 1 : 0);
 }
 
+SourceCropDrawLayout ArtifactImageLayer::sourceCropDrawLayout() const
+{
+    auto size = sourceSize();
+    if (!impl_->fitToLayer_) {
+        size = Size_2D(impl_->width_, impl_->height_);
+    }
+    SourceCropDrawLayout layout;
+    if (size.width <= 0 || size.height <= 0) return layout;
+    layout.outputLocalRect = impl_->displayRectForPixels(
+        QRectF(0.0, 0.0, size.width, size.height));
+    layout.sourcePixelRect = sourceCropToRect(
+        impl_->sourceCrop_, QSize(size.width, size.height));
+    if (!layout.sourcePixelRect.isValid() ||
+        layout.sourcePixelRect.width() <= 0 ||
+        layout.sourcePixelRect.height() <= 0) {
+        layout.sourcePixelRect = QRect(0, 0, size.width, size.height);
+        return layout;
+    }
+
+    layout.cropped = true;
+    const QRectF cropDisplayRect = impl_->displayRectForPixels(
+        QRectF(layout.sourcePixelRect));
+    if (impl_->sourceCrop_.preserveAspect() &&
+        cropDisplayRect.width() > 0.0 && cropDisplayRect.height() > 0.0) {
+        const qreal scale = std::min(
+            layout.outputLocalRect.width() / cropDisplayRect.width(),
+            layout.outputLocalRect.height() / cropDisplayRect.height());
+        const QSizeF fittedSize(cropDisplayRect.width() * scale,
+                                cropDisplayRect.height() * scale);
+        layout.outputLocalRect = QRectF(
+            layout.outputLocalRect.center() -
+                QPointF(fittedSize.width() * 0.5, fittedSize.height() * 0.5),
+            fittedSize);
+    }
+
+    const double rotation = impl_->sourceCrop_.rotation();
+    if (std::isfinite(rotation) && std::abs(rotation) > 1e-6) {
+        const QPointF anchor = impl_->sourceCrop_.anchor();
+        const QPointF pivot(
+            layout.outputLocalRect.x() + layout.outputLocalRect.width() * anchor.x(),
+            layout.outputLocalRect.y() + layout.outputLocalRect.height() * anchor.y());
+        layout.localTransform.translate(static_cast<float>(pivot.x()),
+                                        static_cast<float>(pivot.y()), 0.0f);
+        layout.localTransform.rotate(static_cast<float>(rotation), 0.0f, 0.0f, 1.0f);
+        layout.localTransform.translate(static_cast<float>(-pivot.x()),
+                                        static_cast<float>(-pivot.y()), 0.0f);
+    }
+    return layout;
+}
+
 bool ArtifactImageLayer::localizeSourceIdentity()
 {
     if (impl_->sourceAssetId_.isNull() || isSourceIdentityLocalized()) {
@@ -2510,30 +2560,11 @@ void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
         size = Size_2D(impl_->width_, impl_->height_);
     }
 
-    const QRect cropRect = sourceCropToRect(impl_->sourceCrop_, QSize(size.width, size.height));
-    const bool useCrop = cropRect.isValid() && cropRect.width() > 0 && cropRect.height() > 0;
-
-    // Source Crop reframes content inside the layer's fixed output frame.
-    // Its source-window parameters must never become the layer/gizmo bounds.
-    const QRectF outputDrawRect = impl_->displayRectForPixels(
-        QRectF(0.0, 0.0, size.width, size.height));
-    const auto cropOutputRect = [&]() {
-        if (!useCrop || !impl_->sourceCrop_.preserveAspect()) {
-            return outputDrawRect;
-        }
-        const QRectF cropDisplayRect =
-            impl_->displayRectForPixels(QRectF(cropRect));
-        if (cropDisplayRect.width() <= 0.0 || cropDisplayRect.height() <= 0.0) {
-            return outputDrawRect;
-        }
-        const qreal scale = std::min(outputDrawRect.width() / cropDisplayRect.width(),
-                                     outputDrawRect.height() / cropDisplayRect.height());
-        const QSizeF fittedSize(cropDisplayRect.width() * scale,
-                                cropDisplayRect.height() * scale);
-        return QRectF(outputDrawRect.center() - QPointF(fittedSize.width() * 0.5,
-                                                        fittedSize.height() * 0.5),
-                      fittedSize);
-    };
+    // Share the exact crop rectangle, letterbox, and rotation mapping with
+    // the composition GPU mesh path.
+    const SourceCropDrawLayout cropLayout = sourceCropDrawLayout();
+    const QRect cropRect = cropLayout.sourcePixelRect;
+    const bool useCrop = cropLayout.cropped;
     const QMatrix4x4 baseTransform = getGlobalTransform4x4();
 
     // Depth-enabled file-backed images use the existing 3D mesh renderer.
@@ -2558,20 +2589,8 @@ void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
                      static_cast<qreal>(cropRect.width()) / buffer.width(),
                      static_cast<qreal>(cropRect.height()) / buffer.height())
             : QRectF(0.0, 0.0, 1.0, 1.0);
-        const QRectF drawRect = cropOutputRect();
-        QMatrix4x4 cropTransform = baseTransform;
-        if (useCrop && std::abs(impl_->sourceCrop_.rotation()) > 1e-6) {
-            const QPointF anchor = impl_->sourceCrop_.anchor();
-            const QPointF pivot(
-                drawRect.x() + drawRect.width() * anchor.x(),
-                drawRect.y() + drawRect.height() * anchor.y());
-            cropTransform.translate(static_cast<float>(pivot.x()),
-                                    static_cast<float>(pivot.y()), 0.0f);
-            cropTransform.rotate(static_cast<float>(impl_->sourceCrop_.rotation()),
-                                 0.0f, 0.0f, 1.0f);
-            cropTransform.translate(static_cast<float>(-pivot.x()),
-                                    static_cast<float>(-pivot.y()), 0.0f);
-        }
+        const QRectF drawRect = cropLayout.outputLocalRect;
+        const QMatrix4x4 cropTransform = baseTransform * cropLayout.localTransform;
         for (const auto& lensPass : twoPointFiveDRenderPasses(cropTransform)) {
             drawWithClonerEffect(this, lensPass.transform,
                 [renderer, &buffer, drawRect, uvRect, this, lensOpacity = lensPass.opacity](const QMatrix4x4& transform, float weight) {
@@ -2602,20 +2621,8 @@ void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
                  static_cast<qreal>(cropRect.width()) / img.width(),
                  static_cast<qreal>(cropRect.height()) / img.height())
         : QRectF(0.0, 0.0, 1.0, 1.0);
-    const QRectF drawRect = cropOutputRect();
-    QMatrix4x4 cropTransform = baseTransform;
-    if (useCrop && std::abs(impl_->sourceCrop_.rotation()) > 1e-6) {
-        const QPointF anchor = impl_->sourceCrop_.anchor();
-        const QPointF pivot(
-            drawRect.x() + drawRect.width() * anchor.x(),
-            drawRect.y() + drawRect.height() * anchor.y());
-        cropTransform.translate(static_cast<float>(pivot.x()),
-                                static_cast<float>(pivot.y()), 0.0f);
-        cropTransform.rotate(static_cast<float>(impl_->sourceCrop_.rotation()),
-                             0.0f, 0.0f, 1.0f);
-        cropTransform.translate(static_cast<float>(-pivot.x()),
-                                static_cast<float>(-pivot.y()), 0.0f);
-    }
+    const QRectF drawRect = cropLayout.outputLocalRect;
+    const QMatrix4x4 cropTransform = baseTransform * cropLayout.localTransform;
 
     for (const auto& lensPass : twoPointFiveDRenderPasses(cropTransform)) {
         drawWithClonerEffect(this, lensPass.transform,

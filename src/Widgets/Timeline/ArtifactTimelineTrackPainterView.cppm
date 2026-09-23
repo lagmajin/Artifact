@@ -777,11 +777,12 @@ void restorePropertyKeyframes(
     const std::vector<ArtifactCore::KeyFrame> &keyframes) {
   if (!property) return;
   property->clearKeyFrames();
-  for (const auto &keyframe : keyframes) {
+    for (const auto &keyframe : keyframes) {
     property->addKeyFrame(keyframe.time, keyframe.value, keyframe.interpolation,
                           keyframe.cp1_x, keyframe.cp1_y, keyframe.cp2_x,
                           keyframe.cp2_y, keyframe.roving);
     property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
+    property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
   }
 }
 
@@ -1041,6 +1042,29 @@ QVector<KeyframePropertyRef> collectAnimatablePropertyRefs(
       refs.push_back({layer->id(), property->getName()});
     }
   }
+  const QJsonObject deformation = layer->deformation2DData();
+  const QString controlsKey = deformation.value(QStringLiteral("mode"))
+          .toString() == QStringLiteral("grid")
+      ? QStringLiteral("gridControls") : QStringLiteral("pins");
+  for (const QJsonValue& value : deformation.value(controlsKey).toArray()) {
+    const QString id = value.toObject().value(QStringLiteral("id")).toString();
+    if (id.isEmpty()) continue;
+    QStringList fields{QStringLiteral("x"), QStringLiteral("y")};
+    if (controlsKey == QStringLiteral("pins")) {
+      fields.append(QStringLiteral("rotation"));
+      fields.append(QStringLiteral("weight"));
+    }
+    for (const QString& axis : fields) {
+      const QString path = QStringLiteral("deformation2D.%1.%2").arg(id, axis);
+      const auto property = findLayerPropertyByPath(layer, path);
+      if (!property || !property->isAnimatable()) continue;
+      const QString key = QStringLiteral("%1|%2")
+                              .arg(layer->id().toString(), path);
+      if (seen.contains(key)) continue;
+      seen.insert(key);
+      refs.push_back({layer->id(), path});
+    }
+  }
   return refs;
 }
 
@@ -1189,6 +1213,9 @@ bool applyKeyframePropertySnapshots(
       property->setKeyFrameColorLabelAt(restoredTime, keyframe.colorLabel);
     }
     property->setAnimatable(snapshot.animatable);
+    if (snapshot.propertyPath.startsWith(QStringLiteral("deformation2D."))) {
+      layer->syncDeformation2DControlProperty(snapshot.propertyPath);
+    }
     layer->setDirty(LayerDirtyFlag::Property);
 
     const QString layerKey = layer->id().toString();
@@ -1245,6 +1272,40 @@ void shiftAnimatableLayerKeyframes(const ArtifactCompositionPtr &composition,
         const RationalTime newTime(newFrame, scale);
         property->setKeyFrameAnchorAt(newTime, keyframe.anchor);
         property->setKeyFrameColorLabelAt(newTime, keyframe.colorLabel);
+      }
+    }
+  }
+  const QJsonObject deformation = layer->deformation2DData();
+  const QString controlsKey = deformation.value(QStringLiteral("mode"))
+          .toString() == QStringLiteral("grid")
+      ? QStringLiteral("gridControls") : QStringLiteral("pins");
+  for (const QJsonValue& value : deformation.value(controlsKey).toArray()) {
+    const QString id = value.toObject().value(QStringLiteral("id")).toString();
+    QStringList fields{QStringLiteral("x"), QStringLiteral("y")};
+    if (controlsKey == QStringLiteral("pins")) {
+      fields.append(QStringLiteral("rotation"));
+      fields.append(QStringLiteral("weight"));
+    }
+    for (const QString& axis : fields) {
+      const QString path = QStringLiteral("deformation2D.%1.%2").arg(id, axis);
+      if (const auto property = findLayerPropertyByPath(layer, path)) {
+        if (property->isAnimatable()) {
+          const auto keyframes = property->getKeyFrames();
+          property->clearKeyFrames();
+          for (const auto& keyframe : keyframes) {
+            const int64_t oldFrame = keyframe.time.rescaledTo(scale);
+            const int64_t newFrame = std::max<int64_t>(
+                0, oldFrame + frameDelta);
+            const RationalTime newTime(newFrame, scale);
+            property->addKeyFrame(
+                newTime, keyframe.value, keyframe.interpolation,
+                keyframe.cp1_x, keyframe.cp1_y, keyframe.cp2_x,
+                keyframe.cp2_y, keyframe.roving);
+            property->setKeyFrameAnchorAt(newTime, keyframe.anchor);
+            property->setKeyFrameColorLabelAt(newTime, keyframe.colorLabel);
+          }
+          layer->syncDeformation2DControlProperty(path);
+        }
       }
     }
   }
@@ -1311,6 +1372,9 @@ bool restoreTimelineLayerStateSnapshot(
     layer->setOutPoint(FramePosition(oldOutPoint));
     layer->setStartTime(FramePosition(oldStartTime));
     layer->changed();
+    if (propertyPath.startsWith(QStringLiteral("deformation2D."))) {
+      layer->syncDeformation2DControlProperty(propertyPath);
+    }
     return false;
   }
 
@@ -1919,6 +1983,27 @@ ArtifactCore::AbstractPropertyPtr findLayerPropertyByPath(
       }
     }
   }
+  const QStringList parts = propertyPath.split(QLatin1Char('.'));
+  if (parts.size() == 3 && parts[0] == QStringLiteral("deformation2D") &&
+      (parts[2] == QStringLiteral("x") || parts[2] == QStringLiteral("y") ||
+       parts[2] == QStringLiteral("rotation") ||
+       parts[2] == QStringLiteral("weight"))) {
+    const QJsonObject state = layer->deformation2DData();
+    const QString controlsKey = state.value(QStringLiteral("mode")).toString() ==
+            QStringLiteral("grid")
+        ? QStringLiteral("gridControls") : QStringLiteral("pins");
+    if ((parts[2] == QStringLiteral("rotation") ||
+         parts[2] == QStringLiteral("weight")) &&
+        controlsKey == QStringLiteral("gridControls")) return {};
+    for (const QJsonValue& value : state.value(controlsKey).toArray()) {
+      const QJsonObject control = value.toObject();
+      if (control.value(QStringLiteral("id")).toString() == parts[1]) {
+        return layer->persistentLayerProperty(
+            propertyPath, ArtifactCore::PropertyType::Float,
+            control.value(parts[2]).toDouble(), 100);
+      }
+    }
+  }
   return {};
 }
 
@@ -2031,12 +2116,16 @@ bool isPercentScalePropertyPath(const QString &propertyPath) {
   return propertyPath.compare(QStringLiteral("transform.scale.x"),
                               Qt::CaseInsensitive) == 0 ||
          propertyPath.compare(QStringLiteral("transform.scale.y"),
-                              Qt::CaseInsensitive) == 0;
+                              Qt::CaseInsensitive) == 0 ||
+         propertyPath.endsWith(QStringLiteral(".weight"),
+                               Qt::CaseInsensitive);
 }
 
 bool isDegreeRotationPropertyPath(const QString &propertyPath) {
   return propertyPath.compare(QStringLiteral("transform.rotation"),
-                              Qt::CaseInsensitive) == 0;
+                              Qt::CaseInsensitive) == 0 ||
+         propertyPath.endsWith(QStringLiteral(".rotation"),
+                               Qt::CaseInsensitive);
 }
 
 QString formatTimelinePropertyValue(const QString &propertyPath,
@@ -2186,6 +2275,9 @@ bool cleanNearDuplicateKeyframes(
       continue;
     }
 
+    if (ref.propertyPath.startsWith(QStringLiteral("deformation2D."))) {
+      layer->syncDeformation2DControlProperty(ref.propertyPath);
+    }
     layer->changed();
     changedLayers.insert(layer->id().toString());
     changed = true;
@@ -2338,6 +2430,7 @@ bool applyEvenKeyframeDistribution(
           keyframe.cp2_x, keyframe.cp2_y, keyframe.roving);
       property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
       property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
+      property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
     }
 
     layer->changed();
@@ -4091,21 +4184,8 @@ bool applyKeyframeEditAtFrame(const ArtifactCompositionPtr &composition,
 
   const RationalTime nowTime(frame, timelineFrameRateScale(composition));
 
-  ArtifactCore::AbstractPropertyPtr property;
-  for (const auto &group : layer->getLayerPropertyGroups()) {
-    for (const auto &candidate : group.sortedProperties()) {
-      if (!candidate) {
-        continue;
-      }
-      if (candidate->getName() == propertyPath) {
-        property = candidate;
-        break;
-      }
-    }
-    if (property) {
-      break;
-    }
-  }
+  const ArtifactCore::AbstractPropertyPtr property =
+      findLayerPropertyByPath(layer, propertyPath);
 
   if (!property || !property->isAnimatable()) {
     return false;
@@ -4127,11 +4207,14 @@ bool applyKeyframeEditAtFrame(const ArtifactCompositionPtr &composition,
 
   if (changed) {
     if (auto *mgr = UndoManager::instance()) {
-      if (!mgr->push(std::make_unique<SetLayerPropertyKeyframesCommand>(
+    if (!mgr->push(std::make_unique<SetLayerPropertyKeyframesCommand>(
               layer, propertyPath, beforeKeyframes, property->getKeyFrames(),
               removeKeyframes ? QStringLiteral("Remove Keyframe")
                               : QStringLiteral("Add Keyframe")))) {
         restorePropertyKeyframes(property, beforeKeyframes);
+        if (propertyPath.startsWith(QStringLiteral("deformation2D."))) {
+          layer->syncDeformation2DControlProperty(propertyPath);
+        }
         return false;
       }
     }
@@ -4178,6 +4261,9 @@ bool removeSelectedKeyframeMarkers(
     }
 
     property->removeKeyFrame(time);
+    if (marker.propertyPath.startsWith(QStringLiteral("deformation2D."))) {
+      layer->syncDeformation2DControlProperty(marker.propertyPath);
+    }
     layer->changed();
     ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
         LayerChangedEvent{composition->id().toString(), layer->id().toString(),
@@ -4491,6 +4577,33 @@ bool applyTimelineLayerRangeEdit(const ArtifactAbstractLayerPtr &layer,
               keyframe.value.isValid() ? keyframe.value : property->getValue(),
               keyframe.interpolation, keyframe.cp1_x, keyframe.cp1_y,
               keyframe.cp2_x, keyframe.cp2_y, keyframe.roving);
+        }
+      }
+    }
+    const QJsonObject deformation = layer->deformation2DData();
+    const QString controlsKey = deformation.value(QStringLiteral("mode"))
+            .toString() == QStringLiteral("grid")
+        ? QStringLiteral("gridControls") : QStringLiteral("pins");
+    for (const QJsonValue& controlValue :
+         deformation.value(controlsKey).toArray()) {
+      const QString id = controlValue.toObject().value(
+          QStringLiteral("id")).toString();
+      if (id.isEmpty()) continue;
+      for (const QString& axis : {QStringLiteral("x"), QStringLiteral("y")}) {
+        const QString path = QStringLiteral("deformation2D.%1.%2").arg(id, axis);
+        const auto property = findLayerPropertyByPath(layer, path);
+        if (!property || !property->isAnimatable()) continue;
+        for (const auto& keyframe : property->getKeyFrames()) {
+          ArtifactTimelineTrackPainterView::KeyframeMarkerVisual marker;
+          marker.layerId = layer->id();
+          marker.propertyPath = path;
+          marker.frame = static_cast<double>(
+              keyframe.time.rescaledTo(keyframe.time.scale()));
+          marker.value = keyframe.value;
+          marker.interpolation = keyframe.interpolation;
+          marker.anchor = keyframe.anchor;
+          marker.roving = keyframe.roving;
+          markers.push_back(std::move(marker));
         }
       }
     }
@@ -5298,6 +5411,34 @@ collectAllKeyframeMarkersForLayers(
           ArtifactTimelineTrackPainterView::KeyframeMarkerVisual marker;
           marker.layerId = layer->id();
           marker.propertyPath = property->getName();
+          marker.frame = static_cast<double>(
+              keyframe.time.rescaledTo(keyframe.time.scale()));
+          marker.value = keyframe.value;
+          marker.interpolation = keyframe.interpolation;
+          marker.anchor = keyframe.anchor;
+          marker.roving = keyframe.roving;
+          markers.push_back(std::move(marker));
+        }
+      }
+    }
+    const QJsonObject deformation = layer->deformation2DData();
+    const QString deformationControlsKey =
+        deformation.value(QStringLiteral("mode")).toString() ==
+                QStringLiteral("grid")
+            ? QStringLiteral("gridControls") : QStringLiteral("pins");
+    for (const QJsonValue& controlValue :
+         deformation.value(deformationControlsKey).toArray()) {
+      const QString id = controlValue.toObject().value(
+          QStringLiteral("id")).toString();
+      if (id.isEmpty()) continue;
+      for (const QString& axis : {QStringLiteral("x"), QStringLiteral("y")}) {
+        const QString path = QStringLiteral("deformation2D.%1.%2").arg(id, axis);
+        const auto property = findLayerPropertyByPath(layer, path);
+        if (!property || !property->isAnimatable()) continue;
+        for (const auto& keyframe : property->getKeyFrames()) {
+          ArtifactTimelineTrackPainterView::KeyframeMarkerVisual marker;
+          marker.layerId = layer->id();
+          marker.propertyPath = path;
           marker.frame = static_cast<double>(
               keyframe.time.rescaledTo(keyframe.time.scale()));
           marker.value = keyframe.value;

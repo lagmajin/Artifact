@@ -5,6 +5,10 @@ module;
 #include <memory>
 #include <QStringList>
 #include <QHash>
+#include <QVector>
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QJsonValue>
 #include <QVariant>
 #include <vector>
 #include <wobjectimpl.h>
@@ -144,6 +148,16 @@ QString ArtifactTimelineKeyframeModel::displayLabelForPropertyPath(
   if (!editableLabel.isEmpty()) {
     return editableLabel;
   }
+  const QStringList deformationParts = propertyPath.split(QLatin1Char('.'));
+  if (deformationParts.size() == 3 &&
+      deformationParts[0] == QStringLiteral("deformation2D")) {
+    const QString controlLabel = deformationParts[1].startsWith(
+            QStringLiteral("grid_"))
+        ? QStringLiteral("Grid") : QStringLiteral("Pin");
+    return QStringLiteral("2D Deformer / %1 %2 / %3")
+        .arg(controlLabel, deformationParts[1],
+             deformationParts[2].toUpper());
+  }
   if (propertyPath == QStringLiteral("transform.position.x")) {
     return QStringLiteral("Transform / Position X");
   }
@@ -205,6 +219,88 @@ LayerPropertyLookup resolveLayerProperty(
     if (!comp) return result;
     result.layer = comp->layerById(layerId);
     if (!result.layer) return result;
+    const QStringList deformationParts =
+        propertyPath.split(QLatin1Char('.'));
+    if (deformationParts.size() == 3 &&
+        deformationParts[0] == QStringLiteral("deformation2D") &&
+        (deformationParts[2] == QStringLiteral("x") ||
+         deformationParts[2] == QStringLiteral("y") ||
+         deformationParts[2] == QStringLiteral("rotation") ||
+         deformationParts[2] == QStringLiteral("weight"))) {
+        const QJsonObject state = result.layer->deformation2DData();
+        const QString mode = state.value(QStringLiteral("mode")).toString();
+        if (mode == QStringLiteral("grid") &&
+            (deformationParts[2] == QStringLiteral("rotation") ||
+             deformationParts[2] == QStringLiteral("weight"))) return result;
+        const QJsonArray controls = state.value(
+            mode == QStringLiteral("grid")
+                ? QStringLiteral("gridControls") : QStringLiteral("pins"))
+            .toArray();
+        bool controlExists = false;
+        for (const QJsonValue& value : controls) {
+            if (value.isObject() && value.toObject().value(
+                    QStringLiteral("id")).toString() == deformationParts[1]) {
+                controlExists = true;
+                break;
+            }
+        }
+        if (!controlExists) return result;
+        result.prop = result.layer->persistentLayerProperty(
+            propertyPath, ArtifactCore::PropertyType::Float,
+            QVariant(0.0), 100);
+        const QString axis = deformationParts[2];
+        for (const QJsonValue& controlValue : controls) {
+            const QJsonObject control = controlValue.toObject();
+            if (control.value(QStringLiteral("id")).toString() !=
+                deformationParts[1]) continue;
+            const QJsonArray keys = control.value(
+                axis + QStringLiteral("Keys")).toArray();
+            if (keys.isEmpty()) {
+                result.prop->setValue(QVariant(
+                    control.value(axis).toDouble()));
+                break;
+            }
+            result.prop->clearKeyFrames();
+            result.prop->setAnimatable(true);
+            for (const QJsonValue& keyValue : keys) {
+                if (!keyValue.isObject()) continue;
+                const QJsonObject key = keyValue.toObject();
+                const qint64 frame = key.value(QStringLiteral("frame"))
+                                         .toVariant().toLongLong();
+                const double value = key.value(QStringLiteral("value"))
+                                         .toDouble();
+                if (!std::isfinite(value)) continue;
+                result.prop->addKeyFrame(
+                    RationalTime(frame, result.layer->keyframeTimeScale()),
+                    value,
+                    static_cast<InterpolationType>(std::clamp(
+                        key.value(QStringLiteral("interpolation")).toInt(),
+                        0, 32)),
+                    static_cast<float>(key.value(QStringLiteral("cp1_x"))
+                                           .toDouble(0.42)),
+                    static_cast<float>(key.value(QStringLiteral("cp1_y"))
+                                           .toDouble()),
+                    static_cast<float>(key.value(QStringLiteral("cp2_x"))
+                                           .toDouble(0.58)),
+                    static_cast<float>(key.value(QStringLiteral("cp2_y"))
+                                           .toDouble(1.0)),
+                    key.value(QStringLiteral("roving")).toBool());
+                result.prop->setKeyFrameAnchorAt(
+                    RationalTime(frame, result.layer->keyframeTimeScale()),
+                    static_cast<ArtifactCore::KeyFrame::Anchor>(std::clamp(
+                        key.value(QStringLiteral("anchor")).toInt(), 0, 3)));
+                result.prop->setKeyFrameColorLabelAt(
+                    RationalTime(frame, result.layer->keyframeTimeScale()),
+                    static_cast<ArtifactCore::KeyFrame::ColorLabel>(
+                        std::clamp(key.value(
+                            QStringLiteral("colorLabel")).toInt(), 0, 6)));
+            }
+            break;
+        }
+        result.prop->setAnimatable(true);
+        result.success = true;
+        return result;
+    }
     result.prop = result.layer->getProperty(propertyPath);
     if (!result.prop) return result;
     result.success = true;
@@ -225,6 +321,32 @@ QString dopeSheetPropertyKey(const LayerID& layerId, const QString& propertyPath
     return QStringLiteral("%1|%2").arg(layerId.toString(), propertyPath);
 }
 
+QVector<QString> deformationControlPropertyPaths(
+    const ArtifactAbstractLayerPtr& layer) {
+    QVector<QString> paths;
+    if (!layer) return paths;
+    const QJsonObject state = layer->deformation2DData();
+    const QString mode = state.value(QStringLiteral("mode")).toString();
+    const QJsonArray controls = state.value(
+        mode == QStringLiteral("grid")
+            ? QStringLiteral("gridControls") : QStringLiteral("pins"))
+        .toArray();
+    paths.reserve(controls.size() * 2);
+    for (const QJsonValue& value : controls) {
+        if (!value.isObject()) continue;
+        const QString id = value.toObject().value(
+            QStringLiteral("id")).toString();
+    if (id.isEmpty()) continue;
+    paths.push_back(QStringLiteral("deformation2D.%1.x").arg(id));
+    paths.push_back(QStringLiteral("deformation2D.%1.y").arg(id));
+    if (mode != QStringLiteral("grid")) {
+        paths.push_back(QStringLiteral("deformation2D.%1.rotation").arg(id));
+        paths.push_back(QStringLiteral("deformation2D.%1.weight").arg(id));
+    }
+    }
+    return paths;
+}
+
 ArtifactCore::AbstractPropertyPtr findLayerPropertyByPath(
     const ArtifactAbstractLayerPtr& layer,
     const QString& propertyPath) {
@@ -239,6 +361,26 @@ ArtifactCore::AbstractPropertyPtr findLayerPropertyByPath(
         }
         if (const auto property = group.findProperty(propertyPath)) {
             return property;
+        }
+    }
+    if (propertyPath.startsWith(QStringLiteral("deformation2D."))) {
+        const QVector<QString> paths = deformationControlPropertyPaths(layer);
+        if (std::find(paths.begin(), paths.end(), propertyPath) != paths.end()) {
+            auto* mutableLayer = layer.get();
+            const QString axis = propertyPath.section(QLatin1Char('.'), 2, 2);
+            const QString controlId = propertyPath.section(QLatin1Char('.'), 1, 1);
+            const QJsonObject state = layer->deformation2DData();
+            const QString controlsKey = state.value(QStringLiteral("mode"))
+                    .toString() == QStringLiteral("grid")
+                ? QStringLiteral("gridControls") : QStringLiteral("pins");
+            for (const QJsonValue& value : state.value(controlsKey).toArray()) {
+                const QJsonObject control = value.toObject();
+                if (control.value(QStringLiteral("id")).toString() == controlId) {
+                    return mutableLayer->persistentLayerProperty(
+                        propertyPath, ArtifactCore::PropertyType::Float,
+                        control.value(axis).toDouble(), 100);
+                }
+            }
         }
     }
     return {};
@@ -275,7 +417,7 @@ bool commitKeyframeChange(
         if (!undo->push(std::make_unique<SetLayerPropertyKeyframesCommand>(
                 layer, propertyPath, beforeKeyframes, afterKeyframes, label,
                 beforeAnimatable, afterAnimatable))) {
-            const auto property = layer->getProperty(propertyPath);
+            const auto property = findLayerPropertyByPath(layer, propertyPath);
             restorePropertyKeyframes(property, beforeKeyframes);
             if (property) {
                 property->setAnimatable(beforeAnimatable);
@@ -283,6 +425,10 @@ bool commitKeyframeChange(
             layer->changed();
             return false;
         }
+    }
+    if (propertyPath.startsWith(QStringLiteral("deformation2D.")) &&
+        !layer->syncDeformation2DControlProperty(propertyPath)) {
+        return false;
     }
     return true;
 }
@@ -344,7 +490,8 @@ bool applyDopeSheetTransform(const CompositionID& compId,
         if (!layer) {
             continue;
         }
-        const auto property = findLayerPropertyByPath(layer, propertyPath);
+        const auto property = resolveLayerProperty(
+            compId, layerId, propertyPath).prop;
         if (!property || !property->isAnimatable()) {
             continue;
         }
@@ -396,6 +543,9 @@ bool applyDopeSheetTransform(const CompositionID& compId,
         }
 
         restorePropertyKeyframes(property, deduped);
+        if (propertyPath.startsWith(QStringLiteral("deformation2D."))) {
+            layer->syncDeformation2DControlProperty(propertyPath);
+        }
         propertyChanges.push_back(DopeSheetPropertyChange{
             layer, propertyPath, originalKeyframes, deduped,
             property->isAnimatable()});
@@ -422,18 +572,35 @@ bool applyDopeSheetTransform(const CompositionID& compId,
         }
         if (auto* undo = UndoManager::instance()) {
             for (const auto& change : propertyChanges) {
-                restorePropertyKeyframes(change.layer->getProperty(
-                                             change.propertyPath),
+                restorePropertyKeyframes(findLayerPropertyByPath(
+                                             change.layer, change.propertyPath),
                                          change.beforeKeyframes);
+                if (change.propertyPath.startsWith(
+                        QStringLiteral("deformation2D."))) {
+                    change.layer->syncDeformation2DControlProperty(
+                        change.propertyPath);
+                }
             }
             if (!undo->push(std::move(macro))) {
                 for (const auto& change : propertyChanges) {
-                    restorePropertyKeyframes(change.layer->getProperty(
-                                                 change.propertyPath),
+                    restorePropertyKeyframes(findLayerPropertyByPath(
+                                                 change.layer, change.propertyPath),
                                              change.beforeKeyframes);
+                    if (change.propertyPath.startsWith(
+                            QStringLiteral("deformation2D."))) {
+                        change.layer->syncDeformation2DControlProperty(
+                            change.propertyPath);
+                    }
                     change.layer->changed();
                 }
                 return false;
+            }
+        }
+        for (const auto& change : propertyChanges) {
+            if (change.propertyPath.startsWith(
+                    QStringLiteral("deformation2D."))) {
+                change.layer->syncDeformation2DControlProperty(
+                    change.propertyPath);
             }
         }
     }
@@ -509,9 +676,15 @@ bool ArtifactTimelineKeyframeModel::moveKeyframe(const CompositionID& compId,
         const auto it = std::find_if(keyframes.begin(), keyframes.end(),
             [&fromTime](const KeyFrame& kf) { return kf.time == fromTime; });
         if (it == keyframes.end()) return false;
+        KeyFrame moved = *it;
+        moved.time = toTime;
         const bool beforeAnimatable = lookup.prop->isAnimatable();
         lookup.prop->removeKeyFrame(fromTime);
-        lookup.prop->addKeyFrame(toTime, it->value, it->interpolation, it->cp1_x, it->cp1_y, it->cp2_x, it->cp2_y, it->roving);
+        lookup.prop->addKeyFrame(toTime, moved.value, moved.interpolation,
+                                 moved.cp1_x, moved.cp1_y, moved.cp2_x,
+                                 moved.cp2_y, moved.roving);
+        lookup.prop->setKeyFrameAnchorAt(toTime, moved.anchor);
+        lookup.prop->setKeyFrameColorLabelAt(toTime, moved.colorLabel);
         const auto afterKeyframes = lookup.prop->getKeyFrames();
         if (!commitKeyframeChange(lookup.layer, propertyPath, keyframes,
                                   afterKeyframes, beforeAnimatable,
@@ -586,6 +759,13 @@ ArtifactTimelineKeyframeModel::collectDopeSheetKeyframesForLayer(
                 result.push_back(
                     DopeSheetKeyframeEntry{layerId, property->getName(), keyframe});
             }
+        }
+    }
+    for (const QString& path : deformationControlPropertyPaths(layer)) {
+        const auto property = resolveLayerProperty(compId, layerId, path).prop;
+        if (!property || !property->isAnimatable()) continue;
+        for (const auto& keyframe : property->getKeyFrames()) {
+            result.push_back(DopeSheetKeyframeEntry{layerId, path, keyframe});
         }
     }
 

@@ -6,6 +6,7 @@ module;
 #include <memory>
 #include <utility>
 #include <QMap>
+#include <QStringList>
 
 #include <iostream>
 #include <vector>
@@ -2627,6 +2628,28 @@ bool applyLayerPropertyKeyframeSnapshot(
     }
 
     auto property = layer->getProperty(propertyPath);
+    if (!property && propertyPath.startsWith(QStringLiteral("deformation2D."))) {
+        const QStringList parts = propertyPath.split(QLatin1Char('.'));
+        if (parts.size() == 3) {
+            const QJsonObject state = layer->deformation2DData();
+            const QString mode = state.value(QStringLiteral("mode")).toString();
+            const QJsonArray controls = state.value(
+                mode == QStringLiteral("grid")
+                    ? QStringLiteral("gridControls") : QStringLiteral("pins"))
+                .toArray();
+            const bool exists = std::any_of(
+                controls.begin(), controls.end(), [&parts](const QJsonValue& value) {
+                    return value.isObject() && value.toObject().value(
+                        QStringLiteral("id")).toString() == parts[1];
+                });
+            if (exists) {
+                property = layer->persistentLayerProperty(
+                    propertyPath, ArtifactCore::PropertyType::Float,
+                    QVariant(0.0), 100);
+                property->setAnimatable(true);
+            }
+        }
+    }
     if (!property) {
         return false;
     }
@@ -2693,6 +2716,9 @@ bool applyLayerPropertyKeyframeSnapshot(
     }
 
     notifyLayerPropertyChanged(layer, propertyPath);
+    if (propertyPath.startsWith(QStringLiteral("deformation2D."))) {
+        layer->syncDeformation2DControlProperty(propertyPath);
+    }
     // Opt-in, bounded diagnostics at the key-edit/undo boundary only. Never
     // perform file I/O or build JSON from playback/property evaluation ticks.
     if (const auto traceConfig = keyframeTraceConfig()) {

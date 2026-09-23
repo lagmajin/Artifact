@@ -9333,7 +9333,6 @@ void drawLayerForCompositionView(
   if (auto *imageLayer = dynamic_cast<ArtifactImageLayer *>(layer)) {
 
     if (!layerHasRasterizerEffectsOrMasks(layer) &&
-        !imageLayer->sourceCropEnabled() &&
         imageLayer->hasCurrentFrameBuffer()) {
 
       const ArtifactCore::ImageF32x4_RGBA &buffer =
@@ -9344,23 +9343,43 @@ void drawLayerForCompositionView(
 
           (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
 
+      auto* application = ArtifactApplicationManager::instance();
+      auto* puppetTool = application ? application->puppetTool() : nullptr;
+      imageLayer->refreshAnimatedSourceCrop();
+      const SourceCropDrawLayout cropLayout =
+          imageLayer->sourceCropDrawLayout();
+      const QRect sourceRect = cropLayout.sourcePixelRect.intersected(
+          QRect(0, 0, buffer.width(), buffer.height()));
+      const QRectF drawRect = cropLayout.outputLocalRect.isValid() &&
+              cropLayout.outputLocalRect.width() > 0.0 &&
+              cropLayout.outputLocalRect.height() > 0.0
+          ? cropLayout.outputLocalRect : localRect;
+      const QRectF uvRect(
+          static_cast<qreal>(sourceRect.x()) / buffer.width(),
+          static_cast<qreal>(sourceRect.y()) / buffer.height(),
+          static_cast<qreal>(sourceRect.width()) / buffer.width(),
+          static_cast<qreal>(sourceRect.height()) / buffer.height());
+
       drawWithClonerEffect(
 
           layer, globalTransform4x4,
 
           [&](const QMatrix4x4 &instanceTransform, float instanceWeight) {
 
+            if (puppetTool && puppetTool->renderDeformedLayer(
+                    renderer, imageLayer, instanceTransform,
+                    baseOpacity * instanceWeight)) {
+              return;
+            }
+
+            const QMatrix4x4 cropTransform =
+                instanceTransform * cropLayout.localTransform;
             renderer->drawSpriteTransformed(
-
-                static_cast<float>(localRect.x()),
-
-                static_cast<float>(localRect.y()),
-
-                static_cast<float>(localRect.width()),
-
-                static_cast<float>(localRect.height()), instanceTransform,
-
-                buffer, baseOpacity * instanceWeight);
+                static_cast<float>(drawRect.x()),
+                static_cast<float>(drawRect.y()),
+                static_cast<float>(drawRect.width()),
+                static_cast<float>(drawRect.height()),
+                cropTransform, buffer, baseOpacity * instanceWeight, uvRect);
 
           });
 
@@ -9382,6 +9401,18 @@ void drawLayerForCompositionView(
   }
 
   if (auto *shapeLayer = dynamic_cast<ArtifactShapeLayer *>(layer)) {
+    auto* application = ArtifactApplicationManager::instance();
+    auto* puppetTool = application ? application->puppetTool() : nullptr;
+    const auto prepareDeformer = [](void* context,
+                                    ArtifactAbstractLayer* target) {
+      return static_cast<ArtifactPuppetTool*>(context)->prepareLayerDeformation(target);
+    };
+    const auto mapDeformerPoint = [](void* context,
+                                     ArtifactAbstractLayer* target,
+                                     const QPointF& point) {
+      return static_cast<ArtifactPuppetTool*>(context)->mapDeformationPoint(
+          target, point);
+    };
     // The composition GPU path already renders this layer into the reusable
     // per-layer RTV. When the complete rasterizer stack has a GPU node
     // representation, keep the vector draw on that target and let
@@ -9389,7 +9420,8 @@ void drawLayerForCompositionView(
     // to toQImage() here would rasterize with QPainter, convert on CPU, and
     // upload the same frame again.
     if (deferRasterizerEffectsToGpu && !layer->hasMasks()) {
-      shapeLayer->draw(renderer);
+      shapeLayer->draw(renderer, puppetTool, mapDeformerPoint,
+                       prepareDeformer);
       return;
     }
     if (layerHasRasterizerEffectsOrMasks(layer)) {
@@ -9399,7 +9431,8 @@ void drawLayerForCompositionView(
         return;
       }
     } else {
-      shapeLayer->draw(renderer);
+      shapeLayer->draw(renderer, puppetTool, mapDeformerPoint,
+                       prepareDeformer);
       return;
     }
   }
@@ -12814,6 +12847,9 @@ public:
   QPointF puppetPinDragStartCanvas_;
   QPointF puppetPinDragStartPosition_;
   QString puppetPinUndoId_;
+  QJsonObject puppetLayerUndoSnapshot_;
+  QJsonObject puppetPinAnimationBefore_;
+  bool puppetLayerUndoSnapshotValid_ = false;
   QPointF puppetPinUndoBeforePosition_;
   float puppetPinUndoBeforeRotation_ = 0.0f;
 
@@ -25897,7 +25933,14 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
 
         app->puppetTool()->setSelectedPinId(hitId);
 
+        const LayerID controlLayerId = app->puppetTool()->pinLayerId(hitId);
+        app->puppetTool()->evaluatePinPositionsAtCurrentFrame(controlLayerId);
         const QPointF pinPos = app->puppetTool()->pinPosition(hitId);
+        const auto controlLayer = comp
+            ? comp->layerById(controlLayerId) : ArtifactAbstractLayerPtr{};
+        impl_->puppetLayerUndoSnapshot_ = controlLayer
+            ? controlLayer->deformation2DData() : QJsonObject{};
+        impl_->puppetLayerUndoSnapshotValid_ = static_cast<bool>(controlLayer);
         impl_->puppetPinDragging_ = true;
         impl_->puppetPinDragStartCanvas_ = canvasPt;
         impl_->puppetPinDragStartPosition_ = pinPos;
@@ -25905,6 +25948,9 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
         impl_->puppetPinUndoBeforePosition_ = pinPos;
         impl_->puppetPinUndoBeforeRotation_ =
             app->puppetTool()->pinRotation(hitId);
+        impl_->puppetPinAnimationBefore_ =
+            app->puppetTool()->pinPositionAnimationSnapshot(controlLayerId,
+                                                            hitId);
 
         if (event->modifiers().testFlag(Qt::AltModifier)) {
           impl_->puppetRotationDragging_ = true;
@@ -25917,7 +25963,7 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
         }
 
       } else if (selectedLayer) {
-
+        const QJsonObject before = selectedLayer->deformation2DData();
         if (app->puppetTool()->addPin(selectedLayer->id(), canvasPt)) {
           const auto modifiers = event->modifiers();
           const int pinType = modifiers.testFlag(Qt::ControlModifier)
@@ -25929,6 +25975,14 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
                                               : 0; // Position.
           app->puppetTool()->setPinTypeFor(
               app->puppetTool()->selectedPinId(), pinType);
+          const QJsonObject after = selectedLayer->deformation2DData();
+          if (auto* undo = UndoManager::instance()) {
+            if (!undo->push(std::make_unique<Deformation2DStateUndoCommand>(
+                    selectedLayer, before, after,
+                    QStringLiteral("Add Deformer Pin"), app->puppetTool()))) {
+              app->puppetTool()->restoreLayerData(selectedLayer->id(), before);
+            }
+          }
         }
 
         if (app && app->puppetTool()) {
@@ -28998,7 +29052,7 @@ void CompositionRenderController::handleMouseMove(
               constrainedPos.setY(impl_->puppetPinDragStartPosition_.y() + delta.y());
             }
           }
-          app->puppetTool()->movePin(selId, constrainedPos);
+          app->puppetTool()->movePinAtFrame(selId, constrainedPos);
         }
 
         auto comp = impl_->previewPipeline_.composition();
@@ -30694,35 +30748,101 @@ void CompositionRenderController::handleMouseRelease() {
     return;
   }
 
-  if (impl_->puppetPinDragging_ && !impl_->puppetPinUndoId_.isEmpty()) {
+  if (!impl_->puppetPinUndoId_.isEmpty()) {
     if (auto *app = ArtifactApplicationManager::instance();
-        app && app->puppetTool() && !impl_->selectedLayerId_.isNil()) {
+        app && app->puppetTool()) {
       const QPointF afterPosition =
           app->puppetTool()->pinPosition(impl_->puppetPinUndoId_);
       const float afterRotation =
           app->puppetTool()->pinRotation(impl_->puppetPinUndoId_);
-      if (afterPosition != impl_->puppetPinUndoBeforePosition_ ||
-          std::abs(afterRotation - impl_->puppetPinUndoBeforeRotation_) >
-              0.001f) {
+      const LayerID puppetLayerId =
+          app->puppetTool()->pinLayerId(impl_->puppetPinUndoId_);
+      const auto composition = impl_->previewPipeline_.composition();
+      const auto layer = composition
+          ? composition->layerById(puppetLayerId) : ArtifactAbstractLayerPtr{};
+      if (layer && impl_->puppetLayerUndoSnapshotValid_) {
+        app->puppetTool()->persistLayerData(puppetLayerId);
+      }
+      const QJsonObject afterAnimation =
+          app->puppetTool()->pinPositionAnimationSnapshot(
+              puppetLayerId, impl_->puppetPinUndoId_);
+      if (layer && afterAnimation == impl_->puppetPinAnimationBefore_) {
+        app->puppetTool()->commitPinPositionAtFrame(
+            impl_->puppetPinUndoId_, afterPosition);
+      }
+      const QJsonObject committedAnimation =
+          app->puppetTool()->pinPositionAnimationSnapshot(
+              puppetLayerId, impl_->puppetPinUndoId_);
+      const QJsonObject afterState = layer ? layer->deformation2DData()
+                                           : QJsonObject{};
+      if (layer && committedAnimation != impl_->puppetPinAnimationBefore_) {
         auto *manager = UndoManager::instance();
-        const bool pushed =
-            !manager || manager->push(std::make_unique<PuppetPinUndoCommand>(
-                app->puppetTool(), impl_->renderer_.get(),
-                impl_->selectedLayerId_, impl_->puppetPinUndoId_,
-                impl_->puppetPinUndoBeforePosition_, afterPosition,
-                impl_->puppetPinUndoBeforeRotation_, afterRotation));
+        const bool pushed = !manager || manager->push(
+            std::make_unique<DeformerControlKeyframeUndoCommand>(
+                app->puppetTool(), puppetLayerId, impl_->puppetPinUndoId_,
+                impl_->puppetPinAnimationBefore_, committedAnimation,
+                impl_->puppetPinUndoBeforePosition_, afterPosition));
         if (!pushed) {
-          app->puppetTool()->movePin(impl_->puppetPinUndoId_,
-                                     impl_->puppetPinUndoBeforePosition_);
-          app->puppetTool()->setPinRotation(
-              impl_->puppetPinUndoId_, impl_->puppetPinUndoBeforeRotation_);
-          app->puppetTool()->deformLayer(
-              impl_->selectedLayerId_, impl_->renderer_.get());
+          app->puppetTool()->restorePinPositionAnimation(
+              puppetLayerId, impl_->puppetPinUndoId_,
+              impl_->puppetPinAnimationBefore_,
+              impl_->puppetPinUndoBeforePosition_);
+          app->puppetTool()->movePin(
+              impl_->puppetPinUndoId_, impl_->puppetPinUndoBeforePosition_);
+        }
+      } else if (layer && impl_->puppetLayerUndoSnapshotValid_ &&
+          afterState != impl_->puppetLayerUndoSnapshot_) {
+        auto *manager = UndoManager::instance();
+        const bool pushed = !manager || manager->push(
+            std::make_unique<Deformation2DStateUndoCommand>(
+                layer, impl_->puppetLayerUndoSnapshot_, afterState,
+                QStringLiteral("Move Deformer Control"), app->puppetTool()));
+        if (!pushed) {
+          app->puppetTool()->restoreLayerData(
+              puppetLayerId, impl_->puppetLayerUndoSnapshot_, layer.get());
+        }
+      } else if (!impl_->puppetLayerUndoSnapshotValid_ &&
+                 (afterPosition != impl_->puppetPinUndoBeforePosition_ ||
+                 std::abs(afterRotation - impl_->puppetPinUndoBeforeRotation_) >
+                     0.001f)) {
+        if (!puppetLayerId.isNil()) {
+          auto *manager = UndoManager::instance();
+          const bool pushed =
+              !manager || manager->push(std::make_unique<PuppetPinUndoCommand>(
+                  app->puppetTool(), impl_->renderer_.get(),
+                  puppetLayerId, impl_->puppetPinUndoId_,
+                  impl_->puppetPinUndoBeforePosition_, afterPosition,
+                  impl_->puppetPinUndoBeforeRotation_, afterRotation));
+          if (!pushed) {
+            app->puppetTool()->movePin(impl_->puppetPinUndoId_,
+                                       impl_->puppetPinUndoBeforePosition_);
+            app->puppetTool()->setPinRotation(
+                impl_->puppetPinUndoId_, impl_->puppetPinUndoBeforeRotation_);
+            app->puppetTool()->deformLayer(
+                puppetLayerId, impl_->renderer_.get());
+          }
         }
       }
     }
   }
+  if (!impl_->puppetPinUndoId_.isEmpty()) {
+    if (auto *app = ArtifactApplicationManager::instance();
+        app && app->puppetTool()) {
+      const LayerID puppetLayerId =
+          app->puppetTool()->pinLayerId(impl_->puppetPinUndoId_);
+      const QJsonObject finalAnimation =
+          app->puppetTool()->pinPositionAnimationSnapshot(
+              puppetLayerId, impl_->puppetPinUndoId_);
+      if (!puppetLayerId.isNil() &&
+          finalAnimation == impl_->puppetPinAnimationBefore_) {
+        app->puppetTool()->persistLayerData(puppetLayerId);
+      }
+    }
+  }
   impl_->puppetPinUndoId_.clear();
+  impl_->puppetLayerUndoSnapshot_ = {};
+  impl_->puppetPinAnimationBefore_ = {};
+  impl_->puppetLayerUndoSnapshotValid_ = false;
   impl_->puppetPinUndoBeforePosition_ = {};
   impl_->puppetPinUndoBeforeRotation_ = 0.0f;
   impl_->puppetRotationDragging_ = false;
@@ -35143,8 +35263,22 @@ bool CompositionRenderController::deleteSelectedPuppetPin() {
     return false;
   }
   const QString pinId = app->puppetTool()->selectedPinId();
-  if (pinId.isEmpty() || !app->puppetTool()->removePin(pinId)) {
+  const LayerID layerId = app->puppetTool()->pinLayerId(pinId);
+  auto layer = impl_->previewPipeline_.composition()
+      ? impl_->previewPipeline_.composition()->layerById(layerId)
+      : ArtifactAbstractLayerPtr{};
+  const QJsonObject before = layer ? layer->deformation2DData() : QJsonObject{};
+  if (pinId.isEmpty() || !layer || !app->puppetTool()->removePin(pinId)) {
     return false;
+  }
+  const QJsonObject after = layer->deformation2DData();
+  if (auto* undo = UndoManager::instance()) {
+    if (!undo->push(std::make_unique<Deformation2DStateUndoCommand>(
+            layer, before, after, QStringLiteral("Delete Deformer Control"),
+            app->puppetTool()))) {
+      app->puppetTool()->restoreLayerData(layerId, before);
+      return false;
+    }
   }
   app->puppetTool()->setSelectedPinId(QString());
   impl_->invalidateOverlayComposite();
@@ -35283,39 +35417,60 @@ bool CompositionRenderController::resetSelectedPuppetPinRotation() {
     if (std::abs(before - 1.0f) < 0.001f) {
       return true;
     }
-    app->puppetTool()->setPinWeight(pinId, 1.0f);
     auto *manager = UndoManager::instance();
-    if (manager && !manager->push(std::make_unique<PuppetPinScalarUndoCommand>(
-            app->puppetTool(), pinId, true, before,
-            app->puppetTool()->pinWeight(pinId)))) {
-      app->puppetTool()->setPinWeight(pinId, before);
+    const LayerID layerId = app->puppetTool()->pinLayerId(pinId);
+    const auto composition = impl_->previewPipeline_.composition();
+    const auto layer = composition ? composition->layerById(layerId)
+                                  : ArtifactAbstractLayerPtr{};
+    if (!layer) return false;
+    const QJsonObject beforeState = layer->deformation2DData();
+    app->puppetTool()->setPinWeight(pinId, 1.0f);
+    if (manager && !manager->push(std::make_unique<Deformation2DStateUndoCommand>(
+            layer, beforeState, layer->deformation2DData(),
+            QStringLiteral("Reset Deformer Control"), app->puppetTool()))) {
+      app->puppetTool()->restoreLayerData(layerId, beforeState, layer.get());
       return false;
     }
   } else if (pinType == 2) {
     const float before = app->puppetTool()->pinRotation(pinId);
-    if (std::abs(before) < 0.001f) {
-      return true;
-    }
-    const QPointF position = app->puppetTool()->pinPosition(pinId);
-    app->puppetTool()->setPinRotation(pinId, 0.0f);
-    auto *manager = UndoManager::instance();
-    if (manager && !manager->push(std::make_unique<PuppetPinUndoCommand>(
-            app->puppetTool(), impl_->renderer_.get(), impl_->selectedLayerId_,
-            pinId, position, position, before, 0.0f))) {
-      app->puppetTool()->setPinRotation(pinId, before);
-      return false;
-    }
+      if (std::abs(before) < 0.001f) {
+        return true;
+      }
+      const LayerID layerId = app->puppetTool()->pinLayerId(pinId);
+      const auto layer = impl_->previewPipeline_.composition()
+          ? impl_->previewPipeline_.composition()->layerById(layerId)
+          : ArtifactAbstractLayerPtr{};
+      if (!layer) return false;
+      const QJsonObject beforeState = layer->deformation2DData();
+      app->puppetTool()->setPinRotation(pinId, 0.0f);
+      app->puppetTool()->persistLayerData(layerId);
+      auto *manager = UndoManager::instance();
+      if (manager) {
+        const QJsonObject afterState = layer->deformation2DData();
+        if (!manager->push(std::make_unique<Deformation2DStateUndoCommand>(
+                layer, beforeState, afterState,
+                QStringLiteral("Reset Deformer Control"), app->puppetTool()))) {
+          app->puppetTool()->restoreLayerData(layerId, beforeState, layer.get());
+          return false;
+        }
+      }
   } else if (pinType == 3) {
     const float before = app->puppetTool()->pinDepth(pinId);
     if (std::abs(before) < 0.001f) {
       return true;
     }
-    app->puppetTool()->setPinDepth(pinId, 0.0f);
     auto *manager = UndoManager::instance();
-    if (manager && !manager->push(std::make_unique<PuppetPinScalarUndoCommand>(
-            app->puppetTool(), pinId, false, before,
-            app->puppetTool()->pinDepth(pinId)))) {
-      app->puppetTool()->setPinDepth(pinId, before);
+    const LayerID layerId = app->puppetTool()->pinLayerId(pinId);
+    const auto composition = impl_->previewPipeline_.composition();
+    const auto layer = composition ? composition->layerById(layerId)
+                                  : ArtifactAbstractLayerPtr{};
+    if (!layer) return false;
+    const QJsonObject beforeState = layer->deformation2DData();
+    app->puppetTool()->setPinDepth(pinId, 0.0f);
+    if (manager && !manager->push(std::make_unique<Deformation2DStateUndoCommand>(
+            layer, beforeState, layer->deformation2DData(),
+            QStringLiteral("Reset Deformer Control"), app->puppetTool()))) {
+      app->puppetTool()->restoreLayerData(layerId, beforeState, layer.get());
       return false;
     }
   }
@@ -35337,14 +35492,21 @@ bool CompositionRenderController::adjustSelectedPuppetPinWeightAt(
     return false;
   }
   app->puppetTool()->setSelectedPinId(hitId);
+  const LayerID layerId = app->puppetTool()->pinLayerId(hitId);
+  const auto composition = impl_->previewPipeline_.composition();
+  const auto layer = composition ? composition->layerById(layerId)
+                                : ArtifactAbstractLayerPtr{};
+  if (!layer) return false;
+  const QJsonObject beforeState = layer->deformation2DData();
   const float before = app->puppetTool()->pinWeight(hitId);
   const float after = before + delta;
   app->puppetTool()->setPinWeight(hitId, after);
+  const QJsonObject afterState = layer->deformation2DData();
   auto *manager = UndoManager::instance();
-  if (manager && !manager->push(std::make_unique<PuppetPinScalarUndoCommand>(
-          app->puppetTool(), hitId, true, before,
-          app->puppetTool()->pinWeight(hitId)))) {
-    app->puppetTool()->setPinWeight(hitId, before);
+  if (manager && !manager->push(std::make_unique<Deformation2DStateUndoCommand>(
+          layer, beforeState, afterState,
+          QStringLiteral("Adjust Deformer Control"), app->puppetTool()))) {
+    app->puppetTool()->restoreLayerData(layerId, beforeState, layer.get());
     return false;
   }
   impl_->invalidateOverlayComposite();
@@ -35365,14 +35527,21 @@ bool CompositionRenderController::adjustSelectedPuppetPinDepthAt(
     return false;
   }
   app->puppetTool()->setSelectedPinId(hitId);
+  const LayerID layerId = app->puppetTool()->pinLayerId(hitId);
+  const auto composition = impl_->previewPipeline_.composition();
+  const auto layer = composition ? composition->layerById(layerId)
+                                : ArtifactAbstractLayerPtr{};
+  if (!layer) return false;
+  const QJsonObject beforeState = layer->deformation2DData();
   const float before = app->puppetTool()->pinDepth(hitId);
   const float after = before + delta;
   app->puppetTool()->setPinDepth(hitId, after);
+  const QJsonObject afterState = layer->deformation2DData();
   auto *manager = UndoManager::instance();
-  if (manager && !manager->push(std::make_unique<PuppetPinScalarUndoCommand>(
-          app->puppetTool(), hitId, false, before,
-          app->puppetTool()->pinDepth(hitId)))) {
-    app->puppetTool()->setPinDepth(hitId, before);
+  if (manager && !manager->push(std::make_unique<Deformation2DStateUndoCommand>(
+          layer, beforeState, afterState,
+          QStringLiteral("Adjust Deformer Control"), app->puppetTool()))) {
+    app->puppetTool()->restoreLayerData(layerId, beforeState, layer.get());
     return false;
   }
   impl_->invalidateOverlayComposite();
