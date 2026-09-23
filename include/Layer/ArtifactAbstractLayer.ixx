@@ -460,6 +460,9 @@ public:
       const QString &propertyPath) const;
   QJsonObject animationLayersSnapshot() const;
   void restoreAnimationLayersSnapshot(const QJsonObject &snapshot);
+  QJsonObject deformation2DData() const;
+  void setDeformation2DData(const QJsonObject &data);
+  bool syncDeformation2DControlProperty(const QString &propertyPath);
   void bakeAnimationLayersAtCurrentFrame();
   void bakeAnimationLayersOverRange(int64_t startFrame, int64_t endFrame,
                                     int64_t step = 1);
