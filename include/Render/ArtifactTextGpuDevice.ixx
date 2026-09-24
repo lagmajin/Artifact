@@ -6,6 +6,8 @@ module;
 
 export module Artifact.Render.TextGpuDevice;
 
+import Artifact.Render.Config;
+
 export namespace Artifact {
 
 /// Minimal D3D12 device boundary for text-only GPU experiments.
@@ -19,7 +21,10 @@ public:
         if (!factory) return false;
 
         Diligent::EngineD3D12CreateInfo createInfo{};
-        createInfo.EnableValidation = true;
+        createInfo.EnableValidation = RenderConfig::diligentValidationEnabled();
+        if (createInfo.EnableValidation) {
+            createInfo.SetValidationLevel(Diligent::VALIDATION_LEVEL_2);
+        }
         createInfo.Features.MultithreadedResourceCreation =
             Diligent::DEVICE_FEATURE_STATE_DISABLED;
         createInfo.Features.RayTracing = Diligent::DEVICE_FEATURE_STATE_DISABLED;

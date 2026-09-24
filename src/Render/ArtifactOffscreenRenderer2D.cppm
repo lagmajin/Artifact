@@ -58,6 +58,7 @@ module Artifact.Render.Offscreen;
 
 
 
+import Artifact.Render.Config;
 import Core.ArtifactMath;
 import Core.Point2D;
 import Image.Raw;
@@ -191,9 +192,10 @@ namespace Artifact
 
 
   EngineD3D12CreateInfo CreationAttribs = {};
-  CreationAttribs.EnableValidation = true;
-  CreationAttribs.SetValidationLevel(Diligent::VALIDATION_LEVEL_2);
-  CreationAttribs.EnableValidation = true;
+  CreationAttribs.EnableValidation = RenderConfig::diligentValidationEnabled();
+  if (CreationAttribs.EnableValidation) {
+    CreationAttribs.SetValidationLevel(Diligent::VALIDATION_LEVEL_2);
+  }
 
 
   pFactory->CreateDeviceAndContextsD3D12(CreationAttribs, &renderDevice_, &mainDeviceContext_);

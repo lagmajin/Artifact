@@ -737,8 +737,10 @@ namespace {
                             &queueDesc, IID_PPV_ARGS(&nativeQueue));
                         if (SUCCEEDED(hr) && nativeQueue) {
                             EngineD3D12CreateInfo attachInfo = {};
-                            attachInfo.EnableValidation = true;
-                            attachInfo.SetValidationLevel(Diligent::VALIDATION_LEVEL_2);
+                            attachInfo.EnableValidation = RenderConfig::diligentValidationEnabled();
+                            if (attachInfo.EnableValidation) {
+                                attachInfo.SetValidationLevel(Diligent::VALIDATION_LEVEL_2);
+                            }
                             attachInfo.Features.MultithreadedResourceCreation = DEVICE_FEATURE_STATE_DISABLED;
                             attachInfo.NumAsyncShaderCompilationThreads = kAsyncShaderCompileThreads;
                             attachInfo.Features.RayTracing = rayTracingEnabledByConfig()
@@ -781,8 +783,10 @@ namespace {
             return false;
         }
         creationAttribs.AdapterId = adapterSelection.adapterId;
-        creationAttribs.EnableValidation = true;
-        creationAttribs.SetValidationLevel(Diligent::VALIDATION_LEVEL_2);
+        creationAttribs.EnableValidation = RenderConfig::diligentValidationEnabled();
+        if (creationAttribs.EnableValidation) {
+            creationAttribs.SetValidationLevel(Diligent::VALIDATION_LEVEL_2);
+        }
         creationAttribs.Features.MultithreadedResourceCreation = DEVICE_FEATURE_STATE_DISABLED;
         creationAttribs.NumAsyncShaderCompilationThreads = kAsyncShaderCompileThreads;
 
@@ -836,8 +840,10 @@ namespace {
         EngineVkCreateInfo creationAttribs = {};
         const auto adapterSelection = selectGpuAdapter(pFactory);
         creationAttribs.AdapterId = adapterSelection.adapterId;
-        creationAttribs.EnableValidation = true;
-        creationAttribs.SetValidationLevel(Diligent::VALIDATION_LEVEL_2);
+        creationAttribs.EnableValidation = RenderConfig::diligentValidationEnabled();
+        if (creationAttribs.EnableValidation) {
+            creationAttribs.SetValidationLevel(Diligent::VALIDATION_LEVEL_2);
+        }
         creationAttribs.Features.MultithreadedResourceCreation = DEVICE_FEATURE_STATE_DISABLED;
         creationAttribs.NumAsyncShaderCompilationThreads = kAsyncShaderCompileThreads;
 
