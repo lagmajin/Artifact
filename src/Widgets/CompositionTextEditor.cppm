@@ -286,6 +286,7 @@ public:
 
     editor_ = new QTextEdit(this);
     const QString initialText = textEditorValue(textLayer);
+    initialEditorText_ = initialText;
     richText_ = Qt::mightBeRichText(initialText);
     if (richText_) {
       editor_->setHtml(initialText);
@@ -525,6 +526,17 @@ public:
       root->addLayout(animatorRow);
     }
 
+    auto *actionRow = new QHBoxLayout();
+    editStateLabel_ = new QLabel(QStringLiteral("No changes"), this);
+    editStateLabel_->setAccessibleName(QStringLiteral("Text edit status"));
+    actionRow->addWidget(editStateLabel_, 1);
+    auto *editHelp = new QLabel(
+        QStringLiteral("Ctrl+Enter: Apply    Esc: Cancel"), this);
+    editHelp->setAccessibleDescription(
+        QStringLiteral("Apply or cancel the text edit using the existing editor commands"));
+    actionRow->addWidget(editHelp);
+    root->addLayout(actionRow);
+
     setMinimumSize(680, 520);
     resize(900, 680);
   }
@@ -545,8 +557,7 @@ protected:
          obj == animatorCountSpin_ || obj == animatorPresetCombo_) &&
         (event->type() == QEvent::KeyRelease ||
          event->type() == QEvent::MouseButtonRelease ||
-         event->type() == QEvent::Wheel ||
-         event->type() == QEvent::FocusIn)) {
+         event->type() == QEvent::Wheel)) {
       queueLivePreview();
       return QDialog::eventFilter(obj, event);
     }
@@ -581,8 +592,9 @@ protected:
         }
       } else if (event->type() == QEvent::KeyRelease) {
         applyLivePreview();
+        updateEditState();
       } else if (event->type() == QEvent::FocusOut) {
-        accept();
+        updateEditState();
         return false;
       }
     } else if (obj == preview_ && event->type() == QEvent::Paint) {
@@ -593,13 +605,24 @@ protected:
   }
 
   void accept() override {
+    if (committed_) {
+      QDialog::accept();
+      return;
+    }
     restoreInitialState();
     commit();
+    committed_ = true;
+    finished_ = true;
     QDialog::accept();
   }
 
   void reject() override {
+    if (committed_) {
+      QDialog::reject();
+      return;
+    }
     restoreInitialState();
+    finished_ = true;
     QDialog::reject();
   }
 
@@ -781,7 +804,25 @@ private:
   }
 
   void queueLivePreview() {
-    QTimer::singleShot(0, this, [this]() { applyLivePreview(); });
+    QTimer::singleShot(0, this, [this]() {
+      if (!finished_) {
+        livePreviewChanged_ = true;
+        updateEditState();
+        applyLivePreview();
+      }
+    });
+  }
+
+  void updateEditState() {
+    if (!editStateLabel_ || !editor_) {
+      return;
+    }
+    const QString currentText = richText_ ? editor_->toHtml()
+                                          : editor_->toPlainText();
+    const bool textChanged = currentText != initialEditorText_;
+    const bool dirty = textChanged || livePreviewChanged_;
+    editStateLabel_->setText(dirty ? QStringLiteral("Unsaved changes")
+                                   : QStringLiteral("No changes"));
   }
 
   static QString editorSummaryText(const ArtifactCore::SharedPtr<ArtifactTextLayer> &textLayer) {
@@ -1142,6 +1183,8 @@ private:
   ArtifactAbstractLayerPtr layer_;
   CompositionRenderController *controller_ = nullptr;
   QTextEdit *editor_ = nullptr;
+  QLabel *editStateLabel_ = nullptr;
+  QString initialEditorText_;
   QDoubleSpinBox *fontSizeSpin_ = nullptr;
   QDoubleSpinBox *trackingSpin_ = nullptr;
   QDoubleSpinBox *leadingSpin_ = nullptr;
@@ -1171,6 +1214,9 @@ private:
   TextEditorState initialState_;
   bool richText_ = false;
   bool imePreeditActive_ = false;
+  bool livePreviewChanged_ = false;
+  bool committed_ = false;
+  bool finished_ = false;
   QWidget *preview_ = nullptr;
 };
 
