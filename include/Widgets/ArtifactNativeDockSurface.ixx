@@ -284,7 +284,7 @@ class NativeDockSurface final : public QWidget {
       if (!tabListButton_) {
         return;
       }
-      const Corner desiredCorner = tabPosition() == QTabWidget::South
+      const Qt::Corner desiredCorner = tabPosition() == QTabWidget::South
                                        ? Qt::BottomRightCorner
                                        : Qt::TopRightCorner;
       if (cornerWidget(desiredCorner) != tabListButton_) {
