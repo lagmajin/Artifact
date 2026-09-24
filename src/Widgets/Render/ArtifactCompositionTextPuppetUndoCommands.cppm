@@ -28,11 +28,34 @@ class TextContentUndoCommand final : public UndoCommand {
 public:
   TextContentUndoCommand(ArtifactAbstractLayerPtr layer, QString before,
                          QString after)
-      : layer_(layer), before_(std::move(before)), after_(std::move(after)) {}
+      : layer_(layer), layerId_(layer ? layer->id().toQString() : QString()),
+        before_(std::move(before)), after_(std::move(after)) {}
 
   void undo() override { lastOperationSucceeded_ = apply(before_); }
   void redo() override { lastOperationSucceeded_ = apply(after_); }
   bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+  QStringList collaborationTargetLayerIds() const override {
+    return layerId_.isEmpty() ? QStringList{} : QStringList{layerId_};
+  }
+  bool collaborationTargetScopeResolved() const override {
+    return !layerId_.isEmpty() && !layer_.expired();
+  }
+  bool buildCollaborationOperation(const QString& action,
+                                   QString& operationType, QString& layerId,
+                                   QJsonObject& payload) const override {
+    if (layerId_.isEmpty() || layer_.expired() ||
+        (action != QStringLiteral("push") && action != QStringLiteral("undo") &&
+         action != QStringLiteral("redo"))) return false;
+    const bool reverse = action == QStringLiteral("undo");
+    const QString& expected = reverse ? after_ : before_;
+    const QString& value = reverse ? before_ : after_;
+    if (expected.toUtf8().size() > 131072 || value.toUtf8().size() > 131072) return false;
+    operationType = QStringLiteral("layer.text");
+    layerId = layerId_;
+    payload = QJsonObject{{QStringLiteral("expected"), expected},
+                          {QStringLiteral("value"), value}};
+    return true;
+  }
   QString label() const override { return QStringLiteral("Edit Text"); }
 
 private:
@@ -58,6 +81,7 @@ private:
   }
 
   ArtifactAbstractLayerWeak layer_;
+  QString layerId_;
   QString before_;
   QString after_;
   bool lastOperationSucceeded_ = true;
@@ -81,6 +105,12 @@ public:
     lastOperationSucceeded_ = apply(afterPosition_, afterRotation_);
   }
   bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+  QStringList collaborationTargetLayerIds() const override {
+    return layerId_.isNil() ? QStringList{} : QStringList{layerId_.toString()};
+  }
+  bool collaborationTargetScopeResolved() const override {
+    return !layerId_.isNil();
+  }
   QString label() const override { return QStringLiteral("Move Puppet Pin"); }
 
 private:
@@ -117,9 +147,32 @@ public:
       : layer_(layer), layerId_(layer ? layer->id().toString() : QString()),
         before_(std::move(before)), after_(std::move(after)),
         label_(std::move(label)), tool_(tool) {}
-  void undo() override { lastOperationSucceeded_ = apply(before_); }
-  void redo() override { lastOperationSucceeded_ = apply(after_); }
+  void undo() override { lastOperationSucceeded_ = apply(after_, before_); }
+  void redo() override { lastOperationSucceeded_ = apply(before_, after_); }
   bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+  QStringList collaborationTargetLayerIds() const override {
+    return layerId_.isEmpty() ? QStringList{} : QStringList{layerId_};
+  }
+  bool collaborationTargetScopeResolved() const override {
+    return !layerId_.isEmpty();
+  }
+  bool buildCollaborationOperation(const QString& action,
+                                   QString& operationType, QString& operationLayerId,
+                                   QJsonObject& payload) const override {
+    if (layerId_.isEmpty() || layer_.expired() ||
+        (action != QStringLiteral("push") && action != QStringLiteral("undo") &&
+         action != QStringLiteral("redo"))) return false;
+    const bool reverse = action == QStringLiteral("undo");
+    const QJsonObject& expected = reverse ? after_ : before_;
+    const QJsonObject& value = reverse ? before_ : after_;
+    if (QJsonDocument(expected).toJson(QJsonDocument::Compact).size() > 262144 ||
+        QJsonDocument(value).toJson(QJsonDocument::Compact).size() > 262144) return false;
+    operationType = QStringLiteral("layer.deformation2D");
+    operationLayerId = layerId_;
+    payload = QJsonObject{{QStringLiteral("expected"), expected},
+                          {QStringLiteral("value"), value}};
+    return true;
+  }
   QString label() const override { return label_; }
   size_t estimatedMemoryBytes() const override {
     const auto beforeBytes = QJsonDocument(before_).toJson(QJsonDocument::Compact).size();
@@ -129,7 +182,7 @@ public:
   }
 
 private:
-  bool apply(const QJsonObject& state) {
+  bool apply(const QJsonObject& expected, const QJsonObject& state) {
     ArtifactAbstractLayerPtr layer = layer_.lock();
     if (!layer) {
       if (auto* selection = ArtifactLayerSelectionManager::instance()) {
@@ -139,12 +192,22 @@ private:
     }
     auto* imageLayer = layer ? dynamic_cast<ArtifactImageLayer*>(layer.get()) : nullptr;
     if (!imageLayer || imageLayer->id().toString() != layerId_) return false;
+    const QJsonObject current = imageLayer->deformation2DData();
+    if (current == state) return true; // The editing path applies before pushing its command.
+    if (current != expected) return false;
     if (tool_) {
       const auto id = imageLayer->id();
-      if (!tool_->restoreLayerData(id, state, imageLayer)) return false;
+      if (!tool_->restoreLayerData(id, state, imageLayer) ||
+          imageLayer->deformation2DData() != state) {
+        tool_->restoreLayerData(id, expected, imageLayer);
+        return false;
+      }
     } else {
       imageLayer->setDeformation2DData(state);
-      if (imageLayer->deformation2DData() != state) return false;
+      if (imageLayer->deformation2DData() != state) {
+        imageLayer->setDeformation2DData(expected);
+        return false;
+      }
     }
     if (auto* manager = UndoManager::instance()) manager->notifyAnythingChanged();
     return true;
@@ -175,6 +238,12 @@ public:
     lastOperationSucceeded_ = apply(after_, afterPosition_);
   }
   bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+  QStringList collaborationTargetLayerIds() const override {
+    return layerId_.isNil() ? QStringList{} : QStringList{layerId_.toString()};
+  }
+  bool collaborationTargetScopeResolved() const override {
+    return !layerId_.isNil();
+  }
   QString label() const override { return QStringLiteral("Set Deformer Keyframe"); }
 private:
   bool apply(const QJsonObject& snapshot, const QPointF& position) {

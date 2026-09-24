@@ -82,6 +82,31 @@ public:
     // manager must not invoke a second inverse operation in that case.
     virtual bool handlesFailedOperationCompensation() const { return false; }
     virtual QString label() const { return QStringLiteral("Command"); }
+    // Layer identities allow collaboration lock guards to cover local undo,
+    // redo, macros, and new edits at the manager boundary. Commands without
+    // layer scope remain unaffected until they opt into this contract.
+    virtual QStringList collaborationTargetLayerIds() const { return {}; }
+    // Effect or project commands may need their owning layer resolved at
+    // runtime. False means their mutation scope is unknown and must fail closed
+    // while a collaboration guard is active.
+    virtual bool collaborationTargetScopeResolved() const { return true; }
+    // A one-child macro may expose its semantic leaf for collaboration
+    // dispatch while retaining the macro as the local undo-history entry.
+    virtual const UndoCommand* collaborationDispatchCommand() const {
+        return this;
+    }
+    // Collaboration wire encoding is separate from durable Undo persistence.
+    // Commands may opt in without claiming to be reloadable history entries.
+    virtual bool buildCollaborationOperation(const QString& action,
+                                            QString& operationType,
+                                            QString& layerId,
+                                            QJsonObject& payload) const {
+        (void)action;
+        (void)operationType;
+        (void)layerId;
+        (void)payload;
+        return false;
+    }
     virtual size_t estimatedMemoryBytes() const { return 1024; }
     // Optional persistence contract. Existing commands remain in-memory until
     // they explicitly opt in by overriding these methods.
@@ -98,6 +123,10 @@ public:
     void undo() override;
     void redo() override;
     bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+    QStringList collaborationTargetLayerIds() const override;
+    bool collaborationTargetScopeResolved() const override {
+        return !collaborationTargetLayerIds().isEmpty();
+    }
     QString label() const override;
     size_t estimatedMemoryBytes() const override;
     QString commandType() const override { return QStringLiteral("SetPropertyCommand"); }
@@ -125,6 +154,10 @@ public:
     void undo() override;
     void redo() override;
     bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+    QStringList collaborationTargetLayerIds() const override;
+    bool collaborationTargetScopeResolved() const override {
+        return !collaborationTargetLayerIds().isEmpty();
+    }
     QString label() const override;
     size_t estimatedMemoryBytes() const override;
     QString commandType() const override { return QStringLiteral("EffectPresetSnapshotCommand"); }
@@ -151,6 +184,10 @@ public:
     void undo() override;
     void redo() override;
     bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+    QStringList collaborationTargetLayerIds() const override;
+    bool collaborationTargetScopeResolved() const override {
+        return !collaborationTargetLayerIds().isEmpty();
+    }
     QString label() const override;
     size_t estimatedMemoryBytes() const override;
     QString commandType() const override { return QStringLiteral("SetEffectPropertyKeyframesCommand"); }
@@ -177,6 +214,10 @@ public:
     void undo() override;
     void redo() override;
     bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+    QStringList collaborationTargetLayerIds() const override;
+    bool collaborationTargetScopeResolved() const override {
+        return !collaborationTargetLayerIds().isEmpty();
+    }
     QString label() const override;
     size_t estimatedMemoryBytes() const override;
     QString commandType() const override { return QStringLiteral("SetEffectPropertyExpressionCommand"); }
@@ -201,6 +242,11 @@ public:
     void undo() override;
     void redo() override;
     bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+    QStringList collaborationTargetLayerIds() const override;
+    bool buildCollaborationOperation(const QString& action,
+                                    QString& operationType,
+                                    QString& layerId,
+                                    QJsonObject& payload) const override;
     QString label() const override;
     QString commandType() const override { return QStringLiteral("AnimationLayerStackSnapshotCommand"); }
     bool canSerialize() const override { return !layerId_.isEmpty() && !layer_.expired(); }
@@ -222,6 +268,11 @@ public:
     void undo() override;
     void redo() override;
     bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+    QStringList collaborationTargetLayerIds() const override { return {layerId_}; }
+    bool buildCollaborationOperation(const QString& action,
+                                    QString& operationType,
+                                    QString& operationLayerId,
+                                    QJsonObject& payload) const override;
     QString label() const override { return QStringLiteral("Edit Cloner Transforms"); }
     size_t estimatedMemoryBytes() const override;
     QString commandType() const override {
@@ -248,6 +299,7 @@ public:
     void undo() override;
     void redo() override;
     bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+    QStringList collaborationTargetLayerIds() const override { return {layerId_}; }
     QString label() const override {
         return QStringLiteral("Edit Layer Components");
     }
@@ -275,6 +327,7 @@ public:
     void undo() override;
     void redo() override;
     bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+    QStringList collaborationTargetLayerIds() const override { return {layerId_}; }
     QString label() const override {
         return QStringLiteral("Edit Clone Effectors");
     }
@@ -305,6 +358,10 @@ public:
     void undo() override;
     void redo() override;
     bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+    QStringList collaborationTargetLayerIds() const override;
+    bool collaborationTargetScopeResolved() const override {
+        return !collaborationTargetLayerIds().isEmpty();
+    }
     QString label() const override;
     size_t estimatedMemoryBytes() const override;
     QString commandType() const override { return QStringLiteral("EffectModulationSnapshotCommand"); }
@@ -330,6 +387,11 @@ public:
     void undo() override;
     void redo() override;
     bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+    QStringList collaborationTargetLayerIds() const override { return {layerId_}; }
+    bool buildCollaborationOperation(const QString& action,
+                                    QString& operationType,
+                                    QString& layerId,
+                                    QJsonObject& payload) const override;
     QString label() const override;
     size_t estimatedMemoryBytes() const override;
     QString commandType() const override { return QStringLiteral("LayerModulationSnapshotCommand"); }
@@ -364,6 +426,7 @@ public:
     void undo() override;
     void redo() override;
     bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+    QStringList collaborationTargetLayerIds() const override { return {layerId_}; }
     QString label() const override;
     size_t estimatedMemoryBytes() const override;
     QString commandType() const override { return QStringLiteral("LayerAutomationClipInstancesCommand"); }
@@ -387,6 +450,11 @@ public:
     void undo() override;
     void redo() override;
     bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+    QStringList collaborationTargetLayerIds() const override { return {layerId_}; }
+    bool buildCollaborationOperation(const QString& action,
+                                    QString& operationType,
+                                    QString& operationLayerId,
+                                    QJsonObject& payload) const override;
     QString label() const override;
     size_t estimatedMemoryBytes() const override;
     QString commandType() const override { return QStringLiteral("MoveLayerCommand"); }
@@ -398,7 +466,12 @@ private:
     QString layerId_;
     float dx_, dy_;
     int64_t frame_;
+    float beforeX_ = 0.0f;
+    float beforeY_ = 0.0f;
+    bool positionSnapshotValid_ = false;
     bool lastOperationSucceeded_ = true;
+    bool applyPosition(float expectedX, float expectedY,
+                       float valueX, float valueY);
 };
 
 class MoveMaskCommand : public UndoCommand {
@@ -407,6 +480,7 @@ public:
     void undo() override;
     void redo() override;
     bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+    QStringList collaborationTargetLayerIds() const override { return {layerId_}; }
     QString label() const override;
     size_t estimatedMemoryBytes() const override;
     QString commandType() const override { return QStringLiteral("MoveMaskCommand"); }
@@ -430,6 +504,14 @@ public:
     void undo() override;
     void redo() override;
     bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+    // Existing layers whose references this command removes need locks. The
+    // new layer itself has no room lock to acquire yet.
+    QStringList collaborationTargetLayerIds() const override;
+    bool collaborationTargetScopeResolved() const override { return true; }
+    bool buildCollaborationOperation(const QString& action,
+                                    QString& operationType,
+                                    QString& layerId,
+                                    QJsonObject& payload) const override;
     QString label() const override;
     size_t estimatedMemoryBytes() const override;
     QString commandType() const override { return QStringLiteral("AddLayerCommand"); }
@@ -443,6 +525,9 @@ private:
     QString layerId_;
     bool atTop_;
     int savedIndex_ = -1;
+    QString leftNeighborLayerId_;
+    QString rightNeighborLayerId_;
+    bool hasCollaborationAnchors_ = false;
     std::vector<std::pair<ArtifactAbstractLayerPtr,
                           std::vector<LayerMatteReference>>>
         removedMatteReferences_;
@@ -458,6 +543,7 @@ public:
     void undo() override;
     void redo() override;
     bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+    QStringList collaborationTargetLayerIds() const override { return {layerId_}; }
     QString label() const override { return QStringLiteral("Add Layer Effect"); }
     size_t estimatedMemoryBytes() const override;
     QString commandType() const override {
@@ -483,6 +569,7 @@ public:
     void undo() override;
     void redo() override;
     bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+    QStringList collaborationTargetLayerIds() const override;
     QString label() const override;
     size_t estimatedMemoryBytes() const override;
     QString commandType() const override { return QStringLiteral("RemoveLayerCommand"); }
@@ -536,6 +623,7 @@ public:
     void undo() override;
     void redo() override;
     bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+    QStringList collaborationTargetLayerIds() const override { return {layerId_}; }
     QString label() const override;
     QString commandType() const override { return QStringLiteral("MaskEditCommand"); }
     bool canSerialize() const override { return !layerId_.isEmpty() && !layer_.expired(); }
@@ -557,6 +645,7 @@ public:
     void undo() override;
     void redo() override;
     bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+    QStringList collaborationTargetLayerIds() const override { return {layerId_}; }
     QString label() const override;
     size_t estimatedMemoryBytes() const override;
     QString commandType() const override { return QStringLiteral("ChangeLayerMatteReferencesCommand"); }
@@ -583,6 +672,7 @@ public:
     void undo() override;
     void redo() override;
     bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+    QStringList collaborationTargetLayerIds() const override { return {layerId_}; }
     QString label() const override;
     size_t estimatedMemoryBytes() const override;
     QString commandType() const override { return QStringLiteral("SetLayerPropertyKeyframesCommand"); }
@@ -611,6 +701,7 @@ public:
     void undo() override;
     void redo() override;
     bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+    QStringList collaborationTargetLayerIds() const override { return {layerId_}; }
     QString label() const override;
     size_t estimatedMemoryBytes() const override;
     QString commandType() const override { return QStringLiteral("SetLayerPropertyValueCommand"); }
@@ -637,6 +728,11 @@ public:
     void undo() override;
     void redo() override;
     bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+    QStringList collaborationTargetLayerIds() const override { return {layerId_}; }
+    bool buildCollaborationOperation(const QString& action,
+                                    QString& operationType,
+                                    QString& operationLayerId,
+                                    QJsonObject& payload) const override;
     QString label() const override;
     size_t estimatedMemoryBytes() const override;
     QString commandType() const override { return QStringLiteral("SetAudioDeClickRangesCommand"); }
@@ -662,6 +758,7 @@ public:
     void undo() override;
     void redo() override;
     bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+    QStringList collaborationTargetLayerIds() const override { return {layerId_}; }
     QString label() const override;
     size_t estimatedMemoryBytes() const override;
     QString commandType() const override { return QStringLiteral("SetLayerPropertyExpressionCommand"); }
@@ -687,6 +784,7 @@ public:
     void undo() override;
     void redo() override;
     bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+    QStringList collaborationTargetLayerIds() const override { return {layerId_}; }
     QString label() const override;
     size_t estimatedMemoryBytes() const override;
     QString commandType() const override { return QStringLiteral("SetTextLayerTextCommand"); }
@@ -714,6 +812,11 @@ public:
     size_t estimatedMemoryBytes() const override;
     QString commandType() const override { return QStringLiteral("SetTextAnimatorStackCommand"); }
     bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+    QStringList collaborationTargetLayerIds() const override { return {layerId_}; }
+    bool buildCollaborationOperation(const QString& action,
+                                    QString& operationType,
+                                    QString& layerId,
+                                    QJsonObject& payload) const override;
     bool canSerialize() const override { return !layerId_.isEmpty() && !layer_.expired(); }
     QJsonObject serialize() const override;
     bool deserialize(const QJsonObject& data) override;
@@ -736,6 +839,7 @@ public:
     void undo() override;
     void redo() override;
     bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+    QStringList collaborationTargetLayerIds() const override { return {layerId_}; }
     QString label() const override;
     size_t estimatedMemoryBytes() const override;
     QString commandType() const override { return QStringLiteral("ReplaceLayerSourceCommand"); }
@@ -776,6 +880,10 @@ public:
     void undo() override;
     void redo() override;
     bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+    QStringList collaborationTargetLayerIds() const override;
+    bool collaborationTargetScopeResolved() const override {
+        return !collaborationTargetLayerIds().isEmpty();
+    }
     QString label() const override;
     size_t estimatedMemoryBytes() const override;
     QString commandType() const override { return QStringLiteral("SetEffectMaskImagesCommand"); }
@@ -798,6 +906,11 @@ public:
     void undo() override;
     void redo() override;
     bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+    QStringList collaborationTargetLayerIds() const override { return {layerId_}; }
+    bool buildCollaborationOperation(const QString& action,
+                                     QString& operationType,
+                                     QString& layerId,
+                                     QJsonObject& payload) const override;
     QString label() const override;
     size_t estimatedMemoryBytes() const override;
     QString commandType() const override { return QStringLiteral("MoveLayerIndexCommand"); }
@@ -821,6 +934,11 @@ public:
     void undo() override;
     void redo() override;
     bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+    QStringList collaborationTargetLayerIds() const override { return {layerId_}; }
+    bool buildCollaborationOperation(const QString& action,
+                                     QString& operationType,
+                                     QString& layerId,
+                                     QJsonObject& payload) const override;
     QString label() const override;
     size_t estimatedMemoryBytes() const override;
     QString commandType() const override { return QStringLiteral("RenameLayerCommand"); }
@@ -884,6 +1002,11 @@ public:
     void undo() override;
     void redo() override;
     bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+    QStringList collaborationTargetLayerIds() const override;
+    bool buildCollaborationOperation(const QString& action,
+                                    QString& operationType,
+                                    QString& layerId,
+                                    QJsonObject& payload) const override;
     QString label() const override;
     size_t estimatedMemoryBytes() const override;
     QString commandType() const override { return QStringLiteral("ChangeLayerParentCommand"); }
@@ -1180,6 +1303,7 @@ public:
     QJsonObject serialize() const override;
     bool deserialize(const QJsonObject& data) override;
     bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+    QStringList collaborationTargetLayerIds() const override;
 private:
     std::vector<AlignLayerSnapshot> snapshots_;
     QString compositionId_;
@@ -1200,6 +1324,11 @@ public:
     QJsonObject serialize() const override;
     bool deserialize(const QJsonObject& data) override;
     bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+    QStringList collaborationTargetLayerIds() const override { return {layerId_}; }
+    bool buildCollaborationOperation(const QString& action,
+                                    QString& operationType,
+                                    QString& layerId,
+                                    QJsonObject& payload) const override;
 private:
     ArtifactAbstractLayerWeak layer_;
     QString layerId_;
@@ -1221,6 +1350,11 @@ public:
     QJsonObject serialize() const override;
     bool deserialize(const QJsonObject& data) override;
     bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+    QStringList collaborationTargetLayerIds() const override { return {layerId_}; }
+    bool buildCollaborationOperation(const QString& action,
+                                    QString& operationType,
+                                    QString& layerId,
+                                    QJsonObject& payload) const override;
 private:
     ArtifactAbstractLayerWeak layer_;
     QString layerId_;
@@ -1245,6 +1379,7 @@ public:
     QJsonObject serialize() const override;
     bool deserialize(const QJsonObject& data) override;
     bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+    QStringList collaborationTargetLayerIds() const override { return {layerId_}; }
 private:
     ArtifactAbstractLayerWeak layer_;
     QString layerId_;
@@ -1273,6 +1408,7 @@ public:
     QJsonObject serialize() const override;
     bool deserialize(const QJsonObject& data) override;
     bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+    QStringList collaborationTargetLayerIds() const override;
 
     // レイヤー単位の transform プロパティ snapshot。
     // propertyPath → keyframe 列。非アニメーション値は空 keyframe 列 + currentValue で表現。
@@ -1305,6 +1441,11 @@ public:
     void undo() override;
     void redo() override;
     bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+    QStringList collaborationTargetLayerIds() const override { return {layerId_}; }
+    bool buildCollaborationOperation(const QString& action,
+                                    QString& operationType,
+                                    QString& layerId,
+                                    QJsonObject& payload) const override;
     QString label() const override;
     size_t estimatedMemoryBytes() const override;
     QString commandType() const override { return QStringLiteral("SetLayerVisibilityCommand"); }
@@ -1325,6 +1466,11 @@ public:
     void undo() override;
     void redo() override;
     bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+    QStringList collaborationTargetLayerIds() const override { return {layerId_}; }
+    bool buildCollaborationOperation(const QString& action,
+                                    QString& operationType,
+                                    QString& layerId,
+                                    QJsonObject& payload) const override;
     QString label() const override;
     size_t estimatedMemoryBytes() const override;
     QString commandType() const override { return QStringLiteral("SetLayerLockCommand"); }
@@ -1345,6 +1491,11 @@ public:
     void undo() override;
     void redo() override;
     bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+    QStringList collaborationTargetLayerIds() const override { return {layerId_}; }
+    bool buildCollaborationOperation(const QString& action,
+                                    QString& operationType,
+                                    QString& layerId,
+                                    QJsonObject& payload) const override;
     QString label() const override;
     size_t estimatedMemoryBytes() const override;
     QString commandType() const override { return QStringLiteral("SetLayerSoloCommand"); }
@@ -1365,6 +1516,11 @@ public:
     void undo() override;
     void redo() override;
     bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+    QStringList collaborationTargetLayerIds() const override { return {layerId_}; }
+    bool buildCollaborationOperation(const QString& action,
+                                    QString& operationType,
+                                    QString& layerId,
+                                    QJsonObject& payload) const override;
     QString label() const override;
     size_t estimatedMemoryBytes() const override;
     QString commandType() const override { return QStringLiteral("SetLayerShyCommand"); }
@@ -1385,6 +1541,11 @@ public:
     void undo() override;
     void redo() override;
     bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+    QStringList collaborationTargetLayerIds() const override { return {layerId_}; }
+    bool buildCollaborationOperation(const QString& action,
+                                    QString& operationType,
+                                    QString& layerId,
+                                    QJsonObject& payload) const override;
     QString label() const override;
     size_t estimatedMemoryBytes() const override;
     QString commandType() const override { return QStringLiteral("ChangeLayerBlendModeCommand"); }
@@ -1409,6 +1570,8 @@ public:
     void redo() override;
     bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
     bool handlesFailedOperationCompensation() const override { return true; }
+    QStringList collaborationTargetLayerIds() const override;
+    const UndoCommand* collaborationDispatchCommand() const override;
     QString label() const override;
     size_t estimatedMemoryBytes() const override;
     QString commandType() const override { return QStringLiteral("MacroUndoCommand"); }
@@ -1447,6 +1610,16 @@ public:
     using LayerResolver = std::function<ArtifactAbstractLayerPtr(const QString&)>;
     using CompositionResolver = std::function<ArtifactCompositionPtr(const QString&)>;
     using InOutPointsResolver = std::function<ArtifactInOutPoints*()>;
+    using LayerMutationGuard =
+        std::function<bool(const QStringList&, QString& rejectionReason)>;
+    struct CollaborationEditDispatch {
+        bool accepted = false;
+        QString clientId;
+        qint64 sequence = -1;
+    };
+    using CollaborationEditCallback =
+        std::function<CollaborationEditDispatch(const UndoCommand&,
+                                               const QString&)>;
     enum class OffloadPolicy { Never, OnPressure, Always };
     struct UndoBudget {
         size_t maxEntryCount = 100;
@@ -1458,6 +1631,55 @@ public:
     // Executes and retains cmd. Returns false when the budget rejects it or
     // the command reports that its initial redo did not succeed.
     bool push(std::unique_ptr<UndoCommand> cmd);
+    void setLayerMutationGuard(LayerMutationGuard guard);
+    bool areLayerMutationsAllowed(const QStringList& layerIds,
+                                  QString* rejectionReason = nullptr) const;
+    void setCollaborationEditCallback(CollaborationEditCallback callback);
+    bool acknowledgeCollaborativeOperation(const QString& clientId,
+                                           qint64 sequence);
+    bool rejectCollaborativeOperation(const QString& clientId,
+                                      qint64 sequence);
+    bool hasPendingCollaborativeOperation() const;
+    bool pendingCollaborativeOperationIdentity(QString& clientId,
+                                               qint64& sequence) const;
+    bool applyCollaborativePropertySet(const QString& layerId,
+                                       const QString& propertyPath,
+                                       const QVariant& expectedValue,
+                                       const QVariant& value);
+    bool applyCollaborativePropertyBatch(const QJsonObject& payload);
+    bool applyCollaborativePropertyKeyframes(const QString& layerId,
+                                             const QJsonObject& payload);
+    bool applyCollaborativePropertyExpression(const QString& layerId,
+                                              const QJsonObject& payload);
+    bool applyCollaborativeLayerComponents(const QString& layerId,
+                                            const QJsonObject& payload);
+    bool applyCollaborativeLayerStack(const QString& layerId,
+                                      const QJsonObject& payload);
+    bool applyCollaborativeLayerAudioDeClickRanges(const QString& layerId,
+                                                   const QJsonObject& payload);
+    bool applyCollaborativeLayerAnimationStack(const QString& layerId,
+                                               const QJsonObject& payload);
+    bool applyCollaborativeLayerText(const QString& layerId,
+                                    const QJsonObject& payload);
+    bool applyCollaborativeLayerRename(const QString& layerId,
+                                       const QJsonObject& payload);
+    bool applyCollaborativeLayerVariant(const QString& layerId,
+                                        const QJsonObject& payload);
+    bool applyCollaborativeLayerBlendMode(const QString& layerId,
+                                          const QJsonObject& payload);
+    bool applyCollaborativeLayerOpacity(const QString& layerId,
+                                        const QJsonObject& payload);
+    bool applyCollaborativeLayerVisibility(const QString& layerId,
+                                           const QJsonObject& payload);
+    bool applyCollaborativeLayerFlag(const QString& layerId,
+                                     const QJsonObject& payload);
+    bool applyCollaborativeLayerEditLock(const QString& layerId,
+                                         const QJsonObject& payload);
+    bool applyCollaborativeLayerMembership(const QString& operationType,
+                                           const QString& layerId,
+                                           const QJsonObject& payload);
+    bool applyCollaborativeLayerParent(const QString& layerId,
+                                       const QJsonObject& payload);
     // Records 5–10 serializable actions as a portable MacroUndoCommand payload.
     bool beginActionRecording(const QString& label);
     QJsonObject endActionRecording();
@@ -1513,6 +1735,7 @@ public:
     void notifyAnythingChanged();
 
 private:
+    bool isLayerMutationAllowed(const UndoCommand& command) const;
     class Impl;
     Impl* impl_;
 };

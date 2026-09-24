@@ -5914,6 +5914,11 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
         if (!layer || !mutation) {
           return false;
         }
+        auto *manager = UndoManager::instance();
+        if (manager && !manager->areLayerMutationsAllowed(
+                           {layer->id().toQString()})) {
+          return false;
+        }
         const auto before = layer->componentDescriptorSnapshot();
         mutation();
         const auto after = layer->componentDescriptorSnapshot();
@@ -5922,7 +5927,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
         }
         auto command = std::make_unique<LayerComponentDescriptorSnapshotCommand>(
             layer, before, after);
-        if (auto *manager = UndoManager::instance()) {
+        if (manager) {
           if (manager->push(std::move(command))) {
             return true;
           }
@@ -6102,6 +6107,11 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
         if (!cloneLayer) {
           return false;
         }
+        auto *manager = UndoManager::instance();
+        if (manager && !manager->areLayerMutationsAllowed(
+                           {layer->id().toQString()})) {
+          return false;
+        }
         const auto before = cloneLayer->effectorStackSnapshot();
         mutation(*cloneLayer);
         const auto after = cloneLayer->effectorStackSnapshot();
@@ -6110,7 +6120,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
         }
         auto command = std::make_unique<CloneEffectorStackSnapshotCommand>(
             layer, before, after);
-        if (auto *manager = UndoManager::instance()) {
+        if (manager) {
           if (manager->push(std::move(command))) {
             return true;
           }
@@ -6363,10 +6373,15 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   auto applyClonerTransformMutation =
       [](const ArtifactAbstractLayerPtr &layer, const QString &label,
          const std::function<void()> &mutation) {
-        if (!layer || !mutation) {
-          return false;
-        }
-        const auto before = layer->clonerTransformsSnapshot();
+      if (!layer || !mutation) {
+        return false;
+      }
+      auto *manager = UndoManager::instance();
+      if (manager && !manager->areLayerMutationsAllowed(
+                         {layer->id().toQString()})) {
+        return false;
+      }
+      const auto before = layer->clonerTransformsSnapshot();
         mutation();
         const auto after = layer->clonerTransformsSnapshot();
         if (before == after) {
@@ -6374,7 +6389,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
         }
         auto command = std::make_unique<ClonerTransformStackSnapshotCommand>(
             layer, before, after);
-        if (auto *manager = UndoManager::instance()) {
+      if (manager) {
           if (manager->push(std::move(command))) {
             return true;
           }

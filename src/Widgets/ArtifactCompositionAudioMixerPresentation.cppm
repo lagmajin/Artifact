@@ -84,6 +84,9 @@ public:
   void undo() override { lastOperationSucceeded_ = apply(before_, after_); }
   void redo() override { lastOperationSucceeded_ = apply(after_, before_); }
   bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+  // The mixer snapshot spans the composition and has no layer-scoped lock
+  // identity yet. Collaboration must fail closed until that scope is modeled.
+  bool collaborationTargetScopeResolved() const override { return false; }
   QString label() const override { return label_; }
 
 private:

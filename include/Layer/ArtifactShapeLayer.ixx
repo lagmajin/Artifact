@@ -253,6 +253,8 @@ public:
   void clearCustomPolygonPoints();
   std::vector<QPointF> customPolygonPoints() const;
   bool customPolygonClosed() const;
+  QJsonObject customPolygonSnapshot() const;
+  bool restoreCustomPolygonSnapshot(const QJsonObject& snapshot);
 
   // Bezier vertex path — Phase 5
   // Path keyframe animation. Vertices are stored per frame on the
@@ -267,6 +269,10 @@ public:
   void clearCustomPath();
   std::vector<CustomPathVertex> customPathVertices() const;
   bool customPathClosed() const;
+  QJsonObject customPathSnapshot() const;
+  bool restoreCustomPathSnapshot(const QJsonObject& snapshot);
+  QJsonObject customGeometrySnapshot() const;
+  bool restoreCustomGeometrySnapshot(const QJsonObject& snapshot);
   ArtifactCore::PathFillRule customPathFillRule() const;
   void setCustomPathFillRule(ArtifactCore::PathFillRule rule);
 
@@ -289,6 +295,8 @@ public:
    ShapeContent shapeContentAt(int index) const;
    bool removeShapeContentAt(int index);
    void clearShapeContents();
+   QJsonObject shapeContentsSnapshot() const;
+   bool restoreShapeContentsSnapshot(const QJsonObject& snapshot);
    ShapeContent makeContentFromLegacy() const;
 
    // Active content index for per-content editing proxying.

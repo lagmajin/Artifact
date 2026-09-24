@@ -64,6 +64,7 @@ class ArtifactTimelineWidget :public QWidget {
   ~ArtifactTimelineWidget();
   void update();
   void setComposition(const CompositionID& id);
+  void setCollaborationLockedLayers(const QVector<LayerID>& layerIds);
   // Restrict curve/timeline property payloads to explicitly selected channels.
   // An empty set keeps the existing category/search behaviour.
   void setSelectedPropertyPaths(const QSet<QString>& propertyPaths);

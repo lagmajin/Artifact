@@ -1496,10 +1496,12 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
       // Let's assume MoveLayerCommand(layer, dx, dy) adds dx, dy to OLD values on Redo.
       // So we must pass the actual delta we moved.
       
-      auto cmd = std::make_unique<MoveLayerCommand>(layer, (float)totalDelta.x(), (float)totalDelta.y(), comp->framePosition().framePosition());
-      
       // Revert the real-time move before pushing so redo() applies it cleanly
       t3.setPosition(t0, t3.positionX() - (float)totalDelta.x(), t3.positionY() - (float)totalDelta.y());
+      auto cmd = std::make_unique<MoveLayerCommand>(
+          layer, static_cast<float>(totalDelta.x()),
+          static_cast<float>(totalDelta.y()),
+          comp->framePosition().framePosition());
       bool pushed = false;
       auto* manager = UndoManager::instance();
       if (manager) {

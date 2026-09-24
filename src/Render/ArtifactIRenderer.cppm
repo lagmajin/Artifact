@@ -1755,6 +1755,11 @@ namespace {
     cmdBuf_.targetRTV = pRTV;
     ParticlePkt pkt;
     pkt.data = data;
+    // submitParticles() only binds a color RTV (SetRenderTargets depth=nullptr).
+    // A PSO with DepthEnable and no DSV is undefined and can make every
+    // billboard fail the depth test (layer appears completely invisible).
+    pkt.data.options.depthTest = false;
+    pkt.data.options.depthWrite = false;
     pkt.viewMatrix = view;
     pkt.projMatrix = proj;
     cmdBuf_.append(std::move(pkt));

@@ -67,13 +67,15 @@ void main(uint3 dtid : SV_DispatchThreadID)
 
 static const int kNumAlgorithms = 8;
 
-static const float kBayer2x2[4] = {0.0f, 2.0f, 3.0f, 1.0f};
-static const float kBayer4x4[16] = {
-     0.0f,  8.0f,  2.0f, 10.0f,
-    12.0f,  4.0f, 14.0f,  6.0f,
-     3.0f, 11.0f,  1.0f,  9.0f,
-    15.0f,  7.0f, 13.0f,  5.0f
-};
+int bayerRank(int x, int y, int size) {
+    int rank = 0;
+    for (int bit = 0; (1 << bit) < size; ++bit) {
+        const int xBit = (x >> bit) & 1;
+        const int yBit = (y >> bit) & 1;
+        rank = rank * 4 + ((xBit ^ yBit) * 2 + yBit);
+    }
+    return rank;
+}
 
 void quantizeChannel(float& ch, float levels) {
     ch = std::round(ch * levels) / levels;
@@ -105,13 +107,12 @@ public:
             algorithm_ == DitherAlgorithm::Bayer8x8 ||
             algorithm_ == DitherAlgorithm::Bayer16x16) {
             int bayerSize = 2;
-            const float* bayerMat = kBayer2x2;
-            int bayerN = 2;
-            if (algorithm_ == DitherAlgorithm::Bayer4x4) { bayerSize = 4; bayerMat = kBayer4x4; bayerN = 4; }
-            else if (algorithm_ == DitherAlgorithm::Bayer8x8) { bayerSize = 8; bayerN = 8; }
-            else if (algorithm_ == DitherAlgorithm::Bayer16x16) { bayerSize = 16; bayerN = 16; }
-            float bayerScale = 1.0f / static_cast<float>(bayerN * bayerN);
-            float bayerOffset = 0.5f / static_cast<float>(bayerN * bayerN);
+            if (algorithm_ == DitherAlgorithm::Bayer4x4) bayerSize = 4;
+            else if (algorithm_ == DitherAlgorithm::Bayer8x8) bayerSize = 8;
+            else if (algorithm_ == DitherAlgorithm::Bayer16x16) bayerSize = 16;
+            const int bayerEntryCount = bayerSize * bayerSize;
+            const float bayerScale = 1.0f / static_cast<float>(bayerEntryCount);
+            const float bayerOffset = 0.5f / static_cast<float>(bayerEntryCount);
 
             ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
                 float* row = dstPixels + static_cast<size_t>(y) * static_cast<size_t>(w) * 4u;
@@ -119,9 +120,8 @@ public:
                     float* pixel = row + static_cast<size_t>(x) * 4u;
                     int bx = int((x * patternScale_) / std::max(1.0f, w * 0.01f) * bayerSize) % bayerSize;
                     int by = int((y * patternScale_) / std::max(1.0f, h * 0.01f) * bayerSize) % bayerSize;
-                    int bi = (bayerSize > 2) ? (by * bayerSize + bx) : ((by & 1) * 2 + (bx & 1));
-                    if (bi >= bayerN * bayerN) bi %= (bayerN * bayerN);
-                    float threshold = bayerMat[bi % (bayerN * bayerN)] * bayerScale + bayerOffset;
+                    const int bi = bayerRank(bx, by, bayerSize);
+                    float threshold = static_cast<float>(bi) * bayerScale + bayerOffset;
                     threshold = (threshold - 0.5f) * (1.0f - amount_) * 2.0f + 0.5f;
                     float quantized = std::floor(pixel[0] * levelsPerChannel + threshold) / levelsPerChannel;
                     pixel[0] = std::clamp(quantized, 0.0f, 1.0f);

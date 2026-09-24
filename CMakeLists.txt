@@ -227,6 +227,19 @@ foreach(_artifact_source IN LISTS APP_IMPL)
 endforeach()
 set(APP_IMPL ${_artifact_normalized_app_impl})
 
+# CMake's Ninja dyndep requires module partitions to belong to a CXX_MODULES
+# file set even though they are private implementation units rather than
+# exported module interfaces.
+set(_artifact_module_partitions)
+foreach(_artifact_impl IN LISTS APP_IMPL)
+    file(STRINGS "${_artifact_impl}" _artifact_partition_declarations
+        REGEX "^[ \t]*module[ \t]+[A-Za-z_][A-Za-z0-9_.]*:")
+    if(_artifact_partition_declarations)
+        list(APPEND _artifact_module_partitions "${_artifact_impl}")
+    endif()
+endforeach()
+list(REMOVE_ITEM APP_IMPL ${_artifact_module_partitions})
+
 # Source-only module units are intentionally kept in the generated
 # implementation manifest, but CMake/MSVC also requires an `export module`
 # provider to be present in a CXX_MODULES file set.  Promote only those units
@@ -1010,11 +1023,7 @@ target_include_directories(ArtifactEffectContract PRIVATE
 )
 target_compile_definitions(ArtifactEffectContract PRIVATE LIBRARY_DLL_MODE=1)
 target_link_libraries(ArtifactEffectContract PUBLIC
-    ArtifactCore
     ArtifactCoreAudio
-    ArtifactCoreEnvironment
-    ArtifactRender
-    ArtifactRenderSupport
     ArtifactRenderSupportContracts)
 
 set(ARTIFACT_EFFECTS_MODULES
@@ -2628,10 +2637,12 @@ else()
     set_property(TARGET Artifact PROPERTY CXX_MODULE_STD OFF)
 endif()
 
-target_sources(Artifact
-    PRIVATE ${APP_IMPL}
-    PUBLIC FILE_SET CXX_MODULES FILES ${APP_MODULES}
-)
+target_sources(Artifact PRIVATE ${APP_IMPL})
+if(_artifact_module_partitions)
+    target_sources(Artifact PRIVATE FILE_SET artifact_module_partitions
+        TYPE CXX_MODULES FILES ${_artifact_module_partitions})
+endif()
+target_sources(Artifact PUBLIC FILE_SET CXX_MODULES FILES ${APP_MODULES})
 
 # Strict MSVC-cl only flags
 if(ARTIFACT_COMPILER_MSVC_CL)

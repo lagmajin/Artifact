@@ -23,6 +23,8 @@ module;
 #include <QPolygonF>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonValue>
 #include <QDebug>
 #include <cmath>
 #include <QPen>
@@ -2660,6 +2662,45 @@ void ArtifactShapeLayer::setCustomPolygonPoints(const std::vector<QPointF>& poin
 void ArtifactShapeLayer::clearCustomPolygonPoints() { if (impl_->customPolygonPoints_.empty()) return; impl_->customPolygonPoints_.clear(); impl_->customPolygonClosed_ = true; impl_->markDirty(); impl_->localBoundsCacheDirty_ = true; impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
 std::vector<QPointF> ArtifactShapeLayer::customPolygonPoints() const { return impl_->customPolygonPoints_; }
 bool ArtifactShapeLayer::customPolygonClosed() const { return impl_->customPolygonClosed_; }
+QJsonObject ArtifactShapeLayer::customPolygonSnapshot() const {
+  QJsonArray points;
+  for (const auto& point : impl_->customPolygonPoints_)
+    points.append(QJsonArray{point.x(), point.y()});
+  return QJsonObject{{QStringLiteral("points"), points},
+                     {QStringLiteral("closed"), impl_->customPolygonClosed_}};
+}
+bool ArtifactShapeLayer::restoreCustomPolygonSnapshot(
+    const QJsonObject& snapshot) {
+  if (snapshot.size() != 2 ||
+      !snapshot.value(QStringLiteral("closed")).isBool()) return false;
+  const QJsonValue pointsValue = snapshot.value(QStringLiteral("points"));
+  if (!pointsValue.isArray() ||
+      pointsValue.toArray().size() > kMaxShapePathVertices) return false;
+  std::vector<QPointF> points;
+  points.reserve(static_cast<size_t>(pointsValue.toArray().size()));
+  for (const QJsonValue& pointValue : pointsValue.toArray()) {
+    if (!pointValue.isArray() || pointValue.toArray().size() != 2 ||
+        !pointValue.toArray()[0].isDouble() ||
+        !pointValue.toArray()[1].isDouble()) return false;
+    const QPointF point(pointValue.toArray()[0].toDouble(),
+                        pointValue.toArray()[1].toDouble());
+    if (!isSupportedShapePoint(point)) return false;
+    points.push_back(point);
+  }
+  const QJsonObject previous = customPolygonSnapshot();
+  setCustomPolygonPoints(points, snapshot.value(QStringLiteral("closed")).toBool());
+  if (customPolygonSnapshot() == snapshot) return true;
+  std::vector<QPointF> previousPoints;
+  const QJsonArray previousArray = previous.value(QStringLiteral("points")).toArray();
+  previousPoints.reserve(static_cast<size_t>(previousArray.size()));
+  for (const QJsonValue& pointValue : previousArray) {
+    const QJsonArray pair = pointValue.toArray();
+    previousPoints.emplace_back(pair[0].toDouble(), pair[1].toDouble());
+  }
+  setCustomPolygonPoints(previousPoints,
+                         previous.value(QStringLiteral("closed")).toBool());
+  return false;
+}
 
 // Phase 3: Stroke style setters/getters
 void ArtifactShapeLayer::setStrokeCap(StrokeCap cap) {
@@ -2758,6 +2799,100 @@ void ArtifactShapeLayer::clearCustomPath() {
 }
 std::vector<CustomPathVertex> ArtifactShapeLayer::customPathVertices() const { return impl_->customPathVertices_; }
 bool ArtifactShapeLayer::customPathClosed() const { return impl_->customPathClosed_; }
+QJsonObject ArtifactShapeLayer::customPathSnapshot() const {
+  QJsonArray vertices;
+  for (const auto& vertex : impl_->customPathVertices_) {
+    vertices.append(QJsonArray{vertex.pos.x(), vertex.pos.y(),
+                               vertex.inTangent.x(), vertex.inTangent.y(),
+                               vertex.outTangent.x(), vertex.outTangent.y(),
+                               vertex.smooth});
+  }
+  return QJsonObject{{QStringLiteral("vertices"), vertices},
+                     {QStringLiteral("closed"), impl_->customPathClosed_}};
+}
+bool ArtifactShapeLayer::restoreCustomPathSnapshot(const QJsonObject& snapshot) {
+  if (snapshot.size() != 2 ||
+      !snapshot.value(QStringLiteral("closed")).isBool() ||
+      !snapshot.value(QStringLiteral("vertices")).isArray()) return false;
+  const QJsonArray verticesValue = snapshot.value(QStringLiteral("vertices")).toArray();
+  if (verticesValue.size() > kMaxShapePathVertices) return false;
+  std::vector<CustomPathVertex> vertices;
+  vertices.reserve(static_cast<size_t>(verticesValue.size()));
+  for (const QJsonValue& vertexValue : verticesValue) {
+    if (!vertexValue.isArray() || vertexValue.toArray().size() != 7) return false;
+    const QJsonArray fields = vertexValue.toArray();
+    for (int i = 0; i < 6; ++i) {
+      if (!fields[i].isDouble() || !std::isfinite(fields[i].toDouble()) ||
+          std::abs(fields[i].toDouble()) > kMaxShapeCoordinate) return false;
+    }
+    if (!fields[6].isBool()) return false;
+    CustomPathVertex vertex;
+    vertex.pos = QPointF(fields[0].toDouble(), fields[1].toDouble());
+    vertex.inTangent = QPointF(fields[2].toDouble(), fields[3].toDouble());
+    vertex.outTangent = QPointF(fields[4].toDouble(), fields[5].toDouble());
+    vertex.smooth = fields[6].toBool();
+    if (!isSupportedCustomPathVertex(vertex)) return false;
+    vertices.push_back(vertex);
+  }
+  const QJsonObject previous = customPathSnapshot();
+  setCustomPathVertices(vertices, snapshot.value(QStringLiteral("closed")).toBool());
+  if (customPathSnapshot() == snapshot) return true;
+  std::vector<CustomPathVertex> previousVertices;
+  const QJsonArray previousArray = previous.value(QStringLiteral("vertices")).toArray();
+  previousVertices.reserve(static_cast<size_t>(previousArray.size()));
+  for (const QJsonValue& vertexValue : previousArray) {
+    const QJsonArray fields = vertexValue.toArray();
+    CustomPathVertex vertex;
+    vertex.pos = QPointF(fields[0].toDouble(), fields[1].toDouble());
+    vertex.inTangent = QPointF(fields[2].toDouble(), fields[3].toDouble());
+    vertex.outTangent = QPointF(fields[4].toDouble(), fields[5].toDouble());
+    vertex.smooth = fields[6].toBool();
+    previousVertices.push_back(vertex);
+  }
+  setCustomPathVertices(previousVertices,
+                        previous.value(QStringLiteral("closed")).toBool());
+  return false;
+}
+QJsonObject ArtifactShapeLayer::customGeometrySnapshot() const {
+  return QJsonObject{{QStringLiteral("polygon"), customPolygonSnapshot()},
+                     {QStringLiteral("path"), customPathSnapshot()}};
+}
+bool ArtifactShapeLayer::restoreCustomGeometrySnapshot(
+    const QJsonObject& snapshot) {
+  if (snapshot.size() != 2 ||
+      !snapshot.value(QStringLiteral("polygon")).isObject() ||
+      !snapshot.value(QStringLiteral("path")).isObject()) return false;
+  const QJsonObject previousPolygon = customPolygonSnapshot();
+  const QJsonObject previousPath = customPathSnapshot();
+  const QJsonObject polygon = snapshot.value(QStringLiteral("polygon")).toObject();
+  const QJsonObject path = snapshot.value(QStringLiteral("path")).toObject();
+  const auto applyGeometry = [&](const QJsonObject& nextPolygon,
+                                 const QJsonObject& nextPath) {
+    const bool hasPolygon = !nextPolygon.value(QStringLiteral("points"))
+                                 .toArray().isEmpty();
+    const bool hasPath = !nextPath.value(QStringLiteral("vertices"))
+                             .toArray().isEmpty();
+    if (hasPolygon && hasPath) return false;
+    if (hasPolygon) {
+      if (!restoreCustomPolygonSnapshot(nextPolygon)) return false;
+      impl_->customPathClosed_ = nextPath.value(QStringLiteral("closed")).toBool();
+    } else if (hasPath) {
+      if (!restoreCustomPathSnapshot(nextPath)) return false;
+      impl_->customPolygonClosed_ =
+          nextPolygon.value(QStringLiteral("closed")).toBool();
+    } else {
+      if (!restoreCustomPolygonSnapshot(nextPolygon) ||
+          !restoreCustomPathSnapshot(nextPath)) return false;
+    }
+    return customPolygonSnapshot() == nextPolygon &&
+           customPathSnapshot() == nextPath;
+  };
+  const bool applied = applyGeometry(polygon, path) &&
+                       customGeometrySnapshot() == snapshot;
+  if (applied) return true;
+  (void)applyGeometry(previousPolygon, previousPath);
+  return false;
+}
 // Parametric-alive: numeric base (type/size/corner/star/polygon) survives
 // vertex editing, so overrides can be dropped without data loss.
 bool ArtifactShapeLayer::hasParametricOverrides() const {
@@ -4710,7 +4845,7 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer,
    drawWithClonerEffect(
        this, lensPass.transform,
         [renderer, impl, this, activeDeformerContext, pointMapper, &processedOperatorPaths, fill, stroke,
-        contentFieldWeight, this, geomAnimated, pathAnimated, lensOpacity = lensPass.opacity](const QMatrix4x4& transform, float weight) {
+        contentFieldWeight, geomAnimated, pathAnimated, lensOpacity = lensPass.opacity](const QMatrix4x4& transform, float weight) {
         const float opacity = this->opacity() * weight * contentFieldWeight * lensOpacity;
         const FloatColor drawFill(fill.r(), fill.g(), fill.b(), fill.a() * opacity);
         const FloatColor drawStroke(stroke.r(), stroke.g(), stroke.b(), stroke.a() * opacity);
@@ -6451,6 +6586,64 @@ static Artifact::ShapeStackNode shapeStackNodeFromJson(const QJsonObject& obj) {
   node.operatorIndex = obj["operatorIndex"].toInt(-1);
   node.enabled = obj["enabled"].toBool(true);
   return node;
+}
+
+QJsonObject ArtifactShapeLayer::shapeContentsSnapshot() const {
+  QJsonArray contents;
+  QJsonArray nodes;
+  if (impl_) {
+    for (const auto& content : impl_->shapeContents_)
+      contents.push_back(shapeContentToJson(content));
+    for (const auto& node : impl_->shapeStackNodes_)
+      nodes.push_back(shapeStackNodeToJson(node));
+  }
+  return {{QStringLiteral("contents"), contents},
+          {QStringLiteral("stackNodes"), nodes},
+          {QStringLiteral("activeContentIndex"),
+           impl_ ? impl_->activeContentIndex_ : -1}};
+}
+
+bool ArtifactShapeLayer::restoreShapeContentsSnapshot(
+    const QJsonObject& snapshot) {
+  if (!impl_) return false;
+  const QJsonValue contentsValue = snapshot.value(QStringLiteral("contents"));
+  const QJsonValue nodesValue = snapshot.value(QStringLiteral("stackNodes"));
+  const QJsonValue activeValue = snapshot.value(QStringLiteral("activeContentIndex"));
+  if (!contentsValue.isArray() || !nodesValue.isArray() ||
+      !activeValue.isDouble() || std::floor(activeValue.toDouble()) != activeValue.toDouble() ||
+      activeValue.toDouble() < -1.0 ||
+      activeValue.toDouble() >= contentsValue.toArray().size() ||
+      contentsValue.toArray().size() > 256 || nodesValue.toArray().size() > 1024 ||
+      QJsonDocument(snapshot).toJson(QJsonDocument::Compact).size() > 262144)
+    return false;
+
+  std::vector<Artifact::ShapeContent> contents;
+  contents.reserve(static_cast<size_t>(contentsValue.toArray().size()));
+  for (const QJsonValue& value : contentsValue.toArray()) {
+    if (!value.isObject()) return false;
+    contents.push_back(shapeContentFromJson(value.toObject()));
+  }
+  std::vector<Artifact::ShapeStackNode> nodes;
+  nodes.reserve(static_cast<size_t>(nodesValue.toArray().size()));
+  for (const QJsonValue& value : nodesValue.toArray()) {
+    if (!value.isObject()) return false;
+    const auto node = shapeStackNodeFromJson(value.toObject());
+    if (!isValidShapeStackNode(node, static_cast<int>(contents.size()),
+                               static_cast<int>(impl_->shapeOperators_.size())))
+      return false;
+    nodes.push_back(node);
+  }
+  const int activeIndex = activeValue.toInt(-1);
+  if (activeIndex < -1 || activeIndex >= static_cast<int>(contents.size()))
+    return false;
+  impl_->shapeContents_ = std::move(contents);
+  impl_->shapeStackNodes_ = std::move(nodes);
+  impl_->activeContentIndex_ = activeIndex;
+  impl_->markDirty();
+  impl_->localBoundsCacheDirty_ = true;
+  impl_->shapeContentCacheDirty_ = true;
+  Q_EMIT changed();
+  return true;
 }
 
 // ---- SVG interop (gap 8) ----

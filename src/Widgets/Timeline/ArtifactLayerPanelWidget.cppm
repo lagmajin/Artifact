@@ -5,6 +5,7 @@ module;
 #include <QAction>
 #include <QActionGroup>
 #include <QPainter>
+#include <QColor>
 #include <QFontMetrics>
 #include <QFont>
 #include <QPalette>
@@ -2502,6 +2503,7 @@ public:
   int contentHeight = kLayerRowHeight;
   int hoveredLayerIndex = -1;
   LayerID selectedLayerId;
+  QSet<LayerID> collaborationLockedLayerIds;
   QString selectedContainerId;
   LayerID selectionAnchorLayerId;
   LayerID selectedMaskLayerId;
@@ -3355,6 +3357,16 @@ void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
   impl_->currentPropertyPath.clear();
   propertyFocusChanged(impl_->selectedLayerId, impl_->currentPropertyPath);
   updateLayout();
+}
+
+void ArtifactLayerPanelWidget::setCollaborationLockedLayers(
+    const QVector<LayerID>& layerIds)
+{
+  impl_->collaborationLockedLayerIds.clear();
+  for (const LayerID& layerId : layerIds) {
+    if (!layerId.isNil()) impl_->collaborationLockedLayerIds.insert(layerId);
+  }
+  update();
 }
 
 void ArtifactLayerPanelWidget::setShyHidden(bool hidden)
@@ -7964,6 +7976,17 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
       }
       textX += kLayerTypeIconSize + kLayerTypeIconGap;
       p.setPen(text);
+      if (impl_->collaborationLockedLayerIds.contains(l->id())) {
+        const int iconX = textX;
+        const int iconY = y + (rowH - 12) / 2;
+        const QColor collaborationLockColor = QColor(235, 170, 78);
+        p.setPen(QPen(collaborationLockColor, 1.5));
+        p.setBrush(Qt::NoBrush);
+        p.drawArc(QRect(iconX + 3, iconY, 8, 8), 0, 180 * 16);
+        p.drawRoundedRect(QRect(iconX + 1, iconY + 5, 12, 8), 1.5, 1.5);
+        p.setPen(text);
+        textX += 16;
+      }
     }
     const bool showInlineCombos = row.kind == RowKind::Layer &&
                                   showLayerMetadata(width());
@@ -8588,6 +8611,12 @@ void ArtifactLayerTimelinePanelWrapper::dropEvent(QDropEvent* event)
    impl_->id = id;
    impl_->panel->setComposition(id);
    impl_->panel->updateLayout();
+  }
+
+  void ArtifactLayerTimelinePanelWrapper::setCollaborationLockedLayers(
+      const QVector<LayerID>& layerIds)
+  {
+   if (impl_ && impl_->panel) impl_->panel->setCollaborationLockedLayers(layerIds);
   }
 
 void ArtifactLayerTimelinePanelWrapper::setFilterText(const QString& text)

@@ -1750,6 +1750,24 @@ SourceCrop ArtifactImageLayer::sourceCrop() const
     return impl_->sourceCrop_;
 }
 
+bool ArtifactImageLayer::restoreSourceCropSnapshot(const QJsonObject& snapshot)
+{
+    const QJsonObject previous = impl_->sourceCrop_.toJson();
+    impl_->sourceCrop_.fromJson(snapshot);
+    if (impl_->sourceCrop_.toJson() != snapshot) {
+        impl_->sourceCrop_.fromJson(previous);
+        (void)getLayerPropertyGroups();
+        return false;
+    }
+
+    // Rebuild the cached property values from the restored model. Animated
+    // properties keep their keyframe-owned values through persistentLayerProperty.
+    (void)getLayerPropertyGroups();
+    setDirty(LayerDirtyFlag::Property);
+    Q_EMIT changed();
+    return true;
+}
+
 QString ArtifactImageLayer::sourceCropSignature() const
 {
     const QRectF rect = impl_->sourceCrop_.cropRect();

@@ -515,7 +515,13 @@ void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
         fps = safeParticleFps(comp->frameRate().framerate());
     }
     // フレーム0でも最低1フレーム分のシミュレーションを走らせて初期パーティクルを生成する
+    const float simulatedFrameTime = safeParticleFrameTime(
+        std::max(int64_t{1}, frameNumber), fps);
     impl_->particleSystem->goToFrame(std::max(int64_t{1}, frameNumber), fps);
+    // goToFrame() above fully re-simulates without touching lastTime. Sync it
+    // so the software path (renderToImage) does not apply a second update
+    // from a stale base time when the GPU entry is skipped.
+    impl_->lastTime = simulatedFrameTime;
 
     // 2. GPU レンダリングパス
     // Diligent 経路が使える場合は billboard 描画を優先し、ここではソフト描画へ落とさない
@@ -537,6 +543,7 @@ void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
             lodData,
             impl_->particleSystem->renderSettings().sortMode,
             impl_->particleSystem->cameraPosition());
+        bool gpuParticleDrawAccepted = false;
         if (!lodData.particles.empty()) {
             // 3D particle layers must not collapse (px, py, vx, vy) through a
             // 2D QTransform — CompositionRenderController bundles the 3D
@@ -562,10 +569,20 @@ void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
                     transformParticleRenderData(lodData, globalTransform, opacity());
                 renderer->drawParticles(renderData);
             }
+            gpuParticleDrawAccepted =
+                renderer->particleDebugState().contains(QStringLiteral("state=queued"));
+        } else {
+            // Refresh empty-state diagnostics so particleDebugState() does not
+            // keep showing a previous layer's queue/skip result.
+            renderer->drawParticles(lodData);
         }
-        const auto size = sourceSize();
-        drawFractureOverlay(renderer, getGlobalTransform4x4(), QSizeF(size.width, size.height), opacity());
-        return;
+        if (gpuParticleDrawAccepted || lodData.particles.empty()) {
+            const auto size = sourceSize();
+            drawFractureOverlay(renderer, getGlobalTransform4x4(), QSizeF(size.width, size.height), opacity());
+            return;
+        }
+        // GPU entry rejected (no-rtv / invalid-viewport / device-null / …).
+        // Fall through so the layer is not left completely blank.
     }
 
     // 3. ソフトウェアフォールバックパス
@@ -575,7 +592,8 @@ void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
         if (auto comp = static_cast<ArtifactAbstractComposition*>(composition())) {
             fallbackFps = safeParticleFps(comp->frameRate().framerate());
         }
-        const float time = safeParticleFrameTime(frameNumber, fallbackFps);
+        const float time = safeParticleFrameTime(
+            std::max(int64_t{1}, frameNumber), fallbackFps);
         impl_->cachedFrame = renderFrame(std::max(1, impl_->width),
                                          std::max(1, impl_->height),
                                          time);
@@ -1540,6 +1558,28 @@ void ArtifactParticleLayer::applyPropertiesFromJson(const QJsonObject& obj)
 
                     emitter->addEffector(std::move(effector));
                 }
+            }
+        }
+        if (restoredEmitterCount <= 0 && impl_->particleSystem
+            && impl_->particleSystem->emitterCount() <= 0) {
+            // A present-but-empty/invalid "emitters" array must not leave the
+            // layer permanently blank after a reload. Build the default emitter
+            // without createParticleSystem() so JSON load does not emit changed().
+            if (auto* emitter = impl_->particleSystem->createEmitter()) {
+                EmitterParams params;
+                params.position = QVector3D(
+                    static_cast<float>(impl_->width) / 2.0f,
+                    static_cast<float>(impl_->height) / 2.0f,
+                    0.0f);
+                params.rate = 100.0f;
+                params.scaleMin = 10.0f;
+                params.scaleMax = 20.0f;
+                params.scaleEndMin = 2.0f;
+                params.scaleEndMax = 5.0f;
+                params.colorStart = QColor(255, 200, 50, 255);
+                params.colorEnd = QColor(255, 50, 0, 0);
+                params.preWarm = true;
+                emitter->setParams(params);
             }
         }
         impl_->rebuildSavedEmitterParamsFromSystem();

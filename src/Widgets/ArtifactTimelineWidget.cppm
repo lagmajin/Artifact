@@ -8752,6 +8752,13 @@ void ArtifactTimelineWidget::setComposition(const CompositionID &id) {
   updateSearchState();
 }
 
+void ArtifactTimelineWidget::setCollaborationLockedLayers(
+    const QVector<LayerID>& layerIds) {
+  if (impl_ && impl_->layerTimelinePanel_) {
+    impl_->layerTimelinePanel_->setCollaborationLockedLayers(layerIds);
+  }
+}
+
 void ArtifactTimelineWidget::setSelectedPropertyPaths(const QSet<QString>& propertyPaths) {
   if (!impl_ || impl_->selectedPropertyPaths_ == propertyPaths) return;
   impl_->selectedPropertyPaths_ = propertyPaths;

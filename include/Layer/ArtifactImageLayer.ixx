@@ -77,6 +77,7 @@ struct SourceCropDrawLayout {
    // Whole-value read for VP/undo use. Writes go through the
    // sourceCrop.* property paths so clamping and keyframes stay consistent.
    SourceCrop sourceCrop() const;
+   bool restoreSourceCropSnapshot(const QJsonObject& snapshot);
    QString sourceCropSignature() const;
   SourceCropDrawLayout sourceCropDrawLayout() const;
   void refreshAnimatedSourceCrop();

@@ -658,7 +658,7 @@ std::map<QString, CommandHandler> createCommandRegistry(const QStringList& proje
           err << "Expected true or false for " << property << "\n";
           return;
         }
-        if (numericProperty && !ok) {
+        if (numericProperty && (!ok || !std::isfinite(number))) {
           err << "Expected a number for " << property << "\n";
           return;
         }
@@ -670,12 +670,14 @@ std::map<QString, CommandHandler> createCommandRegistry(const QStringList& proje
           err << "labelColorIndex must be an integer.\n";
           return;
         }
-        if (isTrue) {
+        if (booleanProperty && isTrue) {
           layer[property] = true;
-        } else if (isFalse) {
+        } else if (booleanProperty && isFalse) {
           layer[property] = false;
+        } else if (numericProperty) {
+          layer[property] = number;
         } else {
-          layer[property] = ok ? QJsonValue(number) : QJsonValue(rawValue);
+          layer[property] = rawValue;
         }
         layers[li] = layer; composition[QStringLiteral("layers")] = layers; compositions[ci] = composition;
         project[QStringLiteral("compositions")] = compositions;

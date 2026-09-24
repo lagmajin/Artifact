@@ -13,6 +13,7 @@ module;
 
 #include <QApplication>
 #include <QCoreApplication>
+#include <QJsonObject>
 
 #include <QByteArray>
 
@@ -30797,18 +30798,28 @@ void CompositionRenderController::handleMouseRelease() {
                                            : QJsonObject{};
       if (layer && committedAnimation != impl_->puppetPinAnimationBefore_) {
         auto *manager = UndoManager::instance();
-        const bool pushed = !manager || manager->push(
-            std::make_unique<DeformerControlKeyframeUndoCommand>(
-                app->puppetTool(), puppetLayerId, impl_->puppetPinUndoId_,
-                impl_->puppetPinAnimationBefore_, committedAnimation,
-                impl_->puppetPinUndoBeforePosition_, afterPosition));
+        const bool hasStateSnapshot = impl_->puppetLayerUndoSnapshotValid_ &&
+            afterState != impl_->puppetLayerUndoSnapshot_;
+        const bool pushed = !manager || (hasStateSnapshot
+            ? manager->push(std::make_unique<Deformation2DStateUndoCommand>(
+                  layer, impl_->puppetLayerUndoSnapshot_, afterState,
+                  QStringLiteral("Set Deformer Keyframe"), app->puppetTool()))
+            : manager->push(std::make_unique<DeformerControlKeyframeUndoCommand>(
+                  app->puppetTool(), puppetLayerId, impl_->puppetPinUndoId_,
+                  impl_->puppetPinAnimationBefore_, committedAnimation,
+                  impl_->puppetPinUndoBeforePosition_, afterPosition)));
         if (!pushed) {
-          app->puppetTool()->restorePinPositionAnimation(
-              puppetLayerId, impl_->puppetPinUndoId_,
-              impl_->puppetPinAnimationBefore_,
-              impl_->puppetPinUndoBeforePosition_);
-          app->puppetTool()->movePin(
-              impl_->puppetPinUndoId_, impl_->puppetPinUndoBeforePosition_);
+          if (hasStateSnapshot) {
+            app->puppetTool()->restoreLayerData(
+                puppetLayerId, impl_->puppetLayerUndoSnapshot_, layer.get());
+          } else {
+            app->puppetTool()->restorePinPositionAnimation(
+                puppetLayerId, impl_->puppetPinUndoId_,
+                impl_->puppetPinAnimationBefore_,
+                impl_->puppetPinUndoBeforePosition_);
+            app->puppetTool()->movePin(
+                impl_->puppetPinUndoId_, impl_->puppetPinUndoBeforePosition_);
+          }
         }
       } else if (layer && impl_->puppetLayerUndoSnapshotValid_ &&
           afterState != impl_->puppetLayerUndoSnapshot_) {
@@ -37157,6 +37168,7 @@ bool CompositionRenderController::Impl::finalizePendingShapePathCreation(
 
   const auto beforeVertices = shape->customPathVertices();
   const bool beforeClosed = shape->customPathClosed();
+  const QJsonObject beforeGeometry = shape->customGeometrySnapshot();
   const auto afterVertices = pendingShapePathVertices_;
 
   shape->setCustomPathVertices(pendingShapePathVertices_, true);
@@ -37166,9 +37178,10 @@ bool CompositionRenderController::Impl::finalizePendingShapePathCreation(
   auto *undo = UndoManager::instance();
    const bool pushed = !undo || undo->push(
       std::make_unique<ShapePathVertexEditCommand>(
-          layer, beforeVertices, afterVertices, beforeClosed, true));
+          layer, beforeVertices, afterVertices, beforeClosed, true,
+          beforeGeometry, shape->customGeometrySnapshot()));
   if (!pushed) {
-    shape->setCustomPathVertices(beforeVertices, beforeClosed);
+    shape->restoreCustomGeometrySnapshot(beforeGeometry);
     shape->setDirty(LayerDirtyFlag::Source);
     shape->changed();
     return false;

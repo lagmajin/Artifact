@@ -11,6 +11,7 @@ module;
 
 #include <memory>
 #include <algorithm>
+#include <cmath>
 #include <chrono>
 #include <thread>
 #include <vector>
@@ -51,10 +52,12 @@ extern "C" __declspec(dllexport) const char* D3D12SDKPath = ".\\";
 #include <QFont>
 #include <QIcon>
 #include <QKeyEvent>
+#include <QList>
 #include <QMouseEvent>
 #include <QImage>
 #include <QImageReader>
 #include <QJsonDocument>
+#include <QCryptographicHash>
 #include <QLoggingCategory>
 #include <QLayout>
 #include <QMessageBox>
@@ -66,6 +69,7 @@ extern "C" __declspec(dllexport) const char* D3D12SDKPath = ".\\";
 #include <QPushButton>
 #include <QRectF>
 #include <QSizePolicy>
+#include <QSize>
 #include <QEvent>
 #include <QSettings>
 #include <QSortFilterProxyModel>
@@ -80,6 +84,7 @@ extern "C" __declspec(dllexport) const char* D3D12SDKPath = ".\\";
 #include <QTcpSocket>
 #include <QHostAddress>
 #include <QUrl>
+#include <QUuid>
 #include <QWidget>
 #include <QtCore/QtGlobal>
 #include <filesystem>
@@ -122,6 +127,10 @@ import Artifact.Widgets.PlaybackControlWidget;
 import Artifact.Widgets.PlaybackControlTestWidget;
 import Artifact.Layer.Factory;
 import Artifact.Layer.Clone;
+import Artifact.Layer.Image;
+import Artifact.Layer.Shape;
+import Artifact.Layer.Solid2D;
+import Artifact.Layers.SolidImage;
 import Transform;
 import Draw;
 import Glow;
@@ -157,6 +166,7 @@ import Widgets.CommonStyle;
 import IO.ImageExporter;
 import ArtifactStatusBar;
 import Artifact.Application.Manager;
+import Artifact.Tool.PuppetTool;
 import Artifact.Application.CommandLine;
 import Artifact.Application.InteractiveShell;
 import Artifact.PythonAPI;
@@ -227,6 +237,11 @@ import Artifact.Widgets.DebugConsoleWidget;
 import Artifact.Widgets.FrameDebugViewWidget;
 import Artifact.Widgets.AppDebuggerWidget;
 import Artifact.Widgets.DebugRenderHarnessWidget;
+import Artifact.Widgets.CollabPresenceWidget;
+import Network.CollaborationWebSocket;
+import Collaborate.Session;
+import Collaborate.SessionAdapter;
+import Collaborate.Operations;
 import Event.Bus;
 import Artifact.Event.Types;
 import Artifact.Workspace.Manager;
@@ -237,6 +252,1659 @@ using namespace Artifact;
 using namespace ArtifactCore;
 
 namespace {
+
+class CollaborationDockController final : public QObject {
+public:
+  struct LocalPresenceSnapshot {
+    QString compositionId;
+    qint64 playbackFrame = 0;
+    bool hasPlaybackFrame = false;
+    QStringList selectedLayerIds;
+  };
+
+  struct SelectedLayerNameCache {
+    QString compositionId;
+    QStringList layerIds;
+    QStringList names;
+  };
+
+  CollaborationDockController(CollabPresenceWidget* widget, QObject* parent)
+      : QObject(parent), widget_(widget) {
+    socket_.setConnectionStateCallback(
+        [this](const CollabConnectionState state) { onConnectionState(state); });
+    socket_.setRoomReadyCallback([this]() {
+      QString pendingClientId;
+      qint64 pendingSequence = -1;
+      auto* undoManager = UndoManager::instance();
+      if (session_ && undoManager &&
+          undoManager->pendingCollaborativeOperationIdentity(
+              pendingClientId, pendingSequence)) {
+        // room_ready follows the complete durable history replay. If the
+        // pending operation was committed before a lost ACK, its history echo
+        // has already acknowledged it. Absence here proves it was not stored.
+        (void)session_->discardPendingLocalOperation(
+            pendingClientId, pendingSequence);
+        const bool rolledBack = undoManager->rejectCollaborativeOperation(
+            pendingClientId, pendingSequence);
+        if (widget_) {
+          widget_->setLayerEditBlockedStatus(
+              rolledBack
+                  ? QStringLiteral("A pending edit was absent from server history and has been rolled back")
+                  : QStringLiteral("A pending edit was absent from server history; local rollback failed, reconcile the project before continuing"));
+        }
+      }
+      if (widget_) {
+        widget_->setConnectionStatus(
+            socket_.isReadOnly() ? QStringLiteral("Read-only session")
+                                 : QStringLiteral("Connected"),
+            true);
+        if (undoManager && undoManager->hasPendingCollaborativeOperation()) {
+          widget_->setLayerEditBlockedStatus(
+              QStringLiteral("A previous edit is still awaiting server confirmation; further edits remain blocked until it is reconciled"));
+        }
+      }
+      refreshSelectedLayerLockControl();
+      refreshReviewContext();
+    });
+    socket_.setProtocolErrorCallback([this](const QString& message) {
+      if (!widget_) return;
+      widget_->setLayerEditBlockedStatus(message);
+      if (!socket_.isRoomReady()) {
+        widget_->setConnectionStatus(QStringLiteral("Room sync failed"), false);
+        refreshSelectedLayerLockControl();
+        refreshReviewContext();
+      }
+    });
+    socket_.setOperationRejectedCallback(
+        [this](const QString& clientId, const qint64 sequence,
+               const QString& message) {
+          if (session_) {
+            (void)session_->discardPendingLocalOperation(clientId, sequence);
+          }
+          const bool rolledBack = UndoManager::instance() &&
+              UndoManager::instance()->rejectCollaborativeOperation(
+                  clientId, sequence);
+          if (widget_) {
+            widget_->setLayerEditBlockedStatus(
+                QStringLiteral("Server rejected collaboration operation %1: %2%3")
+                    .arg(sequence)
+                    .arg(message)
+                    .arg(rolledBack
+                             ? QStringLiteral(". Local edit rolled back")
+                             : QStringLiteral(". Local rollback could not be completed; reconcile the project before continuing")));
+          }
+        });
+    if (widget_) {
+      widget_->setConnectionActionHandler(
+          [this](const QString& serverUrl, const QString& projectId,
+                 const QString& userName, const QString& accessToken) {
+            if (serverUrl.isEmpty() && projectId.isEmpty() && userName.isEmpty() &&
+                accessToken.isEmpty()) {
+              disconnectSession();
+            } else {
+              connectSession(serverUrl, projectId, userName, accessToken);
+            }
+          });
+      widget_->setLayerLockActionHandler(
+          [this](const QString& layerId, const bool acquire) {
+            onLayerLockAction(layerId, acquire);
+          });
+      widget_->setReviewCommentHandler(
+          [this](const QString& text) { return addReviewComment(text); });
+      widget_->setReviewReplyHandler(
+          [this](const QString& commentId, const QString& text) {
+            return replyReviewComment(commentId, text);
+          });
+      widget_->setReviewResolveHandler(
+          [this](const QString& commentId, const bool resolved) {
+            return setReviewCommentResolved(commentId, resolved);
+          });
+      widget_->setReviewEditHandler(
+          [this](const QString& commentId, const QString& text) {
+            return editReviewComment(commentId, text);
+          });
+      widget_->setReviewDeleteHandler(
+          [this](const QString& commentId) {
+            return deleteReviewComment(commentId);
+          });
+      widget_->setReviewJumpHandler(
+          [this](const QString& commentId) {
+            return jumpToReviewAnchor(commentId);
+          });
+    }
+    if (auto* undoManager = UndoManager::instance()) {
+      undoManager->setLayerMutationGuard(
+          [this](const QStringList& layerIds, QString& rejectionReason) {
+            if (!session_) return true;
+            if (!socket_.isRoomReady()) {
+              rejectionReason = QStringLiteral(
+                  "Layer edit blocked until collaboration lock state is synchronized; reconnect or disconnect the session");
+              if (widget_) widget_->setLayerEditBlockedStatus(rejectionReason);
+              return false;
+            }
+            if (socket_.isReadOnly()) {
+              rejectionReason = QStringLiteral(
+                  "Edit blocked: this collaboration session is read-only");
+              if (widget_) widget_->setLayerEditBlockedStatus(rejectionReason);
+              return false;
+            }
+            if (layerIds.isEmpty()) {
+              rejectionReason = QStringLiteral(
+                  "Edit blocked: could not resolve the layer owning this effect");
+              if (widget_) widget_->setLayerEditBlockedStatus(rejectionReason);
+              return false;
+            }
+            for (const QString& layerId : layerIds) {
+              if (!session_->isLayerLocked(layerId)) {
+                rejectionReason = QStringLiteral(
+                    "Edit blocked: reserve this layer before editing in a collaboration session");
+                if (widget_) widget_->setLayerEditBlockedStatus(rejectionReason);
+                return false;
+              }
+              if (!session_->isLayerLockedByOther(layerId)) continue;
+              const CollabLayerLock lock = session_->lockOwner(layerId);
+              rejectionReason = lock.userName.isEmpty()
+                  ? QStringLiteral("Edit blocked: layer is reserved by another collaborator")
+                  : QStringLiteral("Edit blocked: layer is reserved by %1")
+                        .arg(lock.userName);
+              if (widget_) widget_->setLayerEditBlockedStatus(rejectionReason);
+              return false;
+            }
+            return true;
+          });
+      undoManager->setCollaborationEditCallback(
+          [this](const UndoCommand& command, const QString& action) {
+            const bool preflight = action.startsWith(QStringLiteral("preflight."));
+            if (action == QStringLiteral("pending")) {
+              if (widget_) {
+                widget_->setLayerEditBlockedStatus(
+                    QStringLiteral("Waiting for the collaboration server to confirm the previous edit"));
+              }
+              return UndoManager::CollaborationEditDispatch{false, {}, -1};
+            }
+            if (!session_) {
+              return UndoManager::CollaborationEditDispatch{true, {}, -1};
+            }
+            const UndoCommand* dispatchCommand =
+                command.collaborationDispatchCommand();
+            QString customOperationType;
+            QString customLayerId;
+            QJsonObject customOperationPayload;
+            const QString operationAction = preflight
+                ? action.mid(QStringLiteral("preflight.").size()) : action;
+            const bool customCollaborationCommand = dispatchCommand &&
+                dispatchCommand->buildCollaborationOperation(
+                    operationAction, customOperationType, customLayerId,
+                    customOperationPayload);
+            const bool singlePropertyCommand = dispatchCommand &&
+                dispatchCommand->commandType() ==
+                    QStringLiteral("SetLayerPropertyValueCommand");
+            const bool singleKeyframeCommand = dispatchCommand &&
+                dispatchCommand->commandType() ==
+                    QStringLiteral("SetLayerPropertyKeyframesCommand");
+            const bool singleExpressionCommand = dispatchCommand &&
+                dispatchCommand->commandType() ==
+                    QStringLiteral("SetLayerPropertyExpressionCommand");
+            const bool singleComponentsCommand = dispatchCommand &&
+                dispatchCommand->commandType() ==
+                    QStringLiteral("LayerComponentDescriptorSnapshotCommand");
+            const bool singleStackCommand = dispatchCommand &&
+                (dispatchCommand->commandType() ==
+                     QStringLiteral("ClonerTransformStackSnapshotCommand") ||
+                 dispatchCommand->commandType() ==
+                     QStringLiteral("CloneEffectorStackSnapshotCommand"));
+            const bool macroBatch = !dispatchCommand &&
+                command.commandType() == QStringLiteral("MacroUndoCommand");
+            if (!singlePropertyCommand && !singleKeyframeCommand &&
+                !singleExpressionCommand && !singleComponentsCommand &&
+                !singleStackCommand &&
+                !macroBatch && !customCollaborationCommand) {
+              if (widget_) {
+                widget_->setLayerEditBlockedStatus(
+                    QStringLiteral("This edit type is not synchronized in the current collaboration session"));
+              }
+              return UndoManager::CollaborationEditDispatch{false, {}, -1};
+            }
+            if (macroBatch && !command.canSerialize()) {
+              return UndoManager::CollaborationEditDispatch{false, {}, -1};
+            }
+            if (singleKeyframeCommand && !dispatchCommand->canSerialize()) {
+              if (widget_) {
+                widget_->setLayerEditBlockedStatus(
+                    QStringLiteral("This keyframe value cannot be represented by the collaboration protocol"));
+              }
+              return UndoManager::CollaborationEditDispatch{false, {}, -1};
+            }
+            if (singleComponentsCommand && !dispatchCommand->canSerialize()) {
+              return UndoManager::CollaborationEditDispatch{false, {}, -1};
+            }
+            if (singleStackCommand && !dispatchCommand->canSerialize()) {
+              return UndoManager::CollaborationEditDispatch{false, {}, -1};
+            }
+            const bool undo = action == QStringLiteral("undo");
+            QJsonArray changes;
+            QString keyframeLayerId;
+            QJsonObject keyframePayload;
+            QString expressionLayerId;
+            QJsonObject expressionPayload;
+            QString componentsLayerId;
+            QJsonObject componentsPayload;
+            QString stackLayerId;
+            QJsonObject stackPayload;
+            const auto appendPropertyChange =
+                [&changes, undo](const QJsonObject& data) {
+                  const QString layerId =
+                      data.value(QStringLiteral("layerId")).toString();
+                  const QString propertyPath =
+                      data.value(QStringLiteral("propertyPath")).toString();
+                  const QJsonValue before =
+                      data.value(QStringLiteral("beforeValue"));
+                  const QJsonValue after =
+                      data.value(QStringLiteral("afterValue"));
+                  if (layerId.isEmpty() || propertyPath.isEmpty() ||
+                      before.isUndefined() || after.isUndefined()) {
+                    return false;
+                  }
+                  changes.append(QJsonObject{
+                      {QStringLiteral("layerId"), layerId},
+                      {QStringLiteral("propertyPath"), propertyPath},
+                      {QStringLiteral("expectedValue"), undo ? after : before},
+                      {QStringLiteral("value"), undo ? before : after}});
+                  return changes.size() <= 128;
+                };
+            const auto appendKeyframeChange =
+                [&changes, undo](const QJsonObject& data) {
+                  const QString layerId = data.value(QStringLiteral("layerId")).toString();
+                  const QString propertyPath = data.value(QStringLiteral("propertyPath")).toString();
+                  const QJsonValue before = data.value(QStringLiteral("before"));
+                  const QJsonValue after = data.value(QStringLiteral("after"));
+                  if (layerId.isEmpty() || propertyPath.isEmpty() ||
+                      !before.isArray() || !after.isArray() ||
+                      QJsonDocument(before.toArray()).toJson(QJsonDocument::Compact).size() > 262144 ||
+                      QJsonDocument(after.toArray()).toJson(QJsonDocument::Compact).size() > 262144) return false;
+                  QJsonObject change{
+                      {QStringLiteral("kind"), QStringLiteral("keyframes")},
+                      {QStringLiteral("layerId"), layerId},
+                      {QStringLiteral("propertyPath"), propertyPath},
+                      {QStringLiteral("expectedKeyframes"), undo ? after : before},
+                      {QStringLiteral("keyframes"), undo ? before : after}};
+                  const bool hasBeforeAnimatable = data.contains(QStringLiteral("beforeAnimatable"));
+                  const bool hasAfterAnimatable = data.contains(QStringLiteral("afterAnimatable"));
+                  if (hasBeforeAnimatable != hasAfterAnimatable) return false;
+                  if (hasBeforeAnimatable) {
+                    const QJsonValue beforeFlag = data.value(QStringLiteral("beforeAnimatable"));
+                    const QJsonValue afterFlag = data.value(QStringLiteral("afterAnimatable"));
+                    if (!beforeFlag.isBool() || !afterFlag.isBool()) return false;
+                    change.insert(QStringLiteral("expectedAnimatable"), undo ? afterFlag : beforeFlag);
+                    change.insert(QStringLiteral("animatable"), undo ? beforeFlag : afterFlag);
+                  }
+                  changes.append(change);
+                  return changes.size() <= 128;
+                };
+            const auto appendExpressionChange =
+                [&changes, undo](const QJsonObject& data) {
+                  const QString layerId = data.value(QStringLiteral("layerId")).toString();
+                  const QString propertyPath = data.value(QStringLiteral("propertyPath")).toString();
+                  const QJsonValue before = data.value(QStringLiteral("beforeExpression"));
+                  const QJsonValue after = data.value(QStringLiteral("afterExpression"));
+                  if (layerId.isEmpty() || propertyPath.isEmpty() ||
+                      !before.isString() || !after.isString() ||
+                      before.toString().toUtf8().size() > 262144 ||
+                      after.toString().toUtf8().size() > 262144) return false;
+                  changes.append(QJsonObject{
+                      {QStringLiteral("kind"), QStringLiteral("expression")},
+                      {QStringLiteral("layerId"), layerId},
+                      {QStringLiteral("propertyPath"), propertyPath},
+                      {QStringLiteral("expectedExpression"), undo ? after : before},
+                      {QStringLiteral("expression"), undo ? before : after}});
+                  return changes.size() <= 128;
+                };
+            if (customCollaborationCommand) {
+              // The command supplied its own collaboration wire payload above.
+            } else if (singlePropertyCommand) {
+              if (!appendPropertyChange(dispatchCommand->serialize())) {
+                return UndoManager::CollaborationEditDispatch{false, {}, -1};
+              }
+            } else if (singleKeyframeCommand) {
+              const QJsonObject data = dispatchCommand->serialize();
+              keyframeLayerId =
+                  data.value(QStringLiteral("layerId")).toString();
+              const QString propertyPath =
+                  data.value(QStringLiteral("propertyPath")).toString();
+              const QJsonValue before = data.value(QStringLiteral("before"));
+              const QJsonValue after = data.value(QStringLiteral("after"));
+              if (keyframeLayerId.isEmpty() || propertyPath.isEmpty() ||
+                  !before.isArray() || !after.isArray()) {
+                return UndoManager::CollaborationEditDispatch{false, {}, -1};
+              }
+              keyframePayload.insert(QStringLiteral("propertyPath"), propertyPath);
+              keyframePayload.insert(QStringLiteral("expectedKeyframes"),
+                                     undo ? after : before);
+              keyframePayload.insert(QStringLiteral("keyframes"),
+                                     undo ? before : after);
+              const bool hasBeforeAnimatable =
+                  data.contains(QStringLiteral("beforeAnimatable"));
+              const bool hasAfterAnimatable =
+                  data.contains(QStringLiteral("afterAnimatable"));
+              if (hasBeforeAnimatable != hasAfterAnimatable) {
+                return UndoManager::CollaborationEditDispatch{false, {}, -1};
+              }
+              if (hasBeforeAnimatable) {
+                const QJsonValue beforeAnimatable =
+                    data.value(QStringLiteral("beforeAnimatable"));
+                const QJsonValue afterAnimatable =
+                    data.value(QStringLiteral("afterAnimatable"));
+                if (!beforeAnimatable.isBool() || !afterAnimatable.isBool()) {
+                  return UndoManager::CollaborationEditDispatch{false, {}, -1};
+                }
+                keyframePayload.insert(QStringLiteral("expectedAnimatable"),
+                                       undo ? afterAnimatable : beforeAnimatable);
+                keyframePayload.insert(QStringLiteral("animatable"),
+                                       undo ? beforeAnimatable : afterAnimatable);
+              }
+            } else if (singleExpressionCommand) {
+              const QJsonObject data = dispatchCommand->serialize();
+              expressionLayerId = data.value(QStringLiteral("layerId")).toString();
+              const QString propertyPath = data.value(QStringLiteral("propertyPath")).toString();
+              const QJsonValue before = data.value(QStringLiteral("beforeExpression"));
+              const QJsonValue after = data.value(QStringLiteral("afterExpression"));
+              if (expressionLayerId.isEmpty() || propertyPath.isEmpty() ||
+                  !before.isString() || !after.isString()) {
+                return UndoManager::CollaborationEditDispatch{false, {}, -1};
+              }
+              expressionPayload.insert(QStringLiteral("propertyPath"), propertyPath);
+              expressionPayload.insert(QStringLiteral("expectedExpression"), undo ? after : before);
+              expressionPayload.insert(QStringLiteral("expression"), undo ? before : after);
+            } else if (singleComponentsCommand) {
+              const QJsonObject data = dispatchCommand->serialize();
+              componentsLayerId = data.value(QStringLiteral("layerId")).toString();
+              const QJsonValue before = data.value(QStringLiteral("before"));
+              const QJsonValue after = data.value(QStringLiteral("after"));
+              if (componentsLayerId.isEmpty() || !before.isObject() ||
+                  !after.isObject() ||
+                  QJsonDocument(before.toObject()).toJson(QJsonDocument::Compact).size() > 262144 ||
+                  QJsonDocument(after.toObject()).toJson(QJsonDocument::Compact).size() > 262144) {
+                return UndoManager::CollaborationEditDispatch{false, {}, -1};
+              }
+              componentsPayload.insert(QStringLiteral("expected"), undo ? after : before);
+              componentsPayload.insert(QStringLiteral("value"), undo ? before : after);
+            } else if (singleStackCommand) {
+              const QJsonObject data = dispatchCommand->serialize();
+              stackLayerId = data.value(QStringLiteral("layerId")).toString();
+              const QJsonValue before = data.value(QStringLiteral("before"));
+              const QJsonValue after = data.value(QStringLiteral("after"));
+              const QString stackKind = dispatchCommand->commandType() ==
+                      QStringLiteral("ClonerTransformStackSnapshotCommand")
+                  ? QStringLiteral("clonerTransforms")
+                  : QStringLiteral("cloneEffectors");
+              if (stackLayerId.isEmpty() || !before.isArray() || !after.isArray() ||
+                  QJsonDocument(before.toArray()).toJson(QJsonDocument::Compact).size() > 262144 ||
+                  QJsonDocument(after.toArray()).toJson(QJsonDocument::Compact).size() > 262144) {
+                return UndoManager::CollaborationEditDispatch{false, {}, -1};
+              }
+              stackPayload.insert(QStringLiteral("stackKind"), stackKind);
+              stackPayload.insert(QStringLiteral("expected"), undo ? after : before);
+              stackPayload.insert(QStringLiteral("value"), undo ? before : after);
+            } else {
+              const QJsonArray children =
+                  command.serialize().value(QStringLiteral("children")).toArray();
+              if (children.isEmpty() || children.size() > 128) {
+                return UndoManager::CollaborationEditDispatch{false, {}, -1};
+              }
+              for (const QJsonValue& childValue : children) {
+                const QJsonObject child = childValue.toObject();
+                const QString childType = child.value(QStringLiteral("type")).toString();
+                const QJsonObject childData = child.value(QStringLiteral("data")).toObject();
+                const bool supported = childType == QStringLiteral("SetLayerPropertyValueCommand")
+                    ? appendPropertyChange(childData)
+                    : childType == QStringLiteral("SetLayerPropertyKeyframesCommand")
+                        ? appendKeyframeChange(childData)
+                        : childType == QStringLiteral("SetLayerPropertyExpressionCommand")
+                            ? appendExpressionChange(childData)
+                        : false;
+                if (!supported) {
+                  if (widget_) {
+                    widget_->setLayerEditBlockedStatus(
+                        QStringLiteral("Only batches of layer property value, keyframe, and expression edits are synchronized"));
+                  }
+                  return UndoManager::CollaborationEditDispatch{false, {}, -1};
+                }
+              }
+              QJsonObject batchPayload;
+              batchPayload.insert(QStringLiteral("changes"), changes);
+              if (QJsonDocument(batchPayload).toJson(QJsonDocument::Compact).size() > 1048576) {
+                return UndoManager::CollaborationEditDispatch{false, {}, -1};
+              }
+            }
+            if (!adapter_ || !socket_.isRoomReady() || socket_.isReadOnly()) {
+              if (preflight && widget_) {
+                widget_->setLayerEditBlockedStatus(
+                    QStringLiteral("Edit blocked until the collaboration room is ready and writable"));
+              }
+              return UndoManager::CollaborationEditDispatch{false, {}, -1};
+            }
+            if (preflight) {
+              return UndoManager::CollaborationEditDispatch{true, {}, -1};
+            }
+            const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+            CollabOperationData request;
+            if (customCollaborationCommand) {
+              request.type = customOperationType;
+              request.layerId = customLayerId;
+              request.payload = customOperationPayload;
+              request.timestampMs = nowMs;
+            } else if (singleKeyframeCommand) {
+              request.type = QString::fromLatin1(kOpPropertyKeyframes);
+              request.layerId = keyframeLayerId;
+              request.payload = keyframePayload;
+              request.timestampMs = nowMs;
+            } else if (singleExpressionCommand) {
+              request.type = QString::fromLatin1(kOpPropertyExpression);
+              request.layerId = expressionLayerId;
+              request.payload = expressionPayload;
+              request.timestampMs = nowMs;
+            } else if (singleComponentsCommand) {
+              request.type = QString::fromLatin1(kOpLayerComponents);
+              request.layerId = componentsLayerId;
+              request.payload = componentsPayload;
+              request.timestampMs = nowMs;
+            } else if (singleStackCommand) {
+              request.type = QString::fromLatin1(kOpLayerStack);
+              request.layerId = stackLayerId;
+              request.payload = stackPayload;
+              request.timestampMs = nowMs;
+            } else if (changes.size() == 1) {
+              const QJsonObject change = changes.at(0).toObject();
+              request = makePropertyCompareSetOperation(
+                  session_->localClientId(),
+                  change.value(QStringLiteral("layerId")).toString(),
+                  change.value(QStringLiteral("propertyPath")).toString(),
+                  change.value(QStringLiteral("expectedValue")),
+                  change.value(QStringLiteral("value")), nowMs);
+            } else {
+              request.type = QString::fromLatin1(kOpPropertyBatch);
+              request.timestampMs = nowMs;
+              request.payload.insert(QStringLiteral("changes"), changes);
+            }
+            const CollabOperationData operation =
+                session_->createLocalOperation(request, nowMs);
+            const bool sent = adapter_->sendLocalOperation(operation);
+            if (sent && widget_) {
+              widget_->setLayerEditBlockedStatus(
+                  QStringLiteral("Waiting for server confirmation of the collaborative edit"));
+            } else if (!sent && widget_ &&
+                       request.type == QStringLiteral("layer.add")) {
+              widget_->setLayerEditBlockedStatus(
+                  QStringLiteral("Layer add was blocked: its snapshot must be path-free, match the shared composition, and fit the collaboration size limit; asset synchronization is not enabled"));
+            }
+            return UndoManager::CollaborationEditDispatch{
+                sent, operation.clientId, operation.sequence};
+          });
+    }
+  }
+
+  ~CollaborationDockController() override {
+    if (auto* undoManager = UndoManager::instance()) {
+      undoManager->setLayerMutationGuard({});
+      undoManager->setCollaborationEditCallback({});
+    }
+    socket_.setConnectionStateCallback({});
+    socket_.setRoomReadyCallback({});
+    socket_.setProtocolErrorCallback({});
+    socket_.setOperationRejectedCallback({});
+    socket_.disconnect();
+    if (widget_) {
+      widget_->setConnectionActionHandler({});
+      widget_->setLayerLockActionHandler({});
+      widget_->setReviewCommentHandler({});
+      widget_->setReviewReplyHandler({});
+      widget_->setReviewResolveHandler({});
+      widget_->setReviewEditHandler({});
+      widget_->setReviewDeleteHandler({});
+      widget_->setReviewJumpHandler({});
+    }
+    clearSession();
+  }
+
+private:
+  void connectSession(const QString& serverUrl, const QString& projectId,
+                      const QString& userName, const QString& accessToken) {
+    const QString projectFingerprint =
+        currentProjectCollaborationFingerprint();
+    if (projectFingerprint.isEmpty()) {
+      if (widget_) {
+        widget_->setConnectionStatus(
+            QStringLiteral("Cannot join: no project baseline is available"), false);
+      }
+      return;
+    }
+    disconnectSession();
+    review_.clear();
+
+    session_ = new CollaborationSession();
+    const QString clientId =
+        QUuid::createUuid().toString(QUuid::WithoutBraces);
+    const QString userId =
+        QUuid::createUuid().toString(QUuid::WithoutBraces);
+    const QColor userColor = QColor::fromHsv(
+        static_cast<int>(qHash(userId) % 360U), 170, 230);
+    session_->setLocalIdentity(clientId, userId, userName, userColor.name());
+
+    adapter_ = new CollaborationSessionAdapter(socket_, *session_, projectId);
+    adapter_->setParticipantsChangedCallback([this]() { refreshRoster(); });
+    adapter_->setLockStateChangedCallback([this](const QString& layerId) {
+      pendingLockReleases_.remove(layerId);
+      refreshSelectedLayerLockControl();
+    });
+    adapter_->setOperationAppliedCallback(
+        [this](const CollabOperationData& operation) {
+          const bool acknowledgedLocalOperation = UndoManager::instance() &&
+              UndoManager::instance()->acknowledgeCollaborativeOperation(
+                  operation.clientId, operation.sequence);
+          if (acknowledgedLocalOperation && widget_) {
+            widget_->setLayerEditBlockedStatus(
+                QStringLiteral("Collaboration edit confirmed by the server"));
+          }
+          if (applyReviewOperation(review_, operation)) {
+            refreshReviewNotes();
+            return;
+          }
+          if (operation.type == kOpPropertySet) {
+            if (acknowledgedLocalOperation ||
+                (session_ &&
+                 operation.clientId == session_->localClientId())) {
+              return;
+            }
+            const QJsonValue expected =
+                operation.payload.value(QStringLiteral("expectedValue"));
+            const QString propertyPath =
+                operation.payload.value(QStringLiteral("propertyPath")).toString();
+            if (!expected.isUndefined() &&
+                UndoManager::instance() &&
+                UndoManager::instance()->applyCollaborativePropertySet(
+                    operation.layerId, propertyPath, expected.toVariant(),
+                    operation.payload.value(QStringLiteral("value")).toVariant())) {
+              return;
+            }
+            if (widget_) {
+              widget_->setLayerEditBlockedStatus(
+                  QStringLiteral("A shared property edit conflicted with the local value and was not applied"));
+            }
+            return;
+          }
+          if (operation.type == kOpPropertyBatch) {
+            if (acknowledgedLocalOperation ||
+                (session_ &&
+                 operation.clientId == session_->localClientId())) {
+              return;
+            }
+            if (UndoManager::instance() &&
+                UndoManager::instance()->applyCollaborativePropertyBatch(
+                    operation.payload)) {
+              return;
+            }
+            if (widget_) {
+              widget_->setLayerEditBlockedStatus(
+                  QStringLiteral("A shared property batch conflicted with local values or could not be fully rolled back; inspect the affected properties"));
+            }
+            return;
+          }
+          if (operation.type == kOpPropertyKeyframes) {
+            if (acknowledgedLocalOperation ||
+                (session_ &&
+                 operation.clientId == session_->localClientId())) {
+              return;
+            }
+            if (UndoManager::instance() &&
+                UndoManager::instance()->applyCollaborativePropertyKeyframes(
+                    operation.layerId, operation.payload)) {
+              return;
+            }
+            if (widget_) {
+              widget_->setLayerEditBlockedStatus(
+                  QStringLiteral("A shared keyframe edit conflicted with local values or could not be applied"));
+            }
+            return;
+          }
+          if (operation.type == kOpPropertyExpression) {
+            if (acknowledgedLocalOperation ||
+                (session_ && operation.clientId == session_->localClientId())) return;
+            if (UndoManager::instance() &&
+                UndoManager::instance()->applyCollaborativePropertyExpression(
+                    operation.layerId, operation.payload)) return;
+            if (widget_) widget_->setLayerEditBlockedStatus(
+                QStringLiteral("A shared expression edit conflicted with the local expression and was not applied"));
+            return;
+          }
+          if (operation.type == kOpLayerComponents) {
+            if (acknowledgedLocalOperation ||
+                (session_ && operation.clientId == session_->localClientId())) return;
+            if (UndoManager::instance() &&
+                UndoManager::instance()->applyCollaborativeLayerComponents(
+                    operation.layerId, operation.payload)) return;
+            if (widget_) widget_->setLayerEditBlockedStatus(
+                QStringLiteral("A shared component edit conflicted with local component state and was not applied"));
+            return;
+          }
+          if (operation.type == kOpLayerStack) {
+            if (acknowledgedLocalOperation ||
+                (session_ && operation.clientId == session_->localClientId())) return;
+            if (UndoManager::instance() &&
+                UndoManager::instance()->applyCollaborativeLayerStack(
+                    operation.layerId, operation.payload)) return;
+            if (widget_) widget_->setLayerEditBlockedStatus(
+                QStringLiteral("A shared stack edit conflicted with local stack state and was not applied"));
+            return;
+          }
+          if (operation.type == kOpLayerAudioDeClickRanges) {
+            if (acknowledgedLocalOperation ||
+                (session_ && operation.clientId == session_->localClientId())) return;
+            if (UndoManager::instance() &&
+                UndoManager::instance()->applyCollaborativeLayerAudioDeClickRanges(
+                    operation.layerId, operation.payload)) return;
+            if (widget_) widget_->setLayerEditBlockedStatus(
+                QStringLiteral("A shared audio de-click edit conflicted with local ranges and was not applied"));
+            return;
+          }
+          if (operation.type == kOpLayerDeformation2D) {
+            if (acknowledgedLocalOperation ||
+                (session_ && operation.clientId == session_->localClientId())) return;
+            const auto expected = operation.payload.value(QStringLiteral("expected"));
+            const auto value = operation.payload.value(QStringLiteral("value"));
+            auto* undo = UndoManager::instance();
+            auto* app = ArtifactApplicationManager::instance();
+            const auto layer = undo ? undo->resolveLayer(operation.layerId)
+                                    : ArtifactAbstractLayerPtr{};
+            auto* puppet = app ? app->puppetTool() : nullptr;
+            if (layer && puppet && expected.isObject() && value.isObject() &&
+                layer->deformation2DData() == expected.toObject()) {
+              const QJsonObject expectedState = expected.toObject();
+              const QJsonObject nextState = value.toObject();
+              if (puppet->restoreLayerData(layer->id(), nextState, layer.get()) &&
+                  layer->deformation2DData() == nextState) {
+                undo->notifyAnythingChanged();
+                ArtifactCore::globalEventBus().publish<ProjectChangedEvent>(
+                    {QString(), QString()});
+                return;
+              }
+              puppet->restoreLayerData(layer->id(), expectedState, layer.get());
+            }
+            if (widget_) widget_->setLayerEditBlockedStatus(
+                QStringLiteral("A shared Deformation 2D edit conflicted with local state and was not applied"));
+            return;
+          }
+          if (operation.type == kOpLayerSolidSize) {
+            if (acknowledgedLocalOperation ||
+                (session_ && operation.clientId == session_->localClientId())) return;
+            const auto decodeSize = [](const QJsonValue& value, QSize& size) {
+              if (!value.isObject()) return false;
+              const auto object = value.toObject();
+              const auto dimension = [](const QJsonValue& input, int& output) {
+                if (!input.isDouble() || !std::isfinite(input.toDouble()) ||
+                    std::floor(input.toDouble()) != input.toDouble() ||
+                    input.toDouble() < 1 || input.toDouble() > 16384) return false;
+                output = input.toInt();
+                return true;
+              };
+              return dimension(object.value(QStringLiteral("width")), size.rwidth()) &&
+                     dimension(object.value(QStringLiteral("height")), size.rheight());
+            };
+            QSize expectedSize, nextSize;
+            auto* undo = UndoManager::instance();
+            const auto layer = undo ? undo->resolveLayer(operation.layerId)
+                                    : ArtifactAbstractLayerPtr{};
+            bool applied = false;
+            if (layer && decodeSize(operation.payload.value(QStringLiteral("expected")),
+                                    expectedSize) &&
+                decodeSize(operation.payload.value(QStringLiteral("value")), nextSize)) {
+              const auto current = layer->sourceSize();
+              if (current.width == expectedSize.width() &&
+                  current.height == expectedSize.height()) {
+                const auto solid = ArtifactCore::dynamicPointerCast<ArtifactSolid2DLayer>(layer);
+                const auto solidImage = solid
+                    ? ArtifactCore::SharedPtr<ArtifactSolidImageLayer>{}
+                    : ArtifactCore::dynamicPointerCast<ArtifactSolidImageLayer>(layer);
+                if (solid) solid->setSize(nextSize.width(), nextSize.height());
+                else if (solidImage) solidImage->setSize(nextSize.width(), nextSize.height());
+                const auto updated = layer->sourceSize();
+                applied = (solid || solidImage) &&
+                    updated.width == nextSize.width() &&
+                    updated.height == nextSize.height();
+                if (!applied) {
+                  if (solid) solid->setSize(expectedSize.width(), expectedSize.height());
+                  else if (solidImage) solidImage->setSize(expectedSize.width(), expectedSize.height());
+                }
+              }
+            }
+            if (applied) {
+              layer->setDirty(LayerDirtyFlag::Source);
+              layer->changed();
+              undo->notifyAnythingChanged();
+              ArtifactCore::globalEventBus().publish<ProjectChangedEvent>(
+                  {QString(), QString()});
+              return;
+            }
+            if (widget_) widget_->setLayerEditBlockedStatus(
+                QStringLiteral("A shared solid size edit conflicted with local dimensions and was not applied"));
+            return;
+          }
+          if (operation.type == kOpLayerSourceCrop) {
+            if (acknowledgedLocalOperation ||
+                (session_ && operation.clientId == session_->localClientId())) return;
+            const auto expected = operation.payload.value(QStringLiteral("expected"));
+            const auto value = operation.payload.value(QStringLiteral("value"));
+            auto* undo = UndoManager::instance();
+            const auto layer = undo ? undo->resolveLayer(operation.layerId)
+                                    : ArtifactAbstractLayerPtr{};
+            const auto imageLayer = ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(layer);
+            bool applied = false;
+            if (imageLayer && expected.isObject() && value.isObject() &&
+                imageLayer->sourceCrop().toJson() == expected.toObject()) {
+              applied = imageLayer->restoreSourceCropSnapshot(value.toObject()) &&
+                  imageLayer->sourceCrop().toJson() == value.toObject();
+              if (!applied && imageLayer->sourceCrop().toJson() != expected.toObject())
+                imageLayer->restoreSourceCropSnapshot(expected.toObject());
+            }
+            if (applied) {
+              undo->notifyAnythingChanged();
+              ArtifactCore::globalEventBus().publish<ProjectChangedEvent>(
+                  {QString(), QString()});
+              return;
+            }
+            if (widget_) widget_->setLayerEditBlockedStatus(
+                QStringLiteral("A shared source crop edit conflicted with local crop state and was not applied"));
+            return;
+          }
+          if (operation.type == kOpLayerShapePolygon) {
+            if (acknowledgedLocalOperation ||
+                (session_ && operation.clientId == session_->localClientId())) return;
+            const QJsonValue expected = operation.payload.value(QStringLiteral("expected"));
+            const QJsonValue value = operation.payload.value(QStringLiteral("value"));
+            auto* undo = UndoManager::instance();
+            const auto layer = undo ? undo->resolveLayer(operation.layerId)
+                                    : ArtifactAbstractLayerPtr{};
+            const auto shape = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(layer);
+            bool applied = false;
+            if (shape && expected.isObject() && value.isObject() &&
+                shape->customPolygonSnapshot() == expected.toObject()) {
+              applied = shape->restoreCustomPolygonSnapshot(value.toObject()) &&
+                  shape->customPolygonSnapshot() == value.toObject();
+              if (!applied && shape->customPolygonSnapshot() != expected.toObject())
+                shape->restoreCustomPolygonSnapshot(expected.toObject());
+            }
+            if (applied) {
+              undo->notifyAnythingChanged();
+              ArtifactCore::globalEventBus().publish<ProjectChangedEvent>(
+                  {QString(), QString()});
+              return;
+            }
+            if (widget_) widget_->setLayerEditBlockedStatus(
+                QStringLiteral("A shared polygon edit conflicted with local shape points and was not applied"));
+            return;
+          }
+          if (operation.type == kOpLayerShapePath) {
+            if (acknowledgedLocalOperation ||
+                (session_ && operation.clientId == session_->localClientId())) return;
+            const QJsonValue expected = operation.payload.value(QStringLiteral("expected"));
+            const QJsonValue value = operation.payload.value(QStringLiteral("value"));
+            auto* undo = UndoManager::instance();
+            const auto layer = undo ? undo->resolveLayer(operation.layerId)
+                                    : ArtifactAbstractLayerPtr{};
+            const auto shape = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(layer);
+            bool applied = false;
+            if (shape && expected.isObject() && value.isObject() &&
+                shape->customGeometrySnapshot() == expected.toObject()) {
+              applied = shape->restoreCustomGeometrySnapshot(value.toObject()) &&
+                  shape->customGeometrySnapshot() == value.toObject();
+              if (!applied && shape->customGeometrySnapshot() != expected.toObject())
+                shape->restoreCustomGeometrySnapshot(expected.toObject());
+            }
+            if (applied) {
+              undo->notifyAnythingChanged();
+              ArtifactCore::globalEventBus().publish<ProjectChangedEvent>(
+                  {QString(), QString()});
+              return;
+            }
+            if (widget_) widget_->setLayerEditBlockedStatus(
+                QStringLiteral("A shared path edit conflicted with local shape vertices and was not applied"));
+            return;
+          }
+          if (operation.type == kOpLayerShapeOperator) {
+            if (acknowledgedLocalOperation ||
+                (session_ && operation.clientId == session_->localClientId())) return;
+            const QJsonObject payload = operation.payload;
+            const int operatorIndex = payload.value(QStringLiteral("operatorIndex")).toInt(-1);
+            const QString field = payload.value(QStringLiteral("field")).toString();
+            const double expected = payload.value(QStringLiteral("expectedValue")).toDouble();
+            const double value = payload.value(QStringLiteral("value")).toDouble();
+            auto* undo = UndoManager::instance();
+            const auto layer = undo ? undo->resolveLayer(operation.layerId)
+                                    : ArtifactAbstractLayerPtr{};
+            const auto shape = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(layer);
+            bool applied = false;
+            if (shape && operatorIndex >= 0 &&
+                operatorIndex < shape->shapeOperatorCount() && !field.isEmpty() &&
+                shape->shapeOperatorValue(operatorIndex, field).toDouble() == expected) {
+              const QString path = QStringLiteral("shape.operator.%1.%2")
+                                       .arg(operatorIndex).arg(field);
+              applied = shape->setLayerPropertyValue(path, QVariant(value)) &&
+                  shape->shapeOperatorValue(operatorIndex, field).toDouble() == value;
+              if (!applied &&
+                  shape->shapeOperatorValue(operatorIndex, field).toDouble() != expected)
+                shape->setLayerPropertyValue(path, QVariant(expected));
+            }
+            if (applied) {
+              undo->notifyAnythingChanged();
+              ArtifactCore::globalEventBus().publish<ProjectChangedEvent>(
+                  {QString(), QString()});
+              return;
+            }
+            if (widget_) widget_->setLayerEditBlockedStatus(
+                QStringLiteral("A shared shape operator edit conflicted with local values and was not applied"));
+            return;
+          }
+          if (operation.type == kOpLayerShapeContents) {
+            if (acknowledgedLocalOperation ||
+                (session_ && operation.clientId == session_->localClientId())) return;
+            const QJsonObject payload = operation.payload;
+            const QJsonValue expected = payload.value(QStringLiteral("expected"));
+            const QJsonValue value = payload.value(QStringLiteral("value"));
+            auto* undo = UndoManager::instance();
+            const auto layer = undo ? undo->resolveLayer(operation.layerId)
+                                    : ArtifactAbstractLayerPtr{};
+            const auto shape = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(layer);
+            bool applied = false;
+            if (shape && expected.isObject() && value.isObject() &&
+                shape->shapeContentsSnapshot() == expected.toObject()) {
+              applied = shape->restoreShapeContentsSnapshot(value.toObject()) &&
+                  shape->shapeContentsSnapshot() == value.toObject();
+              if (!applied && shape->shapeContentsSnapshot() != expected.toObject())
+                shape->restoreShapeContentsSnapshot(expected.toObject());
+            }
+            if (applied) {
+              undo->notifyAnythingChanged();
+              ArtifactCore::globalEventBus().publish<ProjectChangedEvent>(
+                  {QString(), QString()});
+              return;
+            }
+            if (widget_) widget_->setLayerEditBlockedStatus(
+                QStringLiteral("A shared SVG import conflicted with local shape content and was not applied"));
+            return;
+          }
+          if (operation.type == kOpLayerAnimationStack) {
+            if (acknowledgedLocalOperation ||
+                (session_ && operation.clientId == session_->localClientId())) return;
+            if (UndoManager::instance() &&
+                UndoManager::instance()->applyCollaborativeLayerAnimationStack(
+                    operation.layerId, operation.payload)) return;
+            if (widget_) widget_->setLayerEditBlockedStatus(
+                QStringLiteral("A shared animation layer change conflicted with local stack state and was not applied"));
+            return;
+          }
+          if (operation.type == kOpLayerText) {
+            if (acknowledgedLocalOperation ||
+                (session_ && operation.clientId == session_->localClientId())) return;
+            if (UndoManager::instance() &&
+                UndoManager::instance()->applyCollaborativeLayerText(
+                    operation.layerId, operation.payload)) return;
+            if (widget_) widget_->setLayerEditBlockedStatus(
+                QStringLiteral("A shared text edit conflicted with local text and was not applied"));
+            return;
+          }
+          if (operation.type == kOpLayerRename) {
+            if (acknowledgedLocalOperation ||
+                (session_ && operation.clientId == session_->localClientId())) return;
+            if (UndoManager::instance() &&
+                UndoManager::instance()->applyCollaborativeLayerRename(
+                    operation.layerId, operation.payload)) return;
+            if (widget_) widget_->setLayerEditBlockedStatus(
+                QStringLiteral("A shared layer rename conflicted with the local name and was not applied"));
+            return;
+          }
+          if (operation.type == kOpLayerVariant) {
+            if (acknowledgedLocalOperation ||
+                (session_ && operation.clientId == session_->localClientId())) return;
+            if (UndoManager::instance() &&
+                UndoManager::instance()->applyCollaborativeLayerVariant(
+                    operation.layerId, operation.payload)) return;
+            if (widget_) widget_->setLayerEditBlockedStatus(
+                QStringLiteral("A shared layer variant change conflicted with local variants and was not applied"));
+            return;
+          }
+          if (operation.type == kOpLayerBlendMode) {
+            if (acknowledgedLocalOperation ||
+                (session_ && operation.clientId == session_->localClientId())) return;
+            if (UndoManager::instance() &&
+                UndoManager::instance()->applyCollaborativeLayerBlendMode(
+                    operation.layerId, operation.payload)) return;
+            if (widget_) widget_->setLayerEditBlockedStatus(
+                QStringLiteral("A shared blend mode change conflicted with local layer state and was not applied"));
+            return;
+          }
+          if (operation.type == kOpLayerOpacity) {
+            if (acknowledgedLocalOperation ||
+                (session_ && operation.clientId == session_->localClientId())) return;
+            if (UndoManager::instance() &&
+                UndoManager::instance()->applyCollaborativeLayerOpacity(
+                    operation.layerId, operation.payload)) return;
+            if (widget_) widget_->setLayerEditBlockedStatus(
+                QStringLiteral("A shared opacity change conflicted with local layer state and was not applied"));
+            return;
+          }
+          if (operation.type == kOpLayerParent) {
+            if (acknowledgedLocalOperation ||
+                (session_ && operation.clientId == session_->localClientId())) return;
+            if (UndoManager::instance() &&
+                UndoManager::instance()->applyCollaborativeLayerParent(
+                    operation.layerId, operation.payload)) return;
+            if (widget_) widget_->setLayerEditBlockedStatus(
+                QStringLiteral("A shared parent change conflicted with local hierarchy and was not applied"));
+            return;
+          }
+          if (operation.type == kOpLayerVisibility) {
+            if (acknowledgedLocalOperation ||
+                (session_ && operation.clientId == session_->localClientId())) return;
+            if (UndoManager::instance() &&
+                UndoManager::instance()->applyCollaborativeLayerVisibility(
+                    operation.layerId, operation.payload)) return;
+            if (widget_) widget_->setLayerEditBlockedStatus(
+                QStringLiteral("A shared visibility change conflicted with local layer state and was not applied"));
+            return;
+          }
+          if (operation.type == kOpLayerFlag) {
+            if (acknowledgedLocalOperation ||
+                (session_ && operation.clientId == session_->localClientId())) return;
+            if (UndoManager::instance() &&
+                UndoManager::instance()->applyCollaborativeLayerFlag(
+                    operation.layerId, operation.payload)) return;
+            if (widget_) widget_->setLayerEditBlockedStatus(
+                QStringLiteral("A shared solo/shy change conflicted with local layer state and was not applied"));
+            return;
+          }
+          if (operation.type == kOpLayerEditLock) {
+            if (acknowledgedLocalOperation ||
+                (session_ && operation.clientId == session_->localClientId())) return;
+            if (UndoManager::instance() &&
+                UndoManager::instance()->applyCollaborativeLayerEditLock(
+                    operation.layerId, operation.payload)) return;
+            if (widget_) widget_->setLayerEditBlockedStatus(
+                QStringLiteral("A shared project layer lock change conflicted with local state and was not applied"));
+            return;
+          }
+          if (operation.type == kOpLayerAdd ||
+              operation.type == kOpLayerRemove ||
+              operation.type == kOpLayerReorder) {
+            if (acknowledgedLocalOperation ||
+                (session_ && operation.clientId == session_->localClientId())) return;
+            if (UndoManager::instance() &&
+                UndoManager::instance()->applyCollaborativeLayerMembership(
+                    operation.type, operation.layerId, operation.payload)) return;
+            if (widget_) {
+              widget_->setLayerEditBlockedStatus(
+                  QStringLiteral("A shared layer structure change conflicted with local composition state and was not applied"));
+            }
+          } else if (operation.type == kOpLayerMoveAtFrame) {
+            if (acknowledgedLocalOperation ||
+                (session_ && operation.clientId == session_->localClientId())) return;
+            const QJsonObject payload = operation.payload;
+            const qint64 frame = payload.value(QStringLiteral("frame")).toVariant().toLongLong();
+            const qint64 timeScale = payload.value(QStringLiteral("timeScale")).toVariant().toLongLong();
+            const float expectedX = static_cast<float>(
+                payload.value(QStringLiteral("expectedX")).toDouble());
+            const float expectedY = static_cast<float>(
+                payload.value(QStringLiteral("expectedY")).toDouble());
+            const float valueX = static_cast<float>(
+                payload.value(QStringLiteral("x")).toDouble());
+            const float valueY = static_cast<float>(
+                payload.value(QStringLiteral("y")).toDouble());
+            auto* undo = UndoManager::instance();
+            const auto layer = undo ? undo->resolveLayer(operation.layerId)
+                                    : ArtifactAbstractLayerPtr{};
+            bool applied = false;
+            if (layer && frame >= -1000000000LL && frame <= 1000000000LL &&
+                timeScale >= 1 && timeScale <= 10000 &&
+                std::isfinite(expectedX) && std::isfinite(expectedY) &&
+                std::isfinite(valueX) && std::isfinite(valueY)) {
+              const auto x = layer->getProperty(
+                  QStringLiteral("transform.position.x"));
+              const auto y = layer->getProperty(
+                  QStringLiteral("transform.position.y"));
+              const ArtifactCore::RationalTime time(frame, timeScale);
+              if (x && y && x->interpolateValue(time).toFloat() == expectedX &&
+                  y->interpolateValue(time).toFloat() == expectedY) {
+                layer->transform3D().setPosition(time, valueX, valueY);
+                applied = x->interpolateValue(time).toFloat() == valueX &&
+                          y->interpolateValue(time).toFloat() == valueY;
+                if (!applied)
+                  layer->transform3D().setPosition(time, expectedX, expectedY);
+              }
+            }
+            if (applied) {
+              layer->setDirty(LayerDirtyFlag::Transform);
+              layer->changed();
+              undo->notifyAnythingChanged();
+              if (auto* composition = static_cast<ArtifactAbstractComposition*>(
+                      layer->composition())) {
+                ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+                    {composition->id().toString(), layer->id().toString(),
+                     LayerChangedEvent::ChangeType::Modified});
+              }
+              return;
+            }
+            if (widget_) widget_->setLayerEditBlockedStatus(
+                QStringLiteral("A shared layer move conflicted with the local transform at that frame and was not applied"));
+          } else if (operation.type == kOpLayerTransform) {
+            if (widget_) {
+              widget_->setLayerEditBlockedStatus(
+                  QStringLiteral("A shared layer edit was received but not applied locally; project-state sync is not enabled yet"));
+            }
+          } else if (widget_) {
+            widget_->setLayerEditBlockedStatus(
+                QStringLiteral("A collaboration operation was received but this client has no handler for it"));
+          }
+        });
+    adapter_->setRemoteOperationValidator(
+        [this](const CollabOperationData& operation) {
+          return validateCollabReviewOperation(review_, operation).isEmpty();
+        });
+
+    if (widget_) {
+      widget_->setLocalUser(clientId, userName, userColor);
+      widget_->setConnectionStatus(QStringLiteral("Connecting"), true);
+    }
+
+    JoinMessage join;
+    join.projectId = projectId;
+    join.projectFingerprint = projectFingerprint;
+    join.accessToken = accessToken;
+    join.clientId = clientId;
+    join.userId = userId;
+    join.userName = userName;
+    join.userColor = userColor.name();
+    socket_.connectToServer(serverUrl, join);
+  }
+
+  void disconnectSession() {
+    socket_.disconnect();
+    clearSession();
+    if (widget_) {
+      widget_->syncRemoteUsers({});
+      widget_->setLocalUser({}, {}, {});
+      widget_->setConnectionStatus(QStringLiteral("Disconnected"), false);
+    }
+  }
+
+  void clearSession() {
+    delete adapter_;
+    adapter_ = nullptr;
+    delete session_;
+    session_ = nullptr;
+    pendingLockReleases_.clear();
+    if (widget_) {
+      widget_->setLayerLockControlState({}, false, false, false, false, {});
+    }
+    refreshTimelineLockIndicators();
+  }
+
+  void onConnectionState(const CollabConnectionState state) {
+    if (!widget_) return;
+    switch (state) {
+      case CollabConnectionState::Disconnected:
+        if (session_) session_->clearLocks();
+        pendingLockReleases_.clear();
+        widget_->setConnectionStatus(QStringLiteral("Disconnected"), false);
+        widget_->syncRemoteUsers({});
+        refreshSelectedLayerLockControl();
+        refreshReviewNotes();
+        break;
+      case CollabConnectionState::Connecting:
+        hasLastSentPresence_ = false;
+        widget_->setConnectionStatus(QStringLiteral("Connecting"), true);
+        refreshReviewNotes();
+        break;
+      case CollabConnectionState::Connected:
+        widget_->setConnectionStatus(QStringLiteral("Connected; syncing room…"), true);
+        refreshLocalPresence();
+        refreshSelectedLayerLockControl();
+        refreshReviewNotes();
+        break;
+      case CollabConnectionState::Reconnecting:
+        hasLastSentPresence_ = false;
+        if (session_) session_->clearLocks();
+        pendingLockReleases_.clear();
+        widget_->setConnectionStatus(QStringLiteral("Reconnecting"), true);
+        refreshSelectedLayerLockControl();
+        refreshReviewNotes();
+        break;
+      case CollabConnectionState::Error:
+        if (session_) session_->clearLocks();
+        pendingLockReleases_.clear();
+        widget_->setConnectionStatus(QStringLiteral("Connection failed"), false);
+        widget_->syncRemoteUsers({});
+        widget_->setLocalUser({}, {}, {});
+        refreshSelectedLayerLockControl();
+        refreshReviewNotes();
+        break;
+    }
+  }
+
+public:
+  void refreshTimelineLockIndicators() {
+    QVector<LayerID> lockedLayerIds;
+    if (session_) {
+      const auto activeLocks = session_->activeLocks();
+      lockedLayerIds.reserve(static_cast<qsizetype>(activeLocks.size()));
+      for (const CollabLayerLock& lock : activeLocks) {
+        const LayerID layerId(lock.layerId);
+        if (!layerId.isNil()) lockedLayerIds.append(layerId);
+      }
+    }
+    if (!parent()) return;
+    const auto timelines = parent()->findChildren<ArtifactTimelineWidget*>();
+    for (ArtifactTimelineWidget* timeline : timelines) {
+      if (timeline) timeline->setCollaborationLockedLayers(lockedLayerIds);
+    }
+  }
+
+  void refreshLocalPresence() {
+    const QString previousCompositionId =
+        pendingLocalPresence_.compositionId;
+    pendingLocalPresence_.compositionId.clear();
+    pendingLocalPresence_.playbackFrame = 0;
+    pendingLocalPresence_.hasPlaybackFrame = false;
+    auto* projectService = ArtifactProjectService::instance();
+    if (projectService) {
+      if (const auto composition =
+              projectService->currentComposition().lock()) {
+        pendingLocalPresence_.compositionId =
+            composition->id().toString();
+      } else {
+        pendingLocalPresence_.compositionId.clear();
+      }
+    }
+
+    if (auto* playbackService = ArtifactPlaybackService::instance()) {
+      pendingLocalPresence_.playbackFrame =
+          playbackService->currentFrame().framePosition();
+      pendingLocalPresence_.hasPlaybackFrame = true;
+    }
+
+    pendingLocalPresence_.selectedLayerIds.clear();
+    if (auto* app = ArtifactApplicationManager::instance()) {
+      if (auto* selectionManager = app->layerSelectionManager()) {
+        const auto selectedLayers = selectionManager->selectedLayersInOrder();
+        for (const auto& layer : selectedLayers) {
+          if (layer) {
+            pendingLocalPresence_.selectedLayerIds.append(
+                layer->id().toString());
+          }
+        }
+      }
+    }
+
+    pendingPresenceDirty_ = true;
+    refreshSelectedLayerLockControl();
+    if (previousCompositionId != pendingLocalPresence_.compositionId) {
+      refreshReviewNotes();
+    } else {
+      refreshReviewContext();
+    }
+    schedulePresenceFlush();
+  }
+
+  void refreshPlaybackFrame() {
+    pendingLocalPresence_.playbackFrame = 0;
+    pendingLocalPresence_.hasPlaybackFrame = false;
+    if (auto* playbackService = ArtifactPlaybackService::instance()) {
+      pendingLocalPresence_.playbackFrame =
+          playbackService->currentFrame().framePosition();
+      pendingLocalPresence_.hasPlaybackFrame = true;
+    }
+    pendingPresenceDirty_ = true;
+    schedulePresenceFlush();
+  }
+
+private:
+
+  void onLayerLockAction(const QString& layerId, const bool acquire) {
+    if (!session_ || !adapter_ || !socket_.isRoomReady() ||
+        socket_.isReadOnly() || layerId.isEmpty()) {
+      refreshSelectedLayerLockControl();
+      return;
+    }
+    if (acquire) {
+      if (session_->isLayerLockedByOther(layerId) ||
+          session_->hasPendingLockRequest(layerId)) {
+        refreshSelectedLayerLockControl();
+        return;
+      }
+      session_->requestLocalLock(layerId);
+      if (!adapter_->sendLocalLockRequest(layerId)) {
+        session_->releaseLocalLock(layerId);
+      }
+    } else {
+      const CollabLayerLock lock = session_->lockOwner(layerId);
+      if (lock.clientId != session_->localClientId()) {
+        refreshSelectedLayerLockControl();
+        return;
+      }
+      pendingLockReleases_.insert(layerId);
+      if (!adapter_->sendLocalLockRelease(layerId)) {
+        pendingLockReleases_.remove(layerId);
+      }
+    }
+    refreshSelectedLayerLockControl();
+  }
+
+  void refreshSelectedLayerLockControl() {
+    refreshTimelineLockIndicators();
+    if (!widget_) return;
+    const QString selectedLayerId =
+        pendingLocalPresence_.selectedLayerIds.size() == 1
+            ? pendingLocalPresence_.selectedLayerIds.constFirst()
+            : QString();
+    if (!session_ || !adapter_ || selectedLayerId.isEmpty()) {
+      widget_->setLayerLockControlState(
+          selectedLayerId,
+          socket_.isRoomReady() && !socket_.isReadOnly(),
+          false, false, false, {});
+      return;
+    }
+
+    const bool locked = session_->isLayerLocked(selectedLayerId);
+    const CollabLayerLock lock = session_->lockOwner(selectedLayerId);
+    const bool heldByLocalUser =
+        locked && lock.clientId == session_->localClientId();
+    QString ownerName = lock.userName;
+    if (locked && !heldByLocalUser && ownerName.isEmpty()) {
+      ownerName = session_->participant(lock.clientId).userName;
+    }
+    const bool pending = session_->hasPendingLockRequest(selectedLayerId) ||
+                         pendingLockReleases_.contains(selectedLayerId);
+    widget_->setLayerLockControlState(
+        selectedLayerId,
+        socket_.isRoomReady() && !socket_.isReadOnly(),
+        locked, heldByLocalUser,
+        pending, ownerName, session_->lockDenialReason(selectedLayerId));
+  }
+
+  bool addReviewComment(const QString& text) {
+    if (!session_ || !adapter_ || !socket_.isConnected() ||
+        pendingLocalPresence_.compositionId.isEmpty() || text.trimmed().isEmpty() ||
+        text.size() > 4096) {
+      return false;
+    }
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    const CollabParticipant local = session_->localIdentity();
+    const QString layerId =
+        pendingLocalPresence_.selectedLayerIds.size() == 1
+            ? pendingLocalPresence_.selectedLayerIds.constFirst()
+            : QString();
+    CollabComment comment;
+    comment.commentId = newCollabId();
+    comment.authorClientId = local.clientId;
+    comment.authorUserId = local.userId;
+    comment.authorName = local.userName;
+    comment.compositionId = pendingLocalPresence_.compositionId;
+    comment.layerId = layerId;
+    comment.frame = pendingLocalPresence_.hasPlaybackFrame
+                        ? pendingLocalPresence_.playbackFrame
+                        : -1;
+    comment.text = text.trimmed();
+    comment.createdAtMs = nowMs;
+    return sendReviewComment(comment, nowMs);
+  }
+
+  bool replyReviewComment(const QString& parentCommentId,
+                          const QString& text) {
+    if (!session_ || !adapter_ || !socket_.isConnected() ||
+        text.trimmed().isEmpty() || text.size() > 4096) {
+      return false;
+    }
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    const CollabParticipant local = session_->localIdentity();
+    const CollabComment parent = review_.commentForId(parentCommentId);
+    if (parent.commentId.isEmpty() || parent.isReply() || parent.resolved ||
+        parent.deleted ||
+        parent.compositionId != pendingLocalPresence_.compositionId) {
+      return false;
+    }
+    CollabComment reply;
+    reply.commentId = newCollabId();
+    reply.parentCommentId = parentCommentId;
+    reply.authorClientId = local.clientId;
+    reply.authorUserId = local.userId;
+    reply.authorName = local.userName;
+    reply.compositionId = parent.compositionId;
+    reply.layerId = parent.layerId;
+    reply.frame = parent.frame;
+    reply.text = text.trimmed();
+    reply.createdAtMs = nowMs;
+    return sendReviewComment(reply, nowMs);
+  }
+
+  bool sendReviewComment(const CollabComment& comment, const qint64 nowMs) {
+    if (!session_ || !adapter_ || !socket_.isConnected() ||
+        comment.compositionId != pendingLocalPresence_.compositionId) {
+      return false;
+    }
+    const CollabOperationData request = makeReviewCommentAddOperation(
+        comment.authorClientId, comment, nowMs);
+    const CollabOperationData operation =
+        session_->createLocalOperation(request, nowMs);
+    return adapter_->sendLocalOperation(operation);
+  }
+
+  bool setReviewCommentResolved(const QString& commentId,
+                               const bool resolved) {
+    if (!session_ || !adapter_ || !socket_.isConnected()) return false;
+    const CollabComment comment = review_.commentForId(commentId);
+    if (comment.commentId.isEmpty() || comment.isReply() || comment.deleted ||
+        comment.compositionId != pendingLocalPresence_.compositionId ||
+        comment.resolved == resolved) {
+      return false;
+    }
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    const QString clientId = session_->localClientId();
+    const CollabOperationData request = makeReviewCommentResolveOperation(
+        clientId, commentId, resolved, nowMs);
+    const CollabOperationData operation =
+        session_->createLocalOperation(request, nowMs);
+    return adapter_->sendLocalOperation(operation);
+  }
+
+  bool editReviewComment(const QString& commentId, const QString& text) {
+    if (!session_ || !adapter_ || !socket_.isConnected() ||
+        text.trimmed().isEmpty()) {
+      return false;
+    }
+    const QString clientId = session_->localClientId();
+    const CollabComment previous = review_.commentForId(commentId);
+    if (previous.commentId.isEmpty() || previous.deleted ||
+        previous.compositionId != pendingLocalPresence_.compositionId ||
+        previous.authorClientId != clientId || text.size() > 4096) {
+      return false;
+    }
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    const CollabOperationData request = makeReviewCommentEditOperation(
+        clientId, session_->localIdentity().userName, commentId, text, nowMs);
+    const CollabOperationData operation =
+        session_->createLocalOperation(request, nowMs);
+    return adapter_->sendLocalOperation(operation);
+  }
+
+  bool deleteReviewComment(const QString& commentId) {
+    if (!session_ || !adapter_ || !socket_.isConnected()) return false;
+    const QString clientId = session_->localClientId();
+    const CollabComment comment = review_.commentForId(commentId);
+    if (comment.commentId.isEmpty() || comment.deleted ||
+        comment.compositionId != pendingLocalPresence_.compositionId ||
+        !review_.canDeleteComment(commentId, clientId)) {
+      return false;
+    }
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    const CollabOperationData request = makeReviewCommentRemoveOperation(
+        clientId, commentId, nowMs);
+    const CollabOperationData operation =
+        session_->createLocalOperation(request, nowMs);
+    return adapter_->sendLocalOperation(operation);
+  }
+
+  bool jumpToReviewAnchor(const QString& commentId) {
+    if (!session_ || !socket_.isConnected()) return false;
+    const CollabComment comment = review_.commentForId(commentId);
+    if (comment.commentId.isEmpty() ||
+        comment.compositionId != pendingLocalPresence_.compositionId) {
+      return false;
+    }
+    auto* projectService = ArtifactProjectService::instance();
+    if (!projectService) return false;
+    const auto composition = projectService->currentComposition().lock();
+    if (!composition || composition->id().toString() != comment.compositionId) {
+      return false;
+    }
+
+    bool moved = false;
+    if (!comment.layerId.isEmpty()) {
+      const auto layer = composition->layerById(LayerID(comment.layerId));
+      if (layer && !layer->isLocked() && !layer->isSelectionLocked()) {
+        if (auto* selectionManager = ArtifactLayerSelectionManager::instance()) {
+          selectionManager->selectLayer(layer);
+          moved = true;
+        }
+      }
+    }
+    if (comment.frame >= 0) {
+      if (auto* playbackService = ArtifactPlaybackService::instance()) {
+        const auto range = playbackService->frameRange();
+        const qint64 target = std::clamp<qint64>(
+            comment.frame, range.start(), range.end());
+        playbackService->setCurrentFrame(FramePosition(target));
+        moved = true;
+      }
+    }
+    return moved;
+  }
+
+  void refreshReviewNotes() {
+    if (!widget_) return;
+    refreshReviewContext();
+    const QString compositionId = pendingLocalPresence_.compositionId;
+    QList<CollabPresenceWidget::ReviewNote> notes;
+    if (socket_.isConnected() && !compositionId.isEmpty()) {
+      const auto comments = review_.commentsFor(compositionId, {}, true);
+      for (const CollabComment& comment : comments) {
+        CollabPresenceWidget::ReviewNote note;
+        note.commentId = comment.commentId;
+        note.parentCommentId = comment.parentCommentId;
+        note.authorName = comment.authorName;
+        note.text = comment.text;
+        note.resolved = comment.resolved;
+        note.deleted = comment.deleted;
+        note.revisionHistoryTruncated = comment.revisionHistoryTruncated;
+        if (!comment.deleted) {
+          for (const CollabCommentRevision& revision : comment.revisions) {
+            QString editorName = revision.editorName.isEmpty()
+                                     ? revision.editorClientId
+                                     : revision.editorName;
+            if (revision.editorName.isEmpty() && session_) {
+              if (revision.editorClientId == session_->localClientId()) {
+                editorName = session_->localIdentity().userName;
+              } else {
+                const CollabParticipant editor =
+                    session_->participant(revision.editorClientId);
+                if (!editor.userName.isEmpty()) editorName = editor.userName;
+              }
+            }
+            const QString editedAt = revision.editedAtMs > 0
+                ? QDateTime::fromMSecsSinceEpoch(revision.editedAtMs)
+                      .toLocalTime().toString(Qt::ISODateWithMs)
+                : QStringLiteral("Unknown time");
+            note.revisionHistory.append(
+                QStringLiteral("%1 · %2\n%3")
+                    .arg(editedAt, editorName, revision.previousText));
+          }
+        }
+        if (!comment.layerId.isEmpty()) {
+          note.anchor = QStringLiteral("Layer %1").arg(comment.layerId);
+        }
+        if (comment.frame >= 0) {
+          if (!note.anchor.isEmpty()) note.anchor += QStringLiteral(" · ");
+          note.anchor += QStringLiteral("Frame %1").arg(comment.frame);
+        }
+        notes.append(note);
+      }
+    }
+    widget_->setReviewNotes(notes);
+  }
+
+  void refreshReviewContext() {
+    if (!widget_) return;
+    const QString compositionId = pendingLocalPresence_.compositionId;
+    const QString layerId =
+        pendingLocalPresence_.selectedLayerIds.size() == 1
+            ? pendingLocalPresence_.selectedLayerIds.constFirst()
+            : QString();
+    const bool roomReady = socket_.isRoomReady();
+    widget_->setReviewContext(compositionId, layerId, roomReady,
+                              roomReady && !socket_.isReadOnly());
+  }
+
+  void refreshRoster() {
+    if (!widget_ || !session_) return;
+    QList<CollabPresenceWidget::UserPresence> users;
+    QSet<QString> activeClientIds;
+    const auto participants = session_->participants();
+    for (const auto& participant : participants) {
+      activeClientIds.insert(participant.clientId);
+      CollabPresenceWidget::UserPresence user;
+      user.userId = participant.clientId;
+      user.userName = participant.userName;
+      user.color = QColor(participant.userColor);
+
+      const CollabPresenceState presence =
+          session_->participantPresence(participant.clientId);
+      QJsonObject raw = presence.raw;
+      if (raw.contains(QStringLiteral("cursorLocation"))) {
+        user.cursorLocation =
+            raw.value(QStringLiteral("cursorLocation")).toString();
+      } else if (presence.hasPlayback) {
+        user.cursorLocation =
+            QStringLiteral("Frame %1").arg(presence.playbackFrame);
+      } else if (presence.hasComposition) {
+        user.cursorLocation = QStringLiteral("Composition");
+      } else {
+        user.cursorLocation = QStringLiteral("Workspace");
+      }
+
+      const QJsonArray selectedLayers =
+          raw.value(QStringLiteral("selectedLayers")).toArray();
+      for (const QJsonValue& layerId : selectedLayers) {
+        const QString value = layerId.toString();
+        if (!value.isEmpty()) user.selectedLayers.append(value);
+      }
+      if (user.selectedLayers.isEmpty() && presence.hasSelection) {
+        user.selectedLayers.append(presence.selectedLayerId);
+      }
+      auto& nameCache = selectedLayerNameCache_[participant.clientId];
+      if (nameCache.compositionId != presence.compositionId ||
+          nameCache.layerIds != user.selectedLayers) {
+        nameCache.compositionId = presence.compositionId;
+        nameCache.layerIds = user.selectedLayers;
+        nameCache.names.clear();
+        if (presence.hasComposition && !user.selectedLayers.isEmpty()) {
+          auto* projectService = ArtifactProjectService::instance();
+          if (projectService) {
+            const auto found = projectService->findComposition(
+                CompositionID(presence.compositionId));
+            if (found.success) {
+              if (const auto composition = found.ptr.lock()) {
+                for (const QString& selectedLayerId : user.selectedLayers) {
+                  const auto layer = composition->layerById(
+                      LayerID(selectedLayerId));
+                  if (!layer) continue;
+                  const QString layerName = layer->layerName().trimmed();
+                  if (!layerName.isEmpty()) {
+                    nameCache.names.append(layerName);
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      user.selectedLayerNames = nameCache.names;
+      users.append(user);
+    }
+    for (auto cacheIt = selectedLayerNameCache_.begin();
+         cacheIt != selectedLayerNameCache_.end();) {
+      if (!activeClientIds.contains(cacheIt.key())) {
+        cacheIt = selectedLayerNameCache_.erase(cacheIt);
+      } else {
+        ++cacheIt;
+      }
+    }
+    widget_->syncRemoteUsers(users);
+  }
+
+  void schedulePresenceFlush() {
+    if (!pendingPresenceDirty_ || !adapter_ || !socket_.isConnected() ||
+        presenceFlushScheduled_) {
+      return;
+    }
+    presenceFlushScheduled_ = true;
+    QTimer::singleShot(200, this, [this]() {
+      presenceFlushScheduled_ = false;
+      if (!pendingPresenceDirty_ || !adapter_ || !socket_.isConnected()) return;
+      pendingPresenceDirty_ = false;
+
+      QJsonArray selectedLayers;
+      for (const QString& layerId :
+           pendingLocalPresence_.selectedLayerIds) {
+        selectedLayers.append(layerId);
+      }
+      QJsonObject payload{
+      {QStringLiteral("cursorLocation"),
+           pendingLocalPresence_.compositionId.isEmpty()
+               ? QStringLiteral("Workspace")
+               : QStringLiteral("Composition")},
+          {QStringLiteral("selectedLayers"), selectedLayers}};
+      if (pendingLocalPresence_.hasPlaybackFrame) {
+        payload.insert(QStringLiteral("playbackFrame"),
+                       pendingLocalPresence_.playbackFrame);
+      }
+      if (!pendingLocalPresence_.compositionId.isEmpty()) {
+        payload.insert(QStringLiteral("compositionId"),
+                       pendingLocalPresence_.compositionId);
+      }
+      if (hasLastSentPresence_ && payload == lastSentPresence_) return;
+      lastSentPresence_ = payload;
+      hasLastSentPresence_ = true;
+
+      CollabPresenceState presence;
+      presence.raw = payload;
+      if (!adapter_->sendLocalPresence(presence)) {
+        hasLastSentPresence_ = false;
+        pendingPresenceDirty_ = true;
+        schedulePresenceRetry();
+        return;
+      }
+      presenceRetryDelayMs_ = 500;
+      if (widget_ && session_) {
+        widget_->updateUser(session_->localClientId(), payload);
+      }
+    });
+  }
+
+  void schedulePresenceRetry() {
+    if (presenceRetryScheduled_ || !pendingPresenceDirty_) return;
+    presenceRetryScheduled_ = true;
+    const int delayMs = presenceRetryDelayMs_;
+    presenceRetryDelayMs_ = std::min(presenceRetryDelayMs_ * 2, 8000);
+    QTimer::singleShot(delayMs, this, [this]() {
+      presenceRetryScheduled_ = false;
+      if (pendingPresenceDirty_ && socket_.isConnected()) {
+        schedulePresenceFlush();
+      }
+    });
+  }
+
+  QPointer<CollabPresenceWidget> widget_;
+  CollaborationWebSocket socket_;
+  CollaborationSession* session_ = nullptr;
+  CollaborationSessionAdapter* adapter_ = nullptr;
+  LocalPresenceSnapshot pendingLocalPresence_;
+  QJsonObject lastSentPresence_;
+  CollaborationReview review_;
+  bool pendingPresenceDirty_ = false;
+  bool presenceFlushScheduled_ = false;
+  bool presenceRetryScheduled_ = false;
+  int presenceRetryDelayMs_ = 500;
+  bool hasLastSentPresence_ = false;
+  QSet<QString> pendingLockReleases_;
+  QHash<QString, SelectedLayerNameCache> selectedLayerNameCache_;
+};
+
 constexpr int kMainWindowLayoutVersion = 11;
 
 void applyConfiguredMessageBoxButtonAlignment(QMessageBox* messageBox) {
@@ -936,6 +2604,23 @@ QByteArray currentProjectSnapshotJson() {
   }
   const QJsonDocument doc(project->toJson());
   return doc.toJson(QJsonDocument::Indented);
+}
+
+QString currentProjectCollaborationFingerprint() {
+  auto project =
+      ArtifactProjectManager::getInstance().getCurrentProjectSharedPtr();
+  if (!project) {
+    return {};
+  }
+  QJsonObject baseline = project->toJson();
+  baseline.remove(QStringLiteral("savedAt"));
+  const QByteArray bytes =
+      QJsonDocument(baseline).toJson(QJsonDocument::Compact);
+  if (bytes.isEmpty()) {
+    return {};
+  }
+  return QString::fromLatin1(
+      QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex());
 }
 
 QString debugBridgeFilePath() {
@@ -3551,6 +5236,7 @@ int main(int argc, char *argv[]) {
   using namespace Artifact;
   auto *mw = new ArtifactMainWindow();
   QPointer<ArtifactMainWindow> mainWindowGuard(mw);
+  QPointer<CollaborationDockController> collaborationController;
   initializeProjectBundleIpc(mw);
   ArtifactWorkspaceManager workspaceManager;
   mw->setObjectName("ArtifactMainWindow");
@@ -4360,6 +6046,15 @@ int main(int argc, char *argv[]) {
     mw->addDockedWidgetTabbed(QStringLiteral("Properties"),
                               DockArea::Right, propertyPanel,
                               QStringLiteral("Inspector"));
+    auto *collaborationPresence = WidgetCreationDiagnostics::createMeasured(
+        QStringLiteral("Collaboration"), QStringLiteral("eager-widget"),
+        QStringLiteral("optional-session-presence-surface"),
+        [mw]() { return new CollabPresenceWidget(mw); });
+    mw->addDockedWidgetTabbed(QStringLiteral("Collaboration"),
+                              DockArea::Right, collaborationPresence,
+                              QStringLiteral("Inspector"));
+    collaborationController =
+        new CollaborationDockController(collaborationPresence, mw);
     mw->addLazyDockedWidgetTabbedWithId(
         QStringLiteral("Audio Mixer"), QStringLiteral("Audio Mixer"),
         DockArea::Bottom,
@@ -4556,7 +6251,11 @@ int main(int argc, char *argv[]) {
         appEventSubscriptions.push_back(
           appEventBus.subscribe<LayerSelectionChangedEvent>(
               [layerViewEditor, status, projectService, resolveLayerForUi,
-               syncPropertyPanelLayer](const LayerSelectionChangedEvent &event) {
+               syncPropertyPanelLayer,
+               &collaborationController](const LayerSelectionChangedEvent &event) {
+                if (collaborationController) {
+                  collaborationController->refreshLocalPresence();
+                }
                 const LayerID incomingLayerId(event.layerId);
                 LayerID layerId = incomingLayerId;
                 if (layerId.isNil()) {
@@ -4620,7 +6319,11 @@ int main(int argc, char *argv[]) {
         appEventSubscriptions.push_back(
            appEventBus.subscribe<CurrentCompositionChangedEvent>(
                 [mw, compositionEditor, projectService, propertyPanel,
-                  layerViewEditor, status](const CurrentCompositionChangedEvent &event) {
+                  layerViewEditor, status,
+                  &collaborationController](const CurrentCompositionChangedEvent &event) {
+                if (collaborationController) {
+                  collaborationController->refreshLocalPresence();
+                }
                 const CompositionID compId(event.compositionId);
                 if (compositionEditor && projectService) {
                   const auto found = projectService->findComposition(compId);
@@ -4851,7 +6554,8 @@ int main(int argc, char *argv[]) {
                       // Create the regular dock after this layout transaction
                       // has restored main-window updates.
                       QTimer::singleShot(
-                          0, mw, [mw, compId, dockTitle, dockId, status]() {
+                          0, mw, [mw, compId, dockTitle, dockId, status,
+                                  collaborationController]() {
                             if (!mw || mw->hasDock(dockId)) {
                               return;
                             }
@@ -4875,6 +6579,9 @@ int main(int argc, char *argv[]) {
                             panel->resize(1200, 350);
                             phaseTimer.restart();
                             panel->setComposition(compId);
+                            if (collaborationController) {
+                              collaborationController->refreshTimelineLockIndicators();
+                            }
                             const double setCompositionMs =
                                 static_cast<double>(phaseTimer.nsecsElapsed()) /
                                 1000000.0;
@@ -5052,7 +6759,11 @@ int main(int argc, char *argv[]) {
       appEventSubscriptions.push_back(
           appEventBus.subscribe<FrameChangedEvent>(
               [latestFrame, hasFrameUpdate,
-               frameCounter](const FrameChangedEvent &event) {
+               frameCounter,
+               &collaborationController](const FrameChangedEvent &event) {
+                if (collaborationController) {
+                  collaborationController->refreshPlaybackFrame();
+                }
                 latestFrame->store(event.frame);
                 hasFrameUpdate->store(true);
                 frameCounter->fetch_add(1);

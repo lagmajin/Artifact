@@ -1111,7 +1111,8 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
     const QVariant &)> &rowValueChanged = {},
     const std::function<void(
         const QString &, const AbstractPropertyPtr &, const QVariant &)> &beginValueEdit = {},
-    const std::function<void(const QString &)> &cancelValueEdit = {}) {
+    const std::function<void(const QString &)> &cancelValueEdit = {},
+    const QStringList &mutationLayerIds = {}) {
   if (!propertyPtr)
     return nullptr;
   const auto &property = *propertyPtr;
@@ -1173,9 +1174,36 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
 
   auto *playback = ArtifactPlaybackService::instance();
 
+  const auto restorePreviewBaseline = [propertyPtr, row, editor]() {
+    if (!row || !row->property("collaborationPreviewActive").toBool()) return;
+    const QVariant baseline = row->property("collaborationPreviewBaseline");
+    if (propertyPtr) propertyPtr->setValue(baseline);
+    editor->setValueFromVariant(baseline);
+    row->setProperty("collaborationPreviewActive", false);
+  };
+  QStringList guardedLayerIds = mutationLayerIds;
+  if (guardedLayerIds.isEmpty() && layer) {
+    guardedLayerIds.append(layer->id().toQString());
+  }
+
   const auto applyPreviewValue =
-      [handler = previewValue ? previewValue : commitValue, propertyPtr,
-       propertyName = property.getName(), row, rowValueChanged, beginValueEdit](const QVariant &value) {
+      [handler = previewValue ? previewValue : commitValue, propertyPtr, layer,
+       guardedLayerIds, cancelValueEdit,
+       propertyName = property.getName(), row, rowValueChanged, beginValueEdit,
+       restorePreviewBaseline](const QVariant &value) {
+        if (!guardedLayerIds.isEmpty()) {
+          if (auto* manager = UndoManager::instance()) {
+            if (!manager->areLayerMutationsAllowed(guardedLayerIds)) {
+              restorePreviewBaseline();
+              if (cancelValueEdit) cancelValueEdit(propertyName);
+              return;
+            }
+          }
+        }
+        if (row && !row->property("collaborationPreviewActive").toBool()) {
+          row->setProperty("collaborationPreviewBaseline", propertyPtr->getValue());
+          row->setProperty("collaborationPreviewActive", true);
+        }
         if (beginValueEdit) {
           beginValueEdit(propertyName, propertyPtr, value);
         }
@@ -1190,7 +1218,17 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
   const auto applyCommitValue =
       [commitValue, propertyPtr, playback, currentTimeProvider,
        propertyName = property.getName(), row, rowValueChanged,
-       keyframeChanged, layer, beginValueEdit](const QVariant &value) {
+       keyframeChanged, layer, beginValueEdit, guardedLayerIds, cancelValueEdit,
+       restorePreviewBaseline](const QVariant &value) {
+        if (!guardedLayerIds.isEmpty()) {
+          if (auto* manager = UndoManager::instance()) {
+            if (!manager->areLayerMutationsAllowed(guardedLayerIds)) {
+              restorePreviewBaseline();
+              if (cancelValueEdit) cancelValueEdit(propertyName);
+              return;
+            }
+          }
+        }
         if (beginValueEdit) {
           beginValueEdit(propertyName, propertyPtr, value);
         }
@@ -1231,14 +1269,15 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
           }
         }
         commitValue(propertyName, value);
+        if (row) row->setProperty("collaborationPreviewActive", false);
       };
   editor->setPreviewHandler(applyPreviewValue);
   editor->setCommitHandler(applyCommitValue);
-  if (cancelValueEdit) {
-    row->setCancelHandler([cancelValueEdit, propertyName = property.getName()]() {
-      cancelValueEdit(propertyName);
-    });
-  }
+  row->setCancelHandler([cancelValueEdit, propertyName = property.getName(),
+                         restorePreviewBaseline]() {
+    restorePreviewBaseline();
+    if (cancelValueEdit) cancelValueEdit(propertyName);
+  });
 
   QString editorTooltip = meta.tooltip;
   if (property.getName().compare(QStringLiteral("text.value"), Qt::CaseInsensitive) == 0) {
@@ -1795,7 +1834,8 @@ void addRowsFromProperties(
     const QVariant &)> &rowValueChanged = {},
     const std::function<void(
         const QString &, const AbstractPropertyPtr &, const QVariant &)> &beginValueEdit = {},
-    const std::function<void(const QString &)> &cancelValueEdit = {}) {
+    const std::function<void(const QString &)> &cancelValueEdit = {},
+    const QStringList &mutationLayerIds = {}) {
   for (const auto &ptr : properties) {
     if (!ptr || !propertyMatchesFilter(*ptr, filterText)) {
       continue;
@@ -1805,7 +1845,7 @@ void addRowsFromProperties(
                               currentTimeProvider,
                               keyframeChanged, layer, registryScope,
                               rowValueChanged, beginValueEdit,
-                              cancelValueEdit)) {
+                              cancelValueEdit, mutationLayerIds)) {
       // Static help channels from property metadata. Runs before decorateRow
       // so dynamic state text (e.g. "Mixed") and per-case tooltips win.
       const auto meta = ptr->metadata();

@@ -1477,12 +1477,16 @@ ArtifactCore::RationalTime transformKeyframeTimeAtFrame(const ArtifactAbstractLa
 class TransformUndoCommand final : public UndoCommand {
 public:
  TransformUndoCommand(ArtifactAbstractLayerPtr layer, int64_t frame, TransformSnapshot before, TransformSnapshot after)
-     : layer_(layer), frame_(frame), before_(before), after_(after) {}
+     : layer_(layer), layerId_(layer ? layer->id().toString() : QString()),
+       frame_(frame), before_(before), after_(after) {}
 
  void undo() override { lastOperationSucceeded_ = apply(before_); }
  void redo() override { lastOperationSucceeded_ = apply(after_); }
  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
  QString label() const override { return QStringLiteral("Transform Layer"); }
+ QStringList collaborationTargetLayerIds() const override {
+   return layerId_.isEmpty() ? QStringList{} : QStringList{layerId_};
+ }
 
  private:
  bool apply(const TransformSnapshot& snapshot) {
@@ -1541,6 +1545,7 @@ public:
   }
 
  ArtifactAbstractLayerWeak layer_;
+ QString layerId_;
  int64_t frame_ = 0;
  TransformSnapshot before_;
  TransformSnapshot after_;
@@ -1562,6 +1567,16 @@ public:
  void redo() override { lastOperationSucceeded_ = apply(false); }
  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
  QString label() const override { return QStringLiteral("Transform Layers"); }
+ QStringList collaborationTargetLayerIds() const override {
+  QStringList ids;
+  for (const auto& entry : entries_) {
+   const auto layer = entry.layer.lock();
+   if (!layer) continue;
+   const QString id = layer->id().toString();
+   if (!id.isEmpty() && !ids.contains(id)) ids.append(id);
+  }
+  return ids;
+ }
 
  private:
  bool apply(bool useBefore) {
