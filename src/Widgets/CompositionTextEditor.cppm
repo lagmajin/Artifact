@@ -581,15 +581,6 @@ protected:
           accept();
           return true;
         }
-        if ((ke->key() == Qt::Key_Return || ke->key() == Qt::Key_Enter) &&
-            !(ke->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier))) {
-          const auto textLayer =
-              ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer_);
-          if (textLayer && textLayer->layoutMode() == TextLayoutMode::Point) {
-            accept();
-            return true;
-          }
-        }
       } else if (event->type() == QEvent::KeyRelease) {
         applyLivePreview();
         updateEditState();
