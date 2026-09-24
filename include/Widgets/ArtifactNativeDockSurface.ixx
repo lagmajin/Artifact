@@ -43,6 +43,7 @@ module;
 #include <QSplitterHandle>
 #include <QTabWidget>
 #include <QTabBar>
+#include <QEvent>
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QStringList>
@@ -81,16 +82,29 @@ class NativeDockSurface final : public QWidget {
         QStyleOptionTab option;
         initStyleOption(&option, selectedIndex);
         const QRectF rect(option.rect.adjusted(0, 0, -1, 1));
+        const bool tabsAtBottom =
+            tabs_->tabPosition() == QTabWidget::South;
         constexpr qreal radius = 5.0;
         QPainterPath contour;
-        contour.moveTo(rect.left(), rect.bottom());
-        contour.lineTo(rect.left(), rect.top() + radius);
-        contour.quadTo(rect.left(), rect.top(), rect.left() + radius,
-                       rect.top());
-        contour.lineTo(rect.right() - radius, rect.top());
-        contour.quadTo(rect.right(), rect.top(), rect.right(),
-                       rect.top() + radius);
-        contour.lineTo(rect.right(), rect.bottom());
+        if (tabsAtBottom) {
+          contour.moveTo(rect.left(), rect.top());
+          contour.lineTo(rect.left(), rect.bottom() - radius);
+          contour.quadTo(rect.left(), rect.bottom(), rect.left() + radius,
+                         rect.bottom());
+          contour.lineTo(rect.right() - radius, rect.bottom());
+          contour.quadTo(rect.right(), rect.bottom(), rect.right(),
+                         rect.bottom() - radius);
+          contour.lineTo(rect.right(), rect.top());
+        } else {
+          contour.moveTo(rect.left(), rect.bottom());
+          contour.lineTo(rect.left(), rect.top() + radius);
+          contour.quadTo(rect.left(), rect.top(), rect.left() + radius,
+                         rect.top());
+          contour.lineTo(rect.right() - radius, rect.top());
+          contour.quadTo(rect.right(), rect.top(), rect.right(),
+                         rect.top() + radius);
+          contour.lineTo(rect.right(), rect.bottom());
+        }
 
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing, true);
@@ -108,8 +122,11 @@ class NativeDockSurface final : public QWidget {
           // The underline belongs to the title, not to the tab/pane seam.
           // Keep it close to the text and use the configurable theme accent;
           // the fixed violet contour remains the panel-focus cue.
-          const int underlineY = std::min(titleRect.bottom() + 2,
-                                          option.rect.bottom() - 2);
+          const int underlineY = tabsAtBottom
+                                     ? std::max(titleRect.top() - 4,
+                                                option.rect.top() + 2)
+                                     : std::min(titleRect.bottom() + 2,
+                                                option.rect.bottom() - 2);
           QColor titleAccent = palette().color(QPalette::Highlight);
           titleAccent.setAlpha(224);
           painter.fillRect(
@@ -164,12 +181,26 @@ class NativeDockSurface final : public QWidget {
       setStyle(surfaceStyle);
     }
 
+    void setTabListButton(QToolButton *button) {
+      tabListButton_ = button;
+      syncTabListButtonCorner();
+    }
+
     void refreshFocusChrome() {
       update();
       tabBar()->update();
     }
 
   protected:
+    bool event(QEvent *event) override {
+      const bool handled = QTabWidget::event(event);
+      if (event->type() == QEvent::LayoutRequest ||
+          event->type() == QEvent::Resize || event->type() == QEvent::Show) {
+        syncTabListButtonCorner();
+      }
+      return handled;
+    }
+
     void paintEvent(QPaintEvent *event) override {
       QTabWidget::paintEvent(event);
       if (!property("artifactNativeActivePanel").toBool() ||
@@ -188,28 +219,54 @@ class NativeDockSurface final : public QWidget {
 
       const QRectF tab(selectedRect.adjusted(0, 0, -1, 0));
       constexpr qreal outerRadius = 3.0;
-      const qreal contentTop = std::clamp(
-          static_cast<qreal>(tabBar()->geometry().bottom() + 1),
-          tab.bottom(), surface.bottom() - outerRadius);
+      const bool tabsAtBottom = tabPosition() == QTabWidget::South;
+      const qreal contentEdge = tabsAtBottom
+                                    ? std::clamp(
+                                          static_cast<qreal>(
+                                              tabBar()->geometry().top() - 1),
+                                          surface.top() + outerRadius,
+                                          tab.top())
+                                    : std::clamp(
+                                          static_cast<qreal>(
+                                              tabBar()->geometry().bottom() + 1),
+                                          tab.bottom(),
+                                          surface.bottom() - outerRadius);
 
       // Draw only the dock chrome owned by QTabWidget. The selected tab's
-      // upper contour is painted by DockTabBar after the tab itself, so no
-      // additional QWidget needs to overlap a native viewport child.
+      // open contour edge is painted by DockTabBar after the tab itself, so
+      // no additional QWidget needs to overlap a native viewport child.
       QPainterPath outline;
-      outline.moveTo(tab.right(), contentTop);
-      outline.lineTo(surface.right() - outerRadius, contentTop);
-      outline.quadTo(surface.right(), contentTop, surface.right(),
-                     contentTop + outerRadius);
-      outline.lineTo(surface.right(), surface.bottom() - outerRadius);
-      outline.quadTo(surface.right(), surface.bottom(),
-                     surface.right() - outerRadius, surface.bottom());
-      outline.lineTo(surface.left() + outerRadius, surface.bottom());
-      outline.quadTo(surface.left(), surface.bottom(), surface.left(),
-                     surface.bottom() - outerRadius);
-      outline.lineTo(surface.left(), contentTop + outerRadius);
-      outline.quadTo(surface.left(), contentTop,
-                     surface.left() + outerRadius, contentTop);
-      outline.lineTo(tab.left(), contentTop);
+      if (tabsAtBottom) {
+        outline.moveTo(tab.right(), contentEdge);
+        outline.lineTo(surface.right() - outerRadius, contentEdge);
+        outline.quadTo(surface.right(), contentEdge, surface.right(),
+                       contentEdge - outerRadius);
+        outline.lineTo(surface.right(), surface.top() + outerRadius);
+        outline.quadTo(surface.right(), surface.top(),
+                       surface.right() - outerRadius, surface.top());
+        outline.lineTo(surface.left() + outerRadius, surface.top());
+        outline.quadTo(surface.left(), surface.top(), surface.left(),
+                       surface.top() + outerRadius);
+        outline.lineTo(surface.left(), contentEdge - outerRadius);
+        outline.quadTo(surface.left(), contentEdge,
+                       surface.left() + outerRadius, contentEdge);
+        outline.lineTo(tab.left(), contentEdge);
+      } else {
+        outline.moveTo(tab.right(), contentEdge);
+        outline.lineTo(surface.right() - outerRadius, contentEdge);
+        outline.quadTo(surface.right(), contentEdge, surface.right(),
+                       contentEdge + outerRadius);
+        outline.lineTo(surface.right(), surface.bottom() - outerRadius);
+        outline.quadTo(surface.right(), surface.bottom(),
+                       surface.right() - outerRadius, surface.bottom());
+        outline.lineTo(surface.left() + outerRadius, surface.bottom());
+        outline.quadTo(surface.left(), surface.bottom(), surface.left(),
+                       surface.bottom() - outerRadius);
+        outline.lineTo(surface.left(), contentEdge + outerRadius);
+        outline.quadTo(surface.left(), contentEdge,
+                       surface.left() + outerRadius, contentEdge);
+        outline.lineTo(tab.left(), contentEdge);
+      }
 
       QPainter painter(this);
       painter.setRenderHint(QPainter::Antialiasing, true);
@@ -221,6 +278,20 @@ class NativeDockSurface final : public QWidget {
       painter.drawPath(outline);
     }
 
+  private:
+    void syncTabListButtonCorner() {
+      if (!tabListButton_) {
+        return;
+      }
+      const Corner desiredCorner = tabPosition() == QTabWidget::South
+                                       ? Qt::BottomRightCorner
+                                       : Qt::TopRightCorner;
+      if (cornerWidget(desiredCorner) != tabListButton_) {
+        setCornerWidget(tabListButton_, desiredCorner);
+      }
+    }
+
+    QToolButton *tabListButton_ = nullptr;
   };
 
   class DockSplitter final : public QSplitter {
@@ -1773,6 +1844,7 @@ private:
     tabListButton->setAccessibleName(tr("Show panel list"));
     tabListButton->setProperty("artifactDockTabList", true);
     tabListButton->setFixedSize(22, 22);
+    tabs->setTabListButton(tabListButton);
     tabs->setCornerWidget(tabListButton, Qt::TopRightCorner);
     const auto &theme = ArtifactCore::currentDCCTheme();
     QPalette palette = tabs->palette();
