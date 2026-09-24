@@ -15,6 +15,8 @@ enum class CommandType {
   Interactive,
   PluginList,
   PluginInfo,
+  Python,
+  CommandIR,
   Render,
 };
 
@@ -31,7 +33,12 @@ struct GlobalOptions {
 struct GuiCommand {
   QStringList projectPaths;
   QString scriptPath;
+  QString singleCommand;
+  QString requestPath;
   bool scriptRequested = false;
+  bool commandRequested = false;
+  bool requestRequested = false;
+  bool jsonOutput = false;
 };
 
 // Reserved command payload for the future headless renderer. Keeping this
@@ -48,12 +55,27 @@ struct PluginInfoCommand {
   QString pluginId;
 };
 
+struct PythonCommand {
+  QString action;
+  QString target;
+  QString projectPath;
+  bool jsonLines = false;
+};
+
+struct CommandIRCommand {
+  QString requestPath;
+  QString projectPath;
+  bool requested = false;
+};
+
 struct CommandLine {
   CommandType type = CommandType::Gui;
   GlobalOptions global;
   GuiCommand gui;
   RenderCommand render;
   PluginInfoCommand pluginInfo;
+  PythonCommand python;
+  CommandIRCommand commandIR;
   QStringList unknownOptions;
   QStringList missingOptionValues;
   QStringList invalidOptionValues;

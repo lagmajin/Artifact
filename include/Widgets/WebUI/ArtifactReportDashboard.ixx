@@ -4,10 +4,12 @@ module;
 #include <QWidget>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <memory>
+#include <string>
+#include <vector>
 
 export module Artifact.Widgets.ReportDashboard;
 
-import std;
 
 export namespace Artifact {
 

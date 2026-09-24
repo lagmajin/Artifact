@@ -7,10 +7,12 @@ module;
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
+#include <algorithm>
+#include <memory>
+#include <vector>
 
 module Artifact.Layer.SandSim2D;
 
-import std;
 import Artifact.Layer.Abstract;
 import Artifact.Render.IRenderer;
 import Artifact.Render.DiligentDeviceManager;

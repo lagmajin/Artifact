@@ -1,5 +1,6 @@
 module;
 #include <utility>
+
 #include <algorithm>
 #include <cmath>
 #include <memory>
@@ -14,6 +15,7 @@ export module Artifact.Layer.Shape;
 
 import Color.Float;
 import Artifact.Layer.InitParams;
+import Artifact.Layer.Abstract;
 import Artifact.Layers.Abstract._2D;
 import Artifact.Mask.LayerMask;
 import Artifact.Render.IRenderer;
@@ -22,9 +24,14 @@ import Shape.Path;
 import Shape.Layer;
 import Shape.Types;
 import Memory.SharedPtr;
+import Container.NamedVector;
 
 export namespace Artifact {
 using namespace ArtifactCore;
+
+using ShapeDeformerPointMapper = QPointF (*)(
+    void*, ArtifactAbstractLayer*, const QPointF&);
+using ShapeDeformerPrepare = bool (*)(void*, ArtifactAbstractLayer*);
 
 enum class ShapeType { Rect = 0, Ellipse = 1, Star = 2, Polygon = 3, Line = 4, Triangle = 5, Square = 6 };
 
@@ -246,6 +253,8 @@ public:
   void clearCustomPolygonPoints();
   std::vector<QPointF> customPolygonPoints() const;
   bool customPolygonClosed() const;
+  QJsonObject customPolygonSnapshot() const;
+  bool restoreCustomPolygonSnapshot(const QJsonObject& snapshot);
 
   // Bezier vertex path — Phase 5
   // Path keyframe animation. Vertices are stored per frame on the
@@ -260,6 +269,10 @@ public:
   void clearCustomPath();
   std::vector<CustomPathVertex> customPathVertices() const;
   bool customPathClosed() const;
+  QJsonObject customPathSnapshot() const;
+  bool restoreCustomPathSnapshot(const QJsonObject& snapshot);
+  QJsonObject customGeometrySnapshot() const;
+  bool restoreCustomGeometrySnapshot(const QJsonObject& snapshot);
   ArtifactCore::PathFillRule customPathFillRule() const;
   void setCustomPathFillRule(ArtifactCore::PathFillRule rule);
 
@@ -282,6 +295,8 @@ public:
    ShapeContent shapeContentAt(int index) const;
    bool removeShapeContentAt(int index);
    void clearShapeContents();
+   QJsonObject shapeContentsSnapshot() const;
+   bool restoreShapeContentsSnapshot(const QJsonObject& snapshot);
    ShapeContent makeContentFromLegacy() const;
 
    // Active content index for per-content editing proxying.
@@ -388,12 +403,15 @@ public:
 
   // Layer interface
   QRectF localBounds() const override;
-  std::vector<QPointF> collisionOutlineLocalPoints() const override;
+  ArtifactCore::NamedVector<QPointF> collisionOutlineLocalPoints() const override;
   std::vector<ArtifactCore::PropertyGroup>
   getLayerPropertyGroups() const override;
   bool setLayerPropertyValue(const QString &propertyPath,
                               const QVariant &value) override;
   void draw(ArtifactIRenderer *renderer) override;
+  void draw(ArtifactIRenderer *renderer, void *deformerContext,
+            ShapeDeformerPointMapper pointMapper,
+            ShapeDeformerPrepare prepareDeformer);
   QImage toQImage() const;
   QImage getThumbnail(int width = 128, int height = 128) const override;
   QJsonObject toJson() const override;

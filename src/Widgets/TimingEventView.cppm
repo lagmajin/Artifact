@@ -15,7 +15,7 @@ module;
 
 module Artifact.Widgets.TimingEventView;
 
-import std;
+import Core.ArtifactMath;
 import Widgets.Utils.CSS;
 
 namespace Artifact {
@@ -91,7 +91,7 @@ public:
     {
         int rows = 1;
         for (const auto& item : events_) {
-            rows = std::max(rows, item.row + 1);
+            rows = ArtifactCore::artifactMax(rows, item.row + 1);
         }
         return rows;
     }
@@ -103,7 +103,7 @@ public:
 
     int contentRight(const int width) const
     {
-        return std::max(contentLeft(), width - kRightGutter);
+        return ArtifactCore::artifactMax(contentLeft(), width - kRightGutter);
     }
 
     int rowTop(const int row) const
@@ -114,13 +114,13 @@ public:
     int frameToX(const int frame) const
     {
         return contentLeft() +
-               static_cast<int>(std::lround((frame - visibleStartFrame_) * pixelsPerFrame_));
+               static_cast<int>(ArtifactCore::artifactLround((frame - visibleStartFrame_) * pixelsPerFrame_));
     }
 
     int xToFrame(const int x) const
     {
         return visibleStartFrame_ +
-               static_cast<int>(std::lround((x - contentLeft()) / std::max(0.001, pixelsPerFrame_)));
+               static_cast<int>(ArtifactCore::artifactLround((x - contentLeft()) / ArtifactCore::artifactMax(0.001, pixelsPerFrame_)));
     }
 
     QRect eventRect(const TimingEventItem& item, const int width) const
@@ -136,10 +136,10 @@ public:
         const int right = frameToX(item.endFrame);
         const int top = rowTop(item.row) + 4;
         const int height = kRowHeight - 8;
-        const int minRight = std::max(left + 1, right);
-        const int clampedLeft = std::clamp(left, contentLeft(), contentRight(width));
-        const int clampedRight = std::clamp(minRight, contentLeft(), contentRight(width));
-        return QRect(clampedLeft, top, std::max(1, clampedRight - clampedLeft), height);
+        const int minRight = ArtifactCore::artifactMax(left + 1, right);
+        const int clampedLeft = ArtifactCore::artifactClamp(left, contentLeft(), contentRight(width));
+        const int clampedRight = ArtifactCore::artifactClamp(minRight, contentLeft(), contentRight(width));
+        return QRect(clampedLeft, top, ArtifactCore::artifactMax(1, clampedRight - clampedLeft), height);
     }
 
     TimingEventItem* eventAt(const QPoint& pos, const int width)
@@ -168,7 +168,7 @@ public:
 
     int clampVisibleSpan() const
     {
-        return std::max(kMinVisibleSpan, visibleEndFrame_ - visibleStartFrame_);
+        return ArtifactCore::artifactMax(kMinVisibleSpan, visibleEndFrame_ - visibleStartFrame_);
     }
 
     void clampVisibleRange()
@@ -265,7 +265,7 @@ void TimingEventView::setCurrentFrame(const int frame)
         return;
     }
 
-    const int clamped = std::max(0, frame);
+    const int clamped = ArtifactCore::artifactMax(0, frame);
     if (impl_->currentFrame_ != clamped) {
         impl_->currentFrame_ = clamped;
         update();
@@ -284,7 +284,7 @@ void TimingEventView::setVisibleStartFrame(const int frame)
         return;
     }
 
-    const int clamped = std::max(0, frame);
+    const int clamped = ArtifactCore::artifactMax(0, frame);
     if (impl_->visibleStartFrame_ != clamped) {
         impl_->visibleStartFrame_ = clamped;
         impl_->clampVisibleRange();
@@ -303,7 +303,7 @@ void TimingEventView::setVisibleEndFrame(const int frame)
         return;
     }
 
-    const int clamped = std::max(impl_->visibleStartFrame_ + 1, frame);
+    const int clamped = ArtifactCore::artifactMax(impl_->visibleStartFrame_ + 1, frame);
     if (impl_->visibleEndFrame_ != clamped) {
         impl_->visibleEndFrame_ = clamped;
         impl_->clampVisibleRange();
@@ -322,8 +322,8 @@ void TimingEventView::setPixelsPerFrame(const double value)
         return;
     }
 
-    const double clamped = std::clamp(value, kMinPixelsPerFrame, kMaxPixelsPerFrame);
-    if (std::abs(impl_->pixelsPerFrame_ - clamped) > 0.0001) {
+    const double clamped = ArtifactCore::artifactClamp(value, kMinPixelsPerFrame, kMaxPixelsPerFrame);
+    if (ArtifactCore::artifactAbs(impl_->pixelsPerFrame_ - clamped) > 0.0001) {
         impl_->pixelsPerFrame_ = clamped;
         updateGeometry();
         update();
@@ -376,7 +376,7 @@ void TimingEventView::paintEvent(QPaintEvent* event)
     painter.drawRect(outer.adjusted(0, 0, -1, -1));
 
     const int rows = impl_->rowCount();
-    const int rowBandWidth = std::max(0, width() - kLeftGutter - kRightGutter);
+    const int rowBandWidth = ArtifactCore::artifactMax(0, width() - kLeftGutter - kRightGutter);
     for (int row = 0; row < rows; ++row) {
         const QRect band(kLeftGutter, impl_->rowTop(row), rowBandWidth, kRowHeight);
         painter.fillRect(band, (row % 2 == 0) ? theme.background.darker(108) : theme.background.darker(114));
@@ -390,13 +390,13 @@ void TimingEventView::paintEvent(QPaintEvent* event)
     const QFontMetrics fm(rulerFont);
 
     const int visibleStart = impl_->visibleStartFrame_;
-    const int visibleEnd = std::max(visibleStart + kMinVisibleSpan, impl_->visibleEndFrame_);
-    const int visibleFrames = std::max(1, visibleEnd - visibleStart);
-    const int frameSpan = std::max(1, visibleFrames);
-    const double ppf = std::max(0.001, impl_->pixelsPerFrame_);
-    const int firstMajor = std::max(visibleStart, (visibleStart / 10) * 10);
-    const int majorStep = std::max(1, frameSpan / 8);
-    const int minorStep = std::max(1, majorStep / 4);
+    const int visibleEnd = ArtifactCore::artifactMax(visibleStart + kMinVisibleSpan, impl_->visibleEndFrame_);
+    const int visibleFrames = ArtifactCore::artifactMax(1, visibleEnd - visibleStart);
+    const int frameSpan = ArtifactCore::artifactMax(1, visibleFrames);
+    const double ppf = ArtifactCore::artifactMax(0.001, impl_->pixelsPerFrame_);
+    const int firstMajor = ArtifactCore::artifactMax(visibleStart, (visibleStart / 10) * 10);
+    const int majorStep = ArtifactCore::artifactMax(1, frameSpan / 8);
+    const int minorStep = ArtifactCore::artifactMax(1, majorStep / 4);
     double lastLabelRight = -1.0;
     for (int frame = visibleStart; frame <= visibleEnd + minorStep; frame += minorStep) {
         const double x = kLeftGutter + (frame - visibleStart) * ppf;
@@ -454,12 +454,12 @@ void TimingEventView::paintEvent(QPaintEvent* event)
         const QRect textRect = rect.adjusted(8, 0, -8, 0);
         const QString text = fm.elidedText(item.label.isEmpty() ? item.id : item.label,
                                            Qt::ElideRight,
-                                           std::max(0, textRect.width()));
+                                           ArtifactCore::artifactMax(0, textRect.width()));
         painter.setPen(theme.text.lighter(selected ? 190 : 165));
         painter.drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft, text);
     }
 
-    const int clampedCurrentFrame = std::max(0, impl_->currentFrame_);
+    const int clampedCurrentFrame = ArtifactCore::artifactMax(0, impl_->currentFrame_);
     const double playheadX = kLeftGutter + (clampedCurrentFrame - visibleStart) * ppf;
     if (playheadX >= kLeftGutter - 2.0 && playheadX <= width() - kRightGutter + 2.0) {
         const QColor playheadColor(255, 106, 71);
@@ -507,8 +507,8 @@ void TimingEventView::mousePressEvent(QMouseEvent* event)
     impl_->dragEndFrame_ = hit->endFrame;
 
     const QRect rect = impl_->eventRect(*hit, width());
-    const bool nearLeftEdge = std::abs(event->pos().x() - rect.left()) <= kEdgeHitPx;
-    const bool nearRightEdge = std::abs(event->pos().x() - rect.right()) <= kEdgeHitPx;
+    const bool nearLeftEdge = ArtifactCore::artifactAbs(event->pos().x() - rect.left()) <= kEdgeHitPx;
+    const bool nearRightEdge = ArtifactCore::artifactAbs(event->pos().x() - rect.right()) <= kEdgeHitPx;
     impl_->dragMode_ = nearLeftEdge ? DragMode::ResizeStart
                                     : (nearRightEdge ? DragMode::ResizeEnd : DragMode::Move);
     setCursor(impl_->dragMode_ == DragMode::Move ? Qt::ClosedHandCursor : Qt::SizeHorCursor);
@@ -537,23 +537,23 @@ void TimingEventView::mouseMoveEvent(QMouseEvent* event)
         }
 
         const int deltaFrames =
-            static_cast<int>(std::lround((event->pos().x() - impl_->dragPressPos_.x()) /
-                                         std::max(0.001, impl_->pixelsPerFrame_)));
+            static_cast<int>(ArtifactCore::artifactLround((event->pos().x() - impl_->dragPressPos_.x()) /
+                                         ArtifactCore::artifactMax(0.001, impl_->pixelsPerFrame_)));
         switch (impl_->dragMode_) {
         case DragMode::Move: {
-            const int duration = std::max(1, impl_->dragEndFrame_ - impl_->dragStartFrame_);
-            const int start = std::max(0, impl_->dragStartFrame_ + deltaFrames);
+            const int duration = ArtifactCore::artifactMax(1, impl_->dragEndFrame_ - impl_->dragStartFrame_);
+            const int start = ArtifactCore::artifactMax(0, impl_->dragStartFrame_ + deltaFrames);
             item->startFrame = start;
             item->endFrame = start + duration;
             break;
         }
         case DragMode::ResizeStart: {
-            const int newStart = std::clamp(impl_->dragStartFrame_ + deltaFrames, 0, impl_->dragEndFrame_ - 1);
+            const int newStart = ArtifactCore::artifactClamp(impl_->dragStartFrame_ + deltaFrames, 0, impl_->dragEndFrame_ - 1);
             item->startFrame = newStart;
             break;
         }
         case DragMode::ResizeEnd: {
-            const int newEnd = std::max(impl_->dragStartFrame_ + 1, impl_->dragEndFrame_ + deltaFrames);
+            const int newEnd = ArtifactCore::artifactMax(impl_->dragStartFrame_ + 1, impl_->dragEndFrame_ + deltaFrames);
             item->endFrame = newEnd;
             break;
         }
@@ -570,8 +570,8 @@ void TimingEventView::mouseMoveEvent(QMouseEvent* event)
     const TimingEventItem* hit = impl_->eventAt(event->pos(), width());
     if (hit) {
         const QRect rect = impl_->eventRect(*hit, width());
-        if (std::abs(event->pos().x() - rect.left()) <= kEdgeHitPx ||
-            std::abs(event->pos().x() - rect.right()) <= kEdgeHitPx) {
+        if (ArtifactCore::artifactAbs(event->pos().x() - rect.left()) <= kEdgeHitPx ||
+            ArtifactCore::artifactAbs(event->pos().x() - rect.right()) <= kEdgeHitPx) {
             setCursor(Qt::SizeHorCursor);
         } else {
             setCursor(Qt::OpenHandCursor);
@@ -612,24 +612,24 @@ void TimingEventView::wheelEvent(QWheelEvent* event)
 
     if (event->modifiers() & Qt::ControlModifier) {
         const double scale = delta.y() > 0 ? 0.88 : 1.14;
-        const double oldPixelsPerFrame = std::max(0.001, impl_->pixelsPerFrame_);
+        const double oldPixelsPerFrame = ArtifactCore::artifactMax(0.001, impl_->pixelsPerFrame_);
         const int anchorFrame = impl_->xToFrame(event->position().x());
         const double anchorOffset = event->position().x() - kLeftGutter;
-        const double newPixelsPerFrame = std::clamp(oldPixelsPerFrame * scale, kMinPixelsPerFrame, kMaxPixelsPerFrame);
+        const double newPixelsPerFrame = ArtifactCore::artifactClamp(oldPixelsPerFrame * scale, kMinPixelsPerFrame, kMaxPixelsPerFrame);
         impl_->pixelsPerFrame_ = newPixelsPerFrame;
 
         const int newVisibleStart =
-            anchorFrame - static_cast<int>(std::lround(anchorOffset / std::max(0.001, newPixelsPerFrame)));
-        impl_->visibleStartFrame_ = std::max(0, newVisibleStart);
+            anchorFrame - static_cast<int>(ArtifactCore::artifactLround(anchorOffset / ArtifactCore::artifactMax(0.001, newPixelsPerFrame)));
+        impl_->visibleStartFrame_ = ArtifactCore::artifactMax(0, newVisibleStart);
         impl_->clampVisibleRange();
         update();
         event->accept();
         return;
     }
 
-    const int frameDelta = (delta.y() / 120) * std::max(1, static_cast<int>(std::lround(6.0 / std::max(0.001, impl_->pixelsPerFrame_))));
-    impl_->visibleStartFrame_ = std::max(0, impl_->visibleStartFrame_ - frameDelta);
-    impl_->visibleEndFrame_ = std::max(impl_->visibleStartFrame_ + kMinVisibleSpan,
+    const int frameDelta = (delta.y() / 120) * ArtifactCore::artifactMax(1, static_cast<int>(ArtifactCore::artifactLround(6.0 / ArtifactCore::artifactMax(0.001, impl_->pixelsPerFrame_))));
+    impl_->visibleStartFrame_ = ArtifactCore::artifactMax(0, impl_->visibleStartFrame_ - frameDelta);
+    impl_->visibleEndFrame_ = ArtifactCore::artifactMax(impl_->visibleStartFrame_ + kMinVisibleSpan,
                                        impl_->visibleEndFrame_ - frameDelta);
     update();
     event->accept();

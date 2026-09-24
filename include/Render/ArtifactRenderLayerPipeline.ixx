@@ -12,6 +12,7 @@ import Layer.Blend;
 import Artifact.Layer.Abstract;
 import Artifact.Effect.Abstract;
 import Artifact.Render.PointwiseEffectFusion;
+import Artifact.Render.ROI;
 import Graphics.LayerBlendPipeline;
 import Graphics.GPUcomputeContext;
 
@@ -47,9 +48,24 @@ export namespace Artifact
   RenderPipeline();
   ~RenderPipeline();
 
+  // Per-target auxiliary (AOV) request. Targets are allocated on demand;
+  // each has*Target() is request && texture, and every draw gate already
+  // null-checks its RTV, so unrequested targets are simply skipped.
+  struct AuxiliaryTargetRequest {
+    bool emission = false;
+    bool normal = false;
+    bool velocity = false;
+    bool objectId = false;
+    bool materialId = false;
+    bool albedo = false;
+    bool position = false;
+    bool uv = false;
+    bool operator==(const AuxiliaryTargetRequest&) const = default;
+  };
+
   bool initialize(IRenderDevice* device, Uint32 width, Uint32 height,
                   TEXTURE_FORMAT format,
-                  bool enableEmission = false);
+                  AuxiliaryTargetRequest auxiliaryTargets = {});
   void resize(Uint32 width, Uint32 height);
   void destroy();
 
@@ -59,7 +75,8 @@ export namespace Artifact
    IDeviceContext* ctx,
    const std::vector<ArtifactAbstractLayerPtr>& layers,
    int64_t currentFrame,
-   ITextureView* outputRTV
+   ITextureView* outputRTV,
+   const RenderROI& renderROI = RenderROI()
   );
 
   // Apply a pointwise effect stack to the current accumulation entirely on GPU.
@@ -110,6 +127,12 @@ export namespace Artifact
   ITextureView* albedoSRV() const;
   ITextureView* albedoRTV() const;
   bool hasAlbedoTarget() const;
+  ITextureView* positionSRV() const;
+  ITextureView* positionRTV() const;
+  bool hasPositionTarget() const;
+  ITextureView* uvSRV() const;
+  ITextureView* uvRTV() const;
+  bool hasUvTarget() const;
   GlobalIlluminationInputs globalIlluminationInputs(
       ITextureView* depthSRV) const;
   bool dispatchScreenSpaceGlobalIllumination(
@@ -153,7 +176,7 @@ export namespace Artifact
 
  private:
   bool createTextures(IRenderDevice* device, Uint32 width, Uint32 height,
-                      TEXTURE_FORMAT format, bool enableEmission);
+                      TEXTURE_FORMAT format, AuxiliaryTargetRequest request);
 
   struct Impl;
   Impl* impl_ = nullptr;

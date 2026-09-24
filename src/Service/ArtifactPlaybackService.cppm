@@ -3591,6 +3591,24 @@ bool ArtifactPlaybackService::isRamPreviewFramePendingBuild(
   return impl_ ? impl_->isRamPreviewFramePendingBuild(frame) : false;
 }
 
+void ArtifactPlaybackService::deferRamPreviewBuildFrame(
+    const int64_t frame, const QString &reason) {
+  if (!impl_ || !impl_->ramPreviewBuildQueue_.active) {
+    return;
+  }
+  auto &pending = impl_->ramPreviewBuildQueue_.pendingFrames;
+  const auto it = std::find(pending.begin(), pending.end(), frame);
+  if (it == pending.end()) {
+    return;
+  }
+  pending.erase(it);
+  pending.push_back(frame);
+  if (impl_->isValidFrameIndex(frame) && !reason.trimmed().isEmpty()) {
+    impl_->frameCacheStates_[static_cast<size_t>(frame)].reason =
+        reason.trimmed();
+  }
+}
+
 int64_t ArtifactPlaybackService::nextRamPreviewBuildFrame() const {
   return impl_ ? impl_->nextRamPreviewBuildFrame() : int64_t{-1};
 }

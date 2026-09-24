@@ -47,6 +47,7 @@ export namespace Artifact
   enum class TimelineRowKind
   {
    Layer,
+   Container,
    Group,
    Property,
    // A timeline-owned relationship row. It intentionally has no layer
@@ -70,6 +71,7 @@ export namespace Artifact
   struct TimelineRowDescriptor
   {
    LayerID layerId;
+   QString nodeId;
    TimelineRowKind kind = TimelineRowKind::Layer;
    QString label;
    QString propertyPath;
@@ -158,6 +160,7 @@ export namespace Artifact
  
   // Set the composition to display layers for
   void setComposition(const CompositionID& id);
+  void setCollaborationLockedLayers(const QVector<LayerID>& layerIds);
   void setShyHidden(bool hidden);
   void setDisplayMode(TimelineLayerDisplayMode mode);
   TimelineLayerDisplayMode displayMode() const;
@@ -209,6 +212,7 @@ export namespace Artifact
   ArtifactLayerTimelinePanelWrapper(const CompositionID& id, QWidget* parent = nullptr);
   ~ArtifactLayerTimelinePanelWrapper();
   void setComposition(const CompositionID& id);
+  void setCollaborationLockedLayers(const QVector<LayerID>& layerIds);
   void setFilterText(const QString& text);
   void setPropertyChannelFilter(ArtifactLayerPanelWidget::PropertyChannelFilter filter);
   void setSearchMatchMode(SearchMatchMode mode);

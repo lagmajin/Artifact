@@ -5,12 +5,17 @@
 #include <QSize>
 #include <QString>
 #include <QPointF>
+#include <QMatrix4x4>
+#include <QColor>
+#include <QVector2D>
+#include <QVector3D>
+#include <QVector4D>
 
 export module Artifact.Render.SoftwareCompositor;
 
-import std;
 import Layer.Blend;
 import Image.ImageF32x4_RGBA;
+import Mesh;
 
 export namespace Artifact::SoftwareRender {
 
@@ -66,5 +71,21 @@ bool blendSurface(QImage& canvas,
                   const QImage& surface,
                   float opacity,
                   ArtifactCore::BlendMode mode);
+
+/// Minimal CPU fallback for opaque, flat-shaded mesh previews. This is kept
+/// outside the hot GPU path and intentionally does not attempt to reproduce
+/// textured/PBR materials. The caller owns the camera contract through the
+/// supplied matrices.
+struct FlatMeshRasterRequest {
+ const ArtifactCore::Mesh* mesh = nullptr;
+ QMatrix4x4 modelMatrix;
+ QMatrix4x4 viewMatrix;
+ QMatrix4x4 projectionMatrix;
+ QSize outputSize;
+ QColor baseColor = QColor(220, 220, 220);
+ float opacity = 1.0f;
+};
+
+QImage rasterizeFlatMesh(const FlatMeshRasterRequest& request);
 
 } // namespace Artifact::SoftwareRender

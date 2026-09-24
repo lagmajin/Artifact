@@ -1,5 +1,4 @@
 module;
-#include <cmath>
 #include <QDialog>
 #include <QColor>
 #include <QFont>
@@ -21,10 +20,10 @@ module;
 #include <QString>
 #include <QStringList>
 #include <QWidget>
-#include <algorithm>
 #include <wobjectimpl.h>
 module Artifact.Widgets.ResolutionRemapDialog;
 
+import Core.ArtifactMath;
 import Geometry.ResolutionRemap;
 
 namespace Artifact {
@@ -63,7 +62,7 @@ protected:
                 ? static_cast<int>(h * aspect) : w;
             const int fittedHeight = availableAspect > aspect
                 ? h : static_cast<int>(w / aspect);
-            return QSize(std::max(fittedWidth, 20), std::max(fittedHeight, 20));
+            return QSize(ArtifactCore::artifactMax(fittedWidth, 20), ArtifactCore::artifactMax(fittedHeight, 20));
         };
         const QSize oldPreviewSize = fitAspect(oldSize_);
         const QSize newPreviewSize = fitAspect(newSize_);
@@ -210,7 +209,7 @@ ArtifactResolutionRemapDialog::ArtifactResolutionRemapDialog(
     mainLayout->addWidget(policyGroup);
 
     // Warning for aspect ratio change
-    if (std::abs(impact.oldAspectRatio - impact.newAspectRatio) > 0.01) {
+    if (ArtifactCore::artifactAbs(impact.oldAspectRatio - impact.newAspectRatio) > 0.01) {
         auto* warnLabel = new QLabel(QStringLiteral(
             "⚠  Aspect ratio changed. Masks and keyframes may shift; review before applying."), this);
         QPalette warningPalette = warnLabel->palette();

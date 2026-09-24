@@ -39,6 +39,8 @@ module;
 #include <QVBoxLayout>
 #include <QJsonObject>
 #include <wobjectimpl.h>
+#include <memory>
+#include <vector>
 
 module Artifact.Widgets.CompositionAudioMixer;
 
@@ -59,7 +61,6 @@ import Artifact.Service.Audio;
 import Undo.UndoManager;
 import Settings.Accessibility;
 import Event.Bus;
-import std;
 
 namespace Artifact {
 

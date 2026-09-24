@@ -3,10 +3,13 @@ module;
 #include <QString>
 #include <QVariant>
 #include <QVector>
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <vector>
 
 export module Artifact.Effect.WhiteBalance;
 
-import std;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
@@ -50,20 +53,21 @@ public:
     void setPropertyValue(const UniString& name, const QVariant& value) override;
 
     bool supportsGPU() const override { return true; }
+    static constexpr const char* kGpuGenericKeyString = "white_balance";
+    static constexpr std::uint32_t kGpuGenericKey =
+        gpuGenericKeyFromString(kGpuGenericKeyString);
+    std::uint32_t gpuGenericKey() const override { return kGpuGenericKey; }
     GpuRasterEffectDomain gpuRasterEffectDomain() const override {
-        return GpuRasterEffectDomain::Pointwise;
+        return GpuRasterEffectDomain::Spatial;
     }
-    bool appendGpuPointwiseNodes(ArtifactCore::PointwiseEffectStack& stack,
-                                 std::uint32_t& slot) const override {
-        if (std::abs(temperature_ - 6500.0f) > 1.0e-4f ||
-            std::abs(brightness_) > 1.0e-6f ||
-            slot >= ArtifactCore::PointwiseEffectStack::kParameterSlotCount) return false;
-        if (std::abs(tint_) > 1.0e-6f) {
-            stack.addNode(ArtifactCore::PointwiseNodeKind::Tint, slot);
-            stack.setParameter(slot++, {1.0f - tint_ * 0.5f, 1.0f + tint_ * 0.5f,
-                                        1.0f - tint_ * 0.5f, 0.0f});
-        }
-        return true;
+    bool appendGpuSpatialNodes(GpuSpatialEffectStack& stack) const override {
+        GpuSpatialEffectNode node;
+        node.kind = GpuSpatialEffectKind::Generic;
+        node.genericKey = kGpuGenericKey;
+        node.parameters[0] = temperature_;
+        node.parameters[1] = tint_;
+        node.parameters[2] = brightness_;
+        return stack.append(node);
     }
 };
 

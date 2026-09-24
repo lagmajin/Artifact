@@ -22,9 +22,9 @@ module;
 #include <QFont>
 #include <QPalette>
 #include <wobjectimpl.h>
+#include <vector>
 module Artifact.Widgets.SnapshotCompareWidget;
 
-import std;
 import Artifact.Project.RevisionService;
 import Widgets.Utils.CSS;
 

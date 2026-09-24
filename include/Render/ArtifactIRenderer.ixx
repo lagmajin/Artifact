@@ -192,10 +192,11 @@ public:
   QImage readbackDepthToImage() const;
   Diligent::ITextureView *liveDepthShaderResourceView() const;
   ArtifactCore::MultiChannelImage readbackToMultiChannelImage() const;
-  // Async readback: returns immediately, calls callback when ready
+  // Async readback: returns whether a bounded readback slot was acquired.
+  // A false result is transient backpressure; no callback is issued.
   using ReadbackCallback = std::function<void(const QImage &)>;
-  void readbackToImageAsync(ReadbackCallback callback) const;
-  void readbackTextureViewToImageAsync(Diligent::ITextureView *textureView,
+  bool readbackToImageAsync(ReadbackCallback callback) const;
+  bool readbackTextureViewToImageAsync(Diligent::ITextureView *textureView,
                                        ReadbackCallback callback) const;
 
   void setClearColor(const FloatColor &color);
@@ -231,6 +232,11 @@ public:
     AlbedoG,
     AlbedoB,
     Emission,
+    PositionX,
+    PositionY,
+    PositionZ,
+    U,
+    V,
     Custom
   };
 
@@ -248,6 +254,10 @@ public:
   bool isMeshVelocityOnlyPass() const;
   void setMeshAlbedoOnlyPass(bool enabled);
   bool isMeshAlbedoOnlyPass() const;
+  void setMeshPositionOnlyPass(bool enabled);
+  bool isMeshPositionOnlyPass() const;
+  void setMeshUvOnlyPass(bool enabled);
+  bool isMeshUvOnlyPass() const;
   void setCanvasSize(float w, float h);
   void setPan(float x, float y);
   void getPan(float &x, float &y) const;
@@ -480,6 +490,12 @@ public:
                           const QMatrix4x4 &modelMatrix,
                           Diligent::ITextureView *texture,
                           float opacity = 1.0f);
+  // Project3D-style camera projection for textured cards. Scoped per draw:
+  // set source + matrices + enabled, draw, then resetProjector().
+  void setProjectorSource(Diligent::ITextureView *textureView);
+  void setProjectorMatrices(const QMatrix4x4 &view, const QMatrix4x4 &proj);
+  void setProjectorEnabled(bool enabled);
+  void resetProjector();
   void draw3DShape(const std::vector<Detail::float2> &points,
                    const QMatrix4x4 &modelMatrix, const FloatColor &color,
                    float opacity = 1.0f, bool writeDepth = true);

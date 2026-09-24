@@ -445,7 +445,8 @@ void addRowsFromProperties(
     const QVariant &)> &rowValueChanged = {},
     const std::function<void(
         const QString &, const AbstractPropertyPtr &, const QVariant &)> &beginValueEdit = {},
-    const std::function<void(const QString &)> &cancelValueEdit = {});
+    const std::function<void(const QString &)> &cancelValueEdit = {},
+    const QStringList &mutationLayerIds = {});
 
 } // namespace detail
 
@@ -1944,6 +1945,13 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
   bool hasAnyProperties = false;
 
   const ArtifactAbstractLayerPtr layer = currentLayer;
+  QStringList targetLayerMutationIds;
+  targetLayerMutationIds.reserve(static_cast<qsizetype>(targetLayers.size()));
+  for (const auto &target : targetLayers) {
+    if (!target) continue;
+    const QString id = target->id().toQString();
+    if (!targetLayerMutationIds.contains(id)) targetLayerMutationIds.append(id);
+  }
   auto *playback = ArtifactPlaybackService::instance();
   const auto currentLayerTime = [playback, layer]() {
     return currentPlaybackTime(playback, layer);
@@ -2101,8 +2109,26 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
                                                    std::move(animatableSnapshot));
       };
   const auto cancelChannelValueEdit =
-      [channelPropertyEditSnapshots, channelPropertyKeyframeSnapshots,
+      [this, channelPropertyEditSnapshots, channelPropertyKeyframeSnapshots,
        channelPropertyAnimatableSnapshots](const QString &name) {
+        const auto valueSnapshot = channelPropertyEditSnapshots->constFind(name);
+        const auto keyframeSnapshot =
+            channelPropertyKeyframeSnapshots->constFind(name);
+        const auto animatableSnapshot =
+            channelPropertyAnimatableSnapshots->constFind(name);
+        for (const auto &target : targetLayers) {
+          if (!target) continue;
+          const QString id = target->id().toQString();
+          const auto property = target->getProperty(name);
+          if (!property || valueSnapshot == channelPropertyEditSnapshots->cend() ||
+              keyframeSnapshot == channelPropertyKeyframeSnapshots->cend() ||
+              animatableSnapshot == channelPropertyAnimatableSnapshots->cend() ||
+              !valueSnapshot->contains(id) || !keyframeSnapshot->contains(id) ||
+              !animatableSnapshot->contains(id)) continue;
+          restoreLayerPropertySnapshot(
+              target, name, property, valueSnapshot->value(id),
+              keyframeSnapshot->value(id), animatableSnapshot->value(id));
+        }
         channelPropertyEditSnapshots->remove(name);
         channelPropertyKeyframeSnapshots->remove(name);
         channelPropertyAnimatableSnapshots->remove(name);
@@ -2342,7 +2368,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
           notifyLayerKeyframeChanged, layer, nullptr,
           QStringLiteral("channelBox"), &propertyEditors, &channelRows,
           decorateLayerRow, updateLayerRowValue, beginChannelValueEdit,
-          cancelChannelValueEdit);
+          cancelChannelValueEdit, targetLayerMutationIds);
       if (!channelRows.empty()) {
         alignPropertyRowLabels(channelRows, kPropertyRowLabelMinWidth,
                                kPropertyRowLabelMaxWidth);
@@ -2594,7 +2620,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     }
     bool addedGroupProperties = false;
     std::vector<ArtifactPropertyEditorRowWidget *> groupRows;
-    auto groupPreviewOpacity = ArtifactCore::makeShared<std::optional<float>>();
+    auto groupPreviewOpacity = ArtifactCore::makeShared<QHash<QString, float>>();
     auto layerPropertyEditSnapshots =
         ArtifactCore::makeShared<QHash<QString, QHash<QString, QVariant>>>();
     auto layerPropertyKeyframeSnapshots =
@@ -2637,8 +2663,37 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
           }
         };
     auto cancelLayerValueEdit =
-        [layerPropertyEditSnapshots, layerPropertyKeyframeSnapshots,
-         layerPropertyAnimatableSnapshots](const QString &name) {
+        [this, layerPropertyEditSnapshots, layerPropertyKeyframeSnapshots,
+         layerPropertyAnimatableSnapshots, groupPreviewOpacity](const QString &name) {
+      if (name.compare(QStringLiteral("layer.opacity"),
+                       Qt::CaseInsensitive) == 0) {
+        for (const auto &target : targetLayers) {
+          if (!target) continue;
+          const QString id = target->id().toQString();
+          if (!groupPreviewOpacity->contains(id)) continue;
+          target->setOpacity(groupPreviewOpacity->value(id));
+          notifyLayerPropertyPreviewChanged(target);
+        }
+        groupPreviewOpacity->clear();
+      }
+      const auto valueSnapshot = layerPropertyEditSnapshots->constFind(name);
+      const auto keyframeSnapshot =
+          layerPropertyKeyframeSnapshots->constFind(name);
+      const auto animatableSnapshot =
+          layerPropertyAnimatableSnapshots->constFind(name);
+      for (const auto &target : targetLayers) {
+        if (!target) continue;
+        const QString id = target->id().toQString();
+        const auto property = target->getProperty(name);
+        if (!property || valueSnapshot == layerPropertyEditSnapshots->cend() ||
+            keyframeSnapshot == layerPropertyKeyframeSnapshots->cend() ||
+            animatableSnapshot == layerPropertyAnimatableSnapshots->cend() ||
+            !valueSnapshot->contains(id) || !keyframeSnapshot->contains(id) ||
+            !animatableSnapshot->contains(id)) continue;
+        restoreLayerPropertySnapshot(
+            target, name, property, valueSnapshot->value(id),
+            keyframeSnapshot->value(id), animatableSnapshot->value(id));
+      }
       layerPropertyEditSnapshots->remove(name);
       layerPropertyKeyframeSnapshots->remove(name);
       layerPropertyAnimatableSnapshots->remove(name);
@@ -2655,7 +2710,8 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         const float newOpacity = std::clamp(value.toFloat(), 0.0f, 1.0f);
         for (const auto &tl : this->targetLayers) {
           if (!tl) { continue; }
-          const float oldOpacity = groupPreviewOpacity->value_or(tl->opacity());
+          const float oldOpacity = groupPreviewOpacity->value(tl->id().toQString(),
+                                                              tl->opacity());
           if (std::abs(oldOpacity - newOpacity) > 0.0001f) {
             auto command = std::make_unique<ChangeLayerOpacityCommand>(
                 tl, oldOpacity, newOpacity);
@@ -2672,7 +2728,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
             }
           }
         }
-        groupPreviewOpacity->reset();
+        groupPreviewOpacity->clear();
         layerPropertyEditSnapshots->remove(name);
         layerPropertyKeyframeSnapshots->remove(name);
         layerPropertyAnimatableSnapshots->remove(name);
@@ -2859,11 +2915,12 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
       if (name.compare(QStringLiteral("layer.opacity"),
                        Qt::CaseInsensitive) == 0) {
         const float newOpacity = std::clamp(value.toFloat(), 0.0f, 1.0f);
-        if (!groupPreviewOpacity->has_value()) {
-          *groupPreviewOpacity = layer->opacity();
-        }
         for (const auto &tl : this->targetLayers) {
           if (!tl) { continue; }
+          const QString id = tl->id().toQString();
+          if (!groupPreviewOpacity->contains(id)) {
+            groupPreviewOpacity->insert(id, tl->opacity());
+          }
           tl->setOpacity(newOpacity);
           notifyLayerPropertyPreviewChanged(tl);
         }
@@ -2952,7 +3009,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
             previewLayerValue, currentLayerTime, notifyLayerKeyframeChanged,
             layer, &addedGroupProperties, groupName, &propertyEditors, &groupRows,
             decorateLayerRow, updateLayerRowValue, beginLayerValueEdit,
-            cancelLayerValueEdit);
+            cancelLayerValueEdit, targetLayerMutationIds);
       }
 
       for (auto &[transformIndex, props] : transformProps) {
@@ -3083,7 +3140,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
             previewLayerValue, currentLayerTime, notifyLayerKeyframeChanged,
             layer, &addedGroupProperties, transformTitle, &propertyEditors, &transformRows,
             decorateLayerRow, updateLayerRowValue, beginLayerValueEdit,
-            cancelLayerValueEdit);
+            cancelLayerValueEdit, targetLayerMutationIds);
         if (!transformRows.empty()) {
           alignPropertyRowLabels(transformRows, kPropertyRowLabelMinWidth,
                                  kPropertyRowLabelMaxWidth);
@@ -3293,7 +3350,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
             previewLayerValue, currentLayerTime, notifyLayerKeyframeChanged,
             layer, &addedGroupProperties, groupName, &propertyEditors, &windowRows,
             decorateLayerRow, updateLayerRowValue, beginLayerValueEdit,
-            cancelLayerValueEdit);
+            cancelLayerValueEdit, targetLayerMutationIds);
         groupRows.insert(groupRows.end(), windowRows.begin(), windowRows.end());
       }
 
@@ -3309,7 +3366,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
             previewLayerValue, currentLayerTime, notifyLayerKeyframeChanged,
             layer, &addedGroupProperties, groupName, &propertyEditors, &motionRows,
             decorateLayerRow, updateLayerRowValue, beginLayerValueEdit,
-            cancelLayerValueEdit);
+            cancelLayerValueEdit, targetLayerMutationIds);
         groupRows.insert(groupRows.end(), motionRows.begin(), motionRows.end());
       }
       }
@@ -3319,7 +3376,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
           previewLayerValue, currentLayerTime, notifyLayerKeyframeChanged,
           layer, &addedGroupProperties, groupName, &propertyEditors, &groupRows,
           decorateLayerRow, updateLayerRowValue, beginLayerValueEdit,
-          cancelLayerValueEdit);
+          cancelLayerValueEdit, targetLayerMutationIds);
     }
 
     const bool hasSourceCrop =

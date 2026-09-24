@@ -2,11 +2,11 @@ module;
 
 #include <QPointF>
 
-#include <algorithm>
 #include <vector>
 
 module Artifact.Widgets.LayerEditor.ShapeDeleteController;
 
+import Core.ArtifactMath;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Shape;
 import Artifact.Widgets.LayerEditor.ShapeEditSession;
@@ -43,7 +43,7 @@ LayerEditorShapeDeleteResult LayerEditorShapeDeleteController::handle(
  const int segmentCount = closed ? static_cast<int>(points.size())
                                  : static_cast<int>(points.size()) - 1;
  if (segmentCount <= 0) return {};
- const int segment = std::clamp(hover.polygonSegment, 0, segmentCount - 1);
+ const int segment = ArtifactCore::artifactClamp(hover.polygonSegment, 0, segmentCount - 1);
  const int next = closed
      ? (segment + 1) % static_cast<int>(points.size()) : segment + 1;
  if (next < 0 || next >= static_cast<int>(points.size())) return {};
@@ -51,7 +51,7 @@ LayerEditorShapeDeleteResult LayerEditorShapeDeleteController::handle(
      (points[static_cast<size_t>(segment)] +
       points[static_cast<size_t>(next)]) * 0.5;
  editSession.beginPolygon(layer);
- const int inserted = std::clamp(
+ const int inserted = ArtifactCore::artifactClamp(
      segment + 1, 0, static_cast<int>(points.size()));
  points.insert(points.begin() + inserted, midpoint);
  shape->setCustomPolygonPoints(points, closed);

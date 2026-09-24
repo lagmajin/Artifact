@@ -17,13 +17,13 @@ module;
 #include <QSize>
 #include <QVariant>
 #include <opencv2/core.hpp>
+#include <vector>
 
 
 module Artifact.Layers.SolidImage;
 
 import Artifact.Layer.CloneEffectSupport;
 
-import std;
 import Artifact.Layers.Abstract._2D;
 import Artifact.Composition.Abstract;
 import Artifact.Render.IRenderer;
@@ -650,9 +650,9 @@ void ArtifactSolidImageLayer::draw(ArtifactIRenderer *renderer) {
   const float gradientScaleValue = gradientScale();
   const float gradientOffsetValue = gradientOffset();
 
-  static int drawLogSamples = 0;
-  if (drawLogSamples < 5) {
-    ++drawLogSamples;
+  static std::atomic<int> drawLogSamples{0};
+  if (drawLogSamples.load(std::memory_order_relaxed) < 5) {
+    drawLogSamples.fetch_add(1, std::memory_order_relaxed);
     qCDebug(solidImageLayerLog)
         << "[ArtifactSolidImageLayer::draw] id:" << id().toString()
         << "currentFrame:" << currentFrame() << "color: (" << color.r()

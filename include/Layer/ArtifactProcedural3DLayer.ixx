@@ -18,7 +18,8 @@ export namespace Artifact {
 
 enum class Procedural3DLayerKind {
     Terrain = 0,
-    PathTube = 1
+    PathTube = 1,
+    TextExtrude = 2
 };
 
 class ArtifactProcedural3DLayer : public ArtifactAbstractLayer {
@@ -53,5 +54,6 @@ public:
 
 ArtifactCore::SharedPtr<ArtifactProcedural3DLayer> createTerrainLayer();
 ArtifactCore::SharedPtr<ArtifactProcedural3DLayer> createPathTubeLayer();
+ArtifactCore::SharedPtr<ArtifactProcedural3DLayer> createTextExtrudeLayer();
 
 } // namespace Artifact

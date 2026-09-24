@@ -8,6 +8,7 @@ module;
 
 module Artifact.Widgets.LayerEditor.MaskOverlay;
 
+import Core.ArtifactTuple;
 import Artifact.Mask.LayerMask;
 import Artifact.Mask.Path;
 import Artifact.Render.IRenderer;
@@ -82,7 +83,7 @@ bool selected(const LayerEditorMaskOverlayState& state,
 {
  if (!state.selectedVertices) return false;
  return std::find(state.selectedVertices->begin(), state.selectedVertices->end(),
-                  std::make_tuple(mask, path, vertex)) !=
+                   ArtifactCore::artifactMakeTuple(mask, path, vertex)) !=
         state.selectedVertices->end();
 }
 

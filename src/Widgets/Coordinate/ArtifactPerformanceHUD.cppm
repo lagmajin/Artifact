@@ -16,7 +16,6 @@
 
 module Artifact.Widgets.PerformanceHUD;
 
-import std;
 import Artifact.Widgets.CompositionRenderController;
 import Artifact.Layer.Abstract;
 import Artifact.Composition.Abstract;

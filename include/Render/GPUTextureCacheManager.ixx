@@ -31,6 +31,7 @@ enum class GPUTextureCacheInvalidationReason {
     Explicit,
     OwnerChanged,
     BudgetEviction,
+    FrameExpiration,
     DeviceReset,
     ClearAll,
 };
@@ -42,6 +43,7 @@ inline QString gpuTextureCacheInvalidationReasonText(
     case GPUTextureCacheInvalidationReason::Explicit: return QStringLiteral("explicit");
     case GPUTextureCacheInvalidationReason::OwnerChanged: return QStringLiteral("owner-changed");
     case GPUTextureCacheInvalidationReason::BudgetEviction: return QStringLiteral("budget-eviction");
+    case GPUTextureCacheInvalidationReason::FrameExpiration: return QStringLiteral("frame-expiration");
     case GPUTextureCacheInvalidationReason::DeviceReset: return QStringLiteral("device-reset");
     case GPUTextureCacheInvalidationReason::ClearAll: return QStringLiteral("clear-all");
     }
@@ -74,6 +76,9 @@ struct GPUTextureCacheStats {
         GPUTextureCacheInvalidationReason::Explicit;
     size_t pendingUploadBytes = 0;
     int pendingUploadCount = 0;
+    quint64 currentFrameIndex = 0;
+    quint64 resourceExpirationFrames = 0;
+    size_t expiredEvictionCount = 0;
 };
 
 struct GPUTextureOwnerStats {
@@ -100,6 +105,15 @@ public:
 
     void setMaxEntries(int count);
     int maxEntries() const;
+
+    // Marks a cold frame boundary for frame-age based resource expiration.
+    // Expiration is disabled when resourceExpirationFrames is zero. Eviction
+    // work is bounded so a long-idle cache cannot create a single-frame spike.
+    void beginFrame(quint64 frameIndex);
+    void setResourceExpirationFrames(quint64 frameCount);
+    quint64 resourceExpirationFrames() const;
+    void setMaxExpiredEvictionsPerFrame(int count);
+    int maxExpiredEvictionsPerFrame() const;
 
     GPUTextureCacheHandle acquireOrCreate(const QString& ownerId,
                                           const QString& cacheKey,
@@ -148,6 +162,7 @@ private:
         ArtifactCore::GpuVideoFrame sourceGpuFrame;
         size_t memoryBytes = 0;
         quint64 lastUsedTick = 0;
+        quint64 lastUsedFrame = 0;
     };
 
     struct PendingUpload {
@@ -175,6 +190,7 @@ private:
                                                        size_t memoryBytes,
                                                        Diligent::TEXTURE_FORMAT format);
     void pruneLocked();
+    void pruneExpiredLocked();
     void applyPendingD3D12TrimLocked();
     void processPendingUploadsLocked();
     void clearLocked();
@@ -183,7 +199,7 @@ private:
     mutable QMutex mutex_;
     Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device_;
     Diligent::TEXTURE_FORMAT textureFormat_ = Diligent::TEX_FORMAT_RGBA8_UNORM_SRGB;
-    QHash<quint64, Entry> entries_;
+    mutable QHash<quint64, Entry> entries_;
     QHash<QString, quint64> keyToId_;
     QHash<QString, QSet<quint64>> ownerToIds_;
     QHash<quint64, PendingUpload> pendingUploads_;
@@ -191,13 +207,17 @@ private:
     DiligentUploadCoordinator* uploadCoordinator_ = nullptr;
     quint64 nextId_ = 1;
     quint64 generation_ = 1;
-    quint64 usageTick_ = 1;
+    mutable quint64 usageTick_ = 1;
+    mutable quint64 currentFrameIndex_ = 0;
+    quint64 resourceExpirationFrames_ = 0;
+    int maxExpiredEvictionsPerFrame_ = 8;
     size_t budgetBytes_ = 512ull * 1024ull * 1024ull;
     Diligent::Uint64 lastD3D12TrimGeneration_ = 0;
     int maxEntries_ = 256;
     size_t currentBytes_ = 0;
     size_t hitCount_ = 0;
     size_t missCount_ = 0;
+    size_t expiredEvictionCount_ = 0;
     size_t invalidationCount_ = 0;
     GPUTextureCacheInvalidationReason lastInvalidationReason_ =
         GPUTextureCacheInvalidationReason::Explicit;

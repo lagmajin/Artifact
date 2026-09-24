@@ -1,5 +1,6 @@
 module;
 #include <utility>
+#include <cstdint>
 #include <vector>
 #include <memory>
 #include <QPointF>
@@ -78,6 +79,8 @@ private:
     HandleType activeHandle_ = HandleType::None;
     bool editSessionActive_ = false;
 
+    std::int64_t dragStartFrame_ = 0;
+    std::int64_t dragStartTimeScale_ = 30;
     QPointF dragStartCanvasPos_;
     QPointF dragStartLayerPosition_;
     QPointF dragLastCanvasPos_;

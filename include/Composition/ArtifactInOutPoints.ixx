@@ -41,7 +41,6 @@ module;
 export module Artifact.Composition.InOutPoints;
 
 
-import std;
 import Frame.Position;
 import Serialization.ISerializable;
 import Frame.Range;

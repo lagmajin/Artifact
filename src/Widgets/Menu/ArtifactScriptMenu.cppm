@@ -12,11 +12,11 @@ module;
 #include <QTextStream>
 #include <QUrl>
 #include <wobjectimpl.h>
+#include <vector>
 
 module Artifact.Menu.Script;
 import Translation.Manager;
 
-import std;
 
 import Artifact.Script.Hooks;
 import Script.CSharp.Engine;
@@ -26,6 +26,11 @@ import Utils.Path;
 namespace Artifact {
 
 using namespace ArtifactCore;
+
+QString tt(const char* key, const char* fallback)
+{
+  return Artifact::TranslationManager::instance().tr(QString::fromUtf8(key), QString::fromUtf8(fallback));
+}
 
 W_OBJECT_IMPL(ArtifactScriptMenu)
 
@@ -350,9 +355,9 @@ void ArtifactScriptMenu::Impl::refreshCsxActions()
  const QFileInfoList files =
      dir.entryInfoList(QStringList() << "*.csx", QDir::Files, QDir::Name);
  if (files.isEmpty()) {
-  QAction* emptyAction = csxMenu->addAction(tr("No C# Scripts Yet"));
+  QAction* emptyAction = csxMenu->addAction(tt("script.no_csx_yet", "No C# Scripts Yet"));
   emptyAction->setEnabled(false);
-  emptyAction->setToolTip(tr("Put .csx files in %1").arg(scriptsRootPath()));
+  emptyAction->setToolTip(tt("script.csx_hint", "Put .csx files in %1").arg(scriptsRootPath()));
   csxActions.push_back(emptyAction);
   return;
  }
@@ -361,6 +366,8 @@ void ArtifactScriptMenu::Impl::refreshCsxActions()
   QAction* action = csxMenu->addAction(fileInfo.baseName());
   action->setData(fileInfo.absoluteFilePath());
   action->setToolTip(fileInfo.absoluteFilePath());
+  action->setToolTip(QStringLiteral("Run C# script: %1").arg(fileInfo.baseName()));
+  action->setStatusTip(QStringLiteral("Run the selected C# script"));
   QObject::connect(action, &QAction::triggered, menu_,
                    [this, path = fileInfo.absoluteFilePath()]() {
                     auto& engine = CSharpScriptEngine::instance();
@@ -461,6 +468,8 @@ void ArtifactScriptMenu::Impl::refreshMacroActions()
   action->setIcon(QIcon(resolveIconPath("Studio/scriptmenu_run_macro.svg")));
   action->setData(fileInfo.absoluteFilePath());
   action->setToolTip(fileInfo.absoluteFilePath());
+  action->setToolTip(QStringLiteral("Run macro: %1").arg(fileInfo.baseName()));
+  action->setStatusTip(QStringLiteral("Run the selected macro script"));
   QObject::connect(action, &QAction::triggered, menu_, [this, path = fileInfo.absoluteFilePath()]() {
    runMacroFile(path);
   });
@@ -497,6 +506,8 @@ void ArtifactScriptMenu::Impl::refreshAeUtilityActions()
   action->setData(info.absoluteFilePath());
   action->setToolTip(info.absoluteFilePath());
   action->setEnabled(info.exists());
+  action->setToolTip(QStringLiteral("Run utility script: %1").arg(info.baseName()));
+  action->setStatusTip(QStringLiteral("Run the selected AE utility script"));
   QObject::connect(action, &QAction::triggered, menu_, [this, path]() {
    runAeUtilityFile(path);
   });
@@ -520,6 +531,8 @@ ArtifactScriptMenu::Impl::Impl(ArtifactScriptMenu* menu)
  openScriptsFolderAction->setToolTip(
      TranslationManager::instance().tr(
          QStringLiteral("script.workspace_tooltip")));
+ openScriptsFolderAction->setToolTip(QStringLiteral("Open User Scripts Workspace"));
+ openScriptsFolderAction->setStatusTip(QStringLiteral("Open the folder holding user scripts"));
 
  openMenuScriptAction = new QAction(
      TranslationManager::instance().tr(QStringLiteral("script.open_menu")));
@@ -527,30 +540,44 @@ ArtifactScriptMenu::Impl::Impl(ArtifactScriptMenu* menu)
  openMenuScriptAction->setToolTip(
      TranslationManager::instance().tr(
          QStringLiteral("script.open_menu_tooltip")));
+ openMenuScriptAction->setToolTip(QStringLiteral("Open Menu Script"));
+ openMenuScriptAction->setStatusTip(QStringLiteral("Open the script that builds this menu"));
 
  openHooksFolderAction = new QAction(tr("Open Hook Scripts Folder"));
  openHooksFolderAction->setIcon(QIcon(resolveIconPath("Studio/scriptmenu_hooks_folder.svg")));
  openHooksFolderAction->setToolTip(
      TranslationManager::instance().tr(
          QStringLiteral("script.open_hooks_tooltip")));
+ openHooksFolderAction->setToolTip(QStringLiteral("Open Hook Scripts Folder"));
+ openHooksFolderAction->setStatusTip(QStringLiteral("Open the folder holding hook scripts"));
 
  openMacrosFolderAction = new QAction(tr("Open Macros Folder"));
  openMacrosFolderAction->setIcon(QIcon(resolveIconPath("Studio/scriptmenu_macros_folder.svg")));
  openMacrosFolderAction->setToolTip(
      TranslationManager::instance().tr(
          QStringLiteral("script.open_macros_tooltip")));
+ openMacrosFolderAction->setToolTip(QStringLiteral("Open Macros Folder"));
+ openMacrosFolderAction->setStatusTip(QStringLiteral("Open the folder holding macro scripts"));
 
  hooksMenu = new QMenu(tr("Hook Commands"));
  hooksMenu->setIcon(QIcon(resolveIconPath("Studio/scriptmenu_hooks.svg")));
+ hooksMenu->setAccessibleName(QStringLiteral("Hook Commands"));
+ hooksMenu->setAccessibleDescription(QStringLiteral("Run an installed hook command"));
 
  macrosMenu = new QMenu(tr("Macro Commands"));
  macrosMenu->setIcon(QIcon(resolveIconPath("Studio/scriptmenu_macros.svg")));
+ macrosMenu->setAccessibleName(QStringLiteral("Macro Commands"));
+ macrosMenu->setAccessibleDescription(QStringLiteral("Run a recorded macro command"));
 
  aeUtilityMenu = new QMenu(tr("AE Utility Pack"));
  aeUtilityMenu->setIcon(QIcon(resolveIconPath("Studio/scriptmenu_macros.svg")));
+ aeUtilityMenu->setAccessibleName(QStringLiteral("AE Utility Pack"));
+ aeUtilityMenu->setAccessibleDescription(QStringLiteral("Run an AE utility script"));
 
  csxMenu = new QMenu(tr("C# Scripts"));
  csxMenu->setIcon(QIcon(resolveIconPath("Studio/scriptmenu_run_macro.svg")));
+ csxMenu->setAccessibleName(QStringLiteral("C# Scripts"));
+ csxMenu->setAccessibleDescription(QStringLiteral("Run a C# script"));
 
  const QStringList hookNames = ArtifactPythonHookManager::knownHooks();
  for (const QString& hookName : hookNames) {
@@ -558,6 +585,8 @@ ArtifactScriptMenu::Impl::Impl(ArtifactScriptMenu* menu)
   action->setIcon(QIcon(resolveIconPath("Studio/scriptmenu_hooks.svg")));
   action->setData(hookName);
   action->setToolTip(hookName);
+  action->setToolTip(QStringLiteral("Run hook: %1").arg(hookName));
+  action->setStatusTip(QStringLiteral("Run the selected hook command"));
   hookActions.push_back(action);
   QObject::connect(action, &QAction::triggered, menu, [this, hookName]() {
    runHook(hookName);
@@ -610,7 +639,9 @@ ArtifactScriptMenu::ArtifactScriptMenu(QWidget* parent)
  setObjectName(QStringLiteral("ScriptMenu"));
  setTitle(TranslationManager::instance().tr(QStringLiteral("menu.script.label"), QStringLiteral("スクリプト(&S)")));
  setIcon(QIcon(resolveIconPath("Studio/menubar_script.svg")));
- setTearOffEnabled(true);
+ // Keep this menu owned by the main menu bar.  A torn-off native menu can
+ // outlive the main window during shutdown.
+ setTearOffEnabled(false);
 }
 
 ArtifactScriptMenu::~ArtifactScriptMenu()

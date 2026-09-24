@@ -6,9 +6,11 @@ module;
 #include <QVariant>
 #include <QVector>
 #include <QRect>
+#include <algorithm>
+#include <cmath>
+#include <vector>
 export module Artifact.Effect.AutoMosaic;
 
-import std;
 import Artifact.Effect.Abstract;
 import ArtifactCore.ImageProcessing.FaceDetection;
 import Memory.SharedPtr;

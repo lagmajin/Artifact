@@ -7,6 +7,7 @@ module;
 #include <wobjectimpl.h>
 
 module Artifact.Widgets.Test.ScrollPoC;
+import Core.ArtifactMath;
 
 namespace Artifact {
 
@@ -42,7 +43,7 @@ void ArtifactScrollPoCWidget::resizeEvent(QResizeEvent* event)
     verticalScrollBar_->setGeometry(width() - sbWidth, 0, sbWidth, height());
     
     // 可視領域に応じて範囲を更新
-    int maxScroll = std::max(0, contentHeight_ - height());
+    int maxScroll = ArtifactCore::artifactMax(0, contentHeight_ - height());
     verticalScrollBar_->setRange(0, maxScroll);
     verticalScrollBar_->setPageStep(height());
 }

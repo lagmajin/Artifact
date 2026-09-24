@@ -3,7 +3,6 @@ module;
 
 module Artifact.Effect.Field;
 
-import std;
 import Memory.SharedPtr;
 
 namespace Artifact {

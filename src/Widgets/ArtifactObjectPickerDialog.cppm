@@ -17,7 +17,6 @@ module;
 module Artifact.Widgets.ObjectPicker;
 
 import Artifact.Widgets.DialogButtons;
-import std;
 import Artifact.Service.Project;
 import Artifact.Layer.Abstract;
 import Artifact.Composition.Abstract;

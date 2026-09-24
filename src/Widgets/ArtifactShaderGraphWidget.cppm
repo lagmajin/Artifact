@@ -3,6 +3,7 @@ module;
 #include <wobjectimpl.h>
 #include <QGraphicsScene>
 #include <QGraphicsView>
+#include <QPointer>
 #include <QGraphicsRectItem>
 #include <QGraphicsPathItem>
 #include <QGraphicsSceneMouseEvent>
@@ -317,8 +318,11 @@ public:
 class ArtifactShaderGraphWidget::Impl {
 public:
     ArtifactShaderGraphWidget* owner_ = nullptr;
-    QGraphicsScene* scene_ = nullptr;
-    QGraphicsView* view_ = nullptr;
+    // Keep the Qt-owned children observable during dock teardown.  The view
+    // must be destroyed before the scene so that QGraphicsScene cannot call
+    // back into a partially destroyed QGraphicsView.
+    QPointer<QGraphicsScene> scene_;
+    QPointer<QGraphicsView> view_;
     QLabel* status_ = nullptr;
     ShaderNode::NodeGraph graph_;
     std::vector<ShaderGraphNodeItem*> items_;
@@ -1384,6 +1388,12 @@ ArtifactShaderGraphWidget::ArtifactShaderGraphWidget(QWidget* parent)
 }
 
 ArtifactShaderGraphWidget::~ArtifactShaderGraphWidget() {
+    // QWidget will otherwise delete these children later, after Impl has
+    // already been destroyed.  Delete the view first so its scene reference
+    // is detached while both Qt objects are still valid; do not call
+    // setScene(nullptr) here because that can touch a half-destroyed view.
+    delete impl_->view_;
+    delete impl_->scene_;
     delete impl_;
     impl_ = nullptr;
 }

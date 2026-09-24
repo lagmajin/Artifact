@@ -1,6 +1,7 @@
 module;
 #include <utility>
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <functional>
@@ -393,6 +394,25 @@ struct TileKey {
     bool operator!=(const TileKey& other) const { return !(*this == other); }
 };
 
+/**
+ * @brief 1 frame内で処理するdirty tileの固定容量プラン
+ *
+ * 見えているtileを先に選び、残りはdeferとして呼び出し側へ返す。
+ * キューの無制限成長やフレーム中のヒープ確保を避けるため、この型は
+ * 値型の固定容量にする。
+ */
+struct BoundedTileRefinementPlan {
+    static constexpr int MaxTiles = 16;
+
+    std::array<TileKey, MaxTiles> tiles{};
+    int scheduledCount = 0;
+    int deferredCount = 0;
+    int visibleDirtyTileCount = 0;
+    bool requiresFullRedraw = false;
+
+    bool empty() const { return scheduledCount == 0; }
+};
+
 inline size_t qHash(const TileKey& key, size_t seed = 0) noexcept
 {
     const size_t x = std::hash<int>{}(key.tileX);
@@ -444,6 +464,20 @@ struct TileGrid {
         return QRectF(r.left(), r.top(), right - r.left(), bottom - r.top());
     }
 
+    int countTilesIntersecting(const RenderROI& roi) const {
+        if (roi.isEmpty() || imageWidth <= 0 || imageHeight <= 0) {
+            return 0;
+        }
+        const int minX = std::max(0, static_cast<int>(roi.x()) / tileSize);
+        const int minY = std::max(0, static_cast<int>(roi.y()) / tileSize);
+        const int maxX = std::min(gridWidth - 1, static_cast<int>(roi.right()) / tileSize);
+        const int maxY = std::min(gridHeight - 1, static_cast<int>(roi.bottom()) / tileSize);
+        if (minX > maxX || minY > maxY) {
+            return 0;
+        }
+        return (maxX - minX + 1) * (maxY - minY + 1);
+    }
+
     std::vector<TileKey> tilesIntersecting(const RenderROI& roi) const {
         std::vector<TileKey> result;
         if (roi.isEmpty() || imageWidth <= 0 || imageHeight <= 0) {
@@ -459,6 +493,31 @@ struct TileGrid {
             }
         }
         return result;
+    }
+
+    BoundedTileRefinementPlan makeBoundedPlan(
+        const RenderROI& roi, int maxTiles = BoundedTileRefinementPlan::MaxTiles) const {
+        BoundedTileRefinementPlan plan;
+        if (roi.isEmpty() || !isValid()) {
+            return plan;
+        }
+        const int capacity = std::clamp(
+            maxTiles, 0, BoundedTileRefinementPlan::MaxTiles);
+        const int minX = std::max(0, static_cast<int>(roi.x()) / tileSize);
+        const int minY = std::max(0, static_cast<int>(roi.y()) / tileSize);
+        const int maxX = std::min(gridWidth - 1, static_cast<int>(roi.right()) / tileSize);
+        const int maxY = std::min(gridHeight - 1, static_cast<int>(roi.bottom()) / tileSize);
+        if (minX > maxX || minY > maxY) {
+            return plan;
+        }
+        plan.visibleDirtyTileCount = (maxX - minX + 1) * (maxY - minY + 1);
+        for (int ty = minY; ty <= maxY && plan.scheduledCount < capacity; ++ty) {
+            for (int tx = minX; tx <= maxX && plan.scheduledCount < capacity; ++tx) {
+                plan.tiles[static_cast<size_t>(plan.scheduledCount++)] = TileKey{tx, ty};
+            }
+        }
+        plan.deferredCount = plan.visibleDirtyTileCount - plan.scheduledCount;
+        return plan;
     }
 
     bool isValid() const {
@@ -561,6 +620,19 @@ public:
         return !dirtyRegions_.isEmpty();
     }
 
+    bool combinedNeedsFullRedraw() const {
+        for (auto it = dirtyRegions_.cbegin(); it != dirtyRegions_.cend(); ++it) {
+            if (it.value().needsFullRedraw()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    int dirtyLayerCount() const {
+        return dirtyRegions_.size();
+    }
+
     bool needsFullRedraw(const QString& layerId) const {
         if (auto it = dirtyRegions_.find(layerId); it != dirtyRegions_.end()) {
             return it->needsFullRedraw();
@@ -582,6 +654,41 @@ public:
             return {};
         }
         return grid.tilesIntersecting(roi);
+    }
+
+    int dirtyTileCount(const TileGrid& grid, const QString& layerId = QString()) const {
+        if (!grid.isValid()) {
+            return 0;
+        }
+        const RenderROI roi = layerId.isEmpty() ? combinedDirtyROI()
+                                                 : dirtyROI(layerId);
+        const bool fullRedraw = layerId.isEmpty()
+                                    ? combinedNeedsFullRedraw()
+                                    : needsFullRedraw(layerId);
+        if (roi.isEmpty() || fullRedraw) {
+            return 0;
+        }
+        return grid.countTilesIntersecting(roi);
+    }
+
+    BoundedTileRefinementPlan makeBoundedDirtyTilePlan(
+        const TileGrid& grid, const RenderROI& visibleROI,
+        int maxTiles = BoundedTileRefinementPlan::MaxTiles,
+        const QString& layerId = QString()) const {
+        BoundedTileRefinementPlan plan;
+        if (!grid.isValid()) {
+            return plan;
+        }
+        const bool fullRedraw = layerId.isEmpty()
+                                    ? combinedNeedsFullRedraw()
+                                    : needsFullRedraw(layerId);
+        if (fullRedraw) {
+            plan.requiresFullRedraw = true;
+            return plan;
+        }
+        const RenderROI dirtyROI = layerId.isEmpty() ? combinedDirtyROI()
+                                                      : this->dirtyROI(layerId);
+        return grid.makeBoundedPlan(dirtyROI.intersected(visibleROI), maxTiles);
     }
 
 private:

@@ -1,7 +1,15 @@
 ﻿module;
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <optional>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <variant>
+#include <vector>
 export module AIToolDSL.Types;
 
-import std;
 
 export namespace AIToolDSL {
 

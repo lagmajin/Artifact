@@ -1,11 +1,26 @@
 module;
 #include <QByteArray>
+#include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <cstddef>
+#include <exception>
+#include <functional>
+#include <memory>
+#include <optional>
+#include <regex>
+#include <string>
+#include <tuple>
+#include <type_traits>
+#include <unordered_map>
+#include <utility>
+#include <variant>
+#include <vector>
 //#include "DSLTypes.ixx"
 
 export module AIToolDSL.Parser;
 
 import AIToolDSL.Types;
-import std;
 
 namespace AIToolDSL {
 

@@ -21,12 +21,15 @@ module;
 #include <QShowEvent>
 #include <QPalette>
 #include <wobjectimpl.h>
+#include <algorithm>
+#include <functional>
+#include <vector>
 
 module Artifact.Widgets.ColorSwatchDialog;
 
-import std;
 import Color.Float;
 import Widgets.Utils.CSS;
+import Translation.Manager;
 
 namespace Artifact {
 
@@ -46,40 +49,40 @@ struct SwatchEntry {
 };
 
 static const std::vector<SwatchEntry> kBasicColors = {
-    { "ホワイト",     FloatColor(1.0f, 1.0f, 1.0f, 1.0f) },
-    { "ライトグレー1",FloatColor(0.866f, 0.866f, 0.866f, 1.0f) },
-    { "ライトグレー2",FloatColor(0.667f, 0.667f, 0.667f, 1.0f) },
-    { "グレー",       FloatColor(0.467f, 0.467f, 0.467f, 1.0f) },
-    { "ダークグレー", FloatColor(0.267f, 0.267f, 0.267f, 1.0f) },
-    { "ブラック",     FloatColor(0.0f, 0.0f, 0.0f, 1.0f) },
-    { "レッド",       FloatColor(1.0f, 0.0f, 0.0f, 1.0f) },
-    { "グリーン",     FloatColor(0.0f, 1.0f, 0.0f, 1.0f) },
-    { "ブルー",       FloatColor(0.0f, 0.0f, 1.0f, 1.0f) },
-    { "シアン",       FloatColor(0.0f, 1.0f, 1.0f, 1.0f) },
-    { "マゼンタ",     FloatColor(1.0f, 0.0f, 1.0f, 1.0f) },
-    { "イエロー",     FloatColor(1.0f, 1.0f, 0.0f, 1.0f) },
+    { TranslationManager::instance().tr(QStringLiteral("color.white"), QStringLiteral("ホワイト")),     FloatColor(1.0f, 1.0f, 1.0f, 1.0f) },
+    { TranslationManager::instance().tr(QStringLiteral("color.light_gray_1"), QStringLiteral("ライトグレー1")),FloatColor(0.866f, 0.866f, 0.866f, 1.0f) },
+    { TranslationManager::instance().tr(QStringLiteral("color.light_gray_2"), QStringLiteral("ライトグレー2")),FloatColor(0.667f, 0.667f, 0.667f, 1.0f) },
+    { TranslationManager::instance().tr(QStringLiteral("color.gray"), QStringLiteral("グレー")),       FloatColor(0.467f, 0.467f, 0.467f, 1.0f) },
+    { TranslationManager::instance().tr(QStringLiteral("color.dark_gray"), QStringLiteral("ダークグレー")), FloatColor(0.267f, 0.267f, 0.267f, 1.0f) },
+    { TranslationManager::instance().tr(QStringLiteral("color.black"), QStringLiteral("ブラック")),     FloatColor(0.0f, 0.0f, 0.0f, 1.0f) },
+    { TranslationManager::instance().tr(QStringLiteral("color.red"), QStringLiteral("レッド")),       FloatColor(1.0f, 0.0f, 0.0f, 1.0f) },
+    { TranslationManager::instance().tr(QStringLiteral("color.green"), QStringLiteral("グリーン")),     FloatColor(0.0f, 1.0f, 0.0f, 1.0f) },
+    { TranslationManager::instance().tr(QStringLiteral("color.blue"), QStringLiteral("ブルー")),       FloatColor(0.0f, 0.0f, 1.0f, 1.0f) },
+    { TranslationManager::instance().tr(QStringLiteral("color.cyan"), QStringLiteral("シアン")),       FloatColor(0.0f, 1.0f, 1.0f, 1.0f) },
+    { TranslationManager::instance().tr(QStringLiteral("color.magenta"), QStringLiteral("マゼンタ")),     FloatColor(1.0f, 0.0f, 1.0f, 1.0f) },
+    { TranslationManager::instance().tr(QStringLiteral("color.yellow"), QStringLiteral("イエロー")),     FloatColor(1.0f, 1.0f, 0.0f, 1.0f) },
 };
 
 static const std::vector<SwatchEntry> kVideoColors = {
-    { "ホワイト",       FloatColor(1.0f, 1.0f, 1.0f, 1.0f) },
-    { "ブラック",       FloatColor(0.0f, 0.0f, 0.0f, 1.0f) },
-    { "レッド",         FloatColor(1.0f, 0.0f, 0.0f, 1.0f) },
-    { "ブルー",         FloatColor(0.0f, 0.0f, 1.0f, 1.0f) },
-    { "スキン",         FloatColor(1.0f, 0.8f, 0.6f, 1.0f) },
-    { "ブラウン",       FloatColor(0.6f, 0.4f, 0.2f, 1.0f) },
-    { "ライトブルー",   FloatColor(0.4f, 0.67f, 1.0f, 1.0f) },
-    { "グリーン",       FloatColor(0.0f, 0.6f, 0.0f, 1.0f) },
-    { "オレンジ",       FloatColor(1.0f, 0.53f, 0.0f, 1.0f) },
-    { "シアン",         FloatColor(0.0f, 0.8f, 1.0f, 1.0f) },
+    { TranslationManager::instance().tr(QStringLiteral("color.white"), QStringLiteral("ホワイト")),       FloatColor(1.0f, 1.0f, 1.0f, 1.0f) },
+    { TranslationManager::instance().tr(QStringLiteral("color.black"), QStringLiteral("ブラック")),       FloatColor(0.0f, 0.0f, 0.0f, 1.0f) },
+    { TranslationManager::instance().tr(QStringLiteral("color.red"), QStringLiteral("レッド")),         FloatColor(1.0f, 0.0f, 0.0f, 1.0f) },
+    { TranslationManager::instance().tr(QStringLiteral("color.blue"), QStringLiteral("ブルー")),         FloatColor(0.0f, 0.0f, 1.0f, 1.0f) },
+    { TranslationManager::instance().tr(QStringLiteral("color.skin"), QStringLiteral("スキン")),         FloatColor(1.0f, 0.8f, 0.6f, 1.0f) },
+    { TranslationManager::instance().tr(QStringLiteral("color.brown"), QStringLiteral("ブラウン")),       FloatColor(0.6f, 0.4f, 0.2f, 1.0f) },
+    { TranslationManager::instance().tr(QStringLiteral("color.light_blue"), QStringLiteral("ライトブルー")),   FloatColor(0.4f, 0.67f, 1.0f, 1.0f) },
+    { TranslationManager::instance().tr(QStringLiteral("color.green"), QStringLiteral("グリーン")),       FloatColor(0.0f, 0.6f, 0.0f, 1.0f) },
+    { TranslationManager::instance().tr(QStringLiteral("color.orange"), QStringLiteral("オレンジ")),       FloatColor(1.0f, 0.53f, 0.0f, 1.0f) },
+    { TranslationManager::instance().tr(QStringLiteral("color.cyan"), QStringLiteral("シアン")),         FloatColor(0.0f, 0.8f, 1.0f, 1.0f) },
 };
 
 static const std::vector<SwatchEntry> kTransparentColors = {
-    { "透明1", FloatColor(1.0f, 1.0f, 1.0f, 0.0f),   true, 1 },
-    { "透明2", FloatColor(1.0f, 1.0f, 1.0f, 0.25f),  true, 2 },
-    { "透明3", FloatColor(0.78f, 0.90f, 1.0f, 0.50f), true, 3 },
-    { "透明4", FloatColor(1.0f, 0.86f, 0.71f, 0.38f),  true, 4 },
-    { "透明5", FloatColor(0.71f, 1.0f, 0.71f, 0.25f),  true, 5 },
-    { "透明6", FloatColor(1.0f, 1.0f, 1.0f, 0.13f),  true, 6 },
+    { TranslationManager::instance().tr(QStringLiteral("color.transparent_1"), QStringLiteral("透明1")), FloatColor(1.0f, 1.0f, 1.0f, 0.0f),   true, 1 },
+    { TranslationManager::instance().tr(QStringLiteral("color.transparent_2"), QStringLiteral("透明2")), FloatColor(1.0f, 1.0f, 1.0f, 0.25f),  true, 2 },
+    { TranslationManager::instance().tr(QStringLiteral("color.transparent_3"), QStringLiteral("透明3")), FloatColor(0.78f, 0.90f, 1.0f, 0.50f), true, 3 },
+    { TranslationManager::instance().tr(QStringLiteral("color.transparent_4"), QStringLiteral("透明4")), FloatColor(1.0f, 0.86f, 0.71f, 0.38f),  true, 4 },
+    { TranslationManager::instance().tr(QStringLiteral("color.transparent_5"), QStringLiteral("透明5")), FloatColor(0.71f, 1.0f, 0.71f, 0.25f),  true, 5 },
+    { TranslationManager::instance().tr(QStringLiteral("color.transparent_6"), QStringLiteral("透明6")), FloatColor(1.0f, 1.0f, 1.0f, 0.13f),  true, 6 },
 };
 
 // ---------------------------------------------------------------------------
@@ -277,10 +280,14 @@ static QWidget* buildSection(Category& cat,
 
     // [+] add button
     auto* addBtn = new QPushButton("+");
-    addBtn->setAccessibleName(cat.name + QStringLiteral(" にカラーを追加"));
+    addBtn->setAccessibleName(
+        TranslationManager::instance()
+            .tr(QStringLiteral("dialog.color_swatch.add_color_to"),
+                QStringLiteral("%1 にカラーを追加"))
+            .arg(cat.name));
     addBtn->setAccessibleDescription(QStringLiteral("Add a color to this category"));
     addBtn->setFixedSize(32, 32);
-    addBtn->setToolTip("カラーを追加");
+    addBtn->setToolTip(TranslationManager::instance().tr(QStringLiteral("dialog.color_swatch.add_color"), QStringLiteral("カラーを追加")));
     grid->addWidget(addBtn, row, col);
 
     wl->addWidget(cat.contentWidget);
@@ -303,16 +310,16 @@ static QWidget* buildSection(Category& cat,
 ColorSwatchDialog::ColorSwatchDialog(QWidget* parent)
     : QDialog(parent), impl_(new Impl())
 {
-    setWindowTitle("カラースウォッチ");
+    setWindowTitle(TranslationManager::instance().tr(QStringLiteral("dialog.color_swatch.title"), QStringLiteral("カラースウォッチ")));
     setAccessibleName(QStringLiteral("Color Swatches Dialog"));
     setAccessibleDescription(QStringLiteral("Choose a color from the available swatch categories"));
     setFixedSize(520, 560);
     setAutoFillBackground(true);
 
     impl_->categories = {
-        { "基本カラー",   kBasicColors,       nullptr, nullptr, true, {} },
-        { "映像制作",     kVideoColors,       nullptr, nullptr, true, {} },
-        { "透明・グロー", kTransparentColors, nullptr, nullptr, true, {} },
+        { TranslationManager::instance().tr(QStringLiteral("dialog.color_swatch.category_basic"), QStringLiteral("基本カラー")),   kBasicColors,       nullptr, nullptr, true, {} },
+        { TranslationManager::instance().tr(QStringLiteral("dialog.color_swatch.category_video"), QStringLiteral("映像制作")),     kVideoColors,       nullptr, nullptr, true, {} },
+        { TranslationManager::instance().tr(QStringLiteral("dialog.color_swatch.category_transparent_glow"), QStringLiteral("透明・グロー")), kTransparentColors, nullptr, nullptr, true, {} },
     };
 
     auto* mainLayout = new QVBoxLayout(this);
@@ -431,14 +438,14 @@ ColorSwatchDialog::ColorSwatchDialog(QWidget* parent)
     auto* btnRow = new QHBoxLayout();
     btnRow->addStretch();
 
-    auto* closeBtn = new QPushButton("閉じる");
+    auto* closeBtn = new QPushButton(TranslationManager::instance().tr(QStringLiteral("dialog.button.close"), QStringLiteral("閉じる")));
     closeBtn->setAccessibleName(QStringLiteral("Close color swatches"));
     closeBtn->setAccessibleDescription(QStringLiteral("Close without applying a color"));
     closeBtn->setFixedSize(80, 28);
     connect(closeBtn, &QPushButton::clicked, this, &QDialog::reject);
     btnRow->addWidget(closeBtn);
 
-    auto* applyBtn = new QPushButton("適用 ↗");
+    auto* applyBtn = new QPushButton(TranslationManager::instance().tr(QStringLiteral("dialog.color_swatch.apply"), QStringLiteral("適用 ↗")));
     applyBtn->setAccessibleName(QStringLiteral("Apply selected color"));
     applyBtn->setAccessibleDescription(QStringLiteral("Apply the selected color and close"));
     applyBtn->setFixedSize(80, 28);

@@ -136,8 +136,11 @@ public:
 private:
   void applyTableToBindings();
   void applyShortcutProfile();
+  QString selectedShortcutContext() const;
+  void rebuildShortcutContextTree();
   void filterShortcutRows();
   void updateShortcutConflicts();
+  void resetSelectedShortcut();
   void exportPreset();
   void importPreset();
 };
@@ -166,6 +169,20 @@ private:
 public:
   explicit AudioScrubSettingPage(QWidget *parent = nullptr);
   ~AudioScrubSettingPage();
+  void loadSettings() override;
+  void saveSettings() override;
+  QList<SettingItemInfo> searchableItems() const override;
+};
+
+class EnvironmentVariableSettingPage : public QWidget, public ISettingPage {
+private:
+  class Impl;
+  Impl *impl_;
+
+public:
+  explicit EnvironmentVariableSettingPage(QWidget *parent = nullptr);
+  ~EnvironmentVariableSettingPage();
+  bool eventFilter(QObject *watched, QEvent *event) override;
   void loadSettings() override;
   void saveSettings() override;
   QList<SettingItemInfo> searchableItems() const override;

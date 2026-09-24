@@ -7,7 +7,7 @@ module;
 #include <QStringList>
 
 module Artifact.Layer.Factory;
-import std;
+import Core.ArtifactMath;
 import Memory.SharedPtr;
 
 import Utils.String.UniString;
@@ -611,7 +611,7 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(const Artifa
           (json.contains("sourcePath") || json.contains("modelPath") || json.contains("fixedGeometry"))) {
           if (json.contains("fixedGeometry")) {
               ArtifactFixedGeometry3DLayerInitParams fixedParams(
-                  name, static_cast<FixedGeometry3D>(std::clamp(
+                  name, static_cast<FixedGeometry3D>(ArtifactCore::artifactClamp(
                       json.value("fixedGeometry").toInt(), 0, 5)));
               auto result = factory.createLayer(fixedParams);
               if (result.success && result.layer) {

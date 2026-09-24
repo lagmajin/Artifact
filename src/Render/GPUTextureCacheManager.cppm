@@ -157,6 +157,47 @@ int GPUTextureCacheManager::maxEntries() const
     return maxEntries_;
 }
 
+void GPUTextureCacheManager::beginFrame(quint64 frameIndex)
+{
+    QMutexLocker locker(&mutex_);
+    if (frameIndex < currentFrameIndex_) {
+        // A renderer/device restart may reset its local frame counter. Treat
+        // existing entries as used on the new epoch instead of expiring every
+        // resource at once from an invalid age comparison.
+        for (auto it = entries_.begin(); it != entries_.end(); ++it) {
+            it->lastUsedFrame = frameIndex;
+        }
+    }
+    currentFrameIndex_ = frameIndex;
+    processPendingUploadsLocked();
+    pruneExpiredLocked();
+}
+
+void GPUTextureCacheManager::setResourceExpirationFrames(quint64 frameCount)
+{
+    QMutexLocker locker(&mutex_);
+    resourceExpirationFrames_ = frameCount;
+    pruneExpiredLocked();
+}
+
+quint64 GPUTextureCacheManager::resourceExpirationFrames() const
+{
+    QMutexLocker locker(&mutex_);
+    return resourceExpirationFrames_;
+}
+
+void GPUTextureCacheManager::setMaxExpiredEvictionsPerFrame(int count)
+{
+    QMutexLocker locker(&mutex_);
+    maxExpiredEvictionsPerFrame_ = std::max(1, count);
+}
+
+int GPUTextureCacheManager::maxExpiredEvictionsPerFrame() const
+{
+    QMutexLocker locker(&mutex_);
+    return maxExpiredEvictionsPerFrame_;
+}
+
 QString GPUTextureCacheManager::makeKey(const QString& ownerId, const QString& cacheKey) const
 {
     return ownerId + QStringLiteral("|") + cacheKey;
@@ -315,6 +356,7 @@ GPUTextureCacheHandle GPUTextureCacheManager::acquireOrCreate(const QString& own
         auto entryIt = entries_.find(existingIdIt.value());
         if (entryIt != entries_.end() && entryIt->generation == generation_ && entryIt->texture) {
             entryIt->lastUsedTick = usageTick_++;
+            entryIt->lastUsedFrame = currentFrameIndex_;
             ++hitCount_;
             return {entryIt->id, entryIt->generation};
         }
@@ -362,6 +404,7 @@ GPUTextureCacheHandle GPUTextureCacheManager::acquireOrCreate(const QString& own
     entry.sourceGpuFrame = frame;
     entry.memoryBytes = 0;
     entry.lastUsedTick = usageTick_++;
+    entry.lastUsedFrame = currentFrameIndex_;
 
     entries_.insert(entry.id, entry);
     keyToId_.insert(key, entry.id);
@@ -380,10 +423,12 @@ GPUTextureCacheHandle GPUTextureCacheManager::findExisting(
     }
 
     QMutexLocker locker(&mutex_);
-    for (auto it = entries_.cbegin(); it != entries_.cend(); ++it) {
+    for (auto it = entries_.begin(); it != entries_.end(); ++it) {
         if (it->ownerId == ownerId &&
             it->cacheKey == cacheKey &&
             it->generation == generation_ && it->texture) {
+            it->lastUsedTick = usageTick_++;
+            it->lastUsedFrame = currentFrameIndex_;
             return {it->id, it->generation};
         }
     }
@@ -409,6 +454,7 @@ GPUTextureCacheManager::ExistingSourceState GPUTextureCacheManager::tryAcquireEx
         auto entryIt = entries_.find(existingIdIt.value());
         if (entryIt != entries_.end() && entryIt->generation == generation_ && entryIt->texture) {
             entryIt->lastUsedTick = usageTick_++;
+            entryIt->lastUsedFrame = currentFrameIndex_;
             ++hitCount_;
             outHandle = GPUTextureCacheHandle{entryIt->id, entryIt->generation};
             return ExistingSourceState::Hit;
@@ -542,6 +588,8 @@ Diligent::ITextureView* GPUTextureCacheManager::textureView(const GPUTextureCach
     if (it == entries_.end() || it->generation != handle.generation || !it->srv) {
         return nullptr;
     }
+    it->lastUsedTick = usageTick_++;
+    it->lastUsedFrame = currentFrameIndex_;
     return it->srv.RawPtr();
 }
 
@@ -554,6 +602,8 @@ GPUTextureBindingRecord GPUTextureCacheManager::bindingRecord(const GPUTextureCa
     if (it == entries_.end() || it->generation != handle.generation || !it->texture || !it->srv) {
         return record;
     }
+    it->lastUsedTick = usageTick_++;
+    it->lastUsedFrame = currentFrameIndex_;
     record.texture = it->texture.RawPtr();
     record.srv = it->srv.RawPtr();
     record.preferredMode = GPUTextureBindingMode::LegacySRV;
@@ -644,6 +694,7 @@ void GPUTextureCacheManager::clearLocked()
     keyToId_.clear();
     ownerToIds_.clear();
     currentBytes_ = 0;
+    currentFrameIndex_ = 0;
     ++generation_;
 }
 
@@ -687,6 +738,7 @@ void GPUTextureCacheManager::processPendingUploadsLocked()
         entry.srv = std::move(result.srv);
         entry.memoryBytes = pending.memoryBytes;
         entry.lastUsedTick = usageTick_++;
+        entry.lastUsedFrame = currentFrameIndex_;
         entries_.insert(entry.id, entry);
         keyToId_.insert(pending.fullKey, entry.id);
         ownerToIds_[pending.ownerId].insert(entry.id);
@@ -742,16 +794,20 @@ GPUTextureCacheStats GPUTextureCacheManager::stats() const
     const auto uploadStats = uploadCoordinator_
         ? uploadCoordinator_->stats()
         : DiligentUploadCoordinatorStats{};
-    return GPUTextureCacheStats{
-        currentBytes_,
-        static_cast<int>(entries_.size()),
-        hitCount_,
-        missCount_,
-        invalidationCount_,
-        lastInvalidationReason_,
-        uploadStats.pendingBytes,
-        static_cast<int>(uploadStats.pendingJobs + uploadStats.gpuOperations)
-    };
+    GPUTextureCacheStats result;
+    result.memoryBytes = currentBytes_;
+    result.entryCount = static_cast<int>(entries_.size());
+    result.hitCount = hitCount_;
+    result.missCount = missCount_;
+    result.invalidationCount = invalidationCount_;
+    result.lastInvalidationReason = lastInvalidationReason_;
+    result.pendingUploadBytes = uploadStats.pendingBytes;
+    result.pendingUploadCount =
+        static_cast<int>(uploadStats.pendingJobs + uploadStats.gpuOperations);
+    result.currentFrameIndex = currentFrameIndex_;
+    result.resourceExpirationFrames = resourceExpirationFrames_;
+    result.expiredEvictionCount = expiredEvictionCount_;
+    return result;
 }
 
 int GPUTextureCacheManager::ownerEntryCount(const QString& ownerId) const
@@ -844,6 +900,38 @@ void GPUTextureCacheManager::pruneLocked()
         ++invalidationCount_;
         lastInvalidationReason_ = GPUTextureCacheInvalidationReason::BudgetEviction;
         eraseEntryByIdLocked(lruId);
+    }
+}
+
+void GPUTextureCacheManager::pruneExpiredLocked()
+{
+    if (resourceExpirationFrames_ == 0 || entries_.isEmpty()) {
+        return;
+    }
+
+    int evicted = 0;
+    while (evicted < maxExpiredEvictionsPerFrame_) {
+        quint64 oldestExpiredId = 0;
+        quint64 oldestFrame = (std::numeric_limits<quint64>::max)();
+        for (auto it = entries_.cbegin(); it != entries_.cend(); ++it) {
+            const quint64 age = currentFrameIndex_ >= it->lastUsedFrame
+                                    ? currentFrameIndex_ - it->lastUsedFrame
+                                    : 0;
+            if (age > resourceExpirationFrames_ &&
+                it->lastUsedFrame < oldestFrame) {
+                oldestFrame = it->lastUsedFrame;
+                oldestExpiredId = it->id;
+            }
+        }
+        if (oldestExpiredId == 0) {
+            break;
+        }
+        ++invalidationCount_;
+        ++expiredEvictionCount_;
+        lastInvalidationReason_ =
+            GPUTextureCacheInvalidationReason::FrameExpiration;
+        eraseEntryByIdLocked(oldestExpiredId);
+        ++evicted;
     }
 }
 

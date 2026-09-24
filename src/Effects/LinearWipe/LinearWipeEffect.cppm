@@ -29,6 +29,46 @@ namespace Artifact {
 
 using namespace ArtifactCore;
 
+namespace {
+
+// Resident-path variant: P0 angle, P1 softness, P2 feather. The calculation
+// is kept algebraically equivalent to LinearWipeEffectCPUImpl while leaving
+// the CPU implementation as the fallback and parity reference.
+static constexpr const char* kLinearWipeResidentHlsl = R"(
+Texture2D<float4> g_InputTexture : register(t0);
+RWTexture2D<float4> g_OutputTexture : register(u0);
+
+[numthreads(8, 8, 1)]
+void main(uint3 dispatchId : SV_DispatchThreadID)
+{
+    uint width, height;
+    g_OutputTexture.GetDimensions(width, height);
+    if (dispatchId.x >= width || dispatchId.y >= height) return;
+    const float radians = g_P0 * 3.14159265 / 180.0;
+    const float cosine = cos(radians);
+    const float sine = sin(radians);
+    const float projection = (float)dispatchId.x * cosine +
+        (float)dispatchId.y * sine;
+    const float minProjection = min(0.0,
+        min((float)width * cosine, (float)height * sine));
+    const float maxProjection = max(0.0,
+        max((float)width * cosine, (float)height * sine));
+    const float t = saturate((projection - minProjection) /
+        max(0.00001, maxProjection - minProjection));
+    const float halfSoftness = max(0.00001, g_P1 * 0.5);
+    const float edge = saturate((t - (0.5 - halfSoftness)) /
+        max(0.00001, 2.0 * halfSoftness));
+    const float smoothEdge = edge * edge * (3.0 - 2.0 * edge);
+    float alpha = 1.0 - smoothEdge;
+    if (g_P2 > 0.0) alpha = saturate(alpha / max(0.00001, g_P2));
+    float4 color = g_InputTexture[dispatchId.xy];
+    color.a *= alpha;
+    g_OutputTexture[dispatchId.xy] = color;
+}
+)";
+
+} // namespace
+
 class LinearWipeEffectCPUImpl : public ArtifactEffectImplBase {
 public:
     float angle_ = 0.0f;
@@ -110,6 +150,10 @@ LinearWipeEffect::LinearWipeEffect() {
     setPipelineStage(EffectPipelineStage::Rasterizer);
     setCPUImpl(ArtifactCore::makeShared<LinearWipeEffectCPUImpl>());
     auto gpu=ArtifactCore::makeShared<LinearWipeEffectGPUImpl>();gpu->angle_=angle_;gpu->softness_=softness_;gpu->feather_=feather_;setGPUImpl(gpu);setComputeMode(ComputeMode::AUTO);
+    registerGpuGenericShader(
+        LinearWipeEffect::kGpuGenericKey,
+        GpuGenericShaderRecord{
+            kLinearWipeResidentHlsl, "main", GpuGenericResourceKind::Filter});
 }
 LinearWipeEffect::~LinearWipeEffect() = default;
 

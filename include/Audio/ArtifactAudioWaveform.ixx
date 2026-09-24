@@ -11,7 +11,6 @@ module;
 
 export module Artifact.Audio.Waveform;
 
-import std;
 
 import Audio.Segment;
 

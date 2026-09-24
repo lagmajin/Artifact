@@ -25,6 +25,8 @@ import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Image;
 import Artifact.Render.IRenderer;
+import Artifact.Render.Context;
+import Artifact.Render.FrameCache;
 import Artifact.Widgets.Render.ViewportScaleOverlay;
 import Artifact.Grid.System;
 import Frame.Debug;
@@ -60,6 +62,63 @@ enum class CompositionViewportPresentationLayout {
   SelectedOnly
  };
 
+ // P0-4: per-viewport visibility mask for layer categories. Independent
+ // from CompositionLayerRenderFilter (which is render-queue-scoped) so
+ // changing the mask never affects queued output. Categories are encoded
+ // as bit flags so multiple categories can be hidden at once.
+ enum class CompositionViewportLayerCategory : uint32_t {
+  None        = 0u,
+  Solid2D     = 1u << 0,
+  Text        = 1u << 1,
+  Image       = 1u << 2,
+  Shape       = 1u << 3,
+  Adjustment  = 1u << 4,
+  Null        = 1u << 5,
+  Mask        = 1u << 6,
+  Audio       = 1u << 7,
+  Particle    = 1u << 8,
+  Clone       = 1u << 9,
+  Light3D     = 1u << 10,
+  Camera3D    = 1u << 11,
+  Model3D     = 1u << 12,
+  All         = 0xFFFFFFFFu,
+ };
+ using CompositionViewportLayerCategoryMask = uint32_t;
+ constexpr CompositionViewportLayerCategory operator|(
+     CompositionViewportLayerCategory a,
+     CompositionViewportLayerCategory b) noexcept {
+   return static_cast<CompositionViewportLayerCategory>(
+       static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
+ }
+ constexpr CompositionViewportLayerCategory operator&(
+     CompositionViewportLayerCategory a,
+     CompositionViewportLayerCategory b) noexcept {
+   return static_cast<CompositionViewportLayerCategory>(
+       static_cast<uint32_t>(a) & static_cast<uint32_t>(b));
+ }
+ constexpr CompositionViewportLayerCategory operator~(
+     CompositionViewportLayerCategory a) noexcept {
+   return static_cast<CompositionViewportLayerCategory>(
+       ~static_cast<uint32_t>(a));
+ }
+ inline CompositionViewportLayerCategory &operator|=(
+     CompositionViewportLayerCategory &a,
+     CompositionViewportLayerCategory b) noexcept {
+   a = a | b;
+   return a;
+ }
+ inline CompositionViewportLayerCategory &operator&=(
+     CompositionViewportLayerCategory &a,
+     CompositionViewportLayerCategory b) noexcept {
+   a = a & b;
+   return a;
+ }
+ constexpr bool hasViewportLayerCategory(
+     CompositionViewportLayerCategoryMask mask,
+     CompositionViewportLayerCategory category) noexcept {
+   return (mask & static_cast<uint32_t>(category)) != 0u;
+ }
+
  enum class CompositionBackgroundMode {
   Solid,
   Checkerboard,
@@ -88,7 +147,21 @@ enum class CompositionViewportPresentationLayout {
   NormalZ,
   Velocity,
   VelocityX,
-  VelocityY
+  VelocityY,
+  Position,
+  PositionX,
+  PositionY,
+  PositionZ,
+  UV,
+  U,
+  V,
+ // P1-6: Autograph-style channel display variants. Unpremultiplied
+ // divides RGB by alpha before display; Luminance applies Rec 709
+ // coefficients to produce a grayscale preview; Matte shows the alpha
+ // channel as a red overlay on top of a dark RGB.
+  Unpremultiplied,
+  Luminance,
+  Matte
  };
 
  enum class LineDebugKind : uint8_t {
@@ -159,6 +232,14 @@ LayerID selectedLayerId() const;
 void clearMotionPathSelection();
 void setLayerRenderFilter(CompositionLayerRenderFilter filter);
 CompositionLayerRenderFilter layerRenderFilter() const;
+// P0-4: per-viewport layer-category visibility mask. Independent from
+// setLayerRenderFilter (render-queue-scoped) so the mask never affects
+// queued output. Default is All (no filtering).
+void setViewportLayerCategoryMask(CompositionViewportLayerCategoryMask mask);
+CompositionViewportLayerCategoryMask viewportLayerCategoryMask() const;
+void toggleViewportLayerCategory(CompositionViewportLayerCategory category);
+bool isViewportLayerCategoryVisible(
+    CompositionViewportLayerCategory category) const;
 void setCompareMode(CompositionCompareMode mode);
 CompositionCompareMode compareMode() const;
 void setReferencePinned(bool pinned);
@@ -239,6 +320,7 @@ void setShowXRayOverlay(bool show);
 bool isShowXRayOverlay() const;
 void setShowIsolationOverlay(bool show);
 bool isShowIsolationOverlay() const;
+int isolatedLayerCount() const;
 void setShowOnionSkin(bool show);
 bool isShowOnionSkin() const;
 void setShowRigOverlay(bool show);
@@ -247,6 +329,17 @@ void setShowAudioWaveformOverlay(bool show);
 bool isShowAudioWaveformOverlay() const;
 void setShowAudioSpectrumOverlay(bool show);
 bool isShowAudioSpectrumOverlay() const;
+
+// Accessibility viewport magnifier (loupe) toggles.
+void setMagnifierEnabled(bool enable);
+bool isMagnifierEnabled() const;
+void setMagnifierScale(int scale);
+int magnifierScale() const;
+void setMagnifierFollowCursor(bool follow);
+bool isMagnifierFollowCursor() const;
+// Adjust the magnifier scale from a mouse wheel over the loupe. Returns true
+// only when the position is inside the loupe and the wheel was consumed.
+bool adjustMagnifierScaleAt(const QPointF& viewportPosLogical, float delta);
 void setOnionSkinFrameCount(int count);
 int onionSkinFrameCount() const;
 void setOnionSkinOpacity(int percent);
@@ -313,6 +406,50 @@ void zoomFitVisible();
 void zoomFitWorkArea();
 void zoomFill();
   void zoom100();
+
+// Houdini-style box zoom/crop. Begins a rubber-band marquee on the next
+// mouse press; release inside the rectangle zooms in, outside zooms out.
+// The crop variant (false = zoom, true = crop-window) is reserved for a
+// later milestone (P2-8 View Regions) and intentionally no-op today.
+bool beginBoxZoomInteraction(const QPointF& viewportPos, bool cropWindow = false);
+void updateBoxZoomInteraction(const QPointF& viewportPos);
+bool endBoxZoomInteraction();
+void cancelBoxZoomInteraction();
+bool isBoxZoomInteractionActive() const;
+
+// Houdini Space+Z / Maya cursor-tumble-pivot semantics. Stores the
+// cursor-under point as a temporary tumble pivot and feeds it into the
+// viewport orientation view matrix without touching the camera layer's
+// stored target. No-op while the viewport is in Front orthographic mode.
+bool setTumblePivotAtViewportPos(const QPointF& viewportPos);
+void clearTumblePivot();
+bool isTumblePivotOverrideEnabled() const;
+QPointF tumblePivotCanvasPos() const;
+
+// C4D Interactive Render Region / Nuke Pre-render Region analogue.
+// P0-3a scope is viewport-only: the rectangle is owned by the controller
+// and exposed via overlay + HUD. Wiring the rect into RenderContext::roi
+// requires a separate RenderContext integration pass (P0-3b) because the
+// current CompositionRenderController render loop does not consume the
+// RenderContext structure directly.
+void setInteractiveRenderRegion(const QRectF& canvasRect);
+void clearInteractiveRenderRegion();
+bool isInteractiveRenderRegionActive() const;
+QRectF interactiveRenderRegion() const;
+// Resolution slider value in the range [0.25, 1.0]. Affects the HUD
+// readout only in this milestone; future P0-3b will consume it.
+void setInteractiveRenderRegionResolutionScale(float scale);
+float interactiveRenderRegionResolutionScale() const;
+// 2D handle hit-testing + drag. Returns:
+//   0 = no handle (background click),
+//   1 = move (drag the whole rect),
+//   2..9 = corner/edge handles (NW, N, NE, E, SE, S, SW, W).
+int interactiveRenderRegionHandleAt(const QPointF& viewportPos) const;
+bool beginInteractiveRenderRegionDrag(int handle, const QPointF& viewportPos);
+void updateInteractiveRenderRegionDrag(const QPointF& viewportPos);
+bool endInteractiveRenderRegionDrag();
+void cancelInteractiveRenderRegionDrag();
+bool isInteractiveRenderRegionDragActive() const;
   void focusSelectedLayer();
   bool createFullLayerMaskForLayer(const ArtifactAbstractLayerPtr& layer);
   bool cyclePresetLayerMaskForLayer(const ArtifactAbstractLayerPtr& layer, bool reverse = false);
@@ -352,6 +489,10 @@ void zoomFill();
    void setContentEditMode(bool enabled);
    bool contentEditMode() const;
   ArtifactIRenderer* renderer() const;
+  // Read-only access to the render context. The context is owned by the
+  // controller and reflects its current render mode / pan / zoom / canvas
+  // size; external callers must not call setMode() / setROI() on it.
+  const Artifact::RenderContext& renderContext() const;
   QImage captureCurrentFrameImage() const;
   ArtifactCore::FrameDebugSnapshot frameDebugSnapshot() const;
   ArtifactCore::FrameDebugSnapshot frameDebugCounters() const;
@@ -391,6 +532,10 @@ void handleMouseMove(const QPointF& viewportPos);
   void clearModalGizmoNumericInput();
   bool commitModalGizmoInteraction();
   bool isModalGizmoInteractionActive() const;
+  // True while the user is actively interacting with the viewport (dragging a
+  // layer, gizmo, rubber band, drop ghost, ...). Detached Task execution waits
+  // for this to clear before mutating the project.
+  bool isInteractionBusy() const;
   bool cancelGizmoInteraction();
   void setPointerPressure(float pressure);
   void setPointerTilt(float tiltX, float tiltY);
@@ -544,6 +689,7 @@ void pushViewHistory();
   void trackerTrackAll();
   void trackerStop();
   bool trackerJobRunning() const;
+  double trackerSolveProgress() const;
   QString trackerModeLabel() const;
   double trackerAverageConfidence() const;
   int trackerProblemFrameCount() const;

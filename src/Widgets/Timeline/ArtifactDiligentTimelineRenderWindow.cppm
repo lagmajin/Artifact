@@ -8,6 +8,7 @@ module;
 
 #include <QColor>
 #include <QCoreApplication>
+#include <QCursor>
 #include <QEvent>
 #include <QExposeEvent>
 #include <QKeyEvent>
@@ -16,6 +17,7 @@ module;
 #include <QResizeEvent>
 #include <QSize>
 #include <QString>
+#include <QTimer>
 #include <QWheelEvent>
 #include <QWidget>
 #include <QtMath>
@@ -88,6 +90,9 @@ public:
   mutable std::mutex snapshotMutex_;
   std::shared_ptr<const DiligentTimelineVisualSnapshot> snapshot_ =
       std::make_shared<const DiligentTimelineVisualSnapshot>();
+  std::shared_ptr<const DiligentTimelineVisualSnapshot> staticSnapshot_;
+  std::shared_ptr<const DiligentTimelineVisualSnapshot> dynamicSnapshot_;
+  bool layeredSnapshots_ = false;
   Diligent::RefCntAutoPtr<IRenderDevice> device_;
   Diligent::RefCntAutoPtr<IDeviceContext> immediateContext_;
   Diligent::RefCntAutoPtr<ISwapChain> swapChain_;
@@ -97,10 +102,22 @@ public:
   DiligentImmediateSubmitter submitter_;
   bool initialized_ = false;
   bool gpuReady_ = false;
-  bool usingSharedDevice_ = false;
+  bool ownsIndependentDevice_ = false;
   std::atomic_bool renderEventPending_{false};
+  // Keep the idle surface inexpensive, but give direct manipulation a full
+  // 60 Hz presentation lane. Skipped frames retain only the latest snapshot.
+  // GUI thread only.
+  static constexpr std::chrono::milliseconds kIdlePresentInterval{33};
+  static constexpr std::chrono::milliseconds kInteractivePresentInterval{16};
+  std::chrono::steady_clock::time_point lastPresent_{};
+  bool throttleWakeupPending_ = false;
   QPointer<QWidget> inputTarget_;
+  std::function<bool(const QPointF&, const QPoint&, Qt::KeyboardModifiers)>
+      wheelInputHandler_;
+  std::function<bool(Qt::MouseButton, const QPointF&, Qt::MouseButtons,
+                     Qt::KeyboardModifiers)> panInputHandler_;
   std::function<void()> inputUpdatedCallback_;
+  std::function<bool()> interactionStateProvider_;
   std::chrono::steady_clock::time_point lastMouseMoveSnapshot_{};
 
   static FloatColor toFloatColor(const QColor& color)
@@ -130,10 +147,7 @@ public:
     swapChain_.Release();
     immediateContext_.Release();
     device_.Release();
-    if (usingSharedDevice_) {
-      releaseSharedRenderDevice();
-      usingSharedDevice_ = false;
-    }
+    ownsIndependentDevice_ = false;
     gpuReady_ = false;
   }
 
@@ -150,11 +164,21 @@ public:
         backend == QStringLiteral("sw")) {
       return false;
     }
-    if (!acquireSharedRenderDeviceForCurrentBackend(device_, immediateContext_)) {
+    // Timeline owns a fully independent device: the VP worker thread keeps
+    // the shared immediate context to itself, so the two surfaces never
+    // submit through the same context. Failure means no GPU (the caller
+    // falls back to the QWidget painter); there is no shared fallback.
+    IndependentRenderDevice independent;
+    if (!createIndependentRenderDevice(QStringLiteral("timeline"), -1,
+                                       independent)) {
       initialized_ = false;
       return false;
     }
-    usingSharedDevice_ = true;
+    device_ = independent.device;
+    immediateContext_ = independent.immediateContext;
+    independent.device.Release();
+    independent.immediateContext.Release();
+    ownsIndependentDevice_ = true;
 
     Win32NativeWindow nativeWindow;
     nativeWindow.hWnd = reinterpret_cast<HWND>(window->winId());
@@ -165,12 +189,16 @@ public:
         RenderConfig::hdrDisplayEnabled()
             ? TEX_FORMAT_RGBA16_FLOAT
             : TEX_FORMAT_RGBA8_UNORM_SRGB;
+    // 2D-only surface: no depth buffer (render uses a null DSV throughout).
+    // IsPrimary stays true so this device's stale resources are released on
+    // its own Present; see SwapChainDesc docs before touching it.
+    swapChainDesc.DepthBufferFormat = TEX_FORMAT_UNKNOWN;
     swapChainDesc.Width = static_cast<Uint32>(
         std::max(1, qRound(window->width() * window->devicePixelRatio())));
     swapChainDesc.Height = static_cast<Uint32>(
         std::max(1, qRound(window->height() * window->devicePixelRatio())));
 
-    if (sharedRenderDeviceType() == RENDER_DEVICE_TYPE_VULKAN) {
+    if (device_->GetDeviceInfo().Type == RENDER_DEVICE_TYPE_VULKAN) {
       if (auto* factory = resolveTimelineVkFactory()) {
         factory->CreateSwapChainVk(device_, immediateContext_, swapChainDesc,
                                    nativeWindow, &swapChain_);
@@ -207,16 +235,47 @@ public:
       return;
     }
 
+    const auto now = std::chrono::steady_clock::now();
+    const bool interacting = interactionStateProvider_ && interactionStateProvider_();
+    const auto minPresentInterval = interacting ? kInteractivePresentInterval
+                                                : kIdlePresentInterval;
+    if (now - lastPresent_ < minPresentInterval) {
+      if (!throttleWakeupPending_) {
+        throttleWakeupPending_ = true;
+        const auto wait = minPresentInterval - (now - lastPresent_);
+        QTimer::singleShot(
+            static_cast<int>(wait.count()), window, [this, window]() {
+              throttleWakeupPending_ = false;
+              if (!renderEventPending_.exchange(
+                      true, std::memory_order_acq_rel)) {
+                QCoreApplication::postEvent(
+                    window, new QEvent(timelineGpuRenderEventType()));
+              }
+            });
+      }
+      return;
+    }
+    lastPresent_ = now;
+
     std::shared_ptr<const DiligentTimelineVisualSnapshot> snapshot;
+    std::shared_ptr<const DiligentTimelineVisualSnapshot> staticSnapshot;
+    std::shared_ptr<const DiligentTimelineVisualSnapshot> dynamicSnapshot;
+    bool layeredSnapshots = false;
     {
       std::scoped_lock lock(snapshotMutex_);
       snapshot = snapshot_;
+      staticSnapshot = staticSnapshot_;
+      dynamicSnapshot = dynamicSnapshot_;
+      layeredSnapshots = layeredSnapshots_;
     }
 
     Diligent::ITextureView* rtv = swapChain_->GetCurrentBackBufferRTV();
     immediateContext_->SetRenderTargets(
         1, &rtv, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-    const FloatColor background = toFloatColor(snapshot->background);
+    const QColor& backgroundColor = layeredSnapshots && staticSnapshot
+        ? staticSnapshot->background
+        : snapshot->background;
+    const FloatColor background = toFloatColor(backgroundColor);
     const float clearColor[] = {
         background.r(), background.g(), background.b(), background.a()};
     immediateContext_->ClearRenderTarget(
@@ -235,23 +294,78 @@ public:
         static_cast<float>(window->devicePixelRatio()));
     primitiveRenderer_.resetView();
 
-    for (const auto& visual : snapshot->rects) {
+    struct ColorCacheEntry {
+      QRgb key = 0;
+      FloatColor value{};
+      bool valid = false;
+    };
+    ColorCacheEntry colorCache[32]{};
+    size_t nextColorSlot = 0;
+    const auto cachedColor = [&](const QColor& color) -> const FloatColor& {
+      const QRgb key = color.rgba();
+      for (auto& entry : colorCache) {
+        if (entry.valid && entry.key == key) {
+          return entry.value;
+        }
+      }
+      auto& entry = colorCache[nextColorSlot++ % 32];
+      entry.key = key;
+      entry.value = toFloatColor(color);
+      entry.valid = true;
+      return entry.value;
+    };
+    const auto drawSnapshot = [this, &cachedColor](const DiligentTimelineVisualSnapshot& source) {
+    // TextStyle carries several value fields (including UniString). Reuse one
+    // across the snapshot's labels so a static lane does not construct a new
+    // style object for every clip and marker on each present.
+    ArtifactCore::TextStyle textStyle;
+    for (const auto& visual : source.rects) {
       primitiveRenderer_.drawSolidRect(
           static_cast<float>(visual.rect.x()),
           static_cast<float>(visual.rect.y()),
           static_cast<float>(visual.rect.width()),
           static_cast<float>(visual.rect.height()),
-          toFloatColor(visual.color));
+          cachedColor(visual.color));
     }
-    for (const auto& visual : snapshot->lines) {
+    for (const auto& visual : source.lines) {
       primitiveRenderer_.drawThickLineLocal(
           {static_cast<float>(visual.from.x()),
            static_cast<float>(visual.from.y())},
           {static_cast<float>(visual.to.x()),
            static_cast<float>(visual.to.y())},
-          visual.thickness, toFloatColor(visual.color));
+          visual.thickness, cachedColor(visual.color));
     }
-    for (const auto& visual : snapshot->triangles) {
+    for (const auto& visual : source.waveforms) {
+      constexpr int kMaxWaveformBars = 64;
+      // A bar narrower than one device-independent pixel cannot add visible
+      // information. Bound the fallback command count by the actual clip
+      // width as well as the normalized payload size.
+      const int pixelBars = std::max(1, qRound(visual.rect.width()));
+      const int barCount = std::min({kMaxWaveformBars, pixelBars,
+                                     static_cast<int>(visual.peaks.size())});
+      if (barCount <= 0 || visual.rect.width() <= 0.0 ||
+          visual.rect.height() <= 0.0) {
+        continue;
+      }
+      const double centerY = visual.rect.center().y();
+      const FloatColor& waveformColor = cachedColor(visual.color);
+      for (int bar = 0; bar < barCount; ++bar) {
+        const int sampleIndex = (bar * visual.peaks.size()) / barCount;
+        const double amplitude = std::clamp(
+            static_cast<double>(visual.peaks[sampleIndex]), 0.0, 1.0);
+        const double barX = visual.rect.left() +
+            (static_cast<double>(bar) + 0.5) * visual.rect.width() /
+                static_cast<double>(barCount);
+        const double halfHeight = amplitude * visual.rect.height() * 0.34;
+        primitiveRenderer_.drawThickLineLocal(
+            {static_cast<float>(barX),
+             static_cast<float>(centerY - halfHeight)},
+            {static_cast<float>(barX),
+             static_cast<float>(centerY + halfHeight)},
+            1.0f, waveformColor);
+      }
+    }
+    for (const auto& visual : source.triangles) {
       primitiveRenderer_.drawSolidTriangleLocal(
           {static_cast<float>(visual.p0.x()),
            static_cast<float>(visual.p0.y())},
@@ -259,20 +373,32 @@ public:
            static_cast<float>(visual.p1.y())},
           {static_cast<float>(visual.p2.x()),
            static_cast<float>(visual.p2.y())},
-          toFloatColor(visual.color));
+          cachedColor(visual.color));
     }
-    for (const auto& visual : snapshot->texts) {
-      ArtifactCore::TextStyle textStyle;
+    for (const auto& visual : source.texts) {
       textStyle.fontSize = visual.pixelSize;
       textStyle.pixelSize = visual.pixelSize;
       primitiveRenderer_.drawGlyphText(
           static_cast<float>(visual.baseline.x()),
           static_cast<float>(visual.baseline.y()),
           visual.text, textStyle,
-          toFloatColor(visual.color));
+          cachedColor(visual.color));
+    }
+    };
+    if (layeredSnapshots) {
+      if (staticSnapshot) {
+        drawSnapshot(*staticSnapshot);
+      }
+      if (dynamicSnapshot) {
+        drawSnapshot(*dynamicSnapshot);
+      }
+    } else {
+      drawSnapshot(*snapshot);
     }
     submitter_.submit(commandBuffer_, immediateContext_);
-    swapChain_->Present();
+    // SyncInterval 0: the timeline surface must never stall the GUI thread
+    // on vsync. Tearing on tracks/playhead is acceptable here; VP keeps vsync.
+    swapChain_->Present(0);
   }
 };
 
@@ -300,6 +426,9 @@ void ArtifactDiligentTimelineRenderWindow::setSnapshot(
     }
     impl_->snapshot_ =
         std::make_shared<const DiligentTimelineVisualSnapshot>(snapshot);
+    impl_->layeredSnapshots_ = false;
+    impl_->staticSnapshot_.reset();
+    impl_->dynamicSnapshot_.reset();
   }
   requestRender();
 }
@@ -315,6 +444,59 @@ void ArtifactDiligentTimelineRenderWindow::setSnapshot(
     impl_->snapshot_ =
         std::make_shared<const DiligentTimelineVisualSnapshot>(
             std::move(snapshot));
+    impl_->layeredSnapshots_ = false;
+    impl_->staticSnapshot_.reset();
+    impl_->dynamicSnapshot_.reset();
+  }
+  requestRender();
+}
+
+void ArtifactDiligentTimelineRenderWindow::setStaticSnapshot(
+    const DiligentTimelineVisualSnapshot& snapshot)
+{
+  {
+    std::scoped_lock lock(impl_->snapshotMutex_);
+    if (impl_->staticSnapshot_ &&
+        snapshot.generation < impl_->staticSnapshot_->generation) {
+      return;
+    }
+    impl_->staticSnapshot_ =
+        std::make_shared<const DiligentTimelineVisualSnapshot>(snapshot);
+    impl_->layeredSnapshots_ = true;
+  }
+  requestRender();
+}
+
+void ArtifactDiligentTimelineRenderWindow::setStaticSnapshot(
+    DiligentTimelineVisualSnapshot&& snapshot)
+{
+  {
+    std::scoped_lock lock(impl_->snapshotMutex_);
+    if (impl_->staticSnapshot_ &&
+        snapshot.generation < impl_->staticSnapshot_->generation) {
+      return;
+    }
+    impl_->staticSnapshot_ =
+        std::make_shared<const DiligentTimelineVisualSnapshot>(
+            std::move(snapshot));
+    impl_->layeredSnapshots_ = true;
+  }
+  requestRender();
+}
+
+void ArtifactDiligentTimelineRenderWindow::setDynamicSnapshot(
+    DiligentTimelineVisualSnapshot&& snapshot)
+{
+  {
+    std::scoped_lock lock(impl_->snapshotMutex_);
+    if (impl_->dynamicSnapshot_ &&
+        snapshot.generation < impl_->dynamicSnapshot_->generation) {
+      return;
+    }
+    impl_->dynamicSnapshot_ =
+        std::make_shared<const DiligentTimelineVisualSnapshot>(
+            std::move(snapshot));
+    impl_->layeredSnapshots_ = true;
   }
   requestRender();
 }
@@ -322,6 +504,15 @@ void ArtifactDiligentTimelineRenderWindow::setSnapshot(
 quint64 ArtifactDiligentTimelineRenderWindow::snapshotGeneration() const
 {
   std::scoped_lock lock(impl_->snapshotMutex_);
+  if (impl_->layeredSnapshots_) {
+    const quint64 staticGeneration = impl_->staticSnapshot_
+        ? impl_->staticSnapshot_->generation
+        : 0;
+    const quint64 dynamicGeneration = impl_->dynamicSnapshot_
+        ? impl_->dynamicSnapshot_->generation
+        : 0;
+    return std::max(staticGeneration, dynamicGeneration);
+  }
   return impl_->snapshot_->generation;
 }
 
@@ -343,10 +534,29 @@ void ArtifactDiligentTimelineRenderWindow::setInputTarget(QWidget* target)
   }
 }
 
+void ArtifactDiligentTimelineRenderWindow::setWheelInputHandler(
+    std::function<bool(const QPointF&, const QPoint&, Qt::KeyboardModifiers)> handler)
+{
+  impl_->wheelInputHandler_ = std::move(handler);
+}
+
+void ArtifactDiligentTimelineRenderWindow::setPanInputHandler(
+    std::function<bool(Qt::MouseButton, const QPointF&, Qt::MouseButtons,
+                       Qt::KeyboardModifiers)> handler)
+{
+  impl_->panInputHandler_ = std::move(handler);
+}
+
 void ArtifactDiligentTimelineRenderWindow::setInputUpdatedCallback(
     std::function<void()> callback)
 {
   impl_->inputUpdatedCallback_ = std::move(callback);
+}
+
+void ArtifactDiligentTimelineRenderWindow::setInteractionStateProvider(
+    std::function<bool()> provider)
+{
+  impl_->interactionStateProvider_ = std::move(provider);
 }
 
 void ArtifactDiligentTimelineRenderWindow::requestRender()
@@ -358,20 +568,45 @@ void ArtifactDiligentTimelineRenderWindow::requestRender()
 
 bool ArtifactDiligentTimelineRenderWindow::event(QEvent* event)
 {
+  if (event && impl_->panInputHandler_ &&
+      (event->type() == QEvent::MouseButtonPress ||
+       event->type() == QEvent::MouseMove ||
+       event->type() == QEvent::MouseButtonRelease)) {
+    const auto* mouseEvent = static_cast<QMouseEvent*>(event);
+    if (impl_->panInputHandler_(mouseEvent->button(), mouseEvent->position(),
+                                mouseEvent->buttons(), mouseEvent->modifiers())) {
+      event->accept();
+      if (impl_->inputUpdatedCallback_) impl_->inputUpdatedCallback_();
+      return true;
+    }
+  }
+  if (event && event->type() == QEvent::Wheel && impl_->wheelInputHandler_) {
+    const auto* wheelEvent = static_cast<QWheelEvent*>(event);
+    if (impl_->wheelInputHandler_(wheelEvent->position(),
+                                  wheelEvent->angleDelta(),
+                                  wheelEvent->modifiers())) {
+      event->accept();
+      if (impl_->inputUpdatedCallback_) impl_->inputUpdatedCallback_();
+      return true;
+    }
+  }
   if (event && impl_->inputTarget_) {
     switch (event->type()) {
     case QEvent::MouseButtonPress:
     case QEvent::MouseButtonRelease:
     case QEvent::MouseButtonDblClick:
     case QEvent::MouseMove:
-    case QEvent::Wheel:
     case QEvent::KeyPress:
     case QEvent::KeyRelease:
     {
       if (impl_->inputTarget_->size() != QSize(width(), height())) {
         impl_->inputTarget_->resize(width(), height());
       }
+      if (event->type() == QEvent::MouseButtonPress) {
+        requestActivate();
+      }
       QCoreApplication::sendEvent(impl_->inputTarget_, event);
+      setCursor(impl_->inputTarget_->cursor());
       const auto now = std::chrono::steady_clock::now();
       const bool isMouseMove = event->type() == QEvent::MouseMove;
       const bool snapshotDue = !isMouseMove ||

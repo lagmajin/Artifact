@@ -1,6 +1,5 @@
 module;
 
-#include <algorithm>
 
 #include <QColor>
 #include <QFont>
@@ -14,6 +13,7 @@ module;
 #include <QVBoxLayout>
 
 module Artifact.Widgets.SplashScreen;
+import Core.ArtifactMath;
 
 namespace Artifact {
 
@@ -110,7 +110,7 @@ ArtifactSplashScreen::~ArtifactSplashScreen()
 
 void ArtifactSplashScreen::setProgress(int percent)
 {
-  const int clamped = std::clamp(percent, 0, 100);
+  const int clamped = ArtifactCore::artifactClamp(percent, 0, 100);
   if (impl_->progress == clamped) {
     return;
   }

@@ -1,9 +1,8 @@
 module;
 #include <QString>
-#include <algorithm>
-#include <cmath>
 
 module Composition3D;
+import Core.ArtifactMath;
 
 namespace Artifact {
 
@@ -26,8 +25,8 @@ QVector3D ArtifactComposition3D::cameraPosition() const {
 }
 
 void ArtifactComposition3D::setCameraPosition(const QVector3D& position) {
-  if (!impl_ || !std::isfinite(position.x()) || !std::isfinite(position.y()) ||
-      !std::isfinite(position.z())) return;
+  if (!impl_ || !ArtifactCore::artifactIsFinite(position.x()) || !ArtifactCore::artifactIsFinite(position.y()) ||
+      !ArtifactCore::artifactIsFinite(position.z())) return;
   impl_->cameraPosition = position;
   changed();
 }
@@ -37,8 +36,8 @@ QVector3D ArtifactComposition3D::cameraTarget() const {
 }
 
 void ArtifactComposition3D::setCameraTarget(const QVector3D& target) {
-  if (!impl_ || !std::isfinite(target.x()) || !std::isfinite(target.y()) ||
-      !std::isfinite(target.z())) return;
+  if (!impl_ || !ArtifactCore::artifactIsFinite(target.x()) || !ArtifactCore::artifactIsFinite(target.y()) ||
+      !ArtifactCore::artifactIsFinite(target.z())) return;
   impl_->cameraTarget = target;
   changed();
 }
@@ -48,8 +47,8 @@ QVector3D ArtifactComposition3D::cameraUp() const {
 }
 
 void ArtifactComposition3D::setCameraUp(const QVector3D& up) {
-  if (!impl_ || !std::isfinite(up.x()) || !std::isfinite(up.y()) ||
-      !std::isfinite(up.z()) || up.lengthSquared() < 1.0e-8f) return;
+  if (!impl_ || !ArtifactCore::artifactIsFinite(up.x()) || !ArtifactCore::artifactIsFinite(up.y()) ||
+      !ArtifactCore::artifactIsFinite(up.z()) || up.lengthSquared() < 1.0e-8f) return;
   impl_->cameraUp = up.normalized();
   changed();
 }
@@ -59,8 +58,8 @@ float ArtifactComposition3D::cameraFieldOfView() const {
 }
 
 void ArtifactComposition3D::setCameraFieldOfView(const float degrees) {
-  if (!impl_ || !std::isfinite(degrees)) return;
-  const float clamped = std::clamp(degrees, 1.0f, 179.0f);
+  if (!impl_ || !ArtifactCore::artifactIsFinite(degrees)) return;
+  const float clamped = ArtifactCore::artifactClamp(degrees, 1.0f, 179.0f);
   if (impl_->cameraFieldOfView == clamped) return;
   impl_->cameraFieldOfView = clamped;
   changed();

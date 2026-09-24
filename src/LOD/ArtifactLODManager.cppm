@@ -4,6 +4,7 @@ module;
 #include <wobjectimpl.h>
 
 module Artifact.LOD.Manager;
+import Core.ArtifactMath;
 
 namespace Artifact {
 
@@ -65,14 +66,14 @@ float LODManager::calculateLODFactor(float zoom) const
 {
     if (zoom < lowThreshold_) {
         // Low ゾーン：0.0-0.5
-        return std::clamp(zoom / lowThreshold_ * 0.5f, 0.0f, 0.5f);
+        return ArtifactCore::artifactClamp(zoom / lowThreshold_ * 0.5f, 0.0f, 0.5f);
     } else if (zoom < mediumThreshold_) {
         // Medium ゾーン：0.5-0.75
         float t = (zoom - lowThreshold_) / (mediumThreshold_ - lowThreshold_);
         return 0.5f + t * 0.25f;
     } else {
         // High ゾーン：0.75-1.0
-        return std::clamp(0.75f + (zoom - mediumThreshold_) * 1.0f, 0.75f, 1.0f);
+        return ArtifactCore::artifactClamp(0.75f + (zoom - mediumThreshold_) * 1.0f, 0.75f, 1.0f);
     }
 }
 

@@ -11,7 +11,6 @@ module;
 
 module Artifact.Widgets.ObjectReference;
 
-import std;
 import Artifact.Service.Project;
 import Artifact.Layer.Abstract;
 import Artifact.Composition.Abstract;

@@ -21,9 +21,9 @@ module;
 #include <QVBoxLayout>
 #include <QWidget>
 #include <wobjectimpl.h>
+#include <vector>
 
 module Artifact.Menu.Effect;
-import std;
 import Translation.Manager;
 
 import Event.Bus;
@@ -70,7 +70,7 @@ EffectMenuCategory categoryForEffect(const EffectInfo& info)
       name.contains(QStringLiteral("tint")) ||
       name.contains(QStringLiteral("filter")) ||
       name.contains(QStringLiteral("gamma"))) {
-    return {QStringLiteral("カラー"), QStringLiteral("Studio/effect_ops_color.svg")};
+    return {TranslationManager::instance().tr(QStringLiteral("effect.category.color"), QStringLiteral("カラー")), QStringLiteral("Studio/effect_ops_color.svg")};
   }
   if (id.contains(QStringLiteral("blur")) ||
       id.contains(QStringLiteral("glow")) ||
@@ -79,7 +79,7 @@ EffectMenuCategory categoryForEffect(const EffectInfo& info)
       name.contains(QStringLiteral("glow")) ||
       name.contains(QStringLiteral("shadow")) ||
       name.contains(QStringLiteral("bloom"))) {
-    return {QStringLiteral("ブラー / ライト"), QStringLiteral("Studio/effect_ops_blur_light.svg")};
+    return {TranslationManager::instance().tr(QStringLiteral("effect.category.blur_light"), QStringLiteral("ブラー / ライト")), QStringLiteral("Studio/effect_ops_blur_light.svg")};
   }
   if (id.contains(QStringLiteral("distortion")) ||
       id.contains(QStringLiteral("displace")) ||
@@ -94,22 +94,22 @@ EffectMenuCategory categoryForEffect(const EffectInfo& info)
       name.contains(QStringLiteral("twist")) ||
       name.contains(QStringLiteral("bend")) ||
       name.contains(QStringLiteral("liquify"))) {
-    return {QStringLiteral("ディストート"), QStringLiteral("Studio/effect_ops_distort.svg")};
+    return {TranslationManager::instance().tr(QStringLiteral("effect.category.distort"), QStringLiteral("ディストート")), QStringLiteral("Studio/effect_ops_distort.svg")};
   }
   if (id.contains(QStringLiteral("key")) ||
       name.contains(QStringLiteral("key"))) {
-    return {QStringLiteral("キーイング / マット"), QStringLiteral("Studio/effect_ops_key.svg")};
+    return {TranslationManager::instance().tr(QStringLiteral("effect.category.keying_matte"), QStringLiteral("キーイング / マット")), QStringLiteral("Studio/effect_ops_key.svg")};
   }
   if (id.contains(QStringLiteral("noise")) ||
       name.contains(QStringLiteral("noise")) ||
       name.contains(QStringLiteral("grain"))) {
-    return {QStringLiteral("ノイズ"), QStringLiteral("Studio/effect_ops_noise.svg")};
+    return {TranslationManager::instance().tr(QStringLiteral("effect.category.noise"), QStringLiteral("ノイズ")), QStringLiteral("Studio/effect_ops_noise.svg")};
   }
   if (id.contains(QStringLiteral("wipe")) ||
       name.contains(QStringLiteral("wipe"))) {
-    return {QStringLiteral("トランジション"), QStringLiteral("Studio/effect_ops_transition.svg")};
+    return {TranslationManager::instance().tr(QStringLiteral("effect.category.transition"), QStringLiteral("トランジション")), QStringLiteral("Studio/effect_ops_transition.svg")};
   }
-  return {QStringLiteral("スタイライズ / 生成"), QStringLiteral("Studio/effect_ops_generate.svg")};
+  return {TranslationManager::instance().tr(QStringLiteral("effect.category.stylize_generate"), QStringLiteral("スタイライズ / 生成")), QStringLiteral("Studio/effect_ops_generate.svg")};
 }
 
 QString iconForEffect(const EffectInfo& info)
@@ -179,17 +179,25 @@ class ArtifactEffectMenu::Impl
 
 ArtifactEffectMenu::Impl::Impl(ArtifactEffectMenu* menu) : menu_(menu)
 {
-  inspectorAction_ = new QAction(QStringLiteral("エフェクトコントロール"), menu);
+  inspectorAction_ = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.effect.controls"), QStringLiteral("エフェクトコントロール")), menu);
   inspectorAction_->setShortcut(
       ShortcutBindings::instance().shortcut(ShortcutId::EffectShowInspector));
   inspectorAction_->setIcon(menuIcon(QStringLiteral("Studio/effect_ops_control.svg")));
+  inspectorAction_->setToolTip(QStringLiteral("Effect Controls"));
+  inspectorAction_->setStatusTip(QStringLiteral("Show the effect controls inspector"));
   fxStudioAction_ = new QAction(QStringLiteral("FX Studio…"), menu);
+  fxStudioAction_->setToolTip(QStringLiteral("FX Studio"));
+  fxStudioAction_->setStatusTip(QStringLiteral("Open the FX Studio browser"));
 
-  removeAllAction_ = new QAction(QStringLiteral("選択レイヤーのエフェクトをすべて削除"), menu);
+  removeAllAction_ = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.effect.remove_all"), QStringLiteral("選択レイヤーのエフェクトをすべて削除")), menu);
   removeAllAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_X));
   removeAllAction_->setIcon(menuIcon(QStringLiteral("Studio/effect_ops_remove_all.svg")));
+  removeAllAction_->setToolTip(QStringLiteral("Remove All Effects"));
+  removeAllAction_->setStatusTip(QStringLiteral("Remove all effects from the selected layers"));
   ofxManagerAction_ = new QAction(QStringLiteral("OFX Plugin Manager"), menu);
   ofxManagerAction_->setIcon(menuIcon(QStringLiteral("Studio/effect_ops_ofx.svg")));
+  ofxManagerAction_->setToolTip(QStringLiteral("OFX Plugin Manager"));
+  ofxManagerAction_->setStatusTip(QStringLiteral("Manage installed OFX plug-ins"));
 
   menu->addAction(inspectorAction_);
   menu->addAction(fxStudioAction_);

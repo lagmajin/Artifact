@@ -64,6 +64,10 @@ public:
 
     // VST 固有メソッド
     void openEditor(void* parentWindow);
+    bool openEditorWindow(void* nativeParent, void* resizeContext,
+                          bool (*resizeCallback)(void*, int, int),
+                          int& width, int& height, bool& resizable);
+    bool resizeEditor(int width, int height);
     void closeEditor();
     bool hasEditor() const;
 

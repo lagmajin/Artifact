@@ -101,6 +101,10 @@ struct AsyncAssetReadScheduler::Impl {
     explicit Impl(int workerCount)
         : pool(std::make_unique<ArtifactCore::TaskSystem>(std::clamp(workerCount, 1, 8)))
     {
+        // XPU P0 S9: MFR concurrency (maxInFlightFrames_=4, XPU mixed ≤8) と
+        // 合算しても飽和しないよう、既定キュー容量は同時実行の 64倍（256 jobs）
+        // と 512 MiB を維持。必要なら XPU 側の maxQueuedJobs 調整で拡張する。
+        // 本 Impl は workerCount のみを持ち、容量は SharedState の budget で管理。
     }
 
     ~Impl()

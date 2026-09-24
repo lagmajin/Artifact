@@ -32,6 +32,7 @@ module;
 #include <QListView>
 #include <QStyleOptionMenuItem>
 #include <QStyleOptionButton>
+#include <QStyleOptionSlider>
 #include <QStyleOptionToolButton>
 #include <QStringList>
 #include <QBitmap>
@@ -423,7 +424,9 @@ void drawFramedToolButtonSurface(const QStyleOption* option, QPainter* painter, 
     }
   }
   if (hasFocus) {
-    painter->setPen(QPen(QColor(QStringLiteral("#8FBAFF")), 1.5));
+    const QColor focusRing(theme.focusRingColor.isEmpty()
+        ? QStringLiteral("#8FBAFF") : theme.focusRingColor);
+    painter->setPen(QPen(focusRing, 1.5));
     painter->setBrush(Qt::NoBrush);
     painter->drawRoundedRect(QRectF(option->rect).adjusted(1.25, 1.25, -1.25, -1.25), 3.0, 3.0);
   }
@@ -512,26 +515,55 @@ void ArtifactCommonStyle::polish(QWidget* widget)
   const auto& theme = ArtifactCore::currentDCCTheme();
   const QColor background(theme.backgroundColor);
   const QColor surface(theme.secondaryBackgroundColor);
+  const QColor inputBg(theme.inputBackgroundColor.isEmpty()
+      ? theme.secondaryBackgroundColor : theme.inputBackgroundColor);
   const QColor text(theme.textColor);
   const QColor accent(theme.accentColor);
   const QColor border(theme.borderColor);
+  const QColor disabledText(theme.disabledTextColor.isEmpty()
+      ? text.darker(155) : QColor(theme.disabledTextColor));
 
   auto applyWindowPalette = [&](QWidget* w) {
     if (!w) return;
     // QLabel inherits QFrame, so the generic frame branch below must not
     // restore an opaque background after the message-label exemption above.
     if (transparentMessageLabel) return;
+    // Pr昇格: artifactSurfaceKind を本体でも解釈。PrProxyStyle と同義。
+    // "timelineRuler"/"panelToolbar" -> secondary、"trackContent" -> track、
+    // "mediaPlaceholder" -> placeholder。未知値は既定 surface。
+    const QString surfaceKind = w->property("artifactSurfaceKind").toString();
+    QColor windowBg = background;
+    QColor baseBg = inputBg.isValid() ? inputBg : surface;
+    if (surfaceKind == QStringLiteral("timelineRuler") ||
+        surfaceKind == QStringLiteral("panelToolbar")) {
+      windowBg = surface;
+    } else if (surfaceKind == QStringLiteral("trackContent")) {
+      const QColor track(theme.trackBackgroundColor);
+      windowBg = track.isValid() ? track : background.darker(135);
+    } else if (surfaceKind == QStringLiteral("mediaPlaceholder")) {
+      const QColor ph(theme.placeholderBackgroundColor);
+      windowBg = ph.isValid() ? ph : background.darker(150);
+    }
+    QColor windowText = text;
+    if (surfaceKind == QStringLiteral("timelineRuler") ||
+        surfaceKind == QStringLiteral("mediaPlaceholder")) {
+      const QColor muted(theme.textMutedColor);
+      windowText = muted.isValid() ? muted : text;
+    }
     w->setAutoFillBackground(true);
     QPalette pal = w->palette();
-    pal.setColor(QPalette::Window, background);
-    pal.setColor(QPalette::WindowText, text);
-    pal.setColor(QPalette::Base, surface);
+    pal.setColor(QPalette::Window, windowBg);
+    pal.setColor(QPalette::WindowText, windowText);
+    pal.setColor(QPalette::Base, baseBg);
     pal.setColor(QPalette::Text, text);
     pal.setColor(QPalette::Button, surface);
     pal.setColor(QPalette::ButtonText, text);
     pal.setColor(QPalette::Highlight, accent);
     pal.setColor(QPalette::HighlightedText, background);
     pal.setColor(QPalette::Mid, border);
+    pal.setColor(QPalette::Disabled, QPalette::WindowText, disabledText);
+    pal.setColor(QPalette::Disabled, QPalette::Text, disabledText);
+    pal.setColor(QPalette::Disabled, QPalette::ButtonText, disabledText);
     w->setPalette(pal);
   };
 
@@ -636,12 +668,16 @@ QSize ArtifactCommonStyle::sizeFromContents(ContentsType type,
       const QFontMetrics& fm = menuItem->fontMetrics;
       const int labelWidth = fm.horizontalAdvance(label);
       const int shortcutWidth = shortcut.isEmpty() ? 0 : fm.horizontalAdvance(shortcut) + 24;
-      const int checkAndIconWidth = 34;
-      const int submenuWidth =
-          menuItem->menuItemType == QStyleOptionMenuItem::SubMenu ? 18 : 8;
+      // CE_MenuItem の描画と一致させる: 左マージン(8) + チェック列(24) +
+      // アイコン枠(最大18、アイコン無しでも常に確保) + 間隔(8)。
+      const int leftReserve = 8 + 24 + 18 + 8;
+      // 右側: サブメニュー矢印(18)または通常(6) + マージン(8)。
+      const bool isSubMenu =
+          menuItem->menuItemType == QStyleOptionMenuItem::SubMenu;
+      const int rightReserve = (isSubMenu ? 18 : 6) + 8;
       return QSize(std::max(contentsSize.width(),
-                            labelWidth + shortcutWidth + checkAndIconWidth +
-                                submenuWidth + 16),
+                            labelWidth + shortcutWidth + leftReserve +
+                                rightReserve),
                    std::max(contentsSize.height(), fm.height() + 10));
     }
   }
@@ -722,6 +758,38 @@ void ArtifactCommonStyle::drawControl(ControlElement element, const QStyleOption
       return QCommonStyle::drawControl(element, option, painter, widget);
     }
 
+    // Pr昇格: artifactAccentColor (transition button動的色) を本体で解釈。
+    // PrProxyStyle::drawControl(CE_PushButtonLabel) と同等の状態派生。
+    // buttonInfoColor / buttonSuccessColor は通常ボタンでは使わない
+    // (dcc-comparison方針: Warning/Danger/Successへ流用しない)。
+    if (widget && widget->property("artifactAccentColor").isValid()) {
+      const QColor accentProp = widget->property("artifactAccentColor").value<QColor>();
+      if (accentProp.isValid()) {
+        QColor bg = accentProp;
+        const bool enabledProp = button->state.testFlag(State_Enabled);
+        if (!enabledProp) {
+          bg = accentProp.darker(140);
+        } else if (button->state.testFlag(State_Sunken) ||
+                   button->state.testFlag(State_On)) {
+          bg = accentProp.darker(115);
+        } else if (button->state.testFlag(State_MouseOver)) {
+          bg = accentProp.lighter(110);
+        }
+        painter->save();
+        painter->setRenderHint(QPainter::Antialiasing, true);
+        painter->setPen(Qt::NoPen);
+        painter->setBrush(bg);
+        painter->drawRoundedRect(QRectF(button->rect).adjusted(0.5, 0.5, -0.5, -0.5), 3.0, 3.0);
+        painter->setPen(Qt::white);
+        QStyleOptionButton labelOption(*button);
+        labelOption.palette.setColor(QPalette::ButtonText, QColor(Qt::white));
+        labelOption.palette.setColor(QPalette::WindowText, QColor(Qt::white));
+        QCommonStyle::drawControl(CE_PushButtonLabel, &labelOption, painter, widget);
+        painter->restore();
+        return;
+      }
+    }
+
     const bool enabled = button->state.testFlag(State_Enabled);
     const bool hovered = enabled && button->state.testFlag(State_MouseOver);
     const bool pressed = enabled && (button->state.testFlag(State_Sunken) ||
@@ -732,10 +800,14 @@ void ArtifactCommonStyle::drawControl(ControlElement element, const QStyleOption
     QColor fill(theme.buttonColor);
     QColor border(theme.borderColor);
     QColor text(theme.textColor);
+    const QColor disabledText(theme.disabledTextColor.isEmpty()
+        ? text.darker(155) : QColor(theme.disabledTextColor));
+    const QColor focusRing(theme.focusRingColor.isEmpty()
+        ? QStringLiteral("#8FBAFF") : theme.focusRingColor);
     if (!enabled) {
       fill = fill.darker(112);
       border = border.darker(112);
-      text.setAlphaF(0.48);
+      text = disabledText;
     } else if (primary) {
       fill = pressed ? accent.darker(116)
                      : hovered ? accent.lighter(108) : accent;
@@ -758,7 +830,7 @@ void ArtifactCommonStyle::drawControl(ControlElement element, const QStyleOption
     QRectF surfaceRect(button->rect);
     surfaceRect.adjust(0.5, 0.5, -0.5, -0.5);
     if (focused) {
-      painter->setPen(QPen(QColor(QStringLiteral("#8FBAFF")), 2.0));
+      painter->setPen(QPen(focusRing, 2.0));
       painter->setBrush(Qt::NoBrush);
       painter->drawRoundedRect(surfaceRect.adjusted(1.0, 1.0, -1.0, -1.0),
                                4.0, 4.0);
@@ -797,7 +869,8 @@ void ArtifactCommonStyle::drawControl(ControlElement element, const QStyleOption
       }
 
       const bool enabled = menuItem->state.testFlag(State_Enabled);
-      const QColor disabledText = menuText.darker(155);
+      const QColor disabledText = QColor(theme.disabledTextColor.isEmpty()
+          ? theme.textColor : theme.disabledTextColor).darker(115);
 
       const QRect visualItemRect = QStyle::visualRect(
           menuItem->direction, menuItem->rect, itemRect);
@@ -865,7 +938,8 @@ void ArtifactCommonStyle::drawControl(ControlElement element, const QStyleOption
 
       const QRect itemRect = menuItem->rect.adjusted(1, 2, -1, -2);
       const bool enabled = menuItem->state.testFlag(State_Enabled);
-      const QColor disabledText = menuText.darker(145);
+      const QColor disabledText = QColor(theme.disabledTextColor.isEmpty()
+          ? theme.textColor : theme.disabledTextColor).darker(110);
       if (enabled && (menuItem->state.testFlag(State_Selected) ||
           menuItem->state.testFlag(State_Sunken))) {
         painter->setPen(Qt::NoPen);
@@ -985,6 +1059,56 @@ void ArtifactCommonStyle::drawPrimitive(PrimitiveElement element, const QStyleOp
 void ArtifactCommonStyle::drawComplexControl(ComplexControl control, const QStyleOptionComplex* option,
                                              QPainter* painter, const QWidget* widget) const
 {
+  // Pr昇格: sliderHandleColor を本体スライダーにも適用。
+  // PrProxyStyle と同等の上に丸handleを重ねる方式。groove 本体は
+  // QCommonStyle に任せ、handle のアクセント付与のみ行う。
+  // Horizontal / Vertical 両対応 (Pr側は horizontal のみ、本体は縦も)。
+  if (control == CC_Slider && widget && option && painter) {
+    QCommonStyle::drawComplexControl(control, option, painter, widget);
+    const auto* sliderOpt = qstyleoption_cast<const QStyleOptionSlider*>(option);
+    if (!sliderOpt) {
+      return;
+    }
+    const bool isHorizontal = (sliderOpt->orientation == Qt::Horizontal);
+    const auto& theme = ArtifactCore::currentDCCTheme();
+    const QColor fromToken(theme.sliderHandleColor);
+    const QColor handleColor =
+        fromToken.isValid() ? fromToken : QColor(theme.accentColor);
+    if (!handleColor.isValid()) {
+      return;
+    }
+    QStyleOptionSlider handleOpt(*sliderOpt);
+    const QRect handle =
+        subControlRect(CC_Slider, &handleOpt, SC_SliderHandle, widget);
+    if (handle.isEmpty()) {
+      return;
+    }
+    const QPoint center = handle.center();
+    // 縦は幅基準、横は従来通り幅/3。潰れた handle では描かない。
+    const int radius = isHorizontal
+        ? std::max(2, handle.width() / 3)
+        : std::max(2, std::min(handle.width(), handle.height()) / 3);
+    if (radius <= 0) {
+      return;
+    }
+    painter->save();
+    painter->setRenderHint(QPainter::Antialiasing, true);
+    painter->setPen(Qt::NoPen);
+    // disabled 時は disabledText へ寄せて状態を区別
+    if (!(sliderOpt->state & State_Enabled)) {
+      const QColor disabled(theme.disabledTextColor);
+      painter->setBrush(disabled.isValid() ? disabled : handleColor.darker(140));
+    } else if (sliderOpt->state & State_Sunken) {
+      painter->setBrush(handleColor.darker(115));
+    } else if (sliderOpt->state & State_MouseOver) {
+      painter->setBrush(handleColor.lighter(110));
+    } else {
+      painter->setBrush(handleColor);
+    }
+    painter->drawEllipse(center, radius, radius);
+    painter->restore();
+    return;
+  }
   QCommonStyle::drawComplexControl(control, option, painter, widget);
 }
 

@@ -1,7 +1,11 @@
 module;
 
 #include <QPointF>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QString>
+#include <QStringList>
 #include <QVector3D>
 
 #include <cmath>
@@ -26,15 +30,10 @@ namespace {
 
 ArtifactCore::RationalTime transformTime(
     const ArtifactAbstractLayerPtr &layer, int64_t frame) {
-  double fps = 24.0;
-  if (layer) {
-    if (auto *composition = static_cast<ArtifactAbstractComposition *>(
-            layer->composition())) {
-      const double candidate = composition->frameRate().framerate();
-      if (candidate > 0.0) fps = candidate;
-    }
-  }
-  return ArtifactCore::RationalTime(frame, fps);
+  // The layer owns the frame domain its transform keys are stored in; asking
+  // the layer keeps undo in sync with the live drag and the timeline.
+  return layer ? layer->keyframeTimeAtFrame(frame)
+               : ArtifactCore::RationalTime(frame, 24);
 }
 
 } // namespace
@@ -150,22 +149,56 @@ public:
                                float after)
       : layer_(layer), before_(before), after_(after) {}
 
-  void undo() override { lastOperationSucceeded_ = apply(before_); }
-  void redo() override { lastOperationSucceeded_ = apply(after_); }
+  void undo() override { lastOperationSucceeded_ = apply(after_, before_, false); }
+  void redo() override {
+    const bool allowPreApplied = firstRedo_;
+    firstRedo_ = false;
+    lastOperationSucceeded_ = apply(before_, after_, allowPreApplied);
+  }
   bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+  QStringList collaborationTargetLayerIds() const override {
+    const auto layer = layer_.lock();
+    return layer ? QStringList{layer->id().toQString()} : QStringList{};
+  }
+  bool buildCollaborationOperation(const QString& action,
+                                   QString& operationType,
+                                   QString& operationLayerId,
+                                   QJsonObject& payload) const override {
+    const auto layer = layer_.lock();
+    if (!layer || (action != QStringLiteral("push") &&
+                   action != QStringLiteral("undo") &&
+                   action != QStringLiteral("redo"))) return false;
+    const bool reverse = action == QStringLiteral("undo");
+    const float expected = reverse ? after_ : before_;
+    const float value = reverse ? before_ : after_;
+    if (!std::isfinite(expected) || !std::isfinite(value)) return false;
+    operationType = QStringLiteral("property.set");
+    operationLayerId = layer->id().toQString();
+    payload = QJsonObject{{QStringLiteral("propertyPath"),
+                           QStringLiteral("shape.cornerRadius")},
+                          {QStringLiteral("expectedValue"), expected},
+                          {QStringLiteral("value"), value}};
+    return true;
+  }
   QString label() const override {
     return QStringLiteral("Adjust Shape Corner Radius");
   }
 
 private:
-  bool apply(float radius) {
+  bool apply(float expected, float radius, bool allowPreApplied) {
     auto layer = layer_.lock();
     auto shape = layer
         ? ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(layer)
         : ArtifactCore::SharedPtr<ArtifactShapeLayer>{};
     if (!shape) return false;
+    const float current = shape->cornerRadius();
+    if (current == radius && allowPreApplied) return true;
+    if (current != expected) return false;
     shape->setCornerRadius(radius);
-    if (std::abs(shape->cornerRadius() - radius) > 0.000001f) return false;
+    if (shape->cornerRadius() != radius) {
+      shape->setCornerRadius(expected);
+      return false;
+    }
     shape->setDirty(LayerDirtyFlag::Property);
     shape->changed();
     if (auto *comp = static_cast<ArtifactAbstractComposition *>(
@@ -182,6 +215,7 @@ private:
   float before_ = 0.0f;
   float after_ = 0.0f;
   bool lastOperationSucceeded_ = true;
+  bool firstRedo_ = true;
 };
 
 class ShapeStarInnerRadiusUndoCommand final : public UndoCommand {
@@ -190,21 +224,56 @@ class ShapeStarInnerRadiusUndoCommand final : public UndoCommand {
                                   float after)
       : layer_(layer), before_(before), after_(after) {}
 
-  void undo() override { lastOperationSucceeded_ = apply(before_); }
-  void redo() override { lastOperationSucceeded_ = apply(after_); }
+  void undo() override { lastOperationSucceeded_ = apply(after_, before_, false); }
+  void redo() override {
+    const bool allowPreApplied = firstRedo_;
+    firstRedo_ = false;
+    lastOperationSucceeded_ = apply(before_, after_, allowPreApplied);
+  }
   bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+  QStringList collaborationTargetLayerIds() const override {
+    const auto layer = layer_.lock();
+    return layer ? QStringList{layer->id().toQString()} : QStringList{};
+  }
+  bool buildCollaborationOperation(const QString& action,
+                                   QString& operationType,
+                                   QString& operationLayerId,
+                                   QJsonObject& payload) const override {
+    const auto layer = layer_.lock();
+    if (!layer || (action != QStringLiteral("push") &&
+                   action != QStringLiteral("undo") &&
+                   action != QStringLiteral("redo"))) return false;
+    const bool reverse = action == QStringLiteral("undo");
+    const float expected = reverse ? after_ : before_;
+    const float value = reverse ? before_ : after_;
+    if (!std::isfinite(expected) || !std::isfinite(value)) return false;
+    operationType = QStringLiteral("property.set");
+    operationLayerId = layer->id().toQString();
+    payload = QJsonObject{{QStringLiteral("propertyPath"),
+                           QStringLiteral("shape.starInnerRadius")},
+                          {QStringLiteral("expectedValue"), expected},
+                          {QStringLiteral("value"), value}};
+    return true;
+  }
   QString label() const override {
     return QStringLiteral("Adjust Shape Star Inner Radius");
   }
 
  private:
-  bool apply(float radius) {
+  bool apply(float expected, float radius, bool allowPreApplied) {
     auto layer = layer_.lock();
     auto shape = layer
         ? ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(layer)
         : ArtifactCore::SharedPtr<ArtifactShapeLayer>{};
     if (!shape) return false;
+    const float current = shape->starInnerRadius();
+    if (current == radius && allowPreApplied) return true;
+    if (current != expected) return false;
     shape->setStarInnerRadius(radius);
+    if (shape->starInnerRadius() != radius) {
+      shape->setStarInnerRadius(expected);
+      return false;
+    }
     shape->setDirty(LayerDirtyFlag::Property);
     shape->changed();
     if (auto *comp = static_cast<ArtifactAbstractComposition *>(
@@ -221,6 +290,7 @@ class ShapeStarInnerRadiusUndoCommand final : public UndoCommand {
   float before_ = 0.0f;
   float after_ = 0.0f;
   bool lastOperationSucceeded_ = true;
+  bool firstRedo_ = true;
 };
 
 class ShapePolygonPointsUndoCommand final : public UndoCommand { public:
@@ -232,24 +302,81 @@ class ShapePolygonPointsUndoCommand final : public UndoCommand { public:
         beforePoints_(std::move(beforePoints)),
         afterPoints_(std::move(afterPoints)),
         beforeClosed_(beforeClosed),
-        afterClosed_(afterClosed) {}
+        afterClosed_(afterClosed) {
+    const auto locked = layer_.lock();
+    const auto shape = locked
+        ? ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(locked)
+        : ArtifactCore::SharedPtr<ArtifactShapeLayer>{};
+    if (shape) {
+      afterGeometry_ = shape->customGeometrySnapshot();
+      beforeGeometry_ = afterGeometry_;
+      beforeGeometry_[QStringLiteral("polygon")] =
+          polygonSnapshot(beforePoints_, beforeClosed_);
+    }
+  }
 
-  void undo() override { lastOperationSucceeded_ = apply(beforePoints_, beforeClosed_); }
-  void redo() override { lastOperationSucceeded_ = apply(afterPoints_, afterClosed_); }
+  void undo() override {
+    lastOperationSucceeded_ = apply(afterGeometry_, beforeGeometry_, false);
+  }
+  void redo() override {
+    const bool allowPreApplied = firstRedo_;
+    firstRedo_ = false;
+    lastOperationSucceeded_ = apply(beforeGeometry_, afterGeometry_,
+                                    allowPreApplied);
+  }
   bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+  QStringList collaborationTargetLayerIds() const override {
+    const auto layer = layer_.lock();
+    return layer ? QStringList{layer->id().toQString()} : QStringList{};
+  }
+  bool buildCollaborationOperation(const QString& action,
+                                   QString& operationType,
+                                   QString& operationLayerId,
+                                   QJsonObject& payload) const override {
+    const auto layer = layer_.lock();
+    if (!layer || (action != QStringLiteral("push") &&
+                   action != QStringLiteral("undo") &&
+                   action != QStringLiteral("redo"))) return false;
+    const bool reverse = action == QStringLiteral("undo");
+    const QJsonObject& expected = reverse ? afterGeometry_ : beforeGeometry_;
+    const QJsonObject& value = reverse ? beforeGeometry_ : afterGeometry_;
+    if (QJsonDocument(expected).toJson(QJsonDocument::Compact).size() > 262144 ||
+        QJsonDocument(value).toJson(QJsonDocument::Compact).size() > 262144)
+      return false;
+    operationType = QStringLiteral("layer.shapePath");
+    operationLayerId = layer->id().toQString();
+    payload = QJsonObject{{QStringLiteral("expected"), expected},
+                          {QStringLiteral("value"), value}};
+    return true;
+  }
   QString label() const override {
     return QStringLiteral("Edit Shape Polygon");
   }
 
  private:
-  bool apply(const std::vector<QPointF> &points, bool closed) {
+  static QJsonObject polygonSnapshot(const std::vector<QPointF>& points,
+                                    bool closed) {
+    QJsonArray values;
+    for (const QPointF& point : points)
+      values.append(QJsonArray{point.x(), point.y()});
+    return QJsonObject{{QStringLiteral("points"), values},
+                       {QStringLiteral("closed"), closed}};
+  }
+  bool apply(const QJsonObject& expected, const QJsonObject& value,
+             bool allowPreApplied) {
     auto layer = layer_.lock();
     auto shape = layer
         ? ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(layer)
         : ArtifactCore::SharedPtr<ArtifactShapeLayer>{};
     if (!shape) return false;
-    if (points.size() >= 3) shape->setCustomPolygonPoints(points, closed);
-    else shape->clearCustomPolygonPoints();
+    if (allowPreApplied && shape->customGeometrySnapshot() == value) return true;
+    if (shape->customGeometrySnapshot() != expected) return false;
+    if (!shape->restoreCustomGeometrySnapshot(value) ||
+        shape->customGeometrySnapshot() != value) {
+      if (shape->customGeometrySnapshot() != expected)
+        shape->restoreCustomGeometrySnapshot(expected);
+      return false;
+    }
     shape->setDirty(LayerDirtyFlag::Source);
     shape->changed();
     if (auto *comp = static_cast<ArtifactAbstractComposition *>(
@@ -268,6 +395,9 @@ class ShapePolygonPointsUndoCommand final : public UndoCommand { public:
   bool beforeClosed_ = true;
   bool afterClosed_ = true;
   bool lastOperationSucceeded_ = true;
+  bool firstRedo_ = true;
+  QJsonObject beforeGeometry_;
+  QJsonObject afterGeometry_;
 };
 
 // F5: viewport drag of a single numeric shape-operator field. Values travel
@@ -283,15 +413,48 @@ class ShapeOperatorValueUndoCommand final : public UndoCommand {
         before_(before),
         after_(after) {}
 
-  void undo() override { lastOperationSucceeded_ = apply(before_); }
-  void redo() override { lastOperationSucceeded_ = apply(after_); }
+  void undo() override {
+    lastOperationSucceeded_ = apply(after_, before_, false);
+  }
+  void redo() override {
+    const bool allowPreApplied = firstRedo_;
+    firstRedo_ = false;
+    lastOperationSucceeded_ = apply(before_, after_, allowPreApplied);
+  }
   bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+  QStringList collaborationTargetLayerIds() const override {
+    const auto layer = layer_.lock();
+    return layer ? QStringList{layer->id().toQString()} : QStringList{};
+  }
+  bool buildCollaborationOperation(const QString& action,
+                                   QString& operationType,
+                                   QString& operationLayerId,
+                                   QJsonObject& payload) const override {
+    const auto layer = layer_.lock();
+    if (!layer || opIndex_ < 0 || field_.isEmpty() ||
+        !std::isfinite(before_) || !std::isfinite(after_) ||
+        (action != QStringLiteral("push") &&
+         action != QStringLiteral("undo") &&
+         action != QStringLiteral("redo"))) return false;
+    const bool reverse = action == QStringLiteral("undo");
+    operationType = QStringLiteral("layer.shapeOperator");
+    operationLayerId = layer->id().toQString();
+    payload = QJsonObject{
+        {QStringLiteral("operatorIndex"), opIndex_},
+        {QStringLiteral("field"), field_},
+        {QStringLiteral("expectedValue"), reverse ? after_ : before_},
+        {QStringLiteral("value"), reverse ? before_ : after_}};
+    return true;
+  }
   QString label() const override {
     return QStringLiteral("Edit Shape Operator");
   }
 
  private:
-  bool apply(double value) {
+  QString propertyPath() const {
+    return QStringLiteral("shape.operator.%1.%2").arg(opIndex_).arg(field_);
+  }
+  bool apply(double expected, double value, bool allowPreApplied) {
     auto layer = layer_.lock();
     auto shape = layer
         ? ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(layer)
@@ -299,9 +462,12 @@ class ShapeOperatorValueUndoCommand final : public UndoCommand {
     if (!shape || opIndex_ < 0 || opIndex_ >= shape->shapeOperatorCount()) {
       return false;
     }
-    const QString path =
-        QStringLiteral("shape.operator.%1.%2").arg(opIndex_).arg(field_);
-    if (!shape->setLayerPropertyValue(path, QVariant(value))) {
+    const double current = shape->shapeOperatorValue(opIndex_, field_).toDouble();
+    if (allowPreApplied && current == value) return true;
+    if (current != expected) return false;
+    if (!shape->setLayerPropertyValue(propertyPath(), QVariant(value)) ||
+        shape->shapeOperatorValue(opIndex_, field_).toDouble() != value) {
+      shape->setLayerPropertyValue(propertyPath(), QVariant(expected));
       return false;
     }
     shape->setDirty(LayerDirtyFlag::Property);
@@ -322,6 +488,7 @@ class ShapeOperatorValueUndoCommand final : public UndoCommand {
   double before_ = 0.0;
   double after_ = 0.0;
   bool lastOperationSucceeded_ = true;
+  bool firstRedo_ = true;
 };
 
 // F9: SVG/vector import appends parsed contents. Undo removes exactly the
@@ -335,13 +502,38 @@ class ShapeSvgImportUndoCommand final : public UndoCommand {
                              std::vector<Artifact::ShapeContent> added)
       : layer_(layer),
         beforeCount_(beforeCount),
-        added_(std::move(added)) {}
+        added_(std::move(added)) {
+    const auto shape = lockedShape();
+    if (shape && shape->shapeContentCount() == beforeCount_)
+      before_ = shape->shapeContentsSnapshot();
+  }
 
   void undo() override { lastOperationSucceeded_ = applyUndo(); }
   void redo() override { lastOperationSucceeded_ = applyRedo(); }
   bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
   QString label() const override {
     return QStringLiteral("Import SVG into Shape");
+  }
+  QStringList collaborationTargetLayerIds() const override {
+    const auto layer = layer_.lock();
+    return layer ? QStringList{layer->id().toQString()} : QStringList{};
+  }
+  bool buildCollaborationOperation(const QString& action,
+                                   QString& operationType,
+                                   QString& operationLayerId,
+                                   QJsonObject& payload) const override {
+    const auto layer = layer_.lock();
+    if (!layer || (action != QStringLiteral("push") &&
+                   action != QStringLiteral("undo") &&
+                   action != QStringLiteral("redo")) || before_.isEmpty() ||
+        after_.isEmpty())
+      return false;
+    const bool reverse = action == QStringLiteral("undo");
+    operationType = QStringLiteral("layer.shapeContents");
+    operationLayerId = layer->id().toQString();
+    payload = {{QStringLiteral("expected"), reverse ? after_ : before_},
+               {QStringLiteral("value"), reverse ? before_ : after_}};
+    return QJsonDocument(payload).toJson(QJsonDocument::Compact).size() <= 524288;
   }
 
  private:
@@ -355,12 +547,10 @@ class ShapeSvgImportUndoCommand final : public UndoCommand {
 
   bool applyUndo() {
     auto shape = lockedShape();
-    if (!shape) return false;
-    while (shape->shapeContentCount() > beforeCount_) {
-      if (!shape->removeShapeContentAt(shape->shapeContentCount() - 1)) {
-        return false;
-      }
-    }
+    if (!shape || after_.isEmpty() ||
+        shape->shapeContentsSnapshot() != after_ ||
+        !shape->restoreShapeContentsSnapshot(before_) ||
+        shape->shapeContentsSnapshot() != before_) return false;
     shape->changed();
     if (auto *manager = UndoManager::instance()) manager->notifyAnythingChanged();
     return true;
@@ -368,12 +558,22 @@ class ShapeSvgImportUndoCommand final : public UndoCommand {
 
   bool applyRedo() {
     auto shape = lockedShape();
-    if (!shape) return false;
+    if (!shape || before_.isEmpty()) return false;
+    if (!after_.isEmpty()) {
+      if (shape->shapeContentsSnapshot() != before_ ||
+          !shape->restoreShapeContentsSnapshot(after_) ||
+          shape->shapeContentsSnapshot() != after_) return false;
+      shape->changed();
+      if (auto *manager = UndoManager::instance()) manager->notifyAnythingChanged();
+      return true;
+    }
     for (const auto &content : added_) {
       if (shape->addShapeContent(content) < 0) {
+        shape->restoreShapeContentsSnapshot(before_);
         return false;
       }
     }
+    after_ = shape->shapeContentsSnapshot();
     shape->changed();
     if (auto *manager = UndoManager::instance()) manager->notifyAnythingChanged();
     return true;
@@ -382,6 +582,8 @@ class ShapeSvgImportUndoCommand final : public UndoCommand {
   ArtifactAbstractLayerWeak layer_;
   int beforeCount_ = 0;
   std::vector<Artifact::ShapeContent> added_;
+  QJsonObject before_;
+  QJsonObject after_;
   bool lastOperationSucceeded_ = true;
 };
 

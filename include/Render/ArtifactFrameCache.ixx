@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <map>
 #include <set>
 #include <memory>
@@ -41,7 +41,6 @@
 #include <QString>
 #include <QStringList>
 #include <QMutex>
-#include <QWaitCondition>
 
 export module Artifact.Render.FrameCache;
 
@@ -51,14 +50,14 @@ export module Artifact.Render.FrameCache;
 import Frame.Position;
 import Memory.SharedPtr;
 
+W_REGISTER_ARGTYPE(ArtifactCore::FramePosition)
+
 export namespace Artifact {
 
 struct FrameRange {
     int start = 0;
     int end = 0;
 };
-
-W_REGISTER_ARGTYPE(ArtifactCore::FramePosition)
 
 using namespace ArtifactCore;
 
@@ -136,6 +135,10 @@ enum class CachePolicy {
     Size            // Largest first
 };
 
+enum class RenderQuality;
+
+using RenderCallback = std::function<bool(RenderQuality)>;
+
 /**
  * @brief Frame cache for storing rendered frames
  * 
@@ -152,8 +155,6 @@ private:
     std::unique_ptr<Impl> impl_;
     
 public:
-    using RenderCallback = std::function<bool(RenderQuality)>;
-
     explicit FrameCache(QObject* parent = nullptr);
     ~FrameCache();
     
@@ -206,8 +207,8 @@ signals:
     void frameRemoved(const FramePosition& frame) W_SIGNAL(frameRemoved, frame);
     void frameEvicted(const FramePosition& frame) W_SIGNAL(frameEvicted, frame);
     void cacheCleared() W_SIGNAL(cacheCleared);
-    void generationChanged(uint64_t generation, const QString& reason) W_SIGNAL(generationChanged, generation, reason);
-    void memoryPressure(size_t used, size_t max) W_SIGNAL(memoryPressure, used, max);
+    void generationChanged(quint64 generation, const QString& reason) W_SIGNAL(generationChanged, generation, reason);
+    void memoryPressure(quint64 used, quint64 max) W_SIGNAL(memoryPressure, used, max);
     void hitRateChanged(float rate) W_SIGNAL(hitRateChanged, rate);
 };
 
@@ -325,7 +326,9 @@ public:
 signals:
     void performanceWarning(const QString& message) W_SIGNAL(performanceWarning, message);
     void fpsChanged(double current, double average) W_SIGNAL(fpsChanged, current, average);
-    void memoryWarning(size_t used, size_t max) W_SIGNAL(memoryWarning, used, max);
+    void memoryWarning(quint64 used, quint64 max) W_SIGNAL(memoryWarning, used, max);
 };
 
 } // namespace Artifact
+
+W_REGISTER_ARGTYPE(Artifact::RenderQuality)

@@ -8,6 +8,7 @@ module;
 #include <QDialog>
 #include <QComboBox>
 #include <QDebug>
+#include <QEvent>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -19,6 +20,7 @@ module;
 #include <QString>
 #include <QStringList>
 #include <QThread>
+#include <QTimer>
 #include <QToolButton>
 #include <QWidget>
 #include <QLayout>
@@ -68,6 +70,7 @@ enum OptionRow : int {
   CloneTool,
   EraserTool,
   MotionSketchTool,
+  PuppetTool,
   OptionCount
 };
 
@@ -160,6 +163,14 @@ public:
   QSpinBox *motionSmoothingSpin = nullptr;
   QSpinBox *motionSampleRateSpin = nullptr;
   QCheckBox *motionWireframeCheck = nullptr;
+  QComboBox *puppetModeCombo = nullptr;
+  QCheckBox *puppetEnabledCheck = nullptr;
+  QSpinBox *puppetColumnsSpin = nullptr;
+  QSpinBox *puppetRowsSpin = nullptr;
+  int lastPuppetMode = 0;
+  int lastPuppetColumns = 5;
+  int lastPuppetRows = 5;
+  bool lastPuppetEnabled = true;
 
   void createFrames(QHBoxLayout *parentLayout);
   void connectSignals();
@@ -602,6 +613,38 @@ void ArtifactToolOptionsBar::Impl::createFrames(QHBoxLayout *parentLayout) {
     ly->addWidget(motionWireframeCheck);
     ly->addStretch();
     optionFrames[MotionSketchTool] = frame;
+    parentLayout->addWidget(frame);
+    frame->setVisible(false);
+  }
+
+  // ===== Puppet / 2D Deformer =====
+  {
+    auto *frame = new QWidget(toolOptionsBar);
+    auto *ly = new QHBoxLayout(frame);
+    ly->setContentsMargins(4, 2, 4, 2);
+    ly->setSpacing(8);
+    ly->addWidget(makeLabel(QStringLiteral("2D デフォーマ"), frame));
+    puppetEnabledCheck = new QCheckBox(QStringLiteral("有効"), frame);
+    puppetEnabledCheck->setAccessibleName(QStringLiteral("Enable 2D Deformer"));
+    puppetEnabledCheck->setAccessibleDescription(
+        QStringLiteral("Enables or bypasses the selected layer's 2D deformation"));
+    puppetEnabledCheck->installEventFilter(toolOptionsBar);
+    ly->addWidget(puppetEnabledCheck);
+    puppetModeCombo = makeCombo(frame);
+    puppetModeCombo->addItem(QStringLiteral("ピン"), 0);
+    puppetModeCombo->addItem(QStringLiteral("格子"), 1);
+    puppetModeCombo->installEventFilter(toolOptionsBar);
+    ly->addWidget(puppetModeCombo);
+    puppetColumnsSpin = makeSpin(frame, 2, 64);
+    puppetColumnsSpin->installEventFilter(toolOptionsBar);
+    puppetColumnsSpin->setPrefix(QStringLiteral("列 "));
+    puppetRowsSpin = makeSpin(frame, 2, 64);
+    puppetRowsSpin->installEventFilter(toolOptionsBar);
+    puppetRowsSpin->setPrefix(QStringLiteral("行 "));
+    ly->addWidget(puppetColumnsSpin);
+    ly->addWidget(puppetRowsSpin);
+    ly->addStretch();
+    optionFrames[PuppetTool] = frame;
     parentLayout->addWidget(frame);
     frame->setVisible(false);
   }
@@ -1151,6 +1194,9 @@ void ArtifactToolOptionsBar::setCurrentTool(const QString &toolName) {
   } else if (toolName == "モーションスケッチ") {
     impl_->optionFrames[MotionSketchTool]->setVisible(true);
     impl_->currentRow = MotionSketchTool;
+  } else if (toolName == "パペット") {
+    impl_->optionFrames[PuppetTool]->setVisible(true);
+    impl_->currentRow = PuppetTool;
   } else if (toolName == "ブラシ") {
     impl_->optionFrames[BrushTool]->setVisible(true);
     impl_->currentRow = BrushTool;
@@ -1532,6 +1578,81 @@ void ArtifactToolOptionsBar::clearShapeOptions() {
                   static_cast<int>(Artifact::StrokeJoin::Miter),
                   static_cast<int>(Artifact::StrokeAlign::Center),
                   QString(), 0, 5, 38, 6, false);
+}
+
+void ArtifactToolOptionsBar::setPuppetOptions(int mode, int columns, int rows,
+                                               bool enabled,
+                                               bool deformerEnabled) {
+  if (!impl_) return;
+  {
+    const QSignalBlocker blocker(impl_->puppetEnabledCheck);
+    impl_->puppetEnabledCheck->setChecked(deformerEnabled);
+  }
+  impl_->puppetEnabledCheck->setEnabled(enabled);
+  {
+    const QSignalBlocker blocker(impl_->puppetModeCombo);
+    impl_->puppetModeCombo->setCurrentIndex(
+        impl_->puppetModeCombo->findData(std::clamp(mode, 0, 1)));
+  }
+  {
+    const QSignalBlocker blocker(impl_->puppetColumnsSpin);
+    impl_->puppetColumnsSpin->setValue(std::clamp(columns, 2, 64));
+  }
+  {
+    const QSignalBlocker blocker(impl_->puppetRowsSpin);
+    impl_->puppetRowsSpin->setValue(std::clamp(rows, 2, 64));
+  }
+  impl_->puppetModeCombo->setEnabled(enabled);
+  impl_->puppetColumnsSpin->setEnabled(enabled && mode == 1);
+  impl_->puppetRowsSpin->setEnabled(enabled && mode == 1);
+  impl_->lastPuppetMode = std::clamp(mode, 0, 1);
+  impl_->lastPuppetColumns = std::clamp(columns, 2, 64);
+  impl_->lastPuppetRows = std::clamp(rows, 2, 64);
+  impl_->lastPuppetEnabled = deformerEnabled;
+}
+
+bool ArtifactToolOptionsBar::eventFilter(QObject *watched, QEvent *event) {
+  if (!impl_ || !event ||
+      (watched != impl_->puppetEnabledCheck &&
+       watched != impl_->puppetModeCombo &&
+       watched != impl_->puppetColumnsSpin &&
+       watched != impl_->puppetRowsSpin)) {
+    return QWidget::eventFilter(watched, event);
+  }
+  const auto type = event->type();
+  if (type == QEvent::MouseButtonRelease || type == QEvent::KeyRelease ||
+      type == QEvent::Wheel || type == QEvent::FocusOut) {
+    QTimer::singleShot(0, this, [this]() {
+      if (!impl_) return;
+      const int mode = std::clamp(
+          impl_->puppetModeCombo->currentData().toInt(), 0, 1);
+      const int columns = std::clamp(impl_->puppetColumnsSpin->value(), 2, 64);
+      const int rows = std::clamp(impl_->puppetRowsSpin->value(), 2, 64);
+      const bool deformerEnabled = impl_->puppetEnabledCheck->isChecked();
+      if (deformerEnabled != impl_->lastPuppetEnabled) {
+        impl_->lastPuppetEnabled = deformerEnabled;
+        optionChanged(QStringLiteral("パペット"), QStringLiteral("enabled"),
+                      deformerEnabled);
+      }
+      if (mode != impl_->lastPuppetMode) {
+        impl_->puppetColumnsSpin->setEnabled(mode == 1);
+        impl_->puppetRowsSpin->setEnabled(mode == 1);
+        impl_->lastPuppetMode = mode;
+        optionChanged(QStringLiteral("パペット"), QStringLiteral("mode"), mode);
+      }
+      if (columns != impl_->lastPuppetColumns) {
+        impl_->lastPuppetColumns = columns;
+        optionChanged(QStringLiteral("パペット"), QStringLiteral("columns"),
+                      columns);
+      }
+      if (rows != impl_->lastPuppetRows) {
+        impl_->lastPuppetRows = rows;
+        optionChanged(QStringLiteral("パペット"), QStringLiteral("rows"),
+                      rows);
+      }
+    });
+  }
+  return QWidget::eventFilter(watched, event);
 }
 
 } // namespace Artifact

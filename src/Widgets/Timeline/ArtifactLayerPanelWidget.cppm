@@ -5,7 +5,9 @@ module;
 #include <QAction>
 #include <QActionGroup>
 #include <QPainter>
+#include <QColor>
 #include <QFontMetrics>
+#include <QFont>
 #include <QPalette>
 #include <QWidget>
 #include <QString>
@@ -54,11 +56,13 @@ module;
 #include <QDrag>
 #include <QMenu>
 #include <QJsonDocument>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QClipboard>
 #include <algorithm>
 #include <cmath>
 #include <memory>
+#include <vector>
 #include "TimelinePlayheadDraw.hpp"
 module Artifact.Widgets.LayerPanelWidget;
 
@@ -71,8 +75,10 @@ import Artifact.Project.Manager;
 import Artifact.Application.Manager;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Widgets.ProjectManagerWidget;
+import Artifact.Widgets.AppDialogs;
 import Artifact.Widgets.PrecomposeDialog;
 import Artifact.Composition.Abstract;
+import Artifact.Composition.Nodes;
 import Translation.Manager;
 import Artifact.Layer.Abstract;
 import UI.ShortcutBindings;
@@ -103,6 +109,7 @@ import Artifact.Service.Playback;
 import Layer.Blend;
 import Artifact.Layer.InitParams;
 import File.TypeDetector;
+import Frame.Rate;
 import Event.Bus;
 import Artifact.Event.Types;
 import Input.Operator;
@@ -119,6 +126,11 @@ QMessageBox::StandardButton centeredQuestion(QWidget* parent,
 
 namespace {
 constexpr auto kLayerPanelContext = "Panel.LayerTree";
+
+QString tt(const char* key, const char* fallback)
+{
+  return Artifact::TranslationManager::instance().tr(QString::fromUtf8(key), QString::fromUtf8(fallback));
+}
 
 enum class MultiEditCycleMode {
   None,
@@ -392,7 +404,10 @@ TimelineLayerIconKind layerIconKindForLayer(const ArtifactAbstractLayerPtr& laye
 
   QString variantDisplayName(const ArtifactAbstractLayerPtr& layer, int index)
   {
-    const auto variants = layer ? layer->getVariants() : std::vector<LayerVariant*>{};
+    if (!layer) {
+      return variantNameForIndex(index);
+    }
+    const auto variants = layer->getVariants();
     if (index >= 0 && index < variants.size() && variants[index]) {
       const QString name = QString::fromStdString(ArtifactCore::toStdString(variants[index]->GetName())).trimmed();
       if (!name.isEmpty()) {
@@ -487,7 +502,7 @@ TimelineLayerIconKind layerIconKindForLayer(const ArtifactAbstractLayerPtr& laye
     }
 
     const QString newVariantName = nextVariantName(layer);
-    menu.addAction(QStringLiteral("New Variant (%1)").arg(newVariantName), [parent, layer, newVariantName]() {
+    menu.addAction(tt("layer_panel.menu_variant_new", "New Variant (%1)").arg(newVariantName), [parent, layer, newVariantName]() {
       auto cmd = std::make_unique<CreateVariantCommand>(
           layer, newVariantName.toStdString());
       auto *undo = UndoManager::instance();
@@ -524,41 +539,41 @@ TimelineLayerIconKind layerIconKindForLayer(const ArtifactAbstractLayerPtr& laye
       return;
     }
 
-    auto* inspectorAction = menu->addAction(QStringLiteral("インスペクターを開く"), [openInspector]() { openInspector(); });
+    auto* inspectorAction = menu->addAction(tt("layer_panel.menu_open_inspector", "Open Inspector"), [openInspector]() { openInspector(); });
     inspectorAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_settings.svg")));
-    auto* propertiesAction = menu->addAction(QStringLiteral("プロパティを開く"), [openProperties]() { openProperties(); });
+    auto* propertiesAction = menu->addAction(tt("layer_panel.menu_open_properties", "Open Properties"), [openProperties]() { openProperties(); });
     propertiesAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_settings.svg")));
     menu->addSeparator();
-    QMenu* switchMenu = addIconMenu(menu, QStringLiteral("切替"), QStringLiteral("Studio/layermenu_settings.svg"));
-    auto* visibilityAction = addIconAction(switchMenu, QStringLiteral("表示/非表示を切替"), QStringLiteral("Studio/timeline_visibility.svg"),
+    QMenu* switchMenu = addIconMenu(menu, tt("layer_panel.menu_switches", "Switches"), QStringLiteral("Studio/layermenu_settings.svg"));
+    auto* visibilityAction = addIconAction(switchMenu, tt("layer_panel.menu_toggle_visibility_full", "Toggle Visibility"), QStringLiteral("Studio/timeline_visibility.svg"),
                                           [toggleVisibility, layer]() { toggleVisibility(!layer->isVisible()); });
     visibilityAction->setCheckable(true);
     visibilityAction->setChecked(layer->isVisible());
-    auto* lockAction = addIconAction(switchMenu, QStringLiteral("ロックを切替"), QStringLiteral("Studio/timeline_lock.svg"),
+    auto* lockAction = addIconAction(switchMenu, tt("layer_panel.menu_toggle_lock", "Toggle Lock"), QStringLiteral("Studio/timeline_lock.svg"),
                                      [toggleLock, layer]() { toggleLock(!layer->isLocked()); });
     lockAction->setCheckable(true);
     lockAction->setChecked(layer->isLocked());
-    auto* soloAction = addIconAction(switchMenu, QStringLiteral("ソロを切替"), QStringLiteral("Studio/timeline_solo.svg"),
+    auto* soloAction = addIconAction(switchMenu, tt("layer_panel.menu_toggle_solo", "Toggle Solo"), QStringLiteral("Studio/timeline_solo.svg"),
                                      [toggleSolo, layer]() { toggleSolo(!layer->isSolo()); });
     soloAction->setCheckable(true);
     soloAction->setChecked(layer->isSolo());
-    auto* shyAction = addIconAction(switchMenu, QStringLiteral("シャイを切替"), QStringLiteral("Studio/timeline_shy.svg"),
+    auto* shyAction = addIconAction(switchMenu, tt("layer_panel.menu_toggle_shy", "Toggle Shy"), QStringLiteral("Studio/timeline_shy.svg"),
                                     [toggleShy, layer]() { toggleShy(!layer->isShy()); });
     shyAction->setCheckable(true);
     shyAction->setChecked(layer->isShy());
     menu->addSeparator();
-    QMenu* organizeMenu = addIconMenu(menu, QStringLiteral("整理"), QStringLiteral("Studio/layermenu_group.svg"));
-    addIconAction(organizeMenu, QStringLiteral("親を選択"), QStringLiteral("Studio/layermenu_parent_select.svg"),
+    QMenu* organizeMenu = addIconMenu(menu, tt("layer_panel.menu_organize", "Organize"), QStringLiteral("Studio/layermenu_group.svg"));
+    addIconAction(organizeMenu, tt("layer_panel.select_parent", "Select Parent"), QStringLiteral("Studio/layermenu_parent_select.svg"),
                   [selectParent]() { selectParent(); });
-    addIconAction(organizeMenu, QStringLiteral("親を解除"), QStringLiteral("Studio/layermenu_parent_clear.svg"),
+    addIconAction(organizeMenu, tt("layer_panel.clear_parent", "Clear Parent"), QStringLiteral("Studio/layermenu_parent_clear.svg"),
                   [clearParent]() { clearParent(); });
-    addIconAction(organizeMenu, QStringLiteral("レイヤー名を変更..."), QStringLiteral("Studio/layermenu_rename.svg"),
+    addIconAction(organizeMenu, tt("layer_panel.rename", "Rename Layer..."), QStringLiteral("Studio/layermenu_rename.svg"),
                   [renameLayer]() { renameLayer(); });
-    addIconAction(organizeMenu, QStringLiteral("レイヤーを複製"), QStringLiteral("Studio/layermenu_content_copy.svg"),
+    addIconAction(organizeMenu, tt("layer_panel.duplicate", "Duplicate Layer"), QStringLiteral("Studio/layermenu_content_copy.svg"),
                   [duplicateLayer]() { duplicateLayer(); });
-    addIconAction(organizeMenu, QStringLiteral("レイヤーを削除"), QStringLiteral("Studio/layermenu_delete.svg"),
+    addIconAction(organizeMenu, tt("layer_panel.delete", "Delete Layer"), QStringLiteral("Studio/layermenu_delete.svg"),
                   [deleteLayer]() { deleteLayer(); });
-    addIconAction(organizeMenu, QStringLiteral("選択レイヤーをプリコンポーズ"), QStringLiteral("Studio/layermenu_group.svg"),
+    addIconAction(organizeMenu, tt("layer_panel.menu_precompose_selected", "Precompose Selected Layers"), QStringLiteral("Studio/layermenu_group.svg"),
                   [precomposeSelectedLayers]() { precomposeSelectedLayers(); });
   }
 
@@ -681,6 +696,10 @@ TimelineLayerIconKind layerIconKindForLayer(const ArtifactAbstractLayerPtr& laye
     return QRect(std::max(100, right - 144), y + 2, 100, height - 4);
   }
 
+  int layerSwitchStart(int width, int switchWidth) {
+    return std::max(0, propertyValueRect(width, 0, kLayerRowHeight).left() - switchWidth);
+  }
+
   // Header controls share the same column geometry as the owner-drawn rows.
   class LayerHeaderGeometry final : public QObject {
    public:
@@ -703,7 +722,11 @@ TimelineLayerIconKind layerIconKindForLayer(const ArtifactAbstractLayerPtr& laye
     void sync() {
       const int w = host_->width();
       const QVariantList widths = host_->property("timelineStatusWidths").toList();
-      int start = 0;
+      int switchWidth = 0;
+      for (int i = 0; i < kLayerPropertyColumnCount; ++i)
+        switchWidth += i < widths.size() ? widths[i].toInt() : kLayerColumnWidth;
+      int start = layerSwitchStart(w, switchWidth);
+      const int nameWidth = start;
       for (int i = 0; i < kLayerPropertyColumnCount; ++i) {
         const int columnWidth = i < widths.size() ? widths[i].toInt() : kLayerColumnWidth;
         if (i < states_.size()) {
@@ -714,9 +737,9 @@ TimelineLayerIconKind layerIconKindForLayer(const ArtifactAbstractLayerPtr& laye
         start += columnWidth;
       }
       const QRect value = propertyValueRect(w, 0, 24);
-      name_->setGeometry(start, 0, qMax(0, value.left() - start), 24);
+      name_->setGeometry(0, 0, nameWidth, 24);
       value_->setGeometry(value);
-      value_->setVisible(value.left() - start >= 50);
+      value_->setVisible(value.width() >= 50);
       actions_->setGeometry(layerContentRight(w) - 28, 0, 28, 24);
       const bool metadata = showLayerMetadata(w);
       parent_->setVisible(metadata);
@@ -1114,7 +1137,7 @@ namespace {
    return QRect(std::max(0, markerX), rowY + (rowH - 14) / 2, 14, 14);
   }
 
-  bool togglePropertyKeyframeAtCurrentTime(const ArtifactCompositionPtr& composition,
+bool togglePropertyKeyframeAtCurrentTime(const ArtifactCompositionPtr& composition,
                                            const ArtifactAbstractLayerPtr& layer,
                                            const QString& propertyPath,
                                            const RationalTime& currentTime)
@@ -1124,12 +1147,47 @@ namespace {
     return false;
    }
 
+   ArtifactTimelineKeyframeModel model;
    auto property = layer->getProperty(trimmedPropertyPath);
+   if (!property && trimmedPropertyPath.startsWith(
+                        QStringLiteral("deformation2D."))) {
+    const QJsonObject state = layer->deformation2DData();
+    const QString controlsKey = state.value(QStringLiteral("mode"))
+            .toString() == QStringLiteral("grid")
+        ? QStringLiteral("gridControls") : QStringLiteral("pins");
+    const QStringList parts = trimmedPropertyPath.split(QLatin1Char('.'));
+    if (parts.size() == 3) {
+     for (const QJsonValue& value : state.value(controlsKey).toArray()) {
+      const QJsonObject control = value.toObject();
+      if (control.value(QStringLiteral("id")).toString() != parts[1]) continue;
+      property = layer->persistentLayerProperty(
+          trimmedPropertyPath, ArtifactCore::PropertyType::Float,
+          control.value(parts[2]).toDouble(), 100);
+      break;
+     }
+    }
+   }
    if (!property || !property->isAnimatable()) {
     return false;
    }
 
-   ArtifactTimelineKeyframeModel model;
+   if (trimmedPropertyPath.startsWith(QStringLiteral("deformation2D."))) {
+    const auto keyframes = model.getKeyframesFor(
+        composition->id(), layer->id(), trimmedPropertyPath);
+    const auto existing = std::find_if(
+        keyframes.begin(), keyframes.end(), [&currentTime](const auto& key) {
+         return key.time == currentTime;
+        });
+    if (existing != keyframes.end()) {
+     return model.removeKeyframe(composition->id(), layer->id(),
+                                trimmedPropertyPath, currentTime);
+    }
+    const QVariant value = property->interpolateValue(currentTime);
+    return model.addKeyframe(composition->id(), layer->id(), trimmedPropertyPath,
+                             currentTime,
+                             value.isValid() ? value : property->getValue());
+   }
+
    if (property->hasKeyFrameAt(currentTime)) {
     return model.removeKeyframe(composition->id(), layer->id(),
                                 trimmedPropertyPath, currentTime);
@@ -1143,11 +1201,6 @@ namespace {
 }
 
 namespace Artifact {
-
-QString tt(const char* key, const char* fallback)
-{
-  return Artifact::TranslationManager::instance().tr(QString::fromUtf8(key), QString::fromUtf8(fallback));
-}
 
  // ============================================================================
  // ArtifactLayerPanelHeaderWidget Implementation
@@ -1242,7 +1295,7 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   shyButton->setCheckable(true);
   if (!impl_->shyIcon.isNull()) shyButton->setIcon(impl_->shyIcon);
   shyButton->setToolTip("Master Shy Switch");
-  applyLayerPanelButtonPalette(shyButton, true);
+  applyLayerPanelButtonPalette(shyButton);
 
   auto layerNameButton = impl_->layerNameButton = new QPushButton("Layer / Property");
   layerNameButton->setFocusPolicy(Qt::NoFocus);
@@ -1253,7 +1306,7 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   selectionMenuButton->setFocusPolicy(Qt::NoFocus);
   selectionMenuButton->setFlat(true);
   selectionMenuButton->setIcon(QIcon(resolveIconPath("Studio/timeline_actions.svg")));
-  selectionMenuButton->setToolTip(QStringLiteral("選択中レイヤーの操作メニュー"));
+  selectionMenuButton->setToolTip(tt("layer_panel.menu_selection_tip", "Operations for selected layers"));
   applyLayerPanelButtonPalette(selectionMenuButton);
   
   auto parentHeader = impl_->parentHeaderButton = new QPushButton("Parent");
@@ -1276,7 +1329,11 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   applyLayerPanelButtonPalette(valueHeader);
   valueHeader->setFlat(true);
   const QVector<QWidget*> states{visButton, lockButton, soloButton, audioButton, shyButton};
-  for (auto* control : states) { control->setParent(this); control->show(); }
+  for (auto* control : states) {
+    control->setParent(this);
+    if (auto* button = qobject_cast<QPushButton*>(control)) button->setFlat(true);
+    control->show();
+  }
   for (auto* control : {layerNameButton, selectionMenuButton, parentHeader, blendHeader}) {
     control->setParent(this);
     control->setFlat(true);
@@ -1284,6 +1341,27 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   }
   new LayerHeaderGeometry(this, states, layerNameButton, valueHeader,
                           selectionMenuButton, parentHeader, blendHeader);
+
+  // A continuous column surface, with interactive feedback supplied by the
+  // existing button style. Do not fill every flat button as a separate tile.
+  QPalette headerPalette = palette();
+  headerPalette.setColor(QPalette::Window, QColor(35, 39, 43));
+  setPalette(headerPalette);
+  setAutoFillBackground(true);
+  for (auto* control : {visButton, lockButton, soloButton, audioButton, shyButton,
+                        layerNameButton, valueHeader, selectionMenuButton,
+                        parentHeader, blendHeader}) {
+    control->setAutoFillBackground(false);
+    control->setAttribute(Qt::WA_StyledBackground, false);
+    QPalette palette = control->palette();
+    palette.setColor(QPalette::Button, headerPalette.color(QPalette::Window));
+    palette.setColor(QPalette::Window, headerPalette.color(QPalette::Window));
+    control->setPalette(palette);
+    QFont labelFont = control->font();
+    labelFont.setPointSizeF(std::max(10.0, labelFont.pointSizeF()));
+    control->setFont(labelFont);
+    control->setIconSize(QSize(18, 18));
+  }
 
   QObject::connect(shyButton, &QPushButton::toggled, this, [this](bool checked) {
     Q_EMIT shyToggled(checked);
@@ -1373,11 +1451,21 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   {
     const auto& theme = ArtifactCore::currentDCCTheme();
     QPalette pal = palette();
-    pal.setColor(QPalette::Window, themeColor(theme.secondaryBackgroundColor, QColor(QStringLiteral("#2D2D30"))));
+    pal.setColor(QPalette::Window, QColor(35, 39, 43));
     pal.setColor(QPalette::WindowText, themeColor(theme.textColor, QColor(QStringLiteral("#CCC"))));
     setPalette(pal);
   }
   setFixedHeight(kLayerHeaderHeight);
+  // Column controls share the header surface; retain standard button input
+  // and hover handling without a separate raised box around every title.
+  for (auto *button : findChildren<QPushButton *>()) {
+    button->setFlat(true);
+    button->setAutoFillBackground(false);
+    QPalette headerPalette = button->palette();
+    headerPalette.setColor(QPalette::Button, QColor(35, 39, 43));
+    headerPalette.setColor(QPalette::Window, QColor(35, 39, 43));
+    button->setPalette(headerPalette);
+  }
 }
 
  ArtifactLayerPanelHeaderWidget::~ArtifactLayerPanelHeaderWidget()
@@ -1386,7 +1474,7 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
  }
 
 int ArtifactLayerPanelHeaderWidget::buttonSize() const { return kLayerHeaderButtonSize; }
-int ArtifactLayerPanelHeaderWidget::iconSize() const { return 14; }
+int ArtifactLayerPanelHeaderWidget::iconSize() const { return 18; }
 QPushButton* ArtifactLayerPanelHeaderWidget::selectionMenuButton() const { return impl_ ? impl_->selectionMenuButton : nullptr; }
 int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
 {
@@ -1466,6 +1554,71 @@ struct VisibleRow {
  QString stateText;
  LayerPresentationBadgeTone stateTone = LayerPresentationBadgeTone::Neutral;
  QString transitionId;
+ QString nodeId;
+};
+
+class RenameGroupContainerCommand final : public UndoCommand {
+public:
+ RenameGroupContainerCommand(ArtifactCompositionPtr composition, QString containerId,
+                             QString beforeName, QString afterName)
+     : composition_(std::move(composition)), containerId_(std::move(containerId)),
+       beforeName_(std::move(beforeName)), afterName_(std::move(afterName)) {}
+
+ void redo() override { lastOperationSucceeded_ = apply(afterName_); }
+ void undo() override { lastOperationSucceeded_ = apply(beforeName_); }
+ QString label() const override { return QStringLiteral("Rename Group Container"); }
+ bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+
+private:
+ bool apply(const QString& name) {
+  if (!composition_) return false;
+  const bool changed = composition_->setGroupContainerDisplayName(containerId_, name);
+  if (changed) {
+   if (auto* manager = UndoManager::instance()) manager->notifyAnythingChanged();
+  }
+  return changed;
+ }
+
+ ArtifactCompositionPtr composition_;
+ QString containerId_;
+ QString beforeName_;
+ QString afterName_;
+ bool lastOperationSucceeded_ = true;
+};
+
+class RemoveGroupContainerCommand final : public UndoCommand {
+public:
+ RemoveGroupContainerCommand(ArtifactCompositionPtr composition, QString containerId,
+                             QString displayName, QVector<LayerID> childIds)
+     : composition_(std::move(composition)), containerId_(std::move(containerId)),
+       displayName_(std::move(displayName)), childIds_(std::move(childIds)) {}
+
+ void redo() override {
+  lastOperationSucceeded_ = composition_ && composition_->removeGroupContainer(containerId_);
+  if (lastOperationSucceeded_) {
+   if (auto* manager = UndoManager::instance()) manager->notifyAnythingChanged();
+  }
+ }
+ void undo() override {
+  if (!composition_) {
+   lastOperationSucceeded_ = false;
+   return;
+  }
+  lastOperationSucceeded_ = !composition_->createGroupContainer(
+      displayName_, childIds_, containerId_).isEmpty();
+  if (lastOperationSucceeded_) {
+   if (auto* manager = UndoManager::instance()) manager->notifyAnythingChanged();
+  }
+ }
+ QString label() const override { return QStringLiteral("Ungroup Container"); }
+ bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+
+private:
+ ArtifactCompositionPtr composition_;
+ QString containerId_;
+ QString displayName_;
+ QVector<LayerID> childIds_;
+ bool lastOperationSucceeded_ = true;
 };
 
 QString groupLayerSummaryText(const ArtifactAbstractLayerPtr& layer)
@@ -2350,6 +2503,8 @@ public:
   int contentHeight = kLayerRowHeight;
   int hoveredLayerIndex = -1;
   LayerID selectedLayerId;
+  QSet<LayerID> collaborationLockedLayerIds;
+  QString selectedContainerId;
   LayerID selectionAnchorLayerId;
   LayerID selectedMaskLayerId;
   int selectedMaskIndex = -1;
@@ -2364,6 +2519,12 @@ public:
   QHash<int, LayerID> layerBookmarks;
   int columnWidths_[kLayerPropertyColumnCount];
   bool columnVisible_[kLayerPropertyColumnCount] = {true, true, true, true, true, true};
+  int switchStart(int width) const {
+    int switchWidth = 0;
+    for (int i = 0; i < kLayerPropertyColumnCount; ++i)
+      if (columnVisible_[i]) switchWidth += columnWidths_[i];
+    return layerSwitchStart(width, switchWidth);
+  }
   int dragCol_ = -1;
   int dragStartX_ = 0;
   QVector<int> dragStartWidths_;
@@ -2684,7 +2845,17 @@ public:
    const auto matteRefs = node->matteReferences();
    const bool hasMaskStack = node->hasMasks();
    const bool hasMatteStack = !matteRefs.empty();
-   const bool hasChildren = !panelGroups.empty() || hasMaskStack || hasMatteStack;
+   const QJsonObject deformationState = node->deformation2DData();
+   const QString deformationMode = deformationState.value(
+       QStringLiteral("mode")).toString();
+   const QString deformationControlsKey = deformationMode ==
+           QStringLiteral("grid")
+       ? QStringLiteral("gridControls") : QStringLiteral("pins");
+   const QJsonArray deformationControls = deformationState.value(
+       deformationControlsKey).toArray();
+   const bool hasDeformationControls = !deformationControls.isEmpty();
+   const bool hasChildren = !panelGroups.empty() || hasMaskStack ||
+                            hasMatteStack || hasDeformationControls;
    const bool expanded = expandedByLayerId.value(nodeId, true);
    if (!layerMatchesDisplayMode(node, displayMode, selectedLayerId)) {
     return;
@@ -2734,7 +2905,7 @@ public:
 
    if (!hasChildren || !expanded) return;
 
-     for (const auto& groupDef : panelGroups) {
+   for (const auto& groupDef : panelGroups) {
      const QString groupName = groupDef.name().trimmed().isEmpty()
                                    ? QStringLiteral("Layer")
                                    : groupDef.name().trimmed();
@@ -2794,6 +2965,98 @@ public:
          LayerPresentationBadgeTone::Neutral
         });
       }
+      }
+    }
+
+    if (hasDeformationControls &&
+        propertyChannelFilter == ArtifactLayerPanelWidget::PropertyChannelFilter::All &&
+        displayMode != TimelineLayerDisplayMode::AudioOnly &&
+        displayMode != TimelineLayerDisplayMode::VideoOnly &&
+        (displayMode != TimelineLayerDisplayMode::SelectedOnly ||
+         node->id() == selectedLayerId)) {
+      const QString deformerGroupKey = nodeId + QStringLiteral("::deformation2d");
+      const bool deformerExpanded = expandedByGroupKey.value(
+          deformerGroupKey, false);
+      visibleRows.push_back(VisibleRow{
+          node, depth + 1, true, deformerExpanded, RowKind::Group,
+          QStringLiteral("2D Deformer"), QString(), deformerGroupKey,
+          QStringLiteral("Def"), LayerPresentationBadgeTone::Special});
+      if (deformerExpanded) {
+        int controlIndex = 0;
+        for (const QJsonValue& controlValue : deformationControls) {
+          if (!controlValue.isObject()) continue;
+          const QJsonObject control = controlValue.toObject();
+          const QString id = control.value(QStringLiteral("id")).toString();
+          if (id.isEmpty()) continue;
+          ++controlIndex;
+          const bool grid = deformationMode == QStringLiteral("grid");
+          const QString name = grid
+              ? QStringLiteral("Grid %1").arg(controlIndex)
+              : QStringLiteral("Pin %1").arg(controlIndex);
+          QStringList fields{QStringLiteral("x"), QStringLiteral("y")};
+          if (!grid) {
+            fields.append(QStringLiteral("rotation"));
+            fields.append(QStringLiteral("weight"));
+          }
+          for (const QString& axis : fields) {
+            const QString path = QStringLiteral("deformation2D.%1.%2")
+                                     .arg(id, axis);
+            const auto property = node->persistentLayerProperty(
+                path, ArtifactCore::PropertyType::Float,
+                control.value(axis).toDouble(), 100);
+            property->setAnimatable(true);
+            const QJsonArray savedKeys = control.value(
+                axis + QStringLiteral("Keys")).toArray();
+            if (property->getKeyFrames().empty() && !savedKeys.isEmpty()) {
+              property->setAnimatable(true);
+              for (const QJsonValue& keyValue : savedKeys) {
+                if (!keyValue.isObject()) continue;
+                const QJsonObject key = keyValue.toObject();
+                const qint64 frame = key.value(QStringLiteral("frame"))
+                                         .toVariant().toLongLong();
+                const double value = key.value(QStringLiteral("value"))
+                                         .toDouble();
+                if (!std::isfinite(value)) continue;
+                const RationalTime time(
+                    frame, node->keyframeTimeScale());
+                property->addKeyFrame(
+                    time, value,
+                    static_cast<ArtifactCore::InterpolationType>(std::clamp(
+                        key.value(QStringLiteral("interpolation")).toInt(),
+                        0, 32)),
+                    static_cast<float>(key.value(QStringLiteral("cp1_x"))
+                                           .toDouble(0.42)),
+                    static_cast<float>(key.value(QStringLiteral("cp1_y"))
+                                           .toDouble()),
+                    static_cast<float>(key.value(QStringLiteral("cp2_x"))
+                                           .toDouble(0.58)),
+                    static_cast<float>(key.value(QStringLiteral("cp2_y"))
+                                           .toDouble(1.0)),
+                    key.value(QStringLiteral("roving")).toBool());
+                property->setKeyFrameAnchorAt(
+                    time, static_cast<ArtifactCore::KeyFrame::Anchor>(
+                        std::clamp(key.value(QStringLiteral("anchor"))
+                                       .toInt(), 0, 3)));
+                property->setKeyFrameColorLabelAt(
+                    time, static_cast<ArtifactCore::KeyFrame::ColorLabel>(
+                        std::clamp(key.value(QStringLiteral("colorLabel"))
+                                       .toInt(), 0, 6)));
+              }
+            }
+            const bool hasKeys = !savedKeys.isEmpty();
+            if (displayMode == TimelineLayerDisplayMode::AnimatedOnly ||
+                displayMode == TimelineLayerDisplayMode::ImportantAndKeyframed ||
+                displayMode == TimelineLayerDisplayMode::KeyframesOnly) {
+              if (!hasKeys) continue;
+            }
+            const QString label = QStringLiteral("%1 / %2")
+                                      .arg(name, axis.toUpper());
+            visibleRows.push_back(VisibleRow{
+                node, depth + 2, false, false, RowKind::Property, label,
+                path, QString(), QStringLiteral("Prp"),
+                LayerPresentationBadgeTone::Neutral});
+          }
+        }
       }
     }
 
@@ -2867,9 +3130,60 @@ public:
 
    };
 
-   // The composition vector renders bottom-to-top. `layers` is its reverse,
-   // so preserve this exact top-to-bottom order in the timeline. Parenting is
-   // transform metadata and must not regroup the compositing stack.
+   QSet<QString> visibleLayerIds;
+   for (const auto& layer : layers) {
+    if (layer) visibleLayerIds.insert(layer->id().toString());
+   }
+
+   std::vector<CompositionNode> roots;
+   for (const auto& node : comp->nodeStore().nodes()) {
+    if (node.parentId.trimmed().isEmpty()) roots.push_back(node);
+   }
+   std::sort(roots.begin(), roots.end(),
+             [](const CompositionNode& left, const CompositionNode& right) {
+               return left.order > right.order;
+             });
+   for (const auto& root : roots) {
+    const bool standaloneContainer =
+        root.kind == CompositionNodeKind::GroupContainer &&
+        !comp->layerById(LayerID(root.id));
+    if (standaloneContainer) {
+      const QString groupKey = QStringLiteral("container::") + root.id;
+      const bool expanded = expandedByGroupKey.value(groupKey, true);
+      const auto childIds = comp->nodeStore().childrenOf(root.id);
+      const QString label = root.properties.value(QStringLiteral("displayName"))
+                                .toString(QStringLiteral("Group"));
+      VisibleRow containerRow;
+      containerRow.nodeId = root.id;
+      containerRow.hasChildren = !childIds.empty();
+      containerRow.expanded = expanded;
+      containerRow.kind = RowKind::Container;
+      containerRow.label = label;
+      containerRow.groupKey = groupKey;
+      containerRow.auxiliaryText = childIds.empty()
+          ? QStringLiteral("Empty Group")
+          : QStringLiteral("%1 items").arg(childIds.size());
+      containerRow.auxiliaryTone = LayerPresentationBadgeTone::Container;
+      visibleRows.push_back(std::move(containerRow));
+      if (expanded) {
+        for (const auto& childId : childIds) {
+          if (!visibleLayerIds.contains(childId)) continue;
+          QSet<QString> stack;
+          appendNode(comp->layerById(LayerID(childId)), 1, stack);
+        }
+      } else {
+        for (const auto& childId : childIds) emitted.insert(childId);
+      }
+      continue;
+    }
+    if (root.kind == CompositionNodeKind::Layer &&
+        visibleLayerIds.contains(root.id)) {
+      QSet<QString> stack;
+      appendNode(comp->layerById(LayerID(root.id)), 0, stack);
+    }
+   }
+
+   // Compatibility fallback for legacy or partially repaired node stores.
    for (const auto& layer : layers) {
     QSet<QString> stack;
     appendNode(layer, 0, stack);
@@ -2931,8 +3245,9 @@ ArtifactLayerPanelWidget::ArtifactLayerPanelWidget(QWidget* parent)
       return;
     }
     if (auto* playback = ArtifactPlaybackService::instance()) {
-      const auto fps = safeLayerPanelFrameRate(playback->frameRate().framerate());
-      impl_->currentTime = RationalTime(event.frame, fps);
+      const auto scale = FrameRate::storageScaleForFps(
+          safeLayerPanelFrameRate(playback->frameRate().framerate()));
+      impl_->currentTime = RationalTime(event.frame, scale);
       update();
     }
   }));
@@ -3042,6 +3357,16 @@ void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
   impl_->currentPropertyPath.clear();
   propertyFocusChanged(impl_->selectedLayerId, impl_->currentPropertyPath);
   updateLayout();
+}
+
+void ArtifactLayerPanelWidget::setCollaborationLockedLayers(
+    const QVector<LayerID>& layerIds)
+{
+  impl_->collaborationLockedLayerIds.clear();
+  for (const LayerID& layerId : layerIds) {
+    if (!layerId.isNil()) impl_->collaborationLockedLayerIds.insert(layerId);
+  }
+  update();
 }
 
 void ArtifactLayerPanelWidget::setShyHidden(bool hidden)
@@ -3177,6 +3502,7 @@ void ArtifactLayerPanelWidget::performUpdateLayout()
       const QString aId = a.layer ? a.layer->id().toString() : QString();
       const QString bId = b.layer ? b.layer->id().toString() : QString();
       if (aId != bId ||
+          a.nodeId != b.nodeId ||
           a.depth != b.depth ||
           a.hasChildren != b.hasChildren ||
           a.expanded != b.expanded ||
@@ -3258,6 +3584,7 @@ ArtifactLayerPanelWidget::visibleTimelineRowDescriptors() const
   for (const auto& row : impl_->visibleRows) {
    TimelineRowDescriptor descriptor;
    descriptor.layerId = row.layer ? row.layer->id() : LayerID::Nil();
+   descriptor.nodeId = row.nodeId;
    descriptor.kind = row.kind;
    descriptor.label = row.label;
    descriptor.propertyPath = row.propertyPath;
@@ -3327,16 +3654,12 @@ void ArtifactLayerPanelWidget::editLayerName(const LayerID& id)
 
     // Position it
     const int rowIndent = impl_->visibleRows[idx].depth * 14;
-    const int editNameStartX = [this]() {
-      int x = 0;
-      for (int i = 0; i < kLayerPropertyColumnCount; ++i) if (impl_->columnVisible_[i]) x += impl_->columnWidths_[i];
-      return x;
-    }();
+    const int editNameStartX = 0;
     const int layerIconAdvance = kLayerTypeIconSize + kLayerTypeIconGap;
     const int textX = editNameStartX + rowIndent +
                       (impl_->visibleRows[idx].hasChildren ? 16 : 4) +
                       layerIconAdvance;
-    const int editorWidth = std::max(60, width() - textX - kInlineParentWidth - kInlineBlendWidth - 8);
+    const int editorWidth = std::max(20, impl_->switchStart(width()) - textX - 8);
     impl_->inlineNameEditor->setGeometry(textX, impl_->rowViewportY(idx) + 2, editorWidth, impl_->rowHeight - 4);
 
     QObject::connect(impl_->inlineNameEditor, &QLineEdit::editingFinished, this, [this, l, id]() {
@@ -3419,6 +3742,82 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
   }
   const auto row = impl_->visibleRows[idx];
   auto layer = row.layer;
+  if (row.kind == RowKind::Container) {
+    impl_->clearMaskSelection();
+    impl_->selectedContainerId = row.nodeId;
+    if (event->button() == Qt::LeftButton) {
+      if (!row.groupKey.trimmed().isEmpty()) {
+        impl_->expandedByGroupKey[row.groupKey] = !row.expanded;
+        updateLayout();
+      }
+    } else if (event->button() == Qt::RightButton) {
+      auto comp = safeCompositionLookup(impl_->compositionId);
+      const auto* node = comp ? comp->nodeStore().node(row.nodeId) : nullptr;
+      if (!comp || !node || node->kind != CompositionNodeKind::GroupContainer) {
+        event->ignore();
+        return;
+      }
+      const QString displayName = node->properties
+          .value(QStringLiteral("displayName")).toString(QStringLiteral("Group"));
+      QMenu menu(this);
+      QAction* renameAction = menu.addAction(tt("layer_panel.menu_rename_group", "Rename Group..."));
+      QAction* selectChildrenAction = menu.addAction(tt("layer_panel.menu_select_children", "Select Child Layers"));
+      QAction* ungroupAction = menu.addAction(tt("layer_panel.menu_ungroup", "Ungroup"));
+      QAction* chosen = menu.exec(event->globalPos());
+      if (chosen == renameAction) {
+        bool accepted = false;
+        const QString nextName = QInputDialog::getText(
+            this, QStringLiteral("グループ名を変更"), QStringLiteral("名前"),
+            QLineEdit::Normal, displayName, &accepted).trimmed();
+        if (accepted && !nextName.isEmpty() && nextName != displayName) {
+          auto command = std::make_unique<RenameGroupContainerCommand>(
+              comp, row.nodeId, displayName, nextName);
+          bool applied = false;
+          if (auto* undo = UndoManager::instance()) {
+            applied = undo->push(std::move(command));
+          } else {
+            command->redo();
+            applied = command->lastOperationSucceeded();
+          }
+          if (applied) updateLayout();
+        }
+      } else if (chosen == selectChildrenAction) {
+        if (auto* service = ArtifactProjectService::instance()) {
+          bool first = true;
+          for (const auto& childId : comp->groupContainerChildLayerIds(row.nodeId)) {
+            if (first) {
+              service->selectLayer(childId);
+              first = false;
+            } else if (auto* selection = ArtifactLayerSelectionManager::instance()) {
+              if (const auto child = comp->layerById(childId)) {
+                selection->addToSelection(child);
+              }
+            }
+          }
+        }
+      } else if (chosen == ungroupAction) {
+        const auto childIds = comp->groupContainerChildLayerIds(row.nodeId);
+        auto command = std::make_unique<RemoveGroupContainerCommand>(
+            comp, row.nodeId, displayName, childIds);
+        bool applied = false;
+        if (auto* undo = UndoManager::instance()) {
+          applied = undo->push(std::move(command));
+        } else {
+          command->redo();
+          applied = command->lastOperationSucceeded();
+        }
+        if (applied) {
+          impl_->selectedContainerId.clear();
+          updateLayout();
+        }
+      }
+    }
+    event->accept();
+    return;
+  }
+  if (event->button() == Qt::LeftButton) {
+    impl_->selectedContainerId.clear();
+  }
   if (!layer) {
     impl_->clearDragState();
     return;
@@ -3441,8 +3840,9 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
    if (event->button() == Qt::LeftButton) {
     RationalTime currentTime = impl_->currentTime;
     if (auto comp = safeCompositionLookup(impl_->compositionId)) {
-     const auto fps = safeLayerPanelFrameRate(comp->frameRate().framerate());
-     currentTime = RationalTime(comp->framePosition().framePosition(), fps);
+     const auto scale = FrameRate::storageScaleForFps(
+         safeLayerPanelFrameRate(comp->frameRate().framerate()));
+     currentTime = RationalTime(comp->framePosition().framePosition(), scale);
     }
     const QRect keyframeRect =
         propertyKeyframeMarkerRect(width(), impl_->rowViewportY(idx), rowH);
@@ -3677,11 +4077,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
   }
 
   const int y = impl_->rowViewportY(idx);
-  const int mouseNameStartX = [this]() {
-    int x = 0;
-    for (int i = 0; i < kLayerPropertyColumnCount; ++i) if (impl_->columnVisible_[i]) x += impl_->columnWidths_[i];
-    return x;
-  }();
+  const int mouseNameStartX = 0;
   const int nameX = mouseNameStartX + row.depth * 14;
   // Disclosure owns its hit area before selection, parent-link and dividers.
   if (event->button() == Qt::LeftButton && row.kind == RowKind::Layer && row.hasChildren) {
@@ -3872,7 +4268,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     }
     // Pick Whip: 親レイヤードラッグ
     if (showInlineCombos && row.kind == RowKind::Layer && event->button() == Qt::LeftButton) {
-      int whipCumX = 0;
+      int whipCumX = impl_->switchStart(width());
       for (int ci = 0; ci < kLayerPropertyColumnCount; ++ci) {
         if (!impl_->columnVisible_[ci]) continue;
         if (ci == 5) {
@@ -3897,7 +4293,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     }
     // M: 列の区切り線ドラッグ開始チェック（非表示列をスキップ）
     if (row.kind == RowKind::Layer && event->button() == Qt::LeftButton) {
-      int cumX = 0;
+      int cumX = impl_->switchStart(width());
       for (int ci = 0; ci < kLayerPropertyColumnCount - 1; ++ci) {
         if (!impl_->columnVisible_[ci]) continue;
         cumX += impl_->columnWidths_[ci];
@@ -3915,14 +4311,13 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     }
     bool handledLayerSwitch = false;
     {
-      int cumX = 0;
+      int cumX = impl_->switchStart(width());
       for (int ci = 0; ci < kLayerPropertyColumnCount; ++ci) {
         if (!impl_->columnVisible_[ci]) {
-          cumX += impl_->columnWidths_[ci];
           continue;
         }
         const int nextCumX = cumX + impl_->columnWidths_[ci];
-        if (clickX < nextCumX) {
+        if (clickX >= cumX && clickX < nextCumX) {
           // E: Lock feedback - block toggles on locked layers (except lock column)
           if (layer && layer->isLocked() && ci != 1) {
             impl_->lockFlashTimer_.start();
@@ -4387,10 +4782,9 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
                                       ? comp->settings().compositionName().toQString()
                                       : layer->layerName();
       bool ok = false;
-      const QString newName = QInputDialog::getText(
-          this, tt("layer_panel.rename_composition_title", "Rename Composition"),
-          tt("layer_panel.new_composition_name", "New composition name:"),
-          QLineEdit::Normal, currentName, &ok);
+      const QString newName = ArtifactRenameDialog::getName(
+          this, ArtifactRenameTarget::Composition, currentName,
+          QStringLiteral("Timeline / Nested Composition"), {}, {}, &ok);
       if (!ok || newName.trimmed().isEmpty()) {
         return;
       }
@@ -4426,10 +4820,9 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       }
       if (auto* svc = ArtifactProjectService::instance()) {
         bool ok = false;
-        const QString newName = QInputDialog::getText(
-            this, tt("layer_panel.rename_layer_title", "Rename Layer"),
-            tt("layer_panel.new_layer_name", "New layer name:"),
-            QLineEdit::Normal, layer->layerName(), &ok);
+        const QString newName = ArtifactRenameDialog::getName(
+            this, ArtifactRenameTarget::Layer, layer->layerName(),
+            QStringLiteral("Timeline / Selected Layer"), {}, {}, &ok);
         if (!ok || newName.trimmed().isEmpty()) {
           return;
         }
@@ -4609,11 +5002,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       }
     };
 
-    const int ctxNameStartX = [this]() {
-      int x = 0;
-      for (int i = 0; i < kLayerPropertyColumnCount; ++i) if (impl_->columnVisible_[i]) x += impl_->columnWidths_[i];
-      return x;
-    }();
+    const int ctxNameStartX = 0;
     const int nameX = ctxNameStartX + row.depth * 14;
     const bool showInlineCombos = showLayerMetadata(width());
     const auto variants = layer->getVariants();
@@ -4627,10 +5016,8 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
 
     auto comp = safeCompositionLookup(impl_->compositionId);
     QMenu menu(this);
-    QMenu* frequentMenu = menu.addMenu(QStringLiteral("Frequent"));
-    QMenu* allMenu = menu.addMenu(QStringLiteral("All"));
     if (auto* lightLayer = dynamic_cast<ArtifactLightLayer*>(layer.get())) {
-      QMenu* lightLinkMenu = frequentMenu->addMenu(QStringLiteral("Light Linking"));
+      QMenu* lightLinkMenu = menu.addMenu(tt("layer_panel.menu_light_linking", "Light Linking"));
       const auto selectedIds = selectedLayerIdsSnapshot();
       QStringList targetIds;
       for (const auto& selectedId : selectedIds) {
@@ -4668,7 +5055,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         }
         return applyLayerPanelCommand(std::move(macro));
       };
-      QAction* allLightsAction = lightLinkMenu->addAction(QStringLiteral("All Layers"));
+      QAction* allLightsAction = lightLinkMenu->addAction(tt("layer_panel.menu_light_all", "All Layers"));
       allLightsAction->setCheckable(true);
       allLightsAction->setChecked(lightLayer->lightLinkMode() == LightLinkMode::All);
       QObject::connect(allLightsAction, &QAction::triggered, this,
@@ -4678,7 +5065,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         }
       });
       QAction* includeSelectedAction = lightLinkMenu->addAction(
-          QStringLiteral("Include Selected Layers"));
+          tt("layer_panel.menu_light_include", "Include Selected Layers"));
       includeSelectedAction->setEnabled(!targets.isEmpty());
       QObject::connect(includeSelectedAction, &QAction::triggered, this,
                        [applyLightLinking, targets, publishLightChange]() {
@@ -4687,7 +5074,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         }
       });
       QAction* excludeSelectedAction = lightLinkMenu->addAction(
-          QStringLiteral("Exclude Selected Layers"));
+          tt("layer_panel.menu_light_exclude", "Exclude Selected Layers"));
       excludeSelectedAction->setEnabled(!targets.isEmpty());
       QObject::connect(excludeSelectedAction, &QAction::triggered, this,
                        [applyLightLinking, targets, publishLightChange]() {
@@ -4697,7 +5084,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       });
     }
     if (layer->is3D()) {
-      QMenu* materialMenu = frequentMenu->addMenu(QStringLiteral("3D Material"));
+      QMenu* materialMenu = menu.addMenu(tt("layer_panel.menu_material", "3D Material"));
       const auto applyMaterialPreset = [this, layer](const QColor& baseColor,
                                                  double metallic,
                                                  double roughness,
@@ -4721,21 +5108,21 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         }
         updateLayout();
       };
-      materialMenu->addAction(QStringLiteral("Matte"), [applyMaterialPreset]() {
+      materialMenu->addAction(tt("layer_panel.menu_mat_matte", "Matte"), [applyMaterialPreset]() {
         applyMaterialPreset(QColor(180, 180, 180), 0.0, 0.82, 0.35, 0.0, 1.45);
       });
-      materialMenu->addAction(QStringLiteral("Metal"), [applyMaterialPreset]() {
+      materialMenu->addAction(tt("layer_panel.menu_mat_metal", "Metal"), [applyMaterialPreset]() {
         applyMaterialPreset(QColor(170, 180, 195), 0.9, 0.24, 0.5, 0.0, 1.45);
       });
-      materialMenu->addAction(QStringLiteral("Plastic"), [applyMaterialPreset]() {
+      materialMenu->addAction(tt("layer_panel.menu_mat_plastic", "Plastic"), [applyMaterialPreset]() {
         applyMaterialPreset(QColor(210, 220, 235), 0.0, 0.3, 0.5, 0.0, 1.46);
       });
-      materialMenu->addAction(QStringLiteral("Glass"), [applyMaterialPreset]() {
+      materialMenu->addAction(tt("layer_panel.menu_mat_glass", "Glass"), [applyMaterialPreset]() {
         applyMaterialPreset(QColor(225, 240, 255), 0.0, 0.08, 0.5, 0.82, 1.5);
       });
     }
     if (layer->className().toQString() == QStringLiteral("ArtifactTextLayer")) {
-      QMenu* textAnimatorMenu = frequentMenu->addMenu(QStringLiteral("Text Animator"));
+      QMenu* textAnimatorMenu = menu.addMenu(tt("layer_panel.menu_text_animator", "Text Animator"));
       const std::array<std::pair<const char*, int>, 7> presets = {{
           {"Typewriter", 1}, {"Slide Up", 2}, {"Scale In", 3},
           {"Rotation In", 4}, {"Tracking Fade", 5},
@@ -4751,7 +5138,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         });
       }
       textAnimatorMenu->addSeparator();
-      textAnimatorMenu->addAction(QStringLiteral("Clear Animators"), [this, layer]() {
+      textAnimatorMenu->addAction(tt("layer_panel.menu_animator_clear", "Clear Animators"), [this, layer]() {
         if (applyLayerPropertyValues(
                 layer, QStringLiteral("Clear Text Animators"),
                 {{QStringLiteral("text.animatorPreset"), QVariant(0)}})) {
@@ -4760,16 +5147,16 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       });
     }
     if (auto *compLayer = dynamic_cast<ArtifactCompositionLayer *>(layer.get())) {
-      QMenu *precompMenu = allMenu->addMenu(QStringLiteral("プリコンポーズ"));
-      precompMenu->addAction(QStringLiteral("コンポジションを開く"),
+      QMenu *precompMenu = menu.addMenu(tt("layer_panel.menu_precomp", "Precomp"));
+      precompMenu->addAction(tt("layer_panel.menu_precomp_open", "Open Composition"),
                              [triggerOpenComposition]() {
                                triggerOpenComposition();
                              });
-      precompMenu->addAction(QStringLiteral("コンポジション名を変更..."),
+      precompMenu->addAction(tt("layer_panel.menu_precomp_rename", "Rename Composition..."),
                              [triggerRenameComposition]() {
                                triggerRenameComposition();
                              });
-      precompMenu->addAction(QStringLiteral("コンポジションを複製"),
+      precompMenu->addAction(tt("layer_panel.menu_precomp_duplicate", "Duplicate Composition"),
                              [triggerDuplicateComposition]() {
                                triggerDuplicateComposition();
                              });
@@ -4778,20 +5165,20 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       }
     }
     if (auto *groupLayer = dynamic_cast<ArtifactGroupLayer *>(layer.get())) {
-      QMenu *groupMenu = allMenu->addMenu(QStringLiteral("グループ"));
+      QMenu *groupMenu = menu.addMenu(tt("layer_panel.menu_group", "Group"));
       groupMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_group.svg")));
       const bool collapsed = groupLayer->isCollapsed();
       QAction *toggleCollapseAct = groupMenu->addAction(
-          collapsed ? QStringLiteral("展開する") : QStringLiteral("折りたたむ"));
+          collapsed ? tt("layer_panel.menu_expand", "Expand") : tt("layer_panel.menu_collapse", "Collapse"));
       toggleCollapseAct->setIcon(QIcon(resolveIconPath(collapsed ? "Studio/arrow_drop_down.svg"
                                                                : "Studio/arrow_right.svg")));
-      QAction *selectChildrenAct = groupMenu->addAction(QStringLiteral("子レイヤーを選択"));
+      QAction *selectChildrenAct = groupMenu->addAction(tt("layer_panel.menu_select_children", "Select Child Layers"));
       selectChildrenAct->setIcon(QIcon(resolveIconPath("Studio/select_all.svg")));
       QAction *showChildCountAct = groupMenu->addAction(
-          QStringLiteral("子レイヤー数: %1").arg(static_cast<int>(groupLayer->children().size())));
+          tt("layer_panel.menu_child_count", "Child Layers: %1").arg(static_cast<int>(groupLayer->children().size())));
       showChildCountAct->setEnabled(false);
       groupMenu->addSeparator();
-      QMenu *outputModeMenu = groupMenu->addMenu(QStringLiteral("出力モード"));
+      QMenu *outputModeMenu = groupMenu->addMenu(tt("layer_panel.menu_output_mode", "Output Mode"));
       const auto addOutputModeAction = [this, layer, groupLayer, outputModeMenu](
                                            const QString& label, GroupOutputMode mode) {
         QAction *action = outputModeMenu->addAction(label, [this, layer, mode]() {
@@ -4815,14 +5202,14 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         action->setCheckable(true);
         action->setChecked(groupLayer->outputMode() == mode);
       };
-      addOutputModeAction(QStringLiteral("すべて表示 (各 100%)"), GroupOutputMode::All);
-      addOutputModeAction(QStringLiteral("選択した子のみ (100%)"), GroupOutputMode::Single);
-      addOutputModeAction(QStringLiteral("子で 100% を共有"), GroupOutputMode::Share);
+      addOutputModeAction(tt("layer_panel.menu_output_all", "Show All (100% each)"), GroupOutputMode::All);
+      addOutputModeAction(tt("layer_panel.menu_output_single", "Selected Child Only (100%)"), GroupOutputMode::Single);
+      addOutputModeAction(tt("layer_panel.menu_output_share", "Share 100% Among Children"), GroupOutputMode::Share);
       groupMenu->addSeparator();
-      QMenu *activeChildMenu = groupMenu->addMenu(QStringLiteral("Single の出力先"));
+      QMenu *activeChildMenu = groupMenu->addMenu(tt("layer_panel.menu_single_target", "Single Output Target"));
       const auto children = groupLayer->children();
       if (children.empty()) {
-        QAction *emptyAction = activeChildMenu->addAction(QStringLiteral("子レイヤーなし"));
+        QAction *emptyAction = activeChildMenu->addAction(tt("layer_panel.menu_no_children", "No Child Layers"));
         emptyAction->setEnabled(false);
       } else {
         for (const auto& child : children) {
@@ -4865,10 +5252,10 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         }
       }
       groupMenu->addSeparator();
-      groupMenu->addAction(QStringLiteral("グループ名を変更..."), [triggerRenameLayer]() {
+      groupMenu->addAction(tt("layer_panel.menu_rename_group", "Rename Group..."), [triggerRenameLayer]() {
         triggerRenameLayer();
       });
-      groupMenu->addAction(QStringLiteral("グループを解除"), [this]() {
+      groupMenu->addAction(tt("layer_panel.menu_ungroup", "Ungroup"), [this]() {
         if (auto *svc = ArtifactProjectService::instance()) {
           if (svc->ungroupSelectedGroupWithUndo()) {
             updateLayout();
@@ -4914,25 +5301,25 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     }
     const bool isImageLayer = ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(layer) != nullptr;
     if (isImageLayer) {
-      allMenu->addAction(tt("layer_panel.replace_image", "Replace Image..."), [triggerReplaceLayerSource]() {
+      menu.addAction(tt("layer_panel.replace_image", "Replace Image..."), [triggerReplaceLayerSource]() {
         triggerReplaceLayerSource();
       });
     }
     const bool isVideoLayer = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer) != nullptr;
     if (isVideoLayer) {
-      QMenu* videoMenu = allMenu->addMenu(QStringLiteral("ビデオ"));
+      QMenu* videoMenu = menu.addMenu(tt("layer_panel.menu_video", "Video"));
       videoMenu->setIcon(QIcon(resolveIconPath("Studio/videocam.svg")));
       QAction* replaceVideoAct = videoMenu->addAction(QIcon(resolveIconPath("Studio/file_open.svg")),
-                                                      QStringLiteral("ソースを置換..."));
+                                                      tt("layer_panel.menu_video_replace", "Replace Source..."));
       QAction* reloadVideoAct = videoMenu->addAction(QIcon(resolveIconPath("Studio/replay.svg")),
-                                                    QStringLiteral("ソースを再読み込み"));
+                                                    tt("layer_panel.menu_video_reload", "Reload Source"));
       QAction* revealVideoAct = videoMenu->addAction(QIcon(resolveIconPath("Studio/folder_open.svg")),
-                                                    QStringLiteral("ソースを表示"));
+                                                    tt("layer_panel.menu_video_reveal", "Reveal Source"));
       videoMenu->addSeparator();
       QAction* muteAudioAct = videoMenu->addAction(QIcon(resolveIconPath("Studio/settings.svg")),
-                                                   QStringLiteral("音声ミュートを切替"));
+                                                   tt("layer_panel.menu_video_mute", "Toggle Audio Mute"));
       QAction* toggleVideoAct = videoMenu->addAction(QIcon(resolveIconPath("Studio/visibility.svg")),
-                                                     QStringLiteral("映像有効を切替"));
+                                                     tt("layer_panel.menu_video_enabled", "Toggle Video Enabled"));
 
       const QString currentVideoPath = videoSourcePath();
       reloadVideoAct->setEnabled(!currentVideoPath.trimmed().isEmpty());
@@ -4974,26 +5361,26 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         }
       });
       videoMenu->addSeparator();
-      QMenu* proxyMenu = videoMenu->addMenu(QStringLiteral("プロキシ"));
+      QMenu* proxyMenu = videoMenu->addMenu(tt("layer_panel.menu_proxy", "Proxy"));
       proxyMenu->setIcon(QIcon(resolveIconPath("Studio/resolution_half.svg")));
-      QAction* proxyNoneAct = proxyMenu->addAction(QStringLiteral("無効"));
+      QAction* proxyNoneAct = proxyMenu->addAction(tt("layer_panel.menu_proxy_off", "Disabled"));
       proxyNoneAct->setIcon(QIcon(resolveIconPath("Studio/resolution_full.svg")));
-      QAction* proxyQuarterAct = proxyMenu->addAction(QStringLiteral("1/4 画質"));
+      QAction* proxyQuarterAct = proxyMenu->addAction(tt("layer_panel.menu_proxy_quarter", "1/4 Quality"));
       proxyQuarterAct->setIcon(QIcon(resolveIconPath("Studio/resolution_quarter.svg")));
-      QAction* proxyEighthAct = proxyMenu->addAction(QStringLiteral("1/8 画質"));
+      QAction* proxyEighthAct = proxyMenu->addAction(tt("layer_panel.menu_proxy_eighth", "1/8 Quality"));
       proxyEighthAct->setIcon(QIcon(resolveIconPath("Studio/resolution_eighth.svg")));
-      QAction* proxyHalfAct = proxyMenu->addAction(QStringLiteral("1/2 画質"));
+      QAction* proxyHalfAct = proxyMenu->addAction(tt("layer_panel.menu_proxy_half", "1/2 Quality"));
       proxyHalfAct->setIcon(QIcon(resolveIconPath("Studio/resolution_half.svg")));
-      QAction* proxyFullAct = proxyMenu->addAction(QStringLiteral("フル画質"));
+      QAction* proxyFullAct = proxyMenu->addAction(tt("layer_panel.menu_proxy_full", "Full Quality"));
       proxyFullAct->setIcon(QIcon(resolveIconPath("Studio/resolution_full.svg")));
       QActionGroup* proxyQualityGroup = new QActionGroup(proxyMenu);
       proxyQualityGroup->setExclusive(true);
       proxyMenu->addSeparator();
-      QAction* generateProxyAct = proxyMenu->addAction(QStringLiteral("プロキシを生成"));
+      QAction* generateProxyAct = proxyMenu->addAction(tt("layer_panel.menu_proxy_generate", "Generate Proxy"));
       generateProxyAct->setIcon(QIcon(resolveIconPath("Studio/replay.svg")));
-      QAction* revealProxyAct = proxyMenu->addAction(QStringLiteral("プロキシを表示"));
+      QAction* revealProxyAct = proxyMenu->addAction(tt("layer_panel.menu_proxy_reveal", "Reveal Proxy"));
       revealProxyAct->setIcon(QIcon(resolveIconPath("Studio/folder_open.svg")));
-      QAction* clearProxyAct = proxyMenu->addAction(QStringLiteral("プロキシを削除"));
+      QAction* clearProxyAct = proxyMenu->addAction(tt("layer_panel.menu_proxy_clear", "Clear Proxy"));
       clearProxyAct->setIcon(QIcon(resolveIconPath("Studio/delete.svg")));
       QObject::connect(proxyNoneAct, &QAction::triggered, proxyMenu,
                        [triggerSetProxyQuality](bool) { triggerSetProxyQuality(ProxyQuality::None); });
@@ -5034,7 +5421,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       clearProxyAct->setEnabled(hasProxy);
     }
     if (!variants.empty()) {
-      allMenu->addAction(QStringLiteral("バリアントを選択..."), [this, layer]() {
+      menu.addAction(tt("layer_panel.menu_variant_pick", "Select Variant..."), [this, layer]() {
         showVariantPickerMenu(this, layer, QCursor::pos());
       });
     }
@@ -5047,22 +5434,22 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         selectedLayer && selectedLayer->id() != layer->id() && comp &&
         comp->containsLayerById(selectedLayer->id());
     if (canUseSelectedMatteSource || !matteRefs.empty()) {
-      QMenu *matteMenu = allMenu->addMenu(QStringLiteral("トラックマット"));
+      QMenu *matteMenu = menu.addMenu(tt("layer_panel.menu_matte", "Track Matte"));
       if (canUseSelectedMatteSource) {
         QAction *addAction =
-            matteMenu->addAction(QStringLiteral("選択レイヤーをソースにする"));
+            matteMenu->addAction(tt("layer_panel.menu_matte_use_selected", "Use Selected Layer as Source"));
         addAction->setData(QVariantMap{{QStringLiteral("kind"), QStringLiteral("matte_add_selected")},
                                        {QStringLiteral("selectedLayerId"), selectedLayer->id().toString()}});
       }
       if (!matteRefs.empty()) {
         const QStringList typeLabels = {
-            QStringLiteral("アルファ"),
-            QStringLiteral("ルーマ"),
-            QStringLiteral("反転アルファ"),
-            QStringLiteral("反転ルーマ")};
+            tt("layer_panel.alpha", "Alpha"),
+            tt("layer_panel.luma", "Luma"),
+            tt("layer_panel.inverted_alpha", "Inverted Alpha"),
+            tt("layer_panel.inverted_luma", "Inverted Luma")};
         for (int matteIndex = 0; matteIndex < static_cast<int>(matteRefs.size()); ++matteIndex) {
           const auto &ref = matteRefs[matteIndex];
-          QString sourceName = QStringLiteral("<missing>");
+          QString sourceName = tt("layer_panel.menu_matte_missing", "<missing>");
           if (comp && !ref.sourceLayerId.isNil()) {
             if (auto source = comp->layerById(ref.sourceLayerId)) {
               const QString name = source->layerName().trimmed();
@@ -5070,12 +5457,12 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
             }
           }
           QMenu *refMenu = matteMenu->addMenu(
-              QStringLiteral("マット %1: %2").arg(matteIndex + 1).arg(sourceName));
-          QAction *focusAction = refMenu->addAction(QStringLiteral("ソースにフォーカス"));
+              tt("layer_panel.menu_matte_ref", "Matte %1: %2").arg(matteIndex + 1).arg(sourceName));
+          QAction *focusAction = refMenu->addAction(tt("layer_panel.focus_source", "Focus source"));
           focusAction->setData(QVariantMap{{QStringLiteral("kind"), QStringLiteral("matte_focus")},
                                            {QStringLiteral("index"), matteIndex}});
 
-          QMenu *typeMenu = refMenu->addMenu(QStringLiteral("マット種別を設定"));
+          QMenu *typeMenu = refMenu->addMenu(tt("layer_panel.set_matte_type", "Set matte type"));
           for (int typeIndex = 0; typeIndex < typeLabels.size(); ++typeIndex) {
             QAction *typeAction = typeMenu->addAction(typeLabels[typeIndex]);
             typeAction->setData(QVariantMap{{QStringLiteral("kind"), QStringLiteral("matte_type")},
@@ -5093,7 +5480,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
           ? currentLayerSelectionManager()->selectedLayersInOrder()
           : QVector<ArtifactAbstractLayerPtr>{};
       if (selectedForTransition.size() >= 2) {
-        QMenu* transitionMenu = allMenu->addMenu(QStringLiteral("トランジションを追加"));
+        QMenu* transitionMenu = menu.addMenu(tt("layer_panel.menu_trans_add", "Add Transition"));
         const qint64 centerFrame = comp->framePosition().framePosition();
          const qint64 halfSpan = std::max<qint64>(1, static_cast<qint64>(comp->frameRate().framerate() / 2.0));
          const qint64 startFrame = std::max<qint64>(comp->frameRange().start(), centerFrame - halfSpan);
@@ -5108,19 +5495,19 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
           transition.range = FrameRange(FramePosition(startFrame), FramePosition(endFrame));
           comp->addTimelineTransition(transition);
         };
-        transitionMenu->addAction(QStringLiteral("クロスフェード (1秒)"), [addTransition]() {
+        transitionMenu->addAction(tt("layer_panel.menu_trans_crossfade", "Crossfade (1s)"), [addTransition]() {
           addTransition(QStringLiteral("Crossfade"));
         });
-        transitionMenu->addAction(QStringLiteral("ワイプ (1秒)"), [addTransition]() {
+        transitionMenu->addAction(tt("layer_panel.menu_trans_wipe", "Wipe (1s)"), [addTransition]() {
           addTransition(QStringLiteral("Wipe"));
         });
-        transitionMenu->addAction(QStringLiteral("スライド (1秒)"), [addTransition]() {
+        transitionMenu->addAction(tt("layer_panel.menu_trans_slide", "Slide (1s)"), [addTransition]() {
           addTransition(QStringLiteral("Slide"));
         });
         const auto existingTransitions = comp->timelineTransitions();
         if (!existingTransitions.isEmpty()) {
           transitionMenu->addSeparator();
-          QMenu* manageMenu = transitionMenu->addMenu(QStringLiteral("既存トランジション"));
+          QMenu* manageMenu = transitionMenu->addMenu(tt("layer_panel.menu_trans_existing", "Existing Transitions"));
           for (const auto& existing : existingTransitions) {
             QMenu* itemMenu = manageMenu->addMenu(
                 QStringLiteral("%1 — %2  [%3-%4]")
@@ -5129,18 +5516,18 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
                      .arg(existing.range.start())
                      .arg(existing.range.end()));
             itemMenu->addAction(
-                existing.enabled ? QStringLiteral("無効化") : QStringLiteral("有効化"),
+                existing.enabled ? tt("layer_panel.menu_disable", "Disable") : tt("layer_panel.menu_enable", "Enable"),
                 [comp, id = existing.id, enabled = existing.enabled]() {
                   comp->setTimelineTransitionEnabled(id, !enabled);
                 });
-            itemMenu->addAction(QStringLiteral("名前を変更..."), [this, comp, existing]() {
+            itemMenu->addAction(tt("layer_panel.menu_trans_rename", "Rename..."), [this, comp, existing]() {
               bool accepted = false;
               const QString name = QInputDialog::getText(
                   this, QStringLiteral("トランジション名"), QStringLiteral("名前"),
                   QLineEdit::Normal, existing.name, &accepted);
               if (accepted) comp->setTimelineTransitionName(existing.id, name);
             });
-            itemMenu->addAction(QStringLiteral("種類を変更..."), [this, comp, existing]() {
+            itemMenu->addAction(tt("layer_panel.menu_trans_kind", "Change Type..."), [this, comp, existing]() {
               const QStringList kinds = {QStringLiteral("Crossfade"), QStringLiteral("Dissolve"),
                                          QStringLiteral("Wipe"), QStringLiteral("Slide")};
               bool accepted = false;
@@ -5151,7 +5538,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
                 comp->setTimelineTransitionKind(existing.id, kind);
               }
             });
-            itemMenu->addAction(QStringLiteral("イージングを変更..."), [this, comp, existing]() {
+            itemMenu->addAction(tt("layer_panel.menu_trans_easing", "Change Easing..."), [this, comp, existing]() {
               const QStringList easings = {QStringLiteral("Linear"), QStringLiteral("Ease In"),
                                            QStringLiteral("Ease Out"), QStringLiteral("Ease In-Out")};
               bool accepted = false;
@@ -5160,7 +5547,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
                   qMax(0, static_cast<int>(easings.indexOf(existing.easing))), false, &accepted);
               if (accepted) comp->setTimelineTransitionEasing(existing.id, easing);
             });
-            itemMenu->addAction(QStringLiteral("範囲を編集..."), [this, comp, existing]() {
+            itemMenu->addAction(tt("layer_panel.menu_trans_range", "Edit Range..."), [this, comp, existing]() {
               bool accepted = false;
               const int start = QInputDialog::getInt(
                   this, QStringLiteral("トランジション範囲"), QStringLiteral("開始フレーム"),
@@ -5172,21 +5559,21 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
               if (accepted) comp->setTimelineTransitionRange(
                   existing.id, FrameRange(FramePosition(start), FramePosition(end)));
             });
-            itemMenu->addAction(QStringLiteral("削除"), [comp, id = existing.id]() {
+            itemMenu->addAction(tt("layer_panel.menu_delete", "Delete"), [comp, id = existing.id]() {
               comp->removeTimelineTransition(id);
             });
-            itemMenu->addAction(QStringLiteral("複製"), [comp, id = existing.id]() {
+            itemMenu->addAction(tt("layer_panel.menu_duplicate", "Duplicate"), [comp, id = existing.id]() {
               comp->duplicateTimelineTransition(id);
             });
           }
           manageMenu->addSeparator();
-          manageMenu->addAction(QStringLiteral("すべて削除"), [comp]() {
+          manageMenu->addAction(tt("layer_panel.menu_delete_all", "Delete All"), [comp]() {
             comp->clearTimelineTransitions();
           });
         }
       }
       if (selectedForTransition.size() < 2 && !comp->timelineTransitions().isEmpty()) {
-        QMenu* manageMenu = allMenu->addMenu(QStringLiteral("トランジションを管理"));
+        QMenu* manageMenu = menu.addMenu(tt("layer_panel.menu_trans_manage", "Manage Transitions"));
         for (const auto& existing : comp->timelineTransitions()) {
           QMenu* itemMenu = manageMenu->addMenu(
               QStringLiteral("%1 — %2  [%3-%4]")
@@ -5195,18 +5582,18 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
                    .arg(existing.range.start())
                    .arg(existing.range.end()));
           itemMenu->addAction(
-              existing.enabled ? QStringLiteral("無効化") : QStringLiteral("有効化"),
+              existing.enabled ? tt("layer_panel.menu_disable", "Disable") : tt("layer_panel.menu_enable", "Enable"),
               [comp, id = existing.id, enabled = existing.enabled]() {
                 comp->setTimelineTransitionEnabled(id, !enabled);
               });
-          itemMenu->addAction(QStringLiteral("名前を変更..."), [this, comp, existing]() {
+          itemMenu->addAction(tt("layer_panel.menu_trans_rename", "Rename..."), [this, comp, existing]() {
             bool accepted = false;
             const QString name = QInputDialog::getText(
                 this, QStringLiteral("トランジション名"), QStringLiteral("名前"),
                 QLineEdit::Normal, existing.name, &accepted);
             if (accepted) comp->setTimelineTransitionName(existing.id, name);
           });
-          itemMenu->addAction(QStringLiteral("種類を変更..."), [this, comp, existing]() {
+          itemMenu->addAction(tt("layer_panel.menu_trans_kind", "Change Type..."), [this, comp, existing]() {
             const QStringList kinds = {QStringLiteral("Crossfade"), QStringLiteral("Dissolve"),
                                        QStringLiteral("Wipe"), QStringLiteral("Slide")};
             bool accepted = false;
@@ -5217,7 +5604,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
               comp->setTimelineTransitionKind(existing.id, kind);
             }
           });
-          itemMenu->addAction(QStringLiteral("イージングを変更..."), [this, comp, existing]() {
+          itemMenu->addAction(tt("layer_panel.menu_trans_easing", "Change Easing..."), [this, comp, existing]() {
             const QStringList easings = {QStringLiteral("Linear"), QStringLiteral("Ease In"),
                                          QStringLiteral("Ease Out"), QStringLiteral("Ease In-Out")};
             bool accepted = false;
@@ -5226,7 +5613,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
                 qMax(0, static_cast<int>(easings.indexOf(existing.easing))), false, &accepted);
             if (accepted) comp->setTimelineTransitionEasing(existing.id, easing);
           });
-          itemMenu->addAction(QStringLiteral("範囲を編集..."), [this, comp, existing]() {
+          itemMenu->addAction(tt("layer_panel.menu_trans_range", "Edit Range..."), [this, comp, existing]() {
             bool accepted = false;
             const int start = QInputDialog::getInt(
                 this, QStringLiteral("トランジション範囲"), QStringLiteral("開始フレーム"),
@@ -5238,21 +5625,21 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
             if (accepted) comp->setTimelineTransitionRange(
                 existing.id, FrameRange(FramePosition(start), FramePosition(end)));
           });
-          itemMenu->addAction(QStringLiteral("削除"), [comp, id = existing.id]() {
+          itemMenu->addAction(tt("layer_panel.menu_delete", "Delete"), [comp, id = existing.id]() {
             comp->removeTimelineTransition(id);
           });
-          itemMenu->addAction(QStringLiteral("複製"), [comp, id = existing.id]() {
+          itemMenu->addAction(tt("layer_panel.menu_duplicate", "Duplicate"), [comp, id = existing.id]() {
             comp->duplicateTimelineTransition(id);
           });
         }
         manageMenu->addSeparator();
-        manageMenu->addAction(QStringLiteral("すべて削除"), [comp]() {
+        manageMenu->addAction(tt("layer_panel.menu_delete_all", "Delete All"), [comp]() {
           comp->clearTimelineTransitions();
         });
       }
     }
-    QMenu* stateMenu = frequentMenu->addMenu(QStringLiteral("状態"));
-    stateMenu->addAction(QStringLiteral("表示を切替"), [this, layer]() {
+    QMenu* stateMenu = menu.addMenu(tt("layer_panel.menu_state", "State"));
+    stateMenu->addAction(tt("layer_panel.menu_toggle_visibility", "Toggle Visibility"), [this, layer]() {
       if (!layer) return;
       auto cmd = std::make_unique<SetLayerVisibilityCommand>(
           layer, !layer->isVisible());
@@ -5267,7 +5654,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         updateLayout();
       }
     });
-    stateMenu->addAction(QStringLiteral("ロックを切替"), [this, layer]() {
+    stateMenu->addAction(tt("layer_panel.menu_toggle_lock", "Toggle Lock"), [this, layer]() {
       if (!layer) return;
       auto cmd = std::make_unique<SetLayerLockCommand>(
           layer, !layer->isLocked());
@@ -5282,7 +5669,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         updateLayout();
       }
     });
-    stateMenu->addAction(QStringLiteral("ソロを切替"), [this, layer]() {
+    stateMenu->addAction(tt("layer_panel.menu_toggle_solo", "Toggle Solo"), [this, layer]() {
       if (!layer) return;
       auto cmd = std::make_unique<SetLayerSoloCommand>(
           layer, !layer->isSolo());
@@ -5297,7 +5684,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         updateLayout();
       }
     });
-    stateMenu->addAction(QStringLiteral("シャイを切替"), [this, layer]() {
+    stateMenu->addAction(tt("layer_panel.menu_toggle_shy", "Toggle Shy"), [this, layer]() {
       if (!layer) return;
       auto cmd = std::make_unique<SetLayerShyCommand>(
           layer, !layer->isShy());
@@ -5313,7 +5700,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       }
     });
     stateMenu->addSeparator();
-    stateMenu->addAction(QStringLiteral("スマートソロ"), [this, layer]() {
+    stateMenu->addAction(tt("layer_panel.menu_smart_solo", "Smart Solo"), [this, layer]() {
       if (!layer) {
         return;
       }
@@ -5323,7 +5710,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       }
     });
 
-    QMenu* dynamicsMenu = frequentMenu->addMenu(QStringLiteral("Motion Dynamics"));
+    QMenu* dynamicsMenu = menu.addMenu(tt("layer_panel.menu_dynamics", "Motion Dynamics"));
     const auto applyDynamicsPreset = [this, layer](const QString& label,
                                                bool enabled,
                                                int mode,
@@ -5372,55 +5759,57 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         updateLayout();
       }
     };
-    dynamicsMenu->addAction(QStringLiteral("Smooth"), [applyDynamicsPreset]() {
+    dynamicsMenu->addAction(tt("layer_panel.menu_dyn_smooth", "Smooth"), [applyDynamicsPreset]() {
       applyDynamicsPreset(QStringLiteral("Motion Dynamics: Smooth"),
                           true, 1,
                           70.0, 20.0, 1.0, 0.12, true, 0.15);
     });
-    dynamicsMenu->addAction(QStringLiteral("Bouncy"), [applyDynamicsPreset]() {
+    dynamicsMenu->addAction(tt("layer_panel.menu_dyn_bouncy", "Bouncy"), [applyDynamicsPreset]() {
       applyDynamicsPreset(QStringLiteral("Motion Dynamics: Bouncy"),
                           true, 1,
                           95.0, 7.0, 1.0, 0.08, false, 0.5);
     });
-    dynamicsMenu->addAction(QStringLiteral("Heavy"), [applyDynamicsPreset]() {
+    dynamicsMenu->addAction(tt("layer_panel.menu_dyn_heavy", "Heavy"), [applyDynamicsPreset]() {
       applyDynamicsPreset(QStringLiteral("Motion Dynamics: Heavy"),
                           true, 1,
                           120.0, 32.0, 2.5, 0.2, true, 0.1);
     });
-    dynamicsMenu->addAction(QStringLiteral("Floaty"), [applyDynamicsPreset]() {
+    dynamicsMenu->addAction(tt("layer_panel.menu_dyn_floaty", "Floaty"), [applyDynamicsPreset]() {
       applyDynamicsPreset(QStringLiteral("Motion Dynamics: Floaty"),
                           true, 1,
                           35.0, 8.0, 1.4, 0.28, false, 0.6);
     });
-    dynamicsMenu->addAction(QStringLiteral("Rigid"), [applyDynamicsPreset]() {
+    dynamicsMenu->addAction(tt("layer_panel.menu_dyn_rigid", "Rigid"), [applyDynamicsPreset]() {
       applyDynamicsPreset(QStringLiteral("Motion Dynamics: Rigid"),
                           true, 1,
                           220.0, 55.0, 0.8, 0.04, true, 0.05);
     });
     dynamicsMenu->addSeparator();
-    dynamicsMenu->addAction(QStringLiteral("Reset"), [applyDynamicsPreset]() {
+    dynamicsMenu->addAction(tt("layer_panel.menu_dyn_reset", "Reset"), [applyDynamicsPreset]() {
       applyDynamicsPreset(QStringLiteral("Reset Motion Dynamics"),
                           false, 0,
                           80.0, 16.0, 1.0, 0.1, false, 0.3);
     });
 
+    menu.addSeparator();
     // カラーラベル
     {
-      QMenu* colorMenu = allMenu->addMenu(QStringLiteral("ラベル色"));
-      static const std::pair<const char*, QColor> kLabelColors[] = {
-        {"なし",    QColor()},
-        {"赤",      QColor(231, 76, 60)},
-        {"オレンジ",QColor(230, 126, 34)},
-        {"黄",      QColor(241, 196, 15)},
-        {"緑",      QColor(46, 204, 113)},
-        {"シアン",  QColor(26, 188, 156)},
-        {"青",      QColor(52, 152, 219)},
-        {"マゼンタ",QColor(155, 89, 182)}
+      QMenu* colorMenu = menu.addMenu(tt("layer_panel.menu_label_color", "Label Color"));
+      struct LabelColorEntry { const char* key; const char* fallback; QColor color; };
+      static const LabelColorEntry kLabelColors[] = {
+        {"layer_panel.menu_color_none",    "None",    QColor()},
+        {"layer_panel.menu_color_red",     "Red",     QColor(231, 76, 60)},
+        {"layer_panel.menu_color_orange",  "Orange",  QColor(230, 126, 34)},
+        {"layer_panel.menu_color_yellow",  "Yellow",  QColor(241, 196, 15)},
+        {"layer_panel.menu_color_green",   "Green",   QColor(46, 204, 113)},
+        {"layer_panel.menu_color_cyan",    "Cyan",    QColor(26, 188, 156)},
+        {"layer_panel.menu_color_blue",    "Blue",    QColor(52, 152, 219)},
+        {"layer_panel.menu_color_magenta", "Magenta", QColor(155, 89, 182)}
       };
       const int currentColor = layer->labelColorIndex();
       for (int ci = 0; ci < 8; ++ci) {
         QAction* ca = colorMenu->addAction(
-            QString::fromLatin1(kLabelColors[ci].first), [this, layer, ci]() {
+            tt(kLabelColors[ci].key, kLabelColors[ci].fallback), [this, layer, ci]() {
           if (!layer) return;
           auto command = std::make_unique<SetLayerLabelColorCommand>(
               layer, layer->labelColorIndex(), ci);
@@ -5433,11 +5822,11 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
           }
           if (applied) update();
         });
-        if (!kLabelColors[ci].second.isValid()) {
+        if (!kLabelColors[ci].color.isValid()) {
           ca->setIcon(QIcon());
         } else {
           QPixmap cp(12, 12);
-          cp.fill(kLabelColors[ci].second);
+          cp.fill(kLabelColors[ci].color);
           ca->setIcon(QIcon(cp));
         }
         if (ci == currentColor) {
@@ -5449,7 +5838,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
 
     // 全レイヤー表示/ロック一括切替と一括グループ操作
     {
-      QMenu* batchAllMenu = allMenu->addMenu(QStringLiteral("全レイヤー操作"));
+      QMenu* batchAllMenu = menu.addMenu(tt("layer_panel.menu_all_ops", "All Layer Operations"));
       const auto applyAllVisibility = [this](bool visible) {
         auto comp = safeCompositionLookup(impl_->compositionId);
         if (!comp) return;
@@ -5471,10 +5860,10 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         }
         if (applied) updateLayout();
       };
-      batchAllMenu->addAction(QStringLiteral("すべて表示"), [applyAllVisibility]() {
+      batchAllMenu->addAction(tt("layer_panel.menu_show_all", "Show All"), [applyAllVisibility]() {
         applyAllVisibility(true);
       });
-      batchAllMenu->addAction(QStringLiteral("すべて非表示"), [applyAllVisibility]() {
+      batchAllMenu->addAction(tt("layer_panel.menu_hide_all", "Hide All"), [applyAllVisibility]() {
         applyAllVisibility(false);
       });
       batchAllMenu->addSeparator();
@@ -5499,14 +5888,14 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         }
         if (applied) updateLayout();
       };
-      batchAllMenu->addAction(QStringLiteral("すべてロック"), [applyAllLock]() {
+      batchAllMenu->addAction(tt("layer_panel.menu_lock_all", "Lock All"), [applyAllLock]() {
         applyAllLock(true);
       });
-      batchAllMenu->addAction(QStringLiteral("すべてロック解除"), [applyAllLock]() {
+      batchAllMenu->addAction(tt("layer_panel.menu_unlock_all", "Unlock All"), [applyAllLock]() {
         applyAllLock(false);
       });
       batchAllMenu->addSeparator();
-       batchAllMenu->addAction(QStringLiteral("すべてのグループを折りたたみ"), [this]() {
+       batchAllMenu->addAction(tt("layer_panel.menu_collapse_groups", "Collapse All Groups"), [this]() {
         auto comp = safeCompositionLookup(impl_->compositionId);
         if (!comp) return;
         for (const auto& l : comp->allLayer()) {
@@ -5517,7 +5906,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         }
         updateLayout();
       });
-      batchAllMenu->addAction(QStringLiteral("すべてのグループを展開"), [this]() {
+      batchAllMenu->addAction(tt("layer_panel.menu_expand_groups", "Expand All Groups"), [this]() {
         auto comp = safeCompositionLookup(impl_->compositionId);
         if (!comp) return;
         for (const auto& l : comp->allLayer()) {
@@ -5530,12 +5919,20 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       });
     }
 
+    menu.addSeparator();
     // M: カラム表示切替
     {
-      QMenu* colMenu = allMenu->addMenu(QStringLiteral("カラム表示"));
-      static const char* kColNames[] = {"表示", "ロック", "ソロ", "オーディオ", "シャイ"};
+      QMenu* colMenu = menu.addMenu(tt("layer_panel.menu_columns", "Columns"));
+      // Index 5 is the Pick Whip (parent link) column. Keep all six entries
+      // in sync with kLayerPropertyColumnCount.
+      static const char* kColKeys[] = {
+          "layer_panel.menu_col_visible",  "layer_panel.menu_col_lock",
+          "layer_panel.menu_col_solo",     "layer_panel.menu_col_audio",
+          "layer_panel.menu_col_shy",      "layer_panel.menu_col_pickwhip"};
+      static const char* kColFallbacks[] = {
+          "Visibility", "Lock", "Solo", "Audio", "Shy", "Parent Link"};
       for (int ci = 0; ci < kLayerPropertyColumnCount; ++ci) {
-        QAction* ca = colMenu->addAction(QString::fromLatin1(kColNames[ci]), [this, ci]() {
+        QAction* ca = colMenu->addAction(tt(kColKeys[ci], kColFallbacks[ci]), [this, ci]() {
           impl_->columnVisible_[ci] = !impl_->columnVisible_[ci];
           updateLayout();
         });
@@ -5545,7 +5942,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     }
 
     // H: マスクありのみ表示トグル
-    auto* maskFilterAction = allMenu->addAction(QStringLiteral("マスクありのみ表示"), [this]() {
+    auto* maskFilterAction = menu.addAction(tt("layer_panel.menu_mask_filter", "Show Only Layers with Masks"), [this]() {
       impl_->maskFilterEnabled_ = !impl_->maskFilterEnabled_;
       updateLayout();
     });
@@ -5554,7 +5951,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
 
     // O: プロパティをクリップボードにコピー
     if (layer) {
-      QMenu* copyMenu = allMenu->addMenu(QStringLiteral("プロパティをコピー"));
+      QMenu* copyMenu = menu.addMenu(tt("layer_panel.menu_copy_props", "Copy Properties"));
       copyMenu->addAction(QStringLiteral("JSON"), [this, layer]() {
         QJsonObject obj;
         obj[QStringLiteral("name")] = layer->layerName();
@@ -5584,36 +5981,36 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
 
     // U: 新規レイヤー即作成
     {
-      QMenu* newSubMenu = allMenu->addMenu(QStringLiteral("新規"));
-      newSubMenu->addAction(QStringLiteral("ヌル"), [this]() {
+      QMenu* newSubMenu = menu.addMenu(tt("layer_panel.menu_new", "New"));
+      newSubMenu->addAction(tt("layer_panel.menu_new_null", "Null"), [this]() {
         if (auto* svc = ArtifactProjectService::instance()) {
           ArtifactLayerInitParams params(QStringLiteral("Null Layer"), LayerType::Null);
           svc->addLayerToCurrentComposition(params, true, false);
           updateLayout();
         }
       });
-      newSubMenu->addAction(QStringLiteral("単色"), [this]() {
+      newSubMenu->addAction(tt("layer_panel.menu_new_solid", "Solid"), [this]() {
         if (auto* svc = ArtifactProjectService::instance()) {
           ArtifactLayerInitParams params(QStringLiteral("Solid"), LayerType::Solid);
           svc->addLayerToCurrentComposition(params, true, false);
           updateLayout();
         }
       });
-      newSubMenu->addAction(QStringLiteral("テキスト"), [this]() {
+      newSubMenu->addAction(tt("layer_panel.menu_new_text", "Text"), [this]() {
         if (auto* svc = ArtifactProjectService::instance()) {
           ArtifactLayerInitParams params(QStringLiteral("Text"), LayerType::Text);
           svc->addLayerToCurrentComposition(params, true, false);
           updateLayout();
         }
       });
-      newSubMenu->addAction(QStringLiteral("空のグループ"), [this]() {
+      newSubMenu->addAction(tt("layer_panel.menu_new_group", "Empty Group"), [this]() {
         if (auto* svc = ArtifactProjectService::instance()) {
           ArtifactLayerInitParams params(QStringLiteral("Group"), LayerType::Group);
           svc->addLayerToCurrentComposition(params, true, false);
           updateLayout();
         }
       });
-      newSubMenu->addAction(QStringLiteral("マルチプレクサーグループ"), [this]() {
+      newSubMenu->addAction(tt("layer_panel.menu_new_mux", "Multiplexer Group"), [this]() {
         if (auto* svc = ArtifactProjectService::instance()) {
           ArtifactLayerInitParams params(QStringLiteral("Multiplexer Group"), LayerType::Group);
           svc->addLayerToCurrentComposition(params, true, false);
@@ -5631,7 +6028,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
 
     // V: テンプレート保存
     if (layer) {
-      allMenu->addAction(QStringLiteral("テンプレートに保存"), [this, layer]() {
+      menu.addAction(tt("layer_panel.menu_tpl_save", "Save as Template"), [this, layer]() {
         QJsonObject tmpl;
         tmpl[QStringLiteral("name")] = layer->layerName();
         tmpl[QStringLiteral("type")] = describeLayerType(layer);
@@ -5643,7 +6040,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         impl_->layerTemplate_ = tmpl;
       });
       if (!impl_->layerTemplate_.isEmpty()) {
-        allMenu->addAction(QStringLiteral("テンプレートから作成"), [this]() {
+        menu.addAction(tt("layer_panel.menu_tpl_create", "Create from Template"), [this]() {
           const QString typeName = impl_->layerTemplate_.value(QStringLiteral("type")).toString();
           LayerType lt = LayerType::Null;
           if (typeName == "Null") lt = LayerType::Null;
@@ -5662,8 +6059,8 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
 
     // T: 整理メニュー
     {
-      QMenu* cleanMenu = allMenu->addMenu(QStringLiteral("整理"));
-      cleanMenu->addAction(QStringLiteral("未使用レイヤーを削除"), [this]() {
+      QMenu* cleanMenu = menu.addMenu(tt("layer_panel.menu_cleanup", "Cleanup"));
+      cleanMenu->addAction(tt("layer_panel.menu_cleanup_unused", "Delete Unused Layers"), [this]() {
         auto comp = safeCompositionLookup(impl_->compositionId);
         if (!comp) return;
         auto* svc = ArtifactProjectService::instance();
@@ -5682,7 +6079,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         }
         if (!toRemove.isEmpty()) updateLayout();
       });
-      cleanMenu->addAction(QStringLiteral("空のマスクを削除"), [this]() {
+      cleanMenu->addAction(tt("layer_panel.menu_cleanup_masks", "Delete Empty Masks"), [this]() {
         auto comp = safeCompositionLookup(impl_->compositionId);
         if (!comp) return;
         for (const auto& l : comp->allLayer()) {
@@ -5697,7 +6094,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
 
     // ブレンドモードお気に入り管理
     {
-      QMenu* bfMenu = allMenu->addMenu(QStringLiteral("ブレンドモードお気に入り"));
+      QMenu* bfMenu = menu.addMenu(tt("layer_panel.menu_blend_fav", "Blend Mode Favorites"));
       for (std::size_t bi = 0; bi < blendModeCount; ++bi) {
         const auto mode = static_cast<BlendMode>(bi);
         QAction* bfa = bfMenu->addAction(blendModeDisplayName(mode), [this, bi]() {
@@ -5712,7 +6109,8 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       }
     }
 
-    QMenu* selectedLayerMenu = allMenu->addMenu(QStringLiteral("選択レイヤー"));
+    menu.addSeparator();
+    QMenu* selectedLayerMenu = menu.addMenu(tt("layer_panel.menu_selected", "Selected Layers"));
     selectedLayerMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_select_all.svg")));
     buildSelectedLayerMenu(selectedLayerMenu, layer, triggerOpenInspector, triggerOpenProperties,
                            triggerSelectedVisibility, triggerSelectedLock, triggerSelectedSolo,
@@ -5721,42 +6119,42 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
                            triggerPrecomposeSelectedLayers);
 
     if (selectedIds.size() > 1) {
-      QMenu* selectedBatchMenu = addIconMenu(selectedLayerMenu, QStringLiteral("一括操作"), QStringLiteral("Studio/layermenu_group.svg"));
-      addIconAction(selectedBatchMenu, QStringLiteral("複製"), QStringLiteral("Studio/layermenu_content_copy.svg"), [triggerDuplicateSelectedLayers]() {
+      QMenu* selectedBatchMenu = addIconMenu(selectedLayerMenu, tt("layer_panel.menu_batch", "Batch Operations"), QStringLiteral("Studio/layermenu_group.svg"));
+      addIconAction(selectedBatchMenu, tt("layer_panel.menu_duplicate", "Duplicate"), QStringLiteral("Studio/layermenu_content_copy.svg"), [triggerDuplicateSelectedLayers]() {
         triggerDuplicateSelectedLayers();
       });
-      addIconAction(selectedBatchMenu, QStringLiteral("グループ化..."), QStringLiteral("Studio/layermenu_group.svg"), [triggerGroupSelectedLayers]() {
+      addIconAction(selectedBatchMenu, tt("layer_panel.menu_group_layers", "Group..."), QStringLiteral("Studio/layermenu_group.svg"), [triggerGroupSelectedLayers]() {
         triggerGroupSelectedLayers();
       });
       selectedBatchMenu->addSeparator();
-      addIconAction(selectedBatchMenu, QStringLiteral("表示"), QStringLiteral("Studio/timeline_visibility.svg"), [triggerSelectedVisibility]() {
+      addIconAction(selectedBatchMenu, tt("layer_panel.menu_show", "Show"), QStringLiteral("Studio/timeline_visibility.svg"), [triggerSelectedVisibility]() {
         triggerSelectedVisibility(true);
       });
-      addIconAction(selectedBatchMenu, QStringLiteral("非表示"), QStringLiteral("Studio/visibility_off.svg"), [triggerSelectedVisibility]() {
+      addIconAction(selectedBatchMenu, tt("layer_panel.menu_hide", "Hide"), QStringLiteral("Studio/visibility_off.svg"), [triggerSelectedVisibility]() {
         triggerSelectedVisibility(false);
       });
-      addIconAction(selectedBatchMenu, QStringLiteral("ロック"), QStringLiteral("Studio/timeline_lock.svg"), [triggerSelectedLock]() {
+      addIconAction(selectedBatchMenu, tt("layer_panel.menu_lock", "Lock"), QStringLiteral("Studio/timeline_lock.svg"), [triggerSelectedLock]() {
         triggerSelectedLock(true);
       });
-      addIconAction(selectedBatchMenu, QStringLiteral("ロック解除"), QStringLiteral("Studio/lock_open.svg"), [triggerSelectedLock]() {
+      addIconAction(selectedBatchMenu, tt("layer_panel.menu_unlock", "Unlock"), QStringLiteral("Studio/lock_open.svg"), [triggerSelectedLock]() {
         triggerSelectedLock(false);
       });
-      addIconAction(selectedBatchMenu, QStringLiteral("ソロ"), QStringLiteral("Studio/timeline_solo.svg"), [triggerSelectedSolo]() {
+      addIconAction(selectedBatchMenu, tt("layer_panel.menu_solo", "Solo"), QStringLiteral("Studio/timeline_solo.svg"), [triggerSelectedSolo]() {
         triggerSelectedSolo(true);
       });
-      addIconAction(selectedBatchMenu, QStringLiteral("ソロ解除"), QStringLiteral("Studio/timeline_solo.svg"), [triggerSelectedSolo]() {
+      addIconAction(selectedBatchMenu, tt("layer_panel.menu_unsolo", "Unsolo"), QStringLiteral("Studio/timeline_solo.svg"), [triggerSelectedSolo]() {
         triggerSelectedSolo(false);
       });
-      addIconAction(selectedBatchMenu, QStringLiteral("シャイ"), QStringLiteral("Studio/timeline_shy.svg"), [triggerSelectedShy]() {
+      addIconAction(selectedBatchMenu, tt("layer_panel.menu_shy", "Shy"), QStringLiteral("Studio/timeline_shy.svg"), [triggerSelectedShy]() {
         triggerSelectedShy(true);
       });
-      addIconAction(selectedBatchMenu, QStringLiteral("シャイ解除"), QStringLiteral("Studio/timeline_switch_shy.svg"), [triggerSelectedShy]() {
+      addIconAction(selectedBatchMenu, tt("layer_panel.menu_unshy", "Unshy"), QStringLiteral("Studio/timeline_switch_shy.svg"), [triggerSelectedShy]() {
         triggerSelectedShy(false);
       });
     }
 
-    QMenu* selectionStateMenu = addIconMenu(selectedLayerMenu, QStringLiteral("選択状態"), QStringLiteral("Studio/editmenu_select_all.svg"));
-    addIconAction(selectionStateMenu, QStringLiteral("全選択"), QStringLiteral("Studio/editmenu_select_all.svg"), [this]() {
+    QMenu* selectionStateMenu = addIconMenu(selectedLayerMenu, tt("layer_panel.menu_selection", "Selection"), QStringLiteral("Studio/editmenu_select_all.svg"));
+    addIconAction(selectionStateMenu, tt("layer_panel.menu_select_all", "Select All"), QStringLiteral("Studio/editmenu_select_all.svg"), [this]() {
       auto comp = safeCompositionLookup(impl_->compositionId);
       if (!comp) {
         return;
@@ -5770,7 +6168,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       }
       replaceSelectionWithIds(comp, allIds);
     });
-    addIconAction(selectionStateMenu, QStringLiteral("選択反転"), QStringLiteral("Studio/editmenu_select_invert.svg"), [this, selectedIds]() {
+    addIconAction(selectionStateMenu, tt("layer_panel.menu_select_invert", "Invert Selection"), QStringLiteral("Studio/editmenu_select_invert.svg"), [this, selectedIds]() {
       auto comp = safeCompositionLookup(impl_->compositionId);
       if (!comp) {
         return;
@@ -5787,34 +6185,34 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       }
       replaceSelectionWithIds(comp, inverted);
     });
-    addIconAction(selectionStateMenu, QStringLiteral("選択を解除"), QStringLiteral("Studio/editmenu_select_none.svg"), [this]() {
+    addIconAction(selectionStateMenu, tt("layer_panel.menu_select_none", "Deselect All"), QStringLiteral("Studio/editmenu_select_none.svg"), [this]() {
       replaceSelectionWithIds(safeCompositionLookup(impl_->compositionId), {});
     });
     selectedLayerMenu->addSeparator();
-    QMenu* selectPatternMenu = addIconMenu(selectedLayerMenu, QStringLiteral("選択補助"), QStringLiteral("Studio/timemenu_step_forward.svg"));
-    addIconAction(selectPatternMenu, QStringLiteral("2個おき"), QStringLiteral("Studio/timemenu_step_forward.svg"), [this, selectedVisibleIds]() {
+    QMenu* selectPatternMenu = addIconMenu(selectedLayerMenu, tt("layer_panel.menu_select_helpers", "Selection Helpers"), QStringLiteral("Studio/timemenu_step_forward.svg"));
+    addIconAction(selectPatternMenu, tt("layer_panel.menu_every_2nd", "Every 2nd"), QStringLiteral("Studio/timemenu_step_forward.svg"), [this, selectedVisibleIds]() {
       replaceSelectionWithIds(safeCompositionLookup(impl_->compositionId),
                               layerIdsWithStride(selectedVisibleIds, 2, 0));
     });
-    addIconAction(selectPatternMenu, QStringLiteral("3個おき"), QStringLiteral("Studio/timemenu_step_backward.svg"), [this, selectedVisibleIds]() {
+    addIconAction(selectPatternMenu, tt("layer_panel.menu_every_3rd", "Every 3rd"), QStringLiteral("Studio/timemenu_step_backward.svg"), [this, selectedVisibleIds]() {
       replaceSelectionWithIds(safeCompositionLookup(impl_->compositionId),
                               layerIdsWithStride(selectedVisibleIds, 3, 0));
     });
     selectPatternMenu->addSeparator();
-    addIconAction(selectPatternMenu, QStringLiteral("偶数"), QStringLiteral("Studio/viewmenu_grid_on.svg"), [this, selectedVisibleIds]() {
+    addIconAction(selectPatternMenu, tt("layer_panel.menu_even", "Even"), QStringLiteral("Studio/viewmenu_grid_on.svg"), [this, selectedVisibleIds]() {
       replaceSelectionWithIds(safeCompositionLookup(impl_->compositionId),
                               layerIdsWithStride(selectedVisibleIds, 2, 1));
     });
-    addIconAction(selectPatternMenu, QStringLiteral("奇数"), QStringLiteral("Studio/viewmenu_grid_view.svg"), [this, selectedVisibleIds]() {
+    addIconAction(selectPatternMenu, tt("layer_panel.menu_odd", "Odd"), QStringLiteral("Studio/viewmenu_grid_view.svg"), [this, selectedVisibleIds]() {
       replaceSelectionWithIds(safeCompositionLookup(impl_->compositionId),
                               layerIdsWithStride(selectedVisibleIds, 2, 0));
     });
     selectPatternMenu->addSeparator();
-    addIconAction(selectPatternMenu, QStringLiteral("同名だけ"), QStringLiteral("Studio/layermenu_content_copy.svg"), [this, selectedIds]() {
+    addIconAction(selectPatternMenu, tt("layer_panel.menu_same_name", "Same Name Only"), QStringLiteral("Studio/layermenu_content_copy.svg"), [this, selectedIds]() {
       auto comp = safeCompositionLookup(impl_->compositionId);
       replaceSelectionWithIds(comp, layerIdsWithSameName(comp, selectedIds));
     });
-    addIconAction(selectPatternMenu, QStringLiteral("同種だけ"), QStringLiteral("Studio/select_same_type.svg"), [this, selectedVisibleIds]() {
+    addIconAction(selectPatternMenu, tt("layer_panel.menu_same_type", "Same Type Only"), QStringLiteral("Studio/select_same_type.svg"), [this, selectedVisibleIds]() {
       auto comp = safeCompositionLookup(impl_->compositionId);
       if (!comp || selectedVisibleIds.isEmpty()) return;
       const auto kind = layerIconKindForLayer(comp->layerById(selectedVisibleIds.first()));
@@ -5898,11 +6296,7 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
     return;
   }
   const int rowH = impl_->rowHeight;
-  const int nameStartX = [this]() {
-    int x = 0;
-    for (int i = 0; i < kLayerPropertyColumnCount; ++i) if (impl_->columnVisible_[i]) x += impl_->columnWidths_[i];
-    return x;
-  }();
+  const int nameStartX = 0;
   const int idx = impl_->rowIndexFromViewportY(event->pos().y());
   if (idx < 0 || idx >= impl_->visibleRows.size()) {
    QWidget::mouseDoubleClickEvent(event);
@@ -5923,8 +6317,9 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
     const auto property = layer->getProperty(editPath);
     const auto comp = safeCompositionLookup(impl_->compositionId);
     if (!property || !comp) return;
-    const RationalTime time(comp->framePosition().framePosition(),
-                            safeLayerPanelFrameRate(comp->frameRate().framerate()));
+    const auto scale = FrameRate::storageScaleForFps(
+        safeLayerPanelFrameRate(comp->frameRate().framerate()));
+    const RationalTime time(comp->framePosition().framePosition(), scale);
     QVariant value = property->interpolateValue(time);
     if (!value.isValid()) value = property->getValue();
     QVariant next;
@@ -5973,7 +6368,7 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
 
   if (row.hasChildren) {
     const int nameX = nameStartX + row.depth * 14;
-    const QRect treeHitRect(nameX, impl_->rowViewportY(idx), std::max(40, width() - nameX), rowH);
+    const QRect treeHitRect(nameX, impl_->rowViewportY(idx), std::max(0, impl_->switchStart(width()) - nameX), rowH);
     if (treeHitRect.contains(event->pos())) {
     const QString idStr = layer->id().toString();
     impl_->expandedByLayerId[idStr] = !impl_->expandedByLayerId.value(idStr, true);
@@ -5986,7 +6381,7 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
   const bool showInlineCombos = showLayerMetadata(width());
   const int parentRectX = width() - kInlineComboReserve;
   const int nameX = nameStartX + row.depth * 14 + (row.hasChildren ? 16 : 4);
-  const int nameWidth = showInlineCombos ? std::max(20, parentRectX - nameX - 8) : std::max(20, width() - nameX - 8);
+  const int nameWidth = std::max(20, impl_->switchStart(width()) - nameX - 8);
   const QRect editRect(nameX + 2, impl_->rowViewportY(idx) + 2, nameWidth, rowH - 4);
 
   if (auto *compLayer = dynamic_cast<ArtifactCompositionLayer *>(layer.get())) {
@@ -6103,10 +6498,10 @@ void ArtifactLayerPanelWidget::mouseMoveEvent(QMouseEvent* event)
   if (impl_->dragCol_ < 0 && idx >= 0 && idx < impl_->visibleRows.size()) {
     const auto& hoverRow = impl_->visibleRows[idx];
     if (hoverRow.kind == RowKind::Layer) {
-      int cumCX = 0;
+      int cumCX = impl_->switchStart(width());
       for (int ci = 0; ci < kLayerPropertyColumnCount - 1; ++ci) {
-        cumCX += impl_->columnWidths_[ci];
         if (!impl_->columnVisible_[ci]) continue;
+        cumCX += impl_->columnWidths_[ci];
         if (std::abs(event->pos().x() - cumCX) <= kColumnDividerDragMargin) {
           setCursor(Qt::SplitHCursor);
           event->accept();
@@ -6116,16 +6511,9 @@ void ArtifactLayerPanelWidget::mouseMoveEvent(QMouseEvent* event)
     }
   }
 
-  bool pointer = event->pos().x() < [this]() {
-    int x = 0;
-    for (int i = 0; i < kLayerPropertyColumnCount; ++i) if (impl_->columnVisible_[i]) x += impl_->columnWidths_[i];
-    return x;
-  }();
-  const int colNameStartX = [this]() {
-    int x = 0;
-    for (int i = 0; i < kLayerPropertyColumnCount; ++i) if (impl_->columnVisible_[i]) x += impl_->columnWidths_[i];
-    return x;
-  }();
+  bool pointer = event->pos().x() >= impl_->switchStart(width()) &&
+      event->pos().x() < propertyValueRect(width(), 0, impl_->rowHeight).left();
+  const int colNameStartX = 0;
   if (!pointer && idx >= 0 && idx < impl_->visibleRows.size()) {
     const auto& row = impl_->visibleRows[idx];
     if (row.hasChildren) {
@@ -6147,7 +6535,7 @@ void ArtifactLayerPanelWidget::mouseMoveEvent(QMouseEvent* event)
   QString toolTipText;
   if (idx >= 0 && idx < impl_->visibleRows.size() &&
       impl_->visibleRows[idx].kind == RowKind::Property) {
-    toolTipText = tr("Double-click the value to edit. The clock indicates animation; the diamond toggles a key at the current frame.");
+    toolTipText = tt("layer_panel.keyframe_value_hint", "Double-click the value to edit. The clock indicates animation; the diamond toggles a key at the current frame.");
   }
   if (idx >= 0 && idx < impl_->visibleRows.size()) {
     const auto& row = impl_->visibleRows[idx];
@@ -6160,7 +6548,7 @@ void ArtifactLayerPanelWidget::mouseMoveEvent(QMouseEvent* event)
         for (size_t i = 0; i < mattes.size(); ++i) {
           parts << matteSummaryLabel(comp, mattes[i], static_cast<int>(i));
         }
-        toolTipText = QStringLiteral("Track Mattes: %1").arg(parts.join(QStringLiteral(" | ")));
+        toolTipText = tt("layer_panel.matte_list_hint", "Track Mattes: %1").arg(parts.join(QStringLiteral(" | ")));
       } else if (!impl_->dragStarted_) {
         const qint64 inFrame = row.layer->inPoint().framePosition();
         const qint64 outFrame = row.layer->outPoint().framePosition();
@@ -6980,11 +7368,7 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
    }
    if (selectedIdx >= 0) {
       const int y = impl_->rowViewportY(selectedIdx) + impl_->rowHeight / 2;
-      const int x = [this]() {
-        int x = 0;
-        for (int i = 0; i < kLayerPropertyColumnCount; ++i) x += impl_->columnWidths_[i];
-        return x;
-      }() + 20;
+      const int x = 20;
     QMouseEvent fakeEvent(QEvent::MouseButtonDblClick, QPointF(x, y), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
     mouseDoubleClickEvent(&fakeEvent);
     event->accept();
@@ -7129,10 +7513,10 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
   
   const QRect dirtyRect = event->rect();
   const auto& theme = ArtifactCore::currentDCCTheme();
-  const QColor background = themeColor(theme.secondaryBackgroundColor, QColor(QStringLiteral("#2A2A2A")));
   const QColor surface = themeColor(theme.backgroundColor, QColor(QStringLiteral("#25272D")));
+  const QColor background(35, 39, 43);
   const QColor text = themeColor(theme.textColor, QColor(QStringLiteral("#DADADA")));
-  const QColor accent = themeColor(theme.accentColor, QColor(QStringLiteral("#E4B76C")));
+  const QColor accent(61, 184, 234);
   const QColor selection = themeColor(theme.selectionColor, QColor(QStringLiteral("#4A515C")));
   const QColor border = themeColor(theme.borderColor, QColor(QStringLiteral("#1A1A1A")));
 
@@ -7140,19 +7524,23 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
 
   RationalTime currentTime = impl_->currentTime;
   if (auto comp = safeCompositionLookup(impl_->compositionId)) {
-    const auto fps = safeLayerPanelFrameRate(comp->frameRate().framerate());
-    currentTime = RationalTime(comp->framePosition().framePosition(), fps);
+    const auto scale = FrameRate::storageScaleForFps(
+        safeLayerPanelFrameRate(comp->frameRate().framerate()));
+    currentTime = RationalTime(comp->framePosition().framePosition(), scale);
   }
 
   if (impl_->visibleRows.isEmpty()) {
     auto comp = safeCompositionLookup(impl_->compositionId);
+    const QRect messageRect = rect().adjusted(0, rowH * 2, 0, 0);
     if (!comp) {
       p.setPen(text.darker(120));
-      p.drawText(rect(), Qt::AlignCenter, "Open a composition to view layers");
+      p.drawText(messageRect, Qt::AlignHCenter | Qt::AlignTop,
+                 "Open a composition to view layers");
       return;
     }
     p.setPen(text.darker(120));
-    p.drawText(rect(), Qt::AlignCenter, "Add a layer to begin");
+    p.drawText(messageRect, Qt::AlignHCenter | Qt::AlignTop,
+               "Add a layer to begin");
     return;
   }
 
@@ -7170,11 +7558,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
     }
   }
 
-  const int nameStartX = [&]() {
-    int x = 0;
-    for (int i = 0; i < kLayerPropertyColumnCount; ++i) if (impl_->columnVisible_[i]) x += impl_->columnWidths_[i];
-    return x;
-  }();
+  const int nameStartX = 0;
 
   p.save();
   p.translate(0.0, -impl_->verticalOffset);
@@ -7188,6 +7572,45 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
     int y = i * rowH;
     const auto& row = impl_->visibleRows[i];
     auto l = row.layer;
+    if (row.kind == RowKind::Container) {
+      const QFont previousFont = p.font();
+      const int toggleX = nameStartX + row.depth * indent + 2;
+      const int toggleY = y + (rowH - toggleSize) / 2;
+      const bool selectedContainer = row.nodeId == impl_->selectedContainerId;
+      p.fillRect(0, y, width(), rowH, selectedContainer
+          ? mixColor(background, selection, 0.44)
+          : mixColor(background, surface, 0.55));
+      p.fillRect(0, y, 4, rowH, mixColor(background, accent, 0.85));
+      if (row.hasChildren) {
+        QPolygonF tri;
+        if (row.expanded) {
+          tri << QPointF(toggleX + 0.5, toggleY + 2.0)
+              << QPointF(toggleX + toggleSize - 0.5, toggleY + 2.0)
+              << QPointF(toggleX + toggleSize / 2.0, toggleY + toggleSize - 1.0);
+        } else {
+          tri << QPointF(toggleX + 2.0, toggleY + 0.5)
+              << QPointF(toggleX + 2.0, toggleY + toggleSize - 0.5)
+              << QPointF(toggleX + toggleSize - 1.0, toggleY + toggleSize / 2.0);
+        }
+        p.setPen(Qt::NoPen);
+        p.setBrush(text.darker(25));
+        p.drawPolygon(tri);
+      }
+      QFont containerFont = p.font();
+      containerFont.setBold(true);
+      p.setFont(containerFont);
+      p.setPen(mixColor(text, accent, 0.28));
+      const int textX = toggleX + toggleSize + 6;
+      p.drawText(textX, y, std::max(20, width() - textX - 92), rowH,
+                 Qt::AlignVCenter | Qt::AlignLeft, row.label);
+      p.setPen(mixColor(text, surface, 0.38));
+      p.drawText(width() - 86, y, 78, rowH,
+                 Qt::AlignVCenter | Qt::AlignRight, row.auxiliaryText);
+      p.setFont(previousFont);
+      p.setPen(border.darker(120));
+      p.drawLine(0, y + rowH, width(), y + rowH);
+      continue;
+    }
     if (row.kind == RowKind::Transition) {
       const bool hovered = i == impl_->hoveredLayerIndex;
       const QColor barFill = hovered ? mixColor(surface, accent, 0.30)
@@ -7237,15 +7660,15 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
     // Keep layer selection a muted blue-grey band.  It distinguishes the
     // selected layer from the warmer work-area/range colors without turning
     // the compact property table into a bright accent block.
-    const QColor rowSelected(52, 85, 111);
+    const QColor rowSelected(35, 62, 85);
     if (propertyFocused) {
       p.fillRect(0, y, width(), rowH, mixColor(background, selection, 0.32));
     } else if (maskSelected) {
       p.fillRect(0, y, width(), rowH, mixColor(background, accent, 0.30));
     } else if (layerSelected) {
-      QColor selectedEdge = mixColor(accent, text, 0.15);
+      QColor selectedEdge(61, 184, 234);
       selectedEdge.setAlpha(220);
-      p.fillRect(0, y, width(), rowH, rowSelected); // Stronger amber selection
+      p.fillRect(0, y, width(), rowH, rowSelected);
       p.fillRect(0, y, 4, rowH, selectedEdge);
 
     }
@@ -7413,7 +7836,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
       continue;
     }
 
-    int curX = 0;
+    int curX = impl_->switchStart(width());
     if (!isPropertyRow && !isDisplayLeafRow) {
       const int colCount = kLayerPropertyColumnCount;
       const QPixmap* colIcons[colCount] = {&impl_->visibilityIcon, &impl_->lockIcon, &impl_->soloIcon, &impl_->audioIcon, &impl_->shyIcon, &impl_->parentWhipIcon};
@@ -7471,6 +7894,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
       curX = nameStartX;
     }
 
+    curX = nameStartX;
     // カラーラベルインジケータ
     if (!isPropertyRow && !isDisplayLeafRow) {
       const int colorIdx = l->labelColorIndex();
@@ -7552,6 +7976,17 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
       }
       textX += kLayerTypeIconSize + kLayerTypeIconGap;
       p.setPen(text);
+      if (impl_->collaborationLockedLayerIds.contains(l->id())) {
+        const int iconX = textX;
+        const int iconY = y + (rowH - 12) / 2;
+        const QColor collaborationLockColor = QColor(235, 170, 78);
+        p.setPen(QPen(collaborationLockColor, 1.5));
+        p.setBrush(Qt::NoBrush);
+        p.drawArc(QRect(iconX + 3, iconY, 8, 8), 0, 180 * 16);
+        p.drawRoundedRect(QRect(iconX + 1, iconY + 5, 12, 8), 1.5, 1.5);
+        p.setPen(text);
+        textX += 16;
+      }
     }
     const bool showInlineCombos = row.kind == RowKind::Layer &&
                                   showLayerMetadata(width());
@@ -7693,7 +8128,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
                  fm.elidedText(matteBadgeText, Qt::ElideRight, matteBadgeRect.width() - 16));
      }
      p.setPen(layerSelected ? text.lighter(110) : text);
-     const int nameWidth = std::max(0, layerContentRight(width()) - layerTextX - variantChipW - 10);
+     const int nameWidth = std::max(0, impl_->switchStart(width()) - layerTextX - variantChipW - 10);
      p.drawText(layerTextX, y, nameWidth, rowH, Qt::AlignVCenter | Qt::AlignLeft,
                 fm.elidedText(layerName, Qt::ElideRight, nameWidth));
 
@@ -7730,23 +8165,8 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
 
   p.restore();
 
-   // P: ステータスバー（下部に常時表示）
-   {
-    constexpr int kStatusH = 22;
-   auto comp = safeCompositionLookup(impl_->compositionId);
-   const int totalLayers = comp ? static_cast<int>(comp->allLayer().size()) : 0;
-    const QString statusText = QStringLiteral("%1 layers").arg(totalLayers);
-    const QRect sbRect(0, height() - kStatusH, width(), kStatusH);
-    QColor sbBg = mixColor(background, surface, 0.60);
-    sbBg.setAlpha(230);
-    p.fillRect(sbRect, sbBg);
-    p.setPen(text.darker(110));
-    QFont sf = p.font();
-    sf.setPointSizeF(qMax(7.0, sf.pointSizeF() - 2.0));
-    p.setFont(sf);
-    p.drawText(sbRect.adjusted(8, 0, -8, 0), Qt::AlignVCenter | Qt::AlignLeft, statusText);
-    p.drawLine(0, sbRect.top(), width(), sbRect.top());
-   }
+   // Composition/frame status belongs to the timeline footer. Do not paint
+   // a status overlay here: it obscures editable rows without reserving space.
 
  }
 
@@ -8013,11 +8433,11 @@ public:
       }
 
       QMenu menu(impl_->panel);
-      QMenu* hierarchyMenu = menu.addMenu(QStringLiteral("親子の表示範囲"));
-      QAction* allLayersAction = hierarchyMenu->addAction(QStringLiteral("すべてのレイヤー"));
-      QAction* parentLayersAction = hierarchyMenu->addAction(QStringLiteral("親レイヤー"));
-      QAction* childLayersAction = hierarchyMenu->addAction(QStringLiteral("子レイヤー"));
-      QAction* rootLayersAction = hierarchyMenu->addAction(QStringLiteral("ルートレイヤー"));
+      QMenu* hierarchyMenu = menu.addMenu(tt("layer_panel.menu_scope", "Hierarchy Scope"));
+      QAction* allLayersAction = hierarchyMenu->addAction(tt("layer_panel.menu_scope_all", "All Layers"));
+      QAction* parentLayersAction = hierarchyMenu->addAction(tt("layer_panel.menu_scope_parents", "Parent Layers"));
+      QAction* childLayersAction = hierarchyMenu->addAction(tt("layer_panel.menu_scope_children", "Child Layers"));
+      QAction* rootLayersAction = hierarchyMenu->addAction(tt("layer_panel.menu_scope_roots", "Root Layers"));
       const auto hierarchyFilter = impl_->panel->hierarchyFilter();
       const auto configureHierarchyAction = [hierarchyFilter](QAction* action,
                                                                TimelineLayerHierarchyFilter filter) {
@@ -8191,6 +8611,12 @@ void ArtifactLayerTimelinePanelWrapper::dropEvent(QDropEvent* event)
    impl_->id = id;
    impl_->panel->setComposition(id);
    impl_->panel->updateLayout();
+  }
+
+  void ArtifactLayerTimelinePanelWrapper::setCollaborationLockedLayers(
+      const QVector<LayerID>& layerIds)
+  {
+   if (impl_ && impl_->panel) impl_->panel->setCollaborationLockedLayers(layerIds);
   }
 
 void ArtifactLayerTimelinePanelWrapper::setFilterText(const QString& text)

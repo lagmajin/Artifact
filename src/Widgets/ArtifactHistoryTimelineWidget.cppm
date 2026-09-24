@@ -20,6 +20,9 @@ module;
 #include <QMetaObject>
 #include <QVBoxLayout>
 #include <wobjectimpl.h>
+#include <memory>
+#include <utility>
+#include <vector>
 
 module Artifact.Widgets.HistoryTimelineWidget;
 
@@ -27,7 +30,6 @@ import Artifact.Event.Types;
 import Event.Bus;
 import Undo.UndoManager;
 import Widgets.Utils.CSS;
-import std;
 
 namespace Artifact {
 

@@ -1,6 +1,8 @@
 module;
 
 #include <QApplication>
+#include <QColor>
+#include <QLineF>
 #include <QFont>
 #include <QPointF>
 #include <QRectF>
@@ -19,6 +21,62 @@ import Color.Float;
 import Memory.SharedPtr;
 
 namespace Artifact {
+
+void drawLayerEditorColliderOverlay(
+    ArtifactIRenderer* renderer, const ArtifactAbstractLayerPtr& layer)
+{
+ if (!renderer || !layer) return;
+ const auto enabled = layer->getProperty(QStringLiteral("component.collision.enabled"));
+ if (!enabled || !enabled->getValue().toBool()) return;
+ const auto colorProperty = layer->getProperty(
+     QStringLiteral("component.collision.displayColor"));
+ const QColor qColor = colorProperty ? colorProperty->getValue().value<QColor>()
+                                     : QColor(61, 211, 192, 220);
+ if (!qColor.isValid()) return;
+ const FloatColor color{qColor.redF(), qColor.greenF(), qColor.blueF(), qColor.alphaF()};
+ const FloatColor shadow{0.0f, 0.0f, 0.0f, 0.55f};
+ const auto state = layer->collision2DEditState();
+ const QTransform transform = layer->getGlobalTransform();
+ const float thickness = 2.5f;
+ const auto drawSegment = [&](const QPointF& a, const QPointF& b) {
+   const auto p0 = transform.map(a);
+   const auto p1 = transform.map(b);
+   renderer->drawThickLineLocal(
+       {static_cast<float>(p0.x()), static_cast<float>(p0.y())},
+       {static_cast<float>(p1.x()), static_cast<float>(p1.y())},
+       thickness + 3.0f, shadow);
+   renderer->drawThickLineLocal(
+       {static_cast<float>(p0.x()), static_cast<float>(p0.y())},
+       {static_cast<float>(p1.x()), static_cast<float>(p1.y())},
+       thickness, color);
+ };
+ if (state.shape == ArtifactCore::Collider2DShape::Polygon) {
+   const auto points = layer->collisionOutlineLocalPoints();
+   if (points.size() < 3) return;
+   for (size_t i = 0; i < points.size(); ++i)
+     drawSegment(points[i], points[(i + 1) % points.size()]);
+   return;
+ }
+ if (state.shape == ArtifactCore::Collider2DShape::Circle) {
+   const QPointF center = state.resolvedCenter();
+   const QPointF edge = center + QPointF(state.resolvedRadius(), 0.0);
+   const auto mappedCenter = transform.map(center);
+   const auto mappedEdge = transform.map(edge);
+   const float radius = static_cast<float>(QLineF(mappedCenter, mappedEdge).length());
+   renderer->drawCircle(static_cast<float>(mappedCenter.x()),
+                        static_cast<float>(mappedCenter.y()), radius,
+                        shadow, thickness + 3.0f, false);
+   renderer->drawCircle(static_cast<float>(mappedCenter.x()),
+                        static_cast<float>(mappedCenter.y()), radius,
+                        color, thickness, false);
+   return;
+ }
+ const QRectF bounds = state.resolvedBoxBounds();
+ drawSegment(bounds.topLeft(), bounds.topRight());
+ drawSegment(bounds.topRight(), bounds.bottomRight());
+ drawSegment(bounds.bottomRight(), bounds.bottomLeft());
+ drawSegment(bounds.bottomLeft(), bounds.topLeft());
+}
 
 void drawLayerEditorShapeOverlay(
     ArtifactIRenderer* renderer, const ArtifactAbstractLayerPtr& layer,

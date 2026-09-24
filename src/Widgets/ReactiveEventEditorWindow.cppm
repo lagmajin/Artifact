@@ -32,10 +32,10 @@ module;
 #include <QColor>
 #include <QFont>
 #include <wobjectimpl.h>
+#include <vector>
 
 module Artifact.Widgets.ReactiveEventEditorWindow;
 
-import std;
 import Artifact.Event.Types;
 import Artifact.Service.Project;
 import Artifact.Composition.Abstract;

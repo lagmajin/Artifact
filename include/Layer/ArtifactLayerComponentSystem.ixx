@@ -5,7 +5,6 @@ module;
 #include <functional>
 #include <numeric>
 #include <utility>
-#include <vector>
 
 #include <QJsonArray>
 #include <QJsonObject>
@@ -18,6 +17,7 @@ module;
 export module Artifact.Layer.Component.System;
 
 import Utils.Optional;
+import Container.NamedVector;
 
 export namespace Artifact {
 
@@ -207,12 +207,12 @@ public:
     LayerComponentDescriptor* findByType(const QString& typeId);
     const LayerComponentDescriptor* findByType(const QString& typeId) const;
 
-    std::vector<LayerComponentDescriptor> components() const;
-    std::vector<LayerComponentDescriptor> enabledForPhase(
+    ArtifactCore::NamedVector<LayerComponentDescriptor> components() const;
+    ArtifactCore::NamedVector<LayerComponentDescriptor> enabledForPhase(
         LayerComponentPhase phase) const;
-    std::vector<LayerComponentDescriptor> enabledForScope(
+    ArtifactCore::NamedVector<LayerComponentDescriptor> enabledForScope(
         LayerComponentScope scope) const;
-    std::vector<LayerComponentValidationIssue> validate() const;
+    ArtifactCore::NamedVector<LayerComponentValidationIssue> validate() const;
     int autoFixValidationIssues();
     void clearTransientEventsForScope(LayerEvaluationState& state,
                                       LayerComponentScope scope) const;
@@ -221,7 +221,8 @@ public:
     void fromJson(const QJsonArray& array);
 
 private:
-    std::vector<LayerComponentDescriptor> components_;
+    ArtifactCore::NamedVector<LayerComponentDescriptor> components_{
+        ArtifactCore::ContainerName{"Layer.ComponentDescriptors"}};
 };
 
 struct SimulationEntityId {
@@ -294,18 +295,27 @@ struct LayerFragmentState {
 struct LayerFragmentGeometry {
     QString geometryHandle;
     QString materialHandle;
-    std::vector<QVector2D> localPolygon;
-    std::vector<QVector2D> localUV;
+    ArtifactCore::NamedVector<QVector2D> localPolygon{
+        ArtifactCore::ContainerName{"Layer.FragmentLocalPolygon"}};
+    ArtifactCore::NamedVector<QVector2D> localUV{
+        ArtifactCore::ContainerName{"Layer.FragmentLocalUV"}};
 };
 
 struct LayerEvaluationState {
-    std::vector<LayerInstanceState> instances;
-    std::vector<LayerFragmentState> fragments;
-    std::vector<LayerFragmentGeometry> fragmentGeometry;
-    std::vector<LayerMotionIntent> intents;
-    std::vector<LayerContactEvent> contacts;
-    std::vector<LayerFractureEvent> pendingFractures;
-    std::vector<LayerParticleSpawnEvent> pendingParticleSpawns;
+    ArtifactCore::NamedVector<LayerInstanceState> instances{
+        ArtifactCore::ContainerName{"Layer.EvaluationInstances"}};
+    ArtifactCore::NamedVector<LayerFragmentState> fragments{
+        ArtifactCore::ContainerName{"Layer.EvaluationFragments"}};
+    ArtifactCore::NamedVector<LayerFragmentGeometry> fragmentGeometry{
+        ArtifactCore::ContainerName{"Layer.EvaluationFragmentGeometry"}};
+    ArtifactCore::NamedVector<LayerMotionIntent> intents{
+        ArtifactCore::ContainerName{"Layer.EvaluationIntents"}};
+    ArtifactCore::NamedVector<LayerContactEvent> contacts{
+        ArtifactCore::ContainerName{"Layer.EvaluationContacts"}};
+    ArtifactCore::NamedVector<LayerFractureEvent> pendingFractures{
+        ArtifactCore::ContainerName{"Layer.PendingFractures"}};
+    ArtifactCore::NamedVector<LayerParticleSpawnEvent> pendingParticleSpawns{
+        ArtifactCore::ContainerName{"Layer.PendingParticleSpawns"}};
 
     void clearTransientEvents() {
         contacts.clear();
@@ -409,13 +419,10 @@ inline bool LayerComponentHost::upsert(LayerComponentDescriptor descriptor) {
 inline bool LayerComponentHost::remove(const QString& componentId) {
     const QString normalized = componentId.trimmed();
     const auto oldSize = components_.size();
-    components_.erase(
-        std::remove_if(
-            components_.begin(), components_.end(),
-            [&normalized](const LayerComponentDescriptor& descriptor) {
-                return descriptor.componentId == normalized;
-            }),
-        components_.end());
+    components_.removeIf(
+        [&normalized](const LayerComponentDescriptor& descriptor) {
+            return descriptor.componentId == normalized;
+        });
     return components_.size() != oldSize;
 }
 
@@ -463,14 +470,15 @@ LayerComponentHost::findByType(const QString& typeId) const {
     return nullptr;
 }
 
-inline std::vector<LayerComponentDescriptor>
+inline ArtifactCore::NamedVector<LayerComponentDescriptor>
 LayerComponentHost::components() const {
     return components_;
 }
 
-inline std::vector<LayerComponentDescriptor>
+inline ArtifactCore::NamedVector<LayerComponentDescriptor>
 LayerComponentHost::enabledForPhase(LayerComponentPhase phase) const {
-    std::vector<LayerComponentDescriptor> result;
+    ArtifactCore::NamedVector<LayerComponentDescriptor> result{
+        ArtifactCore::ContainerName{"Layer.EnabledPhaseComponents"}};
     for (const auto& descriptor : components_) {
         if (descriptor.enabled && descriptor.phase == phase) {
             result.push_back(descriptor);
@@ -487,9 +495,10 @@ LayerComponentHost::enabledForPhase(LayerComponentPhase phase) const {
     return result;
 }
 
-inline std::vector<LayerComponentValidationIssue>
+inline ArtifactCore::NamedVector<LayerComponentValidationIssue>
 LayerComponentHost::validate() const {
-    std::vector<LayerComponentValidationIssue> issues;
+    ArtifactCore::NamedVector<LayerComponentValidationIssue> issues{
+        ArtifactCore::ContainerName{"Layer.ComponentValidationIssues"}};
     for (std::size_t i = 0; i < components_.size(); ++i) {
         const auto& descriptor = components_[i];
         const QString componentLabel = descriptor.componentId.trimmed().isEmpty()
@@ -559,8 +568,10 @@ LayerComponentHost::validate() const {
     // Dependency cycles make phase ordering and deterministic evaluation
     // ambiguous. Detect them separately from missing/late dependencies so a
     // malformed descriptor graph cannot silently enter the evaluator.
-    std::vector<QString> visiting;
-    std::vector<QString> visited;
+    ArtifactCore::NamedVector<QString> visiting{
+        ArtifactCore::ContainerName{"Layer.ComponentValidationVisiting"}};
+    ArtifactCore::NamedVector<QString> visited{
+        ArtifactCore::ContainerName{"Layer.ComponentValidationVisited"}};
     std::function<void(const QString&)> visit = [&](const QString& typeId) {
         if (std::find(visited.begin(), visited.end(), typeId) != visited.end()) {
             return;
@@ -587,7 +598,7 @@ LayerComponentHost::validate() const {
         for (const auto& requiredTypeId : descriptor->requiredTypeIds) {
             visit(requiredTypeId.trimmed());
         }
-        visiting.pop_back();
+        visiting.popBack();
         visited.push_back(typeId);
     };
     for (const auto& descriptor : components_) {
@@ -600,24 +611,37 @@ inline int LayerComponentHost::autoFixValidationIssues() {
     int fixed = 0;
     auto issues = validate();
     if (issues.empty()) return 0;
-    std::set<QString> toDisable;
-    std::set<QString> toRemove;
+    ArtifactCore::NamedVector<QString> toDisable{
+        ArtifactCore::ContainerName{"Layer.ComponentValidationDisable"}};
+    const auto queueDisable = [&toDisable](const QString& componentId) {
+        if (std::find(toDisable.begin(), toDisable.end(), componentId) ==
+            toDisable.end()) {
+            toDisable.push_back(componentId);
+        }
+    };
     for (const auto& issue : issues) {
         if (issue.message.contains(QStringLiteral("Duplicate component id"))) {
             bool first = true;
-            for (auto it = components_.begin(); it != components_.end();) {
-                if (it->componentId == issue.componentId) {
-                    if (first) { first = false; ++it; }
-                    else { it = components_.erase(it); ++fixed; }
-                } else ++it;
+            for (std::size_t index = 0; index < components_.size();) {
+                const auto* descriptor = components_.at(index);
+                if (descriptor && descriptor->componentId == issue.componentId) {
+                    if (first) {
+                        first = false;
+                        ++index;
+                    } else if (components_.removeAt(index)) {
+                        ++fixed;
+                    }
+                } else {
+                    ++index;
+                }
             }
         } else if (issue.message.contains(QStringLiteral("requires")) && issue.message.contains(QStringLiteral("missing"))) {
-            toDisable.insert(issue.componentId);
+            queueDisable(issue.componentId);
         } else if (issue.message.contains(QStringLiteral("dependency cycle"))) {
             QString cycleId = issue.componentId;
             if (auto* d = find(cycleId)) { d->enabled = false; ++fixed; }
         } else if (issue.message.contains(QStringLiteral("evaluates later"))) {
-            toDisable.insert(issue.componentId);
+            queueDisable(issue.componentId);
         }
     }
     for (const auto& id : toDisable) {
@@ -628,9 +652,10 @@ inline int LayerComponentHost::autoFixValidationIssues() {
     return fixed;
 }
 
-inline std::vector<LayerComponentDescriptor>
+inline ArtifactCore::NamedVector<LayerComponentDescriptor>
 LayerComponentHost::enabledForScope(LayerComponentScope scope) const {
-    std::vector<LayerComponentDescriptor> result;
+    ArtifactCore::NamedVector<LayerComponentDescriptor> result{
+        ArtifactCore::ContainerName{"Layer.EnabledScopeComponents"}};
     for (const auto& d : components_) {
         if (d.enabled && d.scope == scope) result.push_back(d);
     }

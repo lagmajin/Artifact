@@ -12,6 +12,8 @@ module;
 #include <DiligentCore/Graphics/GraphicsEngine/interface/TextureView.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
+#include <cstdint>
+#include <vector>
 
 module Artifact.Layers.Noise;
 
@@ -19,7 +21,6 @@ import Artifact.Layer.CloneEffectSupport;
 import Artifact.Composition.Access;
 import Time.Rational;
 
-import std;
 import Artifact.Layers.Abstract._2D;
 import Artifact.Render.IRenderer;
 import Image.ImageF32x4_RGBA;

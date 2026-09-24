@@ -3,6 +3,7 @@ module;
 #include <cmath>
 #include <deque>
 #include <memory>
+#include <vector>
 #include <QApplication>
 #include <QDebug>
 #include <QDir>
@@ -43,6 +44,7 @@ import Artifact.Project.CreationDefaults;
 import Artifact.Layer.Factory;
 import Artifact.Layer.Result;
 import Artifact.Composition.Abstract;
+import Artifact.Composition.Nodes;
 import Artifact.Project.Items;
 import Artifact.Effect.Abstract;
 import Artifact.Layer.Image;
@@ -1497,6 +1499,44 @@ private:
 };
 
 // --- GroupLayersUndoCommand ---
+class CreateGroupContainerUndoCommand final : public UndoCommand {
+public:
+  CreateGroupContainerUndoCommand(ArtifactCompositionPtr composition,
+                                  QVector<LayerID> childIds,
+                                  QString displayName)
+      : composition_(std::move(composition)), childIds_(std::move(childIds)),
+        displayName_(std::move(displayName)) {}
+
+  void redo() override {
+    lastOperationSucceeded_ = false;
+    if (!composition_) return;
+    containerId_ = composition_->createGroupContainer(
+        displayName_, childIds_, containerId_);
+    lastOperationSucceeded_ = !containerId_.isEmpty();
+    if (lastOperationSucceeded_) {
+      if (auto* mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+    }
+  }
+
+  void undo() override {
+    lastOperationSucceeded_ = composition_ &&
+        composition_->removeGroupContainer(containerId_);
+    if (lastOperationSucceeded_) {
+      if (auto* mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+    }
+  }
+
+  QString label() const override { return QStringLiteral("Group Layers"); }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+
+private:
+  ArtifactCompositionPtr composition_;
+  QVector<LayerID> childIds_;
+  QString displayName_;
+  QString containerId_;
+  bool lastOperationSucceeded_ = true;
+};
+
 class GroupLayersUndoCommand : public UndoCommand {
 public:
   GroupLayersUndoCommand(QVector<LayerID> layerIds, UniString groupName)
@@ -3290,28 +3330,10 @@ bool ArtifactProjectService::groupSelectedLayersInCurrentComposition(
     return false;
   }
 
-  ArtifactLayerInitParams groupParams(groupName.toQString(), LayerType::Group);
-  addLayerToCurrentComposition(groupParams);
-
-  auto newGroup = selectionManager->currentLayer();
-  if (!newGroup || !comp->isGroupLayerResolved(newGroup)) {
-    return false;
-  }
-
-  const LayerID groupId = newGroup->id();
-  bool anyReparented = false;
-  for (const auto &layerId : selectedIds) {
-    if (layerId == groupId) {
-      continue;
-    }
-    anyReparented |= setLayerParentInCurrentComposition(layerId, groupId);
-  }
-
-  if (auto groupLayer = ArtifactCore::dynamicPointerCast<ArtifactGroupLayer>(newGroup)) {
-    groupLayer->setCollapsed(false);
-  }
-  selectLayer(groupId);
-  return anyReparented;
+  const QString requestedName = groupName.toQString().trimmed();
+  return !comp->createGroupContainer(
+      requestedName.isEmpty() ? QStringLiteral("Layer Group") : requestedName,
+      selectedIds).isEmpty();
 }
 
 bool ArtifactProjectService::removeLayerFromComposition(
@@ -4664,80 +4686,28 @@ bool ArtifactProjectService::groupSelectedLayersWithUndo(
   }
   if (ids.isEmpty()) return false;
   QSet<QString> seenIds;
-  QVector<ArtifactAbstractLayerPtr> layers;
-  QVector<LayerID> oldParentIds;
-  layers.reserve(ids.size());
-  oldParentIds.reserve(ids.size());
+  QVector<LayerID> uniqueIds;
+  uniqueIds.reserve(ids.size());
   for (const auto &id : ids) {
     const QString idText = id.toString();
     if (id.isNil() || seenIds.contains(idText)) continue;
+    const auto* node = comp->nodeStore().node(idText);
+    if (!comp->layerById(id) || !node ||
+        node->kind != CompositionNodeKind::Layer) return false;
     seenIds.insert(idText);
-    const auto layer = comp->layerById(id);
-    if (!layer) return false;
-    layers.push_back(layer);
-    oldParentIds.push_back(layer->parentLayerId());
+    uniqueIds.push_back(id);
   }
-  if (layers.isEmpty()) return false;
+  if (uniqueIds.isEmpty()) return false;
 
-  QStringList beforeSelectionIds;
-  for (const auto &selectedLayer : sel->selectedLayersInOrder()) {
-    if (selectedLayer) {
-      beforeSelectionIds.append(selectedLayer->id().toString());
-    }
-  }
-  const QString beforeCurrentSelection = sel->currentLayer()
-      ? sel->currentLayer()->id().toString() : QString();
-
-  auto groupLayer = ArtifactCore::makeShared<ArtifactGroupLayer>();
   const QString trimmedName = groupName.toQString().trimmed();
-  groupLayer->setLayerName(trimmedName.isEmpty()
-                               ? QStringLiteral("Layer Group")
-                               : trimmedName);
-  groupLayer->setCollapsed(false);
-
-  auto macro = std::make_unique<MacroUndoCommand>(QStringLiteral("Group Layers"));
-  macro->addChild(std::make_unique<AddLayerCommand>(comp, groupLayer, true));
-  for (const auto &layer : layers) {
-    macro->addChild(std::make_unique<ChangeLayerParentCommand>(
-        layer, layer->parentLayerId(), groupLayer->id()));
-  }
-  macro->addChild(std::make_unique<LayerSelectionSnapshotCommand>(
-      comp, beforeSelectionIds, beforeCurrentSelection,
-      QStringList{groupLayer->id().toString()}, groupLayer->id().toString()));
+  auto command = std::make_unique<CreateGroupContainerUndoCommand>(
+      comp, uniqueIds,
+      trimmedName.isEmpty() ? QStringLiteral("Layer Group") : trimmedName);
   const size_t undoCountBefore = mgr->undoCount();
-  if (!mgr->push(std::move(macro))) {
+  if (!mgr->push(std::move(command))) {
     return false;
   }
-
-  bool applied = comp->containsLayerById(groupLayer->id());
-  for (const auto &layer : layers) {
-    applied = applied && layer &&
-              layer->parentLayerId() == groupLayer->id();
-  }
-  if (!applied) {
-    // Do not leave a successfully pushed but semantically invalid macro in
-    // history. The macro owns the complete inverse boundary; use it first,
-    // then retain the explicit repair below for a partially failing undo.
-    if (mgr->undoCount() == undoCountBefore + 1) {
-      mgr->undo();
-    }
-    if (comp->containsLayerById(groupLayer->id())) {
-      for (int i = 0; i < layers.size(); ++i) {
-        const auto &layer = layers[i];
-        if (!layer) continue;
-        if (oldParentIds[i].isNil()) {
-          layer->clearParent();
-        } else {
-          layer->setParentById(oldParentIds[i]);
-        }
-      }
-      comp->removeLayer(groupLayer->id());
-    }
-    return false;
-  }
-
-  selectLayer(groupLayer->id());
-  return true;
+  return mgr->undoCount() == undoCountBefore + 1;
 }
 
 bool ArtifactProjectService::ungroupSelectedGroupWithUndo() {

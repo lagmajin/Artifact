@@ -38,6 +38,8 @@ int commandPriority(CommandType type)
     case CommandType::PluginList: return 4;
     case CommandType::PluginInfo: return 3;
     case CommandType::Render: return 2;
+    case CommandType::CommandIR: return 3;
+    case CommandType::Python: return 2;
     case CommandType::Interactive: return 1;
     case CommandType::Gui: return 0;
     default: return 0;
@@ -57,12 +59,37 @@ CommandLine parseCommandLine(const QStringList& arguments)
 {
   CommandLine result;
   bool renderSubcommand = false;
+  bool pythonSubcommand = false;
 
   for (int i = 1; i < arguments.size(); ++i) {
     const QString& argument = arguments[i];
     if (i == 1 && argument == QStringLiteral("render")) {
       renderSubcommand = true;
       selectCommand(result, CommandType::Render);
+    } else if (i == 1 && argument == QStringLiteral("python")) {
+      pythonSubcommand = true;
+      selectCommand(result, CommandType::Python);
+      if (i + 1 < arguments.size() && !arguments[i + 1].startsWith(QLatin1Char('-'))) {
+        result.python.action = arguments[++i].toLower();
+        if ((result.python.action == QStringLiteral("run") ||
+             result.python.action == QStringLiteral("eval")) &&
+            i + 1 < arguments.size() &&
+            !arguments[i + 1].startsWith(QStringLiteral("--"))) {
+          result.python.target = arguments[++i];
+        }
+      } else {
+        result.missingOptionValues.append(argument);
+      }
+    } else if (i == 1 && argument == QStringLiteral("command-ir")) {
+      selectCommand(result, CommandType::CommandIR);
+      result.commandIR.requested = true;
+      if (i + 1 < arguments.size() &&
+          (arguments[i + 1] == QStringLiteral("-") ||
+           !arguments[i + 1].startsWith(QLatin1Char('-')))) {
+        result.commandIR.requestPath = arguments[++i];
+      } else {
+        result.missingOptionValues.append(argument);
+      }
     } else if (renderSubcommand && argument == QStringLiteral("--output")) {
       if (i + 1 < arguments.size() && !arguments[i + 1].startsWith(QLatin1Char('-'))) {
         result.render.outputPath = arguments[++i];
@@ -94,6 +121,10 @@ CommandLine parseCommandLine(const QStringList& arguments)
     } else if (renderSubcommand && !argument.startsWith(QLatin1Char('-')) &&
                result.render.inputPath.isEmpty()) {
       result.render.inputPath = argument;
+    } else if (pythonSubcommand && !argument.startsWith(QLatin1Char('-')) &&
+               result.python.action == QStringLiteral("run") &&
+               result.python.target.isEmpty()) {
+      result.python.target = argument;
     } else if (argument == QStringLiteral("--help") || argument == QStringLiteral("-h")) {
       selectCommand(result, CommandType::Help);
     } else if (argument == QStringLiteral("--version")) {
@@ -112,6 +143,29 @@ CommandLine parseCommandLine(const QStringList& arguments)
     } else if (argument == QStringLiteral("--interactive") ||
                argument == QStringLiteral("-i")) {
       selectCommand(result, CommandType::Interactive);
+    } else if (argument == QStringLiteral("--command")) {
+      selectCommand(result, CommandType::Interactive);
+      result.gui.commandRequested = true;
+      if (i + 1 < arguments.size() && !arguments[i + 1].startsWith(QLatin1Char('-'))) {
+        result.gui.singleCommand = arguments[++i];
+      } else {
+        result.missingOptionValues.append(argument);
+      }
+    } else if (argument == QStringLiteral("--request")) {
+      selectCommand(result, CommandType::Interactive);
+      result.gui.requestRequested = true;
+      result.gui.jsonOutput = true;
+      if (i + 1 < arguments.size() &&
+          (arguments[i + 1] == QStringLiteral("-") ||
+           !arguments[i + 1].startsWith(QLatin1Char('-')))) {
+        result.gui.requestPath = arguments[++i];
+      } else {
+        result.missingOptionValues.append(argument);
+      }
+    } else if (argument == QStringLiteral("--json")) {
+      result.gui.jsonOutput = true;
+    } else if (argument == QStringLiteral("--jsonl")) {
+      result.python.jsonLines = true;
     } else if (argument == QStringLiteral("--script")) {
       selectCommand(result, CommandType::Interactive);
       result.gui.scriptRequested = true;
@@ -165,7 +219,18 @@ CommandLine parseCommandLine(const QStringList& arguments)
     } else if (argument == QStringLiteral("--project") ||
                argument == QStringLiteral("--open")) {
       if (i + 1 < arguments.size() && !arguments[i + 1].startsWith(QLatin1Char('-'))) {
-        result.gui.projectPaths.append(arguments[++i]);
+        const QString path = arguments[++i];
+        if (result.commandIR.requested) {
+          if (!result.commandIR.projectPath.isEmpty()) {
+            result.invalidOptionValues.append(QStringLiteral("--project (only one project may be supplied)"));
+          } else {
+            result.commandIR.projectPath = path;
+          }
+        } else if (pythonSubcommand) {
+          result.python.projectPath = path;
+        } else {
+          result.gui.projectPaths.append(path);
+        }
       } else {
         result.missingOptionValues.append(argument);
       }
@@ -187,7 +252,15 @@ CommandLine parseCommandLine(const QStringList& arguments)
     } else if (argument.startsWith(QLatin1Char('-'))) {
       result.unknownOptions.append(argument);
     } else if (!renderSubcommand && !argument.startsWith(QLatin1Char('-'))) {
-      result.gui.projectPaths.append(argument);
+      if (result.commandIR.requested) {
+        if (!result.commandIR.projectPath.isEmpty()) {
+          result.invalidOptionValues.append(QStringLiteral("command-ir (only one project may be supplied)"));
+        } else {
+          result.commandIR.projectPath = argument;
+        }
+      } else {
+        result.gui.projectPaths.append(argument);
+      }
     }
   }
 
@@ -242,6 +315,82 @@ CommandLineResult validateCommandLine(CommandLine commandLine)
   if (commandLine.gui.scriptRequested && commandLine.gui.scriptPath.isEmpty()) {
     return {std::move(commandLine),
             QStringLiteral("--script requires a command file path")};
+  }
+  if (commandLine.gui.commandRequested && commandLine.gui.singleCommand.trimmed().isEmpty()) {
+    return {std::move(commandLine),
+            QStringLiteral("--command requires a command string")};
+  }
+  if (commandLine.gui.commandRequested && commandLine.gui.scriptRequested) {
+    return {std::move(commandLine),
+            QStringLiteral("--command and --script cannot be used together")};
+  }
+  if (commandLine.gui.requestRequested &&
+      (commandLine.gui.commandRequested || commandLine.gui.scriptRequested)) {
+    return {std::move(commandLine),
+            QStringLiteral("--request cannot be combined with --command or --script")};
+  }
+  if (commandLine.gui.jsonOutput && !commandLine.gui.commandRequested &&
+      !commandLine.gui.requestRequested) {
+    if (commandLine.type != CommandType::CommandIR &&
+        (commandLine.type != CommandType::Python ||
+        (commandLine.python.action != QStringLiteral("run") &&
+         commandLine.python.action != QStringLiteral("eval")))) {
+      return {std::move(commandLine),
+              QStringLiteral("--json requires --command or python run/eval")};
+    }
+  }
+  if (commandLine.type == CommandType::Python &&
+      commandLine.python.action != QStringLiteral("run") &&
+      commandLine.python.action != QStringLiteral("eval") &&
+      commandLine.python.action != QStringLiteral("repl")) {
+    return {std::move(commandLine),
+            QStringLiteral("python action must be run, eval, or repl")};
+  }
+  if (commandLine.type == CommandType::CommandIR &&
+      commandLine.commandIR.requestPath.trimmed().isEmpty()) {
+    return {std::move(commandLine), QStringLiteral("command-ir requires a request file")};
+  }
+  if (commandLine.commandIR.requested && commandLine.type != CommandType::CommandIR) {
+    return {std::move(commandLine), QStringLiteral("command-ir cannot be combined with another mode")};
+  }
+  if (commandLine.type == CommandType::CommandIR) {
+    if (commandLine.commandIR.requestPath != QStringLiteral("-")) {
+      commandLine.commandIR.requestPath =
+          QFileInfo(commandLine.commandIR.requestPath).absoluteFilePath();
+    }
+    if (!commandLine.commandIR.projectPath.isEmpty()) {
+      commandLine.commandIR.projectPath =
+          QFileInfo(commandLine.commandIR.projectPath).absoluteFilePath();
+    }
+  }
+  if (commandLine.type == CommandType::Python &&
+      commandLine.python.action != QStringLiteral("repl") &&
+      commandLine.python.target.trimmed().isEmpty()) {
+    return {std::move(commandLine),
+            QStringLiteral("python %1 requires a target").arg(commandLine.python.action)};
+  }
+  if (commandLine.python.jsonLines &&
+      (commandLine.type != CommandType::Python ||
+       commandLine.python.action != QStringLiteral("repl"))) {
+    return {std::move(commandLine), QStringLiteral("--jsonl requires python repl")};
+  }
+  if (commandLine.type == CommandType::Python &&
+      !commandLine.python.projectPath.isEmpty()) {
+    const QString projectPath = QFileInfo(commandLine.python.projectPath).absoluteFilePath();
+    if (!isProjectPath(projectPath)) {
+      return {std::move(commandLine),
+              QStringLiteral("Invalid Python CLI project path: %1").arg(projectPath)};
+    }
+    commandLine.python.projectPath = projectPath;
+  }
+  if (commandLine.gui.commandRequested && commandLine.type != CommandType::Interactive) {
+    return {std::move(commandLine), QStringLiteral("--command cannot be combined with another mode")};
+  }
+  if (commandLine.gui.scriptRequested && commandLine.type != CommandType::Interactive) {
+    return {std::move(commandLine), QStringLiteral("--script cannot be combined with another mode")};
+  }
+  if (commandLine.gui.requestRequested && commandLine.type != CommandType::Interactive) {
+    return {std::move(commandLine), QStringLiteral("--request cannot be combined with another mode")};
   }
   if (commandLine.type == CommandType::PluginInfo &&
       commandLine.pluginInfo.pluginId.isEmpty()) {

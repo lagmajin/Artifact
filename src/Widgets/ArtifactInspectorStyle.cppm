@@ -21,10 +21,10 @@ module;
 #include <QStyle>
 #include <QWidget>
 
-#include <algorithm>
 
 module Artifact.Widgets.InspectorStyle;
 
+import Core.ArtifactMath;
 import Widgets.Utils.CSS;
 
 namespace Artifact {
@@ -37,7 +37,7 @@ QColor themeColor(const QString& value, const QColor& fallback)
 
 QColor blendColor(const QColor& a, const QColor& b, const qreal t)
 {
-    const qreal clamped = std::clamp(t, 0.0, 1.0);
+    const qreal clamped = ArtifactCore::artifactClamp(t, 0.0, 1.0);
     return QColor::fromRgbF(a.redF() * (1.0 - clamped) + b.redF() * clamped,
                             a.greenF() * (1.0 - clamped) + b.greenF() * clamped,
                             a.blueF() * (1.0 - clamped) + b.blueF() * clamped,

@@ -5,13 +5,11 @@ module;
 #include <QString>
 #include <QVariant>
 #include <QMap>
-#include <algorithm>
-#include <cmath>
 
 
 export module Artifact.AI.MaterialAutomation;
 
-import std;
+import Core.ArtifactMath;
 import Core.AI.Describable;
 import Material.Material;
 import Artifact.Service.Project;
@@ -156,8 +154,8 @@ private:
     QVariantMap stored;
     stored["diffuseColor"] = properties.value("diffuseColor", QColor(200, 200, 200));
     stored["specularColor"] = properties.value("specularColor", QColor(255, 255, 255));
-    stored["roughness"] = std::clamp(properties.value("roughness", 0.5).toFloat(), 0.0f, 1.0f);
-    stored["metallic"] = std::clamp(properties.value("metallic", 0.0).toFloat(), 0.0f, 1.0f);
+    stored["roughness"] = ArtifactCore::artifactClamp(properties.value("roughness", 0.5).toFloat(), 0.0f, 1.0f);
+    stored["metallic"] = ArtifactCore::artifactClamp(properties.value("metallic", 0.0).toFloat(), 0.0f, 1.0f);
     materials_[name] = stored;
     for (auto assignment = layerAssignments_.cbegin();
          assignment != layerAssignments_.cend(); ++assignment) {
@@ -192,8 +190,8 @@ private:
       it.value()[property] = args[2].value<QColor>();
     } else {
       const float numeric = args[2].toFloat();
-      if (!std::isfinite(numeric)) return false;
-      it.value()[property] = std::clamp(numeric, 0.0f, 1.0f);
+      if (!ArtifactCore::artifactIsFinite(numeric)) return false;
+      it.value()[property] = ArtifactCore::artifactClamp(numeric, 0.0f, 1.0f);
     }
     for (auto assignment = layerAssignments_.cbegin();
          assignment != layerAssignments_.cend(); ++assignment) {

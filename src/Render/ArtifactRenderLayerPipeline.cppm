@@ -16,10 +16,14 @@
 #include <DiligentCore/Graphics/GraphicsEngine/interface/TextureView.h>
 
 #include "../../../ArtifactCore/include/Define/DllExportMacro.hpp"
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 module Artifact.Render.Pipeline;
 
-import std;
 import Layer.Blend;
 import Artifact.Layer.Abstract;
 import Artifact.Effect.Abstract;
@@ -1095,6 +1099,8 @@ void ScreenSpaceGIResolveCS(uint3 dispatchId : SV_DispatchThreadID)
   TextureBundle objectId_;
   TextureBundle materialId_;
   TextureBundle albedo_;
+  TextureBundle position_;
+  TextureBundle uv_;
   TextureBundle screenSpaceGI_;
   ArtifactCore::SharedPtr<GpuContext> screenSpaceGIContext_;
   ArtifactCore::SharedPtr<GpuContext> blendContext_;
@@ -1134,7 +1140,7 @@ void ScreenSpaceGIResolveCS(uint3 dispatchId : SV_DispatchThreadID)
   Uint32 width_ = 0;
   Uint32 height_ = 0;
   TEXTURE_FORMAT format_ = TEX_FORMAT_UNKNOWN;
-  bool emissionEnabled_ = false;
+  RenderPipeline::AuxiliaryTargetRequest auxiliaryRequest_;
  };
 
  RenderPipeline::RenderPipeline()
@@ -1153,7 +1159,7 @@ bool RenderPipeline::initialize(IRenderDevice* device,
                                 Uint32 width,
                                 Uint32 height,
                                 TEXTURE_FORMAT format,
-                                bool enableEmission)
+                                AuxiliaryTargetRequest auxiliaryTargets)
  {
   if (!device || width == 0 || height == 0)
   {
@@ -1169,7 +1175,7 @@ bool RenderPipeline::initialize(IRenderDevice* device,
                         impl_->width_ == width &&
                         impl_->height_ == height &&
                         impl_->format_ == resolvedFormat &&
-                        impl_->emissionEnabled_ == enableEmission &&
+                        impl_->auxiliaryRequest_ == auxiliaryTargets &&
                         ready();
   if (sameSize)
   {
@@ -1181,9 +1187,9 @@ bool RenderPipeline::initialize(IRenderDevice* device,
   impl_->width_ = width;
   impl_->height_ = height;
   impl_->format_ = resolvedFormat;
-  impl_->emissionEnabled_ = enableEmission;
+  impl_->auxiliaryRequest_ = auxiliaryTargets;
 
-  if (!createTextures(device, width, height, resolvedFormat, enableEmission))
+  if (!createTextures(device, width, height, resolvedFormat, auxiliaryTargets))
   {
    destroy();
    return false;
@@ -1206,7 +1212,7 @@ bool RenderPipeline::initialize(IRenderDevice* device,
   }
 
   initialize(impl_->device_, width, height, impl_->format_,
-             impl_->emissionEnabled_);
+             impl_->auxiliaryRequest_);
  }
 
  void RenderPipeline::destroy()
@@ -1224,6 +1230,8 @@ bool RenderPipeline::initialize(IRenderDevice* device,
   impl_->objectId_ = {};
   impl_->materialId_ = {};
   impl_->albedo_ = {};
+  impl_->position_ = {};
+  impl_->uv_ = {};
   impl_->screenSpaceGI_ = {};
   impl_->blendPipeline_.reset();
   impl_->blendContext_.reset();
@@ -1264,7 +1272,7 @@ bool RenderPipeline::initialize(IRenderDevice* device,
   impl_->width_ = 0;
   impl_->height_ = 0;
   impl_->format_ = TEX_FORMAT_UNKNOWN;
-  impl_->emissionEnabled_ = false;
+  impl_->auxiliaryRequest_ = RenderPipeline::AuxiliaryTargetRequest{};
   impl_->device_ = nullptr;
  }
 
@@ -2152,27 +2160,38 @@ bool RenderPipeline::initialize(IRenderDevice* device,
          impl_->matteSources_[0].srv &&
          impl_->matteSources_[1].srv &&
          impl_->matteSources_[2].srv &&
-         (!impl_->emissionEnabled_ ||
-          (impl_->emission_.texture && impl_->emission_.srv &&
-           impl_->emission_.rtv &&
-           impl_->normal_.texture && impl_->normal_.srv &&
-           impl_->normal_.rtv &&
-           impl_->velocity_.texture && impl_->velocity_.srv &&
-           impl_->velocity_.rtv)) &&
-         (!impl_->emissionEnabled_ ||
-          (impl_->objectId_.texture && impl_->objectId_.srv &&
-           impl_->objectId_.rtv &&
-           impl_->materialId_.texture && impl_->materialId_.srv &&
-           impl_->materialId_.rtv &&
-           impl_->albedo_.texture && impl_->albedo_.srv &&
-           impl_->albedo_.rtv));
+        (!impl_->auxiliaryRequest_.emission ||
+         (impl_->emission_.texture && impl_->emission_.srv &&
+          impl_->emission_.rtv)) &&
+        (!impl_->auxiliaryRequest_.normal ||
+         (impl_->normal_.texture && impl_->normal_.srv &&
+          impl_->normal_.rtv)) &&
+        (!impl_->auxiliaryRequest_.velocity ||
+         (impl_->velocity_.texture && impl_->velocity_.srv &&
+          impl_->velocity_.rtv)) &&
+        (!impl_->auxiliaryRequest_.objectId ||
+         (impl_->objectId_.texture && impl_->objectId_.srv &&
+          impl_->objectId_.rtv)) &&
+        (!impl_->auxiliaryRequest_.materialId ||
+         (impl_->materialId_.texture && impl_->materialId_.srv &&
+          impl_->materialId_.rtv)) &&
+        (!impl_->auxiliaryRequest_.albedo ||
+         (impl_->albedo_.texture && impl_->albedo_.srv &&
+          impl_->albedo_.rtv)) &&
+        (!impl_->auxiliaryRequest_.position ||
+         (impl_->position_.texture && impl_->position_.srv &&
+          impl_->position_.rtv)) &&
+        (!impl_->auxiliaryRequest_.uv ||
+         (impl_->uv_.texture && impl_->uv_.srv &&
+          impl_->uv_.rtv));
  }
 
  bool RenderPipeline::renderComposition(
   IDeviceContext* ctx,
   const std::vector<ArtifactAbstractLayerPtr>& layers,
   int64_t currentFrame,
-  ITextureView* outputRTV)
+  ITextureView* outputRTV,
+  const RenderROI& renderROI)
  {
   if (!ctx || !outputRTV || !ready())
   {
@@ -2186,6 +2205,19 @@ bool RenderPipeline::initialize(IRenderDevice* device,
   const float clearColor[] = {0.0f, 0.0f, 0.0f, 0.0f};
   ctx->SetRenderTargets(1, &outputRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
   ctx->ClearRenderTarget(outputRTV, clearColor, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+  // P0-3b.2: when the controller passes a non-empty RenderROI, propagate
+  // it as a hardware scissor so subsequent draw calls are clipped to the
+  // region. Empty ROI = full-frame (no scissor override). The render
+  // target dimensions come from impl_->width_/height_ which the
+  // controller keeps in sync with the active viewport.
+  if (!renderROI.isEmpty() && impl_->width_ > 0 && impl_->height_ > 0) {
+    const Rect scissor{
+        static_cast<Int32>(std::lround(renderROI.x())),
+        static_cast<Int32>(std::lround(renderROI.y())),
+        static_cast<Int32>(std::lround(renderROI.x() + renderROI.width())),
+        static_cast<Int32>(std::lround(renderROI.y() + renderROI.height()))};
+    ctx->SetScissorRects(1, &scissor, impl_->width_, impl_->height_);
+  }
   return true;
  }
 
@@ -2211,22 +2243,28 @@ ITextureView* RenderPipeline::matteSourceSRV(int index) const {
 }
 ITextureView* RenderPipeline::emissionSRV() const { return impl_->emission_.srv; }
 ITextureView* RenderPipeline::emissionRTV() const { return impl_->emission_.rtv; }
-bool RenderPipeline::hasEmissionTarget() const { return impl_->emissionEnabled_ && impl_->emission_.texture; }
+bool RenderPipeline::hasEmissionTarget() const { return impl_->auxiliaryRequest_.emission && impl_->emission_.texture; }
 ITextureView* RenderPipeline::normalSRV() const { return impl_->normal_.srv; }
 ITextureView* RenderPipeline::normalRTV() const { return impl_->normal_.rtv; }
-bool RenderPipeline::hasNormalTarget() const { return impl_->emissionEnabled_ && impl_->normal_.texture; }
+bool RenderPipeline::hasNormalTarget() const { return impl_->auxiliaryRequest_.normal && impl_->normal_.texture; }
 ITextureView* RenderPipeline::velocitySRV() const { return impl_->velocity_.srv; }
 ITextureView* RenderPipeline::velocityRTV() const { return impl_->velocity_.rtv; }
-bool RenderPipeline::hasVelocityTarget() const { return impl_->emissionEnabled_ && impl_->velocity_.texture; }
+bool RenderPipeline::hasVelocityTarget() const { return impl_->auxiliaryRequest_.velocity && impl_->velocity_.texture; }
 ITextureView* RenderPipeline::objectIdSRV() const { return impl_->objectId_.srv; }
 ITextureView* RenderPipeline::objectIdRTV() const { return impl_->objectId_.rtv; }
-bool RenderPipeline::hasObjectIdTarget() const { return impl_->emissionEnabled_ && impl_->objectId_.texture; }
+bool RenderPipeline::hasObjectIdTarget() const { return impl_->auxiliaryRequest_.objectId && impl_->objectId_.texture; }
 ITextureView* RenderPipeline::materialIdSRV() const { return impl_->materialId_.srv; }
 ITextureView* RenderPipeline::materialIdRTV() const { return impl_->materialId_.rtv; }
-bool RenderPipeline::hasMaterialIdTarget() const { return impl_->emissionEnabled_ && impl_->materialId_.texture; }
-ITextureView* RenderPipeline::albedoSRV() const { return impl_->albedo_.srv; }
-ITextureView* RenderPipeline::albedoRTV() const { return impl_->albedo_.rtv; }
-bool RenderPipeline::hasAlbedoTarget() const { return impl_->emissionEnabled_ && impl_->albedo_.texture; }
+bool RenderPipeline::hasMaterialIdTarget() const { return impl_->auxiliaryRequest_.materialId && impl_->materialId_.texture; }
+ ITextureView* RenderPipeline::albedoSRV() const { return impl_->albedo_.srv; }
+ ITextureView* RenderPipeline::albedoRTV() const { return impl_->albedo_.rtv; }
+ bool RenderPipeline::hasAlbedoTarget() const { return impl_->auxiliaryRequest_.albedo && impl_->albedo_.texture; }
+ ITextureView* RenderPipeline::positionSRV() const { return impl_->position_.srv; }
+ ITextureView* RenderPipeline::positionRTV() const { return impl_->position_.rtv; }
+ bool RenderPipeline::hasPositionTarget() const { return impl_->auxiliaryRequest_.position && impl_->position_.texture; }
+ ITextureView* RenderPipeline::uvSRV() const { return impl_->uv_.srv; }
+ ITextureView* RenderPipeline::uvRTV() const { return impl_->uv_.rtv; }
+ bool RenderPipeline::hasUvTarget() const { return impl_->auxiliaryRequest_.uv && impl_->uv_.texture; }
 GlobalIlluminationInputs RenderPipeline::globalIlluminationInputs(
     ITextureView* depthSRV) const
 {
@@ -2619,7 +2657,7 @@ bool RenderPipeline::createTextures(IRenderDevice* device,
                                     Uint32 width,
                                     Uint32 height,
                                     TEXTURE_FORMAT format,
-                                    bool enableEmission)
+                                    AuxiliaryTargetRequest request)
  {
   if (!createTextureBundle(device, width, height, format,
                            BIND_RENDER_TARGET | BIND_SHADER_RESOURCE | BIND_UNORDERED_ACCESS,
@@ -2658,21 +2696,21 @@ bool RenderPipeline::createTextures(IRenderDevice* device,
    }
   }
 
-  if (enableEmission &&
+  if (request.emission &&
       !createTextureBundle(device, width, height, format,
                            BIND_RENDER_TARGET | BIND_SHADER_RESOURCE,
                            "RenderPipeline.Emission", impl_->emission_))
   {
    return false;
   }
-  if (enableEmission &&
+  if (request.normal &&
       !createTextureBundle(device, width, height, format,
                            BIND_RENDER_TARGET | BIND_SHADER_RESOURCE,
                            "RenderPipeline.Normal", impl_->normal_))
   {
    return false;
   }
-  if (enableEmission &&
+  if (request.velocity &&
       !createTextureBundle(device, width, height, format,
                            BIND_RENDER_TARGET | BIND_SHADER_RESOURCE,
                            "RenderPipeline.Velocity", impl_->velocity_))
@@ -2682,24 +2720,40 @@ bool RenderPipeline::createTextures(IRenderDevice* device,
   // Cryptomatte IDs are encoded as full uint32 payloads in float bits.
   // RGBA16F would quantize those payloads, so keep these AOVs at 32-bit
   // precision on every Diligent backend.
-  if (enableEmission &&
+  if (request.objectId &&
       !createTextureBundle(device, width, height, TEX_FORMAT_RGBA32_FLOAT,
                            BIND_RENDER_TARGET | BIND_SHADER_RESOURCE,
                            "RenderPipeline.ObjectId", impl_->objectId_))
   {
    return false;
   }
-  if (enableEmission &&
+  if (request.materialId &&
       !createTextureBundle(device, width, height, TEX_FORMAT_RGBA32_FLOAT,
                            BIND_RENDER_TARGET | BIND_SHADER_RESOURCE,
                            "RenderPipeline.MaterialId", impl_->materialId_))
   {
    return false;
   }
-  if (enableEmission &&
+  if (request.albedo &&
       !createTextureBundle(device, width, height, format,
                            BIND_RENDER_TARGET | BIND_SHADER_RESOURCE,
                            "RenderPipeline.Albedo", impl_->albedo_))
+  {
+   return false;
+  }
+  // Position/UV hold raw (unencoded) values; keep the same float format as
+  // the other color-like AOV targets.
+  if (request.position &&
+      !createTextureBundle(device, width, height, format,
+                           BIND_RENDER_TARGET | BIND_SHADER_RESOURCE,
+                           "RenderPipeline.Position", impl_->position_))
+  {
+   return false;
+  }
+  if (request.uv &&
+      !createTextureBundle(device, width, height, format,
+                           BIND_RENDER_TARGET | BIND_SHADER_RESOURCE,
+                           "RenderPipeline.UV", impl_->uv_))
   {
    return false;
   }

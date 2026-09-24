@@ -1,9 +1,8 @@
 module;
-#include <cmath>
-#include <algorithm>
 
 module GridRenderer;
 
+import Core.ArtifactMath;
 import Artifact.Render.IRenderer;
 import Color.Float;
 
@@ -18,17 +17,17 @@ void GridRenderer::draw(ArtifactIRenderer* renderer,
                          const FloatColor& color,
                          GridStyle style)
 {
- if (!renderer || !std::isfinite(x) || !std::isfinite(y) ||
-     !std::isfinite(w) || !std::isfinite(h) || !std::isfinite(spacing) ||
-     !std::isfinite(thickness) || spacing <= 0 || w <= 0 || h <= 0) return;
+ if (!renderer || !ArtifactCore::artifactIsFinite(x) || !ArtifactCore::artifactIsFinite(y) ||
+     !ArtifactCore::artifactIsFinite(w) || !ArtifactCore::artifactIsFinite(h) || !ArtifactCore::artifactIsFinite(spacing) ||
+     !ArtifactCore::artifactIsFinite(thickness) || spacing <= 0 || w <= 0 || h <= 0) return;
 
- const float safeThickness = std::max(0.0f, thickness);
+ const float safeThickness = ArtifactCore::artifactMax(0.0f, thickness);
  const float halfTick = safeThickness * 2.0f;
  constexpr int kMaxGridSamples = 8192;
- const int xSamples = std::min(kMaxGridSamples,
-                               std::max(1, static_cast<int>(std::ceil(w / spacing)) + 1));
- const int ySamples = std::min(kMaxGridSamples,
-                               std::max(1, static_cast<int>(std::ceil(h / spacing)) + 1));
+ const int xSamples = ArtifactCore::artifactMin(kMaxGridSamples,
+                               ArtifactCore::artifactMax(1, static_cast<int>(ArtifactCore::artifactCeil(w / spacing)) + 1));
+ const int ySamples = ArtifactCore::artifactMin(kMaxGridSamples,
+                               ArtifactCore::artifactMax(1, static_cast<int>(ArtifactCore::artifactCeil(h / spacing)) + 1));
 
  if (style == GridStyle::Lines) {
   // Vertical lines
@@ -84,14 +83,14 @@ void GridRenderer::drawSubdivided(ArtifactIRenderer* renderer,
 
 void GridRenderer::setSpacing(float spacing)
 {
- spacing_ = std::max(1.0f, spacing);
+ spacing_ = ArtifactCore::artifactMax(1.0f, spacing);
 }
 
 float GridRenderer::spacing() const { return spacing_; }
 
 void GridRenderer::setMinorRatio(int ratio)
 {
- minorRatio_ = std::max(1, ratio);
+ minorRatio_ = ArtifactCore::artifactMax(1, ratio);
 }
 
 int GridRenderer::minorRatio() const { return minorRatio_; }

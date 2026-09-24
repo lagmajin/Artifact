@@ -4,6 +4,7 @@ module;
 #include <chrono>
 #include <QElapsedTimer>
 #include <QDebug>
+#include <QMutexLocker>
 #include <wobjectimpl.h>
 
 #include <iostream>
@@ -109,7 +110,6 @@ public:
     
     // Thread safety
     mutable QMutex mutex_;
-    QWaitCondition waitCondition_;
     
     // Prefetch queue
     std::set<FramePosition> prefetchQueue_;
@@ -164,7 +164,7 @@ public:
     ArtifactCore::SharedPtr<FrameCacheEntry> evictOne() {
         if (entries_.empty()) return nullptr;
         
-        FramePosition toEvict;
+        FramePosition toEvict(0);
         bool found = false;
         
         switch (policy_) {
@@ -252,18 +252,16 @@ public:
         return nullptr;
     }
     
-    void evictToFit(size_t targetMemory, int targetCount) {
+    void evictToFit(FrameCache& owner, size_t targetMemory, int targetCount) {
         while ((currentMemoryUsage() > targetMemory || (int)entries_.size() > targetCount) 
                && !entries_.empty()) {
             auto evicted = evictOne();
             if (evicted) {
-                emit frameEvicted(evicted->frame);
+                owner.frameEvicted(evicted->frame);
             }
         }
     }
 };
-
-W_OBJECT_IMPL(FrameCache)
 
 FrameCache::FrameCache(QObject* parent)
     : QObject(parent)
@@ -276,7 +274,7 @@ FrameCache::~FrameCache() = default;
 void FrameCache::setMaxMemoryBytes(size_t bytes) {
     QMutexLocker locker(&impl_->mutex_);
     impl_->maxMemory_ = bytes;
-    impl_->evictToFit(impl_->maxMemory_, impl_->maxFrameCount_);
+    impl_->evictToFit(*this, impl_->maxMemory_, impl_->maxFrameCount_);
 }
 
 size_t FrameCache::maxMemoryBytes() const {
@@ -287,7 +285,7 @@ size_t FrameCache::maxMemoryBytes() const {
 void FrameCache::setMaxFrameCount(int count) {
     QMutexLocker locker(&impl_->mutex_);
     impl_->maxFrameCount_ = std::max(0, count);
-    impl_->evictToFit(impl_->maxMemory_, impl_->maxFrameCount_);
+    impl_->evictToFit(*this, impl_->maxMemory_, impl_->maxFrameCount_);
 }
 
 int FrameCache::maxFrameCount() const {
@@ -369,7 +367,7 @@ void FrameCache::put(ArtifactCore::SharedPtr<FrameCacheEntry> entry) {
     // Evict if needed - prevent integer underflow
     size_t targetMem = impl_->maxMemory_ - entry->memorySize;
     size_t targetCount = impl_->maxFrameCount_ > 0 ? impl_->maxFrameCount_ - 1 : 0;
-    impl_->evictToFit(targetMem, targetCount);
+    impl_->evictToFit(*this, targetMem, static_cast<int>(targetCount));
 
     // Add new entry
     entry->generation = impl_->generation_;
@@ -417,7 +415,8 @@ void FrameCache::invalidateRange(const FrameRange& range) {
     QMutexLocker locker(&impl_->mutex_);
 
     for (auto it = impl_->prefetchQueue_.begin(); it != impl_->prefetchQueue_.end();) {
-        if (range.contains(*it)) {
+        const auto frame = it->framePosition();
+        if (frame >= range.start && frame <= range.end) {
             it = impl_->prefetchQueue_.erase(it);
         } else {
             ++it;
@@ -426,7 +425,8 @@ void FrameCache::invalidateRange(const FrameRange& range) {
     
     std::vector<FramePosition> toRemove;
     for (auto& [pos, entry] : impl_->entries_) {
-        if (range.contains(pos)) {
+        const auto frame = pos.framePosition();
+        if (frame >= range.start && frame <= range.end) {
             toRemove.push_back(pos);
         }
     }
@@ -530,8 +530,8 @@ void FrameCache::prefetch(const FramePosition& frame) {
 
 void FrameCache::prefetchRange(const FrameRange& range) {
     QMutexLocker locker(&impl_->mutex_);
-    const auto first = range.start().value();
-    const auto last = range.end().value();
+    const auto first = range.start;
+    const auto last = range.end;
     if (first > last) return;
     for (long long f = first;; ++f) {
         const FramePosition frame(f);
@@ -544,8 +544,8 @@ void FrameCache::prefetchRange(const FrameRange& range) {
 
 void FrameCache::cancelPrefetch(const FrameRange& range) {
     QMutexLocker locker(&impl_->mutex_);
-    const auto first = range.start().value();
-    const auto last = range.end().value();
+    const auto first = range.start;
+    const auto last = range.end;
     if (first > last) return;
     for (long long f = first;; ++f) {
         impl_->prefetchQueue_.erase(FramePosition(f));
@@ -555,7 +555,7 @@ void FrameCache::cancelPrefetch(const FrameRange& range) {
 
 void FrameCache::trimToSize(size_t targetBytes) {
     QMutexLocker locker(&impl_->mutex_);
-    impl_->evictToFit(targetBytes, impl_->maxFrameCount_);
+    impl_->evictToFit(*this, targetBytes, impl_->maxFrameCount_);
 }
 
 void FrameCache::clear() {
@@ -577,7 +577,7 @@ class ProgressiveRenderer::Impl {
 public:
     RenderQuality quality_ = RenderQuality::Preview;
     RenderQuality renderedQuality_ = RenderQuality::Draft;
-    ProgressiveRenderer::RenderCallback renderCallback_;
+    RenderCallback renderCallback_;
     
     int draftDownsample_ = 4;
     int previewDownsample_ = 2;

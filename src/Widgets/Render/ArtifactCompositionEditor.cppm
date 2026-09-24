@@ -1,6 +1,7 @@
 module;
 #include <QAction>
 #include <QActionGroup>
+#include <QAccessible>
 #include <QClipboard>
 #include <QCheckBox>
 #include <QCloseEvent>
@@ -81,6 +82,7 @@ module;
 #include <QWheelEvent>
 #include <QFileDialog>
 #include <QProgressDialog>
+#include <QProgressBar>
 #include <QFile>
 #include <QApplication>
 #include <QDockWidget>
@@ -169,6 +171,7 @@ import Utils.String.UniString;
 import Artifact.Layer.InitParams;
 import File.TypeDetector;
 import Application.AppSettings;
+import Settings.Accessibility;
 import Widgets.Utils.CSS;
 import Event.Bus;
 import Artifact.Event.Types;
@@ -198,6 +201,17 @@ W_OBJECT_IMPL(ArtifactCompositionEditor)
 Q_LOGGING_CATEGORY(compositionViewLog, "artifact.compositionview");
 
 namespace {
+void updateAccessibleState(QWidget* widget, const QString& description) {
+  if (!widget || widget->accessibleDescription() == description) {
+    return;
+  }
+  widget->setAccessibleDescription(description);
+  if (QAccessible::isActive()) {
+    QAccessibleEvent event(widget, QAccessible::DescriptionChanged);
+    QAccessible::updateAccessibility(&event);
+  }
+}
+
 double safeCompositionFrameRate(const ArtifactAbstractComposition *composition)
 {
   if (!composition) {
@@ -1332,6 +1346,73 @@ public:
     });
     add(QStringLiteral("View: Zoom 100%"), [this]() {
       if (controller_) controller_->zoom100();
+    });
+    // P0-1 Box zoom/crop command (palette only). The actual marquee is
+    // driven by mouse press/release routed through ShortcutBindings; this
+    // entry cancels an in-flight interaction for users who lost the cursor.
+    add(QStringLiteral("View: Cancel Box Zoom"), [this]() {
+      if (controller_) controller_->cancelBoxZoomInteraction();
+    });
+    // P0-2 Tumble pivot toggle: setting it requires a viewport position so
+    // the palette action is the no-op clear path; UI handlers drive set.
+    add(QStringLiteral("View: Clear Tumble Pivot"), [this]() {
+      if (controller_) controller_->clearTumblePivot();
+    });
+    // P0-3a Interactive Render Region toggle / clear.
+    add(QStringLiteral("View: Toggle Interactive Render Region"), [this]() {
+      if (!controller_) return;
+      if (controller_->isInteractiveRenderRegionActive()) {
+        controller_->clearInteractiveRenderRegion();
+      }
+    });
+    // P0-4 Layer category visibility toggles. The palette exposes each
+    // category so users can build the viewport mask without opening the
+    // View menu.
+    add(QStringLiteral("View: Show 3D Lights"), [this]() {
+      if (controller_)
+        controller_->toggleViewportLayerCategory(
+            CompositionViewportLayerCategory::Light3D);
+    });
+    add(QStringLiteral("View: Show 3D Cameras"), [this]() {
+      if (controller_)
+        controller_->toggleViewportLayerCategory(
+            CompositionViewportLayerCategory::Camera3D);
+    });
+    add(QStringLiteral("View: Show Audio Layers"), [this]() {
+      if (controller_)
+        controller_->toggleViewportLayerCategory(
+            CompositionViewportLayerCategory::Audio);
+    });
+    add(QStringLiteral("View: Show Particle Layers"), [this]() {
+      if (controller_)
+        controller_->toggleViewportLayerCategory(
+            CompositionViewportLayerCategory::Particle);
+    });
+    add(QStringLiteral("View: Reset Layer Category Filter"), [this]() {
+      if (controller_)
+        controller_->setViewportLayerCategoryMask(
+            static_cast<CompositionViewportLayerCategoryMask>(
+                CompositionViewportLayerCategory::All));
+    });
+    // P1-6: Autograph-style channel display variants. The post-process
+    // step that turns the RGB SRV into unpremultiplied / luminance /
+    // matte is owned by the readback overlay pass; the controller just
+    // stores the selected mode and the sync helper decides which SRV is
+    // active.
+    add(QStringLiteral("View: Channel Straight (Unpremultiplied)"), [this]() {
+      if (controller_)
+        controller_->setViewportChannelDisplayMode(
+            ViewportChannelDisplayMode::Unpremultiplied);
+    });
+    add(QStringLiteral("View: Channel Luminance"), [this]() {
+      if (controller_)
+        controller_->setViewportChannelDisplayMode(
+            ViewportChannelDisplayMode::Luminance);
+    });
+    add(QStringLiteral("View: Channel Matte"), [this]() {
+      if (controller_)
+        controller_->setViewportChannelDisplayMode(
+            ViewportChannelDisplayMode::Matte);
     });
     add(QStringLiteral("View: Toggle Quad Presentation"), [this]() {
       if (!controller_) return;
@@ -2667,6 +2748,94 @@ public:
   }
 
   void showViewportContextMenu(const QPointF &viewportPos) {
+    if (!controller_) {
+      return;
+    }
+
+    QStringList items;
+    QVector<std::function<void()>> actions;
+    QVector<bool> enabledStates;
+    const auto add = [&](const QString &label, std::function<void()> action,
+                         bool enabled = true) {
+      items.push_back(label);
+      actions.push_back(std::move(action));
+      enabledStates.push_back(enabled);
+    };
+    const auto addSeparator = [&]() {
+      items.push_back(QString());
+      actions.push_back([]() {});
+      enabledStates.push_back(false);
+    };
+    const auto toggleLabel = [](const QString &label, bool checked) {
+      return QStringLiteral("%1  %2")
+          .arg(checked ? QStringLiteral("\u2713") : QStringLiteral(" "), label);
+    };
+
+    const LayerID layerId = controller_->layerAtViewportPos(viewportPos);
+    const auto comp = currentComposition();
+    const auto layer = (!layerId.isNil() && comp)
+                           ? comp->layerById(layerId)
+                           : ArtifactAbstractLayerPtr{};
+    add(QStringLiteral("Select Under Cursor"),
+        [this, layer]() {
+          if (!layer) {
+            return;
+          }
+          if (auto *selection = ArtifactLayerSelectionManager::instance()) {
+            selection->selectLayer(layer);
+          }
+          if (controller_) {
+            controller_->setSelectedLayerId(layer->id());
+            controller_->markRenderDirty();
+          }
+        },
+        static_cast<bool>(layer));
+    add(QStringLiteral("Frame Selection"),
+        [this]() { controller_->focusSelectedLayer(); },
+        !controller_->selectedLayerId().isNil());
+    addSeparator();
+    add(QStringLiteral("Fit View"), [this]() { controller_->zoomFit(); });
+    add(QStringLiteral("100%"), [this]() { controller_->zoom100(); });
+    add(QStringLiteral("Reset View"), [this]() { controller_->resetView(); });
+    addSeparator();
+    add(toggleLabel(QStringLiteral("Grid"), controller_->isShowGrid()),
+        [this]() {
+          const bool next = !controller_->isShowGrid();
+          controller_->setShowGrid(next);
+          if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+            settings->setCompositionShowGrid(next);
+          }
+        });
+    add(toggleLabel(QStringLiteral("Guides"), controller_->isShowGuides()),
+        [this]() {
+          const bool next = !controller_->isShowGuides();
+          controller_->setShowGuides(next);
+          if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+            settings->setCompositionShowGuides(next);
+          }
+        });
+    add(toggleLabel(QStringLiteral("Safe Area"),
+                    controller_->isShowSafeMargins()),
+        [this]() {
+          const bool next = !controller_->isShowSafeMargins();
+          controller_->setShowSafeMargins(next);
+          if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+            settings->setCompositionShowSafeMargins(next);
+          }
+        });
+    addSeparator();
+    add(QStringLiteral("Snapshot"),
+        [this]() { saveCurrentFrame(controller_); });
+    add(QStringLiteral("More Viewport Actions\u2026"),
+        [this, viewportPos]() { showViewportDetailedContextMenu(viewportPos); });
+
+    viewportOverlayActions_ = actions;
+    viewportOverlayEnabledStates_ = enabledStates;
+    controller_->showContextMenuOverlay(
+        viewportPos, items, QStringLiteral("VIEWPORT"), QString(), enabledStates);
+  }
+
+  void showViewportDetailedContextMenu(const QPointF &viewportPos) {
     if (!controller_) {
       return;
     }
@@ -4296,6 +4465,20 @@ public:
       add(QStringLiteral("Zoom 100%"), [this]() {
         if (controller_) controller_->zoom100();
       });
+      // P0-1 Box zoom: cancel an in-flight marquee from the right-click
+      // menu if the user lost the cursor or wants to abandon the zoom.
+      add(QStringLiteral("Cancel Box Zoom"), [this]() {
+        if (controller_) controller_->cancelBoxZoomInteraction();
+      }, controller_ && controller_->isBoxZoomInteractionActive());
+      // P0-2 Tumble pivot clear path.
+      add(QStringLiteral("Clear Tumble Pivot"), [this]() {
+        if (controller_) controller_->clearTumblePivot();
+      }, controller_ && controller_->isTumblePivotOverrideEnabled());
+      // P0-3a IRR toggle entry. The right-click menu does not own drag;
+      // press+drag remains the canonical way to draw the rectangle.
+      add(QStringLiteral("Clear Interactive Render Region"), [this]() {
+        if (controller_) controller_->clearInteractiveRenderRegion();
+      }, controller_ && controller_->isInteractiveRenderRegionActive());
       addSeparator();
       add(QStringLiteral("Paste Layers Here"), pasteLayersHere,
           clipboardHasLayerData);
@@ -4949,6 +5132,18 @@ protected:
     const auto modifiers = event->modifiers();
     const QPointF angleDelta = event->angleDelta();
 
+    // Wheel over the accessibility magnifier changes its scale instead of
+    // zooming the viewport.
+    if (controller_->adjustMagnifierScaleAt(
+            event->position(), static_cast<float>(angleDelta.y()))) {
+      if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+        settings->setAccessibilityViewportMagnifierScale(
+            controller_->magnifierScale());
+      }
+      event->accept();
+      return;
+    }
+
     if (angleDelta.y() != 0.0 && !modifiers.testFlag(Qt::ShiftModifier) &&
         !modifiers.testFlag(Qt::AltModifier) &&
         !modifiers.testFlag(Qt::ControlModifier)) {
@@ -5457,6 +5652,41 @@ protected:
     }
 
     if (controller_ && !spacePressed_) {
+      // P0-1 Box zoom: Houdini-style modifier + left-button begins a
+      // marquee. ShortcutBindings owns the binding so any user-customized
+      // modifier set will work the same way.
+      if (event->button() == Qt::LeftButton) {
+        const auto binding = ArtifactCore::ShortcutBindings::instance().shortcut(
+            ArtifactCore::ShortcutId::ViewBoxZoom);
+        const auto bindingKey =
+            QKeyCombination::fromCombined(binding[0]).key();
+        QKeyEvent keyProbe(QEvent::KeyPress, bindingKey, event->modifiers());
+        if (ArtifactCore::ShortcutBindings::instance().matches(
+                &keyProbe, ArtifactCore::ShortcutId::ViewBoxZoom) &&
+            controller_->beginBoxZoomInteraction(event->position())) {
+          if (QWidget::mouseGrabber() != this) {
+            grabMouse();
+          }
+          event->accept();
+          return;
+        }
+      }
+      // P0-3a IRR handle hit-test. If the cursor is over a handle or the
+      // interior of the rect, start a 2D drag.
+      if (event->button() == Qt::LeftButton &&
+          controller_->isInteractiveRenderRegionActive()) {
+        const int handle = controller_->interactiveRenderRegionHandleAt(
+            event->position());
+        if (handle != 0 &&
+            controller_->beginInteractiveRenderRegionDrag(
+                handle, event->position())) {
+          if (QWidget::mouseGrabber() != this) {
+            grabMouse();
+          }
+          event->accept();
+          return;
+        }
+      }
       controller_->handleMousePress(event);
       if (isSpatialGizmoDragging() || controller_->isPhysicsDragActive()) {
         if (QWidget::mouseGrabber() != this) {
@@ -6031,6 +6261,70 @@ protected:
       if (owner->handleImportPlacementKeyPress(event)) {
         return;
       }
+    }
+    // P0-1 Box zoom cancel via Escape while the marquee is active.
+    if (event->key() == Qt::Key_Escape && !event->isAutoRepeat() &&
+        controller_ && controller_->isBoxZoomInteractionActive()) {
+      controller_->cancelBoxZoomInteraction();
+      event->accept();
+      return;
+    }
+    // P0-2 Tumble pivot clear via Escape while the override is active.
+    if (event->key() == Qt::Key_Escape && !event->isAutoRepeat() &&
+        controller_ && controller_->isTumblePivotOverrideEnabled()) {
+      controller_->clearTumblePivot();
+      event->accept();
+      return;
+    }
+    // P0-3a Interactive Render Region Escape cancel while active.
+    if (event->key() == Qt::Key_Escape && !event->isAutoRepeat() &&
+        controller_ && controller_->isInteractiveRenderRegionActive()) {
+      controller_->clearInteractiveRenderRegion();
+      event->accept();
+      return;
+    }
+    // P0-3a IRR toggle via ShortcutBindings. A real press+drag flow is
+    // also wired through mousePressEvent for marquee definition; this is
+    // the palette-style on/off entry.
+    if (!event->isAutoRepeat() && controller_ &&
+        ArtifactCore::ShortcutBindings::instance().matches(
+            event,
+            ArtifactCore::ShortcutId::ViewInteractiveRenderRegion)) {
+      if (controller_->isInteractiveRenderRegionActive()) {
+        controller_->clearInteractiveRenderRegion();
+      } else {
+        // Begin with a default 60% canvas rect centered on the viewport.
+        const QPointF pointer = mapFromGlobal(QCursor::pos());
+        const float viewportW =
+            std::max(1.0f, static_cast<float>(width()));
+        const float viewportH =
+            std::max(1.0f, static_cast<float>(height()));
+        if (controller_->renderer()) {
+          const float zoom =
+              std::max(0.001f, controller_->renderer()->getZoom());
+          float panX = 0.0f;
+          float panY = 0.0f;
+          controller_->renderer()->getPan(panX, panY);
+          const QRectF canvasRect(
+              (pointer.x() - viewportW * 0.3f - panX) / zoom,
+              (pointer.y() - viewportH * 0.3f - panY) / zoom,
+              (viewportW * 0.6f) / zoom,
+              (viewportH * 0.6f) / zoom);
+          controller_->setInteractiveRenderRegion(canvasRect);
+        }
+      }
+      event->accept();
+      return;
+    }
+    // P0-2 Tumble pivot set on Space+Z while the cursor is over the
+    // viewport. ShortcutBindings is the canonical owner of the binding.
+    if (!event->isAutoRepeat() && controller_ &&
+        ArtifactCore::ShortcutBindings::instance().matches(
+            event, ArtifactCore::ShortcutId::ViewTumblePivotUnderCursor)) {
+      const QPointF pointer = mapFromGlobal(QCursor::pos());
+      controller_->setTumblePivotAtViewportPos(pointer);
+      event->accept();
+      return;
     }
     // Blender-style transform semantics: Esc restores the drag-start
     // transform instead of committing the in-progress frame gizmo edit.
@@ -6865,7 +7159,8 @@ protected:
       return;
     }
 
-    if (event->key() == Qt::Key_Tab && !event->isAutoRepeat()) {
+    if (ArtifactCore::ShortcutBindings::instance().matches(
+            event, ArtifactCore::ShortcutId::CompositionViewportPieMenu)) {
       showPieMenu();
       event->accept();
       return;
@@ -7045,6 +7340,16 @@ protected:
                 : selectRotateGizmo
                       ? QStringLiteral("Rotate gizmo selected")
                       : QStringLiteral("Scale gizmo selected"));
+      }
+      event->accept();
+      return;
+    }
+    if (!event->isAutoRepeat() &&
+        shortcutBindings.matches(event,
+                                 ArtifactCore::ShortcutId::ViewToggleMagnifier)) {
+      if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+        settings->setAccessibilityViewportMagnifierEnabled(
+            !settings->accessibilityViewportMagnifierEnabled());
       }
       event->accept();
       return;
@@ -7442,7 +7747,7 @@ protected:
       return;
 
     PieMenuModel model;
-    model.title = "View Controls";
+    model.title.clear();
 
     auto *toolManager =
         ArtifactApplicationManager::instance()
@@ -7465,8 +7770,8 @@ protected:
                                toolManager->setActiveTool(ToolType::Hand);
                            }});
 
-    // Mask Tool
-    model.items.push_back({"Mask",
+    // Pen / Mask Tool
+    model.items.push_back({"Pen",
                            loadIconWithFallback("MaterialVS/neutral/draw.svg"),
                            "tool.mask", true, false, [this, toolManager]() {
                              if (toolManager)
@@ -7492,42 +7797,6 @@ protected:
     model.items.push_back(
         {"Reset", loadIconWithFallback("MaterialVS/neutral/reset.svg"),
          "view.reset", true, false, [this]() { controller_->resetView(); }});
-
-    if (auto *gizmo3D = controller_->gizmo3D()) {
-      model.items.push_back({"3D Move", QIcon(), "gizmo3d.move", true,
-                             gizmo3D->mode() == GizmoMode::Move,
-                             [this]() {
-                               controller_->setGizmoMode(TransformGizmo::Mode::Move);
-                             }});
-      model.items.push_back({"3D Rotate", QIcon(), "gizmo3d.rotate", true,
-                             gizmo3D->mode() == GizmoMode::Rotate,
-                             [this]() {
-                               controller_->setGizmoMode(TransformGizmo::Mode::Rotate);
-                             }});
-      model.items.push_back({"3D Scale", QIcon(), "gizmo3d.scale", true,
-                             gizmo3D->mode() == GizmoMode::Scale,
-                             [this]() {
-                               controller_->setGizmoMode(TransformGizmo::Mode::Scale);
-                             }});
-      model.items.push_back({"3D World", QIcon(), "gizmo3d.world", true,
-                             gizmo3D->space() == GizmoSpace::World,
-                             [this, gizmo3D]() {
-                               gizmo3D->setSpace(GizmoSpace::World);
-                               controller_->markRenderDirty();
-                             }});
-      model.items.push_back({"3D Local", QIcon(), "gizmo3d.local", true,
-                              gizmo3D->space() == GizmoSpace::Local,
-                              [this, gizmo3D]() {
-                                gizmo3D->setSpace(GizmoSpace::Local);
-                                controller_->markRenderDirty();
-                              }});
-      model.items.push_back({"3D View", QIcon(), "gizmo3d.view", true,
-                             gizmo3D->space() == GizmoSpace::View,
-                             [this, gizmo3D]() {
-                               gizmo3D->setSpace(GizmoSpace::View);
-                               controller_->markRenderDirty();
-                             }});
-    }
 
     // Grid Toggle
     model.items.push_back(
@@ -8388,18 +8657,15 @@ public:
   QAction *vectorScopeAction_ = nullptr;
   QPointer<QDialog> vectorScopeDialog_;
   QToolButton *toolModeButton_ = nullptr;
-  ViewportLayoutButton *trackerModeButton_ = nullptr;
-  ViewportLayoutButton *trackerPointModeButton_ = nullptr;
-  ViewportLayoutButton *trackerBackwardButton_ = nullptr;
-  ViewportLayoutButton *trackerStopButton_ = nullptr;
-  ViewportLayoutButton *trackerForwardButton_ = nullptr;
-  ViewportLayoutButton *trackerAllButton_ = nullptr;
-  ViewportLayoutButton *trackerReviewButton_ = nullptr;
   QFrame *trackerPanel_ = nullptr;
   QLabel *trackerPanelModeLabel_ = nullptr;
   QLabel *trackerPanelQualityLabel_ = nullptr;
   QLabel *trackerPanelProblemsLabel_ = nullptr;
   QLabel *trackerPanelFramesLabel_ = nullptr;
+  QLabel *trackerPanelStatusLabel_ = nullptr;
+  QProgressBar *trackerPanelProgress_ = nullptr;
+  ViewportLayoutButton *trackerPointModePanelButton_ = nullptr;
+  ViewportLayoutButton *trackerPlanarModePanelButton_ = nullptr;
   QToolButton *gizmoModeButton_ = nullptr;
   QToolButton *pivotModeButton_ = nullptr;
   QAction *immersiveAction_ = nullptr;
@@ -8710,6 +8976,9 @@ public:
     activePaneId_ = std::clamp(activePaneId_, 0, std::max(0, paneCount - 1));
     if (viewportLayoutButton_) {
       viewportLayoutButton_->setText(viewportLayoutLabel());
+      updateAccessibleState(
+          viewportLayoutButton_, QStringLiteral("Current layout: %1. Cycle between one, two, and four views.")
+                                     .arg(viewportLayoutLabel()));
     }
     if (viewportTopSplitter_) {
       if (paneCount <= 1) {
@@ -9000,12 +9269,20 @@ public:
       statusResolutionLabel_->setText(
           size.isValid() ? QStringLiteral("%1 × %2").arg(size.width()).arg(size.height())
                          : QStringLiteral("— × —"));
+      updateAccessibleState(
+          statusResolutionLabel_,
+          QStringLiteral("Composition resolution: %1")
+              .arg(statusResolutionLabel_->text()));
     }
     if (statusFrameRateLabel_) {
       statusFrameRateLabel_->setText(
           comp ? QStringLiteral("%1 fps").arg(fps, 0, 'f',
                                                std::abs(fps - std::round(fps)) < 0.001 ? 0 : 2)
                : QStringLiteral("— fps"));
+      updateAccessibleState(
+          statusFrameRateLabel_,
+          QStringLiteral("Composition frame rate: %1")
+              .arg(statusFrameRateLabel_->text()));
     }
   }
 
@@ -9063,11 +9340,17 @@ public:
     if (!playPauseButton_) return;
     const bool playing = ArtifactPlaybackService::instance() &&
                          ArtifactPlaybackService::instance()->isPlaying();
+    const QString accessibleAction = playing ? QStringLiteral("Pause")
+                                             : QStringLiteral("Play");
     playPauseButton_->setIcon(loadIconWithFallback(
         playing ? QStringLiteral("Studio/playback_pause.svg")
                 : QStringLiteral("Studio/playback_play.svg")));
-    playPauseButton_->setToolTip(playing ? QStringLiteral("Pause")
-                                        : QStringLiteral("Play"));
+    playPauseButton_->setToolTip(accessibleAction);
+    playPauseButton_->setAccessibleName(accessibleAction);
+    updateAccessibleState(
+        playPauseButton_, playing
+                              ? QStringLiteral("Playback is running. Activate to pause.")
+                              : QStringLiteral("Playback is stopped. Activate to play."));
   }
 
   void openCreateCompositionDialog(ArtifactCompositionEditor *owner) {
@@ -9392,12 +9675,29 @@ public:
       if (trackerPanelQualityLabel_) trackerPanelQualityLabel_->setText(QStringLiteral("Confidence —"));
       if (trackerPanelProblemsLabel_) trackerPanelProblemsLabel_->setText(QStringLiteral("Problem frames —"));
       if (trackerPanelFramesLabel_) trackerPanelFramesLabel_->setText(QStringLiteral("Frames —"));
+      if (trackerPanelStatusLabel_) trackerPanelStatusLabel_->setText(QStringLiteral("No active composition"));
+      if (trackerPanelProgress_) trackerPanelProgress_->setValue(0);
       return;
     }
     if (trackerPanelModeLabel_) {
       trackerPanelModeLabel_->setText(controller->trackerModeLabel());
     }
     const bool tracking = controller->trackerJobRunning();
+    const bool planar = controller->trackerModeLabel().contains(
+        QStringLiteral("Planar"), Qt::CaseInsensitive);
+    if (trackerPointModePanelButton_) {
+      trackerPointModePanelButton_->setChecked(!planar);
+      trackerPointModePanelButton_->update();
+    }
+    if (trackerPlanarModePanelButton_) {
+      trackerPlanarModePanelButton_->setChecked(planar);
+      trackerPlanarModePanelButton_->update();
+    }
+    if (trackerPanelProgress_) {
+      trackerPanelProgress_->setValue(
+          tracking ? static_cast<int>(controller->trackerSolveProgress() * 100.0)
+                   : (controller->trackerHasResult() ? 100 : 0));
+    }
     if (trackerPanelQualityLabel_) {
       trackerPanelQualityLabel_->setText(
           tracking
@@ -9421,6 +9721,13 @@ public:
               : QStringLiteral("Tracked frames %1")
                     .arg(controller->trackerResultFrameCount()));
     }
+    if (trackerPanelStatusLabel_) {
+      trackerPanelStatusLabel_->setText(
+          tracking ? QStringLiteral("Analyzing…")
+                   : controller->trackerHasResult()
+                         ? QStringLiteral("Session stored with composition")
+                         : QStringLiteral("Ready"));
+    }
     if (trackerPanel_->isVisible() && tracking) {
       QTimer::singleShot(100, trackerPanel_, [this]() {
         refreshTrackerPanel();
@@ -9436,16 +9743,10 @@ public:
     auto *toolManager = app ? app->toolManager() : nullptr;
     const auto type =
         toolManager ? toolManager->activeTool() : ToolType::Selection;
-    const bool trackingTool = type == ToolType::TrackPoint;
     if (trackerPanel_) {
-      trackerPanel_->setVisible(trackingTool);
+      trackerPanel_->setEnabled(activeRenderController() != nullptr);
       refreshTrackerPanel();
       syncOverlayGeometry(owner);
-    }
-    for (auto *button : {trackerBackwardButton_, trackerStopButton_,
-                         trackerForwardButton_, trackerAllButton_,
-                         trackerReviewButton_}) {
-      if (button) button->setVisible(trackingTool);
     }
     forceFrontForPlanarEditingTool(type);
     switch (type) {
@@ -9519,6 +9820,9 @@ public:
       toolModeButton_->setText(QStringLiteral("Tool"));
       break;
     }
+    updateAccessibleState(
+        toolModeButton_, QStringLiteral("Current editing tool: %1. Open this menu to choose another tool.")
+                             .arg(toolModeButton_->text()));
   }
 
   bool syncPreferredComposition(ArtifactCompositionEditor *owner) {
@@ -9756,6 +10060,36 @@ public:
     case ViewportChannelDisplayMode::VelocityY:
       tags << QStringLiteral("Vel Y");
       break;
+    case ViewportChannelDisplayMode::Position:
+      tags << QStringLiteral("Position");
+      break;
+    case ViewportChannelDisplayMode::PositionX:
+      tags << QStringLiteral("Pos X");
+      break;
+    case ViewportChannelDisplayMode::PositionY:
+      tags << QStringLiteral("Pos Y");
+      break;
+    case ViewportChannelDisplayMode::PositionZ:
+      tags << QStringLiteral("Pos Z");
+      break;
+    case ViewportChannelDisplayMode::UV:
+      tags << QStringLiteral("UV");
+      break;
+    case ViewportChannelDisplayMode::U:
+      tags << QStringLiteral("UV U");
+      break;
+    case ViewportChannelDisplayMode::V:
+      tags << QStringLiteral("UV V");
+      break;
+    case ViewportChannelDisplayMode::Unpremultiplied:
+      tags << QStringLiteral("Straight");
+      break;
+    case ViewportChannelDisplayMode::Luminance:
+      tags << QStringLiteral("Luminance");
+      break;
+    case ViewportChannelDisplayMode::Matte:
+      tags << QStringLiteral("Matte");
+      break;
     }
     if (xRayAction_ && xRayAction_->isChecked()) {
       tags << QStringLiteral("X-Ray");
@@ -9871,10 +10205,16 @@ public:
     if (shadingButton_) {
       shadingButton_->setText(viewportChannelDisplayLabel());
       shadingButton_->setToolTip(shadingButtonTooltip());
+      updateAccessibleState(
+          shadingButton_, QStringLiteral("Current viewport display: %1. Open this menu to choose a display channel.")
+                              .arg(viewportChannelDisplayLabel()));
     }
     if (gizmoModeButton_) {
       gizmoModeButton_->setText(gizmoButtonLabel());
       gizmoModeButton_->setToolTip(gizmoButtonTooltip());
+      updateAccessibleState(
+          gizmoModeButton_, QStringLiteral("Current transform gizmo: %1. Open this menu to change mode or visibility.")
+                                .arg(gizmoButtonLabel()));
     }
     if (previewOrbitAction_) {
       previewOrbitAction_->setText(previewOrbitButtonLabel());
@@ -10396,6 +10736,12 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
           settings->compositionShowMotionPathOverlay());
       controller->setShowDensityHeatmapOverlay(
           settings->compositionShowDensityHeatmapOverlay());
+      controller->setMagnifierEnabled(
+          settings->accessibilityViewportMagnifierEnabled());
+      controller->setMagnifierScale(
+          settings->accessibilityViewportMagnifierScale());
+      controller->setMagnifierFollowCursor(
+          settings->accessibilityViewportMagnifierFollowCursor());
     };
     impl_->forEachRenderController(applySettings);
   }
@@ -10418,6 +10764,32 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                   const QSignalBlocker blocker(impl_->motionPathAction_);
                   impl_->motionPathAction_->setChecked(
                       impl_->renderController_->isShowMotionPathOverlay());
+                }
+                impl_->renderController_->setMagnifierEnabled(
+                    settings->accessibilityViewportMagnifierEnabled());
+                impl_->renderController_->setMagnifierScale(
+                    settings->accessibilityViewportMagnifierScale());
+                impl_->renderController_->setMagnifierFollowCursor(
+                    settings->accessibilityViewportMagnifierFollowCursor());
+                impl_->forEachActiveSecondaryController(
+                    [settings](CompositionRenderController *controller) {
+                      controller->setMagnifierEnabled(
+                          settings->accessibilityViewportMagnifierEnabled());
+                      controller->setMagnifierScale(
+                          settings->accessibilityViewportMagnifierScale());
+                      controller->setMagnifierFollowCursor(
+                          settings->accessibilityViewportMagnifierFollowCursor());
+                    });
+                if (impl_->compositionView_) {
+                  updateAccessibleState(
+                      impl_->compositionView_,
+                      settings->accessibilityViewportMagnifierEnabled()
+                          ? QStringLiteral("Edit and preview the active composition. "
+                                           "Viewport magnifier on at %1x")
+                                .arg(settings
+                                         ->accessibilityViewportMagnifierScale())
+                          : QStringLiteral("Edit and preview the active composition. "
+                                           "Viewport magnifier off"));
                 }
                 impl_->renderController_->setShowDensityHeatmapOverlay(
                     settings->compositionShowDensityHeatmapOverlay());
@@ -10619,8 +10991,9 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->topToolbar_->setObjectName(QStringLiteral("compositionTopToolbar"));
   impl_->topToolbar_->setMovable(false);
   impl_->topToolbar_->setToolButtonStyle(Qt::ToolButtonTextOnly);
-  impl_->topToolbar_->setIconSize(QSize(18, 18));
-  impl_->topToolbar_->setFixedHeight(38);
+  impl_->topToolbar_->setIconSize(
+      QSize(Accessibility::scaledSize(18), Accessibility::scaledSize(18)));
+  impl_->topToolbar_->setFixedHeight(Accessibility::scaledSize(38));
   {
     QPalette pal = impl_->topToolbar_->palette();
     pal.setColor(QPalette::Window, QColor(theme.secondaryBackgroundColor));
@@ -10631,14 +11004,18 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
 
   impl_->viewportLayoutButton_ = new ViewportLayoutButton(impl_->topToolbar_);
   impl_->viewportLayoutButton_->setText(impl_->viewportLayoutLabel());
-  impl_->viewportLayoutButton_->setFixedWidth(72);
+  impl_->viewportLayoutButton_->setFixedWidth(Accessibility::scaledSize(72));
   impl_->viewportLayoutButton_->setAutoRaise(true);
-  impl_->viewportLayoutButton_->setFocusPolicy(Qt::NoFocus);
+  impl_->viewportLayoutButton_->setFocusPolicy(Qt::StrongFocus);
   impl_->viewportLayoutButton_->setToolButtonStyle(Qt::ToolButtonTextOnly);
   impl_->viewportLayoutButton_->setSizePolicy(QSizePolicy::Fixed,
                                                QSizePolicy::Preferred);
   impl_->viewportLayoutButton_->setToolTip(
       QStringLiteral("Cycle the viewport layout between 1, 2, and 4 views"));
+  impl_->viewportLayoutButton_->setAccessibleName(
+      QStringLiteral("Viewport layout"));
+  impl_->viewportLayoutButton_->setAccessibleDescription(
+      QStringLiteral("Cycle the viewport layout between one, two, and four views"));
   impl_->topToolbar_->addWidget(impl_->viewportLayoutButton_);
   impl_->topToolbar_->addSeparator();
   auto setViewportLayout = [this](ArtifactCompositionEditor::Impl::ViewportLayoutMode mode) {
@@ -10700,9 +11077,13 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->compositionCleanupButton_ = new ViewportLayoutButton(impl_->topToolbar_);
   impl_->compositionCleanupButton_->setText(QStringLiteral("Cleanup"));
   impl_->compositionCleanupButton_->setAutoRaise(true);
-  impl_->compositionCleanupButton_->setFocusPolicy(Qt::NoFocus);
+  impl_->compositionCleanupButton_->setFocusPolicy(Qt::StrongFocus);
   impl_->compositionCleanupButton_->setToolButtonStyle(Qt::ToolButtonTextOnly);
   impl_->compositionCleanupButton_->setToolTip(
+      QStringLiteral("Analyze composition spacing, edge margins, and near-center placement"));
+  impl_->compositionCleanupButton_->setAccessibleName(
+      QStringLiteral("Composition cleanup"));
+  impl_->compositionCleanupButton_->setAccessibleDescription(
       QStringLiteral("Analyze composition spacing, edge margins, and near-center placement"));
   impl_->compositionCleanupButton_->setActivatedCallback([this]() {
     if (!impl_) {
@@ -11191,9 +11572,14 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->workspaceModeButton_ = new ViewportLayoutButton(impl_->topToolbar_);
   impl_->workspaceModeButton_->setObjectName(QStringLiteral("compositionWorkspaceModeButton"));
   impl_->workspaceModeButton_->setText(QStringLiteral("Animate"));
+  impl_->workspaceModeButton_->setFocusPolicy(Qt::StrongFocus);
   impl_->workspaceModeButton_->setToolButtonStyle(Qt::ToolButtonTextOnly);
   impl_->workspaceModeButton_->setToolTip(
       QStringLiteral("Animate: AE-style transform and timeline editing. Click to switch to Design."));
+  impl_->workspaceModeButton_->setAccessibleName(
+      QStringLiteral("Viewport workspace mode"));
+  impl_->workspaceModeButton_->setAccessibleDescription(
+      QStringLiteral("Switch between Animate and Design editing modes"));
   impl_->workspaceModeButton_->setActivatedCallback([this]() {
     if (!impl_ || !impl_->workspaceModeButton_) {
       return;
@@ -11210,6 +11596,10 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
         enterDesign
             ? QStringLiteral("Design: Figma-style structure and layout editing. Click to switch to Animate.")
             : QStringLiteral("Animate: AE-style transform and timeline editing. Click to switch to Design."));
+    updateAccessibleState(
+        impl_->workspaceModeButton_,
+        QStringLiteral("Current workspace mode: %1. Activate to switch modes.")
+            .arg(modeName));
     setProperty("artifactWorkspaceMode", modeName);
     for (auto &pane : impl_->panes_) {
       if (pane.view) {
@@ -11244,113 +11634,23 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->toolModeButton_->setAccessibleDescription(QStringLiteral("Choose the current composition editing tool"));
   impl_->topToolbar_->addWidget(impl_->toolModeButton_);
 
-  const auto makeTrackerButton = [this](const QString &text,
-                                        const QString &tooltip) {
-    auto *button = new ViewportLayoutButton(impl_->topToolbar_);
-    button->setText(text);
-    button->setToolButtonStyle(Qt::ToolButtonTextOnly);
-    button->setAutoRaise(true);
-    button->setFocusPolicy(Qt::NoFocus);
-    button->setToolTip(tooltip);
-    button->hide();
-    impl_->topToolbar_->addWidget(button);
-    return button;
-  };
-  impl_->trackerModeButton_ = makeTrackerButton(
-      QStringLiteral("Planar"), QStringLiteral("Enter planar tracking mode"));
-  impl_->trackerModeButton_->show();
-  impl_->trackerModeButton_->setActivatedCallback([this]() {
-    if (!impl_) return;
-    if (auto *toolManager = ArtifactApplicationManager::instance()
-                                ? ArtifactApplicationManager::instance()
-                                      ->toolManager()
-                                : nullptr) {
-      toolManager->setActiveTool(ToolType::TrackPoint);
-    }
-    impl_->forceFrontForPlanarEditingTool(ToolType::TrackPoint);
-    if (auto *controller = impl_->activeRenderController()) {
-      controller->trackerUsePlanarMode();
-    }
-    impl_->syncToolLabel(this);
-  });
-  impl_->trackerPointModeButton_ = makeTrackerButton(
-      QStringLiteral("Point"), QStringLiteral("Enter point tracking mode"));
-  impl_->trackerPointModeButton_->show();
-  impl_->trackerPointModeButton_->setActivatedCallback([this]() {
-    if (!impl_) return;
-    if (auto *toolManager = ArtifactApplicationManager::instance()
-                                ? ArtifactApplicationManager::instance()
-                                      ->toolManager()
-                                : nullptr) {
-      toolManager->setActiveTool(ToolType::TrackPoint);
-    }
-    impl_->forceFrontForPlanarEditingTool(ToolType::TrackPoint);
-    if (auto *controller = impl_->activeRenderController()) {
-      controller->trackerUsePointMode();
-    }
-    impl_->syncToolLabel(this);
-  });
-  impl_->trackerBackwardButton_ = makeTrackerButton(
-      QStringLiteral("◀"), QStringLiteral("Track backward"));
-  impl_->trackerStopButton_ = makeTrackerButton(
-      QStringLiteral("■"), QStringLiteral("Stop tracking"));
-  impl_->trackerForwardButton_ = makeTrackerButton(
-      QStringLiteral("▶"), QStringLiteral("Track forward"));
-  impl_->trackerAllButton_ = makeTrackerButton(
-      QStringLiteral("Track All"), QStringLiteral("Track full image sequence"));
-  impl_->trackerReviewButton_ = makeTrackerButton(
-      QStringLiteral("Review"), QStringLiteral("Jump to the next problem frame"));
-  impl_->trackerBackwardButton_->setActivatedCallback([this]() {
-    if (auto *controller = impl_ ? impl_->activeRenderController() : nullptr) {
-      controller->trackerTrackBackward();
-    }
-  });
-  impl_->trackerStopButton_->setActivatedCallback([this]() {
-    if (auto *controller = impl_ ? impl_->activeRenderController() : nullptr) {
-      controller->trackerStop();
-    }
-  });
-  impl_->trackerForwardButton_->setActivatedCallback([this]() {
-    if (auto *controller = impl_ ? impl_->activeRenderController() : nullptr) {
-      controller->trackerTrackForward();
-    }
-  });
-  impl_->trackerAllButton_->setActivatedCallback([this]() {
-    if (auto *controller = impl_ ? impl_->activeRenderController() : nullptr) {
-      controller->trackerTrackAll();
-    }
-  });
-  impl_->trackerReviewButton_->setActivatedCallback([this]() {
-    if (auto *controller = impl_ ? impl_->activeRenderController() : nullptr) {
-      controller->trackerNextProblemFrame();
-    }
-  });
-
-  // Compact Tracker dock for the VP. It mirrors the mockup's right-side
-  // controls while reusing the controller's existing command surface.
-  impl_->trackerPanel_ = new QFrame(impl_->viewportShell_);
+  // Tracker is a peer editing surface. The Composition Viewport only owns the
+  // on-canvas geometry supplied by the active TrackPoint tool; session state,
+  // analysis, quality review, and result application live in this panel.
+  impl_->trackerPanel_ = new QFrame(this);
   impl_->trackerPanel_->setObjectName(QStringLiteral("compositionTrackerPanel"));
-  impl_->trackerPanel_->setFrameShape(QFrame::StyledPanel);
+  impl_->trackerPanel_->setFrameShape(QFrame::NoFrame);
   impl_->trackerPanel_->setAutoFillBackground(true);
-  impl_->trackerPanel_->setMinimumWidth(248);
-  impl_->trackerPanel_->setMaximumWidth(292);
+  impl_->trackerPanel_->setMinimumWidth(300);
+  impl_->trackerPanel_->setSizePolicy(QSizePolicy::Preferred,
+                                      QSizePolicy::Expanding);
   QPalette trackerPanelPalette = impl_->trackerPanel_->palette();
   trackerPanelPalette.setColor(QPalette::Window,
                                trackerPanelPalette.color(QPalette::Base));
   impl_->trackerPanel_->setPalette(trackerPanelPalette);
   auto *trackerPanelLayout = new QVBoxLayout(impl_->trackerPanel_);
-  trackerPanelLayout->setContentsMargins(12, 10, 12, 10);
-  trackerPanelLayout->setSpacing(7);
-
-  auto *trackerTitle = new QLabel(QStringLiteral("Tracker"),
-                                  impl_->trackerPanel_);
-  QFont trackerTitleFont = trackerTitle->font();
-  trackerTitleFont.setBold(true);
-  trackerTitle->setFont(trackerTitleFont);
-  trackerPanelLayout->addWidget(trackerTitle);
-  impl_->trackerPanelModeLabel_ = new QLabel(QStringLiteral("Point Tracker"),
-                                             impl_->trackerPanel_);
-  trackerPanelLayout->addWidget(impl_->trackerPanelModeLabel_);
+  trackerPanelLayout->setContentsMargins(14, 12, 14, 12);
+  trackerPanelLayout->setSpacing(8);
 
   const auto makePanelButton = [this](QLayout *layout, const QString &text,
                                       const QString &tooltip,
@@ -11373,8 +11673,28 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     layout->addWidget(button);
     return button;
   };
-  makePanelButton(trackerPanelLayout, QStringLiteral("Set Track Point"),
-                  QStringLiteral("Activate point tracking and place the feature point"),
+  const auto makeSectionLabel = [this, trackerPanelLayout](const QString &text) {
+    auto *line = new QFrame(impl_->trackerPanel_);
+    line->setFrameShape(QFrame::HLine);
+    line->setFrameShadow(QFrame::Plain);
+    trackerPanelLayout->addWidget(line);
+    auto *label = new QLabel(text, impl_->trackerPanel_);
+    QFont font = label->font();
+    font.setBold(true);
+    label->setFont(font);
+    trackerPanelLayout->addWidget(label);
+  };
+
+  auto *sessionRow = new QHBoxLayout();
+  sessionRow->setSpacing(6);
+  auto *sessionLabel = new QLabel(QStringLiteral("Tracker"), impl_->trackerPanel_);
+  sessionRow->addWidget(sessionLabel);
+  impl_->trackerPanelModeLabel_ = new QLabel(QStringLiteral("Point Tracker"),
+                                             impl_->trackerPanel_);
+  impl_->trackerPanelModeLabel_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+  sessionRow->addWidget(impl_->trackerPanelModeLabel_, 1);
+  makePanelButton(sessionRow, QStringLiteral("+"),
+                  QStringLiteral("Initialize a tracker for the active composition"),
                   [this]() {
                     if (!impl_) return;
                     if (auto *toolManager = ArtifactApplicationManager::instance()
@@ -11382,13 +11702,30 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                                                 : nullptr) {
                       toolManager->setActiveTool(ToolType::TrackPoint);
                     }
-                    if (auto *controller = impl_->activeRenderController()) {
-                      controller->trackerUsePointMode();
-                    }
+                    if (auto *controller = impl_->activeRenderController()) controller->trackerInitialize();
                     impl_->syncToolLabel(this);
                   });
-  makePanelButton(trackerPanelLayout, QStringLiteral("Use Planar Tracker"),
-                  QStringLiteral("Switch to four-corner planar tracking"),
+  makePanelButton(sessionRow, QStringLiteral("Delete"),
+                  QStringLiteral("Delete the active tracker"),
+                  [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerDelete(); });
+  trackerPanelLayout->addLayout(sessionRow);
+
+  auto *modeRow = new QHBoxLayout();
+  modeRow->setSpacing(4);
+  impl_->trackerPointModePanelButton_ = makePanelButton(
+      modeRow, QStringLiteral("Point"), QStringLiteral("Use point tracking"),
+      [this]() {
+        if (!impl_) return;
+        if (auto *toolManager = ArtifactApplicationManager::instance()
+                                    ? ArtifactApplicationManager::instance()->toolManager()
+                                    : nullptr) {
+          toolManager->setActiveTool(ToolType::TrackPoint);
+        }
+        if (auto *controller = impl_->activeRenderController()) controller->trackerUsePointMode();
+        impl_->syncToolLabel(this);
+      });
+  impl_->trackerPlanarModePanelButton_ = makePanelButton(
+      modeRow, QStringLiteral("Planar"), QStringLiteral("Use four-corner planar tracking"),
                   [this]() {
                     if (!impl_) return;
                     if (auto *toolManager = ArtifactApplicationManager::instance()
@@ -11401,13 +11738,31 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                     }
                     impl_->syncToolLabel(this);
                   });
-  makePanelButton(trackerPanelLayout, QStringLiteral("Reset Track"),
+  impl_->trackerPointModePanelButton_->setCheckable(true);
+  impl_->trackerPlanarModePanelButton_->setCheckable(true);
+  impl_->trackerPointModePanelButton_->setChecked(true);
+  trackerPanelLayout->addLayout(modeRow);
+
+  makeSectionLabel(QStringLiteral("Setup"));
+  auto *setupRow = new QHBoxLayout();
+  setupRow->setSpacing(6);
+  makePanelButton(setupRow, QStringLiteral("Set Track Geometry"),
+                  QStringLiteral("Activate the tracking tool and edit its point or plane in the viewport"),
+                  [this]() {
+                    if (!impl_) return;
+                    if (auto *toolManager = ArtifactApplicationManager::instance()
+                                                ? ArtifactApplicationManager::instance()->toolManager()
+                                                : nullptr) {
+                      toolManager->setActiveTool(ToolType::TrackPoint);
+                    }
+                    impl_->syncToolLabel(this);
+                  });
+  makePanelButton(setupRow, QStringLiteral("Reset Track"),
                   QStringLiteral("Clear track points, planar regions, and tracked results before a new solve"),
                   [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerReset(); });
+  trackerPanelLayout->addLayout(setupRow);
 
-  auto *analyzeLabel = new QLabel(QStringLiteral("Analyze"),
-                                  impl_->trackerPanel_);
-  trackerPanelLayout->addWidget(analyzeLabel);
+  makeSectionLabel(QStringLiteral("Analyze"));
   auto *analyzeRow = new QHBoxLayout();
   analyzeRow->setSpacing(4);
   makePanelButton(analyzeRow, QStringLiteral("|◀"), QStringLiteral("Track backward"),
@@ -11419,6 +11774,14 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   makePanelButton(analyzeRow, QStringLiteral("▶|"), QStringLiteral("Track full sequence"),
                   [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerTrackAll(); });
   trackerPanelLayout->addLayout(analyzeRow);
+  impl_->trackerPanelProgress_ = new QProgressBar(impl_->trackerPanel_);
+  impl_->trackerPanelProgress_->setRange(0, 100);
+  impl_->trackerPanelProgress_->setValue(0);
+  impl_->trackerPanelProgress_->setTextVisible(false);
+  impl_->trackerPanelProgress_->setFixedHeight(6);
+  trackerPanelLayout->addWidget(impl_->trackerPanelProgress_);
+
+  makeSectionLabel(QStringLiteral("Quality"));
   makePanelButton(trackerPanelLayout, QStringLiteral("Review Problem Frames"),
                   QStringLiteral("Jump to the next problem frame"),
                   [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerNextProblemFrame(); });
@@ -11442,26 +11805,28 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   trackerPanelLayout->addWidget(impl_->trackerPanelProblemsLabel_);
   trackerPanelLayout->addWidget(impl_->trackerPanelFramesLabel_);
 
-  auto *applyLabel = new QLabel(QStringLiteral("Apply"), impl_->trackerPanel_);
-  trackerPanelLayout->addWidget(applyLabel);
-  makePanelButton(trackerPanelLayout, QStringLiteral("Bake Position"),
+  makeSectionLabel(QStringLiteral("Apply"));
+  auto *applyPointRow = new QHBoxLayout();
+  applyPointRow->setSpacing(6);
+  makePanelButton(applyPointRow, QStringLiteral("Bake Position"),
                   QStringLiteral("Apply the point track to position"),
                   [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerApplyToPosition(); });
-  makePanelButton(trackerPanelLayout, QStringLiteral("Bake Anchor"),
+  makePanelButton(applyPointRow, QStringLiteral("Bake Anchor"),
                   QStringLiteral("Apply the point track to anchor"),
                   [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerApplyToAnchor(); });
+  trackerPanelLayout->addLayout(applyPointRow);
   makePanelButton(trackerPanelLayout, QStringLiteral("Create Nulls for All Points"),
                   QStringLiteral("Create one Null layer per tracked point"),
                   [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerApplyAllPoints(); });
-  makePanelButton(trackerPanelLayout, QStringLiteral("Corner Pin (Planar)"),
+  makePanelButton(trackerPanelLayout, QStringLiteral("Apply Corner Pin"),
                   QStringLiteral("Apply planar tracking to Corner Pin"),
                   [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerApplyPlanarCornerPin(); });
   trackerPanelLayout->addStretch(1);
-  if (impl_->viewportShellLayout_) {
-    impl_->viewportShellLayout_->addWidget(impl_->trackerPanel_, 0);
-  }
-  impl_->trackerPanel_->hide();
-  impl_->trackerPanel_->raise();
+  auto *statusLine = new QFrame(impl_->trackerPanel_);
+  statusLine->setFrameShape(QFrame::HLine);
+  trackerPanelLayout->addWidget(statusLine);
+  impl_->trackerPanelStatusLabel_ = new QLabel(QStringLiteral("Ready"), impl_->trackerPanel_);
+  trackerPanelLayout->addWidget(impl_->trackerPanelStatusLabel_);
 
   auto *gizmoMenu = new QMenu(this);
   polishEditorMenu(gizmoMenu, this);
@@ -11728,13 +12093,6 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                        action == impl_->motionPathAction_ ||
                        widget == impl_->workspaceModeButton_ ||
                        widget == impl_->toolModeButton_ ||
-                       widget == impl_->trackerModeButton_ ||
-                       widget == impl_->trackerPointModeButton_ ||
-                       widget == impl_->trackerBackwardButton_ ||
-                       widget == impl_->trackerStopButton_ ||
-                       widget == impl_->trackerForwardButton_ ||
-                       widget == impl_->trackerAllButton_ ||
-                       widget == impl_->trackerReviewButton_ ||
                        widget == impl_->gizmoModeButton_ ||
                        widget == impl_->pivotModeButton_ ||
                        widget == impl_->screenshotButton_ ||
@@ -11751,7 +12109,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   // Bottom Bar (Viewer Controls)
   impl_->bottomBar_ = new QWidget(this);
   impl_->bottomBar_->setObjectName(QStringLiteral("compositionBottomBar"));
-  impl_->bottomBar_->setMinimumHeight(28);
+  impl_->bottomBar_->setMinimumHeight(Accessibility::scaledSize(28));
   impl_->bottomBar_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
   impl_->bottomBar_->setAutoFillBackground(true);
   {
@@ -11770,7 +12128,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     button->setDefaultAction(action);
     button->setAutoRaise(true);
     button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    button->setMinimumHeight(24);
+    button->setMinimumHeight(Accessibility::scaledSize(24));
     return button;
   };
   impl_->zoom100Action_->setText(QStringLiteral("100%"));
@@ -12536,6 +12894,20 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
       addChannelAction(QStringLiteral("Velocity X"), ViewportChannelDisplayMode::VelocityX, false);
   QAction *channelVelocityYAct =
       addChannelAction(QStringLiteral("Velocity Y"), ViewportChannelDisplayMode::VelocityY, false);
+  QAction *channelPositionAct =
+      addChannelAction(QStringLiteral("Position"), ViewportChannelDisplayMode::Position, false);
+  QAction *channelPositionXAct =
+      addChannelAction(QStringLiteral("Position X"), ViewportChannelDisplayMode::PositionX, false);
+  QAction *channelPositionYAct =
+      addChannelAction(QStringLiteral("Position Y"), ViewportChannelDisplayMode::PositionY, false);
+  QAction *channelPositionZAct =
+      addChannelAction(QStringLiteral("Position Z"), ViewportChannelDisplayMode::PositionZ, false);
+  QAction *channelUvAct =
+      addChannelAction(QStringLiteral("UV"), ViewportChannelDisplayMode::UV, false);
+  QAction *channelUAct =
+      addChannelAction(QStringLiteral("UV U"), ViewportChannelDisplayMode::U, false);
+  QAction *channelVAct =
+      addChannelAction(QStringLiteral("UV V"), ViewportChannelDisplayMode::V, false);
   shadingMenu->addSeparator();
   auto *qualityGroup = new QActionGroup(shadingMenu);
   qualityGroup->setExclusive(true);
@@ -12749,6 +13121,13 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     channelVelocityAct->setChecked(channelMode == ViewportChannelDisplayMode::Velocity);
     channelVelocityXAct->setChecked(channelMode == ViewportChannelDisplayMode::VelocityX);
     channelVelocityYAct->setChecked(channelMode == ViewportChannelDisplayMode::VelocityY);
+    channelPositionAct->setChecked(channelMode == ViewportChannelDisplayMode::Position);
+    channelPositionXAct->setChecked(channelMode == ViewportChannelDisplayMode::PositionX);
+    channelPositionYAct->setChecked(channelMode == ViewportChannelDisplayMode::PositionY);
+    channelPositionZAct->setChecked(channelMode == ViewportChannelDisplayMode::PositionZ);
+    channelUvAct->setChecked(channelMode == ViewportChannelDisplayMode::UV);
+    channelUAct->setChecked(channelMode == ViewportChannelDisplayMode::U);
+    channelVAct->setChecked(channelMode == ViewportChannelDisplayMode::V);
     impl_->refreshViewportStateLabels();
     shadeGridAct->setChecked(gridAct->isChecked());
     shadeGuidesAct->setChecked(guidesAct->isChecked());
@@ -12778,14 +13157,21 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->cameraControlButton_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
   impl_->cameraControlButton_->setToolTip(
       QStringLiteral("Viewport orientation and camera view"));
+  impl_->cameraControlButton_->setAccessibleName(
+      QStringLiteral("Viewport camera"));
+  impl_->cameraControlButton_->setAccessibleDescription(
+      QStringLiteral("Choose viewport orientation and camera view"));
 
   auto *bottomLayoutButton = new ViewportLayoutButton(impl_->bottomBar_);
   bottomLayoutButton->setText(impl_->viewportLayoutLabel());
   bottomLayoutButton->setAutoRaise(true);
-  bottomLayoutButton->setFocusPolicy(Qt::NoFocus);
+  bottomLayoutButton->setFocusPolicy(Qt::StrongFocus);
   bottomLayoutButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
   bottomLayoutButton->setToolTip(
       QStringLiteral("Cycle the viewport layout between 1, 2, and 4 views"));
+  bottomLayoutButton->setAccessibleName(QStringLiteral("Viewport layout"));
+  bottomLayoutButton->setAccessibleDescription(
+      QStringLiteral("Cycle the viewport layout between one, two, and four views"));
   bottomLayoutButton->setActivatedCallback([this, setViewportLayout]() {
     if (impl_) setViewportLayout(impl_->nextViewportLayoutMode());
   });
@@ -12794,7 +13180,9 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->viewerTimecodeLabel_ = new QLabel(
       QStringLiteral("00:00:00:00"), impl_->bottomBar_);
   impl_->viewerTimecodeLabel_->setAlignment(Qt::AlignCenter);
-  impl_->viewerTimecodeLabel_->setMinimumWidth(112);
+  impl_->viewerTimecodeLabel_->setMinimumWidth(Accessibility::scaledSize(112));
+  impl_->viewerTimecodeLabel_->setAccessibleDescription(
+      QStringLiteral("Current composition timecode"));
   impl_->viewerTimecodeLabel_->setFrameShape(QFrame::StyledPanel);
   QFont timecodeFont = impl_->viewerTimecodeLabel_->font();
   timecodeFont.setStyleHint(QFont::Monospace);
@@ -12811,8 +13199,11 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     auto *button = new ViewportLayoutButton(impl_->bottomBar_);
     button->setIcon(loadIconWithFallback(icon));
     button->setToolTip(tooltip);
+    button->setAccessibleName(tooltip);
     button->setAutoRaise(true);
-    button->setFixedSize(28, 24);
+    button->setFocusPolicy(Qt::StrongFocus);
+    button->setFixedSize(Accessibility::scaledSize(28),
+                         Accessibility::scaledSize(24));
     return button;
   };
   impl_->previousFrameButton_ = makeTransportButton(
@@ -12866,7 +13257,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
 
   impl_->statusStrip_ = new QFrame(this);
   impl_->statusStrip_->setObjectName(QStringLiteral("compositionStatusStrip"));
-  impl_->statusStrip_->setFixedHeight(22);
+  impl_->statusStrip_->setFixedHeight(Accessibility::scaledSize(22));
   impl_->statusStrip_->setFrameShape(QFrame::StyledPanel);
   impl_->statusStrip_->setFrameShadow(QFrame::Plain);
   impl_->statusStrip_->setAutoFillBackground(true);
@@ -13732,6 +14123,10 @@ void ArtifactCompositionEditor::refreshEnabledState() {
 
 CompositionRenderController* ArtifactCompositionEditor::renderController() const {
   return impl_ ? impl_->renderController_ : nullptr;
+}
+
+QWidget* ArtifactCompositionEditor::trackerPanelWidget() const {
+  return impl_ ? impl_->trackerPanel_ : nullptr;
 }
 
 void ArtifactCompositionEditor::play() {

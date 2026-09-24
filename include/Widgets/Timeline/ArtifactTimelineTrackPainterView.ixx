@@ -9,6 +9,8 @@ module;
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPaintEvent>
+#include <QPoint>
+#include <QPointF>
 #include <QDropEvent>
 #include <QFocusEvent>
 #include <QMenu>
@@ -86,6 +88,7 @@ export namespace Artifact
    Generic,
    Audio,
    Video,
+   GroupContainer,
    // A composition transition is a compact relationship bar, never a layer
    // clip. Its LayerID remains nil so layer selection/move paths cannot own it.
    Transition
@@ -178,6 +181,23 @@ export namespace Artifact
   void setCompositionMarkers(const QVector<CompositionMarkerVisual>& markers);
   QVector<KeyframeMarkerVisual> keyframeMarkers() const;
   const QVector<KeyframeMarkerVisual>& keyframeMarkersView() const;
+  const QVector<CompositionMarkerVisual>& compositionMarkersView() const;
+  // Bumped on every visual-data mutation the GPU snapshot consumes.
+  quint64 timelineVisualRevision() const;
+  // True while a pointer gesture may be mutating visuals live.
+  bool isInteracting() const;
+  // Read-only live-edit previews consumed by the Diligent surface. They keep
+  // the compatibility QWidget as the undo authority while avoiding a full
+  // static-snapshot rebuild for every pointer move.
+  bool activeDragClip(TrackClipVisual& visual) const;
+  bool isKeyframeEditing() const;
+  // Backend-neutral navigation entry point used by the Diligent surface.
+  bool handleNavigationWheel(const QPointF& position, const QPoint& angleDelta,
+                             Qt::KeyboardModifiers modifiers);
+  bool handleNavigationPan(Qt::MouseButton changedButton, const QPointF& position,
+                           Qt::MouseButtons buttons,
+                           Qt::KeyboardModifiers modifiers);
+  void touchTimelineVisuals();
   QVector<KeyframeMarkerVisual> selectedKeyframeMarkers() const;
   KeyframeMarkerVisual hoveredKeyframeMarker() const;
   void selectAllKeyframeMarkers();
@@ -204,6 +224,9 @@ export namespace Artifact
                           bool forceRefresh = false);
   QVector<TrackClipVisual> clips() const;
   const QVector<TrackClipVisual>& clipsView() const;
+  // Borrowed UI-thread geometry for display snapshot construction. The view
+  // owns the storage; callers must not retain the reference across mutations.
+  const QVector<int>& trackTopsView() const;
 
  public:
   void clipSelected(const QString& clipId, const LayerID& layerId);

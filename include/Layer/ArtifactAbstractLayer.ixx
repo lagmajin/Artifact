@@ -45,7 +45,9 @@ import Artifact.Animation.LayerEffectEnvelope;
 import Artifact.Mask.LayerMask;
 import Artifact.Layer.Matte;
 import Artifact.Layer.Component.System;
+import Container.NamedVector;
 import Geometry.Fracture;
+import Physics.Collider2DEdit;
 import Layer.Matte;
 import Frame.Position;
 import Audio.Segment;
@@ -82,8 +84,8 @@ struct LayerRigidBodyContactState {
  };
 
   struct SoftBodyDeformationMesh {
-   std::vector<float> vertices; // x, y, u, v per vertex
-   std::vector<std::uint32_t> indices;
+   NamedVector<float> vertices{ContainerName{"Layer.SoftBodyVertices"}};
+   NamedVector<std::uint32_t> indices{ContainerName{"Layer.SoftBodyIndices"}};
 
    bool isValid() const noexcept {
     return !vertices.empty() && !indices.empty() && vertices.size() % 4 == 0;
@@ -91,9 +93,9 @@ struct LayerRigidBodyContactState {
   };
 
   struct ClothDeformationMesh3D {
-   std::vector<float> positions; // x, y, z per vertex
-   std::vector<float> uvs; // u, v per vertex
-   std::vector<std::uint32_t> indices;
+   NamedVector<float> positions{ContainerName{"Layer.ClothPositions"}};
+   NamedVector<float> uvs{ContainerName{"Layer.ClothUvs"}};
+   NamedVector<std::uint32_t> indices{ContainerName{"Layer.ClothIndices"}};
 
    bool isValid() const noexcept {
     return !positions.empty() && !indices.empty() && positions.size() % 3 == 0 &&
@@ -336,6 +338,11 @@ enum class DetailLevel {
 };
 
 bool isTimelineHiddenLayerPropertyGroup(const QString &groupName);
+// Timeline 例外: テキストアニメーターの動的グループは、表示名ではなく
+// プロパティパスで識別する。グループ内の全プロパティが
+// "text.animators.<index>." 配下にある場合だけ Animator グループとみなす。
+bool isTimelineTextAnimatorLayerPropertyGroup(
+    const ArtifactCore::PropertyGroup &group);
 bool isTimelineExpandedByDefaultLayerPropertyGroup(const QString &groupName);
 bool isInspectorHiddenLayerPropertyGroup(const QString &groupName);
 bool isInspectorExpandedByDefaultLayerPropertyGroup(const QString &groupName);
@@ -353,6 +360,14 @@ private:
       double positionRange, double anchorRange) const;
   void appendMaskPropertyGroups(
       std::vector<ArtifactCore::PropertyGroup> &groups) const;
+  bool setComponentDescriptorPropertyValue(const QString &propertyPath,
+                                           const QVariant &value);
+  bool setComponentPhysicsPropertyValue(const QString &propertyPath,
+                                        const QVariant &value);
+  bool setComponentLayoutPropertyValue(const QString &propertyPath,
+                                       const QVariant &value);
+  bool setTransformTimeSourcePropertyValue(const QString &propertyPath,
+                                           const QVariant &value);
 
 protected:
   void setSourceSize(const Size_2D &size);
@@ -387,6 +402,12 @@ public:
   void setLayerName(const QString &name);
   QString layerNote() const;
   void setLayerNote(const QString& note);
+  // Project3D-style camera projection (3D card targets). Empty source id =
+  // no projection. v1 projects through the current render camera.
+  QString projectionSourceLayerId() const;
+  void setProjectionSourceLayerId(const QString &layerId);
+  bool projectionEnabled() const;
+  void setProjectionEnabled(bool enabled);
 
   virtual void setComposition(QObject *comp);
   virtual void setComposition(void *comp);
@@ -424,6 +445,13 @@ public:
   const AnimatableTransform2D &transform2D() const;
   AnimatableTransform3D &transform3D();
   const AnimatableTransform3D &transform3D() const;
+  // Frame domain transform keys are stored in (pinned to the composition
+  // frame rate on setComposition/setFrameRate). Author and look up transform
+  // keys only through these accessors; re-deriving the scale from the
+  // composition elsewhere addresses keyed frames at the wrong instant.
+  int64_t keyframeTimeScale() const;
+  ArtifactCore::RationalTime keyframeTimeAtFrame(int64_t frame) const;
+  ArtifactCore::RationalTime currentKeyframeTime() const;
   ArtifactCore::AnimationLayerStackT<float> &animationLayers();
   const ArtifactCore::AnimationLayerStackT<float> &animationLayers() const;
   ArtifactCore::AnimationLayerStackT<float> &animationLayerStack(
@@ -432,6 +460,9 @@ public:
       const QString &propertyPath) const;
   QJsonObject animationLayersSnapshot() const;
   void restoreAnimationLayersSnapshot(const QJsonObject &snapshot);
+  QJsonObject deformation2DData() const;
+  void setDeformation2DData(const QJsonObject &data);
+  bool syncDeformation2DControlProperty(const QString &propertyPath);
   void bakeAnimationLayersAtCurrentFrame();
   void bakeAnimationLayersOverRange(int64_t startFrame, int64_t endFrame,
                                     int64_t step = 1);
@@ -452,7 +483,7 @@ public:
   QMatrix4x4 getGlobalTransform4x4At(const ArtifactCore::RationalTime& time) const;
   QMatrix4x4 getLocalTransform4x4() const;
   QMatrix4x4 getLocalTransform4x4At(const ArtifactCore::RationalTime& time) const;
-  std::vector<TwoPointFiveDRenderPass> twoPointFiveDRenderPasses(
+  NamedVector<TwoPointFiveDRenderPass> twoPointFiveDRenderPasses(
       const QMatrix4x4 &baseTransform) const;
   float4x4 getGlobalTransformMatrix() const;
   float4x4 getLocalTransformMatrix() const;
@@ -470,7 +501,10 @@ public:
    void disableCloth3DPhysics();
   // Layer-local outline used by the Polygon collision shape (3). Empty means
   // the layer has no outline and collision falls back to auto bounds.
-  virtual std::vector<QPointF> collisionOutlineLocalPoints() const;
+  virtual ArtifactCore::NamedVector<QPointF>
+  collisionOutlineLocalPoints() const;
+  ArtifactCore::Collider2DEditState collision2DEditState() const;
+  bool setCollision2DEditState(const ArtifactCore::Collider2DEditState& state);
   void enableMaterialPhysics(int preset = 0);
   void disableMaterialPhysics();
   void enableRigidBodyPhysics();
@@ -493,7 +527,7 @@ public:
   bool isJointBroken() const;
   void setJointBroken(bool broken);
   const ArtifactCore::FractureState& fractureState() const;
-  const std::vector<ArtifactCore::FractureShardMotion>& fractureShardMotions() const;
+  const ArtifactCore::NamedVector<ArtifactCore::FractureShardMotion>& fractureShardMotions() const;
   const LayerEvaluationState& layerEvaluationState() const;
   void resetFractureState();
   void applyFractureImpact(const ArtifactCore::FractureImpact& impact);
@@ -616,6 +650,12 @@ public:
   void setOpacity(float value);
   ArtifactCore::Audio::Modulation::ModulationRouter& modulationRouter();
   QString modulationPropertyPath(const QString& propertyPath) const;
+  // Reusable automation-clip placements (Phase 2). Patterns live on the
+  // composition; instances only reference them by id and never mutate keys.
+  // Const-ref: hot-path evaluation must not copy per frame.
+  const std::vector<ArtifactCore::AutomationClipInstance>& automationClipInstances() const;
+  void setAutomationClipInstances(
+      const std::vector<ArtifactCore::AutomationClipInstance>& instances);
   const LayerEffectEnvelope& effectEnvelope() const;
   void setEffectEnvelope(const LayerEffectEnvelope& envelope);
 
@@ -634,7 +674,7 @@ public:
    LayerVariant* getActiveVariant() const;
    LayerVariant* createVariantFromCurrent(const ArtifactCore::String& newName);
    void resetVariantOverride(VariantOverrideFlags specificFlag = VariantOverrideFlags::None);
-   std::vector<LayerVariant*> getVariants() const;
+   ArtifactCore::NamedVector<LayerVariant*> getVariants() const;
    std::unique_ptr<LayerVariant> extractVariant(size_t index);
    void insertVariant(size_t index, std::unique_ptr<LayerVariant> variant);
    /* Variants */
@@ -662,18 +702,18 @@ public:
    /*Modifiers*/
 
   /*Components*/
-  std::vector<LayerComponentDescriptor> layerComponents() const;
-  std::vector<LayerComponentDescriptor>
+  ArtifactCore::NamedVector<LayerComponentDescriptor> layerComponents() const;
+  ArtifactCore::NamedVector<LayerComponentDescriptor>
   enabledLayerComponents(LayerComponentPhase phase) const;
-  std::vector<LayerGeneratorDescriptor> layerGenerators() const;
-  std::vector<LayerFieldDescriptor> layerFields() const;
-  std::vector<LayerModifierDescriptor> layerCloneModifiers() const;
-  std::vector<QString> clonerTransformNames() const;
+  ArtifactCore::NamedVector<LayerGeneratorDescriptor> layerGenerators() const;
+  ArtifactCore::NamedVector<LayerFieldDescriptor> layerFields() const;
+  ArtifactCore::NamedVector<LayerModifierDescriptor> layerCloneModifiers() const;
+  ArtifactCore::NamedVector<QString> clonerTransformNames() const;
   QJsonArray clonerTransformsSnapshot() const;
   bool restoreClonerTransformsSnapshot(const QJsonArray &snapshot);
   QJsonObject componentDescriptorSnapshot() const;
   bool restoreComponentDescriptorSnapshot(const QJsonObject &snapshot);
-  std::vector<LayerComponentValidationIssue>
+  ArtifactCore::NamedVector<LayerComponentValidationIssue>
   validateLayerComponents() const;
   void setAuthoritativeComponentEvaluationState(
       const LayerEvaluationState& state, std::int64_t frame);

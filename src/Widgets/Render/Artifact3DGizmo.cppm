@@ -10,10 +10,14 @@ module;
 #include <QRectF>
 #include <QString>
 #include <wobjectimpl.h>
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <limits>
+#include <memory>
 
 module Artifact.Widgets.Gizmo3D;
 
-import std;
 import Settings.Accessibility;
 
 namespace Artifact {

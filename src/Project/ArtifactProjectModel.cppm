@@ -146,7 +146,7 @@ ArtifactProjectModel::Impl::Impl()
 {
   // create the internal model with no parent for now; ownership will be transferred
   model_ = new QStandardItemModel();
-  // six columns: Name, Size, Duration, Frame Rate, Updated, ID
+  // six columns: Name, Type, Status, Size, Modified, ID
   model_->setColumnCount(6);
 }
 
@@ -182,10 +182,10 @@ void ArtifactProjectModel::Impl::refreshTree()
   model_->setColumnCount(6);
   model_->setHorizontalHeaderLabels(QStringList()
     << QObject::tr("Name")
+    << QObject::tr("Type")
+    << QObject::tr("Status")
     << QObject::tr("Size")
-    << QObject::tr("Duration")
-    << QObject::tr("Frame Rate")
-    << QObject::tr("Updated")
+    << QObject::tr("Modified")
     << QObject::tr("ID"));
 
   auto shared = projectPtr_.lock();
@@ -288,9 +288,9 @@ void ArtifactProjectModel::Impl::refreshTree()
     }
 
     auto* item = new QStandardItem(iconForProjectItem(it), it->name.toQString());
+    auto* typeItem = new QStandardItem(QStringLiteral("Item"));
+    auto* statusItem = new QStandardItem(QStringLiteral("Ready"));
     auto* sizeItem = new QStandardItem(QStringLiteral("-"));
-    auto* durationItem = new QStandardItem(QStringLiteral("-"));
-    auto* frameRateItem = new QStandardItem(QStringLiteral("-"));
     auto* updatedItem = new QStandardItem(QStringLiteral("-"));
     auto* idItem = new QStandardItem(it->id.toString());
 
@@ -315,114 +315,68 @@ void ArtifactProjectModel::Impl::refreshTree()
       }
     };
     setRoleData(item);
+    setRoleData(typeItem);
+    setRoleData(statusItem);
     setRoleData(sizeItem);
-    setRoleData(durationItem);
-    setRoleData(frameRateItem);
     setRoleData(updatedItem);
     setRoleData(idItem);
 
     if (it->type() == Artifact::eProjectItemType::Footage) {
       auto* footage = static_cast<Artifact::FootageItem*>(it);
       const QFileInfo info(footage->filePath);
+      typeItem->setText(QStringLiteral("Footage"));
       if (info.exists()) {
+        statusItem->setText(QStringLiteral("Online"));
         sizeItem->setText(QStringLiteral("%1 KB").arg(info.size() / 1024));
         updatedItem->setText(info.lastModified().toString(QStringLiteral("yyyy-MM-dd HH:mm")));
 
         const QString suffix = info.suffix().toLower();
         if (isImageFile(suffix)) {
           if (footage->isSequence) {
-            durationItem->setText(!footage->sequencePaths.isEmpty()
-                                      ? QStringLiteral("%1 frames").arg(footage->sequencePaths.size())
-                                      : QStringLiteral("-"));
-            frameRateItem->setText(footage->frameRate > 0.0
-                                       ? QStringLiteral("Sequence • %1 fps")
-                                             .arg(QString::number(footage->frameRate, 'f',
-                                                                  std::abs(footage->frameRate - std::round(footage->frameRate)) <= 0.0005 ? 0 : 3))
-                                       : QStringLiteral("Image Sequence"));
+            typeItem->setText(QStringLiteral("Sequence"));
           } else {
-            frameRateItem->setText(QStringLiteral("Image"));
+            typeItem->setText(QStringLiteral("Image"));
           }
         } else if (isVideoFile(suffix)) {
-          // Opening every media file with OpenCV made unrelated project-tree
-          // rebuilds block on disk and codec initialization. Use metadata that
-          // was captured at import time; unknown values remain intentionally
-          // lightweight until a dedicated metadata cache supplies them.
-          frameRateItem->setText(
-              footage->frameRate > 0.0
-                  ? QStringLiteral("%1 fps").arg(QString::number(
-                        footage->frameRate, 'f',
-                        std::abs(footage->frameRate -
-                                 std::round(footage->frameRate)) <= 0.0005
-                            ? 0
-                            : 3))
-                  : QStringLiteral("Video"));
+          typeItem->setText(QStringLiteral("Video"));
         } else if (isAudioFile(suffix)) {
-          frameRateItem->setText(QStringLiteral("Audio"));
+          typeItem->setText(QStringLiteral("Audio"));
         } else if (isFontFile(suffix)) {
-          frameRateItem->setText(QStringLiteral("Font"));
-        } else {
-          frameRateItem->setText(QStringLiteral("Footage"));
+          typeItem->setText(QStringLiteral("Font"));
+        } else if (isModelFile(suffix)) {
+          typeItem->setText(QStringLiteral("3D"));
         }
       } else {
+        statusItem->setText(QStringLiteral("Missing"));
         sizeItem->setText(QStringLiteral("-"));
-        durationItem->setText(QStringLiteral("Missing"));
-        frameRateItem->setText(QStringLiteral("-"));
         updatedItem->setText(QStringLiteral("Missing"));
       }
     } else {
       item->setData(QString(), assetRole);
       if (it->type() == Artifact::eProjectItemType::Composition) {
+        typeItem->setText(QStringLiteral("Composition"));
+        statusItem->setText(QStringLiteral("Ready"));
         auto* compItem = static_cast<Artifact::CompositionItem*>(it);
         idItem->setText(compItem->compositionId.toString());
         if (auto* svc = ArtifactProjectService::instance()) {
           const auto found = svc->findComposition(compItem->compositionId);
           if (auto comp = found.ptr.lock()) {
             const QSize compSize = comp->settings().compositionSize();
-            const FrameRange frameRange = comp->frameRange().normalized();
-            const float fps = comp->frameRate().framerate();
-            const auto responsiveLayout = comp->responsiveLayout();
-            const QString activeVariantId = comp->activeResponsiveLayoutVariantId();
-            QString activeVariantLabel = QStringLiteral("Manual");
-            for (const auto& variant : responsiveLayout.variants) {
-              if (variant.variantId == activeVariantId) {
-                activeVariantLabel = variant.displayName.isEmpty()
-                                         ? variant.variantId
-                                         : variant.displayName;
-                if (variant.baseSize.isValid()) {
-                  activeVariantLabel = QStringLiteral("%1 %2x%3")
-                                           .arg(activeVariantLabel)
-                                           .arg(variant.baseSize.width())
-                                           .arg(variant.baseSize.height());
-                }
-                break;
-              }
-            }
             sizeItem->setText(QStringLiteral("%1 x %2")
                                   .arg(compSize.width())
                                   .arg(compSize.height()));
-            durationItem->setText(QStringLiteral("%1 frames • %2")
-                                      .arg(frameRange.duration())
-                                      .arg(activeVariantLabel));
-            frameRateItem->setText(
-                fps > 0.0f
-                    ? QStringLiteral("%1 fps")
-                          .arg(QString::number(
-                              fps, 'f',
-                              std::abs(fps - std::round(fps)) <= 0.0005f ? 0
-                                                                           : 3))
-                    : QStringLiteral("-"));
           }
         }
       } else if (it->type() == Artifact::eProjectItemType::Solid) {
+        typeItem->setText(QStringLiteral("Solid"));
+        statusItem->setText(QStringLiteral("Ready"));
         const auto* solid = static_cast<const Artifact::SolidItem*>(it);
         sizeItem->setText(QStringLiteral("%1 x %2")
                               .arg(solid->width)
                               .arg(solid->height));
-        const QString aspectLabel = std::abs(solid->pixelAspectRatio - 1.0) <= 0.0005
-                                         ? QStringLiteral("Square pixels")
-                                         : QStringLiteral("PAR %1:1").arg(
-                                               solid->pixelAspectRatio, 0, 'f', 3);
-        frameRateItem->setText(QStringLiteral("Solid • %1").arg(aspectLabel));
+      } else if (it->type() == Artifact::eProjectItemType::Folder) {
+        typeItem->setText(QStringLiteral("Folder"));
+        statusItem->setText(QStringLiteral("-"));
       }
     }
 
@@ -431,7 +385,7 @@ void ArtifactProjectModel::Impl::refreshTree()
       item->appendRow(childRow);
     }
 
-    return QList<QStandardItem*>() << item << sizeItem << durationItem << frameRateItem << updatedItem << idItem;
+    return QList<QStandardItem*>() << item << typeItem << statusItem << sizeItem << updatedItem << idItem;
   };
 
   Artifact::ProjectItem* projectPlaceholder = nullptr;
@@ -514,7 +468,9 @@ ArtifactProjectModel::ArtifactProjectModel(QObject* parent/*=nullptr*/) :QAbstra
 
   // Ensure the internal model provides horizontal header labels for columns
   if (impl_->model_) {
-    impl_->model_->setHorizontalHeaderLabels(QStringList() << tr("Name") << tr("Size") << tr("Duration") << tr("Frame Rate") << tr("Updated") << tr("ID"));
+    impl_->model_->setHorizontalHeaderLabels(QStringList()
+        << tr("Name") << tr("Type") << tr("Status")
+        << tr("Size") << tr("Modified") << tr("ID"));
   }
 }
 
@@ -656,10 +612,10 @@ QVariant ArtifactProjectModel::headerData(int section, Qt::Orientation orientati
     }
     // fallback to explicit known labels per column
     if (section == 0) return tr("Name");
-    if (section == 1) return tr("Size");
-    if (section == 2) return tr("Duration");
-    if (section == 3) return tr("Frame Rate");
-    if (section == 4) return tr("Updated");
+    if (section == 1) return tr("Type");
+    if (section == 2) return tr("Status");
+    if (section == 3) return tr("Size");
+    if (section == 4) return tr("Modified");
     if (section == 5) return tr("ID");
     return QVariant();
   }

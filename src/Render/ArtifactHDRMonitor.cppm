@@ -1,5 +1,4 @@
 module;
-#include <utility>
 #include <QObject>
 #include <wobjectimpl.h>
 
@@ -10,15 +9,16 @@ import Event.Bus;
 
 module Render.HDRMonitor;
 
-import std;
+import Core.ArtifactAlgorithms;
+import Core.ArtifactMath;
 
 namespace Artifact {
 
 class ArtifactHDRMonitor::Impl {
 public:
   HDRMonitorSettings settings_;
-  mutable std::vector<float> luminanceCache_;
-  mutable std::vector<FloatColor> colorCache_;
+  mutable ArtifactArray<float> luminanceCache_;
+  mutable ArtifactArray<FloatColor> colorCache_;
 };
 
 ArtifactHDRMonitor::ArtifactHDRMonitor()
@@ -40,13 +40,13 @@ HDRMonitorSettings ArtifactHDRMonitor::getSettings() const {
 }
 
 HDRAnalysisResult
-ArtifactHDRMonitor::analyzeFrame(const std::vector<FloatColor> &frameData,
+ArtifactHDRMonitor::analyzeFrame(const ArtifactArray<FloatColor> &frameData,
                                  int width, int height) {
   HDRAnalysisResult result;
 
-  if (frameData.empty() || width <= 0 || height <= 0) {
-    impl_->luminanceCache_.clear();
-    impl_->colorCache_.clear();
+  if (frameData.isEmpty() || width <= 0 || height <= 0) {
+    impl_->luminanceCache_.removeAll();
+    impl_->colorCache_.removeAll();
     return result;
   }
 
@@ -66,23 +66,23 @@ ArtifactHDRMonitor::analyzeFrame(const std::vector<FloatColor> &frameData,
   });
 
   // Calculate statistics
-  if (!impl_->luminanceCache_.empty()) {
-    auto [minIt, maxIt] = std::minmax_element(impl_->luminanceCache_.begin(),
-                                              impl_->luminanceCache_.end());
-    result.minLuminance = *minIt;
-    result.maxLuminance = *maxIt;
-
-    result.avgLuminance = std::accumulate(impl_->luminanceCache_.begin(),
-                                          impl_->luminanceCache_.end(), 0.0f) /
-                          impl_->luminanceCache_.size();
+  if (!impl_->luminanceCache_.isEmpty()) {
+    const auto minMax = ArtifactCore::artifactMinMaxElement(
+        impl_->luminanceCache_.begin(), impl_->luminanceCache_.end());
+    result.minLuminance = *minMax.first;
+    result.maxLuminance = *minMax.second;
+    result.avgLuminance = ArtifactCore::artifactAccumulate(
+                                    impl_->luminanceCache_.begin(),
+                                    impl_->luminanceCache_.end(), 0.0f) /
+                                impl_->luminanceCache_.size();
   }
 
   // Classify pixels independently, then reduce in input order so result
   // counters and the legacy out-of-gamut list remain deterministic.
-  std::vector<unsigned char> clipped(frameData.size(), 0);
-  std::vector<unsigned char> highlightClipped(frameData.size(), 0);
-  std::vector<unsigned char> outOfGamut(frameData.size(), 0);
-  std::vector<unsigned char> broadcastViolation(frameData.size(), 0);
+  ArtifactArray<unsigned char> clipped(frameData.size(), 0);
+  ArtifactArray<unsigned char> highlightClipped(frameData.size(), 0);
+  ArtifactArray<unsigned char> outOfGamut(frameData.size(), 0);
+  ArtifactArray<unsigned char> broadcastViolation(frameData.size(), 0);
   ArtifactCore::Parallel::For(0, static_cast<int>(frameData.size()),
                               static_cast<int>(frameData.size()),
                               [&](int index) {
@@ -92,7 +92,7 @@ ArtifactHDRMonitor::analyzeFrame(const std::vector<FloatColor> &frameData,
     bool bClipped = color.b() >= 1.0f || color.b() <= 0.0f;
 
     if (rClipped || gClipped || bClipped) {
-      const auto i = static_cast<size_t>(index);
+      const auto i = static_cast<decltype(frameData.size())>(index);
       clipped[i] = 1;
       highlightClipped[i] = impl_->luminanceCache_[i] > 0.5f ? 1 : 0;
     }
@@ -110,7 +110,7 @@ ArtifactHDRMonitor::analyzeFrame(const std::vector<FloatColor> &frameData,
     }
   });
 
-  for (size_t i = 0; i < frameData.size(); ++i) {
+  for (auto i = decltype(frameData.size()){0}; i < frameData.size(); ++i) {
     if (clipped[i]) {
       result.hasClipping = true;
       if (highlightClipped[i]) {
@@ -120,7 +120,7 @@ ArtifactHDRMonitor::analyzeFrame(const std::vector<FloatColor> &frameData,
       }
     }
     if (outOfGamut[i]) {
-      result.outOfGamutPixels.push_back(frameData[i]);
+      result.outOfGamutPixels.append(frameData[i]);
     }
     if (broadcastViolation[i]) {
       ++result.broadcastSafeViolations;
@@ -131,13 +131,13 @@ ArtifactHDRMonitor::analyzeFrame(const std::vector<FloatColor> &frameData,
   return result;
 }
 
-std::vector<FloatColor>
+ArtifactArray<FloatColor>
 ArtifactHDRMonitor::generateFalseColorOverlay(const HDRAnalysisResult &result,
                                               int width, int height) {
-  std::vector<FloatColor> overlay(width * height,
-                                  FloatColor(0, 0, 0, 0)); // Transparent
+  ArtifactArray<FloatColor> overlay(width * height,
+                                    FloatColor(0, 0, 0, 0)); // Transparent
 
-  if (impl_->luminanceCache_.empty())
+  if (impl_->luminanceCache_.isEmpty())
     return overlay;
 
   // Create false color mapping
@@ -157,22 +157,22 @@ ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
   return overlay;
 }
 
-std::vector<FloatColor> ArtifactHDRMonitor::generateWaveformData(
+ArtifactArray<FloatColor> ArtifactHDRMonitor::generateWaveformData(
     const HDRAnalysisResult &result, int waveformWidth, int waveformHeight) {
-  std::vector<FloatColor> waveform(waveformWidth * waveformHeight,
-                                   FloatColor(0, 0, 0, 1));
+  ArtifactArray<FloatColor> waveform(waveformWidth * waveformHeight,
+                                     FloatColor(0, 0, 0, 1));
 
-  if (impl_->luminanceCache_.empty())
+  if (impl_->luminanceCache_.isEmpty())
     return waveform;
 
   // Simple waveform: luminance distribution across image width
   const int cacheSize = static_cast<int>(impl_->luminanceCache_.size());
   const int samplesPerColumn =
-      std::max(1, (cacheSize + waveformWidth - 1) / waveformWidth);
+      ArtifactCore::artifactMax(1, (cacheSize + waveformWidth - 1) / waveformWidth);
 
   ArtifactCore::Parallel::For(0, waveformWidth, cacheSize, [&](int x) {
     int startIdx = x * samplesPerColumn;
-    int endIdx = std::min(startIdx + samplesPerColumn, cacheSize);
+    int endIdx = ArtifactCore::artifactMin(startIdx + samplesPerColumn, cacheSize);
 
     // Calculate average luminance for this column
     float avgLuminance = 0.0f;
@@ -186,7 +186,7 @@ std::vector<FloatColor> ArtifactHDRMonitor::generateWaveformData(
 
     // Draw vertical line at luminance level
     int yPos = static_cast<int>((1.0f - avgLuminance) * (waveformHeight - 1));
-    yPos = std::clamp(yPos, 0, waveformHeight - 1);
+    yPos = ArtifactCore::artifactClamp(yPos, 0, waveformHeight - 1);
 
     waveform[yPos * waveformWidth + x] = FloatColor(1, 1, 1, 1); // White line
   });
@@ -194,13 +194,13 @@ std::vector<FloatColor> ArtifactHDRMonitor::generateWaveformData(
   return waveform;
 }
 
-std::vector<FloatColor>
+ArtifactArray<FloatColor>
 ArtifactHDRMonitor::generateVectorscopeData(const HDRAnalysisResult &result,
                                             int scopeSize) {
-  std::vector<FloatColor> vectorscope(scopeSize * scopeSize,
-                                      FloatColor(0, 0, 0, 1));
+  ArtifactArray<FloatColor> vectorscope(scopeSize * scopeSize,
+                                        FloatColor(0, 0, 0, 1));
 
-  if (impl_->luminanceCache_.empty())
+  if (impl_->luminanceCache_.isEmpty())
     return vectorscope;
 
   // Simple vectorscope: plot color points in UV space
@@ -208,7 +208,7 @@ ArtifactHDRMonitor::generateVectorscopeData(const HDRAnalysisResult &result,
   float centerY = scopeSize / 2.0f;
   float scale = scopeSize / 2.0f * 0.8f; // Leave margin
 
-  for (size_t i = 0; i < impl_->luminanceCache_.size();
+  for (auto i = decltype(impl_->luminanceCache_.size()){0}; i < impl_->luminanceCache_.size();
        i += 100) { // Sample every 100th pixel for performance
     if (i >= impl_->luminanceCache_.size())
       break;
@@ -226,14 +226,14 @@ ArtifactHDRMonitor::generateVectorscopeData(const HDRAnalysisResult &result,
     int x = static_cast<int>(centerX + u * scale);
     int y = static_cast<int>(centerY + v * scale);
 
-    x = std::clamp(x, 0, scopeSize - 1);
-    y = std::clamp(y, 0, scopeSize - 1);
+    x = ArtifactCore::artifactClamp(x, 0, scopeSize - 1);
+    y = ArtifactCore::artifactClamp(y, 0, scopeSize - 1);
 
     // Preserve the sampled hue in the scope so dense regions remain legible.
     vectorscope[y * scopeSize + x] =
-        FloatColor(std::clamp(color.r(), 0.0f, 1.0f),
-                   std::clamp(color.g(), 0.0f, 1.0f),
-                   std::clamp(color.b(), 0.0f, 1.0f), 0.8f);
+        FloatColor(ArtifactCore::artifactClamp(color.r(), 0.0f, 1.0f),
+                   ArtifactCore::artifactClamp(color.g(), 0.0f, 1.0f),
+                   ArtifactCore::artifactClamp(color.b(), 0.0f, 1.0f), 0.8f);
   }
 
   return vectorscope;

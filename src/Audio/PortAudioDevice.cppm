@@ -8,7 +8,6 @@ module;
 
 module Audio.PortAudioDevice;
 
-import std;
 import Audio.IAudioDevice;
 
 namespace Artifact {

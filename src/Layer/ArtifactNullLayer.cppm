@@ -2,10 +2,11 @@ module;
 #include <utility>
 #include <QImage>
 #include <QSize>
+#include <algorithm>
+#include <vector>
 
 
 module Artifact.Layer.Null;
-import std;
 import Artifact.Layer.Abstract;
 import Memory.SharedPtr;
 

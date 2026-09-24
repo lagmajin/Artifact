@@ -37,13 +37,13 @@ module;
 #include <QVBoxLayout>
 #include <limits>
 #include <wobjectimpl.h>
+#include <algorithm>
 
 module Artifact.Widgets.AI.ArtifactAICloudWidget;
 
 import Artifact.Widgets.AI.ArtifactAICloudSettingsWidget;
 import Artifact.AI.Cloud.AICloudSessionController;
 import Artifact.AI.Cloud.AICloudWorkerProtocol;
-import std;
 import Core.AI.Context;
 import Core.AI.PromptGenerator;
 import Core.AI.ToolBridge;
@@ -53,6 +53,7 @@ import Core.AI.McpTransport;
 import Core.AI.CloudAgent;
 import Core.AI.TieredAIManager;
 import Widgets.Utils.CSS;
+import Artifact.AI.AgentApprovalPolicy;
 import Artifact.AI.WorkspaceAutomation;
 import Artifact.Application.Manager;
 import Artifact.Service.Project;
@@ -747,59 +748,6 @@ bool looksLikeToolCallText(const QString &text) {
          lower.contains(QStringLiteral("workspaceautomation."));
 }
 
-enum class ToolApprovalMode {
-  AskEveryTime = 0,
-  AutoApprove = 1,
-  YOLO = 2,
-};
-
-ToolApprovalMode toolApprovalModeFromIndex(const int index) {
-  switch (std::clamp(index, 0, 2)) {
-  case 1:
-    return ToolApprovalMode::AutoApprove;
-  case 2:
-    return ToolApprovalMode::YOLO;
-  default:
-    return ToolApprovalMode::AskEveryTime;
-  }
-}
-
-int toolApprovalModeToIndex(const ToolApprovalMode mode) {
-  switch (mode) {
-  case ToolApprovalMode::AutoApprove:
-    return 1;
-  case ToolApprovalMode::YOLO:
-    return 2;
-  case ToolApprovalMode::AskEveryTime:
-  default:
-    return 0;
-  }
-}
-
-bool isReadOnlyToolCall(const QJsonObject &toolCall) {
-  const QString method =
-      toolCall.value(QStringLiteral("method")).toString().trimmed().toLower();
-  if (method.isEmpty()) {
-    return false;
-  }
-
-  static const QStringList kReadOnlyPrefixes = {
-      QStringLiteral("get"),      QStringLiteral("list"),
-      QStringLiteral("find"),     QStringLiteral("query"),
-      QStringLiteral("inspect"),  QStringLiteral("preview"),
-      QStringLiteral("describe"), QStringLiteral("check"),
-      QStringLiteral("has"),      QStringLiteral("is"),
-      QStringLiteral("count"),    QStringLiteral("current"),
-      QStringLiteral("read"),     QStringLiteral("fetch"),
-      QStringLiteral("ping")};
-  for (const QString &prefix : kReadOnlyPrefixes) {
-    if (method.startsWith(prefix)) {
-      return true;
-    }
-  }
-  return false;
-}
-
 QString formatToolCallSummary(const QJsonObject &toolCall) {
   const QString className =
       toolCall.value(QStringLiteral("class")).toString().trimmed();
@@ -859,16 +807,14 @@ bool requestToolExecutionApproval(QWidget *parent, const QJsonObject &toolCall,
     return true;
   }
   if (box.clickedButton() == autoApproveButton) {
-    QSettings settings(QStringLiteral("ArtifactStudio"),
-                       QStringLiteral("AICloud"));
-    settings.setValue(QStringLiteral("toolApprovalMode"),
+    QSettings settings(agentApprovalSettingsOrg(), agentApprovalSettingsGroup());
+    settings.setValue(agentApprovalModeKey(),
                       toolApprovalModeToIndex(ToolApprovalMode::AutoApprove));
     return true;
   }
   if (box.clickedButton() == yoloButton) {
-    QSettings settings(QStringLiteral("ArtifactStudio"),
-                       QStringLiteral("AICloud"));
-    settings.setValue(QStringLiteral("toolApprovalMode"),
+    QSettings settings(agentApprovalSettingsOrg(), agentApprovalSettingsGroup());
+    settings.setValue(agentApprovalModeKey(),
                       toolApprovalModeToIndex(ToolApprovalMode::YOLO));
     return true;
   }
@@ -1005,10 +951,9 @@ bool Artifact::ArtifactAICloudWidget::tryHandleToolCallResponse(
   }
 
   if (toolApprovalModeCombo_) {
-    QSettings settings(QStringLiteral("ArtifactStudio"),
-                       QStringLiteral("AICloud"));
+    QSettings settings(agentApprovalSettingsOrg(), agentApprovalSettingsGroup());
     const int savedMode =
-        settings.value(QStringLiteral("toolApprovalMode"),
+        settings.value(agentApprovalModeKey(),
                        toolApprovalModeCombo_->currentIndex())
             .toInt();
     const int normalized = std::clamp(savedMode, 0, 2);

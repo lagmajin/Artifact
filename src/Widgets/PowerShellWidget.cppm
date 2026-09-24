@@ -18,8 +18,6 @@
 #include <set>
 #include <unordered_set>
 #include <memory>
-#include <algorithm>
-#include <cmath>
 #include <functional>
 #include <optional>
 #include <utility>
@@ -48,6 +46,7 @@ module Widgets.PowerShellWidget;
 
 
 
+import Core.ArtifactMath;
 import Utils.String.UniString;
 
 namespace Artifact {
@@ -112,7 +111,7 @@ PowerShellWidget::PowerShellWidget(QWidget* parent) : QWidget(parent), impl_(new
             impl_->historyIndex = impl_->history.size();
         }
         const int historySize = static_cast<int>(impl_->history.size());
-        impl_->historyIndex = std::clamp(
+        impl_->historyIndex = ArtifactCore::artifactClamp(
             impl_->historyIndex + direction, 0, historySize);
         impl_->cmd->setText(impl_->historyIndex == impl_->history.size()
                                 ? QString{}

@@ -4,6 +4,7 @@ module;
 #include <QTransform>
 
 export module Artifact.Widgets.Render.Camera;
+import Core.ArtifactMath;
 
 export namespace Artifact {
 
@@ -17,7 +18,7 @@ public:
     void translate(const QPointF& delta) { pan_ += delta; }
 
     float zoom() const { return zoom_; }
-    void setZoom(float scale) { zoom_ = std::max(0.01f, std::min(scale, 100.0f)); }
+    void setZoom(float scale) { zoom_ = ArtifactCore::artifactMax(0.01f, ArtifactCore::artifactMin(scale, 100.0f)); }
     void zoomRelative(float factor) { setZoom(zoom_ * factor); }
     void zoomAdd(float delta) { setZoom(zoom_ + delta); }
 

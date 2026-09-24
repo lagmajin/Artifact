@@ -213,6 +213,11 @@ namespace {
            type == ArtifactIRenderer::ChannelType::AlbedoR ||
            type == ArtifactIRenderer::ChannelType::AlbedoG ||
            type == ArtifactIRenderer::ChannelType::AlbedoB ||
+           type == ArtifactIRenderer::ChannelType::PositionX ||
+           type == ArtifactIRenderer::ChannelType::PositionY ||
+           type == ArtifactIRenderer::ChannelType::PositionZ ||
+           type == ArtifactIRenderer::ChannelType::U ||
+           type == ArtifactIRenderer::ChannelType::V ||
            type == ArtifactIRenderer::ChannelType::Custom;
   }
 
@@ -245,6 +250,11 @@ namespace {
     case ArtifactIRenderer::ChannelType::AlbedoG:    return ArtifactCore::ChannelType::AlbedoG;
     case ArtifactIRenderer::ChannelType::AlbedoB:    return ArtifactCore::ChannelType::AlbedoB;
     case ArtifactIRenderer::ChannelType::Emission:   return ArtifactCore::ChannelType::Emission;
+    case ArtifactIRenderer::ChannelType::PositionX:  return ArtifactCore::ChannelType::PositionX;
+    case ArtifactIRenderer::ChannelType::PositionY:  return ArtifactCore::ChannelType::PositionY;
+    case ArtifactIRenderer::ChannelType::PositionZ:  return ArtifactCore::ChannelType::PositionZ;
+    case ArtifactIRenderer::ChannelType::U:          return ArtifactCore::ChannelType::U;
+    case ArtifactIRenderer::ChannelType::V:          return ArtifactCore::ChannelType::V;
     case ArtifactIRenderer::ChannelType::Custom:     return ArtifactCore::ChannelType::Custom;
     }
     return ArtifactCore::ChannelType::Custom;
@@ -265,6 +275,11 @@ namespace {
     case ArtifactIRenderer::ChannelType::AlbedoR: return 0;
     case ArtifactIRenderer::ChannelType::AlbedoG: return 1;
     case ArtifactIRenderer::ChannelType::AlbedoB: return 2;
+    case ArtifactIRenderer::ChannelType::PositionX: return 0;
+    case ArtifactIRenderer::ChannelType::PositionY: return 1;
+    case ArtifactIRenderer::ChannelType::PositionZ: return 2;
+    case ArtifactIRenderer::ChannelType::U: return 0;
+    case ArtifactIRenderer::ChannelType::V: return 1;
     default: return -1;
     }
   }
@@ -564,6 +579,8 @@ namespace {
   bool meshNormalOnlyPass_ = false;
   bool meshVelocityOnlyPass_ = false;
   bool meshAlbedoOnlyPass_ = false;
+  bool meshPositionOnlyPass_ = false;
+  bool meshUvOnlyPass_ = false;
   ArtifactIRenderer::ChannelType meshIdPassChannel_ =
       ArtifactIRenderer::ChannelType::Custom;
   float meshIdPassEncodedValue_ = 0.0f;
@@ -1063,7 +1080,9 @@ namespace {
         meshEmissionOnlyPass_ ? 4 :
         meshNormalOnlyPass_ ? 2 :
         meshVelocityOnlyPass_ ? 7 :
-        meshAlbedoOnlyPass_ ? 1
+        meshAlbedoOnlyPass_ ? 1 :
+        meshPositionOnlyPass_ ? 9 :
+        meshUvOnlyPass_ ? 10
                             : std::clamp(shadingMode, 1, 8);
     float combinedAlpha = 1.0f;
     if (wantedInstances > 1 && instancedData) {
@@ -1275,8 +1294,8 @@ namespace {
   QString shadowMapDebugState() const;
   std::vector<ArtifactCore::FrameDebugPassRecord> frameDebugPasses() const;
    bool isInitialized() const { return m_initialized; }
-  void readbackToImageAsync(ArtifactIRenderer::ReadbackCallback callback) const;
-  void readbackTextureViewToImageAsync(
+  bool readbackToImageAsync(ArtifactIRenderer::ReadbackCallback callback) const;
+  bool readbackTextureViewToImageAsync(
       ITextureView* textureView,
       ArtifactIRenderer::ReadbackCallback callback) const;
 
@@ -1300,6 +1319,10 @@ namespace {
   bool isMeshVelocityOnlyPass() const { return meshVelocityOnlyPass_; }
   void setMeshAlbedoOnlyPass(bool enabled) { meshAlbedoOnlyPass_ = enabled; }
   bool isMeshAlbedoOnlyPass() const { return meshAlbedoOnlyPass_; }
+  void setMeshPositionOnlyPass(bool enabled) { meshPositionOnlyPass_ = enabled; }
+  bool isMeshPositionOnlyPass() const { return meshPositionOnlyPass_; }
+  void setMeshUvOnlyPass(bool enabled) { meshUvOnlyPass_ = enabled; }
+  bool isMeshUvOnlyPass() const { return meshUvOnlyPass_; }
   FloatColor getClearColor() const { return clearColor_; }
   void flushAndWait();
   void flush();
@@ -1732,6 +1755,11 @@ namespace {
     cmdBuf_.targetRTV = pRTV;
     ParticlePkt pkt;
     pkt.data = data;
+    // submitParticles() only binds a color RTV (SetRenderTargets depth=nullptr).
+    // A PSO with DepthEnable and no DSV is undefined and can make every
+    // billboard fail the depth test (layer appears completely invisible).
+    pkt.data.options.depthTest = false;
+    pkt.data.options.depthWrite = false;
     pkt.viewMatrix = view;
     pkt.projMatrix = proj;
     cmdBuf_.append(std::move(pkt));
@@ -2464,12 +2492,17 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
     return {};
    }
    const QImage colorImage = readbackTextureViewToImage(sourceView);
-   if (channel == ArtifactIRenderer::ChannelType::NormalX ||
-       channel == ArtifactIRenderer::ChannelType::NormalY ||
-       channel == ArtifactIRenderer::ChannelType::NormalZ ||
-       channel == ArtifactIRenderer::ChannelType::AlbedoR ||
-       channel == ArtifactIRenderer::ChannelType::AlbedoG ||
-       channel == ArtifactIRenderer::ChannelType::AlbedoB) {
+    if (channel == ArtifactIRenderer::ChannelType::NormalX ||
+        channel == ArtifactIRenderer::ChannelType::NormalY ||
+        channel == ArtifactIRenderer::ChannelType::NormalZ ||
+        channel == ArtifactIRenderer::ChannelType::AlbedoR ||
+        channel == ArtifactIRenderer::ChannelType::AlbedoG ||
+        channel == ArtifactIRenderer::ChannelType::AlbedoB ||
+        channel == ArtifactIRenderer::ChannelType::PositionX ||
+        channel == ArtifactIRenderer::ChannelType::PositionY ||
+        channel == ArtifactIRenderer::ChannelType::PositionZ ||
+        channel == ArtifactIRenderer::ChannelType::U ||
+        channel == ArtifactIRenderer::ChannelType::V) {
     const int offset = rgbaOffsetForChannel(channel);
     if (offset < 0 || colorImage.isNull()) {
       return {};
@@ -2508,18 +2541,18 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
   return extractRgbaChannelToGray(color, offset);
 }
 
- void ArtifactIRenderer::Impl::readbackToImageAsync(ReadbackCallback callback) const
+ bool ArtifactIRenderer::Impl::readbackToImageAsync(ReadbackCallback callback) const
  {
-  readbackTextureViewToImageAsync(activeColorView(), std::move(callback));
+  return readbackTextureViewToImageAsync(activeColorView(), std::move(callback));
  }
 
- void ArtifactIRenderer::Impl::readbackTextureViewToImageAsync(
+ bool ArtifactIRenderer::Impl::readbackTextureViewToImageAsync(
      ITextureView* textureView,
      ReadbackCallback callback) const
  {
   if (!deviceManager_.device() || !deviceManager_.immediateContext()) {
     if (callback) callback(QImage());
-    return;
+    return true;
   }
 
   auto ctx = deviceManager_.immediateContext();
@@ -2532,7 +2565,7 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
                                     deviceManager_.swapChain(),
                                     srcTexPtr, srcWidth, srcHeight)) {
     if (callback) callback(QImage());
-    return;
+    return true;
   }
 
   const TEXTURE_FORMAT srcFormat = srcTexPtr->GetDesc().Format;
@@ -2645,10 +2678,10 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
   }
 
   if (!stagingTex || !fence) {
-    if (!createAsyncResources(stagingTex, fence, "AsyncReadbackOneShot")) {
-      if (callback) callback(QImage());
-      return;
-    }
+    // Keep steady-state playback bounded. When all ring slots are in flight,
+    // let the caller defer this frame instead of allocating another staging
+    // texture and fence on the hot path.
+    return false;
   }
 
   // Unbind render target, then copy
@@ -2765,8 +2798,9 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
     releaseSlot();
 
     // Invoke callback on the caller's thread (or thread pool)
-    if (cb) cb(result);
-  });
+      if (cb) cb(result);
+    });
+  return true;
  }
 
  // ---------------------------------------------------------------------------
@@ -3440,11 +3474,11 @@ QImage ArtifactIRenderer::readbackTextureViewToImage(
   }
   return texture->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE);
  }
- void ArtifactIRenderer::readbackTextureViewToImageAsync(
+ bool ArtifactIRenderer::readbackTextureViewToImageAsync(
      Diligent::ITextureView* textureView,
      ReadbackCallback callback) const
  {
-  impl_->readbackTextureViewToImageAsync(textureView, std::move(callback));
+  return impl_->readbackTextureViewToImageAsync(textureView, std::move(callback));
  }
  QImage ArtifactIRenderer::readbackChannelToImage(ChannelType channel) const
  {
@@ -3472,6 +3506,13 @@ ArtifactCore::MultiChannelImage ArtifactIRenderer::readbackToMultiChannelImage()
   const bool needVelocity =
       impl_->isChannelEnabled(ChannelType::VelocityX) ||
       impl_->isChannelEnabled(ChannelType::VelocityY);
+  const bool needPosition =
+      impl_->isChannelEnabled(ChannelType::PositionX) ||
+      impl_->isChannelEnabled(ChannelType::PositionY) ||
+      impl_->isChannelEnabled(ChannelType::PositionZ);
+  const bool needUv =
+      impl_->isChannelEnabled(ChannelType::U) ||
+      impl_->isChannelEnabled(ChannelType::V);
 
   struct FloatReadback {
     std::vector<float> rgba;
@@ -3509,6 +3550,10 @@ ArtifactCore::MultiChannelImage ArtifactIRenderer::readbackToMultiChannelImage()
   if (needNormal) normal = readFloat(auxiliaryView(ChannelType::NormalX));
   FloatReadback velocity;
   if (needVelocity) velocity = readFloat(auxiliaryView(ChannelType::VelocityX));
+  FloatReadback position;
+  if (needPosition) position = readFloat(auxiliaryView(ChannelType::PositionX));
+  FloatReadback uv;
+  if (needUv) uv = readFloat(auxiliaryView(ChannelType::U));
 
   std::vector<float> depthValues;
   int depthWidth = 0;
@@ -3536,6 +3581,8 @@ ArtifactCore::MultiChannelImage ArtifactIRenderer::readbackToMultiChannelImage()
   adoptSize(albedo);
   adoptSize(normal);
   adoptSize(velocity);
+  adoptSize(position);
+  adoptSize(uv);
   if (width <= 0 || height <= 0) return {};
 
   ArtifactCore::MultiChannelImage floatImage(width, height);
@@ -3580,6 +3627,12 @@ ArtifactCore::MultiChannelImage ArtifactIRenderer::readbackToMultiChannelImage()
   writeComponent(ChannelType::NormalZ, normal, 2, 2.0f, -1.0f);
   writeComponent(ChannelType::VelocityX, velocity, 0, 2.0f, -1.0f);
   writeComponent(ChannelType::VelocityY, velocity, 1, 2.0f, -1.0f);
+  // Position/UV targets already hold raw values; no decode needed.
+  writeComponent(ChannelType::PositionX, position, 0);
+  writeComponent(ChannelType::PositionY, position, 1);
+  writeComponent(ChannelType::PositionZ, position, 2);
+  writeComponent(ChannelType::U, uv, 0);
+  writeComponent(ChannelType::V, uv, 1);
   if (needDepth && depthWidth == width && depthHeight == height &&
       depthValues.size() == static_cast<size_t>(width) * height) {
     floatImage.addChannel(ArtifactCore::ChannelType::Depth);
@@ -3890,8 +3943,8 @@ ArtifactCore::MultiChannelImage ArtifactIRenderer::readbackToMultiChannelImage()
 #endif
 }
 
- void ArtifactIRenderer::readbackToImageAsync(ReadbackCallback callback) const {
-  impl_->readbackToImageAsync(std::move(callback));
+ bool ArtifactIRenderer::readbackToImageAsync(ReadbackCallback callback) const {
+  return impl_->readbackToImageAsync(std::move(callback));
  }
 
  void ArtifactIRenderer::present()
@@ -3934,6 +3987,18 @@ void ArtifactIRenderer::setMeshAlbedoOnlyPass(bool enabled) {
 }
 bool ArtifactIRenderer::isMeshAlbedoOnlyPass() const {
   return impl_->isMeshAlbedoOnlyPass();
+}
+void ArtifactIRenderer::setMeshPositionOnlyPass(bool enabled) {
+  impl_->setMeshPositionOnlyPass(enabled);
+}
+bool ArtifactIRenderer::isMeshPositionOnlyPass() const {
+  return impl_->isMeshPositionOnlyPass();
+}
+void ArtifactIRenderer::setMeshUvOnlyPass(bool enabled) {
+  impl_->setMeshUvOnlyPass(enabled);
+}
+bool ArtifactIRenderer::isMeshUvOnlyPass() const {
+  return impl_->isMeshUvOnlyPass();
 }
   FloatColor ArtifactIRenderer::getClearColor() const { return impl_->getClearColor(); }
   void ArtifactIRenderer::setViewportSize(float w, float h) { impl_->setViewportSize(w, h); }
@@ -4865,10 +4930,26 @@ void ArtifactIRenderer::draw3DTexturedCard(
   impl_->submitQueuedDraws(ctx.RawPtr());
  }
  impl_->primitiveRenderer3D_.setOverrideDSV(impl_->activeDepthView());
- impl_->primitiveRenderer3D_.drawTexturedCardQuadImmediate(
-     localRect, modelMatrix, texture,
-     FloatColor{1.0f, 1.0f, 1.0f, 1.0f}, opacity);
- impl_->primitiveRenderer3D_.setOverrideDSV(impl_->m_overrideDepthDSV);
+  impl_->primitiveRenderer3D_.drawTexturedCardQuadImmediate(
+      localRect, modelMatrix, texture,
+      FloatColor{1.0f, 1.0f, 1.0f, 1.0f}, opacity);
+  impl_->primitiveRenderer3D_.setOverrideDSV(impl_->m_overrideDepthDSV);
+}
+void ArtifactIRenderer::setProjectorSource(Diligent::ITextureView* textureView)
+{
+  impl_->primitiveRenderer3D_.setProjectorSource(textureView);
+}
+void ArtifactIRenderer::setProjectorMatrices(const QMatrix4x4& view, const QMatrix4x4& proj)
+{
+  impl_->primitiveRenderer3D_.setProjectorMatrices(view, proj);
+}
+void ArtifactIRenderer::setProjectorEnabled(bool enabled)
+{
+  impl_->primitiveRenderer3D_.setProjectorEnabled(enabled);
+}
+void ArtifactIRenderer::resetProjector()
+{
+  impl_->primitiveRenderer3D_.resetProjector();
 }
 void ArtifactIRenderer::draw3DShape(
     const std::vector<Detail::float2>& points,

@@ -4,12 +4,11 @@ module;
 #include <QPainter>
 #include <QPalette>
 #include <QFontDatabase>
-#include <cmath>
 
 module Artifact.Timeline.ScaleWidget;
 
-import std;
 
+import Core.ArtifactMath;
 import Artifact.Project.Manager;
 import Widgets.Utils.CSS;
 
@@ -49,8 +48,8 @@ namespace Artifact
    font.setPointSize(8);
    painter.setFont(font);
 
-   const double visibleSpan = std::max(1.0, visibleEndFrame - visibleStartFrame);
-   const double pixelsPerFrame = std::max(0.001, static_cast<double>(rect.width()) / visibleSpan);
+   const double visibleSpan = ArtifactCore::artifactMax(1.0, visibleEndFrame - visibleStartFrame);
+   const double pixelsPerFrame = ArtifactCore::artifactMax(0.001, static_cast<double>(rect.width()) / visibleSpan);
    const int baseMajorStep = 10;
    const int minorStep = 1;
    const int minLabelPx = 45;
@@ -60,15 +59,15 @@ namespace Artifact
     majorStep *= 2;
    }
 
-   const int maxFrame = std::max(0, frameCount - 1);
-   const int firstFrame = std::clamp(static_cast<int>(std::floor(visibleStartFrame / majorStep)) * majorStep, 0, maxFrame);
-   const int lastFrame = std::clamp(static_cast<int>(std::ceil(visibleEndFrame)), firstFrame, maxFrame);
+   const int maxFrame = ArtifactCore::artifactMax(0, frameCount - 1);
+   const int firstFrame = ArtifactCore::artifactClamp(static_cast<int>(ArtifactCore::artifactFloor(visibleStartFrame / majorStep)) * majorStep, 0, maxFrame);
+   const int lastFrame = ArtifactCore::artifactClamp(static_cast<int>(ArtifactCore::artifactCeil(visibleEndFrame)), firstFrame, maxFrame);
 
    // Draw ticks and labels
    for (int f = firstFrame; f <= lastFrame; ++f)
    {
     const double normalized = (static_cast<double>(f) - visibleStartFrame) / visibleSpan;
-    const int x = rect.left() + static_cast<int>(std::lround(normalized * rect.width()));
+    const int x = rect.left() + static_cast<int>(ArtifactCore::artifactLround(normalized * rect.width()));
     if (x < rect.left()) continue;
     if (x > rect.right()) break;
 
@@ -129,7 +128,7 @@ TimelineScaleWidget::~TimelineScaleWidget()
 void TimelineScaleWidget::setFrameCount(int frameCount)
 {
  if (!impl_) return;
- const int clamped = std::max(1, frameCount);
+ const int clamped = ArtifactCore::artifactMax(1, frameCount);
  if (impl_->frameCount == clamped) {
   return;
  }
@@ -140,10 +139,10 @@ void TimelineScaleWidget::setFrameCount(int frameCount)
 void TimelineScaleWidget::setVisibleRange(double startFrame, double endFrame)
 {
  if (!impl_) return;
- const double nextStart = std::max(0.0, startFrame);
- const double nextEnd = std::max(nextStart + 1.0, endFrame);
- if (std::abs(impl_->visibleStartFrame - nextStart) < 0.001 &&
-     std::abs(impl_->visibleEndFrame - nextEnd) < 0.001) {
+ const double nextStart = ArtifactCore::artifactMax(0.0, startFrame);
+ const double nextEnd = ArtifactCore::artifactMax(nextStart + 1.0, endFrame);
+ if (ArtifactCore::artifactAbs(impl_->visibleStartFrame - nextStart) < 0.001 &&
+     ArtifactCore::artifactAbs(impl_->visibleEndFrame - nextEnd) < 0.001) {
   return;
  }
  impl_->visibleStartFrame = nextStart;

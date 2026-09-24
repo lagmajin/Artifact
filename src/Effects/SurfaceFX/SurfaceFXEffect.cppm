@@ -1,6 +1,4 @@
 module;
-#include <algorithm>
-#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <opencv2/opencv.hpp>
@@ -12,6 +10,7 @@ module;
 
 module Artifact.Effect.SurfaceFX;
 
+import Core.ArtifactMath;
 import Artifact.Effect.ImplBase;
 import Core.Parallel;
 import Image.ImageF32x4RGBAWithCache;
@@ -42,57 +41,57 @@ public:
         cv::Mat overlay(height, width, CV_32FC4, cv::Scalar(0, 0, 0, 0));
         cv::Mat dropletMask(height, width, CV_32FC1, cv::Scalar(0));
         cv::Mat blendModeMask(height, width, CV_8UC1, cv::Scalar(0));
-        const float left = std::clamp(data.anchorX, 0.0f, 1.0f) * width;
-        const float top = std::clamp(data.anchorY, 0.0f, 1.0f) * height;
-        const float right = std::clamp(data.anchorX + data.anchorWidth, 0.0f, 1.0f) * width;
-        const float bottom = std::clamp(data.anchorY + data.anchorHeight, 0.0f, 1.0f) * height;
+        const float left = ArtifactCore::artifactClamp(data.anchorX, 0.0f, 1.0f) * width;
+        const float top = ArtifactCore::artifactClamp(data.anchorY, 0.0f, 1.0f) * height;
+        const float right = ArtifactCore::artifactClamp(data.anchorX + data.anchorWidth, 0.0f, 1.0f) * width;
+        const float bottom = ArtifactCore::artifactClamp(data.anchorY + data.anchorHeight, 0.0f, 1.0f) * height;
 
         const float currentTime = static_cast<float>(context_.timeSeconds);
         for (const auto& element : data.elements) {
             if (currentTime < element.inTime ||
                 (element.outTime >= 0.0f && currentTime > element.outTime))
                 continue;
-            const float elapsed = std::max(0.0f, currentTime - element.inTime);
+            const float elapsed = ArtifactCore::artifactMax(0.0f, currentTime - element.inTime);
             float timingOpacity = 1.0f;
             if (element.fadeIn > 0.0f)
-                timingOpacity *= std::clamp(elapsed / element.fadeIn, 0.0f, 1.0f);
+                timingOpacity *= ArtifactCore::artifactClamp(elapsed / element.fadeIn, 0.0f, 1.0f);
             if (element.fadeOut > 0.0f && element.outTime >= 0.0f)
-                timingOpacity *= std::clamp(
+                timingOpacity *= ArtifactCore::artifactClamp(
                     (element.outTime - currentTime) / element.fadeOut, 0.0f, 1.0f);
-            const float alpha = std::clamp(element.opacity * element.intensity *
+            const float alpha = ArtifactCore::artifactClamp(element.opacity * element.intensity *
                                                element.tintA * timingOpacity,
                                            0.0f, 1.0f);
             if (alpha <= 0.0f) continue;
-            const float x = std::clamp(element.x, data.anchorX, data.anchorX + data.anchorWidth) * width;
+            const float x = ArtifactCore::artifactClamp(element.x, data.anchorX, data.anchorX + data.anchorWidth) * width;
             float normalizedY = element.y;
             if (element.type == ArtifactCore::SurfaceFXElementType::Droplet ||
                 element.type == ArtifactCore::SurfaceFXElementType::Streak) {
                 const auto seed = static_cast<std::uint32_t>(data.fieldSeed) ^
                                   static_cast<std::uint32_t>(element.seedOffset * 0x9e3779b9u);
                 const float speed = 0.04f + static_cast<float>(seed % 7u) * 0.01f;
-                const float anchorHeight = std::max(0.001f, data.anchorHeight);
+                const float anchorHeight = ArtifactCore::artifactMax(0.001f, data.anchorHeight);
                 const float localY = (element.y - data.anchorY) +
-                                     std::max(0.0f, currentTime - element.inTime) * speed;
-                normalizedY = data.anchorY + std::fmod(localY, anchorHeight);
+                                     ArtifactCore::artifactMax(0.0f, currentTime - element.inTime) * speed;
+                normalizedY = data.anchorY + ArtifactCore::artifactFmod(localY, anchorHeight);
             }
-            const float y = std::clamp(normalizedY, data.anchorY,
+            const float y = ArtifactCore::artifactClamp(normalizedY, data.anchorY,
                                        data.anchorY + data.anchorHeight) * height;
-            const float growthScale = std::max(
-                0.05f, 1.0f + element.growth * std::min(elapsed, 1.0f));
-            const float w = std::max(1.0f, element.width * width * growthScale);
-            const float h = std::max(1.0f, element.height * height * growthScale);
+            const float growthScale = ArtifactCore::artifactMax(
+                0.05f, 1.0f + element.growth * ArtifactCore::artifactMin(elapsed, 1.0f));
+            const float w = ArtifactCore::artifactMax(1.0f, element.width * width * growthScale);
+            const float h = ArtifactCore::artifactMax(1.0f, element.height * height * growthScale);
             const float pivotX = element.type == ArtifactCore::SurfaceFXElementType::TextureDecal
                 ? element.pivotX : 0.5f;
             const float pivotY = element.type == ArtifactCore::SurfaceFXElementType::TextureDecal
                 ? element.pivotY : 0.5f;
-            const cv::Point center(static_cast<int>(std::round(x + w * pivotX)),
-                                   static_cast<int>(std::round(y + h * pivotY)));
+            const cv::Point center(static_cast<int>(ArtifactCore::artifactRound(x + w * pivotX)),
+                                   static_cast<int>(ArtifactCore::artifactRound(y + h * pivotY)));
             const cv::Scalar color = element.type == ArtifactCore::SurfaceFXElementType::Dirt
                 ? cv::Scalar(0.12f, 0.08f, 0.05f, alpha)
                 : element.type == ArtifactCore::SurfaceFXElementType::TextureDecal
                     ? cv::Scalar(element.tintR, element.tintG, element.tintB, alpha)
                     : cv::Scalar(0.82f, 0.9f, 1.0f, alpha);
-            const int thickness = std::max(1, static_cast<int>(std::round(1.0f + element.roughness * 2.0f)));
+            const int thickness = ArtifactCore::artifactMax(1, static_cast<int>(ArtifactCore::artifactRound(1.0f + element.roughness * 2.0f)));
             const std::uint8_t blendMode = element.blendMode == QStringLiteral("multiply") ? 1u
                 : element.blendMode == QStringLiteral("screen") ? 2u
                 : element.blendMode == QStringLiteral("add") ? 3u
@@ -111,14 +110,14 @@ public:
                 if (!texture.empty()) {
                     const float radians = element.rotation *
                                           3.14159265358979323846f / 180.0f;
-                    const float cosAngle = std::cos(radians);
-                    const float sinAngle = std::sin(radians);
-                    const int extent = static_cast<int>(std::ceil(
-                        std::sqrt(w * w + h * h)));
-                    const int minX = std::max(0, center.x - extent);
-                    const int maxX = std::min(width - 1, center.x + extent);
-                    const int minY = std::max(0, center.y - extent);
-                    const int maxY = std::min(height - 1, center.y + extent);
+                    const float cosAngle = ArtifactCore::artifactCos(radians);
+                    const float sinAngle = ArtifactCore::artifactSin(radians);
+                    const int extent = static_cast<int>(ArtifactCore::artifactCeil(
+                        ArtifactCore::artifactSqrt(w * w + h * h)));
+                    const int minX = ArtifactCore::artifactMax(0, center.x - extent);
+                    const int maxX = ArtifactCore::artifactMin(width - 1, center.x + extent);
+                    const int minY = ArtifactCore::artifactMax(0, center.y - extent);
+                    const int maxY = ArtifactCore::artifactMin(height - 1, center.y + extent);
                     for (int dstY = minY; dstY <= maxY; ++dstY) {
                         auto* overlayRow = overlay.ptr<cv::Vec4f>(dstY);
                         auto* modeRow = blendModeMask.ptr<std::uint8_t>(dstY);
@@ -131,14 +130,14 @@ public:
                             const float v = localY / h + pivotY;
                             if (u < 0.0f || u > 1.0f || v < 0.0f || v > 1.0f)
                                 continue;
-                            const int sampleX = std::clamp(
-                                static_cast<int>(std::round(u * (texture.cols - 1))),
+                            const int sampleX = ArtifactCore::artifactClamp(
+                                static_cast<int>(ArtifactCore::artifactRound(u * (texture.cols - 1))),
                                 0, texture.cols - 1);
-                            const int sampleY = std::clamp(
-                                static_cast<int>(std::round(v * (texture.rows - 1))),
+                            const int sampleY = ArtifactCore::artifactClamp(
+                                static_cast<int>(ArtifactCore::artifactRound(v * (texture.rows - 1))),
                                 0, texture.rows - 1);
                             const cv::Vec4f sample = texture.at<cv::Vec4f>(sampleY, sampleX);
-                            const float sampleAlpha = std::clamp(sample[3] * alpha, 0.0f, 1.0f);
+                            const float sampleAlpha = ArtifactCore::artifactClamp(sample[3] * alpha, 0.0f, 1.0f);
                             if (sampleAlpha <= 0.0f)
                                 continue;
                             overlayRow[dstX] = cv::Vec4f(
@@ -158,8 +157,8 @@ public:
                 element.type == ArtifactCore::SurfaceFXElementType::Dirt ||
                 element.type == ArtifactCore::SurfaceFXElementType::Condensation ||
                 element.type == ArtifactCore::SurfaceFXElementType::TextureDecal) {
-                const cv::Size radius(std::max(1, static_cast<int>(w * 0.5f)),
-                                      std::max(1, static_cast<int>(h * 0.5f)));
+                const cv::Size radius(ArtifactCore::artifactMax(1, static_cast<int>(w * 0.5f)),
+                                      ArtifactCore::artifactMax(1, static_cast<int>(h * 0.5f)));
                 cv::ellipse(overlay, center, radius, element.rotation, 0.0, 360.0,
                             color, -1, cv::LINE_AA);
                 cv::ellipse(blendModeMask, center, radius, element.rotation, 0.0, 360.0,
@@ -173,10 +172,10 @@ public:
                                             3.14159265358979323846f / 180.0f;
                         const float distance = 0.55f + 0.12f * static_cast<float>(satellite % 4);
                         const cv::Point satelliteCenter(
-                            center.x + static_cast<int>(std::cos(angle) * radius.width * distance),
-                            center.y + static_cast<int>(std::sin(angle) * radius.height * distance));
-                        const int satelliteRadius = std::max(
-                            1, std::min(radius.width, radius.height) *
+                            center.x + static_cast<int>(ArtifactCore::artifactCos(angle) * radius.width * distance),
+                            center.y + static_cast<int>(ArtifactCore::artifactSin(angle) * radius.height * distance));
+                        const int satelliteRadius = ArtifactCore::artifactMax(
+                            1, ArtifactCore::artifactMin(radius.width, radius.height) *
                                    (12 + static_cast<int>((seed >> (satellite % 8)) & 7u)) / 100);
                         cv::circle(overlay, satelliteCenter, satelliteRadius, color,
                                    -1, cv::LINE_AA);
@@ -189,11 +188,11 @@ public:
                     cv::ellipse(overlay, center, radius, element.rotation, 0.0, 360.0,
                                 rim, thickness, cv::LINE_AA);
                     const cv::Point highlight(
-                        center.x - std::max(1, radius.width / 3),
-                        center.y - std::max(1, radius.height / 3));
+                        center.x - ArtifactCore::artifactMax(1, radius.width / 3),
+                        center.y - ArtifactCore::artifactMax(1, radius.height / 3));
                     cv::ellipse(overlay, highlight,
-                                cv::Size(std::max(1, radius.width / 4),
-                                         std::max(1, radius.height / 4)),
+                                cv::Size(ArtifactCore::artifactMax(1, radius.width / 4),
+                                         ArtifactCore::artifactMax(1, radius.height / 4)),
                                 element.rotation, 0.0, 360.0,
                                 cv::Scalar(1.0f, 1.0f, 1.0f, alpha * 0.65f),
                                 -1, cv::LINE_AA);
@@ -202,8 +201,8 @@ public:
                 }
             } else {
                 const double radians = element.rotation * 3.141592653589793 / 180.0;
-                const cv::Point delta(static_cast<int>(std::round(std::cos(radians) * w)),
-                                      static_cast<int>(std::round(std::sin(radians) * w)));
+                const cv::Point delta(static_cast<int>(ArtifactCore::artifactRound(ArtifactCore::artifactCos(radians) * w)),
+                                      static_cast<int>(ArtifactCore::artifactRound(ArtifactCore::artifactSin(radians) * w)));
                 cv::line(overlay, center - delta / 2, center + delta / 2,
                          color, thickness, cv::LINE_AA);
                 cv::line(blendModeMask, center - delta / 2, center + delta / 2,
@@ -212,32 +211,32 @@ public:
         }
 
         cv::Mat output = input.clone();
-        const int yBegin = std::max(0, static_cast<int>(top));
-        const int yEnd = std::min(height, static_cast<int>(bottom));
+        const int yBegin = ArtifactCore::artifactMax(0, static_cast<int>(top));
+        const int yEnd = ArtifactCore::artifactMin(height, static_cast<int>(bottom));
         Parallel::For(yBegin, yEnd, (yEnd - yBegin) * width, [&](int y) {
             const auto* sourceRow = input.ptr<cv::Vec4f>(y);
             const auto* overlayRow = overlay.ptr<cv::Vec4f>(y);
             const auto* dropletMaskRow = dropletMask.ptr<float>(y);
             const auto* blendModeRow = blendModeMask.ptr<std::uint8_t>(y);
             auto* outputRow = output.ptr<cv::Vec4f>(y);
-            for (int x = std::max(0, static_cast<int>(left)); x < std::min(width, static_cast<int>(right)); ++x) {
+            for (int x = ArtifactCore::artifactMax(0, static_cast<int>(left)); x < ArtifactCore::artifactMin(width, static_cast<int>(right)); ++x) {
                 float featherMask = 1.0f;
                 if (data.feather > 0.0f) {
                     const float u = (static_cast<float>(x) / width - data.anchorX) /
-                                    std::max(0.001f, data.anchorWidth);
+                                    ArtifactCore::artifactMax(0.001f, data.anchorWidth);
                     const float v = (static_cast<float>(y) / height - data.anchorY) /
-                                    std::max(0.001f, data.anchorHeight);
-                    const float edgeDistance = std::min({u, v, 1.0f - u, 1.0f - v});
-                    featherMask = std::clamp(edgeDistance / data.feather, 0.0f, 1.0f);
+                                    ArtifactCore::artifactMax(0.001f, data.anchorHeight);
+                    const float edgeDistance = ArtifactCore::artifactMin(u, v, 1.0f - u, 1.0f - v);
+                    featherMask = ArtifactCore::artifactClamp(edgeDistance / data.feather, 0.0f, 1.0f);
                     featherMask = featherMask * featherMask * (3.0f - 2.0f * featherMask);
                 }
-                const float a = std::clamp(overlayRow[x][3] * featherMask, 0.0f, 1.0f);
-                const float dropletAlpha = std::clamp(
+                const float a = ArtifactCore::artifactClamp(overlayRow[x][3] * featherMask, 0.0f, 1.0f);
+                const float dropletAlpha = ArtifactCore::artifactClamp(
                     dropletMaskRow[x] * featherMask, 0.0f, 1.0f);
                 const int refractionOffset = dropletAlpha > 0.0f
-                    ? std::clamp(static_cast<int>(std::round((dropletAlpha - 0.5f) * 4.0f)), -2, 2)
+                    ? ArtifactCore::artifactClamp(static_cast<int>(ArtifactCore::artifactRound((dropletAlpha - 0.5f) * 4.0f)), -2, 2)
                     : 0;
-                const int sampleX = std::clamp(x + refractionOffset, 0, width - 1);
+                const int sampleX = ArtifactCore::artifactClamp(x + refractionOffset, 0, width - 1);
                 const auto* refractedSource = sourceRow + sampleX;
                 for (int c = 0; c < 3; ++c) {
                     const float source = refractedSource[0][c];
@@ -254,12 +253,12 @@ public:
                         blended = source + decal;
                         break;
                     case 4u:
-                        blended = std::min(source, decal);
+                        blended = ArtifactCore::artifactMin(source, decal);
                         break;
                     default:
                         break;
                     }
-                    outputRow[x][c] = std::clamp(source * (1.0f - a) + blended * a,
+                    outputRow[x][c] = ArtifactCore::artifactClamp(source * (1.0f - a) + blended * a,
                                                  0.0f, 1.0f);
                 }
                 outputRow[x][3] = sourceRow[x][3];

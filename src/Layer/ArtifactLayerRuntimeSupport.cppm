@@ -90,7 +90,11 @@ void MotionTrailRingBuffer::push(const QVector3D &sample,
     return;
   }
   if (samples.size() != capacity) {
-    samples.assign(capacity, sample);
+    samples.clear();
+    samples.reserve(capacity);
+    for (std::size_t index = 0; index < capacity; ++index) {
+      samples.add(sample);
+    }
     head = 0;
     count = 1;
     return;

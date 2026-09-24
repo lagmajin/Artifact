@@ -9,6 +9,8 @@ module;
 #include <QColor>
 #include <QDateTime>
 #include <QFileInfo>
+#include <QFont>
+#include <QFontMetrics>
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QMatrix4x4>
@@ -34,6 +36,7 @@ import Audio.Segment;
 import Color.Float;
 import Material.Material;
 import Mesh;
+import Geometry.MeshDeform;
 import Image.ImageF32x4_RGBA;
 import Procedural3DGenerators;
 import Size;
@@ -164,9 +167,35 @@ QPointF cubicPoint(const QPointF& p0,
 
 class ArtifactProcedural3DLayer::Impl {
 public:
+    // Deform slot: 0=None, 1=Bend, 2=Twist, 3=Taper, 4=Displace, 5=Wave,
+    // 6=Bulge, 7=Spherify, 8=Shear, 9=Pucker, 10=Stretch, 11=Noise, 12=Smooth.
+    // Flat fields; each deformer reads its documented subset.
+    struct DeformSettings {
+        int type = 0;
+        float centerX = 0.0f;
+        float centerY = 0.0f;
+        float centerZ = 0.0f;
+        int axisA = 1;
+        int axisB = 0;
+        float amount = 0.0f;
+        float angle = 0.0f;
+        float frequency = 0.25f;
+        int octaves = 3;
+        int seed = 42;
+        float radius = 0.0f;
+        float dirX = 0.0f;
+        float dirY = 1.0f;
+        float dirZ = 0.0f;
+        float strength = 0.5f;
+        int iterations = 1;
+        float speed = 1.0f;
+        int subdivLevels = 0;
+    };
     Procedural3DLayerKind kind = Procedural3DLayerKind::Terrain;
     ArtifactCore::TerrainSettings terrain;
     ArtifactCore::PathTubeSettings pathTube;
+    ArtifactCore::TextExtrudeSettings textExtrude;
+    DeformSettings deform;
     ArtifactCore::Procedural3DShading shading = ArtifactCore::Procedural3DShading::Solid;
     QColor baseColor = QColor(86, 205, 179);
     float wireThickness = 1.0f;
@@ -469,6 +498,10 @@ public:
             generated = ArtifactCore::Procedural3DGenerators::generateTerrain(
                 resolved,
                 timeSeconds);
+        } else if (kind == Procedural3DLayerKind::TextExtrude) {
+            generated = ArtifactCore::Procedural3DGenerators::generateTextExtrude(
+                textExtrude,
+                timeSeconds);
         } else {
             auto resolved = pathTube;
             if (qualityOverride >= 0) {
@@ -480,10 +513,129 @@ public:
                 timeSeconds);
         }
         mesh = makeMesh(generated);
+        applyDeform(generated, timeSeconds);
         material.setBaseColor(baseColor);
         cachedFrame = frame;
         cachedQuality = qualityOverride;
         cachedRevision = revision;
+    }
+
+    void applyDeform(const ArtifactCore::Procedural3DMeshData& generated, float timeSeconds)
+    {
+        if (deform.type <= 0 || deform.type > 12) {
+            return;
+        }
+        const QVector3D center(deform.centerX, deform.centerY, deform.centerZ);
+        bool applied = false;
+        switch (deform.type) {
+        case 1: {
+            ArtifactCore::BendParams params;
+            params.center = center;
+            params.axis = deform.axisA;
+            params.angle = deform.angle;
+            applied = ArtifactCore::bendMesh(mesh, params);
+            break;
+        }
+        case 2: {
+            ArtifactCore::TwistParams params;
+            params.center = center;
+            params.axis = deform.axisA;
+            params.angle = deform.angle;
+            applied = ArtifactCore::twistMesh(mesh, params);
+            break;
+        }
+        case 3: {
+            ArtifactCore::TaperParams params;
+            params.center = center;
+            params.axis = deform.axisA;
+            params.amount = deform.amount;
+            applied = ArtifactCore::taperMesh(mesh, params);
+            break;
+        }
+        case 4: {
+            ArtifactCore::DisplaceParams params;
+            params.amount = deform.amount;
+            params.frequency = deform.frequency;
+            params.octaves = deform.octaves;
+            params.seed = static_cast<unsigned int>(deform.seed);
+            params.subdivLevels = deform.subdivLevels;
+            applied = ArtifactCore::displaceMesh(mesh, params);
+            break;
+        }
+        case 5: {
+            ArtifactCore::WaveParams params;
+            params.center = center;
+            params.direction = QVector3D(deform.dirX, deform.dirY, deform.dirZ);
+            params.frequency = deform.frequency;
+            params.amplitude = deform.amount;
+            params.speed = deform.speed;
+            params.timeSeconds = timeSeconds;
+            applied = ArtifactCore::waveMesh(mesh, params);
+            break;
+        }
+        case 6: {
+            ArtifactCore::BulgeParams params;
+            params.center = center;
+            params.radius = deform.radius;
+            params.amount = deform.amount;
+            applied = ArtifactCore::bulgeMesh(mesh, params);
+            break;
+        }
+        case 7: {
+            ArtifactCore::SpherifyParams params;
+            params.center = center;
+            params.radius = deform.radius;
+            params.amount = deform.amount;
+            applied = ArtifactCore::spherifyMesh(mesh, params);
+            break;
+        }
+        case 8: {
+            ArtifactCore::ShearParams params;
+            params.center = center;
+            params.axis = deform.axisA;
+            params.shearAxis = deform.axisB;
+            params.amount = deform.amount;
+            applied = ArtifactCore::shearMesh(mesh, params);
+            break;
+        }
+        case 9: {
+            ArtifactCore::PuckerParams params;
+            params.center = center;
+            params.radius = deform.radius;
+            params.amount = deform.amount;
+            applied = ArtifactCore::puckerMesh(mesh, params);
+            break;
+        }
+        case 10: {
+            ArtifactCore::StretchParams params;
+            params.center = center;
+            params.axis = deform.axisA;
+            params.amount = deform.amount;
+            applied = ArtifactCore::stretchMesh(mesh, params);
+            break;
+        }
+        case 11: {
+            ArtifactCore::NoiseParams params;
+            params.amount = deform.amount;
+            params.frequency = deform.frequency;
+            params.octaves = deform.octaves;
+            params.seed = static_cast<unsigned int>(deform.seed);
+            applied = ArtifactCore::noiseMesh(mesh, params);
+            break;
+        }
+        case 12: {
+            ArtifactCore::SmoothParams params;
+            params.strength = deform.strength;
+            params.iterations = deform.iterations;
+            applied = ArtifactCore::smoothMesh(mesh, params);
+            break;
+        }
+        default:
+            break;
+        }
+        if (!applied) {
+            mesh = makeMesh(generated);
+        }
     }
 
     QJsonObject toJson() const
@@ -525,6 +677,38 @@ public:
             {QStringLiteral("noiseAmplitude"), pathTube.noiseAmplitude},
             {QStringLiteral("quality"), static_cast<int>(pathTube.quality)}
         };
+        QJsonObject textJson {
+            {QStringLiteral("text"), textExtrude.text},
+            {QStringLiteral("fontFamily"), textExtrude.fontFamily},
+            {QStringLiteral("fontSize"), textExtrude.fontSize},
+            {QStringLiteral("bold"), textExtrude.bold},
+            {QStringLiteral("italic"), textExtrude.italic},
+            {QStringLiteral("depth"), textExtrude.depth},
+            {QStringLiteral("bevelWidth"), textExtrude.bevelWidth},
+            {QStringLiteral("bevelSegments"), textExtrude.bevelSegments},
+            {QStringLiteral("quality"), static_cast<int>(textExtrude.quality)}
+        };
+        QJsonObject deformJson {
+            {QStringLiteral("type"), deform.type},
+            {QStringLiteral("centerX"), deform.centerX},
+            {QStringLiteral("centerY"), deform.centerY},
+            {QStringLiteral("centerZ"), deform.centerZ},
+            {QStringLiteral("axisA"), deform.axisA},
+            {QStringLiteral("axisB"), deform.axisB},
+            {QStringLiteral("amount"), deform.amount},
+            {QStringLiteral("angle"), deform.angle},
+            {QStringLiteral("frequency"), deform.frequency},
+            {QStringLiteral("octaves"), deform.octaves},
+            {QStringLiteral("seed"), deform.seed},
+            {QStringLiteral("radius"), deform.radius},
+            {QStringLiteral("dirX"), deform.dirX},
+            {QStringLiteral("dirY"), deform.dirY},
+            {QStringLiteral("dirZ"), deform.dirZ},
+            {QStringLiteral("strength"), deform.strength},
+            {QStringLiteral("iterations"), deform.iterations},
+            {QStringLiteral("speed"), deform.speed},
+            {QStringLiteral("subdivLevels"), deform.subdivLevels}
+        };
         return {
             {QStringLiteral("version"), kSettingsVersion},
             {QStringLiteral("kind"), static_cast<int>(kind)},
@@ -532,7 +716,9 @@ public:
             {QStringLiteral("wireThickness"), wireThickness},
             {QStringLiteral("baseColor"), colorToJson(baseColor)},
             {QStringLiteral("terrain"), terrainJson},
-            {QStringLiteral("pathTube"), pathJson}
+            {QStringLiteral("pathTube"), pathJson},
+            {QStringLiteral("textExtrude"), textJson},
+            {QStringLiteral("deform"), deformJson}
         };
     }
 
@@ -545,7 +731,7 @@ public:
                 : fallback;
         };
         kind = static_cast<Procedural3DLayerKind>(
-            std::clamp(object.value(QStringLiteral("kind")).toInt(static_cast<int>(kind)), 0, 1));
+            std::clamp(object.value(QStringLiteral("kind")).toInt(static_cast<int>(kind)), 0, 2));
         shading = static_cast<ArtifactCore::Procedural3DShading>(
             std::clamp(object.value(QStringLiteral("shading")).toInt(static_cast<int>(shading)), 0, 3));
         wireThickness = std::max(
@@ -598,6 +784,39 @@ public:
         pathTube.noiseAmplitude = safeFinite(pathJson.value(QStringLiteral("noiseAmplitude")).toDouble(pathTube.noiseAmplitude), pathTube.noiseAmplitude, 0.0f, 100000.0f);
         pathTube.quality = static_cast<ArtifactCore::Procedural3DQuality>(
             std::clamp(pathJson.value(QStringLiteral("quality")).toInt(static_cast<int>(pathTube.quality)), 0, 2));
+
+        const auto textJson = object.value(QStringLiteral("textExtrude")).toObject();
+        textExtrude.text = textJson.value(QStringLiteral("text")).toString(textExtrude.text).left(1024);
+        textExtrude.fontFamily = textJson.value(QStringLiteral("fontFamily")).toString(textExtrude.fontFamily).trimmed().left(256);
+        textExtrude.fontSize = std::clamp(textJson.value(QStringLiteral("fontSize")).toInt(textExtrude.fontSize), 1, 1000);
+        textExtrude.bold = textJson.value(QStringLiteral("bold")).toBool(textExtrude.bold);
+        textExtrude.italic = textJson.value(QStringLiteral("italic")).toBool(textExtrude.italic);
+        textExtrude.depth = safeFinite(textJson.value(QStringLiteral("depth")).toDouble(textExtrude.depth), textExtrude.depth, 0.0f, 100000.0f);
+        textExtrude.bevelWidth = safeFinite(textJson.value(QStringLiteral("bevelWidth")).toDouble(textExtrude.bevelWidth), textExtrude.bevelWidth, 0.0f, 100000.0f);
+        textExtrude.bevelSegments = std::clamp(textJson.value(QStringLiteral("bevelSegments")).toInt(textExtrude.bevelSegments), 1, 8);
+        textExtrude.quality = static_cast<ArtifactCore::Procedural3DQuality>(
+            std::clamp(textJson.value(QStringLiteral("quality")).toInt(static_cast<int>(textExtrude.quality)), 0, 2));
+
+        const auto deformJson = object.value(QStringLiteral("deform")).toObject();
+        deform.type = std::clamp(deformJson.value(QStringLiteral("type")).toInt(deform.type), 0, 12);
+        deform.centerX = safeFinite(deformJson.value(QStringLiteral("centerX")).toDouble(deform.centerX), deform.centerX, -100000.0f, 100000.0f);
+        deform.centerY = safeFinite(deformJson.value(QStringLiteral("centerY")).toDouble(deform.centerY), deform.centerY, -100000.0f, 100000.0f);
+        deform.centerZ = safeFinite(deformJson.value(QStringLiteral("centerZ")).toDouble(deform.centerZ), deform.centerZ, -100000.0f, 100000.0f);
+        deform.axisA = std::clamp(deformJson.value(QStringLiteral("axisA")).toInt(deform.axisA), 0, 2);
+        deform.axisB = std::clamp(deformJson.value(QStringLiteral("axisB")).toInt(deform.axisB), 0, 2);
+        deform.amount = safeFinite(deformJson.value(QStringLiteral("amount")).toDouble(deform.amount), deform.amount, -100000.0f, 100000.0f);
+        deform.angle = safeFinite(deformJson.value(QStringLiteral("angle")).toDouble(deform.angle), deform.angle, -100000.0f, 100000.0f);
+        deform.frequency = safeFinite(deformJson.value(QStringLiteral("frequency")).toDouble(deform.frequency), deform.frequency, 0.0f, 100000.0f);
+        deform.octaves = std::clamp(deformJson.value(QStringLiteral("octaves")).toInt(deform.octaves), 1, 8);
+        deform.seed = std::max(0, deformJson.value(QStringLiteral("seed")).toInt(deform.seed));
+        deform.radius = safeFinite(deformJson.value(QStringLiteral("radius")).toDouble(deform.radius), deform.radius, 0.0f, 100000.0f);
+        deform.dirX = safeFinite(deformJson.value(QStringLiteral("dirX")).toDouble(deform.dirX), deform.dirX, -100000.0f, 100000.0f);
+        deform.dirY = safeFinite(deformJson.value(QStringLiteral("dirY")).toDouble(deform.dirY), deform.dirY, -100000.0f, 100000.0f);
+        deform.dirZ = safeFinite(deformJson.value(QStringLiteral("dirZ")).toDouble(deform.dirZ), deform.dirZ, -100000.0f, 100000.0f);
+        deform.strength = safeFinite(deformJson.value(QStringLiteral("strength")).toDouble(deform.strength), deform.strength, 0.0f, 1.0f);
+        deform.iterations = std::clamp(deformJson.value(QStringLiteral("iterations")).toInt(deform.iterations), 1, 100);
+        deform.speed = safeFinite(deformJson.value(QStringLiteral("speed")).toDouble(deform.speed), deform.speed, -100000.0f, 100000.0f);
+        deform.subdivLevels = std::clamp(deformJson.value(QStringLiteral("subdivLevels")).toInt(deform.subdivLevels), 0, 3);
         invalidate();
     }
 };
@@ -608,9 +827,12 @@ ArtifactProcedural3DLayer::ArtifactProcedural3DLayer(Procedural3DLayerKind kind)
     impl_->kind = kind;
     impl_->terrain = ArtifactCore::Procedural3DGenerators::makeTerrainPreset();
     impl_->pathTube = ArtifactCore::Procedural3DGenerators::makePathTubePreset();
+    impl_->textExtrude = ArtifactCore::Procedural3DGenerators::makeTextExtrudePreset();
     impl_->baseColor = kind == Procedural3DLayerKind::Terrain
         ? QColor(86, 205, 179)
-        : QColor(255, 89, 140);
+        : (kind == Procedural3DLayerKind::PathTube
+            ? QColor(255, 89, 140)
+            : QColor(255, 196, 66));
     setIs3D(true);
     setSourceSize(Size_2D(1000, 1000));
 }
@@ -723,11 +945,36 @@ void ArtifactProcedural3DLayer::drawResolved(ArtifactIRenderer* renderer,
 
 QRectF ArtifactProcedural3DLayer::localBounds() const
 {
+    // Deformed meshes report their regenerated bounds (updated by the deform
+    // pass); the analytic per-kind rect below is the pre-deform fallback.
+    if (impl_->deform.type > 0 && impl_->mesh.isValid()) {
+        const QVector3D boxMin = impl_->mesh.boundingBoxMin();
+        const QVector3D boxMax = impl_->mesh.boundingBoxMax();
+        if (boxMax.x() > boxMin.x() && boxMax.y() > boxMin.y()) {
+            return QRectF(boxMin.x(), boxMin.y(),
+                          boxMax.x() - boxMin.x(), boxMax.y() - boxMin.y());
+        }
+    }
     if (impl_->kind == Procedural3DLayerKind::Terrain) {
         return QRectF(-impl_->terrain.sizeX * 0.5f,
                       -impl_->terrain.sizeY * 0.5f,
                       impl_->terrain.sizeX,
                       impl_->terrain.sizeY);
+    }
+    if (impl_->kind == Procedural3DLayerKind::TextExtrude) {
+        QFont font(impl_->textExtrude.fontFamily);
+        font.setPointSize(std::clamp(impl_->textExtrude.fontSize, 1, 1000));
+        font.setBold(impl_->textExtrude.bold);
+        font.setItalic(impl_->textExtrude.italic);
+        const QFontMetricsF metrics(font);
+        const QStringList lines = impl_->textExtrude.text.split(QChar(u'\n'));
+        qreal width = 0.0;
+        for (const QString& line : lines) {
+            width = std::max(width, static_cast<qreal>(metrics.horizontalAdvance(line)));
+        }
+        const qreal height = static_cast<qreal>(std::max<qsizetype>(1, lines.size())) *
+                             metrics.lineSpacing();
+        return QRectF(-width * 0.5, -height * 0.5, width, height);
     }
     const float extent = impl_->pathTube.pathScale + impl_->pathTube.radius;
     return QRectF(-extent, -extent, extent * 2.0f, extent * 2.0f);
@@ -737,27 +984,33 @@ QString ArtifactProcedural3DLayer::debugState() const
 {
     const QString sourceState = impl_->kind == Procedural3DLayerKind::Terrain
         ? (impl_->terrain.heightSource == ArtifactCore::TerrainHeightSource::ImageLuminance
-               ? (impl_->terrain.heightSamples.empty()
-                      ? QStringLiteral("image-missing")
-                      : QStringLiteral("image-loaded"))
-               : (impl_->terrain.heightSource == ArtifactCore::TerrainHeightSource::AudioAmplitude
-                      ? (impl_->terrain.audioAvailable
-                             ? QStringLiteral("audio:%1").arg(
-                                   impl_->terrain.audioAmplitude,
-                                   0,
-                                   'f',
-                                   3)
-                             : QStringLiteral("audio-missing:fallback-noise"))
-                      : QStringLiteral("noise")))
-        : (impl_->pathTube.pathSource == ArtifactCore::ProceduralPathSource::ControlPoints
-               ? (impl_->pathTube.pathPoints.size() >= 2u
-                      ? QStringLiteral("layer-path-loaded")
-                      : QStringLiteral("layer-path-missing"))
-               : QStringLiteral("parametric"));
+                ? (impl_->terrain.heightSamples.empty()
+                       ? QStringLiteral("image-missing")
+                       : QStringLiteral("image-loaded"))
+                : (impl_->terrain.heightSource == ArtifactCore::TerrainHeightSource::AudioAmplitude
+                       ? (impl_->terrain.audioAvailable
+                              ? QStringLiteral("audio:%1").arg(
+                                    impl_->terrain.audioAmplitude,
+                                    0,
+                                    'f',
+                                    3)
+                              : QStringLiteral("audio-missing:fallback-noise"))
+                       : QStringLiteral("noise")))
+        : (impl_->kind == Procedural3DLayerKind::TextExtrude
+                ? (impl_->textExtrude.text.trimmed().isEmpty()
+                       ? QStringLiteral("text-missing")
+                       : QStringLiteral("text-ready"))
+                : (impl_->pathTube.pathSource == ArtifactCore::ProceduralPathSource::ControlPoints
+                       ? (impl_->pathTube.pathPoints.size() >= 2u
+                              ? QStringLiteral("layer-path-loaded")
+                              : QStringLiteral("layer-path-missing"))
+                       : QStringLiteral("parametric")));
     return QStringLiteral("Procedural3DLayer{kind=%1 frame=%2 vertices=%3 polygons=%4 quality=%5 shading=%6 source=%7}")
         .arg(impl_->kind == Procedural3DLayerKind::Terrain
                  ? QStringLiteral("terrain")
-                 : QStringLiteral("pathTube"))
+                 : (impl_->kind == Procedural3DLayerKind::TextExtrude
+                        ? QStringLiteral("textExtrude")
+                        : QStringLiteral("pathTube")))
         .arg(impl_->cachedFrame)
         .arg(impl_->mesh.vertexCount())
         .arg(impl_->mesh.polygonCount())
@@ -765,7 +1018,9 @@ QString ArtifactProcedural3DLayer::debugState() const
                  ? impl_->cachedQuality
                  : static_cast<int>(impl_->kind == Procedural3DLayerKind::Terrain
                                         ? impl_->terrain.quality
-                                        : impl_->pathTube.quality))
+                                        : (impl_->kind == Procedural3DLayerKind::TextExtrude
+                                               ? impl_->textExtrude.quality
+                                               : impl_->pathTube.quality)))
         .arg(static_cast<int>(impl_->shading))
         .arg(sourceState);
 }
@@ -828,6 +1083,23 @@ void ArtifactProcedural3DLayer::loadPreset(const QString& presetName)
         impl_->pathTube.repeatCount = 0.8f;
         impl_->baseColor = QColor(255, 190, 68);
         impl_->shading = ArtifactCore::Procedural3DShading::Solid;
+    } else if (preset == QStringLiteral("beveledtext3d")) {
+        impl_->kind = Procedural3DLayerKind::TextExtrude;
+        impl_->textExtrude = ArtifactCore::Procedural3DGenerators::makeTextExtrudePreset(
+            ArtifactCore::Procedural3DQuality::Preview);
+        impl_->baseColor = QColor(255, 196, 66);
+        impl_->shading = ArtifactCore::Procedural3DShading::Lit;
+    } else if (preset == QStringLiteral("rippletext3d")) {
+        impl_->kind = Procedural3DLayerKind::TextExtrude;
+        impl_->textExtrude = ArtifactCore::Procedural3DGenerators::makeTextExtrudePreset(
+            ArtifactCore::Procedural3DQuality::Preview);
+        impl_->textExtrude.text = QStringLiteral("WAVE");
+        impl_->deform.type = 5;
+        impl_->deform.amount = 6.0f;
+        impl_->deform.frequency = 0.05f;
+        impl_->deform.speed = 2.0f;
+        impl_->baseColor = QColor(86, 205, 255);
+        impl_->shading = ArtifactCore::Procedural3DShading::Lit;
     } else {
         return;
     }
@@ -843,7 +1115,9 @@ QStringList ArtifactProcedural3DLayer::availablePresets() const
         QStringLiteral("wireLandscape"),
         QStringLiteral("softClothWave"),
         QStringLiteral("neonPathTube"),
-        QStringLiteral("ribbonTrail")
+        QStringLiteral("ribbonTrail"),
+        QStringLiteral("beveledText3D"),
+        QStringLiteral("rippleText3D")
     };
 }
 
@@ -882,8 +1156,10 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactProcedural3DLayer::getLayerProp
     };
 
     ArtifactCore::PropertyGroup generator(QStringLiteral("Geometry"));
-    generator.addProperty(property(QStringLiteral("procedural.kind"), ArtifactCore::PropertyType::Integer,
-                                   static_cast<int>(impl_->kind), -250));
+    auto kindProperty = property(QStringLiteral("procedural.kind"), ArtifactCore::PropertyType::Integer,
+                                 static_cast<int>(impl_->kind), -250);
+    kindProperty->setTooltip(QStringLiteral("0=Terrain, 1=Path Tube, 2=Text Extrude"));
+    generator.addProperty(kindProperty);
     if (impl_->kind == Procedural3DLayerKind::Terrain) {
         generator.addProperty(property(QStringLiteral("terrain.columns"), ArtifactCore::PropertyType::Integer, impl_->terrain.columns, -249));
         generator.addProperty(property(QStringLiteral("terrain.rows"), ArtifactCore::PropertyType::Integer, impl_->terrain.rows, -248));
@@ -902,6 +1178,15 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactProcedural3DLayer::getLayerProp
         generator.addProperty(property(QStringLiteral("terrain.heightSourcePath"), ArtifactCore::PropertyType::String, impl_->terrainHeightSourcePath, -242));
         generator.addProperty(property(QStringLiteral("terrain.audioGain"), ArtifactCore::PropertyType::Float, impl_->terrainAudioGain, -241));
         generator.addProperty(property(QStringLiteral("terrain.uvMode"), ArtifactCore::PropertyType::Integer, static_cast<int>(impl_->terrain.uvMode), -240));
+    } else if (impl_->kind == Procedural3DLayerKind::TextExtrude) {
+        generator.addProperty(property(QStringLiteral("text.value"), ArtifactCore::PropertyType::String, impl_->textExtrude.text, -249));
+        generator.addProperty(property(QStringLiteral("text.fontFamily"), ArtifactCore::PropertyType::String, impl_->textExtrude.fontFamily, -248));
+        generator.addProperty(property(QStringLiteral("text.fontSize"), ArtifactCore::PropertyType::Integer, impl_->textExtrude.fontSize, -247));
+        generator.addProperty(property(QStringLiteral("text.bold"), ArtifactCore::PropertyType::Boolean, impl_->textExtrude.bold, -246));
+        generator.addProperty(property(QStringLiteral("text.italic"), ArtifactCore::PropertyType::Boolean, impl_->textExtrude.italic, -245));
+        generator.addProperty(property(QStringLiteral("text.depth"), ArtifactCore::PropertyType::Float, impl_->textExtrude.depth, -244));
+        generator.addProperty(property(QStringLiteral("text.bevelWidth"), ArtifactCore::PropertyType::Float, impl_->textExtrude.bevelWidth, -243));
+        generator.addProperty(property(QStringLiteral("text.bevelSegments"), ArtifactCore::PropertyType::Integer, impl_->textExtrude.bevelSegments, -242));
     } else {
         auto pathSourceProperty = property(
             QStringLiteral("path.source"),
@@ -946,11 +1231,49 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactProcedural3DLayer::getLayerProp
         displacement.addProperty(property(QStringLiteral("terrain.noiseAmplitude"), ArtifactCore::PropertyType::Float, impl_->terrain.noiseAmplitude, -229));
         displacement.addProperty(property(QStringLiteral("terrain.noiseOctaves"), ArtifactCore::PropertyType::Integer, impl_->terrain.noiseOctaves, -228));
         displacement.addProperty(property(QStringLiteral("terrain.noiseEvolution"), ArtifactCore::PropertyType::Float, impl_->terrain.noiseEvolution, -227));
-    } else {
+        groups.push_back(displacement);
+    } else if (impl_->kind == Procedural3DLayerKind::PathTube) {
         displacement.addProperty(property(QStringLiteral("path.noiseScale"), ArtifactCore::PropertyType::Float, impl_->pathTube.noiseScale, -230));
         displacement.addProperty(property(QStringLiteral("path.noiseAmplitude"), ArtifactCore::PropertyType::Float, impl_->pathTube.noiseAmplitude, -229));
+        groups.push_back(displacement);
     }
-    groups.push_back(displacement);
+    // TextExtrude has no noise/displacement parameters.
+    // (Deform group below applies to every kind.)
+
+    ArtifactCore::PropertyGroup deformGroup(QStringLiteral("Deform"));
+    auto deformTypeProperty = property(QStringLiteral("deform.type"), ArtifactCore::PropertyType::Integer,
+                                       impl_->deform.type, -225);
+    deformTypeProperty->setTooltip(QStringLiteral("0=None, 1=Bend, 2=Twist, 3=Taper, 4=Displace, 5=Wave, 6=Bulge, 7=Spherify, 8=Shear, 9=Pucker, 10=Stretch, 11=Noise, 12=Smooth"));
+    deformGroup.addProperty(deformTypeProperty);
+    deformGroup.addProperty(property(QStringLiteral("deform.centerX"), ArtifactCore::PropertyType::Float, impl_->deform.centerX, -224));
+    deformGroup.addProperty(property(QStringLiteral("deform.centerY"), ArtifactCore::PropertyType::Float, impl_->deform.centerY, -224));
+    deformGroup.addProperty(property(QStringLiteral("deform.centerZ"), ArtifactCore::PropertyType::Float, impl_->deform.centerZ, -224));
+    auto axisAProperty = property(QStringLiteral("deform.axisA"), ArtifactCore::PropertyType::Integer, impl_->deform.axisA, -223);
+    axisAProperty->setTooltip(QStringLiteral("0=X, 1=Y, 2=Z. Bend/Twist/Taper/Stretch axis, Shear offset axis"));
+    deformGroup.addProperty(axisAProperty);
+    auto axisBProperty = property(QStringLiteral("deform.axisB"), ArtifactCore::PropertyType::Integer, impl_->deform.axisB, -222);
+    axisBProperty->setTooltip(QStringLiteral("Shear driver axis (0=X, 1=Y, 2=Z)"));
+    deformGroup.addProperty(axisBProperty);
+    auto amountProperty = property(QStringLiteral("deform.amount"), ArtifactCore::PropertyType::Float, impl_->deform.amount, -221);
+    amountProperty->setTooltip(QStringLiteral("Taper/Stretch factor, Displace/Noise/Wave amplitude, Bulge/Pucker/Spherify amount"));
+    deformGroup.addProperty(amountProperty);
+    auto angleProperty = property(QStringLiteral("deform.angle"), ArtifactCore::PropertyType::Float, impl_->deform.angle, -220);
+    angleProperty->setTooltip(QStringLiteral("Bend curvature and Twist angle, radians per unit length"));
+    deformGroup.addProperty(angleProperty);
+    deformGroup.addProperty(property(QStringLiteral("deform.frequency"), ArtifactCore::PropertyType::Float, impl_->deform.frequency, -219));
+    deformGroup.addProperty(property(QStringLiteral("deform.octaves"), ArtifactCore::PropertyType::Integer, impl_->deform.octaves, -218));
+    deformGroup.addProperty(property(QStringLiteral("deform.seed"), ArtifactCore::PropertyType::Integer, impl_->deform.seed, -217));
+    auto radiusProperty = property(QStringLiteral("deform.radius"), ArtifactCore::PropertyType::Float, impl_->deform.radius, -216);
+    radiusProperty->setTooltip(QStringLiteral("Bulge/Spherify/Pucker falloff radius, 0 = whole mesh"));
+    deformGroup.addProperty(radiusProperty);
+    deformGroup.addProperty(property(QStringLiteral("deform.dirX"), ArtifactCore::PropertyType::Float, impl_->deform.dirX, -215));
+    deformGroup.addProperty(property(QStringLiteral("deform.dirY"), ArtifactCore::PropertyType::Float, impl_->deform.dirY, -215));
+    deformGroup.addProperty(property(QStringLiteral("deform.dirZ"), ArtifactCore::PropertyType::Float, impl_->deform.dirZ, -215));
+    deformGroup.addProperty(property(QStringLiteral("deform.strength"), ArtifactCore::PropertyType::Float, impl_->deform.strength, -214));
+    deformGroup.addProperty(property(QStringLiteral("deform.iterations"), ArtifactCore::PropertyType::Integer, impl_->deform.iterations, -213));
+    deformGroup.addProperty(property(QStringLiteral("deform.speed"), ArtifactCore::PropertyType::Float, impl_->deform.speed, -212));
+    deformGroup.addProperty(property(QStringLiteral("deform.subdivLevels"), ArtifactCore::PropertyType::Integer, impl_->deform.subdivLevels, -211));
+    groups.push_back(deformGroup);
 
     ArtifactCore::PropertyGroup material(QStringLiteral("Material"));
     material.addProperty(property(QStringLiteral("procedural.baseColor"), ArtifactCore::PropertyType::Color, impl_->baseColor, -210));
@@ -985,7 +1308,9 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactProcedural3DLayer::getLayerProp
     material.addProperty(property(QStringLiteral("procedural.quality"), ArtifactCore::PropertyType::Integer,
                                   static_cast<int>(impl_->kind == Procedural3DLayerKind::Terrain
                                                        ? impl_->terrain.quality
-                                                       : impl_->pathTube.quality),
+                                                       : (impl_->kind == Procedural3DLayerKind::TextExtrude
+                                                              ? impl_->textExtrude.quality
+                                                              : impl_->pathTube.quality)),
                                   -205));
     groups.push_back(material);
     return groups;
@@ -1005,7 +1330,7 @@ bool ArtifactProcedural3DLayer::setLayerPropertyValue(const QString& path, const
         return std::isfinite(raw) ? std::clamp(raw, minimum, maximum) : fallback;
     };
     if (path == QStringLiteral("procedural.kind")) {
-        impl_->kind = static_cast<Procedural3DLayerKind>(std::clamp(value.toInt(), 0, 1));
+        impl_->kind = static_cast<Procedural3DLayerKind>(std::clamp(value.toInt(), 0, 2));
         return commitChange();
     }
     if (path == QStringLiteral("procedural.baseColor")) {
@@ -1031,6 +1356,7 @@ bool ArtifactProcedural3DLayer::setLayerPropertyValue(const QString& path, const
         const auto quality = static_cast<ArtifactCore::Procedural3DQuality>(std::clamp(value.toInt(), 0, 2));
         impl_->terrain.quality = quality;
         impl_->pathTube.quality = quality;
+        impl_->textExtrude.quality = quality;
         return commitChange();
     }
     if (path == QStringLiteral("terrain.columns")) { impl_->terrain.columns = std::clamp(value.toInt(), 2, 4096); return commitChange(); }
@@ -1095,6 +1421,33 @@ bool ArtifactProcedural3DLayer::setLayerPropertyValue(const QString& path, const
     if (path == QStringLiteral("path.seed")) { impl_->pathTube.seed = static_cast<std::uint32_t>(std::max(0, value.toInt())); return commitChange(); }
     if (path == QStringLiteral("path.noiseScale")) { impl_->pathTube.noiseScale = safeValue(value, 1.0f, 0.0001f, 100000.0f); return commitChange(); }
     if (path == QStringLiteral("path.noiseAmplitude")) { impl_->pathTube.noiseAmplitude = safeValue(value, 0.0f, 0.0f, 100000.0f); return commitChange(); }
+    if (path == QStringLiteral("text.value")) { impl_->textExtrude.text = value.toString().left(1024); return commitChange(); }
+    if (path == QStringLiteral("text.fontFamily")) { impl_->textExtrude.fontFamily = value.toString().trimmed().left(256); return commitChange(); }
+    if (path == QStringLiteral("text.fontSize")) { impl_->textExtrude.fontSize = std::clamp(value.toInt(), 1, 1000); return commitChange(); }
+    if (path == QStringLiteral("text.bold")) { impl_->textExtrude.bold = value.toBool(); return commitChange(); }
+    if (path == QStringLiteral("text.italic")) { impl_->textExtrude.italic = value.toBool(); return commitChange(); }
+    if (path == QStringLiteral("text.depth")) { impl_->textExtrude.depth = safeValue(value, 40.0f, 0.0f, 100000.0f); return commitChange(); }
+    if (path == QStringLiteral("text.bevelWidth")) { impl_->textExtrude.bevelWidth = safeValue(value, 4.0f, 0.0f, 100000.0f); return commitChange(); }
+    if (path == QStringLiteral("text.bevelSegments")) { impl_->textExtrude.bevelSegments = std::clamp(value.toInt(), 1, 8); return commitChange(); }
+    if (path == QStringLiteral("deform.type")) { impl_->deform.type = std::clamp(value.toInt(), 0, 12); return commitChange(); }
+    if (path == QStringLiteral("deform.centerX")) { impl_->deform.centerX = safeValue(value, 0.0f, -100000.0f, 100000.0f); return commitChange(); }
+    if (path == QStringLiteral("deform.centerY")) { impl_->deform.centerY = safeValue(value, 0.0f, -100000.0f, 100000.0f); return commitChange(); }
+    if (path == QStringLiteral("deform.centerZ")) { impl_->deform.centerZ = safeValue(value, 0.0f, -100000.0f, 100000.0f); return commitChange(); }
+    if (path == QStringLiteral("deform.axisA")) { impl_->deform.axisA = std::clamp(value.toInt(), 0, 2); return commitChange(); }
+    if (path == QStringLiteral("deform.axisB")) { impl_->deform.axisB = std::clamp(value.toInt(), 0, 2); return commitChange(); }
+    if (path == QStringLiteral("deform.amount")) { impl_->deform.amount = safeValue(value, 0.0f, -100000.0f, 100000.0f); return commitChange(); }
+    if (path == QStringLiteral("deform.angle")) { impl_->deform.angle = safeValue(value, 0.0f, -100000.0f, 100000.0f); return commitChange(); }
+    if (path == QStringLiteral("deform.frequency")) { impl_->deform.frequency = safeValue(value, 0.25f, 0.0f, 100000.0f); return commitChange(); }
+    if (path == QStringLiteral("deform.octaves")) { impl_->deform.octaves = std::clamp(value.toInt(), 1, 8); return commitChange(); }
+    if (path == QStringLiteral("deform.seed")) { impl_->deform.seed = std::max(0, value.toInt()); return commitChange(); }
+    if (path == QStringLiteral("deform.radius")) { impl_->deform.radius = safeValue(value, 0.0f, 0.0f, 100000.0f); return commitChange(); }
+    if (path == QStringLiteral("deform.dirX")) { impl_->deform.dirX = safeValue(value, 0.0f, -100000.0f, 100000.0f); return commitChange(); }
+    if (path == QStringLiteral("deform.dirY")) { impl_->deform.dirY = safeValue(value, 1.0f, -100000.0f, 100000.0f); return commitChange(); }
+    if (path == QStringLiteral("deform.dirZ")) { impl_->deform.dirZ = safeValue(value, 0.0f, -100000.0f, 100000.0f); return commitChange(); }
+    if (path == QStringLiteral("deform.strength")) { impl_->deform.strength = safeValue(value, 0.5f, 0.0f, 1.0f); return commitChange(); }
+    if (path == QStringLiteral("deform.iterations")) { impl_->deform.iterations = std::clamp(value.toInt(), 1, 100); return commitChange(); }
+    if (path == QStringLiteral("deform.speed")) { impl_->deform.speed = safeValue(value, 1.0f, -100000.0f, 100000.0f); return commitChange(); }
+    if (path == QStringLiteral("deform.subdivLevels")) { impl_->deform.subdivLevels = std::clamp(value.toInt(), 0, 3); return commitChange(); }
     return ArtifactAbstractLayer::setLayerPropertyValue(path, value);
 }
 
@@ -1106,6 +1459,11 @@ ArtifactCore::SharedPtr<ArtifactProcedural3DLayer> createTerrainLayer()
 ArtifactCore::SharedPtr<ArtifactProcedural3DLayer> createPathTubeLayer()
 {
     return ArtifactCore::makeShared<ArtifactProcedural3DLayer>(Procedural3DLayerKind::PathTube);
+}
+
+ArtifactCore::SharedPtr<ArtifactProcedural3DLayer> createTextExtrudeLayer()
+{
+    return ArtifactCore::makeShared<ArtifactProcedural3DLayer>(Procedural3DLayerKind::TextExtrude);
 }
 
 } // namespace Artifact

@@ -17,6 +17,7 @@ import Color.Conversion;
 import Color.Luminance;
 import Core.Parallel;
 import Image.ImageF32x4_RGBA;
+import Mesh;
 
 namespace Artifact::SoftwareRender {
 
@@ -708,6 +709,113 @@ bool blendSurface(QImage& canvas,
   }
  });
  return true;
+}
+
+QImage rasterizeFlatMesh(const FlatMeshRasterRequest& request)
+{
+ if (!request.mesh || request.outputSize.width() <= 0 || request.outputSize.height() <= 0) {
+  return {};
+ }
+
+ const auto data = request.mesh->generateRenderData();
+ if (data.positions.isEmpty() || data.indices.size() < 3 ||
+     data.indices.size() % 3 != 0) {
+  return {};
+ }
+
+ const int width = request.outputSize.width();
+ const int height = request.outputSize.height();
+ QImage output(request.outputSize, QImage::Format_RGBA8888);
+ output.fill(Qt::transparent);
+ std::vector<float> depth(static_cast<size_t>(width) * static_cast<size_t>(height),
+                          std::numeric_limits<float>::infinity());
+
+ const QMatrix4x4 viewProjection =
+     request.projectionMatrix * request.viewMatrix * request.modelMatrix;
+ struct ProjectedVertex {
+  QVector2D screen;
+  float depth = 0.0f;
+  bool valid = false;
+ };
+ std::vector<ProjectedVertex> projected;
+ projected.resize(static_cast<size_t>(data.positions.size()));
+ for (int i = 0; i < data.positions.size(); ++i) {
+  const QVector4D clip = viewProjection * QVector4D(data.positions[i], 1.0f);
+  if (!std::isfinite(clip.w()) || std::abs(clip.w()) <= 1.0e-6f) {
+   continue;
+  }
+  const QVector3D ndc = clip.toVector3D() / clip.w();
+  if (!std::isfinite(ndc.x()) || !std::isfinite(ndc.y()) ||
+      !std::isfinite(ndc.z())) {
+   continue;
+  }
+  projected[static_cast<size_t>(i)] = {
+      QVector2D((ndc.x() * 0.5f + 0.5f) * static_cast<float>(width - 1),
+                (1.0f - (ndc.y() * 0.5f + 0.5f)) * static_cast<float>(height - 1)),
+      ndc.z(), true};
+ }
+
+ const auto edge = [](const QVector2D& a, const QVector2D& b,
+                      const QVector2D& p) {
+  return (p.x() - a.x()) * (b.y() - a.y()) -
+         (p.y() - a.y()) * (b.x() - a.x());
+ };
+ const uchar red = static_cast<uchar>(request.baseColor.red());
+ const uchar green = static_cast<uchar>(request.baseColor.green());
+ const uchar blue = static_cast<uchar>(request.baseColor.blue());
+ const uchar alpha = static_cast<uchar>(std::round(std::clamp(
+     static_cast<float>(request.baseColor.alphaF()) * request.opacity, 0.0f, 1.0f) * 255.0f));
+
+ for (int i = 0; i + 2 < data.indices.size(); i += 3) {
+  const unsigned int i0 = data.indices[i];
+  const unsigned int i1 = data.indices[i + 1];
+  const unsigned int i2 = data.indices[i + 2];
+  if (i0 >= static_cast<unsigned int>(projected.size()) ||
+      i1 >= static_cast<unsigned int>(projected.size()) ||
+      i2 >= static_cast<unsigned int>(projected.size())) {
+   continue;
+  }
+  const auto& v0 = projected[i0];
+  const auto& v1 = projected[i1];
+  const auto& v2 = projected[i2];
+  if (!v0.valid || !v1.valid || !v2.valid) {
+   continue;
+  }
+  const float area = edge(v0.screen, v1.screen, v2.screen);
+  if (std::abs(area) <= 1.0e-6f) {
+   continue;
+  }
+  const int minX = std::max(0, static_cast<int>(std::floor(std::min({v0.screen.x(), v1.screen.x(), v2.screen.x()}))));
+  const int maxX = std::min(width - 1, static_cast<int>(std::ceil(std::max({v0.screen.x(), v1.screen.x(), v2.screen.x()}))));
+  const int minY = std::max(0, static_cast<int>(std::floor(std::min({v0.screen.y(), v1.screen.y(), v2.screen.y()}))));
+  const int maxY = std::min(height - 1, static_cast<int>(std::ceil(std::max({v0.screen.y(), v1.screen.y(), v2.screen.y()}))));
+  for (int y = minY; y <= maxY; ++y) {
+   uchar* row = output.scanLine(y);
+   for (int x = minX; x <= maxX; ++x) {
+    const QVector2D p(static_cast<float>(x) + 0.5f,
+                      static_cast<float>(y) + 0.5f);
+    const float w0 = edge(v1.screen, v2.screen, p) / area;
+    const float w1 = edge(v2.screen, v0.screen, p) / area;
+    const float w2 = edge(v0.screen, v1.screen, p) / area;
+    if (w0 < 0.0f || w1 < 0.0f || w2 < 0.0f) {
+     continue;
+    }
+    const float z = w0 * v0.depth + w1 * v1.depth + w2 * v2.depth;
+    const size_t index = static_cast<size_t>(y) * static_cast<size_t>(width) +
+                         static_cast<size_t>(x);
+    if (z >= depth[index]) {
+     continue;
+    }
+    depth[index] = z;
+    uchar* pixel = row + x * 4;
+    pixel[0] = red;
+    pixel[1] = green;
+    pixel[2] = blue;
+    pixel[3] = alpha;
+   }
+  }
+ }
+ return output;
 }
 
 bool composeToBuffer(const CompositeRequest& request,

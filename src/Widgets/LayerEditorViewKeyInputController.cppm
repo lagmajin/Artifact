@@ -2,10 +2,10 @@ module;
 
 #include <Qt>
 
-#include <algorithm>
 
 module Artifact.Widgets.LayerEditor.ViewKeyInputController;
 
+import Core.ArtifactMath;
 import Artifact.Render.IRenderer;
 import Tool;
 import Artifact.Widgets.LayerEditor.ViewportChrome;
@@ -68,14 +68,14 @@ LayerEditorViewKeyInputResult LayerEditorViewKeyInputController::handle(
    return {true, true};
   case Qt::Key_Plus:
   case Qt::Key_Equal:
-   *state.zoomLevel = std::clamp(*state.zoomLevel * 1.1f, 0.05f, 32.0f);
+   *state.zoomLevel = ArtifactCore::artifactClamp(*state.zoomLevel * 1.1f, 0.05f, 32.0f);
    renderer.zoomAroundViewportPoint(
        {static_cast<float>(state.viewportCenter.x()),
         static_cast<float>(state.viewportCenter.y())}, *state.zoomLevel);
    return {true, true};
   case Qt::Key_Minus:
   case Qt::Key_Underscore:
-   *state.zoomLevel = std::clamp(*state.zoomLevel / 1.1f, 0.05f, 32.0f);
+   *state.zoomLevel = ArtifactCore::artifactClamp(*state.zoomLevel / 1.1f, 0.05f, 32.0f);
    renderer.zoomAroundViewportPoint(
        {static_cast<float>(state.viewportCenter.x()),
         static_cast<float>(state.viewportCenter.y())}, *state.zoomLevel);

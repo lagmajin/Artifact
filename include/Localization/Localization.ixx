@@ -2,7 +2,6 @@
 
 export module Localization.Localization;
 
-import std;
 
 
 import Utils.String.UniString;

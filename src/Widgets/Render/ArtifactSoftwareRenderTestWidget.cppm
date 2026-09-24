@@ -6,6 +6,7 @@ module;
 #include <QTimer>
 #include <QKeyEvent>
 #include <QPaintEvent>
+#include <QRect>
 #include <QFileDialog>
 #include <QFile>
 #include <QIODevice>
@@ -346,6 +347,9 @@ public:
             qint64 pixelCount = 0;
             double meanDifference = 0.0;
             int maximumDifference = 0;
+            QRect mismatchBounds;
+            qint64 transparentPixelCount = 0;
+            qint64 transparentDifferentPixels = 0;
         };
         const auto comparePair = [this](const QImage& lhs, const QImage& rhs,
                                         const QString& label) -> PairResult {
@@ -353,7 +357,8 @@ public:
                 return {false, QStringLiteral("%1 size mismatch (%2x%3 vs %4x%5)")
                     .arg(label)
                     .arg(lhs.width()).arg(lhs.height())
-                    .arg(rhs.width()).arg(rhs.height()), 0, 0, 0.0, 0};
+                    .arg(rhs.width()).arg(rhs.height()), 0, 0, 0.0, 0,
+                    {}, 0, 0};
             }
 
             const qint64 pixelCount = static_cast<qint64>(lhs.width()) *
@@ -361,6 +366,9 @@ public:
             quint64 totalDifference = 0;
             qint64 differentPixels = 0;
             int maximumDifference = 0;
+            QRect mismatchBounds;
+            qint64 transparentPixelCount = 0;
+            qint64 transparentDifferentPixels = 0;
             for (int y = 0; y < lhs.height(); ++y) {
                 const uchar* lhsRow = lhs.constScanLine(y);
                 const uchar* rhsRow = rhs.constScanLine(y);
@@ -378,8 +386,18 @@ public:
                     }
                     totalDifference += static_cast<quint64>(pixelDifference);
                     maximumDifference = std::max(maximumDifference, pixelDifference);
+                    const bool transparent = lhsRow[offset + 3] == 0 && rhsRow[offset + 3] == 0;
+                    if (transparent) {
+                        ++transparentPixelCount;
+                    }
                     if (maximumChannelDifference > parityChannelTolerance) {
                         ++differentPixels;
+                        if (transparent) {
+                            ++transparentDifferentPixels;
+                        }
+                        mismatchBounds = mismatchBounds.isNull()
+                            ? QRect(x, y, 1, 1)
+                            : mismatchBounds.united(QRect(x, y, 1, 1));
                     }
                 }
             }
@@ -391,13 +409,20 @@ public:
                 ? static_cast<double>(differentPixels) / static_cast<double>(pixelCount)
                 : 1.0;
             const bool passed = failureRatio <= parityPixelFailureLimit;
-            return {passed, QStringLiteral("%1 %2: %3/%4 over tolerance | mean %5 | max %6")
+            const QString bounds = mismatchBounds.isNull()
+                ? QStringLiteral("none")
+                : QStringLiteral("[%1,%2 %3x%4]")
+                    .arg(mismatchBounds.x()).arg(mismatchBounds.y())
+                    .arg(mismatchBounds.width()).arg(mismatchBounds.height());
+            return {passed, QStringLiteral("%1 %2: %3/%4 over tolerance | mean %5 | max %6 | bounds %7")
                 .arg(label, passed ? QStringLiteral("PASS") : QStringLiteral("FAIL"))
                 .arg(differentPixels)
                 .arg(pixelCount)
                 .arg(QString::number(meanDifference, 'f', 3))
-                .arg(maximumDifference), differentPixels, pixelCount,
-                meanDifference, maximumDifference};
+                .arg(maximumDifference)
+                .arg(bounds), differentPixels, pixelCount,
+                meanDifference, maximumDifference, mismatchBounds,
+                transparentPixelCount, transparentDifferentPixels};
         };
 
         const auto appendPairReport = [this](const PairResult& pair,
@@ -409,6 +434,18 @@ public:
             report.insert(QStringLiteral("pixelCount"), pair.pixelCount);
             report.insert(QStringLiteral("meanDifference"), pair.meanDifference);
             report.insert(QStringLiteral("maximumDifference"), pair.maximumDifference);
+            if (pair.mismatchBounds.isNull()) {
+                report.insert(QStringLiteral("mismatchBounds"), QJsonValue::Null);
+            } else {
+                QJsonObject bounds;
+                bounds.insert(QStringLiteral("x"), pair.mismatchBounds.x());
+                bounds.insert(QStringLiteral("y"), pair.mismatchBounds.y());
+                bounds.insert(QStringLiteral("width"), pair.mismatchBounds.width());
+                bounds.insert(QStringLiteral("height"), pair.mismatchBounds.height());
+                report.insert(QStringLiteral("mismatchBounds"), bounds);
+            }
+            report.insert(QStringLiteral("transparentPixelCount"), pair.transparentPixelCount);
+            report.insert(QStringLiteral("transparentDifferentPixels"), pair.transparentDifferentPixels);
             lastParityReport[QStringLiteral("pair_%1").arg(label)] = report;
         };
 

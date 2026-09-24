@@ -12,9 +12,9 @@ module;
 #include <QMetaObject>
 #include <QPointer>
 #include <wobjectimpl.h>
+#include <vector>
 
 module Menu.Render;
-import std;
 import Translation.Manager;
 
 import Event.Bus;
@@ -121,7 +121,7 @@ public:
 ArtifactRenderMenu::Impl::Impl(ArtifactRenderMenu* menu, QWidget* mainWindow)
  : menu_(menu), mainWindow_(mainWindow)
 {
- addCurrentToQueueAction = new QAction("現在のコンポジションをレンダーキューに追加(&A)");
+ addCurrentToQueueAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.render.add_to_queue"), QStringLiteral("現在のコンポジションをレンダーキューに追加(&A)")));
  addCurrentToQueueAction->setStatusTip(
      QStringLiteral("Add the active composition to the render queue"));
  addCurrentToQueueAction->setStatusTip(
@@ -129,16 +129,20 @@ ArtifactRenderMenu::Impl::Impl(ArtifactRenderMenu* menu, QWidget* mainWindow)
  addCurrentToQueueAction->setShortcut(
      ShortcutBindings::instance().shortcut(ShortcutId::RenderAddCurrentToQueue));
  addCurrentToQueueAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_add_current.svg")));
+ addCurrentToQueueAction->setToolTip(QStringLiteral("Add Composition to Render Queue"));
+ addCurrentToQueueAction->setStatusTip(QStringLiteral("Add the active composition to the render queue"));
 
-showQueueAction = new QAction("レンダーキューを表示(&Q)...");
+showQueueAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.render.show_queue"), QStringLiteral("レンダーキューを表示(&Q)...")));
  showQueueAction->setStatusTip(
      QStringLiteral("Open the render queue window"));
  showQueueAction->setStatusTip(QStringLiteral("Open the render queue window"));
  showQueueAction->setShortcut(
      ShortcutBindings::instance().shortcut(ShortcutId::RenderShowQueue));
  showQueueAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_queue.svg")));
+ showQueueAction->setToolTip(QStringLiteral("Show Render Queue"));
+ showQueueAction->setStatusTip(QStringLiteral("Open the render queue window"));
 
-showRenderManagerAction = new QAction("レンダーマネージャーを表示(&M)...");
+showRenderManagerAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.render.show_manager"), QStringLiteral("レンダーマネージャーを表示(&M)...")));
  showRenderManagerAction->setStatusTip(
      QStringLiteral("Open the render queue manager"));
  showRenderManagerAction->setStatusTip(
@@ -146,8 +150,10 @@ showRenderManagerAction = new QAction("レンダーマネージャーを表示(&
  showRenderManagerAction->setShortcut(
      ShortcutBindings::instance().shortcut(ShortcutId::RenderShowManager));
  showRenderManagerAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_manager.svg")));
+ showRenderManagerAction->setToolTip(QStringLiteral("Show Render Manager"));
+ showRenderManagerAction->setStatusTip(QStringLiteral("Open the render queue manager"));
 
-renderSettingsAction = new QAction("レンダー出力設定(&S)...");
+renderSettingsAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.render.output_settings"), QStringLiteral("レンダー出力設定(&S)...")));
  renderSettingsAction->setStatusTip(
      QStringLiteral("Configure render output and preflight settings"));
  renderSettingsAction->setStatusTip(
@@ -155,34 +161,48 @@ renderSettingsAction = new QAction("レンダー出力設定(&S)...");
  renderSettingsAction->setShortcut(
      ShortcutBindings::instance().shortcut(ShortcutId::RenderSettings));
  renderSettingsAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_settings.svg")));
+ renderSettingsAction->setToolTip(QStringLiteral("Render Output Settings"));
+ renderSettingsAction->setStatusTip(QStringLiteral("Configure render output and preflight settings"));
 
- startRenderAction = new QAction("レンダリングを開始／再開(&S)");
+ startRenderAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.render.start"), QStringLiteral("レンダリングを開始／再開(&S)")));
  startRenderAction->setStatusTip(
      QStringLiteral("Start all pending render queue jobs"));
  startRenderAction->setShortcut(
      ShortcutBindings::instance().shortcut(ShortcutId::RenderStart));
  startRenderAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_start.svg")));
- pauseRenderAction = new QAction(QStringLiteral("レンダリングを一時停止"));
+ startRenderAction->setToolTip(QStringLiteral("Start Rendering"));
+ startRenderAction->setStatusTip(QStringLiteral("Start all pending render queue jobs"));
+ pauseRenderAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.render.pause"), QStringLiteral("レンダリングを一時停止")));
  pauseRenderAction->setStatusTip(
      QStringLiteral("Pause all active render queue jobs"));
  pauseRenderAction->setIcon(QIcon(resolveIconPath("Studio/timemenu_stop.svg")));
- cancelRenderAction = new QAction(QStringLiteral("全ジョブをキャンセル"));
+ pauseRenderAction->setToolTip(QStringLiteral("Pause Rendering"));
+ pauseRenderAction->setStatusTip(QStringLiteral("Pause all active render queue jobs"));
+ cancelRenderAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.render.cancel_all"), QStringLiteral("全ジョブをキャンセル")));
  cancelRenderAction->setStatusTip(
      QStringLiteral("Cancel all active render queue jobs"));
  cancelRenderAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_clear_all.svg")));
+ cancelRenderAction->setToolTip(QStringLiteral("Cancel All Render Jobs"));
+ cancelRenderAction->setStatusTip(QStringLiteral("Cancel all active render queue jobs"));
 
- clearAllAction = new QAction("すべてのジョブをクリア(&C)");
+ clearAllAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.render.clear_all"), QStringLiteral("すべてのジョブをクリア(&C)")));
  clearAllAction->setStatusTip(QStringLiteral("Remove all render queue jobs"));
  clearAllAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_clear_all.svg")));
+ clearAllAction->setToolTip(QStringLiteral("Clear All Render Jobs"));
+ clearAllAction->setStatusTip(QStringLiteral("Remove all render queue jobs"));
 
  scrollPoCAction = new QAction("Scroll PoC (Floating)", menu);
  scrollPoCAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_scroll_poc.svg")));
+ scrollPoCAction->setToolTip(QStringLiteral("Scroll Proof of Concept"));
+ scrollPoCAction->setStatusTip(QStringLiteral("Open the floating scroll test panel"));
 
  menu->addAction(addCurrentToQueueAction);
- addAllCompositionsAction = new QAction("全コンポジションをキューに追加(&A)", menu);
- addAllCompositionsAction->setStatusTip(
-     QStringLiteral("Add every composition to the render queue"));
- addAllCompositionsAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_add_all.svg")));
+  addAllCompositionsAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.render.add_all_compositions"), QStringLiteral("全コンポジションをキューに追加(&A)")), menu);
+  addAllCompositionsAction->setStatusTip(
+      QStringLiteral("Add every composition to the render queue"));
+  addAllCompositionsAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_add_all.svg")));
+  addAllCompositionsAction->setToolTip(QStringLiteral("Add All Compositions to Render Queue"));
+  addAllCompositionsAction->setStatusTip(QStringLiteral("Add every composition to the render queue"));
  menu->addAction(addAllCompositionsAction);
  menu->addSeparator();
  menu->addAction(showQueueAction);
@@ -242,7 +262,7 @@ void ArtifactRenderMenu::Impl::addCurrentToQueue()
  auto* projectService = ArtifactProjectService::instance();
  auto currentComp = projectService->currentComposition().lock();
  if (!currentComp) {
-  QMessageBox::information(mainWindow_ ? mainWindow_ : menu_, "Render", "アクティブなコンポジションがありません。");
+  QMessageBox::information(mainWindow_ ? mainWindow_ : menu_, "Render", TranslationManager::instance().tr(QStringLiteral("dialog.render.no_active_composition"), QStringLiteral("アクティブなコンポジションがありません。")));
   return;
  }
 
@@ -262,10 +282,10 @@ void ArtifactRenderMenu::Impl::addAllCompositions()
  const int added = queueService->addAllCompositions();
  if (added > 0) {
   QMessageBox::information(mainWindow_ ? mainWindow_ : menu_, "Render",
-   QString("%1 個のコンポジションをキューに追加しました。").arg(added));
+   TranslationManager::instance().tr(QStringLiteral("dialog.render.added_to_queue"), QStringLiteral("%1 個のコンポジションをキューに追加しました。")).arg(added));
  } else {
   QMessageBox::information(mainWindow_ ? mainWindow_ : menu_, "Render",
-   "追加できるコンポジションがありません。");
+   TranslationManager::instance().tr(QStringLiteral("dialog.render.no_composition_to_add"), QStringLiteral("追加できるコンポジションがありません。")));
  }
 
  showQueue();

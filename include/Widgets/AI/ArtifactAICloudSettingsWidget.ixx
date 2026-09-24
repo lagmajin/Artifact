@@ -12,7 +12,6 @@ module;
 
 export module Artifact.Widgets.AI.ArtifactAICloudSettingsWidget;
 
-import std;
 
 export namespace Artifact {
 

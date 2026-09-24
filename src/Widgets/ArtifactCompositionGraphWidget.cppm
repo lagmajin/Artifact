@@ -24,6 +24,7 @@ module;
 #include <QSize>
 #include <QVector>
 #include <QInputDialog>
+#include <QPointer>
 #include <QStringList>
 #include <functional>
 #include <QSettings>
@@ -234,8 +235,10 @@ namespace Artifact {
 
     class ArtifactCompositionGraphWidget::Impl {
     public:
-        QGraphicsView* view;
-        QGraphicsScene* scene;
+        // QPointer: dock teardown may kill these before our dtor runs, and a
+        // raw pointer cannot tell a dead view from a live one.
+        QPointer<QGraphicsView> view;
+        QPointer<QGraphicsScene> scene;
         QLineEdit* searchBar;
         QLabel* statusLabel;
         QMap<LayerID, LayerNodeItem*> nodeMap;
@@ -495,10 +498,10 @@ namespace Artifact {
                         return;
                     }
                     bool accepted = false;
-                    const QString name = QInputDialog::getText(
-                        parent, QStringLiteral("Rename Layer"),
-                        QStringLiteral("Layer name:"), QLineEdit::Normal,
-                        layer->layerName(), &accepted);
+                    const QString name = ArtifactRenameDialog::getName(
+                        parent, ArtifactRenameTarget::Layer, layer->layerName(),
+                        QStringLiteral("Composition Graph / Selected Layer"), {}, {},
+                        &accepted);
                     if (accepted && !name.trimmed().isEmpty()) {
                         service->renameLayerInCurrentComposition(node->layerId,
                                                                  name.trimmed());
@@ -961,7 +964,19 @@ namespace Artifact {
     }
 
     ArtifactCompositionGraphWidget::~ArtifactCompositionGraphWidget() {
+        // Deterministic teardown while both objects are still known-alive:
+        // QPointer auto-nulls if dock teardown killed either one earlier.
+        // Deleting the view first (it detaches from the scene itself) means
+        // the scene can never notify a half-destroyed view, in either
+        // QObject child-destruction order. Explicit child deletes are safe:
+        // QObject unlinks them so deleteChildren() will not touch them again.
+        // NOTE: no setScene() call here — doing QWidget work on a possibly
+        // dead view crashed (0xC0000005 in isActiveWindow via setScene).
+        impl_->eventBusSubscriptions_.clear();
+        delete impl_->view;
+        delete impl_->scene;
         delete impl_;
+        impl_ = nullptr;
     }
 
     QSize ArtifactCompositionGraphWidget::sizeHint() const {

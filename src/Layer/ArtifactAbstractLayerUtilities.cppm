@@ -21,6 +21,7 @@ import Artifact.Effect.Abstract;
 import Artifact.Layer.Modifier;
 import Frame.Position;
 import Memory.SharedPtr;
+import Container.NamedVector;
 
 export namespace Artifact::LayerAbstractUtilities {
 
@@ -172,6 +173,48 @@ QString slugifyEffectId(const QString& text) {
   }
   while (slug.endsWith(QChar('-'))) slug.chop(1);
   return slug.isEmpty() ? QStringLiteral("effect") : slug;
+}
+
+QString uniqueEffectIdForLayer(
+    const NamedVector<SharedPtr<ArtifactAbstractEffect>>& effects,
+    const QString& displayName, const QString& preferredId) {
+  QString baseId = preferredId.trimmed();
+  if (baseId.isEmpty()) baseId = slugifyEffectId(displayName);
+  if (baseId.isEmpty()) baseId = QStringLiteral("effect");
+  const auto idExists = [&effects](const QString& candidate) {
+    return std::any_of(effects.begin(), effects.end(),
+                       [&candidate](const SharedPtr<ArtifactAbstractEffect>& effect) {
+                         return effect && effect->effectID().toQString() == candidate;
+                       });
+  };
+  if (!idExists(baseId)) return baseId;
+  QString uniqueId = baseId;
+  int suffix = 2;
+  while (idExists(uniqueId)) {
+    uniqueId = QStringLiteral("%1-%2").arg(baseId).arg(suffix++);
+  }
+  return uniqueId;
+}
+
+QString uniqueModifierIdForLayer(
+    const std::vector<SharedPtr<ArtifactLayerModifier>>& modifiers,
+    const QString& displayName, const QString& preferredId) {
+  QString baseId = preferredId.trimmed();
+  if (baseId.isEmpty()) baseId = slugifyEffectId(displayName);
+  if (baseId.isEmpty()) baseId = QStringLiteral("modifier");
+  const auto idExists = [&modifiers](const QString& candidate) {
+    return std::any_of(modifiers.begin(), modifiers.end(),
+                       [&candidate](const SharedPtr<ArtifactLayerModifier>& modifier) {
+                         return modifier && modifier->modifierId() == candidate;
+                       });
+  };
+  if (!idExists(baseId)) return baseId;
+  QString uniqueId = baseId;
+  int suffix = 2;
+  while (idExists(uniqueId)) {
+    uniqueId = QStringLiteral("%1-%2").arg(baseId).arg(suffix++);
+  }
+  return uniqueId;
 }
 
 } // namespace Artifact::LayerAbstractUtilities

@@ -449,9 +449,47 @@ namespace Artifact {
         return args;
     }
 
+    // XPU P3: エンコードスレッド数。0=encoder default（現行動作）。
+    // プリセット・画質設定には触らない（NFR-6）。
+    static int xpuEncoderThreadCount()
+    {
+        bool ok = false;
+        const int value = qEnvironmentVariable(
+            "ARTIFACT_XPU_ENCODER_THREADS").trimmed().toInt(&ok);
+        if (!ok) {
+            return 0;
+        }
+        return std::clamp(value, 0, 64);
+    }
+
+    // XPU P3: preset override for bench (output-varying, opt-in).
+    // ARTIFACT_XPU_PRESET / ARTIFACT_XPU=preset=<value> で上書き。
+    // 未設定時は従来の "slow"（GPU時は "p4"）を維持。
+    static QString xpuPresetOverride()
+    {
+        const QString direct = qEnvironmentVariable("ARTIFACT_XPU_PRESET").trimmed().toLower();
+        if (!direct.isEmpty()) {
+            return direct;
+        }
+        const QString spec = qEnvironmentVariable("ARTIFACT_XPU").trimmed().toLower();
+        const QString key = QStringLiteral("preset=");
+        const int idx = spec.indexOf(key);
+        if (idx >= 0) {
+            const QString rest = spec.mid(idx + key.size()).trimmed();
+            const int end = rest.indexOf(QRegularExpression(QStringLiteral("[,; ]")));
+            const QString value = (end >= 0 ? rest.left(end) : rest).trimmed();
+            if (!value.isEmpty()) {
+                return value;
+            }
+        }
+        return {};
+    }
+
     static ArtifactCore::FFmpegEncoderSettings buildNativeVideoSettings(const ArtifactRenderJob& job)
     {
         ArtifactCore::FFmpegEncoderSettings settings;
+        settings.threadCount = xpuEncoderThreadCount();
+        const QString presetOverride = xpuPresetOverride();
         settings.width = std::max(1, job.resolutionWidth);
         settings.height = std::max(1, job.resolutionHeight);
         settings.fps = job.frameRate > 0.0 ? job.frameRate : 30.0;
@@ -512,6 +550,9 @@ namespace Artifact {
             settings.gopSize = std::max(1, static_cast<int>(std::round(settings.fps * 2.0)));
             settings.zerolatency = false;
         }
+        if (!presetOverride.isEmpty()) {
+            settings.preset = presetOverride;
+        }
         settings.container = Artifact::deriveContainerFromJob(job);
         return settings;
     }
@@ -534,10 +575,27 @@ namespace Artifact {
             return settings;
         }
 
+        // XPU P4: NVENC/QSV 同時実行上限の予約（出力不変）。
+        // ARTIFACT_XPU_MAX_HW_ENCODERS で上限をログ（既定 2）。実 backoff（同時実行
+        // 数に応じた CPU fallback）は encode セッションの多重化が顕在化した段階で
+        // NativeFFmpegBackend の close 時の decrement と合わせて実装する。現状は
+        // 上限値のログのみで挙動は変えない（既定では HW 優先を維持）。
+        {
+            bool ok = false;
+            const int maxHw = qEnvironmentVariable("ARTIFACT_XPU_MAX_HW_ENCODERS").trimmed().toInt(&ok);
+            const int effectiveMax = ok ? std::clamp(maxHw, 1, 16) : 2;
+            if (ok) {
+                qInfo() << "[Encode][GPU] HW encoder limit"
+                         << "maxHw=" << effectiveMax << "codec=" << job.codec;
+            }
+        }
+
         settings.videoCodec = encoderName;
         settings.encoderName = encoderName;
         settings.preferHardware = true;
-        settings.preset = QStringLiteral("p4");
+        // XPU P3: preset override for bench. Unset = "p4" (現行).
+        const QString presetOverride = xpuPresetOverride();
+        settings.preset = presetOverride.isEmpty() ? QStringLiteral("p4") : presetOverride;
         settings.zerolatency = false;
         if (selectedEncoder) {
             *selectedEncoder = encoderName;
@@ -790,14 +848,15 @@ namespace Artifact {
             }
 
             qInfo() << "[Encode][Native] opened"
-                    << "output=" << job.outputPath
-                    << "codec=" << settings.videoCodec
-                    << "encoder=" << settings.encoderName
-                    << "container=" << settings.container
-                    << "resolution=" << settings.width << "x"
-                    << settings.height
-                    << "fps=" << settings.fps
-                    << "bitrateKbps=" << settings.bitrateKbps;
+                     << "output=" << job.outputPath
+                     << "codec=" << settings.videoCodec
+                     << "encoder=" << settings.encoderName
+                     << "container=" << settings.container
+                     << "resolution=" << settings.width << "x"
+                     << settings.height
+                     << "fps=" << settings.fps
+                     << "bitrateKbps=" << settings.bitrateKbps
+                     << "threads=" << settings.threadCount;
             lastError_.clear();
             return true;
         }

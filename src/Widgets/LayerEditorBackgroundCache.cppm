@@ -4,10 +4,10 @@ module;
 #include <QLinearGradient>
 #include <QPainter>
 
-#include <algorithm>
 
 module Artifact.Widgets.LayerEditor.BackgroundCache;
 
+import Core.ArtifactMath;
 import Color.Float;
 
 namespace Artifact {
@@ -16,8 +16,8 @@ QImage makeLayerEditorMayaGradientSprite(
     const QSize& size,
     const ArtifactCore::FloatColor& backgroundColor)
 {
- const int width = std::max(1, size.width());
- const int height = std::max(1, size.height());
+ const int width = ArtifactCore::artifactMax(1, size.width());
+ const int height = ArtifactCore::artifactMax(1, size.height());
  QImage image(width, height, QImage::Format_ARGB32_Premultiplied);
  image.fill(Qt::transparent);
 

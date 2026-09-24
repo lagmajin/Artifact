@@ -1,6 +1,8 @@
 module;
 
 #include <QColor>
+#include <QPoint>
+#include <QPointF>
 #include <QEvent>
 #include <QPointF>
 #include <QRectF>
@@ -44,12 +46,19 @@ struct DiligentTimelineTextVisual {
   float pixelSize = 11.0f;
 };
 
+struct DiligentTimelineWaveformVisual {
+  QRectF rect;
+  QVector<float> peaks;
+  QColor color;
+};
+
 struct DiligentTimelineVisualSnapshot {
   QColor background{38, 40, 46};
   QVector<DiligentTimelineRectVisual> rects;
   QVector<DiligentTimelineLineVisual> lines;
   QVector<DiligentTimelineTriangleVisual> triangles;
   QVector<DiligentTimelineTextVisual> texts;
+  QVector<DiligentTimelineWaveformVisual> waveforms;
   quint64 generation = 0;
 };
 
@@ -70,6 +79,12 @@ public:
   ~ArtifactDiligentTimelineRenderWindow() override;
   void setSnapshot(const DiligentTimelineVisualSnapshot& snapshot);
   void setSnapshot(DiligentTimelineVisualSnapshot&& snapshot);
+  // Timeline geometry is mostly static across playback and a pointer drag.
+  // Keeping it as a separate immutable lane avoids copying all rows, clips,
+  // and grid primitives whenever only the playhead or an edit preview moves.
+  void setStaticSnapshot(const DiligentTimelineVisualSnapshot& snapshot);
+  void setStaticSnapshot(DiligentTimelineVisualSnapshot&& snapshot);
+  void setDynamicSnapshot(DiligentTimelineVisualSnapshot&& snapshot);
   quint64 snapshotGeneration() const;
   bool initialize();
   bool isGpuReady() const;
@@ -77,7 +92,16 @@ public:
   // remains the authoritative editor for hit testing and Undo-backed edits.
   // Forwarding input keeps the GPU page usable instead of display-only.
   void setInputTarget(QWidget* target);
+  void setWheelInputHandler(
+      std::function<bool(const QPointF&, const QPoint&, Qt::KeyboardModifiers)> handler);
+  void setPanInputHandler(std::function<bool(Qt::MouseButton, const QPointF&,
+                                             Qt::MouseButtons,
+                                             Qt::KeyboardModifiers)> handler);
   void setInputUpdatedCallback(std::function<void()> callback);
+  // Returns true only while the compatibility input model is actively
+  // manipulating timeline state. It lets presentation reduce edit latency
+  // without raising the idle GPU cadence.
+  void setInteractionStateProvider(std::function<bool()> provider);
   void requestRender();
 };
 

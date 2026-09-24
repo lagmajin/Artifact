@@ -6,10 +6,11 @@ module;
 #include <QPointF>
 #include <QElapsedTimer>
 #include <wobjectimpl.h>
+#include <algorithm>
+#include <memory>
 
 module Artifact.Tool.MotionSketchTool;
 
-import std;
 import Artifact.Layer.Abstract;
 import Artifact.Composition.Abstract;
 import Artifact.Event.Types;

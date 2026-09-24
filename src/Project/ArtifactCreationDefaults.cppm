@@ -9,7 +9,6 @@ module Artifact.Project.CreationDefaults;
 import Serialization.Registry;
 import Serialization.SchemaMigration;
 
-import std;
 
 namespace Artifact {
 

@@ -4,6 +4,11 @@
 #include <QDebug>
 #include <limits>
 #include <wobjectimpl.h>
+#include <algorithm>
+#include <cmath>
+#include <complex>
+#include <utility>
+#include <vector>
 
 
 
@@ -11,7 +16,6 @@
 
 module Artifact.Audio.Waveform;
 
-import std;
 import Audio.Segment;
 
 namespace Artifact {

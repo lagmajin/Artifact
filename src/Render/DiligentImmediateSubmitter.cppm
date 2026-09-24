@@ -18,12 +18,13 @@ module;
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Buffer.h>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Common/interface/BasicMath.hpp>
+#include <utility>
+#include <variant>
 module Artifact.Render.DiligentImmediateSubmitter;
 
 import Graphics;
 import FloatRGBA;
 import Color.Float;
-import std;
 import VertexBuffer;
 import Text.Style;
 import Utils.String.UniString;
@@ -427,6 +428,67 @@ void DiligentImmediateSubmitter::createBuffers(RefCntAutoPtr<IRenderDevice> devi
         device->CreateBuffer(desc, nullptr, &m_draw_thick_line_vertex_buffer);
     }
 
+    // Phase 8: run-batch VBs (line/tri/quad) + fixed CPU staging. One Map +
+    // one Draw per type-run replaces hundreds of micro-draws. Capacity is
+    // fixed here; overflow flushes mid-run, so the hot path never allocates.
+    {
+        BufferDesc batchDesc;
+        batchDesc.BindFlags = BIND_VERTEX_BUFFER;
+        batchDesc.Usage = USAGE_DYNAMIC;
+        batchDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
+        batchDesc.Name = "DIS BatchLine VB";
+        batchDesc.Size = sizeof(RectVertex) * k_batch_prim_verts;
+        device->CreateBuffer(batchDesc, nullptr, &m_batch_line_vb_);
+        batchDesc.Name = "DIS BatchTri VB";
+        device->CreateBuffer(batchDesc, nullptr, &m_batch_tri_vb_);
+        batchDesc.Name = "DIS BatchQuad VB";
+        device->CreateBuffer(batchDesc, nullptr, &m_batch_quad_vb_);
+    }
+    m_batchLineVerts_.reserve(k_batch_prim_verts);
+    m_batchTriVerts_.reserve(k_batch_prim_verts);
+    m_batchQuadVerts_.reserve(k_batch_prim_verts);
+    m_batchSpriteVerts_.reserve(k_batch_sprite_quads * 4);
+    {
+        BufferDesc spriteDesc;
+        spriteDesc.BindFlags = BIND_VERTEX_BUFFER;
+        spriteDesc.Usage = USAGE_DYNAMIC;
+        spriteDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
+        spriteDesc.Name = "DIS BatchSprite VB";
+        spriteDesc.Size = sizeof(SpriteVertex) * k_batch_sprite_quads * 4;
+        device->CreateBuffer(spriteDesc, nullptr, &m_batch_sprite_vb_);
+    }
+    {
+        // Degenerate-linked quad list: [0,1,2,2,1,3] per quad with
+        // (prevLast, nextFirst) connectors, so the strip PSO draws N quads
+        // in one call with no shader changes.
+        std::vector<Uint32> indices;
+        indices.reserve(static_cast<size_t>(k_batch_sprite_quads) * 8);
+        for (Uint32 i = 0; i < k_batch_sprite_quads; ++i) {
+            const Uint32 b = i * 4;
+            if (i > 0) {
+                indices.push_back(b - 1);
+                indices.push_back(b);
+            }
+            indices.push_back(b + 0);
+            indices.push_back(b + 1);
+            indices.push_back(b + 2);
+            indices.push_back(b + 2);
+            indices.push_back(b + 1);
+            indices.push_back(b + 3);
+        }
+        BufferDesc desc;
+        desc.Name = "DIS BatchSpriteIB";
+        desc.Usage = USAGE_IMMUTABLE;
+        desc.BindFlags = BIND_INDEX_BUFFER;
+        desc.Size = static_cast<Uint64>(indices.size() * sizeof(Uint32));
+        desc.CPUAccessFlags = CPU_ACCESS_NONE;
+        desc.MiscFlags = MISC_BUFFER_FLAG_NONE;
+        BufferData initData;
+        initData.pData = indices.data();
+        initData.DataSize = desc.Size;
+        device->CreateBuffer(desc, &initData, &m_batch_sprite_ib_);
+    }
+
     {
         BufferDesc desc;
         desc.Name           = "DIS DotLine VB";
@@ -604,7 +666,20 @@ void DiligentImmediateSubmitter::destroy()
     m_draw_solid_triangle_vertex_buffer     = nullptr;
     m_draw_solid_circle_vertex_buffer       = nullptr;
     m_draw_thick_line_vertex_buffer         = nullptr;
-    m_draw_dot_line_vertex_buffer           = nullptr;
+    m_draw_dot_line_vertex_buffer         = nullptr;
+    m_batch_line_vb_                        = nullptr;
+    m_batch_tri_vb_                         = nullptr;
+    m_batch_quad_vb_                        = nullptr;
+    m_batch_sprite_vb_                      = nullptr;
+    m_batch_sprite_ib_                      = nullptr;
+    m_batchSpriteVerts_.clear();
+    m_batchSpriteSRV_ = nullptr;
+    m_batchSpriteActive_ = false;
+    m_batchLineVerts_.clear();
+    m_batchTriVerts_.clear();
+    m_batchQuadVerts_.clear();
+    m_batchLineActive_ = m_batchTriActive_ = m_batchQuadActive_ = false;
+    m_batchQuadHasLast_ = false;
     m_draw_solid_rect_index_buffer          = nullptr;
     m_draw_sprite_cb                        = nullptr;
     m_draw_sprite_transform_matrix_cb       = nullptr;
@@ -780,9 +855,155 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
         recordCtx->EndDebugGroup();
     };
 
+    auto flushLineBatch = [&]() {
+        if (m_batchLineVerts_.empty()) return;
+        if (!pRTV || !m_draw_line_pso_and_srb.pPSO || !m_batch_line_vb_) {
+            m_batchLineVerts_.clear();
+            m_batchLineActive_ = false;
+            return;
+        }
+        mapWriteDiscard(recordCtx, m_batch_line_vb_, m_batchLineVerts_.data(),
+                        sizeof(RectVertex) * m_batchLineVerts_.size(), m_frameCostStats_);
+        mapWriteDiscard(recordCtx, m_draw_solid_rect_trnsform_cb, &m_batchLineXform_,
+                        sizeof(m_batchLineXform_), m_frameCostStats_);
+        if (m_currentPSO_ != m_draw_line_pso_and_srb.pPSO) {
+            recordPipelineStateSwitch(m_frameCostStats_);
+            recordCtx->SetPipelineState(m_draw_line_pso_and_srb.pPSO);
+            m_currentPSO_ = m_draw_line_pso_and_srb.pPSO;
+        }
+        IBuffer* pBufs[] = { m_batch_line_vb_ };
+        Uint64 offs[] = { 0 };
+        recordCtx->SetVertexBuffers(0, 1, pBufs, offs, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
+        recordShaderResourceCommit(m_frameCostStats_);
+        recordCtx->CommitShaderResources(m_draw_line_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        DrawAttribs drawAttrs;
+        drawAttrs.NumVertices = static_cast<Uint32>(m_batchLineVerts_.size());
+        drawAttrs.Flags = DRAW_FLAG_NONE;
+        recordDrawCall(m_frameCostStats_);
+        recordCtx->Draw(drawAttrs);
+        m_batchLineVerts_.clear();
+        m_batchLineActive_ = false;
+    };
+    auto flushTriBatch = [&]() {
+        if (m_batchTriVerts_.empty()) return;
+        if (!pRTV || !m_draw_solid_triangle_pso_and_srb.pPSO || !m_batch_tri_vb_) {
+            m_batchTriVerts_.clear();
+            m_batchTriActive_ = false;
+            return;
+        }
+        mapWriteDiscard(recordCtx, m_batch_tri_vb_, m_batchTriVerts_.data(),
+                        sizeof(RectVertex) * m_batchTriVerts_.size(), m_frameCostStats_);
+        mapWriteDiscard(recordCtx, m_draw_solid_rect_trnsform_cb, &m_batchTriXform_,
+                        sizeof(m_batchTriXform_), m_frameCostStats_);
+        if (m_currentPSO_ != m_draw_solid_triangle_pso_and_srb.pPSO) {
+            recordPipelineStateSwitch(m_frameCostStats_);
+            recordCtx->SetPipelineState(m_draw_solid_triangle_pso_and_srb.pPSO);
+            m_currentPSO_ = m_draw_solid_triangle_pso_and_srb.pPSO;
+        }
+        IBuffer* pBufs[] = { m_batch_tri_vb_ };
+        Uint64 offs[] = { 0 };
+        recordCtx->SetVertexBuffers(0, 1, pBufs, offs, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
+        recordShaderResourceCommit(m_frameCostStats_);
+        recordCtx->CommitShaderResources(m_draw_solid_triangle_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        DrawAttribs drawAttrs;
+        drawAttrs.NumVertices = static_cast<Uint32>(m_batchTriVerts_.size());
+        drawAttrs.Flags = DRAW_FLAG_NONE;
+        recordDrawCall(m_frameCostStats_);
+        recordCtx->Draw(drawAttrs);
+        m_batchTriVerts_.clear();
+        m_batchTriActive_ = false;
+    };
+    auto flushQuadBatch = [&]() {
+        if (m_batchQuadVerts_.empty()) return;
+        if (!pRTV || !m_draw_thick_line_pso_and_srb.pPSO || !m_batch_quad_vb_) {
+            m_batchQuadVerts_.clear();
+            m_batchQuadActive_ = false;
+            m_batchQuadHasLast_ = false;
+            return;
+        }
+        mapWriteDiscard(recordCtx, m_batch_quad_vb_, m_batchQuadVerts_.data(),
+                        sizeof(RectVertex) * m_batchQuadVerts_.size(), m_frameCostStats_);
+        mapWriteDiscard(recordCtx, m_draw_solid_rect_trnsform_cb, &m_batchQuadXform_,
+                        sizeof(m_batchQuadXform_), m_frameCostStats_);
+        if (m_currentPSO_ != m_draw_thick_line_pso_and_srb.pPSO) {
+            recordPipelineStateSwitch(m_frameCostStats_);
+            recordCtx->SetPipelineState(m_draw_thick_line_pso_and_srb.pPSO);
+            m_currentPSO_ = m_draw_thick_line_pso_and_srb.pPSO;
+        }
+        IBuffer* pBufs[] = { m_batch_quad_vb_ };
+        Uint64 offs[] = { 0 };
+        recordCtx->SetVertexBuffers(0, 1, pBufs, offs, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
+        recordShaderResourceCommit(m_frameCostStats_);
+        recordCtx->CommitShaderResources(m_draw_thick_line_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        DrawAttribs drawAttrs;
+        drawAttrs.NumVertices = static_cast<Uint32>(m_batchQuadVerts_.size());
+        drawAttrs.Flags = DRAW_FLAG_NONE;
+        recordDrawCall(m_frameCostStats_);
+        recordCtx->Draw(drawAttrs);
+        m_batchQuadVerts_.clear();
+        m_batchQuadActive_ = false;
+        m_batchQuadHasLast_ = false;
+    };
+    auto flushPrimBatches = [&]() {
+        flushLineBatch();
+        flushTriBatch();
+        flushQuadBatch();
+    };
+    // AtlasSprite runs share one atlas texture: positions bake to pixels
+    // (exact for unit quads) and ride the EXISTING sprite PSO through the
+    // degenerate index buffer above. One Map + one DrawIndexed per run.
+    auto flushSpriteBatch = [&]() {
+        if (m_batchSpriteVerts_.empty()) return;
+        const size_t quads = m_batchSpriteVerts_.size() / 4;
+        if (!pRTV || !m_draw_sprite_pso_and_srb.pPSO || !m_draw_sprite_pso_and_srb.pSRB ||
+            !m_batch_sprite_vb_ || !m_batch_sprite_ib_ || !m_draw_sprite_cb ||
+            !m_var_sprite_gTexture_ || !m_sprite_sampler || !m_batchSpriteSRV_ || quads == 0) {
+            m_batchSpriteVerts_.clear();
+            m_batchSpriteActive_ = false;
+            m_batchSpriteSRV_ = nullptr;
+            return;
+        }
+        recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.SpriteBatch");
+        mapWriteDiscard(recordCtx, m_batch_sprite_vb_, m_batchSpriteVerts_.data(),
+                        sizeof(SpriteVertex) * m_batchSpriteVerts_.size(), m_frameCostStats_);
+        const RenderSolidTransform2D identityXform{{0.0f, 0.0f}, {1.0f, 1.0f}, m_batchSpriteXform_.screenSize};
+        mapWriteDiscard(recordCtx, m_draw_sprite_cb, &identityXform, sizeof(identityXform), m_frameCostStats_);
+        if (m_currentPSO_ != m_draw_sprite_pso_and_srb.pPSO) {
+            recordPipelineStateSwitch(m_frameCostStats_);
+            recordCtx->SetPipelineState(m_draw_sprite_pso_and_srb.pPSO);
+            m_currentPSO_ = m_draw_sprite_pso_and_srb.pPSO;
+        }
+        m_var_sprite_gTexture_->Set(m_batchSpriteSRV_);
+        recordShaderResourceCommit(m_frameCostStats_);
+        recordCtx->CommitShaderResources(m_draw_sprite_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        IBuffer* pBufs[] = { m_batch_sprite_vb_ };
+        Uint64 offs[] = { 0 };
+        recordCtx->SetVertexBuffers(0, 1, pBufs, offs, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
+        recordCtx->SetIndexBuffer(m_batch_sprite_ib_, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        const Uint32 indexCount = static_cast<Uint32>(quads * 6 + (quads - 1) * 2);
+        DrawIndexedAttribs drawAttrs(indexCount, VT_UINT32, DRAW_FLAG_NONE);
+        recordDrawCall(m_frameCostStats_, true);
+        recordCtx->DrawIndexed(drawAttrs);
+        recordCtx->EndDebugGroup();
+        m_batchSpriteVerts_.clear();
+        m_batchSpriteActive_ = false;
+        m_batchSpriteSRV_ = nullptr;
+    };
+    auto xformsEqual = [](const RenderSolidTransform2D& a,
+                          const RenderSolidTransform2D& b) {
+        return a.offset.x == b.offset.x && a.offset.y == b.offset.y &&
+               a.scale.x == b.scale.x && a.scale.y == b.scale.y &&
+               a.screenSize.x == b.screenSize.x && a.screenSize.y == b.screenSize.y;
+    };
+
     for (auto& pkt : buf.packets()) {
         std::visit([&](auto& p) {
             using T = std::decay_t<decltype(p)>;
+            if constexpr (!std::is_same_v<T, LinePkt> && !std::is_same_v<T, QuadPkt> &&
+                          !std::is_same_v<T, SolidTriPkt> && !std::is_same_v<T, AtlasSpritePkt>) {
+                flushPrimBatches();
+                flushSpriteBatch();
+            }
             if constexpr (std::is_same_v<T, SolidRectPkt>) {
                 if (batchReady) {
                     // Overflow: flush before adding a new rect
@@ -843,17 +1064,75 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
             } else {
                 flushSolidRectBatch(); // flush before switching to a different draw type
                 if constexpr      (std::is_same_v<T, GradientRectPkt>)    submitGradientRect(p, recordCtx, pRTV);
-                else if constexpr (std::is_same_v<T, LinePkt>)            submitLine(p, recordCtx, pRTV);
-                else if constexpr (std::is_same_v<T, QuadPkt>)            submitQuad(p, recordCtx, pRTV);
+                else if constexpr (std::is_same_v<T, LinePkt>) {
+                    if (!m_batchLineActive_ || !xformsEqual(m_batchLineXform_, p.xform) ||
+                        m_batchLineVerts_.size() + 2 > k_batch_prim_verts) {
+                        flushLineBatch();
+                        m_batchLineXform_ = p.xform;
+                        m_batchLineActive_ = true;
+                    }
+                    m_batchLineVerts_.push_back(RectVertex{p.p1, p.c1});
+                    m_batchLineVerts_.push_back(RectVertex{p.p2, p.c2});
+                }
+                else if constexpr (std::is_same_v<T, QuadPkt>) {
+                    if (!m_batchQuadActive_ || !xformsEqual(m_batchQuadXform_, p.xform) ||
+                        m_batchQuadVerts_.size() + 6 > k_batch_prim_verts) {
+                        flushQuadBatch();
+                        m_batchQuadXform_ = p.xform;
+                        m_batchQuadActive_ = true;
+                        m_batchQuadHasLast_ = false;
+                    }
+                    const RectVertex q[4] = {{p.p0, p.color}, {p.p1, p.color},
+                                             {p.p2, p.color}, {p.p3, p.color}};
+                    if (m_batchQuadHasLast_) {
+                        m_batchQuadVerts_.push_back(m_batchQuadLast_);
+                        m_batchQuadVerts_.push_back(q[0]);
+                    }
+                    for (int i = 0; i < 4; ++i) m_batchQuadVerts_.push_back(q[i]);
+                    m_batchQuadLast_ = q[3];
+                    m_batchQuadHasLast_ = true;
+                }
                 else if constexpr (std::is_same_v<T, DotLinePkt>)         submitDotLine(p, recordCtx, pRTV);
-                else if constexpr (std::is_same_v<T, SolidTriPkt>)        submitSolidTri(p, recordCtx, pRTV);
+                else if constexpr (std::is_same_v<T, SolidTriPkt>) {
+                    if (!m_batchTriActive_ || !xformsEqual(m_batchTriXform_, p.xform) ||
+                        m_batchTriVerts_.size() + 3 > k_batch_prim_verts) {
+                        flushTriBatch();
+                        m_batchTriXform_ = p.xform;
+                        m_batchTriActive_ = true;
+                    }
+                    m_batchTriVerts_.push_back(RectVertex{p.p0, p.color});
+                    m_batchTriVerts_.push_back(RectVertex{p.p1, p.color});
+                    m_batchTriVerts_.push_back(RectVertex{p.p2, p.color});
+                }
                 else if constexpr (std::is_same_v<T, SolidCirclePkt>)     submitSolidCircle(p, recordCtx, pRTV);
                 else if constexpr (std::is_same_v<T, CheckerboardPkt>)    submitCheckerboard(p, recordCtx, pRTV);
                 else if constexpr (std::is_same_v<T, GridPkt>)            submitGrid(p, recordCtx, pRTV);
                 else if constexpr (std::is_same_v<T, RectOutlinePkt>)     submitRectOutline(p, recordCtx, pRTV);
                 else if constexpr (std::is_same_v<T, SpritePkt>)          { recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.Sprite"); submitSprite(p, recordCtx, pRTV); recordCtx->EndDebugGroup(); }
                 else if constexpr (std::is_same_v<T, SpriteXformPkt>)     { recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.Sprite"); submitSpriteXform(p, recordCtx, pRTV); recordCtx->EndDebugGroup(); }
-                else if constexpr (std::is_same_v<T, AtlasSpritePkt>)     { recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.Sprite"); submitAtlasSprite(p, recordCtx, pRTV); recordCtx->EndDebugGroup(); }
+                else if constexpr (std::is_same_v<T, AtlasSpritePkt>) {
+                    const bool sameTex = m_batchSpriteSRV_ == p.pSRV;
+                    const bool sameScreen = m_batchSpriteXform_.screenSize.x == p.xform.screenSize.x &&
+                                            m_batchSpriteXform_.screenSize.y == p.xform.screenSize.y;
+                    if (!m_batchSpriteActive_ || !sameTex || !sameScreen ||
+                        m_batchSpriteVerts_.size() + 4 > static_cast<size_t>(k_batch_sprite_quads) * 4) {
+                        flushSpriteBatch();
+                        m_batchSpriteXform_ = p.xform;
+                        m_batchSpriteSRV_ = p.pSRV;
+                        m_batchSpriteActive_ = true;
+                    }
+                    const float2 base[4] = {{0.0f, 0.0f}, {1.0f, 0.0f}, {0.0f, 1.0f}, {1.0f, 1.0f}};
+                    const float2 uvs[4] = {{p.uvRect.x, p.uvRect.y}, {p.uvRect.z, p.uvRect.y},
+                                           {p.uvRect.x, p.uvRect.w}, {p.uvRect.z, p.uvRect.w}};
+                    for (int i = 0; i < 4; ++i) {
+                        SpriteVertex v;
+                        v.position = {p.xform.offset.x + base[i].x * p.xform.scale.x,
+                                      p.xform.offset.y + base[i].y * p.xform.scale.y};
+                        v.uv = uvs[i];
+                        v.color = p.color;
+                        m_batchSpriteVerts_.push_back(v);
+                    }
+                }
                 else if constexpr (std::is_same_v<T, AtlasSpriteXformPkt>){ recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.Sprite"); submitAtlasSpriteXform(p, recordCtx, pRTV); recordCtx->EndDebugGroup(); }
                 else if constexpr (std::is_same_v<T, TexturedTriangleXformPkt>){ recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.TexturedTriangle"); submitTexturedTriangleXform(p, recordCtx, pRTV); recordCtx->EndDebugGroup(); }
                 else if constexpr (std::is_same_v<T, MaskedSpritePkt>)    { recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.Sprite"); submitMaskedSprite(p, recordCtx, pRTV); recordCtx->EndDebugGroup(); }
@@ -865,6 +1144,8 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
             }
         }, pkt);
     }
+    flushPrimBatches();
+    flushSpriteBatch();
     flushSolidRectBatch(); // flush any remaining
     recordCtx->EndDebugGroup();
     if (useDeferredCtx) {

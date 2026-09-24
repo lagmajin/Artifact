@@ -34,7 +34,6 @@
 #include <QStringList>
 export module Artifact.Script.Hooks;
 
-import std;
 
 export namespace Artifact {
 

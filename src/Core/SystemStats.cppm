@@ -19,7 +19,6 @@ module;
 
 module Core.SystemStats;
 
-import std;
 
 namespace ArtifactCore {
 

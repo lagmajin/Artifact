@@ -64,6 +64,7 @@ class ArtifactTimelineWidget :public QWidget {
   ~ArtifactTimelineWidget();
   void update();
   void setComposition(const CompositionID& id);
+  void setCollaborationLockedLayers(const QVector<LayerID>& layerIds);
   // Restrict curve/timeline property payloads to explicitly selected channels.
   // An empty set keeps the existing category/search behaviour.
   void setSelectedPropertyPaths(const QSet<QString>& propertyPaths);
@@ -96,6 +97,9 @@ class ArtifactTimelineWidget :public QWidget {
   void reverseAllKeyframesInSelectedLayers();
   void reverseAllKeyframesInComposition();
   void copySelectedKeyframes();
+  // Phase 2: converts each selected (layer, property) keyframe group into a
+  // reusable automation-clip pattern + instance. Non-destructive (keys stay).
+  void convertSelectedKeyframesToAutomationClip();
   bool saveKeyframeSnippet(const QString& name);
   bool applyKeyframeSnippet(const QString& name);
   bool removeKeyframeSnippet(const QString& name);

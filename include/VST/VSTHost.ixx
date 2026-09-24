@@ -96,6 +96,7 @@ public:
     
     // プロセッシング
     void process(int pluginId, const ArtifactCore::AudioSegment& input, ArtifactCore::AudioSegment& output);
+    void processInPlace(int pluginId, ArtifactCore::AudioSegment& segment);
     void processDouble(int pluginId, const std::vector<double>& input, std::vector<double>& output);
     
     // 状態管理
@@ -106,7 +107,9 @@ public:
     int getLoadedPluginIdByPath(const std::string& path) const;
 
     // エディタ
-    void openEditor(int pluginId, void* window);
+    bool openEditor(int pluginId, void* window, void* resizeContext,
+                    bool (*resizeCallback)(void*, int, int),
+                    int& width, int& height);
     void closeEditor(int pluginId);
 
 private:

@@ -11,10 +11,12 @@ module;
 #include <QWidget>
 #include <wobjectimpl.h>
 #include "TimelinePlayheadDraw.hpp"
+#include <algorithm>
+#include <cmath>
+#include <vector>
 
 module Artifact.Timeline.ScrubBar;
 
-import std;
 import ArtifactCore.Utils.PerformanceProfiler;
 import Event.Bus;
 import Artifact.Event.Types;
@@ -71,9 +73,14 @@ namespace Artifact
   bool cacheRangeVisible_ = false;
   int cacheRangeStart_ = 0;
   int cacheRangeEnd_ = 0;
-  std::vector<bool> cacheBitmap_;
-  std::vector<bool> failedBitmap_;
-  std::vector<bool> onDiskBitmap_;
+   std::vector<bool> cacheBitmap_;
+   std::vector<bool> failedBitmap_;
+   std::vector<bool> onDiskBitmap_;
+   // Paint fast path: bitmap emptiness cached in setters so paintEvent never
+   // scans full-frame bitmaps per tick. Mutated only in the setters below.
+   bool hasCacheBitmap_ = false;
+   bool hasFailedBitmap_ = false;
+   bool hasOnDiskBitmap_ = false;
   int fps_ = 30;
   double rulerPixelsPerFrame_ = 0.0;  // 0 = ruler無効
   double rulerHorizontalOffset_ = 0.0;
@@ -303,10 +310,11 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
 
  void ArtifactTimelineScrubBar::setCacheBitmap(const std::vector<bool>& bitmap)
  {
-  if (impl_->cacheBitmap_ != bitmap) {
-   impl_->cacheBitmap_ = bitmap;
-   const bool hasCache = std::any_of(bitmap.begin(), bitmap.end(),
-                                     [](const bool cached) { return cached; });
+   if (impl_->cacheBitmap_ != bitmap) {
+    impl_->cacheBitmap_ = bitmap;
+    const bool hasCache = std::any_of(bitmap.begin(), bitmap.end(),
+                                      [](const bool cached) { return cached; });
+    impl_->hasCacheBitmap_ = hasCache;
    setAccessibleDescription(hasCache
        ? QStringLiteral("Scrub the timeline and review cached frame ranges.")
        : QStringLiteral("Scrub the timeline. No cached frames are available."));
@@ -325,15 +333,17 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
   if (!changed) {
    return;
   }
-  impl_->cacheBitmap_ = readyBitmap;
-  impl_->failedBitmap_ = failedBitmap;
-  impl_->onDiskBitmap_ = onDiskBitmap;
-  const bool hasCache = std::any_of(readyBitmap.begin(), readyBitmap.end(),
-                                    [](const bool cached) { return cached; }) ||
-                        std::any_of(onDiskBitmap.begin(), onDiskBitmap.end(),
-                                    [](const bool cached) { return cached; });
-  const bool hasFailures = std::any_of(failedBitmap.begin(), failedBitmap.end(),
-                                       [](const bool failed) { return failed; });
+   impl_->cacheBitmap_ = readyBitmap;
+   impl_->failedBitmap_ = failedBitmap;
+   impl_->onDiskBitmap_ = onDiskBitmap;
+   impl_->hasCacheBitmap_ = std::any_of(readyBitmap.begin(), readyBitmap.end(),
+                                        [](const bool cached) { return cached; });
+   impl_->hasOnDiskBitmap_ = std::any_of(onDiskBitmap.begin(), onDiskBitmap.end(),
+                                         [](const bool cached) { return cached; });
+   impl_->hasFailedBitmap_ = std::any_of(failedBitmap.begin(), failedBitmap.end(),
+                                         [](const bool failed) { return failed; });
+   const bool hasCache = impl_->hasCacheBitmap_ || impl_->hasOnDiskBitmap_;
+   const bool hasFailures = impl_->hasFailedBitmap_;
   setAccessibleDescription(
       hasCache ? QStringLiteral("Scrub the timeline and review cached frame ranges.")
                : hasFailures
@@ -448,19 +458,19 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
           ? impl_->visualFrame_
           : static_cast<double>(impl_->currentFrame_.framePosition());
   const int currentX = impl_->resolveFrameToX(std::max(0.0, visualFrame), w);
-  const int railHalfH = std::max(3, h / 7);
+  const int railHalfH = std::max(2, h / 10);
   const int railBottomInset = std::max(3, h / 10);
   const int centerY = h - railBottomInset - railHalfH;
   const int trackLeft = impl_->trackLeft(w);
   const int trackRight = impl_->trackRight(w);
-  const int topBandHeight = std::max(12, h / 3);
+  const int topBandHeight = std::max(24, h * 3 / 5);
   const QRect railRect(trackLeft, centerY - railHalfH + 2, std::max(1, trackRight - trackLeft + 1), railHalfH * 2);
 
-  const QColor bgTop = theme.background.darker(112);
-  const QColor bgBottom = theme.background.darker(124);
-  const QColor railColor = theme.surface.darker(112);
+  const QColor bgTop(35, 39, 43);
+  const QColor bgBottom(35, 39, 43);
+  const QColor railColor = theme.surface.darker(124);
   const QColor railBorder = theme.border;
-  const QColor cacheBaseColor(84, 198, 120);
+  const QColor cacheBaseColor(75, 190, 112);
   
   QLinearGradient bgGrad(r.topLeft(), r.bottomLeft());
   bgGrad.setColorAt(0.0, bgTop);
@@ -470,8 +480,8 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
   QRect topBand = r;
   topBand.setHeight(topBandHeight);
   QLinearGradient topBandGrad(topBand.topLeft(), topBand.bottomLeft());
-  topBandGrad.setColorAt(0.0, theme.surface.lighter(112));
-  topBandGrad.setColorAt(1.0, theme.surface.darker(118));
+  topBandGrad.setColorAt(0.0, bgTop);
+  topBandGrad.setColorAt(1.0, bgBottom);
   p.fillRect(topBand, topBandGrad);
 
   p.setPen(theme.background.darker(160));
@@ -488,20 +498,25 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
    constexpr int kMajorStepCandidates[] = {1,2,5,10,15,20,30,50,100,150,200,300,600};
    int majorStep = 10;
    for (int c : kMajorStepCandidates) {
-    if (c * ppf >= 60.0) { majorStep = c; break; }
+    if (c * ppf >= 100.0) { majorStep = c; break; }
    }
-   const int minorStep = std::max(1, majorStep / 5);
+   const int fps = std::max(1, impl_->fps_);
+   if (fps * ppf >= 100.0 && ppf < 30.0) majorStep = fps;
+   else if (majorStep >= fps) majorStep = ((majorStep + fps - 1) / fps) * fps;
+   const int minorStep = majorStep % 5 == 0 ? majorStep / 5
+       : majorStep % 2 == 0 ? majorStep / 2 : 1;
 
    const int fStart = std::max(0, static_cast<int>(std::floor(xOff / ppf)));
    const int fEnd   = std::min(impl_->totalFrames_,
                                static_cast<int>(std::ceil((xOff + w) / ppf)) + 1);
 
    QFont rulerFont;
-   rulerFont.setPixelSize(8);
+   rulerFont.setPixelSize(12);
    p.setFont(rulerFont);
+   const QFontMetrics rulerMetrics(p.font());
 
    double lastLabelRight = -1.0;
-   for (int f = fStart; f <= fEnd; f += minorStep) {
+   for (int f = (fStart / minorStep) * minorStep; f <= fEnd; f += minorStep) {
     const double rx = f * ppf - xOff;
     if (rx < 0.0 || rx > w) continue;
     const bool isMajor = (f % majorStep) == 0;
@@ -509,11 +524,16 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
      p.setPen(QPen(isMajor ? theme.border.lighter(138) : theme.border.darker(124), 1));
     p.drawLine(QPointF(rx, topBandHeight - tickH), QPointF(rx, topBandHeight - 1));
     if (isMajor) {
-     const QString label = QString::number(f);
-     const double labelW = static_cast<double>(QFontMetrics(p.font()).horizontalAdvance(label));
+     const int seconds = f / fps;
+     QString label = QStringLiteral("%1:%2")
+         .arg(seconds / 60, 2, 10, QLatin1Char('0'))
+         .arg(seconds % 60, 2, 10, QLatin1Char('0'));
+     if (majorStep < fps)
+       label += QStringLiteral(":%1").arg(f % fps, 2, 10, QLatin1Char('0'));
+     const double labelW = static_cast<double>(rulerMetrics.horizontalAdvance(label));
      const double labelX = rx + 3.0;
      if (labelX <= lastLabelRight + 6.0) continue;
-     p.setPen(theme.text.darker(150));
+     p.setPen(QColor(190, 198, 205));
      p.drawText(QRectF(labelX, 0.0, labelW + 6.0, topBandHeight - 2), Qt::AlignLeft | Qt::AlignVCenter, label);
      lastLabelRight = labelX + labelW;
     }
@@ -534,29 +554,20 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
    const QRect cacheRect(cacheLeft, railRect.top(), std::max(1, cacheRight - cacheLeft + 1), railRect.height());
    if (cacheRect.width() > 1) {
     QColor requestedColor(218, 166, 76);
-    requestedColor.setAlpha(68);
+    requestedColor.setAlpha(42);
     p.setPen(Qt::NoPen);
     p.setBrush(requestedColor);
     p.drawRoundedRect(cacheRect.adjusted(0, 1, -1, -1), railHalfH, railHalfH);
    }
   }
 
-  const auto drawFrameRuns = [&](const std::vector<bool>& bitmap,
-                                 QColor color,
-                                 const int topInset,
-                                 const int bottomInset) {
-   const int frameLimit = std::min(static_cast<int>(bitmap.size()),
-                                   std::max(0, impl_->totalFrames_));
-   bool hasAnyFrame = false;
-   for (int f = 0; f < frameLimit; ++f) {
-    if (bitmap[f]) {
-     hasAnyFrame = true;
-     break;
-    }
-   }
-   if (!hasAnyFrame) {
-    return;
-   }
+   const auto drawFrameRuns = [&](const std::vector<bool>& bitmap,
+                                  QColor color,
+                                  const int topInset,
+                                  const int bottomInset) {
+    // Emptiness is pre-checked by callers via the cached has*Bitmap_ flags.
+    const int frameLimit = std::min(static_cast<int>(bitmap.size()),
+                                    std::max(0, impl_->totalFrames_));
 
    p.setPen(Qt::NoPen);
    p.setBrush(color);
@@ -585,17 +596,23 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
    }
   };
 
-  QColor onDiskColor(88, 148, 255);
-  onDiskColor.setAlpha(118);
-  drawFrameRuns(impl_->onDiskBitmap_, onDiskColor, 1, 1);
+   if (impl_->hasOnDiskBitmap_) {
+    QColor onDiskColor(88, 148, 255);
+    onDiskColor.setAlpha(118);
+    drawFrameRuns(impl_->onDiskBitmap_, onDiskColor, 1, 1);
+   }
 
-  QColor cachedColor = cacheBaseColor.lighter(112);
-  cachedColor.setAlpha(184);
-  drawFrameRuns(impl_->cacheBitmap_, cachedColor, 2, 2);
+   if (impl_->hasCacheBitmap_) {
+    QColor cachedColor = cacheBaseColor.lighter(112);
+    cachedColor.setAlpha(184);
+    drawFrameRuns(impl_->cacheBitmap_, cachedColor, 2, 2);
+   }
 
-  QColor failedColor(232, 92, 92);
-  failedColor.setAlpha(200);
-  drawFrameRuns(impl_->failedBitmap_, failedColor, 4, 4);
+   if (impl_->hasFailedBitmap_) {
+    QColor failedColor(232, 92, 92);
+    failedColor.setAlpha(200);
+    drawFrameRuns(impl_->failedBitmap_, failedColor, 4, 4);
+   }
 
   // ── 再生ヘッド描画 ──────────────────────
   const int clampedX = std::clamp(currentX, railRect.left(), railRect.right());
@@ -629,15 +646,9 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
   const int ss = totalSeconds % 60;
   const int mm = (totalSeconds / 60) % 60;
   const int hh = totalSeconds / 3600;
-  const bool hasReadyCache = std::any_of(
-      impl_->cacheBitmap_.begin(), impl_->cacheBitmap_.end(),
-      [](const bool cached) { return cached; });
-  const bool hasOnDiskCache = std::any_of(
-      impl_->onDiskBitmap_.begin(), impl_->onDiskBitmap_.end(),
-      [](const bool cached) { return cached; });
-  const bool hasFailedCache = std::any_of(
-      impl_->failedBitmap_.begin(), impl_->failedBitmap_.end(),
-      [](const bool failed) { return failed; });
+   const bool hasReadyCache = impl_->hasCacheBitmap_;
+   const bool hasOnDiskCache = impl_->hasOnDiskBitmap_;
+   const bool hasFailedCache = impl_->hasFailedBitmap_;
   const QString leftLabel = impl_->cacheRangeVisible_ || hasReadyCache || hasOnDiskCache
       ? QStringLiteral("RAM Cache")
       : hasFailedCache

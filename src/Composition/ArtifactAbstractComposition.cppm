@@ -72,6 +72,7 @@ import Artifact.Layer.Video;
 import ArtifactCore.Control.External;
 import Memory.SharedPtr;
 import Property.SerializationBridge;
+import Animation.Value;
 import Audio.Modulation.Router;
 import Physics.System;
 import Physics.Mpm2D;
@@ -826,6 +827,8 @@ QJsonObject serializeModulationRouter(
     object[QStringLiteral("smoothing")] = source.smoothing;
     object[QStringLiteral("seed")] = static_cast<double>(source.seed);
     object[QStringLiteral("macroValue")] = source.macroValue;
+    object[QStringLiteral("constantValue")] = source.constantValue;
+    object[QStringLiteral("stepCount")] = static_cast<double>(source.stepCount);
     object[QStringLiteral("unipolar")] = source.unipolar;
     sources.append(object);
   }
@@ -852,7 +855,7 @@ void restoreModulationRouter(const QJsonObject& object,
     if (!value.isObject()) continue;
     const QJsonObject item = value.toObject();
     const int type = item.value(QStringLiteral("type")).toInt(-1);
-    if (type < 0 || type > 3) continue;
+    if (type < 0 || type > 6) continue;
     Audio::Modulation::ModulationSourceDefinition source;
     source.id = static_cast<std::uint32_t>(item.value(QStringLiteral("id")).toVariant().toUInt());
     source.type = static_cast<Audio::Modulation::ModulatorSourceType>(type);
@@ -869,6 +872,9 @@ void restoreModulationRouter(const QJsonObject& object,
     source.smoothing = static_cast<float>(item.value(QStringLiteral("smoothing")).toDouble(0.005));
     source.seed = static_cast<std::uint32_t>(item.value(QStringLiteral("seed")).toVariant().toUInt());
     source.macroValue = static_cast<float>(item.value(QStringLiteral("macroValue")).toDouble(0.0));
+    source.constantValue = static_cast<float>(item.value(QStringLiteral("constantValue")).toDouble(0.0));
+    source.stepCount = static_cast<std::uint32_t>(
+        std::clamp(item.value(QStringLiteral("stepCount")).toVariant().toUInt(), 1u, 32u));
     source.unipolar = item.value(QStringLiteral("unipolar")).toBool(false);
     sources.push_back(source);
   }
@@ -889,6 +895,192 @@ void restoreModulationRouter(const QJsonObject& object,
     router.addAssignment(assignment);
   }
 }
+
+// ---- Reusable automation-clip patterns (Phase 2, cold path only) ----
+
+std::vector<ArtifactCore::AutomationClipPattern>
+ArtifactAbstractComposition::automationClipPatterns() const {
+  if (!impl_) {
+    return {};
+  }
+  return impl_->automationClipPatterns_;
+}
+
+const ArtifactCore::AutomationClipPattern*
+ArtifactAbstractComposition::findAutomationClipPattern(
+    std::uint32_t patternId) const {
+  if (!impl_ || patternId == 0) {
+    return nullptr;
+  }
+  for (const auto& pattern : impl_->automationClipPatterns_) {
+    if (pattern.id == patternId) {
+      return &pattern;
+    }
+  }
+  return nullptr;
+}
+
+std::uint32_t ArtifactAbstractComposition::addAutomationClipPattern(
+    ArtifactCore::AutomationClipPattern pattern) {
+  if (!impl_ || !ArtifactCore::sanitizeAutomationClipPattern(pattern)) {
+    return 0;
+  }
+  if (pattern.id == 0) {
+    std::uint32_t candidate = impl_->nextAutomationClipId_ == 0
+        ? 1u : impl_->nextAutomationClipId_;
+    const std::uint32_t first = candidate;
+    auto idTaken = [&](std::uint32_t id) {
+      for (const auto& existing : impl_->automationClipPatterns_) {
+        if (existing.id == id) {
+          return true;
+        }
+      }
+      return false;
+    };
+    while (idTaken(candidate)) {
+      ++candidate;
+      if (candidate == 0) {
+        candidate = 1;
+      }
+      if (candidate == first) {
+        return 0;
+      }
+    }
+    pattern.id = candidate;
+    impl_->nextAutomationClipId_ = candidate + 1u;
+    if (impl_->nextAutomationClipId_ == 0) {
+      impl_->nextAutomationClipId_ = 1u;
+    }
+  } else {
+    for (const auto& existing : impl_->automationClipPatterns_) {
+      if (existing.id == pattern.id) {
+        return 0;  // stable ids are unique; restore path replaces wholesale
+      }
+    }
+    if (pattern.id >= impl_->nextAutomationClipId_) {
+      impl_->nextAutomationClipId_ = pattern.id + 1u;
+      if (impl_->nextAutomationClipId_ == 0) {
+        impl_->nextAutomationClipId_ = 1u;
+      }
+    }
+  }
+  const std::uint32_t assigned = pattern.id;
+  impl_->automationClipPatterns_.push_back(std::move(pattern));
+  changed();
+  return assigned;
+}
+
+bool ArtifactAbstractComposition::removeAutomationClipPattern(
+    std::uint32_t patternId) {
+  if (!impl_ || patternId == 0) {
+    return false;
+  }
+  auto& patterns = impl_->automationClipPatterns_;
+  const auto it = std::find_if(patterns.begin(), patterns.end(),
+      [patternId](const ArtifactCore::AutomationClipPattern& pattern) {
+        return pattern.id == patternId;
+      });
+  if (it == patterns.end()) {
+    return false;
+  }
+  patterns.erase(it);
+  // Purge dangling layer placements so playback never references a removed id.
+  for (const auto& layer : impl_->layerMultiIndex_.all()) {
+    if (!layer) {
+      continue;
+    }
+    auto instances = layer->automationClipInstances();
+    const std::size_t before = instances.size();
+    std::erase_if(instances, [patternId](
+        const ArtifactCore::AutomationClipInstance& instance) {
+      return instance.patternId == patternId;
+    });
+    if (instances.size() != before) {
+      layer->setAutomationClipInstances(instances);
+    }
+  }
+  changed();
+  return true;
+}
+
+std::uint32_t ArtifactAbstractComposition::createAutomationClipFromLayerKeys(
+    const ArtifactCore::LayerID& layerId, const QString& targetPath,
+    double startSeconds, double endSeconds, const QString& name) {
+  if (!impl_ || layerId.isNil() || targetPath.trimmed().isEmpty() ||
+      !std::isfinite(startSeconds) || !std::isfinite(endSeconds) ||
+      endSeconds <= startSeconds) {
+    return 0;
+  }
+  const std::string normalizedTarget = targetPath.trimmed().toStdString();
+  if (!ArtifactCore::isAutomationClipEvaluatedPath(normalizedTarget)) {
+    return 0;  // Phase 2 evaluates Transform/Opacity float channels only
+  }
+  const auto layer = layerById(layerId);
+  if (!layer) {
+    return 0;
+  }
+  const auto property = layer->getProperty(targetPath.trimmed());
+  if (!property) {
+    return 0;
+  }
+  ArtifactCore::AutomationClipPattern pattern;
+  pattern.name = name.trimmed().toStdString();
+  for (const auto& key : property->getKeyFrames()) {
+    const double keySeconds = key.time.toDouble();
+    if (!std::isfinite(keySeconds) || keySeconds < startSeconds ||
+        keySeconds > endSeconds) {
+      continue;
+    }
+    bool valueOk = false;
+    const double keyValue = key.value.toDouble(&valueOk);
+    if (!valueOk || !std::isfinite(keyValue)) {
+      continue;  // Phase 2 is float-channel only; Color remap is deferred
+    }
+    ArtifactCore::AutomationClipPoint point;
+    point.time = keySeconds - startSeconds;
+    point.value = static_cast<float>(keyValue);
+    point.interpolation = key.interpolation;
+    point.cp1_x = key.cp1_x;
+    point.cp1_y = key.cp1_y;
+    point.cp2_x = key.cp2_x;
+    point.cp2_y = key.cp2_y;
+    pattern.points.push_back(point);
+  }
+  const std::uint32_t assigned = addAutomationClipPattern(std::move(pattern));
+  if (assigned == 0) {
+    return 0;
+  }
+  // Non-destructive: source keys stay. The new instance overrides by weight.
+  ArtifactCore::AutomationClipInstance instance;
+  instance.patternId = assigned;
+  instance.targetPath = normalizedTarget;
+  instance.offsetSeconds = startSeconds;
+  auto instances = layer->automationClipInstances();
+  instances.push_back(std::move(instance));
+  layer->setAutomationClipInstances(instances);
+  return assigned;
+}
+
+bool ArtifactAbstractComposition::setLayerAutomationClipInstances(
+    const ArtifactCore::LayerID& layerId,
+    const std::vector<ArtifactCore::AutomationClipInstance>& instances) {
+  if (!impl_ || layerId.isNil()) {
+    return false;
+  }
+  const auto layer = layerById(layerId);
+  if (!layer) {
+    return false;
+  }
+  if (ArtifactCore::automationClipInstancesEqual(
+          layer->automationClipInstances(), instances)) {
+    return true;
+  }
+  layer->setAutomationClipInstances(instances);
+  changed();
+  return true;
+}
+
+namespace {
 
 QJsonObject serializeEffect(const SharedPtr<ArtifactAbstractEffect>& effect)
 {
@@ -1173,6 +1365,9 @@ class ArtifactAbstractComposition::Impl {
   uint64_t revision_ = 1;
   FloatColor backgroundColor_ = { 0.47f, 0.47f, 0.47f, 1.0f };
   std::vector<SharedPtr<ArtifactAbstractEffect>> effects_;
+  // Phase 2 reusable automation-clip patterns (composition-owned shared data).
+  std::vector<ArtifactCore::AutomationClipPattern> automationClipPatterns_;
+  std::uint32_t nextAutomationClipId_ = 1;
   mutable QImage thumbnailCache_;
   mutable QSize thumbnailCacheSize_;
   mutable bool thumbnailCacheValid_ = false;
@@ -1997,14 +2192,19 @@ void ArtifactAbstractComposition::Impl::evaluateLayerComponentSimulation(
 
   struct SimulationLayerEntry {
     ArtifactAbstractLayerPtr layer;
-    std::vector<CloneRenderInstance> instances;
-    std::vector<QVector3D> velocities;
-    std::vector<LayerMotionIntent> intents;
-    std::vector<LayerContactEvent> contacts;
+    ArtifactCore::NamedVector<CloneRenderInstance> instances{
+        ArtifactCore::ContainerName{"Composition.SimulationInstances"}};
+    ArtifactCore::NamedVector<QVector3D> velocities{
+        ArtifactCore::ContainerName{"Composition.SimulationVelocities"}};
+    ArtifactCore::NamedVector<LayerMotionIntent> intents{
+        ArtifactCore::ContainerName{"Composition.SimulationIntents"}};
+    ArtifactCore::NamedVector<LayerContactEvent> contacts{
+        ArtifactCore::ContainerName{"Composition.SimulationContacts"}};
     bool crowdEnabled = false;
     bool collisionEnabled = false;
   };
-  std::vector<SimulationLayerEntry> entries;
+  ArtifactCore::NamedVector<SimulationLayerEntry> entries{
+      ArtifactCore::ContainerName{"Composition.SimulationLayerEntries"}};
 
   for (const auto& layer : layerMultiIndex_) {
     if (discontinuousSeek && layer &&
@@ -2034,13 +2234,16 @@ void ArtifactAbstractComposition::Impl::evaluateLayerComponentSimulation(
     entry.layer = layer;
     entry.crowdEnabled = crowdEnabled;
     entry.collisionEnabled = collisionEnabled;
-    entry.instances = cloneRenderInstancesForSimulation(
-        layer.get(), layer->getGlobalTransform4x4());
+    entry.instances = ArtifactCore::NamedVector<CloneRenderInstance>::fromStdVector(
+        ArtifactCore::ContainerName{"Composition.SimulationInstances"},
+        cloneRenderInstancesForSimulation(layer.get(),
+                                          layer->getGlobalTransform4x4()));
     if (entry.instances.empty()) {
       layer->clearAuthoritativeComponentEvaluationState();
       continue;
     }
-    entry.velocities.resize(entry.instances.size(), QVector3D());
+    entry.velocities.resize(entry.instances.size());
+    std::fill(entry.velocities.begin(), entry.velocities.end(), QVector3D());
 
     const auto previous = previousStates.constFind(layer->id().toString());
     if (sequential && previous != previousStates.cend() &&
@@ -3721,6 +3924,121 @@ const CompositionNodeStore& ArtifactAbstractComposition::nodeStore() const
 CompositionNodeStore& ArtifactAbstractComposition::nodeStore()
 {
   return impl_->nodeStore_;
+}
+
+QString ArtifactAbstractComposition::createGroupContainer(
+    const QString& displayName, const QVector<LayerID>& childLayerIds,
+    const QString& preferredId)
+{
+  if (childLayerIds.isEmpty()) return {};
+  QSet<QString> uniqueChildren;
+  for (const auto& childId : childLayerIds) {
+    const QString childKey = childId.toString().trimmed();
+    const auto* childNode = impl_->nodeStore_.node(childKey);
+    if (childKey.isEmpty() || !childNode ||
+        childNode->kind != CompositionNodeKind::Layer ||
+        !childNode->parentId.trimmed().isEmpty() ||
+        uniqueChildren.contains(childKey)) {
+      return {};
+    }
+    uniqueChildren.insert(childKey);
+  }
+
+  QString containerId = preferredId.trimmed();
+  if (containerId.isEmpty()) {
+    containerId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+  }
+  if (impl_->nodeStore_.contains(containerId)) return {};
+
+  int nextOrder = 0;
+  for (const auto& existing : impl_->nodeStore_.nodes()) {
+    nextOrder = std::max(nextOrder, existing.order + 1);
+  }
+  CompositionNode node;
+  node.id = containerId;
+  node.kind = CompositionNodeKind::GroupContainer;
+  node.order = nextOrder;
+  node.properties[QStringLiteral("displayName")] =
+      displayName.trimmed().isEmpty() ? QStringLiteral("Group")
+                                      : displayName.trimmed();
+  node.properties[QStringLiteral("expanded")] = true;
+  node.properties[QStringLiteral("outputMode")] = 0;
+  node.properties[QStringLiteral("activeChildId")] = QString{};
+  node.properties[QStringLiteral("enabled")] = true;
+  node.properties[QStringLiteral("opacity")] = 1.0;
+  node.properties[QStringLiteral("blendMode")] = QStringLiteral("normal");
+  if (!impl_->nodeStore_.addNode(node)) return {};
+
+  QVector<QString> attached;
+  attached.reserve(childLayerIds.size());
+  for (const auto& childId : childLayerIds) {
+    const QString childKey = childId.toString();
+    if (!impl_->nodeStore_.setParent(childKey, containerId)) {
+      for (const auto& attachedId : attached) {
+        impl_->nodeStore_.setParent(attachedId, QString{});
+      }
+      impl_->nodeStore_.removeNode(containerId);
+      return {};
+    }
+    attached.push_back(childKey);
+  }
+
+  impl_->invalidateThumbnailCache();
+  Q_EMIT changed();
+  ArtifactCore::globalEventBus().publish(LayerChangedEvent{
+      id().toString(), containerId, LayerChangedEvent::ChangeType::Modified});
+  return containerId;
+}
+
+bool ArtifactAbstractComposition::removeGroupContainer(const QString& containerId)
+{
+  const QString normalized = containerId.trimmed();
+  const auto* node = impl_->nodeStore_.node(normalized);
+  if (!node || node->kind != CompositionNodeKind::GroupContainer ||
+      impl_->layerMultiIndex_.findById(LayerID(normalized))) {
+    return false;
+  }
+  if (!impl_->nodeStore_.removeNode(normalized)) return false;
+  impl_->invalidateThumbnailCache();
+  Q_EMIT changed();
+  ArtifactCore::globalEventBus().publish(LayerChangedEvent{
+      id().toString(), normalized, LayerChangedEvent::ChangeType::Modified});
+  return true;
+}
+
+bool ArtifactAbstractComposition::setGroupContainerDisplayName(
+    const QString& containerId, const QString& displayName)
+{
+  const QString normalizedId = containerId.trimmed();
+  const QString normalizedName = displayName.trimmed();
+  const auto* node = impl_->nodeStore_.node(normalizedId);
+  if (!node || node->kind != CompositionNodeKind::GroupContainer ||
+      impl_->layerMultiIndex_.findById(LayerID(normalizedId)) ||
+      normalizedName.isEmpty() ||
+      node->properties.value(QStringLiteral("displayName")).toString() == normalizedName) {
+    return false;
+  }
+  if (!impl_->nodeStore_.setProperties(
+          normalizedId,
+          QJsonObject{{QStringLiteral("displayName"), normalizedName}})) {
+    return false;
+  }
+  Q_EMIT changed();
+  ArtifactCore::globalEventBus().publish(LayerChangedEvent{
+      id().toString(), normalizedId, LayerChangedEvent::ChangeType::Modified});
+  return true;
+}
+
+QVector<LayerID> ArtifactAbstractComposition::groupContainerChildLayerIds(
+    const QString& containerId) const
+{
+  QVector<LayerID> result;
+  if (!isGroupContainerNode(containerId)) return result;
+  for (const auto& childKey : impl_->nodeStore_.childrenOf(containerId.trimmed())) {
+    const LayerID childId(childKey);
+    if (impl_->layerMultiIndex_.findById(childId)) result.push_back(childId);
+  }
+  return result;
 }
 
 bool ArtifactAbstractComposition::isGroupContainerNode(const QString& id) const
@@ -5452,6 +5770,14 @@ QJsonDocument ArtifactAbstractComposition::toJson() const{
         }
     }
     obj["effects"] = effectsArray;
+    if (!impl_->automationClipPatterns_.empty()) {
+        QJsonArray clipsArray;
+        for (const auto& pattern : impl_->automationClipPatterns_) {
+            clipsArray.append(
+                ArtifactCore::automationClipPatternToJson(pattern));
+        }
+        obj["automationClips"] = clipsArray;
+    }
     QJsonArray layersArray;
     for (const auto& layer : impl_->layerMultiIndex_.all()) {
         if (layer) {
@@ -5647,6 +5973,38 @@ ArtifactCompositionPtr ArtifactAbstractComposition::fromJson(const QJsonDocument
         }
     }
 
+    comp->impl_->automationClipPatterns_.clear();
+    comp->impl_->nextAutomationClipId_ = 1;
+    if (obj.contains("automationClips") && obj["automationClips"].isArray()) {
+        for (const auto& value : obj["automationClips"].toArray()) {
+            if (!value.isObject()) {
+                continue;
+            }
+            ArtifactCore::AutomationClipPattern pattern;
+            if (!ArtifactCore::automationClipPatternFromJson(
+                    value.toObject(), pattern)) {
+                continue;
+            }
+            bool duplicate = false;
+            for (const auto& existing : comp->impl_->automationClipPatterns_) {
+                if (existing.id == pattern.id) {
+                    duplicate = true;
+                    break;
+                }
+            }
+            if (duplicate) {
+                continue;
+            }
+            comp->impl_->automationClipPatterns_.push_back(std::move(pattern));
+        }
+        std::uint32_t largest = 0;
+        for (const auto& pattern : comp->impl_->automationClipPatterns_) {
+            largest = std::max(largest, pattern.id);
+        }
+        comp->impl_->nextAutomationClipId_ =
+            largest == std::numeric_limits<std::uint32_t>::max() ? 1u : largest + 1u;
+    }
+
     if (obj.contains("layers") && obj["layers"].isArray()) {
         QJsonArray arr = obj["layers"].toArray();
         QVector<ArtifactAbstractLayerPtr> loadedLayers;
@@ -5830,4 +6188,3 @@ QImage ArtifactAbstractComposition::getThumbnailAtFrame(int64_t frameNumber,
 }
 
 };
-

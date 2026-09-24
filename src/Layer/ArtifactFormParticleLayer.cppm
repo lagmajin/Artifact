@@ -22,10 +22,11 @@
 #include <QVariant>
 #include <QVector3D>
 #include <wobjectimpl.h>
+#include <cstddef>
+#include <type_traits>
 
 module Artifact.Layer.FormParticle;
 
-import std;
 import Artifact.Composition.Abstract;
 import Artifact.Render.IRenderer;
 import Memory.SharedPtr;

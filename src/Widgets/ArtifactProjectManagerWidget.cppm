@@ -327,18 +327,14 @@ QSet<QString> findUnusedAssetPathsFromSnapshot(const QJsonObject& snapshot)
 }
 }
 
-QIcon loadSvgAsQIcon(const QString& path, int size = 16)
+QIcon loadSvgAsQIcon(const QString& path)
 {
     if (path.isEmpty()) return QIcon();
     if (path.endsWith(QStringLiteral(".svg"), Qt::CaseInsensitive)) {
         QSvgRenderer renderer(path);
         if (renderer.isValid()) {
-            QPixmap pixmap(size, size);
-            pixmap.fill(Qt::transparent);
-            QPainter painter(&pixmap);
-            renderer.render(&painter);
-            painter.end();
-            if (!pixmap.isNull()) return QIcon(pixmap);
+            // Keep the SVG engine so each screen DPR receives native-resolution pixels.
+            return QIcon(path);
         }
         return QIcon();
     }
@@ -420,7 +416,7 @@ void drawProjectViewEmptyState(QPainter& painter, const QRect& contentRect)
     // Project View uses the compact document mark rather than an illustrative
     // artwork so the empty state stays visually quiet and consistent with the
     // surrounding Project chrome.
-    constexpr int imageSide = 104;
+    constexpr int imageSide = 72;
     const QPixmap illustration = QIcon(
         QStringLiteral(":/icons/Studio/composition_empty_composition.svg"))
         .pixmap(QSize(imageSide, imageSide));
@@ -433,7 +429,7 @@ void drawProjectViewEmptyState(QPainter& painter, const QRect& contentRect)
                               illustration.width(),
                               illustration.height());
         painter.save();
-        painter.setOpacity(0.62);
+        painter.setOpacity(0.46);
         painter.drawPixmap(imageRect.topLeft(), illustration);
         painter.restore();
         y = imageRect.bottom() + 12;
@@ -464,7 +460,7 @@ void drawProjectViewEmptyState(QPainter& painter, const QRect& contentRect)
     painter.drawText(bodyRect, Qt::AlignCenter,
                      hasProject
                          ? QStringLiteral("Adjust the search or filters, or import assets and create a composition.")
-                         : QStringLiteral("Open a project or create a composition to populate Project View."));
+                         : QStringLiteral("Open a project to begin, or create a composition from the action bar."));
 }
 
 constexpr int kHeaderResizeHitRadius = 7;
@@ -554,15 +550,23 @@ public:
 
     struct Colors {
         static QColor background() { return QColor(ArtifactCore::currentDCCTheme().backgroundColor); }
-        static QColor headerBackground() { return QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor); }
+        static QColor headerBackground() { return QColor(ArtifactCore::currentDCCTheme().backgroundColor).lighter(104); }
         static QColor headerText() { return QColor(ArtifactCore::currentDCCTheme().textColor); }
-        static QColor headerSeparator() { return QColor(ArtifactCore::currentDCCTheme().borderColor); }
+        static QColor headerSeparator() {
+            QColor color(ArtifactCore::currentDCCTheme().borderColor);
+            color.setAlpha(120);
+            return color;
+        }
         static QColor headerHover() { return QColor(ArtifactCore::currentDCCTheme().buttonHoverColor); }
         static QColor rowHover() { return QColor(ArtifactCore::currentDCCTheme().buttonHoverColor); }
         static QColor rowSelected() { return QColor(ArtifactCore::currentDCCTheme().selectionColor); }
         static QColor rowSelectedText() { return QColor(ArtifactCore::currentDCCTheme().textColor); }
         static QColor rowText() { return QColor(ArtifactCore::currentDCCTheme().textColor); }
-        static QColor rowBorder() { return QColor(ArtifactCore::currentDCCTheme().borderColor); }
+        static QColor rowBorder() {
+            QColor color(ArtifactCore::currentDCCTheme().borderColor);
+            color.setAlpha(88);
+            return color;
+        }
         static QColor branchNormal() {
             QColor color(ArtifactCore::currentDCCTheme().textColor);
             color.setAlpha(150);
@@ -587,7 +591,10 @@ public:
     QString lastContextCommandLabel;
     QString lastNewCommandId;
     QString lastNewCommandLabel;
-    QVector<int> columnWidths = {320, 150, 260, 190, 220, 180};
+    // Match the focused-workbench reference: the visible table is metadata,
+    // not an internal-ID inspector. The sixth model column remains available
+    // to data/automation paths but is intentionally outside the presentation.
+    QVector<int> columnWidths = {280, 118, 126, 144, 180};
     QVector<VisibleRow> visibleRows;
     QSet<QString> expandedKeys;
     QVector<QMetaObject::Connection> modelConnections;
@@ -608,15 +615,15 @@ public:
     int tileMargin = 14;
     int tileSpacing = 14;
     int tileWidth = 248;
-    int tileHeight = 252;
-    int tilePreviewHeight = 132;
+    int tileHeight = 232;
+    int tilePreviewHeight = 124;
     int tileContentTop = 14;
     int tileContentBottom = 12;
     int tileTextLines = 3;
     int minTileWidth = 188;
     int maxTileWidth = 332;
-    int minTileHeight = 214;
-    int maxTileHeight = 348;
+    int minTileHeight = 202;
+    int maxTileHeight = 320;
 
     QString keyForIndex(QModelIndex index) const {
         index = index.siblingAtColumn(0);
@@ -1364,9 +1371,7 @@ void ArtifactProjectView::paintListMode(QPaintEvent* event)
         painter.drawLine(rowRect.bottomLeft(), rowRect.bottomRight());
 
         int cellX = 0;
-        const int configuredColumnCount = static_cast<int>(impl_->columnWidths.size());
-        const int modelColumnCount = impl_->model ? impl_->model->columnCount({}) : 0;
-        const int columnCount = std::max(configuredColumnCount, modelColumnCount);
+        const int columnCount = static_cast<int>(impl_->columnWidths.size());
 
         for (int column = 0; column < columnCount; ++column) {
             const int width = column < impl_->columnWidths.size() ? impl_->columnWidths[column] : 120;
@@ -1444,9 +1449,7 @@ void ArtifactProjectView::paintListMode(QPaintEvent* event)
     painter.fillRect(QRect(0, 0, width(), impl_->headerHeight), Impl::Colors::headerBackground());
 
     int headerX = 0;
-    const int configuredColumnCount = static_cast<int>(impl_->columnWidths.size());
-    const int modelColumnCount = impl_->model ? impl_->model->columnCount({}) : 0;
-    const int columnCount = std::max(configuredColumnCount, modelColumnCount);
+    const int columnCount = static_cast<int>(impl_->columnWidths.size());
 
     for (int column = 0; column < columnCount; ++column) {
         const int width = column < impl_->columnWidths.size() ? impl_->columnWidths[column] : 120;
@@ -1552,8 +1555,16 @@ void ArtifactProjectView::paintTileMode(QPaintEvent* event)
         const bool hovered = impl_->hoverIndex.isValid() && impl_->hoverIndex == index0;
         const bool hasChildren = impl_->hasChildren(index0);
 
-        QColor tileFill = selected ? Impl::Colors::rowSelected()
-                                   : (hovered ? Impl::Colors::rowHover() : Impl::Colors::headerBackground());
+        QColor tileFill = hovered ? Impl::Colors::rowHover()
+                                  : Impl::Colors::headerBackground();
+        if (selected) {
+            // Keep selection legible without turning the entire card into a
+            // second accent surface. The border and leading rail carry focus.
+            const QColor selection = Impl::Colors::rowSelected();
+            tileFill.setRed((tileFill.red() * 4 + selection.red()) / 5);
+            tileFill.setGreen((tileFill.green() * 4 + selection.green()) / 5);
+            tileFill.setBlue((tileFill.blue() * 4 + selection.blue()) / 5);
+        }
         if (type == eProjectItemType::Folder) {
             tileFill = tileFill.lighter(selected ? 110 : 104);
         }
@@ -1596,6 +1607,7 @@ void ArtifactProjectView::paintTileMode(QPaintEvent* event)
                 previewRect.center() -
                 QPoint(preview.width() / 2, preview.height() / 2);
             painter.drawPixmap(previewTopLeft, preview);
+            painter.fillRect(previewRect, QColor(10, 13, 18, selected ? 18 : 30));
             painter.restore();
             painter.setPen(QPen(QColor(18, 18, 18, 160), 1.0));
             painter.setBrush(Qt::NoBrush);
@@ -1603,13 +1615,13 @@ void ArtifactProjectView::paintTileMode(QPaintEvent* event)
         } else {
             QColor placeholder = QColor(70, 74, 84);
             if (type == eProjectItemType::Composition) {
-                placeholder = QColor(74, 128, 191);
+                placeholder = QColor(66, 94, 128);
             } else if (type == eProjectItemType::Folder) {
-                placeholder = QColor(176, 138, 46);
+                placeholder = QColor(132, 108, 55);
             } else if (type == eProjectItemType::Solid) {
-                placeholder = QColor(110, 88, 170);
+                placeholder = QColor(86, 76, 126);
             } else if (type == eProjectItemType::Footage) {
-                placeholder = QColor(66, 148, 98);
+                placeholder = QColor(61, 112, 78);
             }
             const QPixmap placeholderTexture = projectViewIllustration(
                 QStringLiteral("Studio/project_tile_placeholder.png"),
@@ -1623,11 +1635,11 @@ void ArtifactProjectView::paintTileMode(QPaintEvent* event)
                 const QPoint textureTopLeft =
                     previewRect.center() -
                     QPoint(placeholderTexture.width() / 2, placeholderTexture.height() / 2);
-                painter.setOpacity(selected ? 0.86 : 0.72);
+                painter.setOpacity(selected ? 0.78 : 0.66);
                 painter.drawPixmap(textureTopLeft, placeholderTexture);
                 painter.setOpacity(1.0);
             }
-            painter.fillRect(previewRect, QColor(placeholder.red(), placeholder.green(), placeholder.blue(), 62));
+            painter.fillRect(previewRect, QColor(placeholder.red(), placeholder.green(), placeholder.blue(), 40));
             painter.restore();
             painter.setPen(QPen(QColor(18, 18, 18, 170), 1.0));
             painter.setBrush(Qt::NoBrush);
@@ -1650,7 +1662,15 @@ void ArtifactProjectView::paintTileMode(QPaintEvent* event)
         painter.drawText(titleRect, Qt::AlignLeft | Qt::AlignVCenter,
                          fm.elidedText(title, Qt::ElideRight, titleRect.width()));
 
-        const QStringList metadata = projectItemMetadataLines(sourceIdx, item);
+        QStringList metadata = projectItemMetadataLines(sourceIdx, item);
+        // The title and type badge already identify the item. Prioritize useful
+        // dimensions/timing here; the detail pane retains the full metadata.
+        metadata.removeIf([](const QString& line) {
+            return line.startsWith(QStringLiteral("Name: ")) ||
+                   line.startsWith(QStringLiteral("Type: ")) ||
+                   line == QStringLiteral("Status: Ready") ||
+                   line.startsWith(QStringLiteral("Layout: "));
+        });
         painter.setFont(font());
         painter.setPen(selected ? QColor(235, 238, 242) : QColor(185, 188, 196));
 
@@ -1673,14 +1693,14 @@ void ArtifactProjectView::paintTileMode(QPaintEvent* event)
                               tileRect.top() + 8,
                               badgeW,
                               std::max(18, badgeFm.height() + 4));
-        QColor badgeBg = selected ? QColor(255, 255, 255, 26)
+        QColor badgeBg = selected ? QColor(255, 255, 255, 20)
                                   : (hovered ? QColor(0, 0, 0, 46)
                                              : QColor(0, 0, 0, 34));
         QColor badgePen = selected ? QColor(245, 247, 250)
                                     : (hovered ? QColor(232, 236, 242)
                                                : QColor(210, 214, 220));
         painter.setBrush(badgeBg);
-        painter.setPen(QPen(badgePen, hovered ? 1.2 : 1.0));
+        painter.setPen(Qt::NoPen);
         painter.drawRoundedRect(badgeRect, 6, 6);
         painter.setPen(badgePen);
         painter.drawText(badgeRect.adjusted(6, 0, -6, 0),
@@ -1690,16 +1710,16 @@ void ArtifactProjectView::paintTileMode(QPaintEvent* event)
         const QFontMetrics statusFm(painter.font());
         const int statusW = std::min(tileRect.width() - 20,
                                      statusFm.horizontalAdvance(statusText) + 10);
-        const QRect statusRect(tileRect.left() + 10,
-                               badgeRect.bottom() + 4,
+        const QRect statusRect(previewRect.left() + 8,
+                               previewRect.bottom() - std::max(18, statusFm.height() + 4) - 8,
                                statusW,
                                std::max(18, statusFm.height() + 4));
         const QColor statusAccent = projectItemStatusChipColor(statusText);
         QColor statusBg = statusAccent;
-        statusBg.setAlpha(selected ? 70 : 46);
-        QColor statusPen = statusAccent.lighter(selected ? 145 : 128);
+        statusBg.setAlpha(selected ? 58 : 42);
+        QColor statusPen = statusAccent.lighter(selected ? 136 : 124);
         painter.setBrush(statusBg);
-        painter.setPen(QPen(statusPen, 1.0));
+        painter.setPen(Qt::NoPen);
         painter.drawRoundedRect(statusRect, 6, 6);
         painter.setPen(statusPen);
         painter.drawText(statusRect.adjusted(6, 0, -6, 0),
@@ -1711,13 +1731,14 @@ void ArtifactProjectView::paintTileMode(QPaintEvent* event)
                 const auto found = svc->findComposition(static_cast<CompositionItem*>(item)->compositionId);
                 if (auto comp = found.ptr.lock()) {
                     const auto responsiveLayout = comp->responsiveLayout();
+                    if (responsiveLayout.variants.size() > 1) {
                     const QString layoutSummary = QStringLiteral("Layout: %1")
                         .arg(responsiveLayoutActiveSummary(responsiveLayout));
                     const QFontMetrics layoutFm(painter.font());
                     const int layoutW = std::min(tileRect.width() - 20,
                                                  layoutFm.horizontalAdvance(layoutSummary) + 10);
-                    const QRect layoutRect(tileRect.right() - layoutW - 10,
-                                           statusRect.bottom() + 4,
+                    const QRect layoutRect(previewRect.right() - layoutW - 8,
+                                           previewRect.bottom() - std::max(18, layoutFm.height() + 4) - 8,
                                            layoutW,
                                            std::max(18, layoutFm.height() + 4));
                     painter.setBrush(selected ? QColor(255, 255, 255, 16)
@@ -1731,6 +1752,7 @@ void ArtifactProjectView::paintTileMode(QPaintEvent* event)
                     painter.drawText(layoutRect.adjusted(6, 0, -6, 0),
                                      Qt::AlignCenter,
                                      layoutFm.elidedText(layoutSummary, Qt::ElideRight, layoutRect.width() - 12));
+                    }
                 }
             }
         }
@@ -1751,8 +1773,8 @@ void ArtifactProjectView::paintTileMode(QPaintEvent* event)
                 const QString proxyBadgeText = isStale ? QStringLiteral("Proxy ⚠") : QStringLiteral("Proxy");
                 const QFontMetrics pf(painter.font());
                 const int pw = std::min(tileRect.width() - 20, pf.horizontalAdvance(proxyBadgeText) + 10);
-                const QRect proxyRect(tileRect.right() - pw - 10,
-                                      badgeRect.bottom() + 4,
+                const QRect proxyRect(previewRect.right() - pw - 8,
+                                      previewRect.bottom() - std::max(18, pf.height() + 4) - 8,
                                       pw, std::max(18, pf.height() + 4));
                 painter.setBrush(isStale ? QColor(255, 200, 50, 50) : QColor(50, 200, 100, 40));
                 painter.setPen(QPen(isStale ? QColor(255, 200, 50) : QColor(100, 220, 140), 1.0));
@@ -1994,7 +2016,11 @@ void ArtifactProjectView::mouseMoveEvent(QMouseEvent* event) {
                     mime->setText(filePaths.join(QStringLiteral("\n")));
                 } else {
                     delete mime;
-                    mime = impl_->model->mimeData(sourceRows);
+                    // QSortFilterProxyModel::mimeData() expects indexes from
+                    // the proxy model and maps them to its source internally.
+                    // sourceRows are intentionally kept for item extraction
+                    // above, but must not be passed back to the proxy.
+                    mime = impl_->model->mimeData(selectedRows);
                 }
                 if (!mime || (!mime->hasUrls() && !mime->hasText())) {
                     delete mime;
@@ -2707,13 +2733,8 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                             if (!settingsMacro->lastOperationSucceeded()) return;
                         }
                     }
-                    if (auto current = svc->currentComposition().lock()) {
-                        if (current->id() == compositionId) {
-                            if (auto* playback = ArtifactPlaybackService::instance()) {
-                                playback->setFrameRange(composition->frameRange());
-                                playback->setFrameRate(composition->frameRate());
-                            }
-                        }
+                    if (!svc->finalizeCompositionSettingsChange(compositionId)) {
+                        return;
                     }
 
                     dialog->accept();
@@ -3178,15 +3199,23 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
 
         menu.addSeparator();
         addTrackedAction(QStringLiteral("rename"), QStringLiteral("Rename"), [this, idx]() {
-            bool ok;
-            QString name = QInputDialog::getText(this, "Rename", "New Name:", QLineEdit::Normal, idx.data().toString(), &ok);
+            QModelIndex sourceIdx = idx;
+            if (auto proxy = qobject_cast<const QSortFilterProxyModel*>(idx.model())) {
+                sourceIdx = proxy->mapToSource(idx).siblingAtColumn(0);
+            }
+            const QVariant ptrVar = sourceIdx.data(
+                Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
+            ProjectItem* item = ptrVar.isValid()
+                ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>())
+                : nullptr;
+            bool ok = false;
+            const ArtifactRenameTarget renameTarget = item && item->type() == eProjectItemType::Composition
+                ? ArtifactRenameTarget::Composition
+                : ArtifactRenameTarget::ProjectItem;
+            QString name = ArtifactRenameDialog::getName(
+                this, renameTarget, sourceIdx.data().toString(),
+                QStringLiteral("Project View / Selected Item"), {}, {}, &ok);
             if(ok && !name.isEmpty()) {
-                 QModelIndex sourceIdx = idx;
-                 if (auto proxy = qobject_cast<const QSortFilterProxyModel*>(idx.model())) {
-                     sourceIdx = proxy->mapToSource(idx).siblingAtColumn(0);
-                 }
-                 QVariant ptrVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
-                 ProjectItem* item = ptrVar.isValid() ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>()) : nullptr;
                  if (!renameProjectItem(item, name)) {
                      QMessageBox::warning(this, QStringLiteral("Rename Failed"),
                         QStringLiteral("Could not rename the selected project item."));
@@ -3593,7 +3622,16 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                      loadProjectViewIcon(QStringLiteral("Studio/visibility.svg")));
     addTrackedAction(QStringLiteral("collapse_all"), QStringLiteral("Collapse All"), [this]() { collapseAll(); },
                      loadProjectViewIcon(QStringLiteral("Studio/visibility_off.svg")));
-    addTrackedAction(QStringLiteral("refresh_view"), QStringLiteral("Refresh View"), [this]() { update(); },
+    const QString refreshShortcutText =
+        ArtifactCore::ShortcutBindings::instance().shortcutText(
+            ArtifactCore::ShortcutId::ProjectRefresh);
+    const QString refreshLabel = refreshShortcutText.isEmpty()
+        ? QStringLiteral("Refresh View")
+        : QStringLiteral("Refresh View (%1)").arg(refreshShortcutText);
+    addTrackedAction(QStringLiteral("refresh_view"), refreshLabel, []() {
+        ArtifactCore::globalEventBus().publish<ProjectChangedEvent>(
+            ProjectChangedEvent{QString(), QString()});
+    },
                      loadProjectViewIcon(QStringLiteral("Studio/replay.svg")));
     addTrackedAction(QStringLiteral("show_dependency_graph"), QStringLiteral("Show Dependency Graph..."), [this, svc]() {
         Impl::showDependencyGraphDialog(this, svc);
@@ -3945,6 +3983,13 @@ void ArtifactProjectView::focusOutEvent(QFocusEvent* event)
 
  void ArtifactProjectView::keyPressEvent(QKeyEvent* event)
  {
+     if (event && ArtifactCore::ShortcutBindings::instance().matches(
+                      event, ArtifactCore::ShortcutId::ProjectRefresh)) {
+         ArtifactCore::globalEventBus().publish<ProjectChangedEvent>(
+             ProjectChangedEvent{QString(), QString()});
+         event->accept();
+         return;
+     }
      if (!impl_ || impl_->visibleRows.isEmpty()) { QWidget::keyPressEvent(event); return; }
      if (auto* input = InputOperator::instance()) {
          input->setActiveContext(QString::fromLatin1(kProjectContext));
@@ -4176,6 +4221,9 @@ public:
     std::size_t shortcutListenerToken_ = 0;
     QComboBox* typeFilterBox = nullptr;
     QComboBox* viewModeBox = nullptr;
+    QWidget* viewModeControl = nullptr;
+    ProjectCallbackButton* treeModeButton = nullptr;
+    ProjectCallbackButton* tileModeButton = nullptr;
     QCheckBox* unusedOnlyCheck = nullptr;
     QProgressBar* proxyQueueProgress = nullptr;
     ArtifactProjectManagerToolBox* toolBox = nullptr;
@@ -4188,6 +4236,7 @@ public:
     QLabel* selectionDetailLabel = nullptr;
     QWidget* selectionChrome = nullptr;
     QWidget* detailEmptyState = nullptr;
+    QWidget* detailPanel = nullptr;
     QLabel* detailEmptyTitle = nullptr;
     QLabel* detailEmptyBody = nullptr;
     QLabel* itemActionsLabel = nullptr;
@@ -4244,6 +4293,7 @@ public:
     ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
     std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
     bool projectRefreshQueued_ = false;
+    bool projectModelRefreshPending_ = false;
     bool unusedAssetSnapshotQueued_ = false;
     bool unusedAssetRefreshInFlight_ = false;
     bool unusedAssetRefreshPending_ = false;
@@ -4514,15 +4564,8 @@ public:
         }
         for (auto* compItem : items) {
             if (!compItem) continue;
-            const auto found = svc->findComposition(compItem->compositionId);
-            auto comp = found.ptr.lock();
-            if (!found.success || !comp) continue;
-            if (auto current = svc->currentComposition().lock();
-                current && current->id() == comp->id()) {
-                if (auto* playback = ArtifactPlaybackService::instance()) {
-                    playback->setFrameRange(comp->frameRange());
-                    playback->setFrameRate(comp->frameRate());
-                }
+            if (!svc->finalizeCompositionSettingsChange(compItem->compositionId)) {
+                return false;
             }
         }
         return true;
@@ -4874,7 +4917,12 @@ public:
         }
         bool ok = false;
         const QString currentName = item->name.toQString();
-        const QString newName = QInputDialog::getText(parent, "Rename", "New Name:", QLineEdit::Normal, currentName, &ok);
+        const ArtifactRenameTarget renameTarget = item->type() == eProjectItemType::Composition
+            ? ArtifactRenameTarget::Composition
+            : ArtifactRenameTarget::ProjectItem;
+        const QString newName = ArtifactRenameDialog::getName(
+            parent, renameTarget, currentName,
+            QStringLiteral("Project View / Selected Item"), {}, {}, &ok);
         if (!ok || newName.trimmed().isEmpty()) {
             return false;
         }
@@ -4976,17 +5024,20 @@ public:
     }
 
     QString selectionSummaryText() const {
+        const auto* service = ArtifactProjectService::instance();
+        const QString projectName = service && service->hasProject()
+            ? service->projectName().toQString().trimmed()
+            : QStringLiteral("Project");
         const QString typeText = typeFilterBox ? typeFilterBox->currentText() : QStringLiteral("All");
         const QString unusedText = unusedOnlyCheck && unusedOnlyCheck->isChecked()
             ? QStringLiteral("Unused only")
             : QStringLiteral("All items");
-        const QString viewModeText = projectView_ && projectView_->presentationMode() == ArtifactProjectView::PresentationMode::Tile
-            ? QStringLiteral("Tile")
-            : QStringLiteral("Tree");
-        QString summary = QStringLiteral("%1  ·  %2  ·  %3")
-            .arg(viewModeText)
-            .arg(typeText)
-            .arg(unusedText);
+        QString summary = QStringLiteral("Project  /  %1  /  %2")
+            .arg(projectName.isEmpty() ? QStringLiteral("Untitled") : projectName)
+            .arg(typeText == QStringLiteral("All") ? unusedText : typeText);
+        if (typeText != QStringLiteral("All") && unusedText != QStringLiteral("All items")) {
+            summary += QStringLiteral("  /  %1").arg(unusedText);
+        }
         const QString searchText = searchBar ? searchBar->text().trimmed() : QString();
         if (!searchText.isEmpty()) {
             summary += QStringLiteral("  ·  Search: \"%1\"").arg(searchText);
@@ -5071,27 +5122,35 @@ public:
             : QString();
         const QString sizeText = selectedFootageSizeText();
         const QString sizePart = sizeText.isEmpty() ? QString() : QStringLiteral(" · %1").arg(sizeText);
-        return QStringLiteral("%1 items  ·  %2 selected%3%4")
-            .arg(resultCount)
-            .arg(selectedCount)
-            .arg(compositionPart)
-            .arg(sizePart);
+        const QString countText = resultCount == 1 ? QStringLiteral("1 item")
+                                                  : QStringLiteral("%1 items").arg(resultCount);
+        return selectedCount > 0
+            ? countText + QStringLiteral(" · %1 selected%2%3")
+                              .arg(selectedCount).arg(compositionPart, sizePart)
+            : countText;
     }
 
     QString syncStateText() const {
-        const auto *svc = ArtifactProjectService::instance();
-        return svc && svc->hasProject() ? QStringLiteral("Asset Browser linked")
-                                        : QStringLiteral("No project");
+        const auto* svc = ArtifactProjectService::instance();
+        if (!svc || !svc->hasProject()) {
+            return QStringLiteral("0 warnings  ·  0 errors");
+        }
+        const QString health = svc->currentProjectHealthSummaryText().trimmed();
+        if (health.isEmpty() ||
+            health.contains(QStringLiteral("warning: none"), Qt::CaseInsensitive)) {
+            return QStringLiteral("0 warnings  ·  0 errors");
+        }
+        return QStringLiteral("Project attention required");
     }
 
     QString projectHealthText() const {
         auto* svc = ArtifactProjectService::instance();
         if (!svc || !svc->hasProject()) {
-            return QStringLiteral("No project open");
+            return QStringLiteral("0 items");
         }
-        const QString health = svc->currentProjectHealthSummaryText();
-        const QString unused = QStringLiteral("Unused: %1").arg(unusedAssetPaths_.size());
-        return health.isEmpty() ? unused : QStringLiteral("%1 | %2").arg(health, unused);
+        const int resultCount = proxyModel_ ? proxyModel_->visibleRowCount() : 0;
+        return resultCount == 1 ? QStringLiteral("1 item")
+                                : QStringLiteral("%1 items").arg(resultCount);
     }
 
     void refreshSelectionChrome() {
@@ -5109,6 +5168,8 @@ public:
                 const QSignalBlocker blocker(viewModeBox);
                 viewModeBox->setCurrentText(desiredMode);
             }
+            if (treeModeButton) treeModeButton->setChecked(desiredMode == QStringLiteral("Tree"));
+            if (tileModeButton) tileModeButton->setChecked(desiredMode == QStringLiteral("Tile"));
         }
         if (syncStateLabel) {
             syncStateLabel->setText(syncStateText());
@@ -5136,6 +5197,9 @@ public:
         const bool hasItem = item != nullptr;
         const auto* projectService = ArtifactProjectService::instance();
         const bool hasProject = projectService && projectService->hasProject();
+        if (detailPanel) {
+            detailPanel->setVisible(hasProject && owner_ && owner_->width() >= 760);
+        }
         if (detailEmptyState) {
             detailEmptyState->setVisible(!hasItem);
         }
@@ -5167,6 +5231,7 @@ public:
             : isFootage ? (QFileInfo(static_cast<FootageItem*>(item)->filePath).exists() ? QStringLiteral("Available") : QStringLiteral("Missing"))
             : isFolder ? QStringLiteral("Folder")
             : isComposition ? QStringLiteral("Composition")
+            : item && item->type() == eProjectItemType::Solid ? QStringLiteral("Solid")
             : QStringLiteral("Item");
         if (selectionDetailLabel) {
             if (!hasItem) {
@@ -6131,7 +6196,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     // with the 2026-09-08 mock instead of repeating a second large title row.
     impl_->projectNameLabel->setVisible(false);
 
-    impl_->syncStateLabel = new QLabel(QStringLiteral("Asset Browser linked"), chromePanel);
+    impl_->syncStateLabel = new QLabel(QStringLiteral("0 warnings  ·  0 errors"), chromePanel);
     impl_->syncStateLabel->setObjectName(QStringLiteral("projectManagerSyncChip"));
     {
         QFont f = impl_->syncStateLabel->font();
@@ -6142,17 +6207,18 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
         impl_->syncStateLabel->setContentsMargins(8, 3, 8, 3);
         impl_->syncStateLabel->setMaximumHeight(28);
         QPalette pal = impl_->syncStateLabel->palette();
-        pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().accentColor));
+        pal.setColor(QPalette::WindowText,
+                     QColor(ArtifactCore::currentDCCTheme().textColor).darker(125));
         impl_->syncStateLabel->setPalette(pal);
     }
     chromeLayout->addWidget(impl_->syncStateLabel);
 
-    impl_->projectHealthLabel = new QLabel(QStringLiteral("Status: Open a project to inspect details"), chromePanel);
+    impl_->projectHealthLabel = new QLabel(QStringLiteral("0 items"), chromePanel);
     impl_->projectHealthLabel->setObjectName(QStringLiteral("projectManagerSyncChip"));
     {
         QFont f = impl_->projectHealthLabel->font();
         f.setPointSize(9);
-        f.setBold(true);
+        f.setBold(false);
         impl_->projectHealthLabel->setFont(f);
         impl_->projectHealthLabel->setAlignment(Qt::AlignCenter);
         impl_->projectHealthLabel->setContentsMargins(8, 3, 8, 3);
@@ -6197,7 +6263,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     }
     selectionChromeLayout->addWidget(impl_->filterSummaryLabel);
     impl_->filterSummaryLabel->setVisible(false);
-    impl_->selectionStateLabel = new QLabel(QStringLiteral("0 items  ·  0 selected"), selectionChrome);
+    impl_->selectionStateLabel = new QLabel(QStringLiteral("0 items"), selectionChrome);
     impl_->selectionStateLabel->setWordWrap(false);
     impl_->selectionStateLabel->setMaximumHeight(24);
     impl_->selectionStateLabel->setToolTip(QStringLiteral("Filtered result count and selection-specific state."));
@@ -6396,7 +6462,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
         font.setBold(true);
         impl_->openSelectionButton->setFont(font);
     }
-    auto* itemActionsLabel = new QLabel(QStringLiteral("Item"), selectionChrome);
+    auto* itemActionsLabel = new QLabel(QStringLiteral("Actions"), selectionChrome);
     impl_->itemActionsLabel = itemActionsLabel;
     itemActionsLabel->setObjectName(QStringLiteral("projectManagerActionGroupLabel"));
     auto* proxyActionsLabel = new QLabel(QStringLiteral("Proxy"), selectionChrome);
@@ -6577,10 +6643,10 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     impl_->searchBar->setPlaceholderText(QStringLiteral("Search project, tags, type..."));
     impl_->searchBar->setClearButtonEnabled(true);
     impl_->searchBar->addAction(
-        loadProjectViewIcon(QStringLiteral("Studio/search.svg")),
+        loadProjectViewIcon(QStringLiteral("Studio/project_search.svg")),
         QLineEdit::LeadingPosition);
-    impl_->searchBar->setMinimumHeight(36);
-    impl_->searchBar->setMaximumHeight(36);
+    impl_->searchBar->setMinimumHeight(34);
+    impl_->searchBar->setMaximumHeight(34);
     {
         QFont f = impl_->searchBar->font();
         f.setPointSize(11);
@@ -6608,30 +6674,28 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
         QStringLiteral("Limit the project view to a selected item type."));
     impl_->typeFilterBox->addItems(QStringList() << "All" << "Composition" << "Footage"
                                                   << "Input Source" << "Folder" << "Solid");
-    impl_->typeFilterBox->setMinimumWidth(132);
-    impl_->typeFilterBox->setMinimumHeight(36);
-    impl_->typeFilterBox->setMaximumHeight(36);
+    impl_->typeFilterBox->setFixedWidth(116);
+    impl_->typeFilterBox->setMinimumHeight(32);
+    impl_->typeFilterBox->setMaximumHeight(32);
     impl_->viewModeBox = new QComboBox(filterBarHost);
     impl_->viewModeBox->setObjectName(QStringLiteral("projectManagerViewModeBox"));
     impl_->viewModeBox->setAccessibleName(QStringLiteral("Project view mode"));
     impl_->viewModeBox->setAccessibleDescription(
         QStringLiteral("Choose hierarchy Tree view or visual Tile view."));
     impl_->viewModeBox->addItem(
-        loadProjectViewIcon(QStringLiteral("Studio/view_list.svg")),
+        loadProjectViewIcon(QStringLiteral("Studio/project_tree.svg")),
         QStringLiteral("Tree"));
     impl_->viewModeBox->addItem(
-        loadProjectViewIcon(QStringLiteral("Studio/grid_view.svg")),
+        loadProjectViewIcon(QStringLiteral("Studio/project_tiles.svg")),
         QStringLiteral("Tile"));
-    impl_->viewModeBox->setMinimumWidth(104);
-    impl_->viewModeBox->setMinimumHeight(36);
-    impl_->viewModeBox->setMaximumHeight(36);
+    impl_->viewModeBox->setVisible(false);
     impl_->viewModeBox->setToolTip(QStringLiteral("Switch between hierarchy-first Tree view and visual Tile view."));
     impl_->unusedOnlyCheck = new QCheckBox("Unused only", filterBarHost);
     impl_->unusedOnlyCheck->setObjectName(QStringLiteral("projectManagerUnusedOnlyCheck"));
     impl_->unusedOnlyCheck->setAccessibleName(QStringLiteral("Unused items only"));
     impl_->unusedOnlyCheck->setAccessibleDescription(
         QStringLiteral("Show only project items not referenced by the current composition."));
-    impl_->unusedOnlyCheck->setMinimumHeight(36);
+    impl_->unusedOnlyCheck->setMinimumHeight(32);
     QSettings projectViewSettings;
     impl_->typeFilterBox->setCurrentText(projectViewSettings.value(
         QStringLiteral("ProjectView/TypeFilter"), QStringLiteral("All")).toString());
@@ -6658,12 +6722,45 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     applyProjectControlPalette(impl_->typeFilterBox);
     applyProjectControlPalette(impl_->viewModeBox);
     applyProjectControlPalette(impl_->unusedOnlyCheck);
+    impl_->viewModeControl = new QWidget(filterBarHost);
+    auto* viewModeLayout = new QHBoxLayout(impl_->viewModeControl);
+    viewModeLayout->setContentsMargins(0, 0, 0, 0);
+    viewModeLayout->setSpacing(0);
+    impl_->treeModeButton = new ProjectCallbackButton(QStringLiteral("Tree"), impl_->viewModeControl);
+    impl_->tileModeButton = new ProjectCallbackButton(QStringLiteral("Tile"), impl_->viewModeControl);
+    for (auto* button : {impl_->treeModeButton, impl_->tileModeButton}) {
+        button->setCheckable(true);
+        button->setAutoExclusive(false);
+        button->setMinimumSize(62, 32);
+        button->setMaximumHeight(32);
+        applyProjectControlPalette(button);
+    }
+    impl_->treeModeButton->setAccessibleDescription(QStringLiteral("Show hierarchy-first Tree view."));
+    impl_->tileModeButton->setAccessibleDescription(QStringLiteral("Show visual Tile view."));
+    impl_->treeModeButton->setCallback([this]() {
+        if (!impl_) return;
+        if (impl_->treeModeButton) impl_->treeModeButton->setChecked(true);
+        if (impl_->tileModeButton) impl_->tileModeButton->setChecked(false);
+        if (impl_->viewModeBox) impl_->viewModeBox->setCurrentText(QStringLiteral("Tree"));
+    });
+    impl_->tileModeButton->setCallback([this]() {
+        if (!impl_) return;
+        if (impl_->treeModeButton) impl_->treeModeButton->setChecked(false);
+        if (impl_->tileModeButton) impl_->tileModeButton->setChecked(true);
+        if (impl_->viewModeBox) impl_->viewModeBox->setCurrentText(QStringLiteral("Tile"));
+    });
+    impl_->treeModeButton->setChecked(
+        impl_->viewModeBox->currentText().compare(QStringLiteral("Tree"), Qt::CaseInsensitive) == 0);
+    impl_->tileModeButton->setChecked(
+        impl_->viewModeBox->currentText().compare(QStringLiteral("Tile"), Qt::CaseInsensitive) == 0);
+    viewModeLayout->addWidget(impl_->treeModeButton);
+    viewModeLayout->addWidget(impl_->tileModeButton);
     impl_->proxyQueueProgress = new QProgressBar(filterBarHost);
     impl_->proxyQueueProgress->setVisible(false);
     impl_->proxyQueueProgress->setTextVisible(true);
     impl_->proxyQueueProgress->setFormat("Proxy queue %v/%m");
     filterBar->addWidget(impl_->typeFilterBox);
-    filterBar->addWidget(impl_->viewModeBox);
+    filterBar->addWidget(impl_->viewModeControl);
     filterBar->addWidget(impl_->unusedOnlyCheck);
     filterBar->addWidget(impl_->proxyQueueProgress, 1);
     filterBarHost->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
@@ -6675,11 +6772,12 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     chromeLayout->removeWidget(filterBarHost);
     auto* searchFilterRow = new QWidget(chromePanel);
     searchFilterRow->setObjectName(QStringLiteral("projectManagerSearchFilterRow"));
+    searchFilterRow->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
     searchFilterRow->setAutoFillBackground(true);
     searchFilterRow->setPalette(chromePanel->palette());
     auto* searchFilterLayout = new QHBoxLayout(searchFilterRow);
-    searchFilterLayout->setContentsMargins(14, 8, 14, 8);
-    searchFilterLayout->setSpacing(10);
+    searchFilterLayout->setContentsMargins(16, 6, 16, 6);
+    searchFilterLayout->setSpacing(8);
     searchFilterLayout->addWidget(impl_->searchBar, 1);
     searchFilterLayout->addWidget(filterBarHost);
     chromeLayout->addWidget(searchFilterRow);
@@ -6702,7 +6800,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     }
 
     impl_->toolBox = new ArtifactProjectManagerToolBox(this);
-    impl_->toolBox->setMaximumWidth(132);
+    impl_->toolBox->setFixedWidth(148);
 
     auto* contentSplit = new QSplitter(Qt::Horizontal, this);
     contentSplit->setObjectName(QStringLiteral("projectManagerContentSplit"));
@@ -6724,14 +6822,14 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     {
         QPalette pal = browseContextBar->palette();
         pal.setColor(QPalette::Window,
-                     QColor(ArtifactCore::currentDCCTheme().backgroundColor).lighter(105));
+                     QColor(ArtifactCore::currentDCCTheme().backgroundColor).lighter(102));
         browseContextBar->setPalette(pal);
     }
     auto* browseContextLayout = new QHBoxLayout(browseContextBar);
-    browseContextBar->setMinimumHeight(34);
-    browseContextBar->setMaximumHeight(34);
-    browseContextLayout->setContentsMargins(14, 4, 14, 4);
-    browseContextLayout->setSpacing(8);
+    browseContextBar->setMinimumHeight(42);
+    browseContextBar->setMaximumHeight(42);
+    browseContextLayout->setContentsMargins(20, 6, 20, 6);
+    browseContextLayout->setSpacing(10);
     // The list and tile content needs its own compact context row.  These
     // labels describe the current presentation and result set, not selection
     // details, so they belong directly above the browse surface.
@@ -6746,6 +6844,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     contentSplit->addWidget(projectPane);
 
     auto* detailPanel = new QWidget(contentSplit);
+    impl_->detailPanel = detailPanel;
     detailPanel->setObjectName(QStringLiteral("projectManagerDetailPanel"));
     detailPanel->setAutoFillBackground(true);
     {
@@ -6757,10 +6856,12 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     // The detail surface needs a readable lower bound, but it must not be
     // capped: Project View is commonly docked wide enough to inspect metadata
     // beside the hierarchy.
-    detailPanel->setMinimumWidth(260);
+    detailPanel->setMinimumWidth(256);
+    detailPanel->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Ignored);
+    detailPanel->setMaximumWidth(336);
     auto* detailLayout = new QVBoxLayout(detailPanel);
     detailLayout->setContentsMargins(16, 14, 16, 14);
-    detailLayout->setSpacing(10);
+    detailLayout->setSpacing(9);
 
     impl_->detailEmptyState = new QWidget(detailPanel);
     impl_->detailEmptyState->setSizePolicy(QSizePolicy::Expanding,
@@ -6801,9 +6902,9 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     detailLayout->addWidget(selectionChrome);
     detailLayout->addWidget(impl_->compositionEditorPanel);
     contentSplit->addWidget(detailPanel);
-    contentSplit->setStretchFactor(0, 1);
-    contentSplit->setStretchFactor(1, 0);
-    contentSplit->setSizes({850, 340});
+    contentSplit->setStretchFactor(0, 3);
+    contentSplit->setStretchFactor(1, 1);
+    contentSplit->setSizes({1200, 336});
     mainLayout->addWidget(contentSplit, 1);
 
     auto* statusBar = new QWidget(this);
@@ -6815,11 +6916,11 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
                      QColor(ArtifactCore::currentDCCTheme().backgroundColor).lighter(104));
         statusBar->setPalette(pal);
     }
-    statusBar->setMinimumHeight(32);
-    statusBar->setMaximumHeight(32);
+    statusBar->setMinimumHeight(40);
+    statusBar->setMaximumHeight(40);
     auto* statusLayout = new QHBoxLayout(statusBar);
-    statusLayout->setContentsMargins(14, 0, 14, 0);
-    statusLayout->setSpacing(8);
+    statusLayout->setContentsMargins(20, 0, 20, 0);
+    statusLayout->setSpacing(12);
     impl_->projectHealthLabel->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
     impl_->syncStateLabel->setAlignment(Qt::AlignVCenter | Qt::AlignRight);
     statusLayout->addWidget(impl_->projectHealthLabel, 1);
@@ -6995,8 +7096,13 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     });
 
     QPointer<ArtifactProjectManagerWidget> widgetPtr(this);
-    const auto queueProjectPresentationRefresh = [widgetPtr]() {
-        if (!widgetPtr || !widgetPtr->impl_ || widgetPtr->impl_->projectRefreshQueued_) {
+    const auto queueProjectPresentationRefresh = [widgetPtr](const bool reloadModel) {
+        if (!widgetPtr || !widgetPtr->impl_) {
+            return;
+        }
+        widgetPtr->impl_->projectModelRefreshPending_ =
+            widgetPtr->impl_->projectModelRefreshPending_ || reloadModel;
+        if (widgetPtr->impl_->projectRefreshQueued_) {
             return;
         }
         widgetPtr->impl_->projectRefreshQueued_ = true;
@@ -7006,6 +7112,15 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
             }
             auto* impl = widgetPtr->impl_;
             impl->projectRefreshQueued_ = false;
+            const bool reloadModel = impl->projectModelRefreshPending_;
+            impl->projectModelRefreshPending_ = false;
+            if (reloadModel) {
+                // Structural project and layer mutations can replace the
+                // project-item tree. Repainting/filter invalidation alone
+                // cannot expose newly created items.
+                impl->update();
+                return;
+            }
             impl->refreshUnusedAssetCache();
             if (impl->proxyModel_) {
                 impl->proxyModel_->setAdvancedFilter(
@@ -7019,12 +7134,14 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     };
 
     impl_->eventBusSubscriptions_.push_back(
-        impl_->eventBus_.subscribe<LayerChangedEvent>([queueProjectPresentationRefresh](const LayerChangedEvent&) {
-        queueProjectPresentationRefresh();
+        impl_->eventBus_.subscribe<LayerChangedEvent>([queueProjectPresentationRefresh](const LayerChangedEvent& event) {
+        queueProjectPresentationRefresh(
+            event.changeType == LayerChangedEvent::ChangeType::Created ||
+            event.changeType == LayerChangedEvent::ChangeType::Removed);
     }));
     impl_->eventBusSubscriptions_.push_back(
         impl_->eventBus_.subscribe<ProjectChangedEvent>([queueProjectPresentationRefresh](const ProjectChangedEvent&) {
-        queueProjectPresentationRefresh();
+        queueProjectPresentationRefresh(true);
     }));
     impl_->eventBusSubscriptions_.push_back(
         impl_->eventBus_.subscribe<CurrentCompositionChangedEvent>([this](const CurrentCompositionChangedEvent&) {
@@ -7253,6 +7370,7 @@ void ArtifactProjectManagerWidget::updateRequested() {
         return;
     }
     impl_->projectRefreshQueued_ = false;
+    impl_->projectModelRefreshPending_ = false;
     impl_->update();
     if (impl_) {
         impl_->refreshSelectionChrome();
@@ -7263,6 +7381,16 @@ void ArtifactProjectManagerWidget::updateRequested() {
 void ArtifactProjectManagerWidget::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
+    if (impl_ && impl_->detailPanel) {
+        const auto* service = ArtifactProjectService::instance();
+        impl_->detailPanel->setVisible(width() >= 760 && service && service->hasProject());
+    }
+    if (auto* row = findChild<QWidget*>(QStringLiteral("projectManagerSearchFilterRow"))) {
+        if (auto* rowLayout = qobject_cast<QHBoxLayout*>(row->layout())) {
+            rowLayout->setDirection(width() < 640 ? QBoxLayout::TopToBottom
+                                                 : QBoxLayout::LeftToRight);
+        }
+    }
     if (impl_ && impl_->projectView_) {
         scheduleProjectViewRefresh(impl_->projectView_);
         update();
@@ -7330,13 +7458,13 @@ ArtifactProjectManagerToolBox::ArtifactProjectManagerToolBox(QWidget* parent) : 
         auto b = new QPushButton();
         const QString objectName = QStringLiteral("projectManagerToolbarButton_%1").arg(fallbackText);
         b->setObjectName(objectName.simplified().replace(' ', '_'));
-        const int targetSize = Accessibility::scaledSize(22);
+        const int targetSize = Accessibility::scaledSize(28);
         b->setFixedSize(targetSize, targetSize);
         b->setToolTip(tip);
         b->setAccessibleName(tip);
         b->setAccessibleDescription(
             QStringLiteral("Project View action: %1.").arg(tip));
-        QIcon icon = loadProjectViewIcon(iconPath);
+        QIcon icon = loadProjectViewIcon(iconPath, QFileInfo(iconPath).fileName());
         if ((icon.isNull() || icon.pixmap(16, 16).isNull()) && QApplication::style()) {
             icon = QApplication::style()->standardIcon(fallbackIcon);
         }
@@ -7345,7 +7473,8 @@ ArtifactProjectManagerToolBox::ArtifactProjectManagerToolBox(QWidget* parent) : 
         } else {
             b->setText(fallbackText);
         }
-        b->setIconSize(QSize(15, 15));
+        const int iconSize = Accessibility::scaledSize(16);
+        b->setIconSize(QSize(iconSize, iconSize));
         b->setFlat(true);
         {
             QPalette pal = b->palette();
@@ -7355,10 +7484,10 @@ ArtifactProjectManagerToolBox::ArtifactProjectManagerToolBox(QWidget* parent) : 
         return b;
     };
 
-    auto btnNew = createBtn("New Composition", QStringLiteral("Studio/composition.svg"), QStyle::SP_FileDialogNewFolder, QStringLiteral("N"));
-    auto btnFolder = createBtn("New Folder", QStringLiteral("Studio/folder.svg"), QStyle::SP_DirIcon, QStringLiteral("F"));
-    auto btnProxy = createBtn("Generate Proxies", QStringLiteral("Studio/replay.svg"), QStyle::SP_BrowserReload, QStringLiteral("P"));
-    auto btnDel = createBtn("Delete", QStringLiteral("Studio/delete.svg"), QStyle::SP_TrashIcon, QStringLiteral("D"));
+    auto btnNew = createBtn("New Composition", QStringLiteral("Studio/project_new_composition.svg"), QStyle::SP_FileDialogNewFolder, QStringLiteral("N"));
+    auto btnFolder = createBtn("New Folder", QStringLiteral("Studio/project_new_folder.svg"), QStyle::SP_DirIcon, QStringLiteral("F"));
+    auto btnProxy = createBtn("Generate Proxies", QStringLiteral("Studio/project_proxy.svg"), QStyle::SP_BrowserReload, QStringLiteral("P"));
+    auto btnDel = createBtn("Delete", QStringLiteral("Studio/project_delete.svg"), QStyle::SP_TrashIcon, QStringLiteral("D"));
 
     layout->addWidget(btnNew);
     layout->addWidget(btnFolder);

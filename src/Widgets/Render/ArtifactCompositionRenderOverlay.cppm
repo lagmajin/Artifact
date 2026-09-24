@@ -658,7 +658,7 @@ __declspec(dllexport) void drawViewportPieMenuOverlay(ArtifactIRenderer *rendere
   const int count = static_cast<int>(model.items.size());
   const float sectorSize = 360.0f / static_cast<float>(std::max(1, count));
   renderer->drawSolidRect(0.0f, 0.0f, overlayWf, overlayHf,
-                          FloatColor{0.0f, 0.0f, 0.0f, 0.16f}, 1.0f);
+                          FloatColor{0.0f, 0.0f, 0.0f, 0.07f}, 1.0f);
   renderer->drawCircle(static_cast<float>(center.x()),
                        static_cast<float>(center.y()), outerRadius + 8.0f,
                        FloatColor{0.08f, 0.10f, 0.13f, 0.94f}, 1.0f, true);
@@ -673,13 +673,16 @@ __declspec(dllexport) void drawViewportPieMenuOverlay(ArtifactIRenderer *rendere
   titleFont.setPointSizeF(std::max(10.0, static_cast<double>(titleFont.pointSizeF()) + 1.0));
   titleFont.setWeight(QFont::DemiBold);
 
+  std::vector<Detail::float2> polygon;
+  std::vector<Detail::float2> innerEdge;
+  polygon.reserve(13);
+  innerEdge.reserve(11);
   for (int i = 0; i < count; ++i) {
     const auto &item = model.items[static_cast<size_t>(i)];
     const float startAngle = 90.0f - (i + 1) * sectorSize + sectorSize * 0.5f;
     const float endAngle = startAngle + sectorSize;
     const int steps = 10;
-    std::vector<Detail::float2> polygon;
-    polygon.reserve(static_cast<size_t>(steps + 3));
+    polygon.clear();
     polygon.push_back({static_cast<float>(center.x()),
                        static_cast<float>(center.y())});
     for (int s = 0; s <= steps; ++s) {
@@ -693,11 +696,10 @@ __declspec(dllexport) void drawViewportPieMenuOverlay(ArtifactIRenderer *rendere
     }
     const bool selected = (i == selectedIndex);
     renderer->drawSolidPolygonLocal(
-        polygon, selected ? FloatColor{0.18f, 0.34f, 0.52f, 0.95f}
+        polygon, selected ? FloatColor{0.72f, 0.43f, 0.12f, 0.96f}
                           : FloatColor{0.10f, 0.12f, 0.15f, 0.88f});
 
-    std::vector<Detail::float2> innerEdge;
-    innerEdge.reserve(static_cast<size_t>(steps + 3));
+    innerEdge.clear();
     for (int s = 0; s <= steps; ++s) {
       const float t = static_cast<float>(s) / static_cast<float>(steps);
       const float ang =
@@ -721,17 +723,22 @@ __declspec(dllexport) void drawViewportPieMenuOverlay(ArtifactIRenderer *rendere
                        item.enabled ? FloatColor{0.92f, 0.95f, 0.98f, 1.0f}
                                     : FloatColor{0.55f, 0.58f, 0.62f, 1.0f},
                        Qt::AlignCenter);
+    if (item.checked) {
+      renderer->drawCircle(static_cast<float>(labelPos.x()),
+                           static_cast<float>(labelPos.y() + 16.0f), 2.5f,
+                           FloatColor{0.90f, 0.68f, 0.33f, 1.0f}, 1.0f, true);
+    }
   }
 
   renderer->drawCircle(static_cast<float>(center.x()),
                        static_cast<float>(center.y()), innerRadius - 4.0f,
                        FloatColor{0.03f, 0.04f, 0.06f, 1.0f}, 1.0f, true);
-  renderer->drawText(QRectF(center.x() - innerRadius, center.y() - innerRadius,
-                            innerRadius * 2.0f, innerRadius * 2.0f),
-                     model.title.isEmpty() ? QStringLiteral("Menu")
-                                           : model.title,
-                     titleFont, FloatColor{0.95f, 0.97f, 0.99f, 1.0f},
-                     Qt::AlignCenter);
+  if (!model.title.isEmpty()) {
+    renderer->drawText(QRectF(center.x() - innerRadius, center.y() - innerRadius,
+                              innerRadius * 2.0f, innerRadius * 2.0f),
+                       model.title, titleFont,
+                       FloatColor{0.95f, 0.97f, 0.99f, 1.0f}, Qt::AlignCenter);
+  }
 
   renderer->setZoom(prevZoom);
   renderer->setPan(prevPanX, prevPanY);

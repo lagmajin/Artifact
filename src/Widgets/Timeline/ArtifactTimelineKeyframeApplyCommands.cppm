@@ -3,6 +3,10 @@ module;
 #include <QSet>
 #include <QString>
 #include <QVector>
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QJsonValue>
+#include <QStringList>
 
 #include <utility>
 
@@ -26,6 +30,28 @@ ArtifactCore::AbstractPropertyPtr findLayerPropertyByPath(
   for (const auto &group : groups) {
     for (const auto &property : group.sortedProperties()) {
       if (property && property->getName() == propertyPath) return property;
+    }
+  }
+  const QStringList parts = propertyPath.split(QLatin1Char('.'));
+  if (parts.size() == 3 && parts[0] == QStringLiteral("deformation2D") &&
+      (parts[2] == QStringLiteral("x") || parts[2] == QStringLiteral("y") ||
+       parts[2] == QStringLiteral("rotation") ||
+       parts[2] == QStringLiteral("weight"))) {
+    const QJsonObject state = layer->deformation2DData();
+    const bool grid = state.value(QStringLiteral("mode")).toString() ==
+                      QStringLiteral("grid");
+    if (grid && (parts[2] == QStringLiteral("rotation") ||
+                 parts[2] == QStringLiteral("weight"))) return {};
+    const QJsonArray controls = state.value(
+        grid ? QStringLiteral("gridControls") : QStringLiteral("pins"))
+        .toArray();
+    for (const QJsonValue& value : controls) {
+      const QJsonObject control = value.toObject();
+      if (control.value(QStringLiteral("id")).toString() == parts[1]) {
+        return layer->persistentLayerProperty(
+            propertyPath, ArtifactCore::PropertyType::Float,
+            control.value(parts[2]).toDouble(), 100);
+      }
     }
   }
   return {};
@@ -76,6 +102,9 @@ private:
           keyframe.cp2_x, keyframe.cp2_y, keyframe.roving);
       property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
       property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
+      if (record.propertyPath.startsWith(QStringLiteral("deformation2D."))) {
+        layer->syncDeformation2DControlProperty(record.propertyPath);
+      }
       layer->changed();
       changedLayerIds.insert(layer->id().toString());
     }
@@ -140,6 +169,9 @@ private:
           keyframe.cp2_x, keyframe.cp2_y, keyframe.roving);
       property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
       property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
+      if (record.propertyPath.startsWith(QStringLiteral("deformation2D."))) {
+        layer->syncDeformation2DControlProperty(record.propertyPath);
+      }
       layer->changed();
       changedLayerIds.insert(layer->id().toString());
     }

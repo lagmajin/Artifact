@@ -782,8 +782,8 @@ public:
     ProjectInfoPanel(QWidget* parent = nullptr) : QWidget(parent) {
         setObjectName(QStringLiteral("projectInfoPanel"));
         setAutoFillBackground(true);
-        setMinimumHeight(250);
-        setMaximumHeight(360);
+        setMinimumHeight(232);
+        setMaximumHeight(320);
         const QColor background = QColor(ArtifactCore::currentDCCTheme().backgroundColor);
         const QColor surface = QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor);
         const QColor text = QColor(ArtifactCore::currentDCCTheme().textColor);
@@ -794,12 +794,12 @@ public:
         widgetPalette.setColor(QPalette::WindowText, text);
         setPalette(widgetPalette);
         auto layout = new QVBoxLayout(this);
-        layout->setContentsMargins(0, 0, 0, 8);
-        layout->setSpacing(8);
+        layout->setContentsMargins(0, 0, 0, 6);
+        layout->setSpacing(7);
 
         thumbnail = new QLabel();
-        thumbnail->setMinimumHeight(156);
-        thumbnail->setMaximumHeight(210);
+        thumbnail->setMinimumHeight(124);
+        thumbnail->setMaximumHeight(156);
         thumbnail->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
         thumbnail->setAlignment(Qt::AlignCenter);
         thumbnail->setText("PREVIEW");
@@ -819,7 +819,7 @@ public:
         {
             QFont f = titleLabel->font();
             f.setBold(true);
-            f.setPointSize(13);
+            f.setPointSize(12);
             titleLabel->setFont(f);
             QPalette pal = titleLabel->palette();
             pal.setColor(QPalette::WindowText, text);
@@ -828,8 +828,8 @@ public:
 
         detailsLabel = new QLabel("Select an item to inspect details");
         detailsLabel->setWordWrap(true);
-        detailsLabel->setMinimumHeight(38);
-        detailsLabel->setMaximumHeight(72);
+        detailsLabel->setMinimumHeight(40);
+        detailsLabel->setMaximumHeight(78);
         {
             QPalette pal = detailsLabel->palette();
             pal.setColor(QPalette::WindowText, muted);

@@ -1,6 +1,4 @@
 module;
-#include <algorithm>
-#include <cmath>
 #include <cstdint>
 #include <utility>
 #include <QJsonObject>
@@ -9,6 +7,7 @@ module;
 
 export module Artifact.Layer.Matte;
 
+import Core.ArtifactMath;
 import Utils.Id;
 import Utils.String.UniString;
 import Layer.Matte;
@@ -100,8 +99,8 @@ export namespace Artifact {
             fitMode = static_cast<MatteFitMode>(validEnumValue(
                 obj["fitMode"], 4, static_cast<int>(MatteFitMode::Stretch)));
             const double parsedOpacity = obj["opacity"].toDouble(1.0);
-            opacity = std::isfinite(parsedOpacity)
-                ? static_cast<float>(std::clamp(parsedOpacity, 0.0, 1.0))
+            opacity = ArtifactCore::artifactIsFinite(parsedOpacity)
+                ? static_cast<float>(ArtifactCore::artifactClamp(parsedOpacity, 0.0, 1.0))
                 : 1.0f;
             invert = obj["invert"].toBool(false);
         }

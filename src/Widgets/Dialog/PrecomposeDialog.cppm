@@ -1,5 +1,4 @@
 module;
-#include <algorithm>
 #include <utility>
 #include <QDialog>
 #include <QWidget>
@@ -26,12 +25,23 @@ module;
 #include <QRect>
 #include <QSizePolicy>
 #include <QStringList>
+#include <QProxyStyle>
+#include <QStyleFactory>
+#include <QStyleOption>
+#include <QFont>
+#include <QFontMetrics>
+#include <QColor>
+#include <QVariant>
+#include <QPolygonF>
+#include <QIcon>
 #include <wobjectimpl.h>
 
 module Artifact.Widgets.PrecomposeDialog;
 
+import Core.ArtifactMath;
 import Artifact.Widgets.DialogButtons;
 import Widgets.Utils.CSS;
+import Translation.Manager;
 
 namespace Artifact {
 
@@ -39,15 +49,77 @@ W_OBJECT_IMPL(PrecomposeDialog)
 
 namespace {
 
+// Scope the Fusion controls to this dialog: inherited application styles must
+// not introduce unrelated gradients or blue native selection backgrounds.
+class PrecomposeStyle final : public QProxyStyle {
+public:
+    PrecomposeStyle() : QProxyStyle(QStyleFactory::create(QStringLiteral("Fusion"))) {}
+    void drawPrimitive(PrimitiveElement element, const QStyleOption* option,
+                       QPainter* painter, const QWidget* widget = nullptr) const override {
+        if (element == PE_IndicatorRadioButton || element == PE_IndicatorCheckBox) {
+            painter->save();
+            painter->setRenderHint(QPainter::Antialiasing);
+            const bool enabled = option->state & State_Enabled;
+            const bool checked = option->state & State_On;
+            const QColor ink = enabled ? QColor(195, 201, 207) : QColor(87, 94, 101);
+            const QColor amber(242, 182, 72);
+            const QRectF box = QRectF(option->rect).adjusted(2, 2, -2, -2);
+            painter->setPen(QPen(checked && enabled ? amber : ink, 2));
+            painter->setBrush(Qt::NoBrush);
+            if (element == PE_IndicatorRadioButton) {
+                painter->drawEllipse(box);
+                if (checked) {
+                    painter->setPen(Qt::NoPen);
+                    painter->setBrush(enabled ? amber : ink);
+                    painter->drawEllipse(box.adjusted(5, 5, -5, -5));
+                }
+            } else {
+                if (checked) painter->setBrush(enabled ? amber : ink);
+                painter->drawRoundedRect(box, 2, 2);
+                if (checked) {
+                    painter->setPen(QPen(QColor(32, 36, 40), 2.3));
+                    const QPointF a(box.left()+box.width()*0.2, box.center().y());
+                    const QPointF b(box.left()+box.width()*0.43, box.bottom()-box.height()*0.23);
+                    const QPointF c(box.right()-box.width()*0.15, box.top()+box.height()*0.23);
+                    painter->drawLine(a, b);
+                    painter->drawLine(b, c);
+                }
+            }
+            painter->restore();
+            return;
+        }
+        if (element == PE_PanelButtonCommand) {
+            painter->save();
+            const bool primary = widget && widget->property("precomposePrimary").toBool();
+            QColor fill = primary ? QColor(242, 182, 72) : QColor(38, 42, 47);
+            if (option->state & State_Sunken) fill = fill.darker(112);
+            else if (option->state & State_MouseOver) fill = fill.lighter(108);
+            painter->setPen(QPen(primary ? QColor(251, 201, 108) : QColor(78, 85, 92), 1));
+            painter->setBrush(fill);
+            painter->drawRoundedRect(option->rect.adjusted(1, 1, -1, -1), 4, 4);
+            painter->restore();
+            return;
+        }
+        QProxyStyle::drawPrimitive(element, option, painter, widget);
+    }
+    int pixelMetric(PixelMetric metric, const QStyleOption* option = nullptr,
+                    const QWidget* widget = nullptr) const override {
+        if (metric == PM_IndicatorWidth || metric == PM_IndicatorHeight ||
+            metric == PM_ExclusiveIndicatorWidth || metric == PM_ExclusiveIndicatorHeight)
+            return 26;
+        return QProxyStyle::pixelMetric(metric, option, widget);
+    }
+};
+
 class PrecomposePreviewWidget final : public QWidget {
 public:
     explicit PrecomposePreviewWidget(QWidget* parent = nullptr)
         : QWidget(parent)
     {
-        setMinimumSize(220, 124);
+        setMinimumSize(240, 230);
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-        setAccessibleName(u8"プリコンポーズ予定プレビュー");
-        setAccessibleDescription(u8"選択レイヤーの構成を簡略表示");
+        setAccessibleName(TranslationManager::instance().tr(QStringLiteral("dialog.precompose.preview_a11y"), QStringLiteral("プリコンポーズ予定プレビュー")));
+        setAccessibleDescription(TranslationManager::instance().tr(QStringLiteral("dialog.precompose.preview_a11y_desc"), QStringLiteral("選択レイヤーの構成を簡略表示")));
     }
 
     void setLayerNames(const QStringList& names)
@@ -62,36 +134,39 @@ protected:
     {
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing, true);
-        const auto& theme = ArtifactCore::currentDCCTheme();
-        const QColor background(theme.backgroundColor);
-        const QColor surface(theme.secondaryBackgroundColor);
-        const QColor border(theme.borderColor);
-        const QColor text(theme.textColor);
-        const QColor accent(theme.accentColor);
+        const QColor background(23, 27, 31);
+        const QColor surface(43, 48, 54);
+        const QColor border(69, 76, 83);
+        const QColor text(220, 225, 230);
 
         painter.fillRect(rect(), background.darker(112));
         painter.setPen(QPen(border, 1));
         painter.drawRect(rect().adjusted(0, 0, -1, -1));
 
         const int visibleCount =
-            std::min(3, static_cast<int>(layerNames_.size()));
-        const int cardWidth = std::max(80, width() - 54);
+            ArtifactCore::artifactMin(3, static_cast<int>(layerNames_.size()));
+        const int cardWidth = ArtifactCore::artifactMax(80, width() - 54);
         for (int i = visibleCount - 1; i >= 0; --i) {
-            const int y = 18 + i * 24;
-            QRect card(22 + i * 5, y, cardWidth - i * 10, 42);
+            const int y = 36 + i * 53;
+            QRect card(22, y, cardWidth, 48);
             QColor cardColor = surface;
             cardColor.setAlpha(225);
             painter.setBrush(cardColor);
             painter.setPen(QPen(border.lighter(112), 1));
-            painter.drawRect(card);
-            painter.setPen(i == 1 ? accent : text.darker(112));
+            QPolygonF plane;
+            plane << QPointF(card.left()+16, card.top())
+                  << QPointF(card.right()+10, card.top()+6)
+                  << QPointF(card.right()-6, card.bottom())
+                  << QPointF(card.left(), card.bottom()-6);
+            painter.drawPolygon(plane);
+            painter.setPen(text);
             painter.drawText(card.adjusted(10, 0, -10, 0),
                              Qt::AlignCenter,
-                             layerNames_.value(i));
+                             painter.fontMetrics().elidedText(layerNames_.value(i), Qt::ElideRight, card.width()-20));
         }
         if (visibleCount == 0) {
             painter.setPen(text.darker(150));
-            painter.drawText(rect(), Qt::AlignCenter, u8"選択レイヤーなし");
+            painter.drawText(rect(), Qt::AlignCenter, TranslationManager::instance().tr(QStringLiteral("dialog.precompose.no_selection"), QStringLiteral("選択レイヤーなし")));
         }
     }
 
@@ -125,7 +200,7 @@ public:
     {
         if (!layerCountLabel) return;
         layerCountLabel->setText(
-            QString(u8"%1 レイヤーを選択中 / 全 %2 レイヤー")
+            QString(TranslationManager::instance().tr(QStringLiteral("dialog.precompose.selection_summary"), QStringLiteral("%1 レイヤーを選択中 / 全 %2 レイヤー")))
                 .arg(selectedCount)
                 .arg(totalLayerCount));
     }
@@ -137,11 +212,14 @@ public:
 PrecomposeDialog::PrecomposeDialog(QWidget* parent)
     : QDialog(parent), impl_(new Impl())
 {
-    setWindowTitle(u8"プリコンポーズ");
-    setAccessibleName(u8"プリコンポーズダイアログ");
-    setAccessibleDescription(u8"選択したレイヤーを新規コンポジションへまとめる設定");
+    setWindowTitle(TranslationManager::instance().tr(QStringLiteral("dialog.precompose.title"), QStringLiteral("プリコンポーズ")));
+    setAccessibleName(TranslationManager::instance().tr(QStringLiteral("dialog.precompose.dialog_a11y"), QStringLiteral("プリコンポーズダイアログ")));
+    setAccessibleDescription(TranslationManager::instance().tr(QStringLiteral("dialog.precompose.dialog_a11y_desc"), QStringLiteral("選択したレイヤーを新規コンポジションへまとめる設定")));
     setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
     setAttribute(Qt::WA_NoChildEventsForParent);
+    QFont dialogFont = font();
+    dialogFont.setPointSizeF(11.0);
+    setFont(dialogFont);
 
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
@@ -149,7 +227,7 @@ PrecomposeDialog::PrecomposeDialog(QWidget* parent)
 
     // ── Header ────────────────────────────────────────────────────────────
     auto* header = new QWidget(this);
-    header->setFixedHeight(48);
+    header->setFixedHeight(64);
     {
         QPalette pal = header->palette();
         pal.setColor(QPalette::Window, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
@@ -157,16 +235,21 @@ PrecomposeDialog::PrecomposeDialog(QWidget* parent)
         header->setPalette(pal);
     }
     auto* hLay = new QHBoxLayout(header);
-    hLay->setContentsMargins(15, 0, 10, 0);
-    auto* titleLbl = new QLabel(u8"プリコンポーズ", header);
+    hLay->setContentsMargins(26, 0, 20, 0);
+    auto* titleLbl = new QLabel(TranslationManager::instance().tr(QStringLiteral("dialog.precompose.title"), QStringLiteral("プリコンポーズ")), header);
     {
         QPalette pal = titleLbl->palette();
         pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor));
         titleLbl->setPalette(pal);
     }
     auto* closeBtn = new QPushButton(u8"×", header);
-    closeBtn->setAccessibleName(u8"閉じる");
-    closeBtn->setAccessibleDescription(u8"プリコンポーズダイアログを閉じる");
+    QFont titleFont = dialogFont;
+    titleFont.setPointSizeF(17.0);
+    titleLbl->setFont(titleFont);
+    closeBtn->setFont(titleFont);
+    closeBtn->setFlat(true);
+    closeBtn->setAccessibleName(TranslationManager::instance().tr(QStringLiteral("dialog.button.close"), QStringLiteral("閉じる")));
+    closeBtn->setAccessibleDescription(TranslationManager::instance().tr(QStringLiteral("dialog.precompose.close_a11y_desc"), QStringLiteral("プリコンポーズダイアログを閉じる")));
     closeBtn->setFixedSize(30, 30);
     {
         QPalette pal = closeBtn->palette();
@@ -182,20 +265,24 @@ PrecomposeDialog::PrecomposeDialog(QWidget* parent)
     // ── Body ──────────────────────────────────────────────────────────────
     auto* body = new QWidget(this);
     auto* bodyLayout = new QHBoxLayout(body);
-    bodyLayout->setContentsMargins(20, 16, 20, 8);
-    bodyLayout->setSpacing(20);
+    bodyLayout->setContentsMargins(26, 22, 26, 24);
+    bodyLayout->setSpacing(22);
     auto* mainBody = new QWidget(body);
     auto* bLay = new QVBoxLayout(mainBody);
     bLay->setContentsMargins(0, 0, 0, 0);
-    bLay->setSpacing(10);
-    bodyLayout->addWidget(mainBody, 3);
+    bLay->setSpacing(16);
+    mainBody->setMinimumWidth(560);
+    bodyLayout->addWidget(mainBody, 7);
+    auto* divider = new QFrame(body);
+    divider->setFrameShape(QFrame::VLine);
+    bodyLayout->addWidget(divider);
 
     auto* previewPane = new QWidget(body);
     previewPane->setMinimumWidth(240);
     auto* previewLayout = new QVBoxLayout(previewPane);
-    previewLayout->setContentsMargins(16, 0, 0, 0);
-    previewLayout->setSpacing(8);
-    auto* previewTitle = new QLabel(u8"プリコンポーズ予定", previewPane);
+    previewLayout->setContentsMargins(0, 0, 0, 0);
+    previewLayout->setSpacing(14);
+    auto* previewTitle = new QLabel(TranslationManager::instance().tr(QStringLiteral("dialog.precompose.preview_title"), QStringLiteral("プリコンポーズ予定")), previewPane);
     {
         QPalette pal = previewTitle->palette();
         pal.setColor(QPalette::WindowText,
@@ -203,10 +290,10 @@ PrecomposeDialog::PrecomposeDialog(QWidget* parent)
         previewTitle->setPalette(pal);
     }
     impl_->previewWidget = new PrecomposePreviewWidget(previewPane);
-    auto* previewResolution = new QLabel(u8"出力設定: 現在のコンポジション", previewPane);
-    auto* previewDuration = new QLabel(u8"期間: ワークエリア", previewPane);
-    impl_->previewLayerCount = new QLabel(u8"0 レイヤー", previewPane);
-    auto* previewUpdateHint = new QLabel(u8"選択変更時に更新", previewPane);
+    auto* previewResolution = new QLabel(TranslationManager::instance().tr(QStringLiteral("dialog.precompose.preview_output"), QStringLiteral("出力設定: 現在のコンポジション")), previewPane);
+    auto* previewDuration = new QLabel(TranslationManager::instance().tr(QStringLiteral("dialog.precompose.preview_duration"), QStringLiteral("期間: ワークエリア")), previewPane);
+    impl_->previewLayerCount = new QLabel(TranslationManager::instance().tr(QStringLiteral("dialog.precompose.zero_layers"), QStringLiteral("0 レイヤー")), previewPane);
+    auto* previewUpdateHint = new QLabel(TranslationManager::instance().tr(QStringLiteral("dialog.precompose.preview_update_hint"), QStringLiteral("選択変更時に更新")), previewPane);
     {
         QPalette pal = previewUpdateHint->palette();
         pal.setColor(QPalette::WindowText,
@@ -221,7 +308,7 @@ PrecomposeDialog::PrecomposeDialog(QWidget* parent)
     previewLayout->addSpacing(8);
     previewLayout->addWidget(previewUpdateHint);
     previewLayout->addStretch();
-    bodyLayout->addWidget(previewPane, 2);
+    bodyLayout->addWidget(previewPane, 3);
     root->addWidget(body, 1);
 
     const auto makeSeparator = [&]() -> QFrame* {
@@ -234,9 +321,10 @@ PrecomposeDialog::PrecomposeDialog(QWidget* parent)
     // ── 新規コンポジション名 ──────────────────────────────────────────────
     {
         auto* row = new QWidget(body);
-        auto* rl  = new QHBoxLayout(row);
+        auto* rl  = new QVBoxLayout(row);
+        rl->setSpacing(10);
         rl->setContentsMargins(0, 0, 0, 0);
-        auto* lbl = new QLabel(u8"新規コンポジション名", row);
+        auto* lbl = new QLabel(TranslationManager::instance().tr(QStringLiteral("dialog.precompose.name_label"), QStringLiteral("新規コンポジション名")), row);
         {
             QPalette pal = lbl->palette();
             pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor));
@@ -244,9 +332,11 @@ PrecomposeDialog::PrecomposeDialog(QWidget* parent)
         }
         lbl->setMinimumWidth(100);
         impl_->nameEdit = new QLineEdit(u8"プリコンプ 1", row);
+        impl_->nameEdit->setMinimumHeight(44);
+        impl_->nameEdit->setTextMargins(12, 0, 12, 0);
         lbl->setBuddy(impl_->nameEdit);
-        impl_->nameEdit->setAccessibleName(u8"新規コンポジション名");
-        impl_->nameEdit->setAccessibleDescription(u8"作成する新規コンポジションの名前");
+        impl_->nameEdit->setAccessibleName(TranslationManager::instance().tr(QStringLiteral("dialog.precompose.name_label"), QStringLiteral("新規コンポジション名")));
+        impl_->nameEdit->setAccessibleDescription(TranslationManager::instance().tr(QStringLiteral("dialog.precompose.name_a11y_desc"), QStringLiteral("作成する新規コンポジションの名前")));
         rl->addWidget(lbl);
         rl->addWidget(impl_->nameEdit, 1);
         bLay->addWidget(row);
@@ -256,18 +346,22 @@ PrecomposeDialog::PrecomposeDialog(QWidget* parent)
 
     // ── 選択中のレイヤーリスト ────────────────────────────────────────────
     {
-        auto* secLbl = new QLabel(u8"選択中のレイヤー", body);
+        auto* secLbl = new QLabel(TranslationManager::instance().tr(QStringLiteral("dialog.precompose.selected_layers"), QStringLiteral("選択中のレイヤー")), body);
         {
             QPalette pal = secLbl->palette();
             pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(130));
             secLbl->setPalette(pal);
         }
-        bLay->addWidget(secLbl);
+        auto* listHeading = new QHBoxLayout();
+        listHeading->addWidget(secLbl);
+        bLay->addLayout(listHeading);
 
         impl_->layerListWidget = new QListWidget(body);
-        impl_->layerListWidget->setAccessibleName(u8"選択中のレイヤー");
-        impl_->layerListWidget->setAccessibleDescription(u8"新規コンポジションへ移動するレイヤーの一覧");
-        impl_->layerListWidget->setMinimumHeight(110);
+        impl_->layerListWidget->setAccessibleName(TranslationManager::instance().tr(QStringLiteral("dialog.precompose.selected_layers"), QStringLiteral("選択中のレイヤー")));
+        impl_->layerListWidget->setAccessibleDescription(TranslationManager::instance().tr(QStringLiteral("dialog.precompose.selected_layers_desc"), QStringLiteral("新規コンポジションへ移動するレイヤーの一覧")));
+        impl_->layerListWidget->setFixedHeight(132);
+        impl_->layerListWidget->setIconSize(QSize(20, 20));
+        impl_->layerListWidget->setSpacing(2);
         {
             QPalette pal = impl_->layerListWidget->palette();
             pal.setColor(QPalette::Base, QColor(ArtifactCore::currentDCCTheme().backgroundColor));
@@ -287,14 +381,15 @@ PrecomposeDialog::PrecomposeDialog(QWidget* parent)
             impl_->layerCountLabel->setPalette(pal);
         }
         impl_->updateLayerCountLabel(0);
-        bLay->addWidget(impl_->layerCountLabel);
+        listHeading->addStretch();
+        listHeading->addWidget(impl_->layerCountLabel);
     }
 
     bLay->addWidget(makeSeparator());
 
     // ── 配置オプション ────────────────────────────────────────────────────
     {
-        auto* secLbl = new QLabel(u8"配置オプション", body);
+        auto* secLbl = new QLabel(TranslationManager::instance().tr(QStringLiteral("dialog.precompose.placement_options"), QStringLiteral("配置オプション")), body);
         {
             QPalette pal = secLbl->palette();
             pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(130));
@@ -312,9 +407,9 @@ PrecomposeDialog::PrecomposeDialog(QWidget* parent)
             rLay->setContentsMargins(10, 8, 10, 8);
             rLay->setSpacing(2);
             impl_->moveSelectedRadio = new QRadioButton(
-                u8"選択したレイヤーのみを新規コンポジションに移動する", radioWidget);
-            impl_->moveSelectedRadio->setAccessibleName(u8"選択したレイヤーのみを移動");
-            impl_->moveSelectedRadio->setAccessibleDescription(u8"選択したレイヤーだけを新規コンポジションへ移動");
+                TranslationManager::instance().tr(QStringLiteral("dialog.precompose.move_selected_radio"), QStringLiteral("選択したレイヤーのみを新規コンポジションに移動する")), radioWidget);
+            impl_->moveSelectedRadio->setAccessibleName(TranslationManager::instance().tr(QStringLiteral("dialog.precompose.move_selected_a11y"), QStringLiteral("選択したレイヤーのみを移動")));
+            impl_->moveSelectedRadio->setAccessibleDescription(TranslationManager::instance().tr(QStringLiteral("dialog.precompose.move_selected_a11y_desc"), QStringLiteral("選択したレイヤーだけを新規コンポジションへ移動")));
             impl_->moveSelectedRadio->setChecked(true);
             {
                 QPalette pal = impl_->moveSelectedRadio->palette();
@@ -322,13 +417,15 @@ PrecomposeDialog::PrecomposeDialog(QWidget* parent)
                 impl_->moveSelectedRadio->setPalette(pal);
             }
             auto* subLbl = new QLabel(
-                u8"選択レイヤーをプリコンプに移動。他のレイヤーはそのまま残ります。", radioWidget);
+                TranslationManager::instance().tr(QStringLiteral("dialog.precompose.move_selected_hint"), QStringLiteral("選択レイヤーをプリコンプに移動。他のレイヤーはそのまま残ります。")), radioWidget);
             {
                 QPalette pal = subLbl->palette();
                 pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(130));
                 subLbl->setPalette(pal);
             }
             subLbl->setWordWrap(true);
+            subLbl->setObjectName(QStringLiteral("precomposeOptionHint"));
+            subLbl->setContentsMargins(34, 0, 0, 0);
             rLay->addWidget(impl_->moveSelectedRadio);
             rLay->addWidget(subLbl);
             group->addButton(impl_->moveSelectedRadio, 0);
@@ -343,17 +440,19 @@ PrecomposeDialog::PrecomposeDialog(QWidget* parent)
             rLay->setContentsMargins(10, 8, 10, 8);
             rLay->setSpacing(2);
             impl_->moveAllAttribsRadio = new QRadioButton(
-                u8"すべての属性を新規コンポジションに移動する", radioWidget);
-            impl_->moveAllAttribsRadio->setAccessibleName(u8"すべての属性を移動");
-            impl_->moveAllAttribsRadio->setAccessibleDescription(u8"すべての属性を新規コンポジションへ移動");
+                TranslationManager::instance().tr(QStringLiteral("dialog.precompose.move_all_radio"), QStringLiteral("すべての属性を新規コンポジションに移動する")), radioWidget);
+            impl_->moveAllAttribsRadio->setAccessibleName(TranslationManager::instance().tr(QStringLiteral("dialog.precompose.move_all_a11y"), QStringLiteral("すべての属性を移動")));
+            impl_->moveAllAttribsRadio->setAccessibleDescription(TranslationManager::instance().tr(QStringLiteral("dialog.precompose.move_all_a11y_desc"), QStringLiteral("すべての属性を新規コンポジションへ移動")));
             auto* subLbl = new QLabel(
-                u8"トランスフォームなどの属性もプリコンプに引き継がれます。", radioWidget);
+                TranslationManager::instance().tr(QStringLiteral("dialog.precompose.move_all_hint"), QStringLiteral("トランスフォームなどの属性もプリコンプに引き継がれます。")), radioWidget);
             {
                 QPalette pal = subLbl->palette();
                 pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(130));
                 subLbl->setPalette(pal);
             }
             subLbl->setWordWrap(true);
+            subLbl->setObjectName(QStringLiteral("precomposeOptionHint"));
+            subLbl->setContentsMargins(34, 0, 0, 0);
             rLay->addWidget(impl_->moveAllAttribsRadio);
             rLay->addWidget(subLbl);
             group->addButton(impl_->moveAllAttribsRadio, 1);
@@ -365,22 +464,22 @@ PrecomposeDialog::PrecomposeDialog(QWidget* parent)
 
     // ── チェックボックス ──────────────────────────────────────────────────
     {
-        impl_->openNewCompCheck = new QCheckBox(u8"新規コンポジションを開く", body);
-        impl_->openNewCompCheck->setAccessibleName(u8"新規コンポジションを開く");
-        impl_->openNewCompCheck->setAccessibleDescription(u8"作成後に新規コンポジションを開く");
+        impl_->openNewCompCheck = new QCheckBox(TranslationManager::instance().tr(QStringLiteral("dialog.precompose.open_new_comp"), QStringLiteral("新規コンポジションを開く")), body);
+        impl_->openNewCompCheck->setAccessibleName(TranslationManager::instance().tr(QStringLiteral("dialog.precompose.open_new_comp"), QStringLiteral("新規コンポジションを開く")));
+        impl_->openNewCompCheck->setAccessibleDescription(TranslationManager::instance().tr(QStringLiteral("dialog.precompose.open_new_comp_desc"), QStringLiteral("作成後に新規コンポジションを開く")));
         impl_->openNewCompCheck->setChecked(true);
         bLay->addWidget(impl_->openNewCompCheck);
 
-        impl_->addAdjLayerCheck = new QCheckBox(u8"調整レイヤーとして追加", body);
-        impl_->addAdjLayerCheck->setAccessibleName(u8"調整レイヤーとして追加");
-        impl_->addAdjLayerCheck->setAccessibleDescription(u8"新規コンポジションを調整レイヤーとして追加");
+        impl_->addAdjLayerCheck = new QCheckBox(TranslationManager::instance().tr(QStringLiteral("dialog.precompose.add_adjustment"), QStringLiteral("調整レイヤーとして追加")), body);
+        impl_->addAdjLayerCheck->setAccessibleName(TranslationManager::instance().tr(QStringLiteral("dialog.precompose.add_adjustment"), QStringLiteral("調整レイヤーとして追加")));
+        impl_->addAdjLayerCheck->setAccessibleDescription(TranslationManager::instance().tr(QStringLiteral("dialog.precompose.add_adjustment_desc"), QStringLiteral("新規コンポジションを調整レイヤーとして追加")));
         impl_->addAdjLayerCheck->setChecked(false);
         impl_->addAdjLayerCheck->setEnabled(false); // greyed out by default
         bLay->addWidget(impl_->addAdjLayerCheck);
 
-        impl_->matchDurationCheck = new QCheckBox(u8"コンポジションのデュレーションをワークエリアに合わせる", body);
-        impl_->matchDurationCheck->setAccessibleName(u8"ワークエリアにデュレーションを合わせる");
-        impl_->matchDurationCheck->setAccessibleDescription(u8"新規コンポジションのデュレーションをワークエリアに合わせる");
+        impl_->matchDurationCheck = new QCheckBox(TranslationManager::instance().tr(QStringLiteral("dialog.precompose.match_duration"), QStringLiteral("コンポジションのデュレーションをワークエリアに合わせる")), body);
+        impl_->matchDurationCheck->setAccessibleName(TranslationManager::instance().tr(QStringLiteral("dialog.precompose.match_duration_a11y"), QStringLiteral("ワークエリアにデュレーションを合わせる")));
+        impl_->matchDurationCheck->setAccessibleDescription(TranslationManager::instance().tr(QStringLiteral("dialog.precompose.match_duration_desc"), QStringLiteral("新規コンポジションのデュレーションをワークエリアに合わせる")));
         impl_->matchDurationCheck->setChecked(true);
         bLay->addWidget(impl_->matchDurationCheck);
     }
@@ -392,18 +491,60 @@ PrecomposeDialog::PrecomposeDialog(QWidget* parent)
     auto* fLay = new QHBoxLayout(footer);
     fLay->setContentsMargins(15, 10, 15, 10);
 
-    const DialogButtonRow buttons = createDialogButtonRow(footer, QStringLiteral("OK"), QStringLiteral("キャンセル"));
+    const DialogButtonRow buttons = createDialogButtonRow(footer, QStringLiteral("OK"), TranslationManager::instance().tr(QStringLiteral("dialog.button.cancel"), QStringLiteral("キャンセル")));
     auto* okBtn = buttons.okButton;
     auto* cancelBtn = buttons.cancelButton;
-    okBtn->setAccessibleName(u8"作成");
-    okBtn->setAccessibleDescription(u8"設定した内容でプリコンポーズを作成");
-    cancelBtn->setAccessibleName(u8"キャンセル");
-    cancelBtn->setAccessibleDescription(u8"プリコンポーズをキャンセル");
+    okBtn->setAccessibleName(TranslationManager::instance().tr(QStringLiteral("dialog.precompose.create"), QStringLiteral("作成")));
+    okBtn->setAccessibleDescription(TranslationManager::instance().tr(QStringLiteral("dialog.precompose.create_a11y_desc"), QStringLiteral("設定した内容でプリコンポーズを作成")));
+    cancelBtn->setAccessibleName(TranslationManager::instance().tr(QStringLiteral("dialog.button.cancel"), QStringLiteral("キャンセル")));
+    cancelBtn->setAccessibleDescription(TranslationManager::instance().tr(QStringLiteral("dialog.precompose.cancel_a11y_desc"), QStringLiteral("プリコンポーズをキャンセル")));
     okBtn->setFixedSize(80, 28);
     cancelBtn->setFixedSize(80, 28);
     fLay->addStretch();
     fLay->addWidget(buttons.widget);
-    root->addWidget(footer);
+    bLay->addWidget(footer);
+
+    // One opaque charcoal surface for containers and labels; only input fields,
+    // the layer list and the schematic preview have deliberate inset tones.
+    auto* dialogStyle = new PrecomposeStyle();
+    dialogStyle->setParent(this);
+    QPalette unified;
+    unified.setColor(QPalette::Window, QColor(35, 39, 43));
+    unified.setColor(QPalette::WindowText, QColor(224, 229, 234));
+    unified.setColor(QPalette::Base, QColor(29, 33, 37));
+    unified.setColor(QPalette::AlternateBase, QColor(35, 39, 43));
+    unified.setColor(QPalette::Text, QColor(224, 229, 234));
+    unified.setColor(QPalette::Button, QColor(38, 42, 47));
+    unified.setColor(QPalette::ButtonText, QColor(224, 229, 234));
+    unified.setColor(QPalette::Highlight, QColor(242, 182, 72));
+    unified.setColor(QPalette::HighlightedText, QColor(26, 30, 34));
+    unified.setColor(QPalette::Mid, QColor(65, 71, 77));
+    unified.setColor(QPalette::Dark, QColor(65, 71, 77));
+    unified.setColor(QPalette::Light, QColor(65, 71, 77));
+    unified.setColor(QPalette::Disabled, QPalette::WindowText, QColor(105, 113, 121));
+    unified.setColor(QPalette::Disabled, QPalette::Text, QColor(105, 113, 121));
+    setStyle(dialogStyle);
+    setPalette(unified);
+    setAutoFillBackground(true);
+    const auto children = findChildren<QWidget*>();
+    for (auto* child : children) {
+        child->setStyle(dialogStyle);
+        child->setPalette(unified);
+        if (qobject_cast<QLabel*>(child)) child->setAutoFillBackground(false);
+    }
+    okBtn->setProperty("precomposePrimary", true);
+    QPalette primaryPalette = unified;
+    primaryPalette.setColor(QPalette::ButtonText, QColor(26, 30, 34));
+    okBtn->setPalette(primaryPalette);
+    okBtn->setFixedSize(152, 44);
+    cancelBtn->setFixedSize(144, 44);
+    QPalette muted = unified;
+    muted.setColor(QPalette::WindowText, QColor(157, 165, 173));
+    previewUpdateHint->setPalette(muted);
+    impl_->layerCountLabel->setPalette(muted);
+    for (auto* child : children)
+        if (child->objectName() == QStringLiteral("precomposeOptionHint"))
+            child->setPalette(muted);
 
     // ── Connections ───────────────────────────────────────────────────────
     QObject::connect(closeBtn,  &QPushButton::clicked,    this, &QDialog::reject);
@@ -431,13 +572,15 @@ void PrecomposeDialog::setSelectedLayerNames(const QStringList& names)
     if (!impl_->layerListWidget) return;
     impl_->layerListWidget->clear();
     for (const auto& name : names) {
-        auto* item = new QListWidgetItem(u8"🔲 " + name);
+        auto* item = new QListWidgetItem(
+            style()->standardIcon(QStyle::SP_FileIcon), name);
+        item->setSizeHint(QSize(0, 38));
         impl_->layerListWidget->addItem(item);
     }
     if (impl_->previewWidget) impl_->previewWidget->setLayerNames(names);
     if (impl_->previewLayerCount) {
         impl_->previewLayerCount->setText(
-            QString(u8"%1 レイヤー").arg(names.size()));
+            QString(TranslationManager::instance().tr(QStringLiteral("dialog.precompose.layer_count"), QStringLiteral("%1 レイヤー"))).arg(names.size()));
     }
     impl_->updateLayerCountLabel(names.size());
 }

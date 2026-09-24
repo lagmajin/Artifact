@@ -13,6 +13,10 @@ module;
 #include <QPainter>
 #include <QModelIndex>
 #include <QToolTip>
+#include <QDialog>
+#include <QEvent>
+#include <QMouseEvent>
+#include <QKeyEvent>
 #include <wobjectimpl.h>
 
 module Artifact.Widgets.ColorSwatchWidget;
@@ -22,6 +26,7 @@ import Color.Float;
 import Artifact.Event.Types;
 import Event.Bus;
 import Core.ArtifactString;
+import Artifact.Widgets.ColorSwatchDialog;
 
 namespace Artifact {
 
@@ -35,6 +40,7 @@ public:
     QPushButton* btnLoad = nullptr;
     QPushButton* btnSave = nullptr;
     QPushButton* btnClear = nullptr;
+    QPushButton* btnOpenDialog = nullptr;
 
     Impl() : swatch("New Palette") {}
 };
@@ -78,22 +84,27 @@ ArtifactColorSwatchWidget::ArtifactColorSwatchWidget(QWidget* parent)
     impl_->btnLoad = new QPushButton("Import .gpl", this);
     impl_->btnSave = new QPushButton("Export .gpl", this);
     impl_->btnClear = new QPushButton("Clear", this);
+    impl_->btnOpenDialog = new QPushButton("Swatches…", this);
     impl_->btnLoad->setAccessibleName(QStringLiteral("Import GPL palette"));
     impl_->btnLoad->setAccessibleDescription(QStringLiteral("Import colors from a GIMP palette file"));
     impl_->btnSave->setAccessibleName(QStringLiteral("Export GPL palette"));
     impl_->btnSave->setAccessibleDescription(QStringLiteral("Export the current colors as a GIMP palette file"));
     impl_->btnClear->setAccessibleName(QStringLiteral("Clear color palette"));
     impl_->btnClear->setAccessibleDescription(QStringLiteral("Remove all colors from the current palette"));
+    impl_->btnOpenDialog->setAccessibleName(QStringLiteral("Open color swatch dialog"));
+    impl_->btnOpenDialog->setAccessibleDescription(QStringLiteral("Choose a color from the categorized swatch dialog and add it to the current palette"));
 
     toolLayout->addWidget(impl_->btnLoad);
     toolLayout->addWidget(impl_->btnSave);
     toolLayout->addWidget(impl_->btnClear);
+    toolLayout->addWidget(impl_->btnOpenDialog);
     mainLayout->addLayout(toolLayout);
 
     // Signals
     connect(impl_->btnLoad, &QPushButton::clicked, this, &ArtifactColorSwatchWidget::onLoadGPL);
     connect(impl_->btnSave, &QPushButton::clicked, this, &ArtifactColorSwatchWidget::onSaveGPL);
     connect(impl_->btnClear, &QPushButton::clicked, this, &ArtifactColorSwatchWidget::onClear);
+    impl_->btnOpenDialog->installEventFilter(this);
     
     connect(impl_->listWidget, &QListWidget::itemClicked, [this](QListWidgetItem* item) {
         if (!item) return;
@@ -107,6 +118,28 @@ ArtifactColorSwatchWidget::ArtifactColorSwatchWidget(QWidget* parent)
 }
 
 ArtifactColorSwatchWidget::~ArtifactColorSwatchWidget() = default;
+
+bool ArtifactColorSwatchWidget::eventFilter(QObject* watched, QEvent* event)
+{
+    if (watched == impl_->btnOpenDialog && event) {
+        const bool activateMouse = event->type() == QEvent::MouseButtonRelease &&
+                                   static_cast<QMouseEvent*>(event)->button() == Qt::LeftButton;
+        const bool activateKeyboard = event->type() == QEvent::KeyPress &&
+                                      (static_cast<QKeyEvent*>(event)->key() == Qt::Key_Return ||
+                                       static_cast<QKeyEvent*>(event)->key() == Qt::Key_Enter ||
+                                       static_cast<QKeyEvent*>(event)->key() == Qt::Key_Space);
+        if (activateMouse || activateKeyboard) {
+            ColorSwatchDialog dialog(this);
+            if (dialog.exec() == QDialog::Accepted) {
+                impl_->swatch.addColor(dialog.selectedColor(), ArtifactCore::String("Selected Color"));
+                updateListView();
+                impl_->eventBus_.post<ColorSwatchChangedEvent>(ColorSwatchChangedEvent{});
+            }
+            return true;
+        }
+    }
+    return QWidget::eventFilter(watched, event);
+}
 
 void ArtifactColorSwatchWidget::setSwatch(const ArtifactCore::ColorSwatch& sw) {
     impl_->swatch = sw;

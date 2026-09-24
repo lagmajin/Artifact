@@ -7,10 +7,10 @@ module;
 #include <QSize>
 #include <QString>
 
-#include <algorithm>
 
 module Artifact.Widgets.LayerEditor.ViewportChromeRenderer;
 
+import Core.ArtifactMath;
 import Artifact.Layer.Abstract;
 import Artifact.Render.IRenderer;
 import Artifact.Widgets.LayerEditor.ViewportChrome;
@@ -48,8 +48,8 @@ void drawLayerEditorViewportChrome(
  if (!renderer) return;
 
  const QSize viewportSize = state.viewportSize;
- const float viewportW = static_cast<float>(std::max(1, viewportSize.width()));
- const float viewportH = static_cast<float>(std::max(1, viewportSize.height()));
+ const float viewportW = static_cast<float>(ArtifactCore::artifactMax(1, viewportSize.width()));
+ const float viewportH = static_cast<float>(ArtifactCore::artifactMax(1, viewportSize.height()));
  const float currentZoom = renderer->getZoom();
  float currentPanX = 0.0f;
  float currentPanY = 0.0f;
@@ -231,8 +231,8 @@ void drawLayerEditorViewportChrome(
   }
    }
   } else {
-   const float infoPanelW = std::min(
-       410.0f, std::max(1.0f, viewportW - 16.0f));
+   const float infoPanelW = ArtifactCore::artifactMin(
+       410.0f, ArtifactCore::artifactMax(1.0f, viewportW - 16.0f));
    const float infoPanelX = (viewportW - infoPanelW) * 0.5f;
    const float infoPanelY = surfacePanelY + 96.0f;
    const bool compactInfo = infoPanelW < 320.0f;
@@ -258,7 +258,7 @@ void drawLayerEditorViewportChrome(
        ? QFontMetrics(compactFont).elidedText(
              state.surfaceInfoBody.section(QStringLiteral("\n"), 0, 0),
              Qt::ElideRight,
-             std::max(1, static_cast<int>(infoPanelW - 24.0f)))
+             ArtifactCore::artifactMax(1, static_cast<int>(infoPanelW - 24.0f)))
        : state.surfaceInfoBody;
    renderer->drawText(
        QRectF(infoPanelX + 12.0f, infoPanelY + 31.0f,
@@ -470,7 +470,7 @@ void drawLayerEditorViewportChrome(
  }
  if (!canvasStateTitle.isEmpty() && viewportW >= 260.0f &&
      viewportH >= 300.0f) {
-  const float statePanelW = std::min(340.0f, viewportW - 32.0f);
+  const float statePanelW = ArtifactCore::artifactMin(340.0f, viewportW - 32.0f);
   constexpr float statePanelH = 66.0f;
   const float statePanelX = (viewportW - statePanelW) * 0.5f;
   const float contentTop = state.surfaceMode == LayerEditorSurfaceMode::Edit
@@ -478,7 +478,7 @@ void drawLayerEditorViewportChrome(
       : state.surfaceMode == LayerEditorSurfaceMode::Inspect ? 320.0f : 288.0f;
   const float contentBottom = viewportH - 76.0f;
   if (contentBottom - contentTop >= statePanelH) {
-   const float statePanelY = std::clamp(
+   const float statePanelY = ArtifactCore::artifactClamp(
        (viewportH - statePanelH) * 0.5f,
        contentTop, contentBottom - statePanelH);
    const FloatColor stateAccent = layer
@@ -493,7 +493,7 @@ void drawLayerEditorViewportChrome(
               statePanelW - 28.0f, 23.0f),
        QFontMetrics(stateTitleFont).elidedText(
            canvasStateTitle, Qt::ElideRight,
-           std::max(1, static_cast<int>(statePanelW - 28.0f))),
+           ArtifactCore::artifactMax(1, static_cast<int>(statePanelW - 28.0f))),
        stateTitleFont, textColor,
        Qt::AlignCenter);
    renderer->drawText(
@@ -501,28 +501,28 @@ void drawLayerEditorViewportChrome(
               statePanelW - 28.0f, 22.0f),
        QFontMetrics(compactFont).elidedText(
            canvasStateDetail, Qt::ElideRight,
-           std::max(1, static_cast<int>(statePanelW - 28.0f))),
+           ArtifactCore::artifactMax(1, static_cast<int>(statePanelW - 28.0f))),
        compactFont, mutedText,
        Qt::AlignCenter);
   }
  }
 
  if (viewportH >= 220.0f) {
- const float bottomY = std::max(68.0f, viewportH - 52.0f);
+ const float bottomY = ArtifactCore::artifactMax(68.0f, viewportH - 52.0f);
  const float cardH = 36.0f;
  const float edge = 14.0f;
  const bool compactLayout = viewportW < 980.0f;
  const bool singleCardLayout = viewportW < 560.0f;
  const float leftW = singleCardLayout
-     ? std::max(1.0f, viewportW - edge * 2.0f)
+     ? ArtifactCore::artifactMax(1.0f, viewportW - edge * 2.0f)
      : compactLayout
-     ? std::max(180.0f, (viewportW - edge * 2.0f - 12.0f) * 0.5f)
-     : std::clamp(viewportW * 0.29f, 260.0f, 410.0f);
+     ? ArtifactCore::artifactMax(180.0f, (viewportW - edge * 2.0f - 12.0f) * 0.5f)
+     : ArtifactCore::artifactClamp(viewportW * 0.29f, 260.0f, 410.0f);
  const QRectF stateCard = layerEditorStateCardRect(viewportW, viewportH);
  const float centerW = static_cast<float>(stateCard.width());
  const float rightW = compactLayout
      ? leftW
-     : std::clamp(viewportW * 0.31f, 280.0f, 430.0f);
+     : ArtifactCore::artifactClamp(viewportW * 0.31f, 280.0f, 430.0f);
 
  QString layerName = QStringLiteral("No layer selected");
  QString layerType = QStringLiteral("—");
@@ -542,7 +542,7 @@ void drawLayerEditorViewportChrome(
       ? QStringLiteral("Off")
       : cacheDirty ? QStringLiteral("Dirty") : QStringLiteral("Ready");
   detailText = QStringLiteral("Opacity: %1%   |   Blend: %2   |   Cache: %3")
-      .arg(QString::number(std::clamp(layer->opacity() * 100.0f, 0.0f, 100.0f),
+      .arg(QString::number(ArtifactCore::artifactClamp(layer->opacity() * 100.0f, 0.0f, 100.0f),
                            'f', 0))
       .arg(ArtifactCore::BlendModeUtils::toString(
           ArtifactCore::toBlendMode(layer->layerBlendType())))
@@ -551,14 +551,14 @@ void drawLayerEditorViewportChrome(
 
  const float leftX = edge;
  const float centerX = static_cast<float>(stateCard.x());
- const float rightX = std::max(edge, viewportW - rightW - edge);
+ const float rightX = ArtifactCore::artifactMax(edge, viewportW - rightW - edge);
  const QFontMetrics compactMetrics(compactFont);
  const QString leftText = compactMetrics.elidedText(
      QStringLiteral("Layer: %1   |   %2   |   %3   |   %4")
          .arg(layerName, layerType,
               solo ? QStringLiteral("Solo") : QStringLiteral("Solo off"),
               active ? QStringLiteral("Active") : QStringLiteral("Inactive")),
-     Qt::ElideMiddle, std::max(1, static_cast<int>(leftW - 24.0f)));
+     Qt::ElideMiddle, ArtifactCore::artifactMax(1, static_cast<int>(leftW - 24.0f)));
  drawChromePanel(leftX, bottomY, leftW, cardH,
                  6.0f, panelFill, panelStroke);
  renderer->drawText(

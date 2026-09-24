@@ -13,6 +13,9 @@ struct InteractiveShellResult {
 
 [[nodiscard]] InteractiveShellResult runInteractiveShell(
     const QStringList& projectPaths,
-    const QString& scriptPath = {});
+    const QString& scriptPath = {},
+    const QString& singleCommand = {},
+    bool jsonOutput = false,
+    const QString& requestPath = {});
 
 } // namespace Artifact

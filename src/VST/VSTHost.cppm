@@ -143,17 +143,14 @@ VSTPluginInfo makePluginInfoFromPath(const std::string& path, bool isVST3)
 
 VSTPluginInfo makeVST3PluginInfo(const std::string& path) {
     VSTPluginInfo info = makePluginInfoFromPath(path, true);
-    Steinberg::VST3Module module;
+    Steinberg::Vst::VST3Module module;
     if (!module.load(ArtifactCore::String(path))) return info;
     auto *factory = module.getFactory();
-    if (!factory || factory->countPlugins() <= 0) return info;
+    if (!factory || factory->countClasses() <= 0) return info;
     Steinberg::PClassInfo classInfo;
-    if (factory->getPluginInfo(0, classInfo) == Steinberg::kResultOk) {
+    if (factory->getClassInfo(0, &classInfo) == Steinberg::kResultOk) {
         if (classInfo.name && *classInfo.name) {
             info.name = std::string(classInfo.name) + " (VST3)";
-        }
-        if (classInfo.vendor && *classInfo.vendor) {
-            info.vendor = classInfo.vendor;
         }
     }
     return info;
@@ -183,8 +180,10 @@ struct VSTHost::Impl {
         std::string path;
         bool isVST3 = false;
         void* handle = nullptr;
-        std::unique_ptr<Steinberg::VST3Module> vst3Module;
+        std::unique_ptr<Steinberg::Vst::VST3Module> vst3Module;
         std::vector<float> parameters;
+        std::array<std::vector<float>, 2> inputScratch;
+        std::array<std::vector<float>, 2> outputScratch;
         bool isProcessing = false;
 
         // VST2 関数ポインタ
@@ -209,8 +208,9 @@ constexpr int32_t effGetCategory = 2;
 constexpr int32_t effSetSampleRate = 10;
 constexpr int32_t effSetBlockSize = 11;
 constexpr int32_t effMainsChanged = 1;
-constexpr int32_t effEditOpen = 2;
-constexpr int32_t effEditClose = 3;
+constexpr int32_t effEditGetRect = 13;
+constexpr int32_t effEditOpen = 14;
+constexpr int32_t effEditClose = 15;
 constexpr int32_t effGetParameterName = 5;
 constexpr int32_t effGetParameterDisplay = 6;
 constexpr int32_t effGetParameterLabel = 7;
@@ -228,6 +228,13 @@ constexpr int32_t effIdentify = 0xDEADBEEF;
 constexpr int32_t kVstAudioInputMask = 1;
 constexpr int32_t kVstAudioOutputMask = 2;
 constexpr int32_t kVstSynthCategory = 1;
+
+struct VstEditorRect {
+    int16_t top = 0;
+    int16_t left = 0;
+    int16_t bottom = 0;
+    int16_t right = 0;
+};
 
 VSTHost::VSTHost() : impl_(new Impl()) {
     // デフォルトの検索パスを追加
@@ -342,20 +349,17 @@ bool VSTHost::loadPlugin(const std::string& path) {
     plugin.info = makePluginInfoFromPath(path, plugin.isVST3);
 
     if (plugin.isVST3) {
-        plugin.vst3Module = std::make_unique<Steinberg::VST3Module>();
+        plugin.vst3Module = std::make_unique<Steinberg::Vst::VST3Module>();
         if (!plugin.vst3Module->load(path)) {
             std::cerr << "Failed to load VST3 plugin: " << path << std::endl;
             return false;
         }
         if (auto *factory = plugin.vst3Module->getFactory(); factory &&
-            factory->countPlugins() > 0) {
+            factory->countClasses() > 0) {
             Steinberg::PClassInfo classInfo;
-            if (factory->getPluginInfo(0, classInfo) == Steinberg::kResultOk) {
+            if (factory->getClassInfo(0, &classInfo) == Steinberg::kResultOk) {
                 if (classInfo.name && *classInfo.name) {
                     plugin.info.name = std::string(classInfo.name) + " (VST3)";
-                }
-                if (classInfo.vendor && *classInfo.vendor) {
-                    plugin.info.vendor = classInfo.vendor;
                 }
             }
         }
@@ -413,6 +417,12 @@ bool VSTHost::loadPlugin(const std::string& path) {
         if (!product.empty()) plugin.info.name = product;
         if (!vendor.empty()) plugin.info.vendor = vendor;
         plugin.parameters.resize(static_cast<size_t>(plugin.info.numParameters), 0.0f);
+        for (auto& channel : plugin.inputScratch) {
+            channel.resize(static_cast<size_t>(impl_->blockSize));
+        }
+        for (auto& channel : plugin.outputScratch) {
+            channel.resize(static_cast<size_t>(impl_->blockSize));
+        }
         plugin.effect->dispatcher(plugin.effect, kEffOpen, 0, 0, nullptr, 0.0f);
         plugin.effect->dispatcher(plugin.effect, kEffSetSampleRate, 0, 0,
                                   nullptr, static_cast<float>(impl_->sampleRate));
@@ -613,6 +623,14 @@ void VSTHost::setBlockSize(int blockSize) {
                                        static_cast<VstIntPtr>(impl_->blockSize),
                                        nullptr, 0.0f);
         }
+        if (!plugin.isVST3) {
+            for (auto& channel : plugin.inputScratch) {
+                channel.resize(static_cast<size_t>(impl_->blockSize));
+            }
+            for (auto& channel : plugin.outputScratch) {
+                channel.resize(static_cast<size_t>(impl_->blockSize));
+            }
+        }
     }
 }
 
@@ -714,15 +732,122 @@ int VSTHost::getLoadedPluginIdByPath(const std::string& path) const {
     return -1;
 }
 
-void VSTHost::openEditor(int pluginId, void* window) {
+bool VSTHost::openEditor(int pluginId, void* window, void* resizeContext,
+                         bool (*resizeCallback)(void*, int, int),
+                         int& width, int& height) {
+    width = 0;
+    height = 0;
     auto it = impl_->loadedPlugins.find(pluginId);
     if (it != impl_->loadedPlugins.end() && !it->second.isVST3 &&
         it->second.info.hasEditor && it->second.effect &&
         it->second.effect->dispatcher && window) {
-        it->second.effect->dispatcher(it->second.effect, effEditOpen, 0, 0,
-                                      window, 0.0f);
+        VstEditorRect* editorRect = nullptr;
+        const VstIntPtr hasRect = it->second.effect->dispatcher(
+            it->second.effect, effEditGetRect, 0, 0, &editorRect, 0.0f);
+        if (hasRect == 0 || !editorRect) return false;
+        const int editorWidth = static_cast<int>(editorRect->right) -
+                                static_cast<int>(editorRect->left);
+        const int editorHeight = static_cast<int>(editorRect->bottom) -
+                                 static_cast<int>(editorRect->top);
+        if (editorWidth <= 0 || editorHeight <= 0 || editorWidth > 8192 ||
+            editorHeight > 8192 ||
+            (resizeCallback && !resizeCallback(resizeContext, editorWidth,
+                                                editorHeight))) {
+            return false;
+        }
+        const VstIntPtr opened = it->second.effect->dispatcher(
+            it->second.effect, effEditOpen, 0, 0, window, 0.0f);
+        if (opened == 0) {
+            (void)it->second.effect->dispatcher(
+                it->second.effect, effEditClose, 0, 0, nullptr, 0.0f);
+            return false;
+        }
+        width = editorWidth;
+        height = editorHeight;
         std::cout << "[VSTHost] openEditor requested for " << it->second.info.name
                   << std::endl;
+        return true;
+    }
+    return false;
+}
+
+void VSTHost::processInPlace(int pluginId, ArtifactCore::AudioSegment& segment) {
+    const auto it = impl_->loadedPlugins.find(pluginId);
+    if (it == impl_->loadedPlugins.end() || it->second.isVST3 ||
+        !it->second.effect || !it->second.effect->process ||
+        !it->second.isProcessing || segment.frameCount() <= 0 ||
+        segment.channelCount() < 1 || segment.channelCount() > 2) return;
+
+    auto& plugin = it->second;
+    const int frames = segment.frameCount();
+    const int hostChannels = segment.channelCount();
+    const int inputChannels = plugin.info.numInputs;
+    const int outputChannels = plugin.info.numOutputs > 0
+        ? plugin.info.numOutputs : hostChannels;
+    if (inputChannels < 1 || inputChannels > 2 || outputChannels < 1 ||
+        outputChannels > 2) return;
+    const int maxBlock = std::max(1, impl_->blockSize);
+    for (int channel = 0; channel < hostChannels; ++channel) {
+        if (segment.channelData[channel].size() < frames ||
+            plugin.inputScratch[channel].size() <
+                static_cast<size_t>(std::min(frames, maxBlock))) return;
+    }
+    for (int channel = 0; channel < std::max(inputChannels, outputChannels);
+         ++channel) {
+        if (plugin.inputScratch[channel].size() <
+                static_cast<size_t>(std::min(frames, maxBlock)) ||
+            plugin.outputScratch[channel].size() <
+                static_cast<size_t>(std::min(frames, maxBlock))) return;
+    }
+
+    for (int offset = 0; offset < frames; offset += maxBlock) {
+        const int blockFrames = std::min(maxBlock, frames - offset);
+        std::array<float*, 2> inputs{nullptr, nullptr};
+        std::array<float*, 2> outputs{nullptr, nullptr};
+        if (inputChannels == hostChannels) {
+            for (int channel = 0; channel < inputChannels; ++channel) {
+                inputs[channel] = const_cast<float*>(
+                    segment.channelData[channel].constData()) + offset;
+            }
+        } else if (inputChannels == 1) {
+            const float* left = segment.channelData[0].constData() + offset;
+            const float* right = segment.channelData[1].constData() + offset;
+            float* mono = plugin.inputScratch[0].data();
+            for (int frame = 0; frame < blockFrames; ++frame) {
+                mono[frame] = 0.5f * left[frame] + 0.5f * right[frame];
+            }
+            inputs[0] = mono;
+        } else {
+            const float* mono = segment.channelData[0].constData() + offset;
+            for (int channel = 0; channel < 2; ++channel) {
+                float* stereo = plugin.inputScratch[channel].data();
+                std::copy_n(mono, blockFrames, stereo);
+                inputs[channel] = stereo;
+            }
+        }
+        for (int channel = 0; channel < outputChannels; ++channel)
+            outputs[channel] = plugin.outputScratch[channel].data();
+        plugin.effect->process(plugin.effect, inputs.data(), outputs.data(),
+                               blockFrames);
+        if (outputChannels == hostChannels) {
+            for (int channel = 0; channel < hostChannels; ++channel) {
+                std::copy_n(plugin.outputScratch[channel].data(), blockFrames,
+                            segment.channelData[channel].data() + offset);
+            }
+        } else if (outputChannels == 1) {
+            const float* mono = plugin.outputScratch[0].data();
+            for (int channel = 0; channel < hostChannels; ++channel) {
+                std::copy_n(mono, blockFrames,
+                            segment.channelData[channel].data() + offset);
+            }
+        } else {
+            const float* left = plugin.outputScratch[0].data();
+            const float* right = plugin.outputScratch[1].data();
+            float* mono = segment.channelData[0].data() + offset;
+            for (int frame = 0; frame < blockFrames; ++frame) {
+                mono[frame] = 0.5f * left[frame] + 0.5f * right[frame];
+            }
+        }
     }
 }
 

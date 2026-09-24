@@ -53,6 +53,85 @@ static float valueNoise2D(float x, float y, int seed)
     const float ix1 = v01 + (v11 - v01) * sx;
     return ix0 + (ix1 - ix0) * sy;
 }
+
+// Resident-path shader. It deliberately uses the shared generic parameter
+// buffer rather than declaring a second b0 cbuffer: P0 amount, P1 size,
+// P2 octaves, P3 seed, P4 domain warp. The CPU reference remains the fallback
+// for a failed dispatch and the parity oracle for its mt19937 jitter sequence.
+static constexpr const char* kTurbulentDisplaceResidentHlsl = R"(
+Texture2D<float4> g_InputTexture : register(t0);
+RWTexture2D<float4> g_OutputTexture : register(u0);
+
+uint turbulentHash(uint x, uint y, uint seed)
+{
+    uint h = x * 374761393u + y * 668265263u + seed * 2246822519u;
+    h = (h ^ (h >> 13u)) * 1274126177u;
+    return h ^ (h >> 16u);
+}
+
+float turbulentValueNoise(float2 position, uint seed)
+{
+    int2 base = int2(floor(position));
+    float2 fraction = frac(position);
+    uint2 p00 = uint2(base);
+    const float v00 = (float)turbulentHash(p00.x,     p00.y,     seed) / 4294967295.0;
+    const float v10 = (float)turbulentHash(p00.x + 1, p00.y,     seed) / 4294967295.0;
+    const float v01 = (float)turbulentHash(p00.x,     p00.y + 1, seed) / 4294967295.0;
+    const float v11 = (float)turbulentHash(p00.x + 1, p00.y + 1, seed) / 4294967295.0;
+    const float2 smooth = fraction * fraction * (3.0 - 2.0 * fraction);
+    return lerp(lerp(v00, v10, smooth.x), lerp(v01, v11, smooth.x), smooth.y);
+}
+
+float turbulentJitter(uint x, uint y, uint octave, uint axis, uint seed)
+{
+    return (float)turbulentHash(x + octave * 2246822519u,
+                                y + axis * 3266489917u, seed) /
+            4294967295.0) * 1000.0;
+}
+
+float4 turbulentSampleLinear(float2 position, uint width, uint height)
+{
+    position = clamp(position, float2(0.0, 0.0),
+                     float2(width - 1, height - 1));
+    const int2 lower = int2(floor(position));
+    const float2 fraction = frac(position);
+    const int2 upperX = min(lower + int2(1, 0), int2(width - 1, height - 1));
+    const int2 upperY = min(lower + int2(0, 1), int2(width - 1, height - 1));
+    const int2 upperXY = min(lower + int2(1, 1), int2(width - 1, height - 1));
+    return lerp(lerp(g_InputTexture[uint2(lower)], g_InputTexture[uint2(upperX)], fraction.x),
+                lerp(g_InputTexture[uint2(upperY)], g_InputTexture[uint2(upperXY)], fraction.x),
+                fraction.y);
+}
+
+[numthreads(8, 8, 1)]
+void main(uint3 dispatchId : SV_DispatchThreadID)
+{
+    uint width, height;
+    g_OutputTexture.GetDimensions(width, height);
+    if (dispatchId.x >= width || dispatchId.y >= height) return;
+
+    const uint seed = (uint)max(g_P3, 0.0);
+    const int octaves = clamp((int)(g_P2 + 0.5), 1, 12);
+    const float2 coordinate = float2(dispatchId.xy);
+    const float2 base = coordinate / max(g_P1, 1.0);
+    const float2 warped = base + float2(
+        turbulentValueNoise(base * 0.75 + float2(17.0, 0.0), seed + 101u) - 0.5,
+        turbulentValueNoise(base * 0.75 + float2(0.0, 31.0), seed + 137u) - 0.5) * g_P4;
+    float2 displacement = 0.0;
+    float amplitude = g_P0;
+    float frequency = 1.0;
+    for (int octave = 0; octave < octaves; ++octave) {
+        const float jitterX = turbulentJitter(dispatchId.x, dispatchId.y, octave, 0u, seed);
+        const float jitterY = turbulentJitter(dispatchId.x, dispatchId.y, octave, 1u, seed);
+        const float2 samplePosition = warped * frequency + float2(jitterX, jitterY);
+        displacement.x += turbulentValueNoise(samplePosition, seed + (uint)octave) * amplitude;
+        displacement.y += turbulentValueNoise(samplePosition + 100.0, seed + (uint)octave) * amplitude;
+        amplitude *= 0.5;
+        frequency *= 2.0;
+    }
+    g_OutputTexture[dispatchId.xy] = turbulentSampleLinear(coordinate + displacement, width, height);
+}
+)";
 } // namespace
 
 class TurbulentDisplaceEffectCPUImpl : public ArtifactEffectImplBase {
@@ -154,6 +233,11 @@ TurbulentDisplaceEffect::TurbulentDisplaceEffect() {
     setPipelineStage(EffectPipelineStage::Rasterizer);
     setCPUImpl(ArtifactCore::makeShared<TurbulentDisplaceEffectCPUImpl>());
     setGPUImpl(ArtifactCore::makeShared<TurbulentDisplaceEffectGPUImpl>());
+    setComputeMode(ComputeMode::AUTO);
+    registerGpuGenericShader(
+        TurbulentDisplaceEffect::kGpuGenericKey,
+        GpuGenericShaderRecord{
+            kTurbulentDisplaceResidentHlsl, "main", GpuGenericResourceKind::Filter});
 }
 TurbulentDisplaceEffect::~TurbulentDisplaceEffect() = default;
 

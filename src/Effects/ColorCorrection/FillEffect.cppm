@@ -27,6 +27,30 @@ import Core.Parallel;
 
 namespace Artifact {
 
+namespace {
+// Resident-path variant of SolidFillProcessor::applyFillPixel(): P0..P2 are
+// RGB, P3 is opacity, and P4 controls alpha preservation.
+static constexpr const char* kSolidFillResidentHlsl = R"(
+Texture2D<float4> g_InputTexture : register(t0);
+RWTexture2D<float4> g_OutputTexture : register(u0);
+
+[numthreads(8, 8, 1)]
+void main(uint3 dtid : SV_DispatchThreadID)
+{
+    if (dtid.x >= g_Width || dtid.y >= g_Height) return;
+
+    float4 pixel = g_InputTexture[dtid.xy];
+    const float opacity = saturate(g_P3);
+    const float3 fillColor = float3(g_P0, g_P1, g_P2);
+    pixel.rgb = lerp(pixel.rgb, fillColor, opacity);
+    if (g_P4 < 0.5f) {
+        pixel.a = lerp(pixel.a, 1.0f, opacity);
+    }
+    g_OutputTexture[dtid.xy] = pixel;
+}
+)";
+} // namespace
+
 class FillEffectCPUImpl : public ArtifactEffectImplBase {
 public:
     ArtifactCore::SolidFillProcessor processor_;
@@ -203,7 +227,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
     float3 fillColor = float3(g_R, g_G, g_B);
     px.rgb = lerp(px.rgb, fillColor, saturate(g_Opacity));
     if (g_PreserveAlpha < 0.5f) {
-        px.a = 1.0f;
+        px.a = lerp(px.a, 1.0f, saturate(g_Opacity));
     }
     g_OutputTexture[dtid.xy] = px;
 }
@@ -334,6 +358,10 @@ FillEffect::FillEffect() {
     setCPUImpl(ArtifactCore::makeShared<FillEffectCPUImpl>());
     setGPUImpl(ArtifactCore::makeShared<FillEffectGPUImpl>());
     setComputeMode(ComputeMode::AUTO);
+    registerGpuGenericShader(
+        FillEffect::kGpuGenericKey,
+        GpuGenericShaderRecord{
+            kSolidFillResidentHlsl, "main", GpuGenericResourceKind::Filter});
     applyPreset(preset_);
     syncImpls();
 }

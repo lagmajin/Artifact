@@ -4,9 +4,9 @@ module;
 #include <QList>
 #include <QString>
 #include <QRegularExpression>
+#include <vector>
 module Artifact.Project.Settings;
 
-import std;
 import Utils.String.UniString;
 
 

@@ -11,6 +11,7 @@ module;
 #include <QFont>
 #include <QSize>
 #include <QSizeF>
+#include <QMatrix4x4>
 #include <QFile>
 #include <QDataStream>
 #include <QTextOption>
@@ -82,6 +83,7 @@ import Artifact.Render.Queue.Encoder;
 import Artifact.Render.Queue.Job;
 import Frame.Range;
 import Frame.Debug;
+import Time.Rational;
 import Core.Diagnostics.Trace;
 import Core.Diagnostics.Recorder;
 import Core.Diagnostics.ProjectDiagnostic;
@@ -111,6 +113,8 @@ import Core.Diagnostics.SessionLedger;
 import Encoder.FFmpegEncoder;
 import Media.Encoder.FFmpegAudioEncoder;
 import IO.ImageExporter;
+import IO.Async.ImageWriterManager;
+import Image.Raw;
 import IO.VectorExport;
 import Image.ExportOptions;
 import Artifact.Composition.Abstract;
@@ -141,9 +145,13 @@ import Memory.SharedPtr;
 
 namespace Artifact
 {
+    // Frame-level diagnostics stay behind a dedicated category, but the
+    // threshold is debug so a render that never starts or stalls is visible
+    // in the log by default. Silence with
+    // QT_LOGGING_RULES="artifact.render.queue.frames.debug=false".
     Q_LOGGING_CATEGORY(renderQueueFrameLog,
                        "artifact.render.queue.frames",
-                       QtWarningMsg)
+                       QtDebugMsg)
 
     namespace {
         FootageItem* findProjectRenderInput(const ArtifactCore::Id& projectItemId) {
@@ -736,7 +744,7 @@ namespace Artifact
     namespace {
         using RendererChannel = ArtifactIRenderer::ChannelType;
 
-        constexpr std::array<RendererChannel, 16> kAllRendererChannels = {
+        constexpr std::array<RendererChannel, 21> kAllRendererChannels = {
             RendererChannel::Red,
             RendererChannel::Green,
             RendererChannel::Blue,
@@ -753,9 +761,14 @@ namespace Artifact
             RendererChannel::AlbedoG,
             RendererChannel::AlbedoB,
             RendererChannel::Emission,
+            RendererChannel::PositionX,
+            RendererChannel::PositionY,
+            RendererChannel::PositionZ,
+            RendererChannel::U,
+            RendererChannel::V,
         };
 
-        constexpr std::array<RendererChannel, 16> kDefaultMultiChannelExportChannels = {
+        constexpr std::array<RendererChannel, 21> kDefaultMultiChannelExportChannels = {
             RendererChannel::Red,
             RendererChannel::Green,
             RendererChannel::Blue,
@@ -772,6 +785,11 @@ namespace Artifact
             RendererChannel::AlbedoG,
             RendererChannel::AlbedoB,
             RendererChannel::Emission,
+            RendererChannel::PositionX,
+            RendererChannel::PositionY,
+            RendererChannel::PositionZ,
+            RendererChannel::U,
+            RendererChannel::V,
         };
 
         QString rendererChannelKey(RendererChannel channel)
@@ -809,6 +827,16 @@ namespace Artifact
                 return QStringLiteral("Albedo.B");
             case RendererChannel::Emission:
                 return QStringLiteral("Emission");
+            case RendererChannel::PositionX:
+                return QStringLiteral("Position.X");
+            case RendererChannel::PositionY:
+                return QStringLiteral("Position.Y");
+            case RendererChannel::PositionZ:
+                return QStringLiteral("Position.Z");
+            case RendererChannel::U:
+                return QStringLiteral("UV.U");
+            case RendererChannel::V:
+                return QStringLiteral("UV.V");
             case RendererChannel::Custom:
                 return QStringLiteral("Custom");
             }
@@ -848,6 +876,11 @@ namespace Artifact
             case RendererChannel::AlbedoG: return ArtifactCore::ChannelType::AlbedoG;
             case RendererChannel::AlbedoB: return ArtifactCore::ChannelType::AlbedoB;
             case RendererChannel::Emission: return ArtifactCore::ChannelType::Emission;
+            case RendererChannel::PositionX: return ArtifactCore::ChannelType::PositionX;
+            case RendererChannel::PositionY: return ArtifactCore::ChannelType::PositionY;
+            case RendererChannel::PositionZ: return ArtifactCore::ChannelType::PositionZ;
+            case RendererChannel::U: return ArtifactCore::ChannelType::U;
+            case RendererChannel::V: return ArtifactCore::ChannelType::V;
             case RendererChannel::Custom: return ArtifactCore::ChannelType::Custom;
             }
             return ArtifactCore::ChannelType::Custom;
@@ -1299,7 +1332,7 @@ namespace Artifact
                 ArtifactCore::DiagnosticSeverity::Info,
                 ArtifactCore::DiagnosticCategory::Configuration,
                 QStringLiteral("AOV export uses the scene render boundary"),
-                QStringLiteral("Beauty and named AOVs are captured before composition final-image effects. This keeps Depth, Normal, Velocity, and ID channels spatially aligned."),
+                QStringLiteral("Beauty and named AOVs are captured before composition final-image effects. This keeps Depth, Normal, Velocity, Position, UV, and ID channels spatially aligned."),
                 QStringLiteral("Bake final-image effects into layers when they must affect the exported Beauty channel"),
                 compId));
 
@@ -2497,6 +2530,8 @@ namespace Artifact
         int lastPreviewJobIndex_ = -1;
         std::atomic<bool> previewUpdatePending_{false};
         std::mutex previewMutex_;
+        // XPU P3: progress-preview time-decimation stamp (consumer thread only).
+        std::chrono::steady_clock::time_point lastPreviewPublishTime_{};
 
         std::unique_ptr<ArtifactIRenderer> gpuRenderer_;
         std::unique_ptr<ArtifactCore::LayerBlendPipeline> gpuMattePipeline_;
@@ -2661,6 +2696,147 @@ namespace Artifact
             int adapterId = -1;
         };
 
+        // XPU: formal name for the hetero compute foundation
+        // (CPU groups + dGPU full workers + iGPU assist/full workers).
+        // P1 scope: unified plan construction + policy logging only.
+        // Actual dispatch stays on the existing GpuFinalWorker path (P2).
+        struct XpuNodeDesc {
+            enum class Kind { CpuGroup, GpuFull, GpuAssist } kind = Kind::GpuFull;
+            QString id;
+            int maxInFlight = 1;
+            quint64 memoryBudgetBytes = 0;
+            int adapterId = -1;
+            QString backend;
+            QString adapterType;
+            int autoScore = 0;
+        };
+        using HeteroNodeDesc = XpuNodeDesc; // legacy alias
+
+        static QString xpuNodeKindName(XpuNodeDesc::Kind kind)
+        {
+            switch (kind) {
+            case XpuNodeDesc::Kind::CpuGroup:
+                return QStringLiteral("cpu-group");
+            case XpuNodeDesc::Kind::GpuAssist:
+                return QStringLiteral("gpu-assist");
+            case XpuNodeDesc::Kind::GpuFull:
+            default:
+                return QStringLiteral("gpu-full");
+            }
+        }
+
+        // Canonical spec string. ARTIFACT_XPU is the formal name;
+        // ARTIFACT_HETERO remains a legacy alias. Unset = current behavior.
+        static QString xpuSpecString()
+        {
+            const QString canonical = qEnvironmentVariable("ARTIFACT_XPU").trimmed();
+            if (!canonical.isEmpty()) {
+                return canonical;
+            }
+            return qEnvironmentVariable("ARTIFACT_HETERO").trimmed();
+        }
+
+        // iGPU role selection: "off" / "assist" / "full".
+        // Default is "full" to match the implemented 2026-09-21 behavior
+        // (Integrated participates as an independent final worker).
+        // "assist" is opt-in, reserved for P4 consumer offload.
+        QString xpuIgpuRole() const
+        {
+            const QString spec = xpuSpecString().toLower();
+            if (spec.contains(QStringLiteral("igpu=off"))) {
+                return QStringLiteral("off");
+            }
+            if (spec.contains(QStringLiteral("igpu=assist"))) {
+                return QStringLiteral("assist");
+            }
+            if (spec.contains(QStringLiteral("igpu=full"))) {
+                return QStringLiteral("full");
+            }
+            return QStringLiteral("full");
+        }
+
+        std::vector<XpuNodeDesc> buildXpuPlan() const
+        {
+            std::vector<XpuNodeDesc> plan;
+            XpuNodeDesc cpu;
+            cpu.kind = XpuNodeDesc::Kind::CpuGroup;
+            cpu.id = QStringLiteral("cpu:0");
+            cpu.maxInFlight = std::max(1, maxInFlightFrames_);
+            cpu.memoryBudgetBytes = 0; // bounded by outputBuffer limits
+            plan.push_back(cpu);
+
+            const QString igpuRole = xpuIgpuRole();
+            DiligentDeviceManager probe;
+            const auto candidates = probe.availableAdapters();
+            for (const auto& candidate : candidates) {
+                if (candidate.type.compare(
+                        QStringLiteral("Software"), Qt::CaseInsensitive) == 0) {
+                    continue;
+                }
+                const bool isDiscrete = candidate.type.compare(
+                    QStringLiteral("Discrete"), Qt::CaseInsensitive) == 0;
+                const bool isIntegrated = candidate.type.compare(
+                    QStringLiteral("Integrated"), Qt::CaseInsensitive) == 0;
+                XpuNodeDesc node;
+                node.adapterId = static_cast<int>(candidate.adapterId);
+                node.backend = candidate.backend;
+                node.adapterType = candidate.type;
+                node.autoScore = candidate.autoScore;
+                node.maxInFlight = 1; // one immediate context per worker
+                node.memoryBudgetBytes = candidate.localMemoryBytes != 0
+                    ? static_cast<quint64>(candidate.localMemoryBytes)
+                    : static_cast<quint64>(candidate.unifiedMemoryBytes);
+                if (isDiscrete) {
+                    node.kind = XpuNodeDesc::Kind::GpuFull;
+                    node.id = QStringLiteral("gpu:%1").arg(node.adapterId);
+                } else if (isIntegrated) {
+                    if (igpuRole == QLatin1String("off")) {
+                        continue;
+                    }
+                    node.kind = (igpuRole == QLatin1String("assist"))
+                        ? XpuNodeDesc::Kind::GpuAssist
+                        : XpuNodeDesc::Kind::GpuFull;
+                    node.id = QStringLiteral("igpu:%1").arg(node.adapterId);
+                } else {
+                    continue;
+                }
+                plan.push_back(node);
+            }
+            return plan;
+        }
+
+        static QString xpuPlanDebugState(const std::vector<XpuNodeDesc>& plan)
+        {
+            if (plan.empty()) {
+                return QStringLiteral("xpuPlan nodes=0");
+            }
+            QStringList parts;
+            parts.reserve(static_cast<qsizetype>(plan.size()));
+            for (const auto& node : plan) {
+                parts.push_back(
+                    QStringLiteral("id=%1 kind=%2 backend=%3 adapter=%4 score=%5 budgetMiB=%6 inFlight=%7")
+                        .arg(node.id)
+                        .arg(xpuNodeKindName(node.kind))
+                        .arg(node.backend.isEmpty() ? QStringLiteral("<none>") : node.backend)
+                        .arg(node.adapterId)
+                        .arg(node.autoScore)
+                        .arg(node.memoryBudgetBytes / (1024ull * 1024ull))
+                        .arg(node.maxInFlight));
+            }
+            return QStringLiteral("xpuPlan nodes=%1 [%2]")
+                .arg(static_cast<qulonglong>(plan.size()))
+                .arg(parts.join(QStringLiteral(" | ")));
+        }
+
+        // P2: XPU mixed (CPU+GPU) frame-parallel dispatch, opt-in only.
+        // ARTIFACT_XPU=mixed=on (ARTIFACT_HETERO alias accepted).
+        // Unset = current behavior (no mixed workers).
+        bool xpuMixedRequested() const
+        {
+            return xpuSpecString().toLower().contains(
+                QStringLiteral("mixed=on"));
+        }
+
         void processFramesForJob(
             ArtifactRenderQueueService* service,
             int jobIndex,
@@ -2691,7 +2867,219 @@ namespace Artifact
         ArtifactCore::RetryPolicy farmRetryPolicy_;
 
         // M-RD-13 Phase 2: Multi-Frame Scheduler
-        int maxInFlightFrames_ = 4;
+        // XPU P3: HW/memory 連動の autotune は P4。以降は環境変数で上書き可
+        // (既定 4=現行動作)。
+        static int resolveMaxInFlightFrames()
+        {
+            bool ok = false;
+            const int value = qEnvironmentVariable(
+                "ARTIFACT_XPU_MAX_IN_FLIGHT").trimmed().toInt(&ok);
+            if (!ok) {
+                return 4;
+            }
+            return std::clamp(value, 1, 64);
+        }
+        int maxInFlightFrames_ = resolveMaxInFlightFrames();
+
+        // XPU P3: 進捗 preview の時間間引き (ms)。出力には影響しない。
+        // 0=間引きなし（従来動作）。既定 250。
+        static int xpuPreviewMinIntervalMs()
+        {
+            bool ok = false;
+            const int value = qEnvironmentVariable(
+                "ARTIFACT_XPU_PREVIEW_MIN_INTERVAL_MS").trimmed().toInt(&ok);
+            if (!ok) {
+                return 250;
+            }
+            return std::clamp(value, 0, 60000);
+        }
+
+        // XPU P3: 連番書込の非同期化（出力不変・順序不問・bounded）。
+        // 既定 off（従来の同期書込）。ARTIFACT_XPU_ASYNC_SEQUENCE=on または
+        // ARTIFACT_XPU=asyncseq=on で opt-in。manager=on で AsyncImageWriterManager 経由。
+        static bool xpuAsyncSequenceEnabled()
+        {
+            const QString direct = qEnvironmentVariable(
+                "ARTIFACT_XPU_ASYNC_SEQUENCE").trimmed().toLower();
+            if (direct == QLatin1String("1") || direct == QLatin1String("on") ||
+                direct == QLatin1String("true") || direct == QLatin1String("yes") ||
+                direct == QLatin1String("manager")) {
+                return true;
+            }
+            return xpuSpecString().toLower().contains(
+                QStringLiteral("asyncseq=on")) ||
+                xpuSpecString().toLower().contains(
+                    QStringLiteral("asyncseq=manager"));
+        }
+
+        static bool xpuAsyncSequenceUseManager()
+        {
+            const QString direct = qEnvironmentVariable(
+                "ARTIFACT_XPU_ASYNC_SEQUENCE").trimmed().toLower();
+            if (direct == QLatin1String("manager")) {
+                return true;
+            }
+            return xpuSpecString().toLower().contains(
+                QStringLiteral("asyncseq=manager"));
+        }
+
+        static ArtifactCore::RawImagePtr xpuQImageToRawImage(const QImage& image)
+        {
+            if (image.isNull()) {
+                return nullptr;
+            }
+            const QImage conv = image.format() == QImage::Format_RGBA8888
+                ? image : image.convertToFormat(QImage::Format_RGBA8888);
+            auto raw = ArtifactCore::makeShared<ArtifactCore::RawImage>();
+            raw->width = conv.width();
+            raw->height = conv.height();
+            raw->channels = 4;
+            raw->pixelType = QStringLiteral("uint8");
+            raw->bitsPerChannel = 8;
+            const qsizetype bytes = conv.sizeInBytes();
+            raw->data.resize(static_cast<int>(bytes));
+            if (bytes > 0) {
+                std::memcpy(raw->data.data(), conv.constBits(),
+                    static_cast<size_t>(bytes));
+            }
+            return raw;
+        }
+
+        // XPU P5: parity hash（出力不変・opt-in）。逐次 vs ヘテロの同一性検証用。
+        // 既定 off。ARTIFACT_XPU_PARITY_HASH=on または ARTIFACT_XPU=parity=on。
+        static bool xpuParityHashEnabled()
+        {
+            const QString direct = qEnvironmentVariable(
+                "ARTIFACT_XPU_PARITY_HASH").trimmed().toLower();
+            if (direct == QLatin1String("1") || direct == QLatin1String("on") ||
+                direct == QLatin1String("true") || direct == QLatin1String("yes")) {
+                return true;
+            }
+            return xpuSpecString().toLower().contains(
+                QStringLiteral("parity=on"));
+        }
+
+        // XPU P3: 3-stage consumer pipeline（出力不変・opt-in）。
+        // ARTIFACT_XPU_PIPELINE=on または ARTIFACT_XPU=pipeline=on で有効。
+        // 取得 serial（既存 outputBuffer）→ 変換 parallel（RGBA detach/scale）→
+        // encode serial（videoBackend->addFrame は順序必須）の最小形。
+        static bool xpuPipelineEnabled()
+        {
+            const QString direct = qEnvironmentVariable(
+                "ARTIFACT_XPU_PIPELINE").trimmed().toLower();
+            if (direct == QLatin1String("1") || direct == QLatin1String("on") ||
+                direct == QLatin1String("true") || direct == QLatin1String("yes")) {
+                return true;
+            }
+            return xpuSpecString().toLower().contains(
+                QStringLiteral("pipeline=on"));
+        }
+
+        // XPU P5: bench JSON（出力不変・opt-in）。ARTIFACT_XPU_BENCH=on で
+        // temp/ArtifactStudio/xpu-bench/ に job summary を JSON で残す。
+        static bool xpuBenchEnabled()
+        {
+            const QString direct = qEnvironmentVariable(
+                "ARTIFACT_XPU_BENCH").trimmed().toLower();
+            if (direct == QLatin1String("1") || direct == QLatin1String("on") ||
+                direct == QLatin1String("true") || direct == QLatin1String("yes")) {
+                return true;
+            }
+            return xpuSpecString().toLower().contains(
+                QStringLiteral("bench=on"));
+        }
+
+        static void writeXpuBenchRecord(
+            int jobIndex, const ArtifactRenderJob& job,
+            int totalFrames, qint64 wallMs,
+            int gpuFrames, int cpuFrames,
+            bool mixed, bool asyncSeq, bool useGpuBackend,
+            size_t parityCombined, bool parityOn,
+            const std::vector<XpuNodeDesc>& plan)
+        {
+            const QString tempRoot = QStandardPaths::writableLocation(
+                QStandardPaths::TempLocation);
+            const QDir benchDir(QDir(tempRoot).filePath(
+                QStringLiteral("ArtifactStudio/xpu-bench")));
+            if (!benchDir.exists() && !benchDir.mkpath(QStringLiteral("."))) {
+                return;
+            }
+            const QString stamp = QDateTime::currentDateTimeUtc().toString(
+                QStringLiteral("yyyyMMdd_HHmmss_zzz"));
+            const QString fileName = QStringLiteral("xpu_job%1_%2.json")
+                .arg(jobIndex).arg(stamp);
+            QJsonObject obj;
+            obj.insert(QStringLiteral("jobIndex"), jobIndex);
+            obj.insert(QStringLiteral("compositionId"), job.compositionId.toString());
+            obj.insert(QStringLiteral("compositionName"), job.compositionName);
+            obj.insert(QStringLiteral("outputPath"), job.outputPath);
+            obj.insert(QStringLiteral("totalFrames"), totalFrames);
+            obj.insert(QStringLiteral("wallMs"), static_cast<qint64>(wallMs));
+            obj.insert(QStringLiteral("gpuFrames"), gpuFrames);
+            obj.insert(QStringLiteral("xpuCpuFrames"), cpuFrames);
+            obj.insert(QStringLiteral("mixed"), mixed);
+            obj.insert(QStringLiteral("asyncSeq"), asyncSeq);
+            obj.insert(QStringLiteral("backend"), useGpuBackend ? QStringLiteral("gpu") : QStringLiteral("cpu"));
+            obj.insert(QStringLiteral("parity"), parityOn
+                ? QString::number(parityCombined, 16) : QStringLiteral("off"));
+            obj.insert(QStringLiteral("timestamp"), stamp);
+            QJsonArray planArr;
+            for (const auto& node : plan) {
+                QJsonObject n;
+                n.insert(QStringLiteral("id"), node.id);
+                n.insert(QStringLiteral("kind"), xpuNodeKindName(node.kind));
+                n.insert(QStringLiteral("backend"), node.backend);
+                n.insert(QStringLiteral("adapter"), node.adapterId);
+                n.insert(QStringLiteral("score"), node.autoScore);
+                n.insert(QStringLiteral("budgetMiB"),
+                    static_cast<qint64>(node.memoryBudgetBytes / (1024ULL * 1024ULL)));
+                n.insert(QStringLiteral("inFlight"), node.maxInFlight);
+                planArr.push_back(n);
+            }
+            obj.insert(QStringLiteral("xpuPlan"), planArr);
+            const QString path = benchDir.filePath(fileName);
+            QFile f(path);
+            if (f.open(QIODevice::WriteOnly | QIODevice::Text)) {
+                f.write(QJsonDocument(obj).toJson(QJsonDocument::Indented));
+                f.close();
+                qInfo() << "[RenderQueue] XPU bench record" << path;
+            }
+        }
+
+        static size_t xpuImageParityHash(const QImage& image)
+        {
+            if (image.isNull()) {
+                return 0;
+            }
+            size_t h = 1469598103934665603ULL;
+            h ^= static_cast<size_t>(image.width());
+            h *= 1099511628211ULL;
+            h ^= static_cast<size_t>(image.height());
+            h *= 1099511628211ULL;
+            h ^= static_cast<size_t>(image.format());
+            h *= 1099511628211ULL;
+            const QImage conv = image.format() == QImage::Format_RGBA8888
+                ? image : image.convertToFormat(QImage::Format_RGBA8888);
+            const uchar* bits = conv.constBits();
+            const size_t bytes = static_cast<size_t>(conv.sizeInBytes());
+            // Sample every 16 bytes to keep consumer overhead bounded
+            // while still catching CPU/GPU pixel diffs. Tail byte included.
+            for (size_t i = 0; i < bytes; i += 16) {
+                h ^= static_cast<size_t>(bits[i]);
+                h *= 1099511628211ULL;
+            }
+            if (bytes > 0) {
+                h ^= static_cast<size_t>(bits[bytes - 1]);
+                h *= 1099511628211ULL;
+            }
+            return h;
+        }
+
+        static size_t xpuCombineParityHash(size_t combined, size_t frameHash)
+        {
+            return combined ^ (frameHash + 0x9e3779b97f4a7c15ULL +
+                               (combined << 6) + (combined >> 2));
+        }
 
         // M-RD-13 Phase 3: Cache and Memory Boundaries
         int maxOutputBufferFrames_ = 8;
@@ -3226,16 +3614,43 @@ namespace Artifact
             return true;
         }
 
-        std::vector<int> resolveDiscreteD3D12AdapterIds()
+        bool shouldIncludeIntegratedGpuWorkers() const
+        {
+            // Canonical: ARTIFACT_XPU_INCLUDE_INTEGRATED. Legacy alias:
+            // ARTIFACT_MULTI_GPU_INCLUDE_INTEGRATED. XPU spec igpu=off
+            // also excludes.
+            if (xpuIgpuRole() == QLatin1String("off")) {
+                return false;
+            }
+            QString requested = qEnvironmentVariable(
+                "ARTIFACT_XPU_INCLUDE_INTEGRATED").trimmed().toLower();
+            if (requested.isEmpty()) {
+                requested = qEnvironmentVariable(
+                    "ARTIFACT_MULTI_GPU_INCLUDE_INTEGRATED").trimmed().toLower();
+            }
+            return requested != QLatin1String("0") &&
+                   requested != QLatin1String("false") &&
+                   requested != QLatin1String("off") &&
+                   requested != QLatin1String("no");
+        }
+
+        std::vector<int> resolveFrameParallelD3D12AdapterIds()
         {
             std::vector<int> adapterIds;
             DiligentDeviceManager probe;
             const auto candidates = probe.availableAdapters();
+            const bool includeIntegrated = shouldIncludeIntegratedGpuWorkers();
             for (const auto& candidate : candidates) {
                 if (candidate.backend.compare(
-                        QStringLiteral("d3d12"), Qt::CaseInsensitive) != 0 ||
-                    candidate.type.compare(
-                        QStringLiteral("Discrete"), Qt::CaseInsensitive) != 0) {
+                        QStringLiteral("d3d12"), Qt::CaseInsensitive) != 0) {
+                    continue;
+                }
+
+                const bool isDiscrete = candidate.type.compare(
+                    QStringLiteral("Discrete"), Qt::CaseInsensitive) == 0;
+                const bool isIntegrated = candidate.type.compare(
+                    QStringLiteral("Integrated"), Qt::CaseInsensitive) == 0;
+                if (!isDiscrete && !(includeIntegrated && isIntegrated)) {
                     continue;
                 }
                 adapterIds.push_back(static_cast<int>(candidate.adapterId));
@@ -3454,7 +3869,10 @@ namespace Artifact
             return placeholder;
         }
 
-        QImage renderLayerSurface(const ArtifactAbstractLayerPtr& layer) const
+        QImage renderLayerSurface(const ArtifactAbstractLayerPtr& layer,
+                                  const QMatrix4x4* cameraView = nullptr,
+                                  const QMatrix4x4* cameraProjection = nullptr,
+                                  const QSize& compositionSize = {}) const
         {
             if (!layer) {
                 return {};
@@ -3502,6 +3920,38 @@ namespace Artifact
                 }
             }
 
+            // The CPU render queue keeps a deliberately small 3D fallback: fixed or
+            // imported meshes are rasterized flat-shaded with the active camera.
+            // Material graphs, textures, lighting, and skinning remain GPU-only.
+            if (const auto modelLayer = ArtifactCore::dynamicPointerCast<Artifact3DLayer>(layer)) {
+                if (cameraView && cameraProjection &&
+                    modelLayer->renderMode() == ModelRenderMode::Solid &&
+                    !modelLayer->hasTransparentMaterial()) {
+                    const auto snapshot = modelLayer->transform3D().snapshotAt(
+                        ArtifactCore::RationalTime(modelLayer->currentFrame(), 30.0));
+                    QMatrix4x4 modelMatrix;
+                    modelMatrix.translate(snapshot.positionX, snapshot.positionY, snapshot.positionZ);
+                    modelMatrix.rotate(snapshot.rotationX, 1.0f, 0.0f, 0.0f);
+                    modelMatrix.rotate(snapshot.rotationY, 0.0f, 1.0f, 0.0f);
+                    modelMatrix.rotate(snapshot.rotationZ, 0.0f, 0.0f, 1.0f);
+                    modelMatrix.scale(snapshot.scaleX, snapshot.scaleY, snapshot.scaleZ);
+                    modelMatrix.translate(-snapshot.anchorX, -snapshot.anchorY, -snapshot.anchorZ);
+
+                    SoftwareRender::FlatMeshRasterRequest request;
+                    request.mesh = &modelLayer->mesh();
+                    request.modelMatrix = modelMatrix;
+                    request.viewMatrix = *cameraView;
+                    request.projectionMatrix = *cameraProjection;
+                    request.outputSize = compositionSize.isValid() ? compositionSize : layerSize;
+                    request.baseColor = modelLayer->material().baseColor();
+                    request.opacity = 1.0f;
+                    const QImage raster = SoftwareRender::rasterizeFlatMesh(request);
+                    if (!raster.isNull()) {
+                        return raster;
+                    }
+                }
+            }
+
             QImage fallback = layer->getThumbnail(layerSize.width(), layerSize.height());
             if (!fallback.isNull()) {
                 return fallback.convertToFormat(QImage::Format_ARGB32_Premultiplied);
@@ -3539,6 +3989,50 @@ namespace Artifact
             return clone;
         }
 
+        // XPU P0: clone→renderSingleFrame の pixel 一致を簡易検証（opt-in）。
+        // ARTIFACT_XPU_CLONE_CHECK=on で job 先頭フレームのみ software path で比較。
+        static bool xpuCloneCheckEnabled()
+        {
+            const QString direct = qEnvironmentVariable(
+                "ARTIFACT_XPU_CLONE_CHECK").trimmed().toLower();
+            if (direct == QLatin1String("1") || direct == QLatin1String("on") ||
+                direct == QLatin1String("true") || direct == QLatin1String("yes")) {
+                return true;
+            }
+            return xpuSpecString().toLower().contains(
+                QStringLiteral("clonecheck=on"));
+        }
+
+        bool verifyCloneParityForJob(const ArtifactRenderJob& job,
+            const ArtifactCompositionPtr& composition, int frameNumber,
+            QString* outReason) const
+        {
+            auto clone = cloneCompositionSnapshot(composition);
+            if (!clone || !composition) {
+                if (outReason) *outReason = QStringLiteral("clone failed");
+                return false;
+            }
+            // Software path のみで比較（GPU parity は M-IR 領域）。
+            const QImage a = renderSingleFrameComposition(job, composition, frameNumber);
+            const QImage b = renderSingleFrameComposition(job, clone, frameNumber);
+            if (a.isNull() || b.isNull()) {
+                if (outReason) *outReason = QStringLiteral("render null");
+                return false;
+            }
+            if (a.size() != b.size() || a.format() != b.format()) {
+                if (outReason) *outReason = QStringLiteral("size/format mismatch");
+                return false;
+            }
+            const size_t ha = xpuImageParityHash(a);
+            const size_t hb = xpuImageParityHash(b);
+            const bool ok = ha == hb;
+            if (!ok && outReason) {
+                *outReason = QStringLiteral("hash mismatch %1 vs %2")
+                    .arg(QString::number(ha, 16), QString::number(hb, 16));
+            }
+            return ok;
+        }
+
         QImage renderSingleFrameComposition(const ArtifactRenderJob& job, const ArtifactCompositionPtr& composition, int frameNumber) const
         {
             if (!composition) {
@@ -3567,6 +4061,21 @@ namespace Artifact
 
             const ArtifactCore::FramePosition currentPos(frameNumber);
             const auto& layers = composition->allLayerRef();
+            const ArtifactCameraLayer* activeCamera = nullptr;
+            for (const auto& layer : layers) {
+                const auto camera = ArtifactCore::dynamicPointerCast<ArtifactCameraLayer>(layer);
+                if (camera && camera->isActiveCamera() &&
+                    (!activeCamera || camera->cameraPriority() > activeCamera->cameraPriority())) {
+                    activeCamera = camera.get();
+                }
+            }
+            QMatrix4x4 cameraView;
+            QMatrix4x4 cameraProjection;
+            if (activeCamera) {
+                cameraView = activeCamera->viewMatrix();
+                cameraProjection = activeCamera->projectionMatrix(
+                    static_cast<float>(compW) / static_cast<float>(compH));
+            }
             const bool hasSoloLayer = std::any_of(
                 layers.begin(), layers.end(), [](const auto& layer) {
                     return layer && layer->isSolo();
@@ -3616,7 +4125,9 @@ namespace Artifact
                             continue;
                         }
                         sourceLayer->goToFrame(frameNumber);
-                        const QImage source = renderLayerSurface(sourceLayer);
+                        const QImage source = renderLayerSurface(
+                            sourceLayer, activeCamera ? &cameraView : nullptr,
+                            activeCamera ? &cameraProjection : nullptr, QSize(compW, compH));
                         if (!source.isNull()) {
                             softwareMatteSources.insert(matteRef.sourceLayerId, source);
                         }
@@ -3636,7 +4147,9 @@ namespace Artifact
                     continue;
                 }
 
-                QImage surface = renderLayerSurface(layer);
+                QImage surface = renderLayerSurface(
+                    layer, activeCamera ? &cameraView : nullptr,
+                    activeCamera ? &cameraProjection : nullptr, QSize(compW, compH));
                 if (surface.isNull()) {
                     continue;
                 }
@@ -4027,6 +4540,24 @@ namespace Artifact
                 }, Qt::QueuedConnection);
         }
 
+        // Surfaces a UI-visible log line for otherwise-silent conditions such
+        // as a start request arriving while a render is still running.
+        void publishLogNotice(const QString& message) {
+            if (!owner_) {
+                return;
+            }
+            if (QThread::currentThread() == owner_->thread()) {
+                ArtifactCore::globalEventBus().publish(
+                    RenderQueueLogEvent{message, -1, true});
+                return;
+            }
+            QMetaObject::invokeMethod(
+                owner_, [message]() {
+                    ArtifactCore::globalEventBus().publish(
+                        RenderQueueLogEvent{message, -1, true});
+                }, Qt::QueuedConnection);
+        }
+
         QString persistentQueuePath() const {
             const QString base = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
             return QDir(base).filePath(QStringLiteral("render-queue.json"));
@@ -4352,7 +4883,11 @@ namespace Artifact
     }
 
     int ArtifactRenderQueueService::startRenderQueuesAt(const QList<int>& indices) {
-        if (impl_->isRendering_.load(std::memory_order_acquire)) return 0;
+        if (impl_->isRendering_.load(std::memory_order_acquire)) {
+            impl_->publishLogNotice(QStringLiteral(
+                "Render is already in progress; start request ignored."));
+            return 0;
+        }
         std::set<int> uniqueIndices;
         for (const int index : indices) {
             if (index >= 0 && index < impl_->queueManager.jobCount()) {
@@ -5356,7 +5891,11 @@ namespace Artifact
                 compId));
         }
 
-        if (job.startFrame >= job.endFrame) {
+        // SingleFrame derives its [start,end) from the composition at render
+        // time (processFramesForJob), so the queued range is legitimately empty.
+        // Only explicit range modes must supply a non-empty stored range.
+        if (job.frameRangeMode != ArtifactRenderJob::FrameRangeMode::SingleFrame &&
+            job.startFrame >= job.endFrame) {
             result.addDiagnostic(makePreflightDiagnostic(
                 ArtifactCore::DiagnosticSeverity::Error,
                 ArtifactCore::DiagnosticCategory::Configuration,
@@ -6275,6 +6814,26 @@ namespace Artifact
                 }
             }
         }
+        // XPU P0: clone parity check (opt-in, cold path, output-invariant).
+        if (xpuCloneCheckEnabled() && compositionForRender && !compositionForRender->usesLayerComponentSimulation()) {
+            QString cloneReason;
+            const bool cloneOk = verifyCloneParityForJob(
+                job, compositionForRender, startF, &cloneReason);
+            qInfo() << "[RenderQueue] XPU clone check"
+                     << "job=" << jobIndex
+                     << "frame=" << startF
+                     << "ok=" << cloneOk
+                     << "reason=" << cloneReason;
+        }
+
+        // XPU P5: job wall-time and per-backend frame counters (cold path only).
+        QElapsedTimer xpuWallTimer;
+        xpuWallTimer.start();
+        std::atomic<int> xpuCpuFrames{0};
+        std::atomic<int> xpuGpuFrames{0};
+        std::atomic<qint64> xpuCpuMs{0};
+        std::atomic<qint64> xpuGpuMs{0};
+
         // CPU MFR workers and multi-GPU workers each receive an independent
         // composition snapshot. The legacy single-GPU path remains serialized.
         bool useMfr = !useGpuBackend && totalFrames > 1;
@@ -6323,7 +6882,7 @@ namespace Artifact
                 Diligent::RENDER_DEVICE_TYPE_D3D12;
         if (mainRendererUsesD3D12 && !usesComponentSimulation &&
             totalFrames > 1) {
-            const auto adapterIds = resolveDiscreteD3D12AdapterIds();
+            const auto adapterIds = resolveFrameParallelD3D12AdapterIds();
             if (adapterIds.size() >= 2) {
                 const int requestedWorkers = std::min(
                     {static_cast<int>(adapterIds.size()), totalFrames,
@@ -6358,10 +6917,55 @@ namespace Artifact
                     useMultiGpu = true;
                     numWorkers = static_cast<int>(multiGpuWorkers.size());
                     qInfo() << "[RenderQueue] Multi-GPU final render active"
-                            << "workers=" << numWorkers;
+                             << "workers=" << numWorkers
+                             << "includeIntegrated="
+                             << shouldIncludeIntegratedGpuWorkers();
+                    qInfo() << "[RenderQueue] XPU plan"
+                             << xpuPlanDebugState(buildXpuPlan());
                 } else {
                     multiGpuWorkers.clear();
+                    qInfo() << "[RenderQueue] XPU plan (single-GPU fallback)"
+                             << xpuPlanDebugState(buildXpuPlan());
                 }
+            }
+        }
+
+        // P2: XPU mixed dispatch. CPU workers render frames through the
+        // software path with isolated snapshots (same contract as MFR:
+        // isolated + !useGpuBackend runs lock-free in renderSingleFrame);
+        // GPU workers keep the existing GpuFinalWorker path. Opt-in only
+        // (ARTIFACT_XPU=mixed=on); any unmet condition or clone failure
+        // falls back to the established multi-GPU behavior unchanged.
+        // compositionFrameStateMutex_ is retained (MFR Phase 0 pending).
+        std::vector<ArtifactCompositionPtr> xpuMixedCpuCompositions;
+        bool useXpuMixed = false;
+        if (xpuMixedRequested() && useMultiGpu && !usesComponentSimulation &&
+            tileRenderMode_ != TileRenderMode::Tiled &&
+            !isHtmlPlayer && !job.multiChannelExportEnabled &&
+            !job.deepExportEnabled &&
+            totalFrames > numWorkers && maxInFlightFrames_ > numWorkers) {
+            const int mixedCpuWorkers = std::min(maxInFlightFrames_ - numWorkers,
+                                                totalFrames - numWorkers);
+            xpuMixedCpuCompositions.reserve(
+                static_cast<size_t>(mixedCpuWorkers));
+            bool mixedCpuReady = true;
+            for (int cpuIndex = 0; cpuIndex < mixedCpuWorkers; ++cpuIndex) {
+                auto snapshot = cloneCompositionSnapshot(compositionForRender);
+                if (!snapshot) {
+                    mixedCpuReady = false;
+                    break;
+                }
+                xpuMixedCpuCompositions.push_back(std::move(snapshot));
+            }
+            if (mixedCpuReady && !xpuMixedCpuCompositions.empty()) {
+                useXpuMixed = true;
+                numWorkers += static_cast<int>(xpuMixedCpuCompositions.size());
+                qInfo() << "[RenderQueue] XPU mixed active"
+                         << "gpuWorkers=" << multiGpuWorkers.size()
+                         << "cpuWorkers=" << xpuMixedCpuCompositions.size()
+                         << "totalWorkers=" << numWorkers;
+            } else {
+                xpuMixedCpuCompositions.clear();
             }
         }
 
@@ -6380,9 +6984,10 @@ namespace Artifact
         // Shared: render a single frame, return true on success.
         // Does NOT set anyWorkerFailed — caller (renderFrame) owns retry/failure logic.
         auto renderOneFrame = [&](int f,
-                                  const ArtifactCompositionPtr& workerComposition,
-                                  bool compositionIsIsolated,
-                                  GpuFinalWorker* gpuWorker = nullptr) -> bool {
+                                   const ArtifactCompositionPtr& workerComposition,
+                                   bool compositionIsIsolated,
+                                   GpuFinalWorker* gpuWorker = nullptr,
+                                   bool forceCpuPath = false) -> bool {
             if (shutdownRequested_.load(std::memory_order_acquire))
                 return false;
 
@@ -6402,16 +7007,24 @@ namespace Artifact
             snap.frameNumber = f;
             snap.composition = workerComposition;
             snap.compositionIsIsolated = compositionIsIsolated;
+            if (forceCpuPath) {
+                // XPU mixed CPU worker: software path with isolated state.
+                // Multi-channel/deep export is gated off before dispatch.
+                snap.useGpuBackend = false;
+            }
             FrameRenderOutput frameOutput;
             QString frameError;
             bool ok = false;
+            QElapsedTimer xpuFrameTimer;
+            xpuFrameTimer.start();
             qCDebug(renderQueueFrameLog)
                 << "[EncodeSession][Frame] render begin"
                 << "job=" << jobIndex
                 << "frame=" << f
                 << "renderBackend="
                 << (gpuWorker ? "gpu-multi" :
-                    (useGpuBackend ? "gpu" : "cpu"));
+                    (forceCpuPath ? "xpu-cpu" :
+                     (useGpuBackend ? "gpu" : "cpu")));
             try {
                 // Keep the job-local surface cache alive across frames. Its
                 // signatures already include animated effect, crop, sequence,
@@ -6433,11 +7046,20 @@ namespace Artifact
                 << "job=" << jobIndex
                 << "frame=" << f
                 << "success=" << ok
-                << "reason=" << frameError;
+                << "reason=" << frameError
+                << "elapsedMs=" << xpuFrameTimer.elapsed();
 
             {
                 std::lock_guard<std::mutex> lock(outputBufferMutex);
                 if (ok) {
+                    const qint64 elapsed = xpuFrameTimer.elapsed();
+                    if (forceCpuPath) {
+                        xpuCpuFrames.fetch_add(1, std::memory_order_relaxed);
+                        xpuCpuMs.fetch_add(elapsed, std::memory_order_relaxed);
+                    } else if (gpuWorker || useGpuBackend) {
+                        xpuGpuFrames.fetch_add(1, std::memory_order_relaxed);
+                        xpuGpuMs.fetch_add(elapsed, std::memory_order_relaxed);
+                    }
                     const size_t channelMultiplier = (snap.job.multiChannelExportEnabled ||
                                                       snap.job.deepExportEnabled)
                         ? std::max<size_t>(1, frameOutput.channels.channelCount()) : 1;
@@ -6470,12 +7092,13 @@ namespace Artifact
                     workerFailureReasons.push_back(
                         QStringLiteral("Frame %1: %2").arg(f).arg(frameError));
                     qWarning() << "[EncodeSession][Frame] render failed"
-                               << "job=" << jobIndex
-                               << "frame=" << f
-                               << "renderBackend="
-                               << (gpuWorker ? "gpu-multi" :
-                                   (useGpuBackend ? "gpu" : "cpu"))
-                               << "reason=" << frameError;
+                                << "job=" << jobIndex
+                                << "frame=" << f
+                                << "renderBackend="
+                                << (gpuWorker ? "gpu-multi" :
+                                    (forceCpuPath ? "xpu-cpu" :
+                                     (useGpuBackend ? "gpu" : "cpu")))
+                                << "reason=" << frameError;
                     ArtifactCore::Logger::instance()->flushFile();
                 }
             }
@@ -6673,11 +7296,22 @@ namespace Artifact
                 const bool hasCpuIsolatedComposition =
                     useMfr && workerIndex >= 0 &&
                     workerIndex < static_cast<int>(workerCompositions.size());
+                // XPU mixed CPU workers follow the GPU workers. Total
+                // threads stay within maxInFlightFrames_ (GPU first).
+                const int mixedCpuIndex = workerIndex -
+                    static_cast<int>(multiGpuWorkers.size());
+                const bool hasXpuMixedCpuComposition =
+                    useXpuMixed && gpuWorker == nullptr &&
+                    !hasCpuIsolatedComposition && mixedCpuIndex >= 0 &&
+                    mixedCpuIndex <
+                        static_cast<int>(xpuMixedCpuCompositions.size());
                 const ArtifactCompositionPtr& workerComposition =
                     gpuWorker
                         ? gpuWorker->composition
                         : hasCpuIsolatedComposition
                         ? workerCompositions[static_cast<size_t>(workerIndex)]
+                        : hasXpuMixedCpuComposition
+                        ? xpuMixedCpuCompositions[static_cast<size_t>(mixedCpuIndex)]
                         : compositionForRender;
                 while (!anyWorkerFailed.load(std::memory_order_relaxed)) {
                     const int f = nextFrameCounter.fetch_add(1, std::memory_order_relaxed);
@@ -6688,8 +7322,9 @@ namespace Artifact
                     }
                     renderOneFrame(
                         f, workerComposition,
-                        gpuWorker != nullptr || hasCpuIsolatedComposition,
-                        gpuWorker);
+                        gpuWorker != nullptr || hasCpuIsolatedComposition ||
+                            hasXpuMixedCpuComposition,
+                        gpuWorker, hasXpuMixedCpuComposition);
                 }
             };
 
@@ -6697,6 +7332,55 @@ namespace Artifact
                 renderWorkers.emplace_back(renderWorker, w);
             }
         }
+
+        // XPU P3: bounded async for image-sequence writes (opt-in, output-invariant).
+        // asyncseq=manager で AsyncImageWriterManager 経由（RawImage 変換）。
+        const bool xpuAsyncSequence = xpuAsyncSequenceEnabled() && !isVideo &&
+            !isHtmlPlayer && ext != QStringLiteral("svg");
+        const bool xpuUseManager = xpuAsyncSequenceUseManager() && xpuAsyncSequence;
+        std::unique_ptr<ArtifactCore::AsyncImageWriterManager> xpuSequenceManager;
+        if (xpuUseManager) {
+            xpuSequenceManager = std::make_unique<ArtifactCore::AsyncImageWriterManager>();
+            qInfo() << "[RenderQueue] XPU async sequence manager active"
+                     << "threads=" << QThread::idealThreadCount();
+        }
+        std::vector<std::pair<int, std::future<ArtifactCore::ImageExportResult>>> xpuPendingSequenceWrites;
+        // XPU P5: parity hash accumulator (consumer thread only, opt-in).
+        const bool xpuDoParity = xpuParityHashEnabled();
+        size_t xpuParityCombined = 0;
+        if (xpuAsyncSequence) {
+            xpuPendingSequenceWrites.reserve(
+                static_cast<size_t>(std::max(1, maxInFlightFrames_ * 2)));
+            qInfo() << "[RenderQueue] XPU async sequence active"
+                     << "maxPending=" << (maxInFlightFrames_ * 2);
+        }
+        auto xpuDrainOneAsyncWrite = [&](bool waitForAny) -> bool {
+            if (xpuPendingSequenceWrites.empty()) {
+                return true;
+            }
+            if (!waitForAny &&
+                static_cast<int>(xpuPendingSequenceWrites.size()) <
+                    std::max(2, maxInFlightFrames_)) {
+                return true;
+            }
+            auto pending = std::move(xpuPendingSequenceWrites.front());
+            xpuPendingSequenceWrites.erase(xpuPendingSequenceWrites.begin());
+            ArtifactCore::ImageExportResult result;
+            try {
+                result = pending.second.get();
+            } catch (...) {
+                result.success = false;
+                result.errorMessage = QStringLiteral("Async sequence write threw");
+            }
+            if (!result.success) {
+                success.store(false, std::memory_order_relaxed);
+                failureReason = QStringLiteral(
+                    "Failed to save image sequence frame %1: %2")
+                    .arg(pending.first).arg(result.errorMessage);
+                return false;
+            }
+            return true;
+        };
 
         // Consumer loop (shared by both paths; start may be checkpoint-adjusted)
         for (int f = consumerStartF; f < endF; ++f) {
@@ -6789,15 +7473,58 @@ namespace Artifact
             }
 
             QImage qimg = std::move(frameOutput.beauty);
+            if (xpuDoParity) {
+                const size_t fh = xpuImageParityHash(qimg);
+                xpuParityCombined = xpuCombineParityHash(xpuParityCombined, fh);
+            }
             const bool isFinalFrame = f + 1 >= endF;
-            const bool shouldPublishPreview = isFinalFrame ||
-                !previewUpdatePending_.exchange(true, std::memory_order_acq_rel);
+            // XPU P3: time-decimated progress preview (output-invariant).
+            // Final frame always publishes; otherwise gate by elapsed time.
+            bool timeOk = isFinalFrame;
+            if (!timeOk) {
+                const int minIntervalMs = xpuPreviewMinIntervalMs();
+                if (minIntervalMs <= 0) {
+                    timeOk = true;
+                } else {
+                    const auto now = std::chrono::steady_clock::now();
+                    if (lastPreviewPublishTime_ == std::chrono::steady_clock::time_point{}) {
+                        timeOk = true;
+                    } else {
+                        const auto elapsed =
+                            std::chrono::duration_cast<std::chrono::milliseconds>(
+                                now - lastPreviewPublishTime_).count();
+                        timeOk = elapsed >= minIntervalMs;
+                    }
+                }
+            }
+            const bool shouldPublishPreview = timeOk &&
+                (isFinalFrame ||
+                 !previewUpdatePending_.exchange(true, std::memory_order_acq_rel));
             if (shouldPublishPreview) {
+                lastPreviewPublishTime_ = std::chrono::steady_clock::now();
                 previewUpdatePending_.store(true, std::memory_order_release);
-                QImage previewImage = job.multiChannelExportEnabled
-                    ? makeMultiChannelPreview(frameOutput.channels, QSize(320, 180))
-                    : qimg.scaled(320, 180, Qt::KeepAspectRatio,
-                                  Qt::SmoothTransformation);
+                // XPU P4: iGPU assist の軽量 compute 予約。igpu=assist 時のみ
+                // preview 縮小を async（将来の iGPU offload の雛形）で実行。
+                // 既定 full/off では同期のまま（出力不変）。
+                const bool assistPreview = xpuIgpuRole() == QLatin1String("assist");
+                QImage previewImage;
+                if (assistPreview && !job.multiChannelExportEnabled) {
+                    auto pf = std::async(std::launch::async, [qimg]() {
+                        return qimg.scaled(320, 180, Qt::KeepAspectRatio,
+                                           Qt::SmoothTransformation);
+                    });
+                    try {
+                        previewImage = pf.get();
+                    } catch (...) {
+                        previewImage = qimg.scaled(320, 180, Qt::KeepAspectRatio,
+                                                   Qt::SmoothTransformation);
+                    }
+                } else {
+                    previewImage = job.multiChannelExportEnabled
+                        ? makeMultiChannelPreview(frameOutput.channels, QSize(320, 180))
+                        : qimg.scaled(320, 180, Qt::KeepAspectRatio,
+                                       Qt::SmoothTransformation);
+                }
 
                 {
                     ArtifactCore::TraceLockScope traceLock(QStringLiteral("ArtifactRenderQueueService::previewMutex_"));
@@ -6818,18 +7545,44 @@ namespace Artifact
                 }, Qt::QueuedConnection);
             }
 
+            // XPU P3: 3-stage pipeline (opt-in). Serial fetch above →
+            // parallel convert (RGBA detach, optional preview already done) →
+            // serial encode. Video encode must stay serial_in_order.
+            const bool xpuPipeline = xpuPipelineEnabled();
             if (isVideo) {
                 qCDebug(renderQueueFrameLog)
                     << "[EncodeSession][Frame] encode begin"
                     << "job=" << jobIndex
                     << "frame=" << f
-                    << "size=" << qimg.size();
-                if (!videoBackend->addFrame(qimg, f, &failureReason)) {
+                    << "size=" << qimg.size()
+                    << "pipeline=" << (xpuPipeline ? "on" : "off");
+                bool encodeOk = false;
+                if (xpuPipeline) {
+                    // Parallel convert stage: detach to RGBA8888 off the serial path,
+                    // then serial_in_order encode.
+                    auto convertFut = std::async(std::launch::async, [qimg]() {
+                        return (qimg.format() == QImage::Format_RGBA8888)
+                            ? qimg : qimg.convertToFormat(QImage::Format_RGBA8888);
+                    });
+                    QImage converted;
+                    try {
+                        converted = convertFut.get();
+                    } catch (...) {
+                        failureReason = QStringLiteral("XPU pipeline convert threw (frame %1)").arg(f);
+                        success.store(false, std::memory_order_relaxed);
+                        break;
+                    }
+                    encodeOk = videoBackend->addFrame(converted, f, &failureReason);
+                } else {
+                    encodeOk = videoBackend->addFrame(qimg, f, &failureReason);
+                }
+                if (!encodeOk) {
                     qWarning() << "[EncodeSession][Frame] encoder rejected frame"
                                << "job=" << jobIndex
                                << "frame=" << f
                                << "size=" << qimg.size()
                                << "format=" << static_cast<int>(qimg.format())
+                               << "pipeline=" << (xpuPipeline ? "on" : "off")
                                << "reason=" << failureReason;
                     ArtifactCore::Logger::instance()->flushFile();
                     success.store(false, std::memory_order_relaxed);
@@ -6948,19 +7701,72 @@ namespace Artifact
                         break;
                     }
                 } else {
-                    const auto result = job.multiChannelExportEnabled
-                        ? exporter.writeMultiChannel(frameOutput.channels, framePath, imgOpts)
-                        : exporter.write(qimg, framePath, imgOpts);
-                    if (!result.success) {
-                        success.store(false, std::memory_order_relaxed);
-                        failureReason = QStringLiteral("Failed to save image sequence frame: %1")
-                            .arg(result.errorMessage);
-                        break;
+                    // XPU P3: bounded async for the common single-channel path.
+                    // Multi-channel/deep remain synchronous to keep the contract simple.
+                    // manager 経由は RawImage 変換＋AsyncImageWriterManager の thread_pool。
+                    const bool canAsync = xpuAsyncSequence &&
+                        !job.multiChannelExportEnabled && !job.deepExportEnabled;
+                    if (canAsync) {
+                        if (xpuUseManager) {
+                            // Backpressure via pending futures count (manager は fire-and-forget
+                            // のため、std::async 側の pending が溜まりすぎないように同期側でも drain)。
+                            if (!xpuDrainOneAsyncWrite(false)) {
+                                break;
+                            }
+                            auto raw = xpuQImageToRawImage(qimg);
+                            if (!raw) {
+                                success.store(false, std::memory_order_relaxed);
+                                failureReason = QStringLiteral("Failed to convert frame %1 to RawImage").arg(f);
+                                break;
+                            }
+                            xpuSequenceManager->enqueueWriter(framePath, raw);
+                        } else {
+                            // Backpressure: keep at most ~2*maxInFlight pending writes.
+                            if (!xpuDrainOneAsyncWrite(false)) {
+                                break;
+                            }
+                            QImage asyncImg = qimg; // detach for thread
+                            const QString asyncPath = framePath;
+                            const QString asyncFmt = frameExt;
+                            ArtifactCore::ImageExportOptions asyncOpts = imgOpts;
+                            auto fut = std::async(std::launch::async,
+                                [asyncImg, asyncPath, asyncFmt, asyncOpts]() mutable {
+                                    ArtifactCore::ImageExporter e;
+                                    return e.write(asyncImg, asyncPath, asyncOpts);
+                                });
+                            xpuPendingSequenceWrites.emplace_back(
+                                f, std::move(fut));
+                        }
+                    } else {
+                        const auto result = job.multiChannelExportEnabled
+                            ? exporter.writeMultiChannel(frameOutput.channels, framePath, imgOpts)
+                            : exporter.write(qimg, framePath, imgOpts);
+                        if (!result.success) {
+                            success.store(false, std::memory_order_relaxed);
+                            failureReason = QStringLiteral("Failed to save image sequence frame: %1")
+                                .arg(result.errorMessage);
+                            break;
+                        }
                     }
                 }
                 if (!success.load(std::memory_order_relaxed)) {
                     success.store(false, std::memory_order_relaxed);
                     break;
+                }
+            }
+
+            // Drain async sequence writes before reporting progress for this frame
+            // is not required; they run bounded in background. Final drain
+            // happens after the consumer loop, but surface early failures eagerly.
+            if (xpuAsyncSequence && !xpuPendingSequenceWrites.empty()) {
+                const bool shouldDrain = success.load(std::memory_order_relaxed) &&
+                    (f + 1 >= endF ||
+                     static_cast<int>(xpuPendingSequenceWrites.size()) >=
+                         std::max(2, maxInFlightFrames_ * 2));
+                if (shouldDrain) {
+                    if (!xpuDrainOneAsyncWrite(true)) {
+                        break;
+                    }
                 }
             }
 
@@ -6972,6 +7778,31 @@ namespace Artifact
             QMetaObject::invokeMethod(service, [this, jobIndex, pct]() {
                 queueManager.setJobProgress(jobIndex, pct);
             }, Qt::QueuedConnection);
+        }
+
+        // XPU P3: final drain for async sequence writes (output-invariant join).
+        if (xpuAsyncSequence) {
+            for (auto& pending : xpuPendingSequenceWrites) {
+                ArtifactCore::ImageExportResult result;
+                try {
+                    result = pending.second.get();
+                } catch (...) {
+                    result.success = false;
+                    result.errorMessage = QStringLiteral("Async sequence write threw");
+                }
+                if (!result.success && success.load(std::memory_order_relaxed)) {
+                    success.store(false, std::memory_order_relaxed);
+                    failureReason = QStringLiteral(
+                        "Failed to save image sequence frame %1: %2")
+                        .arg(pending.first).arg(result.errorMessage);
+                }
+            }
+            xpuPendingSequenceWrites.clear();
+            if (xpuSequenceManager) {
+                // Manager の thread_pool は Impl dtor で join される。明示的に
+                // reset して全 write の完了を待つ（出力不変の join）。
+                xpuSequenceManager.reset();
+            }
         }
 
         // Teardown: join legacy workers / cancel farm
@@ -7007,11 +7838,51 @@ namespace Artifact
                    !workerFailureReasons.isEmpty()) {
             sessionLedger_.recordRenderFailed(jobIndex, failureReason);
         }
+        // XPU P5: job summary for bench/parity harness (cold path, output-invariant).
+        // P4 throughput: per-backend elapsedMs for autotune weight.
+        {
+            const qint64 wallMs = xpuWallTimer.elapsed();
+            const int cpuN = xpuCpuFrames.load(std::memory_order_relaxed);
+            const int gpuN = xpuGpuFrames.load(std::memory_order_relaxed);
+            const qint64 cpuMs = xpuCpuMs.load(std::memory_order_relaxed);
+            const qint64 gpuMs = xpuGpuMs.load(std::memory_order_relaxed);
+            const double cpuAvg = cpuN > 0 ? static_cast<double>(cpuMs) / cpuN : 0.0;
+            const double gpuAvg = gpuN > 0 ? static_cast<double>(gpuMs) / gpuN : 0.0;
+            const double weightCpu = (cpuAvg > 0 && gpuAvg > 0) ? gpuAvg / cpuAvg : 1.0;
+            const double weightGpu = 1.0;
+            const auto plan = buildXpuPlan();
+            qInfo() << "[RenderQueue] XPU job summary"
+                     << "job=" << jobIndex
+                     << "frames=" << totalFrames
+                     << "wallMs=" << wallMs
+                     << "gpuFrames=" << gpuN
+                     << "xpuCpuFrames=" << cpuN
+                     << "gpuAvgMs=" << gpuAvg
+                     << "cpuAvgMs=" << cpuAvg
+                     << "weightGpu=" << weightGpu
+                     << "weightCpu=" << weightCpu
+                     << "mixed=" << useXpuMixed
+                     << "asyncSeq=" << xpuAsyncSequence
+                     << "backend=" << (useGpuBackend ? "gpu" : "cpu")
+                     << "parity=" << (xpuDoParity
+                         ? QString::number(xpuParityCombined, 16)
+                         : QStringLiteral("off"))
+                     << xpuPlanDebugState(plan);
+            if (xpuBenchEnabled()) {
+                writeXpuBenchRecord(jobIndex, job, totalFrames, wallMs,
+                    gpuN, cpuN, useXpuMixed, xpuAsyncSequence, useGpuBackend,
+                    xpuParityCombined, xpuDoParity, plan);
+            }
+        }
         ArtifactCore::Logger::instance()->flushFile();
     }
 
     void ArtifactRenderQueueService::startAllJobs() {
-        if (impl_->isRendering_.exchange(true, std::memory_order_acq_rel)) return;
+        if (impl_->isRendering_.exchange(true, std::memory_order_acq_rel)) {
+            impl_->publishLogNotice(QStringLiteral(
+                "Render is already in progress; start request ignored."));
+            return;
+        }
         impl_->shutdownRequested_.store(false, std::memory_order_release);
 
         if (!impl_->selectiveRun_) {

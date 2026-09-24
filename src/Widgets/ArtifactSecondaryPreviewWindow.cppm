@@ -31,6 +31,7 @@ module;
 
 module Artifact.Widgets.SecondaryPreviewWindow;
 
+import Core.ArtifactMath;
 import Artifact.Service.Playback;
 import Image.ImageF32x4_RGBA;
 import Widgets.Utils.CSS;
@@ -63,7 +64,7 @@ public:
             QStringLiteral("Artifact/SecondaryPreview/Fullscreen"), false).toBool();
         autoUpdate_ = settings.value(
             QStringLiteral("Artifact/SecondaryPreview/AutoUpdate"), true).toBool();
-        updateRate_ = std::clamp(settings.value(
+        updateRate_ = ArtifactCore::artifactClamp(settings.value(
             QStringLiteral("Artifact/SecondaryPreview/UpdateRate"), 30).toInt(), 1, 120);
     }
 
@@ -88,7 +89,7 @@ public:
                 screens[i]->name() == preferredScreenName_) return i;
         }
         const int screenCount = static_cast<int>(screens.size());
-        return std::clamp(currentScreenIndex_, 0, std::max(0, screenCount - 1));
+        return ArtifactCore::artifactClamp(currentScreenIndex_, 0, ArtifactCore::artifactMax(0, screenCount - 1));
     }
 
     // OSD
@@ -424,7 +425,7 @@ bool ArtifactSecondaryPreviewWindow::autoUpdate() const {
 }
 
 void ArtifactSecondaryPreviewWindow::setUpdateRate(int fps) {
-    impl_->updateRate_ = std::max(1, std::min(120, fps));
+    impl_->updateRate_ = ArtifactCore::artifactMax(1, ArtifactCore::artifactMin(120, fps));
     impl_->updateTimer_->setInterval(1000 / impl_->updateRate_);
     if (impl_->autoUpdate_) {
         impl_->updateTimer_->start();

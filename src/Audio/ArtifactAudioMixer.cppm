@@ -9,6 +9,11 @@ module;
 #include <QStringList>
 #include <QVector>
 #include <wobjectimpl.h>
+#include <algorithm>
+#include <cmath>
+#include <map>
+#include <memory>
+#include <vector>
 
 module Artifact.Audio.Mixer;
 
@@ -20,7 +25,6 @@ import Audio.Mixer;
 import Memory.SharedPtr;
 import Core.ArtifactString;
 
-import std;
 
 namespace Artifact
 {

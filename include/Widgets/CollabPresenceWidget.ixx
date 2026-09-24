@@ -4,6 +4,8 @@ module;
 #include <QString>
 #include <QColor>
 #include <QJsonObject>
+#include <QList>
+#include <QStringList>
 #include <QWidget>
 #include <QPainter>
 #include <QPaintEvent>
@@ -11,6 +13,7 @@ module;
 #include <QVBoxLayout>
 #include <QLabel>
 #include <QFrame>
+#include <functional>
 #include <wobjectdefs.h>
 
 export module Artifact.Widgets.CollabPresenceWidget;
@@ -45,7 +48,50 @@ public:
         QColor color;
         QString cursorLocation;  // "timeline:150", "inspector:transform"
         QStringList selectedLayers;
+        QStringList selectedLayerNames;
     };
+
+    struct ReviewNote {
+        QString commentId;
+        QString parentCommentId;
+        QString authorName;
+        QString anchor;
+        QString text;
+        QStringList revisionHistory;
+        bool resolved = false;
+        bool deleted = false;
+        bool revisionHistoryTruncated = false;
+    };
+
+    void setConnectionActionHandler(
+        std::function<void(const QString& serverUrl, const QString& projectId,
+                           const QString& userName,
+                           const QString& accessToken)> handler);
+    void setLayerLockActionHandler(
+        std::function<void(const QString& layerId, bool acquire)> handler);
+    void setConnectionStatus(const QString& statusText, bool active);
+    void setLayerLockControlState(const QString& selectedLayerId,
+                                  bool connected, bool locked, bool heldByLocalUser,
+                                  bool pending, const QString& ownerName,
+                                  const QString& reason = {});
+    void setLayerEditBlockedStatus(const QString& reason);
+    void setReviewCommentHandler(
+        std::function<bool(const QString& text)> handler);
+    void setReviewReplyHandler(
+        std::function<bool(const QString& commentId, const QString& text)> handler);
+    void setReviewResolveHandler(
+        std::function<bool(const QString& commentId, bool resolved)> handler);
+    void setReviewEditHandler(
+        std::function<bool(const QString& commentId, const QString& text)> handler);
+    void setReviewDeleteHandler(
+        std::function<bool(const QString& commentId)> handler);
+    void setReviewJumpHandler(
+        std::function<bool(const QString& commentId)> handler);
+    void setReviewContext(const QString& compositionId,
+                          const QString& layerId, bool connected,
+                          bool canEdit);
+    void setReviewNotes(const QList<ReviewNote>& notes);
+    void syncRemoteUsers(const QList<UserPresence>& users);
     QList<UserPresence> users() const;
 
 protected:

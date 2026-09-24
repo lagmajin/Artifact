@@ -654,7 +654,9 @@ public:
     SortMode sortMode = SortMode::Distance;
     
     // Rendering
-    bool depthTest = true;
+    // Particle submit binds a color RTV only (no DSV). depthTest=true with
+    // no depth attachment can discard draws, so keep the App default off.
+    bool depthTest = false;
     bool depthWrite = false;
     bool softParticles = false;
     float softParticleDistance = 10.0f;

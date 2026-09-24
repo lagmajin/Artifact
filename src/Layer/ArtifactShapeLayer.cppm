@@ -23,14 +23,19 @@ module;
 #include <QPolygonF>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonValue>
 #include <QDebug>
 #include <cmath>
 #include <QPen>
+#include <cstdint>
+#include <memory>
+#include <vector>
 
 module Artifact.Layer.Shape;
 
-import std;
 import Artifact.Layers.Abstract._2D;
+import Artifact.Layer.Abstract;
 import Artifact.Layer.CloneEffectSupport;
 import Artifact.Mask.LayerMask;
 import Artifact.Mask.Path;
@@ -47,8 +52,10 @@ import Physics.System;
 import Physics.SoftBody;
 import Physics.Mpm2D;
 import Artifact.Render.IRenderer;
+import Artifact.Tool.PuppetTool;
 import Artifact.Composition.Abstract;
 import Time.Rational;
+import Container.NamedVector;
 
 namespace {
 
@@ -107,6 +114,16 @@ QPointF mapPoint(const QMatrix4x4& transform, const QPointF& point) {
   return QPointF(v.x() / v.w(), v.y() / v.w());
  }
  return QPointF(v.x(), v.y());
+}
+
+QPointF mapDeformerPoint(const QMatrix4x4& transform, const QPointF& point,
+                         void* deformerContext,
+                         Artifact::ShapeDeformerPointMapper pointMapper,
+                         Artifact::ArtifactAbstractLayer* layer) {
+ if (deformerContext && pointMapper && layer) {
+  return mapPoint(transform, pointMapper(deformerContext, layer, point));
+ }
+ return mapPoint(transform, point);
 }
 
 void drawDashedNativeStroke(
@@ -2645,6 +2662,45 @@ void ArtifactShapeLayer::setCustomPolygonPoints(const std::vector<QPointF>& poin
 void ArtifactShapeLayer::clearCustomPolygonPoints() { if (impl_->customPolygonPoints_.empty()) return; impl_->customPolygonPoints_.clear(); impl_->customPolygonClosed_ = true; impl_->markDirty(); impl_->localBoundsCacheDirty_ = true; impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
 std::vector<QPointF> ArtifactShapeLayer::customPolygonPoints() const { return impl_->customPolygonPoints_; }
 bool ArtifactShapeLayer::customPolygonClosed() const { return impl_->customPolygonClosed_; }
+QJsonObject ArtifactShapeLayer::customPolygonSnapshot() const {
+  QJsonArray points;
+  for (const auto& point : impl_->customPolygonPoints_)
+    points.append(QJsonArray{point.x(), point.y()});
+  return QJsonObject{{QStringLiteral("points"), points},
+                     {QStringLiteral("closed"), impl_->customPolygonClosed_}};
+}
+bool ArtifactShapeLayer::restoreCustomPolygonSnapshot(
+    const QJsonObject& snapshot) {
+  if (snapshot.size() != 2 ||
+      !snapshot.value(QStringLiteral("closed")).isBool()) return false;
+  const QJsonValue pointsValue = snapshot.value(QStringLiteral("points"));
+  if (!pointsValue.isArray() ||
+      pointsValue.toArray().size() > kMaxShapePathVertices) return false;
+  std::vector<QPointF> points;
+  points.reserve(static_cast<size_t>(pointsValue.toArray().size()));
+  for (const QJsonValue& pointValue : pointsValue.toArray()) {
+    if (!pointValue.isArray() || pointValue.toArray().size() != 2 ||
+        !pointValue.toArray()[0].isDouble() ||
+        !pointValue.toArray()[1].isDouble()) return false;
+    const QPointF point(pointValue.toArray()[0].toDouble(),
+                        pointValue.toArray()[1].toDouble());
+    if (!isSupportedShapePoint(point)) return false;
+    points.push_back(point);
+  }
+  const QJsonObject previous = customPolygonSnapshot();
+  setCustomPolygonPoints(points, snapshot.value(QStringLiteral("closed")).toBool());
+  if (customPolygonSnapshot() == snapshot) return true;
+  std::vector<QPointF> previousPoints;
+  const QJsonArray previousArray = previous.value(QStringLiteral("points")).toArray();
+  previousPoints.reserve(static_cast<size_t>(previousArray.size()));
+  for (const QJsonValue& pointValue : previousArray) {
+    const QJsonArray pair = pointValue.toArray();
+    previousPoints.emplace_back(pair[0].toDouble(), pair[1].toDouble());
+  }
+  setCustomPolygonPoints(previousPoints,
+                         previous.value(QStringLiteral("closed")).toBool());
+  return false;
+}
 
 // Phase 3: Stroke style setters/getters
 void ArtifactShapeLayer::setStrokeCap(StrokeCap cap) {
@@ -2743,6 +2799,100 @@ void ArtifactShapeLayer::clearCustomPath() {
 }
 std::vector<CustomPathVertex> ArtifactShapeLayer::customPathVertices() const { return impl_->customPathVertices_; }
 bool ArtifactShapeLayer::customPathClosed() const { return impl_->customPathClosed_; }
+QJsonObject ArtifactShapeLayer::customPathSnapshot() const {
+  QJsonArray vertices;
+  for (const auto& vertex : impl_->customPathVertices_) {
+    vertices.append(QJsonArray{vertex.pos.x(), vertex.pos.y(),
+                               vertex.inTangent.x(), vertex.inTangent.y(),
+                               vertex.outTangent.x(), vertex.outTangent.y(),
+                               vertex.smooth});
+  }
+  return QJsonObject{{QStringLiteral("vertices"), vertices},
+                     {QStringLiteral("closed"), impl_->customPathClosed_}};
+}
+bool ArtifactShapeLayer::restoreCustomPathSnapshot(const QJsonObject& snapshot) {
+  if (snapshot.size() != 2 ||
+      !snapshot.value(QStringLiteral("closed")).isBool() ||
+      !snapshot.value(QStringLiteral("vertices")).isArray()) return false;
+  const QJsonArray verticesValue = snapshot.value(QStringLiteral("vertices")).toArray();
+  if (verticesValue.size() > kMaxShapePathVertices) return false;
+  std::vector<CustomPathVertex> vertices;
+  vertices.reserve(static_cast<size_t>(verticesValue.size()));
+  for (const QJsonValue& vertexValue : verticesValue) {
+    if (!vertexValue.isArray() || vertexValue.toArray().size() != 7) return false;
+    const QJsonArray fields = vertexValue.toArray();
+    for (int i = 0; i < 6; ++i) {
+      if (!fields[i].isDouble() || !std::isfinite(fields[i].toDouble()) ||
+          std::abs(fields[i].toDouble()) > kMaxShapeCoordinate) return false;
+    }
+    if (!fields[6].isBool()) return false;
+    CustomPathVertex vertex;
+    vertex.pos = QPointF(fields[0].toDouble(), fields[1].toDouble());
+    vertex.inTangent = QPointF(fields[2].toDouble(), fields[3].toDouble());
+    vertex.outTangent = QPointF(fields[4].toDouble(), fields[5].toDouble());
+    vertex.smooth = fields[6].toBool();
+    if (!isSupportedCustomPathVertex(vertex)) return false;
+    vertices.push_back(vertex);
+  }
+  const QJsonObject previous = customPathSnapshot();
+  setCustomPathVertices(vertices, snapshot.value(QStringLiteral("closed")).toBool());
+  if (customPathSnapshot() == snapshot) return true;
+  std::vector<CustomPathVertex> previousVertices;
+  const QJsonArray previousArray = previous.value(QStringLiteral("vertices")).toArray();
+  previousVertices.reserve(static_cast<size_t>(previousArray.size()));
+  for (const QJsonValue& vertexValue : previousArray) {
+    const QJsonArray fields = vertexValue.toArray();
+    CustomPathVertex vertex;
+    vertex.pos = QPointF(fields[0].toDouble(), fields[1].toDouble());
+    vertex.inTangent = QPointF(fields[2].toDouble(), fields[3].toDouble());
+    vertex.outTangent = QPointF(fields[4].toDouble(), fields[5].toDouble());
+    vertex.smooth = fields[6].toBool();
+    previousVertices.push_back(vertex);
+  }
+  setCustomPathVertices(previousVertices,
+                        previous.value(QStringLiteral("closed")).toBool());
+  return false;
+}
+QJsonObject ArtifactShapeLayer::customGeometrySnapshot() const {
+  return QJsonObject{{QStringLiteral("polygon"), customPolygonSnapshot()},
+                     {QStringLiteral("path"), customPathSnapshot()}};
+}
+bool ArtifactShapeLayer::restoreCustomGeometrySnapshot(
+    const QJsonObject& snapshot) {
+  if (snapshot.size() != 2 ||
+      !snapshot.value(QStringLiteral("polygon")).isObject() ||
+      !snapshot.value(QStringLiteral("path")).isObject()) return false;
+  const QJsonObject previousPolygon = customPolygonSnapshot();
+  const QJsonObject previousPath = customPathSnapshot();
+  const QJsonObject polygon = snapshot.value(QStringLiteral("polygon")).toObject();
+  const QJsonObject path = snapshot.value(QStringLiteral("path")).toObject();
+  const auto applyGeometry = [&](const QJsonObject& nextPolygon,
+                                 const QJsonObject& nextPath) {
+    const bool hasPolygon = !nextPolygon.value(QStringLiteral("points"))
+                                 .toArray().isEmpty();
+    const bool hasPath = !nextPath.value(QStringLiteral("vertices"))
+                             .toArray().isEmpty();
+    if (hasPolygon && hasPath) return false;
+    if (hasPolygon) {
+      if (!restoreCustomPolygonSnapshot(nextPolygon)) return false;
+      impl_->customPathClosed_ = nextPath.value(QStringLiteral("closed")).toBool();
+    } else if (hasPath) {
+      if (!restoreCustomPathSnapshot(nextPath)) return false;
+      impl_->customPolygonClosed_ =
+          nextPolygon.value(QStringLiteral("closed")).toBool();
+    } else {
+      if (!restoreCustomPolygonSnapshot(nextPolygon) ||
+          !restoreCustomPathSnapshot(nextPath)) return false;
+    }
+    return customPolygonSnapshot() == nextPolygon &&
+           customPathSnapshot() == nextPath;
+  };
+  const bool applied = applyGeometry(polygon, path) &&
+                       customGeometrySnapshot() == snapshot;
+  if (applied) return true;
+  (void)applyGeometry(previousPolygon, previousPath);
+  return false;
+}
 // Parametric-alive: numeric base (type/size/corner/star/polygon) survives
 // vertex editing, so overrides can be dropped without data loss.
 bool ArtifactShapeLayer::hasParametricOverrides() const {
@@ -4251,7 +4401,8 @@ QRectF ArtifactShapeLayer::localBounds() const
   return impl_->cachedLocalBounds_;
 }
 
-std::vector<QPointF> ArtifactShapeLayer::collisionOutlineLocalPoints() const
+ArtifactCore::NamedVector<QPointF>
+ArtifactShapeLayer::collisionOutlineLocalPoints() const
 {
   // Multi-content: concatenate per-content outlines (custom path, polygon,
   // or primitive sample points). Operator/merge reshaping falls back to
@@ -4260,7 +4411,8 @@ std::vector<QPointF> ArtifactShapeLayer::collisionOutlineLocalPoints() const
     if (!impl_->shapeOperators_.empty()) {
       return {};
     }
-    std::vector<QPointF> points;
+    ArtifactCore::NamedVector<QPointF> points{
+        ArtifactCore::ContainerName{"Layer.ShapeCollisionOutline"}};
     for (const auto& content : impl_->shapeContents_) {
       if (!content.visible) {
         continue;
@@ -4285,7 +4437,9 @@ std::vector<QPointF> ArtifactShapeLayer::collisionOutlineLocalPoints() const
           g.type, std::max(1, g.width), std::max(1, g.height), g.cornerRadius,
           std::max(3, g.starPoints), g.starInnerRadius, std::max(3, g.polygonSides),
           g.polygonPoints, g.polygonClosed);
-      points.insert(points.end(), sampled.begin(), sampled.end());
+      for (const QPointF& point : sampled) {
+        points.add(point);
+      }
     }
     return points;
   }
@@ -4296,7 +4450,8 @@ std::vector<QPointF> ArtifactShapeLayer::collisionOutlineLocalPoints() const
   }
 
   if (impl_->customPathVertices_.size() >= 3) {
-   std::vector<QPointF> points;
+   ArtifactCore::NamedVector<QPointF> points{
+       ArtifactCore::ContainerName{"Layer.ShapeCollisionOutline"}};
    points.reserve(impl_->customPathVertices_.size());
    for (const auto& vertex : impl_->customPathVertices_) {
     points.push_back(vertex.pos);
@@ -4305,7 +4460,13 @@ std::vector<QPointF> ArtifactShapeLayer::collisionOutlineLocalPoints() const
   }
 
   if (impl_->customPolygonPoints_.size() >= 3) {
-    return impl_->customPolygonPoints_;
+    ArtifactCore::NamedVector<QPointF> points{
+        ArtifactCore::ContainerName{"Layer.ShapeCollisionOutline"}};
+    points.reserve(impl_->customPolygonPoints_.size());
+    for (const QPointF& point : impl_->customPolygonPoints_) {
+      points.add(point);
+    }
+    return points;
   }
 
   if (impl_->shapeType_ == Artifact::ShapeType::Line) {
@@ -4315,11 +4476,17 @@ std::vector<QPointF> ArtifactShapeLayer::collisionOutlineLocalPoints() const
   const ShapeGeomDims dims = resolveShapeGeomDims(
       this, impl_->width_, impl_->height_, impl_->cornerRadius_,
       impl_->starPoints_, impl_->starInnerRadius_, impl_->polygonSides_);
-  return buildRenderablePoints(impl_->shapeType_, dims.width, dims.height,
-                               dims.cornerRadius, dims.starPoints,
-                               dims.starInnerRadius, dims.polygonSides,
-                               impl_->customPolygonPoints_,
-                               impl_->customPolygonClosed_);
+  const auto sampled = buildRenderablePoints(
+      impl_->shapeType_, dims.width, dims.height, dims.cornerRadius,
+      dims.starPoints, dims.starInnerRadius, dims.polygonSides,
+      impl_->customPolygonPoints_, impl_->customPolygonClosed_);
+  ArtifactCore::NamedVector<QPointF> points{
+      ArtifactCore::ContainerName{"Layer.ShapeCollisionOutline"}};
+  points.reserve(sampled.size());
+  for (const QPointF& point : sampled) {
+    points.add(point);
+  }
+  return points;
 }
 // ============================================================
 // GPU vector painting (gaps 1 & 3)
@@ -4418,7 +4585,10 @@ static void paintGpuPaintItems(Artifact::ArtifactIRenderer* renderer,
                                float baseOpacity,
                                const std::vector<GpuPaintItem>& items,
                                double tolerance,
-                               float renderScale) {
+                               float renderScale,
+                               void* deformerContext = nullptr,
+                               Artifact::ShapeDeformerPointMapper pointMapper = nullptr,
+                               Artifact::ArtifactAbstractLayer* layer = nullptr) {
   if (!renderer || items.empty()) {
     return;
   }
@@ -4440,9 +4610,9 @@ static void paintGpuPaintItems(Artifact::ArtifactIRenderer* renderer,
           ArtifactCore::FloatColor c = contentGradientColorAt(
               item.fill, static_cast<float>(cx), static_cast<float>(cy), gradW, gradH);
           c = ArtifactCore::FloatColor(c.r(), c.g(), c.b(), c.a() * opacity);
-          const QPointF p0 = mapPoint(transform, tri.p0);
-          const QPointF p1 = mapPoint(transform, tri.p1);
-          const QPointF p2 = mapPoint(transform, tri.p2);
+          const QPointF p0 = mapDeformerPoint(transform, tri.p0, deformerContext, pointMapper, layer);
+          const QPointF p1 = mapDeformerPoint(transform, tri.p1, deformerContext, pointMapper, layer);
+          const QPointF p2 = mapDeformerPoint(transform, tri.p2, deformerContext, pointMapper, layer);
           renderer->drawSolidTriangleLocal(
               {static_cast<float>(p0.x()), static_cast<float>(p0.y())},
               {static_cast<float>(p1.x()), static_cast<float>(p1.y())},
@@ -4481,10 +4651,11 @@ static void paintGpuPaintItems(Artifact::ArtifactIRenderer* renderer,
           std::vector<Artifact::Detail::float2> points;
           points.reserve(segments.size() + 1);
           for (const auto& segment : segments) {
-            const QPointF p = mapPoint(transform, segment.p0);
+            const QPointF p = mapDeformerPoint(transform, segment.p0, deformerContext, pointMapper, layer);
             points.push_back({static_cast<float>(p.x()), static_cast<float>(p.y())});
           }
-          const QPointF end = mapPoint(transform, segments.back().p1);
+          const QPointF end = mapDeformerPoint(transform, segments.back().p1,
+                                               deformerContext, pointMapper, layer);
           points.push_back({static_cast<float>(end.x()), static_cast<float>(end.y())});
           const bool closed = points.size() > 2 &&
               std::hypot(points.front().x - points.back().x,
@@ -4524,9 +4695,18 @@ static void paintGpuPaintItems(Artifact::ArtifactIRenderer* renderer,
 // ============================================================
 
 void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
+ draw(renderer, nullptr, nullptr, nullptr);
+}
+
+void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer,
+                              void* deformerContext,
+                              ShapeDeformerPointMapper pointMapper,
+                              ShapeDeformerPrepare prepareDeformer) {
  if (!renderer) {
   return;
  }
+ void* activeDeformerContext = deformerContext && prepareDeformer &&
+     prepareDeformer(deformerContext, this) ? deformerContext : nullptr;
   const QMatrix4x4 baseTransform = getGlobalTransform4x4();
    const float contentFieldWeight = compositionFieldContentWeight(this);
   auto* impl = impl_;
@@ -4598,7 +4778,7 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
    for (const auto& lensPass : twoPointFiveDRenderPasses(baseTransform)) {
     drawWithClonerEffect(
         this, lensPass.transform,
-        [renderer, this, &contentItems, contentFieldWeight,
+         [renderer, this, activeDeformerContext, pointMapper, &contentItems, contentFieldWeight,
          lensOpacity = lensPass.opacity](const QMatrix4x4& transform, float weight) {
          const float baseOpacity =
              this->opacity() * weight * contentFieldWeight * lensOpacity;
@@ -4608,7 +4788,8 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
                                           static_cast<double>(transform(1, 1)));
          const double renderScale = std::max({1.0, scaleX, scaleY});
          paintGpuPaintItems(renderer, transform, baseOpacity, contentItems,
-                             0.25 / renderScale, static_cast<float>(renderScale));
+                             0.25 / renderScale, static_cast<float>(renderScale),
+                             activeDeformerContext, pointMapper, this);
         });
    }
    drawFractureOverlay(renderer, baseTransform, localBounds().size(),
@@ -4663,8 +4844,8 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
    for (const auto& lensPass : twoPointFiveDRenderPasses(baseTransform)) {
    drawWithClonerEffect(
        this, lensPass.transform,
-        [renderer, impl, &processedOperatorPaths, fill, stroke,
-        contentFieldWeight, this, geomAnimated, pathAnimated, lensOpacity = lensPass.opacity](const QMatrix4x4& transform, float weight) {
+        [renderer, impl, this, activeDeformerContext, pointMapper, &processedOperatorPaths, fill, stroke,
+        contentFieldWeight, geomAnimated, pathAnimated, lensOpacity = lensPass.opacity](const QMatrix4x4& transform, float weight) {
         const float opacity = this->opacity() * weight * contentFieldWeight * lensOpacity;
         const FloatColor drawFill(fill.r(), fill.g(), fill.b(), fill.a() * opacity);
         const FloatColor drawStroke(stroke.r(), stroke.g(), stroke.b(), stroke.a() * opacity);
@@ -4679,9 +4860,9 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
         for (const auto& pathGeometry : geometry) {
          if (impl->fillEnabled_) {
           for (const auto& triangle : pathGeometry.triangles) {
-           const QPointF p0 = mapPoint(transform, triangle.p0);
-           const QPointF p1 = mapPoint(transform, triangle.p1);
-           const QPointF p2 = mapPoint(transform, triangle.p2);
+           const QPointF p0 = mapDeformerPoint(transform, triangle.p0, activeDeformerContext, pointMapper, this);
+           const QPointF p1 = mapDeformerPoint(transform, triangle.p1, activeDeformerContext, pointMapper, this);
+           const QPointF p2 = mapDeformerPoint(transform, triangle.p2, activeDeformerContext, pointMapper, this);
            renderer->drawSolidTriangleLocal(
                {static_cast<float>(p0.x()), static_cast<float>(p0.y())},
                {static_cast<float>(p1.x()), static_cast<float>(p1.y())},
@@ -4693,10 +4874,11 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
           std::vector<Detail::float2> points;
           points.reserve(segments.size() + 1);
           for (const auto& segment : segments) {
-           const QPointF p = mapPoint(transform, segment.p0);
+           const QPointF p = mapDeformerPoint(transform, segment.p0, activeDeformerContext, pointMapper, this);
            points.push_back({static_cast<float>(p.x()), static_cast<float>(p.y())});
           }
-          const QPointF end = mapPoint(transform, segments.back().p1);
+          const QPointF end = mapDeformerPoint(transform, segments.back().p1,
+                                               activeDeformerContext, pointMapper, this);
           points.push_back({static_cast<float>(end.x()), static_cast<float>(end.y())});
           const bool closed = points.size() > 2 &&
                               std::hypot(points.front().x - points.back().x,
@@ -4798,7 +4980,7 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
    for (const auto& lensPass : twoPointFiveDRenderPasses(baseTransform)) {
     drawWithClonerEffect(
         this, lensPass.transform,
-        [renderer, this, &legacyItems, contentFieldWeight,
+        [renderer, this, activeDeformerContext, pointMapper, &legacyItems, contentFieldWeight,
          lensOpacity = lensPass.opacity](const QMatrix4x4& transform, float weight) {
          const float baseOpacity =
              this->opacity() * weight * contentFieldWeight * lensOpacity;
@@ -4808,7 +4990,8 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
                                           static_cast<double>(transform(1, 1)));
          const double renderScale = std::max({1.0, scaleX, scaleY});
          paintGpuPaintItems(renderer, transform, baseOpacity, legacyItems,
-                             0.25 / renderScale, static_cast<float>(renderScale));
+                             0.25 / renderScale, static_cast<float>(renderScale),
+                             activeDeformerContext, pointMapper, this);
         });
    }
    drawFractureOverlay(renderer, baseTransform,
@@ -4818,7 +5001,7 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
   }
   for (const auto& lensPass : twoPointFiveDRenderPasses(baseTransform)) {
   drawWithClonerEffect(this, lensPass.transform,
-                       [renderer, impl, this, contentFieldWeight, geomDims,
+                       [renderer, impl, this, activeDeformerContext, pointMapper, contentFieldWeight, geomDims,
                         pathAnimated, &evaluatedPathVertices, lensOpacity = lensPass.opacity](const QMatrix4x4& transform, float weight) {
     const auto fill = FloatColor(
         impl->fillColor_.r(), impl->fillColor_.g(), impl->fillColor_.b(),
@@ -4830,13 +5013,15 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
     // A soft-body grid owns the rectangle's local vertices.  Keep all other
     // shape types on their existing path until they have a matching topology
     // bridge instead of approximating curves with an unrelated cloth mesh.
-    if (impl->shapeType_ == Artifact::ShapeType::Rect &&
+    if ((!activeDeformerContext || !pointMapper) &&
+        impl->shapeType_ == Artifact::ShapeType::Rect &&
         drawMaterialGrid(this, renderer, transform, fill, stroke,
                          std::max(1.0f, impl->strokeWidth_),
                          impl->strokeEnabled_)) {
      return;
     }
-    if (impl->shapeType_ == Artifact::ShapeType::Rect &&
+    if ((!activeDeformerContext || !pointMapper) &&
+        impl->shapeType_ == Artifact::ShapeType::Rect &&
         drawSoftBodyGrid(this, renderer, transform, fill, stroke,
                          std::max(1.0f, impl->strokeWidth_),
                          impl->strokeEnabled_)) {
@@ -4855,9 +5040,9 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
 
     if (impl->fillEnabled_) {
      for (const auto& triangle : geometry.triangles) {
-      const QPointF t0 = mapPoint(transform, triangle.p0);
-      const QPointF t1 = mapPoint(transform, triangle.p1);
-      const QPointF t2 = mapPoint(transform, triangle.p2);
+      const QPointF t0 = mapDeformerPoint(transform, triangle.p0, activeDeformerContext, pointMapper, this);
+      const QPointF t1 = mapDeformerPoint(transform, triangle.p1, activeDeformerContext, pointMapper, this);
+      const QPointF t2 = mapDeformerPoint(transform, triangle.p2, activeDeformerContext, pointMapper, this);
       renderer->drawSolidTriangleLocal(
           {static_cast<float>(t0.x()), static_cast<float>(t0.y())},
           {static_cast<float>(t1.x()), static_cast<float>(t1.y())},
@@ -4871,11 +5056,12 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
       std::vector<Detail::float2> points;
       points.reserve(segments.size() + 1);
       for (const auto& segment : segments) {
-       const QPointF point = mapPoint(transform, segment.p0);
+       const QPointF point = mapDeformerPoint(transform, segment.p0, activeDeformerContext, pointMapper, this);
        points.push_back({static_cast<float>(point.x()),
                          static_cast<float>(point.y())});
       }
-      const QPointF end = mapPoint(transform, segments.back().p1);
+      const QPointF end = mapDeformerPoint(transform, segments.back().p1,
+                                           activeDeformerContext, pointMapper, this);
       points.push_back({static_cast<float>(end.x()),
                         static_cast<float>(end.y())});
       const bool closed = points.size() > 2 &&
@@ -6400,6 +6586,64 @@ static Artifact::ShapeStackNode shapeStackNodeFromJson(const QJsonObject& obj) {
   node.operatorIndex = obj["operatorIndex"].toInt(-1);
   node.enabled = obj["enabled"].toBool(true);
   return node;
+}
+
+QJsonObject ArtifactShapeLayer::shapeContentsSnapshot() const {
+  QJsonArray contents;
+  QJsonArray nodes;
+  if (impl_) {
+    for (const auto& content : impl_->shapeContents_)
+      contents.push_back(shapeContentToJson(content));
+    for (const auto& node : impl_->shapeStackNodes_)
+      nodes.push_back(shapeStackNodeToJson(node));
+  }
+  return {{QStringLiteral("contents"), contents},
+          {QStringLiteral("stackNodes"), nodes},
+          {QStringLiteral("activeContentIndex"),
+           impl_ ? impl_->activeContentIndex_ : -1}};
+}
+
+bool ArtifactShapeLayer::restoreShapeContentsSnapshot(
+    const QJsonObject& snapshot) {
+  if (!impl_) return false;
+  const QJsonValue contentsValue = snapshot.value(QStringLiteral("contents"));
+  const QJsonValue nodesValue = snapshot.value(QStringLiteral("stackNodes"));
+  const QJsonValue activeValue = snapshot.value(QStringLiteral("activeContentIndex"));
+  if (!contentsValue.isArray() || !nodesValue.isArray() ||
+      !activeValue.isDouble() || std::floor(activeValue.toDouble()) != activeValue.toDouble() ||
+      activeValue.toDouble() < -1.0 ||
+      activeValue.toDouble() >= contentsValue.toArray().size() ||
+      contentsValue.toArray().size() > 256 || nodesValue.toArray().size() > 1024 ||
+      QJsonDocument(snapshot).toJson(QJsonDocument::Compact).size() > 262144)
+    return false;
+
+  std::vector<Artifact::ShapeContent> contents;
+  contents.reserve(static_cast<size_t>(contentsValue.toArray().size()));
+  for (const QJsonValue& value : contentsValue.toArray()) {
+    if (!value.isObject()) return false;
+    contents.push_back(shapeContentFromJson(value.toObject()));
+  }
+  std::vector<Artifact::ShapeStackNode> nodes;
+  nodes.reserve(static_cast<size_t>(nodesValue.toArray().size()));
+  for (const QJsonValue& value : nodesValue.toArray()) {
+    if (!value.isObject()) return false;
+    const auto node = shapeStackNodeFromJson(value.toObject());
+    if (!isValidShapeStackNode(node, static_cast<int>(contents.size()),
+                               static_cast<int>(impl_->shapeOperators_.size())))
+      return false;
+    nodes.push_back(node);
+  }
+  const int activeIndex = activeValue.toInt(-1);
+  if (activeIndex < -1 || activeIndex >= static_cast<int>(contents.size()))
+    return false;
+  impl_->shapeContents_ = std::move(contents);
+  impl_->shapeStackNodes_ = std::move(nodes);
+  impl_->activeContentIndex_ = activeIndex;
+  impl_->markDirty();
+  impl_->localBoundsCacheDirty_ = true;
+  impl_->shapeContentCacheDirty_ = true;
+  Q_EMIT changed();
+  return true;
 }
 
 // ---- SVG interop (gap 8) ----

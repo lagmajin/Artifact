@@ -1,4 +1,5 @@
 module;
+#include <cstdint>
 #include <utility>
 #include <vector>
 #include <QString>
@@ -53,6 +54,30 @@ public:
 
     std::vector<AbstractProperty> getProperties() const override;
     void setPropertyValue(const UniString& name, const QVariant& value) override;
+
+    static constexpr const char* kGpuGenericKeyString = "photo_filter";
+    static constexpr std::uint32_t kGpuGenericKey =
+        gpuGenericKeyFromString(kGpuGenericKeyString);
+    std::uint32_t gpuGenericKey() const override { return kGpuGenericKey; }
+
+    GpuRasterEffectDomain gpuRasterEffectDomain() const override {
+        return GpuRasterEffectDomain::Spatial;
+    }
+
+    bool appendGpuSpatialNodes(GpuSpatialEffectStack& stack) const override {
+        GpuSpatialEffectNode node;
+        node.kind = GpuSpatialEffectKind::Generic;
+        node.genericKey = kGpuGenericKey;
+        node.parameters[0] = settings_.color.r;
+        node.parameters[1] = settings_.color.g;
+        node.parameters[2] = settings_.color.b;
+        node.parameters[3] = settings_.density;
+        node.parameters[4] = settings_.brightness;
+        node.parameters[5] = settings_.contrast;
+        node.parameters[6] = settings_.saturationBoost;
+        node.parameters[7] = settings_.preserveLuma ? 1.0f : 0.0f;
+        return stack.append(node);
+    }
 
     bool supportsGPU() const override { return true; }
 };

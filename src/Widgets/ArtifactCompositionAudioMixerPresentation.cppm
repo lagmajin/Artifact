@@ -37,6 +37,8 @@ module;
 #include <QVBoxLayout>
 #include <QJsonObject>
 #include <wobjectimpl.h>
+#include <memory>
+#include <vector>
 
 module Artifact.Widgets.CompositionAudioMixer;
 
@@ -57,7 +59,6 @@ import Artifact.Service.Audio;
 import Undo.UndoManager;
 import Settings.Accessibility;
 import Event.Bus;
-import std;
 
 namespace Artifact {
 
@@ -83,6 +84,9 @@ public:
   void undo() override { lastOperationSucceeded_ = apply(before_, after_); }
   void redo() override { lastOperationSucceeded_ = apply(after_, before_); }
   bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+  // The mixer snapshot spans the composition and has no layer-scoped lock
+  // identity yet. Collaboration must fail closed until that scope is modeled.
+  bool collaborationTargetScopeResolved() const override { return false; }
   QString label() const override { return label_; }
 
 private:

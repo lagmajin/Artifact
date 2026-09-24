@@ -2,10 +2,13 @@ module;
 #include <utility>
 #include <QMutex>
 #include <QString>
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <limits>
 
 module Audio.AudioClockProvider;
 
-import std;
 
 namespace Artifact {
 

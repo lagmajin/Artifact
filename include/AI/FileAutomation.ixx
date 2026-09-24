@@ -12,7 +12,6 @@ module;
 
 export module Artifact.AI.FileAutomation;
 
-import std;
 import Core.AI.Describable;
 
 export namespace Artifact {

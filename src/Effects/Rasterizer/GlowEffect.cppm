@@ -22,6 +22,55 @@ import Memory.SharedPtr;
 namespace Artifact {
 using namespace ArtifactCore;
 
+namespace {
+
+// Resident-path shader. P0 threshold, P1 radius, P2 intensity. This body
+// relies on the pipeline's ResidentGenericParams b0 prelude and has no CPU
+// readback; the CPU implementation remains the fallback and parity oracle.
+static constexpr const char* kRasterizerGlowResidentHlsl = R"(
+Texture2D<float4> g_InputTexture : register(t0);
+RWTexture2D<float4> g_OutputTexture : register(u0);
+
+float4 glowSampleClamped(int2 position, uint width, uint height)
+{
+    return g_InputTexture[uint2(clamp(position, int2(0, 0),
+        int2(width - 1, height - 1)))];
+}
+
+[numthreads(8, 8, 1)]
+void main(uint3 dispatchId : SV_DispatchThreadID)
+{
+    uint width, height;
+    g_OutputTexture.GetDimensions(width, height);
+    if (dispatchId.x >= width || dispatchId.y >= height) return;
+
+    const float4 base = g_InputTexture[dispatchId.xy];
+    const int radius = clamp((int)g_P1, 1, 4);
+    const float sigma = max(g_P1 * 0.3, 0.001);
+    const float denominator = max(1.0 - g_P0, 0.0001);
+    float3 blurredBright = 0.0;
+    float totalWeight = 0.0;
+    for (int y = -radius; y <= radius; ++y) {
+        for (int x = -radius; x <= radius; ++x) {
+            const float distanceSquared = float(x * x + y * y);
+            const float weight = exp(-distanceSquared / (2.0 * sigma * sigma));
+            const float4 sample = glowSampleClamped(
+                int2(dispatchId.xy) + int2(x, y), width, height);
+            const float luminance = dot(sample.rgb, float3(0.299, 0.587, 0.114));
+            const float contribution = luminance >= g_P0
+                ? saturate((luminance - g_P0) / denominator) : 0.0;
+            blurredBright += sample.rgb * contribution * weight;
+            totalWeight += weight;
+        }
+    }
+    const float3 result = saturate(base.rgb +
+        blurredBright / max(totalWeight, 0.0001) * g_P2);
+    g_OutputTexture[dispatchId.xy] = float4(result, base.a);
+}
+)";
+
+} // namespace
+
 class GlowCPUImpl : public ArtifactEffectImplBase {
 public:
     float threshold_=0.5f,radius_=20.0f,intensity_=1.0f;
@@ -47,7 +96,15 @@ Parallel::For(0,H,W*H,[&](int y){auto* br=blur.ptr<cv::Vec4f>(y);float* o=d+(siz
     }
 };
 
-RasterizerGlowEffect::RasterizerGlowEffect():ArtifactAbstractEffect(){setPipelineStage(EffectPipelineStage::Rasterizer);syncImpls();}
+RasterizerGlowEffect::RasterizerGlowEffect():ArtifactAbstractEffect(){
+    setPipelineStage(EffectPipelineStage::Rasterizer);
+    setComputeMode(ComputeMode::AUTO);
+    registerGpuGenericShader(
+        RasterizerGlowEffect::kGpuGenericKey,
+        GpuGenericShaderRecord{
+            kRasterizerGlowResidentHlsl, "main", GpuGenericResourceKind::Filter});
+    syncImpls();
+}
 RasterizerGlowEffect::~RasterizerGlowEffect()=default;
 float RasterizerGlowEffect::threshold()const{return threshold_;}void RasterizerGlowEffect::setThreshold(float v){threshold_=std::clamp(v,0.0f,1.0f);syncImpls();}
 float RasterizerGlowEffect::radius()const{return radius_;}void RasterizerGlowEffect::setRadius(float v){radius_=std::max(v,1.0f);syncImpls();}

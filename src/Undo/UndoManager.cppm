@@ -6,6 +6,8 @@ module;
 #include <memory>
 #include <utility>
 #include <QMap>
+#include <QStringList>
+#include <QVector>
 
 #include <iostream>
 #include <vector>
@@ -42,6 +44,9 @@ module;
 #include <regex>
 #include <random>
 #include <QFile>
+#include <QCoreApplication>
+#include <QDateTime>
+#include <QtGlobal>
 #include <QFileInfo>
 #include <QDir>
 #include <QSaveFile>
@@ -64,6 +69,7 @@ import Artifact.Layer.Audio;
 import Artifact.Layer.Text;
 import Artifact.Layer.Clone;
 import Artifact.Layer.Matte;
+import Artifact.Layer.Factory;
 import Artifact.Mask.LayerMask;
 import Artifact.Composition.Abstract;
 import Artifact.Project.Manager;
@@ -77,6 +83,7 @@ import Time.Rational;
 import Artifact.Layers.Selection.Manager;
 import Audio.Modulation.Modulator;
 import Audio.Modulation.Router;
+import Animation.Value;
 
 namespace Artifact {
 
@@ -87,6 +94,44 @@ bool maskJsonStructureValid(const QJsonObject& object);
 
 namespace {
 constexpr qint64 kMaxUndoPayloadBytes = 64ll * 1024ll * 1024ll;
+
+struct KeyframeTraceConfig {
+    QString logPath;
+    qint64 maxBytes = 8ll * 1024ll * 1024ll;
+    size_t maxKeysPerRecord = 32;
+};
+
+std::optional<KeyframeTraceConfig> keyframeTraceConfig() {
+    const QDir appDirectory(QCoreApplication::applicationDirPath());
+    QFile configFile(appDirectory.filePath(QStringLiteral("ArtifactKeyframeDebug.json")));
+    if (!configFile.open(QIODevice::ReadOnly)) {
+        return std::nullopt;
+    }
+    QJsonParseError parseError;
+    const QJsonDocument document = QJsonDocument::fromJson(configFile.readAll(), &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+        return std::nullopt;
+    }
+    const QJsonObject object = document.object();
+    if (!object.value(QStringLiteral("enabled")).toBool(false)) {
+        return std::nullopt;
+    }
+
+    KeyframeTraceConfig config;
+    const QString configuredLog = object.value(QStringLiteral("logFile"))
+                                      .toString(QStringLiteral("ArtifactKeyframeTrace.jsonl"));
+    config.logPath = QFileInfo(configuredLog).isAbsolute()
+                         ? configuredLog
+                         : appDirectory.filePath(configuredLog);
+    const qint64 configuredMaxBytes = static_cast<qint64>(
+        object.value(QStringLiteral("maxBytes")).toDouble(config.maxBytes));
+    config.maxBytes = std::clamp<qint64>(configuredMaxBytes,
+                                         64ll * 1024ll,
+                                         64ll * 1024ll * 1024ll);
+    const int configuredMaxKeys = object.value(QStringLiteral("maxKeysPerRecord")).toInt(32);
+    config.maxKeysPerRecord = static_cast<size_t>(std::clamp(configuredMaxKeys, 1, 256));
+    return config;
+}
 
 bool jsonInteger(const QJsonValue& value, qint64& result);
 
@@ -653,6 +698,17 @@ bool SetCompositionResponsiveLayoutCommand::deserialize(const QJsonObject& data)
 
 class UndoManager::Impl {
 public:
+    struct PendingCollaborationEdit {
+        enum class Action { Apply, Undo, Redo };
+        Action action = Action::Apply;
+        QString clientId;
+        qint64 sequence = -1;
+        UndoCommand* command = nullptr;
+        int64_t stateId = 0;
+        int64_t previousVersion = 0;
+        std::vector<std::unique_ptr<UndoCommand>> previousRedoStack;
+        std::vector<int64_t> previousRedoStateIds;
+    };
     std::vector<std::unique_ptr<UndoCommand>> undoStack;
     std::vector<std::unique_ptr<UndoCommand>> redoStack;
     size_t maxHistorySize_ = 100;
@@ -666,6 +722,9 @@ public:
     UndoManager::LayerResolver layerResolver_;
     UndoManager::CompositionResolver compositionResolver_;
     UndoManager::InOutPointsResolver inOutPointsResolver_;
+    UndoManager::LayerMutationGuard layerMutationGuard_;
+    UndoManager::CollaborationEditCallback collaborationEditCallback_;
+    std::optional<PendingCollaborationEdit> pendingCollaborationEdit_;
     std::vector<int64_t> undoStateIds_;
     std::vector<int64_t> redoStateIds_;
     int64_t nextStateId_ = 1;
@@ -691,7 +750,16 @@ public:
 
     size_t allStackBytes() const {
         const size_t undoBytes = stackBytes(undoStack);
-        const size_t redoBytes = stackBytes(redoStack);
+        size_t redoBytes = stackBytes(redoStack);
+        if (pendingCollaborationEdit_) {
+            const size_t previousRedoBytes =
+                stackBytes(pendingCollaborationEdit_->previousRedoStack);
+            if (previousRedoBytes >
+                std::numeric_limits<size_t>::max() - redoBytes) {
+                return std::numeric_limits<size_t>::max();
+            }
+            redoBytes += previousRedoBytes;
+        }
         if (redoBytes > std::numeric_limits<size_t>::max() - undoBytes) {
             return std::numeric_limits<size_t>::max();
         }
@@ -843,10 +911,55 @@ public:
     }
 };
 
+namespace {
+QStringList collaborationLayersForEffect(
+    const ArtifactAbstractEffectWeakPtr& weakEffect) {
+    QStringList layerIds;
+    const auto effect = weakEffect.lock();
+    auto project = ArtifactProjectManager::getInstance().getCurrentProjectSharedPtr();
+    if (!effect || !project) return layerIds;
+
+    QVector<ProjectItem*> pending = project->projectItems();
+    while (!pending.isEmpty()) {
+        ProjectItem* item = pending.takeLast();
+        if (!item) continue;
+        if (item->type() == eProjectItemType::Composition) {
+            const auto* compositionItem = static_cast<const CompositionItem*>(item);
+            const auto resolved = project->findComposition(compositionItem->compositionId);
+            const auto composition = resolved.success ? resolved.ptr.lock()
+                                                      : ArtifactCompositionPtr{};
+            if (composition) {
+                for (const auto& layer : composition->allLayer()) {
+                    if (!layer) continue;
+                    const auto effects = layer->getEffects();
+                    const bool ownsEffect = std::any_of(
+                        effects.begin(), effects.end(), [&effect](const auto& candidate) {
+                            return candidate && candidate.get() == effect.get();
+                        });
+                    if (!ownsEffect) continue;
+                    const QString id = layer->id().toQString();
+                    if (!id.isEmpty() && !layerIds.contains(id)) {
+                        layerIds.append(id);
+                    }
+                }
+            }
+        }
+        for (ProjectItem* child : item->children) {
+            if (child) pending.append(child);
+        }
+    }
+    return layerIds;
+}
+}
+
 // --- SetPropertyCommand ---
 SetPropertyCommand::SetPropertyCommand(ArtifactAbstractEffectPtr target, const UniString& propName, const QVariant& oldValue, const QVariant& newValue)
     : target_(target), effectId_(target ? target->effectID().toQString() : QString()),
       name_(propName), oldValue_(oldValue), newValue_(newValue) {}
+
+QStringList SetPropertyCommand::collaborationTargetLayerIds() const {
+    return collaborationLayersForEffect(target_);
+}
 
 void SetPropertyCommand::undo() {
     auto t = target_.lock();
@@ -877,6 +990,10 @@ EffectPresetSnapshotCommand::EffectPresetSnapshotCommand(
     QString label)
     : effect_(effect), effectId_(effect ? effect->effectID().toQString() : QString()),
       before_(std::move(before)), after_(std::move(after)), label_(std::move(label)) {}
+
+QStringList EffectPresetSnapshotCommand::collaborationTargetLayerIds() const {
+    return collaborationLayersForEffect(effect_);
+}
 
 namespace {
 bool applyEffectPresetSnapshot(const ArtifactAbstractEffectPtr& effect,
@@ -957,9 +1074,33 @@ AnimationLayerStackSnapshotCommand::AnimationLayerStackSnapshotCommand(
     const QJsonObject& after)
     : layer_(layer), layerId_(layer ? layer->id().toQString() : QString()), before_(before), after_(after) {}
 
+QStringList AnimationLayerStackSnapshotCommand::collaborationTargetLayerIds() const {
+    return layerId_.isEmpty() ? QStringList{} : QStringList{layerId_};
+}
+
+bool AnimationLayerStackSnapshotCommand::buildCollaborationOperation(
+    const QString& action, QString& operationType, QString& operationLayerId,
+    QJsonObject& payload) const {
+    if (!canSerialize() ||
+        (action != QStringLiteral("push") && action != QStringLiteral("undo") &&
+         action != QStringLiteral("redo")) ||
+        QJsonDocument(before_).toJson(QJsonDocument::Compact).size() > 262144 ||
+        QJsonDocument(after_).toJson(QJsonDocument::Compact).size() > 262144) {
+        return false;
+    }
+    const bool reverse = action == QStringLiteral("undo");
+    operationType = QStringLiteral("layer.animationStack");
+    operationLayerId = layerId_;
+    payload = QJsonObject{
+        {QStringLiteral("expected"), reverse ? after_ : before_},
+        {QStringLiteral("value"), reverse ? before_ : after_}};
+    return true;
+}
+
 void AnimationLayerStackSnapshotCommand::undo() {
     lastOperationSucceeded_ = false;
     if (auto layer = layer_.lock()) {
+        if (layer->animationLayersSnapshot() != after_) return;
         layer->restoreAnimationLayersSnapshot(before_);
         layer->changed();
         lastOperationSucceeded_ = layer->animationLayersSnapshot() == before_;
@@ -973,6 +1114,12 @@ void AnimationLayerStackSnapshotCommand::undo() {
 void AnimationLayerStackSnapshotCommand::redo() {
     lastOperationSucceeded_ = false;
     if (auto layer = layer_.lock()) {
+        const QJsonObject current = layer->animationLayersSnapshot();
+        if (current == after_) {
+            lastOperationSucceeded_ = true;
+            return;
+        }
+        if (current != before_) return;
         layer->restoreAnimationLayersSnapshot(after_);
         layer->changed();
         lastOperationSucceeded_ = layer->animationLayersSnapshot() == after_;
@@ -1227,6 +1374,8 @@ QJsonObject encodeModulationRouterSnapshot(
             {QStringLiteral("smoothing"), static_cast<double>(source.smoothing)},
             {QStringLiteral("seed"), static_cast<qint64>(source.seed)},
             {QStringLiteral("macroValue"), static_cast<double>(source.macroValue)},
+            {QStringLiteral("constantValue"), static_cast<double>(source.constantValue)},
+            {QStringLiteral("stepCount"), static_cast<qint64>(source.stepCount)},
             {QStringLiteral("unipolar"), source.unipolar}});
     }
 
@@ -1283,7 +1432,7 @@ bool decodeModulationRouterSnapshot(
             return false;
         }
         if (!sourceIds.insert(id).second ||
-            type < 0 || type > static_cast<int>(SourceType::Macro) ||
+            type < 0 || type > static_cast<int>(SourceType::Steps) ||
             waveform < 0 || waveform > static_cast<int>(Waveform::SampleAndHold)) {
             return false;
         }
@@ -1306,6 +1455,22 @@ bool decodeModulationRouterSnapshot(
             !sourceObject.value(QStringLiteral("unipolar")).isBool()) {
             return false;
         }
+        // Phase 1 fields default for payloads written before Constant/Noise/Steps.
+        // Non-finite constants collapse to 0, matching ConstantSource::setValue.
+        const double rawConstant =
+            sourceObject.value(QStringLiteral("constantValue")).toDouble(0.0);
+        source.constantValue =
+            std::isfinite(rawConstant) ? static_cast<float>(rawConstant) : 0.0f;
+        std::uint32_t stepCount = 8u;
+        if (sourceObject.contains(QStringLiteral("stepCount"))) {
+            if (!jsonUInt32(sourceObject.value(QStringLiteral("stepCount")), stepCount)) {
+                return false;
+            }
+        }
+        if (stepCount < 1u || stepCount > 32u) {
+            return false;
+        }
+        source.stepCount = stepCount;
         source.unipolar = sourceObject.value(QStringLiteral("unipolar")).toBool();
         snapshot.sources.push_back(source);
     }
@@ -1357,14 +1522,16 @@ bool modulationSnapshotSerializable(
     for (const auto& source : snapshot.sources) {
         if (source.id == 0 || !sourceIds.insert(source.id).second ||
             static_cast<int>(source.type) < 0 ||
-            static_cast<int>(source.type) > static_cast<int>(Audio::Modulation::ModulatorSourceType::Macro) ||
+            static_cast<int>(source.type) > static_cast<int>(Audio::Modulation::ModulatorSourceType::Steps) ||
             static_cast<int>(source.waveform) < 0 ||
             static_cast<int>(source.waveform) > static_cast<int>(Audio::Modulation::LfoWaveform::SampleAndHold) ||
             !std::isfinite(source.frequency) || !std::isfinite(source.phaseOffset) ||
             !std::isfinite(source.pulseWidth) || !std::isfinite(source.attack) ||
             !std::isfinite(source.decay) || !std::isfinite(source.sustain) ||
             !std::isfinite(source.release) || !std::isfinite(source.rate) ||
-            !std::isfinite(source.smoothing) || !std::isfinite(source.macroValue)) {
+            !std::isfinite(source.smoothing) || !std::isfinite(source.macroValue) ||
+            !std::isfinite(source.constantValue) ||
+            source.stepCount < 1u || source.stepCount > 32u) {
             return false;
         }
     }
@@ -1403,6 +1570,10 @@ EffectModulationSnapshotCommand::EffectModulationSnapshotCommand(
     : effect_(effect), effectId_(effect ? effect->effectID().toQString() : QString()),
       before_(std::move(before)), after_(std::move(after)),
       label_(std::move(label)) {}
+
+QStringList EffectModulationSnapshotCommand::collaborationTargetLayerIds() const {
+    return collaborationLayersForEffect(effect_);
+}
 
 void EffectModulationSnapshotCommand::undo() {
     lastOperationSucceeded_ = false;
@@ -1522,6 +1693,209 @@ bool LayerModulationSnapshotCommand::deserialize(const QJsonObject& data) {
     return canSerialize();
 }
 
+namespace {
+size_t automationClipInstancesBytes(
+    const std::vector<ArtifactCore::AutomationClipInstance>& instances) {
+    size_t bytes = sizeof(ArtifactCore::AutomationClipInstance) * instances.size();
+    for (const auto& instance : instances) {
+        bytes += instance.targetPath.size();
+    }
+    return bytes;
+}
+
+QJsonArray encodeAutomationClipInstances(
+    const std::vector<ArtifactCore::AutomationClipInstance>& instances) {
+    QJsonArray array;
+    for (const auto& instance : instances) {
+        array.append(ArtifactCore::automationClipInstanceToJson(instance));
+    }
+    return array;
+}
+
+bool decodeAutomationClipInstances(
+    const QJsonValue& value,
+    std::vector<ArtifactCore::AutomationClipInstance>& instances) {
+    if (!value.isArray()) {
+        return false;
+    }
+    std::vector<ArtifactCore::AutomationClipInstance> result;
+    for (const auto& entry : value.toArray()) {
+        if (!entry.isObject()) {
+            return false;
+        }
+        ArtifactCore::AutomationClipInstance instance;
+        if (!ArtifactCore::automationClipInstanceFromJson(
+                entry.toObject(), instance)) {
+            return false;
+        }
+        result.push_back(std::move(instance));
+    }
+    instances = std::move(result);
+    return true;
+}
+
+bool applyAutomationClipInstances(
+    const ArtifactAbstractLayerPtr& layer,
+    const std::vector<ArtifactCore::AutomationClipInstance>& target) {
+    if (!layer) {
+        return false;
+    }
+    layer->setAutomationClipInstances(target);
+    return ArtifactCore::automationClipInstancesEqual(
+        layer->automationClipInstances(), target);
+}
+} // namespace
+
+LayerAutomationClipInstancesCommand::LayerAutomationClipInstancesCommand(
+    ArtifactAbstractLayerPtr layer,
+    std::vector<ArtifactCore::AutomationClipInstance> before,
+    std::vector<ArtifactCore::AutomationClipInstance> after, QString label)
+    : layer_(layer), layerId_(layer ? layer->id().toQString() : QString()),
+      before_(std::move(before)), after_(std::move(after)),
+      label_(std::move(label)) {}
+
+void LayerAutomationClipInstancesCommand::setCreatedPattern(
+    const QString& compositionId,
+    const ArtifactCore::AutomationClipPattern& pattern) {
+    compositionId_ = compositionId;
+    createdPattern_ = pattern;
+}
+
+void LayerAutomationClipInstancesCommand::clearCreatedPattern() {
+    compositionId_.clear();
+    createdPattern_.reset();
+}
+
+void LayerAutomationClipInstancesCommand::undo() {
+    lastOperationSucceeded_ = false;
+    auto layer = layer_.lock();
+    if (!layer) {
+        return;
+    }
+    if (!applyAutomationClipInstances(layer, before_)) {
+        return;
+    }
+    if (createdPattern_.has_value()) {
+        auto* manager = UndoManager::instance();
+        auto comp = manager ? manager->resolveComposition(compositionId_)
+                            : ArtifactCompositionPtr{};
+        if (!comp ||
+            !comp->removeAutomationClipPattern(createdPattern_->id)) {
+            // Restore the instances even when pattern removal fails, then report.
+            lastOperationSucceeded_ = false;
+            return;
+        }
+        if (comp->findAutomationClipPattern(createdPattern_->id) != nullptr) {
+            return;
+        }
+    }
+    lastOperationSucceeded_ = true;
+    if (auto manager = UndoManager::instance()) manager->notifyAnythingChanged();
+}
+
+void LayerAutomationClipInstancesCommand::redo() {
+    lastOperationSucceeded_ = false;
+    auto layer = layer_.lock();
+    if (!layer) {
+        return;
+    }
+    if (createdPattern_.has_value()) {
+        auto* manager = UndoManager::instance();
+        auto comp = manager ? manager->resolveComposition(compositionId_)
+                            : ArtifactCompositionPtr{};
+        if (!comp) {
+            return;
+        }
+        if (comp->findAutomationClipPattern(createdPattern_->id) == nullptr) {
+            if (comp->addAutomationClipPattern(*createdPattern_) !=
+                createdPattern_->id) {
+                return;
+            }
+        }
+    }
+    if (!applyAutomationClipInstances(layer, after_)) {
+        return;
+    }
+    lastOperationSucceeded_ = true;
+    if (auto manager = UndoManager::instance()) manager->notifyAnythingChanged();
+}
+
+QString LayerAutomationClipInstancesCommand::label() const { return label_; }
+
+size_t LayerAutomationClipInstancesCommand::estimatedMemoryBytes() const {
+    size_t bytes = sizeof(*this) + automationClipInstancesBytes(before_) +
+           automationClipInstancesBytes(after_) +
+           static_cast<size_t>(label_.size()) * sizeof(QChar);
+    if (createdPattern_.has_value()) {
+        bytes += sizeof(ArtifactCore::AutomationClipPattern) +
+            createdPattern_->points.size() *
+                sizeof(ArtifactCore::AutomationClipPoint) +
+            createdPattern_->name.size();
+    }
+    return bytes;
+}
+
+bool LayerAutomationClipInstancesCommand::canSerialize() const {
+    if (layerId_.isEmpty() || layer_.expired()) {
+        return false;
+    }
+    if (createdPattern_.has_value()) {
+        if (compositionId_.isEmpty() || createdPattern_->id == 0 ||
+            createdPattern_->points.empty()) {
+            return false;
+        }
+        auto* manager = UndoManager::instance();
+        if (!manager ||
+            !manager->resolveComposition(compositionId_)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+QJsonObject LayerAutomationClipInstancesCommand::serialize() const {
+    QJsonObject object{{QStringLiteral("layerId"), layerId_},
+                       {QStringLiteral("before"), encodeAutomationClipInstances(before_)},
+                       {QStringLiteral("after"), encodeAutomationClipInstances(after_)},
+                       {QStringLiteral("label"), label_}};
+    if (createdPattern_.has_value()) {
+        object.insert(QStringLiteral("compositionId"), compositionId_);
+        object.insert(QStringLiteral("createdPattern"),
+                      ArtifactCore::automationClipPatternToJson(*createdPattern_));
+    }
+    return object;
+}
+
+bool LayerAutomationClipInstancesCommand::deserialize(const QJsonObject& data) {
+    layerId_ = data.value(QStringLiteral("layerId")).toString();
+    label_ = data.value(QStringLiteral("label")).toString();
+    if (!decodeAutomationClipInstances(data.value(QStringLiteral("before")), before_) ||
+        !decodeAutomationClipInstances(data.value(QStringLiteral("after")), after_)) {
+        return false;
+    }
+    clearCreatedPattern();
+    const QJsonValue patternValue = data.value(QStringLiteral("createdPattern"));
+    if (!patternValue.isUndefined()) {
+        if (!patternValue.isObject()) {
+            return false;
+        }
+        ArtifactCore::AutomationClipPattern pattern;
+        if (!ArtifactCore::automationClipPatternFromJson(
+                patternValue.toObject(), pattern)) {
+            return false;
+        }
+        compositionId_ = data.value(QStringLiteral("compositionId")).toString();
+        if (compositionId_.isEmpty()) {
+            return false;
+        }
+        createdPattern_ = std::move(pattern);
+    }
+    auto* manager = UndoManager::instance();
+    if (!manager) return false;
+    layer_ = manager->resolveLayer(layerId_);
+    return canSerialize();
+}
+
 QJsonObject AnimationLayerStackSnapshotCommand::serialize() const {
     return QJsonObject{{QStringLiteral("layerId"), layerId_},
                        {QStringLiteral("before"), before_},
@@ -1632,36 +2006,106 @@ QString ToggleLocalizedSourceCommand::label() const {
 // --- MoveLayerCommand ---
 MoveLayerCommand::MoveLayerCommand(ArtifactAbstractLayerPtr layer, float deltaX, float deltaY, int64_t frame)
     : layer_(layer), layerId_(layer ? layer->id().toQString() : QString()),
-      dx_(deltaX), dy_(deltaY), frame_(frame) {}
+      dx_(deltaX), dy_(deltaY), frame_(frame) {
+    if (!layer) return;
+    const auto time = ArtifactCore::RationalTime(
+        frame_, transformTimeScaleForLayer(layer));
+    const auto x = layer->getProperty(QStringLiteral("transform.position.x"));
+    const auto y = layer->getProperty(QStringLiteral("transform.position.y"));
+    if (!x || !y) return;
+    beforeX_ = x->interpolateValue(time).toFloat();
+    beforeY_ = y->interpolateValue(time).toFloat();
+    positionSnapshotValid_ = std::isfinite(beforeX_) && std::isfinite(beforeY_);
+}
 
 void MoveLayerCommand::undo() {
-    auto l = layer_.lock();
-    lastOperationSucceeded_ = static_cast<bool>(l);
-    if (l) {
-        auto& t3 = l->transform3D();
-        const ArtifactCore::RationalTime t0(
-            frame_, transformTimeScaleForLayer(l));
-        t3.setPosition(t0, t3.positionX() - dx_, t3.positionY() - dy_);
-        notifyLayerTransformChanged(l);
-        if (lastOperationSucceeded_) {
-            if (auto mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
-        }
+    if (positionSnapshotValid_) {
+        lastOperationSucceeded_ = applyPosition(beforeX_ + dx_, beforeY_ + dy_,
+                                                beforeX_, beforeY_);
+        return;
     }
+    auto layer = layer_.lock();
+    lastOperationSucceeded_ = static_cast<bool>(layer);
+    if (!layer) return;
+    const ArtifactCore::RationalTime time(frame_, transformTimeScaleForLayer(layer));
+    auto& transform = layer->transform3D();
+    transform.setPosition(time, transform.positionX() - dx_,
+                          transform.positionY() - dy_);
+    notifyLayerTransformChanged(layer);
+    if (auto* manager = UndoManager::instance()) manager->notifyAnythingChanged();
 }
 
 void MoveLayerCommand::redo() {
-    auto l = layer_.lock();
-    lastOperationSucceeded_ = static_cast<bool>(l);
-    if (l) {
-        auto& t3 = l->transform3D();
-        const ArtifactCore::RationalTime t0(
-            frame_, transformTimeScaleForLayer(l));
-        t3.setPosition(t0, t3.positionX() + dx_, t3.positionY() + dy_);
-        notifyLayerTransformChanged(l);
-        if (lastOperationSucceeded_) {
-            if (auto mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
-        }
+    if (positionSnapshotValid_) {
+        lastOperationSucceeded_ = applyPosition(beforeX_, beforeY_,
+                                                beforeX_ + dx_, beforeY_ + dy_);
+        return;
     }
+    auto layer = layer_.lock();
+    lastOperationSucceeded_ = static_cast<bool>(layer);
+    if (!layer) return;
+    const ArtifactCore::RationalTime time(frame_, transformTimeScaleForLayer(layer));
+    auto& transform = layer->transform3D();
+    transform.setPosition(time, transform.positionX() + dx_,
+                          transform.positionY() + dy_);
+    notifyLayerTransformChanged(layer);
+    if (auto* manager = UndoManager::instance()) manager->notifyAnythingChanged();
+}
+
+bool MoveLayerCommand::buildCollaborationOperation(
+    const QString& action, QString& operationType, QString& operationLayerId,
+    QJsonObject& payload) const {
+    const auto layer = layer_.lock();
+    if (!layer || (action != QStringLiteral("push") &&
+                   action != QStringLiteral("undo") &&
+                   action != QStringLiteral("redo")) ||
+        !std::isfinite(beforeX_) || !std::isfinite(beforeY_) ||
+        !positionSnapshotValid_ || !std::isfinite(dx_) ||
+        !std::isfinite(dy_)) return false;
+    const bool reverse = action == QStringLiteral("undo");
+    const float expectedX = reverse ? beforeX_ + dx_ : beforeX_;
+    const float expectedY = reverse ? beforeY_ + dy_ : beforeY_;
+    const float valueX = reverse ? beforeX_ : beforeX_ + dx_;
+    const float valueY = reverse ? beforeY_ : beforeY_ + dy_;
+    if (!std::isfinite(valueX) || !std::isfinite(valueY) ||
+        std::abs(expectedX) > 1000000000.0f ||
+        std::abs(expectedY) > 1000000000.0f ||
+        std::abs(valueX) > 1000000000.0f ||
+        std::abs(valueY) > 1000000000.0f ||
+        frame_ < -1000000000LL || frame_ > 1000000000LL) return false;
+    operationType = QStringLiteral("layer.moveAtFrame");
+    operationLayerId = layerId_;
+    payload = QJsonObject{
+        {QStringLiteral("frame"), static_cast<qint64>(frame_)},
+        {QStringLiteral("timeScale"), static_cast<qint64>(
+             transformTimeScaleForLayer(layer))},
+        {QStringLiteral("expectedX"), expectedX},
+        {QStringLiteral("expectedY"), expectedY},
+        {QStringLiteral("x"), valueX},
+        {QStringLiteral("y"), valueY}};
+    return true;
+}
+
+bool MoveLayerCommand::applyPosition(float expectedX, float expectedY,
+                                     float valueX, float valueY) {
+    const auto layer = layer_.lock();
+    if (!layer || !std::isfinite(expectedX) || !std::isfinite(expectedY) ||
+        !std::isfinite(valueX) || !std::isfinite(valueY)) return false;
+    const ArtifactCore::RationalTime time(
+        frame_, transformTimeScaleForLayer(layer));
+    const auto x = layer->getProperty(QStringLiteral("transform.position.x"));
+    const auto y = layer->getProperty(QStringLiteral("transform.position.y"));
+    if (!x || !y || x->interpolateValue(time).toFloat() != expectedX ||
+        y->interpolateValue(time).toFloat() != expectedY) return false;
+    layer->transform3D().setPosition(time, valueX, valueY);
+    if (x->interpolateValue(time).toFloat() != valueX ||
+        y->interpolateValue(time).toFloat() != valueY) {
+        layer->transform3D().setPosition(time, expectedX, expectedY);
+        return false;
+    }
+    notifyLayerTransformChanged(layer);
+    if (auto* manager = UndoManager::instance()) manager->notifyAnythingChanged();
+    return true;
 }
 
 QString MoveLayerCommand::label() const {
@@ -1675,6 +2119,9 @@ size_t MoveLayerCommand::estimatedMemoryBytes() const {
 QJsonObject MoveLayerCommand::serialize() const {
     return QJsonObject{{QStringLiteral("layerId"), layerId_},
                        {QStringLiteral("dx"), dx_}, {QStringLiteral("dy"), dy_},
+                       {QStringLiteral("beforeX"), beforeX_},
+                       {QStringLiteral("beforeY"), beforeY_},
+                       {QStringLiteral("positionSnapshotValid"), positionSnapshotValid_},
                        {QStringLiteral("frame"), static_cast<qint64>(frame_)}};
 }
 
@@ -1688,7 +2135,12 @@ bool MoveLayerCommand::deserialize(const QJsonObject& data) {
     auto* manager = UndoManager::instance();
     if (!manager) return false;
     layer_ = manager->resolveLayer(layerId_);
-    return !layerId_.isEmpty() && !layer_.expired();
+    if (layerId_.isEmpty() || layer_.expired()) return false;
+    positionSnapshotValid_ = data.value(QStringLiteral("positionSnapshotValid")).toBool();
+    if (positionSnapshotValid_ &&
+        (!finiteJsonNumber(data, QStringLiteral("beforeX"), beforeX_) ||
+         !finiteJsonNumber(data, QStringLiteral("beforeY"), beforeY_))) return false;
+    return true;
 }
 
 // --- AddLayerCommand ---
@@ -1783,6 +2235,161 @@ AddLayerCommand::AddLayerCommand(ArtifactCompositionPtr comp, ArtifactAbstractLa
     }
 }
 
+QStringList AddLayerCommand::collaborationTargetLayerIds() const {
+    QStringList ids;
+    const auto append = [&ids](const QString& id) {
+        if (!id.isEmpty() && !ids.contains(id)) ids.append(id);
+    };
+    const auto comp = comp_.lock();
+    const auto layer = layer_;
+    // A push/redo creates a layer that does not yet have a room lock. Undo
+    // removes an existing layer and therefore must be protected by its lock.
+    if (comp && layer && comp->containsLayerById(layer->id())) append(layerId_);
+    else if (comp && layer) {
+        const auto layers = comp->allLayer();
+        QString insertionAnchorId;
+        if (!layers.isEmpty()) {
+            const auto& anchorLayer = atTop_ ? layers[layers.size() - 1]
+                                             : layers[0];
+            if (anchorLayer) insertionAnchorId = anchorLayer->id().toQString();
+        }
+        const QString anchorId = hasCollaborationAnchors_
+            ? (!leftNeighborLayerId_.isEmpty() ? leftNeighborLayerId_
+                                                : rightNeighborLayerId_)
+            : insertionAnchorId;
+        if (!anchorId.isEmpty() && comp->containsLayerById(LayerID(anchorId))) {
+            append(anchorId);
+        }
+    }
+    for (const auto& [dependentLayer, refs] : removedMatteReferences_) {
+        Q_UNUSED(refs);
+        if (dependentLayer) append(dependentLayer->id().toQString());
+    }
+    for (const auto& [dependentLayer, parentId] : removedParentReferences_) {
+        Q_UNUSED(parentId);
+        if (dependentLayer) append(dependentLayer->id().toQString());
+    }
+    return ids;
+}
+
+namespace {
+template <class LayerList>
+int collaborationInsertionIndex(const LayerList& layers,
+                                const QString& layerId,
+                                const QString& leftNeighborId,
+                                const QString& rightNeighborId) {
+    int leftIndex = -1;
+    int rightIndex = static_cast<int>(layers.size());
+    if (!leftNeighborId.isEmpty()) {
+        leftIndex = -1;
+        for (int i = 0; i < layers.size(); ++i) {
+            if (layers[i] && layers[i]->id().toQString() == leftNeighborId) {
+                leftIndex = i;
+                break;
+            }
+        }
+        if (leftIndex < 0) return -1;
+    }
+    if (!rightNeighborId.isEmpty()) {
+        rightIndex = -1;
+        for (int i = 0; i < layers.size(); ++i) {
+            if (layers[i] && layers[i]->id().toQString() == rightNeighborId) {
+                rightIndex = i;
+                break;
+            }
+        }
+        if (rightIndex < 0) return -1;
+    }
+    const int first = leftIndex + 1;
+    if (first > rightIndex) return -1;
+    for (int i = first; i < rightIndex; ++i) {
+        if (layers[i] && layers[i]->id().toQString() > layerId) return i;
+    }
+    return rightIndex;
+}
+}
+
+bool AddLayerCommand::buildCollaborationOperation(
+    const QString& action, QString& operationType, QString& operationLayerId,
+    QJsonObject& payload) const {
+    if (!layer_ || compositionId_.isEmpty() || layerId_.isEmpty() ||
+        !removedMatteReferences_.empty() || !removedParentReferences_.empty() ||
+        (action != QStringLiteral("push") && action != QStringLiteral("apply") &&
+         action != QStringLiteral("undo") && action != QStringLiteral("redo"))) {
+        return false;
+    }
+    const auto comp = comp_.lock();
+    if (!comp) return false;
+    const bool remove = action == QStringLiteral("undo");
+    QString leftNeighborId = remove ? QString{} : leftNeighborLayerId_;
+    QString rightNeighborId = remove ? QString{} : rightNeighborLayerId_;
+    int index = savedIndex_;
+    const auto layers = comp->allLayer();
+    if (!remove) {
+        index = -1;
+        for (int i = 0; i < layers.size(); ++i) {
+            if (layers[i] && layers[i]->id() == layer_->id()) {
+                index = i;
+                break;
+            }
+        }
+        if (index < 0) {
+            if (action == QStringLiteral("push")) {
+                index = atTop_ ? static_cast<int>(layers.size()) : 0;
+            } else if (action == QStringLiteral("redo") && index >= 0) {
+                index = std::min(index, static_cast<int>(layers.size()));
+            } else {
+                index = savedIndex_;
+            }
+        }
+        if (!hasCollaborationAnchors_) {
+            const int boundedIndex = std::clamp(index, 0, static_cast<int>(layers.size()));
+            const auto neighborId = [&layers](const int neighborIndex) {
+                return neighborIndex >= 0 && neighborIndex < layers.size() &&
+                               layers[neighborIndex]
+                    ? layers[neighborIndex]->id().toQString() : QString{};
+            };
+            leftNeighborId = neighborId(boundedIndex - 1);
+            rightNeighborId = neighborId(boundedIndex);
+        }
+        index = collaborationInsertionIndex(layers, layerId_,
+                                             leftNeighborId, rightNeighborId);
+    }
+    if (index < 0 || index >= 100000) return false;
+    const QJsonObject layerSnapshot = layer_->toJson();
+    QString layerType = layerSnapshot.value(QStringLiteral("layerType")).toString();
+    if (layerType.trimmed().isEmpty() &&
+        layerSnapshot.value(QStringLiteral("type")).isDouble()) {
+        layerType = QString::number(
+            layerSnapshot.value(QStringLiteral("type")).toInt(-1));
+    }
+    if (layerSnapshot.value(QStringLiteral("id")).toString() != layerId_ ||
+        layerType.trimmed().isEmpty()) return false;
+    QJsonObject layerJson = layerSnapshot;
+    if (!layerJson.contains(QStringLiteral("layerType"))) {
+        layerJson.insert(QStringLiteral("layerType"), layerType);
+    }
+    const QJsonObject payloadValue{
+        {QStringLiteral("compositionId"), compositionId_},
+        {QStringLiteral("index"), index},
+        {QStringLiteral("layerType"), layerType},
+        {QStringLiteral("leftNeighborId"), leftNeighborId},
+        {QStringLiteral("rightNeighborId"), rightNeighborId},
+        {QStringLiteral("anchorLayerId"),
+         remove ? QString{} : (!leftNeighborId.isEmpty() ? leftNeighborId
+                                                         : rightNeighborId)},
+        {remove ? QStringLiteral("expectedLayerJson") : QStringLiteral("layerJson"),
+         remove ? layerSnapshot : layerJson}};
+    if (QJsonDocument(payloadValue).toJson(QJsonDocument::Compact).size() > 786432) {
+        return false;
+    }
+    operationType = remove ? QStringLiteral("layer.remove")
+                           : QStringLiteral("layer.add");
+    operationLayerId = layerId_;
+    payload = payloadValue;
+    return true;
+}
+
 void AddLayerCommand::undo() {
     auto comp = comp_.lock();
     auto layer = layer_;
@@ -1799,6 +2406,7 @@ void AddLayerCommand::undo() {
             }
         }
         if (currentIndex < 0) return;
+        savedIndex_ = currentIndex;
         comp->removeLayer(layer->id());
         if (comp->containsLayerById(layer->id())) return;
         bool referencesRestored = true;
@@ -1831,12 +2439,44 @@ void AddLayerCommand::redo() {
     if (comp && layer && !comp->containsLayerById(layer->id())) {
         const auto relationshipBefore = captureLayerRelationships(
             removedMatteReferences_, removedParentReferences_);
-        const auto result = atTop_ ? comp->appendLayerTop(layer)
-                                   : comp->appendLayerBottom(layer);
+        const int desiredIndex = savedIndex_ < 0
+            ? (atTop_ ? static_cast<int>(comp->layerCount()) : 0)
+            : std::min(savedIndex_, static_cast<int>(comp->layerCount()));
+        const auto beforeLayers = comp->allLayer();
+        if (!hasCollaborationAnchors_) {
+            const auto neighborId = [&beforeLayers](const int neighborIndex) {
+                return neighborIndex >= 0 && neighborIndex < beforeLayers.size() &&
+                               beforeLayers[neighborIndex]
+                    ? beforeLayers[neighborIndex]->id().toQString() : QString{};
+            };
+            leftNeighborLayerId_ = neighborId(desiredIndex - 1);
+            rightNeighborLayerId_ = neighborId(desiredIndex);
+            hasCollaborationAnchors_ = true;
+        }
+        const int insertionIndex = collaborationInsertionIndex(
+            beforeLayers, layerId_, leftNeighborLayerId_, rightNeighborLayerId_);
+        if (insertionIndex < 0) return;
+        const auto result = comp->appendLayerTop(layer);
         if (!result.success || !comp->containsLayerById(layer->id())) {
             if (comp->containsLayerById(layer->id())) {
                 comp->removeLayer(layer->id());
             }
+            restoreLayerRelationships(relationshipBefore);
+            return;
+        }
+        if (insertionIndex != comp->layerCount() - 1) {
+            comp->moveLayerToIndex(layer->id(), insertionIndex);
+        }
+        const auto insertedLayers = comp->allLayer();
+        savedIndex_ = -1;
+        for (int i = 0; i < insertedLayers.size(); ++i) {
+            if (insertedLayers[i] && insertedLayers[i]->id() == layer->id()) {
+                savedIndex_ = i;
+                break;
+            }
+        }
+        if (savedIndex_ != insertionIndex) {
+            comp->removeLayer(layer->id());
             restoreLayerRelationships(relationshipBefore);
             return;
         }
@@ -1901,7 +2541,10 @@ QJsonObject AddLayerCommand::serialize() const {
     return QJsonObject{{QStringLiteral("compositionId"), compositionId_},
                        {QStringLiteral("layerId"), layerId_},
                        {QStringLiteral("atTop"), atTop_},
-                       {QStringLiteral("savedIndex"), savedIndex_}};
+                       {QStringLiteral("savedIndex"), savedIndex_},
+                       {QStringLiteral("leftNeighborLayerId"), leftNeighborLayerId_},
+                       {QStringLiteral("rightNeighborLayerId"), rightNeighborLayerId_},
+                       {QStringLiteral("hasCollaborationAnchors"), hasCollaborationAnchors_}};
 }
 
 bool AddLayerCommand::deserialize(const QJsonObject& data) {
@@ -1909,6 +2552,11 @@ bool AddLayerCommand::deserialize(const QJsonObject& data) {
     layerId_ = data.value(QStringLiteral("layerId")).toString();
     atTop_ = data.value(QStringLiteral("atTop")).toBool(true);
     savedIndex_ = data.value(QStringLiteral("savedIndex")).toInt(-1);
+    leftNeighborLayerId_ = data.value(QStringLiteral("leftNeighborLayerId")).toString();
+    rightNeighborLayerId_ = data.value(QStringLiteral("rightNeighborLayerId")).toString();
+    hasCollaborationAnchors_ = data.value(QStringLiteral("hasCollaborationAnchors")).toBool(
+        data.contains(QStringLiteral("leftNeighborLayerId")) ||
+        data.contains(QStringLiteral("rightNeighborLayerId")));
     auto* manager = UndoManager::instance();
     if (!manager) return false;
     comp_ = manager->resolveComposition(compositionId_);
@@ -2074,6 +2722,23 @@ RemoveLayerCommand::RemoveLayerCommand(ArtifactCompositionPtr comp, ArtifactAbst
             removedMatteReferences_.emplace_back(candidate, refs);
         }
     }
+}
+
+QStringList RemoveLayerCommand::collaborationTargetLayerIds() const {
+    QStringList ids;
+    const auto append = [&ids](const QString& id) {
+        if (!id.isEmpty() && !ids.contains(id)) ids.append(id);
+    };
+    append(layerId_);
+    for (const auto& [dependentLayer, refs] : removedMatteReferences_) {
+        Q_UNUSED(refs);
+        if (dependentLayer) append(dependentLayer->id().toQString());
+    }
+    for (const auto& [dependentLayer, parentId] : removedParentReferences_) {
+        Q_UNUSED(parentId);
+        if (dependentLayer) append(dependentLayer->id().toQString());
+    }
+    return ids;
 }
 
 void RemoveLayerCommand::undo() {
@@ -2362,6 +3027,28 @@ bool applyLayerPropertyKeyframeSnapshot(
     }
 
     auto property = layer->getProperty(propertyPath);
+    if (!property && propertyPath.startsWith(QStringLiteral("deformation2D."))) {
+        const QStringList parts = propertyPath.split(QLatin1Char('.'));
+        if (parts.size() == 3) {
+            const QJsonObject state = layer->deformation2DData();
+            const QString mode = state.value(QStringLiteral("mode")).toString();
+            const QJsonArray controls = state.value(
+                mode == QStringLiteral("grid")
+                    ? QStringLiteral("gridControls") : QStringLiteral("pins"))
+                .toArray();
+            const bool exists = std::any_of(
+                controls.begin(), controls.end(), [&parts](const QJsonValue& value) {
+                    return value.isObject() && value.toObject().value(
+                        QStringLiteral("id")).toString() == parts[1];
+                });
+            if (exists) {
+                property = layer->persistentLayerProperty(
+                    propertyPath, ArtifactCore::PropertyType::Float,
+                    QVariant(0.0), 100);
+                property->setAnimatable(true);
+            }
+        }
+    }
     if (!property) {
         return false;
     }
@@ -2428,21 +3115,67 @@ bool applyLayerPropertyKeyframeSnapshot(
     }
 
     notifyLayerPropertyChanged(layer, propertyPath);
+    if (propertyPath.startsWith(QStringLiteral("deformation2D."))) {
+        layer->syncDeformation2DControlProperty(propertyPath);
+    }
+    // Opt-in, bounded diagnostics at the key-edit/undo boundary only. Never
+    // perform file I/O or build JSON from playback/property evaluation ticks.
+    if (const auto traceConfig = keyframeTraceConfig()) {
+        QFile trace(traceConfig->logPath);
+        if (trace.size() < traceConfig->maxBytes &&
+            trace.open(QIODevice::WriteOnly | QIODevice::Append)) {
+            QJsonArray keys;
+            QJsonArray samples;
+            const size_t count = std::min(appliedKeyframes.size(), traceConfig->maxKeysPerRecord);
+            for (size_t i = 0; i < count; ++i) {
+                const auto& key = appliedKeyframes[i];
+                keys.append(QJsonObject{
+                    {QStringLiteral("timeValue"), QString::number(key.time.value())},
+                    {QStringLiteral("timeScale"), QString::number(key.time.scale())},
+                    {QStringLiteral("seconds"), key.time.toDouble()},
+                    {QStringLiteral("value"), QJsonValue::fromVariant(key.value)},
+                    {QStringLiteral("interpolation"), static_cast<int>(key.interpolation)},
+                    {QStringLiteral("evaluatedAtKey"), QJsonValue::fromVariant(property->interpolateValue(key.time))}});
+                if (i + 1 < count) {
+                    const double midpoint = (key.time.toDouble() + appliedKeyframes[i + 1].time.toDouble()) * 0.5;
+                    const ArtifactCore::RationalTime sampleTime(
+                        static_cast<int64_t>(std::llround(midpoint * 1000000.0)), 1000000);
+                    samples.append(QJsonObject{
+                        {QStringLiteral("seconds"), sampleTime.toDouble()},
+                        {QStringLiteral("value"), QJsonValue::fromVariant(property->interpolateValue(sampleTime))}});
+                }
+            }
+            const QJsonObject record{
+                {QStringLiteral("timestamp"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)},
+                {QStringLiteral("layerId"), layer->id().toQString()},
+                {QStringLiteral("property"), propertyPath},
+                {QStringLiteral("compositionFps"), layer->compositionFrameRate()},
+                {QStringLiteral("animatable"), property->isAnimatable()},
+                {QStringLiteral("keyCount"), static_cast<double>(appliedKeyframes.size())},
+                {QStringLiteral("keys"), keys},
+                {QStringLiteral("midpointSamples"), samples}};
+            trace.write(QJsonDocument(record).toJson(QJsonDocument::Compact));
+            trace.write("\n");
+        }
+    }
     return true;
 }
 
 bool applyLayerPropertyValue(const ArtifactAbstractLayerPtr& layer,
                              const QString& propertyPath,
+                             const QVariant& expectedValue,
                              const QVariant& value) {
     if (!layer || propertyPath.trimmed().isEmpty()) {
         return false;
     }
+    const auto property = layer->getProperty(propertyPath);
+    if (!property ||
+        QJsonValue::fromVariant(property->getValue()) !=
+            QJsonValue::fromVariant(expectedValue)) {
+        return false;
+    }
     if (layer->setLayerPropertyValue(propertyPath, value)) {
         return true;
-    }
-    const auto property = layer->getProperty(propertyPath);
-    if (!property) {
-        return false;
     }
     const auto previousValue = property->getValue();
     property->setValue(value);
@@ -2456,13 +3189,17 @@ bool applyLayerPropertyValue(const ArtifactAbstractLayerPtr& layer,
 
 bool applyAudioDeClickRanges(
     const ArtifactAbstractLayerPtr& layer,
+    const std::vector<std::pair<qint64, qint64>>& expectedRanges,
     const std::vector<std::pair<qint64, qint64>>& ranges) {
     const auto audioLayer = ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer);
     if (!audioLayer) {
         return false;
     }
+    if (audioLayer->deClickRanges() != expectedRanges) return false;
     audioLayer->setDeClickRanges(ranges);
-    return audioLayer->deClickRanges() == ranges;
+    if (audioLayer->deClickRanges() == ranges) return true;
+    audioLayer->setDeClickRanges(expectedRanges);
+    return false;
 }
 
 CompositionItem* findCompositionItemInTreeForUndo(
@@ -2991,7 +3728,7 @@ bool decodeKeyframes(const QJsonArray& encoded, std::vector<ArtifactCore::KeyFra
         int interpolation = 0;
         if (!jsonEnumInt(object.value(QStringLiteral("interpolation")), interpolation) ||
             interpolation < 0 ||
-            interpolation > static_cast<int>(ArtifactCore::InterpolationType::ExponentialInOut) ||
+            interpolation > static_cast<int>(ArtifactCore::InterpolationType::CircularInOut) ||
             !finiteJsonNumber(object, QStringLiteral("cp1_x"), keyframe.cp1_x) ||
             !finiteJsonNumber(object, QStringLiteral("cp1_y"), keyframe.cp1_y) ||
             !finiteJsonNumber(object, QStringLiteral("cp2_x"), keyframe.cp2_x) ||
@@ -3031,6 +3768,10 @@ SetEffectPropertyKeyframesCommand::SetEffectPropertyKeyframesCommand(
       propertyName_(std::move(propertyName)),
       beforeKeyframes_(std::move(beforeKeyframes)),
       afterKeyframes_(std::move(afterKeyframes)), label_(std::move(label)) {}
+
+QStringList SetEffectPropertyKeyframesCommand::collaborationTargetLayerIds() const {
+    return collaborationLayersForEffect(effect_);
+}
 
 void SetEffectPropertyKeyframesCommand::undo() {
     auto effect = effect_.lock();
@@ -3143,6 +3884,10 @@ SetEffectPropertyExpressionCommand::SetEffectPropertyExpressionCommand(
       beforeExpression_(std::move(beforeExpression)),
       afterExpression_(std::move(afterExpression)), label_(std::move(label)) {}
 
+QStringList SetEffectPropertyExpressionCommand::collaborationTargetLayerIds() const {
+    return collaborationLayersForEffect(effect_);
+}
+
 void SetEffectPropertyExpressionCommand::undo() {
     lastOperationSucceeded_ = applyEffectPropertyExpression(
         effect_.lock(), propertyName_, beforeExpression_);
@@ -3251,7 +3996,7 @@ SetLayerPropertyValueCommand::SetLayerPropertyValueCommand(
 
 void SetLayerPropertyValueCommand::undo() {
     lastOperationSucceeded_ = applyLayerPropertyValue(
-        layer_.lock(), propertyPath_, beforeValue_);
+        layer_.lock(), propertyPath_, afterValue_, beforeValue_);
     if (lastOperationSucceeded_) {
         if (auto mgr = UndoManager::instance()) {
             mgr->notifyAnythingChanged();
@@ -3261,7 +4006,7 @@ void SetLayerPropertyValueCommand::undo() {
 
 void SetLayerPropertyValueCommand::redo() {
     lastOperationSucceeded_ = applyLayerPropertyValue(
-        layer_.lock(), propertyPath_, afterValue_);
+        layer_.lock(), propertyPath_, beforeValue_, afterValue_);
     if (lastOperationSucceeded_) {
         if (auto mgr = UndoManager::instance()) {
             mgr->notifyAnythingChanged();
@@ -3337,7 +4082,7 @@ SetAudioDeClickRangesCommand::SetAudioDeClickRangesCommand(
       label_(std::move(label)) {}
 
 void SetAudioDeClickRangesCommand::undo() {
-    lastOperationSucceeded_ = applyAudioDeClickRanges(layer_.lock(), beforeRanges_);
+    lastOperationSucceeded_ = applyAudioDeClickRanges(layer_.lock(), afterRanges_, beforeRanges_);
     if (lastOperationSucceeded_) {
         if (auto mgr = UndoManager::instance()) {
             mgr->notifyAnythingChanged();
@@ -3346,12 +4091,36 @@ void SetAudioDeClickRangesCommand::undo() {
 }
 
 void SetAudioDeClickRangesCommand::redo() {
-    lastOperationSucceeded_ = applyAudioDeClickRanges(layer_.lock(), afterRanges_);
+    lastOperationSucceeded_ = applyAudioDeClickRanges(layer_.lock(), beforeRanges_, afterRanges_);
     if (lastOperationSucceeded_) {
         if (auto mgr = UndoManager::instance()) {
             mgr->notifyAnythingChanged();
         }
     }
+}
+
+bool SetAudioDeClickRangesCommand::buildCollaborationOperation(
+    const QString& action, QString& operationType, QString& operationLayerId,
+    QJsonObject& payload) const {
+    if (!canSerialize() ||
+        (action != QStringLiteral("push") && action != QStringLiteral("undo") &&
+         action != QStringLiteral("redo"))) return false;
+    const auto encode = [](const auto& ranges) {
+        QJsonArray result;
+        for (const auto& range : ranges)
+            result.append(QJsonArray{QString::number(range.first), QString::number(range.second)});
+        return result;
+    };
+    const bool reverse = action == QStringLiteral("undo");
+    const QJsonArray expected = encode(reverse ? afterRanges_ : beforeRanges_);
+    const QJsonArray value = encode(reverse ? beforeRanges_ : afterRanges_);
+    if (QJsonDocument(expected).toJson(QJsonDocument::Compact).size() > 262144 ||
+        QJsonDocument(value).toJson(QJsonDocument::Compact).size() > 262144) return false;
+    operationType = QStringLiteral("layer.audioDeClickRanges");
+    operationLayerId = layerId_;
+    payload = QJsonObject{{QStringLiteral("expected"), expected},
+                          {QStringLiteral("value"), value}};
+    return true;
 }
 
 QString SetAudioDeClickRangesCommand::label() const {
@@ -3673,6 +4442,9 @@ bool SetTextAnimatorStackCommand::apply(
     if (!layer) return false;
     if (auto textLayer =
             ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer)) {
+        if (textLayer->textAnimatorStackSnapshot() != compensationStack) {
+            return false;
+        }
         textLayer->restoreTextAnimatorStack(stack);
         if (textLayer->textAnimatorStackSnapshot() != stack) {
             textLayer->restoreTextAnimatorStack(compensationStack);
@@ -3691,7 +4463,37 @@ void SetTextAnimatorStackCommand::undo() {
 }
 
 void SetTextAnimatorStackCommand::redo() {
+    const auto layer = layer_.lock();
+    if (layer) {
+        const auto textLayer =
+            ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer);
+        if (textLayer && textLayer->textAnimatorStackSnapshot() == afterStack_) {
+            lastOperationSucceeded_ = true;
+            if (auto* manager = UndoManager::instance()) manager->notifyAnythingChanged();
+            return;
+        }
+    }
     lastOperationSucceeded_ = apply(afterStack_, beforeStack_);
+}
+
+bool SetTextAnimatorStackCommand::buildCollaborationOperation(
+    const QString& action, QString& operationType, QString& operationLayerId,
+    QJsonObject& payload) const {
+    if (!canSerialize() ||
+        (action != QStringLiteral("push") && action != QStringLiteral("undo") &&
+         action != QStringLiteral("redo")) ||
+        QJsonDocument(beforeStack_).toJson(QJsonDocument::Compact).size() > 262144 ||
+        QJsonDocument(afterStack_).toJson(QJsonDocument::Compact).size() > 262144) {
+        return false;
+    }
+    const bool reverse = action == QStringLiteral("undo");
+    operationType = QStringLiteral("layer.stack");
+    operationLayerId = layerId_;
+    payload = QJsonObject{
+        {QStringLiteral("stackKind"), QStringLiteral("textAnimators")},
+        {QStringLiteral("expected"), reverse ? afterStack_ : beforeStack_},
+        {QStringLiteral("value"), reverse ? beforeStack_ : afterStack_}};
+    return true;
 }
 
 QString SetTextAnimatorStackCommand::label() const {
@@ -3737,6 +4539,10 @@ SetEffectMaskImagesCommand::SetEffectMaskImagesCommand(
       beforeMasks_(std::move(beforeMasks)),
       afterMasks_(std::move(afterMasks)),
       label_(std::move(label)) {}
+
+QStringList SetEffectMaskImagesCommand::collaborationTargetLayerIds() const {
+    return collaborationLayersForEffect(effect_);
+}
 
 void SetEffectMaskImagesCommand::undo() {
     lastOperationSucceeded_ = applyEffectMaskImageSnapshot(effect_.lock(), beforeMasks_);
@@ -3855,6 +4661,16 @@ void AlignLayersUndoCommand::redo() {
 }
 
 QString AlignLayersUndoCommand::label() const { return label_; }
+
+QStringList AlignLayersUndoCommand::collaborationTargetLayerIds() const {
+    QStringList ids;
+    for (const auto& snapshot : snapshots_) {
+        if (!snapshot.layerId.isEmpty() && !ids.contains(snapshot.layerId)) {
+            ids.append(snapshot.layerId);
+        }
+    }
+    return ids;
+}
 
 size_t AlignLayersUndoCommand::estimatedMemoryBytes() const {
     size_t bytes = sizeof(*this) + static_cast<size_t>(compositionId_.size() + label_.size()) * sizeof(QChar);
@@ -4003,6 +4819,21 @@ bool SetLayerVisibilityCommand::deserialize(const QJsonObject& data) {
     return !layerId_.isEmpty() && !layer_.expired();
 }
 
+bool SetLayerVisibilityCommand::buildCollaborationOperation(
+    const QString& action, QString& operationType, QString& layerId,
+    QJsonObject& payload) const {
+    if (!canSerialize() ||
+        (action != QStringLiteral("push") && action != QStringLiteral("undo") &&
+         action != QStringLiteral("redo"))) return false;
+    const bool reverse = action == QStringLiteral("undo");
+    operationType = QStringLiteral("layer.visibility");
+    layerId = layerId_;
+    payload = QJsonObject{
+        {QStringLiteral("expected"), reverse ? newVisible_ : oldVisible_},
+        {QStringLiteral("value"), reverse ? oldVisible_ : newVisible_}};
+    return true;
+}
+
 // --- SetLayerLockCommand ---
 SetLayerLockCommand::SetLayerLockCommand(ArtifactAbstractLayerPtr layer, bool locked)
     : layer_(layer), layerId_(layer ? layer->id().toQString() : QString()),
@@ -4057,6 +4888,21 @@ bool SetLayerLockCommand::deserialize(const QJsonObject& data) {
     if (!manager) return false;
     layer_ = manager->resolveLayer(layerId_);
     return !layerId_.isEmpty() && !layer_.expired();
+}
+
+bool SetLayerLockCommand::buildCollaborationOperation(
+    const QString& action, QString& operationType, QString& layerId,
+    QJsonObject& payload) const {
+    if (!canSerialize() ||
+        (action != QStringLiteral("push") && action != QStringLiteral("undo") &&
+         action != QStringLiteral("redo"))) return false;
+    const bool reverse = action == QStringLiteral("undo");
+    operationType = QStringLiteral("layer.editLock");
+    layerId = layerId_;
+    payload = QJsonObject{
+        {QStringLiteral("expected"), reverse ? newLocked_ : oldLocked_},
+        {QStringLiteral("value"), reverse ? oldLocked_ : newLocked_}};
+    return true;
 }
 
 // --- SetLayerSoloCommand ---
@@ -4115,6 +4961,22 @@ bool SetLayerSoloCommand::deserialize(const QJsonObject& data) {
     return !layerId_.isEmpty() && !layer_.expired();
 }
 
+bool SetLayerSoloCommand::buildCollaborationOperation(
+    const QString& action, QString& operationType, QString& layerId,
+    QJsonObject& payload) const {
+    if (!canSerialize() ||
+        (action != QStringLiteral("push") && action != QStringLiteral("undo") &&
+         action != QStringLiteral("redo"))) return false;
+    const bool reverse = action == QStringLiteral("undo");
+    operationType = QStringLiteral("layer.flag");
+    layerId = layerId_;
+    payload = QJsonObject{
+        {QStringLiteral("flag"), QStringLiteral("solo")},
+        {QStringLiteral("expected"), reverse ? newSolo_ : oldSolo_},
+        {QStringLiteral("value"), reverse ? oldSolo_ : newSolo_}};
+    return true;
+}
+
 // --- SetLayerShyCommand ---
 SetLayerShyCommand::SetLayerShyCommand(ArtifactAbstractLayerPtr layer, bool shy)
     : layer_(layer), layerId_(layer ? layer->id().toQString() : QString()),
@@ -4169,6 +5031,22 @@ bool SetLayerShyCommand::deserialize(const QJsonObject& data) {
     if (!manager) return false;
     layer_ = manager->resolveLayer(layerId_);
     return !layerId_.isEmpty() && !layer_.expired();
+}
+
+bool SetLayerShyCommand::buildCollaborationOperation(
+    const QString& action, QString& operationType, QString& layerId,
+    QJsonObject& payload) const {
+    if (!canSerialize() ||
+        (action != QStringLiteral("push") && action != QStringLiteral("undo") &&
+         action != QStringLiteral("redo"))) return false;
+    const bool reverse = action == QStringLiteral("undo");
+    operationType = QStringLiteral("layer.flag");
+    layerId = layerId_;
+    payload = QJsonObject{
+        {QStringLiteral("flag"), QStringLiteral("shy")},
+        {QStringLiteral("expected"), reverse ? newShy_ : oldShy_},
+        {QStringLiteral("value"), reverse ? oldShy_ : newShy_}};
+    return true;
 }
 
 // --- ChangeLayerBlendModeCommand ---
@@ -4243,6 +5121,24 @@ bool ChangeLayerBlendModeCommand::deserialize(const QJsonObject& data) {
     return !layerId_.isEmpty() && !layer_.expired();
 }
 
+bool ChangeLayerBlendModeCommand::buildCollaborationOperation(
+    const QString& action, QString& operationType, QString& layerId,
+    QJsonObject& payload) const {
+    const int oldValue = static_cast<int>(oldMode_);
+    const int newValue = static_cast<int>(newMode_);
+    if (!canSerialize() ||
+        (action != QStringLiteral("push") && action != QStringLiteral("undo") &&
+         action != QStringLiteral("redo")) ||
+        oldValue < 0 || oldValue > 33 || newValue < 0 || newValue > 33) return false;
+    const bool reverse = action == QStringLiteral("undo");
+    operationType = QStringLiteral("layer.blendMode");
+    layerId = layerId_;
+    payload = QJsonObject{
+        {QStringLiteral("expected"), reverse ? newValue : oldValue},
+        {QStringLiteral("value"), reverse ? oldValue : newValue}};
+    return true;
+}
+
 // --- MacroUndoCommand ---
 MacroUndoCommand::MacroUndoCommand(const QString& label)
     : label_(label) {}
@@ -4251,6 +5147,24 @@ void MacroUndoCommand::addChild(std::unique_ptr<UndoCommand> child) {
     if (child) {
         children_.push_back(std::move(child));
     }
+}
+
+QStringList MacroUndoCommand::collaborationTargetLayerIds() const {
+    QStringList result;
+    for (const auto& child : children_) {
+        if (!child) continue;
+        for (const QString& layerId : child->collaborationTargetLayerIds()) {
+            if (!layerId.isEmpty() && !result.contains(layerId)) {
+                result.append(layerId);
+            }
+        }
+    }
+    return result;
+}
+
+const UndoCommand* MacroUndoCommand::collaborationDispatchCommand() const {
+    if (children_.size() != 1 || !children_.front()) return nullptr;
+    return children_.front()->collaborationDispatchCommand();
 }
 
 void MacroUndoCommand::undo() {
@@ -4459,6 +5373,15 @@ UndoManager::UndoManager(): impl_(new Impl()) {
                 ArtifactAbstractLayerPtr{},
                 Audio::Modulation::ModulationRouterSnapshot{},
                 Audio::Modulation::ModulationRouterSnapshot{},
+                data.value(QStringLiteral("label")).toString());
+        });
+    impl_->commandFactories_.insert(
+        QStringLiteral("LayerAutomationClipInstancesCommand"),
+        [](const QJsonObject& data) {
+            return std::make_unique<LayerAutomationClipInstancesCommand>(
+                ArtifactAbstractLayerPtr{},
+                std::vector<ArtifactCore::AutomationClipInstance>{},
+                std::vector<ArtifactCore::AutomationClipInstance>{},
                 data.value(QStringLiteral("label")).toString());
         });
     impl_->commandFactories_.insert(
@@ -4770,6 +5693,14 @@ UndoManager* UndoManager::instance() {
 
 bool UndoManager::push(std::unique_ptr<UndoCommand> cmd) {
     if (!cmd) return false;
+    if (impl_->pendingCollaborationEdit_) {
+        if (impl_->collaborationEditCallback_) {
+            (void)impl_->collaborationEditCallback_(
+                *cmd, QStringLiteral("pending"));
+        }
+        return false;
+    }
+    if (!isLayerMutationAllowed(*cmd)) return false;
     const size_t estimatedBytes = cmd->estimatedMemoryBytes();
     if (impl_->budget_.maxEntryCount == 0 ||
         estimatedBytes > impl_->budget_.maxSingleEntryBytes ||
@@ -4779,6 +5710,12 @@ bool UndoManager::push(std::unique_ptr<UndoCommand> cmd) {
         // budget; callers can inspect the unchanged history and retry after
         // changing the policy.
         return false;
+    }
+    if (impl_->collaborationEditCallback_) {
+        const CollaborationEditDispatch preflight =
+            impl_->collaborationEditCallback_(*cmd,
+                                              QStringLiteral("preflight.push"));
+        if (!preflight.accepted) return false;
     }
     // Execute immediately and record for undo
     cmd->redo();
@@ -4796,6 +5733,31 @@ bool UndoManager::push(std::unique_ptr<UndoCommand> cmd) {
         return false;
     }
 
+    CollaborationEditDispatch dispatch;
+    dispatch.accepted = true;
+    if (impl_->collaborationEditCallback_) {
+        dispatch = impl_->collaborationEditCallback_(*cmd,
+                                                     QStringLiteral("apply"));
+    }
+    if (!dispatch.accepted) {
+        cmd->undo();
+        return false;
+    }
+
+    const int64_t previousVersion = impl_->version_;
+    Impl::PendingCollaborationEdit pending;
+    pending.action = Impl::PendingCollaborationEdit::Action::Apply;
+    pending.clientId = dispatch.clientId;
+    pending.sequence = dispatch.sequence;
+    pending.command = cmd.get();
+    pending.previousVersion = previousVersion;
+    if (dispatch.sequence >= 0) {
+        pending.previousRedoStack = std::move(impl_->redoStack);
+        pending.previousRedoStateIds = std::move(impl_->redoStateIds_);
+    } else {
+        impl_->redoStack.clear();
+        impl_->redoStateIds_.clear();
+    }
     impl_->undoStack.push_back(std::move(cmd));
     if (impl_->actionRecording_) {
         const auto& recorded = impl_->undoStack.back();
@@ -4809,14 +5771,856 @@ bool UndoManager::push(std::unique_ptr<UndoCommand> cmd) {
         }
     }
     impl_->undoStateIds_.push_back(impl_->allocateStateId());
-    impl_->redoStack.clear();
-    impl_->redoStateIds_.clear();
     impl_->version_ = impl_->undoStateIds_.back();
+    if (dispatch.sequence >= 0) {
+        pending.stateId = impl_->undoStateIds_.back();
+        impl_->pendingCollaborationEdit_ = std::move(pending);
+    } else {
+        impl_->enforceBudget();
+        impl_->applyOffloadPolicy();
+    }
+    ArtifactCore::globalEventBus().publish<UndoManagerChangedEvent>(
+        {UndoManagerChangeKind::HistoryChanged, {}});
+    return true;
+}
+
+void UndoManager::setLayerMutationGuard(LayerMutationGuard guard) {
+    impl_->layerMutationGuard_ = std::move(guard);
+}
+
+void UndoManager::setCollaborationEditCallback(
+    CollaborationEditCallback callback) {
+    impl_->collaborationEditCallback_ = std::move(callback);
+}
+
+bool UndoManager::hasPendingCollaborativeOperation() const {
+    return impl_->pendingCollaborationEdit_.has_value();
+}
+
+bool UndoManager::pendingCollaborativeOperationIdentity(
+    QString& clientId, qint64& sequence) const {
+    const auto& pending = impl_->pendingCollaborationEdit_;
+    if (!pending) return false;
+    clientId = pending->clientId;
+    sequence = pending->sequence;
+    return !clientId.isEmpty() && sequence >= 0;
+}
+
+bool UndoManager::acknowledgeCollaborativeOperation(
+    const QString& clientId, const qint64 sequence) {
+    auto& pending = impl_->pendingCollaborationEdit_;
+    if (!pending || pending->clientId != clientId ||
+        pending->sequence != sequence) {
+        return false;
+    }
+    pending.reset();
     impl_->enforceBudget();
     impl_->applyOffloadPolicy();
     ArtifactCore::globalEventBus().publish<UndoManagerChangedEvent>(
         {UndoManagerChangeKind::HistoryChanged, {}});
     return true;
+}
+
+bool UndoManager::rejectCollaborativeOperation(
+    const QString& clientId, const qint64 sequence) {
+    auto& pending = impl_->pendingCollaborationEdit_;
+    if (!pending || pending->clientId != clientId ||
+        pending->sequence != sequence || !pending->command) {
+        return false;
+    }
+
+    switch (pending->action) {
+    case Impl::PendingCollaborationEdit::Action::Apply: {
+        if (impl_->undoStack.empty() ||
+            impl_->undoStack.back().get() != pending->command) {
+            return false;
+        }
+        impl_->undoStack.back()->undo();
+        if (!impl_->undoStack.back()->lastOperationSucceeded()) return false;
+        impl_->undoStack.pop_back();
+        if (!impl_->undoStateIds_.empty()) impl_->undoStateIds_.pop_back();
+        impl_->redoStack = std::move(pending->previousRedoStack);
+        impl_->redoStateIds_ = std::move(pending->previousRedoStateIds);
+        impl_->version_ = pending->previousVersion;
+        break;
+    }
+    case Impl::PendingCollaborationEdit::Action::Undo: {
+        if (impl_->redoStack.empty() ||
+            impl_->redoStack.back().get() != pending->command) {
+            return false;
+        }
+        impl_->redoStack.back()->redo();
+        if (!impl_->redoStack.back()->lastOperationSucceeded()) return false;
+        auto command = std::move(impl_->redoStack.back());
+        impl_->redoStack.pop_back();
+        if (!impl_->redoStateIds_.empty()) impl_->redoStateIds_.pop_back();
+        impl_->undoStack.push_back(std::move(command));
+        impl_->undoStateIds_.push_back(pending->stateId);
+        impl_->version_ = pending->previousVersion;
+        break;
+    }
+    case Impl::PendingCollaborationEdit::Action::Redo: {
+        if (impl_->undoStack.empty() ||
+            impl_->undoStack.back().get() != pending->command) {
+            return false;
+        }
+        impl_->undoStack.back()->undo();
+        if (!impl_->undoStack.back()->lastOperationSucceeded()) return false;
+        auto command = std::move(impl_->undoStack.back());
+        impl_->undoStack.pop_back();
+        if (!impl_->undoStateIds_.empty()) impl_->undoStateIds_.pop_back();
+        impl_->redoStack.push_back(std::move(command));
+        impl_->redoStateIds_.push_back(pending->stateId);
+        impl_->version_ = pending->previousVersion;
+        break;
+    }
+    }
+
+    if (impl_->actionRecording_) impl_->actionRecordingFailed_ = true;
+    pending.reset();
+    ArtifactCore::globalEventBus().publish<UndoManagerChangedEvent>(
+        {UndoManagerChangeKind::HistoryChanged, {}});
+    return true;
+}
+
+bool UndoManager::applyCollaborativePropertySet(
+    const QString& layerId, const QString& propertyPath,
+    const QVariant& expectedValue, const QVariant& value) {
+    if (layerId.trimmed().isEmpty() || propertyPath.trimmed().isEmpty()) {
+        return false;
+    }
+    const bool applied = applyLayerPropertyValue(
+        resolveLayer(layerId), propertyPath, expectedValue, value);
+    if (applied) {
+        notifyAnythingChanged();
+        ArtifactCore::globalEventBus().publish<ProjectChangedEvent>(
+            {QString(), QString()});
+    }
+    return applied;
+}
+
+bool UndoManager::applyCollaborativePropertyBatch(const QJsonObject& payload) {
+    const QJsonValue changesValue = payload.value(QStringLiteral("changes"));
+    if (!changesValue.isArray()) return false;
+    const QJsonArray changes = changesValue.toArray();
+    if (changes.isEmpty() || changes.size() > 128) return false;
+
+    struct ResolvedChange {
+        ArtifactAbstractLayerPtr layer;
+        QString propertyPath;
+        bool keyframes = false;
+        bool expression = false;
+        QVariant expectedValue;
+        QVariant value;
+        QString expectedExpression;
+        QString expressionValue;
+        std::vector<ArtifactCore::KeyFrame> expectedKeyframes;
+        std::vector<ArtifactCore::KeyFrame> keyframesValue;
+        std::optional<bool> expectedAnimatable;
+        std::optional<bool> animatable;
+    };
+    std::vector<ResolvedChange> resolved;
+    resolved.reserve(static_cast<size_t>(changes.size()));
+    for (const QJsonValue& changeValue : changes) {
+        if (!changeValue.isObject()) return false;
+        const QJsonObject change = changeValue.toObject();
+        const QString layerId = change.value(QStringLiteral("layerId")).toString();
+        const QString propertyPath =
+            change.value(QStringLiteral("propertyPath")).toString();
+        const QString kind = change.value(QStringLiteral("kind"))
+                                 .toString(QStringLiteral("value"));
+        if (layerId.trimmed().isEmpty() || propertyPath.trimmed().isEmpty()) {
+            return false;
+        }
+        auto layer = resolveLayer(layerId);
+        const auto property = layer ? layer->getProperty(propertyPath) : nullptr;
+        if (!property) return false;
+        if (kind == QStringLiteral("expression")) {
+            const QJsonValue expected = change.value(QStringLiteral("expectedExpression"));
+            const QJsonValue next = change.value(QStringLiteral("expression"));
+            if (!expected.isString() || !next.isString() ||
+                property->getExpression() != expected.toString()) return false;
+            ResolvedChange resolvedChange;
+            resolvedChange.layer = layer;
+            resolvedChange.propertyPath = propertyPath;
+            resolvedChange.expression = true;
+            resolvedChange.expectedExpression = expected.toString();
+            resolvedChange.expressionValue = next.toString();
+            resolved.push_back(std::move(resolvedChange));
+        } else if (kind == QStringLiteral("keyframes")) {
+            const QJsonValue expected = change.value(QStringLiteral("expectedKeyframes"));
+            const QJsonValue next = change.value(QStringLiteral("keyframes"));
+            if (!expected.isArray() || !next.isArray()) return false;
+            const bool hasExpectedAnimatable = change.contains(QStringLiteral("expectedAnimatable"));
+            const bool hasAnimatable = change.contains(QStringLiteral("animatable"));
+            if (hasExpectedAnimatable != hasAnimatable ||
+                (hasExpectedAnimatable &&
+                 (!change.value(QStringLiteral("expectedAnimatable")).isBool() ||
+                  !change.value(QStringLiteral("animatable")).isBool()))) return false;
+            const auto currentKeyframes = property->getKeyFrames();
+            const SetLayerPropertyKeyframesCommand currentSnapshot(
+                layer, propertyPath, currentKeyframes, currentKeyframes,
+                QStringLiteral("Compare Collaborative Keyframes"));
+            const QJsonValue currentEncoded = currentSnapshot.serialize().value(QStringLiteral("before"));
+            if (currentEncoded != expected ||
+                (hasExpectedAnimatable && property->isAnimatable() !=
+                    change.value(QStringLiteral("expectedAnimatable")).toBool())) return false;
+            ResolvedChange resolvedChange;
+            resolvedChange.layer = layer;
+            resolvedChange.propertyPath = propertyPath;
+            resolvedChange.keyframes = true;
+            if (!decodeKeyframes(expected.toArray(), resolvedChange.expectedKeyframes) ||
+                !decodeKeyframes(next.toArray(), resolvedChange.keyframesValue)) return false;
+            if (hasExpectedAnimatable) {
+                resolvedChange.expectedAnimatable = change.value(QStringLiteral("expectedAnimatable")).toBool();
+                resolvedChange.animatable = change.value(QStringLiteral("animatable")).toBool();
+            }
+            resolved.push_back(std::move(resolvedChange));
+        } else if (kind == QStringLiteral("value") &&
+                   change.contains(QStringLiteral("expectedValue")) &&
+                   change.contains(QStringLiteral("value")) &&
+                   QJsonValue::fromVariant(property->getValue()) ==
+                       change.value(QStringLiteral("expectedValue"))) {
+            resolved.push_back(ResolvedChange{
+                layer, propertyPath, false, false,
+                change.value(QStringLiteral("expectedValue")).toVariant(),
+                change.value(QStringLiteral("value")).toVariant(),
+                {}, {}, {}, {}, {}, {}});
+        } else {
+            return false;
+        }
+    }
+
+    size_t appliedCount = 0;
+    for (; appliedCount < resolved.size(); ++appliedCount) {
+        const auto& change = resolved[appliedCount];
+        const bool applied = change.keyframes
+            ? applyLayerPropertyKeyframeSnapshot(change.layer, change.propertyPath,
+                                                 change.keyframesValue, change.animatable)
+            : change.expression
+                ? [&]() {
+                    const auto property = change.layer->getProperty(change.propertyPath);
+                    if (!property || property->getExpression() != change.expectedExpression) return false;
+                    property->setExpression(change.expressionValue);
+                    if (property->getExpression() != change.expressionValue) {
+                        property->setExpression(change.expectedExpression);
+                        return false;
+                    }
+                    notifyLayerPropertyChanged(change.layer, change.propertyPath);
+                    return true;
+                  }()
+                : applyLayerPropertyValue(change.layer, change.propertyPath,
+                                          change.expectedValue, change.value);
+        if (!applied) {
+            bool rollbackSucceeded = true;
+            for (size_t rollbackIndex = appliedCount; rollbackIndex > 0;
+                 --rollbackIndex) {
+                const auto& applied = resolved[rollbackIndex - 1];
+                const bool rolledBack = applied.keyframes
+                    ? applyLayerPropertyKeyframeSnapshot(
+                          applied.layer, applied.propertyPath,
+                          applied.expectedKeyframes, applied.expectedAnimatable)
+                    : applied.expression
+                        ? [&]() {
+                            const auto property = applied.layer->getProperty(applied.propertyPath);
+                            if (!property) return false;
+                            property->setExpression(applied.expectedExpression);
+                            const bool restored = property->getExpression() == applied.expectedExpression;
+                            if (restored) notifyLayerPropertyChanged(applied.layer, applied.propertyPath);
+                            return restored;
+                          }()
+                    : [&]() {
+                          const auto property = applied.layer->getProperty(applied.propertyPath);
+                          return property && applyLayerPropertyValue(
+                              applied.layer, applied.propertyPath,
+                              property->getValue(), applied.expectedValue);
+                      }();
+                if (!rolledBack) {
+                    rollbackSucceeded = false;
+                }
+            }
+            if (!rollbackSucceeded) {
+                notifyAnythingChanged();
+                ArtifactCore::globalEventBus().publish<ProjectChangedEvent>(
+                    {QString(), QString()});
+            }
+            return false;
+        }
+    }
+
+    notifyAnythingChanged();
+    ArtifactCore::globalEventBus().publish<ProjectChangedEvent>(
+        {QString(), QString()});
+    return true;
+}
+
+bool UndoManager::applyCollaborativePropertyKeyframes(
+    const QString& layerId, const QJsonObject& payload) {
+    const QString propertyPath =
+        payload.value(QStringLiteral("propertyPath")).toString();
+    const QJsonValue expectedValue =
+        payload.value(QStringLiteral("expectedKeyframes"));
+    const QJsonValue nextValue = payload.value(QStringLiteral("keyframes"));
+    if (layerId.trimmed().isEmpty() || propertyPath.trimmed().isEmpty() ||
+        !expectedValue.isArray() || !nextValue.isArray() ||
+        expectedValue.toArray().size() > 100000 ||
+        nextValue.toArray().size() > 100000) {
+        return false;
+    }
+
+    std::optional<bool> expectedAnimatable;
+    std::optional<bool> nextAnimatable;
+    const bool hasExpectedAnimatable =
+        payload.contains(QStringLiteral("expectedAnimatable"));
+    const bool hasAnimatable = payload.contains(QStringLiteral("animatable"));
+    if (hasExpectedAnimatable != hasAnimatable) return false;
+    if (hasExpectedAnimatable) {
+        const QJsonValue expectedFlag =
+            payload.value(QStringLiteral("expectedAnimatable"));
+        const QJsonValue nextFlag = payload.value(QStringLiteral("animatable"));
+        if (!expectedFlag.isBool() || !nextFlag.isBool()) return false;
+        expectedAnimatable = expectedFlag.toBool();
+        nextAnimatable = nextFlag.toBool();
+    }
+
+    const auto layer = resolveLayer(layerId);
+    const auto property = layer ? layer->getProperty(propertyPath) : nullptr;
+    if (!property) return false;
+    const auto currentKeyframes = property->getKeyFrames();
+    const bool currentAnimatable = property->isAnimatable();
+    const SetLayerPropertyKeyframesCommand currentSnapshot(
+        layer, propertyPath, currentKeyframes, currentKeyframes,
+        QStringLiteral("Compare Collaborative Keyframes"),
+        expectedAnimatable.has_value()
+            ? std::optional<bool>(currentAnimatable)
+            : std::nullopt,
+        expectedAnimatable.has_value()
+            ? std::optional<bool>(currentAnimatable)
+            : std::nullopt);
+    const QJsonObject encodedCurrent = currentSnapshot.serialize();
+    const QJsonValue encodedCurrentKeyframes =
+        encodedCurrent.value(QStringLiteral("before"));
+    if (!encodedCurrentKeyframes.isArray() ||
+        encodedCurrentKeyframes.toArray().size() !=
+            static_cast<qsizetype>(currentKeyframes.size()) ||
+        encodedCurrentKeyframes != expectedValue ||
+        (expectedAnimatable.has_value() &&
+         currentAnimatable != *expectedAnimatable)) {
+        return false;
+    }
+
+    std::vector<ArtifactCore::KeyFrame> nextKeyframes;
+    if (!decodeKeyframes(nextValue.toArray(), nextKeyframes)) return false;
+    if (!applyLayerPropertyKeyframeSnapshot(
+            layer, propertyPath, nextKeyframes, nextAnimatable)) {
+        return false;
+    }
+    notifyAnythingChanged();
+    ArtifactCore::globalEventBus().publish<ProjectChangedEvent>(
+        {QString(), QString()});
+    return true;
+}
+
+bool UndoManager::applyCollaborativePropertyExpression(
+    const QString& layerId, const QJsonObject& payload) {
+    const QString propertyPath = payload.value(QStringLiteral("propertyPath")).toString();
+    const QJsonValue expected = payload.value(QStringLiteral("expectedExpression"));
+    const QJsonValue next = payload.value(QStringLiteral("expression"));
+    if (layerId.trimmed().isEmpty() || propertyPath.trimmed().isEmpty() ||
+        !expected.isString() || !next.isString()) return false;
+    const auto layer = resolveLayer(layerId);
+    const auto property = layer ? layer->getProperty(propertyPath) : nullptr;
+    if (!property || property->getExpression() != expected.toString()) return false;
+    property->setExpression(next.toString());
+    if (property->getExpression() != next.toString()) return false;
+    notifyLayerPropertyChanged(layer, propertyPath);
+    notifyAnythingChanged();
+    ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
+    return true;
+}
+
+bool UndoManager::applyCollaborativeLayerComponents(
+    const QString& layerId, const QJsonObject& payload) {
+    const QJsonValue expected = payload.value(QStringLiteral("expected"));
+    const QJsonValue next = payload.value(QStringLiteral("value"));
+    if (layerId.trimmed().isEmpty() || !expected.isObject() || !next.isObject() ||
+        QJsonDocument(expected.toObject()).toJson(QJsonDocument::Compact).size() > 262144 ||
+        QJsonDocument(next.toObject()).toJson(QJsonDocument::Compact).size() > 262144) {
+        return false;
+    }
+    const auto layer = resolveLayer(layerId);
+    if (!layer || layer->componentDescriptorSnapshot() != expected.toObject() ||
+        !layer->restoreComponentDescriptorSnapshot(next.toObject())) {
+        return false;
+    }
+    notifyLayerPropertyChanged(layer, QStringLiteral("component.descriptors"));
+    notifyAnythingChanged();
+    ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
+    return true;
+}
+
+bool UndoManager::applyCollaborativeLayerStack(
+    const QString& layerId, const QJsonObject& payload) {
+    const QString stackKind = payload.value(QStringLiteral("stackKind")).toString();
+    const QJsonValue expected = payload.value(QStringLiteral("expected"));
+    const QJsonValue next = payload.value(QStringLiteral("value"));
+    if (layerId.trimmed().isEmpty() ||
+        (stackKind != QStringLiteral("clonerTransforms") &&
+         stackKind != QStringLiteral("cloneEffectors") &&
+         stackKind != QStringLiteral("textAnimators")) ||
+        !expected.isArray() || !next.isArray() ||
+        QJsonDocument(expected.toArray()).toJson(QJsonDocument::Compact).size() > 262144 ||
+        QJsonDocument(next.toArray()).toJson(QJsonDocument::Compact).size() > 262144) {
+        return false;
+    }
+    const auto layer = resolveLayer(layerId);
+    if (!layer) return false;
+    const auto expectedStack = expected.toArray();
+    const auto nextStack = next.toArray();
+    bool applied = false;
+    if (stackKind == QStringLiteral("textAnimators")) {
+        auto* textLayer = dynamic_cast<ArtifactTextLayer*>(layer.get());
+        if (!textLayer || textLayer->textAnimatorStackSnapshot() != expectedStack) {
+            return false;
+        }
+        textLayer->restoreTextAnimatorStack(nextStack);
+        applied = textLayer->textAnimatorStackSnapshot() == nextStack;
+        if (!applied) textLayer->restoreTextAnimatorStack(expectedStack);
+    } else if (stackKind == QStringLiteral("clonerTransforms")) {
+        if (layer->clonerTransformsSnapshot() != expectedStack) return false;
+        applied = layer->restoreClonerTransformsSnapshot(nextStack);
+    } else if (auto* cloneLayer = dynamic_cast<ArtifactCloneLayer*>(layer.get())) {
+        if (cloneLayer->effectorStackSnapshot() != expectedStack) return false;
+        applied = cloneLayer->restoreEffectorStackSnapshot(nextStack);
+    }
+    if (!applied) return false;
+    notifyLayerPropertyChanged(
+        layer, stackKind == QStringLiteral("clonerTransforms")
+                   ? QStringLiteral("component.cloner.transforms")
+                   : stackKind == QStringLiteral("textAnimators")
+                         ? QStringLiteral("text.animators")
+                         : QStringLiteral("clone.effectors"));
+    notifyAnythingChanged();
+    ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
+    return true;
+}
+
+bool UndoManager::applyCollaborativeLayerAudioDeClickRanges(
+    const QString& layerId, const QJsonObject& payload) {
+    const auto decode = [](const QJsonValue& value,
+                           std::vector<std::pair<qint64, qint64>>& out) {
+        if (!value.isArray() || value.toArray().size() > 8192 ||
+            QJsonDocument(value.toArray()).toJson(QJsonDocument::Compact).size() > 262144) return false;
+        qint64 previousEnd = -1;
+        for (const auto& entry : value.toArray()) {
+            if (!entry.isArray() || entry.toArray().size() != 2) return false;
+            const auto pair = entry.toArray();
+            if (!pair[0].isString() || !pair[1].isString()) return false;
+            bool startOk = false, endOk = false;
+            const auto start = pair[0].toString().toLongLong(&startOk, 10);
+            const auto end = pair[1].toString().toLongLong(&endOk, 10);
+            if (!startOk || !endOk || start < 0 || start >= end ||
+                QString::number(start) != pair[0].toString() ||
+                QString::number(end) != pair[1].toString() ||
+                (previousEnd >= 0 && start <= previousEnd)) return false;
+            out.emplace_back(start, end);
+            previousEnd = end;
+        }
+        return true;
+    };
+    std::vector<std::pair<qint64, qint64>> expected, next;
+    if (layerId.trimmed().isEmpty() || !decode(payload.value(QStringLiteral("expected")), expected) ||
+        !decode(payload.value(QStringLiteral("value")), next)) return false;
+    const auto layer = resolveLayer(layerId);
+    const auto audioLayer = ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer);
+    if (!audioLayer || audioLayer->deClickRanges() != expected) return false;
+    audioLayer->setDeClickRanges(next);
+    if (audioLayer->deClickRanges() != next) {
+        audioLayer->setDeClickRanges(expected);
+        return false;
+    }
+    notifyAnythingChanged();
+    ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
+    return true;
+}
+
+bool UndoManager::applyCollaborativeLayerAnimationStack(
+    const QString& layerId, const QJsonObject& payload) {
+    const QJsonValue expected = payload.value(QStringLiteral("expected"));
+    const QJsonValue next = payload.value(QStringLiteral("value"));
+    if (layerId.trimmed().isEmpty() || !expected.isObject() || !next.isObject() ||
+        QJsonDocument(expected.toObject()).toJson(QJsonDocument::Compact).size() > 262144 ||
+        QJsonDocument(next.toObject()).toJson(QJsonDocument::Compact).size() > 262144) {
+        return false;
+    }
+    const auto layer = resolveLayer(layerId);
+    if (!layer || layer->animationLayersSnapshot() != expected.toObject()) return false;
+    layer->restoreAnimationLayersSnapshot(next.toObject());
+    if (layer->animationLayersSnapshot() != next.toObject()) {
+        layer->restoreAnimationLayersSnapshot(expected.toObject());
+        layer->changed();
+        return false;
+    }
+    layer->changed();
+    notifyAnythingChanged();
+    ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
+    return true;
+}
+
+bool UndoManager::applyCollaborativeLayerText(
+    const QString& layerId, const QJsonObject& payload) {
+    const QJsonValue expected = payload.value(QStringLiteral("expected"));
+    const QJsonValue next = payload.value(QStringLiteral("value"));
+    if (layerId.trimmed().isEmpty() || !expected.isString() || !next.isString() ||
+        expected.toString().toUtf8().size() > 131072 ||
+        next.toString().toUtf8().size() > 131072) return false;
+    const auto layer = resolveLayer(layerId);
+    auto* textLayer = layer ? dynamic_cast<ArtifactTextLayer*>(layer.get()) : nullptr;
+    if (!textLayer || textLayer->text().toQString() != expected.toString()) return false;
+    textLayer->setText(UniString(next.toString()));
+    if (textLayer->text().toQString() != next.toString()) {
+        textLayer->setText(UniString(expected.toString()));
+        return false;
+    }
+    textLayer->changed();
+    notifyLayerPropertyChanged(layer, QStringLiteral("text.value"));
+    notifyAnythingChanged();
+    if (auto* composition = static_cast<ArtifactAbstractComposition*>(
+            textLayer->composition())) {
+        ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+            LayerChangedEvent{composition->id().toString(), textLayer->id().toString(),
+                              LayerChangedEvent::ChangeType::Modified});
+    }
+    ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
+    return true;
+}
+
+bool UndoManager::applyCollaborativeLayerRename(
+    const QString& layerId, const QJsonObject& payload) {
+    const QJsonValue expected = payload.value(QStringLiteral("expected"));
+    const QJsonValue next = payload.value(QStringLiteral("value"));
+    if (layerId.trimmed().isEmpty() || !expected.isString() || !next.isString() ||
+        expected.toString().toUtf8().size() > 4096 ||
+        next.toString().toUtf8().size() > 4096) return false;
+    const auto layer = resolveLayer(layerId);
+    if (!layer || layer->layerName() != expected.toString()) return false;
+    layer->setLayerName(next.toString());
+    if (layer->layerName() != next.toString()) {
+        layer->setLayerName(expected.toString());
+        return false;
+    }
+    notifyLayerPropertyChanged(layer, QStringLiteral("layer.name"));
+    notifyAnythingChanged();
+    ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
+    return true;
+}
+
+bool UndoManager::applyCollaborativeLayerVariant(
+    const QString& layerId, const QJsonObject& payload) {
+    qint64 expectedIndex = -1;
+    qint64 nextIndex = -1;
+    if (layerId.trimmed().isEmpty() ||
+        !jsonInteger(payload.value(QStringLiteral("expected")), expectedIndex) ||
+        !jsonInteger(payload.value(QStringLiteral("value")), nextIndex) ||
+        expectedIndex < 0 || nextIndex < 0 ||
+        expectedIndex > 100000 || nextIndex > 100000) return false;
+    const auto layer = resolveLayer(layerId);
+    if (!layer || layer->getActiveVariantIndex() != static_cast<size_t>(expectedIndex)) {
+        return false;
+    }
+    layer->setActiveVariant(static_cast<size_t>(nextIndex));
+    if (layer->getActiveVariantIndex() != static_cast<size_t>(nextIndex)) {
+        layer->setActiveVariant(static_cast<size_t>(expectedIndex));
+        return false;
+    }
+    notifyLayerPropertyChanged(layer, QStringLiteral("layer.variant"));
+    notifyAnythingChanged();
+    ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
+    return true;
+}
+
+bool UndoManager::applyCollaborativeLayerBlendMode(
+    const QString& layerId, const QJsonObject& payload) {
+    qint64 expectedMode = -1;
+    qint64 nextMode = -1;
+    if (layerId.trimmed().isEmpty() ||
+        !jsonInteger(payload.value(QStringLiteral("expected")), expectedMode) ||
+        !jsonInteger(payload.value(QStringLiteral("value")), nextMode) ||
+        expectedMode < 0 || expectedMode > 33 || nextMode < 0 || nextMode > 33) {
+        return false;
+    }
+    const auto layer = resolveLayer(layerId);
+    if (!layer || static_cast<qint64>(layer->layerBlendType()) != expectedMode) {
+        return false;
+    }
+    const auto next = static_cast<LAYER_BLEND_TYPE>(nextMode);
+    layer->setBlendMode(next);
+    if (layer->layerBlendType() != next) {
+        layer->setBlendMode(static_cast<LAYER_BLEND_TYPE>(expectedMode));
+        return false;
+    }
+    notifyLayerPropertyChanged(layer, QStringLiteral("layer.blendMode"));
+    notifyAnythingChanged();
+    ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
+    return true;
+}
+
+bool UndoManager::applyCollaborativeLayerOpacity(
+    const QString& layerId, const QJsonObject& payload) {
+    const QJsonValue expected = payload.value(QStringLiteral("expected"));
+    const QJsonValue next = payload.value(QStringLiteral("value"));
+    if (layerId.trimmed().isEmpty() || !expected.isDouble() || !next.isDouble() ||
+        !std::isfinite(expected.toDouble()) || !std::isfinite(next.toDouble()) ||
+        expected.toDouble() < 0.0 || expected.toDouble() > 1.0 ||
+        next.toDouble() < 0.0 || next.toDouble() > 1.0) return false;
+    const auto layer = resolveLayer(layerId);
+    const float expectedOpacity = static_cast<float>(expected.toDouble());
+    const float nextOpacity = static_cast<float>(next.toDouble());
+    if (!layer || layer->opacity() != expectedOpacity) return false;
+    layer->setOpacity(nextOpacity);
+    if (layer->opacity() != nextOpacity) {
+        layer->setOpacity(expectedOpacity);
+        return false;
+    }
+    notifyLayerPropertyChanged(layer, QStringLiteral("layer.opacity"));
+    notifyAnythingChanged();
+    ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
+    return true;
+}
+
+bool UndoManager::applyCollaborativeLayerParent(
+    const QString& layerId, const QJsonObject& payload) {
+    const QString expectedText =
+        payload.value(QStringLiteral("expectedParentId")).toString();
+    const QString nextText = payload.value(QStringLiteral("parentId")).toString();
+    if (layerId.trimmed().isEmpty() || expectedText.size() > 64 ||
+        nextText.size() > 64 || expectedText.trimmed().isEmpty() ||
+        nextText.trimmed().isEmpty()) return false;
+    const LayerID expectedParentId(expectedText);
+    const LayerID nextParentId(nextText);
+    if (expectedParentId.toString() != expectedText.toLower() ||
+        nextParentId.toString() != nextText.toLower()) return false;
+    const auto layer = resolveLayer(layerId);
+    if (!layer || layer->parentLayerId() != expectedParentId ||
+        nextParentId == layer->id()) return false;
+    const LayerID previousParentId = layer->parentLayerId();
+    if (nextParentId.isNil()) layer->clearParent();
+    else layer->setParentById(nextParentId);
+    if (layer->parentLayerId() != nextParentId) {
+        if (previousParentId.isNil()) layer->clearParent();
+        else layer->setParentById(previousParentId);
+        return false;
+    }
+    notifyLayerTransformChanged(layer);
+    notifyAnythingChanged();
+    ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
+    return true;
+}
+
+bool UndoManager::applyCollaborativeLayerVisibility(
+    const QString& layerId, const QJsonObject& payload) {
+    const QJsonValue expected = payload.value(QStringLiteral("expected"));
+    const QJsonValue next = payload.value(QStringLiteral("value"));
+    if (layerId.trimmed().isEmpty() || !expected.isBool() || !next.isBool()) return false;
+    const auto layer = resolveLayer(layerId);
+    if (!layer || layer->isVisible() != expected.toBool()) return false;
+    layer->setVisible(next.toBool());
+    if (layer->isVisible() != next.toBool()) {
+        layer->setVisible(expected.toBool());
+        return false;
+    }
+    notifyLayerPropertyChanged(layer, QStringLiteral("layer.visible"));
+    notifyAnythingChanged();
+    ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
+    return true;
+}
+
+bool UndoManager::applyCollaborativeLayerFlag(
+    const QString& layerId, const QJsonObject& payload) {
+    const QString flag = payload.value(QStringLiteral("flag")).toString();
+    const QJsonValue expected = payload.value(QStringLiteral("expected"));
+    const QJsonValue next = payload.value(QStringLiteral("value"));
+    if (layerId.trimmed().isEmpty() ||
+        (flag != QStringLiteral("solo") && flag != QStringLiteral("shy")) ||
+        !expected.isBool() || !next.isBool()) return false;
+    const auto layer = resolveLayer(layerId);
+    if (!layer) return false;
+    const bool current = flag == QStringLiteral("solo") ? layer->isSolo() : layer->isShy();
+    if (current != expected.toBool()) return false;
+    if (flag == QStringLiteral("solo")) layer->setSolo(next.toBool());
+    else layer->setShy(next.toBool());
+    const bool applied = flag == QStringLiteral("solo")
+        ? layer->isSolo() == next.toBool() : layer->isShy() == next.toBool();
+    if (!applied) {
+        if (flag == QStringLiteral("solo")) layer->setSolo(expected.toBool());
+        else layer->setShy(expected.toBool());
+        return false;
+    }
+    notifyLayerPropertyChanged(
+        layer, flag == QStringLiteral("solo")
+                   ? QStringLiteral("layer.solo") : QStringLiteral("layer.shy"));
+    notifyAnythingChanged();
+    ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
+    return true;
+}
+
+bool UndoManager::applyCollaborativeLayerEditLock(
+    const QString& layerId, const QJsonObject& payload) {
+    const QJsonValue expected = payload.value(QStringLiteral("expected"));
+    const QJsonValue next = payload.value(QStringLiteral("value"));
+    if (layerId.trimmed().isEmpty() || !expected.isBool() || !next.isBool()) return false;
+    const auto layer = resolveLayer(layerId);
+    if (!layer || layer->isLocked() != expected.toBool()) return false;
+    layer->setLocked(next.toBool());
+    if (layer->isLocked() != next.toBool()) {
+        layer->setLocked(expected.toBool());
+        return false;
+    }
+    notifyLayerPropertyChanged(layer, QStringLiteral("layer.editLocked"));
+    notifyAnythingChanged();
+    ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
+    return true;
+}
+
+bool UndoManager::applyCollaborativeLayerMembership(
+    const QString& operationType, const QString& layerId,
+    const QJsonObject& payload) {
+    const QString compositionId =
+        payload.value(QStringLiteral("compositionId")).toString();
+    const QJsonValue indexValue = payload.value(QStringLiteral("index"));
+    if (compositionId.trimmed().isEmpty() || layerId.trimmed().isEmpty() ||
+        !indexValue.isDouble() || indexValue.toDouble() < 0 ||
+        indexValue.toDouble() > 100000 ||
+        std::floor(indexValue.toDouble()) != indexValue.toDouble()) {
+        return false;
+    }
+    const auto composition = resolveComposition(compositionId);
+    if (!composition) return false;
+    if (operationType == QStringLiteral("layer.reorder")) {
+        const QJsonValue expectedValue = payload.value(QStringLiteral("expectedIndex"));
+        const auto layer = resolveLayer(layerId);
+        const int expectedIndex = expectedValue.toInt(-1);
+        const int targetIndex = indexValue.toInt(-1);
+        const auto layers = composition->allLayer();
+        if (!expectedValue.isDouble() || std::floor(expectedValue.toDouble()) != expectedValue.toDouble() ||
+            !layer || !composition->containsLayerById(layer->id()) ||
+            targetIndex < 0 || targetIndex >= layers.size() ||
+            composition->allLayerRef().indexOf(layer) != expectedIndex) {
+            return false;
+        }
+        composition->moveLayerToIndex(layer->id(), targetIndex);
+        if (composition->allLayerRef().indexOf(layer) != targetIndex) {
+            composition->moveLayerToIndex(layer->id(), expectedIndex);
+            return false;
+        }
+        notifyAnythingChanged();
+        ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
+        return true;
+    }
+    if (operationType == QStringLiteral("layer.add")) {
+        const QJsonObject layerJson = payload.value(QStringLiteral("layerJson")).toObject();
+        const QString leftNeighborId =
+            payload.value(QStringLiteral("leftNeighborId")).toString();
+        const QString rightNeighborId =
+            payload.value(QStringLiteral("rightNeighborId")).toString();
+        const QString anchorLayerId =
+            payload.value(QStringLiteral("anchorLayerId")).toString();
+        const auto previouslyKnownLayer = resolveLayer(layerId);
+        if (layerJson.isEmpty() ||
+            layerJson.value(QStringLiteral("id")).toString() != layerId ||
+            (previouslyKnownLayer &&
+             previouslyKnownLayer->compositionObject() != nullptr) ||
+            anchorLayerId != (!leftNeighborId.isEmpty() ? leftNeighborId
+                                                        : rightNeighborId)) {
+            return false;
+        }
+        const auto existingLayers = composition->allLayer();
+        const int insertionIndex = collaborationInsertionIndex(
+            existingLayers, layerId, leftNeighborId, rightNeighborId);
+        if (insertionIndex < 0) return false;
+        const auto layer = ArtifactLayerFactory::createFromJson(layerJson);
+        if (!layer || layer->id().toQString() != layerId) return false;
+        if (!layer->parentLayerId().isNil() &&
+            !composition->containsLayerById(layer->parentLayerId())) return false;
+        for (const auto& matteRef : layer->matteReferences()) {
+            if (!composition->containsLayerById(matteRef.sourceLayerId)) return false;
+        }
+        if (const auto* cloneLayer = dynamic_cast<const ArtifactCloneLayer*>(layer.get())) {
+            const LayerID sourceId = cloneLayer->cloneSettings().sourceLayerId;
+            if (!sourceId.isNil() && !composition->containsLayerById(sourceId)) return false;
+        }
+        const auto appendResult = composition->appendLayerTop(layer);
+        if (!appendResult.success ||
+            !composition->containsLayerById(layer->id())) {
+            if (composition->containsLayerById(layer->id())) {
+                composition->removeLayer(layer->id());
+            }
+            return false;
+        }
+        if (insertionIndex != composition->layerCount() - 1) {
+            composition->moveLayerToIndex(layer->id(), insertionIndex);
+        }
+        const auto insertedLayers = composition->allLayer();
+        if (insertionIndex >= insertedLayers.size() || !insertedLayers[insertionIndex] ||
+            insertedLayers[insertionIndex]->id() != layer->id()) {
+            composition->removeLayer(layer->id());
+            return false;
+        }
+    } else if (operationType == QStringLiteral("layer.remove")) {
+        const auto layer = resolveLayer(layerId);
+        const QJsonObject expected =
+            payload.value(QStringLiteral("expectedLayerJson")).toObject();
+        if (!layer || !composition->containsLayerById(layer->id()) ||
+            expected.isEmpty() || layer->toJson() != expected) {
+            return false;
+        }
+        const auto layers = composition->allLayer();
+        for (const auto& candidate : layers) {
+            if (!candidate || candidate->id() == layer->id()) continue;
+            if (candidate->parentLayerId() == layer->id()) return false;
+            const auto matteRefs = candidate->matteReferences();
+            if (std::any_of(matteRefs.cbegin(), matteRefs.cend(),
+                    [&layer](const LayerMatteReference& ref) {
+                        return ref.sourceLayerId == layer->id();
+                    })) return false;
+        }
+        composition->removeLayer(layer->id());
+        if (composition->containsLayerById(layer->id())) return false;
+        if (auto* selection = ArtifactLayerSelectionManager::instance();
+            selection && selection->activeComposition() == composition &&
+            selection->isSelected(layer)) {
+            selection->removeFromSelection(layer);
+        }
+    } else {
+        return false;
+    }
+    notifyAnythingChanged();
+    ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
+    return true;
+}
+
+bool UndoManager::isLayerMutationAllowed(const UndoCommand& command) const {
+    if (!impl_->layerMutationGuard_) return true;
+    const QStringList targetLayerIds = command.collaborationTargetLayerIds();
+    if (targetLayerIds.isEmpty() && command.collaborationTargetScopeResolved()) {
+        return true;
+    }
+    return areLayerMutationsAllowed(targetLayerIds);
+}
+
+bool UndoManager::areLayerMutationsAllowed(
+    const QStringList& layerIds, QString* rejectionReason) const {
+    if (!impl_->layerMutationGuard_) return true;
+    if (layerIds.isEmpty()) {
+        if (rejectionReason) {
+            *rejectionReason = QStringLiteral("Edit blocked: affected layer could not be resolved");
+        }
+        return false;
+    }
+    QString reason;
+    const bool allowed = impl_->layerMutationGuard_(layerIds, reason);
+    if (!allowed && rejectionReason) *rejectionReason = std::move(reason);
+    return allowed;
 }
 
 bool UndoManager::beginActionRecording(const QString& label) {
@@ -4866,8 +6670,25 @@ bool UndoManager::replayActionRecording(const QJsonObject& recording) {
 bool UndoManager::isActionRecording() const { return impl_->actionRecording_; }
 
 void UndoManager::undo() {
+    if (impl_->pendingCollaborationEdit_) {
+        if (impl_->collaborationEditCallback_ &&
+            impl_->pendingCollaborationEdit_->command) {
+            (void)impl_->collaborationEditCallback_(
+                *impl_->pendingCollaborationEdit_->command,
+                QStringLiteral("pending"));
+        }
+        return;
+    }
     if (impl_->undoStack.empty()) return;
+    if (!isLayerMutationAllowed(*impl_->undoStack.back())) return;
+    if (impl_->collaborationEditCallback_) {
+        const CollaborationEditDispatch preflight =
+            impl_->collaborationEditCallback_(*impl_->undoStack.back(),
+                                              QStringLiteral("preflight.undo"));
+        if (!preflight.accepted) return;
+    }
     impl_->alignUndoStateIds();
+    const int64_t previousVersion = impl_->version_;
     auto cmd = std::move(impl_->undoStack.back());
     impl_->undoStack.pop_back();
     const int64_t stateId = impl_->undoStateIds_.back();
@@ -4883,17 +6704,55 @@ void UndoManager::undo() {
         impl_->undoStateIds_.push_back(stateId);
         return;
     }
+    CollaborationEditDispatch dispatch;
+    dispatch.accepted = true;
+    if (impl_->collaborationEditCallback_) {
+        dispatch = impl_->collaborationEditCallback_(*cmd,
+                                                     QStringLiteral("undo"));
+    }
+    if (!dispatch.accepted) {
+        cmd->redo();
+        impl_->undoStack.push_back(std::move(cmd));
+        impl_->undoStateIds_.push_back(stateId);
+        return;
+    }
     impl_->redoStack.push_back(std::move(cmd));
     impl_->redoStateIds_.push_back(stateId);
     impl_->version_ = impl_->undoStateIds_.empty()
                           ? 0
                           : impl_->undoStateIds_.back();
+    if (dispatch.sequence >= 0) {
+        Impl::PendingCollaborationEdit pending;
+        pending.action = Impl::PendingCollaborationEdit::Action::Undo;
+        pending.clientId = dispatch.clientId;
+        pending.sequence = dispatch.sequence;
+        pending.command = impl_->redoStack.back().get();
+        pending.stateId = stateId;
+        pending.previousVersion = previousVersion;
+        impl_->pendingCollaborationEdit_ = std::move(pending);
+    }
     ArtifactCore::globalEventBus().publish<UndoManagerChangedEvent>(
         {UndoManagerChangeKind::HistoryChanged, {}});
 }
 
 void UndoManager::redo() {
+    if (impl_->pendingCollaborationEdit_) {
+        if (impl_->collaborationEditCallback_ &&
+            impl_->pendingCollaborationEdit_->command) {
+            (void)impl_->collaborationEditCallback_(
+                *impl_->pendingCollaborationEdit_->command,
+                QStringLiteral("pending"));
+        }
+        return;
+    }
     if (impl_->redoStack.empty()) return;
+    if (!isLayerMutationAllowed(*impl_->redoStack.back())) return;
+    if (impl_->collaborationEditCallback_) {
+        const CollaborationEditDispatch preflight =
+            impl_->collaborationEditCallback_(*impl_->redoStack.back(),
+                                              QStringLiteral("preflight.redo"));
+        if (!preflight.accepted) return;
+    }
     const int64_t stateId = impl_->redoStateIds_.empty()
                                 ? impl_->allocateStateId()
                                 : impl_->redoStateIds_.back();
@@ -4911,17 +6770,45 @@ void UndoManager::redo() {
         impl_->redoStateIds_.push_back(stateId);
         return;
     }
+    const int64_t previousVersion = impl_->version_;
+    CollaborationEditDispatch dispatch;
+    dispatch.accepted = true;
+    if (impl_->collaborationEditCallback_) {
+        dispatch = impl_->collaborationEditCallback_(*cmd,
+                                                     QStringLiteral("redo"));
+    }
+    if (!dispatch.accepted) {
+        cmd->undo();
+        impl_->redoStack.push_back(std::move(cmd));
+        impl_->redoStateIds_.push_back(stateId);
+        return;
+    }
     impl_->undoStack.push_back(std::move(cmd));
     impl_->undoStateIds_.push_back(stateId);
     impl_->version_ = stateId;
+    if (dispatch.sequence >= 0) {
+        Impl::PendingCollaborationEdit pending;
+        pending.action = Impl::PendingCollaborationEdit::Action::Redo;
+        pending.clientId = dispatch.clientId;
+        pending.sequence = dispatch.sequence;
+        pending.command = impl_->undoStack.back().get();
+        pending.stateId = stateId;
+        pending.previousVersion = previousVersion;
+        impl_->pendingCollaborationEdit_ = std::move(pending);
+    }
     ArtifactCore::globalEventBus().publish<UndoManagerChangedEvent>(
         {UndoManagerChangeKind::HistoryChanged, {}});
 }
 
-bool UndoManager::canUndo() const { return !impl_->undoStack.empty(); }
-bool UndoManager::canRedo() const { return !impl_->redoStack.empty(); }
+bool UndoManager::canUndo() const {
+    return !impl_->pendingCollaborationEdit_ && !impl_->undoStack.empty();
+}
+bool UndoManager::canRedo() const {
+    return !impl_->pendingCollaborationEdit_ && !impl_->redoStack.empty();
+}
 
 void UndoManager::clearHistory() {
+    if (impl_->pendingCollaborationEdit_) return;
     impl_->cleanupOffloadFiles();
     impl_->undoStack.clear();
     impl_->redoStack.clear();
@@ -4966,6 +6853,7 @@ QStringList UndoManager::redoHistoryLabels() const {
 }
 
 void UndoManager::setMaxHistorySize(size_t maxSize) {
+    if (impl_->pendingCollaborationEdit_) return;
     impl_->budget_.maxEntryCount = std::max<size_t>(1, maxSize);
     impl_->enforceBudget();
     ArtifactCore::globalEventBus().publish<UndoManagerChangedEvent>(
@@ -4974,6 +6862,7 @@ void UndoManager::setMaxHistorySize(size_t maxSize) {
 
 size_t UndoManager::maxHistorySize() const { return impl_->maxHistorySize_; }
 void UndoManager::setBudget(const UndoBudget& budget) {
+    if (impl_->pendingCollaborationEdit_) return;
     impl_->budget_ = budget;
     impl_->budget_.maxEntryCount = std::max<size_t>(1, impl_->budget_.maxEntryCount);
     impl_->enforceBudget();
@@ -4991,6 +6880,7 @@ float UndoManager::memoryPressure() const {
 }
 
 void UndoManager::setOffloadPolicy(const OffloadPolicy policy) {
+    if (impl_->pendingCollaborationEdit_) return;
     impl_->offloadPolicy_ = policy;
     impl_->applyOffloadPolicy();
 }
@@ -5000,6 +6890,7 @@ UndoManager::OffloadPolicy UndoManager::offloadPolicy() const {
 }
 
 void UndoManager::setOffloadDirectory(const QString& path) {
+    if (impl_->pendingCollaborationEdit_) return;
     impl_->offloadDirectory_ = path;
     if (!path.isEmpty()) QDir().mkpath(path);
 }
@@ -5010,7 +6901,7 @@ QString UndoManager::offloadDirectory() const {
 
 bool UndoManager::saveSessionHistory(const QString& path) const {
     constexpr qsizetype kMaxHistoryFileBytes = 64ll * 1024ll * 1024ll;
-    if (path.trimmed().isEmpty()) return false;
+    if (impl_->pendingCollaborationEdit_ || path.trimmed().isEmpty()) return false;
     QJsonObject root;
     root.insert(QStringLiteral("version"), 1);
     root.insert(QStringLiteral("savedVersion"), static_cast<qint64>(impl_->savedVersion_));
@@ -5097,6 +6988,7 @@ ArtifactInOutPoints* UndoManager::resolveInOutPoints() const {
 
 bool UndoManager::loadSessionHistory(const QString& path) {
     constexpr qint64 kMaxHistoryFileBytes = 64ll * 1024ll * 1024ll;
+    if (impl_->pendingCollaborationEdit_) return false;
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) return false;
     if (file.size() < 0 || file.size() > kMaxHistoryFileBytes) return false;
@@ -5164,8 +7056,14 @@ bool UndoManager::loadSessionHistory(const QString& path) {
         {UndoManagerChangeKind::HistoryChanged, {}});
     return true;
 }
-bool UndoManager::hasUnsavedChanges() const { return impl_->version_ != impl_->savedVersion_; }
-void UndoManager::markAsSaved() { impl_->savedVersion_ = impl_->version_; }
+bool UndoManager::hasUnsavedChanges() const {
+    return impl_->pendingCollaborationEdit_.has_value() ||
+           impl_->version_ != impl_->savedVersion_;
+}
+void UndoManager::markAsSaved() {
+    if (impl_->pendingCollaborationEdit_) return;
+    impl_->savedVersion_ = impl_->version_;
+}
 int64_t UndoManager::currentVersion() const { return impl_->version_; }
 
 // --- MoveLayerIndexCommand ---
@@ -5179,7 +7077,8 @@ void MoveLayerIndexCommand::undo() {
     lastOperationSucceeded_ = false;
     auto comp = comp_.lock();
     auto layer = layer_.lock();
-    if (!comp || !layer || oldIndex_ < 0 || oldIndex_ >= comp->layerCount()) return;
+    if (!comp || !layer || oldIndex_ < 0 || oldIndex_ >= comp->layerCount() ||
+        comp->allLayerRef().indexOf(layer) != newIndex_) return;
     comp->moveLayerToIndex(layer->id(), oldIndex_);
     lastOperationSucceeded_ = comp->allLayerRef().indexOf(layer) == oldIndex_;
 }
@@ -5188,9 +7087,31 @@ void MoveLayerIndexCommand::redo() {
     lastOperationSucceeded_ = false;
     auto comp = comp_.lock();
     auto layer = layer_.lock();
-    if (!comp || !layer || newIndex_ < 0 || newIndex_ >= comp->layerCount()) return;
+    if (!comp || !layer || newIndex_ < 0 || newIndex_ >= comp->layerCount() ||
+        comp->allLayerRef().indexOf(layer) != oldIndex_) return;
     comp->moveLayerToIndex(layer->id(), newIndex_);
     lastOperationSucceeded_ = comp->allLayerRef().indexOf(layer) == newIndex_;
+}
+
+bool MoveLayerIndexCommand::buildCollaborationOperation(
+    const QString& action, QString& operationType, QString& operationLayerId,
+    QJsonObject& payload) const {
+    if (!canSerialize() ||
+        (action != QStringLiteral("push") && action != QStringLiteral("undo") &&
+         action != QStringLiteral("redo"))) return false;
+    const bool reverse = action == QStringLiteral("undo");
+    const int expectedIndex = reverse ? newIndex_ : oldIndex_;
+    const int index = reverse ? oldIndex_ : newIndex_;
+    if (expectedIndex < 0 || index < 0 || expectedIndex > 100000 || index > 100000) {
+        return false;
+    }
+    operationType = QStringLiteral("layer.reorder");
+    operationLayerId = layerId_;
+    payload = QJsonObject{
+        {QStringLiteral("compositionId"), compositionId_},
+        {QStringLiteral("expectedIndex"), expectedIndex},
+        {QStringLiteral("index"), index}};
+    return true;
 }
 
 QString MoveLayerIndexCommand::label() const {
@@ -5249,6 +7170,23 @@ QString RenameLayerCommand::label() const {
 
 size_t RenameLayerCommand::estimatedMemoryBytes() const {
     return sizeof(*this) + static_cast<size_t>(layerId_.size() + oldName_.size() + newName_.size()) * sizeof(QChar);
+}
+
+bool RenameLayerCommand::buildCollaborationOperation(
+    const QString& action, QString& operationType, QString& layerId,
+    QJsonObject& payload) const {
+    if (!canSerialize() ||
+        (action != QStringLiteral("push") && action != QStringLiteral("undo") &&
+         action != QStringLiteral("redo"))) return false;
+    const bool reverse = action == QStringLiteral("undo");
+    const QString& expected = reverse ? newName_ : oldName_;
+    const QString& value = reverse ? oldName_ : newName_;
+    if (expected.toUtf8().size() > 4096 || value.toUtf8().size() > 4096) return false;
+    operationType = QStringLiteral("layer.rename");
+    layerId = layerId_;
+    payload = QJsonObject{{QStringLiteral("expected"), expected},
+                          {QStringLiteral("value"), value}};
+    return true;
 }
 
 QJsonObject RenameLayerCommand::serialize() const {
@@ -5372,24 +7310,42 @@ ChangeLayerParentCommand::ChangeLayerParentCommand(
     : layer_(layer), layerId_(layer ? layer->id().toQString() : QString()),
       oldParentId_(oldParentId), newParentId_(newParentId) {}
 
+QStringList ChangeLayerParentCommand::collaborationTargetLayerIds() const {
+    QStringList layerIds{layerId_};
+    if (!oldParentId_.isNil()) {
+        const QString oldParentId = oldParentId_.toQString();
+        if (!layerIds.contains(oldParentId)) layerIds.append(oldParentId);
+    }
+    if (!newParentId_.isNil()) {
+        const QString newParentId = newParentId_.toQString();
+        if (!layerIds.contains(newParentId)) layerIds.append(newParentId);
+    }
+    return layerIds;
+}
+
 namespace {
 bool applyLayerParent(const ArtifactAbstractLayerPtr& layer,
+                      const LayerID& expectedParentId,
                       const LayerID& parentId) {
-    if (!layer) {
+    if (!layer || layer->parentLayerId() != expectedParentId) {
         return false;
     }
+    const LayerID previousParentId = layer->parentLayerId();
     if (parentId.isNil()) {
         layer->clearParent();
     } else {
         layer->setParentById(parentId);
     }
-    return layer->parentLayerId() == parentId;
+    if (layer->parentLayerId() == parentId) return true;
+    if (previousParentId.isNil()) layer->clearParent();
+    else layer->setParentById(previousParentId);
+    return false;
 }
 }
 
 void ChangeLayerParentCommand::undo() {
     const auto layer = layer_.lock();
-    lastOperationSucceeded_ = applyLayerParent(layer, oldParentId_);
+    lastOperationSucceeded_ = applyLayerParent(layer, newParentId_, oldParentId_);
     if (lastOperationSucceeded_) {
         notifyLayerTransformChanged(layer);
     }
@@ -5402,7 +7358,7 @@ void ChangeLayerParentCommand::undo() {
 
 void ChangeLayerParentCommand::redo() {
     const auto layer = layer_.lock();
-    lastOperationSucceeded_ = applyLayerParent(layer, newParentId_);
+    lastOperationSucceeded_ = applyLayerParent(layer, oldParentId_, newParentId_);
     if (lastOperationSucceeded_) {
         notifyLayerTransformChanged(layer);
     }
@@ -5411,6 +7367,23 @@ void ChangeLayerParentCommand::redo() {
         mgr->notifyAnythingChanged();
       }
     }
+}
+
+bool ChangeLayerParentCommand::buildCollaborationOperation(
+    const QString& action, QString& operationType, QString& operationLayerId,
+    QJsonObject& payload) const {
+    if (!canSerialize() ||
+        (action != QStringLiteral("push") && action != QStringLiteral("undo") &&
+         action != QStringLiteral("redo"))) return false;
+    const bool reverse = action == QStringLiteral("undo");
+    operationType = QStringLiteral("layer.parent");
+    operationLayerId = layerId_;
+    payload = QJsonObject{
+        {QStringLiteral("expectedParentId"),
+         reverse ? newParentId_.toString() : oldParentId_.toString()},
+        {QStringLiteral("parentId"),
+         reverse ? oldParentId_.toString() : newParentId_.toString()}};
+    return true;
 }
 
 QString ChangeLayerParentCommand::label() const {
@@ -6056,9 +8029,11 @@ ChangeLayerOpacityCommand::ChangeLayerOpacityCommand(ArtifactAbstractLayerPtr la
 
 void ChangeLayerOpacityCommand::undo() {
     auto layer = layer_.lock();
-    lastOperationSucceeded_ = static_cast<bool>(layer);
+    lastOperationSucceeded_ = layer && layer->opacity() == newOpacity_;
     if (lastOperationSucceeded_) {
         layer->setOpacity(oldOpacity_);
+        lastOperationSucceeded_ = layer->opacity() == oldOpacity_;
+        if (!lastOperationSucceeded_) return;
         notifyLayerPropertyChanged(layer, QStringLiteral("layer.opacity"));
         if (auto mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
     }
@@ -6068,7 +8043,14 @@ void ChangeLayerOpacityCommand::redo() {
     auto layer = layer_.lock();
     lastOperationSucceeded_ = static_cast<bool>(layer);
     if (lastOperationSucceeded_) {
-        layer->setOpacity(newOpacity_);
+        const float currentOpacity = layer->opacity();
+        if (currentOpacity != oldOpacity_ && currentOpacity != newOpacity_) {
+            lastOperationSucceeded_ = false;
+            return;
+        }
+        if (currentOpacity != newOpacity_) layer->setOpacity(newOpacity_);
+        lastOperationSucceeded_ = layer->opacity() == newOpacity_;
+        if (!lastOperationSucceeded_) return;
         notifyLayerPropertyChanged(layer, QStringLiteral("layer.opacity"));
         if (auto mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
     }
@@ -6084,7 +8066,24 @@ size_t ChangeLayerOpacityCommand::estimatedMemoryBytes() const {
 
 bool ChangeLayerOpacityCommand::canSerialize() const {
     return !layerId_.isEmpty() && !layer_.expired() &&
-           std::isfinite(oldOpacity_) && std::isfinite(newOpacity_);
+           std::isfinite(oldOpacity_) && std::isfinite(newOpacity_) &&
+           oldOpacity_ >= 0.0f && oldOpacity_ <= 1.0f &&
+           newOpacity_ >= 0.0f && newOpacity_ <= 1.0f;
+}
+
+bool ChangeLayerOpacityCommand::buildCollaborationOperation(
+    const QString& action, QString& operationType, QString& operationLayerId,
+    QJsonObject& payload) const {
+    if (!canSerialize() ||
+        (action != QStringLiteral("push") && action != QStringLiteral("undo") &&
+         action != QStringLiteral("redo"))) return false;
+    const bool reverse = action == QStringLiteral("undo");
+    operationType = QStringLiteral("layer.opacity");
+    operationLayerId = layerId_;
+    payload = QJsonObject{
+        {QStringLiteral("expected"), reverse ? newOpacity_ : oldOpacity_},
+        {QStringLiteral("value"), reverse ? oldOpacity_ : newOpacity_}};
+    return true;
 }
 
 QJsonObject ChangeLayerOpacityCommand::serialize() const {
@@ -6140,6 +8139,22 @@ QString ChangeActiveVariantCommand::label() const {
 
 size_t ChangeActiveVariantCommand::estimatedMemoryBytes() const {
     return sizeof(*this) + static_cast<size_t>(layerId_.size()) * sizeof(QChar);
+}
+
+bool ChangeActiveVariantCommand::buildCollaborationOperation(
+    const QString& action, QString& operationType, QString& layerId,
+    QJsonObject& payload) const {
+    if (!canSerialize() ||
+        (action != QStringLiteral("push") && action != QStringLiteral("undo") &&
+         action != QStringLiteral("redo")) || oldIndex_ > 100000 ||
+        newIndex_ > 100000) return false;
+    const bool reverse = action == QStringLiteral("undo");
+    operationType = QStringLiteral("layer.variant");
+    layerId = layerId_;
+    payload = QJsonObject{
+        {QStringLiteral("expected"), static_cast<qint64>(reverse ? newIndex_ : oldIndex_)},
+        {QStringLiteral("value"), static_cast<qint64>(reverse ? oldIndex_ : newIndex_)}};
+    return true;
 }
 
 QJsonObject ChangeActiveVariantCommand::serialize() const {
@@ -6419,6 +8434,15 @@ void ChangeCompositionResolutionCommand::redo() {
 
 QString ChangeCompositionResolutionCommand::label() const {
     return QStringLiteral("Change Composition Resolution");
+}
+
+QStringList ChangeCompositionResolutionCommand::collaborationTargetLayerIds() const {
+    QStringList ids;
+    for (const auto& snapshot : beforeSnapshots_) {
+        const QString layerId = snapshot.layerId.toQString();
+        if (!layerId.isEmpty() && !ids.contains(layerId)) ids.append(layerId);
+    }
+    return ids;
 }
 
 size_t ChangeCompositionResolutionCommand::estimatedMemoryBytes() const {

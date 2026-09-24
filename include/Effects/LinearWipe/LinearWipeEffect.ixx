@@ -1,4 +1,5 @@
 module;
+#include <cstdint>
 #include <utility>
 #include <vector>
 #include <QString>
@@ -32,6 +33,26 @@ public:
 
     std::vector<ArtifactCore::AbstractProperty> getProperties() const override;
     void setPropertyValue(const UniString& name, const QVariant& value) override;
+
+    static constexpr const char* kGpuGenericKeyString = "linear_wipe";
+    static constexpr std::uint32_t kGpuGenericKey =
+        gpuGenericKeyFromString(kGpuGenericKeyString);
+    std::uint32_t gpuGenericKey() const override { return kGpuGenericKey; }
+
+    GpuRasterEffectDomain gpuRasterEffectDomain() const override {
+        return GpuRasterEffectDomain::Spatial;
+    }
+
+    bool appendGpuSpatialNodes(GpuSpatialEffectStack& stack) const override {
+        GpuSpatialEffectNode node;
+        node.kind = GpuSpatialEffectKind::Generic;
+        node.genericKey = kGpuGenericKey;
+        node.parameters[0] = angle_;
+        node.parameters[1] = softness_;
+        node.parameters[2] = feather_;
+        return stack.append(node);
+    }
+
     bool supportsGPU() const override { return true; }
 };
 

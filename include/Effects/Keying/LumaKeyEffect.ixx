@@ -1,4 +1,5 @@
 module;
+#include <cstdint>
 #include <memory>
 #include <vector>
 #include <cmath>
@@ -55,6 +56,29 @@ class LumaKeyEffect final : public ArtifactAbstractEffect {
 
 public:
   LumaKeyEffect();
+  static constexpr const char* kGpuGenericKeyString = "luma_key";
+  static constexpr std::uint32_t kGpuGenericKey =
+      gpuGenericKeyFromString(kGpuGenericKeyString);
+  std::uint32_t gpuGenericKey() const override { return kGpuGenericKey; }
+  GpuRasterEffectDomain gpuRasterEffectDomain() const override {
+    return GpuRasterEffectDomain::Spatial;
+  }
+  bool appendGpuSpatialNodes(GpuSpatialEffectStack& stack) const override {
+    if (std::abs(typedCpuImpl_->choke()) > 1.0e-4f ||
+        typedCpuImpl_->matteBlur() > 1.0e-4f) {
+      return false;
+    }
+    GpuSpatialEffectNode node;
+    node.kind = GpuSpatialEffectKind::Generic;
+    node.genericKey = kGpuGenericKey;
+    node.parameters[0] = typedCpuImpl_->lowThreshold();
+    node.parameters[1] = typedCpuImpl_->highThreshold();
+    node.parameters[2] = typedCpuImpl_->softness();
+    node.parameters[3] = typedCpuImpl_->choke();
+    node.parameters[4] = typedCpuImpl_->matteBlur();
+    node.parameters[5] = static_cast<float>(typedCpuImpl_->viewMode());
+    return stack.append(node);
+  }
   bool supportsGPU() const override { return true; }
   std::vector<ArtifactCore::AbstractProperty> getProperties() const override;
   void setPropertyValue(const ArtifactCore::UniString& name,

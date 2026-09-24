@@ -30,6 +30,62 @@ namespace Artifact {
 
 using namespace ArtifactCore;
 
+namespace {
+
+// Resident-path variant of the CPU reference: P0 amount, P1 size,
+// P2 color-noise flag, P3 monochrome flag, P4 seed. It intentionally uses
+// an integer conversion for the seed rather than the legacy HLSL's asuint()
+// conversion of a float value.
+static constexpr const char* kAddNoiseResidentHlsl = R"(
+Texture2D<float4> g_InputTexture : register(t0);
+RWTexture2D<float4> g_OutputTexture : register(u0);
+
+uint addNoiseHash(uint value)
+{
+    value ^= value >> 16;
+    value *= 0x7feb352du;
+    value ^= value >> 15;
+    value *= 0x846ca68bu;
+    return value ^ (value >> 16);
+}
+
+float addNoiseRandom(uint x, uint y, uint channel, uint seed)
+{
+    const uint value = x * 73856093u ^ y * 19349663u ^
+        channel * 83492791u ^ seed;
+    return (float)(addNoiseHash(value) & 0x00ffffffu) / 16777215.0 * 2.0 - 1.0;
+}
+
+[numthreads(8, 8, 1)]
+void main(uint3 dispatchId : SV_DispatchThreadID)
+{
+    uint width, height;
+    g_OutputTexture.GetDimensions(width, height);
+    if (dispatchId.x >= width || dispatchId.y >= height) return;
+
+    const uint sampleX = (uint)floor((float)dispatchId.x / max(g_P1, 0.1));
+    const uint sampleY = (uint)floor((float)dispatchId.y / max(g_P1, 0.1));
+    const uint seed = (uint)max(g_P4, 0.0);
+    float4 pixel = g_InputTexture[dispatchId.xy];
+    const float monoNoise = addNoiseRandom(sampleX, sampleY, 1u, seed) * g_P0;
+    if (g_P3 > 0.5) {
+        pixel.rgb = saturate(pixel.rgb + monoNoise);
+    } else if (g_P2 > 0.5) {
+        pixel.rgb = saturate(pixel.rgb + float3(
+            addNoiseRandom(sampleX, sampleY, 1u, seed),
+            addNoiseRandom(sampleX, sampleY, 2u, seed),
+            addNoiseRandom(sampleX, sampleY, 3u, seed)) * g_P0);
+    } else {
+        const float luma = dot(pixel.rgb, float3(0.299, 0.587, 0.114));
+        const float newLuma = saturate(luma + monoNoise);
+        pixel.rgb = saturate(pixel.rgb + (newLuma - luma));
+    }
+    g_OutputTexture[dispatchId.xy] = pixel;
+}
+)";
+
+} // namespace
+
 class AddNoiseEffectCPUImpl : public ArtifactEffectImplBase {
 public:
     float amount_ = 0.15f;
@@ -199,7 +255,11 @@ AddNoiseEffect::AddNoiseEffect() {
     setDisplayName(UniString("Add Noise"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
     setCPUImpl(ArtifactCore::makeShared<AddNoiseEffectCPUImpl>());
-    auto gpu=ArtifactCore::makeShared<AddNoiseEffectGPUImpl>();gpu->amount_=amount_;gpu->colorNoise_=colorNoise_;gpu->monochrome_=monochrome_;gpu->seed_=seed_;setGPUImpl(gpu);setComputeMode(ComputeMode::AUTO);
+    auto gpu=ArtifactCore::makeShared<AddNoiseEffectGPUImpl>();gpu->amount_=amount_;gpu->size_=size_;gpu->colorNoise_=colorNoise_;gpu->monochrome_=monochrome_;gpu->seed_=seed_;setGPUImpl(gpu);setComputeMode(ComputeMode::AUTO);
+    registerGpuGenericShader(
+        AddNoiseEffect::kGpuGenericKey,
+        GpuGenericShaderRecord{
+            kAddNoiseResidentHlsl, "main", GpuGenericResourceKind::Filter});
 }
 AddNoiseEffect::~AddNoiseEffect() = default;
 

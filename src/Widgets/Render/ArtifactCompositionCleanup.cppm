@@ -7,7 +7,6 @@ module;
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
-#include <QMouseEvent>
 #include <QPalette>
 #include <QPointF>
 #include <QRectF>
@@ -46,19 +45,9 @@ void ViewportLayoutButton::setActivatedCallback(std::function<void()> callback) 
   activatedCallback_ = std::move(callback);
 }
 
-void ViewportLayoutButton::mousePressEvent(QMouseEvent* event) {
-  pressedInside_ = event && event->button() == Qt::LeftButton &&
-                   rect().contains(event->position().toPoint());
-  QToolButton::mousePressEvent(event);
-}
-
-void ViewportLayoutButton::mouseReleaseEvent(QMouseEvent* event) {
-  const bool activate = pressedInside_ && event &&
-                        event->button() == Qt::LeftButton &&
-                        rect().contains(event->position().toPoint());
-  pressedInside_ = false;
-  QToolButton::mouseReleaseEvent(event);
-  if (activate && activatedCallback_) {
+void ViewportLayoutButton::nextCheckState() {
+  QToolButton::nextCheckState();
+  if (activatedCallback_) {
     activatedCallback_();
   }
 }

@@ -1,9 +1,9 @@
 module;
 
-#include <algorithm>
 
 module Artifact.Widgets.LayerEditor.ViewMoveController;
 
+import Core.ArtifactMath;
 import Artifact.Layer.Abstract;
 import Artifact.Render.IRenderer;
 import Artifact.Widgets.LayerEditor.ModalTransformController;
@@ -23,7 +23,7 @@ LayerEditorViewMoveResult LayerEditorViewMoveController::handle(
  if (modalTransform.active()) {
   const auto target = modalTransform.update(
       state.viewportPosition,
-      std::max(0.001, static_cast<double>(renderer.getZoom())),
+      ArtifactCore::artifactMax(0.001, static_cast<double>(renderer.getZoom())),
       state.precision, state.snap);
   if (target == LayerEditorModalTransformTarget::Path)
    shapeEditSession.markPathDirty();

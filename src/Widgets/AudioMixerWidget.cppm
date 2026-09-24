@@ -18,6 +18,8 @@ module;
 #include <QPalette>
 #include <QColor>
 #include <QDialog>
+#include <QCloseEvent>
+#include <QResizeEvent>
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QDoubleSpinBox>
@@ -25,11 +27,19 @@ module;
 #include <QInputDialog>
 #include <QStringList>
 #include <QLineEdit>
+#include <QFileDialog>
 #include <QToolTip>
 #include <QJsonObject>
 #include <QJsonDocument>
+#include <QMessageBox>
+#include <QPointer>
+#include <QSize>
+#include <QString>
+#include <memory>
+#include <algorithm>
 #include <cmath>
 #include <functional>
+#include <map>
 #include <wobjectimpl.h>
 
 module Artifact.Widgets.AudioMixer;
@@ -39,6 +49,7 @@ import Audio.Mixer;
 import Audio.Effect.Spectrum;
 import Artifact.VST.Effect;
 import Artifact.VST.Host;
+import CLAP.Host;
 import Artifact.Audio.Effects.Manager;
 import Artifact.Audio.Effects.Base;
 import Memory.SharedPtr;
@@ -49,6 +60,168 @@ namespace Artifact {
 W_OBJECT_IMPL(AudioEffectSlotWidget)
 W_OBJECT_IMPL(AudioChannelStripWidget)
 W_OBJECT_IMPL(AudioMixerWidget)
+
+class PluginEditorDialog final : public QDialog {
+public:
+    explicit PluginEditorDialog(QWidget* parent) : QDialog(parent) {
+        setAttribute(Qt::WA_DeleteOnClose);
+        auto* layout = new QVBoxLayout(this);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(0);
+        container_ = new QWidget(this);
+        container_->setAttribute(Qt::WA_NativeWindow);
+        layout->addWidget(container_);
+    }
+
+    ~PluginEditorDialog() override {
+        if (editorCloser_) editorCloser_();
+    }
+
+    QWidget* nativeContainer() const { return container_; }
+    void setEditorCloser(std::function<void()> closer) {
+        editorCloser_ = std::move(closer);
+    }
+    void setEditorResizeHandler(std::function<bool(int&, int&)> handler) {
+        editorResizeHandler_ = std::move(handler);
+    }
+    void setPluginResizable(bool resizable) { pluginResizable_ = resizable; }
+    void resizeForPlugin(int width, int height) {
+        if (width <= 0 || height <= 0 || width > 8192 || height > 8192) return;
+        applyingPluginResize_ = true;
+        const QSize frameSize = size() - container_->size();
+        container_->resize(width, height);
+        resize(width + frameSize.width(), height + frameSize.height());
+        lastPluginSize_ = QSize(width, height);
+        applyingPluginResize_ = false;
+    }
+
+protected:
+    void closeEvent(QCloseEvent* event) override {
+        if (editorCloser_) {
+            editorCloser_();
+            editorCloser_ = {};
+        }
+        QDialog::closeEvent(event);
+    }
+
+    void resizeEvent(QResizeEvent* event) override {
+        QDialog::resizeEvent(event);
+        if (!pluginResizable_ || applyingPluginResize_ || !editorResizeHandler_) {
+            return;
+        }
+        const QSize requestedSize = container_->size();
+        int width = requestedSize.width();
+        int height = requestedSize.height();
+        if (!editorResizeHandler_(width, height)) {
+            resizeForPlugin(lastPluginSize_.width(), lastPluginSize_.height());
+            return;
+        }
+        if (width != requestedSize.width() || height != requestedSize.height()) {
+            resizeForPlugin(width, height);
+            return;
+        }
+        lastPluginSize_ = container_->size();
+    }
+
+private:
+    QWidget* container_ = nullptr;
+    std::function<void()> editorCloser_;
+    std::function<bool(int&, int&)> editorResizeHandler_;
+    QSize lastPluginSize_{640, 420};
+    bool pluginResizable_ = false;
+    bool applyingPluginResize_ = false;
+};
+
+void* nativeWindowHandle(QWidget* widget) {
+    if (!widget) return nullptr;
+    const WId handle = widget->winId();
+#ifdef Q_OS_WIN
+    return reinterpret_cast<void*>(handle);
+#else
+    return reinterpret_cast<void*>(static_cast<quintptr>(handle));
+#endif
+}
+
+clap_window clapWindowForNativeHandle(void* nativeHandle) {
+    clap_window window{};
+    if (!nativeHandle) return window;
+#ifdef Q_OS_WIN
+    window.api = "win32";
+    window.win32 = nativeHandle;
+#elif defined(Q_OS_MACOS)
+    window.api = "cocoa";
+    window.cocoa = nativeHandle;
+#elif defined(Q_OS_LINUX)
+    window.api = "x11";
+    window.x11 = static_cast<unsigned long>(
+        reinterpret_cast<quintptr>(nativeHandle));
+#endif
+    return window;
+}
+
+clap::Host& clapPluginHost() {
+    static clap::Host host;
+    return host;
+}
+
+bool resizePluginEditorContainer(void* context, int width, int height) {
+    auto* dialog = static_cast<PluginEditorDialog*>(context);
+    if (!dialog || width <= 0 || height <= 0 || width > 8192 || height > 8192) {
+        return false;
+    }
+    dialog->resizeForPlugin(width, height);
+    return true;
+}
+
+PluginEditorDialog* openPluginEditorDialog(
+    QWidget* owner, const void* editorKey, const QString& title,
+    const std::function<bool(QWidget*, void*, int&, int&, void*,
+                             bool (*)(void*, int, int), bool&)>& openEditor,
+    std::function<bool(int&, int&)> resizeEditor,
+    std::function<void()> closeEditor) {
+    static std::map<const void*, QPointer<PluginEditorDialog>> openEditors;
+    const auto existing = openEditors.find(editorKey);
+    if (existing != openEditors.end() && existing->second) {
+        existing->second->showNormal();
+        existing->second->raise();
+        existing->second->activateWindow();
+        return existing->second;
+    }
+
+    auto* dialog = new PluginEditorDialog(owner);
+    dialog->setWindowTitle(title);
+    auto* container = dialog->nativeContainer();
+    int width = 640;
+    int height = 420;
+    container->resize(width, height);
+    dialog->resize(width, height);
+    bool resizable = false;
+    if (!openEditor(container, nativeWindowHandle(container), width, height,
+                    dialog, resizePluginEditorContainer, resizable)) {
+        delete dialog;
+        QMessageBox::warning(owner, title,
+                             QStringLiteral("The plug-in editor could not be opened."));
+        return nullptr;
+    }
+    dialog->resize(std::clamp(width, 240, 8192),
+                   std::clamp(height, 160, 8192));
+    dialog->setPluginResizable(resizable);
+    dialog->setEditorResizeHandler(std::move(resizeEditor));
+    dialog->resizeForPlugin(std::clamp(width, 240, 8192),
+                            std::clamp(height, 160, 8192));
+    if (!resizable) dialog->setFixedSize(dialog->size());
+    dialog->setEditorCloser([editorKey, dialog,
+                             closeEditor = std::move(closeEditor)]() mutable {
+        const auto current = openEditors.find(editorKey);
+        if (current != openEditors.end() && current->second == dialog) {
+            openEditors.erase(current);
+        }
+        if (closeEditor) closeEditor();
+    });
+    openEditors[editorKey] = dialog;
+    dialog->show();
+    return dialog;
+}
 
 class RoutingComboBox final : public QComboBox {
 public:
@@ -226,9 +399,62 @@ void AudioEffectSlotWidget::mousePressEvent(QMouseEvent* event) {
             }
         }
 
-        menu.addAction("Insert VST Effect...", [this]() {
+        QMenu* vstMenu = menu.addMenu("Insert VST Plug-in");
+        vstMenu->addAction("VST3 Bundle...", [this]() {
+            const QString path = QFileDialog::getExistingDirectory(
+                this, QStringLiteral("Select VST3 Plug-in Bundle"));
+            if (path.isEmpty()) return;
+            if (!VSTPluginLoader::isVST3Plugin(path.toStdString())) {
+                QMessageBox::warning(
+                    this, QStringLiteral("VST3 Plug-in"),
+                    QStringLiteral("Select a folder whose name ends in .vst3."));
+                return;
+            }
             auto vst = ArtifactCore::makeShared<Artifact::VSTEffect>();
+            if (!vst->loadPlugin(path.toStdString())) {
+                QMessageBox::warning(
+                    this, QStringLiteral("VST3 Plug-in"),
+                    QStringLiteral("The VST3 plug-in could not be loaded."));
+                return;
+            }
             bus_->addEffect(vst);
+            update();
+        });
+        vstMenu->addAction("VST2 Plug-in...", [this]() {
+            const QString path = QFileDialog::getOpenFileName(
+                this, QStringLiteral("Select VST2 Plug-in"), QString(),
+                QStringLiteral("VST plug-ins (*.dll *.so *.vst);;All files (*)"));
+            if (path.isEmpty()) return;
+            auto vst = ArtifactCore::makeShared<Artifact::VSTEffect>();
+            if (!vst->loadPlugin(path.toStdString())) {
+                QMessageBox::warning(
+                    this, QStringLiteral("VST2 Plug-in"),
+                    QStringLiteral("The VST2 plug-in could not be loaded."));
+                return;
+            }
+            bus_->addEffect(vst);
+            update();
+        });
+        menu.addAction("Insert CLAP Plug-in...", [this]() {
+            const QString path = QFileDialog::getOpenFileName(
+                this, QStringLiteral("Select CLAP Plug-in"), QString(),
+                QStringLiteral("CLAP plug-ins (*.clap);;All files (*)"));
+            if (path.isEmpty()) return;
+            clap::Plugin* plugin = clapPluginHost().loadPlugin(path.toStdString());
+            if (!plugin) {
+                QMessageBox::warning(
+                    this, QStringLiteral("CLAP Plug-in"),
+                    QStringLiteral("The CLAP plug-in could not be loaded."));
+                return;
+            }
+            const QString pluginName = QString::fromStdString(
+                plugin->descriptor().name);
+            auto effectOwner = clapPluginHost().createEffect(
+                plugin, ArtifactCore::String(pluginName.toStdString()));
+            if (!effectOwner) return;
+            ArtifactCore::SharedPtr<clap::ClapEffect> effect(
+                std::shared_ptr<clap::ClapEffect>(std::move(effectOwner)));
+            bus_->addEffect(effect);
             update();
         });
     } else {
@@ -259,9 +485,68 @@ void AudioEffectSlotWidget::mousePressEvent(QMouseEvent* event) {
         }
 
         if (auto vst = ArtifactCore::dynamicPointerCast<Artifact::VSTEffect>(effect)) {
-            menu.addAction("Open Editor", [this, vst]() {
-                vst->openEditor(nullptr);
-            });
+            if (vst->hasEditor()) {
+                menu.addAction("Open Plug-in UI...", [this, vst]() {
+                    const QString title = QString::fromStdString(
+                        vst->getPluginName());
+                    openPluginEditorDialog(
+                        this, vst.get(), title,
+                        [vst](QWidget*, void* nativeParent, int& width,
+                              int& height, void* resizeContext,
+                              bool (*resizeCallback)(void*, int, int),
+                              bool& resizable) {
+                            return vst->openEditorWindow(
+                                nativeParent, resizeContext, resizeCallback,
+                                width, height, resizable);
+                        },
+                        [vst](int& width, int& height) {
+                            return vst->resizeEditor(width, height);
+                        },
+                        [vst]() { vst->closeEditor(); });
+                });
+            }
+        }
+        if (auto clapEffect =
+                ArtifactCore::dynamicPointerCast<clap::ClapEffect>(effect)) {
+            if (clapEffect->hasEditor()) {
+                menu.addAction("Open Plug-in UI...", [this, clapEffect]() {
+                    const QString title = QString::fromStdString(
+                        ArtifactCore::toStdString(clapEffect->getName()));
+                    openPluginEditorDialog(
+                        this, clapEffect.get(), title,
+                        [clapEffect](QWidget*, void* nativeParent, int& width,
+                                     int& height, void* resizeContext,
+                                     bool (*resizeCallback)(void*, int, int),
+                                     bool& resizable) {
+                            const clap_window parent =
+                                clapWindowForNativeHandle(nativeParent);
+                            if (!parent.api) return false;
+                            uint32_t pluginWidth = 0;
+                            uint32_t pluginHeight = 0;
+                            const bool opened = clapEffect->openEditor(
+                                parent, resizeContext, resizeCallback,
+                                pluginWidth, pluginHeight, resizable);
+                            if (opened) {
+                                width = static_cast<int>(pluginWidth);
+                                height = static_cast<int>(pluginHeight);
+                            }
+                            return opened;
+                        },
+                        [clapEffect](int& width, int& height) {
+                            if (width <= 0 || height <= 0) return false;
+                            uint32_t pluginWidth = static_cast<uint32_t>(width);
+                            uint32_t pluginHeight = static_cast<uint32_t>(height);
+                            const bool resized = clapEffect->resizeEditor(
+                                pluginWidth, pluginHeight);
+                            if (resized) {
+                                width = static_cast<int>(pluginWidth);
+                                height = static_cast<int>(pluginHeight);
+                            }
+                            return resized;
+                        },
+                        [clapEffect]() { clapEffect->closeEditor(); });
+                });
+            }
         }
     }
 

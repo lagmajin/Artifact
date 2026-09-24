@@ -21,13 +21,14 @@ module;
 
 #include <QTextStream>
 #include <wobjectimpl.h>
+#include <functional>
+#include <memory>
 //#include <folly\Singleton.h>
 
 module Artifact.Project.Manager;
 
 import Artifact.Project.HookBridge;
 
-import std;
 
 import Artifact.Event.Types;
 import Event.Bus;

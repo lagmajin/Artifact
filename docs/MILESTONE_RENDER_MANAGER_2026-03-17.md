@@ -1,5 +1,7 @@
 # M14 Render Manager (2026-03-17)
 
+**最終更新:** 2026-09-21
+
 レンダーマネージャーを「単なるリスト表示」から、DCC ツールとして実用的な「書き出しワークフローの中核」へ進化させるためのマイルストーン。
 
 ## 概要
@@ -12,6 +14,14 @@
 ### 実装状況（2026-07-25 確認）
 
 `ArtifactRenderQueueService` と関連 UI を確認した結果、実コンポジションのフレーム描画、CPU/GPU レンダリング経路、音声書き出しと mux、プリフライト、進捗・一時停止・キャンセル、失敗フレーム検出と再レンダー、キューの JSON 永続化、リトライ／チェックポイント基盤まで実装されている。残課題は M-RENDER-6 の履歴・復旧 UI、一括編集、分散運用の仕上げと、実機での動画／連番／音声付き出力およびクラッシュ後再開の検証。
+
+### 2026-09-21 Heterogeneous Multi-GPU Final Render
+
+- GPU 最終レンダーは、D3D12 の Discrete / Integrated adapter ごとに独立した renderer、immediate context、texture cache、matte resource pool、composition snapshot を持つフレーム単位 worker として実行できる。
+- GPU resource は device 境界を越えて共有しない。完成したフレームだけを既存の CPU 側順序バッファへ渡すため、dGPU / iGPU 間の texture 転送や同一フレームの分割合成は行わない。
+- Integrated adapter は既定で候補に含める。共有メモリ帯域・電力・ドライバーの事情で除外したい場合は、`ARTIFACT_MULTI_GPU_INCLUDE_INTEGRATED=0`（`false` / `off` / `no` も可）を指定する。
+- CPU は既存どおり snapshot 管理、出力順序制御、画像書き出し／エンコードを担当する。CPU software-composite worker と GPU worker で同一フレームを並列合成するものではない。
+- **未検証:** 実機の dGPU+iGPU での初期化、出力 parity、スループット、共有メモリ圧迫時の有効性は、ユーザー許可後に代表コンポジションで測定する。
 
 ### 2026-07-29 Implementation Loop
 

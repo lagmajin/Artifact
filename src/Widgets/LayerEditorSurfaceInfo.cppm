@@ -3,10 +3,10 @@ module;
 #include <QRectF>
 #include <QString>
 
-#include <algorithm>
 
 module Artifact.Widgets.LayerEditor.SurfaceInfo;
 
+import Core.ArtifactMath;
 import Artifact.Composition.Abstract;
 import Artifact.Effect.Abstract;
 import Artifact.Layer.Image;
@@ -88,7 +88,7 @@ LayerEditorSurfaceInfo buildLayerEditorSurfaceInfo(
   if (!effects.empty()) {
    effectSummary.clear();
    constexpr int maxNamedEffects = 2;
-   const int namedEffectCount = std::min(
+   const int namedEffectCount = ArtifactCore::artifactMin(
        static_cast<int>(effects.size()), maxNamedEffects);
    for (int i = 0; i < namedEffectCount; ++i) {
     if (i > 0) effectSummary += QStringLiteral(" › ");
@@ -128,7 +128,7 @@ LayerEditorSurfaceInfo buildLayerEditorSurfaceInfo(
     default: modeName = QStringLiteral("Add"); break;
     }
     opacityText = QStringLiteral("%1%")
-        .arg(std::clamp(path.opacity() * 100.0f, 0.0f, 100.0f), 0, 'f', 0);
+        .arg(ArtifactCore::artifactClamp(path.opacity() * 100.0f, 0.0f, 100.0f), 0, 'f', 0);
     invertedText = path.isInverted() ? QStringLiteral(" · Inverted")
                                      : QString{};
    }
@@ -175,7 +175,7 @@ LayerEditorSurfaceInfo buildLayerEditorSurfaceInfo(
       .arg(transform.anchorX(), 0, 'f', 0)
       .arg(transform.anchorY(), 0, 'f', 0)
       .arg(stateText)
-      .arg(std::clamp(layer->opacity() * 100.0f, 0.0f, 100.0f), 0, 'f', 0)
+      .arg(ArtifactCore::artifactClamp(layer->opacity() * 100.0f, 0.0f, 100.0f), 0, 'f', 0)
       .arg(ArtifactCore::BlendModeUtils::toString(
           ArtifactCore::toBlendMode(layer->layerBlendType())))
       .arg(enabledMatteCount)

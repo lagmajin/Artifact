@@ -113,6 +113,32 @@ bool applyLayerMenuUndoCommand(std::unique_ptr<UndoCommand> command)
     return command->lastOperationSucceeded();
 }
 
+// QAction does not expose QWidget accessibility properties. Keep its visible
+// label as the accessible action name and provide a standard Qt status hint
+// for the longer operation description. This is intentionally applied when
+// the menu opens so dynamically populated submenus follow the same contract.
+void synchronizeLayerMenuActionHints(QMenu* menu)
+{
+    if (!menu) {
+        return;
+    }
+
+    for (QAction* action : menu->actions()) {
+        if (!action || action->isSeparator()) {
+            continue;
+        }
+
+        if (action->statusTip().isEmpty()) {
+            const QString hint = action->toolTip().isEmpty()
+                                     ? action->text().remove(QLatin1Char('&'))
+                                     : action->toolTip();
+            action->setStatusTip(hint);
+        }
+
+        synchronizeLayerMenuActionHints(action->menu());
+    }
+}
+
 class SetLayerEffectEnvelopeCommand final : public UndoCommand {
 public:
     SetLayerEffectEnvelopeCommand(ArtifactAbstractLayerPtr layer,
@@ -640,7 +666,7 @@ std::optional<CompositionTransformField> chooseTransformField(
     const auto fields = composition->transformFields();
     if (fields.isEmpty()) {
         QMessageBox::information(
-            parent, title, QStringLiteral("このコンポジションにライブFieldはありません。"));
+            parent, title, TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_live_field"), QStringLiteral("このコンポジションにライブFieldはありません。")));
         return std::nullopt;
     }
 
@@ -658,8 +684,8 @@ std::optional<CompositionTransformField> chooseTransformField(
                                              ? QStringLiteral("linear")
                                              : QStringLiteral("radial");
         const QString state = QStringLiteral("%1 / %2 / %3 / %4")
-                                  .arg(field.enabled ? QStringLiteral("有効")
-                                                     : QStringLiteral("無効"),
+                                  .arg(field.enabled ? TranslationManager::instance().tr(QStringLiteral("menu.layer.enabled"), QStringLiteral("有効"))
+                                                     : TranslationManager::instance().tr(QStringLiteral("menu.layer.disabled"), QStringLiteral("無効")),
                                        field.fieldId == activeFieldId
                                            ? QStringLiteral("active")
                                            : QStringLiteral("inactive"),
@@ -800,6 +826,7 @@ public:
     QAction* createFormParticleAction = nullptr;
     QAction* createTerrainAction = nullptr;
     QAction* createPathTubeAction = nullptr;
+    QAction* createTextExtrudeAction = nullptr;
     QAction* createCameraAction = nullptr;
     QAction* createLightAction = nullptr;
     QAction* createAudioAction = nullptr;
@@ -1039,20 +1066,22 @@ public:
 
 ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
 {
-    createMenu = new QMenu("新規(&N)", menu);
+    createMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.layer.new"), QStringLiteral("新規(&N)")), menu);
     createMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_add.svg")));
-    createSolidAction = new QAction("平面(&Y)...", createMenu);
+    createMenu->setAccessibleName(QStringLiteral("New Layer"));
+    createMenu->setAccessibleDescription(QStringLiteral("Create a new layer of the chosen type"));
+    createSolidAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_solid"), QStringLiteral("平面(&Y)...")), createMenu);
     createSolidAction->setShortcut(
         ShortcutBindings::instance().shortcut(ShortcutId::LayerCreateSolid));
     createSolidAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_palette.svg")));
-    createRigAction = new QAction(QStringLiteral("リグレイヤー(&G)"), createMenu);
+    createRigAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_rig"), QStringLiteral("リグレイヤー(&G)")), createMenu);
     createRigAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_shape_rect.svg")));
-    createRigAction->setToolTip(QStringLiteral("2D平面と初期ボーンを作成します"));
-    createQuickLayerAction = new QAction(QStringLiteral("クイックレイヤー作成..."), createMenu);
+    createRigAction->setToolTip(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_2d_tooltip"), QStringLiteral("2D平面と初期ボーンを作成します")));
+    createQuickLayerAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.quick_create"), QStringLiteral("クイックレイヤー作成...")), createMenu);
     createQuickLayerAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_add.svg")));
-    createQuickLayerAction->setToolTip(QStringLiteral("平面、マスク、入場・退場をまとめて作成します"));
+    createQuickLayerAction->setToolTip(TranslationManager::instance().tr(QStringLiteral("menu.layer.quick_create_tooltip"), QStringLiteral("平面、マスク、入場・退場をまとめて作成します")));
 
-    createNullAction = new QAction("ヌルオブジェクト(&N)", createMenu);
+    createNullAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_null"), QStringLiteral("ヌルオブジェクト(&N)")), createMenu);
     createNullAction->setShortcut(
         ShortcutBindings::instance().shortcut(ShortcutId::LayerCreateNull));
     createNullAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_aspect_ratio.svg")));
@@ -1061,23 +1090,23 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createConstructionAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_grid_on.svg")));
     createConstructionAction->setToolTip(QStringLiteral("Create a construction layer (editor-only by default)"));
 
-    createAdjustAction = new QAction("調整レイヤー(&A)", createMenu);
+    createAdjustAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_adjustment"), QStringLiteral("調整レイヤー(&A)")), createMenu);
     createAdjustAction->setShortcut(
         ShortcutBindings::instance().shortcut(ShortcutId::LayerCreateAdjust));
     createAdjustAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_blur_on.svg")));
 
-    createTextAction = new QAction("テキスト(&T)", createMenu);
+    createTextAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_text"), QStringLiteral("テキスト(&T)")), createMenu);
     createTextAction->setShortcut(
         ShortcutBindings::instance().shortcut(ShortcutId::LayerCreateText));
     createTextAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_title.svg")));
 
-    createParticleAction = new QAction("2D パーティクル(&P)", createMenu);
+    createParticleAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_particle_2d"), QStringLiteral("2D パーティクル(&P)")), createMenu);
     createParticleAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_particle.svg")));
-    createParticleAction->setToolTip(QStringLiteral("コンポジション平面で動作する2Dパーティクルレイヤーを追加します"));
-    createParticle3DAction = new QAction("3D パーティクル", createMenu);
+    createParticleAction->setToolTip(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_particle_2d_tooltip"), QStringLiteral("コンポジション平面で動作する2Dパーティクルレイヤーを追加します")));
+    createParticle3DAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_particle_3d"), QStringLiteral("3D パーティクル")), createMenu);
     createParticle3DAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_particle.svg")));
-    createParticle3DAction->setToolTip(QStringLiteral("3Dカメラと深度を使うパーティクルレイヤーを追加します"));
-    createPaintAction = new QAction("ペイントレイヤー(&R)...", createMenu);
+    createParticle3DAction->setToolTip(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_particle_3d_tooltip"), QStringLiteral("3Dカメラと深度を使うパーティクルレイヤーを追加します")));
+    createPaintAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_paint"), QStringLiteral("ペイントレイヤー(&R)...")), createMenu);
     createPaintAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_paint.svg")));
     createPaintAction->setToolTip(QStringLiteral("Create a frame-by-frame Paint Layer for brush work."));
     createFormParticleAction = new QAction("Form Particle(&F)", createMenu);
@@ -1089,112 +1118,121 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createPathTubeAction = new QAction("Path Tube (Tao)", createMenu);
     createPathTubeAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_model3d.svg")));
     createPathTubeAction->setToolTip(QStringLiteral("Procedural tube or ribbon along an animated path"));
+    createTextExtrudeAction = new QAction("Text 3D (Extrude)", createMenu);
+    createTextExtrudeAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_model3d.svg")));
+    createTextExtrudeAction->setToolTip(QStringLiteral("Extruded 3D text with bevel (Fusion Text3D equivalent)"));
 
-    createCameraAction = new QAction("カメラ(&C)", createMenu);
+    createCameraAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_camera"), QStringLiteral("カメラ(&C)")), createMenu);
     createCameraAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_videocam.svg")));
 
-    createLightAction = new QAction("ライト(&L)", createMenu);
+    createLightAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_light"), QStringLiteral("ライト(&L)")), createMenu);
     createLightAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_wb_sunny.svg")));
 
-    createSpatialAudioAction = new QAction("3Dオーディオ...", createMenu);
+    createSpatialAudioAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_audio_3d"), QStringLiteral("3Dオーディオ...")), createMenu);
     createSpatialAudioAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_audiotrack.svg")));
-    createAudioAction = new QAction("オーディオ(&U)...", createMenu);
+    createAudioAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_audio_dots"), QStringLiteral("オーディオ(&U)...")), createMenu);
     createAudioAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_audiotrack.svg")));
 
-    createSvgAction = new QAction("SVG シェイプレイヤー(&V)...", createMenu);
+    createSvgAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_svg_shape"), QStringLiteral("SVG シェイプレイヤー(&V)...")), createMenu);
     createSvgAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_svg_layer.svg")));
-    createModel3DAction = new QAction("3Dモデルレイヤー(&3)...", createMenu);
+    createModel3DAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_3d_model"), QStringLiteral("3Dモデルレイヤー(&3)...")), createMenu);
     createModel3DAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_model3d.svg")));
     createModel3DAction->setToolTip(QStringLiteral("Import a 3D model as a layer"));
-    createPlane3DAction = new QAction("3D平面レイヤー(&P)", createMenu);
+    createPlane3DAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_3d_plane"), QStringLiteral("3D平面レイヤー(&P)")), createMenu);
     createPlane3DAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_shape_square.svg")));
     createPlane3DAction->setToolTip(QStringLiteral("Create a fixed plane as a 3D layer"));
-    createBox3DAction = new QAction("3D Boxレイヤー(&B)", createMenu);
+    createBox3DAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_3d_box"), QStringLiteral("3D Boxレイヤー(&B)")), createMenu);
     createBox3DAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_model3d.svg")));
     createBox3DAction->setToolTip(QStringLiteral("Create a fixed box as a 3D layer"));
-    createSphere3DAction = new QAction("3D Sphereレイヤー(&S)", createMenu);
+    createSphere3DAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_3d_sphere"), QStringLiteral("3D Sphereレイヤー(&S)")), createMenu);
     createSphere3DAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_model3d.svg")));
     createSphere3DAction->setToolTip(QStringLiteral("Create a fixed sphere as a 3D layer"));
-    createCylinder3DAction = new QAction("3D Cylinderレイヤー(&Y)", createMenu);
+    createCylinder3DAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_3d_cylinder"), QStringLiteral("3D Cylinderレイヤー(&Y)")), createMenu);
     createCylinder3DAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_model3d.svg")));
     createCylinder3DAction->setToolTip(QStringLiteral("Create a fixed cylinder as a 3D layer"));
-    createCone3DAction = new QAction("3D Coneレイヤー(&N)", createMenu);
+    createCone3DAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_3d_cone"), QStringLiteral("3D Coneレイヤー(&N)")), createMenu);
     createCone3DAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_model3d.svg")));
     createCone3DAction->setToolTip(QStringLiteral("Create a fixed cone as a 3D layer"));
-    createTorus3DAction = new QAction("3D Torusレイヤー(&T)", createMenu);
+    createTorus3DAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_3d_torus"), QStringLiteral("3D Torusレイヤー(&T)")), createMenu);
     createTorus3DAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_model3d.svg")));
     createTorus3DAction->setToolTip(QStringLiteral("Create a fixed torus as a 3D layer"));
-    createCapsule3DAction = new QAction("3D Capsuleレイヤー(&A)", createMenu);
+    createCapsule3DAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_3d_capsule"), QStringLiteral("3D Capsuleレイヤー(&A)")), createMenu);
     createCapsule3DAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_model3d.svg")));
     createCapsule3DAction->setToolTip(QStringLiteral("Create a fixed capsule as a 3D layer"));
-    createPyramid3DAction = new QAction("3D Pyramidレイヤー(&R)", createMenu);
+    createPyramid3DAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_3d_pyramid"), QStringLiteral("3D Pyramidレイヤー(&R)")), createMenu);
     createPyramid3DAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_model3d.svg")));
     createPyramid3DAction->setToolTip(QStringLiteral("Create a fixed pyramid as a 3D layer"));
-    createPlacementMenu = new QMenu("作成位置(&O)", createMenu);
+    createPlacementMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.layer.create_position"), QStringLiteral("作成位置(&O)")), createMenu);
     createPlacementMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_settings.svg")));
+    createPlacementMenu->setAccessibleName(QStringLiteral("New Layer Placement"));
+    createPlacementMenu->setAccessibleDescription(QStringLiteral("Choose where new layers are placed in time"));
     auto* placementGroup = new QActionGroup(createPlacementMenu);
     placementGroup->setExclusive(true);
-    placementAtCompStartAction = new QAction("コンポジション開始", createPlacementMenu);
+    placementAtCompStartAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.at_composition_start"), QStringLiteral("コンポジション開始")), createPlacementMenu);
     placementAtCompStartAction->setCheckable(true);
     placementAtCompStartAction->setChecked(true);
-    placementAtCompStartAction->setToolTip(QStringLiteral("新規レイヤーをコンポジション開始に配置します"));
-    placementAtPlayheadAction = new QAction("再生ヘッド", createPlacementMenu);
+    placementAtCompStartAction->setToolTip(TranslationManager::instance().tr(QStringLiteral("menu.layer.create_at_start_tooltip"), QStringLiteral("新規レイヤーをコンポジション開始に配置します")));
+    placementAtPlayheadAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.at_playhead"), QStringLiteral("再生ヘッド")), createPlacementMenu);
     placementAtPlayheadAction->setCheckable(true);
-    placementAtPlayheadAction->setToolTip(QStringLiteral("新規レイヤーを再生ヘッドに配置します"));
+    placementAtPlayheadAction->setToolTip(TranslationManager::instance().tr(QStringLiteral("menu.layer.create_at_playhead_tooltip"), QStringLiteral("新規レイヤーを再生ヘッドに配置します")));
     placementGroup->addAction(placementAtCompStartAction);
     placementGroup->addAction(placementAtPlayheadAction);
     createPlacementMenu->addAction(placementAtCompStartAction);
     createPlacementMenu->addAction(placementAtPlayheadAction);
-    startHiddenAction = new QAction("非表示のまま追加", createPlacementMenu);
+    startHiddenAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.add_hidden"), QStringLiteral("非表示のまま追加")), createPlacementMenu);
     startHiddenAction->setCheckable(true);
     startHiddenAction->setChecked(startHiddenRequested());
-    startHiddenAction->setToolTip(QStringLiteral("新規レイヤーを表示オフのまま追加します"));
+    startHiddenAction->setToolTip(TranslationManager::instance().tr(QStringLiteral("menu.layer.create_hidden_tooltip"), QStringLiteral("新規レイヤーを表示オフのまま追加します")));
     createPlacementMenu->addAction(startHiddenAction);
-    cycleLayerForwardAction = new QAction("レイヤーを次々作成", createMenu);
+    cycleLayerForwardAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.create_layers_sequentially"), QStringLiteral("レイヤーを次々作成")), createMenu);
     cycleLayerForwardAction->setToolTip(QStringLiteral("Cycle common layer creation presets"));
     cycleLayerForwardAction->setShortcut(
         ShortcutBindings::instance().shortcut(ShortcutId::LayerCreateLayerCycleForward));
-    cycleLayerReverseAction = new QAction("レイヤーを逆順で次々作成", createMenu);
+    cycleLayerReverseAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.create_layers_reverse"), QStringLiteral("レイヤーを逆順で次々作成")), createMenu);
     cycleLayerReverseAction->setToolTip(QStringLiteral("Cycle common layer creation presets in reverse"));
     cycleLayerReverseAction->setShortcut(
         ShortcutBindings::instance().shortcut(ShortcutId::LayerCreateLayerCycleReverse));
 
-    createShapeMenu = new QMenu("シェイプ(&S)", createMenu);
+    createShapeMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_shape"), QStringLiteral("シェイプ(&S)")), createMenu);
     createShapeMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_shape_rect.svg")));
-    cycleShapeForwardAction = new QAction("シェイプを次々作成", createShapeMenu);
+    createShapeMenu->setAccessibleName(QStringLiteral("New Shape Layer"));
+    createShapeMenu->setAccessibleDescription(QStringLiteral("Create a shape layer of the chosen type"));
+    cycleShapeForwardAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.create_shapes_sequentially"), QStringLiteral("シェイプを次々作成")), createShapeMenu);
     cycleShapeForwardAction->setToolTip(QStringLiteral("Cycle shape presets"));
     cycleShapeForwardAction->setShortcut(
         ShortcutBindings::instance().shortcut(ShortcutId::LayerCreateShapeCycleForward));
-    cycleShapeReverseAction = new QAction("シェイプを逆順で次々作成", createShapeMenu);
+    cycleShapeReverseAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.create_shapes_reverse"), QStringLiteral("シェイプを逆順で次々作成")), createShapeMenu);
     cycleShapeReverseAction->setToolTip(QStringLiteral("Cycle shape presets in reverse"));
     cycleShapeReverseAction->setShortcut(
         ShortcutBindings::instance().shortcut(ShortcutId::LayerCreateShapeCycleReverse));
-    createShapeRectAction = new QAction("四角形", createShapeMenu);
+    createShapeRectAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.rectangle"), QStringLiteral("四角形")), createShapeMenu);
     createShapeRectAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_shape_rect.svg")));
-    createShapeSquareAction = new QAction("正方形", createShapeMenu);
+    createShapeSquareAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.square"), QStringLiteral("正方形")), createShapeMenu);
     createShapeSquareAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_shape_square.svg")));
-    createShapePolygonAction = new QAction("多角形", createShapeMenu);
+    createShapePolygonAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.polygon"), QStringLiteral("多角形")), createShapeMenu);
     createShapePolygonAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_shape_polygon.svg")));
-    createShapeTriangleAction = new QAction("三角形", createShapeMenu);
+    createShapeTriangleAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.triangle"), QStringLiteral("三角形")), createShapeMenu);
     createShapeTriangleAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_shape_triangle.svg")));
-    createShapeEllipseAction = new QAction("楕円", createShapeMenu);
+    createShapeEllipseAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.ellipse"), QStringLiteral("楕円")), createShapeMenu);
     createShapeEllipseAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_shape_ellipse.svg")));
-    createShapeStarAction = new QAction("星形", createShapeMenu);
+    createShapeStarAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.polygon_star"), QStringLiteral("星形")), createShapeMenu);
     createShapeStarAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_shape_star.svg")));
-    createShapeLineAction = new QAction("ライン", createShapeMenu);
+    createShapeLineAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.line"), QStringLiteral("ライン")), createShapeMenu);
     createShapeLineAction->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_shape.svg")));
-    createShapeDashedLineAction = new QAction("破線", createShapeMenu);
+    createShapeDashedLineAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.dashed"), QStringLiteral("破線")), createShapeMenu);
     createShapeDashedLineAction->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_shape.svg")));
-    createShapeBezierCurveAction = new QAction("ベジェ曲線", createShapeMenu);
+    createShapeBezierCurveAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.bezier_curve"), QStringLiteral("ベジェ曲線")), createShapeMenu);
     createShapeBezierCurveAction->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_pen.svg")));
-    createShapeArcAction = new QAction("円弧", createShapeMenu);
+    createShapeArcAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.arc"), QStringLiteral("円弧")), createShapeMenu);
     createShapeArcAction->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_pen.svg")));
-    createShapeArrowAction = new QAction("矢印", createShapeMenu);
+    createShapeArrowAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.arrow"), QStringLiteral("矢印")), createShapeMenu);
     createShapeArrowAction->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_shape.svg")));
-    createShapeDoubleArrowAction = new QAction("双方向矢印", createShapeMenu);
+    createShapeDoubleArrowAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.double_arrow"), QStringLiteral("双方向矢印")), createShapeMenu);
     createShapeDoubleArrowAction->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_shape.svg")));
-    createLineMenu = new QMenu(QStringLiteral("ライン"), createShapeMenu);
+    createLineMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.layer.line"), QStringLiteral("ライン")), createShapeMenu);
     createLineMenu->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_shape.svg")));
+    createLineMenu->setAccessibleName(QStringLiteral("Line Shapes"));
+    createLineMenu->setAccessibleDescription(QStringLiteral("Create a line-based shape layer"));
     createLineMenu->addAction(createShapeLineAction);
     createLineMenu->addAction(createShapeDashedLineAction);
     createLineMenu->addSeparator();
@@ -1214,36 +1252,44 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createShapeMenu->addAction(cycleShapeForwardAction);
     createShapeMenu->addAction(cycleShapeReverseAction);
 
-    create2DMenu = new QMenu(QStringLiteral("2Dレイヤー(&2)"), createMenu);
+    create2DMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_2d"), QStringLiteral("2Dレイヤー(&2)")), createMenu);
     create2DMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_shape_rect.svg")));
+    create2DMenu->setAccessibleName(QStringLiteral("New 2D Layer"));
+    create2DMenu->setAccessibleDescription(QStringLiteral("Create a 2D shape, text, adjustment, paint, or SVG layer"));
     create2DMenu->addMenu(createShapeMenu);
     create2DMenu->addAction(createTextAction);
     create2DMenu->addAction(createAdjustAction);
     create2DMenu->addAction(createPaintAction);
     create2DMenu->addAction(createSvgAction);
 
-    createUtilityMenu = new QMenu(QStringLiteral("補助レイヤー(&U)"), createMenu);
+    createUtilityMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.layer.utility_layers"), QStringLiteral("補助レイヤー(&U)")), createMenu);
     createUtilityMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_settings.svg")));
+    createUtilityMenu->setAccessibleName(QStringLiteral("Utility Layers"));
+    createUtilityMenu->setAccessibleDescription(QStringLiteral("Create null, rig, construction, or quick-setup layers"));
     createUtilityMenu->addAction(createNullAction);
     createUtilityMenu->addAction(createRigAction);
     createUtilityMenu->addAction(createConstructionAction);
     createUtilityMenu->addSeparator();
     createUtilityMenu->addAction(createQuickLayerAction);
 
-    createParticleMenu = new QMenu(QStringLiteral("パーティクル(&P)"), createMenu);
+    createParticleMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_particle"), QStringLiteral("パーティクル(&P)")), createMenu);
     createParticleMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_particle.svg")));
+    createParticleMenu->setAccessibleName(QStringLiteral("New Particle Layer"));
+    createParticleMenu->setAccessibleDescription(QStringLiteral("Create a 2D, form, or 3D particle layer"));
     createParticleMenu->addAction(createParticleAction);
     createParticleMenu->addAction(createFormParticleAction);
     createParticleMenu->addAction(createParticle3DAction);
 
-    createAudioMenu = new QMenu(QStringLiteral("オーディオ(&A)"), createMenu);
+    createAudioMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_audio"), QStringLiteral("オーディオ(&A)")), createMenu);
     createAudioMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_audiotrack.svg")));
+    createAudioMenu->setAccessibleName(QStringLiteral("New Audio Layer"));
+    createAudioMenu->setAccessibleDescription(QStringLiteral("Create an audio or 3D audio layer"));
     createAudioMenu->addAction(createAudioAction);
     createAudioMenu->addAction(createSpatialAudioAction);
 
-    trackCameraAction = new QAction("3Dカメラトラッキング(&T)", menu);
+    trackCameraAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.camera_tracking_3d"), QStringLiteral("3Dカメラトラッキング(&T)")), menu);
     trackCameraAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_videocam.svg")));
-    createMotionTrackerAction = new QAction("モーショントラッカーを作成(&M)", menu);
+    createMotionTrackerAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.create_motion_tracker"), QStringLiteral("モーショントラッカーを作成(&M)")), menu);
 
     createMenu->addAction(createSolidAction);
     createMenu->addSeparator();
@@ -1251,8 +1297,10 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createMenu->addMenu(createUtilityMenu);
     createMenu->addMenu(createParticleMenu);
     createMenu->addMenu(createAudioMenu);
-    create3DMenu = new QMenu(QStringLiteral("3Dレイヤー(&3)"), createMenu);
+    create3DMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_3d"), QStringLiteral("3Dレイヤー(&3)")), createMenu);
     create3DMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_model3d.svg")));
+    create3DMenu->setAccessibleName(QStringLiteral("New 3D Layer"));
+    create3DMenu->setAccessibleDescription(QStringLiteral("Create a 3D model or primitive layer"));
     create3DMenu->addAction(createModel3DAction);
     create3DMenu->addSeparator();
     create3DMenu->addAction(createPlane3DAction);
@@ -1266,40 +1314,45 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     create3DMenu->addSeparator();
     create3DMenu->addAction(createTerrainAction);
     create3DMenu->addAction(createPathTubeAction);
+    create3DMenu->addAction(createTextExtrudeAction);
     createMenu->addMenu(create3DMenu);
     createMenu->addSeparator();
     createMenu->addMenu(createPlacementMenu);
     createMenu->addAction(cycleLayerForwardAction);
     createMenu->addAction(cycleLayerReverseAction);
 
-    duplicateLayerAction = new QAction("レイヤーを複製(&D)", menu);
+    duplicateLayerAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.duplicate"), QStringLiteral("レイヤーを複製(&D)")), menu);
     duplicateLayerAction->setShortcut(
         ShortcutBindings::instance().shortcut(ShortcutId::LayerDuplicate));
     duplicateLayerAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_content_copy.svg")));
-    renameLayerAction = new QAction("レイヤー名を変更(&R)...", menu);
+    renameLayerAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.rename_dots"), QStringLiteral("レイヤー名を変更(&R)...")), menu);
     renameLayerAction->setShortcut(
         ShortcutBindings::instance().shortcut(ShortcutId::LayerRename));
     renameLayerAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_rename.svg")));
-    deleteLayerAction = new QAction("削除(&X)", menu);
+    deleteLayerAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.delete_accel"), QStringLiteral("削除(&X)")), menu);
     deleteLayerAction->setShortcut(
         ShortcutBindings::instance().shortcut(ShortcutId::LayerDelete));
     deleteLayerAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_delete.svg")));
 
-    switchMenu = new QMenu("スイッチ(&S)", menu);
+    switchMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_switch"), QStringLiteral("スイッチ(&S)")), menu);
     switchMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_settings.svg")));
-    toggleVisibleAction = new QAction("表示/非表示を切替", switchMenu);
+    switchMenu->setAccessibleName(QStringLiteral("Layer Switches"));
+    switchMenu->setAccessibleDescription(QStringLiteral("Toggle layer visibility, lock, solo, shy, and cache states"));
+    toggleVisibleAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.toggle_visibility"), QStringLiteral("表示/非表示を切替")), switchMenu);
     toggleVisibleAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_visibility.svg")));
-    toggleLockAction = new QAction("ロックを切替", switchMenu);
+    toggleLockAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.toggle_lock"), QStringLiteral("ロックを切替")), switchMenu);
     toggleLockAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_lock.svg")));
-    toggleSoloAction = new QAction("ソロを切替", switchMenu);
+    toggleSoloAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.toggle_solo"), QStringLiteral("ソロを切替")), switchMenu);
     toggleSoloAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_headset.svg")));
-    toggleShyAction = new QAction("シャイを切替", switchMenu);
+    toggleShyAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.toggle_shy"), QStringLiteral("シャイを切替")), switchMenu);
     toggleShyAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_shy.svg")));
     soloOnlyAction = new QAction("Smart Solo", switchMenu);
     soloOnlyAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_solo_only.svg")));
-    soloOnlyAction->setToolTip(QStringLiteral("選択レイヤーと必要な Parent / Matte をまとめてソロ表示します"));
+    soloOnlyAction->setToolTip(TranslationManager::instance().tr(QStringLiteral("menu.layer.solo_with_dependencies_tooltip"), QStringLiteral("選択レイヤーと必要な Parent / Matte をまとめてソロ表示します")));
     cacheMenu = new QMenu("Cache Policy", switchMenu);
     cacheMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_settings.svg")));
+    cacheMenu->setAccessibleName(QStringLiteral("Layer Cache Policy"));
+    cacheMenu->setAccessibleDescription(QStringLiteral("Choose the frame cache policy for the selected layer"));
     cacheDefaultAction = new QAction("Default", cacheMenu);
     cacheEnabledAction = new QAction("Enabled", cacheMenu);
     cacheDisabledAction = new QAction("Disabled", cacheMenu);
@@ -1316,85 +1369,93 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     switchMenu->addSeparator();
     switchMenu->addAction(soloOnlyAction);
 
-    selectMenu = new QMenu("選択(&E)", menu);
+    selectMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.layer.select"), QStringLiteral("選択(&E)")), menu);
     selectMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_select_all.svg")));
-    selectParentAction = new QAction("親を選択", selectMenu);
+    selectMenu->setAccessibleName(QStringLiteral("Layer Selection"));
+    selectMenu->setAccessibleDescription(QStringLiteral("Select the parent layer or clear parenting"));
+    selectParentAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.select_parent"), QStringLiteral("親を選択")), selectMenu);
     selectParentAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_parent_select.svg")));
-    clearParentAction = new QAction("親を解除", selectMenu);
+    clearParentAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.unparent"), QStringLiteral("親を解除")), selectMenu);
     clearParentAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_parent_clear.svg")));
     selectMenu->addAction(selectParentAction);
     selectMenu->addAction(clearParentAction);
 
-    proxyMenu = new QMenu("Proxy 画質(&Q)", menu);
+    proxyMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.layer.proxy_quality"), QStringLiteral("Proxy 画質(&Q)")), menu);
     proxyMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_resolution_half.svg")));
-    debugMenu = new QMenu("デバッグレイヤー(&D)", menu);
+    proxyMenu->setAccessibleName(QStringLiteral("Proxy Quality"));
+    proxyMenu->setAccessibleDescription(QStringLiteral("Manage proxy resolution and proxy files for layers"));
+    debugMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.layer.debug_layers"), QStringLiteral("デバッグレイヤー(&D)")), menu);
     debugMenu->setIcon(QIcon(resolveIconPath("Studio/testmenu_layer_composite.svg")));
     proxyQualityGroup = new QActionGroup(menu);
     proxyQualityGroup->setExclusive(true);
-    proxyNoneAction = proxyMenu->addAction("無効");
+    proxyNoneAction = proxyMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.disabled"), QStringLiteral("無効")));
     proxyNoneAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_resolution_full.svg")));
-    proxyQuarterAction = proxyMenu->addAction("1/4 画質");
+    proxyQuarterAction = proxyMenu->addAction(TranslationManager::instance().tr(QStringLiteral("dialog.layer.proxy_quarter"), QStringLiteral("1/4 画質")));
     proxyQuarterAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_resolution_quarter.svg")));
-    proxyEighthAction = proxyMenu->addAction("1/8 画質");
+    proxyEighthAction = proxyMenu->addAction(TranslationManager::instance().tr(QStringLiteral("dialog.layer.proxy_eighth"), QStringLiteral("1/8 画質")));
     proxyEighthAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_resolution_eighth.svg")));
-    proxyHalfAction = proxyMenu->addAction("1/2 画質");
+    proxyHalfAction = proxyMenu->addAction(TranslationManager::instance().tr(QStringLiteral("dialog.layer.proxy_half"), QStringLiteral("1/2 画質")));
     proxyHalfAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_resolution_half.svg")));
-    proxyFullAction = proxyMenu->addAction("フル画質");
+    proxyFullAction = proxyMenu->addAction(TranslationManager::instance().tr(QStringLiteral("dialog.layer.proxy_full"), QStringLiteral("フル画質")));
     proxyFullAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_resolution_full.svg")));
-    generateProxyAction = proxyMenu->addAction("プロキシを生成");
+    generateProxyAction = proxyMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.proxy_create"), QStringLiteral("プロキシを生成")));
     generateProxyAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_replay.svg")));
-    generateSelectedProxyAction = proxyMenu->addAction("選択レイヤーのプロキシを生成");
+    generateSelectedProxyAction = proxyMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.proxy_create_selected"), QStringLiteral("選択レイヤーのプロキシを生成")));
     generateSelectedProxyAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_replay.svg")));
     proxyMenu->addSeparator();
-    revealProxyAction = proxyMenu->addAction("プロキシを表示");
+    revealProxyAction = proxyMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.proxy_show"), QStringLiteral("プロキシを表示")));
     revealProxyAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_folder_open.svg")));
-    clearProxyAction = proxyMenu->addAction("プロキシを削除");
+    clearProxyAction = proxyMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.proxy_delete"), QStringLiteral("プロキシを削除")));
     clearProxyAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_delete.svg")));
-    clearSelectedProxyAction = proxyMenu->addAction("選択レイヤーのプロキシを削除");
+    clearSelectedProxyAction = proxyMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.proxy_delete_selected"), QStringLiteral("選択レイヤーのプロキシを削除")));
     clearSelectedProxyAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_delete.svg")));
 
-    maskMenu = new QMenu(QStringLiteral("マスクとシェイプ"), menu);
+    maskMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.layer.mask_and_shape"), QStringLiteral("マスクとシェイプ")), menu);
     maskMenu->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_shape.svg")));
-    saveMaskPresetAction = maskMenu->addAction("マスクをプリセットとして保存...");
+    maskMenu->setAccessibleName(QStringLiteral("Mask and Shape"));
+    maskMenu->setAccessibleDescription(QStringLiteral("Convert between masks, shapes, and vector paths"));
+    saveMaskPresetAction = maskMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.save_mask_preset"), QStringLiteral("マスクをプリセットとして保存...")));
     saveMaskPresetAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_save.svg")));
-    loadMaskPresetAction = maskMenu->addAction("マスクプリセットを適用...");
+    loadMaskPresetAction = maskMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.mask_preset_apply_dots"), QStringLiteral("マスクプリセットを適用...")));
     loadMaskPresetAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_folder_open.svg")));
     maskMenu->addSeparator();
-    createMaskFromTextAction = maskMenu->addAction(QStringLiteral("テキストからマスクパスを作成"));
+    createMaskFromTextAction = maskMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.text_to_mask_path"), QStringLiteral("テキストからマスクパスを作成")));
     createMaskFromTextAction->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_shape.svg")));
-    convertShapeToMaskAction = maskMenu->addAction(QStringLiteral("シェイプをマスクに変換"));
+    convertShapeToMaskAction = maskMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.shape_to_mask"), QStringLiteral("シェイプをマスクに変換")));
     convertShapeToMaskAction->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_shape.svg")));
-    linkShapeToMaskAction = maskMenu->addAction(QStringLiteral("シェイプをマスクにリンク（live）"));
+    linkShapeToMaskAction = maskMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.link_shape_to_mask_live"), QStringLiteral("シェイプをマスクにリンク（live）")));
     linkShapeToMaskAction->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_shape.svg")));
-    convertMaskToShapeAction = maskMenu->addAction(QStringLiteral("マスクをシェイプに変換"));
+    convertMaskToShapeAction = maskMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.mask_to_shape"), QStringLiteral("マスクをシェイプに変換")));
     convertMaskToShapeAction->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_shape.svg")));
-    convertLineToBezierPathAction = maskMenu->addAction(QStringLiteral("ラインをベジェパスに変換"));
+    convertLineToBezierPathAction = maskMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.line_to_bezier"), QStringLiteral("ラインをベジェパスに変換")));
     convertLineToBezierPathAction->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_shape.svg")));
-    restoreBezierPathToLineAction = maskMenu->addAction(QStringLiteral("ベジェパスを直線に戻す"));
+    restoreBezierPathToLineAction = maskMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.bezier_to_line"), QStringLiteral("ベジェパスを直線に戻す")));
     restoreBezierPathToLineAction->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_shape.svg")));
     maskMenu->addSeparator();
-    importSvgIntoShapeAction = maskMenu->addAction(QStringLiteral("SVGをシェイプに取り込み..."));
+    importSvgIntoShapeAction = maskMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.svg_import_dots"), QStringLiteral("SVGをシェイプに取り込み...")));
     importSvgIntoShapeAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_folder_open.svg")));
-    createShapesFromVectorAction = maskMenu->addAction(QStringLiteral("ベクターレイヤーからシェイプを作成"));
+    createShapesFromVectorAction = maskMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.vector_layer_to_shape"), QStringLiteral("ベクターレイヤーからシェイプを作成")));
     createShapesFromVectorAction->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_shape.svg")));
     for (auto *action : {proxyNoneAction, proxyQuarterAction, proxyEighthAction, proxyHalfAction, proxyFullAction}) {
         action->setCheckable(true);
         proxyQualityGroup->addAction(action);
     }
 
-    arrangeMenu = new QMenu("配置(&A)", menu);
+    arrangeMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.layer.arrange"), QStringLiteral("配置(&A)")), menu);
     arrangeMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_arrange.svg")));
-    bringToFrontAction = new QAction("最前面へ(&F)", arrangeMenu);
+    arrangeMenu->setAccessibleName(QStringLiteral("Arrange Layers"));
+    arrangeMenu->setAccessibleDescription(QStringLiteral("Change layer stacking order and apply warp fields"));
+    bringToFrontAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.bring_to_front"), QStringLiteral("最前面へ(&F)")), arrangeMenu);
     bringToFrontAction->setShortcut(
         ShortcutBindings::instance().shortcut(ShortcutId::LayerBringToFront));
     bringToFrontAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_bring_to_front.svg")));
-    bringForwardAction = new QAction("1つ前面へ(&W)", arrangeMenu);
+    bringForwardAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.bring_forward"), QStringLiteral("1つ前面へ(&W)")), arrangeMenu);
     bringForwardAction->setShortcut(
         ShortcutBindings::instance().shortcut(ShortcutId::LayerBringForward));
-    sendBackwardAction = new QAction("1つ背面へ(&B)", arrangeMenu);
+    sendBackwardAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.send_backward"), QStringLiteral("1つ背面へ(&B)")), arrangeMenu);
     sendBackwardAction->setShortcut(
         ShortcutBindings::instance().shortcut(ShortcutId::LayerSendBackward));
-    sendToBackAction = new QAction("最背面へ(&K)", arrangeMenu);
+    sendToBackAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.send_to_back"), QStringLiteral("最背面へ(&K)")), arrangeMenu);
     sendToBackAction->setShortcut(
         ShortcutBindings::instance().shortcut(ShortcutId::LayerSendToBack));
     sendToBackAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_send_to_back.svg")));
@@ -1403,53 +1464,53 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     arrangeMenu->addAction(sendBackwardAction);
     arrangeMenu->addAction(sendToBackAction);
     arrangeMenu->addSeparator();
-    radialTransformAction = new QAction("放射状変形...", arrangeMenu);
+    radialTransformAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.radial_warp_dots"), QStringLiteral("放射状変形...")), arrangeMenu);
     radialTransformAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_arrange.svg")));
     radialTransformAction->setToolTip(
-        QStringLiteral("選択中心からの距離に応じて、複数レイヤーの位置とスケールを一度だけ変更します"));
+        TranslationManager::instance().tr(QStringLiteral("menu.layer.radial_warp_apply_tooltip"), QStringLiteral("選択中心からの距離に応じて、複数レイヤーの位置とスケールを一度だけ変更します")));
     arrangeMenu->addAction(radialTransformAction);
-    createLiveRadialFieldAction = new QAction("ライブ放射状Fieldを作成...", arrangeMenu);
+    createLiveRadialFieldAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.live_radial_field_create"), QStringLiteral("ライブ放射状Fieldを作成...")), arrangeMenu);
     createLiveRadialFieldAction->setIcon(
         QIcon(resolveIconPath("Studio/layermenu_arrange.svg")));
     createLiveRadialFieldAction->setToolTip(
-        QStringLiteral("元のTransformを保ったまま、選択レイヤーへ放射状変形を適用します"));
+        TranslationManager::instance().tr(QStringLiteral("menu.layer.radial_warp_tooltip"), QStringLiteral("元のTransformを保ったまま、選択レイヤーへ放射状変形を適用します")));
     arrangeMenu->addAction(createLiveRadialFieldAction);
-    createLiveBoxFieldAction = new QAction("ライブBox Fieldを作成...", arrangeMenu);
+    createLiveBoxFieldAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.live_box_field_create"), QStringLiteral("ライブBox Fieldを作成...")), arrangeMenu);
     createLiveBoxFieldAction->setIcon(
         QIcon(resolveIconPath("Studio/layermenu_arrange.svg")));
     createLiveBoxFieldAction->setToolTip(
-        QStringLiteral("元のTransformを保ったまま、選択レイヤーへ矩形範囲の変形を適用します"));
+        TranslationManager::instance().tr(QStringLiteral("menu.layer.box_warp_tooltip"), QStringLiteral("元のTransformを保ったまま、選択レイヤーへ矩形範囲の変形を適用します")));
     arrangeMenu->addAction(createLiveBoxFieldAction);
-    createLiveLinearFieldAction = new QAction("ライブLinear Fieldを作成...", arrangeMenu);
+    createLiveLinearFieldAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.live_linear_field_create"), QStringLiteral("ライブLinear Fieldを作成...")), arrangeMenu);
     createLiveLinearFieldAction->setIcon(
         QIcon(resolveIconPath("Studio/layermenu_arrange.svg")));
     createLiveLinearFieldAction->setToolTip(
-        QStringLiteral("元のTransformを保ったまま、選択レイヤーへ方向付きField変形を適用します"));
+        TranslationManager::instance().tr(QStringLiteral("menu.layer.directional_warp_tooltip"), QStringLiteral("元のTransformを保ったまま、選択レイヤーへ方向付きField変形を適用します")));
     arrangeMenu->addAction(createLiveLinearFieldAction);
-    createLiveNoiseFieldAction = new QAction("ライブNoise Fieldを作成...", arrangeMenu);
+    createLiveNoiseFieldAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.live_noise_field_create"), QStringLiteral("ライブNoise Fieldを作成...")), arrangeMenu);
     createLiveNoiseFieldAction->setIcon(createLiveRadialFieldAction->icon());
-    createLiveNoiseFieldAction->setToolTip(QStringLiteral("決定的なノイズ影響を持つ live field を作成"));
+    createLiveNoiseFieldAction->setToolTip(TranslationManager::instance().tr(QStringLiteral("menu.layer.live_noise_field_tooltip"), QStringLiteral("決定的なノイズ影響を持つ live field を作成")));
     arrangeMenu->addAction(createLiveNoiseFieldAction);
-    createLiveSolidFieldAction = new QAction("ライブSolid Fieldを作成...", arrangeMenu);
+    createLiveSolidFieldAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.live_solid_field_create"), QStringLiteral("ライブSolid Fieldを作成...")), arrangeMenu);
     createLiveSolidFieldAction->setIcon(createLiveRadialFieldAction->icon());
-    createLiveSolidFieldAction->setToolTip(QStringLiteral("一定の影響を持つ live field を作成"));
+    createLiveSolidFieldAction->setToolTip(TranslationManager::instance().tr(QStringLiteral("menu.layer.live_solid_field_tooltip"), QStringLiteral("一定の影響を持つ live field を作成")));
     arrangeMenu->addAction(createLiveSolidFieldAction);
     liveFieldMenu = new QMenu("Live Fields", arrangeMenu);
     liveFieldMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_settings.svg")));
+    liveFieldMenu->setAccessibleName(QStringLiteral("Live Fields"));
+    liveFieldMenu->setAccessibleDescription(QStringLiteral("Manage live warp fields on the selected layers"));
     arrangeMenu->addMenu(liveFieldMenu);
-    selectLiveRadialFieldAction = new QAction("ライブFieldを選択...", arrangeMenu);
+    selectLiveRadialFieldAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.live_field_select_dots"), QStringLiteral("ライブFieldを選択...")), arrangeMenu);
     arrangeMenu->addAction(selectLiveRadialFieldAction);
-    activatePreviousLiveRadialFieldAction = new QAction("前のFieldをアクティブ", arrangeMenu);
-    activateNextLiveRadialFieldAction = new QAction("次のFieldをアクティブ", arrangeMenu);
-    arrangeMenu->addAction(activatePreviousLiveRadialFieldAction);
-    arrangeMenu->addAction(activateNextLiveRadialFieldAction);
-    editLiveRadialFieldAction = new QAction("ライブFieldを編集...", arrangeMenu);
-    toggleLiveRadialFieldAction = new QAction("ライブFieldを有効/無効...", arrangeMenu);
-    moveActiveLiveRadialFieldUpAction = new QAction("アクティブFieldを上へ", arrangeMenu);
-    moveActiveLiveRadialFieldDownAction = new QAction("アクティブFieldを下へ", arrangeMenu);
-    moveLiveRadialFieldUpAction = new QAction("ライブFieldを上へ...", arrangeMenu);
-    moveLiveRadialFieldDownAction = new QAction("ライブFieldを下へ...", arrangeMenu);
-    removeLiveRadialFieldAction = new QAction("ライブFieldを削除...", arrangeMenu);
+    activatePreviousLiveRadialFieldAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.activate_previous_field"), QStringLiteral("前のFieldをアクティブ")), arrangeMenu);
+    activateNextLiveRadialFieldAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.activate_next_field"), QStringLiteral("次のFieldをアクティブ")), arrangeMenu);
+    editLiveRadialFieldAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.live_field_edit_dots"), QStringLiteral("ライブFieldを編集...")), arrangeMenu);
+    toggleLiveRadialFieldAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.live_field_toggle_dots"), QStringLiteral("ライブFieldを有効/無効...")), arrangeMenu);
+    moveActiveLiveRadialFieldUpAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.field_move_up"), QStringLiteral("アクティブFieldを上へ")), arrangeMenu);
+    moveActiveLiveRadialFieldDownAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.field_move_down"), QStringLiteral("アクティブFieldを下へ")), arrangeMenu);
+    moveLiveRadialFieldUpAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.live_field_up"), QStringLiteral("ライブFieldを上へ...")), arrangeMenu);
+    moveLiveRadialFieldDownAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.live_field_down"), QStringLiteral("ライブFieldを下へ...")), arrangeMenu);
+    removeLiveRadialFieldAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.live_field_delete_dots"), QStringLiteral("ライブFieldを削除...")), arrangeMenu);
     liveFieldMenu->addAction(editLiveRadialFieldAction);
     liveFieldMenu->addAction(toggleLiveRadialFieldAction);
     liveFieldMenu->addSeparator();
@@ -1466,11 +1527,11 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     arrangeMenu->addAction(moveLiveRadialFieldDownAction);
     arrangeMenu->addAction(removeLiveRadialFieldAction);
     arrangeMenu->addSeparator();
-    addParametricParameterAction = new QAction("Parametric Parameterを追加...", arrangeMenu);
-    publishParametricParameterAction = new QAction("ParameterをPublished Controlにする...", arrangeMenu);
-    editParametricControlAction = new QAction("Published Controlを編集...", arrangeMenu);
-    unpublishParametricControlAction = new QAction("Published Controlを解除...", arrangeMenu);
-    controllerLearnAction = new QAction("Controller Learn を現在Propertyへ適用", arrangeMenu);
+    addParametricParameterAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.parameter_add_parametric"), QStringLiteral("Parametric Parameterを追加...")), arrangeMenu);
+    publishParametricParameterAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.parameter_publish"), QStringLiteral("ParameterをPublished Controlにする...")), arrangeMenu);
+    editParametricControlAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.published_edit_dots"), QStringLiteral("Published Controlを編集...")), arrangeMenu);
+    unpublishParametricControlAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.published_release_dots"), QStringLiteral("Published Controlを解除...")), arrangeMenu);
+    controllerLearnAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.controller_learn_apply"), QStringLiteral("Controller Learn を現在Propertyへ適用")), arrangeMenu);
     arrangeMenu->addAction(addParametricParameterAction);
     arrangeMenu->addAction(publishParametricParameterAction);
     arrangeMenu->addAction(editParametricControlAction);
@@ -1478,30 +1539,32 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     arrangeMenu->addSeparator();
     arrangeMenu->addAction(controllerLearnAction);
 
-    alignMenu = new QMenu("整列(&L)", menu);
+    alignMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.layer.align"), QStringLiteral("整列(&L)")), menu);
     alignMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_align.svg")));
-    alignLeftAction = new QAction("左端を揃える", alignMenu);
+    alignMenu->setAccessibleName(QStringLiteral("Align Layers"));
+    alignMenu->setAccessibleDescription(QStringLiteral("Align the selected layers to an edge or center"));
+    alignLeftAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.align_left"), QStringLiteral("左端を揃える")), alignMenu);
     alignLeftAction->setShortcut(
         ShortcutBindings::instance().shortcut(ShortcutId::LayerAlignLeft));
     alignLeftAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_align_left.svg")));
-    alignHCenterAction = new QAction("水平中央を揃える", alignMenu);
+    alignHCenterAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.align_horizontal_center"), QStringLiteral("水平中央を揃える")), alignMenu);
     alignHCenterAction->setShortcut(
         ShortcutBindings::instance().shortcut(ShortcutId::LayerAlignHCenter));
     alignHCenterAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_align_hcenter.svg")));
-    alignRightAction = new QAction("右端を揃える", alignMenu);
+    alignRightAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.align_right"), QStringLiteral("右端を揃える")), alignMenu);
     alignRightAction->setShortcut(
         ShortcutBindings::instance().shortcut(ShortcutId::LayerAlignRight));
     alignRightAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_align_right.svg")));
     alignMenu->addSeparator();
-    alignTopAction = new QAction("上端を揃える", alignMenu);
+    alignTopAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.align_top"), QStringLiteral("上端を揃える")), alignMenu);
     alignTopAction->setShortcut(
         ShortcutBindings::instance().shortcut(ShortcutId::LayerAlignTop));
     alignTopAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_align_top.svg")));
-    alignVCenterAction = new QAction("垂直中央を揃える", alignMenu);
+    alignVCenterAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.align_vertical_center"), QStringLiteral("垂直中央を揃える")), alignMenu);
     alignVCenterAction->setShortcut(
         ShortcutBindings::instance().shortcut(ShortcutId::LayerAlignVCenter));
     alignVCenterAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_align_vcenter.svg")));
-    alignBottomAction = new QAction("下端を揃える", alignMenu);
+    alignBottomAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.align_bottom"), QStringLiteral("下端を揃える")), alignMenu);
     alignBottomAction->setShortcut(
         ShortcutBindings::instance().shortcut(ShortcutId::LayerAlignBottom));
     alignBottomAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_align_bottom.svg")));
@@ -1512,62 +1575,63 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     alignMenu->addAction(alignVCenterAction);
     alignMenu->addAction(alignBottomAction);
 
-    distributeMenu = new QMenu("分布(&D)", menu);
+    distributeMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.layer.distribute"), QStringLiteral("分布(&D)")), menu);
     distributeMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_distribute.svg")));
-    distributeHCenterAction = new QAction("水平中央を分布", distributeMenu);
+    distributeMenu->setAccessibleName(QStringLiteral("Distribute Layers"));
+    distributeMenu->setAccessibleDescription(QStringLiteral("Evenly distribute the selected layers"));
+    distributeHCenterAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.distribute_horizontal_center"), QStringLiteral("水平中央を分布")), distributeMenu);
     distributeHCenterAction->setShortcut(
         ShortcutBindings::instance().shortcut(ShortcutId::LayerDistributeHCenter));
-    distributeVCenterAction = new QAction("垂直中央を分布", distributeMenu);
+    distributeVCenterAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.distribute_vertical_center"), QStringLiteral("垂直中央を分布")), distributeMenu);
     distributeVCenterAction->setShortcut(
         ShortcutBindings::instance().shortcut(ShortcutId::LayerDistributeVCenter));
-    distributeSpacingAction = new QAction("等間隔に配置", distributeMenu);
+    distributeSpacingAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.distribute_evenly"), QStringLiteral("等間隔に配置")), distributeMenu);
     distributeSpacingAction->setShortcut(
         ShortcutBindings::instance().shortcut(ShortcutId::LayerDistributeSpacing));
-    distributeMenu->addAction(distributeHCenterAction);
-    distributeMenu->addAction(distributeVCenterAction);
-    distributeMenu->addAction(distributeSpacingAction);
-    resolveLayoutCollisionsAction = new QAction("衝突を自動回避", menu);
+    resolveLayoutCollisionsAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.auto_avoid_collisions"), QStringLiteral("衝突を自動回避")), menu);
 
-    openInspectorAction = new QAction("Inspector を開く", menu);
+    openInspectorAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.open_inspector"), QStringLiteral("Inspector を開く")), menu);
     openInspectorAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_inspector.svg")));
-    openPropertiesAction = new QAction("Properties を開く", menu);
+    openPropertiesAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.open_properties"), QStringLiteral("Properties を開く")), menu);
     openPropertiesAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_settings.svg")));
-    applyLipSyncAction = new QAction("Lip Sync を Switch Layer に適用", menu);
+    applyLipSyncAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.apply_lipsync"), QStringLiteral("Lip Sync を Switch Layer に適用")), menu);
 
+    debugMenu->setAccessibleName(QStringLiteral("Debug Layers"));
+    debugMenu->setAccessibleDescription(QStringLiteral("Add diagnostic test layers for developers"));
     addDebugBlendLayersAction = new QAction("Debug Blend Test Layers...", debugMenu);
     addDebugBlendLayersAction->setIcon(QIcon(resolveIconPath("Studio/testmenu_layer_composite.svg")));
     addDebugBlendLayersAction->setToolTip(
-        QStringLiteral("Debug 用の合成テストレイヤーをまとめて追加します"));
+        TranslationManager::instance().tr(QStringLiteral("menu.layer.debug_composite_tooltip"), QStringLiteral("Debug 用の合成テストレイヤーをまとめて追加します")));
     debugMenu->addAction(addDebugBlendLayersAction);
 
     addDebugBindlessPlanesAction = new QAction("Debug Bindless Sprite Planes...", debugMenu);
     addDebugBindlessPlanesAction->setIcon(QIcon(resolveIconPath("Studio/testmenu_layer_composite.svg")));
     addDebugBindlessPlanesAction->setToolTip(
-        QStringLiteral("Bindless sprite batch の検証用にテクスチャ平面だけを追加します"));
+        TranslationManager::instance().tr(QStringLiteral("menu.layer.bindless_test_tooltip"), QStringLiteral("Bindless sprite batch の検証用にテクスチャ平面だけを追加します")));
     debugMenu->addAction(addDebugBindlessPlanesAction);
 
     addDebugBillboardLayerAction = new QAction("Debug Billboard Layer...", debugMenu);
     addDebugBillboardLayerAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_particle.svg")));
     addDebugBillboardLayerAction->setToolTip(
-        QStringLiteral("ビルボード描画の検証用に、見やすい粒子レイヤーを追加します"));
+        TranslationManager::instance().tr(QStringLiteral("menu.layer.billboard_test_tooltip"), QStringLiteral("ビルボード描画の検証用に、見やすい粒子レイヤーを追加します")));
     debugMenu->addAction(addDebugBillboardLayerAction);
 
     addDebugParticleLayerAction = new QAction("Debug Particle Layer...", debugMenu);
     addDebugParticleLayerAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_particle.svg")));
     addDebugParticleLayerAction->setToolTip(
-        QStringLiteral("独立したデバッグ用パーティクルレイヤーを追加します"));
+        TranslationManager::instance().tr(QStringLiteral("menu.layer.debug_particle_tooltip"), QStringLiteral("独立したデバッグ用パーティクルレイヤーを追加します")));
     debugMenu->addAction(addDebugParticleLayerAction);
 
-    precomposeAction = new QAction("プリコンポーズ(&P)...", menu);
+    precomposeAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.precompose_dots"), QStringLiteral("プリコンポーズ(&P)...")), menu);
     precomposeAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_view_comfy.svg")));
-    unprecomposeAction = new QAction("プリコンポーズを解除", menu);
-    addCompositionLayerAction = new QAction("コンポジションをレイヤーとして追加...", menu);
+    unprecomposeAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.unprecompose"), QStringLiteral("プリコンポーズを解除")), menu);
+    addCompositionLayerAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.add_composition_dots"), QStringLiteral("コンポジションをレイヤーとして追加...")), menu);
     unprecomposeAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_ungroup.svg")));
-    groupSelectionAction = new QAction("グループ化(&G)...", menu);
+    groupSelectionAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.group_dots"), QStringLiteral("グループ化(&G)...")), menu);
     groupSelectionAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_group.svg")));
-    ungroupAction = new QAction("グループ解除(&U)", menu);
+    ungroupAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.ungroup_accel"), QStringLiteral("グループ解除(&U)")), menu);
     ungroupAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_ungroup.svg")));
-    splitAction = new QAction("レイヤー分割(&L)", menu);
+    splitAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.split"), QStringLiteral("レイヤー分割(&L)")), menu);
     splitAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_content_cut.svg")));
 
     menu->addMenu(createMenu);
@@ -1622,6 +1686,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
         if (action == createFormParticleAction) { handleCreateFormParticle(); return; }
         if (action == createTerrainAction) { handleCreateProcedural3D(Procedural3DLayerKind::Terrain); return; }
         if (action == createPathTubeAction) { handleCreateProcedural3D(Procedural3DLayerKind::PathTube); return; }
+        if (action == createTextExtrudeAction) { handleCreateProcedural3D(Procedural3DLayerKind::TextExtrude); return; }
         if (action == createCameraAction) { handleCreateCamera(); return; }
         if (action == createLightAction) { handleCreateLight(); return; }
         if (action == createSpatialAudioAction) { handleCreateAudio(true); return; }
@@ -1710,13 +1775,13 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
             auto* projectService = ArtifactProjectService::instance();
             if (!projectService) {
                 QMessageBox::warning(menu_->window(), "Debug Layers",
-                                     "ProjectService が利用できません。");
+                                     TranslationManager::instance().tr(QStringLiteral("dialog.layer.project_service_unavailable"), QStringLiteral("ProjectService が利用できません。")));
                 return;
             }
             auto comp = projectService->currentComposition().lock();
             if (!comp) {
                 QMessageBox::warning(menu_->window(), "Debug Layers",
-                                     "先にコンポジションを開いてください。");
+                                     TranslationManager::instance().tr(QStringLiteral("dialog.layer.open_composition_first"), QStringLiteral("先にコンポジションを開いてください。")));
                 return;
             }
 
@@ -1732,7 +1797,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
                 1.0f);
             if (!lastCreatedLayer) {
                 QMessageBox::warning(menu_->window(), "Debug Layers",
-                                     "デバッグ用ベースレイヤーの追加に失敗しました。");
+                                     TranslationManager::instance().tr(QStringLiteral("dialog.layer.debug_base_failed"), QStringLiteral("デバッグ用ベースレイヤーの追加に失敗しました。")));
                 return;
             }
 
@@ -1742,7 +1807,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
                 0.58f);
             if (!lastCreatedLayer) {
                 QMessageBox::warning(menu_->window(), "Debug Layers",
-                                     "Multiply テストレイヤーの追加に失敗しました。");
+                                     TranslationManager::instance().tr(QStringLiteral("dialog.layer.multiply_test_failed"), QStringLiteral("Multiply テストレイヤーの追加に失敗しました。")));
                 return;
             }
 
@@ -1752,31 +1817,28 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
                 0.52f);
             if (!lastCreatedLayer) {
                 QMessageBox::warning(menu_->window(), "Debug Layers",
-                                     "Screen テストレイヤーの追加に失敗しました。");
+                                     TranslationManager::instance().tr(QStringLiteral("dialog.layer.screen_test_failed"), QStringLiteral("Screen テストレイヤーの追加に失敗しました。")));
                 return;
             }
 
             projectService->selectLayer(lastCreatedLayer->id());
             QMessageBox::information(
                 menu_->window(), "Debug Layers",
-                QStringLiteral("Debug blend test layers を追加しました。\n\n"
-                               "- Debug Base Plate\n"
-                               "- Debug Multiply Plate\n"
-                               "- Debug Screen Plate\n\n"
-                               "タイムライン上で並び替えたり、不透明度を変えて合成検証できます。"));
+                TranslationManager::instance().tr(QStringLiteral("dialog.layer.debug_blend_message"),
+                    TranslationManager::instance().tr(QStringLiteral("menu.layer.debug_blend_added"), QStringLiteral("Debug blend test layers を追加しました。\n\n- Debug Base Plate\n- Debug Multiply Plate\n- Debug Screen Plate\n\nタイムライン上で並び替えたり、不透明度を変えて合成検証できます。"))));
             return;
         }
         if (action == addDebugBindlessPlanesAction) {
             auto* projectService = ArtifactProjectService::instance();
             if (!projectService) {
                 QMessageBox::warning(menu_->window(), "Debug Layers",
-                                     "ProjectService が利用できません。");
+                                     TranslationManager::instance().tr(QStringLiteral("dialog.layer.project_service_unavailable"), QStringLiteral("ProjectService が利用できません。")));
                 return;
             }
             auto comp = projectService->currentComposition().lock();
             if (!comp) {
                 QMessageBox::warning(menu_->window(), "Debug Layers",
-                                     "先にコンポジションを開いてください。");
+                                     TranslationManager::instance().tr(QStringLiteral("dialog.layer.open_composition_first"), QStringLiteral("先にコンポジションを開いてください。")));
                 return;
             }
 
@@ -1794,7 +1856,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
                 FloatColor(0.12f, 0.18f, 0.70f, 1.0f), 0.88f);
             if (!lastCreatedLayer) {
                 QMessageBox::warning(menu_->window(), "Debug Layers",
-                                     "Bindless テスト平面 A の追加に失敗しました。");
+                                     TranslationManager::instance().tr(QStringLiteral("dialog.layer.bindless_test_a_failed"), QStringLiteral("Bindless テスト平面 A の追加に失敗しました。")));
                 return;
             }
 
@@ -1804,7 +1866,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
                 FloatColor(0.92f, 0.74f, 0.18f, 1.0f), 0.72f);
             if (!lastCreatedLayer) {
                 QMessageBox::warning(menu_->window(), "Debug Layers",
-                                     "Bindless テスト平面 B の追加に失敗しました。");
+                                     TranslationManager::instance().tr(QStringLiteral("dialog.layer.bindless_test_b_failed"), QStringLiteral("Bindless テスト平面 B の追加に失敗しました。")));
                 return;
             }
 
@@ -1814,29 +1876,28 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
                 FloatColor(0.16f, 0.64f, 0.95f, 1.0f), 0.58f);
             if (!lastCreatedLayer) {
                 QMessageBox::warning(menu_->window(), "Debug Layers",
-                                     "Bindless テスト平面 C の追加に失敗しました。");
+                                     TranslationManager::instance().tr(QStringLiteral("dialog.layer.bindless_test_c_failed"), QStringLiteral("Bindless テスト平面 C の追加に失敗しました。")));
                 return;
             }
 
             projectService->selectLayer(lastCreatedLayer->id());
             QMessageBox::information(
                 menu_->window(), "Debug Layers",
-                QStringLiteral("Debug Bindless Sprite Planes を追加しました。\n\n"
-                               "gradient solid planes だけで構成されるため、"
-                               "composition 描画では SpriteXform packet の bindless batch を検証できます。"));
+                TranslationManager::instance().tr(QStringLiteral("dialog.layer.debug_bindless_message"),
+                    TranslationManager::instance().tr(QStringLiteral("menu.layer.debug_bindless_added"), QStringLiteral("Debug Bindless Sprite Planes を追加しました。\n\ngradient solid planes だけで構成されるため、composition 描画では SpriteXform packet の bindless batch を検証できます。"))));
             return;
         }
         if (action == addDebugBillboardLayerAction) {
             auto* service = ArtifactProjectService::instance();
             if (!service) {
                 QMessageBox::warning(menu_->window(), "Debug Layers",
-                                     "ProjectService が利用できません。");
+                                     TranslationManager::instance().tr(QStringLiteral("dialog.layer.project_service_unavailable"), QStringLiteral("ProjectService が利用できません。")));
                 return;
             }
             const auto comp = service->currentComposition().lock();
             if (!comp) {
                 QMessageBox::warning(menu_->window(), "Debug Layers",
-                                     "先にコンポジションを開いてください。");
+                                     TranslationManager::instance().tr(QStringLiteral("dialog.layer.open_composition_first"), QStringLiteral("先にコンポジションを開いてください。")));
                 return;
             }
 
@@ -1850,7 +1911,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
             const auto particleLayer = ArtifactCore::dynamicPointerCast<ArtifactParticleLayer>(created);
             if (!particleLayer) {
                 QMessageBox::warning(menu_->window(), "Debug Layers",
-                                     "Particle レイヤーの生成に失敗しました。");
+                                     TranslationManager::instance().tr(QStringLiteral("dialog.layer.particle_create_failed"), QStringLiteral("Particle レイヤーの生成に失敗しました。")));
                 return;
             }
 
@@ -1862,35 +1923,34 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
 
             QMessageBox::information(
                 menu_->window(), "Debug Layers",
-                QStringLiteral("Debug Billboard Particle を追加しました。\n\n"
-                "sparkles プリセットを使うので、ビルボード描画の見え方を"
-                "確認しやすいはずです。"));
+                TranslationManager::instance().tr(QStringLiteral("dialog.layer.debug_billboard_message"),
+                    TranslationManager::instance().tr(QStringLiteral("menu.layer.debug_billboard_added"), QStringLiteral("Debug Billboard Particle を追加しました。\n\nsparkles プリセットを使うので、ビルボード描画の見え方を確認しやすいはずです。"))));
             return;
         }
         if (action == addDebugParticleLayerAction) {
             auto* service = ArtifactProjectService::instance();
             if (!service) {
                 QMessageBox::warning(menu_->window(), "Debug Layers",
-                                     "ProjectService が利用できません。");
+                                     TranslationManager::instance().tr(QStringLiteral("dialog.layer.project_service_unavailable"), QStringLiteral("ProjectService が利用できません。")));
                 return;
             }
             if (!ensureCurrentComposition()) {
                 QMessageBox::warning(menu_->window(), "Debug Layers",
-                                     "先にコンポジションを作成してください。");
+                                     TranslationManager::instance().tr(QStringLiteral("dialog.layer.create_composition_first"), QStringLiteral("先にコンポジションを作成してください。")));
                 return;
             }
 
             auto comp = service->currentComposition().lock();
             if (!comp) {
                 QMessageBox::warning(menu_->window(), "Debug Layers",
-                                     "現在のコンポジションを取得できません。");
+                                     TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_current_composition"), QStringLiteral("現在のコンポジションを取得できません。")));
                 return;
             }
 
             auto layer = createParticleDebugLayer();
             if (!layer) {
                 QMessageBox::warning(menu_->window(), "Debug Layers",
-                                     "デバッグ用パーティクルレイヤーの生成に失敗しました。");
+                                     TranslationManager::instance().tr(QStringLiteral("dialog.layer.debug_particle_failed"), QStringLiteral("デバッグ用パーティクルレイヤーの生成に失敗しました。")));
                 return;
             }
 
@@ -1910,15 +1970,15 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
             if (!applyLayerMenuUndoCommand(std::make_unique<AddLayerCommand>(
                     comp, layer, true))) {
                 QMessageBox::warning(menu_->window(), "Debug Layers",
-                                     QStringLiteral("レイヤーの追加に失敗しました。"));
+                                     TranslationManager::instance().tr(QStringLiteral("dialog.layer.add_failed"), QStringLiteral("レイヤーの追加に失敗しました。")));
                 return;
             }
 
             service->selectLayer(layer->id());
             QMessageBox::information(
                 menu_->window(), "Debug Layers",
-                QStringLiteral("Debug Particle Layer を追加しました。\n\n"
-                               "通常の ParticleLayer とは独立したデバッグ用レイヤーです。"));
+                TranslationManager::instance().tr(QStringLiteral("dialog.layer.debug_particle_message"),
+                    TranslationManager::instance().tr(QStringLiteral("menu.layer.debug_particle_added"), QStringLiteral("Debug Particle Layer を追加しました。\n\n通常の ParticleLayer とは独立したデバッグ用レイヤーです。"))));
             return;
         }
         if (action == precomposeAction) { handlePrecompose(); return; }
@@ -2017,6 +2077,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
             }));
     QObject::connect(menu, &QMenu::aboutToShow, menu, [this]() {
         refreshEnabledState();
+        synchronizeLayerMenuActionHints(menu_);
     });
 }
 
@@ -2140,18 +2201,18 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
                 }
             }
         }
-        toggleVisibleAction->setText(visible ? QStringLiteral("非表示にする") : QStringLiteral("表示する"));
-        toggleLockAction->setText(locked ? QStringLiteral("ロックを解除") : QStringLiteral("ロックする"));
-        toggleSoloAction->setText(solo ? QStringLiteral("ソロを解除") : QStringLiteral("ソロにする"));
-        toggleShyAction->setText(shy ? QStringLiteral("シャイを解除") : QStringLiteral("シャイにする"));
+        toggleVisibleAction->setText(visible ? TranslationManager::instance().tr(QStringLiteral("menu.layer.hide"), QStringLiteral("非表示にする")) : TranslationManager::instance().tr(QStringLiteral("menu.layer.show"), QStringLiteral("表示する")));
+        toggleLockAction->setText(locked ? TranslationManager::instance().tr(QStringLiteral("menu.layer.unlock"), QStringLiteral("ロックを解除")) : TranslationManager::instance().tr(QStringLiteral("menu.layer.lock"), QStringLiteral("ロックする")));
+        toggleSoloAction->setText(solo ? TranslationManager::instance().tr(QStringLiteral("menu.layer.unsolo"), QStringLiteral("ソロを解除")) : TranslationManager::instance().tr(QStringLiteral("menu.layer.make_solo"), QStringLiteral("ソロにする")));
+        toggleShyAction->setText(shy ? TranslationManager::instance().tr(QStringLiteral("menu.layer.unshy"), QStringLiteral("シャイを解除")) : TranslationManager::instance().tr(QStringLiteral("menu.layer.make_shy"), QStringLiteral("シャイにする")));
         cacheDefaultAction->setChecked(cachePolicy == 0);
         cacheEnabledAction->setChecked(cachePolicy == 1);
         cacheDisabledAction->setChecked(cachePolicy == 2);
     } else {
-        toggleVisibleAction->setText(QStringLiteral("表示/非表示を切替"));
-        toggleLockAction->setText(QStringLiteral("ロックを切替"));
-        toggleSoloAction->setText(QStringLiteral("ソロを切替"));
-        toggleShyAction->setText(QStringLiteral("シャイを切替"));
+        toggleVisibleAction->setText(TranslationManager::instance().tr(QStringLiteral("menu.layer.toggle_visibility"), QStringLiteral("表示/非表示を切替")));
+        toggleLockAction->setText(TranslationManager::instance().tr(QStringLiteral("menu.layer.toggle_lock"), QStringLiteral("ロックを切替")));
+        toggleSoloAction->setText(TranslationManager::instance().tr(QStringLiteral("menu.layer.toggle_solo"), QStringLiteral("ソロを切替")));
+        toggleShyAction->setText(TranslationManager::instance().tr(QStringLiteral("menu.layer.toggle_shy"), QStringLiteral("シャイを切替")));
         cacheDefaultAction->setChecked(true);
         cacheEnabledAction->setChecked(false);
         cacheDisabledAction->setChecked(false);
@@ -2212,11 +2273,11 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
         const QString displayName = parentName.trimmed().isEmpty()
                                         ? QStringLiteral("Parent")
                                         : parentName.trimmed();
-        selectParentAction->setText(QStringLiteral("親を選択 (%1)").arg(displayName));
-        clearParentAction->setText(QStringLiteral("親を解除 (%1)").arg(displayName));
+        selectParentAction->setText(TranslationManager::instance().tr(QStringLiteral("menu.layer.select_parent_named"), QStringLiteral("親を選択 (%1)")).arg(displayName));
+        clearParentAction->setText(TranslationManager::instance().tr(QStringLiteral("menu.layer.unparent_named"), QStringLiteral("親を解除 (%1)")).arg(displayName));
     } else {
-        selectParentAction->setText(QStringLiteral("親を選択"));
-        clearParentAction->setText(QStringLiteral("親を解除"));
+        selectParentAction->setText(TranslationManager::instance().tr(QStringLiteral("menu.layer.select_parent"), QStringLiteral("親を選択")));
+        clearParentAction->setText(TranslationManager::instance().tr(QStringLiteral("menu.layer.unparent"), QStringLiteral("親を解除")));
     }
     selectParentAction->setEnabled(hasParent);
     clearParentAction->setEnabled(hasParent);
@@ -2470,7 +2531,7 @@ void ArtifactLayerMenu::Impl::handleCreateSolid()
     auto service = ArtifactProjectService::instance();
     if (!ensureCurrentComposition()) {
         QWidget* parentWindow = mainWindow_ ? mainWindow_ : (menu_ ? menu_->window() : nullptr);
-        QMessageBox::warning(parentWindow, "Layer", "コンポジションが選択されていません。");
+        QMessageBox::warning(parentWindow, "Layer", TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_composition_selected"), QStringLiteral("コンポジションが選択されていません。")));
         return;
     }
     QWidget* parentWindow = mainWindow_ ? mainWindow_ : (menu_ ? menu_->window() : nullptr);
@@ -2489,7 +2550,7 @@ void ArtifactLayerMenu::Impl::handleCreateRig()
     if (!ensureCurrentComposition()) {
         QMessageBox::warning(menu_ ? menu_->window() : nullptr,
                              QStringLiteral("Layer"),
-                             QStringLiteral("コンポジションが選択されていません。"));
+                             TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_composition_selected"), QStringLiteral("コンポジションが選択されていません。")));
         return;
     }
 
@@ -2553,7 +2614,7 @@ void ArtifactLayerMenu::Impl::handleCreateQuickLayer()
 {
     if (!ensureCurrentComposition()) {
         QMessageBox::warning(menu_ ? menu_->window() : nullptr, QStringLiteral("Layer"),
-                             QStringLiteral("コンポジションが選択されていません。"));
+                             TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_composition_selected"), QStringLiteral("コンポジションが選択されていません。")));
         return;
     }
 
@@ -2647,7 +2708,7 @@ void ArtifactLayerMenu::Impl::handleCreateQuickLayer()
 void ArtifactLayerMenu::Impl::handleCreateNull()
 {
     if (!ensureCurrentComposition()) {
-        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_composition_selected"), QStringLiteral("コンポジションが選択されていません。")));
         return;
     }
     ArtifactNullLayerInitParams params(uniqueLayerName(u8"Null 1"));
@@ -2663,7 +2724,7 @@ void ArtifactLayerMenu::Impl::handleCreateNull()
 void ArtifactLayerMenu::Impl::handleCreateConstruction()
 {
     if (!ensureCurrentComposition()) {
-        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_composition_selected"), QStringLiteral("コンポジションが選択されていません。")));
         return;
     }
 
@@ -2676,7 +2737,7 @@ void ArtifactLayerMenu::Impl::handleCreateConstruction()
 void ArtifactLayerMenu::Impl::handleCreateAdjust()
 {
     if (!ensureCurrentComposition()) {
-        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_composition_selected"), QStringLiteral("コンポジションが選択されていません。")));
         return;
     }
     ArtifactLayerInitParams params(uniqueLayerName(u8"Adjustment Layer 1"), LayerType::Adjustment);
@@ -2686,7 +2747,7 @@ void ArtifactLayerMenu::Impl::handleCreateAdjust()
 void ArtifactLayerMenu::Impl::handleCreateText()
 {
     if (!ensureCurrentComposition()) {
-        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_composition_selected"), QStringLiteral("コンポジションが選択されていません。")));
         return;
     }
     ArtifactTextLayerInitParams params(uniqueLayerName(u8"Text 1"));
@@ -2696,7 +2757,7 @@ void ArtifactLayerMenu::Impl::handleCreateText()
 void ArtifactLayerMenu::Impl::handleCreateParticle()
 {
     if (!ensureCurrentComposition()) {
-        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_composition_selected"), QStringLiteral("コンポジションが選択されていません。")));
         return;
     }
     ArtifactLayerInitParams params(uniqueLayerName(u8"2D Particle 1"), LayerType::Particle);
@@ -2706,7 +2767,7 @@ void ArtifactLayerMenu::Impl::handleCreateParticle()
 void ArtifactLayerMenu::Impl::handleCreateParticle3D()
 {
     if (!ensureCurrentComposition()) {
-        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_composition_selected"), QStringLiteral("コンポジションが選択されていません。")));
         return;
     }
     ArtifactLayerInitParams params(uniqueLayerName(u8"3D Particle 1"), LayerType::Particle3D);
@@ -2717,7 +2778,7 @@ void ArtifactLayerMenu::Impl::handleCreatePaint()
 {
     if (!ensureCurrentComposition()) {
         QMessageBox::warning(menu_ ? menu_->window() : nullptr, QStringLiteral("Layer"),
-                             QStringLiteral("コンポジションが選択されていません。"));
+                             TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_composition_selected"), QStringLiteral("コンポジションが選択されていません。")));
         return;
     }
 
@@ -2733,7 +2794,7 @@ void ArtifactLayerMenu::Impl::handleCreatePaint()
 void ArtifactLayerMenu::Impl::handleCreateFormParticle()
 {
     if (!ensureCurrentComposition()) {
-        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_composition_selected"), QStringLiteral("コンポジションが選択されていません。")));
         return;
     }
 
@@ -2756,13 +2817,15 @@ void ArtifactLayerMenu::Impl::handleCreateFormParticle()
 void ArtifactLayerMenu::Impl::handleCreateProcedural3D(Procedural3DLayerKind kind)
 {
     if (!ensureCurrentComposition()) {
-        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_composition_selected"), QStringLiteral("コンポジションが選択されていません。")));
         return;
     }
 
     const QString baseName = kind == Procedural3DLayerKind::Terrain
         ? QStringLiteral("Terrain 1")
-        : QStringLiteral("Path Tube 1");
+        : (kind == Procedural3DLayerKind::TextExtrude
+            ? QStringLiteral("Text 3D 1")
+            : QStringLiteral("Path Tube 1"));
     ArtifactLayerInitParams params(uniqueLayerName(baseName), LayerType::Procedural3D);
     auto* service = ArtifactProjectService::instance();
     if (!service) {
@@ -2776,14 +2839,16 @@ void ArtifactLayerMenu::Impl::handleCreateProcedural3D(Procedural3DLayerKind kin
     if (const auto layer = ArtifactCore::dynamicPointerCast<ArtifactProcedural3DLayer>(created)) {
         layer->loadPreset(kind == Procedural3DLayerKind::Terrain
                               ? QStringLiteral("lowPolyTerrain")
-                              : QStringLiteral("neonPathTube"));
+                              : (kind == Procedural3DLayerKind::TextExtrude
+                                     ? QStringLiteral("beveledText3D")
+                                     : QStringLiteral("neonPathTube")));
     }
 }
 
 void ArtifactLayerMenu::Impl::handleCreateCamera()
 {
     if (!ensureCurrentComposition()) {
-        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_composition_selected"), QStringLiteral("コンポジションが選択されていません。")));
         return;
     }
 
@@ -2834,7 +2899,7 @@ void ArtifactLayerMenu::Impl::handleCreateLight()
 {
     if (!ensureCurrentComposition()) {
         QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer",
-                             "コンポジションが選択されていません。");
+                             TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_composition_selected"), QStringLiteral("コンポジションが選択されていません。")));
         return;
     }
 
@@ -2868,13 +2933,13 @@ void ArtifactLayerMenu::Impl::handleCreateLight()
 void ArtifactLayerMenu::Impl::handleCreateAudio(bool spatial)
 {
     if (!ensureCurrentComposition()) {
-        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_composition_selected"), QStringLiteral("コンポジションが選択されていません。")));
         return;
     }
 
     const QString path = QFileDialog::getOpenFileName(
         menu_ ? menu_->window() : nullptr,
-        QStringLiteral("オーディオを選択"),
+        TranslationManager::instance().tr(QStringLiteral("dialog.layer.select_audio"), QStringLiteral("オーディオを選択")),
         QString(),
         QStringLiteral("WAV Audio (*.wav);;All Files (*.*)"));
     if (path.isEmpty()) {
@@ -2891,7 +2956,7 @@ void ArtifactLayerMenu::Impl::handleCreateSvg()
 {
     auto* service = ArtifactProjectService::instance();
     if (!ensureCurrentComposition()) {
-        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_composition_selected"), QStringLiteral("コンポジションが選択されていません。")));
         return;
     }
     if (!service) {
@@ -2900,7 +2965,7 @@ void ArtifactLayerMenu::Impl::handleCreateSvg()
 
     const QString filePath = QFileDialog::getOpenFileName(
         menu_ ? menu_->window() : nullptr,
-        QStringLiteral("SVGを選択"),
+        TranslationManager::instance().tr(QStringLiteral("dialog.layer.svg_select"), QStringLiteral("SVGを選択")),
         QString(),
         QStringLiteral("SVG (*.svg);;All Files (*.*)"));
     if (filePath.isEmpty()) {
@@ -2909,14 +2974,14 @@ void ArtifactLayerMenu::Impl::handleCreateSvg()
     if (!filePath.endsWith(QStringLiteral(".svg"), Qt::CaseInsensitive)) {
         QMessageBox::warning(menu_ ? menu_->window() : nullptr,
                              QStringLiteral("Layer"),
-                             QStringLiteral("SVG ファイルを選択してください。"));
+                             TranslationManager::instance().tr(QStringLiteral("dialog.layer.svg_select_prompt"), QStringLiteral("SVG ファイルを選択してください。")));
         return;
     }
     QSvgRenderer validator(filePath);
     if (!validator.isValid()) {
         QMessageBox::warning(menu_ ? menu_->window() : nullptr,
                              QStringLiteral("Layer"),
-                             QStringLiteral("SVG を読み込めませんでした。"));
+                             TranslationManager::instance().tr(QStringLiteral("dialog.layer.svg_load_failed"), QStringLiteral("SVG を読み込めませんでした。")));
         return;
     }
 
@@ -2935,7 +3000,7 @@ void ArtifactLayerMenu::Impl::handleCreateModel3D()
 {
     auto* service = ArtifactProjectService::instance();
     if (!ensureCurrentComposition()) {
-        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_composition_selected"), QStringLiteral("コンポジションが選択されていません。")));
         return;
     }
     if (!service) {
@@ -2944,7 +3009,7 @@ void ArtifactLayerMenu::Impl::handleCreateModel3D()
 
     const QString filePath = QFileDialog::getOpenFileName(
         menu_ ? menu_->window() : nullptr,
-        QStringLiteral("3Dモデルを選択"),
+        TranslationManager::instance().tr(QStringLiteral("dialog.layer.select_3d_model"), QStringLiteral("3Dモデルを選択")),
         QString(),
         QStringLiteral("3D Models (*.obj *.fbx *.gltf *.glb *.ply *.las *.stl *.dae *.abc *.usd *.usda *.usdc *.usdz *.pmd);;All Files (*.*)"));
     if (filePath.isEmpty()) {
@@ -2965,7 +3030,7 @@ void ArtifactLayerMenu::Impl::handleCreateModel3D()
 void ArtifactLayerMenu::Impl::handleCreatePlane3D()
 {
     if (!ensureCurrentComposition()) {
-        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_composition_selected"), QStringLiteral("コンポジションが選択されていません。")));
         return;
     }
     auto* service = ArtifactProjectService::instance();
@@ -2980,7 +3045,7 @@ void ArtifactLayerMenu::Impl::handleCreatePlane3D()
 void ArtifactLayerMenu::Impl::handleCreateBox3D()
 {
     if (!ensureCurrentComposition()) {
-        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_composition_selected"), QStringLiteral("コンポジションが選択されていません。")));
         return;
     }
     auto* service = ArtifactProjectService::instance();
@@ -2995,7 +3060,7 @@ void ArtifactLayerMenu::Impl::handleCreateBox3D()
 void ArtifactLayerMenu::Impl::handleCreateSphere3D()
 {
     if (!ensureCurrentComposition()) {
-        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_composition_selected"), QStringLiteral("コンポジションが選択されていません。")));
         return;
     }
     auto* service = ArtifactProjectService::instance();
@@ -3010,7 +3075,7 @@ void ArtifactLayerMenu::Impl::handleCreateSphere3D()
 void ArtifactLayerMenu::Impl::handleCreateCylinder3D()
 {
     if (!ensureCurrentComposition()) {
-        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_composition_selected"), QStringLiteral("コンポジションが選択されていません。")));
         return;
     }
     auto* service = ArtifactProjectService::instance();
@@ -3025,7 +3090,7 @@ void ArtifactLayerMenu::Impl::handleCreateCylinder3D()
 void ArtifactLayerMenu::Impl::handleCreateCone3D()
 {
     if (!ensureCurrentComposition()) {
-        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_composition_selected"), QStringLiteral("コンポジションが選択されていません。")));
         return;
     }
     auto* service = ArtifactProjectService::instance();
@@ -3040,7 +3105,7 @@ void ArtifactLayerMenu::Impl::handleCreateCone3D()
 void ArtifactLayerMenu::Impl::handleCreateTorus3D()
 {
     if (!ensureCurrentComposition()) {
-        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_composition_selected"), QStringLiteral("コンポジションが選択されていません。")));
         return;
     }
     auto* service = ArtifactProjectService::instance();
@@ -3055,7 +3120,7 @@ void ArtifactLayerMenu::Impl::handleCreateTorus3D()
 void ArtifactLayerMenu::Impl::handleCreateCapsule3D()
 {
     if (!ensureCurrentComposition()) {
-        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_composition_selected"), QStringLiteral("コンポジションが選択されていません。")));
         return;
     }
     auto* service = ArtifactProjectService::instance();
@@ -3070,7 +3135,7 @@ void ArtifactLayerMenu::Impl::handleCreateCapsule3D()
 void ArtifactLayerMenu::Impl::handleCreatePyramid3D()
 {
     if (!ensureCurrentComposition()) {
-        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_composition_selected"), QStringLiteral("コンポジションが選択されていません。")));
         return;
     }
     auto* service = ArtifactProjectService::instance();
@@ -3085,7 +3150,7 @@ void ArtifactLayerMenu::Impl::handleCreatePyramid3D()
 void ArtifactLayerMenu::Impl::handleCycleLayerCreation(bool reverse)
 {
     if (!ensureCurrentComposition()) {
-        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_composition_selected"), QStringLiteral("コンポジションが選択されていません。")));
         return;
     }
     auto* service = ArtifactProjectService::instance();
@@ -3186,7 +3251,7 @@ void ArtifactLayerMenu::Impl::handleCreateShape(ShapeType type, const QString& n
 {
     auto* service = ArtifactProjectService::instance();
     if (!ensureCurrentComposition()) {
-        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_composition_selected"), QStringLiteral("コンポジションが選択されていません。")));
         return;
     }
     if (!service) {
@@ -3218,7 +3283,7 @@ void ArtifactLayerMenu::Impl::handleDuplicateLayer()
     auto* service = ArtifactProjectService::instance();
     if (!service || selectedLayerId_.isNil()) return;
     if (!service->duplicateLayerInCurrentComposition(selectedLayerId_)) {
-        QMessageBox::warning(menu_->window(), "Layer", "レイヤー複製に失敗しました。");
+        QMessageBox::warning(menu_->window(), "Layer", TranslationManager::instance().tr(QStringLiteral("dialog.layer.duplicate_failed"), QStringLiteral("レイヤー複製に失敗しました。")));
     }
 }
 
@@ -3229,16 +3294,12 @@ void ArtifactLayerMenu::Impl::handleRenameLayer()
     const QString layerName = service->layerNameInCurrentComposition(selectedLayerId_);
 
     bool ok = false;
-    const QString newName = QInputDialog::getText(
-        menu_->window(),
-        "レイヤー名の変更",
-        "新しい名前:",
-        QLineEdit::Normal,
-        layerName,
-        &ok);
+    const QString newName = ArtifactRenameDialog::getName(
+        menu_->window(), ArtifactRenameTarget::Layer, layerName,
+        QStringLiteral("Layer Menu / Selected Layer"), {}, {}, &ok);
     if (!ok) return;
     if (!service->renameLayerInCurrentComposition(selectedLayerId_, newName)) {
-        QMessageBox::warning(menu_->window(), "Layer", "レイヤー名の変更に失敗しました。");
+        QMessageBox::warning(menu_->window(), "Layer", TranslationManager::instance().tr(QStringLiteral("dialog.layer.rename_failed"), QStringLiteral("レイヤー名の変更に失敗しました。")));
     }
 }
 
@@ -3249,11 +3310,11 @@ void ArtifactLayerMenu::Impl::handleDeleteLayer()
     auto comp = service->currentComposition().lock();
     if (!comp) return;
     const QString message = service->layerRemovalConfirmationMessage(comp->id(), selectedLayerId_);
-    if (!ArtifactMessageBox::confirmDelete(menu_->window(), QStringLiteral("レイヤー削除"), message)) {
+    if (!ArtifactMessageBox::confirmDelete(menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.delete"), QStringLiteral("レイヤー削除")), message)) {
         return;
     }
     if (!service->removeLayerFromComposition(comp->id(), selectedLayerId_)) {
-        QMessageBox::warning(menu_->window(), QStringLiteral("削除失敗"), QStringLiteral("レイヤー削除に失敗しました。"));
+        QMessageBox::warning(menu_->window(), TranslationManager::instance().tr(QStringLiteral("dialog.layer.delete_failed_title"), QStringLiteral("削除失敗")), TranslationManager::instance().tr(QStringLiteral("dialog.layer.delete_failed"), QStringLiteral("レイヤー削除に失敗しました。")));
     }
 }
 
@@ -3427,7 +3488,7 @@ void ArtifactLayerMenu::Impl::handleGenerateProxy()
     }
     const QString sourcePath = videoLayer->sourcePath().trimmed();
     if (sourcePath.isEmpty()) {
-        QMessageBox::information(menu_->window(), QStringLiteral("Proxy"), QStringLiteral("Source file が見つかりません。"));
+        QMessageBox::information(menu_->window(), QStringLiteral("Proxy"), TranslationManager::instance().tr(QStringLiteral("dialog.layer.source_file_missing"), QStringLiteral("Source file が見つかりません。")));
         return;
     }
 
@@ -3446,13 +3507,13 @@ void ArtifactLayerMenu::Impl::handleGenerateProxy()
         }
     }
     if (!projectDock) {
-        QMessageBox::information(menu_->window(), QStringLiteral("Proxy"), QStringLiteral("Project dock が見つかりません。"));
+        QMessageBox::information(menu_->window(), QStringLiteral("Proxy"), TranslationManager::instance().tr(QStringLiteral("dialog.layer.project_dock_missing"), QStringLiteral("Project dock が見つかりません。")));
         return;
     }
 
     const auto found = projectDock->selectItemsByFilePaths(QStringList{sourcePath});
     if (!found) {
-        QMessageBox::information(menu_->window(), QStringLiteral("Proxy"), QStringLiteral("Source file を Project で選択できませんでした。"));
+        QMessageBox::information(menu_->window(), QStringLiteral("Proxy"), TranslationManager::instance().tr(QStringLiteral("dialog.layer.source_select_failed"), QStringLiteral("Source file を Project で選択できませんでした。")));
         return;
     }
     projectDock->generateProxyForSelection();
@@ -3475,12 +3536,12 @@ void ArtifactLayerMenu::Impl::handleRevealProxy()
     }
     const QString proxyPath = videoLayer->proxyPath();
     if (proxyPath.isEmpty() || !QFileInfo::exists(proxyPath)) {
-        QMessageBox::information(menu_->window(), QStringLiteral("Proxy"), QStringLiteral("表示できるプロキシがありません。"));
+        QMessageBox::information(menu_->window(), QStringLiteral("Proxy"), TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_proxy_to_show"), QStringLiteral("表示できるプロキシがありません。")));
         return;
     }
     const QString folder = QFileInfo(proxyPath).absolutePath();
     if (!QDesktopServices::openUrl(QUrl::fromLocalFile(folder))) {
-        QMessageBox::warning(menu_->window(), QStringLiteral("Proxy"), QStringLiteral("プロキシフォルダを開けませんでした。"));
+        QMessageBox::warning(menu_->window(), QStringLiteral("Proxy"), TranslationManager::instance().tr(QStringLiteral("dialog.layer.proxy_folder_open_failed"), QStringLiteral("プロキシフォルダを開けませんでした。")));
     }
 }
 
@@ -3507,12 +3568,12 @@ void ArtifactLayerMenu::Impl::handleClearProxy()
     auto* manager = window ? window->findChild<ArtifactProjectManagerWidget*>(QStringLiteral("artifactProjectManagerWidget")) : nullptr;
     if (manager) {
         if (!manager->clearProxyForFilePath(videoLayer->sourcePath())) {
-            QMessageBox::warning(menu_->window(), QStringLiteral("Proxy"), QStringLiteral("プロキシファイルを削除できませんでした。"));
+            QMessageBox::warning(menu_->window(), QStringLiteral("Proxy"), TranslationManager::instance().tr(QStringLiteral("dialog.layer.proxy_delete_failed"), QStringLiteral("プロキシファイルを削除できませんでした。")));
         }
         return;
     }
     if (QFileInfo::exists(proxyPath) && !QFile::remove(proxyPath)) {
-        QMessageBox::warning(menu_->window(), QStringLiteral("Proxy"), QStringLiteral("プロキシファイルを削除できませんでした。"));
+        QMessageBox::warning(menu_->window(), QStringLiteral("Proxy"), TranslationManager::instance().tr(QStringLiteral("dialog.layer.proxy_delete_failed"), QStringLiteral("プロキシファイルを削除できませんでした。")));
         return;
     }
     videoLayer->clearProxy();
@@ -3571,7 +3632,7 @@ void ArtifactLayerMenu::Impl::handleGenerateSelectedProxies()
 {
     const QStringList sourcePaths = selectedVideoSourcePathsInCurrentComposition();
     if (sourcePaths.size() <= 1) {
-        QMessageBox::information(menu_->window(), QStringLiteral("Proxy"), QStringLiteral("複数の動画レイヤーを選択してください。"));
+        QMessageBox::information(menu_->window(), QStringLiteral("Proxy"), TranslationManager::instance().tr(QStringLiteral("dialog.layer.select_multiple_video"), QStringLiteral("複数の動画レイヤーを選択してください。")));
         return;
     }
 
@@ -3590,7 +3651,7 @@ void ArtifactLayerMenu::Impl::handleGenerateSelectedProxies()
         }
     }
     if (!projectDock) {
-        QMessageBox::information(menu_->window(), QStringLiteral("Proxy"), QStringLiteral("Project dock が見つかりません。"));
+        QMessageBox::information(menu_->window(), QStringLiteral("Proxy"), TranslationManager::instance().tr(QStringLiteral("dialog.layer.project_dock_missing"), QStringLiteral("Project dock が見つかりません。")));
         return;
     }
 
@@ -3603,7 +3664,7 @@ void ArtifactLayerMenu::Impl::handleClearSelectedProxies()
 {
     const QStringList sourcePaths = selectedVideoSourcePathsInCurrentComposition();
     if (sourcePaths.size() <= 1) {
-        QMessageBox::information(menu_->window(), QStringLiteral("Proxy"), QStringLiteral("複数の動画レイヤーを選択してください。"));
+        QMessageBox::information(menu_->window(), QStringLiteral("Proxy"), TranslationManager::instance().tr(QStringLiteral("dialog.layer.select_multiple_video"), QStringLiteral("複数の動画レイヤーを選択してください。")));
         return;
     }
 
@@ -3619,7 +3680,7 @@ void ArtifactLayerMenu::Impl::handleClearSelectedProxies()
         }
     }
     if (!projectDock) {
-        QMessageBox::information(menu_->window(), QStringLiteral("Proxy"), QStringLiteral("Project dock が見つかりません。"));
+        QMessageBox::information(menu_->window(), QStringLiteral("Proxy"), TranslationManager::instance().tr(QStringLiteral("dialog.layer.project_dock_missing"), QStringLiteral("Project dock が見つかりません。")));
         return;
     }
 
@@ -3628,7 +3689,7 @@ void ArtifactLayerMenu::Impl::handleClearSelectedProxies()
         anyCleared = projectDock->clearProxyForFilePath(sourcePath) || anyCleared;
     }
     if (!anyCleared) {
-        QMessageBox::information(menu_->window(), QStringLiteral("Proxy"), QStringLiteral("削除できるプロキシがありませんでした。"));
+        QMessageBox::information(menu_->window(), QStringLiteral("Proxy"), TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_proxy_to_delete"), QStringLiteral("削除できるプロキシがありませんでした。")));
     }
 }
 
@@ -3646,13 +3707,13 @@ void ArtifactLayerMenu::Impl::handleSaveMaskPreset()
     auto layer = comp->layerById(selectedLayerId_);
     if (!layer || !layer->hasMasks()) {
         QMessageBox::information(menu_->window(), QStringLiteral("Mask Preset"),
-                                 QStringLiteral("保存するマスクがありません。"));
+                                 TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_mask_to_save"), QStringLiteral("保存するマスクがありません。")));
         return;
     }
 
     const QString filePath = QFileDialog::getSaveFileName(
         menu_ ? menu_->window() : nullptr,
-        QStringLiteral("マスクプリセットを保存"),
+        TranslationManager::instance().tr(QStringLiteral("dialog.layer.mask_preset_save"), QStringLiteral("マスクプリセットを保存")),
         QString(),
         QStringLiteral("Mask Preset (*.mask.json *.json);;All Files (*.*)"));
     if (filePath.isEmpty()) {
@@ -3674,7 +3735,7 @@ void ArtifactLayerMenu::Impl::handleSaveMaskPreset()
 
     if (!ArtifactPresetManager::saveMaskPreset(mask, resolvedPath)) {
         QMessageBox::warning(menu_->window(), QStringLiteral("Mask Preset"),
-                             QStringLiteral("マスクプリセットを保存できませんでした。"));
+                             TranslationManager::instance().tr(QStringLiteral("dialog.layer.mask_preset_save_failed"), QStringLiteral("マスクプリセットを保存できませんでした。")));
     }
 }
 
@@ -3698,8 +3759,8 @@ void ArtifactLayerMenu::Impl::handleCreateMaskFromText()
 
     const LayerMask mask = textLayer->createMaskFromText();
     if (!mask.isEnabled() || mask.maskPathCount() == 0) {
-        QMessageBox::information(menu_->window(), QStringLiteral("テキストマスク"),
-                                 QStringLiteral("マスク化できる文字がありません。"));
+        QMessageBox::information(menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.text_mask"), QStringLiteral("テキストマスク")),
+                                 TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_text_to_mask"), QStringLiteral("マスク化できる文字がありません。")));
         return;
     }
 
@@ -3707,8 +3768,8 @@ void ArtifactLayerMenu::Impl::handleCreateMaskFromText()
     if (!applyLayerMenuUndoCommand(std::make_unique<AddLayerMaskCommand>(
             textLayer, mask, maskIndex))) {
         QMessageBox::warning(
-            menu_->window(), QStringLiteral("テキストマスク"),
-            QStringLiteral("テキストマスクを適用できませんでした。"));
+            menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.text_mask"), QStringLiteral("テキストマスク")),
+            TranslationManager::instance().tr(QStringLiteral("dialog.layer.text_mask_failed"), QStringLiteral("テキストマスクを適用できませんでした。")));
         return;
     }
 }
@@ -3730,8 +3791,8 @@ void ArtifactLayerMenu::Impl::handleConvertShapeToMask()
 
     const LayerMask convertedMask = shapeLayer->createMaskFromShape();
     if (convertedMask.maskPathCount() == 0) {
-        QMessageBox::information(menu_->window(), QStringLiteral("シェイプをマスクに変換"),
-                                 QStringLiteral("変換可能なパスがありません。"));
+        QMessageBox::information(menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.shape_to_mask"), QStringLiteral("シェイプをマスクに変換")),
+                                 TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_convertible_path"), QStringLiteral("変換可能なパスがありません。")));
         return;
     }
 
@@ -3739,8 +3800,8 @@ void ArtifactLayerMenu::Impl::handleConvertShapeToMask()
     if (!applyLayerMenuUndoCommand(std::make_unique<AddLayerMaskCommand>(
             shapeLayer, convertedMask, maskIndex))) {
         QMessageBox::warning(
-            menu_->window(), QStringLiteral("シェイプをマスクに変換"),
-            QStringLiteral("シェイプをマスクへ変換できませんでした。"));
+            menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.shape_to_mask"), QStringLiteral("シェイプをマスクに変換")),
+            TranslationManager::instance().tr(QStringLiteral("dialog.layer.shape_to_mask_failed"), QStringLiteral("シェイプをマスクへ変換できませんでした。")));
         return;
     }
 }
@@ -3760,15 +3821,15 @@ void ArtifactLayerMenu::Impl::handleLinkShapeToMask()
         return;
     }
     if (shapeLayer->shapeMaskLiveLink()) {
-        QMessageBox::information(menu_->window(), QStringLiteral("シェイプをマスクにリンク"),
-                                 QStringLiteral("既にliveリンク中です。"));
+        QMessageBox::information(menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.link_shape_to_mask"), QStringLiteral("シェイプをマスクにリンク")),
+                                 TranslationManager::instance().tr(QStringLiteral("dialog.layer.already_live_linked"), QStringLiteral("既にliveリンク中です。")));
         return;
     }
 
     const LayerMask convertedMask = shapeLayer->createMaskFromShape();
     if (convertedMask.maskPathCount() == 0) {
-        QMessageBox::information(menu_->window(), QStringLiteral("シェイプをマスクにリンク"),
-                                 QStringLiteral("変換可能なパスがありません。"));
+        QMessageBox::information(menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.link_shape_to_mask"), QStringLiteral("シェイプをマスクにリンク")),
+                                 TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_convertible_path"), QStringLiteral("変換可能なパスがありません。")));
         return;
     }
 
@@ -3776,8 +3837,8 @@ void ArtifactLayerMenu::Impl::handleLinkShapeToMask()
     if (!applyLayerMenuUndoCommand(std::make_unique<AddLayerMaskCommand>(
             shapeLayer, convertedMask, maskIndex))) {
         QMessageBox::warning(
-            menu_->window(), QStringLiteral("シェイプをマスクにリンク"),
-            QStringLiteral("シェイプをマスクへ変換できませんでした。"));
+            menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.link_shape_to_mask"), QStringLiteral("シェイプをマスクにリンク")),
+            TranslationManager::instance().tr(QStringLiteral("dialog.layer.shape_to_mask_failed"), QStringLiteral("シェイプをマスクへ変換できませんでした。")));
         return;
     }
     // Link setup itself is not undoable; the pushed slot above is.
@@ -3839,14 +3900,14 @@ void ArtifactLayerMenu::Impl::handleConvertMaskToShape()
     }
 
     if (createdCount == 0) {
-        QMessageBox::information(menu_->window(), QStringLiteral("マスクをシェイプに変換"),
-                                 QStringLiteral("変換可能なマスクパスがありません。"));
+        QMessageBox::information(menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.mask_to_shape"), QStringLiteral("マスクをシェイプに変換")),
+                                 TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_convertible_mask_path"), QStringLiteral("変換可能なマスクパスがありません。")));
         return;
     }
     if (!applyLayerMenuUndoCommand(std::move(transaction))) {
         QMessageBox::warning(
-            menu_->window(), QStringLiteral("マスクをシェイプに変換"),
-            QStringLiteral("マスクをシェイプへ変換できませんでした。"));
+            menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.mask_to_shape"), QStringLiteral("マスクをシェイプに変換")),
+            TranslationManager::instance().tr(QStringLiteral("dialog.layer.mask_to_shape_failed"), QStringLiteral("マスクをシェイプへ変換できませんでした。")));
         return;
     }
 }
@@ -4059,7 +4120,7 @@ void ArtifactLayerMenu::Impl::handleImportSvgIntoShape()
 
     const QString filePath = QFileDialog::getOpenFileName(
         menu_ ? menu_->window() : nullptr,
-        QStringLiteral("SVGをシェイプに取り込み"),
+        TranslationManager::instance().tr(QStringLiteral("menu.layer.svg_import"), QStringLiteral("SVGをシェイプに取り込み")),
         QString(),
         QStringLiteral("SVG Files (*.svg);;All Files (*.*)"));
     if (filePath.isEmpty()) {
@@ -4068,13 +4129,13 @@ void ArtifactLayerMenu::Impl::handleImportSvgIntoShape()
 
     QFile file(filePath);
     if (!file.exists() || file.size() > 64 * 1024 * 1024) {
-        QMessageBox::warning(menu_->window(), QStringLiteral("SVGをシェイプに取り込み"),
-                             QStringLiteral("ファイルを開けません(64MB上限)。"));
+        QMessageBox::warning(menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.svg_import"), QStringLiteral("SVGをシェイプに取り込み")),
+                             TranslationManager::instance().tr(QStringLiteral("dialog.layer.file_too_large"), QStringLiteral("ファイルを開けません(64MB上限)。")));
         return;
     }
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        QMessageBox::warning(menu_->window(), QStringLiteral("SVGをシェイプに取り込み"),
-                             QStringLiteral("ファイルを読み込めませんでした。"));
+        QMessageBox::warning(menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.svg_import"), QStringLiteral("SVGをシェイプに取り込み")),
+                             TranslationManager::instance().tr(QStringLiteral("dialog.layer.file_load_failed"), QStringLiteral("ファイルを読み込めませんでした。")));
         return;
     }
     const QString text = QString::fromUtf8(file.readAll());
@@ -4082,16 +4143,16 @@ void ArtifactLayerMenu::Impl::handleImportSvgIntoShape()
     const std::vector<Artifact::ShapeContent> parsed =
         ArtifactShapeLayer::parseShapeContentsFromSvg(text);
     if (parsed.empty()) {
-        QMessageBox::information(menu_->window(), QStringLiteral("SVGをシェイプに取り込み"),
-                                 QStringLiteral("変換可能なシェイプがありません。"));
+        QMessageBox::information(menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.svg_import"), QStringLiteral("SVGをシェイプに取り込み")),
+                                 TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_convertible_shape"), QStringLiteral("変換可能なシェイプがありません。")));
         return;
     }
 
     const int beforeCount = shapeLayer->shapeContentCount();
     if (!applyLayerMenuUndoCommand(std::make_unique<ShapeSvgImportUndoCommand>(
             shapeLayer, beforeCount, parsed))) {
-        QMessageBox::warning(menu_->window(), QStringLiteral("SVGをシェイプに取り込み"),
-                             QStringLiteral("シェイプへ取り込めませんでした。"));
+        QMessageBox::warning(menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.svg_import"), QStringLiteral("SVGをシェイプに取り込み")),
+                             TranslationManager::instance().tr(QStringLiteral("dialog.layer.shape_import_failed"), QStringLiteral("シェイプへ取り込めませんでした。")));
         return;
     }
     service->selectLayer(shapeLayer->id());
@@ -4117,13 +4178,13 @@ void ArtifactLayerMenu::Impl::handleCreateShapesFromVectorLayer()
     QFile file(sourcePath);
     if (sourcePath.trimmed().isEmpty() || !file.exists() ||
         file.size() > 64 * 1024 * 1024) {
-        QMessageBox::warning(menu_->window(), QStringLiteral("ベクターからシェイプを作成"),
-                             QStringLiteral("SVGソースを開けません。"));
+        QMessageBox::warning(menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.vector_to_shape"), QStringLiteral("ベクターからシェイプを作成")),
+                             TranslationManager::instance().tr(QStringLiteral("dialog.layer.svg_source_open_failed"), QStringLiteral("SVGソースを開けません。")));
         return;
     }
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        QMessageBox::warning(menu_->window(), QStringLiteral("ベクターからシェイプを作成"),
-                             QStringLiteral("SVGソースを読み込めませんでした。"));
+        QMessageBox::warning(menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.vector_to_shape"), QStringLiteral("ベクターからシェイプを作成")),
+                             TranslationManager::instance().tr(QStringLiteral("dialog.layer.svg_source_load_failed"), QStringLiteral("SVGソースを読み込めませんでした。")));
         return;
     }
     const QString text = QString::fromUtf8(file.readAll());
@@ -4131,8 +4192,8 @@ void ArtifactLayerMenu::Impl::handleCreateShapesFromVectorLayer()
     const std::vector<Artifact::ShapeContent> parsed =
         ArtifactShapeLayer::parseShapeContentsFromSvg(text);
     if (parsed.empty()) {
-        QMessageBox::information(menu_->window(), QStringLiteral("ベクターからシェイプを作成"),
-                                 QStringLiteral("変換可能なシェイプがありません。"));
+        QMessageBox::information(menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.vector_to_shape"), QStringLiteral("ベクターからシェイプを作成")),
+                                 TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_convertible_shape"), QStringLiteral("変換可能なシェイプがありません。")));
         return;
     }
 
@@ -4142,8 +4203,8 @@ void ArtifactLayerMenu::Impl::handleCreateShapesFromVectorLayer()
     shapeLayer->setSize(std::max(1, sourceSize.width), std::max(1, sourceSize.height));
     for (const auto& content : parsed) {
         if (shapeLayer->addShapeContent(content) < 0) {
-            QMessageBox::warning(menu_->window(), QStringLiteral("ベクターからシェイプを作成"),
-                                 QStringLiteral("シェイプ内容を追加できませんでした。"));
+            QMessageBox::warning(menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.vector_to_shape"), QStringLiteral("ベクターからシェイプを作成")),
+                                 TranslationManager::instance().tr(QStringLiteral("dialog.layer.shape_content_add_failed"), QStringLiteral("シェイプ内容を追加できませんでした。")));
             return;
         }
     }
@@ -4152,8 +4213,8 @@ void ArtifactLayerMenu::Impl::handleCreateShapesFromVectorLayer()
     transaction->addChild(
         std::make_unique<AddLayerCommand>(composition, shapeLayer));
     if (!applyLayerMenuUndoCommand(std::move(transaction))) {
-        QMessageBox::warning(menu_->window(), QStringLiteral("ベクターからシェイプを作成"),
-                             QStringLiteral("シェイプレイヤーを作成できませんでした。"));
+        QMessageBox::warning(menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.vector_to_shape"), QStringLiteral("ベクターからシェイプを作成")),
+                             TranslationManager::instance().tr(QStringLiteral("dialog.layer.shape_layer_create_failed"), QStringLiteral("シェイプレイヤーを作成できませんでした。")));
         return;
     }
     service->selectLayer(shapeLayer->id());
@@ -4177,7 +4238,7 @@ void ArtifactLayerMenu::Impl::handleLoadMaskPreset()
 
     const QString filePath = QFileDialog::getOpenFileName(
         menu_ ? menu_->window() : nullptr,
-        QStringLiteral("マスクプリセットを適用"),
+        TranslationManager::instance().tr(QStringLiteral("dialog.layer.mask_preset_apply"), QStringLiteral("マスクプリセットを適用")),
         QString(),
         QStringLiteral("Mask Preset (*.mask.json *.json);;All Files (*.*)"));
     if (filePath.isEmpty()) {
@@ -4187,7 +4248,7 @@ void ArtifactLayerMenu::Impl::handleLoadMaskPreset()
     LayerMask mask;
     if (!ArtifactPresetManager::loadMaskPreset(mask, filePath)) {
         QMessageBox::warning(menu_->window(), QStringLiteral("Mask Preset"),
-                             QStringLiteral("マスクプリセットを読み込めませんでした。"));
+                             TranslationManager::instance().tr(QStringLiteral("dialog.layer.mask_preset_load_failed"), QStringLiteral("マスクプリセットを読み込めませんでした。")));
         return;
     }
 
@@ -4251,7 +4312,7 @@ void ArtifactLayerMenu::Impl::handleApplyLipSyncToSwitchLayer()
     auto comp = service->currentComposition().lock();
     if (!comp) {
         QMessageBox::warning(menu_->window(), QStringLiteral("Lip Sync"),
-                             QStringLiteral("コンポジションが選択されていません。"));
+                             TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_composition_selected"), QStringLiteral("コンポジションが選択されていません。")));
         return;
     }
 
@@ -4259,7 +4320,7 @@ void ArtifactLayerMenu::Impl::handleApplyLipSyncToSwitchLayer()
     auto* selectionManager = app ? app->layerSelectionManager() : nullptr;
     if (!selectionManager) {
         QMessageBox::warning(menu_->window(), QStringLiteral("Lip Sync"),
-                             QStringLiteral("選択レイヤーを取得できませんでした。"));
+                             TranslationManager::instance().tr(QStringLiteral("dialog.layer.selected_layers_unavailable"), QStringLiteral("選択レイヤーを取得できませんでした。")));
         return;
     }
 
@@ -4284,12 +4345,12 @@ void ArtifactLayerMenu::Impl::handleApplyLipSyncToSwitchLayer()
     auto switchTargetPtr = ArtifactCore::dynamicPointerCast<ArtifactSwitchLayer>(switchLayer);
     if (!audio || !switchTargetPtr) {
         QMessageBox::warning(menu_->window(), QStringLiteral("Lip Sync"),
-                             QStringLiteral("音声レイヤーと Switch Layer の両方を選択してください。"));
+                             TranslationManager::instance().tr(QStringLiteral("dialog.layer.select_audio_and_switch"), QStringLiteral("音声レイヤーと Switch Layer の両方を選択してください。")));
         return;
     }
 
     QMessageBox::information(menu_->window(), QStringLiteral("Lip Sync"),
-                             QStringLiteral("Lip Sync の適用は現在のビルドでは無効化されています。"));
+                             TranslationManager::instance().tr(QStringLiteral("dialog.layer.lipsync_disabled"), QStringLiteral("Lip Sync の適用は現在のビルドでは無効化されています。")));
 }
 
 void ArtifactLayerMenu::Impl::handlePrecompose()
@@ -4300,14 +4361,14 @@ void ArtifactLayerMenu::Impl::handlePrecompose()
     }
     auto comp = service->currentComposition().lock();
     if (!comp) {
-        QMessageBox::warning(menu_->window(), "プリコンポーズ", "コンポジションが選択されていません。");
+        QMessageBox::warning(menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.precompose"), QStringLiteral("プリコンポーズ")), TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_composition_selected"), QStringLiteral("コンポジションが選択されていません。")));
         return;
     }
 
     auto* app = ArtifactApplicationManager::instance();
     auto* selectionManager = app ? app->layerSelectionManager() : nullptr;
     if (!selectionManager) {
-        QMessageBox::warning(menu_->window(), "プリコンポーズ", "選択レイヤーを取得できませんでした。");
+        QMessageBox::warning(menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.precompose"), QStringLiteral("プリコンポーズ")), TranslationManager::instance().tr(QStringLiteral("dialog.layer.selected_layers_unavailable"), QStringLiteral("選択レイヤーを取得できませんでした。")));
         return;
     }
 
@@ -4333,7 +4394,7 @@ void ArtifactLayerMenu::Impl::handlePrecompose()
     }
 
     if (selectedIds.isEmpty()) {
-        QMessageBox::warning(menu_->window(), "プリコンポーズ", "選択レイヤーがありません。");
+        QMessageBox::warning(menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.precompose"), QStringLiteral("プリコンポーズ")), TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_selected_layer"), QStringLiteral("選択レイヤーがありません。")));
         return;
     }
 
@@ -4350,7 +4411,7 @@ void ArtifactLayerMenu::Impl::handlePrecompose()
     if (!service->precomposeLayersWithUndo(
             selectedIds, UniString(dialog.newCompositionName()),
             dialog.openNewComposition(), dialog.matchWorkspaceDuration(), mode)) {
-        QMessageBox::warning(menu_->window(), "プリコンポーズ", "プリコンポーズに失敗しました。");
+        QMessageBox::warning(menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.precompose"), QStringLiteral("プリコンポーズ")), TranslationManager::instance().tr(QStringLiteral("dialog.layer.precompose_failed"), QStringLiteral("プリコンポーズに失敗しました。")));
     }
 }
 
@@ -4381,19 +4442,19 @@ void ArtifactLayerMenu::Impl::handleAddCompositionLayer()
         };
     collect(service->projectItems());
     if (names.isEmpty()) {
-        QMessageBox::information(menu_->window(), QStringLiteral("コンポジションを追加"),
-                                 QStringLiteral("追加できる別コンポジションがありません。"));
+        QMessageBox::information(menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.add_composition_short"), QStringLiteral("コンポジションを追加")),
+                                 TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_other_composition"), QStringLiteral("追加できる別コンポジションがありません。")));
         return;
     }
     bool accepted = false;
     const QString choice = QInputDialog::getItem(
-        menu_->window(), QStringLiteral("コンポジションをレイヤーとして追加"),
-        QStringLiteral("コンポジション"), names, 0, false, &accepted);
+        menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.add_composition"), QStringLiteral("コンポジションをレイヤーとして追加")),
+        TranslationManager::instance().tr(QStringLiteral("menu.layer.composition"), QStringLiteral("コンポジション")), names, 0, false, &accepted);
     if (!accepted) return;
     const int index = names.indexOf(choice);
     if (index < 0 || !service->addCompositionLayerToCurrentCompositionWithUndo(ids[index])) {
-        QMessageBox::warning(menu_->window(), QStringLiteral("コンポジションを追加"),
-                             QStringLiteral("循環参照、またはレイヤー追加により失敗しました。"));
+        QMessageBox::warning(menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.add_composition_short"), QStringLiteral("コンポジションを追加")),
+                             TranslationManager::instance().tr(QStringLiteral("dialog.layer.add_failed_cycle"), QStringLiteral("循環参照、またはレイヤー追加により失敗しました。")));
     }
 }
 
@@ -4414,8 +4475,8 @@ void ArtifactLayerMenu::Impl::handleUnprecompose()
 
     const auto reply = QMessageBox::question(
         menu_->window(),
-        QStringLiteral("プリコンポーズを解除"),
-        QStringLiteral("選択したプリコンポーズを解除しますか？"),
+        TranslationManager::instance().tr(QStringLiteral("menu.layer.unprecompose"), QStringLiteral("プリコンポーズを解除")),
+        TranslationManager::instance().tr(QStringLiteral("dialog.layer.confirm_unprecompose"), QStringLiteral("選択したプリコンポーズを解除しますか？")),
         QMessageBox::Yes | QMessageBox::No,
         QMessageBox::No);
     if (reply != QMessageBox::Yes) {
@@ -4423,8 +4484,8 @@ void ArtifactLayerMenu::Impl::handleUnprecompose()
     }
 
     if (!service->unprecomposeLayerWithUndo(selectedLayerId_, true)) {
-        QMessageBox::warning(menu_->window(), QStringLiteral("プリコンポーズを解除"),
-                             QStringLiteral("プリコンポーズの解除に失敗しました。"));
+        QMessageBox::warning(menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.unprecompose"), QStringLiteral("プリコンポーズを解除")),
+                             TranslationManager::instance().tr(QStringLiteral("dialog.layer.unprecompose_failed"), QStringLiteral("プリコンポーズの解除に失敗しました。")));
     }
 }
 
@@ -4438,8 +4499,8 @@ void ArtifactLayerMenu::Impl::handleGroupSelection()
     bool ok = false;
     const QString groupName = QInputDialog::getText(
         menu_->window(),
-        "グループ化",
-        "グループ名:",
+        TranslationManager::instance().tr(QStringLiteral("menu.layer.group"), QStringLiteral("グループ化")),
+        TranslationManager::instance().tr(QStringLiteral("dialog.layer.group_name"), QStringLiteral("グループ名:")),
         QLineEdit::Normal,
         QStringLiteral("Group 1"),
         &ok);
@@ -4448,7 +4509,7 @@ void ArtifactLayerMenu::Impl::handleGroupSelection()
     }
 
     if (!service->groupSelectedLayersWithUndo(UniString(groupName))) {
-        QMessageBox::warning(menu_->window(), "グループ化", "選択レイヤーをグループ化できませんでした。");
+        QMessageBox::warning(menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.group"), QStringLiteral("グループ化")), TranslationManager::instance().tr(QStringLiteral("dialog.layer.group_failed"), QStringLiteral("選択レイヤーをグループ化できませんでした。")));
     }
 }
 
@@ -4460,7 +4521,7 @@ void ArtifactLayerMenu::Impl::handleUngroup()
     }
 
     if (!service->ungroupSelectedGroupWithUndo()) {
-        QMessageBox::warning(menu_->window(), "グループ解除", "グループを解除できませんでした。グループを選択してください。");
+        QMessageBox::warning(menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.ungroup"), QStringLiteral("グループ解除")), TranslationManager::instance().tr(QStringLiteral("dialog.layer.ungroup_failed"), QStringLiteral("グループを解除できませんでした。グループを選択してください。")));
     }
 }
 
@@ -4468,13 +4529,13 @@ void ArtifactLayerMenu::Impl::handleSplitLayer()
 {
     if (selectedLayerId_.isNil()) {
         QMessageBox::warning(menu_->window(), QStringLiteral("Layer"),
-                             QStringLiteral("分割するレイヤーが選択されていません。"));
+                             TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_layer_to_split"), QStringLiteral("分割するレイヤーが選択されていません。")));
         return;
     }
     auto* svc = ArtifactProjectService::instance();
     if (!svc) {
         QMessageBox::warning(menu_->window(), QStringLiteral("Layer"),
-                             QStringLiteral("アクティブコンテキストが利用できません。"));
+                             TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_active_context"), QStringLiteral("アクティブコンテキストが利用できません。")));
         return;
     }
     auto comp = svc->currentComposition().lock();
@@ -4493,7 +4554,7 @@ void ArtifactLayerMenu::Impl::handleTrackCamera()
 
     auto layer = comp->layerById(selectedLayerId_);
     if (!layer || !layer->hasVideo()) {
-        QMessageBox::warning(menu_->window(), "3D Tracker", "動画レイヤーを選択してください。");
+        QMessageBox::warning(menu_->window(), "3D Tracker", TranslationManager::instance().tr(QStringLiteral("dialog.layer.select_video_layer"), QStringLiteral("動画レイヤーを選択してください。")));
         return;
     }
 
@@ -4524,9 +4585,9 @@ void ArtifactLayerMenu::Impl::handleTrackCamera()
         });
 
     if (success) {
-        QMessageBox::information(menu_->window(), "3D Tracker", "トラッキングが完了しました。カメラと特徴点レイヤーが作成されました。");
+        QMessageBox::information(menu_->window(), "3D Tracker", TranslationManager::instance().tr(QStringLiteral("dialog.layer.tracking_done"), QStringLiteral("トラッキングが完了しました。カメラと特徴点レイヤーが作成されました。")));
     } else {
-        QMessageBox::warning(menu_->window(), "3D Tracker", "トラッキングに失敗しました。十分な特徴点が見つからなかった可能性があります。");
+        QMessageBox::warning(menu_->window(), "3D Tracker", TranslationManager::instance().tr(QStringLiteral("dialog.layer.tracking_failed"), QStringLiteral("トラッキングに失敗しました。十分な特徴点が見つからなかった可能性があります。")));
     }
 }
 
@@ -4545,7 +4606,7 @@ void ArtifactLayerMenu::Impl::handleCreateMotionTracker()
     auto layer = comp->layerById(selectedLayerId_);
     auto videoLayer = layer ? ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer) : nullptr;
     if (!videoLayer || !videoLayer->hasVideo()) {
-        QMessageBox::warning(menu_->window(), "Motion Tracker", "動画レイヤーを選択してください。");
+        QMessageBox::warning(menu_->window(), "Motion Tracker", TranslationManager::instance().tr(QStringLiteral("dialog.layer.select_video_layer"), QStringLiteral("動画レイヤーを選択してください。")));
         return;
     }
 
@@ -4557,7 +4618,7 @@ void ArtifactLayerMenu::Impl::handleCreateMotionTracker()
             }
         }
         QMessageBox::information(menu_->window(), "Motion Tracker",
-                                 QStringLiteral("このレイヤーには既存のトラッカー #%1 が紐づいています。")
+                                 TranslationManager::instance().tr(QStringLiteral("dialog.layer.tracker_already_linked"), QStringLiteral("このレイヤーには既存のトラッカー #%1 が紐づいています。"))
                                      .arg(existingTrackerId));
         return;
     }
@@ -4567,7 +4628,7 @@ void ArtifactLayerMenu::Impl::handleCreateMotionTracker()
                                  : QStringLiteral("%1 Tracker").arg(videoLayer->layerName().trimmed());
     auto* tracker = ArtifactCore::TrackerManager::instance().createTracker(baseName);
     if (!tracker) {
-        QMessageBox::warning(menu_->window(), "Motion Tracker", "トラッカーを作成できませんでした。");
+        QMessageBox::warning(menu_->window(), "Motion Tracker", TranslationManager::instance().tr(QStringLiteral("dialog.layer.tracker_create_failed"), QStringLiteral("トラッカーを作成できませんでした。")));
         return;
     }
 
@@ -4584,7 +4645,7 @@ void ArtifactLayerMenu::Impl::handleCreateMotionTracker()
     }
 
     QMessageBox::information(menu_->window(), "Motion Tracker",
-                             QStringLiteral("トラッカー #%1 を作成してレイヤーに紐づけました。")
+                             TranslationManager::instance().tr(QStringLiteral("dialog.layer.tracker_created"), QStringLiteral("トラッカー #%1 を作成してレイヤーに紐づけました。"))
                                  .arg(tracker->id()));
 }
 
@@ -4939,8 +5000,8 @@ void ArtifactLayerMenu::Impl::handleRadialTransform()
     }
     if (layers.size() < 2) {
         QMessageBox::information(
-            menu_->window(), QStringLiteral("放射状変形"),
-            QStringLiteral("変形ロックされていないレイヤーを2つ以上選択してください。"));
+            menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.radial_warp"), QStringLiteral("放射状変形")),
+            TranslationManager::instance().tr(QStringLiteral("dialog.layer.select_two_unlocked"), QStringLiteral("変形ロックされていないレイヤーを2つ以上選択してください。")));
         return;
     }
 
@@ -4948,26 +5009,26 @@ void ArtifactLayerMenu::Impl::handleRadialTransform()
     for (const auto& layer : layers) {
         if (layer->parentLayerId() != commonParentId) {
             QMessageBox::information(
-                menu_->window(), QStringLiteral("放射状変形"),
-                QStringLiteral("異なる親を持つレイヤーは座標系が異なるため、同じ親のレイヤーだけを選択してください。"));
+                menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.radial_warp"), QStringLiteral("放射状変形")),
+                TranslationManager::instance().tr(QStringLiteral("dialog.layer.same_parent_required"), QStringLiteral("異なる親を持つレイヤーは座標系が異なるため、同じ親のレイヤーだけを選択してください。")));
             return;
         }
     }
 
     bool accepted = false;
     const double expansionPercent = QInputDialog::getDouble(
-        menu_->window(), QStringLiteral("放射状変形"),
-        QStringLiteral("外側レイヤーの移動量 (%)\n"
-                       "正数で外側へ、負数で中心へ移動します。"),
+        menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.radial_warp"), QStringLiteral("放射状変形")),
+        TranslationManager::instance().tr(QStringLiteral("dialog.layer.outer_layer_amount_label"),
+            TranslationManager::instance().tr(QStringLiteral("dialog.layer.outer_offset"), QStringLiteral("外側レイヤーの移動量 (%)\n正数で外側へ、負数で中心へ移動します。"))),
         25.0, -90.0, 500.0, 1, &accepted);
     if (!accepted) {
         return;
     }
 
     const double edgeScalePercent = QInputDialog::getDouble(
-        menu_->window(), QStringLiteral("放射状変形"),
-        QStringLiteral("最外周のスケール (%)\n"
-                       "中心は元のスケールを維持します。"),
+        menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.radial_warp"), QStringLiteral("放射状変形")),
+        TranslationManager::instance().tr(QStringLiteral("dialog.layer.outer_scale_label"),
+            TranslationManager::instance().tr(QStringLiteral("dialog.layer.outer_scale"), QStringLiteral("最外周のスケール (%)\n中心は元のスケールを維持します。"))),
         70.0, 1.0, 500.0, 1, &accepted);
     if (!accepted) {
         return;
@@ -4990,8 +5051,8 @@ void ArtifactLayerMenu::Impl::handleRadialTransform()
     }
     if (maxDistance <= 0.0001) {
         QMessageBox::information(
-            menu_->window(), QStringLiteral("放射状変形"),
-            QStringLiteral("選択レイヤーが同じ位置にあるため、距離に基づく変形を計算できません。"));
+            menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.radial_warp"), QStringLiteral("放射状変形")),
+            TranslationManager::instance().tr(QStringLiteral("dialog.layer.same_position_warp_failed"), QStringLiteral("選択レイヤーが同じ位置にあるため、距離に基づく変形を計算できません。")));
         return;
     }
 
@@ -5057,14 +5118,14 @@ void ArtifactLayerMenu::Impl::handleCreateLiveTransformField(const QString& requ
                               ? normalizedShape
                               : QStringLiteral("radial");
     const QString dialogTitle = shape == QStringLiteral("box")
-                                    ? QStringLiteral("ライブBox Field")
+                                    ? TranslationManager::instance().tr(QStringLiteral("menu.layer.live_box_field"), QStringLiteral("ライブBox Field"))
                                     : shape == QStringLiteral("linear")
-                                          ? QStringLiteral("ライブLinear Field")
+                                          ? TranslationManager::instance().tr(QStringLiteral("menu.layer.live_linear_field"), QStringLiteral("ライブLinear Field"))
                                           : shape == QStringLiteral("noise")
-                                                ? QStringLiteral("ライブNoise Field")
+                                                ? TranslationManager::instance().tr(QStringLiteral("menu.layer.live_noise_field"), QStringLiteral("ライブNoise Field"))
                                                 : shape == QStringLiteral("solid")
-                                                      ? QStringLiteral("ライブSolid Field")
-                                                      : QStringLiteral("ライブ放射状Field");
+                                                      ? TranslationManager::instance().tr(QStringLiteral("menu.layer.live_solid_field"), QStringLiteral("ライブSolid Field"))
+                                                      : TranslationManager::instance().tr(QStringLiteral("menu.layer.live_radial_field"), QStringLiteral("ライブ放射状Field"));
     auto* selection = ArtifactLayerSelectionManager::instance();
     if (!selection) {
         return;
@@ -5083,7 +5144,7 @@ void ArtifactLayerMenu::Impl::handleCreateLiveTransformField(const QString& requ
     if (layers.size() < 2) {
         QMessageBox::information(
             menu_->window(), dialogTitle,
-            QStringLiteral("変形ロックされていないレイヤーを2つ以上選択してください。"));
+            TranslationManager::instance().tr(QStringLiteral("dialog.layer.select_two_unlocked"), QStringLiteral("変形ロックされていないレイヤーを2つ以上選択してください。")));
         return;
     }
 
@@ -5092,7 +5153,7 @@ void ArtifactLayerMenu::Impl::handleCreateLiveTransformField(const QString& requ
         if (layer->parentLayerId() != commonParentId) {
             QMessageBox::information(
                 menu_->window(), dialogTitle,
-                QStringLiteral("異なる親を持つレイヤーは座標系が異なるため、同じ親のレイヤーだけを選択してください。"));
+                TranslationManager::instance().tr(QStringLiteral("dialog.layer.same_parent_required"), QStringLiteral("異なる親を持つレイヤーは座標系が異なるため、同じ親のレイヤーだけを選択してください。")));
             return;
         }
     }
@@ -5100,21 +5161,21 @@ void ArtifactLayerMenu::Impl::handleCreateLiveTransformField(const QString& requ
     bool accepted = false;
     const double expansionPercent = QInputDialog::getDouble(
         menu_->window(), dialogTitle,
-        QStringLiteral("外側レイヤーの移動量 (%)"),
+        TranslationManager::instance().tr(QStringLiteral("dialog.layer.outer_layer_amount"), QStringLiteral("外側レイヤーの移動量 (%)")),
         25.0, -90.0, 500.0, 1, &accepted);
     if (!accepted) {
         return;
     }
     const double edgeScalePercent = QInputDialog::getDouble(
         menu_->window(), dialogTitle,
-        QStringLiteral("最外周のスケール (%)"),
+        TranslationManager::instance().tr(QStringLiteral("dialog.layer.outer_scale"), QStringLiteral("最外周のスケール (%)")),
         70.0, 1.0, 500.0, 1, &accepted);
     if (!accepted) {
         return;
     }
     const double strength = QInputDialog::getDouble(
         menu_->window(), dialogTitle,
-        QStringLiteral("強さ (strength)"),
+        TranslationManager::instance().tr(QStringLiteral("dialog.layer.strength"), QStringLiteral("強さ (strength)")),
         1.0, 0.0, 4.0, 2, &accepted);
     if (!accepted) {
         return;
@@ -5130,7 +5191,7 @@ void ArtifactLayerMenu::Impl::handleCreateLiveTransformField(const QString& requ
 
     const auto invertChoice = QMessageBox::question(
         menu_->window(), dialogTitle,
-        QStringLiteral("Field を反転しますか?"),
+        TranslationManager::instance().tr(QStringLiteral("dialog.layer.invert_field_confirm"), QStringLiteral("Field を反転しますか?")),
         QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
     const bool invert = invertChoice == QMessageBox::Yes;
 
@@ -5199,7 +5260,7 @@ void ArtifactLayerMenu::Impl::handleCreateLiveTransformField(const QString& requ
          secondaryRadius <= 0.0001)) {
         QMessageBox::information(
             menu_->window(), dialogTitle,
-            QStringLiteral("選択レイヤーが同じ位置にあるため、Fieldを作成できません。"));
+            TranslationManager::instance().tr(QStringLiteral("dialog.layer.same_position_field_failed"), QStringLiteral("選択レイヤーが同じ位置にあるため、Fieldを作成できません。")));
         return;
     }
     field.radius = radius;
@@ -5222,7 +5283,7 @@ void ArtifactLayerMenu::Impl::handleSelectLiveRadialField()
             ? ArtifactProjectService::instance()->currentComposition().lock()
             : ArtifactCompositionPtr{};
     auto selected = chooseTransformField(
-        menu_->window(), composition, QStringLiteral("ライブFieldを選択"));
+        menu_->window(), composition, TranslationManager::instance().tr(QStringLiteral("menu.layer.live_field_select"), QStringLiteral("ライブFieldを選択")));
     if (!selected.has_value() || !composition) {
         return;
     }
@@ -5319,7 +5380,7 @@ void ArtifactLayerMenu::Impl::handleEditLiveRadialField()
             ? ArtifactProjectService::instance()->currentComposition().lock()
             : ArtifactCompositionPtr{};
     auto selected = activeOrChosenTransformField(
-        menu_->window(), composition, QStringLiteral("ライブFieldを編集"));
+        menu_->window(), composition, TranslationManager::instance().tr(QStringLiteral("menu.layer.live_field_edit"), QStringLiteral("ライブFieldを編集")));
     if (!selected.has_value()) {
         return;
     }
@@ -5327,12 +5388,12 @@ void ArtifactLayerMenu::Impl::handleEditLiveRadialField()
     CompositionTransformField edited = *selected;
     bool accepted = false;
     edited.radius = QInputDialog::getDouble(
-        menu_->window(), QStringLiteral("ライブFieldを編集"),
+        menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.live_field_edit"), QStringLiteral("ライブFieldを編集")),
         edited.shape == QStringLiteral("box")
-            ? QStringLiteral("X半径")
+            ? TranslationManager::instance().tr(QStringLiteral("dialog.layer.radius_x"), QStringLiteral("X半径"))
             : edited.shape == QStringLiteral("linear")
-                  ? QStringLiteral("グラデーション半幅")
-                  : QStringLiteral("半径"),
+                  ? TranslationManager::instance().tr(QStringLiteral("dialog.layer.gradient_half_width"), QStringLiteral("グラデーション半幅"))
+                  : TranslationManager::instance().tr(QStringLiteral("dialog.layer.radius"), QStringLiteral("半径")),
         edited.radius, 0.01, 100000.0, 2, &accepted);
     if (!accepted) {
         return;
@@ -5340,9 +5401,9 @@ void ArtifactLayerMenu::Impl::handleEditLiveRadialField()
     if (edited.shape == QStringLiteral("box") ||
         edited.shape == QStringLiteral("linear")) {
         edited.secondaryRadius = QInputDialog::getDouble(
-            menu_->window(), QStringLiteral("ライブFieldを編集"),
-            edited.shape == QStringLiteral("box") ? QStringLiteral("Y半径")
-                                                    : QStringLiteral("ガイド長"),
+            menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.live_field_edit"), QStringLiteral("ライブFieldを編集")),
+            edited.shape == QStringLiteral("box") ? TranslationManager::instance().tr(QStringLiteral("dialog.layer.radius_y"), QStringLiteral("Y半径"))
+                                                    : TranslationManager::instance().tr(QStringLiteral("dialog.layer.guide_length"), QStringLiteral("ガイド長")),
             edited.secondaryRadius, 0.01, 100000.0,
             2, &accepted);
         if (!accepted) {
@@ -5351,29 +5412,29 @@ void ArtifactLayerMenu::Impl::handleEditLiveRadialField()
     }
     if (edited.shape == QStringLiteral("linear")) {
         edited.rotationDegrees = QInputDialog::getDouble(
-            menu_->window(), QStringLiteral("ライブFieldを編集"),
-            QStringLiteral("方向 (degrees)"), edited.rotationDegrees,
+            menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.live_field_edit"), QStringLiteral("ライブFieldを編集")),
+            TranslationManager::instance().tr(QStringLiteral("dialog.layer.direction"), QStringLiteral("方向 (degrees)")), edited.rotationDegrees,
             -360.0, 360.0, 1, &accepted);
         if (!accepted) {
             return;
         }
     }
     edited.expansion = QInputDialog::getDouble(
-        menu_->window(), QStringLiteral("ライブFieldを編集"),
-        QStringLiteral("外側レイヤーの移動量 (%)"),
+        menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.live_field_edit"), QStringLiteral("ライブFieldを編集")),
+        TranslationManager::instance().tr(QStringLiteral("dialog.layer.outer_layer_amount"), QStringLiteral("外側レイヤーの移動量 (%)")),
         edited.expansion * 100.0, -90.0, 500.0, 1, &accepted) / 100.0;
     if (!accepted) {
         return;
     }
     edited.edgeScale = QInputDialog::getDouble(
-        menu_->window(), QStringLiteral("ライブFieldを編集"),
-        QStringLiteral("最外周のスケール (%)"),
+        menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.live_field_edit"), QStringLiteral("ライブFieldを編集")),
+        TranslationManager::instance().tr(QStringLiteral("dialog.layer.outer_scale"), QStringLiteral("最外周のスケール (%)")),
         edited.edgeScale * 100.0, 1.0, 500.0, 1, &accepted) / 100.0;
     if (!accepted) {
         return;
     }
     edited.timeOffsetSeconds = QInputDialog::getDouble(
-        menu_->window(), QStringLiteral("ライブFieldを編集"),
+        menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.live_field_edit"), QStringLiteral("ライブFieldを編集")),
         QStringLiteral("Clone time offset (seconds)"),
         edited.timeOffsetSeconds, -60.0, 60.0, 3, &accepted);
     if (!accepted) {
@@ -5381,8 +5442,8 @@ void ArtifactLayerMenu::Impl::handleEditLiveRadialField()
     }
 
     edited.strength = QInputDialog::getDouble(
-        menu_->window(), QStringLiteral("ライブFieldを編集"),
-        QStringLiteral("強さ (strength)"),
+        menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.live_field_edit"), QStringLiteral("ライブFieldを編集")),
+        TranslationManager::instance().tr(QStringLiteral("dialog.layer.strength"), QStringLiteral("強さ (strength)")),
         edited.strength, 0.0, 4.0, 2, &accepted);
     if (!accepted) {
         return;
@@ -5394,7 +5455,7 @@ void ArtifactLayerMenu::Impl::handleEditLiveRadialField()
                transformFieldBlendModeLabel(edited.blendMode).toLower()));
     const int currentBlendIndex = static_cast<int>(currentBlendIndexValue);
     edited.blendMode = QInputDialog::getItem(
-        menu_->window(), QStringLiteral("ライブFieldを編集"),
+        menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.live_field_edit"), QStringLiteral("ライブFieldを編集")),
         QStringLiteral("Blend mode"), blendChoices, currentBlendIndex, false,
         &accepted);
     if (!accepted) {
@@ -5402,8 +5463,8 @@ void ArtifactLayerMenu::Impl::handleEditLiveRadialField()
     }
 
     const auto invertChoice = QMessageBox::question(
-        menu_->window(), QStringLiteral("ライブFieldを編集"),
-        QStringLiteral("Field を反転しますか?"),
+        menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.live_field_edit"), QStringLiteral("ライブFieldを編集")),
+        TranslationManager::instance().tr(QStringLiteral("dialog.layer.invert_field_confirm"), QStringLiteral("Field を反転しますか?")),
         QMessageBox::Yes | QMessageBox::No,
         edited.invert ? QMessageBox::Yes : QMessageBox::No);
     edited.invert = invertChoice == QMessageBox::Yes;
@@ -5423,7 +5484,7 @@ void ArtifactLayerMenu::Impl::handleToggleLiveRadialField()
             ? ArtifactProjectService::instance()->currentComposition().lock()
             : ArtifactCompositionPtr{};
     auto selected = activeOrChosenTransformField(
-        menu_->window(), composition, QStringLiteral("ライブFieldを有効/無効"));
+        menu_->window(), composition, TranslationManager::instance().tr(QStringLiteral("menu.layer.live_field_toggle"), QStringLiteral("ライブFieldを有効/無効")));
     if (!selected.has_value()) {
         return;
     }
@@ -5450,8 +5511,8 @@ void ArtifactLayerMenu::Impl::handleMoveActiveLiveRadialField(const int directio
     const QString activeFieldId = composition->activeTransformFieldId();
     if (activeFieldId.isEmpty()) {
         QMessageBox::information(
-            menu_->window(), QStringLiteral("ライブFieldの順序を変更"),
-            QStringLiteral("アクティブな Field がありません。先に Field を選択してください。"));
+            menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.live_field_reorder"), QStringLiteral("ライブFieldの順序を変更")),
+            TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_active_field"), QStringLiteral("アクティブな Field がありません。先に Field を選択してください。")));
         return;
     }
 
@@ -5459,10 +5520,10 @@ void ArtifactLayerMenu::Impl::handleMoveActiveLiveRadialField(const int directio
         reorderedTransformFieldsForMove(composition, activeFieldId, direction);
     if (!reordered.has_value()) {
         QMessageBox::information(
-            menu_->window(), QStringLiteral("ライブFieldの順序を変更"),
+            menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.live_field_reorder"), QStringLiteral("ライブFieldの順序を変更")),
             direction < 0
-                ? QStringLiteral("これ以上上へ移動できません。")
-                : QStringLiteral("これ以上下へ移動できません。"));
+                ? TranslationManager::instance().tr(QStringLiteral("dialog.layer.cannot_move_up"), QStringLiteral("これ以上上へ移動できません。"))
+                : TranslationManager::instance().tr(QStringLiteral("dialog.layer.cannot_move_down"), QStringLiteral("これ以上下へ移動できません。")));
         return;
     }
 
@@ -5493,7 +5554,7 @@ void ArtifactLayerMenu::Impl::handleMoveLiveRadialField(const int direction)
             ? ArtifactProjectService::instance()->currentComposition().lock()
             : ArtifactCompositionPtr{};
     auto selected = chooseTransformField(
-        menu_->window(), composition, QStringLiteral("ライブFieldの順序を変更"));
+        menu_->window(), composition, TranslationManager::instance().tr(QStringLiteral("menu.layer.live_field_reorder"), QStringLiteral("ライブFieldの順序を変更")));
     if (!selected.has_value() || !composition) {
         return;
     }
@@ -5502,10 +5563,10 @@ void ArtifactLayerMenu::Impl::handleMoveLiveRadialField(const int direction)
         reorderedTransformFieldsForMove(composition, selected->fieldId, direction);
     if (!reordered.has_value()) {
         QMessageBox::information(
-            menu_->window(), QStringLiteral("ライブFieldの順序を変更"),
+            menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.live_field_reorder"), QStringLiteral("ライブFieldの順序を変更")),
             direction < 0
-                ? QStringLiteral("これ以上上へ移動できません。")
-                : QStringLiteral("これ以上下へ移動できません。"));
+                ? TranslationManager::instance().tr(QStringLiteral("dialog.layer.cannot_move_up"), QStringLiteral("これ以上上へ移動できません。"))
+                : TranslationManager::instance().tr(QStringLiteral("dialog.layer.cannot_move_down"), QStringLiteral("これ以上下へ移動できません。")));
         return;
     }
 
@@ -5538,7 +5599,7 @@ void ArtifactLayerMenu::Impl::handleRemoveLiveRadialField()
             ? ArtifactProjectService::instance()->currentComposition().lock()
             : ArtifactCompositionPtr{};
     auto selected = activeOrChosenTransformField(
-        menu_->window(), composition, QStringLiteral("ライブFieldを削除"));
+        menu_->window(), composition, TranslationManager::instance().tr(QStringLiteral("menu.layer.live_field_delete"), QStringLiteral("ライブFieldを削除")));
     if (!selected.has_value()) {
         return;
     }
@@ -5583,7 +5644,7 @@ void ArtifactLayerMenu::Impl::handleAddParametricParameter()
     if (after->hasParameter(key)) {
         QMessageBox::warning(
             menu_->window(), QStringLiteral("Parametric Parameter"),
-            QStringLiteral("Parameter を追加できませんでした。既に同名の parameter がある可能性があります。"));
+            TranslationManager::instance().tr(QStringLiteral("dialog.layer.parameter_add_failed_dup"), QStringLiteral("Parameter を追加できませんでした。既に同名の parameter がある可能性があります。")));
         return;
     }
 
@@ -5594,7 +5655,7 @@ void ArtifactLayerMenu::Impl::handleAddParametricParameter()
     if (!after->addParameter(parameter)) {
         QMessageBox::warning(
             menu_->window(), QStringLiteral("Parametric Parameter"),
-            QStringLiteral("Parameter を追加できませんでした。"));
+            TranslationManager::instance().tr(QStringLiteral("dialog.layer.parameter_add_failed"), QStringLiteral("Parameter を追加できませんでした。")));
         return;
     }
 
@@ -5620,7 +5681,7 @@ void ArtifactLayerMenu::Impl::handlePublishParametricParameter()
     if (parameterChoices.isEmpty()) {
         QMessageBox::information(
             menu_->window(), QStringLiteral("Published Control"),
-            QStringLiteral("公開できる parameter がありません。先に parameter を追加してください。"));
+            TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_publishable_parameter"), QStringLiteral("公開できる parameter がありません。先に parameter を追加してください。")));
         return;
     }
 
@@ -5659,7 +5720,7 @@ void ArtifactLayerMenu::Impl::handlePublishParametricParameter()
         !after->addPublishedControl(control)) {
         QMessageBox::warning(
             menu_->window(), QStringLiteral("Published Control"),
-            QStringLiteral("Published Control を作成できませんでした。既に公開済みの可能性があります。"));
+            TranslationManager::instance().tr(QStringLiteral("dialog.layer.published_create_failed"), QStringLiteral("Published Control を作成できませんでした。既に公開済みの可能性があります。")));
         return;
     }
 
@@ -5682,7 +5743,7 @@ void ArtifactLayerMenu::Impl::handleEditParametricControl()
     if (controls.isEmpty()) {
         QMessageBox::information(
             menu_->window(), QStringLiteral("Published Control"),
-            QStringLiteral("編集できる Published Control がありません。"));
+            TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_editable_published"), QStringLiteral("編集できる Published Control がありません。")));
         return;
     }
 
@@ -5698,7 +5759,7 @@ void ArtifactLayerMenu::Impl::handleEditParametricControl()
 
     bool accepted = false;
     const QString selectedChoice = QInputDialog::getItem(
-        menu_->window(), QStringLiteral("Published Controlを編集"),
+        menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.published_edit"), QStringLiteral("Published Controlを編集")),
         QStringLiteral("Control"), controlChoices, 0, false, &accepted);
     if (!accepted || selectedChoice.isEmpty()) {
         return;
@@ -5717,7 +5778,7 @@ void ArtifactLayerMenu::Impl::handleEditParametricControl()
     auto selectedControl = controls.at(selectedIndex);
 
     const QString newDisplayName = QInputDialog::getText(
-        menu_->window(), QStringLiteral("Published Controlを編集"),
+        menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.published_edit"), QStringLiteral("Published Controlを編集")),
         QStringLiteral("Display Name"),
         QLineEdit::Normal, selectedControl.displayName, &accepted).trimmed();
     if (!accepted) {
@@ -5725,7 +5786,7 @@ void ArtifactLayerMenu::Impl::handleEditParametricControl()
     }
 
     const QString newControlId = QInputDialog::getText(
-        menu_->window(), QStringLiteral("Published Controlを編集"),
+        menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.published_edit"), QStringLiteral("Published Controlを編集")),
         QStringLiteral("Control ID"),
         QLineEdit::Normal, selectedControl.controlId, &accepted).trimmed();
     if (!accepted || newControlId.isEmpty()) {
@@ -5736,14 +5797,14 @@ void ArtifactLayerMenu::Impl::handleEditParametricControl()
         after->hasPublishedControl(newControlId)) {
         QMessageBox::warning(
             menu_->window(), QStringLiteral("Published Control"),
-            QStringLiteral("同じ Control ID が既に存在します。"));
+            TranslationManager::instance().tr(QStringLiteral("dialog.layer.duplicate_control_id"), QStringLiteral("同じ Control ID が既に存在します。")));
         return;
     }
 
     if (!after->removePublishedControl(selectedControl.controlId)) {
         QMessageBox::warning(
             menu_->window(), QStringLiteral("Published Control"),
-            QStringLiteral("Published Control を更新できませんでした。"));
+            TranslationManager::instance().tr(QStringLiteral("dialog.layer.published_update_failed"), QStringLiteral("Published Control を更新できませんでした。")));
         return;
     }
 
@@ -5753,7 +5814,7 @@ void ArtifactLayerMenu::Impl::handleEditParametricControl()
     if (!after->addPublishedControl(selectedControl)) {
         QMessageBox::warning(
             menu_->window(), QStringLiteral("Published Control"),
-            QStringLiteral("Published Control を更新できませんでした。"));
+            TranslationManager::instance().tr(QStringLiteral("dialog.layer.published_update_failed"), QStringLiteral("Published Control を更新できませんでした。")));
         return;
     }
 
@@ -5776,7 +5837,7 @@ void ArtifactLayerMenu::Impl::handleUnpublishParametricControl()
     if (controls.isEmpty()) {
         QMessageBox::information(
             menu_->window(), QStringLiteral("Published Control"),
-            QStringLiteral("解除できる Published Control がありません。"));
+            TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_releasable_published"), QStringLiteral("解除できる Published Control がありません。")));
         return;
     }
 
@@ -5787,7 +5848,7 @@ void ArtifactLayerMenu::Impl::handleUnpublishParametricControl()
 
     bool accepted = false;
     const QString controlId = QInputDialog::getItem(
-        menu_->window(), QStringLiteral("Published Control を解除"),
+        menu_->window(), TranslationManager::instance().tr(QStringLiteral("menu.layer.published_release"), QStringLiteral("Published Control を解除")),
         QStringLiteral("Control"), controlChoices, 0, false, &accepted);
     if (!accepted || controlId.isEmpty()) {
         return;
@@ -5801,7 +5862,7 @@ void ArtifactLayerMenu::Impl::handleUnpublishParametricControl()
     if (!after->removePublishedControl(controlId)) {
         QMessageBox::warning(
             menu_->window(), QStringLiteral("Published Control"),
-            QStringLiteral("Published Control を解除できませんでした。"));
+            TranslationManager::instance().tr(QStringLiteral("dialog.layer.published_release_failed"), QStringLiteral("Published Control を解除できませんでした。")));
         return;
     }
 
@@ -5821,7 +5882,7 @@ void ArtifactLayerMenu::Impl::handleControllerLearn()
         QMessageBox::information(
             root,
             QStringLiteral("Controller Learn"),
-            QStringLiteral("フォーカス中の animatable property が見つかりません。"));
+            TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_focused_property"), QStringLiteral("フォーカス中の animatable property が見つかりません。")));
         return;
     }
 
@@ -5831,7 +5892,7 @@ void ArtifactLayerMenu::Impl::handleControllerLearn()
         QMessageBox::information(
             root,
             QStringLiteral("Controller Learn"),
-            QStringLiteral("Learn 先の property を特定できませんでした。"));
+            TranslationManager::instance().tr(QStringLiteral("dialog.layer.learn_target_missing"), QStringLiteral("Learn 先の property を特定できませんでした。")));
         return;
     }
 
@@ -5842,7 +5903,7 @@ void ArtifactLayerMenu::Impl::handleControllerLearn()
         address = QInputDialog::getText(
             root,
             QStringLiteral("Controller Learn"),
-            QStringLiteral("最後に観測した controller input がありません。address を入力してください。"),
+            TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_controller_input"), QStringLiteral("最後に観測した controller input がありません。address を入力してください。")),
             QLineEdit::Normal,
             QStringLiteral("midi:1:1"),
             &ok).trimmed();
@@ -5855,7 +5916,7 @@ void ArtifactLayerMenu::Impl::handleControllerLearn()
     QMessageBox::information(
         root,
         QStringLiteral("Controller Learn"),
-        QStringLiteral("%1 → %2 に割り当てました。")
+        TranslationManager::instance().tr(QStringLiteral("dialog.layer.assigned"), QStringLiteral("%1 → %2 に割り当てました。"))
             .arg(address, propertyPath));
 }
 

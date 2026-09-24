@@ -455,79 +455,115 @@ public:
 ArtifactCompositionMenu::Impl::Impl(ArtifactCompositionMenu* menu, QWidget* mainWindow)
  : menu_(menu), mainWindow_(mainWindow)
 {
- createAction = new QAction("新規コンポジション(&N)...");
- createAction->setShortcut(ShortcutBindings::instance().shortcut(ShortcutId::CompositionCreate));
- createAction->setIcon(QIcon(resolveIconPath("Studio/compositionmenu_new.svg")));
+  createAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.composition.new_composition_n"), QStringLiteral("新規コンポジション(&N)...")));
+  createAction->setShortcut(ShortcutBindings::instance().shortcut(ShortcutId::CompositionCreate));
+  createAction->setIcon(QIcon(resolveIconPath("Studio/compositionmenu_new.svg")));
+  createAction->setToolTip(QStringLiteral("New Composition"));
+  createAction->setStatusTip(QStringLiteral("Create a new composition"));
 
- presetMenu = new QMenu("プリセットから作成(&P)", menu);
- presetMenu->setIcon(QIcon(resolveIconPath("Studio/compositionmenu_presets.svg")));
- presetHdAction = presetMenu->addAction("HD 1080p 30fps");
- presetHdAction->setIcon(QIcon(resolveIconPath("Studio/compositionmenu_preset_hd.svg")));
- preset4kAction = presetMenu->addAction("4K UHD 30fps");
- preset4kAction->setIcon(QIcon(resolveIconPath("Studio/compositionmenu_preset_4k.svg")));
- presetVerticalAction = presetMenu->addAction("Vertical 1080x1920 30fps");
- presetVerticalAction->setIcon(QIcon(resolveIconPath("Studio/compositionmenu_preset_vertical.svg")));
+  presetMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.composition.create_from_preset"), QStringLiteral("プリセットから作成(&P)")), menu);
+  presetMenu->setIcon(QIcon(resolveIconPath("Studio/compositionmenu_presets.svg")));
+  presetMenu->setAccessibleName(QStringLiteral("Create from preset"));
+  presetMenu->setAccessibleDescription(QStringLiteral("Create a composition from a resolution preset"));
+  presetHdAction = presetMenu->addAction("HD 1080p 30fps");
+  presetHdAction->setIcon(QIcon(resolveIconPath("Studio/compositionmenu_preset_hd.svg")));
+  presetHdAction->setToolTip(QStringLiteral("HD 1080p 30fps preset"));
+  presetHdAction->setStatusTip(QStringLiteral("Create a Full HD composition at 30 frames per second"));
+  preset4kAction = presetMenu->addAction("4K UHD 30fps");
+  preset4kAction->setIcon(QIcon(resolveIconPath("Studio/compositionmenu_preset_4k.svg")));
+  preset4kAction->setToolTip(QStringLiteral("4K UHD 30fps preset"));
+  preset4kAction->setStatusTip(QStringLiteral("Create a 4K UHD composition at 30 frames per second"));
+  presetVerticalAction = presetMenu->addAction("Vertical 1080x1920 30fps");
+  presetVerticalAction->setIcon(QIcon(resolveIconPath("Studio/compositionmenu_preset_vertical.svg")));
+  presetVerticalAction->setToolTip(QStringLiteral("Vertical 1080x1920 30fps preset"));
+  presetVerticalAction->setStatusTip(QStringLiteral("Create a vertical composition at 30 frames per second"));
 
- duplicateAction = new QAction("コンポジションを複製(&D)");
- duplicateAction->setIcon(QIcon(resolveIconPath("Studio/compositionmenu_duplicate.svg")));
- renameAction = new QAction("名前を変更(&R)...");
- renameAction->setIcon(QIcon(resolveIconPath("Studio/compositionmenu_rename.svg")));
- deleteAction = new QAction("コンポジションを削除(&X)...");
- deleteAction->setIcon(QIcon(resolveIconPath("Studio/compositionmenu_delete.svg")));
+  duplicateAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.composition.duplicate"), QStringLiteral("コンポジションを複製(&D)")));
+  duplicateAction->setIcon(QIcon(resolveIconPath("Studio/compositionmenu_duplicate.svg")));
+  duplicateAction->setToolTip(QStringLiteral("Duplicate Composition"));
+  duplicateAction->setStatusTip(QStringLiteral("Duplicate the current composition"));
+  renameAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.composition.rename"), QStringLiteral("名前を変更(&R)...")));
+  renameAction->setIcon(QIcon(resolveIconPath("Studio/compositionmenu_rename.svg")));
+  renameAction->setToolTip(QStringLiteral("Rename Composition"));
+  renameAction->setStatusTip(QStringLiteral("Rename the current composition"));
+  deleteAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.composition.delete"), QStringLiteral("コンポジションを削除(&X)...")));
+  deleteAction->setIcon(QIcon(resolveIconPath("Studio/compositionmenu_delete.svg")));
+  deleteAction->setToolTip(QStringLiteral("Delete Composition"));
+  deleteAction->setStatusTip(QStringLiteral("Delete the current composition"));
 
- settingsAction = new QAction("設定 (&S)...", menu);
- settingsAction->setIcon(QIcon(resolveIconPath("Studio/compositionmenu_settings.svg")));
+  settingsAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.composition.settings"), QStringLiteral("設定 (&S)...")), menu);
+  settingsAction->setIcon(QIcon(resolveIconPath("Studio/compositionmenu_settings.svg")));
+  settingsAction->setToolTip(QStringLiteral("Composition Settings"));
+  settingsAction->setStatusTip(QStringLiteral("Open the composition settings dialog"));
 
- colorAction = new QAction("背景色(&B)...");
- colorAction->setShortcut(ShortcutBindings::instance().shortcut(ShortcutId::CompositionColor));
- colorAction->setIcon(QIcon(resolveIconPath("Studio/compositionmenu_background.svg")));
+  colorAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.composition.background_color"), QStringLiteral("背景色(&B)...")));
+  colorAction->setShortcut(ShortcutBindings::instance().shortcut(ShortcutId::CompositionColor));
+  colorAction->setIcon(QIcon(resolveIconPath("Studio/compositionmenu_background.svg")));
+  colorAction->setToolTip(QStringLiteral("Composition Background Color"));
+  colorAction->setStatusTip(QStringLiteral("Change the composition background color"));
 
- sendAction = new QAction("メインプロジェクトへ送信(&T)...", menu);
- sendAction->setIcon(QIcon(resolveIconPath("Studio/compositionmenu_send_project.svg")));
- addToRenderQueueAction = new QAction(QStringLiteral("レンダーキューに追加(&Q)"), menu);
- addToRenderQueueAction->setStatusTip(
-     QStringLiteral("Queue the full composition range for rendering"));
- addToRenderQueueAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_add_current.svg")));
- addCurrentFrameToRenderQueueAction = new QAction(
-     QStringLiteral("現在フレームをレンダーキューに追加"), menu);
- addCurrentFrameToRenderQueueAction->setStatusTip(
-     QStringLiteral("Queue only the active composition frame for rendering"));
- addCurrentFrameToRenderQueueAction->setStatusTip(
-     QStringLiteral("Queue only the active frame for rendering"));
- addCurrentFrameToRenderQueueAction->setIcon(
-     QIcon(resolveIconPath("Studio/rendermenu_add_current.svg")));
- addWorkAreaToRenderQueueAction = new QAction(
-     QStringLiteral("ワークエリアをレンダーキューに追加"), menu);
- addWorkAreaToRenderQueueAction->setStatusTip(
-     QStringLiteral("Queue only the current work area for rendering"));
- addWorkAreaToRenderQueueAction->setStatusTip(
-     QStringLiteral("Queue the current work area for rendering"));
- addWorkAreaToRenderQueueAction->setIcon(
-     QIcon(resolveIconPath("Studio/rendermenu_add_all.svg")));
- addSelectedLayersToRenderQueueAction = new QAction(
-     QStringLiteral("選択レイヤーのみをレンダーキューに追加"), menu);
- addSelectedLayersToRenderQueueAction->setStatusTip(
-     QStringLiteral("Queue the selected layers for the full composition range"));
- addSelectedLayersToRenderQueueAction->setStatusTip(
-     QStringLiteral("Queue only the currently selected layers"));
- addSelectedLayersToRenderQueueAction->setIcon(
-     QIcon(resolveIconPath("Studio/rendermenu_add_current.svg")));
- addSelectedCurrentFrameToRenderQueueAction = new QAction(
-     QStringLiteral("選択レイヤーを現在フレームだけレンダー"), menu);
- addSelectedCurrentFrameToRenderQueueAction->setIcon(
-     QIcon(resolveIconPath("Studio/rendermenu_add_current.svg")));
- addSelectedWorkAreaToRenderQueueAction = new QAction(
-     QStringLiteral("選択レイヤーをワークエリアだけレンダー"), menu);
- addSelectedWorkAreaToRenderQueueAction->setIcon(
-     QIcon(resolveIconPath("Studio/rendermenu_add_all.svg")));
- advancedRenderQueueAction = new QAction(
-     QStringLiteral("高度なレンダー設定を開く…"), menu);
- advancedRenderQueueAction->setStatusTip(
-     QStringLiteral("Open the render manager to configure range, layers, region, and output settings"));
- advancedRenderQueueAction->setStatusTip(
-     QStringLiteral("Open the render manager for detailed queue settings"));
- advancedRenderQueueAction->setIcon(
-     QIcon(resolveIconPath("Studio/rendermenu_settings.svg")));
+  sendAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.composition.send_to_main"), QStringLiteral("メインプロジェクトへ送信(&T)...")), menu);
+  sendAction->setIcon(QIcon(resolveIconPath("Studio/compositionmenu_send_project.svg")));
+  sendAction->setToolTip(QStringLiteral("Send Composition to Main Project"));
+  sendAction->setStatusTip(QStringLiteral("Send the composition to the main project"));
+  addToRenderQueueAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.composition.add_to_render_queue"), QStringLiteral("レンダーキューに追加(&Q)")), menu);
+  addToRenderQueueAction->setStatusTip(
+      QStringLiteral("Queue the full composition range for rendering"));
+  addToRenderQueueAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_add_current.svg")));
+  addToRenderQueueAction->setToolTip(QStringLiteral("Add Composition to Render Queue"));
+  addToRenderQueueAction->setStatusTip(QStringLiteral("Queue the full composition range for rendering"));
+  addCurrentFrameToRenderQueueAction = new QAction(
+      TranslationManager::instance().tr(QStringLiteral("menu.composition.add_current_frame"), QStringLiteral("現在フレームをレンダーキューに追加")), menu);
+  addCurrentFrameToRenderQueueAction->setStatusTip(
+      QStringLiteral("Queue only the active composition frame for rendering"));
+  addCurrentFrameToRenderQueueAction->setStatusTip(
+      QStringLiteral("Queue only the active frame for rendering"));
+  addCurrentFrameToRenderQueueAction->setIcon(
+      QIcon(resolveIconPath("Studio/rendermenu_add_current.svg")));
+  addCurrentFrameToRenderQueueAction->setToolTip(QStringLiteral("Add Current Frame to Render Queue"));
+  addCurrentFrameToRenderQueueAction->setStatusTip(QStringLiteral("Queue only the active frame for rendering"));
+  addWorkAreaToRenderQueueAction = new QAction(
+      TranslationManager::instance().tr(QStringLiteral("menu.composition.add_work_area"), QStringLiteral("ワークエリアをレンダーキューに追加")), menu);
+  addWorkAreaToRenderQueueAction->setStatusTip(
+      QStringLiteral("Queue only the current work area for rendering"));
+  addWorkAreaToRenderQueueAction->setStatusTip(
+      QStringLiteral("Queue the current work area for rendering"));
+  addWorkAreaToRenderQueueAction->setIcon(
+      QIcon(resolveIconPath("Studio/rendermenu_add_all.svg")));
+  addWorkAreaToRenderQueueAction->setToolTip(QStringLiteral("Add Work Area to Render Queue"));
+  addWorkAreaToRenderQueueAction->setStatusTip(QStringLiteral("Queue the current work area for rendering"));
+  addSelectedLayersToRenderQueueAction = new QAction(
+      TranslationManager::instance().tr(QStringLiteral("menu.composition.add_selected_layers"), QStringLiteral("選択レイヤーのみをレンダーキューに追加")), menu);
+  addSelectedLayersToRenderQueueAction->setStatusTip(
+      QStringLiteral("Queue the selected layers for the full composition range"));
+  addSelectedLayersToRenderQueueAction->setStatusTip(
+      QStringLiteral("Queue only the currently selected layers"));
+  addSelectedLayersToRenderQueueAction->setIcon(
+      QIcon(resolveIconPath("Studio/rendermenu_add_current.svg")));
+  addSelectedLayersToRenderQueueAction->setToolTip(QStringLiteral("Add Selected Layers to Render Queue"));
+  addSelectedLayersToRenderQueueAction->setStatusTip(QStringLiteral("Queue only the currently selected layers"));
+  addSelectedCurrentFrameToRenderQueueAction = new QAction(
+      TranslationManager::instance().tr(QStringLiteral("menu.composition.render_selected_current_frame"), QStringLiteral("選択レイヤーを現在フレームだけレンダー")), menu);
+  addSelectedCurrentFrameToRenderQueueAction->setIcon(
+      QIcon(resolveIconPath("Studio/rendermenu_add_current.svg")));
+  addSelectedCurrentFrameToRenderQueueAction->setToolTip(QStringLiteral("Render Selected Layers Current Frame"));
+  addSelectedCurrentFrameToRenderQueueAction->setStatusTip(QStringLiteral("Render the selected layers for the current frame only"));
+  addSelectedWorkAreaToRenderQueueAction = new QAction(
+      TranslationManager::instance().tr(QStringLiteral("menu.composition.render_selected_work_area"), QStringLiteral("選択レイヤーをワークエリアだけレンダー")), menu);
+  addSelectedWorkAreaToRenderQueueAction->setIcon(
+      QIcon(resolveIconPath("Studio/rendermenu_add_all.svg")));
+  addSelectedWorkAreaToRenderQueueAction->setToolTip(QStringLiteral("Render Selected Layers Work Area"));
+  addSelectedWorkAreaToRenderQueueAction->setStatusTip(QStringLiteral("Render the selected layers for the work area only"));
+  advancedRenderQueueAction = new QAction(
+      TranslationManager::instance().tr(QStringLiteral("menu.composition.open_advanced_render_settings"), QStringLiteral("高度なレンダー設定を開く…")), menu);
+  advancedRenderQueueAction->setStatusTip(
+      QStringLiteral("Open the render manager to configure range, layers, region, and output settings"));
+  advancedRenderQueueAction->setStatusTip(
+      QStringLiteral("Open the render manager for detailed queue settings"));
+  advancedRenderQueueAction->setIcon(
+      QIcon(resolveIconPath("Studio/rendermenu_settings.svg")));
+  advancedRenderQueueAction->setToolTip(QStringLiteral("Open Advanced Render Settings"));
+  advancedRenderQueueAction->setStatusTip(QStringLiteral("Open the render manager for detailed queue settings"));
 
  menu->addAction(createAction);
  menu->addMenu(presetMenu);
@@ -538,7 +574,7 @@ ArtifactCompositionMenu::Impl::Impl(ArtifactCompositionMenu* menu, QWidget* main
  menu->addSeparator();
  menu->addAction(settingsAction);
  menu->addAction(sendAction);
- auto* renderQueueAddMenu = menu->addMenu(QStringLiteral("レンダーキューに追加"));
+ auto* renderQueueAddMenu = menu->addMenu(TranslationManager::instance().tr(QStringLiteral("menu.composition.render_queue_add"), QStringLiteral("レンダーキューに追加")));
  renderQueueAddMenu->setAccessibleName(QStringLiteral("Add to render queue"));
  renderQueueAddMenu->setAccessibleDescription(
      QStringLiteral("Choose composition range and layer scope for a new render queue item."));
@@ -599,7 +635,7 @@ void ArtifactCompositionMenu::Impl::createFromPreset(const ArtifactCompositionIn
  if (!service) {
   QMessageBox::warning(mainWindow_ ? mainWindow_ : menu_,
    "Composition",
-   "プロジェクトサービスが利用できません。");
+   TranslationManager::instance().tr(QStringLiteral("dialog.composition.project_service_unavailable"), QStringLiteral("プロジェクトサービスが利用できません。")));
   return;
  }
  service->createComposition(params);
@@ -616,7 +652,7 @@ void ArtifactCompositionMenu::Impl::duplicateCurrent()
  if (!service->duplicateComposition(current->id())) {
   QMessageBox::warning(mainWindow_ ? mainWindow_ : menu_,
    "Composition",
-   "コンポジションの複製に失敗しました。");
+   TranslationManager::instance().tr(QStringLiteral("dialog.composition.duplicate_failed"), QStringLiteral("コンポジションの複製に失敗しました。")));
  }
 }
 
@@ -629,13 +665,11 @@ void ArtifactCompositionMenu::Impl::renameCurrent()
  }
 
  bool ok = false;
- const QString newName = QInputDialog::getText(
+ const QString newName = ArtifactRenameDialog::getName(
   mainWindow_ ? mainWindow_ : menu_,
-  "コンポジション名の変更",
-  "新しい名前:",
-  QLineEdit::Normal,
+  ArtifactRenameTarget::Composition,
   current->settings().compositionName().toQString().trimmed(),
-  &ok);
+  QStringLiteral("Composition Menu / Current Composition"), {}, {}, &ok);
  if (!ok) {
   return;
  }
@@ -646,7 +680,7 @@ void ArtifactCompositionMenu::Impl::renameCurrent()
  if (!service->renameComposition(current->id(), UniString(trimmed))) {
   QMessageBox::warning(mainWindow_ ? mainWindow_ : menu_,
    "Composition",
-   "コンポジション名の変更に失敗しました。");
+   TranslationManager::instance().tr(QStringLiteral("dialog.composition.rename_failed"), QStringLiteral("コンポジション名の変更に失敗しました。")));
  }
 }
 
@@ -660,14 +694,14 @@ void ArtifactCompositionMenu::Impl::removeCurrent()
 
  const QString message = service->compositionRemovalConfirmationMessage(current->id());
 
- if (!ArtifactMessageBox::confirmDelete(mainWindow_ ? mainWindow_ : menu_, "コンポジション削除", message)) {
+ if (!ArtifactMessageBox::confirmDelete(mainWindow_ ? mainWindow_ : menu_, TranslationManager::instance().tr(QStringLiteral("dialog.composition.delete_title"), QStringLiteral("コンポジション削除")), message)) {
   return;
  }
 
  if (!service->removeCompositionWithRenderQueueCleanup(current->id())) {
   QMessageBox::warning(mainWindow_ ? mainWindow_ : menu_,
    "Composition",
-  "コンポジションの削除に失敗しました。");
+  TranslationManager::instance().tr(QStringLiteral("dialog.composition.delete_failed"), QStringLiteral("コンポジションの削除に失敗しました。")));
  }
 }
 
@@ -677,7 +711,7 @@ void ArtifactCompositionMenu::Impl::showSettings()
  if (!service) {
   QMessageBox::warning(mainWindow_ ? mainWindow_ : menu_,
                        QStringLiteral("Composition"),
-                       QStringLiteral("プロジェクトサービスが利用できません。"));
+                       TranslationManager::instance().tr(QStringLiteral("dialog.composition.project_service_unavailable"), QStringLiteral("プロジェクトサービスが利用できません。")));
   return;
  }
 
@@ -685,7 +719,7 @@ void ArtifactCompositionMenu::Impl::showSettings()
  if (!current) {
   QMessageBox::information(mainWindow_ ? mainWindow_ : menu_,
                            QStringLiteral("Composition"),
-                           QStringLiteral("設定するコンポジションがありません。"));
+                           TranslationManager::instance().tr(QStringLiteral("dialog.composition.none_to_configure"), QStringLiteral("設定するコンポジションがありません。")));
   return;
  }
 
@@ -1549,7 +1583,7 @@ void ArtifactCompositionMenu::Impl::sendCurrentComposition()
  if (!service) {
   QMessageBox::warning(mainWindow_ ? mainWindow_ : menu_,
                        QStringLiteral("Composition"),
-                       QStringLiteral("プロジェクトサービスが利用できません。"));
+                       TranslationManager::instance().tr(QStringLiteral("dialog.composition.project_service_unavailable"), QStringLiteral("プロジェクトサービスが利用できません。")));
   return;
  }
 
@@ -1557,7 +1591,7 @@ void ArtifactCompositionMenu::Impl::sendCurrentComposition()
  if (!current) {
   QMessageBox::information(mainWindow_ ? mainWindow_ : menu_,
                           QStringLiteral("Composition"),
-                          QStringLiteral("送信するコンポジションがありません。"));
+                          TranslationManager::instance().tr(QStringLiteral("dialog.composition.none_to_send"), QStringLiteral("送信するコンポジションがありません。")));
   return;
  }
 
@@ -1588,7 +1622,7 @@ void ArtifactCompositionMenu::Impl::showAdvancedRenderQueue()
   if (!current || !renderQueue) {
     QMessageBox::information(
         mainWindow_ ? mainWindow_ : menu_, QStringLiteral("Render Queue"),
-        QStringLiteral("アクティブなコンポジションがありません。"));
+        TranslationManager::instance().tr(QStringLiteral("dialog.composition.no_active"), QStringLiteral("アクティブなコンポジションがありません。")));
     return;
   }
   renderQueue->addRenderQueueForComposition(

@@ -30,9 +30,9 @@ module;
 #include <QUrl>
 #include <wobjectdefs.h>
 #include <wobjectimpl.h>
+#include <vector>
 
 export module Artifact.Widgets.ProjectHealthDashboard;
-import std;
 
 
 

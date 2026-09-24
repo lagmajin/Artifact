@@ -29,6 +29,7 @@ module;
 #include <QMessageBox>
 #include <QPluginLoader>
 #include <QProgressBar>
+#include <QProcessEnvironment>
 #include <QPushButton>
 #include <QMouseEvent>
 #include <QKeySequenceEdit>
@@ -38,12 +39,15 @@ module;
 #include <QDoubleSpinBox>
 #include <QVariant>
 #include <QStackedWidget>
+#include <QSettings>
+#include <QSplitter>
 #include <QStandardPaths>
 #include <QString>
 #include <QStringList>
 #include <QTableWidget>
 #include <QThread>
 #include <QTimer>
+#include <QTreeWidget>
 #include <QUrl>
 #include <QVBoxLayout>
 #include <utility>
@@ -71,6 +75,8 @@ import Artifact.Widgets.AppDialogs;
 import Artifact.Widgets.AI.ArtifactAICloudSettingsWidget;
 import Artifact.Widgets.PropertyEditor;
 import Application.AppSettings;
+import Core.Localization;
+import Localization.LocaleFormatting;
 import Configuration.ConfigLayer;
 import Configuration.ConfigSchema;
 import Configuration.LayeredConfigStore;
@@ -81,6 +87,8 @@ import Artifact.Widgets.Dialog.FloatColorPickerHooks;
 import Widgets.Utils.CSS;
 import UI.ShortcutBindings;
 import Settings.Accessibility;
+import EnvironmentVariable;
+import EnvironmentVariable.Expansion;
 
 namespace ArtifactCore {
 
@@ -138,6 +146,7 @@ public:
   QSpinBox *dockTabFontSizeSpinBox_;
   QComboBox *themeCombo_;
   QComboBox *accentCombo_;
+  QComboBox *languageCombo_;
   QFontComboBox *uiFontCombo_;
   QSpinBox *uiFontSizeSpinBox_;
   QComboBox *handednessCombo_;
@@ -197,6 +206,56 @@ GeneralSettingPage::GeneralSettingPage(QWidget *parent)
   startupLayout->addWidget(impl_->showStartupDialogCheckBox_);
 
   mainLayout->addWidget(startupGroup);
+
+  // Language Group
+  auto *languageGroup = new QGroupBox("Language", this);
+  auto *languageLayout = new QVBoxLayout(languageGroup);
+
+  auto *languageRow = new QHBoxLayout();
+  languageRow->addWidget(new QLabel("Interface language:", this));
+  impl_->languageCombo_ = new QComboBox(this);
+  impl_->languageCombo_->setAccessibleName(QStringLiteral("Interface language"));
+  impl_->languageCombo_->setAccessibleDescription(
+      QStringLiteral("Choose the application interface language. Changes apply after restart."));
+  impl_->languageCombo_->addItem(QStringLiteral("Auto (System)"), QString());
+  {
+    struct LanguageOption {
+      const char *code;
+      const char *label;
+    };
+    static const LanguageOption kLanguageOptions[] = {
+        {"en", "English"},     {"ja", "日本語"},    {"zh", "简体中文"},
+        {"zh-TW", "繁體中文"}, {"ko", "한국어"},    {"fr", "Français"},
+        {"de", "Deutsch"},     {"es", "Español"},   {"pt", "Português"},
+        {"ru", "Русский"},     {"ar", "العربية"},
+    };
+    auto &loc = ArtifactCore::LocalizationManager::instance();
+    const QStringList loaded = loc.availableLocales();
+    // 低カバレッジのスタブ言語（11キー等）は選択肢から除外する。
+    // 基準: 英語のキー数の 1/10（最低50キー）。zh / zh-TW は現状 165 キーなので残る。
+    const int minKeys = qMax(50, loc.translationCount(QStringLiteral("en")) / 10);
+    for (const auto &option : kLanguageOptions) {
+      const QString code = QString::fromLatin1(option.code);
+      if (!loaded.contains(code)) {
+        continue;
+      }
+      if (code != QStringLiteral("en") && loc.translationCount(code) < minKeys) {
+        continue;
+      }
+      impl_->languageCombo_->addItem(QString::fromUtf8(option.label), code);
+    }
+  }
+  impl_->languageCombo_->setMinimumWidth(220);
+  languageRow->addWidget(impl_->languageCombo_);
+  languageRow->addStretch();
+  languageLayout->addLayout(languageRow);
+
+  auto *languageNote = new QLabel(
+      "The interface language is applied the next time Artifact starts.", this);
+  languageNote->setWordWrap(true);
+  languageLayout->addWidget(languageNote);
+
+  mainLayout->addWidget(languageGroup);
 
   // UI Group
   auto *uiGroup = new QGroupBox("User Interface", this);
@@ -450,6 +509,16 @@ void GeneralSettingPage::loadSettings() {
   impl_->menuBarFontScaleSpinBox_->setValue(
       settings->menuBarFontScalePercent());
   impl_->dockTabFontSizeSpinBox_->setValue(settings->dockTabFontPointSize());
+  if (impl_->languageCombo_) {
+    const QString savedLanguage = settings->appLanguageCode();
+    int languageIndex = impl_->languageCombo_->findData(savedLanguage);
+    if (languageIndex < 0 && !savedLanguage.isEmpty()) {
+      // カタログが未ロードでも保存値を失わないよう、候補に追加して選択する
+      impl_->languageCombo_->addItem(savedLanguage, savedLanguage);
+      languageIndex = impl_->languageCombo_->count() - 1;
+    }
+    impl_->languageCombo_->setCurrentIndex(languageIndex >= 0 ? languageIndex : 0);
+  }
   if (impl_->themeCombo_) {
     const QString themeLabel = canonicalThemeLabel(settings->themeName());
     const int themeIndex = impl_->themeCombo_->findText(themeLabel);
@@ -502,6 +571,18 @@ void GeneralSettingPage::saveSettings() {
       impl_->menuBarFontScaleSpinBox_->value());
   settings->setDockTabFontPointSize(
       impl_->dockTabFontSizeSpinBox_->value());
+  if (impl_->languageCombo_) {
+    const QString selectedLanguage =
+        impl_->languageCombo_->currentData().toString();
+    settings->setAppLanguageCode(selectedLanguage);
+    // 永続化に加えて即時反映も行う。空文字 (Auto) は次回起動時にシステムロケールで
+    // 再解決するため、ここでは何もしない。開いているメニューは aboutToShow で
+    // rebuildMenu() され、次に開いた時点で新言語のラベルになる。
+    if (!selectedLanguage.isEmpty()) {
+      ArtifactCore::LocalizationManager::instance().setLanguageCode(
+          selectedLanguage);
+    }
+  }
   if (impl_->themeCombo_) {
     settings->setThemeName(impl_->themeCombo_->currentText());
   }
@@ -541,6 +622,11 @@ void GeneralSettingPage::saveSettings() {
 
 QList<SettingItemInfo> GeneralSettingPage::searchableItems() const {
   QList<SettingItemInfo> items;
+  if (impl_ && impl_->languageCombo_) {
+    items.push_back({"Interface language",
+                     "Choose the application interface language (applied after restart)",
+                     "Language", impl_->languageCombo_, "General/LanguageCode"});
+  }
   if (impl_ && impl_->themeCombo_) {
     items.push_back({"UI Theme",
                      "Built-in application theme preset",
@@ -1318,10 +1404,14 @@ public:
     if (memoryUsageBar_)
       memoryUsageBar_->setValue(memPercent);
     if (memoryLabel_)
-      memoryLabel_->setText(QString("%1 / %2 (%3%)")
-                                .arg(QString::number(usedPhys / (1024 * 1024)))
-                                .arg(QString::number(totalPhys / (1024 * 1024)))
-                                .arg(memPercent));
+      memoryLabel_->setText(
+          QStringLiteral("%1 / %2 (%3)")
+              .arg(ArtifactCore::LocaleFormatting::formatFileSize(
+                  static_cast<qint64>(usedPhys)))
+              .arg(ArtifactCore::LocaleFormatting::formatFileSize(
+                  static_cast<qint64>(totalPhys)))
+              .arg(ArtifactCore::LocaleFormatting::formatPercentage(
+                  memPercent / 100.0, 0)));
 
     // CPU (process percentage)
     FILETIME ftCreation, ftExit, ftKernel, ftUser;
@@ -1354,7 +1444,9 @@ public:
         cpuUsageBar_->setValue(qBound(0, cpuInt, 100));
       if (cpuLabel_)
         cpuLabel_->setText(
-            QString("%1% (process)").arg(QString::number(cpuPercent, 'f', 1)));
+            QStringLiteral("%1 (process)")
+                .arg(ArtifactCore::LocaleFormatting::formatPercentage(
+                    cpuPercent / 100.0, 1)));
 
       prevProcessTimeMs_ = procMs;
       prevTickMs_ = curTick;
@@ -1673,10 +1765,13 @@ public:
   QComboBox *profileCombo_ = nullptr;
   QComboBox *contextCombo_ = nullptr;
   QLineEdit *filterEdit_ = nullptr;
+  QCheckBox *conflictsOnlyCheckBox_ = nullptr;
   QLabel *conflictLabel_ = nullptr;
+  QTreeWidget *contextTree_ = nullptr;
   QTableWidget *table_ = nullptr;
   QPushButton *importPresetButton_ = nullptr;
   QPushButton *exportPresetButton_ = nullptr;
+  QPushButton *resetSelectedButton_ = nullptr;
   QPushButton *resetDefaultsButton_ = nullptr;
 };
 
@@ -1685,7 +1780,8 @@ QString shortcutContext(ArtifactCore::ShortcutId id) {
   using ArtifactCore::ShortcutId;
   const int value = static_cast<int>(id);
   if (id == ShortcutId::Undo || id == ShortcutId::Redo) return QStringLiteral("Global");
-  if (id == ShortcutId::ProjectClearSearch) return QStringLiteral("Workspace.Project");
+  if (id == ShortcutId::ProjectClearSearch || id == ShortcutId::ProjectRefresh)
+    return QStringLiteral("Workspace.Project");
   if (id == ShortcutId::TimelineFocusSearch || id == ShortcutId::TimelineClearSearch)
     return QStringLiteral("Workspace.Timeline");
   if (id == ShortcutId::CompositionImmersiveExit) return QStringLiteral("Viewport.Composition");
@@ -1726,6 +1822,10 @@ QString shortcutContext(ArtifactCore::ShortcutId id) {
   if (id == ShortcutId::CompositionViewportMoveGizmo ||
       id == ShortcutId::CompositionViewportRotateGizmo ||
       id == ShortcutId::CompositionViewportScaleGizmo)
+    return QStringLiteral("Viewport.Composition");
+  if (id == ShortcutId::ViewDetachedTasks)
+    return QStringLiteral("Panel.DetachedTasks");
+  if (id == ShortcutId::ViewToggleMagnifier)
     return QStringLiteral("Viewport.Composition");
   return QStringLiteral("Workspace.Timeline");
 }
@@ -1778,6 +1878,8 @@ ShortcutSettingPage::ShortcutSettingPage(QWidget *parent)
   impl_->profileCombo_->installEventFilter(this);
   impl_->profileCombo_->view()->viewport()->installEventFilter(this);
   controls->addWidget(impl_->profileCombo_);
+  controls->addWidget(impl_->importPresetButton_ = new QPushButton(QStringLiteral("Import Preset"), this));
+  controls->addWidget(impl_->exportPresetButton_ = new QPushButton(QStringLiteral("Export Preset"), this));
   impl_->contextCombo_ = new QComboBox(this);
   impl_->contextCombo_->setAccessibleName(QStringLiteral("Shortcut context filter"));
   impl_->contextCombo_->addItem(QStringLiteral("All contexts"));
@@ -1789,6 +1891,10 @@ ShortcutSettingPage::ShortcutSettingPage(QWidget *parent)
   impl_->filterEdit_->setAccessibleName(QStringLiteral("Search shortcuts"));
   impl_->filterEdit_->installEventFilter(this);
   controls->addWidget(impl_->filterEdit_, 1);
+  impl_->conflictsOnlyCheckBox_ = new QCheckBox(QStringLiteral("Show conflicts only"), this);
+  impl_->conflictsOnlyCheckBox_->setAccessibleName(QStringLiteral("Show shortcut conflicts only"));
+  impl_->conflictsOnlyCheckBox_->installEventFilter(this);
+  controls->addWidget(impl_->conflictsOnlyCheckBox_);
   impl_->layout_->addLayout(controls);
 
   impl_->conflictLabel_ = new QLabel(QStringLiteral("No context conflicts"), this);
@@ -1812,11 +1918,22 @@ ShortcutSettingPage::ShortcutSettingPage(QWidget *parent)
   impl_->table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
   impl_->table_->setSelectionBehavior(QAbstractItemView::SelectRows);
   impl_->table_->setSelectionMode(QAbstractItemView::SingleSelection);
-  impl_->layout_->addWidget(impl_->table_, 1);
+  auto *content = new QSplitter(Qt::Horizontal, this);
+  impl_->contextTree_ = new QTreeWidget(content);
+  impl_->contextTree_->setHeaderLabel(QStringLiteral("Contexts"));
+  impl_->contextTree_->setAccessibleName(QStringLiteral("Shortcut context tree"));
+  impl_->contextTree_->setAccessibleDescription(
+      QStringLiteral("Filter shortcut actions by the surface where they are active"));
+  impl_->contextTree_->setMinimumWidth(185);
+  impl_->contextTree_->installEventFilter(this);
+  content->addWidget(impl_->contextTree_);
+  content->addWidget(impl_->table_);
+  content->setStretchFactor(0, 0);
+  content->setStretchFactor(1, 1);
+  impl_->layout_->addWidget(content, 1);
 
   auto *footerLayout = new QHBoxLayout();
-  footerLayout->addWidget(impl_->importPresetButton_ = new QPushButton(QStringLiteral("Import Preset"), this));
-  footerLayout->addWidget(impl_->exportPresetButton_ = new QPushButton(QStringLiteral("Export Preset"), this));
+  footerLayout->addWidget(impl_->resetSelectedButton_ = new QPushButton(QStringLiteral("Reset Selected"), this));
   footerLayout->addWidget(impl_->resetDefaultsButton_ = new QPushButton(QStringLiteral("Reset to Defaults"), this));
   impl_->importPresetButton_->setAccessibleName(QStringLiteral("Import shortcut preset"));
   impl_->importPresetButton_->setAccessibleDescription(QStringLiteral("Load shortcut bindings from a preset"));
@@ -1824,9 +1941,13 @@ ShortcutSettingPage::ShortcutSettingPage(QWidget *parent)
   impl_->exportPresetButton_->setAccessibleDescription(QStringLiteral("Save current shortcut bindings as a preset"));
   impl_->resetDefaultsButton_->setAccessibleName(QStringLiteral("Reset shortcuts to defaults"));
   impl_->resetDefaultsButton_->setAccessibleDescription(QStringLiteral("Restore default shortcut bindings"));
+  impl_->resetSelectedButton_->setAccessibleName(QStringLiteral("Reset selected shortcut"));
+  impl_->resetSelectedButton_->setAccessibleDescription(
+      QStringLiteral("Restore the selected shortcut to its factory default"));
   footerLayout->addStretch();
   impl_->importPresetButton_->installEventFilter(this);
   impl_->exportPresetButton_->installEventFilter(this);
+  impl_->resetSelectedButton_->installEventFilter(this);
   impl_->resetDefaultsButton_->installEventFilter(this);
   impl_->layout_->addLayout(footerLayout);
 
@@ -1901,10 +2022,68 @@ void ShortcutSettingPage::applyShortcutProfile() {
   filterShortcutRows();
 }
 
+QString ShortcutSettingPage::selectedShortcutContext() const {
+  if (!impl_) return {};
+  if (impl_->contextTree_ && impl_->contextTree_->currentItem()) {
+    const QString selected = impl_->contextTree_->currentItem()->data(0, Qt::UserRole).toString();
+    if (!selected.isEmpty()) return selected;
+  }
+  return impl_->contextCombo_ ? impl_->contextCombo_->currentText() : QString();
+}
+
+void ShortcutSettingPage::rebuildShortcutContextTree() {
+  if (!impl_ || !impl_->contextTree_) return;
+
+  const QString previousContext = selectedShortcutContext();
+  impl_->contextTree_->clear();
+  for (const auto id : ArtifactCore::allShortcutIds()) {
+    const QString context = shortcutContext(id);
+    QTreeWidgetItem* parent = nullptr;
+    const QStringList parts = context.split(QLatin1Char('.'));
+    for (int depth = 0; depth < parts.size(); ++depth) {
+      const QString& label = parts.at(depth);
+      QTreeWidgetItem* current = nullptr;
+      const int candidateCount = parent ? parent->childCount() : impl_->contextTree_->topLevelItemCount();
+      for (int candidate = 0; candidate < candidateCount; ++candidate) {
+        QTreeWidgetItem* item = parent ? parent->child(candidate)
+                                       : impl_->contextTree_->topLevelItem(candidate);
+        if (item && item->text(0) == label) {
+          current = item;
+          break;
+        }
+      }
+      if (!current) {
+        current = parent ? new QTreeWidgetItem(parent, QStringList{label})
+                         : new QTreeWidgetItem(impl_->contextTree_, QStringList{label});
+      }
+      parent = current;
+      parent->setData(0, Qt::UserRole, parts.mid(0, depth + 1).join(QLatin1Char('.')));
+    }
+  }
+
+  impl_->contextTree_->expandAll();
+  const std::function<QTreeWidgetItem*(QTreeWidgetItem*)> findContext =
+      [&findContext, &previousContext](QTreeWidgetItem* item) -> QTreeWidgetItem* {
+        if (!item) return nullptr;
+        if (item->data(0, Qt::UserRole).toString() == previousContext) return item;
+        for (int child = 0; child < item->childCount(); ++child) {
+          if (auto* match = findContext(item->child(child))) return match;
+        }
+        return nullptr;
+      };
+  for (int topLevel = 0; topLevel < impl_->contextTree_->topLevelItemCount(); ++topLevel) {
+    if (auto* match = findContext(impl_->contextTree_->topLevelItem(topLevel))) {
+      impl_->contextTree_->setCurrentItem(match);
+      break;
+    }
+  }
+}
+
 void ShortcutSettingPage::filterShortcutRows() {
   if (!impl_ || !impl_->table_) return;
-  const QString context = impl_->contextCombo_ ? impl_->contextCombo_->currentText() : QString();
+  const QString context = selectedShortcutContext();
   const QString query = impl_->filterEdit_ ? impl_->filterEdit_->text().trimmed() : QString();
+  const bool conflictsOnly = impl_->conflictsOnlyCheckBox_ && impl_->conflictsOnlyCheckBox_->isChecked();
   for (int row = 0; row < impl_->table_->rowCount(); ++row) {
     const QString rowContext = impl_->table_->item(row, 1)
                                    ? impl_->table_->item(row, 1)->text() : QString();
@@ -1915,17 +2094,21 @@ void ShortcutSettingPage::filterShortcutRows() {
                                  ? editor->keySequence().toString(QKeySequence::NativeText)
                                  : QString();
     const bool contextMatches = context.isEmpty() || context == QStringLiteral("All contexts") ||
-                                rowContext == context;
+                                rowContext == context ||
+                                rowContext.startsWith(context + QLatin1Char('.'));
     const bool queryMatches = query.isEmpty() || action.contains(query, Qt::CaseInsensitive) ||
                               rowContext.contains(query, Qt::CaseInsensitive) ||
                               shortcut.contains(query, Qt::CaseInsensitive);
-    impl_->table_->setRowHidden(row, !contextMatches || !queryMatches);
+    const auto* status = impl_->table_->item(row, 5);
+    const bool hasConflict = status && status->data(Qt::UserRole).toBool();
+    impl_->table_->setRowHidden(row, !contextMatches || !queryMatches ||
+                                     (conflictsOnly && !hasConflict));
   }
 }
 
 void ShortcutSettingPage::updateShortcutConflicts() {
   if (!impl_ || !impl_->table_) return;
-  int conflicts = 0;
+  int conflictPairs = 0;
   for (int row = 0; row < impl_->table_->rowCount(); ++row) {
     auto* status = impl_->table_->item(row, 5);
     if (!status) {
@@ -1933,6 +2116,8 @@ void ShortcutSettingPage::updateShortcutConflicts() {
       impl_->table_->setItem(row, 5, status);
     }
     status->setText(QString());
+    status->setToolTip(QString());
+    status->setData(Qt::UserRole, false);
     const QString context = impl_->table_->item(row, 1)
                                 ? impl_->table_->item(row, 1)->text() : QString();
     const auto* editor = qobject_cast<QKeySequenceEdit*>(impl_->table_->cellWidget(row, 4));
@@ -1944,19 +2129,44 @@ void ShortcutSettingPage::updateShortcutConflicts() {
       const auto* otherEditor = qobject_cast<QKeySequenceEdit*>(
           impl_->table_->cellWidget(other, 4));
       if (context == otherContext && otherEditor && otherEditor->keySequence() == sequence) {
-        status->setText(QStringLiteral("Conflict"));
-        if (auto* otherStatus = impl_->table_->item(other, 5))
-          otherStatus->setText(QStringLiteral("Conflict"));
-        ++conflicts;
-        break;
+        const QString action = impl_->table_->item(row, 2)
+                                   ? impl_->table_->item(row, 2)->text() : QString();
+        const QString otherAction = impl_->table_->item(other, 2)
+                                        ? impl_->table_->item(other, 2)->text() : QString();
+        const auto appendConflict = [](QTableWidgetItem* item, const QString& counterpart) {
+          if (!item) return;
+          const QString existing = item->text();
+          item->setText(existing.isEmpty()
+                            ? QStringLiteral("Conflicts with %1").arg(counterpart)
+                            : QStringLiteral("%1, %2").arg(existing, counterpart));
+          item->setToolTip(item->text());
+          item->setData(Qt::UserRole, true);
+        };
+        appendConflict(status, otherAction);
+        appendConflict(impl_->table_->item(other, 5), action);
+        ++conflictPairs;
       }
     }
   }
   if (impl_->conflictLabel_) {
     impl_->conflictLabel_->setText(
-        conflicts == 0 ? QStringLiteral("No context conflicts")
-                       : QStringLiteral("%1 context conflict(s) — review rows marked Conflict before applying")
-                             .arg(conflicts));
+        conflictPairs == 0 ? QStringLiteral("No context conflicts")
+                           : QStringLiteral("%1 context conflict(s) — review the affected rows before applying")
+                                 .arg(conflictPairs));
+  }
+  filterShortcutRows();
+}
+
+void ShortcutSettingPage::resetSelectedShortcut() {
+  if (!impl_ || !impl_->table_) return;
+  const int row = impl_->table_->currentRow();
+  const auto* action = row >= 0 ? impl_->table_->item(row, 2) : nullptr;
+  if (!action) return;
+  const auto id = static_cast<ArtifactCore::ShortcutId>(action->data(Qt::UserRole).toInt());
+  if (auto* editor = qobject_cast<QKeySequenceEdit*>(impl_->table_->cellWidget(row, 4))) {
+    editor->setKeySequence(ArtifactCore::ShortcutBindings::instance().defaultShortcut(id));
+    if (impl_->profileCombo_) impl_->profileCombo_->setCurrentIndex(3);
+    updateShortcutConflicts();
   }
 }
 
@@ -2051,6 +2261,7 @@ void ShortcutSettingPage::loadSettings() {
     const int selectedIndex = impl_->contextCombo_->findText(selectedContext);
     impl_->contextCombo_->setCurrentIndex(selectedIndex >= 0 ? selectedIndex : 0);
   }
+  rebuildShortcutContextTree();
 
   for (int row = 0; row < static_cast<int>(ids.size()); ++row) {
     const auto id = ids[static_cast<std::size_t>(row)];
@@ -2061,7 +2272,9 @@ void ShortcutSettingPage::loadSettings() {
 
     impl_->table_->setItem(row, 0, new QTableWidgetItem(category));
     impl_->table_->setItem(row, 1, new QTableWidgetItem(context));
-    impl_->table_->setItem(row, 2, new QTableWidgetItem(actionLabel));
+    auto* actionItem = new QTableWidgetItem(actionLabel);
+    actionItem->setData(Qt::UserRole, static_cast<int>(id));
+    impl_->table_->setItem(row, 2, actionItem);
     impl_->table_->setItem(row, 3, new QTableWidgetItem(defaultShortcut));
     auto *editor = new QKeySequenceEdit(impl_->table_);
     editor->setKeySequence(bindings.shortcut(id));
@@ -2090,6 +2303,7 @@ bool ShortcutSettingPage::eventFilter(QObject *watched, QEvent *event) {
         (impl_->profileCombo_ && watched == impl_->profileCombo_->view()->viewport());
     const bool contextControl = watched == impl_->contextCombo_ ||
         (impl_->contextCombo_ && watched == impl_->contextCombo_->view()->viewport());
+    const bool contextTree = watched == impl_->contextTree_;
     if (watched == impl_->filterEdit_ &&
         (event->type() == QEvent::KeyRelease || event->type() == QEvent::FocusOut)) {
       filterShortcutRows();
@@ -2098,6 +2312,17 @@ bool ShortcutSettingPage::eventFilter(QObject *watched, QEvent *event) {
                 event->type() == QEvent::KeyRelease)) {
       QTimer::singleShot(0, this, [this]() { applyShortcutProfile(); });
     } else if (contextControl &&
+               (event->type() == QEvent::MouseButtonRelease ||
+                event->type() == QEvent::KeyRelease)) {
+      QTimer::singleShot(0, this, [this]() {
+        if (impl_ && impl_->contextTree_) impl_->contextTree_->setCurrentItem(nullptr);
+        filterShortcutRows();
+      });
+    } else if (contextTree &&
+               (event->type() == QEvent::MouseButtonRelease ||
+                event->type() == QEvent::KeyRelease)) {
+      QTimer::singleShot(0, this, [this]() { filterShortcutRows(); });
+    } else if (watched == impl_->conflictsOnlyCheckBox_ &&
                (event->type() == QEvent::MouseButtonRelease ||
                 event->type() == QEvent::KeyRelease)) {
       QTimer::singleShot(0, this, [this]() { filterShortcutRows(); });
@@ -2159,6 +2384,23 @@ bool ShortcutSettingPage::eventFilter(QObject *watched, QEvent *event) {
           return true;
         }
       }
+    } else if (watched == impl_->resetSelectedButton_) {
+      const auto type = event->type();
+      if (type == QEvent::MouseButtonRelease) {
+        auto *mouseEvent = static_cast<QMouseEvent *>(event);
+        if (mouseEvent && mouseEvent->button() == Qt::LeftButton) {
+          resetSelectedShortcut();
+          return true;
+        }
+      } else if (type == QEvent::KeyRelease) {
+        auto *keyEvent = static_cast<QKeyEvent *>(event);
+        if (keyEvent && (keyEvent->key() == Qt::Key_Return ||
+                         keyEvent->key() == Qt::Key_Enter ||
+                         keyEvent->key() == Qt::Key_Space)) {
+          resetSelectedShortcut();
+          return true;
+        }
+      }
     }
   }
 
@@ -2179,6 +2421,220 @@ QList<SettingItemInfo> ShortcutSettingPage::searchableItems() const {
     });
   }
   return items;
+}
+
+namespace {
+
+bool isEnvironmentVariableName(const QString &name) {
+  if (name.isEmpty()) return false;
+  const QChar first = name.front();
+  if (!((first >= QChar(u'a') && first <= QChar(u'z')) ||
+        (first >= QChar(u'A') && first <= QChar(u'Z')) ||
+        first == QChar(u'_'))) {
+    return false;
+  }
+  for (const QChar character : name) {
+    const bool isLetter = (character >= QChar(u'a') && character <= QChar(u'z')) ||
+        (character >= QChar(u'A') && character <= QChar(u'Z'));
+    if (!isLetter && !character.isDigit() && character != QChar(u'_')) return false;
+  }
+  return true;
+}
+
+QVariantMap applicationEnvironmentOverrides() {
+  return QSettings().value(QStringLiteral("EnvironmentVariables/ApplicationOverrides")).toMap();
+}
+
+} // namespace
+
+class EnvironmentVariableSettingPage::Impl {
+public:
+  QTableWidget *table_ = nullptr;
+  QLabel *nameValue_ = nullptr;
+  QLabel *sourceValue_ = nullptr;
+  QLineEdit *expandedValue_ = nullptr;
+  QLabel *hint_ = nullptr;
+
+  void updateDetails() {
+    if (!table_ || !nameValue_ || !sourceValue_ || !expandedValue_ || !hint_) return;
+    const int row = table_->currentRow();
+    const auto *nameItem = row >= 0 ? table_->item(row, 0) : nullptr;
+    const auto *valueItem = row >= 0 ? table_->item(row, 1) : nullptr;
+    const auto *sourceItem = row >= 0 ? table_->item(row, 2) : nullptr;
+    const QString name = nameItem ? nameItem->text().trimmed() : QString();
+    const QString value = valueItem ? valueItem->text() : QString();
+    nameValue_->setText(name.isEmpty() ? QStringLiteral("Select a variable") : name);
+    sourceValue_->setText(sourceItem ? sourceItem->text() : QString());
+    expandedValue_->setText(ArtifactCore::expandTokens(value, {}));
+    hint_->setText(name.isEmpty()
+        ? QStringLiteral("Edit the blank application row to add an override.")
+        : QStringLiteral("Use ${NAME} or $NAME to reference another variable."));
+  }
+};
+
+EnvironmentVariableSettingPage::EnvironmentVariableSettingPage(QWidget *parent)
+    : QWidget(parent), impl_(new Impl()) {
+  setAccessibleName(QStringLiteral("Environment variables"));
+  setAccessibleDescription(QStringLiteral("Configure ArtifactStudio-only environment variable overrides"));
+
+  auto *layout = new QVBoxLayout(this);
+  layout->setContentsMargins(0, 0, 0, 0);
+  layout->setSpacing(10);
+  auto *note = new QLabel(
+      QStringLiteral("Application overrides are used by ArtifactStudio only. System environment variables are read-only here."), this);
+  note->setWordWrap(true);
+  layout->addWidget(note);
+
+  auto *content = new QHBoxLayout();
+  content->setContentsMargins(0, 0, 0, 0);
+  content->setSpacing(14);
+  impl_->table_ = new QTableWidget(this);
+  impl_->table_->setColumnCount(3);
+  impl_->table_->setHorizontalHeaderLabels(
+      {QStringLiteral("Variable"), QStringLiteral("Value"), QStringLiteral("Source")});
+  impl_->table_->setSelectionBehavior(QAbstractItemView::SelectRows);
+  impl_->table_->setSelectionMode(QAbstractItemView::SingleSelection);
+  impl_->table_->setEditTriggers(QAbstractItemView::DoubleClicked |
+                                 QAbstractItemView::EditKeyPressed |
+                                 QAbstractItemView::SelectedClicked);
+  impl_->table_->horizontalHeader()->setStretchLastSection(false);
+  impl_->table_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+  impl_->table_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+  impl_->table_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+  impl_->table_->verticalHeader()->setVisible(false);
+  impl_->table_->setAccessibleName(QStringLiteral("Environment variable list"));
+  impl_->table_->setAccessibleDescription(
+      QStringLiteral("Application overrides are editable. System variables are displayed for reference."));
+  impl_->table_->installEventFilter(this);
+  content->addWidget(impl_->table_, 3);
+
+  auto *details = new QGroupBox(QStringLiteral("Variable details"), this);
+  details->setMinimumWidth(250);
+  auto *detailsLayout = new QVBoxLayout(details);
+  detailsLayout->addWidget(new QLabel(QStringLiteral("Variable"), details));
+  impl_->nameValue_ = new QLabel(details);
+  QFont nameFont = impl_->nameValue_->font();
+  nameFont.setBold(true);
+  impl_->nameValue_->setFont(nameFont);
+  detailsLayout->addWidget(impl_->nameValue_);
+  detailsLayout->addWidget(new QLabel(QStringLiteral("Source"), details));
+  impl_->sourceValue_ = new QLabel(details);
+  detailsLayout->addWidget(impl_->sourceValue_);
+  detailsLayout->addWidget(new QLabel(QStringLiteral("Expanded value"), details));
+  impl_->expandedValue_ = new QLineEdit(details);
+  impl_->expandedValue_->setReadOnly(true);
+  impl_->expandedValue_->setAccessibleName(QStringLiteral("Expanded environment variable value"));
+  detailsLayout->addWidget(impl_->expandedValue_);
+  impl_->hint_ = new QLabel(details);
+  impl_->hint_->setWordWrap(true);
+  detailsLayout->addWidget(impl_->hint_);
+  detailsLayout->addStretch(1);
+  content->addWidget(details, 2);
+  layout->addLayout(content, 1);
+  loadSettings();
+}
+
+EnvironmentVariableSettingPage::~EnvironmentVariableSettingPage() { delete impl_; }
+
+bool EnvironmentVariableSettingPage::eventFilter(QObject *watched, QEvent *event) {
+  if (impl_ && watched == impl_->table_ &&
+      (event->type() == QEvent::MouseButtonRelease || event->type() == QEvent::KeyRelease ||
+       event->type() == QEvent::FocusOut)) {
+    impl_->updateDetails();
+  }
+  return QWidget::eventFilter(watched, event);
+}
+
+void EnvironmentVariableSettingPage::loadSettings() {
+  if (!impl_ || !impl_->table_) return;
+  const QVariantMap overrides = applicationEnvironmentOverrides();
+  const QProcessEnvironment system = QProcessEnvironment::systemEnvironment();
+  QStringList names = system.keys();
+  for (auto it = overrides.cbegin(); it != overrides.cend(); ++it) {
+    if (!names.contains(it.key(), Qt::CaseInsensitive)) names.append(it.key());
+  }
+  names.sort(Qt::CaseInsensitive);
+
+  impl_->table_->setRowCount(0);
+  for (const QString &name : names) {
+    const bool applicationOverride = overrides.contains(name);
+    const int row = impl_->table_->rowCount();
+    impl_->table_->insertRow(row);
+    auto *nameItem = new QTableWidgetItem(name);
+    auto *valueItem = new QTableWidgetItem(
+        applicationOverride ? overrides.value(name).toString() : system.value(name));
+    auto *sourceItem = new QTableWidgetItem(
+        applicationOverride ? QStringLiteral("Application") : QStringLiteral("System"));
+    sourceItem->setData(Qt::UserRole, applicationOverride);
+    if (!applicationOverride) {
+      const Qt::ItemFlags readOnly = Qt::ItemIsSelectable | Qt::ItemIsEnabled;
+      nameItem->setFlags(readOnly);
+      valueItem->setFlags(readOnly);
+      sourceItem->setFlags(readOnly);
+    } else {
+      sourceItem->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled);
+    }
+    impl_->table_->setItem(row, 0, nameItem);
+    impl_->table_->setItem(row, 1, valueItem);
+    impl_->table_->setItem(row, 2, sourceItem);
+  }
+  const int newRow = impl_->table_->rowCount();
+  impl_->table_->insertRow(newRow);
+  auto *newName = new QTableWidgetItem();
+  newName->setToolTip(QStringLiteral("Enter a variable name to add an application override"));
+  auto *newValue = new QTableWidgetItem();
+  auto *newSource = new QTableWidgetItem(QStringLiteral("Application"));
+  newSource->setData(Qt::UserRole, true);
+  newSource->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled);
+  impl_->table_->setItem(newRow, 0, newName);
+  impl_->table_->setItem(newRow, 1, newValue);
+  impl_->table_->setItem(newRow, 2, newSource);
+  if (impl_->table_->rowCount() > 0) impl_->table_->selectRow(0);
+  impl_->updateDetails();
+}
+
+void EnvironmentVariableSettingPage::saveSettings() {
+  if (!impl_ || !impl_->table_) return;
+  QVariantMap nextOverrides;
+  for (int row = 0; row < impl_->table_->rowCount(); ++row) {
+    const auto *nameItem = impl_->table_->item(row, 0);
+    const auto *valueItem = impl_->table_->item(row, 1);
+    const auto *sourceItem = impl_->table_->item(row, 2);
+    if (!nameItem || !valueItem || !sourceItem || !sourceItem->data(Qt::UserRole).toBool()) continue;
+    const QString name = nameItem->text().trimmed();
+    if (name.isEmpty()) continue;
+    if (!isEnvironmentVariableName(name)) {
+      QMessageBox::warning(this, QStringLiteral("Invalid environment variable"),
+          QStringLiteral("%1 is not a valid environment variable name.").arg(name));
+      return;
+    }
+    nextOverrides.insert(name, valueItem->text());
+  }
+
+  const QVariantMap previousOverrides = applicationEnvironmentOverrides();
+  QSettings settings;
+  settings.setValue(QStringLiteral("EnvironmentVariables/ApplicationOverrides"), nextOverrides);
+  auto *manager = ArtifactCore::EnvironmentVariableManager::instance();
+  const QProcessEnvironment system = QProcessEnvironment::systemEnvironment();
+  for (auto it = previousOverrides.cbegin(); it != previousOverrides.cend(); ++it) {
+    if (!nextOverrides.contains(it.key())) {
+      if (system.keys().contains(it.key(), Qt::CaseInsensitive)) {
+        manager->setVariable(it.key(), system.value(it.key()));
+      } else {
+        manager->unsetVariable(it.key());
+      }
+    }
+  }
+  for (auto it = nextOverrides.cbegin(); it != nextOverrides.cend(); ++it) {
+    manager->setVariable(it.key(), it.value());
+  }
+}
+
+QList<SettingItemInfo> EnvironmentVariableSettingPage::searchableItems() const {
+  if (!impl_) return {};
+  return {{QStringLiteral("Environment variables"),
+           QStringLiteral("Application-only environment variable overrides and token expansion"),
+           QStringLiteral("Environment Variables"), impl_->table_}};
 }
 
 class ApplicationSettingDialog::Impl {
@@ -2204,6 +2660,7 @@ public:
   ShortcutSettingPage *shortcutPage_;
   PluginSettingPage *pluginPage_;
   AudioScrubSettingPage *audioScrubPage_;
+  EnvironmentVariableSettingPage *environmentVariablePage_;
   QVector<ISettingPage *> pages_;
 
   void setupUI(ApplicationSettingDialog *dialog);
@@ -2253,7 +2710,8 @@ ApplicationSettingDialog::Impl::Impl()
       pageTitle_(nullptr), pageDescription_(nullptr),
       generalPage_(nullptr), importPage_(nullptr), previewPage_(nullptr),
       projectPage_(nullptr), compositionPage_(nullptr), memoryPage_(nullptr),
-      shortcutPage_(nullptr), pluginPage_(nullptr), audioScrubPage_(nullptr) {}
+      shortcutPage_(nullptr), pluginPage_(nullptr), audioScrubPage_(nullptr),
+      environmentVariablePage_(nullptr) {}
 
 ApplicationSettingDialog::Impl::~Impl() {}
 
@@ -2261,12 +2719,14 @@ void ApplicationSettingDialog::Impl::setupUI(ApplicationSettingDialog *dialog) {
   const auto& theme = ArtifactCore::currentDCCTheme();
   const QColor background(theme.backgroundColor);
   const QColor surface(theme.secondaryBackgroundColor);
+  const QColor inputBg(theme.inputBackgroundColor.isEmpty()
+      ? theme.secondaryBackgroundColor : theme.inputBackgroundColor);
   const QColor text(theme.textColor);
   const QColor accent(theme.accentColor);
   QPalette dialogPalette = dialog->palette();
   dialogPalette.setColor(QPalette::Window, background);
   dialogPalette.setColor(QPalette::WindowText, text);
-  dialogPalette.setColor(QPalette::Base, surface);
+  dialogPalette.setColor(QPalette::Base, inputBg.isValid() ? inputBg : surface);
   dialogPalette.setColor(QPalette::AlternateBase, background.darker(108));
   dialogPalette.setColor(QPalette::Button, surface);
   dialogPalette.setColor(QPalette::ButtonText, text);
@@ -2311,6 +2771,7 @@ void ApplicationSettingDialog::Impl::setupUI(ApplicationSettingDialog *dialog) {
   categoryList_->addItem("Shortcuts");
   categoryList_->addItem("Audio Scrubbing");
   categoryList_->addItem("Plugins");
+  categoryList_->addItem("Environment Variables");
   categoryList_->setCurrentRow(0);
   navigationLayout->addWidget(categoryList_, 1);
   contentLayout->addLayout(navigationLayout);
@@ -2378,9 +2839,10 @@ void ApplicationSettingDialog::Impl::setupUI(ApplicationSettingDialog *dialog) {
   settingPages_->addWidget(shortcutPage_);
   settingPages_->addWidget(audioScrubPage_ = new AudioScrubSettingPage(dialog));
   settingPages_->addWidget(pluginPage_ = new PluginSettingPage(dialog));
+  settingPages_->addWidget(environmentVariablePage_ = new EnvironmentVariableSettingPage(dialog));
 
   pages_ = {generalPage_, importPage_, previewPage_, projectPage_, compositionPage_,
-            memoryPage_, shortcutPage_, audioScrubPage_, pluginPage_};
+            memoryPage_, shortcutPage_, audioScrubPage_, pluginPage_, environmentVariablePage_};
 
   pageLayout->addWidget(settingPages_, 1);
   contentLayout->addLayout(pageLayout, 1);
@@ -2444,7 +2906,8 @@ void ApplicationSettingDialog::Impl::onCategoryChanged(int index) {
       QStringLiteral("Memory budget, CPU allocation, and background performance."),
       QStringLiteral("Review and customize keyboard commands by workspace context."),
       QStringLiteral("Audio feedback settings used while scrubbing the timeline."),
-      QStringLiteral("Discover and manage installed application plugins.")};
+      QStringLiteral("Discover and manage installed application plugins."),
+      QStringLiteral("Manage environment overrides used by ArtifactStudio and preview token expansion.")};
   pageTitle_->setText(categoryList_->item(index)->text());
   pageDescription_->setText(descriptions.value(index));
 }
@@ -2513,6 +2976,7 @@ void ApplicationSettingDialog::Impl::resetProjectOverrides() {
   if (memoryPage_) memoryPage_->loadSettings();
   if (shortcutPage_) shortcutPage_->loadSettings();
   if (audioScrubPage_) audioScrubPage_->loadSettings();
+  if (environmentVariablePage_) environmentVariablePage_->loadSettings();
 }
 
 ApplicationSettingDialog::ApplicationSettingDialog(
@@ -2541,6 +3005,9 @@ void ApplicationSettingDialog::loadSettings() {
   if (impl_->audioScrubPage_) {
     impl_->audioScrubPage_->loadSettings();
   }
+  if (impl_->environmentVariablePage_) {
+    impl_->environmentVariablePage_->loadSettings();
+  }
   impl_->updateOverrideSummary();
 }
 
@@ -2556,6 +3023,9 @@ void ApplicationSettingDialog::saveSettings() {
   }
   if (impl_->audioScrubPage_) {
     impl_->audioScrubPage_->saveSettings();
+  }
+  if (impl_->environmentVariablePage_) {
+    impl_->environmentVariablePage_->saveSettings();
   }
 
   ArtifactAppSettings::instance()->sync();

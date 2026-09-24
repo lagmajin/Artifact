@@ -73,11 +73,14 @@ import Widgets.Common.DialogPlacement;
 import Artifact.Application.Manager;
 import Artifact.Tool.MotionSketchTool;
 import Artifact.Tool.Brush;
+import Artifact.Tool.PuppetTool;
+import Artifact.Widgets.CompositionTextPuppetUndoCommands;
 import Artifact.Tool.Manager;
 import Artifact.Composition.Abstract;
 import Artifact.Event.Types;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Image;
 import Artifact.Layer.Shape;
 import Artifact.Layer.Text;
 import Event.Bus;
@@ -1393,6 +1396,29 @@ public:
         std::max(3, shapeLayer->polygonSides()), true);
 
   }
+
+  void syncPuppetToolOptions(ArtifactMainWindow *owner) {
+    if (!owner || !toolOptionsBar) return;
+    auto *app = ArtifactApplicationManager::instance();
+    auto *selection = app ? app->layerSelectionManager() : nullptr;
+    const auto current = selection ? selection->currentLayer()
+                                   : ArtifactAbstractLayerPtr{};
+    const auto layer = current;
+    const auto *toolManager = app ? app->toolManager() : nullptr;
+    const auto activeTool = toolManager ? toolManager->activeTool()
+                                        : ToolType::Selection;
+    const bool puppetActive = activeTool == ToolType::Puppet;
+    if (!layer || !app || !app->puppetTool()) {
+      toolOptionsBar->setPuppetOptions(0, 5, 5, !puppetActive);
+      return;
+    }
+    const auto state = layer->deformation2DData();
+    toolOptionsBar->setPuppetOptions(
+        static_cast<int>(app->puppetTool()->deformation2DMode(layer->id())),
+        std::clamp(state.value(QStringLiteral("columns")).toInt(5), 2, 64),
+        std::clamp(state.value(QStringLiteral("rows")).toInt(5), 2, 64),
+        puppetActive, state.value(QStringLiteral("enabled")).toBool(true));
+  }
 };
 
 ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
@@ -1532,7 +1558,8 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
   // action itself remains a local widget boundary.
   impl_->eventBusSubscriptions_.push_back(
       impl_->eventBus_.subscribe<ToolChangedEvent>(
-          [](const ToolChangedEvent &event) {
+          [this](const ToolChangedEvent &event) {
+            if (impl_) impl_->syncPuppetToolOptions(this);
             switch (event.toolType) {
             case ToolType::Move:
               qDebug() << "[MainWindow] Move tool selected (W)";
@@ -1558,6 +1585,84 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
         auto *selection = app ? app->layerSelectionManager() : nullptr;
         const auto current =
             selection ? selection->currentLayer() : ArtifactAbstractLayerPtr{};
+
+        if (toolName == QStringLiteral("パペット")) {
+          const auto layer = current;
+          auto *puppet = app ? app->puppetTool() : nullptr;
+          if (!layer || !puppet) return;
+          const auto state = layer->deformation2DData();
+          const int columns = std::clamp(state.value(QStringLiteral("columns")).toInt(5), 2, 64);
+          const int rows = std::clamp(state.value(QStringLiteral("rows")).toInt(5), 2, 64);
+          const auto mode = puppet->deformation2DMode(layer->id());
+          if (optionName == QStringLiteral("enabled")) {
+            const bool enabled = value.toBool();
+            if (state.value(QStringLiteral("enabled")).toBool(true) != enabled) {
+              const QJsonObject before = state;
+              QJsonObject after = state;
+              after[QStringLiteral("enabled")] = enabled;
+              layer->setDeformation2DData(after);
+              if (auto *undo = UndoManager::instance()) {
+                if (!undo->push(std::make_unique<Deformation2DStateUndoCommand>(
+                        current, before, after,
+                        QStringLiteral("Toggle 2D Deformer"), puppet))) {
+                  puppet->restoreLayerData(layer->id(), before, layer.get());
+                  impl_->syncPuppetToolOptions(this);
+                }
+              }
+            }
+          } else if (optionName == QStringLiteral("mode")) {
+            const auto requested = value.toInt() == 1
+                ? Deformation2DMode::Grid : Deformation2DMode::Pins;
+            if (requested != mode) {
+              const QJsonObject before = layer->deformation2DData();
+              if (puppet->setDeformation2DMode(layer->id(), requested, columns, rows)) {
+                impl_->syncPuppetToolOptions(this);
+                if (auto *undo = UndoManager::instance()) {
+                  const QJsonObject after = layer->deformation2DData();
+                  if (!undo->push(std::make_unique<Deformation2DStateUndoCommand>(
+                          current, before, after,
+                          QStringLiteral("Change 2D Deformer Mode"), puppet))) {
+                    puppet->restoreLayerData(layer->id(), before, layer.get());
+                    impl_->syncPuppetToolOptions(this);
+                  }
+                }
+              } else {
+                impl_->syncPuppetToolOptions(this);
+              }
+            }
+          } else if (optionName == QStringLiteral("columns") && mode == Deformation2DMode::Grid) {
+            const QJsonObject before = layer->deformation2DData();
+            if (value.toInt() != columns &&
+                puppet->setDeformation2DMode(layer->id(), mode, value.toInt(), rows)) {
+              impl_->syncPuppetToolOptions(this);
+              if (auto *undo = UndoManager::instance()) {
+                const QJsonObject after = layer->deformation2DData();
+                if (!undo->push(std::make_unique<Deformation2DStateUndoCommand>(
+                        current, before, after,
+                        QStringLiteral("Change Deformer Grid Columns"), puppet))) {
+                  puppet->restoreLayerData(layer->id(), before, layer.get());
+                  impl_->syncPuppetToolOptions(this);
+                }
+              }
+            }
+          } else if (optionName == QStringLiteral("rows") && mode == Deformation2DMode::Grid) {
+            const QJsonObject before = layer->deformation2DData();
+            if (value.toInt() != rows &&
+                puppet->setDeformation2DMode(layer->id(), mode, columns, value.toInt())) {
+              impl_->syncPuppetToolOptions(this);
+              if (auto *undo = UndoManager::instance()) {
+                const QJsonObject after = layer->deformation2DData();
+                if (!undo->push(std::make_unique<Deformation2DStateUndoCommand>(
+                        current, before, after,
+                        QStringLiteral("Change Deformer Grid Rows"), puppet))) {
+                  puppet->restoreLayerData(layer->id(), before, layer.get());
+                  impl_->syncPuppetToolOptions(this);
+                }
+              }
+            }
+          }
+          return;
+        }
 
         if (toolName == QStringLiteral("ブラシ") ||
             toolName == QStringLiteral("消しゴム") ||
@@ -2024,6 +2129,7 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
         if (impl_) {
           impl_->syncTextToolOptions(this);
           impl_->syncShapeToolOptions(this);
+          impl_->syncPuppetToolOptions(this);
         }
       }));
   impl_->eventBusSubscriptions_.push_back(
@@ -2042,6 +2148,7 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
               }
               impl_->syncTextToolOptions(this);
               impl_->syncShapeToolOptions(this);
+              impl_->syncPuppetToolOptions(this);
             };
             if (QThread::currentThread() == thread()) {
               refresh();
@@ -2051,6 +2158,7 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
           }));
   impl_->syncTextToolOptions(this);
   impl_->syncShapeToolOptions(this);
+  impl_->syncPuppetToolOptions(this);
 
   if (qApp) {
     qApp->installEventFilter(this);
@@ -2065,6 +2173,14 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
   impl_->nativeDockSurface = new NativeDockSurface(impl_->centralWidgetHost);
   impl_->nativeDockSurface->setObjectName(
       QStringLiteral("ArtifactNativeDockMvpSurface"));
+  const QPointer<ArtifactMainWindow> nativeDockWindowGuard(this);
+  impl_->nativeDockSurface->setLayoutMutationCallback(
+      [nativeDockWindowGuard](const QByteArray &beforeState,
+                              const QString &label) {
+        if (nativeDockWindowGuard) {
+          pushDockLayoutSnapshot(nativeDockWindowGuard, beforeState, label);
+        }
+      });
   impl_->centralWorkspaceLayout->addWidget(impl_->nativeDockSurface);
   impl_->rootLayout->addWidget(impl_->centralWidgetHost, 1);
   if (impl_->dockStyleManager) {
@@ -2202,7 +2318,22 @@ ArtifactMainWindow::~ArtifactMainWindow() {
   if (qApp) {
     qApp->removeEventFilter(this);
   }
+
+  // ArtifactMenuBar is created lazily after the other window children.  If it
+  // is left to QObject's child cleanup, QMenuBar remains installed as a window
+  // event filter while earlier children tear down their native QWidgetWindow
+  // instances.  Destroy it while the owning window is still fully valid.
+  if (impl_ && impl_->menuBar) {
+    ArtifactMenuBar *menuBar = impl_->menuBar;
+    impl_->menuBar = nullptr;
+    if (impl_->rootLayout) {
+      impl_->rootLayout->removeWidget(menuBar);
+    }
+    delete menuBar;
+  }
+
   delete impl_;
+  impl_ = nullptr;
 }
 
 void ArtifactMainWindow::addWidget() {}
@@ -2560,12 +2691,9 @@ void ArtifactMainWindow::moveDockToTabGroup(const QString &title,
       !impl_->nativeDockSurface->containsDock(tabGroupPrefix)) {
     return;
   }
-  const QByteArray beforeState = saveDockManagerState();
   if (!impl_->nativeDockSurface->moveDockWidgetToTab(title, tabGroupPrefix)) {
     return;
   }
-  pushDockLayoutSnapshot(this, beforeState,
-                         QStringLiteral("Move Dock: %1").arg(title));
   return;
 
 
@@ -2630,9 +2758,23 @@ void ArtifactMainWindow::setDockVisible(const QString &title,
     return;
   if (impl_->nativeDockSurface &&
       impl_->nativeDockSurface->containsDock(title)) {
+    const bool changed = impl_->nativeDockSurface->dockVisible(title) != visible;
+    const bool recordMutation =
+        changed && impl_->recordLayoutMutations && !impl_->startupLayoutFrozen &&
+        !impl_->startupLayoutApplying &&
+        property("artifactWorkspaceVisibilityBatchDepth").toInt() == 0 &&
+        property("artifactProgrammaticDockMutationDepth").toInt() == 0;
+    const QByteArray beforeState =
+        recordMutation ? saveDockManagerState() : QByteArray{};
     impl_->nativeDockSurface->setDockVisible(title, visible);
     if (visible) {
       impl_->nativeDockSurface->activateDock(title);
+    }
+    if (recordMutation) {
+      pushDockLayoutSnapshot(
+          this, beforeState,
+          visible ? QStringLiteral("Show Dock: %1").arg(title)
+                  : QStringLiteral("Hide Dock: %1").arg(title));
     }
     return;
   }
@@ -2724,7 +2866,21 @@ void ArtifactMainWindow::setDockPinned(const QString &title, bool pinned) {
   }
   if (impl_->nativeDockSurface &&
       impl_->nativeDockSurface->containsDock(title)) {
+    if (impl_->nativeDockSurface->dockPinned(title) == pinned) {
+      return;
+    }
+    const bool recordMutation = impl_->recordLayoutMutations &&
+        !impl_->startupLayoutFrozen && !impl_->startupLayoutApplying &&
+        property("artifactProgrammaticDockMutationDepth").toInt() == 0;
+    const QByteArray beforeState =
+        recordMutation ? saveDockManagerState() : QByteArray{};
     impl_->nativeDockSurface->setDockPinned(title, pinned);
+    if (recordMutation) {
+      pushDockLayoutSnapshot(
+          this, beforeState,
+          pinned ? QStringLiteral("Pin Dock: %1").arg(title)
+                 : QStringLiteral("Unpin Dock: %1").arg(title));
+    }
     return;
   }
   if (impl_->nativeDockSurface) {
