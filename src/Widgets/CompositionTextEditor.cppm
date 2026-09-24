@@ -3,6 +3,7 @@ module;
 #include <QCheckBox>
 #include <QColor>
 #include <QComboBox>
+#include <QContextMenuEvent>
 #include <QDialog>
 #include <QDoubleSpinBox>
 #include <QEvent>
@@ -13,6 +14,7 @@ module;
 #include <QInputMethodEvent>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QMimeData>
 #include <QPalette>
 #include <QPainter>
 #include <QPen>
@@ -25,6 +27,7 @@ module;
 #include <QSpinBox>
 #include <QString>
 #include <QTextEdit>
+#include <QTextDocument>
 #include <QTimer>
 #include <QObject>
 #include <QVariant>
@@ -239,6 +242,56 @@ private:
   bool imePreeditActive_ = false;
 };
 
+class TextEditorInput final : public QTextEdit {
+public:
+  explicit TextEditorInput(QWidget *parent = nullptr) : QTextEdit(parent) {}
+
+  void setDocumentEditedHandler(std::function<void()> handler) {
+    documentEditedHandler_ = std::move(handler);
+  }
+
+protected:
+  void keyPressEvent(QKeyEvent *event) override {
+    const int revisionBefore = document()->revision();
+    QTextEdit::keyPressEvent(event);
+    notifyIfChanged(revisionBefore);
+  }
+
+  void inputMethodEvent(QInputMethodEvent *event) override {
+    const int revisionBefore = document()->revision();
+    QTextEdit::inputMethodEvent(event);
+    if (event->preeditString().isEmpty()) {
+      notifyIfChanged(revisionBefore);
+    }
+  }
+
+  void insertFromMimeData(const QMimeData *source) override {
+    const int revisionBefore = document()->revision();
+    QTextEdit::insertFromMimeData(source);
+    if (!contextMenuActive_) {
+      notifyIfChanged(revisionBefore);
+    }
+  }
+
+  void contextMenuEvent(QContextMenuEvent *event) override {
+    const int revisionBefore = document()->revision();
+    contextMenuActive_ = true;
+    QTextEdit::contextMenuEvent(event);
+    contextMenuActive_ = false;
+    notifyIfChanged(revisionBefore);
+  }
+
+private:
+  void notifyIfChanged(int revisionBefore) {
+    if (document()->revision() != revisionBefore && documentEditedHandler_) {
+      documentEditedHandler_();
+    }
+  }
+
+  std::function<void()> documentEditedHandler_;
+  bool contextMenuActive_ = false;
+};
+
 class ArtifactTextEditorDialog final : public QDialog {
 public:
   ArtifactTextEditorDialog(const ArtifactAbstractLayerPtr &layer,
@@ -284,7 +337,7 @@ public:
     preview_ = preview;
     root->addWidget(preview, 1);
 
-    editor_ = new QTextEdit(this);
+    editor_ = new TextEditorInput(this);
     const QString initialText = textEditorValue(textLayer);
     initialEditorText_ = initialText;
     richText_ = Qt::mightBeRichText(initialText);
@@ -314,6 +367,7 @@ public:
     editor_->setPalette(editorPalette);
 
     editor_->installEventFilter(this);
+    editor_->setDocumentEditedHandler([this]() { queueLivePreview(); });
     root->addWidget(editor_);
 
     auto *typeRow = new QHBoxLayout();
@@ -444,7 +498,8 @@ public:
       wrapModeCombo_->setCurrentIndex(static_cast<int>(textLayer->wrapMode()));
       wrapModeCombo_->installEventFilter(this);
       layoutRow->addWidget(wrapModeCombo_);
-      layoutRow->addWidget(new QLabel(QStringLiteral("V Align"), this));
+      verticalAlignmentLabel_ = new QLabel(QStringLiteral("V Align"), this);
+      layoutRow->addWidget(verticalAlignmentLabel_);
       verticalAlignmentCombo_ = new QComboBox(this);
       verticalAlignmentCombo_->addItem(QStringLiteral("Top"), 0);
       verticalAlignmentCombo_->addItem(QStringLiteral("Middle"), 1);
@@ -478,11 +533,13 @@ public:
         spin->installEventFilter(this);
         paragraphRow->addWidget(spin);
         *out = spin;
+        return static_cast<QLabel *>(paragraphRow->itemAt(
+            paragraphRow->count() - 2)->widget());
       };
-      addParagraphMetric(QStringLiteral("Width"), textLayer->maxWidth(), 0.0,
-                         100000.0, &boxWidthSpin_);
-      addParagraphMetric(QStringLiteral("Height"), textLayer->boxHeight(), 0.0,
-                         100000.0, &boxHeightSpin_);
+      boxWidthLabel_ = addParagraphMetric(QStringLiteral("Width"),
+          textLayer->maxWidth(), 0.0, 100000.0, &boxWidthSpin_);
+      boxHeightLabel_ = addParagraphMetric(QStringLiteral("Height"),
+          textLayer->boxHeight(), 0.0, 100000.0, &boxHeightSpin_);
       addParagraphMetric(QStringLiteral("Paragraph"), textLayer->paragraphSpacing(),
                          -1000.0, 1000.0, &paragraphSpacingSpin_);
       addParagraphMetric(QStringLiteral("Shadow X"), textLayer->shadowOffsetX(),
@@ -525,6 +582,8 @@ public:
       animatorRow->addStretch(1);
       root->addLayout(animatorRow);
     }
+
+    updateLayoutControlState();
 
     auto *actionRow = new QHBoxLayout();
     editStateLabel_ = new QLabel(QStringLiteral("No changes"), this);
@@ -581,9 +640,6 @@ protected:
           accept();
           return true;
         }
-      } else if (event->type() == QEvent::KeyRelease) {
-        applyLivePreview();
-        updateEditState();
       } else if (event->type() == QEvent::FocusOut) {
         updateEditState();
         return false;
@@ -784,6 +840,7 @@ private:
             verticalAlignmentCombo_->currentData().toInt()));
     if (writingModeCombo_) textLayer->setWritingMode(
         static_cast<ArtifactCore::TextWritingMode>(writingModeCombo_->currentData().toInt()));
+    updateLayoutControlState();
     textLayer->setDirty();
     textLayer->changed();
     if (preview_) {
@@ -795,7 +852,12 @@ private:
   }
 
   void queueLivePreview() {
+    if (finished_ || previewUpdatePending_) {
+      return;
+    }
+    previewUpdatePending_ = true;
     QTimer::singleShot(0, this, [this]() {
+      previewUpdatePending_ = false;
       if (!finished_) {
         livePreviewChanged_ = true;
         updateEditState();
@@ -814,6 +876,24 @@ private:
     const bool dirty = textChanged || livePreviewChanged_;
     editStateLabel_->setText(dirty ? QStringLiteral("Unsaved changes")
                                    : QStringLiteral("No changes"));
+  }
+
+  void updateLayoutControlState() {
+    const bool boxLayout = layoutModeCombo_ &&
+        layoutModeCombo_->currentData().toInt() ==
+            static_cast<int>(TextLayoutMode::Box);
+    if (boxWidthLabel_) boxWidthLabel_->setEnabled(boxLayout);
+    if (boxWidthSpin_) boxWidthSpin_->setEnabled(boxLayout);
+    if (boxHeightLabel_) boxHeightLabel_->setEnabled(boxLayout);
+    if (boxHeightSpin_) boxHeightSpin_->setEnabled(boxLayout);
+    const bool hasFixedBoxHeight = boxLayout && boxHeightSpin_ &&
+                                   boxHeightSpin_->value() > 0.0;
+    if (verticalAlignmentLabel_) {
+      verticalAlignmentLabel_->setEnabled(hasFixedBoxHeight);
+    }
+    if (verticalAlignmentCombo_) {
+      verticalAlignmentCombo_->setEnabled(hasFixedBoxHeight);
+    }
   }
 
   static QString editorSummaryText(const ArtifactCore::SharedPtr<ArtifactTextLayer> &textLayer) {
@@ -1173,7 +1253,7 @@ private:
 
   ArtifactAbstractLayerPtr layer_;
   CompositionRenderController *controller_ = nullptr;
-  QTextEdit *editor_ = nullptr;
+  TextEditorInput *editor_ = nullptr;
   QLabel *editStateLabel_ = nullptr;
   QString initialEditorText_;
   QDoubleSpinBox *fontSizeSpin_ = nullptr;
@@ -1195,6 +1275,9 @@ private:
   QDoubleSpinBox *shadowOffsetYSpin_ = nullptr;
   QDoubleSpinBox *boxWidthSpin_ = nullptr;
   QDoubleSpinBox *boxHeightSpin_ = nullptr;
+  QLabel *boxWidthLabel_ = nullptr;
+  QLabel *boxHeightLabel_ = nullptr;
+  QLabel *verticalAlignmentLabel_ = nullptr;
   QDoubleSpinBox *paragraphSpacingSpin_ = nullptr;
   QComboBox *layoutModeCombo_ = nullptr;
   QComboBox *wrapModeCombo_ = nullptr;
@@ -1206,6 +1289,7 @@ private:
   bool richText_ = false;
   bool imePreeditActive_ = false;
   bool livePreviewChanged_ = false;
+  bool previewUpdatePending_ = false;
   bool committed_ = false;
   bool finished_ = false;
   QWidget *preview_ = nullptr;
