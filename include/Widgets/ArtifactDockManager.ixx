@@ -176,14 +176,29 @@ inline DockLayoutEntry dockLayoutEntryFromJson(const QJsonObject &json) {
 struct DockLayoutDocument {
   int version = kDockLayoutDocumentVersion;
   QList<DockLayoutEntry> entries;
+  // Optional, area-level preference. Missing and unknown values retain the
+  // historical North/top placement for backward compatibility.
+  QHash<int, bool> areaTabsAtBottom;
 
   QJsonObject toJson() const {
     QJsonArray jsonEntries;
     for (const auto &entry : entries) {
       jsonEntries.push_back(dockLayoutEntryToJson(entry));
     }
-    return QJsonObject{{QStringLiteral("version"), version},
-                       {QStringLiteral("entries"), jsonEntries}};
+    QJsonObject json{{QStringLiteral("version"), version},
+                     {QStringLiteral("entries"), jsonEntries}};
+    QJsonObject tabPositions;
+    for (const DockArea area : {DockArea::Left, DockArea::Right,
+                                DockArea::Top, DockArea::Bottom,
+                                DockArea::Center}) {
+      if (areaTabsAtBottom.value(static_cast<int>(area), false)) {
+        tabPositions[dockAreaToString(area)] = QStringLiteral("bottom");
+      }
+    }
+    if (!tabPositions.isEmpty()) {
+      json[QStringLiteral("areaTabPositions")] = tabPositions;
+    }
+    return json;
   }
 
   static DockLayoutDocument fromJson(const QJsonObject &json) {
@@ -192,6 +207,18 @@ struct DockLayoutDocument {
     if (document.version != kDockLayoutDocumentVersion) {
       document.entries.clear();
       return document;
+    }
+    const QJsonObject tabPositions =
+        json.value(QStringLiteral("areaTabPositions")).toObject();
+    for (const DockArea area : {DockArea::Left, DockArea::Right,
+                                DockArea::Top, DockArea::Bottom,
+                                DockArea::Center}) {
+      const QString position =
+          tabPositions.value(dockAreaToString(area)).toString();
+      if (position.compare(QStringLiteral("bottom"), Qt::CaseInsensitive) ==
+          0) {
+        document.areaTabsAtBottom.insert(static_cast<int>(area), true);
+      }
     }
     for (const auto &value :
          json.value(QStringLiteral("entries")).toArray()) {

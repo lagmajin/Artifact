@@ -802,6 +802,7 @@ public:
 
   QByteArray saveLayoutState() const {
     DockLayoutDocument document;
+    document.areaTabsAtBottom = areaTabsAtBottom_;
     QHash<int, QStringList> areaIds;
     QHash<QDialog *, QStringList> floatingTabIds;
     QHash<QTabWidget *, QString> activeTabIds;
@@ -892,7 +893,11 @@ public:
       if (document.version != kDockLayoutDocumentVersion) {
         return false;
       }
-      return restoreLayout(document.entries);
+      const bool restored = restoreLayout(document.entries);
+      if (restored) {
+        applyAreaTabPositions(document.areaTabsAtBottom);
+      }
+      return restored;
     }
     if (json.isArray()) {
       QList<DockLayoutEntry> entries;
@@ -905,7 +910,11 @@ public:
           entries.push_back(entry);
         }
       }
-      return restoreLayout(entries);
+      const bool restored = restoreLayout(entries);
+      if (restored) {
+        applyAreaTabPositions({});
+      }
+      return restored;
     }
     return false;
   }
@@ -1655,6 +1664,69 @@ private:
     showDropPreview(marker);
   }
 
+  bool isFloatingTabSurface(const QTabWidget *tabs) const {
+    for (auto it = floatingTabSurfaces_.cbegin();
+         it != floatingTabSurfaces_.cend(); ++it) {
+      if (it.value() == tabs) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  void applyAreaTabPositions(const QHash<int, bool> &positions) {
+    areaTabsAtBottom_.clear();
+    for (const DockArea area : {DockArea::Left, DockArea::Right,
+                                DockArea::Top, DockArea::Bottom,
+                                DockArea::Center}) {
+      const bool atBottom = positions.value(static_cast<int>(area), false);
+      if (auto *tabs = tabsForArea(area)) {
+        tabs->setTabPosition(atBottom ? QTabWidget::South
+                                      : QTabWidget::North);
+      }
+      if (atBottom) {
+        areaTabsAtBottom_.insert(static_cast<int>(area), true);
+      }
+    }
+  }
+
+  void setAreaTabPosition(DockArea area, bool atBottom) {
+    auto *tabs = tabsForArea(area);
+    if (!tabs || isFloatingTabSurface(tabs) ||
+        (tabs->tabPosition() == QTabWidget::South) == atBottom) {
+      return;
+    }
+    const QByteArray beforeState = beginLayoutMutation();
+    tabs->setTabPosition(atBottom ? QTabWidget::South : QTabWidget::North);
+    if (atBottom) {
+      areaTabsAtBottom_.insert(static_cast<int>(area), true);
+    } else {
+      areaTabsAtBottom_.remove(static_cast<int>(area));
+    }
+    finishLayoutMutation(beforeState, tr("Change tab bar position"));
+  }
+
+  void addTabPositionActions(QMenu *menu, QTabWidget *tabs,
+                             QAction **topAction,
+                             QAction **bottomAction) {
+    if (!menu || !tabs || isFloatingTabSurface(tabs)) {
+      return;
+    }
+    const DockArea area = areaForTabs(tabs);
+    QMenu *positionMenu = menu->addMenu(
+        tr("Tab bar position (%1 area)").arg(dockAreaToString(area)));
+    if (topAction) {
+      *topAction = positionMenu->addAction(tr("Tabs at top"));
+      (*topAction)->setCheckable(true);
+      (*topAction)->setChecked(tabs->tabPosition() == QTabWidget::North);
+    }
+    if (bottomAction) {
+      *bottomAction = positionMenu->addAction(tr("Tabs at bottom"));
+      (*bottomAction)->setCheckable(true);
+      (*bottomAction)->setChecked(tabs->tabPosition() == QTabWidget::South);
+    }
+  }
+
   void showTabListMenu(QTabWidget *tabs, const QPoint &globalPosition) {
     if (!tabs || tabs->count() == 0) {
       return;
@@ -1671,8 +1743,18 @@ private:
       action->setEnabled(tabs->isTabVisible(index));
       action->setData(dockId);
     }
+    QAction *topPositionAction = nullptr;
+    QAction *bottomPositionAction = nullptr;
+    addTabPositionActions(&menu, tabs, &topPositionAction,
+                          &bottomPositionAction);
     if (QAction *selected = menu.exec(globalPosition)) {
-      activateDock(selected->data().toString());
+      if (selected == topPositionAction) {
+        setAreaTabPosition(areaForTabs(tabs), false);
+      } else if (selected == bottomPositionAction) {
+        setAreaTabPosition(areaForTabs(tabs), true);
+      } else {
+        activateDock(selected->data().toString());
+      }
     }
   }
 
@@ -1687,11 +1769,15 @@ private:
     QMenu menu(this);
     QAction *placementAction = nullptr;
     QAction *floatGroupAction = nullptr;
+    QAction *topPositionAction = nullptr;
+    QAction *bottomPositionAction = nullptr;
     if (docked) {
       placementAction = menu.addAction(tr("Float panel"));
       floatGroupAction = menu.addAction(tr("Float tab group"));
       auto *tabs = tabsForWidget(docks_.value(resolvedId, nullptr));
       floatGroupAction->setEnabled(tabs && tabs->count() > 1);
+      addTabPositionActions(&menu, tabs, &topPositionAction,
+                            &bottomPositionAction);
     } else {
       placementAction = menu.addAction(tr("Dock panel back"));
     }
@@ -1709,6 +1795,10 @@ private:
       }
     } else if (selected == floatGroupAction) {
       floatDockTabGroup(resolvedId);
+    } else if (selected == topPositionAction) {
+      setAreaTabPosition(areas_.value(resolvedId, DockArea::Center), false);
+    } else if (selected == bottomPositionAction) {
+      setAreaTabPosition(areas_.value(resolvedId, DockArea::Center), true);
     } else if (selected == pinAction) {
       const QByteArray beforeState = beginLayoutMutation();
       setDockPinned(resolvedId, !dockPinned(resolvedId));
@@ -1971,6 +2061,7 @@ private:
   QHash<QString, QWidget *> floatingWidgets_;
   QHash<QDialog *, QTabWidget *> floatingTabSurfaces_;
   QHash<QString, DockArea> areas_;
+  QHash<int, bool> areaTabsAtBottom_;
   QHash<QString, QString> titles_;
   QHash<QString, bool> pinned_;
 };
