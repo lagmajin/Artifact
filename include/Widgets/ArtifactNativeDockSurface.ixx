@@ -34,6 +34,7 @@ module;
 #include <QVariant>
 #include <QPalette>
 #include <QLabel>
+#include <QFont>
 #include <QMenu>
 #include <QAction>
 #include <QSize>
@@ -1084,6 +1085,10 @@ public:
 
   bool setDockVisible(const QString &dockId, bool visible) {
     const QString resolvedId = resolveDockId(dockId);
+    const bool wasVisible = panelTabVisible(resolvedId);
+    if (!visible && wasVisible && !restoringLayout_) {
+      recentlyClosedDockId_ = resolvedId;
+    }
     if (auto *dialog = floatingDialogs_.value(resolvedId, nullptr)) {
       auto *widget = floatingWidgets_.value(resolvedId, nullptr);
       auto *tabs = floatingTabSurfaces_.value(dialog, nullptr);
@@ -1280,6 +1285,21 @@ public:
     const auto *widget = docks_.value(resolvedId,
                                       floatingWidgets_.value(resolvedId, nullptr));
     return widget && widget->isVisible();
+  }
+
+  bool panelTabVisible(const QString &dockId) const {
+    const QString resolvedId = resolveDockId(dockId);
+    if (auto *dialog = floatingDialogs_.value(resolvedId, nullptr)) {
+      auto *tabs = floatingTabSurfaces_.value(dialog, nullptr);
+      auto *widget = floatingWidgets_.value(resolvedId, nullptr);
+      const int index = tabs && widget ? tabs->indexOf(widget) : -1;
+      return index >= 0 && tabs->isTabVisible(index);
+    }
+    auto *widget = docks_.value(resolvedId, nullptr);
+    auto *tabs = widget ? tabsForWidget(widget) : nullptr;
+    const int index = tabs && widget ? tabs->indexOf(widget) : -1;
+    return index >= 0 ? tabs->isTabVisible(index)
+                      : widget && widget->isVisible();
   }
 
   bool dockPinned(const QString &dockId) const {
@@ -1727,6 +1747,24 @@ private:
     }
   }
 
+  void restoreDockFromTabList(const QString &dockId) {
+    const QString resolvedId = resolveDockId(dockId);
+    if (resolvedId.isEmpty() || !dockWidget(resolvedId)) {
+      return;
+    }
+    if (!panelTabVisible(resolvedId)) {
+      const QByteArray beforeState = beginLayoutMutation();
+      setDockVisible(resolvedId, true);
+      activateDock(resolvedId);
+      finishLayoutMutation(beforeState, tr("Restore panel"));
+    } else {
+      activateDock(resolvedId);
+    }
+    if (recentlyClosedDockId_ == resolvedId) {
+      recentlyClosedDockId_.clear();
+    }
+  }
+
   void showTabListMenu(QTabWidget *tabs, const QPoint &globalPosition) {
     if (!tabs || tabs->count() == 0) {
       return;
@@ -1737,11 +1775,23 @@ private:
       if (dockId.isEmpty()) {
         continue;
       }
+      const bool visible = tabs->isTabVisible(index);
       QAction *action = menu.addAction(tabs->tabText(index));
       action->setCheckable(true);
       action->setChecked(index == tabs->currentIndex());
-      action->setEnabled(tabs->isTabVisible(index));
+      QFont itemFont = action->font();
+      itemFont.setItalic(!visible);
+      action->setFont(itemFont);
       action->setData(dockId);
+    }
+    QAction *restoreLastClosedAction = nullptr;
+    if (!recentlyClosedDockId_.isEmpty() &&
+        dockWidget(recentlyClosedDockId_)) {
+      menu.addSeparator();
+      restoreLastClosedAction = menu.addAction(
+          tr("Restore last closed panel: %1")
+              .arg(titles_.value(recentlyClosedDockId_,
+                                 recentlyClosedDockId_)));
     }
     QAction *topPositionAction = nullptr;
     QAction *bottomPositionAction = nullptr;
@@ -1752,8 +1802,10 @@ private:
         setAreaTabPosition(areaForTabs(tabs), false);
       } else if (selected == bottomPositionAction) {
         setAreaTabPosition(areaForTabs(tabs), true);
+      } else if (selected == restoreLastClosedAction) {
+        restoreDockFromTabList(recentlyClosedDockId_);
       } else {
-        activateDock(selected->data().toString());
+        restoreDockFromTabList(selected->data().toString());
       }
     }
   }
@@ -2064,6 +2116,7 @@ private:
   QHash<int, bool> areaTabsAtBottom_;
   QHash<QString, QString> titles_;
   QHash<QString, bool> pinned_;
+  QString recentlyClosedDockId_;
 };
 
 } // namespace Artifact
