@@ -570,10 +570,10 @@ void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
                 renderer->drawParticles(renderData);
             }
             gpuParticleDrawAccepted =
-                renderer->particleDebugState().contains(QStringLiteral("state=queued"));
+                renderer->particleDrawQueued();
         } else {
-            // Refresh empty-state diagnostics so particleDebugState() does not
-            // keep showing a previous layer's queue/skip result.
+            // Refresh the renderer's empty-state diagnostic for debugger
+            // snapshots, even though no GPU acceptance query is needed here.
             renderer->drawParticles(lodData);
         }
         if (gpuParticleDrawAccepted || lodData.particles.empty()) {
@@ -701,18 +701,24 @@ QJsonObject ArtifactParticleLayer::toJson() const
         EmitterParams params;
     };
     std::vector<SerializableEmitter> serializableEmitters;
-    if (impl_->particleSystem) {
-        const auto& liveEmitters = impl_->particleSystem->emitters();
-        serializableEmitters.reserve(liveEmitters.size());
-        for (const auto& emitter : liveEmitters) {
-            if (emitter) {
-                serializableEmitters.push_back({emitter.get(), emitter->params()});
-            }
-        }
-    } else {
-        serializableEmitters.reserve(impl_->savedEmitterParams.size());
-        for (const auto& params : impl_->savedEmitterParams) {
-            serializableEmitters.push_back({nullptr, params});
+    const auto* liveEmitters = impl_->particleSystem
+                                   ? &impl_->particleSystem->emitters()
+                                   : nullptr;
+    const std::size_t emitterCount = std::max(
+        impl_->savedEmitterParams.size(),
+        liveEmitters ? liveEmitters->size() : std::size_t{0});
+    serializableEmitters.reserve(emitterCount);
+    for (std::size_t index = 0; index < emitterCount; ++index) {
+        const ParticleEmitter* liveEmitter =
+            liveEmitters && index < liveEmitters->size()
+                ? (*liveEmitters)[index].get()
+                : nullptr;
+        if (index < impl_->savedEmitterParams.size()) {
+            serializableEmitters.push_back(
+                {liveEmitter, impl_->savedEmitterParams[index]});
+        } else if (liveEmitter) {
+            serializableEmitters.push_back(
+                {liveEmitter, liveEmitter->params()});
         }
     }
     QJsonArray emittersArray;

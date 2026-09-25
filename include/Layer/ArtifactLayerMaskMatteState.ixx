@@ -19,6 +19,7 @@ public:
   bool moveMask(int fromIndex, int toIndex);
   void setMask(int index, const LayerMask &mask);
   LayerMask mask(int index) const;
+  const LayerMask* maskView(int index) const noexcept;
   int maskCount() const;
   void clearMasks();
   std::vector<LayerMask> masks() const;

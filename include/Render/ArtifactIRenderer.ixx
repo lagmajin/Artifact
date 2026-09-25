@@ -13,6 +13,7 @@ module;
 #include <QRectF>
 #include <QString>
 #include <QTransform>
+#include <QUuid>
 #include <QWidget>
 #include <QtGlobal>
 #include <RefCntAutoPtr.hpp>
@@ -173,6 +174,7 @@ public:
   bool hasFrameGpuTiming() const;
   quint64 lastFrameGpuTimingExecutionId() const;
   QString particleDebugState() const;
+  bool particleDrawQueued() const;
   QString glyphAtlasDebugState() const;
   QString gpuAdapterDebugState() const;
   QString gpuAdapterRegistryDebugState() const;
@@ -402,6 +404,10 @@ public:
                              const QMatrix4x4 &transform,
                              Diligent::ITextureView *texture,
                              float opacity = 1.0f);
+  void drawSpriteTransformed(float x, float y, float w, float h,
+                             const QMatrix4x4 &transform,
+                             Diligent::ITextureView *texture, float opacity,
+                             const QRectF &uvRect);
   void drawMaskedTextureLocal(float x, float y, float w, float h,
                               Diligent::ITextureView *sceneTexture,
                               const QImage &maskImage, float opacity = 1.0f);
@@ -452,6 +458,10 @@ public:
                                        float opacity = 1.0f);
   Diligent::ITextureView* textureForImage(
       const ArtifactCore::ImageF32x4_RGBA& image);
+  Diligent::ITextureView* textureForImage(
+      const ArtifactCore::ImageF32x4_RGBA& image,
+      const QUuid& sourceIdentityId, quint64 sourceVersion,
+      qint64 sourceFrameContentKey);
   Diligent::ITextureView* textureForImage(const QImage& image);
 
   // Gizmo specialized APIs
@@ -555,11 +565,30 @@ public:
                    Diligent::ITextureView *dstSRV,
                    Diligent::ITextureView *outUAV,
                    ArtifactCore::BlendMode mode, float opacity) const;
+  bool blendLayers(ArtifactCore::LayerBlendPipeline *pipeline,
+                   Diligent::ITextureView *srcSRV,
+                   Diligent::ITextureView *dstSRV,
+                   Diligent::ITextureView *outUAV,
+                   ArtifactCore::BlendMode mode, float opacity,
+                   const ArtifactCore::ComputeRegion &region) const;
+  bool copyTextureOutsideRegion(
+      Diligent::ITextureView *sourceSRV,
+      Diligent::ITextureView *destinationUAV,
+      const ArtifactCore::ComputeRegion &region) const;
+  bool clearTextureRegion(ArtifactCore::LayerBlendPipeline *pipeline,
+                          Diligent::ITextureView *outUAV,
+                          const ArtifactCore::ComputeRegion &region) const;
   bool convertLayerToFloat(ArtifactCore::LayerBlendPipeline *pipeline,
                            Diligent::ITextureView *srcSRV,
                            Diligent::ITextureView *outUAV,
                            Diligent::Uint32 width,
                            Diligent::Uint32 height) const;
+  bool convertLayerToFloat(ArtifactCore::LayerBlendPipeline *pipeline,
+                           Diligent::ITextureView *srcSRV,
+                           Diligent::ITextureView *outUAV,
+                           Diligent::Uint32 width,
+                           Diligent::Uint32 height,
+                           const ArtifactCore::ComputeRegion &region) const;
   bool applyTrackMatte(ArtifactCore::LayerBlendPipeline *pipeline,
                        Diligent::ITextureView *layerSRV,
                        Diligent::ITextureView *matteSrc0SRV,

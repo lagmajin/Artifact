@@ -155,6 +155,8 @@ public:
 
   // Frame position
   FramePosition currentFrame() const;
+  FrameRange playableRange() const;
+  FramePosition playableEndFrame() const;
   void setCurrentFrame(const FramePosition &position);
 
   // Frame range
@@ -205,6 +207,7 @@ public:
   ArtifactCore::FrameDebugSnapshot frameDebugSnapshot() const;
   double audioOffsetSeconds() const;
   std::int64_t droppedFrameCount() const;
+  void recordPresentedFrame(int64_t frame);
 
   // In/Out Points
   void setInOutPoints(ArtifactInOutPoints *inOutPoints);

@@ -1,4 +1,6 @@
 module;
+#include <array>
+#include <cstdint>
 #include <vector>
 #include <RenderDevice.h>
 #include <DeviceContext.h>
@@ -7,11 +9,13 @@ module;
 #include <RefCntAutoPtr.hpp>
 #include <BasicMath.hpp>
 #include <QFont>
+#include <QPointF>
 export module Artifact.Render.DiligentImmediateSubmitter;
 
 import Artifact.Render.IRenderSubmitter;
 import Artifact.Render.RenderCommandBuffer;
 import Artifact.Render.PrimitiveRenderer3D;
+import Core.ArtifactArray;
 import Color.Float;
 import Artifact.Render.ShaderManager;
 import Frame.Debug;
@@ -40,7 +44,7 @@ public:
     void setPrimitiveRenderer3D(PrimitiveRenderer3D* renderer);
     void setParticleRenderer(ArtifactCore::ParticleRenderer* renderer);
     void beginFrameDebugCapture();
-    std::vector<ArtifactCore::FrameDebugPassRecord> endFrameDebugCapture();
+    void endFrameDebugCapture();
     std::vector<ArtifactCore::FrameDebugPassRecord> frameDebugPasses() const;
 
     void submit(RenderCommandBuffer& buf, IDeviceContext* ctx) override;
@@ -77,9 +81,31 @@ private:
     RefCntAutoPtr<ITextureView> m_glyph_atlas_srv;
     GlyphAtlas m_glyph_atlas;
     struct GlyphSubmission {
-        GlyphItem item;
+        QPointF basePosition;
+        QPointF offsetPosition;
+        float offsetRotation = 0.0f;
+        float offsetScale = 1.0f;
+        float offsetOpacity = 1.0f;
         GlyphRect rect;
     };
+    struct ResolvedGlyphFont {
+        QFont sourceFont;
+        char32_t codePoint = 0;
+        GlyphRenderMode renderMode = GlyphRenderMode::MonochromeCoverage;
+        QFont font;
+        GlyphKey key;
+    };
+    ArtifactArray<ResolvedGlyphFont> m_resolvedGlyphFonts_;
+    static constexpr size_t kResolvedGlyphFontSlotCount = 4096;
+    static_assert((kResolvedGlyphFontSlotCount &
+                   (kResolvedGlyphFontSlotCount - 1)) == 0);
+    std::array<std::int16_t, kResolvedGlyphFontSlotCount>
+        m_resolvedGlyphFontSlots_{};
+    bool m_resolvedGlyphFontSlotsInitialized_ = false;
+    const ResolvedGlyphFont& resolvedGlyphFont(
+        const QFont& font, size_t fontHash, char32_t codePoint,
+        GlyphRenderMode renderMode);
+
     // Reused by both glyph submit paths.  Capacity is allocated during renderer
     // setup so ordinary text edits do not allocate in frame submission.
     std::vector<GlyphSubmission> m_glyph_submission_scratch_;
@@ -192,7 +218,7 @@ private:
     void submitParticles     (const ParticlePkt&,       IDeviceContext*, ITextureView*);
     void submitGlyphText     (const GlyphTextPkt&,      IDeviceContext*, ITextureView*);
     void submitGlyphTextTransformed(const GlyphTextXformPkt&, IDeviceContext*, ITextureView*);
-    void recordDebugPass(const ArtifactCore::FrameDebugPassRecord& pass);
+    void recordDebugPass(ArtifactCore::FrameDebugPassRecord&& pass);
 };
 
 } // namespace Artifact

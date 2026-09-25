@@ -85,7 +85,7 @@ QVariant animatedSolidGradientValue(const ArtifactSolidImageLayer* layer,
                                     const QString& path) {
   if (!layer) return {};
   const auto property = layer->getProperty(path);
-  if (!property || property->getKeyFrames().empty()) return {};
+  if (!property || !property->hasKeyFrames()) return {};
   return property->interpolateValue(effectiveSolidTimelineTime(layer));
 }
 
@@ -182,7 +182,7 @@ ArtifactSolidImageLayer::~ArtifactSolidImageLayer() { delete impl_; }
 FloatColor ArtifactSolidImageLayer::color() const {
   if (const auto property = getProperty(QStringLiteral("solid.color"))) {
     const QVariant value =
-        property->getKeyFrames().empty()
+        !property->hasKeyFrames()
             ? property->getValue()
             : property->interpolateValue(effectiveSolidTimelineTime(this));
     if (value.canConvert<QColor>()) {
@@ -214,7 +214,7 @@ void ArtifactSolidImageLayer::setColor(const FloatColor &color) {
         normalizedColor.r(), normalizedColor.g(), normalizedColor.b(),
         normalizedColor.a());
     property->setAnimatable(true);
-    if (!property->getKeyFrames().empty()) {
+    if (property->hasKeyFrames()) {
       property->addKeyFrame(effectiveSolidTimelineTime(this),
                             QVariant::fromValue(nextColor));
     } else {
@@ -353,7 +353,7 @@ QJsonObject ArtifactSolidImageLayer::toJson() const {
     }
   QJsonObject colorObj;
   if (const auto colorProperty = getProperty(QStringLiteral("solid.color"));
-      colorProperty && !colorProperty->getKeyFrames().empty()) {
+      colorProperty && colorProperty->hasKeyFrames()) {
     obj["solidColorKeyframes"] =
         ArtifactCore::PropertySerializationBridge::serializeProperty(colorProperty)
             .keyframes;

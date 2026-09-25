@@ -6680,7 +6680,7 @@ namespace Artifact
                 // owns effects. The common no-effect path can read RGBA8
                 // directly and avoid a full-size float buffer plus conversion.
                 const bool hasCompositionEffects =
-                    !snap.composition->getEffects().empty();
+                    snap.composition->effectCount() > 0;
                 if (!hasCompositionEffects) {
                     output.beauty = renderer->readbackToImage();
                     if (snap.job.regionMode != ArtifactRenderJob::RegionMode::Full) {

@@ -25,7 +25,6 @@ module Artifact.Playback.Engine;
 import Frame.Position;
 import Frame.Rate;
 import Frame.Range;
-import Frame.SkipTracker;
 import Artifact.Composition.Abstract;
 import Artifact.Composition.InOutPoints;
 import Artifact.Widgets.SoftwareRenderInspectors;
@@ -142,8 +141,10 @@ public:
     
     // フレーム状態
     std::atomic<int64_t> currentFrame_{0};
-    FrameRange frameRange_{FramePosition(0), FramePosition(299)};  // デフォルト 300 フレーム
+    FrameRange frameRange_{FramePosition(0), FramePosition(300)};
     FrameRate frameRate_{30.0f};
+    mutable std::mutex settingsMutex_;
+    std::atomic<uint64_t> settingsRevision_{0};
     // Written by the UI/service thread and consumed by the playback worker.
     // The worker re-bases its timeline before applying a changed value.
     std::atomic<float> playbackSpeed_{1.0f};
@@ -154,9 +155,15 @@ public:
     
     // In/Out Points
     ArtifactInOutPoints* inOutPoints_ = nullptr;
-    
+    std::atomic_bool hasInPoint_{false};
+    std::atomic_bool hasOutPoint_{false};
+    std::atomic<int64_t> inPointValue_{0};
+    std::atomic<int64_t> outPointValue_{0};
+    mutable std::mutex inOutPointsMutex_;
+
     // オーディオクロック
     std::function<double()> audioClockProvider_;
+    mutable std::mutex audioClockProviderMutex_;
     
     // 同期プリミティブ
     std::mutex mutex_;
@@ -207,7 +214,8 @@ public:
     
     // コンポジション
     ArtifactCompositionPtr composition_;
-    
+    mutable std::mutex compositionMutex_;
+
     Impl(ArtifactPlaybackEngine* owner)
         : owner_(owner)
     {
@@ -263,6 +271,24 @@ public:
         }
     }
     
+    void requestStopResources() {
+        audioLeftRmsDb_.store(-60.0f, std::memory_order_relaxed);
+        audioRightRmsDb_.store(-60.0f, std::memory_order_relaxed);
+        audioLeftPeakDb_.store(-60.0f, std::memory_order_relaxed);
+        audioRightPeakDb_.store(-60.0f, std::memory_order_relaxed);
+        audioSeekPending_ = true;
+        if (audioRenderer_) {
+            audioRenderer_->requestStop();
+            audioRenderer_->clearBuffer();
+        }
+        audioTargetBufferedFrames_ = 0;
+    }
+
+    void stopAtPlaybackBoundary() {
+        state_ = PlaybackState::Stopped;
+        requestStopResources();
+    }
+
     void stop() {
         qDebug() << "[PlaybackEngine] stop requested"
                  << "workerRunning=" << (workerThread_ && workerThread_->isRunning())
@@ -271,32 +297,13 @@ public:
                  << "audioResyncClears=" << audioResyncClearCount_
                  << "audioClockCorrections=" << audioClockCorrectionCount_;
 
-        audioLeftRmsDb_.store(-60.0f, std::memory_order_relaxed);
-        audioRightRmsDb_.store(-60.0f, std::memory_order_relaxed);
-        audioLeftPeakDb_.store(-60.0f, std::memory_order_relaxed);
-        audioRightPeakDb_.store(-60.0f, std::memory_order_relaxed);
-        
         PlaybackState oldState = state_.load();
         state_ = PlaybackState::Stopped;
         qDebug() << "[PlaybackEngine] state transition:" << (int)oldState << "->" << (int)PlaybackState::Stopped;
 
         condition_.notify_one();
         audioNextFrame_ = currentFrame_.load();
-        audioSeekPending_ = true;
-
-        // Keep stop responsive: the renderer/backend already exposes a
-        // requestStop() path that signals the audio thread without joining it
-        // on the UI/playback control path. The next start or final close
-        // reaps the joinable worker before reusing or releasing the device.
-        if (audioRenderer_) {
-            audioRenderer_->requestStop();
-            audioRenderer_->clearBuffer();
-        }
-        audioLeftRmsDb_.store(-60.0f, std::memory_order_relaxed);
-        audioRightRmsDb_.store(-60.0f, std::memory_order_relaxed);
-        audioLeftPeakDb_.store(-60.0f, std::memory_order_relaxed);
-        audioRightPeakDb_.store(-60.0f, std::memory_order_relaxed);
-        audioTargetBufferedFrames_ = 0;
+        requestStopResources();
 
         if (workerThread_ && workerThread_->isRunning()) {
             // The finished handler restarts the worker if play() wins a rapid
@@ -357,7 +364,11 @@ public:
         elapsedTimer_.start();
         lastFrameTime_ = std::chrono::steady_clock::now();
         
-        const double fps = frameRate_.framerate();
+        double fps = [&]() {
+            std::lock_guard<std::mutex> lock(settingsMutex_);
+            return frameRate_.framerate();
+        }();
+        uint64_t appliedSettingsRevision = settingsRevision_.load(std::memory_order_acquire);
         appliedPlaybackSpeed_ = playbackSpeed_.load();
         std::uint64_t loopIterations = 0;
         std::uint64_t emittedFrames = 0;
@@ -394,6 +405,17 @@ public:
             }
             
             auto now = std::chrono::steady_clock::now();
+
+            const uint64_t settingsRevision = settingsRevision_.load(std::memory_order_acquire);
+            if (settingsRevision != appliedSettingsRevision) {
+                appliedSettingsRevision = settingsRevision;
+                std::lock_guard<std::mutex> lock(settingsMutex_);
+                fps = frameRate_.framerate();
+                playbackStartFrame_ = currentFrame_.load();
+                playbackStartTime_ = now;
+                nextSequentialFrameTime = now;
+                audioSeekPending_ = true;
+            }
 
             const float requestedSpeed = playbackSpeed_.load();
             if (requestedSpeed != appliedPlaybackSpeed_) {
@@ -497,7 +519,7 @@ public:
                         audioSeekPending_ = true;
                         crossedPlaybackBoundary = true;
                     } else {
-                        state_ = PlaybackState::Stopped;
+                        stopAtPlaybackBoundary();
                         QMetaObject::invokeMethod(owner_, [this]() {
                             Q_EMIT owner_->playbackStateChanged(PlaybackState::Stopped);
                         }, Qt::QueuedConnection);
@@ -519,7 +541,13 @@ public:
                         targetFrame = endPos.framePosition();
                         crossedPlaybackBoundary = true;
                     } else {
-                        targetFrame = startPos.framePosition();
+                        currentFrame_ = startPos.framePosition();
+                        stopAtPlaybackBoundary();
+                        QMetaObject::invokeMethod(owner_, [this, position = startPos]() {
+                            Q_EMIT owner_->frameChanged(position, QImage());
+                            Q_EMIT owner_->playbackStateChanged(PlaybackState::Stopped);
+                        }, Qt::QueuedConnection);
+                        break;
                     }
                 }
             }
@@ -581,7 +609,8 @@ public:
             updateAudio();
             
             // オーディオ同期
-            if (audioClockProvider_ && audioRenderer_ && audioRenderer_->isActive()) {
+            if (audioClockProviderSnapshot() && audioRenderer_ &&
+                audioRenderer_->isActive()) {
                 syncWithAudioClock();
             }
 
@@ -627,12 +656,13 @@ public:
                 << "iterations=" << loopIterations
                 << "emitted=" << emittedFrames
                 << "droppedTotal=" << droppedFrameCount_;
-        // workerThread_ は stop() で既に quit() されているため不要
+        if (workerThread_ && workerThread_->isRunning()) {
+            workerThread_->quit();
+        }
     }
     
     /// フレーム更新処理
     void updateFrame(int64_t targetFrame) {
-        FrameSkipTracker::instance()->beginDispatch(targetFrame);
         // PlaybackService owns composition-frame sync and viewport rendering.
         // Do not render a QImage here: playback ticks must stay lightweight.
         // A sequential preview needs backpressure at the composition-sync
@@ -651,28 +681,29 @@ public:
 
     /// フレーム描画
     QImage renderFrame(const FramePosition& position) {
+        const auto composition = compositionSnapshot();
         QSize sz(1280, 720); // Default preview size
-        if (composition_) {
-            auto compSz = composition_->settings().compositionSize();
+        if (composition) {
+            auto compSz = composition->settings().compositionSize();
             sz = QSize(compSz.width(), compSz.height());
         }
 
         FramePosition previousPosition(0);
-        const bool restorePosition = composition_ &&
-                                     composition_->framePosition() != position;
+        const bool restorePosition = composition &&
+                                     composition->framePosition() != position;
         if (restorePosition) {
-            previousPosition = composition_->framePosition();
-            composition_->setFramePosition(position);
+            previousPosition = composition->framePosition();
+            composition->setFramePosition(position);
         }
 
-        if (composition_) {
-            QImage preview = generateCompositionThumbnail(composition_, sz);
+        if (composition) {
+            QImage preview = generateCompositionThumbnail(composition, sz);
             if (!preview.isNull()) {
                 if (preview.size() != sz) {
                     preview = preview.scaled(sz, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
                 }
                 if (restorePosition) {
-                    composition_->setFramePosition(previousPosition);
+                    composition->setFramePosition(previousPosition);
                 }
                 return preview;
             }
@@ -691,8 +722,8 @@ public:
         painter.setFont(QFont(QStringLiteral("Segoe UI"), 20, QFont::Bold));
         painter.drawText(backBuffer_.rect(), Qt::AlignCenter,
                          QStringLiteral("Preview unavailable"));
-        if (restorePosition) {
-            composition_->setFramePosition(previousPosition);
+        if (restorePosition && composition) {
+            composition->setFramePosition(previousPosition);
         }
         return backBuffer_;
     }
@@ -701,7 +732,8 @@ public:
     void updateAudio() {
         // 停止状態なら何もしない（競合防止）
         if (state_.load() == PlaybackState::Stopped) return;
-        if (!composition_ || !audioRenderer_) return;
+        const auto composition = compositionSnapshot();
+        if (!composition || !audioRenderer_) return;
 
         if (!std::isfinite(appliedPlaybackSpeed_) ||
             std::abs(appliedPlaybackSpeed_) <= 0.0001f) {
@@ -716,7 +748,7 @@ public:
 
         const auto fillStart = std::chrono::high_resolution_clock::now();
 
-        if (!composition_->hasAudio()) {
+        if (!composition->hasAudio()) {
             if (audioRenderer_->isActive() || audioRenderer_->bufferedFrames() > 0) {
                 qDebug() << "[PlaybackEngine][Audio] composition has no audio. Stopping output.";
                 audioRenderer_->stop();
@@ -740,7 +772,7 @@ public:
                            << "bufferedFrames=" << audioRenderer_->bufferedFrames()
                            << "targetBufferedFrames=" << audioTargetBufferedFrames_;
             }
-            const double probeFrameRate = static_cast<double>(frameRate_.framerate());
+            const double probeFrameRate = frameRateSnapshot().framerate();
             const double probeSampleCount =
                 static_cast<double>(audioSampleRate_) / probeFrameRate;
             constexpr double maxSamplesPerFrame = static_cast<double>(
@@ -755,7 +787,7 @@ public:
             const int probeFrames = std::max(
                 1, static_cast<int>(std::round(probeSampleCount)));
             AudioSegment probeSegment;
-            if (composition_->getAudio(
+            if (composition->getAudio(
                     probeSegment, FramePosition(audioNextFrame_), probeFrames,
                     audioSampleRate_)) {
                 const int sourceChannels = probeSegment.channelCount();
@@ -788,7 +820,7 @@ public:
             audioLastSentMuted_ = effectiveAudioMuted;
         }
 
-        const double safeFrameRate = frameRate_.exactFps();
+        const double safeFrameRate = frameRateSnapshot().exactFps();
         const double exactSamplesPerFrame =
             static_cast<double>(audioSampleRate_) / safeFrameRate;
         constexpr double maxSamplesPerFrame = static_cast<double>(
@@ -846,7 +878,7 @@ public:
             if (samplesThisFrame <= 0) samplesThisFrame = 1;
 
             AudioSegment segment;
-            if (!composition_->getAudio(segment, FramePosition(audioNextFrame_), samplesThisFrame, audioSampleRate_)) {
+            if (!composition->getAudio(segment, FramePosition(audioNextFrame_), samplesThisFrame, audioSampleRate_)) {
                 audioExhausted = true;
                 qWarning() << "[PlaybackEngine][Audio] composition getAudio exhausted"
                            << "requestFrame=" << audioNextFrame_
@@ -945,21 +977,18 @@ public:
     
     /// オーディオ同期
     void syncWithAudioClock() {
-        std::function<double()> provider;
-        {
-            // ロックなしで provider を読み取り（停止信号は audioClockProvider_ = {} で送信）
-            provider = audioClockProvider_;
-        }
+        const auto provider = audioClockProviderSnapshot();
         if (!provider) return;
         if (std::abs(appliedPlaybackSpeed_ - 1.0f) > 0.0001f) return;
         if (state_.load() != PlaybackState::Playing) return;
         if (!audioRenderer_ || !audioRenderer_->isActive()) return;
-        if (composition_ && !composition_->hasAudio()) return;
+        const auto composition = compositionSnapshot();
+        if (composition && !composition->hasAudio()) return;
         
         double audioTime = provider();
         if (!std::isfinite(audioTime) || audioTime <= 0.001) return;
 
-        const double safeFrameRate = static_cast<double>(frameRate_.framerate());
+        const double safeFrameRate = frameRateSnapshot().framerate();
         if (!std::isfinite(safeFrameRate) || safeFrameRate <= 0.0) {
             qWarning() << "[PlaybackEngine][AudioClock] invalid frame rate"
                        << "frameRate=" << safeFrameRate;
@@ -1014,26 +1043,55 @@ public:
     
     /// In/Out Points を考慮した開始フレーム
     FramePosition effectiveStartFrame() const {
-        FramePosition start = frameRange_.startPosition();
-        
-        if (inOutPoints_ && inOutPoints_->hasInPoint()) {
-            auto inPoint = inOutPoints_->inPoint().value();
-            start = std::max(start, inPoint);
+        const FrameRange range = frameRangeSnapshot();
+        FramePosition start = range.startPosition();
+        if (hasInPoint_.load(std::memory_order_acquire)) {
+            start = std::max(
+                start,
+                FramePosition(inPointValue_.load(std::memory_order_acquire)));
         }
-        
         return start;
     }
-    
+
+    std::function<double()> audioClockProviderSnapshot() const {
+        std::lock_guard<std::mutex> lock(audioClockProviderMutex_);
+        return audioClockProvider_;
+    }
+
+    ArtifactInOutPoints* inOutPointsSnapshot() const {
+        std::lock_guard<std::mutex> lock(inOutPointsMutex_);
+        return inOutPoints_;
+    }
+
+    ArtifactCompositionPtr compositionSnapshot() const {
+        std::lock_guard<std::mutex> lock(compositionMutex_);
+        return composition_;
+    }
+
+    FrameRate frameRateSnapshot() const {
+        std::lock_guard<std::mutex> lock(settingsMutex_);
+        return frameRate_;
+    }
+
+    FrameRange frameRangeSnapshot() const {
+        std::lock_guard<std::mutex> lock(settingsMutex_);
+        return frameRange_;
+    }
+
     /// In/Out Points を考慮した終了フレーム
     FramePosition effectiveEndFrame() const {
-        FramePosition end = frameRange_.endPosition();
-        
-        if (inOutPoints_ && inOutPoints_->hasOutPoint()) {
-            auto outPoint = inOutPoints_->outPoint().value();
-            end = std::min(end, outPoint);
+        const FrameRange range = frameRangeSnapshot();
+        const FramePosition start = effectiveStartFrame();
+        const int64_t end = std::max(
+            start.framePosition(),
+            range.endPosition().framePosition() - 1);
+        if (hasOutPoint_.load(std::memory_order_acquire)) {
+            return std::max(
+                start,
+                std::min(FramePosition(end),
+                         FramePosition(outPointValue_.load(std::memory_order_acquire))));
         }
-        
-        return end;
+        return FramePosition(end);
     }
     
 public slots:
@@ -1072,16 +1130,24 @@ ArtifactPlaybackEngine::~ArtifactPlaybackEngine() {
 }
 
 void ArtifactPlaybackEngine::setFrameRate(const FrameRate& rate) {
-    impl_->frameRate_ = rate;
-    frameRangeChanged(impl_->frameRange_);
+    {
+        std::lock_guard<std::mutex> lock(impl_->settingsMutex_);
+        impl_->frameRate_ = rate;
+    }
+    impl_->settingsRevision_.fetch_add(1, std::memory_order_acq_rel);
+    frameRangeChanged(impl_->frameRangeSnapshot());
 }
 
 FrameRate ArtifactPlaybackEngine::frameRate() const {
-    return impl_->frameRate_;
+    return impl_->frameRateSnapshot();
 }
 
 void ArtifactPlaybackEngine::setFrameRange(const FrameRange& range) {
-    impl_->frameRange_ = range;
+    {
+        std::lock_guard<std::mutex> lock(impl_->settingsMutex_);
+        impl_->frameRange_ = range;
+    }
+    impl_->settingsRevision_.fetch_add(1, std::memory_order_acq_rel);
     frameRangeChanged(range);
 }
 
@@ -1100,7 +1166,7 @@ void ArtifactPlaybackEngine::frameRangeChanged(const FrameRange& range) {
 }
 
 FrameRange ArtifactPlaybackEngine::frameRange() const {
-    return impl_->frameRange_;
+    return impl_->frameRangeSnapshot();
 }
 
 void ArtifactPlaybackEngine::setPlaybackSpeed(float speed) {
@@ -1204,8 +1270,6 @@ void ArtifactPlaybackEngine::togglePlayPause() {
 
 void ArtifactPlaybackEngine::goToFrame(const FramePosition& position) {
     const int64_t targetFrame = position.framePosition();
-    FrameSkipTracker::instance()->beginDispatch(targetFrame);
-
     impl_->currentFrame_ = targetFrame;
     impl_->playbackStartFrame_ = impl_->currentFrame_.load();
     impl_->playbackStartTime_ = std::chrono::steady_clock::now();
@@ -1222,14 +1286,7 @@ void ArtifactPlaybackEngine::goToFrame(const FramePosition& position) {
     impl_->audioLeftPeakDb_.store(-60.0f, std::memory_order_relaxed);
     impl_->audioRightPeakDb_.store(-60.0f, std::memory_order_relaxed);
 
-    QImage preview = renderPreviewFrame(position);
-    if (preview.isNull()) {
-        FrameSkipTracker::instance()->recordSkip(
-            targetFrame, impl_->currentFrame_.load(),
-            FrameSkipReason::TooHeavy,
-            QStringLiteral("renderPreviewFrame returned null"));
-    }
-    Q_EMIT frameChanged(position, preview);
+    Q_EMIT frameChanged(position, QImage());
 }
 
 void ArtifactPlaybackEngine::goToNextFrame() {
@@ -1257,40 +1314,44 @@ void ArtifactPlaybackEngine::goToEndFrame() {
 }
 
 void ArtifactPlaybackEngine::goToNextMarker() {
-    if (!impl_->inOutPoints_) {
+    const auto *points = impl_->inOutPointsSnapshot();
+    if (!points) {
         return;
     }
-    const auto next = impl_->inOutPoints_->nextMarker(currentFrame());
+    const auto next = points->nextMarker(currentFrame());
     if (next) {
         goToFrame(*next);
     }
 }
 
 void ArtifactPlaybackEngine::goToPreviousMarker() {
-    if (!impl_->inOutPoints_) {
+    const auto *points = impl_->inOutPointsSnapshot();
+    if (!points) {
         return;
     }
-    const auto prev = impl_->inOutPoints_->previousMarker(currentFrame());
+    const auto prev = points->previousMarker(currentFrame());
     if (prev) {
         goToFrame(*prev);
     }
 }
 
 void ArtifactPlaybackEngine::goToNextChapter() {
-    if (!impl_->inOutPoints_) {
+    const auto *points = impl_->inOutPointsSnapshot();
+    if (!points) {
         return;
     }
-    const auto next = impl_->inOutPoints_->nextChapter(currentFrame());
+    const auto next = points->nextChapter(currentFrame());
     if (next) {
         goToFrame(*next);
     }
 }
 
 void ArtifactPlaybackEngine::goToPreviousChapter() {
-    if (!impl_->inOutPoints_) {
+    const auto *points = impl_->inOutPointsSnapshot();
+    if (!points) {
         return;
     }
-    const auto prev = impl_->inOutPoints_->previousChapter(currentFrame());
+    const auto prev = points->previousChapter(currentFrame());
     if (prev) {
         goToFrame(*prev);
     }
@@ -1324,14 +1385,26 @@ QImage ArtifactPlaybackEngine::renderPreviewFrame(const FramePosition& position)
 }
 
 void ArtifactPlaybackEngine::setInOutPoints(ArtifactInOutPoints* inOutPoints) {
+    const bool hasIn = inOutPoints && inOutPoints->hasInPoint();
+    const bool hasOut = inOutPoints && inOutPoints->hasOutPoint();
+    const int64_t inValue =
+        hasIn ? inOutPoints->inPoint().value().framePosition() : 0;
+    const int64_t outValue =
+        hasOut ? inOutPoints->outPoint().value().framePosition() : 0;
+    inPointValue_.store(inValue, std::memory_order_relaxed);
+    hasInPoint_.store(hasIn, std::memory_order_release);
+    outPointValue_.store(outValue, std::memory_order_relaxed);
+    hasOutPoint_.store(hasOut, std::memory_order_release);
+    std::lock_guard<std::mutex> lock(impl_->inOutPointsMutex_);
     impl_->inOutPoints_ = inOutPoints;
 }
 
 ArtifactInOutPoints* ArtifactPlaybackEngine::inOutPoints() const {
-    return impl_->inOutPoints_;
+    return impl_->inOutPointsSnapshot();
 }
 
 void ArtifactPlaybackEngine::setAudioClockProvider(const std::function<double()>& provider) {
+    std::lock_guard<std::mutex> lock(impl_->audioClockProviderMutex_);
     impl_->audioClockProvider_ = provider;
 }
 
@@ -1406,7 +1479,10 @@ QString ArtifactPlaybackEngine::audioOutputDeviceName() const {
 }
 
 void ArtifactPlaybackEngine::setComposition(ArtifactCompositionPtr composition) {
-    impl_->composition_ = composition;
+    {
+        std::lock_guard<std::mutex> lock(impl_->compositionMutex_);
+        impl_->composition_ = composition;
+    }
     impl_->audioTargetBufferedFrames_ = 0;
     impl_->audioSampleAccumulator_ = 0.0;
     impl_->audioSeekPending_ = true;
@@ -1418,14 +1494,18 @@ void ArtifactPlaybackEngine::setComposition(ArtifactCompositionPtr composition) 
         impl_->audioRenderer_->clearBuffer();
     }
     if (composition) {
-        impl_->frameRange_ = composition->frameRange();
-        impl_->frameRate_ = composition->frameRate();
+        {
+            std::lock_guard<std::mutex> lock(impl_->settingsMutex_);
+            impl_->frameRange_ = composition->frameRange();
+            impl_->frameRate_ = composition->frameRate();
+        }
+        impl_->settingsRevision_.fetch_add(1, std::memory_order_acq_rel);
         impl_->audioNextFrame_ = impl_->currentFrame_.load();
     }
 }
 
 ArtifactCompositionPtr ArtifactPlaybackEngine::composition() const {
-    return impl_->composition_;
+    return impl_->compositionSnapshot();
 }
 
 } // namespace Artifact

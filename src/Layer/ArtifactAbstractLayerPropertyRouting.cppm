@@ -187,6 +187,21 @@ ArtifactAbstractLayer::getProperty(const QString &name) const {
   return nullptr;
 }
 
+bool ArtifactAbstractLayer::hasCachedAnimatedPropertiesWithPrefix(
+    const QString &propertyPathPrefix) const {
+  if (propertyPathPrefix.isEmpty()) return false;
+  std::lock_guard<std::mutex> lock(impl_->propertyCacheMutex_);
+  for (auto it = impl_->propertyCache_.cbegin();
+       it != impl_->propertyCache_.cend(); ++it) {
+    const auto &property = it.value();
+    if (it.key().startsWith(propertyPathPrefix) && property &&
+        (property->hasKeyFrames() || property->hasExpression())) {
+      return true;
+    }
+  }
+  return false;
+}
+
 SharedPtr<ArtifactCore::AbstractProperty>
 ArtifactAbstractLayer::persistentLayerProperty(const QString &propertyPath,
                                                PropertyType type,
@@ -202,7 +217,7 @@ ArtifactAbstractLayer::persistentLayerProperty(const QString &propertyPath,
   }
   auto property = it.value();
   const bool hasAnimatedValue =
-      property->isAnimatable() && !property->getKeyFrames().empty();
+      property->isAnimatable() && property->hasKeyFrames();
   property->setName(propertyPath);
   property->setType(type);
   if (!channel && !hasAnimatedValue && !property->hasExpression()) {
@@ -262,14 +277,14 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
           propertyPath, PropertyType::Float,
           QVariant(control.value(deformationParts[2]).toDouble()), 100);
       if (cachedProperty->isAnimatable() &&
-          !cachedProperty->getKeyFrames().empty()) {
+          cachedProperty->hasKeyFrames()) {
         cachedProperty->setValue(QVariant(clampedValue));
         QJsonArray keys;
         for (const auto& key : cachedProperty->getKeyFrames()) {
           keys.append(QJsonObject{
               {QStringLiteral("frame"), QString::number(
                    key.time.rescaledTo(keyframeTimeScale()))},
-              {QStringLiteral("value"), key.value},
+              {QStringLiteral("value"), QJsonValue::fromVariant(key.value)},
               {QStringLiteral("interpolation"),
                static_cast<int>(key.interpolation)},
               {QStringLiteral("cp1_x"), key.cp1_x},

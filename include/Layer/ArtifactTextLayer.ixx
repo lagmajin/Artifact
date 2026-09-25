@@ -87,6 +87,7 @@ public:
     QString sourceTextAtFrame(qint64 frame) const;
     QList<qint64> sourceTextKeyframeFrames() const;
     bool hasSourceTextKeyframes() const;
+    bool hasAnimatedTextProperties() const;
 
     void setFontSize(float size);
     float fontSize() const;

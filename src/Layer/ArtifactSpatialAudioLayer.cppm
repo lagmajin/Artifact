@@ -133,7 +133,7 @@ bool ArtifactSpatialAudioLayer::getAudio(ArtifactCore::AudioSegment& outSegment,
     auto params = impl_->spatial_;
     const auto number = [&](const char* path, float fallback) {
         const auto prop = getProperty(QString::fromLatin1(path));
-        if (!prop || prop->getKeyFrames().empty()) return fallback;
+        if (!prop || !prop->hasKeyFrames()) return fallback;
         const QVariant v = prop->interpolateValue(blockTime);
         const float result = v.isValid() ? v.toFloat() : fallback;
         return std::isfinite(result) ? result : fallback;

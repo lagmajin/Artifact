@@ -9811,11 +9811,6 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
     setCurrentFrame(targetFrame);
     ArtifactCore::globalEventBus().publish<TimelineSeekRequestedEvent>(
         TimelineSeekRequestedEvent{targetFrame});
-    if (auto *svc = ArtifactProjectService::instance()) {
-      if (auto comp = svc->currentComposition().lock()) {
-        comp->goToFrame(static_cast<int64_t>(std::llround(targetFrame)));
-      }
-    }
     event->accept();
     return;
   }

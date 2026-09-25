@@ -45,7 +45,7 @@ QVariant animatedSolidGradientValue(const ArtifactSolid2DLayer* layer,
                                     const QString& path) {
   if (!layer) return {};
   const auto property = layer->getProperty(path);
-  if (!property || property->getKeyFrames().empty()) return {};
+  if (!property || !property->hasKeyFrames()) return {};
   return property->interpolateValue(solidTimelineTime(layer));
 }
 

@@ -73,6 +73,7 @@ public:
                                std::size_t maxBytes = 64ull * 1024ull * 1024ull);
     bool tryTakeResult(const DiligentUploadTicket& ticket,
                        DiligentTextureUploadResult& result);
+    // Cancels queued work and drops any completed or in-flight result.
     void cancel(const DiligentUploadTicket& ticket);
     void invalidateBeforeGeneration(std::uint64_t generation);
     void clear();

@@ -291,7 +291,7 @@ ResolvedTextAnimatorStack resolvedTextAnimatorStackAtTime(
     const auto valueAtTime = [&](const QString &suffix) -> QVariant {
       const auto property = layer->getProperty(prefix + suffix);
       if (!property) return {};
-      if (property->getKeyFrames().empty() && property->getEnvelopes().empty() &&
+      if (!property->hasKeyFrames() && property->getEnvelopes().empty() &&
           !property->hasExpression() && !property->hasExternalOverride()) {
         return {};
       }
@@ -393,7 +393,7 @@ QString resolvedSourceTextAtTime(const ArtifactTextLayer *layer) {
     return QString();
   }
   if (const auto property = layer->getProperty(QStringLiteral("text.value"));
-      property && !property->getKeyFrames().empty()) {
+      property && property->hasKeyFrames()) {
     const QVariant value =
         property->interpolateValue(effectiveTextTimelineTime(layer));
     if (value.isValid()) {
@@ -409,7 +409,7 @@ bool sourceTextIsAnimated(const ArtifactTextLayer *layer) {
   }
   if (const auto property = layer->getProperty(QStringLiteral("text.value"));
       property) {
-    return !property->getKeyFrames().empty();
+    return property->hasKeyFrames();
   }
   return false;
 }
@@ -1774,6 +1774,29 @@ QFont makeTextFont(const TextStyle &style, const QString &sampleText) {
   return font;
 }
 
+const std::array<QString, 33> &animatedTextPropertyPaths() {
+  static const std::array<QString, 33> paths{
+      QStringLiteral("text.fontFamily"), QStringLiteral("text.fontSize"),
+      QStringLiteral("text.tracking"), QStringLiteral("text.fontStretch"),
+      QStringLiteral("text.leading"), QStringLiteral("text.bold"),
+      QStringLiteral("text.italic"), QStringLiteral("text.allCaps"),
+      QStringLiteral("text.underline"), QStringLiteral("text.strikethrough"),
+      QStringLiteral("text.alignment"), QStringLiteral("text.verticalAlignment"),
+      QStringLiteral("text.wrapMode"), QStringLiteral("text.writingMode"),
+      QStringLiteral("text.rubyText"), QStringLiteral("text.rubyScale"),
+      QStringLiteral("text.layoutMode"), QStringLiteral("text.maxWidth"),
+      QStringLiteral("text.boxHeight"), QStringLiteral("text.paragraphSpacing"),
+      QStringLiteral("text.pathStartOffset"), QStringLiteral("text.pathEndOffset"),
+      QStringLiteral("text.pathReverse"), QStringLiteral("text.pathAlignToPath"),
+      QStringLiteral("text.color"), QStringLiteral("text.strokeEnabled"),
+      QStringLiteral("text.strokeColor"), QStringLiteral("text.strokeWidth"),
+      QStringLiteral("text.shadowEnabled"), QStringLiteral("text.shadowColor"),
+      QStringLiteral("text.shadowOffsetX"), QStringLiteral("text.shadowOffsetY"),
+      QStringLiteral("text.shadowBlur"),
+  };
+  return paths;
+}
+
 } // namespace
 
 ArtifactTextLayer::ArtifactTextLayer()
@@ -1845,7 +1868,11 @@ QList<qint64> ArtifactTextLayer::sourceTextKeyframeFrames() const {
 
 bool ArtifactTextLayer::hasSourceTextKeyframes() const {
   const auto property = getProperty(QStringLiteral("text.value"));
-  return property && !property->getKeyFrames().empty();
+  return property && property->hasKeyFrames();
+}
+
+bool ArtifactTextLayer::hasAnimatedTextProperties() const {
+  return hasCachedAnimatedPropertiesWithPrefix(QStringLiteral("text."));
 }
 
 void ArtifactTextLayer::setFontSize(float size) {
@@ -2603,7 +2630,7 @@ void ArtifactTextLayer::fromJsonProperties(const QJsonObject &obj) {
       constexpr qsizetype kMaxSourceTextKeyframes = 10000;
       textProp->clearKeyFrames();
       for (const auto& value : keyframeArray) {
-        if (textProp->getKeyFrames().size() >= kMaxSourceTextKeyframes) {
+        if (textProp->keyFrameCount() >= kMaxSourceTextKeyframes) {
           break;
         }
         if (!value.isObject()) {
@@ -2940,46 +2967,11 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
       *impl_->lastAnimatedTextPropertyFrame_ != animationFrame) {
     impl_->lastAnimatedTextPropertyFrame_ = animationFrame;
     impl_->applyingAnimatedTextProperties_ = true;
-    static const std::array<QString, 33> animatedTextPropertyPaths{
-        QStringLiteral("text.fontFamily"),
-        QStringLiteral("text.fontSize"),
-        QStringLiteral("text.tracking"),
-        QStringLiteral("text.fontStretch"),
-        QStringLiteral("text.leading"),
-        QStringLiteral("text.bold"),
-        QStringLiteral("text.italic"),
-        QStringLiteral("text.allCaps"),
-        QStringLiteral("text.underline"),
-        QStringLiteral("text.strikethrough"),
-        QStringLiteral("text.alignment"),
-        QStringLiteral("text.verticalAlignment"),
-        QStringLiteral("text.wrapMode"),
-        QStringLiteral("text.writingMode"),
-        QStringLiteral("text.rubyText"),
-        QStringLiteral("text.rubyScale"),
-        QStringLiteral("text.layoutMode"),
-        QStringLiteral("text.maxWidth"),
-        QStringLiteral("text.boxHeight"),
-        QStringLiteral("text.paragraphSpacing"),
-        QStringLiteral("text.pathStartOffset"),
-        QStringLiteral("text.pathEndOffset"),
-        QStringLiteral("text.pathReverse"),
-        QStringLiteral("text.pathAlignToPath"),
-        QStringLiteral("text.color"),
-        QStringLiteral("text.strokeEnabled"),
-        QStringLiteral("text.strokeColor"),
-        QStringLiteral("text.strokeWidth"),
-        QStringLiteral("text.shadowEnabled"),
-        QStringLiteral("text.shadowColor"),
-        QStringLiteral("text.shadowOffsetX"),
-        QStringLiteral("text.shadowOffsetY"),
-        QStringLiteral("text.shadowBlur"),
-    };
     const RationalTime animationTime = effectiveTextTimelineTime(this);
-    for (const auto &propertyPath : animatedTextPropertyPaths) {
+    for (const auto &propertyPath : animatedTextPropertyPaths()) {
       const auto property = getProperty(propertyPath);
       if (!property || !property->isAnimatable() ||
-          property->getKeyFrames().empty()) {
+          !property->hasKeyFrames()) {
         continue;
       }
       const QVariant animatedValue = property->interpolateValue(animationTime);

@@ -1,6 +1,7 @@
 module;
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 
 #include <QJsonArray>
 #include <QJsonObject>
@@ -19,6 +20,7 @@ export namespace Artifact {
 class SourceCrop : public ArtifactCore::Serialization::ISerializable {
 public:
   SourceCrop() = default;
+  std::uint64_t revision() const;
 
   bool enabled() const;
   void setEnabled(bool enabled);
@@ -60,6 +62,7 @@ public:
   int schemaVersion() const override { return 1; }
 
 private:
+  std::uint64_t revision_ = 1;
   bool enabled_ = false;
   QRectF cropRect_;
   QPointF pan_{0.0, 0.0};

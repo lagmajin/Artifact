@@ -1,6 +1,7 @@
 module;
 #include <QColor>
 #include <QDialog>
+#include <QDoubleSpinBox>
 #include <QFileDialog>
 #include <QFrame>
 #include <QHBoxLayout>
@@ -13,19 +14,27 @@ module;
 #include <QPen>
 #include <QPolygonF>
 #include <QPushButton>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonValue>
+#include <QLayoutItem>
 #include <QSignalBlocker>
 #include <QStringList>
 #include <QVariant>
 #include <QTextEdit>
 #include <QWidget>
+#include <QVBoxLayout>
 #include <memory>
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <utility>
 
 module Artifact.Widgets.PropertyEditor;
 
 import Property.Abstract;
+import Color.Float;
 import Artifact.Widgets.RelativeSpinBox;
 import FloatColorPickerDialog;
 import Artifact.Widgets.Dialog.FloatColorPickerHooks;
@@ -33,6 +42,277 @@ import Utils.Path;
 
 namespace Artifact {
 using namespace detail;
+
+namespace {
+
+class GradientActionButton final : public QPushButton {
+public:
+  using Callback = std::function<void()>;
+
+  explicit GradientActionButton(const QString& text, QWidget* parent = nullptr)
+      : QPushButton(text, parent) {}
+
+  void setCallback(Callback callback) { callback_ = std::move(callback); }
+
+protected:
+  void nextCheckState() override {
+    if (callback_) {
+      callback_();
+    }
+  }
+
+private:
+  Callback callback_;
+};
+
+struct GradientStopValue {
+  double offset = 0.5;
+  ArtifactCore::FloatColor color = ArtifactCore::FloatColor(1.0f, 1.0f, 1.0f, 1.0f);
+};
+
+QJsonArray gradientStopsFromJson(const QString& text) {
+  if (text.size() > 16384 || text.trimmed().isEmpty()) {
+    return {};
+  }
+  const QJsonDocument document = QJsonDocument::fromJson(text.toUtf8());
+  if (!document.isArray()) {
+    return {};
+  }
+  QJsonArray result;
+  for (const QJsonValue& value : document.array()) {
+    if (!value.isObject() || result.size() >= 32) {
+      continue;
+    }
+    const QJsonObject object = value.toObject();
+    const double offset = object.value(QStringLiteral("o")).toDouble(-1.0);
+    if (!std::isfinite(offset) || offset < 0.0 || offset > 1.0) {
+      continue;
+    }
+    const double r = object.value(QStringLiteral("r")).toDouble(0.0);
+    const double g = object.value(QStringLiteral("g")).toDouble(0.0);
+    const double b = object.value(QStringLiteral("b")).toDouble(0.0);
+    const double a = object.value(QStringLiteral("a")).toDouble(1.0);
+    QJsonObject normalized;
+    normalized.insert(QStringLiteral("o"), offset);
+    normalized.insert(QStringLiteral("r"), std::clamp(r, 0.0, 1.0));
+    normalized.insert(QStringLiteral("g"), std::clamp(g, 0.0, 1.0));
+    normalized.insert(QStringLiteral("b"), std::clamp(b, 0.0, 1.0));
+    normalized.insert(QStringLiteral("a"), std::clamp(a, 0.0, 1.0));
+    result.push_back(normalized);
+  }
+  return result;
+}
+
+QString gradientStopsToJson(const QJsonArray& stops) {
+  return QString::fromUtf8(QJsonDocument(stops).toJson(QJsonDocument::Compact));
+}
+
+QJsonObject gradientStopObject(const GradientStopValue& stop) {
+  QJsonObject object;
+  object.insert(QStringLiteral("o"), std::clamp(stop.offset, 0.0, 1.0));
+  object.insert(QStringLiteral("r"), std::clamp<double>(stop.color.r(), 0.0, 1.0));
+  object.insert(QStringLiteral("g"), std::clamp<double>(stop.color.g(), 0.0, 1.0));
+  object.insert(QStringLiteral("b"), std::clamp<double>(stop.color.b(), 0.0, 1.0));
+  object.insert(QStringLiteral("a"), std::clamp<double>(stop.color.a(), 0.0, 1.0));
+  return object;
+}
+
+GradientStopValue gradientStopFromObject(const QJsonObject& object) {
+  GradientStopValue stop;
+  stop.offset = std::clamp(object.value(QStringLiteral("o")).toDouble(0.5), 0.0, 1.0);
+  stop.color = ArtifactCore::FloatColor(
+      static_cast<float>(std::clamp(object.value(QStringLiteral("r")).toDouble(0.0), 0.0, 1.0)),
+      static_cast<float>(std::clamp(object.value(QStringLiteral("g")).toDouble(0.0), 0.0, 1.0)),
+      static_cast<float>(std::clamp(object.value(QStringLiteral("b")).toDouble(0.0), 0.0, 1.0)),
+      static_cast<float>(std::clamp(object.value(QStringLiteral("a")).toDouble(1.0), 0.0, 1.0)));
+  return stop;
+}
+
+bool editGradientStop(QWidget* parent, QJsonObject& stopObject) {
+  GradientStopValue stop = gradientStopFromObject(stopObject);
+  QDialog dialog(parent);
+  dialog.setWindowTitle(QStringLiteral("Edit Gradient Stop"));
+  auto* layout = new QVBoxLayout(&dialog);
+  auto* offsetLabel = new QLabel(QStringLiteral("Position"), &dialog);
+  auto* offset = new QDoubleSpinBox(&dialog);
+  offset->setRange(0.0, 1.0);
+  offset->setDecimals(3);
+  offset->setSingleStep(0.01);
+  offset->setValue(stop.offset);
+  layout->addWidget(offsetLabel);
+  layout->addWidget(offset);
+
+  auto* colorButton = new GradientActionButton(QStringLiteral("Choose Color…"), &dialog);
+  colorButton->setAccessibleName(QStringLiteral("Gradient stop color"));
+  colorButton->setAccessibleDescription(QStringLiteral("Choose the color for this gradient stop"));
+  colorButton->setText(QStringLiteral("Color: %1, %2, %3, %4")
+      .arg(stop.color.r(), 0, 'f', 2)
+      .arg(stop.color.g(), 0, 'f', 2)
+      .arg(stop.color.b(), 0, 'f', 2)
+      .arg(stop.color.a(), 0, 'f', 2));
+  applyPropertyButtonPalette(colorButton, true);
+  layout->addWidget(colorButton);
+  ArtifactCore::FloatColor selectedColor = stop.color;
+  colorButton->setCallback([&dialog, colorButton, &selectedColor]() {
+    ArtifactWidgets::FloatColorPicker picker(&dialog);
+    picker.setInitialColor(selectedColor);
+    configureFloatColorPicker(&picker, ColorSelectionPurpose::Edit);
+    if (picker.exec() == QDialog::Accepted) {
+      selectedColor = picker.getColor();
+      colorButton->setText(QStringLiteral("Color: %1, %2, %3")
+          .arg(selectedColor.r(), 0, 'f', 2)
+          .arg(selectedColor.g(), 0, 'f', 2)
+          .arg(selectedColor.b(), 0, 'f', 2));
+    }
+  });
+
+  auto* actions = new QHBoxLayout();
+  auto* accept = new GradientActionButton(QStringLiteral("OK"), &dialog);
+  auto* cancel = new GradientActionButton(QStringLiteral("Cancel"), &dialog);
+  accept->setDefault(true);
+  applyPropertyButtonPalette(accept, true);
+  applyPropertyButtonPalette(cancel);
+  accept->setCallback([&dialog]() { dialog.accept(); });
+  cancel->setCallback([&dialog]() { dialog.reject(); });
+  actions->addStretch(1);
+  actions->addWidget(cancel);
+  actions->addWidget(accept);
+  layout->addLayout(actions);
+
+  if (dialog.exec() != QDialog::Accepted) {
+    return false;
+  }
+  stop.offset = offset->value();
+  stop.color = selectedColor;
+  stopObject = gradientStopObject(stop);
+  return true;
+}
+
+bool editGradientStops(QWidget* parent, QJsonArray& stops) {
+  QDialog dialog(parent);
+  dialog.setWindowTitle(QStringLiteral("Gradient Stops"));
+  dialog.setMinimumWidth(320);
+  auto* layout = new QVBoxLayout(&dialog);
+  auto* rows = new QVBoxLayout();
+  rows->setSpacing(4);
+  layout->addLayout(rows);
+  auto* add = new GradientActionButton(QStringLiteral("Add Stop"), &dialog);
+  auto* actions = new QHBoxLayout();
+  auto* done = new GradientActionButton(QStringLiteral("Done"), &dialog);
+  applyPropertyButtonPalette(add, true);
+  applyPropertyButtonPalette(done, true);
+  actions->addWidget(add);
+  actions->addStretch(1);
+  actions->addWidget(done);
+  layout->addLayout(actions);
+
+  auto rebuildRows = [&]() {
+    while (QLayoutItem* item = rows->takeAt(0)) {
+      if (QWidget* widget = item->widget()) {
+        widget->hide();
+        widget->deleteLater();
+      }
+      delete item;
+    }
+    for (qsizetype i = 0; i < stops.size(); ++i) {
+      const QJsonObject stop = stops.at(i).toObject();
+      auto* row = new QWidget(&dialog);
+      auto* rowLayout = new QHBoxLayout(row);
+      rowLayout->setContentsMargins(0, 0, 0, 0);
+      auto* label = new QLabel(QStringLiteral("%1  ·  %2")
+          .arg(i + 1).arg(stop.value(QStringLiteral("o")).toDouble(), 0, 'f', 3), row);
+      auto* edit = new GradientActionButton(QStringLiteral("Edit"), row);
+      auto* remove = new GradientActionButton(QStringLiteral("Remove"), row);
+      applyPropertyButtonPalette(edit);
+      applyPropertyButtonPalette(remove);
+      edit->setCallback([&, i]() {
+        QJsonObject changed = stops.at(i).toObject();
+        if (editGradientStop(&dialog, changed)) {
+          stops.replace(i, changed);
+          rebuildRows();
+        }
+      });
+      remove->setCallback([&, i]() {
+        stops.removeAt(i);
+        rebuildRows();
+      });
+      rowLayout->addWidget(label, 1);
+      rowLayout->addWidget(edit);
+      rowLayout->addWidget(remove);
+      rows->addWidget(row);
+    }
+    add->setEnabled(stops.size() < 32);
+  };
+  add->setCallback([&]() {
+    if (stops.size() >= 32) {
+      return;
+    }
+    GradientStopValue stop;
+    if (stops.isEmpty()) {
+      stop.offset = 0.5;
+    } else {
+      const QJsonObject previous = stops.last().toObject();
+      const double lastOffset = previous.value(QStringLiteral("o")).toDouble(0.0);
+      stop.offset = std::clamp(lastOffset + (1.0 - lastOffset) * 0.5, 0.0, 1.0);
+      stop.color = gradientStopFromObject(previous).color;
+    }
+    stops.push_back(gradientStopObject(stop));
+    rebuildRows();
+  });
+  done->setCallback([&dialog]() { dialog.accept(); });
+  rebuildRows();
+  if (dialog.exec() != QDialog::Accepted) {
+    return false;
+  }
+  return true;
+}
+
+class ArtifactGradientStopsPropertyEditor final : public ArtifactAbstractPropertyEditor {
+public:
+  explicit ArtifactGradientStopsPropertyEditor(
+      const ArtifactCore::AbstractProperty& property, QWidget* parent = nullptr)
+      : ArtifactAbstractPropertyEditor(parent), value_(gradientStopsToJson(gradientStopsFromJson(property.getValue().toString()))) {
+    setObjectName(QStringLiteral("propertyGradientStopsEditor"));
+    setAccessibleName(QStringLiteral("Gradient stops editor"));
+    auto* layout = new QHBoxLayout(this);
+    layout->setContentsMargins(0, 0, 0, 0);
+    summary_ = new QLabel(this);
+    auto* button = new GradientActionButton(QStringLiteral("Edit Stops…"), this);
+    button->setAccessibleName(QStringLiteral("Edit gradient stops"));
+    applyPropertyFieldPalette(summary_);
+    applyPropertyButtonPalette(button, true);
+    layout->addWidget(summary_, 1);
+    layout->addWidget(button);
+    button->setCallback([this]() {
+      QJsonArray stops = gradientStopsFromJson(value_);
+      if (!editGradientStops(this, stops)) {
+        return;
+      }
+      value_ = gradientStopsToJson(stops);
+      updateSummary();
+      commitValue(value_);
+    });
+    updateSummary();
+  }
+
+  QVariant value() const override { return value_; }
+  void setValueFromVariant(const QVariant& value) override {
+    value_ = gradientStopsToJson(gradientStopsFromJson(value.toString()));
+    updateSummary();
+  }
+
+private:
+  void updateSummary() {
+    const int count = gradientStopsFromJson(value_).size();
+    summary_->setText(count == 0 ? QStringLiteral("2-color default")
+                                 : QStringLiteral("%1 stops").arg(count));
+  }
+
+  QString value_;
+  QLabel* summary_ = nullptr;
+};
+
+} // namespace
 
 ArtifactTextAnimatorColorEditor::ArtifactTextAnimatorColorEditor(
     const ArtifactCore::AbstractProperty &property, QWidget *parent)
@@ -466,6 +746,12 @@ void ArtifactLevelsPropertyEditor::mouseReleaseEvent(QMouseEvent* event) {
 ArtifactAbstractPropertyEditor *
 createPropertyEditorWidget(const ArtifactCore::AbstractProperty &property,
                            QWidget *parent) {
+  const QString propertyName = property.getName();
+  if (propertyName == QStringLiteral("shape.fillGradientStops") ||
+      (propertyName.startsWith(QStringLiteral("shape.content.")) &&
+       propertyName.endsWith(QStringLiteral(".fillGradientStops")))) {
+    return new ArtifactGradientStopsPropertyEditor(property, parent);
+  }
   if (property.getName() == QStringLiteral("curve.master")) {
     return new ArtifactCurvesPropertyEditor(property, parent);
   }

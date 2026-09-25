@@ -3,6 +3,7 @@ module;
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <memory>
 #include <vector>
 #include <QString>
@@ -288,7 +289,8 @@ public:
   // Multi-content (1レイヤー複数パス). Empty list = legacy single shape.
    // addShapeContent snapshots the legacy shape as contents[0] on first use
    // so the existing look is preserved.
-   int shapeContentCount() const;
+  int shapeContentCount() const;
+  std::uint64_t contentRevision() const;
    bool hasMultiShapeContents() const;
    int addShapeContent(const ShapeContent& content);
    bool setShapeContentAt(int index, const ShapeContent& content);

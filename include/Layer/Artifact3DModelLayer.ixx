@@ -49,7 +49,7 @@ export namespace Artifact {
     void createCapsuleMesh();
     void createPyramidMesh();
     void createFixedGeometryMesh(FixedGeometry3D geometry);
-   void updateSourceSizeFromMesh();
+    void updateSourceSizeFromMesh(bool updateBounds = true);
 
  public:
     Artifact3DLayer();

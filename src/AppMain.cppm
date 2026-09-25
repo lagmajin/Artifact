@@ -898,6 +898,22 @@ private:
                 QStringLiteral("A shared stack edit conflicted with local stack state and was not applied"));
             return;
           }
+          if (operation.type == QStringLiteral("layer.modulation")) {
+            if (acknowledgedLocalOperation ||
+                (session_ && operation.clientId == session_->localClientId())) {
+              return;
+            }
+            if (UndoManager::instance() &&
+                UndoManager::instance()->applyCollaborativeLayerModulation(
+                    operation.layerId, operation.payload)) {
+              return;
+            }
+            if (widget_) {
+              widget_->setLayerEditBlockedStatus(
+                  QStringLiteral("A shared layer modulation edit conflicted with local values or could not be applied"));
+            }
+            return;
+          }
           if (operation.type == kOpLayerAudioDeClickRanges) {
             if (acknowledgedLocalOperation ||
                 (session_ && operation.clientId == session_->localClientId())) return;
@@ -2699,6 +2715,140 @@ QJsonObject diagnosticSnapshotJson() {
   return diagnostics;
 }
 
+QJsonObject buildDebugBridgeWorkspaceSnapshotJson() {
+  QJsonObject workspaceJson;
+  QJsonObject projectJson;
+  QJsonObject compositionJson;
+  QJsonObject selectionJson;
+  QJsonObject queueJson;
+
+  auto* app = Artifact::ArtifactApplicationManager::instance();
+  auto* projectService = app ? app->projectService() : nullptr;
+  auto* selectionService = app ? app->layerSelectionManager() : nullptr;
+  auto* queueService = Artifact::ArtifactRenderQueueService::instance();
+  auto& projectManager = Artifact::ArtifactProjectManager::getInstance();
+  const auto project = projectManager.getCurrentProjectSharedPtr();
+  Artifact::ArtifactCompositionPtr composition;
+  if (app && app->activeContextService()) {
+    composition = app->activeContextService()->activeComposition();
+  }
+  if (!composition && projectService) {
+    composition = projectService->currentComposition().lock();
+  }
+
+  projectJson.insert(QStringLiteral("available"), static_cast<bool>(project));
+  if (project) {
+    projectJson.insert(QStringLiteral("projectName"),
+                       projectService ? projectService->projectName().toQString() : QString());
+    projectJson.insert(QStringLiteral("projectPath"), projectManager.currentProjectPath());
+    projectJson.insert(QStringLiteral("assetsPath"), projectManager.currentProjectAssetsPath());
+    projectJson.insert(QStringLiteral("compositionCount"), projectManager.compositionCount());
+    projectJson.insert(QStringLiteral("projectItemCount"), projectManager.projectItems().size());
+  } else {
+    projectJson.insert(QStringLiteral("errorCode"), QStringLiteral("NO_OPEN_PROJECT"));
+    projectJson.insert(QStringLiteral("retryable"), true);
+    projectJson.insert(QStringLiteral("projectPath"), projectManager.currentProjectPath());
+    projectJson.insert(QStringLiteral("assetsPath"), projectManager.currentProjectAssetsPath());
+  }
+
+  compositionJson.insert(QStringLiteral("available"), static_cast<bool>(composition));
+  if (composition) {
+    compositionJson.insert(QStringLiteral("id"), composition->id().toString());
+    compositionJson.insert(QStringLiteral("name"),
+                           composition->settings().compositionName().toQString());
+    compositionJson.insert(QStringLiteral("layerCount"), composition->layerCount());
+  } else {
+    compositionJson.insert(QStringLiteral("errorCode"), QStringLiteral("NO_ACTIVE_COMPOSITION"));
+    compositionJson.insert(QStringLiteral("retryable"), true);
+  }
+
+  QJsonArray selectedLayersJson;
+  QJsonArray selectedLayerIdsJson;
+  QString currentLayerId;
+  int selectedLayerCount = 0;
+  if (selectionService) {
+    const auto selectedLayers = selectionService->selectedLayers();
+    for (const auto& layer : selectedLayers) {
+      if (!layer) {
+        continue;
+      }
+      ++selectedLayerCount;
+      const QString layerId = layer->id().toString();
+      QJsonObject layerJson;
+      layerJson.insert(QStringLiteral("id"), layerId);
+      layerJson.insert(QStringLiteral("className"), layer->className().toQString());
+      layerJson.insert(QStringLiteral("name"), layer->layerName());
+      layerJson.insert(QStringLiteral("selected"), true);
+      selectedLayersJson.append(layerJson);
+      selectedLayerIdsJson.append(layerId);
+    }
+    if (const auto currentLayer = selectionService->currentLayer()) {
+      currentLayerId = currentLayer->id().toString();
+    }
+    selectionJson.insert(QStringLiteral("available"), true);
+  } else {
+    selectionJson.insert(QStringLiteral("available"), false);
+    selectionJson.insert(QStringLiteral("errorCode"), QStringLiteral("SELECTION_UNAVAILABLE"));
+    selectionJson.insert(QStringLiteral("retryable"), true);
+  }
+  selectionJson.insert(QStringLiteral("activeCompositionId"),
+                       composition ? composition->id().toString() : QString());
+  selectionJson.insert(QStringLiteral("currentLayerId"), currentLayerId);
+  selectionJson.insert(QStringLiteral("selectedLayerCount"), selectedLayerCount);
+  selectionJson.insert(QStringLiteral("selectedLayers"), selectedLayersJson);
+
+  queueJson.insert(QStringLiteral("available"), queueService != nullptr);
+  if (queueService) {
+    queueJson.insert(QStringLiteral("jobCount"), queueService->jobCount());
+    queueJson.insert(QStringLiteral("totalProgress"), queueService->getTotalProgress());
+  } else {
+    queueJson.insert(QStringLiteral("errorCode"), QStringLiteral("RENDER_QUEUE_UNAVAILABLE"));
+    queueJson.insert(QStringLiteral("retryable"), true);
+  }
+
+  workspaceJson.insert(QStringLiteral("schemaVersion"), 1);
+  workspaceJson.insert(QStringLiteral("snapshotType"), QStringLiteral("workspace"));
+  workspaceJson.insert(QStringLiteral("capturedAt"),
+                       QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+  workspaceJson.insert(QStringLiteral("project"), projectJson);
+  workspaceJson.insert(QStringLiteral("currentComposition"), compositionJson);
+  workspaceJson.insert(QStringLiteral("selection"), selectionJson);
+  workspaceJson.insert(QStringLiteral("renderQueue"), queueJson);
+  workspaceJson.insert(QStringLiteral("activeIds"), QJsonObject{
+      {QStringLiteral("compositionId"), compositionJson.value(QStringLiteral("id"))},
+      {QStringLiteral("currentLayerId"), currentLayerId},
+      {QStringLiteral("selectedLayerIds"), selectedLayerIdsJson}});
+  workspaceJson.insert(QStringLiteral("counts"), QJsonObject{
+      {QStringLiteral("compositionCount"), projectJson.value(QStringLiteral("compositionCount"))},
+      {QStringLiteral("selectedLayerCount"), selectedLayerCount},
+      {QStringLiteral("renderQueueJobCount"), queueJson.value(QStringLiteral("jobCount"))}});
+
+  QStringList warnings;
+  QStringList warningCodes;
+  if (!project) {
+    warnings.append(QStringLiteral("No project is currently open."));
+    warningCodes.append(QStringLiteral("NO_OPEN_PROJECT"));
+  }
+  if (!composition) {
+    warnings.append(QStringLiteral("No active composition is selected."));
+    warningCodes.append(QStringLiteral("NO_ACTIVE_COMPOSITION"));
+  }
+  if (selectedLayerCount == 0) {
+    warnings.append(QStringLiteral("No layers are selected."));
+    warningCodes.append(QStringLiteral("NO_SELECTED_LAYERS"));
+  }
+  if (!queueService) {
+    warnings.append(QStringLiteral("Render queue service is currently unavailable."));
+    warningCodes.append(QStringLiteral("RENDER_QUEUE_UNAVAILABLE"));
+  } else if (queueService->jobCount() == 0) {
+    warnings.append(QStringLiteral("Render queue is empty."));
+    warningCodes.append(QStringLiteral("RENDER_QUEUE_EMPTY"));
+  }
+  workspaceJson.insert(QStringLiteral("warnings"), warnings);
+  workspaceJson.insert(QStringLiteral("warningCodes"), warningCodes);
+  return workspaceJson;
+}
+
 QJsonObject buildDebugBridgeSnapshotJson() {
   QJsonObject root;
   root.insert(QStringLiteral("snapshotVersion"), 1);
@@ -2710,11 +2860,7 @@ QJsonObject buildDebugBridgeSnapshotJson() {
                  static_cast<qint64>(QCoreApplication::applicationPid()));
   root.insert(QStringLiteral("app"), appJson);
 
-  const QVariantMap workspace =
-      Artifact::WorkspaceAutomation::instance()
-          .invokeMethod(QStringLiteral("workspaceSnapshot"), {})
-          .toMap();
-  const QJsonObject workspaceJson = QJsonDocument::fromVariant(workspace).object();
+  const QJsonObject workspaceJson = buildDebugBridgeWorkspaceSnapshotJson();
   root.insert(QStringLiteral("workspace"), workspaceJson);
   root.insert(QStringLiteral("project"),
               workspaceJson.value(QStringLiteral("project")).toObject());
@@ -3356,7 +3502,7 @@ bool debugMcpAutoSyncPlaybackState(QJsonObject& state, ArtifactPlaybackService* 
         session.value(QStringLiteral("stepFrames")).toVariant().toLongLong(), 1, 1000);
     const qint64 current = playbackService->currentFrame().framePosition();
     const qint64 target = std::min(current + steps,
-                                   playbackService->frameRange().end());
+                                   playbackService->playableEndFrame().framePosition());
     playbackService->setCurrentFrame(FramePosition(target));
     QJsonObject updatedSession = session;
     updatedSession.insert(QStringLiteral("lastAction"), QStringLiteral("step-forward"));
@@ -3369,7 +3515,7 @@ bool debugMcpAutoSyncPlaybackState(QJsonObject& state, ArtifactPlaybackService* 
                                 .toVariant().toLongLong();
     const qint64 target = std::clamp(requested,
                                      playbackService->frameRange().start(),
-                                     playbackService->frameRange().end());
+                                     playbackService->playableEndFrame().framePosition());
     playbackService->setCurrentFrame(FramePosition(target));
     QJsonObject updatedSession = session;
     updatedSession.insert(QStringLiteral("lastAction"), QStringLiteral("step-to-frame"));
@@ -5401,7 +5547,8 @@ int main(int argc, char *argv[]) {
   QTimer::singleShot(
       0, mw,
       [=, &renderCenterWindow, &debugConsoleWidget,
-       &frameDebugWidget, &debugHarnessWidget, &frameDebugTimer]() {
+       &frameDebugWidget, &debugHarnessWidget, &frameDebugTimer,
+       &collaborationController]() {
     mw->addLazyDockedWidgetFloating(
         QStringLiteral("Debug Console"), QStringLiteral("DebugConsole"),
         [mw, compositionEditor, &debugConsoleWidget]() mutable -> QWidget* {
@@ -6460,8 +6607,10 @@ int main(int argc, char *argv[]) {
               [mw, timelineDockTitle, timelineDockObjectId, dopeSheetDockTitle,
                dopeSheetDockObjectId, animationTimelineDockTitle,
                animationTimelineDockObjectId, audioMiniDockTitle, audioMiniDockObjectId,
-               status, collaborationController](const CompositionCreatedEvent &event) {
-                const CompositionID compId(event.compositionId);
+                status, &collaborationController](const CompositionCreatedEvent &event) {
+                 const CompositionID compId(event.compositionId);
+                 const QPointer<CollaborationDockController>
+                     collaborationControllerGuard = collaborationController;
                 if (!mw || compId.isNil()) {
                   return;
                 }
@@ -6474,9 +6623,9 @@ int main(int argc, char *argv[]) {
                 QTimer::singleShot(
                     1, mw,
                     [mw, compId, timelineDockTitle, timelineDockObjectId,
-                     dopeSheetDockTitle, dopeSheetDockObjectId, animationTimelineDockTitle,
-                     animationTimelineDockObjectId, audioMiniDockTitle, audioMiniDockObjectId, status,
-                     event]() {
+                      dopeSheetDockTitle, dopeSheetDockObjectId, animationTimelineDockTitle,
+                      animationTimelineDockObjectId, audioMiniDockTitle, audioMiniDockObjectId, status,
+                      collaborationControllerGuard, event]() {
                       if (!mw) {
                         return;
                       }
@@ -6557,7 +6706,7 @@ int main(int argc, char *argv[]) {
                       // has restored main-window updates.
                       QTimer::singleShot(
                           0, mw, [mw, compId, dockTitle, dockId, status,
-                                  collaborationController]() {
+                                  collaborationControllerGuard]() {
                             if (!mw || mw->hasDock(dockId)) {
                               return;
                             }
@@ -6581,8 +6730,8 @@ int main(int argc, char *argv[]) {
                             panel->resize(1200, 350);
                             phaseTimer.restart();
                             panel->setComposition(compId);
-                            if (collaborationController) {
-                              collaborationController->refreshTimelineLockIndicators();
+                            if (collaborationControllerGuard) {
+                              collaborationControllerGuard->refreshTimelineLockIndicators();
                             }
                             const double setCompositionMs =
                                 static_cast<double>(phaseTimer.nsecsElapsed()) /

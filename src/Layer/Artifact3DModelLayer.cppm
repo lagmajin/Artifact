@@ -134,8 +134,9 @@ public:
   float normalLength_ = 25.0f;
   float pointSize_ = 1.0f;
   QString lastRenderTraceOutcome_;
+  ArtifactCore::MeshImporter* animationImporter_ = nullptr;
   Impl() {}
-  ~Impl() {}
+  ~Impl() { delete animationImporter_; }
 };
 
 Artifact3DLayer::Artifact3DLayer() : impl_(new Impl()) {
@@ -185,8 +186,14 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
   impl_->fixedGeometry_ = FixedGeometry3D::Auto;
   impl_->lastSkinAnimationFrame_ = std::numeric_limits<int64_t>::min();
 
-  ArtifactCore::MeshImporter importer;
-  auto mesh = importer.importMeshFromFile(UniString(normalizedInput));
+  if (!impl_->animationImporter_) {
+    impl_->animationImporter_ = new ArtifactCore::MeshImporter();
+  }
+  ArtifactCore::MeshImporter* importer = impl_->animationImporter_;
+  const QString canonicalInput = inputInfo.canonicalFilePath().isEmpty()
+      ? inputInfo.absoluteFilePath()
+      : inputInfo.canonicalFilePath();
+  auto mesh = importer->importMeshFromFile(UniString(canonicalInput));
 
   if (mesh && mesh->vertexCount() > 0) {
     impl_->mesh_ = *mesh;
@@ -196,7 +203,7 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
     centerMeshPositions(impl_->mesh_);
     impl_->meshLoaded_ = true;
     updateSourceSizeFromMesh();
-    const QString importedTexture = importer.lastBaseColorTexture();
+    const QString importedTexture = importer->lastBaseColorTexture();
     if (!importedTexture.isEmpty() &&
         impl_->material_.baseColorTexture().toQString().isEmpty()) {
       qDebug() << "[Artifact3DLayer] Imported base color texture:" << importedTexture;
@@ -204,7 +211,7 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
           ArtifactCore::UniString::fromQString(importedTexture));
     }
     const QString importedMetallicRoughnessTexture =
-        importer.lastMetallicRoughnessTexture();
+        importer->lastMetallicRoughnessTexture();
     if (!importedMetallicRoughnessTexture.isEmpty() &&
         impl_->material_.metallicRoughnessTexture().toQString().isEmpty()) {
       qDebug() << "[Artifact3DLayer] Imported metallic-roughness texture:"
@@ -212,14 +219,14 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
       impl_->material_.setMetallicRoughnessTexture(
           ArtifactCore::UniString::fromQString(importedMetallicRoughnessTexture));
     }
-    const QString importedNormalTexture = importer.lastNormalTexture();
+    const QString importedNormalTexture = importer->lastNormalTexture();
     if (!importedNormalTexture.isEmpty() &&
         impl_->material_.normalTexture().toQString().isEmpty()) {
       qDebug() << "[Artifact3DLayer] Imported normal texture:" << importedNormalTexture;
       impl_->material_.setNormalTexture(
           ArtifactCore::UniString::fromQString(importedNormalTexture));
     }
-    const QString importedEmissionTexture = importer.lastEmissionTexture();
+    const QString importedEmissionTexture = importer->lastEmissionTexture();
     if (!importedEmissionTexture.isEmpty() &&
         impl_->material_.emissionTexture().toQString().isEmpty()) {
       qDebug() << "[Artifact3DLayer] Imported emission texture:"
@@ -227,7 +234,7 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
       impl_->material_.setEmissionTexture(
           ArtifactCore::UniString::fromQString(importedEmissionTexture));
     }
-    const QString importedOcclusionTexture = importer.lastOcclusionTexture();
+    const QString importedOcclusionTexture = importer->lastOcclusionTexture();
     if (!importedOcclusionTexture.isEmpty() &&
         impl_->material_.occlusionTexture().toQString().isEmpty()) {
       qDebug() << "[Artifact3DLayer] Imported occlusion texture:"
@@ -235,7 +242,7 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
       impl_->material_.setOcclusionTexture(
           ArtifactCore::UniString::fromQString(importedOcclusionTexture));
     }
-    const QString importedOpacityTexture = importer.lastOpacityTexture();
+    const QString importedOpacityTexture = importer->lastOpacityTexture();
     if (!importedOpacityTexture.isEmpty() &&
         impl_->material_.opacityTexture().toQString().isEmpty()) {
       qDebug() << "[Artifact3DLayer] Imported opacity texture:"
@@ -247,15 +254,15 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
     // backend produced them, and the material is still at its default (never
     // user-edited), mirroring the texture isEmpty guards above.
     const bool factorsFromUfbx =
-        importer.lastBackend() == ArtifactCore::MeshImporter::Backend::Ufbx ||
-        importer.lastBackend() == ArtifactCore::MeshImporter::Backend::UfbxGltf;
-    if (factorsFromUfbx && importer.hasLastMetallicFactor() &&
+        importer->lastBackend() == ArtifactCore::MeshImporter::Backend::Ufbx ||
+        importer->lastBackend() == ArtifactCore::MeshImporter::Backend::UfbxGltf;
+    if (factorsFromUfbx && importer->hasLastMetallicFactor() &&
         impl_->material_.metallic() == 0.0f) {
-      impl_->material_.setMetallic(importer.lastMetallicFactor());
+      impl_->material_.setMetallic(importer->lastMetallicFactor());
     }
-    if (factorsFromUfbx && importer.hasLastRoughnessFactor() &&
+    if (factorsFromUfbx && importer->hasLastRoughnessFactor() &&
         impl_->material_.roughness() == 0.5f) {
-      impl_->material_.setRoughness(importer.lastRoughnessFactor());
+      impl_->material_.setRoughness(importer->lastRoughnessFactor());
     }
     if (impl_->material_.baseColorTexture().toQString().isEmpty()) {
       const QString detectedTexture = detectSiblingBaseColorTexture(normalizedInput);
@@ -1255,8 +1262,10 @@ void Artifact3DLayer::createPyramidMesh()
   uvAttr->data() = uvs;
 }
 
-void Artifact3DLayer::updateSourceSizeFromMesh() {
-  impl_->mesh_.updateBounds();
+void Artifact3DLayer::updateSourceSizeFromMesh(const bool updateBounds) {
+  if (updateBounds) {
+    impl_->mesh_.updateBounds();
+  }
   const QVector3D minB = impl_->mesh_.boundingBoxMin();
   const QVector3D maxB = impl_->mesh_.boundingBoxMax();
   const int width =
@@ -1272,45 +1281,67 @@ void Artifact3DLayer::loadFromFileAtTime(const QString& filePath,
                                          const double time,
                                          const int clipIndex)
 {
-  const QString normalizedInput = filePath.trimmed();
+  const QString templatePath = filePath.trimmed();
+  QString normalizedInput = templatePath;
+  if (containsExpansionMarker(normalizedInput)) {
+    ExpansionContext expansionContext;
+    normalizedInput = expandTokens(normalizedInput, expansionContext);
+  }
   if (normalizedInput.isEmpty()) return;
-
-  ArtifactCore::MeshImporter importer;
-  auto mesh = importer.importMeshFromFileAtTime(
-      UniString(normalizedInput), time, clipIndex);
-  if (!mesh || mesh->vertexCount() <= 0) {
-    qWarning() << "[Artifact3DLayer] Timed model evaluation failed:"
-               << normalizedInput << importer.lastError();
+  if (!impl_->animationImporter_ || !impl_->meshLoaded_) {
     return;
   }
-  impl_->fixedGeometry_ = FixedGeometry3D::Auto;
-  const int clipCount = static_cast<int>(mesh->skinAnimationClips().size());
+
+  const auto updateWholeMeshAtTime = [&]() {
+    auto evaluatedMesh = impl_->animationImporter_->importMeshFromFileAtTime(
+        UniString(normalizedInput), time, clipIndex);
+    if (!evaluatedMesh || evaluatedMesh->vertexCount() <= 0) {
+      return false;
+    }
+    impl_->mesh_ = *evaluatedMesh;
+    for (int shapeIndex = 0;
+         shapeIndex < impl_->mesh_.blendShapes().size(); ++shapeIndex) {
+      const auto overrideIt = impl_->blendShapeWeightOverrides_.constFind(
+          impl_->mesh_.blendShapes()[shapeIndex].name);
+      if (overrideIt != impl_->blendShapeWeightOverrides_.constEnd()) {
+        impl_->mesh_.setBlendShapeWeight(shapeIndex, overrideIt.value());
+      }
+    }
+    centerMeshPositions(impl_->mesh_);
+    updateSourceSizeFromMesh(false);
+    return true;
+  };
+
+  // Node-only and blend-shape animation still use the existing timed import
+  // path. The retained ufbx source scene avoids reparsing the file, while the
+  // skin-only path below updates the existing mesh in place.
+  if (impl_->mesh_.skinBones().isEmpty() ||
+      !impl_->mesh_.blendShapes().isEmpty()) {
+    if (!updateWholeMeshAtTime()) {
+      qWarning() << "[Artifact3DLayer] Timed model evaluation failed:"
+                 << normalizedInput << impl_->animationImporter_->lastError();
+      return;
+    }
+    Q_EMIT changed();
+    return;
+  }
+
+  if (!impl_->animationImporter_->updateSkinPose(
+          UniString(normalizedInput), time, clipIndex, impl_->mesh_)) {
+    if (updateWholeMeshAtTime()) {
+      Q_EMIT changed();
+      return;
+    }
+    qWarning() << "[Artifact3DLayer] Timed model evaluation failed:"
+               << normalizedInput << impl_->animationImporter_->lastError();
+    return;
+  }
+  const int clipCount = static_cast<int>(impl_->mesh_.skinAnimationClips().size());
   impl_->skinAnimationClipIndex_ = clipCount > 0
       ? std::clamp(clipIndex, 0, clipCount - 1)
       : std::max(0, clipIndex);
   impl_->lastSkinAnimationFrame_ = std::numeric_limits<int64_t>::min();
-  impl_->mesh_ = *mesh;
-  if (!impl_->mesh_.skinBones().isEmpty()) {
-    impl_->mesh_.applyDeformers(impl_->mesh_.skinPoseMatrices());
-  }
-  for (int shapeIndex = 0;
-       shapeIndex < impl_->mesh_.blendShapes().size(); ++shapeIndex) {
-    const auto overrideIt = impl_->blendShapeWeightOverrides_.constFind(
-        impl_->mesh_.blendShapes()[shapeIndex].name);
-    if (overrideIt != impl_->blendShapeWeightOverrides_.constEnd()) {
-      impl_->mesh_.setBlendShapeWeight(shapeIndex, overrideIt.value());
-    }
-  }
-  centerMeshPositions(impl_->mesh_);
-  impl_->meshLoaded_ = true;
-  impl_->renderMode_ = ModelRenderMode::Solid;
-  updateSourceSizeFromMesh();
-  const QFileInfo sourceInfo(normalizedInput);
-  const QString normalizedSourcePath = sourceInfo.canonicalFilePath().isEmpty()
-      ? sourceInfo.absoluteFilePath()
-      : sourceInfo.canonicalFilePath();
-  impl_->sourcePath_ = normalizedSourcePath;
-  setLayerName(sourceInfo.baseName());
+  updateSourceSizeFromMesh(false);
   Q_EMIT changed();
 }
 

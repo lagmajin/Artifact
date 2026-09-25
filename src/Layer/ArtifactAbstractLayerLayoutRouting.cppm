@@ -142,6 +142,40 @@ void restoreLayerTransform(const QJsonObject& object,
                            ArtifactCore::AnimatableTransform3D& transform,
                            double frameRate);
 
+namespace {
+SharedPtr<ArtifactCore::AbstractProperty> transformChannelProperty(
+    const ArtifactCore::AnimatableTransform3D& transform,
+    const QString& path) {
+  using ArtifactCore::TransformChannel;
+  if (path == QStringLiteral("transform.position.x"))
+    return transform.channelProperty(TransformChannel::PositionX);
+  if (path == QStringLiteral("transform.position.y"))
+    return transform.channelProperty(TransformChannel::PositionY);
+  if (path == QStringLiteral("transform.position.z"))
+    return transform.channelProperty(TransformChannel::PositionZ);
+  if (path == QStringLiteral("transform.rotation") ||
+      path == QStringLiteral("transform.rotation.z"))
+    return transform.channelProperty(TransformChannel::Rotation);
+  if (path == QStringLiteral("transform.rotation.x"))
+    return transform.channelProperty(TransformChannel::RotationX);
+  if (path == QStringLiteral("transform.rotation.y"))
+    return transform.channelProperty(TransformChannel::RotationY);
+  if (path == QStringLiteral("transform.scale.x"))
+    return transform.channelProperty(TransformChannel::ScaleX);
+  if (path == QStringLiteral("transform.scale.y"))
+    return transform.channelProperty(TransformChannel::ScaleY);
+  if (path == QStringLiteral("transform.scale.z"))
+    return transform.channelProperty(TransformChannel::ScaleZ);
+  if (path == QStringLiteral("transform.anchor.x"))
+    return transform.channelProperty(TransformChannel::AnchorX);
+  if (path == QStringLiteral("transform.anchor.y"))
+    return transform.channelProperty(TransformChannel::AnchorY);
+  if (path == QStringLiteral("transform.anchor.z"))
+    return transform.channelProperty(TransformChannel::AnchorZ);
+  return {};
+}
+}
+
 bool ArtifactAbstractLayer::setComponentLayoutPropertyValue(
     const QString &propertyPath, const QVariant &value) {
     if (propertyPath == QStringLiteral("component.layout.enabled")) {
@@ -456,7 +490,7 @@ bool ArtifactAbstractLayer::setTransformTimeSourcePropertyValue(
   if (auto property = transformChannelProperty(t3, propertyPath)) {
     const double number = value.toDouble();
     if (!std::isfinite(number)) return false;
-    if (!property->getKeyFrames().empty()) {
+    if (property->hasKeyFrames()) {
       const auto keys = property->getKeyFrames();
       const auto existing = std::find_if(keys.begin(), keys.end(),
           [&currentTime](const auto& key) { return key.time == currentTime; });

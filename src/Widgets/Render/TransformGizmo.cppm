@@ -1406,7 +1406,7 @@ void syncAnimatedProperty(const ArtifactAbstractLayerPtr& layer,
   return;
  }
  const auto property = layer->getProperty(propertyPath);
- if (property && property->isAnimatable() && !property->getKeyFrames().empty()) {
+ if (property && property->isAnimatable() && property->hasKeyFrames()) {
   property->addKeyFrame(time, value);
  }
 }

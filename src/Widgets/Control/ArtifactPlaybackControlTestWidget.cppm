@@ -796,7 +796,7 @@ public:
         const FramePosition current = service ? service->currentFrame() : FramePosition(0);
 
         const qint64 startFrame = std::min(range.start(), range.end());
-        const qint64 endFrame = std::max(range.start(), range.end());
+        const qint64 endFrame = service ? service->playableEndFrame().framePosition() : 299;
         const qint64 clampedCurrent = std::clamp(current.framePosition(), startFrame, endFrame);
 
         if (scrubSlider_) {
@@ -1145,8 +1145,10 @@ public:
             if (scrubSlider_) {
                 QSignalBlocker blocker(scrubSlider_);
                 const FrameRange range = service->frameRange();
-                scrubSlider_->setRange(static_cast<int>(std::min(range.start(), range.end())),
-                                       static_cast<int>(std::max(range.start(), range.end())));
+                const qint64 start = std::min(range.start(), range.end());
+                const qint64 end = service->playableEndFrame().framePosition();
+                scrubSlider_->setRange(static_cast<int>(start),
+                                       static_cast<int>(end));
                 scrubSlider_->setValue(static_cast<int>(service->currentFrame().framePosition()));
             }
             if (ramCacheCheckbox_) {

@@ -1066,7 +1066,7 @@ public:
     compositionId_ = compositionId;
     layerId_ = layer ? layer->id() : LayerID();
     composition_ = composition;
-    const bool hasMatteRefs = layer && !layer->matteReferences().empty();
+    const bool hasMatteRefs = layer && layer->matteReferenceCount() > 0;
     const ArtifactAbstractLayerPtr selectedLayer =
         ArtifactLayerSelectionManager::instance()
             ? ArtifactLayerSelectionManager::instance()->currentLayer()

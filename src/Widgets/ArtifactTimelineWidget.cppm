@@ -43,6 +43,7 @@ module;
 #include <QTimer>
 #include <QWheelEvent>
 #include <QWidget>
+#include <QWidgetAction>
 #include <QPaintEvent>
 #include <QPointer>
 #include <QPolygonF>
@@ -4452,19 +4453,15 @@ public:
     const int mandatorySpacing = spacing * std::max(0, mandatoryCount - 1);
     const int baseWidth = mandatoryWidth + mandatorySpacing;
 
-    // Preserve the mode controls and the compact global switches first. Search
-    // is useful, but it is the only wide control and can safely collapse when
-    // the dock is narrow without squeezing the timecode or adjacent buttons.
-    const bool showSwitches =
-        availableWidth >= baseWidth + spacing + switchesWidth;
-    const int reservedForSwitches = showSwitches ? spacing + switchesWidth : 0;
+    // The overflow menu must remain reachable even in a narrow dock.
+    const int reservedForSwitches = spacing + switchesWidth;
     const bool showSearch =
         availableWidth >= baseWidth + reservedForSwitches + spacing +
                               searchMinimumWidth_;
 
     timecode_->setVisible(true);
     searchBar_->setVisible(showSearch);
-    switches_->setVisible(showSwitches);
+    switches_->setVisible(true);
 
     if (!showSearch) {
       return;
@@ -6301,11 +6298,6 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
     headerWidget->setAutoFillBackground(true);
   }
 
-  auto *leftHeaderPriorityFilter = new LeftHeaderPriorityFilter(
-      headerWidget, leftHeader, searchBar, globalSwitches, headerWidget);
-  headerWidget->installEventFilter(leftHeaderPriorityFilter);
-  leftHeaderPriorityFilter->sync();
-
   auto *currentLayerClickFilter = new TimelineStatusClickFilter(
       currentLayerLabel, [this]() {
         ArtifactAbstractLayerPtr currentLayer;
@@ -6657,6 +6649,11 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   leftTopSpacer->setFixedHeight(0);
   leftTopSpacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
   leftTopSpacer->setAutoFillBackground(true);
+  {
+    QPalette palette = leftTopSpacer->palette();
+    palette.setColor(QPalette::Window, QColor(35, 39, 43));
+    leftTopSpacer->setPalette(palette);
+  }
   auto *timelineModeButton = impl_->timelineModeButton_ =
       new TimelineToolCallbackButton(headerWidget);
   auto *curveModeButton = impl_->curveModeButton_ =
@@ -6766,8 +6763,32 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   transportDivider->setPalette(dividerPalette);
   searchBarLayout->addWidget(transportDivider);
   searchBarLayout->addSpacing(Accessibility::scaledSize(10));
-  searchBarLayout->addWidget(globalSwitches);
+  auto *switchesMenu = new QMenu(headerWidget);
+  switchesMenu->addSection(QStringLiteral("Timeline options"));
+  auto *switchesAction = new QWidgetAction(switchesMenu);
+  switchesAction->setDefaultWidget(globalSwitches);
+  switchesMenu->addAction(switchesAction);
+  auto *moreButton = new TimelineToolCallbackButton(headerWidget);
+  styleTimelineToolButton(moreButton);
+  moreButton->setIcon(QIcon(ArtifactCore::resolveIconPath(
+      QStringLiteral("Studio/timeline_actions.svg"))));
+  moreButton->setIconSize(QSize(Accessibility::scaledSize(20),
+                                Accessibility::scaledSize(20)));
+  moreButton->setFixedSize(Accessibility::scaledSize(36),
+                           Accessibility::scaledSize(34));
+  moreButton->setToolTip(QStringLiteral("Timeline options"));
+  moreButton->setAccessibleName(QStringLiteral("Timeline options"));
+  moreButton->setCallback([switchesMenu, moreButton]() {
+    switchesMenu->exec(moreButton->mapToGlobal(
+        QPoint(0, moreButton->height())));
+  });
+  searchBarLayout->addWidget(moreButton);
   searchBarLayout->addWidget(miniKeyEditorButton);
+
+  auto *leftHeaderPriorityFilter = new LeftHeaderPriorityFilter(
+      headerWidget, leftHeader, searchBar, moreButton, headerWidget);
+  headerWidget->installEventFilter(leftHeaderPriorityFilter);
+  leftHeaderPriorityFilter->sync();
 
   auto leftSubHeaderSpacer = new QWidget();
   leftSubHeaderSpacer->setObjectName(QStringLiteral("timelineLeftSubHeaderSpacer"));
@@ -8153,7 +8174,8 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                             impl_->painterTrackView_->horizontalOffset();
     constexpr double kFollowMargin = 24.0;
     const double followX = std::max(
-        kFollowMargin, static_cast<double>(impl_->painterTrackView_->width()) * 0.7);
+        kFollowMargin,
+        static_cast<double>(impl_->painterTrackView_->width()) - kFollowMargin);
     if (playheadX < kFollowMargin || playheadX > followX) {
       const double targetX = playheadX < kFollowMargin ? kFollowMargin : followX;
       syncTimelineHorizontalOffset(
@@ -8849,15 +8871,7 @@ void ArtifactTimelineWidget::refreshTracks() {
         if (layer->isSolo()) return QStringLiteral("Solo");
         if (layer->isShy()) return QStringLiteral("Shy");
         const bool hasMasks = layer->hasMasks();
-        const auto layerId = layer->id();
-        bool hasMattes = false;
-        for (const auto& ref : layer->matteReferences()) {
-          if (ref.enabled && !ref.sourceLayerId.isNil() &&
-              ref.sourceLayerId != layerId) {
-            hasMattes = true;
-            break;
-          }
-        }
+        const bool hasMattes = layer->hasEnabledExternalMatteReference();
         if (hasMasks && hasMattes) return QStringLiteral("Mask + Matte");
         if (hasMasks) return QStringLiteral("Masked");
         if (hasMattes) return QStringLiteral("Matted");
@@ -8871,15 +8885,7 @@ void ArtifactTimelineWidget::refreshTracks() {
         if (!layer->isVisible()) return LayerPresentationBadgeTone::Neutral;
         if (layer->isLocked() || layer->isShy()) return LayerPresentationBadgeTone::Special;
         if (layer->isSolo()) return LayerPresentationBadgeTone::Motion;
-        const auto layerId = layer->id();
-        bool hasMattes = false;
-        for (const auto& ref : layer->matteReferences()) {
-          if (ref.enabled && !ref.sourceLayerId.isNil() &&
-              ref.sourceLayerId != layerId) {
-            hasMattes = true;
-            break;
-          }
-        }
+        const bool hasMattes = layer->hasEnabledExternalMatteReference();
         if (layer->hasMasks() || hasMattes) return LayerPresentationBadgeTone::Special;
         if (layer->hasParent()) return LayerPresentationBadgeTone::Container;
         return LayerPresentationBadgeTone::Neutral;
@@ -9963,14 +9969,12 @@ void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
     event->accept();
     return;
    }
-   if (auto *svc = ArtifactProjectService::instance()) {
-    auto comp = svc->currentComposition().lock();
-    if (comp) {
+   if (auto *playback = ArtifactPlaybackService::instance()) {
      const int64_t delta = event->key() == Qt::Key_PageDown ? 10 : -10;
-     comp->goToFrame(comp->framePosition().framePosition() + delta);
+     const int64_t target = playback->currentFrame().framePosition() + delta;
+     playback->goToFrame(FramePosition(target));
      event->accept();
      return;
-    }
    }
   }
 

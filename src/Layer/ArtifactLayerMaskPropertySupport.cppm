@@ -18,6 +18,11 @@ RationalTime currentTimelineTime(const ArtifactAbstractLayer* layer);
 void applyMaskPropertyState(const ArtifactAbstractLayer* layer, int maskIndex,
                             LayerMask& mask) {
   if (!layer) return;
+  const QString maskPrefix = maskPropertyPrefix(maskIndex);
+  if (!layer->hasCachedAnimatedPropertiesWithPrefix(
+          maskPrefix + QStringLiteral("."))) {
+    return;
+  }
   const RationalTime time = currentTimelineTime(layer);
   const auto resolveBool = [layer, time](const QString& propertyPath, bool fallback) {
     const auto property = layer->getProperty(propertyPath);
@@ -44,7 +49,6 @@ void applyMaskPropertyState(const ArtifactAbstractLayer* layer, int maskIndex,
     return value.isValid() ? value.toString() : fallback;
   };
 
-  const QString maskPrefix = maskPropertyPrefix(maskIndex);
   mask.setEnabled(resolveBool(maskPrefix + QStringLiteral(".enabled"), mask.isEnabled()));
   for (int pathIndex = 0; pathIndex < mask.maskPathCount(); ++pathIndex) {
     MaskPath path = mask.maskPath(pathIndex);

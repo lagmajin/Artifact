@@ -425,6 +425,39 @@ std::vector<AbstractPropertyPtr> filteredGroupProperties(
     }
   }
 
+  if (normalizedGroup.compare(QStringLiteral("Contents"), Qt::CaseInsensitive) == 0) {
+    std::vector<AbstractPropertyPtr> filtered;
+    filtered.reserve(visibleProperties.size());
+    for (const auto& property : visibleProperties) {
+      if (!property) {
+        continue;
+      }
+      const QStringList parts = property->getName().split(QLatin1Char('.'));
+      if (parts.size() == 4 && parts[0] == QStringLiteral("shape") &&
+          parts[1] == QStringLiteral("content")) {
+        const QString field = parts[3];
+        const QString fillTypePath = QStringLiteral("shape.content.%1.fillType")
+                                         .arg(parts[2]);
+        const int fillType = groupInt(fillTypePath,
+            static_cast<int>(ArtifactSolidFillType::Solid));
+        const bool solid = fillType == static_cast<int>(ArtifactSolidFillType::Solid);
+        const bool solidOnly = field == QStringLiteral("fillColor");
+        const bool gradientOnly = field == QStringLiteral("gradientStartColor") ||
+            field == QStringLiteral("gradientEndColor") ||
+            field == QStringLiteral("gradientAngle") ||
+            field == QStringLiteral("gradientCenterX") ||
+            field == QStringLiteral("gradientCenterY") ||
+            field == QStringLiteral("gradientRadius") ||
+            field == QStringLiteral("fillGradientStops");
+        if ((solid && gradientOnly) || (!solid && solidOnly)) {
+          continue;
+        }
+      }
+      filtered.push_back(property);
+    }
+    return filtered;
+  }
+
   return visibleProperties;
 }
 
@@ -1494,7 +1527,7 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
               }
             }
           }
-          row->setKeyframeModeEnabled(!propertyPtr->getKeyFrames().empty());
+          row->setKeyframeModeEnabled(propertyPtr->hasKeyFrames());
           row->setKeyframeChecked(propertyPtr->hasKeyFrameAt(nowTime));
           row->setKeyframeAnchor(propertyPtr->getKeyFrameAnchorAt(nowTime));
           row->setNavigationEnabled(true);

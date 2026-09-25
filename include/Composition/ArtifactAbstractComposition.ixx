@@ -253,6 +253,7 @@ export namespace Artifact {
   std::vector<SharedPtr<ArtifactAbstractEffect>> getEffects() const;
   SharedPtr<ArtifactAbstractEffect> getEffect(const UniString& effectID) const;
   int effectCount() const;
+  bool hasEnabledRasterizerEffect() const;
 
   // Reusable automation-clip patterns (Phase 2, Bitwig-inspired). Patterns are
   // composition-owned shared curve data; layers hold instances referencing a
@@ -469,4 +470,3 @@ export namespace Artifact {
  typedef MultiIndexContainer<ArtifactCompositionPtr, CompositionID> ArtifactCompositionMultiIndexContainer;
  using MultiIndexLayerContainer = MultiIndexContainer<ArtifactAbstractLayerPtr, LayerID>;
 };
-

@@ -109,6 +109,7 @@ public:
     /// Get current source file path
     QString sourcePath() const;
     QUuid sourceAssetId() const;
+    std::uint64_t sourceVersion() const;
     bool localizeSourceIdentity();
     bool relinkSourceIdentityToShared();
     bool isSourceIdentityLocalized() const;

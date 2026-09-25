@@ -131,7 +131,7 @@ private:
    property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
   }
   property->setValue(value);
-  const bool applied = property->getKeyFrames().size() == keyframes.size() &&
+  const bool applied = property->keyFrameCount() == keyframes.size() &&
                        property->getValue() == value;
   if (!applied) {
    property->clearKeyFrames();
@@ -202,7 +202,7 @@ private:
     property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
    }
    property->setValue(before ? change.beforeValue : change.afterValue);
-   if (property->getKeyFrames().size() != keyframes.size() ||
+   if (property->keyFrameCount() != keyframes.size() ||
        property->getValue() != (before ? change.beforeValue : change.afterValue)) {
     return false;
    }

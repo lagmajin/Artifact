@@ -182,13 +182,13 @@ void restoreDeformerControlProperties(ArtifactAbstractLayer* layer,
             control.value(axis).toDouble(), 100);
         if (forceReplace) property->clearKeyFrames();
         if (keys.isEmpty()) {
-            if (forceReplace || property->getKeyFrames().empty()) {
+            if (forceReplace || !property->hasKeyFrames()) {
                 property->setAnimatable(false);
                 property->setValue(control.value(axis).toDouble());
             }
             continue;
         }
-        if (!forceReplace && !property->getKeyFrames().empty()) continue;
+        if (!forceReplace && property->hasKeyFrames()) continue;
         property->clearKeyFrames();
         property->setAnimatable(true);
         for (const QJsonValue& keyValue : keys) {
@@ -370,13 +370,13 @@ void ArtifactPuppetTool::persistLayerData(const LayerID& layerId)
             const auto rotationProperty = layer->getProperty(rotationPath);
             const auto weightProperty = layer->getProperty(weightPath);
             const bool hasXAnimation = xProperty &&
-                                       !xProperty->getKeyFrames().empty();
+                                       xProperty->hasKeyFrames();
             const bool hasYAnimation = yProperty &&
-                                       !yProperty->getKeyFrames().empty();
+                                       yProperty->hasKeyFrames();
             const bool hasRotationAnimation = rotationProperty &&
-                !rotationProperty->getKeyFrames().empty();
+                rotationProperty->hasKeyFrames();
             const bool hasWeightAnimation = weightProperty &&
-                !weightProperty->getKeyFrames().empty();
+                weightProperty->hasKeyFrames();
             if (hasXAnimation || hasYAnimation) {
                 object[QStringLiteral("originalX")] =
                     previous.value(QStringLiteral("originalX"));
@@ -440,7 +440,7 @@ void ArtifactPuppetTool::persistLayerData(const LayerID& layerId)
                      static_cast<int>(key.colorLabel)}});
             }
             object[axis + QStringLiteral("Keys")] = keys;
-            if (!property->getKeyFrames().empty()) {
+            if (property->hasKeyFrames()) {
                 object[axis] = QJsonValue::fromVariant(
                     property->getKeyFrames().front().value);
             }
@@ -819,9 +819,9 @@ bool ArtifactPuppetTool::movePinAtFrame(const QString& pinId,
         layerTimelineFrame(imageLayer.get()), imageLayer->keyframeTimeScale());
     const QPointF fallbackLocal = canvasToLocal.map(pin->canvasPos);
     const QPointF currentLocal(
-        xProperty->isAnimatable() && !xProperty->getKeyFrames().empty()
+        xProperty->isAnimatable() && xProperty->hasKeyFrames()
             ? xProperty->interpolateValue(time).toDouble() : fallbackLocal.x(),
-        yProperty->isAnimatable() && !yProperty->getKeyFrames().empty()
+        yProperty->isAnimatable() && yProperty->hasKeyFrames()
             ? yProperty->interpolateValue(time).toDouble() : fallbackLocal.y());
     const QPointF delta = targetLocal - currentLocal;
     if (impl_->proportionalEditingEnabled &&
@@ -1014,7 +1014,7 @@ void ArtifactPuppetTool::evaluatePinPositionsAtCurrentFrame(
                                      .arg(pin.id, axis);
             const auto property = layer->getProperty(path);
             if (property && property->isAnimatable() &&
-                !property->getKeyFrames().empty()) {
+                property->hasKeyFrames()) {
                 const double value = property->interpolateValue(time).toDouble();
                 return std::isfinite(value) ? value : fallback;
             }
@@ -1467,7 +1467,7 @@ bool ArtifactPuppetTool::renderDeformedLayer(
                 double result = base;
                 if (const auto property = imageLayer->getProperty(propertyPath);
                     property && property->isAnimatable() &&
-                    !property->getKeyFrames().empty()) {
+                    property->hasKeyFrames()) {
                     const ArtifactCore::RationalTime time(
                         evaluationFrame, imageLayer->keyframeTimeScale());
                     const QVariant value = property->interpolateValue(time);
@@ -1579,7 +1579,14 @@ bool ArtifactPuppetTool::renderDeformedLayer(
         lp->needsDeform = false;
     }
 
-    Diligent::ITextureView* texture = renderer->textureForImage(source);
+    const bool hasStableSourceIdentity =
+        !imageLayer->hasTemporarySourceOverride();
+    Diligent::ITextureView* texture = renderer->textureForImage(
+        source,
+        hasStableSourceIdentity ? imageLayer->sourceAssetId() : QUuid{},
+        hasStableSourceIdentity ? imageLayer->sourceVersion() : 0,
+        hasStableSourceIdentity && imageLayer->isImageSequence()
+            ? imageLayer->sequenceCachedFrameContentKey() : 0);
     if (!texture) return false;
     const ArtifactCore::PuppetMesh& mesh = lp->engine->deformedMeshView();
     if (mesh.vertices.empty() || mesh.indices.size() < 3 ||

@@ -821,10 +821,57 @@ void ArtifactAbstractLayer::setLabelColorIndex(int index) {
 void ArtifactAbstractLayer::setDirty(LayerDirtyFlag flag) {
   impl_->dirtyFlags_ |= (uint32_t)flag;
   ++impl_->geometryRevision_;
+  if (((uint32_t)flag & (uint32_t)LayerDirtyFlag::Effect) != 0) {
+    impl_->effectRevision_.fetch_add(1, std::memory_order_release);
+  }
   // A thumbnail is derived from layer content. Any mutation invalidates the
   // cached image so a later renderer cannot return a stale preview.
   impl_->thumbnailCache_ = QImage();
   impl_->thumbnailCacheSize_ = QSize();
+}
+std::uint64_t ArtifactAbstractLayer::effectRevision() const {
+  return impl_ ? impl_->effectRevision_.load(std::memory_order_acquire) : 0;
+}
+
+bool ArtifactAbstractLayer::hasAnimatedEffectProperties() {
+  if (!impl_) return false;
+  const std::uint64_t revision =
+      impl_->effectRevision_.load(std::memory_order_acquire);
+  constexpr std::uint64_t kValid = 1u;
+  constexpr std::uint64_t kAnimated = 2u;
+  const std::uint64_t cached =
+      impl_->animatedEffectPropertyState_.load(std::memory_order_acquire);
+  if ((cached >> 2u) == revision && (cached & kValid) != 0) {
+    return (cached & kAnimated) != 0;
+  }
+
+  bool animated = false;
+  for (const auto& effect : getEffects()) {
+    if (!effect || !effect->isEnabled()) continue;
+    for (const auto& property : effect->editableProperties()) {
+      if (!property) continue;
+      const QString modulationPath =
+          effect->modulationPropertyPath(property->getName());
+      const bool hasModulation = !modulationPath.isEmpty() &&
+          effect->modulationRouter().hasTarget(
+              Audio::Modulation::modulationTargetId(
+                  modulationPath.toStdString()));
+      if (property->hasKeyFrames() || property->hasExpression() ||
+          property->hasEnvelopes() || hasModulation) {
+        animated = true;
+        break;
+      }
+    }
+    if (animated) break;
+  }
+
+  if (impl_->effectRevision_.load(std::memory_order_acquire) == revision) {
+    const std::uint64_t state = (revision << 2u) | kValid |
+                                (animated ? kAnimated : 0u);
+    impl_->animatedEffectPropertyState_.store(state,
+                                               std::memory_order_release);
+  }
+  return animated;
 }
 void ArtifactAbstractLayer::clearDirty(LayerDirtyFlag flag) {
   impl_->dirtyFlags_ &= ~(uint32_t)flag;
@@ -2206,7 +2253,7 @@ bool ArtifactAbstractLayer::syncDeformation2DControlProperty(
       keys.append(QJsonObject{
           {QStringLiteral("frame"), QString::number(
                key.time.rescaledTo(keyframeTimeScale()))},
-          {QStringLiteral("value"), key.value},
+          {QStringLiteral("value"), QJsonValue::fromVariant(key.value)},
           {QStringLiteral("interpolation"),
            static_cast<int>(key.interpolation)},
           {QStringLiteral("cp1_x"), key.cp1_x},
@@ -2219,8 +2266,9 @@ bool ArtifactAbstractLayer::syncDeformation2DControlProperty(
            static_cast<int>(key.colorLabel)}});
     }
     control[parts[2] + QStringLiteral("Keys")] = keys;
-    if (!property->getKeyFrames().empty()) {
-      control[parts[2]] = property->getKeyFrames().front().value;
+    if (property->hasKeyFrames()) {
+      control[parts[2]] =
+          QJsonValue::fromVariant(property->getKeyFrames().front().value);
     }
     controls[index] = control;
     state[controlsKey] = controls;
@@ -2359,6 +2407,58 @@ int ArtifactAbstractLayerImpl::effectCount() const {
   return static_cast<int>(effects_.size());
 }
 
+bool ArtifactAbstractLayerImpl::hasEnabledRasterizerEffect() const {
+  for (const auto &effect : effects_) {
+    if (effect && effect->isEnabled() &&
+        effect->pipelineStage() == EffectPipelineStage::Rasterizer) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool ArtifactAbstractLayerImpl::hasEnabledFullFrameEffect() const {
+  for (const auto &effect : effects_) {
+    if (effect && effect->isEnabled() && effect->roiHint().requiresFullFrame) {
+      return true;
+    }
+  }
+  return false;
+}
+
+float ArtifactAbstractLayerImpl::enabledRasterizerOverscanPixels() const {
+  float expansion = 0.0f;
+  for (const auto &effect : effects_) {
+    if (!effect || !effect->isEnabled() || !effect->allowOverscan() ||
+        effect->pipelineStage() != EffectPipelineStage::Rasterizer) {
+      continue;
+    }
+    const EffectROIHint hint = effect->roiHint();
+    if (!hint.requiresFullFrame) {
+      expansion += std::max(0.0f, hint.expansionPixels);
+    }
+  }
+  return expansion;
+}
+
+float ArtifactAbstractLayerImpl::cachedRasterizerOverscanPixels() const {
+  std::lock_guard<std::mutex> lock(rasterizerOverscanCacheMutex_);
+  const std::uint64_t revision =
+      effectRevision_.load(std::memory_order_acquire);
+  if (cachedRasterizerOverscanValid_ &&
+      cachedRasterizerOverscanRevision_ == revision) {
+    return cachedRasterizerOverscanPixels_;
+  }
+
+  const float expansion = enabledRasterizerOverscanPixels();
+  if (effectRevision_.load(std::memory_order_acquire) == revision) {
+    cachedRasterizerOverscanPixels_ = expansion;
+    cachedRasterizerOverscanRevision_ = revision;
+    cachedRasterizerOverscanValid_ = true;
+  }
+  return expansion;
+}
+
 void ArtifactAbstractLayerImpl::addModifier(
     SharedPtr<ArtifactLayerModifier> modifier) {
   if (!modifier) {
@@ -2403,13 +2503,18 @@ bool ArtifactAbstractLayerImpl::hasModifiers() const {
 void ArtifactAbstractLayer::addEffect(
     SharedPtr<ArtifactAbstractEffect> effect) {
   impl_->addEffect(effect);
+  setDirty(LayerDirtyFlag::Effect);
 }
 
 void ArtifactAbstractLayer::removeEffect(const UniString &effectID) {
   impl_->removeEffect(effectID);
+  setDirty(LayerDirtyFlag::Effect);
 }
 
-void ArtifactAbstractLayer::clearEffects() { impl_->clearEffects(); }
+void ArtifactAbstractLayer::clearEffects() {
+  impl_->clearEffects();
+  setDirty(LayerDirtyFlag::Effect);
+}
 
 std::vector<SharedPtr<ArtifactAbstractEffect>>
 ArtifactAbstractLayer::getEffects() const {
@@ -2422,6 +2527,21 @@ ArtifactAbstractLayer::getEffect(const UniString &effectID) const {
 }
 
 int ArtifactAbstractLayer::effectCount() const { return impl_->effectCount(); }
+
+bool ArtifactAbstractLayer::hasEnabledRasterizerEffect() const {
+  return impl_->hasEnabledRasterizerEffect();
+}
+
+bool ArtifactAbstractLayer::hasEnabledFullFrameEffect() const {
+  return impl_->hasEnabledFullFrameEffect();
+}
+
+float ArtifactAbstractLayer::enabledRasterizerOverscanPixels() const {
+  if (hasAnimatedEffectProperties()) {
+    return impl_->enabledRasterizerOverscanPixels();
+  }
+  return impl_->cachedRasterizerOverscanPixels();
+}
 
 void ArtifactAbstractLayer::addModifier(
     SharedPtr<ArtifactLayerModifier> modifier) {
@@ -3050,6 +3170,65 @@ LayerMask ArtifactAbstractLayer::mask(int index) const {
   return resolved;
 }
 
+const LayerMask* ArtifactAbstractLayer::maskView(int index) const noexcept {
+  return impl_->maskMatteState_.maskView(index);
+}
+
+const LayerMask* ArtifactAbstractLayer::resolvedMaskView(
+    int index, LayerMask& resolvedStorage) const {
+  const LayerMask* baseMask = maskView(index);
+  if (!baseMask) {
+    return nullptr;
+  }
+  if (!hasTimeVaryingMaskProperties(index)) {
+    return baseMask;
+  }
+  resolvedStorage = mask(index);
+  return &resolvedStorage;
+}
+
+bool ArtifactAbstractLayer::hasTimeVaryingMaskProperties(int index) const {
+  if (index < 0) {
+    return false;
+  }
+  std::lock_guard<std::mutex> lock(impl_->propertyCacheMutex_);
+  for (auto it = impl_->propertyCache_.cbegin();
+       it != impl_->propertyCache_.cend(); ++it) {
+    const QString& path = it.key();
+    if (path.size() < 7 || path[0] != QLatin1Char('m') ||
+        path[1] != QLatin1Char('a') || path[2] != QLatin1Char('s') ||
+        path[3] != QLatin1Char('k') || path[4] != QLatin1Char('.')) {
+      continue;
+    }
+
+    int parsedIndex = 0;
+    qsizetype cursor = 5;
+    bool hasDigits = false;
+    bool indexMatches = true;
+    while (cursor < path.size() && path[cursor] >= QLatin1Char('0') &&
+           path[cursor] <= QLatin1Char('9')) {
+      hasDigits = true;
+      const int digit = path[cursor].unicode() - QLatin1Char('0').unicode();
+      if (parsedIndex > (std::numeric_limits<int>::max() - digit) / 10) {
+        indexMatches = false;
+        break;
+      }
+      parsedIndex = parsedIndex * 10 + digit;
+      ++cursor;
+    }
+    if (!indexMatches || !hasDigits || cursor >= path.size() ||
+        path[cursor] != QLatin1Char('.') || parsedIndex != index) {
+      continue;
+    }
+
+    const auto& property = it.value();
+    if (property && (property->hasKeyFrames() || property->hasExpression())) {
+      return true;
+    }
+  }
+  return false;
+}
+
 int ArtifactAbstractLayer::maskCount() const {
   return impl_->maskMatteState_.maskCount();
 }
@@ -3068,6 +3247,27 @@ bool ArtifactAbstractLayer::hasMasks() const {
 
 std::vector<LayerMatteReference> ArtifactAbstractLayer::matteReferences() const {
   return impl_->maskMatteState_.matteReferences();
+}
+
+int ArtifactAbstractLayer::matteReferenceCount() const {
+  return static_cast<int>(impl_->maskMatteState_.mattes().size());
+}
+
+bool ArtifactAbstractLayer::hasEnabledExternalMatteReference() const {
+  return enabledExternalMatteReferenceCount() > 0;
+}
+
+int ArtifactAbstractLayer::enabledExternalMatteReferenceCount() const {
+  const auto &references = impl_->maskMatteState_.mattes();
+  const auto targetId = id();
+  int count = 0;
+  for (const auto &reference : references) {
+    if (reference.enabled && !reference.sourceLayerId.isNil() &&
+        reference.sourceLayerId != targetId) {
+      ++count;
+    }
+  }
+  return count;
 }
 
 void ArtifactAbstractLayer::setMatteReferences(const std::vector<LayerMatteReference>& refs) {
@@ -3089,8 +3289,13 @@ const LayerEffectEnvelope& ArtifactAbstractLayer::effectEnvelope() const {
 
 void ArtifactAbstractLayer::setEffectEnvelope(const LayerEffectEnvelope& envelope) {
   impl_->effectEnvelope_ = envelope;
-  notifyLayerMutation(this, LayerDirtyFlag::Property,
-                      LayerDirtyReason::PropertyChanged);
+  const auto dirtyFlags = static_cast<LayerDirtyFlag>(
+      static_cast<uint32_t>(LayerDirtyFlag::Property) |
+      static_cast<uint32_t>(LayerDirtyFlag::Effect));
+  setDirty(dirtyFlags);
+  addDirtyReason(LayerDirtyReason::PropertyChanged);
+  addDirtyReason(LayerDirtyReason::EffectChanged);
+  changed();
 }
 
 float ArtifactAbstractLayer::opacity() const {
@@ -3102,7 +3307,7 @@ float ArtifactAbstractLayer::opacity() const {
     const SharedPtr<AbstractProperty> property =
         getProperty(QStringLiteral("layer.opacity"));
     if (property) {
-      if ((property->isAnimatable() && !property->getKeyFrames().empty()) ||
+      if ((property->isAnimatable() && property->hasKeyFrames()) ||
           property->hasExpression() || property->hasEnvelopes() ||
           property->hasExternalOverride()) {
         const RationalTime time = currentTimelineTime(this);
@@ -3202,7 +3407,7 @@ void ArtifactAbstractLayer::setOpacity(float value) {
   const SharedPtr<AbstractProperty> property =
       getProperty(QStringLiteral("layer.opacity"));
   if (property) {
-    if (property->isAnimatable() && !property->getKeyFrames().empty()) {
+    if (property->isAnimatable() && property->hasKeyFrames()) {
         const RationalTime time = currentTimelineTime(this);
         property->addKeyFrame(time, clamped);
         changed = true;

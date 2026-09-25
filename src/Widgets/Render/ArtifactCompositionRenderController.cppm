@@ -668,41 +668,15 @@ bool layerHasRasterizerEffectsOrMasks(ArtifactAbstractLayer* targetLayer) {
   if (targetLayer->hasMasks()) {
     return true;
   }
-  for (const auto& effect : targetLayer->getEffects()) {
-    if (effect && effect->isEnabled() &&
-        effect->pipelineStage() == EffectPipelineStage::Rasterizer) {
-      return true;
-    }
-  }
-  return false;
+  return targetLayer->hasEnabledRasterizerEffect();
 }
 
 bool layerHasEnabledMatteReferences(ArtifactAbstractLayer* targetLayer) {
-  if (!targetLayer) {
-    return false;
-  }
-  const auto references = targetLayer->matteReferences();
-  const auto targetId = targetLayer->id();
-  return std::any_of(references.cbegin(), references.cend(),
-                     [targetId](const LayerMatteReference& ref) {
-                       return ref.enabled && !ref.sourceLayerId.isNil() &&
-                              ref.sourceLayerId != targetId;
-                     });
+  return targetLayer && targetLayer->hasEnabledExternalMatteReference();
 }
 
 int layerActiveMatteReferenceCount(ArtifactAbstractLayer* targetLayer) {
-  if (!targetLayer) {
-    return 0;
-  }
-  int count = 0;
-  const auto targetId = targetLayer->id();
-  for (const auto& ref : targetLayer->matteReferences()) {
-    if (ref.enabled && !ref.sourceLayerId.isNil() &&
-        ref.sourceLayerId != targetId) {
-      ++count;
-    }
-  }
-  return count;
+  return targetLayer ? targetLayer->enabledExternalMatteReferenceCount() : 0;
 }
 
 bool solid3DCardColor(ArtifactAbstractLayer* layer, FloatColor& color) {
@@ -3520,18 +3494,7 @@ float layerOverscanPixels(const ArtifactAbstractLayer *layer) {
   if (!layer || layer->isAdjustmentLayer()) {
     return 0.0f;
   }
-  float expansion = 0.0f;
-  for (const auto &effect : layer->getEffects()) {
-    if (!effect || !effect->isEnabled() || !effect->allowOverscan() ||
-        effect->pipelineStage() != EffectPipelineStage::Rasterizer) {
-      continue;
-    }
-    const EffectROIHint hint = effect->roiHint();
-    if (!hint.requiresFullFrame) {
-      expansion += std::max(0.0f, hint.expansionPixels);
-    }
-  }
-  return expansion;
+  return layer->enabledRasterizerOverscanPixels();
 }
 
 QRectF effectExpandedLayerBounds(const ArtifactAbstractLayer *layer) {
@@ -3751,7 +3714,10 @@ struct GpuRasterEffectPlan {
 
 bool buildGpuRasterEffectPlan(
     ArtifactAbstractLayer* layer, GpuRasterEffectPlan* outPlan) {
-  if (!layer || !outPlan || layer->isAdjustmentLayer()) return false;
+  if (!layer || !outPlan || layer->isAdjustmentLayer() ||
+      !layer->hasEnabledRasterizerEffect()) {
+    return false;
+  }
   GpuRasterEffectPlan plan;
   ArtifactCore::PointwiseEffectStack pointwise;
   std::uint32_t parameterSlot = 0;
@@ -3816,27 +3782,8 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer *targetLayer,
 
   const bool hasMasks = targetLayer->hasMasks();
 
-  const auto effects = targetLayer->getEffects();
-
-  bool hasRasterizerEffect = false;
-
-  for (const auto &effect : effects) {
-
-    if (effect && effect->isEnabled() &&
-
-        effect->pipelineStage() == EffectPipelineStage::Rasterizer) {
-
-      hasRasterizerEffect = true;
-
-      break;
-
-    }
-
-  }
-
-
-
-  hasRasterizerEffect = hasRasterizerEffect && !deferRasterizerEffectsToGpu;
+  const bool hasRasterizerEffect = !deferRasterizerEffectsToGpu &&
+      targetLayer->hasEnabledRasterizerEffect();
 
   if (!hasRasterizerEffect && !hasMasks) {
 
@@ -3901,15 +3848,18 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer *targetLayer,
 
     for (int m = 0; m < targetLayer->maskCount(); ++m) {
 
+      LayerMask resolvedMask;
+      const LayerMask* maskView =
+          targetLayer->resolvedMaskView(m, resolvedMask);
+      if (!maskView) continue;
+
       std::int64_t maskFrame = targetLayer->currentFrame();
       if (auto *maskComposition = static_cast<ArtifactAbstractComposition *>(
               targetLayer->composition())) {
         maskFrame = maskComposition->framePosition().framePosition();
       }
-      LayerMask mask = targetLayer->mask(m);
-
-      mask.applyToImage(mat.cols, mat.rows, &mat, maskOffsetX, maskOffsetY,
-                        scaleX, scaleY, maskFrame);
+      maskView->applyToImage(mat.cols, mat.rows, &mat, maskOffsetX, maskOffsetY,
+                             scaleX, scaleY, maskFrame);
 
     }
 
@@ -3958,6 +3908,7 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer *targetLayer,
   }
 
   if (hasRasterizerEffect) {
+    const auto effects = targetLayer->getEffects();
     // Overscan is expressed in layer-space pixels.  It must remain stable
     // while the viewport uses an interactive preview scale: outputRect keeps
     // the same logical extent, so reducing this padding would stretch the
@@ -4732,7 +4683,7 @@ bool layerNeedsFrameSyncForCompositionView(ArtifactAbstractLayer *layer) {
 
       layer->hasModifiers() ||
 
-      !layer->getEffects().empty()) {
+      layer->effectCount() > 0) {
 
     return true;
 
@@ -4760,7 +4711,7 @@ bool layerNeedsFrameSyncForCompositionView(ArtifactAbstractLayer *layer) {
 
             solidImage->getProperty(QStringLiteral("solid.color"));
 
-        property && !property->getKeyFrames().empty()) {
+        property && property->hasKeyFrames()) {
 
       return true;
 
@@ -4800,7 +4751,7 @@ bool layerHasOnionSkinAnimation(const ArtifactAbstractLayerPtr &layer) {
 
   for (const auto &group : layer->getLayerPropertyGroups()) {
     for (const auto &property : group.allProperties()) {
-      if (property && property->getKeyFrames().size() > 1) {
+      if (property && property->keyFrameCount() > 1) {
         return true;
       }
     }
@@ -5143,6 +5094,10 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer *layer,
 
   const auto *composition =
       static_cast<ArtifactAbstractComposition *>(layer->composition());
+  const int64_t layerFrame = layer->currentFrame();
+  const int64_t compositionFrame = composition
+      ? composition->framePosition().framePosition()
+      : layerFrame;
   key += QStringLiteral("|colorPipeline=%1")
              .arg(composition
                       ? composition->colorPipelineVersion()
@@ -5150,23 +5105,30 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer *layer,
 
   key += QStringLiteral("|generation=%1").arg(surfaceGeneration);
   key += QStringLiteral("|maskRevision=%1").arg(layer->maskRevision());
+  if (layer->hasCachedAnimatedPropertiesWithPrefix(QStringLiteral("mask."))) {
+    key += QStringLiteral("|maskFrame=%1:%2:%3")
+               .arg(frameNumber)
+               .arg(layerFrame)
+               .arg(compositionFrame);
+  }
+  key += QStringLiteral("|effectRevision=%1").arg(layer->effectRevision());
   // Source-time-aware cache key: timeline frame alone collides when a remap
   // or stop-motion sample resolves to a different/held source frame.
   if (layer->hasSourceTimeMapping()) {
    if (frameNumber != std::numeric_limits<int64_t>::min()) {
     const double mappedSource = layer->getSourceFrameAtCompFrame(frameNumber);
     key += QStringLiteral("|sourceTime=%1:%2:%3:%4:%5")
-               .arg(mappedSource, 0, 'f', 3)
+               .arg(mappedSource, 0, 'g', 17)
                .arg(static_cast<int>(layer->timeRemapFrameBlendMode()))
-               .arg(layer->timeRemapFrameBlendAmount(), 0, 'f', 3)
+               .arg(layer->timeRemapFrameBlendAmount(), 0, 'g', 9)
                .arg(layer->isStopMotionSamplingEnabled() ? 1 : 0)
-               .arg(layer->stopMotionSamplingFrameRate(), 0, 'f', 3);
+               .arg(layer->stopMotionSamplingFrameRate(), 0, 'g', 17);
    } else {
     key += QStringLiteral("|sourceTime=noframe:%1:%2:%3:%4")
                .arg(static_cast<int>(layer->timeRemapFrameBlendMode()))
-               .arg(layer->timeRemapFrameBlendAmount(), 0, 'f', 3)
+               .arg(layer->timeRemapFrameBlendAmount(), 0, 'g', 9)
                .arg(layer->isStopMotionSamplingEnabled() ? 1 : 0)
-               .arg(layer->stopMotionSamplingFrameRate(), 0, 'f', 3);
+               .arg(layer->stopMotionSamplingFrameRate(), 0, 'g', 17);
    }
   }
   // Do not use QImage::cacheKey() as a generic layer identity here. Solid and
@@ -5179,85 +5141,96 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer *layer,
   // processed surface is recovered from cache. Keep it out of this identity so
   // opacity-only edits can reuse the rasterized surface and only re-composite.
 
-  bool hasAnimatedEffectProperty = false;
-  for (const auto &effect : layer->getEffects()) {
-    if (!effect || !effect->isEnabled()) {
-      continue;
-    }
-    for (const auto &property : effect->editableProperties()) {
-      if (property && (!property->getKeyFrames().empty() ||
-                       property->hasExpression() ||
-                       property->hasEnvelopes())) {
-        hasAnimatedEffectProperty = true;
-        break;
-      }
-    }
-    if (hasAnimatedEffectProperty) {
-      break;
-    }
-  }
-  if (hasAnimatedEffectProperty) {
-    key += QStringLiteral("|effectFrame=%1").arg(frameNumber);
+  if (layer->hasAnimatedEffectProperties() ||
+      (layer->effectEnvelope().enabled && layer->effectCount() > 0)) {
+    key += QStringLiteral("|effectFrame=%1:%2:%3")
+               .arg(frameNumber)
+               .arg(layerFrame)
+               .arg(compositionFrame);
   }
 
 
+
+  const auto rgbaKey = [](float r, float g, float b, float a) {
+    return QStringLiteral("%1,%2,%3,%4")
+        .arg(r, 0, 'g', 9)
+        .arg(g, 0, 'g', 9)
+        .arg(b, 0, 'g', 9)
+        .arg(a, 0, 'g', 9);
+  };
+  const auto hasAnimatedGradient = [](ArtifactAbstractLayer *target) {
+    return target && target->hasCachedAnimatedPropertiesWithPrefix(
+                         QStringLiteral("solid.gradient"));
+  };
 
   if (auto *solid2D = dynamic_cast<ArtifactSolid2DLayer *>(layer)) {
-
     const QRectF bounds = solid2D->localBounds();
-
-    key += QStringLiteral("|solid2D|color=%1|bounds=%2x%3")
-
-               .arg(QStringLiteral("%1,%2,%3,%4")
-
-                        .arg(solid2D->color().r(), 0, 'f', 4)
-
-                        .arg(solid2D->color().g(), 0, 'f', 4)
-
-                        .arg(solid2D->color().b(), 0, 'f', 4)
-
-                        .arg(solid2D->color().a(), 0, 'f', 4))
-
-               .arg(bounds.width(), 0, 'f', 2)
-
-               .arg(bounds.height(), 0, 'f', 2);
-
+    key += QStringLiteral(
+               "|solid2D|color=%1|fill=%2|g0=%3|g1=%4|ang=%5|rev=%6|cx=%7|cy=%8|scale=%9|off=%10|bounds=%11x%12")
+               .arg(rgbaKey(solid2D->color().r(), solid2D->color().g(),
+                            solid2D->color().b(), solid2D->color().a()))
+               .arg(static_cast<int>(solid2D->fillType()))
+               .arg(rgbaKey(solid2D->gradientStartColor().r(),
+                            solid2D->gradientStartColor().g(),
+                            solid2D->gradientStartColor().b(),
+                            solid2D->gradientStartColor().a()))
+               .arg(rgbaKey(solid2D->gradientEndColor().r(),
+                            solid2D->gradientEndColor().g(),
+                            solid2D->gradientEndColor().b(),
+                            solid2D->gradientEndColor().a()))
+               .arg(solid2D->gradientAngleDegrees(), 0, 'g', 9)
+               .arg(solid2D->gradientReverse() ? 1 : 0)
+               .arg(solid2D->gradientCenterX(), 0, 'g', 9)
+               .arg(solid2D->gradientCenterY(), 0, 'g', 9)
+               .arg(solid2D->gradientScale(), 0, 'g', 9)
+               .arg(solid2D->gradientOffset(), 0, 'g', 9)
+               .arg(bounds.width(), 0, 'g', 17)
+               .arg(bounds.height(), 0, 'g', 17);
+    if (hasAnimatedGradient(solid2D)) {
+      key += QStringLiteral("|gradientFrame=%1:%2:%3")
+                 .arg(frameNumber)
+                 .arg(layerFrame)
+                 .arg(compositionFrame);
+    }
     return key;
-
   }
-
-
 
   if (auto *solidImage = dynamic_cast<ArtifactSolidImageLayer *>(layer)) {
-
     const QRectF bounds = solidImage->localBounds();
-
-    key += QStringLiteral("|solidImage|color=%1|bounds=%2x%3")
-
-               .arg(QStringLiteral("%1,%2,%3,%4")
-
-                        .arg(solidImage->color().r(), 0, 'f', 4)
-
-                        .arg(solidImage->color().g(), 0, 'f', 4)
-
-                        .arg(solidImage->color().b(), 0, 'f', 4)
-
-                        .arg(solidImage->color().a(), 0, 'f', 4))
-
-               .arg(bounds.width(), 0, 'f', 2)
-
-               .arg(bounds.height(), 0, 'f', 2);
-
+    key += QStringLiteral(
+               "|solidImage|color=%1|fill=%2|g0=%3|g1=%4|ang=%5|rev=%6|cx=%7|cy=%8|scale=%9|off=%10|bounds=%11x%12")
+               .arg(rgbaKey(solidImage->color().r(), solidImage->color().g(),
+                            solidImage->color().b(), solidImage->color().a()))
+               .arg(static_cast<int>(solidImage->fillType()))
+               .arg(rgbaKey(solidImage->gradientStartColor().r(),
+                            solidImage->gradientStartColor().g(),
+                            solidImage->gradientStartColor().b(),
+                            solidImage->gradientStartColor().a()))
+               .arg(rgbaKey(solidImage->gradientEndColor().r(),
+                            solidImage->gradientEndColor().g(),
+                            solidImage->gradientEndColor().b(),
+                            solidImage->gradientEndColor().a()))
+               .arg(solidImage->gradientAngleDegrees(), 0, 'g', 9)
+               .arg(solidImage->gradientReverse() ? 1 : 0)
+               .arg(solidImage->gradientCenterX(), 0, 'g', 9)
+               .arg(solidImage->gradientCenterY(), 0, 'g', 9)
+               .arg(solidImage->gradientScale(), 0, 'g', 9)
+               .arg(solidImage->gradientOffset(), 0, 'g', 9)
+               .arg(bounds.width(), 0, 'g', 17)
+               .arg(bounds.height(), 0, 'g', 17);
+    if (hasAnimatedGradient(solidImage)) {
+      key += QStringLiteral("|gradientFrame=%1:%2:%3")
+                 .arg(frameNumber)
+                 .arg(layerFrame)
+                 .arg(compositionFrame);
+    }
     return key;
-
   }
-
-
 
   if (auto *imageLayer = dynamic_cast<ArtifactImageLayer *>(layer)) {
 
     key += QStringLiteral(
-               "|image|src=%1|rev=%2|fit=%3|size=%4x%5|cs=%6|tf=%7|crop=%8")
+               "|image|src=%1|rev=%2|fit=%3|size=%4x%5|cs=%6|tf=%7|crop=%8|seq=%9|content=%10")
 
                .arg(imageLayer->sourcePath())
 
@@ -5272,7 +5245,23 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer *layer,
                .arg(imageLayer->inputColorSpace())
 
                .arg(imageLayer->inputTransferFunction())
-               .arg(imageLayer->sourceCropSignature());
+               .arg(imageLayer->sourceCropRevision())
+               .arg(imageLayer->isImageSequence()
+                        ? imageLayer->sequenceCachedFrameIndex()
+                        : -1)
+               .arg(imageLayer->isImageSequence()
+                        ? imageLayer->sequenceCachedFrameContentKey()
+                        : 0);
+
+    const bool animatedSourceCrop =
+        imageLayer->hasCachedAnimatedPropertiesWithPrefix(
+            QStringLiteral("sourceCrop."));
+    if (animatedSourceCrop) {
+      key += QStringLiteral("|cropFrame=%1:%2:%3")
+                 .arg(frameNumber)
+                 .arg(layerFrame)
+                 .arg(compositionFrame);
+    }
 
     return key;
 
@@ -5281,35 +5270,31 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer *layer,
 
 
   if (auto *shapeLayer = dynamic_cast<ArtifactShapeLayer *>(layer)) {
-    bool animated = shapeLayer->hasPathKeyframes();
-    if (!animated) {
-      for (const auto &group : shapeLayer->getLayerPropertyGroups()) {
-        for (const auto &property : group.sortedProperties()) {
-          if (property && !property->getKeyFrames().empty()) {
-            animated = true;
-            break;
-          }
-        }
-        if (animated) {
-          break;
-        }
-      }
-    }
+    const bool animated = shapeLayer->hasPathKeyframes() ||
+        shapeLayer->hasCachedAnimatedPropertiesWithPrefix(
+            QStringLiteral("shape."));
     key += QStringLiteral("|shape|w=%1|h=%2|type=%3")
                .arg(shapeLayer->shapeWidth())
                .arg(shapeLayer->shapeHeight())
                .arg(static_cast<int>(shapeLayer->shapeType()));
     if (animated) {
-      key += QStringLiteral("|frame=%1").arg(frameNumber);
+      key += QStringLiteral("|frame=%1:%2:%3")
+                 .arg(frameNumber)
+                 .arg(layerFrame)
+                 .arg(compositionFrame);
     }
+    key += QStringLiteral("|shapeRevision=%1")
+               .arg(shapeLayer->contentRevision());
     return key;
   }
 
   if (auto *svgLayer = dynamic_cast<ArtifactSvgLayer *>(layer)) {
 
-    key += QStringLiteral("|svg|src=%1|fit=%2|size=%3x%4")
+    key += QStringLiteral("|svg|src=%1|rev=%2|fit=%3|size=%4x%5")
 
                .arg(svgLayer->sourcePath())
+
+               .arg(svgLayer->sourceVersion())
 
                .arg(svgLayer->fitToLayer() ? 1 : 0)
 
@@ -5325,11 +5310,16 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer *layer,
 
   if (auto *videoLayer = dynamic_cast<ArtifactVideoLayer *>(layer)) {
 
-    key += QStringLiteral("|video|src=%1|frame=%2|proxy=%3|size=%4x%5")
+    key += QStringLiteral("|video|src=%1|rev=%2|frame=%3|proxy=%4|size=%5x%6")
 
                .arg(videoLayer->sourcePath())
 
-               .arg(frameNumber)
+               .arg(videoLayer->sourceVersion())
+
+               .arg(QStringLiteral("%1:%2:%3")
+                        .arg(frameNumber)
+                        .arg(layerFrame)
+                        .arg(compositionFrame))
 
                .arg(static_cast<int>(videoLayer->proxyQuality()))
 
@@ -5346,10 +5336,15 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer *layer,
   if (auto *textLayer = dynamic_cast<ArtifactTextLayer *>(layer)) {
     key += QStringLiteral("|text|rev=%1")
                .arg(textLayer->contentRevision());
-    // Source-text keyframes and animator stacks can alter the resolved glyph
-    // surface without an authoring mutation. Keep those entries frame-scoped.
-    if (textLayer->hasSourceTextKeyframes() || textLayer->animatorCount() > 0) {
-      key += QStringLiteral("|textFrame=%1").arg(frameNumber);
+    // Source text, ordinary text properties, and animator stacks can alter
+    // the resolved glyph surface without an authoring mutation.
+    if (textLayer->hasSourceTextKeyframes() ||
+        textLayer->hasAnimatedTextProperties() ||
+        textLayer->animatorCount() > 0) {
+      key += QStringLiteral("|textFrame=%1:%2:%3")
+                 .arg(frameNumber)
+                 .arg(layerFrame)
+                 .arg(compositionFrame);
     }
 
     return key;
@@ -5358,7 +5353,10 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer *layer,
 
 
 
-  return key;
+  // Precomposition surfaces depend on the referenced composition's revision,
+  // sampled child frame, and instance overrides. Until all of those inputs
+  // have a stable cache identity, leave unsupported layer types uncached.
+  return QString();
 
 }
 
@@ -7909,9 +7907,9 @@ static void applyLayerMatteToSurface(
 
 {
 
-    auto mattes = layer->matteReferences();
+    if (!layer || !layer->hasEnabledExternalMatteReference()) return;
 
-    if (mattes.empty()) return;
+    auto mattes = layer->matteReferences();
 
 
 
@@ -8086,10 +8084,11 @@ static void applyLayerMatteToSurface(
     return;
   }
 
-  const auto mattes = layer->matteReferences();
-  if (mattes.empty()) {
+  if (!layer->hasEnabledExternalMatteReference()) {
     return;
   }
+
+  const auto mattes = layer->matteReferences();
 
   const int w = surface.width();
   const int h = surface.height();
@@ -8205,6 +8204,7 @@ class SolidPointwisePreviewCache final {
     Diligent::RefCntAutoPtr<Diligent::ITexture> input;
     Diligent::RefCntAutoPtr<Diligent::ITexture> output;
     QRgb sourceRgba = 0;
+    std::uint64_t effectRevision = 0;
     quint64 used = 0;
   };
   ArtifactCore::NamedVector<Entry> entries_;
@@ -8252,8 +8252,49 @@ public:
         sourceColor.red() / 255.0f, 1.0f};
     // Match the existing controller's ARGB32 -> CV_32FC4 storage order.
     // Channel-order normalization is a separate compatibility change.
+    const auto device = renderer->device();
+    const auto context = renderer->immediateContext();
+    if (!device || !context) return nullptr;
+    if (device_ != device || context_ != context) {
+      renderer->flush();
+      clear();
+      device_ = device;
+      context_ = context;
+    }
+
+    ++requests_;
+    const QString owner = layer->id().toString();
+    Entry *entry = nullptr;
+    for (auto &candidate : entries_) {
+      if (candidate.owner == owner) {
+        entry = &candidate;
+        break;
+      }
+    }
+    const QRgb sourceRgba = sourceColor.rgba();
+    const std::uint64_t effectRevision = layer->effectRevision();
+    const auto layerEffectEnvelope = layer->effectEnvelope();
+    const bool envelopeAffectsEffects =
+        layerEffectEnvelope.enabled && layer->effectCount() > 0;
+    if (!layer->hasAnimatedEffectProperties() && !envelopeAffectsEffects &&
+        entry && entry->output &&
+        entry->sourceRgba == sourceRgba &&
+        entry->effectRevision == effectRevision) {
+      ++hits_;
+      entry->used = requests_;
+      report();
+      return entry->output->GetDefaultView(
+          Diligent::TEXTURE_VIEW_SHADER_RESOURCE);
+    }
+
     ArtifactCore::PointwiseEffectStack stack;
-    QString signature = QString::number(sourceColor.rgba());
+    QString signature = QString::number(sourceRgba);
+    if (envelopeAffectsEffects) {
+      signature += QStringLiteral("|effectStrength=%1")
+                       .arg(layerEffectEnvelope.sample(layer->currentFrame())
+                                .effectStrength,
+                            0, 'g', 9);
+    }
     std::uint32_t slot = 0;
     const auto effects = layer->getEffects();
     // Reject the entire stack before evaluating or submitting any prefix.
@@ -8296,24 +8337,10 @@ public:
     // Match convertImageForUpload(Rgba32LinearStraight) at the legacy
     // unknown-transfer boundary, after all effects have clamped to [0,1].
     stack.addNode(ArtifactCore::PointwiseNodeKind::SrgbToLinear);
-    const auto device = renderer->device();
-    const auto context = renderer->immediateContext();
-    if (!device || !context) return nullptr;
-    if (device_ != device || context_ != context) {
-      renderer->flush();
-      clear();
-      device_ = device;
-      context_ = context;
-    }
-    ++requests_;
-    const QString owner = layer->id().toString();
-    Entry* entry = nullptr;
-    for (auto& candidate : entries_) {
-      if (candidate.owner == owner) { entry = &candidate; break; }
-    }
     if (entry && entry->signature == signature && entry->output) {
       ++hits_;
       entry->used = requests_;
+      entry->effectRevision = effectRevision;
       report();
       return entry->output->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE);
     }
@@ -8354,11 +8381,11 @@ public:
     Diligent::TextureData initial;
     initial.pSubResources = &data;
     initial.NumSubresources = 1;
-    if (!entry->input || entry->sourceRgba != sourceColor.rgba()) {
+    if (!entry->input || entry->sourceRgba != sourceRgba) {
       entry->input.Release();
       device->CreateTexture(desc, &initial, &entry->input);
       if (!entry->input) return nullptr;
-      entry->sourceRgba = sourceColor.rgba();
+      entry->sourceRgba = sourceRgba;
       ++uploads_;
     }
     if (!entry->output) {
@@ -8378,6 +8405,7 @@ public:
             entry->output->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS),
             pipeline_->createPointwiseParameterBuffer(), plan)) return nullptr;
     entry->signature = signature;
+    entry->effectRevision = effectRevision;
     ++dispatches_;
     report();
     return entry->output->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE);
@@ -8903,31 +8931,29 @@ void drawLayerForCompositionView(
 
     const QString ownerId = layer->id().toString();
 
-    QString cacheSignature =
+    QString cacheSignature = buildLayerSurfaceCacheKey(
+        layer, surface, cacheFrameNumber, surfaceGeneration);
+    if (!cacheSignature.isEmpty()) {
+      cacheSignature += QStringLiteral("|interactiveDraft=%1")
+                            .arg(interactiveDraft ? 1 : 0);
 
-        buildLayerSurfaceCacheKey(layer, surface, cacheFrameNumber,
+      const float effectResolutionScale = interactiveDraft
+          ? 0.25f
+          : lod == DetailLevel::Low
+                ? 0.25f
+                : lod == DetailLevel::Medium ? 0.5f : 1.0f;
 
-                                  surfaceGeneration);
+      cacheSignature += QStringLiteral("|effectScale=%1")
+                            .arg(effectResolutionScale, 0, 'f', 2);
 
-    cacheSignature +=
+      cacheSignature += QStringLiteral("|gpuPointwise=%1")
+                            .arg(deferRasterizerEffectsToGpu ? 1 : 0);
 
-        QStringLiteral("|interactiveDraft=%1").arg(interactiveDraft ? 1 : 0);
+      cacheSignature += QStringLiteral("|overscan=%1")
+                            .arg(overscanPixels, 0, 'f', 3);
 
-    const float effectResolutionScale = interactiveDraft
-        ? 0.25f
-        : lod == DetailLevel::Low
-              ? 0.25f
-              : lod == DetailLevel::Medium ? 0.5f : 1.0f;
-
-    cacheSignature += QStringLiteral("|effectScale=%1")
-                          .arg(effectResolutionScale, 0, 'f', 2);
-
-    cacheSignature += QStringLiteral("|gpuPointwise=%1")
-                          .arg(deferRasterizerEffectsToGpu ? 1 : 0);
-
-    cacheSignature += QStringLiteral("|overscan=%1").arg(overscanPixels, 0, 'f', 3);
-
-    cacheSignature += matteSourceSignature;
+      cacheSignature += matteSourceSignature;
+    }
 
     QString gpuOwnerId = ownerId;
     QString gpuCacheSignature = cacheSignature;
@@ -9375,6 +9401,14 @@ void drawLayerForCompositionView(
           static_cast<qreal>(sourceRect.y()) / buffer.height(),
           static_cast<qreal>(sourceRect.width()) / buffer.width(),
           static_cast<qreal>(sourceRect.height()) / buffer.height());
+      const bool hasStableSourceIdentity =
+          !imageLayer->hasTemporarySourceOverride();
+      Diligent::ITextureView* sourceTexture = renderer->textureForImage(
+          buffer,
+          hasStableSourceIdentity ? imageLayer->sourceAssetId() : QUuid{},
+          hasStableSourceIdentity ? imageLayer->sourceVersion() : 0,
+          hasStableSourceIdentity && imageLayer->isImageSequence()
+              ? imageLayer->sequenceCachedFrameContentKey() : 0);
 
       drawWithClonerEffect(
 
@@ -9390,6 +9424,15 @@ void drawLayerForCompositionView(
 
             const QMatrix4x4 cropTransform =
                 instanceTransform * cropLayout.localTransform;
+            if (sourceTexture) {
+              renderer->drawSpriteTransformed(
+                  static_cast<float>(drawRect.x()),
+                  static_cast<float>(drawRect.y()),
+                  static_cast<float>(drawRect.width()),
+                  static_cast<float>(drawRect.height()), cropTransform,
+                  sourceTexture, baseOpacity * instanceWeight, uvRect);
+              return;
+            }
             renderer->drawSpriteTransformed(
                 static_cast<float>(drawRect.x()),
                 static_cast<float>(drawRect.y()),
@@ -9405,6 +9448,10 @@ void drawLayerForCompositionView(
 
 
 
+    // Rasterizer/mask processing consumes the cropped source surface. Resolve
+    // crop keyframes before toQImage() so this path matches the direct draw
+    // path and its cache identity below.
+    imageLayer->refreshAnimatedSourceCrop();
     const QImage img = imageLayer->toQImage();
 
     if (!img.isNull()) {
@@ -9466,6 +9513,9 @@ void drawLayerForCompositionView(
 
             svgLayer->currentFrameBuffer();
 
+        Diligent::ITextureView* sourceTexture = renderer->textureForImage(
+            buffer, layer->id(), svgLayer->sourceVersion(), 0);
+
         const float baseOpacity =
 
             (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
@@ -9476,6 +9526,15 @@ void drawLayerForCompositionView(
 
             [&](const QMatrix4x4 &instanceTransform, float instanceWeight) {
 
+              if (sourceTexture) {
+                renderer->drawSpriteTransformed(
+                    static_cast<float>(localRect.x()),
+                    static_cast<float>(localRect.y()),
+                    static_cast<float>(localRect.width()),
+                    static_cast<float>(localRect.height()), instanceTransform,
+                    sourceTexture, baseOpacity * instanceWeight);
+                return;
+              }
               renderer->drawSpriteTransformed(
 
                   static_cast<float>(localRect.x()),
@@ -9587,24 +9646,18 @@ void drawLayerForCompositionView(
         }
 
         videoLayer->markFrameRenderQueued(layer->currentFrame());
-
         drawWithClonerEffect(
 
             layer, globalTransform4x4,
 
             [&](const QMatrix4x4 &instanceTransform, float instanceWeight) {
 
-              renderer->drawSpriteTransformed(
-
-                  static_cast<float>(localRect.x()),
-
-                  static_cast<float>(localRect.y()),
-
-                  static_cast<float>(localRect.width()),
-
-                  static_cast<float>(localRect.height()), instanceTransform,
-
-                  buffer, baseOpacity * instanceWeight);
+                renderer->drawSpriteTransformed(
+                    static_cast<float>(localRect.x()),
+                    static_cast<float>(localRect.y()),
+                    static_cast<float>(localRect.width()),
+                    static_cast<float>(localRect.height()), instanceTransform,
+                    buffer, baseOpacity * instanceWeight);
 
             });
 
@@ -9812,26 +9865,41 @@ void drawLayerForCompositionView(
       const float baseOpacity =
           (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
       const auto drawTextBuffer =
-          [&](const ArtifactCore::ImageF32x4_RGBA &buffer) {
+          [&](const ArtifactCore::ImageF32x4_RGBA &buffer,
+              bool stableSource) {
+            Diligent::ITextureView* sourceTexture = stableSource
+                ? renderer->textureForImage(
+                      buffer, layer->id(), textLayer->contentRevision(),
+                      static_cast<qint64>(layer->currentFrame()))
+                : nullptr;
             drawWithClonerEffect(
                 layer, globalTransform4x4,
                 [&](const QMatrix4x4 &instanceTransform,
                     float instanceWeight) {
-                  renderer->drawSpriteTransformed(
-                      static_cast<float>(localRect.x()),
-                      static_cast<float>(localRect.y()),
-                      static_cast<float>(localRect.width()),
-                      static_cast<float>(localRect.height()), instanceTransform,
-                      buffer, baseOpacity * instanceWeight);
+                  if (sourceTexture) {
+                    renderer->drawSpriteTransformed(
+                        static_cast<float>(localRect.x()),
+                        static_cast<float>(localRect.y()),
+                        static_cast<float>(localRect.width()),
+                        static_cast<float>(localRect.height()), instanceTransform,
+                        sourceTexture, baseOpacity * instanceWeight);
+                  } else {
+                    renderer->drawSpriteTransformed(
+                        static_cast<float>(localRect.x()),
+                        static_cast<float>(localRect.y()),
+                        static_cast<float>(localRect.width()),
+                        static_cast<float>(localRect.height()), instanceTransform,
+                        buffer, baseOpacity * instanceWeight);
+                  }
                 });
           };
 
       if (layerHasRasterizerEffectsOrMasks(layer)) {
         ArtifactCore::ImageF32x4_RGBA buffer = sourceBuffer.DeepCopy();
         applyRasterizerEffectsAndMasksToSurface(layer, buffer, lod);
-        drawTextBuffer(buffer);
+        drawTextBuffer(buffer, false);
       } else {
-        drawTextBuffer(sourceBuffer);
+        drawTextBuffer(sourceBuffer, true);
       }
 
       return;
@@ -10620,6 +10688,32 @@ public:
 
     quint64 lastSubmittedFrame = 0;
 
+    RenderDamageTracker damageTracker;
+
+    std::uint64_t damageTileCursor = 0;
+
+    bool retainedCompositeValid = false;
+
+    Diligent::ITexture* retainedAccumTexture = nullptr;
+
+    CompositionID retainedCompositionId;
+
+    qint64 retainedFramePosition = std::numeric_limits<qint64>::min();
+
+    QSize retainedTargetSize;
+
+    int retainedDownsample = 0;
+
+    float retainedCanvasWidth = 0.0f;
+
+    float retainedCanvasHeight = 0.0f;
+
+    float retainedZoom = 1.0f;
+
+    float retainedPanX = 0.0f;
+
+    float retainedPanY = 0.0f;
+
     State state = State::Free;
 
   };
@@ -10891,6 +10985,10 @@ public:
   std::atomic_bool renderTickPosted_{false};
 
   std::atomic_bool renderDirty_{false};
+
+  std::atomic_bool failedFrameRetryIssued_{false};
+
+  std::atomic_bool damageContinuationPending_{false};
 
   static constexpr int kRenderTickIntervalMs = 16; // ~60fps
 
@@ -11170,13 +11268,101 @@ public:
 
 
 
+  ArtifactCore::ComputeRegion mapDamageRectToRenderTarget(
+      const QRectF& damageRect, Diligent::Uint32 targetWidth,
+      Diligent::Uint32 targetHeight) const {
+    ArtifactCore::ComputeRegion region;
+    if (!renderer_ || damageRect.isEmpty() || targetWidth == 0 ||
+        targetHeight == 0) {
+      return region;
+    }
+
+    const std::array<QPointF, 4> canvasCorners{
+        damageRect.topLeft(), damageRect.topRight(),
+        damageRect.bottomLeft(), damageRect.bottomRight()};
+    float minX = std::numeric_limits<float>::max();
+    float minY = std::numeric_limits<float>::max();
+    float maxX = std::numeric_limits<float>::lowest();
+    float maxY = std::numeric_limits<float>::lowest();
+    for (const QPointF& corner : canvasCorners) {
+      const auto mapped = renderer_->canvasToViewport(
+          {static_cast<float>(corner.x()), static_cast<float>(corner.y())});
+      if (!std::isfinite(mapped.x) || !std::isfinite(mapped.y)) {
+        return {};
+      }
+      minX = std::min(minX, mapped.x);
+      minY = std::min(minY, mapped.y);
+      maxX = std::max(maxX, mapped.x);
+      maxY = std::max(maxY, mapped.y);
+    }
+
+    constexpr float kRasterCoveragePad = 1.0f;
+    const double targetWidthD = static_cast<double>(targetWidth);
+    const double targetHeightD = static_cast<double>(targetHeight);
+    const auto left = static_cast<Diligent::Uint32>(std::floor(std::clamp(
+        static_cast<double>(minX) - kRasterCoveragePad, 0.0, targetWidthD)));
+    const auto top = static_cast<Diligent::Uint32>(std::floor(std::clamp(
+        static_cast<double>(minY) - kRasterCoveragePad, 0.0, targetHeightD)));
+    const auto right = static_cast<Diligent::Uint32>(std::ceil(std::clamp(
+        static_cast<double>(maxX) + kRasterCoveragePad, 0.0, targetWidthD)));
+    const auto bottom = static_cast<Diligent::Uint32>(std::ceil(std::clamp(
+        static_cast<double>(maxY) + kRasterCoveragePad, 0.0, targetHeightD)));
+    if (right <= left || bottom <= top) {
+      return region;
+    }
+
+    region = {left, top, right - left, bottom - top};
+    const std::uint64_t dirtyPixels =
+        static_cast<std::uint64_t>(region.width) * region.height;
+    const std::uint64_t targetPixels =
+        static_cast<std::uint64_t>(targetWidth) * targetHeight;
+    if (!region.validFor(targetWidth, targetHeight) ||
+        dirtyPixels >= targetPixels - targetPixels / 4) {
+      return {};
+    }
+    return region;
+  }
+
+  QRectF mapRenderTargetRegionToCanvas(
+      const ArtifactCore::ComputeRegion& region) const {
+    if (!renderer_ || region.width == 0 || region.height == 0) {
+      return {};
+    }
+    const float left = static_cast<float>(region.x);
+    const float top = static_cast<float>(region.y);
+    const float right = static_cast<float>(region.x + region.width);
+    const float bottom = static_cast<float>(region.y + region.height);
+    const std::array<QPointF, 4> targetCorners{
+        QPointF(left, top), QPointF(right, top),
+        QPointF(left, bottom), QPointF(right, bottom)};
+    float minX = std::numeric_limits<float>::max();
+    float minY = std::numeric_limits<float>::max();
+    float maxX = std::numeric_limits<float>::lowest();
+    float maxY = std::numeric_limits<float>::lowest();
+    for (const QPointF& corner : targetCorners) {
+      const auto mapped = renderer_->viewportToCanvas(
+          {static_cast<float>(corner.x()), static_cast<float>(corner.y())});
+      if (!std::isfinite(mapped.x) || !std::isfinite(mapped.y)) {
+        return {};
+      }
+      minX = std::min(minX, mapped.x);
+      minY = std::min(minY, mapped.y);
+      maxX = std::max(maxX, mapped.x);
+      maxY = std::max(maxY, mapped.y);
+    }
+    return QRectF(QPointF(minX, minY), QPointF(maxX, maxY)).normalized();
+  }
+
   GpuBasePassState beginGpuBasePass(
 
       RenderPipeline& renderPipeline, PreviewRenderPipelineSlot& previewRenderSlot,
 
       float rcw, float rch, float cw, float ch, FloatColor layerBgColor,
 
-      CompositionBackgroundMode backgroundMode) {
+      CompositionBackgroundMode backgroundMode,
+      const QRectF* damageRect,
+      ArtifactCore::ComputeRegion* outDamageRegion,
+      bool* outPartialRecompose) {
 
     GpuBasePassState state;
 
@@ -11218,6 +11404,13 @@ public:
 
     renderer_->setViewportRect(rcw, rch);
 
+    if (outDamageRegion) {
+      *outDamageRegion = {};
+    }
+    if (outPartialRecompose) {
+      *outPartialRecompose = false;
+    }
+
 
 
     if (compositionViewLog().isDebugEnabled()) {
@@ -11254,6 +11447,18 @@ public:
 
 
 
+    ArtifactCore::ComputeRegion damageRegion;
+    bool canPreserveOutside = damageRect && outDamageRegion &&
+                              outPartialRecompose;
+    if (canPreserveOutside) {
+      damageRegion = mapDamageRectToRenderTarget(
+          *damageRect, static_cast<Diligent::Uint32>(renderPipeline.width()),
+          static_cast<Diligent::Uint32>(renderPipeline.height()));
+      canPreserveOutside = damageRegion.validFor(
+          static_cast<Diligent::Uint32>(renderPipeline.width()),
+          static_cast<Diligent::Uint32>(renderPipeline.height()));
+    }
+
     renderer_->pushRenderTarget(renderPipeline.accumRTV(), previewRenderSlot.depthTargetView);
 
     if (previewRenderSlot.depthTargetView) {
@@ -11262,11 +11467,24 @@ public:
 
     }
 
-    renderer_->clearRenderTarget(renderPipeline.accumRTV(),
-
-                                 FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
-
     renderer_->popRenderTarget();
+
+    if (canPreserveOutside) {
+      renderer_->unbindColorTargetsForCompute();
+      canPreserveOutside = renderer_->clearTextureRegion(
+          blendPipeline_.get(), renderPipeline.accumUAV(), damageRegion);
+    }
+
+    if (!canPreserveOutside) {
+      renderer_->pushRenderTarget(renderPipeline.accumRTV(),
+                                  previewRenderSlot.depthTargetView);
+      renderer_->clearRenderTarget(renderPipeline.accumRTV(),
+                                   FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
+      renderer_->popRenderTarget();
+    } else {
+      *outDamageRegion = damageRegion;
+      *outPartialRecompose = true;
+    }
 
 
 
@@ -11276,7 +11494,7 @@ public:
 
 
 
-  void seedGpuBasePassBackground(
+  bool seedGpuBasePassBackground(
 
       RenderPipeline& renderPipeline, Diligent::ITextureView* layerRTV,
 
@@ -11289,7 +11507,8 @@ public:
       int& blendDispatchCount, int& blendFailureCount, float cw, float ch,
 
       FloatColor layerBgColor, CompositionBackgroundMode backgroundMode,
-      const ArtifactCompositionPtr& composition) {
+      const ArtifactCompositionPtr& composition,
+      const ArtifactCore::ComputeRegion* damageRegion = nullptr) {
 
     renderer_->pushRenderTarget(layerRTV);
 
@@ -11325,7 +11544,7 @@ public:
 
     if (layerBgColor.a() <= 0.0f) {
 
-      return;
+      return true;
 
     }
 
@@ -11333,19 +11552,26 @@ public:
 
     ++layerToFloatConvertCount;
 
-    const bool convertedBackgroundToFloat = renderer_->convertLayerToFloat(
-
-        blendPipeline_.get(), layerSRV, layerFloatUAV,
-
-        static_cast<Diligent::Uint32>(renderPipeline.width()),
-
-        static_cast<Diligent::Uint32>(renderPipeline.height()));
+    const bool convertedBackgroundToFloat = damageRegion
+        ? renderer_->convertLayerToFloat(
+              blendPipeline_.get(), layerSRV, layerFloatUAV,
+              static_cast<Diligent::Uint32>(renderPipeline.width()),
+              static_cast<Diligent::Uint32>(renderPipeline.height()),
+              *damageRegion)
+        : renderer_->convertLayerToFloat(
+              blendPipeline_.get(), layerSRV, layerFloatUAV,
+              static_cast<Diligent::Uint32>(renderPipeline.width()),
+              static_cast<Diligent::Uint32>(renderPipeline.height()));
 
     Diligent::ITextureView* backgroundBlendSrc =
 
         convertedBackgroundToFloat ? layerFloatSRV : layerSRV;
 
     if (!convertedBackgroundToFloat) {
+
+      if (damageRegion) {
+        return false;
+      }
 
       qWarning() << "[CompositionView] background-to-float conversion failed; "
 
@@ -11355,23 +11581,35 @@ public:
 
     ++blendDispatchCount;
 
-    if (renderer_->blendLayers(blendPipeline_.get(), backgroundBlendSrc,
+    if (damageRegion &&
+        !renderer_->copyTextureOutsideRegion(accumSRV, tempUAV,
+                                             *damageRegion)) {
+      return false;
+    }
 
-                               accumSRV, tempUAV,
-
-                               ArtifactCore::BlendMode::Normal, 1.0f)) {
+    const bool blended = damageRegion
+        ? renderer_->blendLayers(blendPipeline_.get(), backgroundBlendSrc,
+                                 accumSRV, tempUAV,
+                                 ArtifactCore::BlendMode::Normal, 1.0f,
+                                 *damageRegion)
+        : renderer_->blendLayers(blendPipeline_.get(), backgroundBlendSrc,
+                                 accumSRV, tempUAV,
+                                 ArtifactCore::BlendMode::Normal, 1.0f);
+    if (blended) {
 
       renderPipeline.swapAccumAndTemp();
 
       accumSRV = renderPipeline.accumSRV();
 
       tempUAV = renderPipeline.tempUAV();
+      return true;
 
     } else {
 
       ++blendFailureCount;
 
       qWarning() << "[CompositionView] background seed blend failed";
+      return false;
 
     }
 
@@ -12033,15 +12271,19 @@ public:
 
       const QHash<ArtifactCore::Id, Diligent::ITextureView*>& matteSourceGpuViews,
 
-      int& layerToFloatConvertCount, bool& convertedLayerToFloat) {
+      int& layerToFloatConvertCount, bool& convertedLayerToFloat,
+      const ArtifactCore::ComputeRegion* damageRegion = nullptr) {
 
-    convertedLayerToFloat = renderer_->convertLayerToFloat(
-
-        blendPipeline_.get(), layerSRV, layerFloatUAV,
-
-        static_cast<Diligent::Uint32>(renderPipeline.width()),
-
-        static_cast<Diligent::Uint32>(renderPipeline.height()));
+    convertedLayerToFloat = damageRegion
+        ? renderer_->convertLayerToFloat(
+              blendPipeline_.get(), layerSRV, layerFloatUAV,
+              static_cast<Diligent::Uint32>(renderPipeline.width()),
+              static_cast<Diligent::Uint32>(renderPipeline.height()),
+              *damageRegion)
+        : renderer_->convertLayerToFloat(
+              blendPipeline_.get(), layerSRV, layerFloatUAV,
+              static_cast<Diligent::Uint32>(renderPipeline.width()),
+              static_cast<Diligent::Uint32>(renderPipeline.height()));
 
     if (!convertedLayerToFloat) {
 
@@ -12086,14 +12328,14 @@ public:
       }
     }
 
-    const auto mattes = layer->matteReferences();
-
-    if (mattes.empty()) {
+    if (!layer->hasEnabledExternalMatteReference()) {
 
       return layerFloatSRV;
 
     }
 
+
+    const auto mattes = layer->matteReferences();
 
 
     auto devCtx = renderer_->immediateContext();
@@ -12347,7 +12589,8 @@ public:
 
       int& blendFailureCount, int& directBlendFallbackCount,
 
-      bool convertedLayerToFloat) {
+      bool convertedLayerToFloat,
+      const ArtifactCore::ComputeRegion* damageRegion = nullptr) {
 
     GpuLayerBlendResult result;
 
@@ -12376,13 +12619,19 @@ public:
 
     ++blendDispatchCount;
 
-    result.blended = renderer_->blendLayers(blendPipeline_.get(),
+    if (damageRegion &&
+        !renderer_->copyTextureOutsideRegion(accumSRV, tempUAV,
+                                             *damageRegion)) {
+      ++blendFailureCount;
+      return result;
+    }
 
-                                            preparedBlendSRV,
-
-                                            accumSRV, tempUAV, blendMode,
-
-                                            opacity);
+    result.blended = damageRegion
+        ? renderer_->blendLayers(blendPipeline_.get(), preparedBlendSRV,
+                                 accumSRV, tempUAV, blendMode, opacity,
+                                 *damageRegion)
+        : renderer_->blendLayers(blendPipeline_.get(), preparedBlendSRV,
+                                 accumSRV, tempUAV, blendMode, opacity);
 
     if (!result.blended) {
 
@@ -12730,8 +12979,11 @@ public:
     result.presentedGpuFrameMs = renderer_->lastFrameGpuTimeMs();
 
     result.presentedStatus = renderer_->lastPresentStatus();
-
-
+    if (auto *playback = ArtifactPlaybackService::instance();
+        playback && playback->isPlaying() &&
+        !result.presentedStatus.contains(QStringLiteral("fail"), Qt::CaseInsensitive)) {
+      playback->recordPresentedFrame(currentFrame.framePosition());
+    }
 
     for (const auto& layer : layers) {
 
@@ -12937,6 +13189,7 @@ public:
   bool rectangleToolDragging_ = false;
   bool rectangleToolFromCenter_ = false;
   float rectangleToolRoundness_ = 0.0f;
+  ShapeType rectangleToolShapeType_ = ShapeType::Rect;
 
   RectangleToolMode rectangleToolMode_ = RectangleToolMode::None;
 
@@ -14040,6 +14293,26 @@ public:
 
   RenderDamageTracker damageTracker_;
 
+  bool compositionHasMatteDependencies_ = false;
+
+  CompositionID damageCompositionId_;
+
+  int64_t damageFrame_ = 0;
+
+  int32_t damageViewportWidth_ = 0;
+
+  int32_t damageViewportHeight_ = 0;
+
+  int32_t damageDownsample_ = 0;
+
+  float damageCanvasWidth_ = 0.0f;
+
+  float damageCanvasHeight_ = 0.0f;
+
+  bool damageStateInitialized_ = false;
+
+  bool fullRedrawPending_ = true;
+
   QHash<QString, QRectF> lastLayerDamageBounds_;
 
   bool layerDamageBoundsInitialized_ = false;
@@ -14370,6 +14643,12 @@ public:
   const bool compositionSpaceGpuCachePresentationReady_ =
       QSettings(QStringLiteral("ArtifactStudio"), QStringLiteral("Artifact"))
           .value(QStringLiteral("Render/Experimental/CompositionSpaceGpuCache"),
+                 false)
+          .toBool();
+
+  const bool tgfxPartialRecomposeEnabled_ =
+      QSettings(QStringLiteral("ArtifactStudio"), QStringLiteral("Artifact"))
+          .value(QStringLiteral("Render/Experimental/TGFXPartialRecompose"),
                  false)
           .toBool();
 
@@ -16018,6 +16297,15 @@ public:
 
     const QRectF oldBounds = lastLayerDamageBounds_.value(ownerId);
 
+    const auto hasFiniteBounds = [](const QRectF& bounds) {
+      return std::isfinite(bounds.x()) && std::isfinite(bounds.y()) &&
+             std::isfinite(bounds.width()) &&
+             std::isfinite(bounds.height()) &&
+             std::isfinite(bounds.right()) &&
+             std::isfinite(bounds.bottom()) && bounds.width() >= 0.0 &&
+             bounds.height() >= 0.0;
+    };
+
     LayerInvalidationRegion region;
 
     region.source = source;
@@ -16034,16 +16322,30 @@ public:
 
     lastLayerDamageBounds_[ownerId] = newBounds;
 
-    // A full-frame effect remains conservative until the composition host can
-    // supply its canvas extent to the layer-level bounds query.
-    for (const auto& effect : layer->getEffects()) {
-      if (effect && effect->isEnabled() && effect->roiHint().requiresFullFrame) {
-        region.requiresFullRedraw = true;
-        break;
-      }
+    if (source == LayerInvalidationRegion::Source::Property &&
+        layerHasEnabledMatteReferences(layer.get())) {
+      compositionHasMatteDependencies_ = true;
     }
 
+    // Until dependency-aware ROI calculation exists, these layer contracts
+    // conservatively invalidate the whole composition.
+    region.requiresFullRedraw =
+        !hasFiniteBounds(oldBounds) || !hasFiniteBounds(newBounds) ||
+        layer->is3D() || layer->isAdjustmentLayer() || layer->hasMasks() ||
+        layer->hasModifiers() || compositionHasMatteDependencies_ ||
+        layer->layerBlendType() !=
+            ArtifactCore::LAYER_BLEND_TYPE::BLEND_NORMAL;
+
+    // A full-frame effect remains conservative until the composition host can
+    // supply its canvas extent to the layer-level bounds query.
+    region.requiresFullRedraw = region.requiresFullRedraw ||
+        layer->hasEnabledFullFrameEffect();
+
     damageTracker_.markDirty(ownerId, region);
+
+    for (auto& slot : previewRenderPipelineSlots_) {
+      slot.damageTracker.markDirty(ownerId, region);
+    }
 
   }
 
@@ -16052,6 +16354,8 @@ public:
   void resetLayerDamageBounds(const ArtifactCompositionPtr& composition) {
 
     lastLayerDamageBounds_.clear();
+
+    compositionHasMatteDependencies_ = false;
 
     layerDamageBoundsInitialized_ = true;
 
@@ -16064,6 +16368,10 @@ public:
     for (const auto& layer : composition->allLayerRef()) {
 
       if (layer) {
+
+        compositionHasMatteDependencies_ =
+            compositionHasMatteDependencies_ ||
+            layerHasEnabledMatteReferences(layer.get());
 
         lastLayerDamageBounds_.insert(
             layer->id().toString(), effectExpandedLayerBounds(layer.get()));
@@ -16085,6 +16393,10 @@ public:
     if (!preserveLayerDamage) {
 
       damageTracker_.clearAll();
+
+      markAllPreviewSlotsFullRedraw();
+
+      fullRedrawPending_ = true;
 
     }
 
@@ -16116,6 +16428,25 @@ public:
 
 
   RenderDamageTracker& damageTracker() { return damageTracker_; }
+
+  void scheduleFailedFrameRetry() {
+    if (failedFrameRetryIssued_.exchange(true, std::memory_order_acq_rel)) {
+      return;
+    }
+    renderDirty_.store(true, std::memory_order_release);
+    if (running_ && renderTickDriver_ && !renderTickDriver_->isRunning()) {
+      renderTickDriver_->start();
+    }
+  }
+
+  void markAllPreviewSlotsFullRedraw() {
+    for (auto& slot : previewRenderPipelineSlots_) {
+      slot.damageTracker.clearAll();
+      slot.damageTracker.markFullRedraw();
+      slot.damageTileCursor = 0;
+      slot.retainedCompositeValid = false;
+    }
+  }
 
 
 
@@ -22450,6 +22781,7 @@ CompositionRenderController::frameDebugSnapshot() const {
                                    assetGpuStats.pendingUploadBytes;
       QString gpuSourceBindingState = QStringLiteral("n/a");
       if (impl_->gpuTextureCacheManager_ &&
+          hasBuffer &&
           imageLayer->canShareSourceGpuTexture() &&
           !imageLayer->sourceAssetId().isNull() &&
           imageLayer->sourceVersion() > 0) {
@@ -22461,7 +22793,7 @@ CompositionRenderController::frameDebugSnapshot() const {
                 .arg(imageLayer->inputColorSpace())
                 .arg(imageLayer->inputTransferFunction());
         const auto handle = impl_->gpuTextureCacheManager_->findExisting(
-            gpuOwner, gpuKey);
+            gpuOwner, gpuKey, imageLayer->currentFrameBuffer());
         gpuSourceBindingState =
             impl_->gpuTextureCacheManager_->bindingRecord(handle).isValid()
                 ? QStringLiteral("ready")
@@ -22478,6 +22810,8 @@ CompositionRenderController::frameDebugSnapshot() const {
           QStringLiteral("sourcePath=%1 exists=%2 sourceVersion=%3 "
                          "buffer=%4 sequence=%5 colorSpace=%6 transfer=%7 "
                          "gpuLayerEntries=%8 gpuAssetEntries=%9 "
+                         "gpuLayerImportedFrames=%13 "
+                         "gpuAssetImportedFrames=%14 "
                          "gpuPending=%10 gpuPendingBytes=%11 "
                          "gpuSourceBinding=%12")
               .arg(hasSourcePath ? sourcePath : QStringLiteral("<in-memory>"))
@@ -22495,7 +22829,11 @@ CompositionRenderController::frameDebugSnapshot() const {
               .arg(assetGpuStats.entryCount)
               .arg(gpuPendingCount)
               .arg(static_cast<qulonglong>(gpuPendingBytes))
-              .arg(gpuSourceBindingState);
+              .arg(gpuSourceBindingState)
+              .arg(static_cast<qulonglong>(
+                  layerGpuStats.importedGpuFrameCount))
+              .arg(static_cast<qulonglong>(
+                  assetGpuStats.importedGpuFrameCount));
       snapshot.resources.push_back(imageSourceResource);
     }
   }
@@ -22691,9 +23029,10 @@ CompositionRenderController::frameDebugSnapshot() const {
     textureCacheResource.stale = stats.pendingUploadCount > 0;
 
     textureCacheResource.note = QStringLiteral(
-        "entries=%1 bytes=%2 hits=%3 misses=%4 pendingUploads=%5 "
+        "entries=%1 bytes=%2 importedFrames=%18 hits=%3 misses=%4 pendingUploads=%5 "
         "pendingBytes=%6 invalidations=%7 lastReason=%8 frame=%9 "
-        "expireAfter=%10 expired=%11")
+        "expireAfter=%10 expired=%11 expiredThisFrame=%12 "
+        "explicit=%13 ownerChanged=%14 budget=%15 deviceReset=%16 clearAll=%17")
         .arg(stats.entryCount)
         .arg(static_cast<qulonglong>(stats.memoryBytes))
         .arg(static_cast<qulonglong>(stats.hitCount))
@@ -22704,7 +23043,14 @@ CompositionRenderController::frameDebugSnapshot() const {
         .arg(gpuTextureCacheInvalidationReasonText(stats.lastInvalidationReason))
         .arg(static_cast<qulonglong>(stats.currentFrameIndex))
         .arg(static_cast<qulonglong>(stats.resourceExpirationFrames))
-        .arg(static_cast<qulonglong>(stats.expiredEvictionCount));
+        .arg(static_cast<qulonglong>(stats.expiredEvictionCount))
+        .arg(stats.expiredEvictionsThisFrame)
+        .arg(static_cast<qulonglong>(stats.explicitInvalidationCount))
+        .arg(static_cast<qulonglong>(stats.ownerChangedInvalidationCount))
+        .arg(static_cast<qulonglong>(stats.budgetEvictionCount))
+        .arg(static_cast<qulonglong>(stats.deviceResetCount))
+        .arg(static_cast<qulonglong>(stats.clearAllCount))
+        .arg(static_cast<qulonglong>(stats.importedGpuFrameCount));
 
     snapshot.resources.push_back(textureCacheResource);
 
@@ -22725,7 +23071,7 @@ CompositionRenderController::frameDebugSnapshot() const {
     damageResource.stale = impl_->damageTracker_.hasDirtyRegions();
 
     damageResource.note = QStringLiteral(
-        "layers=%1 tiles=%2 scheduled=%3 deferred=%4 full=%5 "
+        "layers=%1 tiles=%2 planScheduled=%3 planRemainder=%4 full=%5 "
         "rect=%6,%7 %8x%9 pending=%10")
         .arg(impl_->lastConsumedDamageLayerCount_)
         .arg(impl_->lastConsumedDamageTileCount_)
@@ -26111,10 +26457,39 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
 
     } else {
 
-      RectangleToolMode shapeMode = RectangleToolMode::Shape;
+      ShapeType createShapeType = ShapeType::Rect;
       if (activeTool == ToolType::Ellipse) {
-        shapeMode = RectangleToolMode::EllipseShape;
+        createShapeType = ShapeType::Ellipse;
+      } else if (activeTool == ToolType::Shape) {
+        const int rawShapeType = QSettings().value(
+            QStringLiteral("shape/createType"),
+            static_cast<int>(ShapeType::Rect)).toInt();
+        if (rawShapeType >= static_cast<int>(ShapeType::Rect) &&
+            rawShapeType <= static_cast<int>(ShapeType::Square)) {
+          createShapeType = static_cast<ShapeType>(rawShapeType);
+        }
       }
+
+      RectangleToolMode shapeMode = RectangleToolMode::Shape;
+      switch (createShapeType) {
+      case ShapeType::Ellipse:
+        shapeMode = RectangleToolMode::EllipseShape;
+        break;
+      case ShapeType::Star:
+        shapeMode = RectangleToolMode::StarShape;
+        break;
+      case ShapeType::Polygon:
+        shapeMode = RectangleToolMode::PolygonShape;
+        break;
+      case ShapeType::Triangle:
+        shapeMode = RectangleToolMode::TriangleShape;
+        break;
+      case ShapeType::Rect:
+      case ShapeType::Square:
+      case ShapeType::Line:
+        break;
+      }
+      impl_->rectangleToolShapeType_ = createShapeType;
       impl_->beginRectangleToolSession(shapeMode,
 
                                        ArtifactAbstractLayerPtr{},
@@ -31015,35 +31390,13 @@ void CompositionRenderController::handleMouseRelease() {
         QRectF(impl_->textToolStartCanvas_, impl_->textToolCurrentCanvas_).normalized();
     const bool boxText = impl_->textToolDragging_ && rect.width() >= 2.0 &&
                          rect.height() >= 2.0;
-    const bool createdText = createTextLayerAtCanvas(
+    createTextLayerAtCanvas(
         impl_->textToolStartCanvas_,
         boxText ? QSizeF(rect.width(), rect.height()) : QSizeF());
     impl_->textToolCandidate_ = false;
     impl_->textToolDragging_ = false;
     impl_->invalidateOverlayComposite();
     markRenderDirty();
-    if (createdText) {
-      // Reuse the established text edit transaction so a newly-created text
-      // layer is immediately ready for input and remains undoable as one edit.
-      const LayerID createdLayerId = impl_->selectedLayerId_;
-      const auto viewport = impl_->renderer_->canvasToViewport(
-          {static_cast<float>(impl_->textToolCurrentCanvas_.x()),
-           static_cast<float>(impl_->textToolCurrentCanvas_.y())});
-      const bool accepted = editTextAtViewport(QPointF(viewport.x, viewport.y));
-      if (!accepted) {
-        const auto createdComposition = impl_->previewPipeline_.composition();
-        if (createdComposition && !createdLayerId.isNil()) {
-          if (auto *service = ArtifactProjectService::instance()) {
-            service->removeLayerFromComposition(createdComposition->id(),
-                                                createdLayerId);
-          }
-        }
-        setSelectedLayerId(LayerID::Nil());
-        impl_->invalidateBaseComposite();
-        impl_->invalidateOverlayComposite();
-        markRenderDirty();
-      }
-    }
     return;
   }
 
@@ -31693,14 +32046,14 @@ void CompositionRenderController::handleMouseRelease() {
                meaningfulRect && comp) {
 
       QString baseName = QStringLiteral("Rectangle");
-      if (impl_->rectangleToolMode_ == RectangleToolMode::EllipseShape) {
-        baseName = QStringLiteral("Ellipse");
-      } else if (impl_->rectangleToolMode_ == RectangleToolMode::StarShape) {
-        baseName = QStringLiteral("Star");
-      } else if (impl_->rectangleToolMode_ == RectangleToolMode::PolygonShape) {
-        baseName = QStringLiteral("Polygon");
-      } else if (impl_->rectangleToolMode_ == RectangleToolMode::TriangleShape) {
-        baseName = QStringLiteral("Triangle");
+      switch (impl_->rectangleToolShapeType_) {
+      case ShapeType::Rect: baseName = QStringLiteral("Rectangle"); break;
+      case ShapeType::Ellipse: baseName = QStringLiteral("Ellipse"); break;
+      case ShapeType::Star: baseName = QStringLiteral("Star"); break;
+      case ShapeType::Polygon: baseName = QStringLiteral("Polygon"); break;
+      case ShapeType::Line: baseName = QStringLiteral("Line"); break;
+      case ShapeType::Triangle: baseName = QStringLiteral("Triangle"); break;
+      case ShapeType::Square: baseName = QStringLiteral("Square"); break;
       }
       const QString layerName = uniqueLayerNameForCurrentComposition(baseName);
 
@@ -31742,15 +32095,7 @@ void CompositionRenderController::handleMouseRelease() {
 
                   ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(createdLayer)) {
 
-            if (impl_->rectangleToolMode_ == RectangleToolMode::EllipseShape) {
-              shapeLayer->setShapeType(ShapeType::Ellipse);
-            } else if (impl_->rectangleToolMode_ == RectangleToolMode::StarShape) {
-              shapeLayer->setShapeType(ShapeType::Star);
-            } else if (impl_->rectangleToolMode_ == RectangleToolMode::PolygonShape) {
-              shapeLayer->setShapeType(ShapeType::Polygon);
-            } else if (impl_->rectangleToolMode_ == RectangleToolMode::TriangleShape) {
-              shapeLayer->setShapeType(ShapeType::Triangle);
-            }
+            shapeLayer->setShapeType(impl_->rectangleToolShapeType_);
 
             shapeLayer->setSize(
 
@@ -35854,7 +36199,11 @@ void CompositionRenderController::trackerNextProblemFrame() {
     }
   }
   const auto targetFrame = static_cast<int64_t>(std::llround(targetTime * fps));
-  comp->goToFrame(targetFrame);
+  if (auto* playback = ArtifactPlaybackService::instance()) {
+    playback->goToFrame(FramePosition(targetFrame));
+  } else {
+    comp->goToFrame(targetFrame);
+  }
   setInfoOverlayText(trackerModeTitle(impl_->trackerMotionTracker_),
                      QStringLiteral("Reviewing problem frame %1")
                          .arg(targetFrame));
@@ -36921,6 +37270,8 @@ void CompositionRenderController::renderOneFrame() {
 
 
 void CompositionRenderController::markRenderDirty() {
+
+  impl_->failedFrameRetryIssued_.store(false, std::memory_order_release);
 
   impl_->renderDirty_.store(true, std::memory_order_release);
 
@@ -38629,7 +38980,39 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
   const bool forceContinuousRedraw = interactionBusy();
 
-  if (!forceContinuousRedraw && currentKey == lastRenderKeyState_) {
+  const auto damageViewportWidth =
+      static_cast<int32_t>(std::ceil(viewportW));
+  const auto damageViewportHeight =
+      static_cast<int32_t>(std::ceil(viewportH));
+
+  if (!damageStateInitialized_ ||
+      damageCompositionId_ != comp->id() ||
+      damageFrame_ != framePos ||
+      damageViewportWidth_ != damageViewportWidth ||
+      damageViewportHeight_ != damageViewportHeight ||
+      damageDownsample_ != effectivePreviewDownsample ||
+      damageCanvasWidth_ != cw || damageCanvasHeight_ != ch) {
+    damageTracker_.markFullRedraw();
+    markAllPreviewSlotsFullRedraw();
+    damageCompositionId_ = comp->id();
+    damageFrame_ = framePos;
+    damageViewportWidth_ = damageViewportWidth;
+    damageViewportHeight_ = damageViewportHeight;
+    damageDownsample_ = effectivePreviewDownsample;
+    damageCanvasWidth_ = cw;
+    damageCanvasHeight_ = ch;
+    damageStateInitialized_ = true;
+  }
+
+  if (fullRedrawPending_) {
+    damageTracker_.markFullRedraw();
+    markAllPreviewSlotsFullRedraw();
+  }
+
+  const bool damageContinuationPending =
+      damageContinuationPending_.load(std::memory_order_acquire);
+  if (!forceContinuousRedraw && !damageContinuationPending &&
+      currentKey == lastRenderKeyState_) {
 
     return;
 
@@ -38753,6 +39136,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
 
     auto &previewRenderSlot = acquirePreviewRenderPipelineSlot();
+    damageContinuationPending_.store(false, std::memory_order_release);
 
     auto &renderPipeline = previewRenderSlot.pipeline;
 
@@ -38963,13 +39347,52 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
         !previewRenderSlotAcquireHazard;
 
+    Diligent::ITexture* currentAccumTexture = nullptr;
+    if (auto* retainedView = renderPipeline.accumSRV()) {
+      currentAccumTexture = retainedView->GetTexture();
+    }
+
+    if (pipelineEnabled && previewRenderSlot.retainedCompositeValid) {
+      float currentPanX = 0.0f;
+      float currentPanY = 0.0f;
+      renderer_->getPan(currentPanX, currentPanY);
+      const bool retainedStateMatches =
+          previewRenderSlot.retainedCompositionId ==
+              (comp ? comp->id() : CompositionID()) &&
+          previewRenderSlot.retainedFramePosition ==
+              currentFrame.framePosition() &&
+          previewRenderSlot.retainedTargetSize ==
+              QSize(static_cast<int>(renderPipeline.width()),
+                    static_cast<int>(renderPipeline.height())) &&
+          previewRenderSlot.retainedAccumTexture == currentAccumTexture &&
+          previewRenderSlot.retainedDownsample == effectivePreviewDownsample &&
+          std::abs(previewRenderSlot.retainedCanvasWidth - cw) <= 1.0e-4f &&
+          std::abs(previewRenderSlot.retainedCanvasHeight - ch) <= 1.0e-4f &&
+          std::abs(previewRenderSlot.retainedZoom - renderer_->getZoom()) <=
+              1.0e-5f &&
+          std::abs(previewRenderSlot.retainedPanX - currentPanX) <= 1.0e-4f &&
+          std::abs(previewRenderSlot.retainedPanY - currentPanY) <= 1.0e-4f;
+      if (!retainedStateMatches) {
+        previewRenderSlot.retainedCompositeValid = false;
+        previewRenderSlot.damageTracker.clearAll();
+        previewRenderSlot.damageTracker.markFullRedraw();
+        damageTracker_.markFullRedraw();
+      }
+    }
+
+    if (pipelineEnabled && !previewRenderSlot.retainedCompositeValid) {
+      previewRenderSlot.damageTracker.clearAll();
+      previewRenderSlot.damageTracker.markFullRedraw();
+      damageTracker_.markFullRedraw();
+    }
+
     const auto isCompositionSpaceCacheLayer =
         [](const ArtifactAbstractLayerPtr& layer) {
           if (!layer || layer->is3D() || layer->isAdjustmentLayer() ||
               layer->maskCount() != 0 ||
               layer->layerBlendType() !=
                   ArtifactCore::LAYER_BLEND_TYPE::BLEND_NORMAL ||
-              !layer->getEffects().empty()) {
+              layer->effectCount() > 0) {
             return false;
           }
           if (const auto imageLayer =
@@ -38978,6 +39401,17 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           }
           return dynamic_cast<ArtifactSolid2DLayer*>(layer.get()) ||
                  dynamic_cast<ArtifactSolidImageLayer*>(layer.get());
+        };
+    const auto isPartialRecomposeLayer =
+        [&](const ArtifactAbstractLayerPtr& layer) {
+          if (isCompositionSpaceCacheLayer(layer)) {
+            return true;
+          }
+          return layer && !layer->is3D() && !layer->isAdjustmentLayer() &&
+                 layer->maskCount() == 0 && layer->effectCount() == 0 &&
+                 layer->layerBlendType() ==
+                     ArtifactCore::LAYER_BLEND_TYPE::BLEND_NORMAL &&
+                 dynamic_cast<ArtifactShapeLayer*>(layer.get());
         };
 
     // Keep the composition-space cache opt-in until its offscreen target
@@ -39423,6 +39857,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
     int skipRoiCount = 0;
 
+    int skipPartialDamageCount = 0;
+
     int skipCategoryCount = 0;
 
     int skipLodCount = 0;
@@ -39430,6 +39866,13 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     int opacityZeroCount = 0;
 
     int compositedLayerCount = 0;
+
+    bool gpuPartialRecomposeCandidate = false;
+    bool gpuPartialRecomposeStarted = false;
+    QRectF gpuPartialRecomposeRequestedCanvasRect;
+    BoundedTileRefinementPlan gpuPartialDamageTilePlan;
+    std::uint64_t gpuPartialRegionPixels = 0;
+    std::uint64_t gpuPartialTargetPixels = 0;
 
     QStringList blendMaskLayerNotes;
 
@@ -39596,8 +40039,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
         });
 
-    RenderPassExecutor::runWithRenderGraph(setupPass, setupContext,
-                                           setupResources);
+    bool partialGpuRecomposeFailed = false;
+    bool framePassesSucceeded = RenderPassExecutor::runWithRenderGraph(
+        setupPass, setupContext, setupResources);
 
     renderCrashTrace("render-clear-end", renderFrameCounter_);
 
@@ -39775,9 +40219,13 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
             continue;
 
-          auto mattes = layerForMatte->matteReferences();
+          if (!layerForMatte->hasEnabledExternalMatteReference()) {
 
-          if (mattes.empty()) continue;
+            continue;
+
+          }
+
+          auto mattes = layerForMatte->matteReferences();
 
           for (const auto &matteRef : mattes) {
 
@@ -39833,6 +40281,62 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
       const FloatColor layerBgColor = comp->backgroundColor();
 
+      const auto pendingSlotDamage =
+          previewRenderSlot.damageTracker.combinedDirtyROI();
+      const bool damageLayersAreSupported = tgfxPartialRecomposeEnabled_ &&
+          std::all_of(layers.cbegin(), layers.cend(),
+                      [&](const ArtifactAbstractLayerPtr& layer) {
+                        if (!layer || !isPartialRecomposeLayer(layer) ||
+                            !effectExpandedLayerBounds(layer.get()).isValid()) {
+                          return false;
+                        }
+                        return !layer->hasModifiers() &&
+                               !layerHasEnabledMatteReferences(layer.get());
+                      });
+      const bool partialGpuRecomposeEligible =
+          tgfxPartialRecomposeEnabled_ && pipelineEnabled &&
+          currentAccumTexture != nullptr && !layers.empty() &&
+          previewRenderSlot.retainedCompositeValid &&
+          previewRenderSlot.damageTracker.hasDirtyRegions() &&
+          !previewRenderSlot.damageTracker.combinedNeedsFullRedraw() &&
+          !pendingSlotDamage.isEmpty() && !forceContinuousRedraw &&
+          !frameOutOfRange && !has3DCamera && !hasVisible3DLayer &&
+          !hasSoloLayer &&
+          layerRenderFilter_ == CompositionLayerRenderFilter::All &&
+          viewportChannelDisplayMode_ == ViewportChannelDisplayMode::Color &&
+          isFrontOrthographicViewport() && !showIsolationOverlay_ &&
+          !showXRayOverlay_ && !showCompositionRegionOverlay_ &&
+          !previewOrbitActive_ && !auxiliary3DChannelRequested &&
+          !postPassMask.screenSpaceGi && !postPassMask.motionBlurVelocity &&
+          !postPassMask.cameraMotionBlur && !postPassMask.timelineMotionBlur &&
+          !postPassMask.depthOfField && !viewportMultiChannelRequested &&
+          damageLayersAreSupported;
+      const TileGrid damageTileGrid(
+          std::max(1, static_cast<int>(std::ceil(cw))),
+          std::max(1, static_cast<int>(std::ceil(ch))), 256);
+      if (partialGpuRecomposeEligible) {
+        gpuPartialDamageTilePlan =
+            previewRenderSlot.damageTracker.makeBoundedDirtyTilePlan(
+                damageTileGrid, RenderROI(visibleCanvasRect), 8, QString(),
+                previewRenderSlot.damageTileCursor);
+        for (int index = 0;
+             index < gpuPartialDamageTilePlan.scheduledCount; ++index) {
+          const QRectF tileRect = damageTileGrid.tileRectClamped(
+              gpuPartialDamageTilePlan.tiles[static_cast<size_t>(index)]);
+          gpuPartialRecomposeRequestedCanvasRect =
+              gpuPartialRecomposeRequestedCanvasRect.isEmpty()
+                  ? tileRect
+                  : gpuPartialRecomposeRequestedCanvasRect.united(tileRect);
+        }
+      }
+      bool partialGpuRecomposeActive =
+          partialGpuRecomposeEligible &&
+          !gpuPartialDamageTilePlan.empty() &&
+          !gpuPartialRecomposeRequestedCanvasRect.isEmpty();
+      gpuPartialRecomposeCandidate = partialGpuRecomposeEligible;
+      ArtifactCore::ComputeRegion gpuDamageRegion;
+      QRectF gpuDamageCanvasRect;
+
       GpuBasePassState gpuBasePassState;
 
       RenderPassContext baseContext{renderer_.get(), renderFrameCounter_};
@@ -39865,9 +40369,39 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                 passResolution.renderWidthF(), passResolution.renderHeightF(),
                 cw, ch,
 
-                layerBgColor, backgroundMode);
+                layerBgColor, backgroundMode,
+                partialGpuRecomposeActive
+                    ? &gpuPartialRecomposeRequestedCanvasRect
+                    : nullptr,
+                &gpuDamageRegion, &partialGpuRecomposeActive);
+            if (partialGpuRecomposeActive) {
+              gpuDamageCanvasRect =
+                  mapRenderTargetRegionToCanvas(gpuDamageRegion);
+            }
+            if (tgfxPartialRecomposeEnabled_ &&
+                previewRenderSlot.retainedCompositeValid &&
+                previewRenderSlot.damageTracker.hasDirtyRegions() &&
+                !previewRenderSlot.damageTracker.combinedNeedsFullRedraw() &&
+                !partialGpuRecomposeActive) {
+              previewRenderSlot.damageTracker.clearAll();
+              previewRenderSlot.damageTracker.markFullRedraw();
+              damageTracker_.markFullRedraw();
+            }
+            previewRenderSlot.retainedCompositionId =
+                comp ? comp->id() : CompositionID();
+            previewRenderSlot.retainedFramePosition =
+                currentFrame.framePosition();
+            previewRenderSlot.retainedTargetSize =
+                QSize(static_cast<int>(resources.pipeline->width()),
+                      static_cast<int>(resources.pipeline->height()));
+            previewRenderSlot.retainedDownsample = effectivePreviewDownsample;
+            previewRenderSlot.retainedCanvasWidth = cw;
+            previewRenderSlot.retainedCanvasHeight = ch;
+            previewRenderSlot.retainedZoom = gpuBasePassState.origZoom;
+            previewRenderSlot.retainedPanX = gpuBasePassState.origPanX;
+            previewRenderSlot.retainedPanY = gpuBasePassState.origPanY;
 
-            seedGpuBasePassBackground(
+            bool backgroundSeeded = seedGpuBasePassBackground(
 
                 *resources.pipeline, resources.layerRTV, resources.layerSRV,
 
@@ -39877,7 +40411,41 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                 layerToFloatConvertCount, blendDispatchCount,
 
-                blendFailureCount, cw, ch, layerBgColor, backgroundMode, comp);
+                blendFailureCount, cw, ch, layerBgColor, backgroundMode, comp,
+                partialGpuRecomposeActive ? &gpuDamageRegion : nullptr);
+            if (!backgroundSeeded && partialGpuRecomposeActive) {
+              partialGpuRecomposeActive = false;
+              previewRenderSlot.damageTracker.clearAll();
+              previewRenderSlot.damageTracker.markFullRedraw();
+              damageTracker_.markFullRedraw();
+              renderer_->pushRenderTarget(resources.pipeline->accumRTV(),
+                                          previewRenderSlot.depthTargetView);
+              renderer_->clearRenderTarget(
+                  resources.pipeline->accumRTV(),
+                  FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
+              renderer_->popRenderTarget();
+              renderer_->unbindColorTargetsForCompute();
+              backgroundSeeded = seedGpuBasePassBackground(
+                  *resources.pipeline, resources.layerRTV, resources.layerSRV,
+                  resources.layerFloatSRV, resources.layerFloatUAV,
+                  resources.accumSRV, resources.tempUAV,
+                  layerToFloatConvertCount, blendDispatchCount,
+                  blendFailureCount, cw, ch, layerBgColor, backgroundMode,
+                  comp);
+            }
+            if (!backgroundSeeded) {
+              return false;
+            }
+
+            if (partialGpuRecomposeActive) {
+              gpuPartialRecomposeStarted = true;
+              gpuPartialRegionPixels =
+                  static_cast<std::uint64_t>(gpuDamageRegion.width) *
+                  gpuDamageRegion.height;
+              gpuPartialTargetPixels =
+                  static_cast<std::uint64_t>(resources.pipeline->width()) *
+                  resources.pipeline->height();
+            }
 
             accumSRV = resources.accumSRV;
 
@@ -39887,8 +40455,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           });
 
-      RenderPassExecutor::runWithRenderGraph(basePass, baseContext,
-                                             baseResources);
+      framePassesSucceeded = RenderPassExecutor::runWithRenderGraph(
+          basePass, baseContext, baseResources) && framePassesSucceeded;
 
       const float origZoom = gpuBasePassState.origZoom;
 
@@ -40066,6 +40634,14 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
             continue;
 
+          }
+
+          if (partialGpuRecomposeActive && gpuDamageCanvasRect.isValid() &&
+              layerBounds.isValid() &&
+              layerBounds.intersected(gpuDamageCanvasRect).isEmpty()) {
+            ++skipRoiCount;
+            ++skipPartialDamageCount;
+            continue;
           }
 
 
@@ -40301,6 +40877,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           if (!passContext.renderer || !passResources.pipeline ||
               !passResources.layerRTV || !passResources.layerSRV) {
             shared3DSceneDepthOpen = false;
+            if (partialGpuRecomposeActive) {
+              partialGpuRecomposeFailed = true;
+              return false;
+            }
             continue;
           }
 
@@ -40452,6 +41032,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               !passResources.layerFloatSRV || !passResources.layerFloatUAV ||
               !passResources.tempUAV) {
             shared3DSceneDepthOpen = false;
+            if (partialGpuRecomposeActive) {
+              partialGpuRecomposeFailed = true;
+              return false;
+            }
             continue;
           }
 
@@ -40464,12 +41048,17 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                     passResources.tempUAV, &layerRasterEffectPlan,
                     matteSourceImages,
                     matteSourceGpuViews, layerToFloatConvertCount,
-                    convertedLayerToFloat);
+                    convertedLayerToFloat,
+                    partialGpuRecomposeActive ? &gpuDamageRegion : nullptr);
 
           maskPassMs = markPhaseMs();
 
           if (!preparedBlendSRV) {
             shared3DSceneDepthOpen = false;
+            if (partialGpuRecomposeActive) {
+              partialGpuRecomposeFailed = true;
+              return false;
+            }
             continue;
           }
 
@@ -40478,6 +41067,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           if (!passResources.pipeline || !passResources.layerSRV ||
               !passResources.accumSRV || !passResources.tempUAV) {
             shared3DSceneDepthOpen = false;
+            if (partialGpuRecomposeActive) {
+              partialGpuRecomposeFailed = true;
+              return false;
+            }
             continue;
           }
 
@@ -40491,7 +41084,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                     blendRetryNormalCount, blendFailureCount,
 
-                    directBlendFallbackCount, convertedLayerToFloat);
+                    directBlendFallbackCount, convertedLayerToFloat,
+                    partialGpuRecomposeActive ? &gpuDamageRegion : nullptr);
 
                 accumSRV = passResources.accumSRV;
 
@@ -40501,12 +41095,21 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           if (!blendResult.blended && !blendResult.directFallbackUsed) {
             shared3DSceneDepthOpen = false;
+            if (partialGpuRecomposeActive) {
+              partialGpuRecomposeFailed = true;
+              return false;
+            }
             continue;
           }
 
           if (!blendResult.blended) {
 
             shared3DSceneDepthOpen = false;
+
+            if (partialGpuRecomposeActive) {
+              partialGpuRecomposeFailed = true;
+              return false;
+            }
 
             continue;
 
@@ -40747,8 +41350,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           });
 
-      RenderPassExecutor::runWithRenderGraph(resolvePass, resolveContext,
-                                             resolveResources);
+      framePassesSucceeded = RenderPassExecutor::runWithRenderGraph(
+          resolvePass, resolveContext, resolveResources) && framePassesSucceeded;
 
       postPassMs = markPhaseMs();
 
@@ -40938,8 +41541,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           });
 
-      RenderPassExecutor::runWithRenderGraph(fallbackBasePass, fallbackContext,
-                                             fallbackResources);
+      framePassesSucceeded = RenderPassExecutor::runWithRenderGraph(
+          fallbackBasePass, fallbackContext, fallbackResources) &&
+          framePassesSucceeded;
 
       basePassMs = markPhaseMs();
 
@@ -41212,9 +41816,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
               });
 
-          RenderPassExecutor::runWithRenderGraph(directCompositePass,
-                                                 directContext,
-                                                 directResources);
+          framePassesSucceeded = RenderPassExecutor::runWithRenderGraph(
+              directCompositePass, directContext, directResources) &&
+              framePassesSucceeded;
 
           surfacePassMs = markPhaseMs();
 
@@ -42960,8 +43564,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
         });
 
-    RenderPassExecutor::runWithRenderGraph(overlayPass, overlayContext,
-                                           overlayResources);
+    framePassesSucceeded = RenderPassExecutor::runWithRenderGraph(
+        overlayPass, overlayContext, overlayResources) && framePassesSucceeded;
 
     overlayMs = markPhaseMs();
 
@@ -42998,6 +43602,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
     // renderer_->flushAndWait(); // 毎フレーム同期を削除し、性能改善を試む
 
+    bool presentationSucceeded = false;
     {
 
       ArtifactCore::ProfileScope _profPresent(
@@ -43016,7 +43621,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           FrameRenderPassKind::Present, QStringLiteral("Present"),
 
-          [](RenderPassResources&) { return true; },
+          [&](RenderPassResources&) { return !partialGpuRecomposeFailed; },
 
           [&](RenderPassContext&, RenderPassResources&) {
 
@@ -43032,8 +43637,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           });
 
-      RenderPassExecutor::runWithRenderGraph(presentPass, presentContext,
-                                             presentResources);
+      presentationSucceeded = RenderPassExecutor::runWithRenderGraph(
+          presentPass, presentContext, presentResources) &&
+          presentResult.presentedStatus == QStringLiteral("ok");
 
       if (!presentResult.presentedVideoDebug.isEmpty() &&
 
@@ -43177,19 +43783,21 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
     lastSubmit2DMs_ = latestTimerMs("Submit2D");
 
-    // Consume damage only after the frame reached presentation. Early-return
-    // and failed frames retain it for the next attempt. Tile enumeration is
-    // bounded by the composition grid and currently feeds diagnostics; the
-    // later refinement stage can use the same lifecycle without changing the
-    // invalidation contract.
-    if (damageTracker_.hasDirtyRegions()) {
+    // Consume damage only after every frame pass and presentation succeed.
+    // A committed partial pass consumes the requested canvas region; a full
+    // redraw consumes all damage. Failed and skipped presentations retry it.
+    auto& presentedRenderSlot =
+        previewRenderPipelineSlots_[activePreviewRenderPipelineSlot_];
+    auto& presentedSlotDamage = presentedRenderSlot.damageTracker;
+    if (framePassesSucceeded && presentationSucceeded &&
+        presentedSlotDamage.hasDirtyRegions()) {
 
-      lastConsumedDamageLayerCount_ = damageTracker_.dirtyLayerCount();
+      lastConsumedDamageLayerCount_ = presentedSlotDamage.dirtyLayerCount();
 
       lastConsumedDamageWasFullRedraw_ =
-          damageTracker_.combinedNeedsFullRedraw();
+          presentedSlotDamage.combinedNeedsFullRedraw();
 
-      const RenderROI damageRoi = damageTracker_.combinedDirtyROI();
+      const RenderROI damageRoi = presentedSlotDamage.combinedDirtyROI();
 
       lastConsumedDamageRect_ = damageRoi.rect;
 
@@ -43200,10 +43808,17 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         const TileGrid grid(std::max(1, static_cast<int>(std::ceil(cw))),
                             std::max(1, static_cast<int>(std::ceil(ch))), 256);
 
-        lastConsumedDamageTileCount_ = damageTracker_.dirtyTileCount(grid);
+        lastConsumedDamageTileCount_ = presentedSlotDamage.dirtyTileCount(grid);
 
-        lastConsumedDamageTilePlan_ = damageTracker_.makeBoundedDirtyTilePlan(
-            grid, RenderROI(visibleCanvasRect), 8);
+        if (gpuPartialRecomposeStarted &&
+            !partialGpuRecomposeFailed) {
+          lastConsumedDamageTilePlan_ = gpuPartialDamageTilePlan;
+        } else {
+          lastConsumedDamageTilePlan_ =
+              presentedSlotDamage.makeBoundedDirtyTilePlan(
+                  grid, RenderROI(visibleCanvasRect), 8,
+                  QString(), presentedRenderSlot.damageTileCursor);
+        }
 
       } else {
 
@@ -43214,8 +43829,75 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
       }
 
-      damageTracker_.clearAll();
+    }
 
+    if (framePassesSucceeded && presentationSucceeded) {
+      if (pipelineEnabled) {
+        presentedRenderSlot.retainedCompositeValid = true;
+        presentedRenderSlot.retainedAccumTexture =
+            presentedRenderSlot.pipeline.accumSRV()
+                ? presentedRenderSlot.pipeline.accumSRV()->GetTexture()
+                : nullptr;
+        if (gpuPartialRecomposeStarted && !partialGpuRecomposeFailed &&
+            !gpuPartialRecomposeRequestedCanvasRect.isEmpty()) {
+          presentedSlotDamage.consumeRegion(
+              gpuPartialRecomposeRequestedCanvasRect);
+          presentedRenderSlot.damageTileCursor =
+              gpuPartialDamageTilePlan.nextTileOrdinal;
+          if (!presentedSlotDamage.hasDirtyRegions()) {
+            presentedRenderSlot.damageTileCursor = 0;
+          }
+        } else {
+          presentedSlotDamage.clearAll();
+          presentedRenderSlot.damageTileCursor = 0;
+        }
+        const bool anySlotDamagePending = std::any_of(
+            previewRenderPipelineSlots_.cbegin(),
+            previewRenderPipelineSlots_.cend(),
+            [](const PreviewRenderPipelineSlot& slot) {
+              return slot.damageTracker.hasDirtyRegions();
+            });
+        if (!anySlotDamagePending) {
+          damageTracker_.clearAll();
+        } else if (tgfxPartialRecomposeEnabled_ && owner) {
+          const TileGrid remainingDamageGrid(
+              std::max(1, static_cast<int>(std::ceil(cw))),
+              std::max(1, static_cast<int>(std::ceil(ch))), 256);
+          const bool anyVisibleDamagePending = std::any_of(
+              previewRenderPipelineSlots_.cbegin(),
+              previewRenderPipelineSlots_.cend(),
+              [&](const PreviewRenderPipelineSlot& slot) {
+                return !slot.damageTracker
+                            .makeBoundedDirtyTilePlan(
+                                remainingDamageGrid,
+                                RenderROI(visibleCanvasRect), 8, QString(),
+                                slot.damageTileCursor)
+                            .empty();
+              });
+          if (anyVisibleDamagePending) {
+            // Continue bounded refinement while visible damage remains in
+            // either retained preview slot.
+            damageContinuationPending_.store(true,
+                                             std::memory_order_release);
+            owner->markRenderDirty();
+          }
+        }
+      } else {
+        for (auto& slot : previewRenderPipelineSlots_) {
+          slot.retainedCompositeValid = false;
+          slot.damageTracker.clearAll();
+          slot.damageTileCursor = 0;
+        }
+        damageTracker_.clearAll();
+      }
+      fullRedrawPending_ = false;
+      failedFrameRetryIssued_.store(false, std::memory_order_release);
+    } else {
+      markAllPreviewSlotsFullRedraw();
+      damageTracker_.markFullRedraw();
+      fullRedrawPending_ = true;
+      lastRenderKeyState_ = {};
+      scheduleFailedFrameRetry();
     }
 
     // P0-3d: when an Interactive Render Region is active, drive one
@@ -43740,6 +44422,20 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
       }
 
+      if (tgfxPartialRecomposeEnabled_ && gpuPartialRecomposeCandidate) {
+        qCDebug(compositionViewLog)
+            << "[CompositionView][TGFXPartial]"
+            << "candidate=" << gpuPartialRecomposeCandidate
+            << "started=" << gpuPartialRecomposeStarted
+            << "failed=" << partialGpuRecomposeFailed
+            << "regionPixels=" << gpuPartialRegionPixels
+            << "targetPixels=" << gpuPartialTargetPixels
+            << "partialSkippedLayers=" << skipPartialDamageCount
+            << "partialCommitted="
+            << (gpuPartialRecomposeStarted && !partialGpuRecomposeFailed &&
+                framePassesSucceeded && presentationSucceeded);
+      }
+
     }
 
   } // _profSetup ("RenderFrame") destructs here — BEFORE endFrame() so its
@@ -44173,7 +44869,7 @@ void CompositionRenderController::Impl::renderPartialRegion(
   // rectangle. We trigger a fresh damage pass so the cache layer below
   // the pipeline re-emits the contents inside the rectangle.
   if (!roi.isEmpty()) {
-    damageTracker_.markFullRedraw(QString());
+    damageTracker_.markFullRedraw();
     invalidateBaseComposite();
     owner->markRenderDirty();
   }
@@ -47125,15 +47821,20 @@ void CompositionRenderController::Impl::drawViewportInteractionOverlay(
         drawRectOutline(renderer_.get(), rect, outlineColor, 1.6f);
       }
       QString shapeTypeName = QStringLiteral("Rectangle");
-      if (rectangleToolMode_ == RectangleToolMode::EllipseMask ||
-          rectangleToolMode_ == RectangleToolMode::EllipseShape) {
-        shapeTypeName = QStringLiteral("Ellipse");
-      } else if (rectangleToolMode_ == RectangleToolMode::StarShape) {
-        shapeTypeName = QStringLiteral("Star");
-      } else if (rectangleToolMode_ == RectangleToolMode::PolygonShape) {
-        shapeTypeName = QStringLiteral("Polygon");
-      } else if (rectangleToolMode_ == RectangleToolMode::TriangleShape) {
-        shapeTypeName = QStringLiteral("Triangle");
+      if (rectangleToolMode_ == RectangleToolMode::Mask) {
+        shapeTypeName = QStringLiteral("Mask");
+      } else if (rectangleToolMode_ == RectangleToolMode::EllipseMask) {
+        shapeTypeName = QStringLiteral("Ellipse Mask");
+      } else {
+        switch (rectangleToolShapeType_) {
+        case ShapeType::Rect: shapeTypeName = QStringLiteral("Rectangle"); break;
+        case ShapeType::Ellipse: shapeTypeName = QStringLiteral("Ellipse"); break;
+        case ShapeType::Star: shapeTypeName = QStringLiteral("Star"); break;
+        case ShapeType::Polygon: shapeTypeName = QStringLiteral("Polygon"); break;
+        case ShapeType::Line: shapeTypeName = QStringLiteral("Line"); break;
+        case ShapeType::Triangle: shapeTypeName = QStringLiteral("Triangle"); break;
+        case ShapeType::Square: shapeTypeName = QStringLiteral("Square"); break;
+        }
       }
 
       const QString sizeLabel = (rectangleToolRoundness_ > 0.0f && rectangleToolMode_ == RectangleToolMode::Shape)

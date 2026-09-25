@@ -214,7 +214,7 @@ void textSyncAnimatedProperty(const ArtifactAbstractLayerPtr& layer,
     }
     const auto property = layer->getProperty(propertyPath);
     if (property && property->isAnimatable() &&
-        !property->getKeyFrames().empty()) {
+        property->hasKeyFrames()) {
         property->addKeyFrame(time, value);
     }
 }
@@ -1512,7 +1512,7 @@ void TextGizmo::captureTransformBeforeStates() {
         if (const auto property = layer_->getProperty(path)) {
             state.staticValue = property->getValue();
             state.animated = property->isAnimatable() &&
-                             !property->getKeyFrames().empty();
+                             property->hasKeyFrames();
             if (state.animated) {
                 state.keyframes = property->getKeyFrames();
             }

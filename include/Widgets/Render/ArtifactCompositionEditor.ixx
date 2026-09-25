@@ -4,6 +4,7 @@ module;
 #include <QWidget>
 #include <QResizeEvent>
 #include <QKeyEvent>
+#include <QtGlobal>
 #include <wobjectdefs.h>
 export module Artifact.Widgets.CompositionEditor;
 
@@ -37,6 +38,7 @@ public /*slots*/:
   void pause(); W_SLOT(pause);
   void togglePlayPause(); W_SLOT(togglePlayPause);
   void stop(); W_SLOT(stop);
+  void seekToFrame(qint64 frame); W_SLOT(seekToFrame);
   void resetView(); W_SLOT(resetView);
   void zoomIn(); W_SLOT(zoomIn);
   void zoomOut(); W_SLOT(zoomOut);

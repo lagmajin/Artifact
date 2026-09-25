@@ -40,7 +40,7 @@ export namespace Artifact
   void prevFrame(); W_SLOT(prevFrame);
   void goToStart(); W_SLOT(goToStart);
   void goToEnd(); W_SLOT(goToEnd);
-  void seekToFrame(int64_t frame); W_SLOT(seekToFrame);
+  void seekToFrame(qint64 frame); W_SLOT(seekToFrame);
 
   // Layer Actions (AE Style)
   void setLayerInAtCurrentTime(); W_SLOT(setLayerInAtCurrentTime);

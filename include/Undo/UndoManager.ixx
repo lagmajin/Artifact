@@ -1655,6 +1655,8 @@ public:
                                             const QJsonObject& payload);
     bool applyCollaborativeLayerStack(const QString& layerId,
                                       const QJsonObject& payload);
+    bool applyCollaborativeLayerModulation(const QString& layerId,
+                                           const QJsonObject& payload);
     bool applyCollaborativeLayerAudioDeClickRanges(const QString& layerId,
                                                    const QJsonObject& payload);
     bool applyCollaborativeLayerAnimationStack(const QString& layerId,

@@ -30,6 +30,7 @@ module;
 #include <QPen>
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <vector>
 
 module Artifact.Layer.Shape;
@@ -41,6 +42,7 @@ import Artifact.Mask.LayerMask;
 import Artifact.Mask.Path;
 import Property.Types;
 import Property.Abstract;
+import Property.SerializationBridge;
 import Shape.Group;
 import Shape.TrimPaths;
 import Shape.Repeater;
@@ -56,6 +58,7 @@ import Artifact.Tool.PuppetTool;
 import Artifact.Composition.Abstract;
 import Time.Rational;
 import Container.NamedVector;
+import Math.Interpolate;
 
 namespace {
 
@@ -335,9 +338,40 @@ std::vector<float> stringToDashPattern(const QString& str) {
 // F10: property/JSON transport for gradient stops. Compact JSON array of
 // {o,r,g,b,a}; empty string = no stops. Validation funnels through
 // normalizedGradientStops so the cap/sort/clamp live in one place.
+constexpr size_t kMaxGradientStops = 32;
 // Forward: defined beside normalizedShapeColor below.
+FloatColor normalizedShapeColor(const FloatColor& color);
 std::vector<Artifact::ShapeGradientStop> normalizedGradientStops(
     const std::vector<Artifact::ShapeGradientStop>& stops);
+
+std::vector<Artifact::ShapeGradientStop> gradientStopsFromJsonArray(
+    const QJsonArray& array) {
+  std::vector<Artifact::ShapeGradientStop> raw;
+  raw.reserve(std::min(static_cast<size_t>(array.size()), kMaxGradientStops));
+  const qsizetype inspectedCount = std::min(
+      array.size(), static_cast<qsizetype>(kMaxGradientStops));
+  for (qsizetype index = 0; index < inspectedCount; ++index) {
+    const auto& val = array.at(index);
+    if (!val.isObject()) continue;
+    const QJsonObject s = val.toObject();
+    if (!s.contains(QStringLiteral("o")) &&
+        !s.contains(QStringLiteral("r")) &&
+        !s.contains(QStringLiteral("g")) &&
+        !s.contains(QStringLiteral("b")) &&
+        !s.contains(QStringLiteral("a"))) {
+      continue;
+    }
+    Artifact::ShapeGradientStop stop;
+    stop.offset = static_cast<float>(s.value(QStringLiteral("o")).toDouble(0.0));
+    stop.color = FloatColor(
+        static_cast<float>(s.value(QStringLiteral("r")).toDouble(1.0)),
+        static_cast<float>(s.value(QStringLiteral("g")).toDouble(1.0)),
+        static_cast<float>(s.value(QStringLiteral("b")).toDouble(1.0)),
+        static_cast<float>(s.value(QStringLiteral("a")).toDouble(1.0)));
+    raw.push_back(stop);
+  }
+  return normalizedGradientStops(raw);
+}
 
 QString gradientStopsToString(
     const std::vector<Artifact::ShapeGradientStop>& stops) {
@@ -357,22 +391,10 @@ QString gradientStopsToString(
 
 std::vector<Artifact::ShapeGradientStop> stringToGradientStops(
     const QString& str) {
-  if (str.trimmed().isEmpty()) return {};
+  if (str.size() > 16384 || str.trimmed().isEmpty()) return {};
   const QJsonDocument doc = QJsonDocument::fromJson(str.toUtf8());
   if (!doc.isArray()) return {};
-  std::vector<Artifact::ShapeGradientStop> raw;
-  for (const auto& val : doc.array()) {
-    const QJsonObject s = val.toObject();
-    Artifact::ShapeGradientStop stop;
-    stop.offset = static_cast<float>(s["o"].toDouble(0.0));
-    stop.color = FloatColor(
-        static_cast<float>(s["r"].toDouble(1.0)),
-        static_cast<float>(s["g"].toDouble(1.0)),
-        static_cast<float>(s["b"].toDouble(1.0)),
-        static_cast<float>(s["a"].toDouble(1.0)));
-    raw.push_back(stop);
-  }
-  return normalizedGradientStops(raw);
+  return gradientStopsFromJsonArray(doc.array());
 }
 
 FloatColor mixColor(const FloatColor& a, const FloatColor& b, const float t) {
@@ -382,6 +404,149 @@ FloatColor mixColor(const FloatColor& a, const FloatColor& b, const float t) {
       a.g() + (b.g() - a.g()) * clampedT,
       a.b() + (b.b() - a.b()) * clampedT,
       a.a() + (b.a() - a.a()) * clampedT);
+}
+
+float interpolateGradientChannel(
+    const ArtifactCore::KeyFrameInterpolationSegment& segment,
+    float previous, float start, float end, float next) {
+  const float alpha = std::clamp(segment.alpha, 0.0f, 1.0f);
+  if (segment.interpolation == ArtifactCore::InterpolationType::Bezier) {
+    return ArtifactCore::bezierInterpolate(
+        start, end, alpha, segment.cp1_x, segment.cp1_y,
+        segment.cp2_x, segment.cp2_y);
+  }
+  if (segment.interpolation == ArtifactCore::InterpolationType::CatmullRom) {
+    return ArtifactCore::catmullRomInterpolate(
+        previous, start, end, next, alpha);
+  }
+  if (segment.interpolation == ArtifactCore::InterpolationType::Hermite) {
+    const float m0 = segment.beforeSpan > 0.0f
+        ? (end - previous) * static_cast<float>(
+              segment.duration / segment.beforeSpan)
+        : end - start;
+    const float m1 = segment.afterSpan > 0.0f
+        ? (next - start) * static_cast<float>(
+              segment.duration / segment.afterSpan)
+        : end - start;
+    return ArtifactCore::hermiteInterpolate(start, m0, end, m1, alpha);
+  }
+  return ArtifactCore::interpolate(start, end, alpha, segment.interpolation);
+}
+
+struct GradientStopTrackCache {
+ QString heldJson;
+ QString startJson;
+ QString endJson;
+ QString previousJson;
+ QString nextJson;
+ std::vector<Artifact::ShapeGradientStop> heldStops;
+ std::vector<Artifact::ShapeGradientStop> startStops;
+ std::vector<Artifact::ShapeGradientStop> endStops;
+ std::vector<Artifact::ShapeGradientStop> previousStops;
+ std::vector<Artifact::ShapeGradientStop> nextStops;
+ std::vector<Artifact::ShapeGradientStop> evaluatedStops;
+ bool initialized = false;
+};
+
+const std::vector<Artifact::ShapeGradientStop>& evaluateGradientStopTrack(
+    const ArtifactCore::SharedPtr<ArtifactCore::AbstractProperty>& property,
+    const ArtifactCore::RationalTime& time, GradientStopTrackCache& cache,
+    const std::vector<Artifact::ShapeGradientStop>& fallback,
+    bool* interpolating = nullptr,
+    const QString** evaluatedJson = nullptr) {
+ if (interpolating) *interpolating = false;
+ if (evaluatedJson) *evaluatedJson = nullptr;
+ if (!property) return fallback;
+ if (!cache.initialized) {
+  cache.heldStops.reserve(kMaxGradientStops);
+  cache.startStops.reserve(kMaxGradientStops);
+  cache.endStops.reserve(kMaxGradientStops);
+  cache.previousStops.reserve(kMaxGradientStops);
+  cache.nextStops.reserve(kMaxGradientStops);
+  cache.evaluatedStops.reserve(kMaxGradientStops);
+  cache.initialized = true;
+ }
+ ArtifactCore::KeyFrameInterpolationSegment segment;
+ if (property->keyFrameInterpolationSegment(time, segment)) {
+  if (interpolating) *interpolating = true;
+  const QString startJson = segment.startValue.toString();
+  const QString endJson = segment.endValue.toString();
+  if (cache.startJson != startJson || cache.endJson != endJson) {
+   cache.startStops = stringToGradientStops(startJson);
+   cache.endStops = stringToGradientStops(endJson);
+   cache.startJson = startJson;
+   cache.endJson = endJson;
+   cache.previousJson.clear();
+   cache.nextJson.clear();
+   cache.previousStops.clear();
+   cache.nextStops.clear();
+  }
+  if (cache.startStops.size() != cache.endStops.size()) {
+   return cache.startStops;
+  }
+  const bool spline =
+      segment.interpolation == ArtifactCore::InterpolationType::CatmullRom ||
+      segment.interpolation == ArtifactCore::InterpolationType::Hermite;
+  if (spline) {
+   const QString previousJson = segment.previousValue.toString();
+   const QString nextJson = segment.nextValue.toString();
+   if (cache.previousJson != previousJson) {
+    cache.previousStops = stringToGradientStops(previousJson);
+    cache.previousJson = previousJson;
+   }
+   if (cache.nextJson != nextJson) {
+    cache.nextStops = stringToGradientStops(nextJson);
+    cache.nextJson = nextJson;
+   }
+  }
+  const bool previousMatches =
+      spline && cache.previousStops.size() == cache.startStops.size();
+  const bool nextMatches = spline &&
+      cache.nextStops.size() == cache.startStops.size();
+  cache.evaluatedStops.resize(cache.startStops.size());
+  for (size_t i = 0; i < cache.startStops.size(); ++i) {
+   const auto& start = cache.startStops[i];
+   const auto& end = cache.endStops[i];
+   const auto& previous = previousMatches ? cache.previousStops[i] : start;
+   const auto& next = nextMatches ? cache.nextStops[i] : end;
+   auto& result = cache.evaluatedStops[i];
+   const float offset = interpolateGradientChannel(
+       segment, previous.offset, start.offset, end.offset, next.offset);
+   result.offset = std::isfinite(offset)
+       ? std::clamp(offset, 0.0f, 1.0f) : start.offset;
+   result.color = normalizedShapeColor(FloatColor(
+       interpolateGradientChannel(segment, previous.color.r(), start.color.r(),
+                                  end.color.r(), next.color.r()),
+       interpolateGradientChannel(segment, previous.color.g(), start.color.g(),
+                                  end.color.g(), next.color.g()),
+       interpolateGradientChannel(segment, previous.color.b(), start.color.b(),
+                                  end.color.b(), next.color.b()),
+       interpolateGradientChannel(segment, previous.color.a(), start.color.a(),
+                                  end.color.a(), next.color.a())));
+  }
+  // Bounded insertion sort preserves authored order for equal offsets and
+  // avoids allocating a temporary buffer while evaluating the frame.
+  for (size_t i = 1; i < cache.evaluatedStops.size(); ++i) {
+   const auto value = cache.evaluatedStops[i];
+   size_t j = i;
+   while (j > 0 && value.offset < cache.evaluatedStops[j - 1].offset) {
+    cache.evaluatedStops[j] = cache.evaluatedStops[j - 1];
+    --j;
+   }
+   cache.evaluatedStops[j] = value;
+  }
+  return cache.evaluatedStops;
+ }
+
+ const QVariant value = property->interpolateValue(time);
+ if (!value.isValid()) return fallback;
+ const QString json = value.toString();
+ if (cache.heldJson != json) {
+  cache.heldStops = stringToGradientStops(json);
+  cache.heldJson = json;
+ }
+ if (evaluatedJson) *evaluatedJson = &cache.heldJson;
+ return cache.heldStops;
 }
 
 QColor toQColor(const FloatColor& color) {
@@ -407,8 +572,6 @@ FloatColor normalizedShapeColor(const FloatColor& color) {
 // existing projects render identically. Stops are expected sorted by offset
 // (setFillGradientStops/normalizedShapeContent enforce it); the scan below
 // still terminates on unsorted input.
-constexpr size_t kMaxGradientStops = 32;
-
 std::vector<Artifact::ShapeGradientStop> normalizedGradientStops(
     const std::vector<Artifact::ShapeGradientStop>& stops) {
   std::vector<Artifact::ShapeGradientStop> out;
@@ -423,14 +586,14 @@ std::vector<Artifact::ShapeGradientStop> normalizedGradientStops(
     kept.color = normalizedShapeColor(stop.color);
     out.push_back(kept);
   }
-  std::sort(out.begin(), out.end(), [](const auto& a, const auto& b) {
+  std::stable_sort(out.begin(), out.end(), [](const auto& a, const auto& b) {
     return a.offset < b.offset;
   });
   return out;
 }
 
 FloatColor sampleGradientStops(
-    const std::vector<Artifact::ShapeGradientStop>& stops,
+    std::span<const Artifact::ShapeGradientStop> stops,
     const FloatColor& start, const FloatColor& end, float t) {
   if (stops.empty()) {
     return mixColor(start, end, t);
@@ -475,7 +638,7 @@ float strokeWaveOffset(float t, float amount, float frequency, float phase) {
 // F10: QGradient stops-or-fallback shared by the legacy and contents paint
 // paths. Opacity multiplies alpha like the surrounding 2-stop code.
 void applyGradientStopsToQGradient(QGradient* grad,
-    const std::vector<Artifact::ShapeGradientStop>& stops,
+    std::span<const Artifact::ShapeGradientStop> stops,
     const FloatColor& start, const FloatColor& end, float opacity) {
   if (!grad) {
     return;
@@ -530,7 +693,7 @@ double animatedShapeNumber(const Artifact::ArtifactShapeLayer* layer,
   return fallback;
  }
  const auto property = layer->getProperty(QString::fromLatin1(propertyPath));
- if (!property || property->getKeyFrames().empty()) {
+ if (!property || !property->hasKeyFrames()) {
   return fallback;
  }
  const QVariant value =
@@ -570,7 +733,7 @@ bool hasAnimatedShapeGeometry(const Artifact::ArtifactShapeLayer* layer) {
  }
  for (const char* path : kPaths) {
   const auto property = layer->getProperty(QString::fromLatin1(path));
-  if (property && !property->getKeyFrames().empty()) {
+  if (property && property->hasKeyFrames()) {
    return true;
   }
  }
@@ -661,6 +824,7 @@ void ArtifactShapeLayer::setPathKeyframe(int64_t frame,
  root[QString::number(static_cast<qint64>(frame))] =
      serializePathVertices(verts);
  property->setValue(QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact)));
+ ++impl_->contentRevision_;
  Q_EMIT changed();
 }
 
@@ -673,7 +837,7 @@ bool ArtifactShapeLayer::hasPathKeyframes() const {
  // frame marks an animated path. Keyframes live on this dedicated property
  // so the timeline can treat it like any other animatable channel.
  return !property->getValue().toString().isEmpty() ||
-        !property->getKeyFrames().empty();
+        property->hasKeyFrames();
 }
 
 std::vector<CustomPathVertex> ArtifactShapeLayer::evaluatePathAt(int64_t frame) const {
@@ -781,18 +945,18 @@ bool hasAnimatedShapeOperators(const Artifact::ArtifactShapeLayer* layer) {
   for (const char* field : kFloatFields) {
    const auto property =
        layer->getProperty(prefix + QString::fromLatin1(field));
-   if (property && !property->getKeyFrames().empty()) {
+   if (property && property->hasKeyFrames()) {
     return true;
    }
   }
   const auto modeProperty = layer->getProperty(
       prefix + QStringLiteral("mode"));
-  if (modeProperty && !modeProperty->getKeyFrames().empty()) {
+  if (modeProperty && modeProperty->hasKeyFrames()) {
    return true;
   }
   const auto compositeProperty = layer->getProperty(
       prefix + QStringLiteral("composite"));
-  if (compositeProperty && !compositeProperty->getKeyFrames().empty()) {
+  if (compositeProperty && compositeProperty->hasKeyFrames()) {
    return true;
   }
  }
@@ -814,7 +978,7 @@ void applyAnimatedOperatorParameters(const Artifact::ArtifactShapeLayer* layer,
   auto applyFloat = [&](const char* field, auto setter) {
    const auto property =
        layer->getProperty(prefix + QString::fromLatin1(field));
-   if (property && !property->getKeyFrames().empty()) {
+   if (property && property->hasKeyFrames()) {
     const QVariant value =
         property->interpolateValue(effectiveShapeTimelineTime(layer));
     if (value.isValid()) {
@@ -829,7 +993,7 @@ void applyAnimatedOperatorParameters(const Artifact::ArtifactShapeLayer* layer,
   } else if (auto* merge = dynamic_cast<ArtifactCore::MergePaths*>(&op)) {
    const auto modeProperty = layer->getProperty(
        prefix + QStringLiteral("mode"));
-   if (modeProperty && !modeProperty->getKeyFrames().empty()) {
+   if (modeProperty && modeProperty->hasKeyFrames()) {
     const QVariant value =
         modeProperty->interpolateValue(effectiveShapeTimelineTime(layer));
     if (value.isValid()) {
@@ -849,7 +1013,7 @@ void applyAnimatedOperatorParameters(const Artifact::ArtifactShapeLayer* layer,
    });
    const auto copiesProperty =
        layer->getProperty(prefix + QStringLiteral("copies"));
-   if (copiesProperty && !copiesProperty->getKeyFrames().empty()) {
+   if (copiesProperty && copiesProperty->hasKeyFrames()) {
     const QVariant value =
         copiesProperty->interpolateValue(effectiveShapeTimelineTime(layer));
     if (value.isValid()) {
@@ -878,12 +1042,12 @@ void applyAnimatedOperatorParameters(const Artifact::ArtifactShapeLayer* layer,
     wiggle->setTemporalPhase(static_cast<float>(v));
    });   applyFloat("correlation", [&](double v) { wiggle->setCorrelation(static_cast<float>(v)); });
    const auto detailProperty = layer->getProperty(prefix + QStringLiteral("detail"));
-   if (detailProperty && !detailProperty->getKeyFrames().empty()) {
+   if (detailProperty && detailProperty->hasKeyFrames()) {
     const QVariant value = detailProperty->interpolateValue(effectiveShapeTimelineTime(layer));
     if (value.isValid()) wiggle->setDetail(value.toInt());
    }
    const auto smoothProperty = layer->getProperty(prefix + QStringLiteral("smooth"));
-   if (smoothProperty && !smoothProperty->getKeyFrames().empty()) {
+   if (smoothProperty && smoothProperty->hasKeyFrames()) {
     const QVariant value = smoothProperty->interpolateValue(effectiveShapeTimelineTime(layer));
     if (value.isValid()) wiggle->setSmooth(value.toBool());
    }
@@ -906,7 +1070,7 @@ void applyAnimatedOperatorParameters(const Artifact::ArtifactShapeLayer* layer,
   if (auto* repeater = dynamic_cast<ArtifactCore::Repeater*>(&op)) {
    const auto compositeProperty =
        layer->getProperty(prefix + QStringLiteral("composite"));
-   if (compositeProperty && !compositeProperty->getKeyFrames().empty()) {
+   if (compositeProperty && compositeProperty->hasKeyFrames()) {
     const QVariant value = compositeProperty->interpolateValue(
         effectiveShapeTimelineTime(layer));
     if (value.isValid()) {
@@ -1344,11 +1508,12 @@ static float contentGradientT(const Artifact::ShapeContentFill& fill,
 }
 
 static ArtifactCore::FloatColor contentGradientColorAt(const Artifact::ShapeContentFill& fill,
-                                                       float x, float y, float w, float h) {
+                                                       float x, float y, float w, float h,
+                                                       std::span<const Artifact::ShapeGradientStop> stops) {
   if (fill.type == ArtifactSolidFillType::Solid) {
     return fill.color;
   }
-  return sampleGradientStops(fill.gradientStops, fill.gradientStart,
+  return sampleGradientStops(stops, fill.gradientStart,
                              fill.gradientEnd,
                              contentGradientT(fill, x, y, w, h));
 }
@@ -1949,6 +2114,46 @@ QString operatorName(ArtifactCore::ShapeOperatorType type) {
 
 class ArtifactShapeLayer::Impl {
 public:
+ struct ContentGradientStopsCache {
+  QString propertyPath;
+  GradientStopTrackCache track;
+ };
+ ContentGradientStopsCache legacyGradientStopsCache_;
+ ArtifactCore::NamedVector<ContentGradientStopsCache>
+     contentGradientStopsCaches_{
+         ArtifactCore::ContainerName{"Layer.ShapeContentGradientStops"}};
+
+ const std::vector<Artifact::ShapeGradientStop>& evaluatedContentGradientStops(
+     const Artifact::ArtifactShapeLayer* layer, int contentIndex,
+     const std::vector<Artifact::ShapeGradientStop>& fallback,
+     bool* interpolating = nullptr,
+     const QString** evaluatedJson = nullptr) {
+  if (interpolating) *interpolating = false;
+  if (evaluatedJson) *evaluatedJson = nullptr;
+  if (!layer || contentIndex < -1) return fallback;
+  ContentGradientStopsCache* cachePointer = nullptr;
+  if (contentIndex < 0) {
+   cachePointer = &legacyGradientStopsCache_;
+  } else {
+   const auto index = static_cast<size_t>(contentIndex);
+   if (contentGradientStopsCaches_.size() <= index) {
+    contentGradientStopsCaches_.resize(index + 1);
+   }
+   cachePointer = &contentGradientStopsCaches_[index];
+  }
+  auto& cache = *cachePointer;
+  if (cache.propertyPath.isEmpty()) {
+   cache.propertyPath = contentIndex < 0
+       ? QStringLiteral("shape.fillGradientStops")
+       : QStringLiteral("shape.content.%1.fillGradientStops").arg(contentIndex);
+  }
+  const auto property = layer->getProperty(cache.propertyPath);
+  if (!property) return fallback;
+  return evaluateGradientStopTrack(property,
+      effectiveShapeTimelineTime(layer), cache.track, fallback,
+      interpolating, evaluatedJson);
+ }
+
  Artifact::ShapeType shapeType_ = Artifact::ShapeType::Rect;
  int width_ = 200;
  int height_ = 200;
@@ -1958,6 +2163,7 @@ public:
   FloatColor fillGradientEndColor_ = FloatColor(0.0f, 0.0f, 0.0f, 1.0f);
   // F10: empty = legacy 2-stop behaviour.
   std::vector<Artifact::ShapeGradientStop> fillGradientStops_;
+  QString cachedImageGradientStopsJson_;
   float fillGradientAngleDegrees_ = 0.0f;
   float fillGradientCenterX_ = 0.5f;
   float fillGradientCenterY_ = 0.5f;
@@ -2054,6 +2260,7 @@ public:
 
     QImage cachedImage_;
     bool cacheDirty_ = true;
+    std::uint64_t contentRevision_ = 1;
 
     mutable QRectF cachedLocalBounds_;
     bool localBoundsCacheDirty_ = true;
@@ -2078,6 +2285,7 @@ public:
  ~Impl() = default;
    void addShape() {}
     void markDirty() {
+     ++contentRevision_;
      cacheDirty_ = true;
      shapeContentCacheDirty_ = true;
      nativeGeometryCacheDirty_ = true;
@@ -2137,8 +2345,16 @@ public:
    }
   void rebuildCache(
       const ShapeGeomDims* dims = nullptr,
-      const std::vector<CustomPathVertex>* pathVertices = nullptr) {
-    if (!cacheDirty_ && !dims && !pathVertices) return;
+      const std::vector<CustomPathVertex>* pathVertices = nullptr,
+      const std::vector<Artifact::ShapeGradientStop>* evaluatedStops = nullptr,
+      const QString* evaluatedStopsJson = nullptr,
+      bool forceGradientStopsRefresh = false) {
+    const bool gradientStopsChanged = evaluatedStopsJson &&
+        *evaluatedStopsJson != cachedImageGradientStopsJson_;
+    if (!cacheDirty_ && !dims && !pathVertices && !gradientStopsChanged &&
+        !forceGradientStopsRefresh) return;
+    const auto& activeGradientStops = evaluatedStops ? *evaluatedStops
+                                                      : fillGradientStops_;
     const int effW = dims ? dims->width : width_;
     const int effH = dims ? dims->height : height_;
     const float effCornerRadius = dims ? dims->cornerRadius : cornerRadius_;
@@ -2195,8 +2411,8 @@ public:
        grad->setColorAt(0.0, toQColor(fillGradientStartColor_));
        grad->setColorAt(1.0, toQColor(fillGradientEndColor_));
        // F10: multi-stop replaces the 2-stop endpoints when present.
-       if (!fillGradientStops_.empty()) {
-         applyGradientStopsToQGradient(grad, fillGradientStops_,
+       if (!activeGradientStops.empty()) {
+         applyGradientStopsToQGradient(grad, activeGradientStops,
                                        fillGradientStartColor_,
                                        fillGradientEndColor_, 1.0f);
        }
@@ -2302,6 +2518,9 @@ public:
    painter.end();
    cachedImage_ = std::move(img);
    cacheDirty_ = false;
+   if (evaluatedStopsJson) {
+    cachedImageGradientStopsJson_ = *evaluatedStopsJson;
+   }
   }
 };
 
@@ -2441,6 +2660,9 @@ float ArtifactShapeLayer::fillGradientRadius() const { return impl_->fillGradien
 void ArtifactShapeLayer::setFillGradientStops(const std::vector<Artifact::ShapeGradientStop>& stops) {
   if (!impl_) return;
   impl_->fillGradientStops_ = normalizedGradientStops(stops);
+  if (const auto property = getProperty(QStringLiteral("shape.fillGradientStops"))) {
+    property->setValue(gradientStopsToString(impl_->fillGradientStops_));
+  }
   impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed();
 }
 std::vector<Artifact::ShapeGradientStop> ArtifactShapeLayer::fillGradientStops() const {
@@ -3109,9 +3331,11 @@ ArtifactCore::ShapeLayer ArtifactShapeLayer::toCoreShapeLayer() const
         cfill.color = toQColor(content.fill.color);
       } else {
         cfill.gradientStart = toQColor(content.fill.gradientStart);
-        cfill.gradientEnd = toQColor(content.fill.gradientEnd);
-        cfill.gradientStops.clear();
-        for (const auto& stop : content.fill.gradientStops) {
+      cfill.gradientEnd = toQColor(content.fill.gradientEnd);
+      cfill.gradientStops.clear();
+        const auto evaluatedStops = impl_->evaluatedContentGradientStops(
+            this, static_cast<int>(ci), content.fill.gradientStops);
+        for (const auto& stop : evaluatedStops) {
           ArtifactCore::FillSettings::GradientStop coreStop;
           coreStop.offset = std::clamp(static_cast<double>(stop.offset), 0.0, 1.0);
           coreStop.color = toQColor(stop.color);
@@ -3187,10 +3411,12 @@ ArtifactCore::ShapeLayer ArtifactShapeLayer::toCoreShapeLayer() const
  if (impl_->fillType_ == ArtifactSolidFillType::Solid) {
   fill.color = toQColor(impl_->fillColor_);
  } else {
+  const auto& effectiveStops = impl_->evaluatedContentGradientStops(
+      this, -1, impl_->fillGradientStops_);
   fill.gradientStart = toQColor(impl_->fillGradientStartColor_);
   fill.gradientEnd = toQColor(impl_->fillGradientEndColor_);
   fill.gradientStops.clear();
-  for (const auto& stop : impl_->fillGradientStops_) {
+  for (const auto& stop : effectiveStops) {
    ArtifactCore::FillSettings::GradientStop coreStop;
    coreStop.offset = std::clamp(static_cast<double>(stop.offset), 0.0, 1.0);
    coreStop.color = toQColor(stop.color);
@@ -3555,6 +3781,10 @@ Artifact::ShapeContent ArtifactShapeLayer::makeContentFromLegacy() const {
 
 int ArtifactShapeLayer::shapeContentCount() const {
   return impl_ ? static_cast<int>(impl_->shapeContents_.size()) : 0;
+}
+
+std::uint64_t ArtifactShapeLayer::contentRevision() const {
+  return impl_ ? impl_->contentRevision_ : 0;
 }
 
 bool ArtifactShapeLayer::hasMultiShapeContents() const {
@@ -4101,8 +4331,10 @@ QImage ArtifactShapeLayer::renderContentsToImage() const {
           content.fill.gradientEnd.b(),
           content.fill.gradientEnd.a() * content.opacity)));
       // F10: multi-stop replaces the 2-stop endpoints when present.
-      if (!content.fill.gradientStops.empty()) {
-        applyGradientStopsToQGradient(grad, content.fill.gradientStops,
+      const auto evaluatedStops = impl->evaluatedContentGradientStops(
+          this, static_cast<int>(ci), content.fill.gradientStops);
+      if (!evaluatedStops.empty()) {
+        applyGradientStopsToQGradient(grad, evaluatedStops,
                                       content.fill.gradientStart,
                                       content.fill.gradientEnd,
                                       content.opacity);
@@ -4220,6 +4452,11 @@ QImage ArtifactShapeLayer::toQImage() const {
   if (impl_ && !impl_->shapeContents_.empty()) {
     return renderContentsToImage();
   }
+  bool interpolatingGradientStops = false;
+  const QString* evaluatedStopsJson = nullptr;
+  const auto& evaluatedStops = impl_->evaluatedContentGradientStops(
+      this, -1, impl_->fillGradientStops_, &interpolatingGradientStops,
+      &evaluatedStopsJson);
   const bool geomAnimated = hasAnimatedShapeGeometry(this);
   const bool pathAnimated = hasPathKeyframes();
  if (geomAnimated || pathAnimated) {
@@ -4229,9 +4466,12 @@ QImage ArtifactShapeLayer::toQImage() const {
   const std::vector<CustomPathVertex> evaluatedPathVertices =
       pathAnimated ? evaluatePathAt(currentFrame())
                    : impl_->customPathVertices_;
-  impl_->rebuildCache(&dims, &evaluatedPathVertices);
+  impl_->rebuildCache(&dims, &evaluatedPathVertices,
+                      &evaluatedStops, evaluatedStopsJson,
+                      interpolatingGradientStops);
  } else {
-  impl_->rebuildCache();
+  impl_->rebuildCache(nullptr, nullptr, &evaluatedStops,
+                      evaluatedStopsJson, interpolatingGradientStops);
  }
  return impl_->cachedImage_;
 }
@@ -4519,11 +4759,28 @@ struct GpuPaintItem {
   std::vector<ArtifactCore::ShapePath> fillPaths;
   std::vector<ArtifactCore::ShapePath> strokePaths;
   Artifact::ShapeContentFill fill;
+  // Borrow the authored or cached evaluated storage; do not duplicate the
+  // stop list inside each per-frame paint item.
+  std::span<const Artifact::ShapeGradientStop> gradientStops;
+  int contentIndex = -1;
   Artifact::ShapeContentStroke stroke;
   float gradientW = 1.0f;
   float gradientH = 1.0f;
   float itemOpacity = 1.0f;
 };
+
+static void copyGpuFillFields(Artifact::ShapeContentFill& destination,
+                              const Artifact::ShapeContentFill& source) {
+  destination.enabled = source.enabled;
+  destination.color = source.color;
+  destination.type = source.type;
+  destination.gradientStart = source.gradientStart;
+  destination.gradientEnd = source.gradientEnd;
+  destination.gradientAngleDegrees = source.gradientAngleDegrees;
+  destination.gradientCenterX = source.gradientCenterX;
+  destination.gradientCenterY = source.gradientCenterY;
+  destination.gradientRadius = source.gradientRadius;
+}
 
 // Evaluates the persisted ordered Shape Group.  A path entry contributes
 // geometry, an operator rewrites every path accumulated above it, and a paint
@@ -4561,7 +4818,9 @@ static std::vector<GpuPaintItem> evaluateShapeStack(
     GpuPaintItem item;
     item.fillPaths = paths;
     item.strokePaths = paths;
-    item.fill = content.fill;
+    copyGpuFillFields(item.fill, content.fill);
+    item.gradientStops = content.fill.gradientStops;
+    item.contentIndex = node.contentIndex;
     item.stroke = content.stroke;
     if (node.type == Artifact::ShapeStackNodeType::Fill) {
       item.stroke.enabled = false;
@@ -4608,7 +4867,8 @@ static void paintGpuPaintItems(Artifact::ArtifactIRenderer* renderer,
           const double cx = (tri.p0.x() + tri.p1.x() + tri.p2.x()) / 3.0;
           const double cy = (tri.p0.y() + tri.p1.y() + tri.p2.y()) / 3.0;
           ArtifactCore::FloatColor c = contentGradientColorAt(
-              item.fill, static_cast<float>(cx), static_cast<float>(cy), gradW, gradH);
+              item.fill, static_cast<float>(cx), static_cast<float>(cy), gradW, gradH,
+              item.gradientStops);
           c = ArtifactCore::FloatColor(c.r(), c.g(), c.b(), c.a() * opacity);
           const QPointF p0 = mapDeformerPoint(transform, tri.p0, deformerContext, pointMapper, layer);
           const QPointF p1 = mapDeformerPoint(transform, tri.p1, deformerContext, pointMapper, layer);
@@ -4708,7 +4968,7 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer,
  void* activeDeformerContext = deformerContext && prepareDeformer &&
      prepareDeformer(deformerContext, this) ? deformerContext : nullptr;
   const QMatrix4x4 baseTransform = getGlobalTransform4x4();
-   const float contentFieldWeight = compositionFieldContentWeight(this);
+ const float contentFieldWeight = compositionFieldContentWeight(this);
   auto* impl = impl_;
   // Gap 1: multi-content GPU rendering. Each visible content paints with its
   // own fill/stroke after merge resolution. Physics grids stay legacy-only.
@@ -4742,6 +5002,13 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer,
     contentItems = evaluateShapeStack(impl->shapeStackNodes_, impl->shapeContents_,
                                       activeOperators);
     for (auto& item : contentItems) {
+     if (item.contentIndex >= 0 &&
+         static_cast<size_t>(item.contentIndex) < impl->shapeContents_.size()) {
+      const auto& content =
+          impl->shapeContents_[static_cast<size_t>(item.contentIndex)];
+      item.gradientStops = impl->evaluatedContentGradientStops(
+          this, item.contentIndex, content.fill.gradientStops);
+     }
      item.strokePaths.clear();
      item.strokePaths.reserve(item.fillPaths.size());
      for (const auto& path : item.fillPaths) {
@@ -4767,7 +5034,10 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer,
      item.strokePaths.push_back(
          strokeAlignedPath(path, content.stroke.align, content.stroke.width));
     }
-    item.fill = content.fill;
+    copyGpuFillFields(item.fill, content.fill);
+    item.gradientStops = impl->evaluatedContentGradientStops(
+        this, static_cast<int>(ci), content.fill.gradientStops);
+    item.contentIndex = static_cast<int>(ci);
     item.stroke = content.stroke;
     item.gradientW = static_cast<float>(std::max(1, content.geometry.width));
     item.gradientH = static_cast<float>(std::max(1, content.geometry.height));
@@ -4796,6 +5066,8 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer,
                        opacity() * contentFieldWeight);
    return;
   }
+  const auto& effectiveStops = impl->evaluatedContentGradientStops(
+      this, -1, impl->fillGradientStops_);
   const bool geomAnimated = hasAnimatedShapeGeometry(this);
   const bool pathAnimated = hasPathKeyframes();
   const std::vector<CustomPathVertex> evaluatedPathVertices =
@@ -4946,6 +5218,7 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer,
    legacyItem.fill.type = impl->fillType_;
    legacyItem.fill.gradientStart = impl->fillGradientStartColor_;
    legacyItem.fill.gradientEnd = impl->fillGradientEndColor_;
+   legacyItem.gradientStops = &effectiveStops;
    legacyItem.fill.gradientAngleDegrees = impl->fillGradientAngleDegrees_;
    legacyItem.fill.gradientCenterX = impl->fillGradientCenterX_;
    legacyItem.fill.gradientCenterY = impl->fillGradientCenterY_;
@@ -5223,13 +5496,14 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactShapeLayer::getLayerPropertyGro
   fillGradRadiusProp->setDisplayLabel(QStringLiteral("Gradient Radius"));
    appearanceGroup.addProperty(fillGradRadiusProp);
 
-  // F10: multi-stop gradient as compact JSON [{o,r,g,b,a}]. Empty = 2-stop.
+  // F10: edited with the dedicated stop-list control; value remains compact
+  // JSON [{o,r,g,b,a}] for the existing property and project persistence path.
   auto fillGradStopsProp = makeProp(QStringLiteral("shape.fillGradientStops"),
                                     ArtifactCore::PropertyType::String,
                                     gradientStopsToString(impl_->fillGradientStops_),
-                                    -192, false);
+                                    -192);
   fillGradStopsProp->setDisplayLabel(QStringLiteral("Gradient Stops"));
-  fillGradStopsProp->setTooltip(QStringLiteral("JSON [{o,r,g,b,a}]; empty = 2-color"));
+  fillGradStopsProp->setTooltip(QStringLiteral("Add/remove stops and edit position/color (max 32); keyframes hold the complete ramp"));
    appearanceGroup.addProperty(fillGradStopsProp);
 
  auto strokeColorProp = makeProp(QStringLiteral("shape.strokeColor"),
@@ -5513,6 +5787,56 @@ auto countProp = makeProp(QStringLiteral("shape.contents.count"),
           -184);
       fillColorProp->setDisplayLabel(QStringLiteral("Fill Color"));
       contentsGroup.addProperty(fillColorProp);
+      auto fillTypeProp = makeProp(
+          prefix + QStringLiteral("fillType"),
+          ArtifactCore::PropertyType::Integer,
+          static_cast<int>(content.fill.type), -184);
+      fillTypeProp->setHardRange(0, 5);
+      fillTypeProp->setDisplayLabel(QStringLiteral("Fill Type"));
+      contentsGroup.addProperty(fillTypeProp);
+      auto addContentGradientColor = [&](const QString& field,
+                                         const FloatColor& color,
+                                         const QString& label, int priority) {
+        auto prop = makeProp(prefix + field, ArtifactCore::PropertyType::Color,
+            QColor(static_cast<int>(color.r() * 255),
+                   static_cast<int>(color.g() * 255),
+                   static_cast<int>(color.b() * 255),
+                   static_cast<int>(color.a() * 255)), priority, false);
+        prop->setDisplayLabel(label);
+        contentsGroup.addProperty(prop);
+      };
+      addContentGradientColor(QStringLiteral("gradientStartColor"),
+          content.fill.gradientStart, QStringLiteral("Gradient Start"), -183);
+      addContentGradientColor(QStringLiteral("gradientEndColor"),
+          content.fill.gradientEnd, QStringLiteral("Gradient End"), -182);
+      auto addContentGradientNumber = [&](const QString& field, float value,
+                                          const QString& label, int priority,
+                                          double minimum, double maximum) {
+        auto prop = makeProp(prefix + field, ArtifactCore::PropertyType::Float,
+                             value, priority, false);
+        prop->setHardRange(minimum, maximum);
+        prop->setDisplayLabel(label);
+        contentsGroup.addProperty(prop);
+      };
+      addContentGradientNumber(QStringLiteral("gradientAngle"),
+          content.fill.gradientAngleDegrees, QStringLiteral("Gradient Angle"),
+          -181, -360.0, 360.0);
+      addContentGradientNumber(QStringLiteral("gradientCenterX"),
+          content.fill.gradientCenterX, QStringLiteral("Gradient Center X"),
+          -180, 0.0, 1.0);
+      addContentGradientNumber(QStringLiteral("gradientCenterY"),
+          content.fill.gradientCenterY, QStringLiteral("Gradient Center Y"),
+          -179, 0.0, 1.0);
+      addContentGradientNumber(QStringLiteral("gradientRadius"),
+          content.fill.gradientRadius, QStringLiteral("Gradient Radius"),
+          -178, 0.001, 100000.0);
+      auto fillStopsProp = makeProp(
+          prefix + QStringLiteral("fillGradientStops"),
+          ArtifactCore::PropertyType::String,
+          gradientStopsToString(content.fill.gradientStops), -177);
+      fillStopsProp->setDisplayLabel(QStringLiteral("Gradient Stops"));
+      fillStopsProp->setTooltip(QStringLiteral("Add/remove stops and edit position/color (max 32)"));
+      contentsGroup.addProperty(fillStopsProp);
       auto strokeEnabledProp = makeProp(
           prefix + QStringLiteral("strokeEnabled"),
           ArtifactCore::PropertyType::Boolean, content.stroke.enabled, -183);
@@ -6069,6 +6393,46 @@ if (propertyPath == "shape.dashOffset") {
           content.fill.color = normalizedShapeColor(
               FloatColor(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
           handled = true;
+        } else if (field == "fillType") {
+          content.fill.type = static_cast<ArtifactSolidFillType>(
+              std::clamp(value.toInt(), 0, 5));
+          handled = true;
+        } else if (field == "gradientStartColor" ||
+                   field == "gradientEndColor") {
+          const auto c = value.value<QColor>();
+          const FloatColor color = normalizedShapeColor(
+              FloatColor(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
+          if (field == "gradientStartColor") {
+            content.fill.gradientStart = color;
+          } else {
+            content.fill.gradientEnd = color;
+          }
+          handled = true;
+        } else if (field == "gradientAngle") {
+          const float next = value.toFloat();
+          content.fill.gradientAngleDegrees = std::isfinite(next)
+              ? std::clamp(next, -360.0f, 360.0f) : 0.0f;
+          handled = true;
+        } else if (field == "gradientCenterX" ||
+                   field == "gradientCenterY") {
+          const float next = value.toFloat();
+          const float normalized = std::isfinite(next)
+              ? std::clamp(next, 0.0f, 1.0f) : 0.5f;
+          if (field == "gradientCenterX") {
+            content.fill.gradientCenterX = normalized;
+          } else {
+            content.fill.gradientCenterY = normalized;
+          }
+          handled = true;
+        } else if (field == "gradientRadius") {
+          const float next = value.toFloat();
+          content.fill.gradientRadius = std::isfinite(next)
+              ? std::clamp(next, 0.001f, 100000.0f) : 0.5f;
+          handled = true;
+        } else if (field == "fillGradientStops") {
+          content.fill.gradientStops =
+              stringToGradientStops(value.toString());
+          handled = true;
         } else if (field == "strokeEnabled") {
           content.stroke.enabled = value.toBool();
           handled = true;
@@ -6524,17 +6888,8 @@ static Artifact::ShapeContent shapeContentFromJson(const QJsonObject& obj) {
   content.fill.gradientCenterX = static_cast<float>(fill["gradCenterX"].toDouble(0.5));
   content.fill.gradientCenterY = static_cast<float>(fill["gradCenterY"].toDouble(0.5));
   content.fill.gradientRadius = static_cast<float>(fill["gradRadius"].toDouble(0.5));
-  for (const auto& val : fill["gradStops"].toArray()) {
-    const QJsonObject s = val.toObject();
-    Artifact::ShapeGradientStop stop;
-    stop.offset = static_cast<float>(s["o"].toDouble(0.0));
-    stop.color = FloatColor(
-        static_cast<float>(s["r"].toDouble(1.0)),
-        static_cast<float>(s["g"].toDouble(1.0)),
-        static_cast<float>(s["b"].toDouble(1.0)),
-        static_cast<float>(s["a"].toDouble(1.0)));
-    content.fill.gradientStops.push_back(stop);
-  }
+  content.fill.gradientStops =
+      gradientStopsFromJsonArray(fill["gradStops"].toArray());
   const QJsonObject stroke = obj["stroke"].toObject();
   content.stroke.enabled = stroke["enabled"].toBool(false);
   content.stroke.color = FloatColor(
@@ -6707,6 +7062,7 @@ static QString svgPathData(const ArtifactCore::ShapePath& path) {
 // round-trips through the importer below. Conical has no SVG equivalent
 // and falls back to the start color.
 static QString svgFillAttr(const Artifact::ShapeContentFill& fill, int contentIndex,
+                           std::span<const Artifact::ShapeGradientStop> gradientStops,
                            QString* defsOut) {
   if (!fill.enabled) {
     return QStringLiteral("none");
@@ -6715,12 +7071,21 @@ static QString svgFillAttr(const Artifact::ShapeContentFill& fill, int contentIn
   if (type == 1 || type == 2 || type == 4 || type == 5) {
     const QString gid = QStringLiteral("ag%1f").arg(contentIndex);
     QString stops;
-    QString so0;
-    stops += QStringLiteral("<stop offset=\"0\" stop-color=\"%1\" stop-opacity=\"%2\"/>")
-                 .arg(svgColorRgb(fill.gradientStart, &so0), so0);
-    QString so1;
-    stops += QStringLiteral("<stop offset=\"1\" stop-color=\"%1\" stop-opacity=\"%2\"/>")
-                 .arg(svgColorRgb(fill.gradientEnd, &so1), so1);
+    if (gradientStops.empty()) {
+      QString so0;
+      stops += QStringLiteral("<stop offset=\"0\" stop-color=\"%1\" stop-opacity=\"%2\"/>")
+                   .arg(svgColorRgb(fill.gradientStart, &so0), so0);
+      QString so1;
+      stops += QStringLiteral("<stop offset=\"1\" stop-color=\"%1\" stop-opacity=\"%2\"/>")
+                   .arg(svgColorRgb(fill.gradientEnd, &so1), so1);
+    } else {
+      for (const auto& stop : gradientStops) {
+        QString stopOpacity;
+        const QString stopColor = svgColorRgb(stop.color, &stopOpacity);
+        stops += QStringLiteral("<stop offset=\"%1\" stop-color=\"%2\" stop-opacity=\"%3\"/>")
+            .arg(svgNumber(stop.offset), stopColor, stopOpacity);
+      }
+    }
     if (type == 1 || type == 4 || type == 5) {
       const float rad = fill.gradientAngleDegrees * 3.14159265f / 180.0f;
       const float dx = std::cos(rad) * 0.5f;
@@ -6759,6 +7124,7 @@ static QString svgFillAttr(const Artifact::ShapeContentFill& fill, int contentIn
 QString ArtifactShapeLayer::shapeContentsToSvg() const {
   struct ExportItem {
     Artifact::ShapeContent content;
+    std::span<const Artifact::ShapeGradientStop> gradientStops;
     std::vector<ArtifactCore::ShapePath> paths;
   };
   std::vector<ExportItem> items;
@@ -6773,6 +7139,16 @@ QString ArtifactShapeLayer::shapeContentsToSvg() const {
           item.content.opacity = paintItem.itemOpacity;
           item.content.fill = paintItem.fill;
           item.content.stroke = paintItem.stroke;
+          if (paintItem.contentIndex >= 0 &&
+              static_cast<size_t>(paintItem.contentIndex) <
+                  impl_->shapeContents_.size()) {
+            const auto& source = impl_->shapeContents_[
+                static_cast<size_t>(paintItem.contentIndex)];
+            item.gradientStops = impl_->evaluatedContentGradientStops(
+                this, paintItem.contentIndex, source.fill.gradientStops);
+          } else {
+            item.gradientStops = paintItem.gradientStops;
+          }
           item.content.geometry.width = std::max(1, static_cast<int>(paintItem.gradientW));
           item.content.geometry.height = std::max(1, static_cast<int>(paintItem.gradientH));
           item.paths = paintItem.fill.enabled ? paintItem.fillPaths : paintItem.strokePaths;
@@ -6787,6 +7163,8 @@ QString ArtifactShapeLayer::shapeContentsToSvg() const {
           }
         ExportItem item;
         item.content = content;
+        item.gradientStops = impl_->evaluatedContentGradientStops(
+            this, static_cast<int>(ci), content.fill.gradientStops);
         if (ci < impl_->contentCache_.visPaths.size()) {
           item.paths = impl_->contentCache_.visPaths[ci];
         }
@@ -6832,7 +7210,8 @@ QString ArtifactShapeLayer::shapeContentsToSvg() const {
       if (d.isEmpty()) {
         continue;
       }
-      QString fillValue = svgFillAttr(content.fill, contentIndex, &defs);
+      QString fillValue = svgFillAttr(content.fill, contentIndex,
+                                      item.gradientStops, &defs);
       QString fillOpacityAttr;
       const int pipeAt = fillValue.indexOf(QChar('|'));
       if (pipeAt >= 0) {
@@ -8249,7 +8628,33 @@ QJsonObject ArtifactShapeLayer::toJson() const {
    for (const auto& content : impl_->shapeContents_) {
      contents.push_back(shapeContentToJson(content));
    }
-obj["shapeContents"] = contents;
+  obj["shapeContents"] = contents;
+   // Gradient stop ramps are stored as compact JSON strings in animatable
+   // properties. Persist only these explicit Shape channels, using the shared
+   // property bridge so interpolation metadata survives project round trips.
+   (void)getLayerPropertyGroups();
+   QJsonObject gradientStopTracks;
+   const auto appendGradientStopTrack = [&](const QString& path) {
+     const auto property = getProperty(path);
+     if (!property) return;
+     const auto serialized =
+         ArtifactCore::PropertySerializationBridge::serializeProperty(property);
+     if (serialized.keyframes.isEmpty()) return;
+     QJsonObject track;
+     track[QStringLiteral("type")] = serialized.type;
+     track[QStringLiteral("value")] = serialized.value;
+     track[QStringLiteral("keyframes")] = serialized.keyframes;
+     gradientStopTracks.insert(path, track);
+   };
+   appendGradientStopTrack(QStringLiteral("shape.fillGradientStops"));
+   for (size_t contentIndex = 0; contentIndex < impl_->shapeContents_.size();
+        ++contentIndex) {
+     appendGradientStopTrack(
+         QStringLiteral("shape.content.%1.fillGradientStops").arg(contentIndex));
+   }
+   if (!gradientStopTracks.isEmpty()) {
+     obj[QStringLiteral("shapeGradientStopTracks")] = gradientStopTracks;
+   }
    QJsonArray stackNodes;
    for (const auto& node : impl_->shapeStackNodes_) {
      stackNodes.push_back(shapeStackNodeToJson(node));
@@ -8288,18 +8693,8 @@ SharedPtr<ArtifactShapeLayer> ArtifactShapeLayer::fromJson(const QJsonObject &ob
   layer->setFillGradientCenterY(static_cast<float>(obj["fillGradCenterY"].toDouble(0.5)));
   layer->setFillGradientRadius(static_cast<float>(obj["fillGradRadius"].toDouble(0.5)));
   {
-    std::vector<Artifact::ShapeGradientStop> stops;
-    for (const auto& val : obj["fillGradStops"].toArray()) {
-      const QJsonObject s = val.toObject();
-      Artifact::ShapeGradientStop stop;
-      stop.offset = static_cast<float>(s["o"].toDouble(0.0));
-      stop.color = FloatColor(
-          static_cast<float>(s["r"].toDouble(1.0)),
-          static_cast<float>(s["g"].toDouble(1.0)),
-          static_cast<float>(s["b"].toDouble(1.0)),
-          static_cast<float>(s["a"].toDouble(1.0)));
-      stops.push_back(stop);
-    }
+    const auto stops = gradientStopsFromJsonArray(
+        obj["fillGradStops"].toArray());
     // Absent key = legacy file: leave the default empty stops untouched.
     if (!stops.empty() || obj.contains(QStringLiteral("fillGradStops"))) {
       layer->setFillGradientStops(stops);
@@ -8420,9 +8815,46 @@ SharedPtr<ArtifactShapeLayer> ArtifactShapeLayer::fromJson(const QJsonObject &ob
   layer->impl_->shapeContents_.clear();
   const int contentCount = std::min(static_cast<int>(contentsArr.size()), 256);
   layer->impl_->shapeContents_.reserve(contentCount);
-for (int contentIndex = 0; contentIndex < contentCount; ++contentIndex) {
+  for (int contentIndex = 0; contentIndex < contentCount; ++contentIndex) {
     layer->impl_->shapeContents_.push_back(
         shapeContentFromJson(contentsArr.at(contentIndex).toObject()));
+  }
+  const QJsonObject gradientStopTracks =
+      obj.value(QStringLiteral("shapeGradientStopTracks")).toObject();
+  if (!gradientStopTracks.isEmpty()) {
+    // Materialize the persistent Shape properties after static content data is
+    // restored, then accept only the known legacy/content gradient-stop paths.
+    (void)layer->getLayerPropertyGroups();
+    int restoredTrackCount = 0;
+    for (auto it = gradientStopTracks.constBegin();
+         it != gradientStopTracks.constEnd() && restoredTrackCount < 257; ++it) {
+      const QString& path = it.key();
+      bool allowedPath = path == QStringLiteral("shape.fillGradientStops");
+      if (!allowedPath && path.startsWith(QStringLiteral("shape.content.")) &&
+          path.endsWith(QStringLiteral(".fillGradientStops"))) {
+        const QString indexText = path.mid(QStringLiteral("shape.content.").size(),
+            path.size() - QStringLiteral("shape.content.").size() -
+                QStringLiteral(".fillGradientStops").size());
+        bool indexOk = false;
+        const int contentIndex = indexText.toInt(&indexOk);
+        allowedPath = indexOk && contentIndex >= 0 &&
+            contentIndex < static_cast<int>(layer->impl_->shapeContents_.size());
+      }
+      if (!allowedPath || !it.value().isObject()) continue;
+      auto property = layer->getProperty(path);
+      if (!property) continue;
+      const QJsonObject track = it.value().toObject();
+      ArtifactCore::SerializedProperty serialized;
+      serialized.name = path;
+      serialized.type = track.value(QStringLiteral("type")).toInt(
+          static_cast<int>(property->getType()));
+      serialized.value = track.value(QStringLiteral("value"));
+      serialized.keyframes = track.value(QStringLiteral("keyframes")).toArray();
+      property->setAnimatable(true);
+      ArtifactCore::PropertySerializationBridge::deserializeProperty(
+          property, serialized);
+      ++restoredTrackCount;
+    }
   }
   const QJsonArray stackNodesArr = obj["shapeStackNodes"].toArray();
   layer->impl_->shapeStackNodes_.clear();

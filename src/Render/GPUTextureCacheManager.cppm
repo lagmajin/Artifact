@@ -1,5 +1,6 @@
 module;
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -14,6 +15,7 @@ module;
 #include <QMutex>
 #include <QSet>
 #include <QString>
+#include <QStringView>
 #include <QDebug>
 #include <QMutexLocker>
 #include <vulkan/vulkan.h>
@@ -41,6 +43,78 @@ size_t bytesForImage(const QImage& image)
         return 0;
     }
     return static_cast<size_t>(image.bytesPerLine()) * static_cast<size_t>(image.height());
+}
+
+void appendSignedDecimal(QString& output, int value)
+{
+    char digits[std::numeric_limits<unsigned>::digits10 + 1];
+    int digitCount = 0;
+    const bool negative = value < 0;
+    unsigned magnitude = negative
+        ? static_cast<unsigned>(-static_cast<std::int64_t>(value))
+        : static_cast<unsigned>(value);
+    do {
+        digits[digitCount++] = static_cast<char>('0' + magnitude % 10u);
+        magnitude /= 10u;
+    } while (magnitude != 0u);
+
+    if (negative) {
+        output.append(QLatin1Char('-'));
+    }
+    while (digitCount > 0) {
+        output.append(QLatin1Char(digits[--digitCount]));
+    }
+}
+
+QString colorAwareImageCacheKey(
+    const QString& cacheKey,
+    const ArtifactCore::ImageF32x4_RGBA& image)
+{
+    const auto descriptor = image.colorDescriptor();
+    QString result = cacheKey;
+    const qsizetype cacheKeySize = cacheKey.size();
+    if (cacheKeySize <= std::numeric_limits<qsizetype>::max() - 48) {
+        result.reserve(cacheKeySize + 48);
+    }
+    result.append(QStringLiteral("|color:"));
+    appendSignedDecimal(result, static_cast<int>(descriptor.storage));
+    result.append(QLatin1Char(','));
+    appendSignedDecimal(result, static_cast<int>(descriptor.channelOrder));
+    result.append(QLatin1Char(','));
+    appendSignedDecimal(result, static_cast<int>(descriptor.primaries));
+    result.append(QLatin1Char(','));
+    appendSignedDecimal(result, static_cast<int>(descriptor.transfer));
+    result.append(QLatin1Char(','));
+    appendSignedDecimal(result, static_cast<int>(descriptor.alphaMode));
+    result.append(QLatin1Char(','));
+    appendSignedDecimal(result, static_cast<int>(descriptor.range));
+    result.append(QLatin1Char(','));
+    appendSignedDecimal(result, descriptor.transferKnown ? 1 : 0);
+    return result;
+}
+
+QStringView versionedAssetCacheToken(const QString& cacheKey)
+{
+    if (!cacheKey.startsWith(QStringLiteral("video-gpu:v")) &&
+        !cacheKey.startsWith(QStringLiteral("image-f32:v"))) {
+        return {};
+    }
+
+    const QStringView key{cacheKey};
+    const qsizetype versionStart = key.indexOf(u':') + 1;
+    if (versionStart <= 0) {
+        return {};
+    }
+    const qsizetype variantSeparator = key.indexOf(u'|', versionStart);
+    const qsizetype frameSeparator = key.indexOf(u':', versionStart);
+    qsizetype tokenEnd = key.size();
+    if (variantSeparator >= 0) {
+        tokenEnd = std::min(tokenEnd, variantSeparator);
+    }
+    if (frameSeparator >= 0) {
+        tokenEnd = std::min(tokenEnd, frameSeparator);
+    }
+    return key.first(tokenEnd);
 }
 
 Diligent::TEXTURE_FORMAT textureFormatFromVulkanNativeFormat(std::uint32_t nativeFormat)
@@ -107,8 +181,7 @@ void GPUTextureCacheManager::setDevice(RefCntAutoPtr<IRenderDevice> device,
                                        TEXTURE_FORMAT format)
 {
     QMutexLocker locker(&mutex_);
-    ++invalidationCount_;
-    lastInvalidationReason_ = GPUTextureCacheInvalidationReason::DeviceReset;
+    recordInvalidationLocked(GPUTextureCacheInvalidationReason::DeviceReset);
     clearLocked();
     device_ = std::move(device);
     textureFormat_ = format;
@@ -122,8 +195,7 @@ void GPUTextureCacheManager::setDevice(RefCntAutoPtr<IRenderDevice> device,
 void GPUTextureCacheManager::clearDevice()
 {
     QMutexLocker locker(&mutex_);
-    ++invalidationCount_;
-    lastInvalidationReason_ = GPUTextureCacheInvalidationReason::DeviceReset;
+    recordInvalidationLocked(GPUTextureCacheInvalidationReason::DeviceReset);
     clearLocked();
     if (uploadCoordinator_) {
         uploadCoordinator_->clearDevice();
@@ -168,16 +240,23 @@ void GPUTextureCacheManager::beginFrame(quint64 frameIndex)
             it->lastUsedFrame = frameIndex;
         }
     }
+    if (frameIndex != currentFrameIndex_) {
+        pendingUploadWorkProcessedThisFrame_ = false;
+        expirationWorkProcessedThisFrame_ = false;
+        expiredEvictionsThisFrame_ = 0;
+    }
     currentFrameIndex_ = frameIndex;
     processPendingUploadsLocked();
-    pruneExpiredLocked();
+    if (!expirationWorkProcessedThisFrame_) {
+        expirationWorkProcessedThisFrame_ = true;
+        pruneExpiredLocked();
+    }
 }
 
 void GPUTextureCacheManager::setResourceExpirationFrames(quint64 frameCount)
 {
     QMutexLocker locker(&mutex_);
     resourceExpirationFrames_ = frameCount;
-    pruneExpiredLocked();
 }
 
 quint64 GPUTextureCacheManager::resourceExpirationFrames() const
@@ -189,7 +268,8 @@ quint64 GPUTextureCacheManager::resourceExpirationFrames() const
 void GPUTextureCacheManager::setMaxExpiredEvictionsPerFrame(int count)
 {
     QMutexLocker locker(&mutex_);
-    maxExpiredEvictionsPerFrame_ = std::max(1, count);
+    maxExpiredEvictionsPerFrame_ = std::clamp(
+        count, 1, MaxExpiredEvictionsPerFrameLimit);
 }
 
 int GPUTextureCacheManager::maxExpiredEvictionsPerFrame() const
@@ -238,16 +318,7 @@ GPUTextureCacheHandle GPUTextureCacheManager::acquireOrCreate(const QString& own
                                                               const QString& cacheKey,
                                                               const ArtifactCore::ImageF32x4_RGBA& image)
 {
-    const auto descriptor = image.colorDescriptor();
-    const QString colorAwareCacheKey =
-        cacheKey + QStringLiteral("|color:%1,%2,%3,%4,%5,%6,%7")
-                       .arg(static_cast<int>(descriptor.storage))
-                       .arg(static_cast<int>(descriptor.channelOrder))
-                       .arg(static_cast<int>(descriptor.primaries))
-                       .arg(static_cast<int>(descriptor.transfer))
-                       .arg(static_cast<int>(descriptor.alphaMode))
-                       .arg(static_cast<int>(descriptor.range))
-                       .arg(descriptor.transferKnown ? 1 : 0);
+    const QString colorAwareCacheKey = colorAwareImageCacheKey(cacheKey, image);
     {
         QMutexLocker locker(&mutex_);
         GPUTextureCacheHandle existingHandle;
@@ -315,42 +386,10 @@ GPUTextureCacheHandle GPUTextureCacheManager::acquireOrCreate(const QString& own
         return {};
     }
 
-    const QString currentVersionToken =
-        (ownerId.startsWith(QStringLiteral("asset:")) &&
-         (cacheKey.startsWith(QStringLiteral("video-gpu:v")) ||
-          cacheKey.startsWith(QStringLiteral("image-f32:v"))))
-            ? cacheKey.section(QLatin1Char(':'), 1, 1)
-            : QString();
-    if (!currentVersionToken.isEmpty()) {
-        const auto ownerIds = ownerToIds_.value(ownerId);
-        for (const quint64 id : ownerIds) {
-            const auto entryIt = entries_.constFind(id);
-            if (entryIt != entries_.cend() &&
-                entryIt->cacheKey.section(QLatin1Char(':'), 1, 1) != currentVersionToken) {
-                eraseEntryByIdLocked(id);
-            }
-        }
-        QList<quint64> stalePendingIds;
-        for (auto pendingIt = pendingUploads_.cbegin();
-             pendingIt != pendingUploads_.cend(); ++pendingIt) {
-            if (pendingIt->ownerId == ownerId &&
-                pendingIt->cacheKey.section(QLatin1Char(':'), 1, 1) != currentVersionToken) {
-                stalePendingIds.push_back(pendingIt.key());
-            }
-        }
-        for (const quint64 ticketId : stalePendingIds) {
-            const auto pendingIt = pendingUploads_.find(ticketId);
-            if (pendingIt == pendingUploads_.end()) continue;
-            if (uploadCoordinator_) {
-                uploadCoordinator_->cancel(
-                    {pendingIt->ticketId, pendingIt->ticketGeneration});
-            }
-            pendingKeyToTicket_.remove(pendingIt->fullKey);
-            pendingUploads_.erase(pendingIt);
-        }
-    }
+    purgeStaleVersionEntriesLocked(ownerId, cacheKey);
 
-    const QString key = makeKey(ownerId, cacheKey);
+    const QString key = makeKey(ownerId, cacheKey) +
+                        QStringLiteral("|format:%1").arg(static_cast<int>(format));
     const auto existingIdIt = keyToId_.find(key);
     if (existingIdIt != keyToId_.end()) {
         auto entryIt = entries_.find(existingIdIt.value());
@@ -396,6 +435,7 @@ GPUTextureCacheHandle GPUTextureCacheManager::acquireOrCreate(const QString& own
     Entry entry;
     entry.id = nextId_++;
     entry.generation = generation_;
+    entry.format = format;
     entry.ownerId = ownerId;
     entry.cacheKey = cacheKey;
     entry.fullKey = key;
@@ -409,6 +449,7 @@ GPUTextureCacheHandle GPUTextureCacheManager::acquireOrCreate(const QString& own
     entries_.insert(entry.id, entry);
     keyToId_.insert(key, entry.id);
     ownerToIds_[ownerId].insert(entry.id);
+    ownerCacheKeyToIds_[ownerId][cacheKey].insert(entry.id);
     ++missCount_;
 
     pruneLocked();
@@ -416,23 +457,44 @@ GPUTextureCacheHandle GPUTextureCacheManager::acquireOrCreate(const QString& own
 }
 
 GPUTextureCacheHandle GPUTextureCacheManager::findExisting(
-    const QString& ownerId, const QString& cacheKey) const
+    const QString& ownerId, const QString& cacheKey,
+    Diligent::TEXTURE_FORMAT format) const
 {
     if (ownerId.isEmpty() || cacheKey.isEmpty()) {
         return {};
     }
 
     QMutexLocker locker(&mutex_);
-    for (auto it = entries_.begin(); it != entries_.end(); ++it) {
-        if (it->ownerId == ownerId &&
-            it->cacheKey == cacheKey &&
+    const auto ownerIt = ownerCacheKeyToIds_.constFind(ownerId);
+    if (ownerIt == ownerCacheKeyToIds_.cend()) {
+        return {};
+    }
+    const auto cacheKeyIt = ownerIt.value().constFind(cacheKey);
+    if (cacheKeyIt == ownerIt.value().cend()) {
+        return {};
+    }
+    for (const quint64 id : cacheKeyIt.value()) {
+        auto it = entries_.find(id);
+        if (it != entries_.end() && it->cacheKey == cacheKey &&
+            (format == Diligent::TEX_FORMAT_UNKNOWN ||
+             it->format == format) &&
             it->generation == generation_ && it->texture) {
             it->lastUsedTick = usageTick_++;
             it->lastUsedFrame = currentFrameIndex_;
+            ++hitCount_;
             return {it->id, it->generation};
         }
     }
     return {};
+}
+
+GPUTextureCacheHandle GPUTextureCacheManager::findExisting(
+    const QString& ownerId, const QString& cacheKey,
+    const ArtifactCore::ImageF32x4_RGBA& image) const
+{
+    const QString colorAwareCacheKey = colorAwareImageCacheKey(cacheKey, image);
+    return findExisting(ownerId, colorAwareCacheKey,
+                        Diligent::TEX_FORMAT_RGBA32_FLOAT);
 }
 
 GPUTextureCacheManager::ExistingSourceState GPUTextureCacheManager::tryAcquireExistingLocked(
@@ -445,6 +507,31 @@ GPUTextureCacheManager::ExistingSourceState GPUTextureCacheManager::tryAcquireEx
     purgeStaleVersionEntriesLocked(ownerId, cacheKey);
     if (format == Diligent::TEX_FORMAT_UNKNOWN) {
         return ExistingSourceState::NeedUpload;
+    }
+
+    // The owner/cache-key index already identifies the small set of format
+    // variants for this source. Resolve ordinary hits here before building the
+    // composite QString key used by pending-upload and insertion bookkeeping.
+    const auto ownerIt = ownerCacheKeyToIds_.constFind(ownerId);
+    if (ownerIt != ownerCacheKeyToIds_.cend()) {
+        const auto cacheKeyIt = ownerIt.value().constFind(cacheKey);
+        if (cacheKeyIt != ownerIt.value().cend()) {
+            for (const quint64 id : cacheKeyIt.value()) {
+                auto entryIt = entries_.find(id);
+                if (entryIt == entries_.end() ||
+                    entryIt->format != format ||
+                    entryIt->generation != generation_ ||
+                    !entryIt->texture) {
+                    continue;
+                }
+                entryIt->lastUsedTick = usageTick_++;
+                entryIt->lastUsedFrame = currentFrameIndex_;
+                ++hitCount_;
+                outHandle = GPUTextureCacheHandle{entryIt->id,
+                                                   entryIt->generation};
+                return ExistingSourceState::Hit;
+            }
+        }
     }
 
     const QString key = makeKey(ownerId, cacheKey) +
@@ -475,40 +562,58 @@ GPUTextureCacheManager::ExistingSourceState GPUTextureCacheManager::tryAcquireEx
 void GPUTextureCacheManager::purgeStaleVersionEntriesLocked(const QString& ownerId,
                                                             const QString& cacheKey)
 {
-    const QString currentVersionToken =
-        (ownerId.startsWith(QStringLiteral("asset:")) &&
-         (cacheKey.startsWith(QStringLiteral("video-gpu:v")) ||
-          cacheKey.startsWith(QStringLiteral("image-f32:v"))))
-            ? cacheKey.section(QLatin1Char(':'), 1, 1)
-            : QString();
+    const QStringView currentVersionToken =
+        ownerId.startsWith(QStringLiteral("asset:"))
+            ? versionedAssetCacheToken(cacheKey)
+            : QStringView{};
     if (currentVersionToken.isEmpty()) {
         return;
     }
+    const auto latestVersionIt =
+        latestAssetVersionTokenByOwner_.constFind(ownerId);
+    if (latestVersionIt != latestAssetVersionTokenByOwner_.cend() &&
+        QStringView{latestVersionIt.value()} == currentVersionToken) {
+        return;
+    }
+
     const auto ownerIds = ownerToIds_.value(ownerId);
     for (const quint64 id : ownerIds) {
         const auto entryIt = entries_.constFind(id);
-        if (entryIt != entries_.cend() &&
-            entryIt->cacheKey.section(QLatin1Char(':'), 1, 1) != currentVersionToken) {
-            eraseEntryByIdLocked(id);
+        if (entryIt != entries_.cend()) {
+            const QStringView entryVersionToken =
+                versionedAssetCacheToken(entryIt->cacheKey);
+            if (!entryVersionToken.isEmpty() &&
+                entryVersionToken != currentVersionToken) {
+                eraseEntryByIdLocked(id);
+            }
         }
     }
-    QList<quint64> stalePendingIds;
-    for (auto pendingIt = pendingUploads_.cbegin();
-         pendingIt != pendingUploads_.cend(); ++pendingIt) {
-        if (pendingIt->ownerId == ownerId &&
-            pendingIt->cacheKey.section(QLatin1Char(':'), 1, 1) != currentVersionToken) {
-            stalePendingIds.push_back(pendingIt.key());
+    bool hasCurrentVersionPendingUpload = false;
+    auto pendingIt = pendingUploads_.begin();
+    while (pendingIt != pendingUploads_.end()) {
+        const QStringView pendingVersionToken =
+            versionedAssetCacheToken(pendingIt->cacheKey);
+        if (pendingIt->ownerId != ownerId || pendingVersionToken.isEmpty()) {
+            ++pendingIt;
+            continue;
         }
-    }
-    for (const quint64 ticketId : stalePendingIds) {
-        const auto pendingIt = pendingUploads_.find(ticketId);
-        if (pendingIt == pendingUploads_.end()) continue;
+        if (pendingVersionToken == currentVersionToken) {
+            hasCurrentVersionPendingUpload = true;
+            ++pendingIt;
+            continue;
+        }
         if (uploadCoordinator_) {
             uploadCoordinator_->cancel(
                 {pendingIt->ticketId, pendingIt->ticketGeneration});
         }
         pendingKeyToTicket_.remove(pendingIt->fullKey);
-        pendingUploads_.erase(pendingIt);
+        pendingIt = pendingUploads_.erase(pendingIt);
+    }
+    if (ownerToIds_.contains(ownerId) || hasCurrentVersionPendingUpload) {
+        latestAssetVersionTokenByOwner_.insert(ownerId,
+                                              currentVersionToken.toString());
+    } else {
+        latestAssetVersionTokenByOwner_.remove(ownerId);
     }
 }
 
@@ -571,6 +676,7 @@ GPUTextureCacheHandle GPUTextureCacheManager::acquireOrCreateFromRgbaBytes(const
     PendingUpload pending;
     pending.ticketId = ticket.id;
     pending.ticketGeneration = ticket.generation;
+    pending.format = format;
     pending.ownerId = ownerId;
     pending.cacheKey = cacheKey;
     pending.fullKey = key;
@@ -627,8 +733,12 @@ void GPUTextureCacheManager::invalidate(
     GPUTextureCacheInvalidationReason reason)
 {
     QMutexLocker locker(&mutex_);
-    ++invalidationCount_;
-    lastInvalidationReason_ = reason;
+    const auto entryIt = entries_.constFind(handle.id);
+    if (entryIt == entries_.cend() ||
+        entryIt->generation != handle.generation) {
+        return;
+    }
+    recordInvalidationLocked(reason);
     eraseEntryByIdLocked(handle.id);
 }
 
@@ -642,44 +752,39 @@ void GPUTextureCacheManager::invalidateOwner(
     GPUTextureCacheInvalidationReason reason)
 {
     QMutexLocker locker(&mutex_);
-    auto it = ownerToIds_.find(ownerId);
     bool invalidated = false;
-    if (it != ownerToIds_.end()) {
-        const auto ids = it.value();
-        for (quint64 id : ids) {
-            eraseEntryByIdLocked(id);
-        }
-        ownerToIds_.remove(ownerId);
-        invalidated = !ids.isEmpty();
+    auto ownerIt = ownerToIds_.find(ownerId);
+    while (ownerIt != ownerToIds_.end() && !ownerIt.value().isEmpty()) {
+        const quint64 id = *ownerIt.value().cbegin();
+        eraseEntryByIdLocked(id);
+        invalidated = true;
+        ownerIt = ownerToIds_.find(ownerId);
     }
 
-    QList<quint64> pendingIds;
-    for (auto pendingIt = pendingUploads_.cbegin();
-         pendingIt != pendingUploads_.cend(); ++pendingIt) {
-        if (pendingIt->ownerId == ownerId) pendingIds.push_back(pendingIt.key());
-    }
-    for (const quint64 ticketId : pendingIds) {
-        const auto pendingIt = pendingUploads_.find(ticketId);
-        if (pendingIt == pendingUploads_.end()) continue;
+    auto pendingIt = pendingUploads_.begin();
+    while (pendingIt != pendingUploads_.end()) {
+        if (pendingIt->ownerId != ownerId) {
+            ++pendingIt;
+            continue;
+        }
         if (uploadCoordinator_) {
             uploadCoordinator_->cancel(
                 {pendingIt->ticketId, pendingIt->ticketGeneration});
         }
         pendingKeyToTicket_.remove(pendingIt->fullKey);
-        pendingUploads_.erase(pendingIt);
+        pendingIt = pendingUploads_.erase(pendingIt);
         invalidated = true;
     }
+    latestAssetVersionTokenByOwner_.remove(ownerId);
     if (invalidated) {
-        ++invalidationCount_;
-        lastInvalidationReason_ = reason;
+        recordInvalidationLocked(reason);
     }
 }
 
 void GPUTextureCacheManager::clear()
 {
     QMutexLocker locker(&mutex_);
-    ++invalidationCount_;
-    lastInvalidationReason_ = GPUTextureCacheInvalidationReason::ClearAll;
+    recordInvalidationLocked(GPUTextureCacheInvalidationReason::ClearAll);
     clearLocked();
 }
 
@@ -693,31 +798,39 @@ void GPUTextureCacheManager::clearLocked()
     entries_.clear();
     keyToId_.clear();
     ownerToIds_.clear();
+    ownerCacheKeyToIds_.clear();
+    latestAssetVersionTokenByOwner_.clear();
     currentBytes_ = 0;
     currentFrameIndex_ = 0;
+    pendingUploadWorkProcessedThisFrame_ = false;
+    expirationWorkProcessedThisFrame_ = false;
+    expiredEvictionsThisFrame_ = 0;
     ++generation_;
 }
 
 void GPUTextureCacheManager::processPendingUploadsLocked()
 {
+    if (pendingUploadWorkProcessedThisFrame_) {
+        return;
+    }
+    pendingUploadWorkProcessedThisFrame_ = true;
     applyPendingD3D12TrimLocked();
     if (!uploadCoordinator_) return;
     uploadCoordinator_->processPending(8, 64ull * 1024ull * 1024ull);
     if (pendingUploads_.isEmpty()) return;
 
-    const QList<quint64> ticketIds = pendingUploads_.keys();
-    for (const quint64 ticketId : ticketIds) {
-        auto pendingIt = pendingUploads_.find(ticketId);
-        if (pendingIt == pendingUploads_.end()) continue;
+    auto pendingIt = pendingUploads_.begin();
+    while (pendingIt != pendingUploads_.end()) {
         DiligentTextureUploadResult result;
         if (!uploadCoordinator_->tryTakeResult(
                 {pendingIt->ticketId, pendingIt->ticketGeneration}, result)) {
+            ++pendingIt;
             continue;
         }
 
         const PendingUpload pending = pendingIt.value();
         pendingKeyToTicket_.remove(pending.fullKey);
-        pendingUploads_.erase(pendingIt);
+        pendingIt = pendingUploads_.erase(pendingIt);
         if (!result.succeeded() || pending.ticketGeneration != generation_) {
             if (!result.canceled && !result.stale) {
                 qWarning() << "[GPUTextureCache] queued upload failed"
@@ -725,12 +838,14 @@ void GPUTextureCacheManager::processPendingUploadsLocked()
                            << "cacheKey=" << pending.cacheKey
                            << "error=" << result.error;
             }
+            pruneAssetVersionTokenIfOwnerUnusedLocked(pending.ownerId);
             continue;
         }
 
         Entry entry;
         entry.id = nextId_++;
         entry.generation = generation_;
+        entry.format = pending.format;
         entry.ownerId = pending.ownerId;
         entry.cacheKey = pending.cacheKey;
         entry.fullKey = pending.fullKey;
@@ -742,6 +857,7 @@ void GPUTextureCacheManager::processPendingUploadsLocked()
         entries_.insert(entry.id, entry);
         keyToId_.insert(pending.fullKey, entry.id);
         ownerToIds_[pending.ownerId].insert(entry.id);
+        ownerCacheKeyToIds_[pending.ownerId][pending.cacheKey].insert(entry.id);
         currentBytes_ += entry.memoryBytes;
     }
     pruneLocked();
@@ -774,9 +890,7 @@ void GPUTextureCacheManager::applyPendingD3D12TrimLocked()
         if (lruId == 0) {
             break;
         }
-        ++invalidationCount_;
-        lastInvalidationReason_ =
-            GPUTextureCacheInvalidationReason::BudgetEviction;
+        recordInvalidationLocked(GPUTextureCacheInvalidationReason::BudgetEviction);
         eraseEntryByIdLocked(lruId);
         releasedBytes += entryBytes;
     }
@@ -791,22 +905,31 @@ void GPUTextureCacheManager::applyPendingD3D12TrimLocked()
 GPUTextureCacheStats GPUTextureCacheManager::stats() const
 {
     QMutexLocker locker(&mutex_);
-    const auto uploadStats = uploadCoordinator_
-        ? uploadCoordinator_->stats()
-        : DiligentUploadCoordinatorStats{};
     GPUTextureCacheStats result;
     result.memoryBytes = currentBytes_;
     result.entryCount = static_cast<int>(entries_.size());
+    for (auto it = entries_.cbegin(); it != entries_.cend(); ++it) {
+        if (it->sourceGpuFrame.isValid()) {
+            ++result.importedGpuFrameCount;
+        }
+    }
     result.hitCount = hitCount_;
     result.missCount = missCount_;
     result.invalidationCount = invalidationCount_;
     result.lastInvalidationReason = lastInvalidationReason_;
-    result.pendingUploadBytes = uploadStats.pendingBytes;
-    result.pendingUploadCount =
-        static_cast<int>(uploadStats.pendingJobs + uploadStats.gpuOperations);
+    result.explicitInvalidationCount = explicitInvalidationCount_;
+    result.ownerChangedInvalidationCount = ownerChangedInvalidationCount_;
+    result.budgetEvictionCount = budgetEvictionCount_;
+    result.deviceResetCount = deviceResetCount_;
+    result.clearAllCount = clearAllCount_;
+    for (auto it = pendingUploads_.cbegin(); it != pendingUploads_.cend(); ++it) {
+        ++result.pendingUploadCount;
+        result.pendingUploadBytes += it->memoryBytes;
+    }
     result.currentFrameIndex = currentFrameIndex_;
     result.resourceExpirationFrames = resourceExpirationFrames_;
     result.expiredEvictionCount = expiredEvictionCount_;
+    result.expiredEvictionsThisFrame = expiredEvictionsThisFrame_;
     return result;
 }
 
@@ -816,7 +939,8 @@ int GPUTextureCacheManager::ownerEntryCount(const QString& ownerId) const
         return 0;
     }
     QMutexLocker locker(&mutex_);
-    return ownerToIds_.value(ownerId).size();
+    const auto ownerIt = ownerToIds_.constFind(ownerId);
+    return ownerIt == ownerToIds_.cend() ? 0 : ownerIt.value().size();
 }
 
 GPUTextureOwnerStats GPUTextureCacheManager::ownerStats(
@@ -827,12 +951,18 @@ GPUTextureOwnerStats GPUTextureCacheManager::ownerStats(
         return result;
     }
     QMutexLocker locker(&mutex_);
-    const auto ids = ownerToIds_.value(ownerId);
-    result.entryCount = ids.size();
-    for (const quint64 id : ids) {
-        const auto it = entries_.constFind(id);
-        if (it != entries_.cend()) {
-            result.memoryBytes += it->memoryBytes;
+    const auto ownerIt = ownerToIds_.constFind(ownerId);
+    if (ownerIt != ownerToIds_.cend()) {
+        const auto& ids = ownerIt.value();
+        result.entryCount = ids.size();
+        for (const quint64 id : ids) {
+            const auto it = entries_.constFind(id);
+            if (it != entries_.cend()) {
+                result.memoryBytes += it->memoryBytes;
+                if (it->sourceGpuFrame.isValid()) {
+                    ++result.importedGpuFrameCount;
+                }
+            }
         }
     }
     for (auto it = pendingUploads_.cbegin(); it != pendingUploads_.cend(); ++it) {
@@ -851,11 +981,13 @@ size_t GPUTextureCacheManager::ownerMemoryBytes(const QString& ownerId) const
     }
     QMutexLocker locker(&mutex_);
     size_t bytes = 0;
-    const auto ids = ownerToIds_.value(ownerId);
-    for (const quint64 id : ids) {
-        const auto it = entries_.constFind(id);
-        if (it != entries_.cend()) {
-            bytes += it->memoryBytes;
+    const auto ownerIt = ownerToIds_.constFind(ownerId);
+    if (ownerIt != ownerToIds_.cend()) {
+        for (const quint64 id : ownerIt.value()) {
+            const auto it = entries_.constFind(id);
+            if (it != entries_.cend()) {
+                bytes += it->memoryBytes;
+            }
         }
     }
     return bytes;
@@ -868,9 +1000,12 @@ void GPUTextureCacheManager::eraseEntryByIdLocked(quint64 id)
         return;
     }
 
-    keyToId_.remove(it->fullKey.isEmpty()
-                        ? makeKey(it->ownerId, it->cacheKey)
-                        : it->fullKey);
+    const QString fullKey = it->fullKey.isEmpty()
+                                ? makeKey(it->ownerId, it->cacheKey) +
+                                      QStringLiteral("|format:%1").arg(
+                                          static_cast<int>(it->format))
+                                : it->fullKey;
+    keyToId_.remove(fullKey);
     auto ownerIt = ownerToIds_.find(it->ownerId);
     if (ownerIt != ownerToIds_.end()) {
         ownerIt.value().remove(id);
@@ -878,8 +1013,37 @@ void GPUTextureCacheManager::eraseEntryByIdLocked(quint64 id)
             ownerToIds_.remove(it->ownerId);
         }
     }
+    auto ownerCacheIt = ownerCacheKeyToIds_.find(it->ownerId);
+    if (ownerCacheIt != ownerCacheKeyToIds_.end()) {
+        auto cacheKeyIt = ownerCacheIt.value().find(it->cacheKey);
+        if (cacheKeyIt != ownerCacheIt.value().end()) {
+            cacheKeyIt.value().remove(id);
+            if (cacheKeyIt.value().isEmpty()) {
+                ownerCacheIt.value().erase(cacheKeyIt);
+            }
+        }
+        if (ownerCacheIt.value().isEmpty()) {
+            ownerCacheKeyToIds_.erase(ownerCacheIt);
+        }
+    }
     currentBytes_ = (currentBytes_ > it->memoryBytes) ? (currentBytes_ - it->memoryBytes) : 0;
+    const QString ownerId = it->ownerId;
     entries_.erase(it);
+    pruneAssetVersionTokenIfOwnerUnusedLocked(ownerId);
+}
+
+void GPUTextureCacheManager::pruneAssetVersionTokenIfOwnerUnusedLocked(
+    const QString& ownerId)
+{
+    if (ownerToIds_.contains(ownerId)) {
+        return;
+    }
+    for (auto it = pendingUploads_.cbegin(); it != pendingUploads_.cend(); ++it) {
+        if (it->ownerId == ownerId) {
+            return;
+        }
+    }
+    latestAssetVersionTokenByOwner_.remove(ownerId);
 }
 
 void GPUTextureCacheManager::pruneLocked()
@@ -897,8 +1061,7 @@ void GPUTextureCacheManager::pruneLocked()
         if (lruId == 0) {
             break;
         }
-        ++invalidationCount_;
-        lastInvalidationReason_ = GPUTextureCacheInvalidationReason::BudgetEviction;
+        recordInvalidationLocked(GPUTextureCacheInvalidationReason::BudgetEviction);
         eraseEntryByIdLocked(lruId);
     }
 }
@@ -909,29 +1072,72 @@ void GPUTextureCacheManager::pruneExpiredLocked()
         return;
     }
 
-    int evicted = 0;
-    while (evicted < maxExpiredEvictionsPerFrame_) {
-        quint64 oldestExpiredId = 0;
-        quint64 oldestFrame = (std::numeric_limits<quint64>::max)();
-        for (auto it = entries_.cbegin(); it != entries_.cend(); ++it) {
-            const quint64 age = currentFrameIndex_ >= it->lastUsedFrame
-                                    ? currentFrameIndex_ - it->lastUsedFrame
-                                    : 0;
-            if (age > resourceExpirationFrames_ &&
-                it->lastUsedFrame < oldestFrame) {
-                oldestFrame = it->lastUsedFrame;
-                oldestExpiredId = it->id;
-            }
+    std::array<quint64, MaxExpiredEvictionsPerFrameLimit> expiredIds{};
+    std::array<quint64, MaxExpiredEvictionsPerFrameLimit> expiredFrames{};
+    int expiredCount = 0;
+    for (auto it = entries_.cbegin(); it != entries_.cend(); ++it) {
+        const quint64 age = currentFrameIndex_ >= it->lastUsedFrame
+                                ? currentFrameIndex_ - it->lastUsedFrame
+                                : 0;
+        if (age <= resourceExpirationFrames_) {
+            continue;
         }
-        if (oldestExpiredId == 0) {
-            break;
+
+        int insertionIndex = 0;
+        while (insertionIndex < expiredCount &&
+               expiredFrames[static_cast<size_t>(insertionIndex)] <=
+                   it->lastUsedFrame) {
+            ++insertionIndex;
         }
-        ++invalidationCount_;
+
+        if (insertionIndex >= maxExpiredEvictionsPerFrame_) {
+            continue;
+        }
+        if (expiredCount < maxExpiredEvictionsPerFrame_) {
+            ++expiredCount;
+        }
+        for (int moveIndex = expiredCount - 1;
+             moveIndex > insertionIndex; --moveIndex) {
+            const auto destination = static_cast<size_t>(moveIndex);
+            const auto source = static_cast<size_t>(moveIndex - 1);
+            expiredIds[destination] = expiredIds[source];
+            expiredFrames[destination] = expiredFrames[source];
+        }
+        expiredIds[static_cast<size_t>(insertionIndex)] = it->id;
+        expiredFrames[static_cast<size_t>(insertionIndex)] = it->lastUsedFrame;
+    }
+
+    for (int index = 0; index < expiredCount; ++index) {
         ++expiredEvictionCount_;
-        lastInvalidationReason_ =
-            GPUTextureCacheInvalidationReason::FrameExpiration;
-        eraseEntryByIdLocked(oldestExpiredId);
-        ++evicted;
+        ++expiredEvictionsThisFrame_;
+        recordInvalidationLocked(GPUTextureCacheInvalidationReason::FrameExpiration);
+        eraseEntryByIdLocked(expiredIds[static_cast<size_t>(index)]);
+    }
+}
+
+void GPUTextureCacheManager::recordInvalidationLocked(
+    GPUTextureCacheInvalidationReason reason)
+{
+    ++invalidationCount_;
+    lastInvalidationReason_ = reason;
+    switch (reason) {
+    case GPUTextureCacheInvalidationReason::Explicit:
+        ++explicitInvalidationCount_;
+        break;
+    case GPUTextureCacheInvalidationReason::OwnerChanged:
+        ++ownerChangedInvalidationCount_;
+        break;
+    case GPUTextureCacheInvalidationReason::BudgetEviction:
+        ++budgetEvictionCount_;
+        break;
+    case GPUTextureCacheInvalidationReason::DeviceReset:
+        ++deviceResetCount_;
+        break;
+    case GPUTextureCacheInvalidationReason::ClearAll:
+        ++clearAllCount_;
+        break;
+    case GPUTextureCacheInvalidationReason::FrameExpiration:
+        break;
     }
 }
 

@@ -5,7 +5,9 @@ module;
 #include <cmath>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <vector>
+#include <QPointF>
 #include <QRectF>
 #include <QHash>
 #include <QString>
@@ -408,6 +410,10 @@ struct BoundedTileRefinementPlan {
     int scheduledCount = 0;
     int deferredCount = 0;
     int visibleDirtyTileCount = 0;
+    // Row-major ordinals in the complete grid for stable cursor reuse as the
+    // visible or dirty ROI changes between frames.
+    std::uint64_t firstTileOrdinal = 0;
+    std::uint64_t nextTileOrdinal = 0;
     bool requiresFullRedraw = false;
 
     bool empty() const { return scheduledCount == 0; }
@@ -432,16 +438,58 @@ struct TileGrid {
     int imageWidth = 0;
     int imageHeight = 0;
 
+    static int saturatedTileCount(int minX, int minY, int maxX, int maxY) {
+        const std::int64_t width = static_cast<std::int64_t>(maxX) - minX + 1;
+        const std::int64_t height = static_cast<std::int64_t>(maxY) - minY + 1;
+        const std::int64_t count = width * height;
+        return static_cast<int>(std::min<std::int64_t>(
+            count, std::numeric_limits<int>::max()));
+    }
+
+    bool tileRangeForROI(const RenderROI& roi, int& minX, int& minY,
+                         int& maxX, int& maxY) const {
+        if (!isValid() || roi.isEmpty() ||
+            !std::isfinite(roi.x()) || !std::isfinite(roi.y()) ||
+            !std::isfinite(roi.right()) || !std::isfinite(roi.bottom())) {
+            return false;
+        }
+
+        const double left = std::clamp(static_cast<double>(roi.x()), 0.0,
+                                       static_cast<double>(imageWidth));
+        const double top = std::clamp(static_cast<double>(roi.y()), 0.0,
+                                      static_cast<double>(imageHeight));
+        const double right = std::clamp(static_cast<double>(roi.right()), 0.0,
+                                        static_cast<double>(imageWidth));
+        const double bottom = std::clamp(static_cast<double>(roi.bottom()), 0.0,
+                                         static_cast<double>(imageHeight));
+        if (right <= left || bottom <= top) {
+            return false;
+        }
+
+        minX = static_cast<int>(std::floor(left / tileSize));
+        minY = static_cast<int>(std::floor(top / tileSize));
+        maxX = static_cast<int>(std::ceil(right / tileSize)) - 1;
+        maxY = static_cast<int>(std::ceil(bottom / tileSize)) - 1;
+        return true;
+    }
+
     TileGrid() = default;
     TileGrid(int imgW, int imgH, int tileSz = 256)
-        : tileSize(tileSz)
-        , gridWidth((imgW + tileSz - 1) / tileSz)
-        , gridHeight((imgH + tileSz - 1) / tileSz)
-        , imageWidth(imgW)
-        , imageHeight(imgH)
-    {}
+    {
+        if (imgW <= 0 || imgH <= 0 || tileSz <= 0) {
+            return;
+        }
+        tileSize = tileSz;
+        imageWidth = imgW;
+        imageHeight = imgH;
+        gridWidth = 1 + (imgW - 1) / tileSz;
+        gridHeight = 1 + (imgH - 1) / tileSz;
+    }
 
     TileKey keyForPixel(int px, int py) const {
+        if (!isValid()) {
+            return {};
+        }
         return TileKey{
             std::clamp(px / tileSize, 0, gridWidth - 1),
             std::clamp(py / tileSize, 0, gridHeight - 1)
@@ -465,56 +513,81 @@ struct TileGrid {
     }
 
     int countTilesIntersecting(const RenderROI& roi) const {
-        if (roi.isEmpty() || imageWidth <= 0 || imageHeight <= 0) {
+        int minX = 0;
+        int minY = 0;
+        int maxX = -1;
+        int maxY = -1;
+        if (!tileRangeForROI(roi, minX, minY, maxX, maxY)) {
             return 0;
         }
-        const int minX = std::max(0, static_cast<int>(roi.x()) / tileSize);
-        const int minY = std::max(0, static_cast<int>(roi.y()) / tileSize);
-        const int maxX = std::min(gridWidth - 1, static_cast<int>(roi.right()) / tileSize);
-        const int maxY = std::min(gridHeight - 1, static_cast<int>(roi.bottom()) / tileSize);
-        if (minX > maxX || minY > maxY) {
-            return 0;
-        }
-        return (maxX - minX + 1) * (maxY - minY + 1);
-    }
-
-    std::vector<TileKey> tilesIntersecting(const RenderROI& roi) const {
-        std::vector<TileKey> result;
-        if (roi.isEmpty() || imageWidth <= 0 || imageHeight <= 0) {
-            return result;
-        }
-        const int minX = std::max(0, static_cast<int>(roi.x()) / tileSize);
-        const int minY = std::max(0, static_cast<int>(roi.y()) / tileSize);
-        const int maxX = std::min(gridWidth - 1, static_cast<int>(roi.right()) / tileSize);
-        const int maxY = std::min(gridHeight - 1, static_cast<int>(roi.bottom()) / tileSize);
-        for (int ty = minY; ty <= maxY; ++ty) {
-            for (int tx = minX; tx <= maxX; ++tx) {
-                result.push_back(TileKey{tx, ty});
-            }
-        }
-        return result;
+        return saturatedTileCount(minX, minY, maxX, maxY);
     }
 
     BoundedTileRefinementPlan makeBoundedPlan(
-        const RenderROI& roi, int maxTiles = BoundedTileRefinementPlan::MaxTiles) const {
+        const RenderROI& roi,
+        int maxTiles = BoundedTileRefinementPlan::MaxTiles,
+        std::uint64_t startOrdinal = 0) const {
         BoundedTileRefinementPlan plan;
         if (roi.isEmpty() || !isValid()) {
             return plan;
         }
         const int capacity = std::clamp(
             maxTiles, 0, BoundedTileRefinementPlan::MaxTiles);
-        const int minX = std::max(0, static_cast<int>(roi.x()) / tileSize);
-        const int minY = std::max(0, static_cast<int>(roi.y()) / tileSize);
-        const int maxX = std::min(gridWidth - 1, static_cast<int>(roi.right()) / tileSize);
-        const int maxY = std::min(gridHeight - 1, static_cast<int>(roi.bottom()) / tileSize);
-        if (minX > maxX || minY > maxY) {
+        int minX = 0;
+        int minY = 0;
+        int maxX = -1;
+        int maxY = -1;
+        if (!tileRangeForROI(roi, minX, minY, maxX, maxY)) {
             return plan;
         }
-        plan.visibleDirtyTileCount = (maxX - minX + 1) * (maxY - minY + 1);
-        for (int ty = minY; ty <= maxY && plan.scheduledCount < capacity; ++ty) {
-            for (int tx = minX; tx <= maxX && plan.scheduledCount < capacity; ++tx) {
-                plan.tiles[static_cast<size_t>(plan.scheduledCount++)] = TileKey{tx, ty};
+        const std::uint64_t rangeWidth =
+            static_cast<std::uint64_t>(maxX - minX + 1);
+        const std::uint64_t rangeHeight =
+            static_cast<std::uint64_t>(maxY - minY + 1);
+        const std::uint64_t totalTileCount = rangeWidth * rangeHeight;
+        if (totalTileCount == 0) {
+            return plan;
+        }
+        plan.visibleDirtyTileCount =
+            saturatedTileCount(minX, minY, maxX, maxY);
+        const std::uint64_t gridTileCount =
+            static_cast<std::uint64_t>(gridWidth) * gridHeight;
+        const std::uint64_t normalizedStart = startOrdinal % gridTileCount;
+        const int startX = static_cast<int>(normalizedStart % gridWidth);
+        const int startY = static_cast<int>(normalizedStart / gridWidth);
+        int tileX = minX;
+        int tileY = minY;
+        if (startY >= minY && startY <= maxY) {
+            tileY = startY;
+            if (startX >= minX && startX <= maxX) {
+                tileX = startX;
+            } else if (startX > maxX) {
+                tileY = startY < maxY ? startY + 1 : minY;
             }
+        }
+        plan.firstTileOrdinal =
+            static_cast<std::uint64_t>(tileY) * gridWidth + tileX;
+        // Keep each batch on one row so its GPU recompose ROI stays compact.
+        const int scheduledRow = tileY;
+        while (plan.scheduledCount < capacity &&
+               tileY == scheduledRow) {
+            plan.tiles[static_cast<size_t>(plan.scheduledCount++)] =
+                TileKey{tileX, tileY};
+            if (tileX < maxX) {
+                ++tileX;
+            } else {
+                break;
+            }
+        }
+        if (plan.scheduledCount > 0) {
+            const TileKey lastTile =
+                plan.tiles[static_cast<size_t>(plan.scheduledCount - 1)];
+            const std::uint64_t lastOrdinal =
+                static_cast<std::uint64_t>(lastTile.tileY) * gridWidth +
+                lastTile.tileX;
+            plan.nextTileOrdinal = (lastOrdinal + 1) % gridTileCount;
+        } else {
+            plan.nextTileOrdinal = normalizedStart;
         }
         plan.deferredCount = plan.visibleDirtyTileCount - plan.scheduledCount;
         return plan;
@@ -530,24 +603,122 @@ struct TileGrid {
  */
 class DirtyRegionAccumulator {
 public:
+    // Keep disjoint damage bounded without allocating during frame updates.
+    static constexpr int MaxDirtyRegions = 16;
+
     void add(const LayerInvalidationRegion& region) {
         if (region.requiresFullRedraw) {
             dirtyRect_ = QRectF();
+            dirtyRegionCount_ = 0;
             requiresFullRedraw_ = true;
             return;
         }
         if (region.isEmpty()) {
             return;
         }
-        if (dirtyRect_.isEmpty()) {
-            dirtyRect_ = region.region;
-        } else {
-            dirtyRect_ = dirtyRect_.united(region.region);
+
+        QRectF pendingRegion = region.region.normalized();
+        if (!isFiniteNonEmpty(pendingRegion)) {
+            dirtyRect_ = QRectF();
+            dirtyRegionCount_ = 0;
+            requiresFullRedraw_ = true;
+            return;
         }
+
+        for (int index = 0; index < dirtyRegionCount_;) {
+            if (!dirtyRegions_[static_cast<size_t>(index)].intersects(
+                    pendingRegion)) {
+                ++index;
+                continue;
+            }
+            pendingRegion = pendingRegion.united(
+                dirtyRegions_[static_cast<size_t>(index)]);
+            removeRegionAt(index);
+            index = 0;
+        }
+
+        if (dirtyRegionCount_ == MaxDirtyRegions) {
+            // Coalescing can cause extra redraws, but never drops pending damage.
+            for (int index = 0; index < dirtyRegionCount_; ++index) {
+                pendingRegion = pendingRegion.united(
+                    dirtyRegions_[static_cast<size_t>(index)]);
+            }
+            dirtyRegionCount_ = 1;
+            dirtyRegions_[0] = pendingRegion;
+        } else {
+            dirtyRegions_[static_cast<size_t>(dirtyRegionCount_++)] =
+                pendingRegion;
+        }
+        recomputeDirtyRect();
+    }
+
+    void consume(const QRectF& region) {
+        if (requiresFullRedraw_ || dirtyRegionCount_ == 0 ||
+            !isFiniteNonEmpty(region)) {
+            return;
+        }
+
+        std::array<QRectF, MaxDirtyRegions * 4> remaining{};
+        int remainingCount = 0;
+        const QRectF cut = region.normalized();
+        for (int index = 0; index < dirtyRegionCount_; ++index) {
+            const QRectF source = dirtyRegions_[static_cast<size_t>(index)];
+            const QRectF intersection = source.intersected(cut);
+            if (intersection.isEmpty()) {
+                remaining[static_cast<size_t>(remainingCount++)] = source;
+                continue;
+            }
+
+            appendIfNonEmpty(
+                remaining, remainingCount,
+                QRectF(QPointF(source.left(), source.top()),
+                       QPointF(source.right(), intersection.top())));
+            appendIfNonEmpty(
+                remaining, remainingCount,
+                QRectF(QPointF(source.left(), intersection.bottom()),
+                       QPointF(source.right(), source.bottom())));
+            appendIfNonEmpty(
+                remaining, remainingCount,
+                QRectF(QPointF(source.left(), intersection.top()),
+                       QPointF(intersection.left(), intersection.bottom())));
+            appendIfNonEmpty(
+                remaining, remainingCount,
+                QRectF(QPointF(intersection.right(), intersection.top()),
+                       QPointF(source.right(), intersection.bottom())));
+        }
+
+        dirtyRegionCount_ = 0;
+        for (int index = 0; index < remainingCount; ++index) {
+            QRectF pendingRegion = remaining[static_cast<size_t>(index)];
+            for (int existing = 0; existing < dirtyRegionCount_;) {
+                if (!dirtyRegions_[static_cast<size_t>(existing)].intersects(
+                        pendingRegion)) {
+                    ++existing;
+                    continue;
+                }
+                pendingRegion = pendingRegion.united(
+                    dirtyRegions_[static_cast<size_t>(existing)]);
+                removeRegionAt(existing);
+                existing = 0;
+            }
+            if (dirtyRegionCount_ == MaxDirtyRegions) {
+                for (int existing = 0; existing < dirtyRegionCount_; ++existing) {
+                    pendingRegion = pendingRegion.united(
+                        dirtyRegions_[static_cast<size_t>(existing)]);
+                }
+                dirtyRegionCount_ = 1;
+                dirtyRegions_[0] = pendingRegion;
+            } else {
+                dirtyRegions_[static_cast<size_t>(dirtyRegionCount_++)] =
+                    pendingRegion;
+            }
+        }
+        recomputeDirtyRect();
     }
 
     void reset() {
         dirtyRect_ = QRectF();
+        dirtyRegionCount_ = 0;
         requiresFullRedraw_ = false;
         frameNumber_ = 0;
     }
@@ -565,7 +736,51 @@ public:
     void setFrameNumber(int64_t f) { frameNumber_ = f; }
 
 private:
+    friend class RenderDamageTracker;
+
+    int dirtyRegionCount() const { return dirtyRegionCount_; }
+    const QRectF& dirtyRegionAt(int index) const {
+        return dirtyRegions_[static_cast<size_t>(index)];
+    }
+
+    static bool isFiniteNonEmpty(const QRectF& region) {
+        return std::isfinite(region.x()) && std::isfinite(region.y()) &&
+               std::isfinite(region.width()) &&
+               std::isfinite(region.height()) &&
+               std::isfinite(region.right()) &&
+               std::isfinite(region.bottom()) && !region.isEmpty();
+    }
+
+    template <size_t Capacity>
+    static void appendIfNonEmpty(std::array<QRectF, Capacity>& regions,
+                                 int& count, const QRectF& region) {
+        if (isFiniteNonEmpty(region) && count < static_cast<int>(Capacity)) {
+            regions[static_cast<size_t>(count++)] = region;
+        }
+    }
+
+    void removeRegionAt(int index) {
+        for (int moveIndex = index + 1; moveIndex < dirtyRegionCount_;
+             ++moveIndex) {
+            dirtyRegions_[static_cast<size_t>(moveIndex - 1)] =
+                dirtyRegions_[static_cast<size_t>(moveIndex)];
+        }
+        --dirtyRegionCount_;
+    }
+
+    void recomputeDirtyRect() {
+        dirtyRect_ = QRectF();
+        for (int index = 0; index < dirtyRegionCount_; ++index) {
+            const QRectF& region = dirtyRegions_[static_cast<size_t>(index)];
+            dirtyRect_ = dirtyRect_.isEmpty()
+                             ? region
+                             : dirtyRect_.united(region);
+        }
+    }
+
     QRectF dirtyRect_;
+    std::array<QRectF, MaxDirtyRegions> dirtyRegions_{};
+    int dirtyRegionCount_ = 0;
     bool requiresFullRedraw_ = false;
     int64_t frameNumber_ = 0;
 };
@@ -575,7 +790,14 @@ private:
  */
 class RenderDamageTracker {
 public:
+    void markFullRedraw() {
+        requiresFullRedraw_ = true;
+    }
+
     void markDirty(const QString& layerId, const LayerInvalidationRegion& region) {
+        if (region.isEmpty()) {
+            return;
+        }
         dirtyRegions_[layerId].add(region);
     }
 
@@ -590,8 +812,25 @@ public:
         dirtyRegions_.remove(layerId);
     }
 
+    void consumeRegion(const QRectF& region) {
+        if (requiresFullRedraw_) {
+            return;
+        }
+        auto it = dirtyRegions_.begin();
+        while (it != dirtyRegions_.end()) {
+            it.value().consume(region);
+            if (it.value().dirtyRect().isEmpty() &&
+                !it.value().needsFullRedraw()) {
+                it = dirtyRegions_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
     void clearAll() {
         dirtyRegions_.clear();
+        requiresFullRedraw_ = false;
     }
 
     RenderROI dirtyROI(const QString& layerId) const {
@@ -602,6 +841,9 @@ public:
     }
 
     RenderROI combinedDirtyROI() const {
+        if (requiresFullRedraw_) {
+            return RenderROI();
+        }
         RenderROI result;
         for (auto it = dirtyRegions_.cbegin(); it != dirtyRegions_.cend(); ++it) {
             const auto& accumulator = it.value();
@@ -617,10 +859,13 @@ public:
     }
 
     bool hasDirtyRegions() const {
-        return !dirtyRegions_.isEmpty();
+        return requiresFullRedraw_ || !dirtyRegions_.isEmpty();
     }
 
     bool combinedNeedsFullRedraw() const {
+        if (requiresFullRedraw_) {
+            return true;
+        }
         for (auto it = dirtyRegions_.cbegin(); it != dirtyRegions_.cend(); ++it) {
             if (it.value().needsFullRedraw()) {
                 return true;
@@ -630,30 +875,17 @@ public:
     }
 
     int dirtyLayerCount() const {
-        return dirtyRegions_.size();
+        return dirtyRegions_.size() + (requiresFullRedraw_ ? 1 : 0);
     }
 
     bool needsFullRedraw(const QString& layerId) const {
+        if (requiresFullRedraw_) {
+            return true;
+        }
         if (auto it = dirtyRegions_.find(layerId); it != dirtyRegions_.end()) {
             return it->needsFullRedraw();
         }
         return false;
-    }
-
-    std::vector<TileKey> dirtyTiles(const TileGrid& grid, const QString& layerId = QString()) const {
-        if (!grid.isValid()) {
-            return {};
-        }
-        RenderROI roi;
-        if (layerId.isEmpty()) {
-            roi = combinedDirtyROI();
-        } else {
-            roi = dirtyROI(layerId);
-        }
-        if (roi.isEmpty() || needsFullRedraw(layerId)) {
-            return {};
-        }
-        return grid.tilesIntersecting(roi);
     }
 
     int dirtyTileCount(const TileGrid& grid, const QString& layerId = QString()) const {
@@ -674,141 +906,81 @@ public:
     BoundedTileRefinementPlan makeBoundedDirtyTilePlan(
         const TileGrid& grid, const RenderROI& visibleROI,
         int maxTiles = BoundedTileRefinementPlan::MaxTiles,
-        const QString& layerId = QString()) const {
+        const QString& layerId = QString(),
+        std::uint64_t startOrdinal = 0) const {
         BoundedTileRefinementPlan plan;
         if (!grid.isValid()) {
             return plan;
         }
-        const bool fullRedraw = layerId.isEmpty()
-                                    ? combinedNeedsFullRedraw()
-                                    : needsFullRedraw(layerId);
+        const bool fullRedraw = layerId.isEmpty() ? combinedNeedsFullRedraw()
+                                                   : needsFullRedraw(layerId);
         if (fullRedraw) {
             plan.requiresFullRedraw = true;
             return plan;
         }
-        const RenderROI dirtyROI = layerId.isEmpty() ? combinedDirtyROI()
-                                                      : this->dirtyROI(layerId);
-        return grid.makeBoundedPlan(dirtyROI.intersected(visibleROI), maxTiles);
+        const int capacity = std::clamp(
+            maxTiles, 0, BoundedTileRefinementPlan::MaxTiles);
+        const std::uint64_t gridTileCount =
+            static_cast<std::uint64_t>(grid.gridWidth) * grid.gridHeight;
+        if (gridTileCount == 0) {
+            return plan;
+        }
+        const std::uint64_t normalizedStart = startOrdinal % gridTileCount;
+        std::uint64_t bestFirstTileDistance = gridTileCount;
+        BoundedTileRefinementPlan bestRegionPlan;
+
+        // Pick one cursor-nearest damage rectangle instead of combining distant
+        // regions into a large GPU recompose rectangle.
+        const auto addAccumulator = [&](const DirtyRegionAccumulator& accumulator) {
+            for (int regionIndex = 0;
+                 regionIndex < accumulator.dirtyRegionCount(); ++regionIndex) {
+                const RenderROI regionROI(
+                    accumulator.dirtyRegionAt(regionIndex));
+                const BoundedTileRefinementPlan regionPlan =
+                    grid.makeBoundedPlan(regionROI.intersected(visibleROI),
+                                         capacity, normalizedStart);
+                if (regionPlan.empty()) {
+                    continue;
+                }
+                const std::uint64_t ordinal = regionPlan.firstTileOrdinal;
+                const std::uint64_t distance =
+                    ordinal >= normalizedStart
+                        ? ordinal - normalizedStart
+                        : gridTileCount - normalizedStart + ordinal;
+                if (distance < bestFirstTileDistance) {
+                    bestFirstTileDistance = distance;
+                    bestRegionPlan = regionPlan;
+                }
+            }
+        };
+
+        if (layerId.isEmpty()) {
+            for (auto it = dirtyRegions_.cbegin(); it != dirtyRegions_.cend();
+                 ++it) {
+                addAccumulator(it.value());
+            }
+        } else {
+            const auto it = dirtyRegions_.constFind(layerId);
+            if (it != dirtyRegions_.cend()) {
+                addAccumulator(it.value());
+            }
+        }
+        plan.visibleDirtyTileCount =
+            bestRegionPlan.visibleDirtyTileCount;
+        plan.tiles = bestRegionPlan.tiles;
+        plan.scheduledCount = bestRegionPlan.scheduledCount;
+        plan.firstTileOrdinal = bestRegionPlan.firstTileOrdinal;
+        plan.nextTileOrdinal = bestRegionPlan.scheduledCount > 0
+                                   ? bestRegionPlan.nextTileOrdinal
+                                   : normalizedStart;
+        plan.deferredCount = std::max(
+            0, plan.visibleDirtyTileCount - plan.scheduledCount);
+        return plan;
     }
 
 private:
     QHash<QString, DirtyRegionAccumulator> dirtyRegions_;
-};
-
-/**
- * @brief スパースなタイルサーフェス
- *
- * 必要なタイルだけを確保する遅延確保型バッファ。
- * full-frame の巨大バッファを避けて、ROI 単位でメモリを割り当てる。
- */
-class SparseTileSurface {
-public:
-    explicit SparseTileSurface(const TileGrid& grid = TileGrid())
-        : grid_(grid)
-    {}
-
-    void setGrid(const TileGrid& grid) {
-        grid_ = grid;
-        tiles_.clear();
-    }
-
-    const TileGrid& grid() const { return grid_; }
-
-    bool hasTile(const TileKey& key) const {
-        return tiles_.contains(key);
-    }
-
-    void* tileData(const TileKey& key) {
-        return tiles_.value(key, nullptr);
-    }
-
-    const void* tileData(const TileKey& key) const {
-        return tiles_.value(key, nullptr);
-    }
-
-    void ensureTile(const TileKey& key) {
-        if (!tiles_.contains(key)) {
-            const QRectF r = grid_.tileRectClamped(key);
-            const int bytesPerPixel = 16;
-            const int w = static_cast<int>(std::ceil(r.width()));
-            const int h = static_cast<int>(std::ceil(r.height()));
-            tiles_[key] = new std::vector<uint8_t>(w * h * bytesPerPixel, 0);
-        }
-    }
-
-    void releaseTile(const TileKey& key) {
-        if (auto it = tiles_.find(key); it != tiles_.end()) {
-            delete it.value();
-            tiles_.erase(it);
-        }
-    }
-
-    void clear() {
-        for (auto* data : tiles_) {
-            delete data;
-        }
-        tiles_.clear();
-    }
-
-    int tileCount() const { return static_cast<int>(tiles_.size()); }
-    std::vector<TileKey> activeTileKeys() const {
-        std::vector<TileKey> keys;
-        keys.reserve(tiles_.size());
-        for (auto it = tiles_.begin(); it != tiles_.end(); ++it) {
-            keys.push_back(it.key());
-        }
-        return keys;
-    }
-
-private:
-    TileGrid grid_;
-    QHash<TileKey, std::vector<uint8_t>*> tiles_;
-};
-
-/**
- * @brief タイルレンダースケジューラ
- *
- * タイル単位でレンダリングタスクをキューイングし、
- * 優先度付きで実行する（将来的にマルチスレッド対応）。
- */
-class TileRenderScheduler {
-public:
-    struct TileTask {
-        TileKey key;
-        int priority = 0;
-        std::function<void(const TileKey&)> renderFn;
-    };
-
-    void enqueue(const TileTask& task) {
-        tasks_.push_back(task);
-    }
-
-    void enqueueTiles(const std::vector<TileKey>& keys,
-                      std::function<void(const TileKey&)> fn,
-                      int priority = 0) {
-        for (const auto& key : keys) {
-            tasks_.push_back(TileTask{key, priority, fn});
-        }
-    }
-
-    void processAll() {
-        std::sort(tasks_.begin(), tasks_.end(),
-                  [](const TileTask& a, const TileTask& b) {
-                      return a.priority > b.priority;
-                  });
-        for (const auto& task : tasks_) {
-            if (task.renderFn) {
-                task.renderFn(task.key);
-            }
-        }
-        tasks_.clear();
-    }
-
-    void clear() { tasks_.clear(); }
-    int pendingCount() const { return static_cast<int>(tasks_.size()); }
-
-private:
-    std::vector<TileTask> tasks_;
+    bool requiresFullRedraw_ = false;
 };
 
 } // namespace Artifact

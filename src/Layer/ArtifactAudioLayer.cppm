@@ -1067,7 +1067,7 @@ double animatedAudioNumber(const ArtifactAudioLayer* layer,
     return fallback;
   }
   const auto property = layer->getProperty(QString::fromLatin1(propertyPath));
-  if (!property || property->getKeyFrames().empty()) {
+  if (!property || !property->hasKeyFrames()) {
     return fallback;
   }
   int64_t fps = 30;

@@ -1236,6 +1236,7 @@ class ArtifactAbstractComposition::Impl {
    std::vector<SharedPtr<ArtifactAbstractEffect>> getEffects() const;
    SharedPtr<ArtifactAbstractEffect> getEffect(const UniString& effectID) const;
    int effectCount() const;
+   bool hasEnabledRasterizerEffect() const;
 
     bool isPlaying_ = false;
     QSet<QString> activeCollisionPairs_;
@@ -3280,6 +3281,17 @@ ArtifactAbstractComposition::Impl::getEffect(const UniString& effectID) const
   return static_cast<int>(effects_.size());
  }
 
+ bool ArtifactAbstractComposition::Impl::hasEnabledRasterizerEffect() const
+ {
+  for (const auto& effect : effects_) {
+   if (effect && effect->isEnabled() &&
+       effect->pipelineStage() == EffectPipelineStage::Rasterizer) {
+    return true;
+   }
+  }
+  return false;
+ }
+
  void ArtifactAbstractComposition::addEffect(SharedPtr<ArtifactAbstractEffect> effect)
  {
   impl_->addEffect(std::move(effect));
@@ -3323,6 +3335,11 @@ ArtifactAbstractComposition::getEffect(const UniString& effectID) const
  int ArtifactAbstractComposition::effectCount() const
  {
   return impl_->effectCount();
+ }
+
+ bool ArtifactAbstractComposition::hasEnabledRasterizerEffect() const
+ {
+  return impl_->hasEnabledRasterizerEffect();
  }
 
  uint64_t ArtifactAbstractComposition::revision() const noexcept

@@ -178,7 +178,7 @@ ArtifactPlaybackShortcuts::ArtifactPlaybackShortcuts(QObject* parent)
                          int maxFrame = 999999;
                          if (auto* service = ArtifactPlaybackService::instance()) {
                              currentFrame = static_cast<int>(service->currentFrame().framePosition());
-                             maxFrame = static_cast<int>(service->frameRange().endPosition().framePosition());
+                             maxFrame = static_cast<int>(service->playableEndFrame().framePosition());
                          } else if (impl_->controller_) {
                              currentFrame = static_cast<int>(impl_->controller_->currentFrame().framePosition());
                              maxFrame = static_cast<int>(impl_->controller_->frameRange().endPosition().framePosition());

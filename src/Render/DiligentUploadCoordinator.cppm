@@ -265,12 +265,24 @@ std::size_t DiligentUploadCoordinator::processPending(std::size_t maxJobs,
             const std::scoped_lock lock(impl_->mutex);
             const QString normalizedKey = impl_->ticketKeys.value(job->ticket.id);
             impl_->pendingByKey.remove(normalizedKey);
-            impl_->completed.insert(job->ticket.id, std::move(result));
-            ++impl_->stats.completedJobs;
-            const auto& stored = impl_->completed[job->ticket.id];
-            if (stored.canceled || stored.stale) ++impl_->stats.canceled;
-            else if (!stored.error.isEmpty()) ++impl_->stats.failed;
-            else ++impl_->stats.completed;
+            const bool ticketStillTracked =
+                impl_->ticketKeys.contains(job->ticket.id);
+            const bool staleAfterUpload =
+                job->request.generation <
+                impl_->minimumGeneration.load(std::memory_order_acquire);
+            if (!ticketStillTracked || staleAfterUpload || result.canceled ||
+                result.stale) {
+                impl_->ticketKeys.remove(job->ticket.id);
+                if (ticketStillTracked) {
+                    ++impl_->stats.canceled;
+                }
+            } else {
+                impl_->completed.insert(job->ticket.id, std::move(result));
+                ++impl_->stats.completedJobs;
+                const auto& stored = impl_->completed[job->ticket.id];
+                if (!stored.error.isEmpty()) ++impl_->stats.failed;
+                else ++impl_->stats.completed;
+            }
         }
         ++processed;
     }
@@ -300,12 +312,39 @@ void DiligentUploadCoordinator::cancel(const DiligentUploadTicket& ticket)
 {
     if (!impl_ || !ticket.isValid()) return;
     const std::scoped_lock lock(impl_->mutex);
-    for (auto& job : impl_->pending) {
+    for (auto it = impl_->pending.begin(); it != impl_->pending.end(); ++it) {
+        const auto& job = *it;
         if (job->ticket.id == ticket.id &&
             job->ticket.generation == ticket.generation) {
-            job->canceled = true;
+            const std::size_t bytes =
+                static_cast<std::size_t>(job->request.bytes.size());
+            impl_->pendingByKey.remove(
+                impl_->ticketKeys.value(ticket.id));
+            impl_->ticketKeys.remove(ticket.id);
+            impl_->pending.erase(it);
+            impl_->stats.pendingJobs -=
+                std::min<std::size_t>(impl_->stats.pendingJobs, 1);
+            impl_->stats.pendingBytes -=
+                std::min(impl_->stats.pendingBytes, bytes);
+            ++impl_->stats.canceled;
             return;
         }
+    }
+
+    const auto completedIt = impl_->completed.find(ticket.id);
+    if (completedIt != impl_->completed.end() &&
+        completedIt->ticket.generation == ticket.generation) {
+        impl_->completed.erase(completedIt);
+        impl_->ticketKeys.remove(ticket.id);
+        impl_->stats.completedJobs -=
+            std::min<std::size_t>(impl_->stats.completedJobs, 1);
+        return;
+    }
+
+    if (impl_->ticketKeys.contains(ticket.id)) {
+        const QString key = impl_->ticketKeys.take(ticket.id);
+        impl_->pendingByKey.remove(key);
+        ++impl_->stats.canceled;
     }
 }
 
@@ -320,8 +359,33 @@ void DiligentUploadCoordinator::invalidateBeforeGeneration(
                                           std::memory_order_acq_rel)) {
     }
     const std::scoped_lock lock(impl_->mutex);
-    for (auto& job : impl_->pending) {
-        if (job->request.generation < generation) job->canceled = true;
+    for (auto it = impl_->pending.begin(); it != impl_->pending.end();) {
+        const auto& job = *it;
+        if (job->request.generation >= generation) {
+            ++it;
+            continue;
+        }
+        const std::size_t bytes =
+            static_cast<std::size_t>(job->request.bytes.size());
+        impl_->pendingByKey.remove(impl_->ticketKeys.value(job->ticket.id));
+        impl_->ticketKeys.remove(job->ticket.id);
+        it = impl_->pending.erase(it);
+        impl_->stats.pendingJobs -=
+            std::min<std::size_t>(impl_->stats.pendingJobs, 1);
+        impl_->stats.pendingBytes -=
+            std::min(impl_->stats.pendingBytes, bytes);
+        ++impl_->stats.canceled;
+    }
+    auto completedIt = impl_->completed.begin();
+    while (completedIt != impl_->completed.end()) {
+        if (completedIt->ticket.generation >= generation) {
+            ++completedIt;
+            continue;
+        }
+        impl_->ticketKeys.remove(completedIt.key());
+        completedIt = impl_->completed.erase(completedIt);
+        impl_->stats.completedJobs -=
+            std::min<std::size_t>(impl_->stats.completedJobs, 1);
     }
 }
 

@@ -978,7 +978,7 @@ public:
         cacheBufferQImageSource_ = nullptr;
         cacheBufferQImage_ = {};
         cacheBufferCropSource_ = nullptr;
-        cacheBufferCropSignature_.clear();
+        cacheBufferCropRevision_ = 0;
         cacheBufferCroppedImage_ = {};
     }
 
@@ -1025,7 +1025,7 @@ public:
     mutable const ArtifactCore::ImageF32x4_RGBA *cacheBufferQImageSource_ = nullptr;
     mutable QImage cacheBufferQImage_;
     mutable const ArtifactCore::ImageF32x4_RGBA *cacheBufferCropSource_ = nullptr;
-    mutable QString cacheBufferCropSignature_;
+    mutable std::uint64_t cacheBufferCropRevision_ = 0;
     mutable QImage cacheBufferCroppedImage_;
     ArtifactCore::DepthMap depthMap_;
     ArtifactCore::Mesh depthMesh_;
@@ -1737,7 +1737,7 @@ bool ArtifactImageLayer::canShareSourceGpuTexture() const
     return !isImageSequence() &&
            !impl_->sourceAssetId_.isNull() &&
            !impl_->sourceCrop_.enabled() &&
-           !hasMasks() && getEffects().empty();
+           !hasMasks() && effectCount() == 0;
 }
 
 bool ArtifactImageLayer::sourceCropEnabled() const
@@ -1748,6 +1748,11 @@ bool ArtifactImageLayer::sourceCropEnabled() const
 SourceCrop ArtifactImageLayer::sourceCrop() const
 {
     return impl_->sourceCrop_;
+}
+
+std::uint64_t ArtifactImageLayer::sourceCropRevision() const
+{
+    return impl_->sourceCrop_.revision();
 }
 
 bool ArtifactImageLayer::restoreSourceCropSnapshot(const QJsonObject& snapshot)
@@ -1775,16 +1780,16 @@ QString ArtifactImageLayer::sourceCropSignature() const
     const QPointF anchor = impl_->sourceCrop_.anchor();
     return QStringLiteral("enabled=%1|rect=%2,%3,%4,%5|pan=%6,%7|zoom=%8|rotation=%9|anchor=%10,%11|preserve=%12")
         .arg(impl_->sourceCrop_.enabled() ? 1 : 0)
-        .arg(rect.x(), 0, 'g', 12)
-        .arg(rect.y(), 0, 'g', 12)
-        .arg(rect.width(), 0, 'g', 12)
-        .arg(rect.height(), 0, 'g', 12)
-        .arg(pan.x(), 0, 'g', 12)
-        .arg(pan.y(), 0, 'g', 12)
-        .arg(impl_->sourceCrop_.zoom(), 0, 'g', 12)
-        .arg(impl_->sourceCrop_.rotation(), 0, 'g', 12)
-        .arg(anchor.x(), 0, 'g', 12)
-        .arg(anchor.y(), 0, 'g', 12)
+        .arg(rect.x(), 0, 'g', 17)
+        .arg(rect.y(), 0, 'g', 17)
+        .arg(rect.width(), 0, 'g', 17)
+        .arg(rect.height(), 0, 'g', 17)
+        .arg(pan.x(), 0, 'g', 17)
+        .arg(pan.y(), 0, 'g', 17)
+        .arg(impl_->sourceCrop_.zoom(), 0, 'g', 17)
+        .arg(impl_->sourceCrop_.rotation(), 0, 'g', 17)
+        .arg(anchor.x(), 0, 'g', 17)
+        .arg(anchor.y(), 0, 'g', 17)
         .arg(impl_->sourceCrop_.preserveAspect() ? 1 : 0);
 }
 
@@ -2465,7 +2470,7 @@ void ArtifactImageLayer::refreshAnimatedSourceCrop()
     const auto animatedSourceCropValue = [&](const QString& propertyPath) {
         const auto property = getProperty(propertyPath);
         if (!property || !property->isAnimatable() ||
-            property->getKeyFrames().empty()) {
+            !property->hasKeyFrames()) {
             return QVariant();
         }
         return property->interpolateValue(animationTime);
@@ -2601,6 +2606,17 @@ void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
 
     if (hasCurrentFrameBuffer()) {
         const ArtifactCore::ImageF32x4_RGBA& buffer = currentFrameBuffer();
+        const bool hasStableSourceIdentity = !hasTemporarySourceOverride();
+        const QUuid textureSourceId = hasStableSourceIdentity
+            ? sourceAssetId() : QUuid{};
+        const quint64 textureSourceVersion = hasStableSourceIdentity
+            ? sourceVersion() : 0;
+        const qint64 textureFrameContentKey =
+            hasStableSourceIdentity && isImageSequence()
+                ? sequenceCachedFrameContentKey() : 0;
+        Diligent::ITextureView* sourceTexture = renderer->textureForImage(
+            buffer, textureSourceId, textureSourceVersion,
+            textureFrameContentKey);
         const QRectF uvRect = useCrop
             ? QRectF(static_cast<qreal>(cropRect.x()) / buffer.width(),
                      static_cast<qreal>(cropRect.y()) / buffer.height(),
@@ -2611,7 +2627,17 @@ void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
         const QMatrix4x4 cropTransform = baseTransform * cropLayout.localTransform;
         for (const auto& lensPass : twoPointFiveDRenderPasses(cropTransform)) {
             drawWithClonerEffect(this, lensPass.transform,
-                [renderer, &buffer, drawRect, uvRect, this, lensOpacity = lensPass.opacity](const QMatrix4x4& transform, float weight) {
+                [renderer, &buffer, sourceTexture, drawRect, uvRect, this, lensOpacity = lensPass.opacity](const QMatrix4x4& transform, float weight) {
+                    if (sourceTexture) {
+                        renderer->drawSpriteTransformed(
+                            static_cast<float>(drawRect.x()),
+                            static_cast<float>(drawRect.y()),
+                            static_cast<float>(drawRect.width()),
+                            static_cast<float>(drawRect.height()),
+                            transform, sourceTexture,
+                            this->opacity() * weight * lensOpacity, uvRect);
+                        return;
+                    }
                     renderer->drawSpriteTransformed(
                         static_cast<float>(drawRect.x()),
                         static_cast<float>(drawRect.y()),
@@ -2622,7 +2648,8 @@ void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
         }
         drawFractureOverlay(renderer, baseTransform,
                             QSizeF(size.width, size.height), opacity(),
-                            renderer->textureForImage(buffer));
+                            sourceTexture ? sourceTexture
+                                          : renderer->textureForImage(buffer));
         return;
     }
 
@@ -2697,7 +2724,7 @@ QImage ArtifactImageLayer::toQImage() const
             impl_->cacheBufferQImageSource_ = nullptr;
             impl_->cacheBufferQImage_ = {};
             impl_->cacheBufferCropSource_ = nullptr;
-            impl_->cacheBufferCropSignature_.clear();
+            impl_->cacheBufferCropRevision_ = 0;
             impl_->cacheBufferCroppedImage_ = {};
         }
         compatibleImage = *impl_->cache_;
@@ -2706,7 +2733,7 @@ QImage ArtifactImageLayer::toQImage() const
             impl_->cacheBufferQImageSource_ = nullptr;
             impl_->cacheBufferQImage_ = {};
             impl_->cacheBufferCropSource_ = nullptr;
-            impl_->cacheBufferCropSignature_.clear();
+            impl_->cacheBufferCropRevision_ = 0;
             impl_->cacheBufferCroppedImage_ = {};
         }
     }
@@ -2718,19 +2745,19 @@ QImage ArtifactImageLayer::toQImage() const
             if (!isMainThread) {
                 return makeTransparentCropCanvas(base, cropRect);
             }
-            const QString cropSignature = sourceCropSignature();
+            const std::uint64_t cropRevision = sourceCropRevision();
             if (impl_->cacheBufferCropSource_ != source ||
-                impl_->cacheBufferCropSignature_ != cropSignature) {
+                impl_->cacheBufferCropRevision_ != cropRevision) {
                 impl_->cacheBufferCroppedImage_ =
                     makeTransparentCropCanvas(base, cropRect);
                 impl_->cacheBufferCropSource_ = source;
-                impl_->cacheBufferCropSignature_ = cropSignature;
+                impl_->cacheBufferCropRevision_ = cropRevision;
             }
             return impl_->cacheBufferCroppedImage_;
         }
         if (isMainThread) {
             impl_->cacheBufferCropSource_ = nullptr;
-            impl_->cacheBufferCropSignature_.clear();
+            impl_->cacheBufferCropRevision_ = 0;
             impl_->cacheBufferCroppedImage_ = {};
         }
         return base;
@@ -2873,6 +2900,12 @@ bool ArtifactImageLayer::hasCurrentFrameBuffer() const
     std::lock_guard<std::mutex> lock(impl_->sequenceStateMutex_);
     return (impl_->cacheBuffer_ && !impl_->cacheBuffer_->isEmpty()) ||
            static_cast<bool>(impl_->cache_);
+}
+
+bool ArtifactImageLayer::hasTemporarySourceOverride() const
+{
+    return impl_ && impl_->temporarySourceOverride_ &&
+           !impl_->temporarySourceOverride_->isEmpty();
 }
 
 const ArtifactCore::ImageF32x4_RGBA*

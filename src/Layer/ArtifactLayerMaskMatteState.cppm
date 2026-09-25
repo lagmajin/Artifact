@@ -52,6 +52,13 @@ LayerMask LayerMaskMatteState::mask(int index) const {
   return {};
 }
 
+const LayerMask* LayerMaskMatteState::maskView(int index) const noexcept {
+  if (index < 0) {
+    return nullptr;
+  }
+  return masks_.at(static_cast<std::size_t>(index));
+}
+
 int LayerMaskMatteState::maskCount() const {
   return static_cast<int>(masks_.size());
 }

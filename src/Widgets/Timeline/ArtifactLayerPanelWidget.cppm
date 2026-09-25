@@ -43,6 +43,11 @@ module;
 #include <QFocusEvent>
 #include <QWheelEvent>
 #include <QInputDialog>
+#include <QDialog>
+#include <QLabel>
+#include <QFrame>
+#include <QVBoxLayout>
+#include <QHBoxLayout>
 #include <QEvent>
 #include <QVariant>
 #include <QFileDialog>
@@ -62,6 +67,8 @@ module;
 #include <algorithm>
 #include <cmath>
 #include <memory>
+#include <functional>
+#include <limits>
 #include <vector>
 #include "TimelinePlayheadDraw.hpp"
 module Artifact.Widgets.LayerPanelWidget;
@@ -126,6 +133,126 @@ QMessageBox::StandardButton centeredQuestion(QWidget* parent,
 
 namespace {
 constexpr auto kLayerPanelContext = "Panel.LayerTree";
+
+class ValueEditButton final : public QPushButton {
+public:
+  explicit ValueEditButton(const QString& text, QWidget* parent) : QPushButton(text, parent) {}
+  std::function<void()> action;
+protected:
+  void nextCheckState() override {
+    QPushButton::nextCheckState();
+    if (action) action();
+  }
+};
+
+class TimelineValueEditDialog final : public QDialog {
+public:
+  TimelineValueEditDialog(QWidget* parent, const QString& label,
+                          const QString& layerName, const QString& context,
+                          const QString& detail, const QVariant& value,
+                          const QString& unit)
+      : QDialog(parent), originalType_(value.metaType()), boolean_(value.metaType().id() == QMetaType::Bool) {
+    setWindowTitle(tr("Edit %1").arg(label));
+    setModal(true);
+    setMinimumWidth(400);
+    setSizeGripEnabled(false);
+    const auto& theme = ArtifactCore::currentDCCTheme();
+    const QColor background(theme.backgroundColor);
+    const QColor secondary(theme.secondaryBackgroundColor);
+    const QColor text(theme.textColor);
+    QPalette colors = palette();
+    colors.setColor(QPalette::Window, background);
+    colors.setColor(QPalette::Base, secondary.darker(112));
+    colors.setColor(QPalette::Text, text);
+    colors.setColor(QPalette::WindowText, text);
+    colors.setColor(QPalette::Button, secondary.lighter(106));
+    colors.setColor(QPalette::ButtonText, text);
+    colors.setColor(QPalette::Highlight, QColor(theme.accentColor));
+    colors.setColor(QPalette::HighlightedText, Qt::white);
+    setPalette(colors);
+    setAutoFillBackground(true);
+    auto* root = new QVBoxLayout(this);
+    root->setContentsMargins(24, 20, 24, 20);
+    root->setSpacing(10);
+    auto* title = new QLabel(windowTitle(), this);
+    QFont titleFont = title->font();
+    titleFont.setPointSize(titleFont.pointSize() + 2);
+    titleFont.setBold(true);
+    title->setFont(titleFont);
+    root->addWidget(title);
+    auto* contextLabel = new QLabel(layerName + QStringLiteral(" / ") + context, this);
+    QPalette muted = contextLabel->palette();
+    muted.setColor(QPalette::WindowText, text.darker(135));
+    contextLabel->setPalette(muted);
+    root->addWidget(contextLabel);
+    root->addSpacing(8);
+    auto* valueLabel = new QLabel(tr("Value"), this);
+    root->addWidget(valueLabel);
+    if (boolean_) {
+      choice_ = new QComboBox(this);
+      choice_->addItems({tr("Off"), tr("On")});
+      choice_->setCurrentIndex(value.toBool() ? 1 : 0);
+      choice_->setMinimumHeight(36);
+      valueLabel->setBuddy(choice_);
+      root->addWidget(choice_);
+    } else {
+      auto* fieldRow = new QHBoxLayout();
+      edit_ = new QLineEdit(value.toString(), this);
+      edit_->setMinimumHeight(36);
+      edit_->setAccessibleName(tr("%1 value").arg(label));
+      valueLabel->setBuddy(edit_);
+      fieldRow->addWidget(edit_);
+      if (!unit.isEmpty()) {
+        auto* unitLabel = new QLabel(unit, this);
+        unitLabel->setPalette(muted);
+        fieldRow->addWidget(unitLabel);
+      }
+      root->addLayout(fieldRow);
+    }
+    auto* detailLabel = new QLabel(detail, this);
+    detailLabel->setPalette(muted);
+    root->addWidget(detailLabel);
+    root->addSpacing(10);
+    auto* separator = new QFrame(this);
+    separator->setFrameShape(QFrame::HLine);
+    root->addWidget(separator);
+    auto* actions = new QHBoxLayout();
+    actions->addStretch();
+    auto* cancel = new ValueEditButton(tr("Cancel"), this);
+    auto* apply = new ValueEditButton(tr("Apply"), this);
+    cancel->setMinimumSize(100, 34);
+    apply->setMinimumSize(100, 34);
+    apply->setDefault(true);
+    actions->addWidget(cancel);
+    actions->addWidget(apply);
+    root->addLayout(actions);
+    cancel->action = [this] { reject(); };
+    apply->action = [this] {
+      QVariant parsed;
+      if (!readValue(parsed)) return;
+      acceptedValue_ = parsed;
+      accept();
+    };
+    if (edit_) { edit_->setFocus(Qt::TabFocusReason); edit_->selectAll(); }
+  }
+
+  QVariant selectedValue() const { return acceptedValue_; }
+
+private:
+  bool readValue(QVariant& result) {
+    if (boolean_) { result = choice_->currentIndex() == 1; return true; }
+    bool valid = false;
+    const double number = edit_->text().trimmed().toDouble(&valid);
+    if (!valid || !std::isfinite(number)) { edit_->setFocus(); edit_->selectAll(); return false; }
+    result = number;
+    return result.convert(originalType_);
+  }
+  QMetaType originalType_;
+  bool boolean_ = false;
+  QLineEdit* edit_ = nullptr;
+  QComboBox* choice_ = nullptr;
+  QVariant acceptedValue_;
+};
 
 QString tt(const char* key, const char* fallback)
 {
@@ -203,6 +330,33 @@ bool applyLayerPropertyValues(
         layer, path, beforeValue, afterValue, label));
   }
   return applyLayerPanelCommand(std::move(macro));
+}
+
+void commitTimelinePropertyValue(const ArtifactAbstractLayerPtr& layer,
+                                 const QString& path, const QString& label,
+                                 const ArtifactCompositionPtr& comp,
+                                 const RationalTime& time, const QVariant& value,
+                                 const QVariant& next)
+{
+  if (!layer || !comp || !next.isValid() || next == value) return;
+  const auto property = layer->getProperty(path);
+  if (!property) return;
+  const auto before = property->getKeyFrames();
+  if (before.empty()) {
+    applyLayerPropertyValues(layer, QObject::tr("Edit %1").arg(label), {{path, next}});
+    return;
+  }
+  auto after = before;
+  for (auto& key : after) {
+    if (key.time == time) {
+      key.value = next;
+      applyLayerPanelCommand(std::make_unique<SetLayerPropertyKeyframesCommand>(
+          layer, path, before, after, QObject::tr("Edit %1 keyframe").arg(label)));
+      return;
+    }
+  }
+  ArtifactTimelineKeyframeModel model;
+  model.addKeyframe(comp->id(), layer->id(), path, time, next);
 }
 
 double safeLayerPanelFrameRate(const double rawFps)
@@ -1351,11 +1505,17 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   for (auto* control : {visButton, lockButton, soloButton, audioButton, shyButton,
                         layerNameButton, valueHeader, selectionMenuButton,
                         parentHeader, blendHeader}) {
+    control->setFlat(true);
     control->setAutoFillBackground(false);
     control->setAttribute(Qt::WA_StyledBackground, false);
     QPalette palette = control->palette();
-    palette.setColor(QPalette::Button, headerPalette.color(QPalette::Window));
-    palette.setColor(QPalette::Window, headerPalette.color(QPalette::Window));
+    for (const auto group : {QPalette::Active, QPalette::Inactive,
+                             QPalette::Disabled}) {
+      palette.setColor(group, QPalette::Button,
+                       headerPalette.color(QPalette::Window));
+      palette.setColor(group, QPalette::Window,
+                       headerPalette.color(QPalette::Window));
+    }
     control->setPalette(palette);
     QFont labelFont = control->font();
     labelFont.setPointSizeF(std::max(10.0, labelFont.pointSizeF()));
@@ -1755,7 +1915,7 @@ bool propertyMatchesDisplayMode(const ArtifactCore::AbstractPropertyPtr& propert
  case TimelineLayerDisplayMode::AnimatedOnly:
  case TimelineLayerDisplayMode::ImportantAndKeyframed:
  case TimelineLayerDisplayMode::KeyframesOnly:
-  return property->isAnimatable() && !property->getKeyFrames().empty();
+  return property->isAnimatable() && property->hasKeyFrames();
  case TimelineLayerDisplayMode::AudioOnly:
  case TimelineLayerDisplayMode::VideoOnly:
  case TimelineLayerDisplayMode::SelectedOnly:
@@ -2473,6 +2633,14 @@ public:
   ArtifactTimelineKeyframeModel* keyframeModel = nullptr;
   RationalTime currentTime{};
   QString currentPropertyPath;
+  int valueEditRow = -1;
+  QPoint valueEditStart;
+  QVariant valueEditOriginal;
+  QVariant valueEditPreview;
+  bool valueEditDragging = false;
+  double valueEditStep = 1.0;
+  double valueEditMin = -std::numeric_limits<double>::infinity();
+  double valueEditMax = std::numeric_limits<double>::infinity();
 
   QPixmap visibilityIcon;
   QPixmap lockIcon;
@@ -3007,7 +3175,7 @@ public:
             property->setAnimatable(true);
             const QJsonArray savedKeys = control.value(
                 axis + QStringLiteral("Keys")).toArray();
-            if (property->getKeyFrames().empty() && !savedKeys.isEmpty()) {
+            if (!property->hasKeyFrames() && !savedKeys.isEmpty()) {
               property->setAnimatable(true);
               for (const QJsonValue& keyValue : savedKeys) {
                 if (!keyValue.isObject()) continue;
@@ -3732,6 +3900,8 @@ QString ArtifactLayerPanelWidget::currentPropertyPath() const {
 void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
 {
   setFocus();
+  impl_->valueEditRow = -1;
+  impl_->valueEditDragging = false;
   const int rowH = impl_->rowHeight;
   int idx = impl_->rowIndexFromViewportY(event->pos().y());
   int clickX = event->pos().x();
@@ -3869,6 +4039,31 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     impl_->selectedLayerId = layer->id();
     impl_->currentPropertyPath = row.propertyPath.trimmed();
     propertyFocusChanged(impl_->selectedLayerId, impl_->currentPropertyPath);
+    if (propertyValueRect(width(), impl_->rowViewportY(idx), rowH).contains(event->pos()) &&
+        !layer->isLocked()) {
+      const auto property = layer->getProperty(row.propertyPath);
+      if (property) {
+        impl_->valueEditRow = idx;
+        impl_->valueEditStart = event->pos();
+        impl_->valueEditOriginal = property->interpolateValue(currentTime);
+        if (!impl_->valueEditOriginal.isValid()) impl_->valueEditOriginal = property->getValue();
+        impl_->valueEditPreview = impl_->valueEditOriginal;
+        impl_->valueEditDragging = false;
+        const auto metadata = property->metadata();
+        bool valid = false;
+        impl_->valueEditStep = metadata.step.toDouble(&valid);
+        if (!valid || !std::isfinite(impl_->valueEditStep) || impl_->valueEditStep <= 0.0)
+          impl_->valueEditStep = 1.0;
+        impl_->valueEditMin = metadata.hardMin.toDouble(&valid);
+        if (!valid) impl_->valueEditMin = -std::numeric_limits<double>::infinity();
+        impl_->valueEditMax = metadata.hardMax.toDouble(&valid);
+        if (!valid) impl_->valueEditMax = std::numeric_limits<double>::infinity();
+        if (impl_->valueEditMin > impl_->valueEditMax) {
+          impl_->valueEditMin = -std::numeric_limits<double>::infinity();
+          impl_->valueEditMax = std::numeric_limits<double>::infinity();
+        }
+      }
+    }
     update();
    }
    event->accept();
@@ -6311,54 +6506,6 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
   if (row.kind == RowKind::Property &&
       propertyValueRect(width(), impl_->rowViewportY(idx), rowH).contains(event->pos())) {
     event->accept();
-    if (layer->isLocked()) return;
-    const QString editPath = row.propertyPath;
-    const QString editLabel = row.label;
-    const auto property = layer->getProperty(editPath);
-    const auto comp = safeCompositionLookup(impl_->compositionId);
-    if (!property || !comp) return;
-    const auto scale = FrameRate::storageScaleForFps(
-        safeLayerPanelFrameRate(comp->frameRate().framerate()));
-    const RationalTime time(comp->framePosition().framePosition(), scale);
-    QVariant value = property->interpolateValue(time);
-    if (!value.isValid()) value = property->getValue();
-    QVariant next;
-    bool accepted = false;
-    if (value.metaType().id() == QMetaType::Bool) {
-      const QString choice = QInputDialog::getItem(this, editLabel, tr("Value"),
-          {tr("Off"), tr("On")}, value.toBool() ? 1 : 0, false, &accepted);
-      next = choice == tr("On");
-    } else {
-      bool numeric = false;
-      value.toDouble(&numeric);
-      if (!numeric) return;
-      const QString input = QInputDialog::getText(this, editLabel, tr("Value"),
-          QLineEdit::Normal, value.toString(), &accepted);
-      bool valid = false;
-      const double number = input.toDouble(&valid);
-      if (!valid || !std::isfinite(number)) return;
-      next = number;
-      if (!next.convert(value.metaType())) return;
-    }
-    if (!accepted || next == value) return;
-    const auto before = property->getKeyFrames();
-    if (before.empty()) {
-      applyLayerPropertyValues(layer, tr("Edit %1").arg(editLabel), {{editPath, next}});
-    } else {
-      auto after = before;
-      bool existing = false;
-      for (auto& key : after) {
-        if (key.time == time) { key.value = next; existing = true; break; }
-      }
-      if (existing) {
-        applyLayerPanelCommand(std::make_unique<SetLayerPropertyKeyframesCommand>(
-            layer, editPath, before, after, tr("Edit %1 keyframe").arg(editLabel)));
-      } else {
-        ArtifactTimelineKeyframeModel model;
-        model.addKeyframe(comp->id(), layer->id(), editPath, time, next);
-      }
-    }
-    update();
     return;
   }
    if (row.kind != RowKind::Layer) {
@@ -6435,6 +6582,30 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
 
 void ArtifactLayerPanelWidget::mouseMoveEvent(QMouseEvent* event)
 {
+  if (impl_->valueEditRow >= 0 && impl_->valueEditRow < impl_->visibleRows.size() &&
+      (event->buttons() & Qt::LeftButton)) {
+    bool numeric = false;
+    const double original = impl_->valueEditOriginal.toDouble(&numeric);
+    if (numeric && impl_->valueEditOriginal.metaType().id() != QMetaType::Bool) {
+      const int distance = event->pos().x() - impl_->valueEditStart.x();
+      if (!impl_->valueEditDragging && std::abs(distance) >= QApplication::startDragDistance()) {
+        impl_->valueEditDragging = true;
+        setCursor(Qt::SizeHorCursor);
+      }
+      if (impl_->valueEditDragging) {
+        const double number = std::clamp(
+            original + static_cast<double>(distance) * impl_->valueEditStep,
+            impl_->valueEditMin, impl_->valueEditMax);
+        QVariant preview = number;
+        if (preview.convert(impl_->valueEditOriginal.metaType())) {
+          impl_->valueEditPreview = preview;
+          update(0, impl_->rowViewportY(impl_->valueEditRow), width(), impl_->rowHeight);
+        }
+      }
+    }
+    event->accept();
+    return;
+  }
   // 列幅ドラッグ中
   if (impl_->dragCol_ >= 0 && (event->buttons() & Qt::LeftButton)) {
     const int delta = event->pos().x() - impl_->dragStartX_;
@@ -6535,7 +6706,7 @@ void ArtifactLayerPanelWidget::mouseMoveEvent(QMouseEvent* event)
   QString toolTipText;
   if (idx >= 0 && idx < impl_->visibleRows.size() &&
       impl_->visibleRows[idx].kind == RowKind::Property) {
-    toolTipText = tt("layer_panel.keyframe_value_hint", "Double-click the value to edit. The clock indicates animation; the diamond toggles a key at the current frame.");
+    toolTipText = tt("layer_panel.keyframe_value_hint", "Click the value to edit, or drag left and right to adjust it. The clock indicates animation; the diamond toggles a key at the current frame.");
   }
   if (idx >= 0 && idx < impl_->visibleRows.size()) {
     const auto& row = impl_->visibleRows[idx];
@@ -6585,6 +6756,43 @@ void ArtifactLayerPanelWidget::mouseMoveEvent(QMouseEvent* event)
 
  void ArtifactLayerPanelWidget::mouseReleaseEvent(QMouseEvent* event)
  {
+  if (event->button() == Qt::LeftButton && impl_->valueEditRow >= 0) {
+    const int rowIndex = impl_->valueEditRow;
+    const bool dragged = impl_->valueEditDragging;
+    const QVariant original = impl_->valueEditOriginal;
+    const QVariant preview = impl_->valueEditPreview;
+    impl_->valueEditRow = -1;
+    impl_->valueEditDragging = false;
+    unsetCursor();
+    if (rowIndex < impl_->visibleRows.size()) {
+      const auto row = impl_->visibleRows[rowIndex];
+      const auto layer = row.layer;
+      const auto comp = safeCompositionLookup(impl_->compositionId);
+      const auto property = layer ? layer->getProperty(row.propertyPath) : nullptr;
+      if (layer && !layer->isLocked() && comp && property) {
+        const auto scale = FrameRate::storageScaleForFps(
+            safeLayerPanelFrameRate(comp->frameRate().framerate()));
+        const RationalTime time(comp->framePosition().framePosition(), scale);
+        if (dragged) {
+          commitTimelinePropertyValue(layer, row.propertyPath, row.label, comp, time,
+                                      original, preview);
+        } else if (propertyValueRect(width(), impl_->rowViewportY(rowIndex), impl_->rowHeight)
+                       .contains(event->pos())) {
+          const QString context = row.propertyPath.section(QLatin1Char('.'), 0, 0);
+          const QString detail = tr("Frame %1").arg(comp->framePosition().framePosition());
+          TimelineValueEditDialog dialog(this, row.label, layer->layerName(), context,
+                                         detail, original, property->metadata().unit);
+          if (dialog.exec() == QDialog::Accepted) {
+            commitTimelinePropertyValue(layer, row.propertyPath, row.label, comp, time,
+                                        original, dialog.selectedValue());
+          }
+        }
+      }
+    }
+    update();
+    event->accept();
+    return;
+  }
   if (impl_->dragCol_ >= 0) {
     impl_->dragCol_ = -1;
     impl_->dragStartWidths_.clear();
@@ -8029,6 +8237,9 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
      if (property) {
       QVariant value = property->interpolateValue(currentTime);
       if (!value.isValid()) value = property->getValue();
+      if (impl_->valueEditDragging && impl_->valueEditRow == i) {
+        value = impl_->valueEditPreview;
+      }
       QString valueText;
       if (value.metaType().id() == QMetaType::Bool) {
        valueText = value.toBool() ? QStringLiteral("On") : QStringLiteral("Off");
@@ -8042,7 +8253,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
                  p.fontMetrics().elidedText(valueText, Qt::ElideRight, valueRect.width() - 8));
       if (propertyAnimatable) {
        const QRect clockRect(keyframeRect.left() - 21, y + (rowH - 14) / 2, 14, 14);
-       const bool animated = !property->getKeyFrames().empty();
+       const bool animated = property->hasKeyFrames();
        p.setOpacity(animated ? 1.0 : 0.35);
        p.drawPixmap(clockRect, impl_->animationIcon);
        p.setOpacity(1.0);

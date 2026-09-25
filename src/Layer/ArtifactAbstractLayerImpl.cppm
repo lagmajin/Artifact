@@ -1,5 +1,6 @@
 module;
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <memory>
@@ -45,9 +46,14 @@ import Artifact.Layer.Abstract;
 
 import Memory.SharedPtr;
 import Utils;
+import Utils.String.UniString;
 import Layer.State;
 import Animation.Transform2D;
+import Animation.Transform3D;
 import Animation.Dynamics;
+import Size;
+import Layer.Blend;
+import Artifact.Animation.LayerEffectEnvelope;
 import Frame.Position;
 import Time.Rational;
 import Frame.Rate;
@@ -358,6 +364,12 @@ public:
   LayerMaskMatteState maskMatteState_;
 
   uint32_t dirtyFlags_ = (uint32_t)LayerDirtyFlag::All;
+  std::atomic<std::uint64_t> effectRevision_{1};
+  std::atomic<std::uint64_t> animatedEffectPropertyState_{0};
+  mutable std::mutex rasterizerOverscanCacheMutex_;
+  mutable std::uint64_t cachedRasterizerOverscanRevision_ = 0;
+  mutable float cachedRasterizerOverscanPixels_ = 0.0f;
+  mutable bool cachedRasterizerOverscanValid_ = false;
   uint64_t dirtyReasonMask_ =
       static_cast<uint64_t>(LayerDirtyReason::PropertyChanged);
   mutable quint64 geometryRevision_ = 1;
@@ -419,6 +431,10 @@ public:
   SharedPtr<ArtifactAbstractEffect>
   getEffect(const UniString &effectID) const;
   int effectCount() const;
+  bool hasEnabledRasterizerEffect() const;
+  bool hasEnabledFullFrameEffect() const;
+  float enabledRasterizerOverscanPixels() const;
+  float cachedRasterizerOverscanPixels() const;
 
   // モディファイア管理メソッド
   void addModifier(SharedPtr<ArtifactLayerModifier> modifier);

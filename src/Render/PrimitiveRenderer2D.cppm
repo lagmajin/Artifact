@@ -5,6 +5,7 @@ module;
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <iterator>
 #include <numbers>
 #include <vector>
 #include <QImage>
@@ -15,7 +16,11 @@ module;
 #include <QPointF>
 #include <QRectF>
 #include <QSizeF>
+#include <QChar>
+#include <QString>
+#include <QtGlobal>
 #include <QTransform>
+#include <QUuid>
 #include <QDebug>
 #include <QLoggingCategory>
 #include <opencv2/opencv.hpp>
@@ -57,32 +62,19 @@ GlyphRenderMode renderModeForCodePoint(char32_t codePoint) noexcept {
         : GlyphRenderMode::MonochromeCoverage;
 }
 
-// Compute a stable cache key from image content (dimensions + pixel hash).
-// QImage::cacheKey() changes on every new instance even with identical data,
-// so we hash the actual bits instead.
+// QImage's key is stable across implicitly-shared copies and changes when its
+// contents are modified. Use that exact source identity here instead of a
+// lossy pixel sample, which can alias unrelated images.
 qint64 computeImageContentKey(const QImage& image) {
     if (image.isNull()) return 0;
-    // Hash dimensions + first 4 KB of pixel data for a fast fingerprint.
-    const size_t sampleBytes = std::min<size_t>(
-        static_cast<size_t>(image.sizeInBytes()), 4096u);
-    quint32 h = qHashMulti(0, image.width(), image.height(),
-                           image.format(), image.depth());
-    const uchar* data = image.constBits();
-    // FNV-1a style mix over sampled bytes
-    for (size_t i = 0; i < sampleBytes; ++i) {
-        h ^= data[i];
-        h *= 16777619u;
-    }
-    // Also fold in the last byte to catch trailing differences
-    if (sampleBytes > 0) {
-        h ^= data[sampleBytes - 1];
-        h *= 16777619u;
-    }
-    return static_cast<qint64>(h);
+    return image.cacheKey();
 }
 
 qint64 computeImageContentKey(const auto& image)
 {
+    // ImageF32 has no content revision exposed at this API boundary. Keep the
+    // bounded sample for lookup cost, but treat this as a lossy fingerprint:
+    // callers needing exact identity should use the owner/version GPU cache.
     const float* data32 = image.rgba32fData();
     const std::uint8_t* data8 = image.rgba8Data();
     if (!data32 && !data8) {
@@ -92,8 +84,9 @@ qint64 computeImageContentKey(const auto& image)
     const bool isFloat = data32 != nullptr;
     const size_t bytesPerChannel = isFloat ? sizeof(float) : sizeof(std::uint8_t);
     const size_t totalBytes = static_cast<size_t>(image.width()) * static_cast<size_t>(image.height()) * 4u * bytesPerChannel;
-    const size_t sampleBytes = std::min<size_t>(totalBytes, 4096u);
-    quint32 h = qHashMulti(0, image.width(), image.height(), 4, bytesPerChannel);
+    const size_t sampleCount = std::min<size_t>(totalBytes, 4096u);
+    quint64 h = qHashMulti(quint64{0x494d414745463332}, image.width(),
+                           image.height(), 4, bytesPerChannel);
     if constexpr (requires { image.colorDescriptor(); }) {
         const auto descriptor = image.colorDescriptor();
         h = qHashMulti(h,
@@ -108,15 +101,54 @@ qint64 computeImageContentKey(const auto& image)
     const quint8* bytes = isFloat
         ? reinterpret_cast<const quint8*>(data32)
         : reinterpret_cast<const quint8*>(data8);
-    for (size_t i = 0; i < sampleBytes; ++i) {
-        h ^= static_cast<quint32>(bytes[i]);
-        h *= 16777619u;
-    }
-    if (sampleBytes > 0) {
-        h ^= static_cast<quint32>(bytes[sampleBytes - 1]);
-        h *= 16777619u;
+    if (sampleCount == totalBytes) {
+        for (size_t i = 0; i < sampleCount; ++i) {
+            h ^= static_cast<quint64>(bytes[i]);
+            h *= 1099511628211ull;
+        }
+    } else if (sampleCount > 1) {
+        // Spread the same bounded read budget across the whole image so a
+        // change confined to a later tile is more likely to alter the key.
+        const size_t span = totalBytes - 1;
+        const size_t divisor = sampleCount - 1;
+        const size_t wholeStep = span / divisor;
+        const size_t remainder = span % divisor;
+        size_t offset = 0;
+        size_t stepRemainder = 0;
+        for (size_t i = 0; i < sampleCount; ++i) {
+            h ^= static_cast<quint64>(bytes[offset]);
+            h *= 1099511628211ull;
+            if (i + 1 < sampleCount) {
+                offset += wholeStep;
+                stepRemainder += remainder;
+                if (stepRemainder >= divisor) {
+                    ++offset;
+                    stepRemainder -= divisor;
+                }
+            }
+        }
     }
     return static_cast<qint64>(h);
+}
+
+qint64 stableImageTextureKey(
+    const ArtifactCore::ImageF32x4_RGBA& image, const QUuid& sourceIdentityId,
+    quint64 sourceVersion, qint64 sourceFrameContentKey) {
+    if ((sourceIdentityId.isNull() || sourceVersion == 0) &&
+        sourceFrameContentKey == 0) {
+        return computeImageContentKey(image);
+    }
+    const auto descriptor = image.colorDescriptor();
+    const quint64 key = qHashMulti(
+          quint64{0x534f555243454944}, sourceIdentityId, sourceVersion,
+        sourceFrameContentKey, image.width(), image.height(),
+        static_cast<int>(descriptor.storage),
+        static_cast<int>(descriptor.channelOrder),
+        static_cast<int>(descriptor.primaries),
+        static_cast<int>(descriptor.transfer),
+        static_cast<int>(descriptor.alphaMode),
+        static_cast<int>(descriptor.range), descriptor.transferKnown);
+    return static_cast<qint64>(key);
 }
 
 QImage imageToQImageAdapter(const ArtifactCore::ImageF32x4_RGBA& image)
@@ -212,24 +244,53 @@ public:
     // re-query the font database or rebuild the UTF-8 family key every frame.
     std::optional<TextStyle> glyphFontCacheStyle_;
     std::vector<ResolvedGlyphFont> glyphFontCache_;
+    // Fixed open-address index for the bounded 2048-entry font cache. The
+    // vector remains the owner so returned references stay stable until the
+    // existing style/capacity reset.
+    static constexpr size_t kGlyphFontCacheSlotCount = 4096;
+    static_assert((kGlyphFontCacheSlotCount &
+                   (kGlyphFontCacheSlotCount - 1)) == 0);
+    std::array<std::int16_t, kGlyphFontCacheSlotCount> glyphFontCacheSlots_{};
     // Reused by drawGlyphText().  Timeline labels are submitted every
     // present even when their static snapshot is unchanged; keep the
     // per-call code-point lookup outside the allocator hot path.
     std::vector<char32_t> glyphCodePointScratch_;
+    static constexpr size_t kGlyphCodePointSlotCount = 4096;
+    static_assert((kGlyphCodePointSlotCount &
+                   (kGlyphCodePointSlotCount - 1)) == 0);
+    std::array<std::int32_t, kGlyphCodePointSlotCount>
+        glyphCodePointSlots_{};
+    std::array<std::uint16_t, kGlyphCodePointSlotCount>
+        glyphCodePointOccupiedSlots_{};
+    size_t glyphCodePointOccupiedCount_ = 0;
+    bool glyphCodePointIndexSaturated_ = false;
+    bool glyphCodePointSlotsInitialized_ = false;
 
-    const ResolvedGlyphFont& resolvedGlyphFont(const TextStyle& style,
-                                                char32_t codePoint) {
+    ResolvedGlyphFont& resolvedGlyphFont(const TextStyle& style,
+                                         char32_t codePoint) {
         if (!glyphFontCacheStyle_ || *glyphFontCacheStyle_ != style) {
             glyphFontCacheStyle_ = style;
             glyphFontCache_.clear();
+            glyphFontCacheSlots_.fill(-1);
         }
-        for (const ResolvedGlyphFont& entry : glyphFontCache_) {
-            if (entry.codePoint == codePoint) {
-                return entry;
+        constexpr size_t slotMask = kGlyphFontCacheSlotCount - 1;
+        const auto initialSlotFor = [slotMask](char32_t value) {
+            const auto mixed = static_cast<std::uint32_t>(value) * 2654435761u;
+            return static_cast<size_t>(mixed) & slotMask;
+        };
+        size_t slot = initialSlotFor(codePoint);
+        while (glyphFontCacheSlots_[slot] >= 0) {
+            const size_t cachedIndex = static_cast<size_t>(
+                glyphFontCacheSlots_[slot]);
+            if (glyphFontCache_[cachedIndex].codePoint == codePoint) {
+                return glyphFontCache_[cachedIndex];
             }
+            slot = (slot + 1) & slotMask;
         }
         if (glyphFontCache_.size() >= 2048) {
             glyphFontCache_.clear();
+            glyphFontCacheSlots_.fill(-1);
+            slot = initialSlotFor(codePoint);
         }
         const QString glyphText = QString::fromUcs4(&codePoint, 1);
         QFont font = FontManager::makeFont(style, glyphText);
@@ -240,38 +301,93 @@ public:
         key.styleFlags = (static_cast<uint32_t>(style.fontWeight) << 1) |
                          static_cast<uint32_t>(style.fontStyle);
         key.renderMode = renderModeForCodePoint(codePoint);
+        const auto cacheIndex = static_cast<std::int16_t>(
+            glyphFontCache_.size());
         glyphFontCache_.push_back({codePoint, std::move(font), std::move(key)});
+        glyphFontCacheSlots_[slot] = cacheIndex;
         return glyphFontCache_.back();
     }
 
     struct CachedTexture {
         RefCntAutoPtr<ITexture> pTexture;
-        qint64 lastUsedFrame = 0;
+        quint64 lastUsedAccess = 0;
+        size_t estimatedBytes = 0;
     };
     std::unordered_map<qint64, CachedTexture> m_spriteTexCache;
     std::unordered_map<qint64, CachedTexture> m_maskTexCache;
-    qint64 m_frameCount = 0;
-    qint64 m_lastPruneDrawCount = 0;
+    quint64 m_textureAccessSequence = 0;
+    size_t m_cachedTextureBytes = 0;
+    static constexpr size_t kTextureCacheEntryLimit = 50;
+    static constexpr size_t kTextureCacheByteLimit = 512ull * 1024ull * 1024ull;
 
-    void pruneCache() {
-        const qint64 cycleBoundary = m_lastPruneDrawCount;
-        if (m_spriteTexCache.size() > 50) {
-            for (auto it = m_spriteTexCache.begin(); it != m_spriteTexCache.end(); ) {
-                if (it->second.lastUsedFrame <= cycleBoundary)
-                    it = m_spriteTexCache.erase(it);
-                else
-                    ++it;
+    void evictOldestTexture(
+        std::unordered_map<qint64, CachedTexture>& cache) {
+        if (cache.empty()) return;
+        auto oldest = cache.begin();
+        for (auto it = std::next(oldest); it != cache.end(); ++it) {
+            if (it->second.lastUsedAccess < oldest->second.lastUsedAccess) {
+                oldest = it;
             }
         }
-        if (m_maskTexCache.size() > 50) {
-            for (auto it = m_maskTexCache.begin(); it != m_maskTexCache.end(); ) {
-                if (it->second.lastUsedFrame <= cycleBoundary)
-                    it = m_maskTexCache.erase(it);
-                else
-                    ++it;
+        m_cachedTextureBytes -= oldest->second.estimatedBytes;
+        cache.erase(oldest);
+    }
+
+    void evictLeastRecentlyUsedTexture() {
+        if (m_spriteTexCache.empty()) {
+            evictOldestTexture(m_maskTexCache);
+            return;
+        }
+        if (m_maskTexCache.empty()) {
+            evictOldestTexture(m_spriteTexCache);
+            return;
+        }
+        const auto oldestSprite = std::min_element(
+            m_spriteTexCache.begin(), m_spriteTexCache.end(),
+            [](const auto& a, const auto& b) {
+                return a.second.lastUsedAccess < b.second.lastUsedAccess;
+            });
+        const auto oldestMask = std::min_element(
+            m_maskTexCache.begin(), m_maskTexCache.end(),
+            [](const auto& a, const auto& b) {
+                return a.second.lastUsedAccess < b.second.lastUsedAccess;
+            });
+        if (oldestSprite->second.lastUsedAccess <=
+            oldestMask->second.lastUsedAccess) {
+            m_cachedTextureBytes -= oldestSprite->second.estimatedBytes;
+            m_spriteTexCache.erase(oldestSprite);
+        } else {
+            m_cachedTextureBytes -= oldestMask->second.estimatedBytes;
+            m_maskTexCache.erase(oldestMask);
+        }
+    }
+
+    void cacheTexture(std::unordered_map<qint64, CachedTexture>& cache,
+                      qint64 key, const RefCntAutoPtr<ITexture>& texture) {
+        auto existing = cache.find(key);
+        if (existing != cache.end()) {
+            m_cachedTextureBytes -= existing->second.estimatedBytes;
+            cache.erase(existing);
+        }
+        const auto& desc = texture->GetDesc();
+        // The sprite and mask upload paths both create RGBA8 textures.
+        const quint64 estimatedGpuBytes =
+            static_cast<quint64>(desc.Width) * desc.Height * 4u;
+        const size_t estimatedBytes = static_cast<size_t>(estimatedGpuBytes);
+        if (cache.size() >= kTextureCacheEntryLimit) {
+            evictOldestTexture(cache);
+        }
+        if (estimatedBytes > kTextureCacheByteLimit) {
+            while (!m_spriteTexCache.empty() || !m_maskTexCache.empty()) {
+                evictLeastRecentlyUsedTexture();
+            }
+        } else {
+            while (m_cachedTextureBytes > kTextureCacheByteLimit - estimatedBytes) {
+                evictLeastRecentlyUsedTexture();
             }
         }
-        m_lastPruneDrawCount = m_frameCount;
+        cache[key] = { texture, m_textureAccessSequence, estimatedBytes };
+        m_cachedTextureBytes += estimatedBytes;
     }
 
     ViewportTransformer viewport_;
@@ -363,6 +479,8 @@ void PrimitiveRenderer2D::createBuffers(RefCntAutoPtr<IRenderDevice> device, TEX
 {
     if (!device) return;
     impl_->pDevice_ = device;
+    impl_->m_spriteTexCache.reserve(Impl::kTextureCacheEntryLimit);
+    impl_->m_maskTexCache.reserve(Impl::kTextureCacheEntryLimit);
     
     // Initialize GlyphAtlas
     if (!impl_->pGlyphAtlas_) {
@@ -376,6 +494,7 @@ void PrimitiveRenderer2D::destroy()
 {
     impl_->m_spriteTexCache.clear();
     impl_->m_maskTexCache.clear();
+    impl_->m_cachedTextureBytes = 0;
     impl_->pDevice_      = nullptr;
     impl_->pContext_     = nullptr;
     impl_->pSwapChain_   = nullptr;
@@ -916,8 +1035,7 @@ void PrimitiveRenderer2D::drawSpriteLocal(float x, float y, float w, float h, co
         return;
     }
 
-    impl_->m_frameCount++;
-    if (impl_->m_frameCount % 60 == 0) impl_->pruneCache();
+    impl_->m_textureAccessSequence++;
 
     qint64 cacheKey = computeImageContentKey(image);
     RefCntAutoPtr<ITexture> pTexture;
@@ -925,7 +1043,7 @@ void PrimitiveRenderer2D::drawSpriteLocal(float x, float y, float w, float h, co
     auto it = impl_->m_spriteTexCache.find(cacheKey);
     if (it != impl_->m_spriteTexCache.end()) {
         pTexture = it->second.pTexture;
-        it->second.lastUsedFrame = impl_->m_frameCount;
+        it->second.lastUsedAccess = impl_->m_textureAccessSequence;
         if (primitiveRenderer2DLog().isDebugEnabled()) {
             qCDebug(primitiveRenderer2DLog) << "drawSpriteLocal: cache hit for key" << cacheKey << "-> pTexture=" << (pTexture != nullptr);
         }
@@ -966,7 +1084,7 @@ void PrimitiveRenderer2D::drawSpriteLocal(float x, float y, float w, float h, co
         }
             return;
         }
-        impl_->m_spriteTexCache[cacheKey] = { pTexture, impl_->m_frameCount };
+        impl_->cacheTexture(impl_->m_spriteTexCache, cacheKey, pTexture);
     }
 
     auto* pSRV = pTexture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
@@ -1090,8 +1208,7 @@ void PrimitiveRenderer2D::drawMaskedTextureLocal(float x, float y, float w, floa
         return;
     }
 
-    impl_->m_frameCount++;
-    if (impl_->m_frameCount % 60 == 0) impl_->pruneCache();
+    impl_->m_textureAccessSequence++;
 
     qint64 cacheKey = computeImageContentKey(maskImage);
     RefCntAutoPtr<ITexture> pMaskTexture;
@@ -1099,7 +1216,7 @@ void PrimitiveRenderer2D::drawMaskedTextureLocal(float x, float y, float w, floa
     auto it = impl_->m_maskTexCache.find(cacheKey);
     if (it != impl_->m_maskTexCache.end()) {
         pMaskTexture = it->second.pTexture;
-        it->second.lastUsedFrame = impl_->m_frameCount;
+        it->second.lastUsedAccess = impl_->m_textureAccessSequence;
     } else {
         const QImage rgba = (maskImage.format() == QImage::Format_RGBA8888)
                                 ? maskImage
@@ -1125,7 +1242,7 @@ void PrimitiveRenderer2D::drawMaskedTextureLocal(float x, float y, float w, floa
         if (!pMaskTexture) {
             return;
         }
-        impl_->m_maskTexCache[cacheKey] = { pMaskTexture, impl_->m_frameCount };
+        impl_->cacheTexture(impl_->m_maskTexCache, cacheKey, pMaskTexture);
     }
 
     auto* maskSRV = pMaskTexture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
@@ -1150,8 +1267,7 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
         return;
     }
 
-    impl_->m_frameCount++;
-    if (impl_->m_frameCount % 60 == 0) impl_->pruneCache();
+    impl_->m_textureAccessSequence++;
 
     qint64 cacheKey = computeImageContentKey(image);
     RefCntAutoPtr<ITexture> pTexture;
@@ -1159,7 +1275,7 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
     auto it = impl_->m_spriteTexCache.find(cacheKey);
     if (it != impl_->m_spriteTexCache.end()) {
         pTexture = it->second.pTexture;
-        it->second.lastUsedFrame = impl_->m_frameCount;
+        it->second.lastUsedAccess = impl_->m_textureAccessSequence;
     } else {
         const QImage rgba = (image.format() == QImage::Format_RGBA8888)
                                 ? image
@@ -1183,7 +1299,7 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
         initData.NumSubresources = 1;
         impl_->pDevice_->CreateTexture(texDesc, &initData, &pTexture);
         if (!pTexture) return;
-        impl_->m_spriteTexCache[cacheKey] = { pTexture, impl_->m_frameCount };
+        impl_->cacheTexture(impl_->m_spriteTexCache, cacheKey, pTexture);
     }
 
     auto* pSRV = pTexture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
@@ -1245,8 +1361,55 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
     pkt.mat.row1 = { finalMat.row(1).x(), finalMat.row(1).y(), finalMat.row(1).z(), finalMat.row(1).w() };
     pkt.mat.row2 = { finalMat.row(2).x(), finalMat.row(2).y(), finalMat.row(2).z(), finalMat.row(2).w() };
     pkt.mat.row3 = { finalMat.row(3).x(), finalMat.row(3).y(), finalMat.row(3).z(), finalMat.row(3).w() };
+    pkt.pSRV = pSRV;
+    pkt.opacity = opacity;
+    impl_->cmdBuf_->append(pkt);
+}
+
+void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, ITextureView* pSRV, float opacity, const QRectF& uvRect)
+{
+    if (!impl_->cmdBuf_ || !pSRV) return;
+
+    const auto viewportCB = impl_->viewport_.GetViewportCB();
+    const float screenW = std::max(viewportCB.screenSize.x, 0.001f);
+    const float screenH = std::max(viewportCB.screenSize.y, 0.001f);
+    const float zoom = std::max(viewportCB.zoom, 0.001f);
+    const float panX = viewportCB.offset.x, panY = viewportCB.offset.y;
+
+    QMatrix4x4 finalMat;
+    if (impl_->useExternalMatrices_) {
+        QMatrix4x4 model = transform;
+        model.translate(x, y, 0);
+        model.scale(w, h, 1.0f);
+        finalMat = impl_->externalProjMatrix_ * impl_->externalViewMatrix_ * model;
+    } else {
+        QMatrix4x4 combined = transform;
+        combined.translate(x, y, 0);
+        combined.scale(w, h, 1.0f);
+        QMatrix4x4 canvasToNdc;
+        canvasToNdc.setToIdentity();
+        canvasToNdc.translate(-1.0f, 1.0f, 0.0f);
+        canvasToNdc.scale(2.0f / screenW, -2.0f / screenH, 1.0f);
+        canvasToNdc.scale(zoom, zoom, 1.0f);
+        canvasToNdc.translate(panX / zoom, panY / zoom, 0.0f);
+        finalMat = canvasToNdc * combined;
+    }
+
+    const QRectF clampedUv = uvRect.normalized().intersected(
+        QRectF(0.0, 0.0, 1.0, 1.0));
+    if (!clampedUv.isValid() || clampedUv.width() <= 0.0 ||
+        clampedUv.height() <= 0.0) return;
+    AtlasSpriteXformPkt pkt;
+    pkt.mat.row0 = { finalMat.row(0).x(), finalMat.row(0).y(), finalMat.row(0).z(), finalMat.row(0).w() };
+    pkt.mat.row1 = { finalMat.row(1).x(), finalMat.row(1).y(), finalMat.row(1).z(), finalMat.row(1).w() };
+    pkt.mat.row2 = { finalMat.row(2).x(), finalMat.row(2).y(), finalMat.row(2).z(), finalMat.row(2).w() };
+    pkt.mat.row3 = { finalMat.row(3).x(), finalMat.row(3).y(), finalMat.row(3).z(), finalMat.row(3).w() };
     pkt.pSRV     = pSRV;
-    pkt.opacity  = opacity;
+    pkt.uvRect = {static_cast<float>(clampedUv.left()),
+                  static_cast<float>(clampedUv.top()),
+                  static_cast<float>(clampedUv.right()),
+                  static_cast<float>(clampedUv.bottom())};
+    pkt.color = {1.0f, 1.0f, 1.0f, opacity};
     impl_->cmdBuf_->append(pkt);
 }
 
@@ -1286,8 +1449,7 @@ void PrimitiveRenderer2D::drawTexturedTriangleTransformed(
 ITextureView* PrimitiveRenderer2D::textureForImage(
     const ArtifactCore::ImageF32x4_RGBA& image) {
     if (image.isEmpty() || !impl_->pDevice_) return nullptr;
-    ++impl_->m_frameCount;
-    if (impl_->m_frameCount % 60 == 0) impl_->pruneCache();
+    ++impl_->m_textureAccessSequence;
     const qint64 cacheKey = computeImageContentKey(image);
     auto it = impl_->m_spriteTexCache.find(cacheKey);
     if (it == impl_->m_spriteTexCache.end()) {
@@ -1311,10 +1473,48 @@ ITextureView* PrimitiveRenderer2D::textureForImage(
         RefCntAutoPtr<ITexture> texture;
         impl_->pDevice_->CreateTexture(desc, &data, &texture);
         if (!texture) return nullptr;
-        impl_->m_spriteTexCache[cacheKey] = {texture, impl_->m_frameCount};
+        impl_->cacheTexture(impl_->m_spriteTexCache, cacheKey, texture);
         it = impl_->m_spriteTexCache.find(cacheKey);
     }
-    it->second.lastUsedFrame = impl_->m_frameCount;
+    it->second.lastUsedAccess = impl_->m_textureAccessSequence;
+    return it->second.pTexture
+        ? it->second.pTexture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE)
+        : nullptr;
+}
+
+ITextureView* PrimitiveRenderer2D::textureForImage(
+    const ArtifactCore::ImageF32x4_RGBA& image, const QUuid& sourceIdentityId,
+    quint64 sourceVersion, qint64 sourceFrameContentKey) {
+    if (image.isEmpty() || !impl_->pDevice_) return nullptr;
+    ++impl_->m_textureAccessSequence;
+    const qint64 cacheKey = stableImageTextureKey(
+        image, sourceIdentityId, sourceVersion, sourceFrameContentKey);
+    auto it = impl_->m_spriteTexCache.find(cacheKey);
+    if (it == impl_->m_spriteTexCache.end()) {
+        const auto upload = ArtifactCore::convertImageForUpload(
+            image, ArtifactCore::ImageUploadTarget::Rgba8SrgbStraight);
+        if (!upload.isValid()) return nullptr;
+        TextureDesc desc;
+        desc.Type = RESOURCE_DIM_TEX_2D;
+        desc.Width = static_cast<Uint32>(upload.width);
+        desc.Height = static_cast<Uint32>(upload.height);
+        desc.Format = TEX_FORMAT_RGBA8_UNORM_SRGB;
+        desc.MipLevels = 1;
+        desc.Usage = USAGE_IMMUTABLE;
+        desc.BindFlags = BIND_SHADER_RESOURCE;
+        TextureSubResData subData;
+        subData.pData = upload.bytes.data();
+        subData.Stride = upload.rowStride;
+        TextureData data;
+        data.pSubResources = &subData;
+        data.NumSubresources = 1;
+        RefCntAutoPtr<ITexture> texture;
+        impl_->pDevice_->CreateTexture(desc, &data, &texture);
+        if (!texture) return nullptr;
+        impl_->cacheTexture(impl_->m_spriteTexCache, cacheKey, texture);
+        it = impl_->m_spriteTexCache.find(cacheKey);
+    }
+    it->second.lastUsedAccess = impl_->m_textureAccessSequence;
     return it->second.pTexture
         ? it->second.pTexture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE)
         : nullptr;
@@ -1322,8 +1522,7 @@ ITextureView* PrimitiveRenderer2D::textureForImage(
 
 ITextureView* PrimitiveRenderer2D::textureForImage(const QImage& image) {
     if (image.isNull() || !impl_->pDevice_) return nullptr;
-    ++impl_->m_frameCount;
-    if (impl_->m_frameCount % 60 == 0) impl_->pruneCache();
+    ++impl_->m_textureAccessSequence;
     const qint64 cacheKey = computeImageContentKey(image);
     auto it = impl_->m_spriteTexCache.find(cacheKey);
     if (it == impl_->m_spriteTexCache.end()) {
@@ -1347,10 +1546,10 @@ ITextureView* PrimitiveRenderer2D::textureForImage(const QImage& image) {
         RefCntAutoPtr<ITexture> texture;
         impl_->pDevice_->CreateTexture(desc, &data, &texture);
         if (!texture) return nullptr;
-        impl_->m_spriteTexCache[cacheKey] = {texture, impl_->m_frameCount};
+        impl_->cacheTexture(impl_->m_spriteTexCache, cacheKey, texture);
         it = impl_->m_spriteTexCache.find(cacheKey);
     }
-    it->second.lastUsedFrame = impl_->m_frameCount;
+    it->second.lastUsedAccess = impl_->m_textureAccessSequence;
     return it->second.pTexture
         ? it->second.pTexture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE)
         : nullptr;
@@ -1360,8 +1559,7 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
 {
     if (!impl_->cmdBuf_ || image.isNull() || !impl_->pDevice_) return;
 
-    impl_->m_frameCount++;
-    if (impl_->m_frameCount % 60 == 0) impl_->pruneCache();
+    impl_->m_textureAccessSequence++;
 
     const qint64 cacheKey = computeImageContentKey(image);
     RefCntAutoPtr<ITexture> pTexture;
@@ -1369,7 +1567,7 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
     auto it = impl_->m_spriteTexCache.find(cacheKey);
     if (it != impl_->m_spriteTexCache.end()) {
         pTexture = it->second.pTexture;
-        it->second.lastUsedFrame = impl_->m_frameCount;
+        it->second.lastUsedAccess = impl_->m_textureAccessSequence;
     } else {
         const QImage rgba = (image.format() == QImage::Format_RGBA8888)
                                 ? image : image.convertToFormat(QImage::Format_RGBA8888);
@@ -1395,7 +1593,7 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
         if (!newTex) {
             return;
         }
-        impl_->m_spriteTexCache[cacheKey] = { newTex, impl_->m_frameCount };
+        impl_->cacheTexture(impl_->m_spriteTexCache, cacheKey, newTex);
         pTexture = newTex;
     }
 
@@ -1452,10 +1650,7 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
         return;
     }
 
-    impl_->m_frameCount++;
-    if (impl_->m_frameCount % 60 == 0) {
-        impl_->pruneCache();
-    }
+    impl_->m_textureAccessSequence++;
 
     const qint64 cacheKey = computeImageContentKey(image);
     RefCntAutoPtr<ITexture> pTexture;
@@ -1463,7 +1658,7 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
     auto it = impl_->m_spriteTexCache.find(cacheKey);
     if (it != impl_->m_spriteTexCache.end()) {
         pTexture = it->second.pTexture;
-        it->second.lastUsedFrame = impl_->m_frameCount;
+        it->second.lastUsedAccess = impl_->m_textureAccessSequence;
     } else {
         const ArtifactCore::ImageUploadBuffer upload =
             ArtifactCore::convertImageForUpload(
@@ -1496,7 +1691,7 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
         if (!newTex) {
             return;
         }
-        impl_->m_spriteTexCache[cacheKey] = { newTex, impl_->m_frameCount };
+        impl_->cacheTexture(impl_->m_spriteTexCache, cacheKey, newTex);
         pTexture = newTex;
     }
 
@@ -1558,27 +1753,86 @@ void PrimitiveRenderer2D::drawGlyphText(float x, float y, const UniString& text,
 {
     if (!impl_->pGlyphAtlas_ || text.length() == 0 || !impl_->cmdBuf_) return;
 
-    const auto codePoints = text.toStdU32String();
+    const QString textString = text.toQString();
+    const auto forEachCodePoint = [&textString](auto&& callback) {
+        qsizetype index = 0;
+        while (index < textString.size()) {
+            const QChar first = textString.at(index++);
+            uint codePoint = first.unicode();
+            if (first.isHighSurrogate() && index < textString.size()) {
+                const QChar second = textString.at(index);
+                if (second.isLowSurrogate()) {
+                    ++index;
+                    codePoint = QChar::surrogateToUcs4(first.unicode(),
+                                                       second.unicode());
+                } else {
+                    codePoint = QChar::ReplacementCharacter;
+                }
+            } else if (first.isLowSurrogate()) {
+                codePoint = QChar::ReplacementCharacter;
+            }
+            callback(static_cast<char32_t>(codePoint));
+        }
+    };
     // Resolve each unique code point once.  The renderer-lifetime cache keeps
     // font fallback and GlyphKey construction out of the per-present path.
     auto& glyphCodePointScratch = impl_->glyphCodePointScratch_;
+    auto& glyphCodePointSlots = impl_->glyphCodePointSlots_;
+    if (!impl_->glyphCodePointSlotsInitialized_) {
+        glyphCodePointSlots.fill(-1);
+        impl_->glyphCodePointSlotsInitialized_ = true;
+    }
+    for (size_t i = 0; i < impl_->glyphCodePointOccupiedCount_; ++i) {
+        glyphCodePointSlots[impl_->glyphCodePointOccupiedSlots_[i]] = -1;
+    }
+    impl_->glyphCodePointOccupiedCount_ = 0;
+    impl_->glyphCodePointIndexSaturated_ = false;
     glyphCodePointScratch.clear();
-    glyphCodePointScratch.reserve(codePoints.size());
-    for (const char32_t codePoint : codePoints) {
+    forEachCodePoint([&](const char32_t codePoint) {
         bool found = false;
-        for (const char32_t cachedCodePoint : glyphCodePointScratch) {
-            if (cachedCodePoint == codePoint) {
-                found = true;
-                break;
+        size_t slot = 0;
+        bool hasFreeSlot = false;
+        if (!impl_->glyphCodePointIndexSaturated_) {
+            constexpr size_t slotMask = Impl::kGlyphCodePointSlotCount - 1;
+            const auto mixed = static_cast<std::uint32_t>(codePoint) *
+                               2654435761u;
+            slot = static_cast<size_t>(mixed) & slotMask;
+            while (glyphCodePointSlots[slot] >= 0) {
+                const size_t cachedIndex = static_cast<size_t>(
+                    glyphCodePointSlots[slot]);
+                if (glyphCodePointScratch[cachedIndex] == codePoint) {
+                    found = true;
+                    break;
+                }
+                slot = (slot + 1) & slotMask;
+            }
+            hasFreeSlot = !found;
+        } else {
+            for (const char32_t cachedCodePoint : glyphCodePointScratch) {
+                if (cachedCodePoint == codePoint) {
+                    found = true;
+                    break;
+                }
             }
         }
         if (!found) {
             // Populate the renderer-lifetime font cache before retaining any
             // references into it; cache growth may reallocate its storage.
             impl_->resolvedGlyphFont(style, codePoint);
+            if (hasFreeSlot) {
+                const size_t cacheIndex = glyphCodePointScratch.size();
+                glyphCodePointSlots[slot] = static_cast<std::int32_t>(cacheIndex);
+                impl_->glyphCodePointOccupiedSlots_[
+                    impl_->glyphCodePointOccupiedCount_++] =
+                    static_cast<std::uint16_t>(slot);
+                if (impl_->glyphCodePointOccupiedCount_ ==
+                    Impl::kGlyphCodePointSlotCount) {
+                    impl_->glyphCodePointIndexSaturated_ = true;
+                }
+            }
             glyphCodePointScratch.push_back(codePoint);
         }
-    }
+    });
     for (const char32_t codePoint : glyphCodePointScratch) {
         const auto& entry = impl_->resolvedGlyphFont(style, codePoint);
         impl_->pGlyphAtlas_->acquire(entry.key, entry.font);
@@ -1598,10 +1852,10 @@ void PrimitiveRenderer2D::drawGlyphText(float x, float y, const UniString& text,
     const float atlasH = static_cast<float>(impl_->pGlyphAtlas_->height());
     
     float currentX = x;
-    for (const char32_t codePoint : codePoints) {
+    forEachCodePoint([&](const char32_t codePoint) {
         const auto& entry = impl_->resolvedGlyphFont(style, codePoint);
         GlyphRect rect = impl_->pGlyphAtlas_->acquire(entry.key, entry.font);
-        if (!rect.valid) continue;
+        if (!rect.valid) return;
         
         AtlasSpritePkt pkt;
         pkt.pSRV = pSRV;
@@ -1631,7 +1885,7 @@ void PrimitiveRenderer2D::drawGlyphText(float x, float y, const UniString& text,
         
         impl_->cmdBuf_->append(pkt);
         currentX += rect.advance;
-    }
+    });
 }
 
 void PrimitiveRenderer2D::drawGlyphTextTransformed(float x, float y, const UniString& text,

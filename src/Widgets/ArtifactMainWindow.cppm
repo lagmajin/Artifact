@@ -1371,6 +1371,10 @@ public:
       return;
     }
 
+    QSettings shapeSettings;
+    shapeSettings.setValue(QStringLiteral("shape/createType"),
+                           static_cast<int>(shapeLayer->shapeType()));
+
     auto fmtDash = [](const std::vector<float> &pat) {
       QStringList parts;
       for (auto v : pat)
@@ -1585,6 +1589,13 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
         auto *selection = app ? app->layerSelectionManager() : nullptr;
         const auto current =
             selection ? selection->currentLayer() : ArtifactAbstractLayerPtr{};
+
+        if (toolName == QStringLiteral("シェイプ") &&
+            optionName == QStringLiteral("shapeType")) {
+          QSettings shapeSettings;
+          shapeSettings.setValue(QStringLiteral("shape/createType"),
+                                 value.toInt());
+        }
 
         if (toolName == QStringLiteral("パペット")) {
           const auto layer = current;

@@ -75,14 +75,7 @@ LayerEditorSurfaceInfo buildLayerEditorSurfaceInfo(
   const auto source = layer->sourceSize();
   const QRectF bounds = layer->transformedBoundingBox();
   const auto& transform = layer->transform3D();
-  const auto layerId = layer->id();
-  int enabledMatteCount = 0;
-  for (const auto& ref : layer->matteReferences()) {
-   if (ref.enabled && !ref.sourceLayerId.isNil() &&
-       ref.sourceLayerId != layerId) {
-    ++enabledMatteCount;
-   }
-  }
+  const int enabledMatteCount = layer->enabledExternalMatteReferenceCount();
   QString effectSummary = QStringLiteral("None");
   const auto effects = layer->getEffects();
   if (!effects.empty()) {

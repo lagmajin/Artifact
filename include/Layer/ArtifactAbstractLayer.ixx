@@ -45,6 +45,7 @@ import Artifact.Animation.LayerEffectEnvelope;
 import Artifact.Mask.LayerMask;
 import Artifact.Layer.Matte;
 import Artifact.Layer.Component.System;
+import Artifact.Layer.Modifier;
 import Container.NamedVector;
 import Geometry.Fracture;
 import Physics.Collider2DEdit;
@@ -155,8 +156,6 @@ using ArtifactAbstractLayerPtr = SharedPtr<ArtifactAbstractLayer>;
 using ArtifactLayerJsonFactory =
     ArtifactAbstractLayerPtr (*)(const QJsonObject &);
 void setArtifactLayerJsonFactory(ArtifactLayerJsonFactory factory);
-class ArtifactLayerModifier;
-
 class LayerVariant {
 public:
     LayerVariant(ArtifactAbstractLayer* parentLayer, const ArtifactCore::String& name)
@@ -654,6 +653,8 @@ public:
 
   // Dirty Management
   void setDirty(LayerDirtyFlag flag = LayerDirtyFlag::All);
+  std::uint64_t effectRevision() const;
+  bool hasAnimatedEffectProperties();
   void clearDirty(LayerDirtyFlag flag = LayerDirtyFlag::All);
   bool isDirty(LayerDirtyFlag flag = LayerDirtyFlag::All) const;
   void addDirtyReason(LayerDirtyReason reason);
@@ -681,6 +682,9 @@ public:
    SharedPtr<ArtifactAbstractEffect>
    getEffect(const UniString &effectID) const;
    int effectCount() const;
+   bool hasEnabledRasterizerEffect() const;
+   bool hasEnabledFullFrameEffect() const;
+   float enabledRasterizerOverscanPixels() const;
    /*Effects*/
 
    /*Modifiers*/
@@ -740,6 +744,8 @@ public:
   virtual bool setLayerPropertyValue(const QString &propertyPath,
                                      const QVariant &value);
   SharedPtr<ArtifactCore::AbstractProperty> getProperty(const QString &name) const;
+  // Checks only already registered properties and never constructs property groups.
+  bool hasCachedAnimatedPropertiesWithPrefix(const QString &propertyPathPrefix) const;
   // Returns the layer-owned cached property for a dynamic or persistent path,
   // creating it when needed. Editing adapters use this to keep keyframe edits
   // attached to the layer's property cache.
@@ -758,6 +764,11 @@ public:
   bool moveMask(int fromIndex, int toIndex);
   void setMask(int index, const LayerMask &mask);
   LayerMask mask(int index) const;
+  // Borrowed until the next mask mutation; use only for immediate read access.
+  const LayerMask* maskView(int index) const noexcept;
+  // Returns the base view or fills resolvedStorage for time-varying overrides.
+  const LayerMask* resolvedMaskView(int index, LayerMask& resolvedStorage) const;
+  bool hasTimeVaryingMaskProperties(int index) const;
   int maskCount() const;
   std::uint64_t maskRevision() const;
   void clearMasks();
@@ -766,6 +777,9 @@ public:
 
   /*Mattes*/
   std::vector<LayerMatteReference> matteReferences() const;
+  int matteReferenceCount() const;
+  bool hasEnabledExternalMatteReference() const;
+  int enabledExternalMatteReferenceCount() const;
   void setMatteReferences(const std::vector<LayerMatteReference>& refs);
   void addMatteReference(const LayerMatteReference& ref);
   void clearMatteReferences();

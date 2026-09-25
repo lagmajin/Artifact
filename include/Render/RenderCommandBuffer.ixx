@@ -3,6 +3,7 @@ module;
 #include <vector>
 #include <variant>
 #include <cstdint>
+#include <utility>
 #include <QFont>
 #include <QImage>
 #include <QMatrix4x4>
@@ -11,6 +12,7 @@ module;
 #include <QVector2D>
 #include <QVector3D>
 #include <Texture.h>
+#include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <BasicMath.hpp>
 export module Artifact.Render.RenderCommandBuffer;
 
@@ -126,6 +128,8 @@ struct RectOutlinePkt {
 struct SpritePkt {
     RenderSolidTransform2D xform;
     ITextureView*      pSRV    = nullptr;
+    // Packet data can outlive its texture-cache entry until submit/reset.
+    RefCntAutoPtr<ITextureView> retainedSRV;
     float              opacity = 1.0f;
     float              _pad[3];
 };
@@ -133,6 +137,7 @@ struct SpritePkt {
 struct SpriteXformPkt {
     RenderSolidRectTransform2D mat;
     ITextureView*          pSRV    = nullptr;
+    RefCntAutoPtr<ITextureView> retainedSRV;
     float                  opacity = 1.0f;
     float                  _pad[3];
 };
@@ -140,6 +145,7 @@ struct SpriteXformPkt {
 struct AtlasSpritePkt {
     RenderSolidTransform2D xform;
     ITextureView*      pSRV    = nullptr;
+    RefCntAutoPtr<ITextureView> retainedSRV;
     float4             uvRect; // x=u0, y=v0, z=u1, w=v1
     float4             color;  // rgb=color, a=opacity
 };
@@ -147,6 +153,7 @@ struct AtlasSpritePkt {
 struct AtlasSpriteXformPkt {
     RenderSolidRectTransform2D mat;
     ITextureView*          pSRV    = nullptr;
+    RefCntAutoPtr<ITextureView> retainedSRV;
     float4                 uvRect;
     float4                 color;
 };
@@ -163,13 +170,16 @@ struct TexturedTriangleXformPkt {
     float2 uv1;
     float2 uv2;
     ITextureView* pSRV = nullptr;
+    RefCntAutoPtr<ITextureView> retainedSRV;
     float4 color = {1.0f, 1.0f, 1.0f, 1.0f};
 };
 
 struct MaskedSpritePkt {
     RenderSolidTransform2D xform;
     ITextureView*      sceneSRV = nullptr;
+    RefCntAutoPtr<ITextureView> retainedSceneSRV;
     ITextureView*      maskSRV  = nullptr;
+    RefCntAutoPtr<ITextureView> retainedMaskSRV;
     float              opacity   = 1.0f;
     float              _pad[3];
 };
@@ -178,6 +188,7 @@ struct BillboardPkt {
     QVector3D           center;
     QVector2D           size;
     ITextureView*       pSRV        = nullptr;
+    RefCntAutoPtr<ITextureView> retainedSRV;
     float4              tint        = {1.0f, 1.0f, 1.0f, 1.0f};
     float               opacity     = 1.0f;
     float               rollDegrees = 0.0f;
@@ -238,11 +249,32 @@ public:
     ITextureView* targetRTV = nullptr;
 
     void reset()  { packets_.clear(); targetRTV = nullptr; }
-    void append(DrawPacket pkt) { packets_.push_back(std::move(pkt)); }
+    template <typename Packet>
+    void append(Packet&& packet) {
+        packets_.emplace_back(std::forward<Packet>(packet));
+        pinTextureViews(packets_.back());
+    }
     bool empty()  const { return packets_.empty(); }
     const std::vector<DrawPacket>& packets() const { return packets_; }
 
 private:
+    static void pinTextureViews(DrawPacket& pkt) {
+        std::visit([](auto& packet) {
+            if constexpr (requires { packet.pSRV; packet.retainedSRV; }) {
+                packet.retainedSRV = packet.pSRV;
+            }
+            if constexpr (requires {
+                              packet.sceneSRV;
+                              packet.retainedSceneSRV;
+                              packet.maskSRV;
+                              packet.retainedMaskSRV;
+                          }) {
+                packet.retainedSceneSRV = packet.sceneSRV;
+                packet.retainedMaskSRV = packet.maskSRV;
+            }
+        }, pkt);
+    }
+
     std::vector<DrawPacket> packets_;
 };
 

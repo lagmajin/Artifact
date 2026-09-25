@@ -5037,6 +5037,9 @@ bool ArtifactProjectService::setEffectEnabledInLayerInCurrentComposition(
         effect->setEnabled(oldEnabled);
         return false;
       }
+      if (oldEnabled != enabled) {
+        layer->setDirty(LayerDirtyFlag::Effect);
+      }
       ArtifactCore::globalEventBus().publish(LayerChangedEvent{
           comp->id().toString(), layerId.toString(),
           LayerChangedEvent::ChangeType::Modified});

@@ -25,6 +25,7 @@ module;
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <iterator>
 #include <limits>
 #include <unordered_map>
 #include <utility>
@@ -370,25 +371,31 @@ public:
 
     struct CachedTexture {
         RefCntAutoPtr<ITexture> texture;
-        qint64 lastUsedFrame = 0;
+        quint64 lastUsedAccess = 0;
+        size_t estimatedBytes = 0;
     };
 
     std::unordered_map<qint64, CachedTexture> textureCache_;
-    qint64 frameCount_ = 0;
+    quint64 textureAccessCount_ = 0;
+    size_t textureCacheBytes_ = 0;
     TEXTURE_FORMAT rtvFormat_ = TEX_FORMAT_RGBA8_UNORM_SRGB;
+    static constexpr size_t kTextureCacheEntryLimit = 50;
+    static constexpr size_t kTextureCacheByteLimit = 512ull * 1024ull * 1024ull;
 
-    void pruneCache()
+    void evictLeastRecentlyUsedTexture()
     {
-        if (textureCache_.size() <= 50) {
+        if (textureCache_.empty()) {
             return;
         }
-        for (auto it = textureCache_.begin(); it != textureCache_.end(); ) {
-            if (it->second.lastUsedFrame + 60 < frameCount_) {
-                it = textureCache_.erase(it);
-            } else {
-                ++it;
+
+        auto oldest = textureCache_.begin();
+        for (auto it = std::next(oldest); it != textureCache_.end(); ++it) {
+            if (it->second.lastUsedAccess < oldest->second.lastUsedAccess) {
+                oldest = it;
             }
         }
+        textureCacheBytes_ -= oldest->second.estimatedBytes;
+        textureCache_.erase(oldest);
     }
 
     ITextureView* currentRTV() const
@@ -736,7 +743,7 @@ public:
         const qint64 cacheKey = image.cacheKey();
         auto it = textureCache_.find(cacheKey);
         if (it != textureCache_.end()) {
-            it->second.lastUsedFrame = frameCount_;
+            it->second.lastUsedAccess = ++textureAccessCount_;
             return it->second.texture;
         }
 
@@ -770,7 +777,19 @@ public:
             return {};
         }
 
-        textureCache_[cacheKey] = { texture, frameCount_ };
+        const quint64 estimatedGpuBytes = static_cast<quint64>(rgba.width()) *
+                                         static_cast<quint64>(rgba.height()) * 4u;
+        if (estimatedGpuBytes > kTextureCacheByteLimit) {
+            return texture;
+        }
+        const size_t estimatedBytes = static_cast<size_t>(estimatedGpuBytes);
+        while (textureCache_.size() >= kTextureCacheEntryLimit ||
+               textureCacheBytes_ > kTextureCacheByteLimit - estimatedBytes) {
+            evictLeastRecentlyUsedTexture();
+        }
+        textureCache_[cacheKey] = {
+            texture, ++textureAccessCount_, estimatedBytes };
+        textureCacheBytes_ += estimatedBytes;
         return texture;
     }
 
@@ -1378,11 +1397,6 @@ public:
             return;
         }
 
-        frameCount_++;
-        if (frameCount_ % 60 == 0) {
-            pruneCache();
-        }
-
         setConstants(center, size, tint, opacity, rollDegrees);
 
         void* mapped = nullptr;
@@ -1663,6 +1677,7 @@ void PrimitiveRenderer3D::setFrameCostStats(ArtifactCore::RenderCostStats* stats
 void PrimitiveRenderer3D::destroy()
 {
     impl_->textureCache_.clear();
+    impl_->textureCacheBytes_ = 0;
     impl_->pendingLineVerts_.clear();
     impl_->pendingTriVerts_.clear();
     impl_->defaultTextureSRV_ = nullptr;

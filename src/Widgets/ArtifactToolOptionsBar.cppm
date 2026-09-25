@@ -19,6 +19,7 @@ module;
 #include <QSpinBox>
 #include <QString>
 #include <QStringList>
+#include <QSettings>
 #include <QThread>
 #include <QTimer>
 #include <QToolButton>
@@ -379,6 +380,16 @@ void ArtifactToolOptionsBar::Impl::createFrames(QHBoxLayout *parentLayout) {
                             static_cast<int>(Artifact::ShapeType::Triangle));
     shapeTypeCombo->addItem(QStringLiteral("Square"),
                             static_cast<int>(Artifact::ShapeType::Square));
+    shapeTypeCombo->setAccessibleName(QStringLiteral("Shape type"));
+    shapeTypeCombo->setToolTip(
+        QStringLiteral("Selected shape type and default type for new shapes"));
+    const int savedCreateType = QSettings().value(
+        QStringLiteral("shape/createType"),
+        static_cast<int>(Artifact::ShapeType::Rect)).toInt();
+    if (savedCreateType >= static_cast<int>(Artifact::ShapeType::Rect) &&
+        savedCreateType <= static_cast<int>(Artifact::ShapeType::Square)) {
+      shapeTypeCombo->setCurrentIndex(shapeTypeCombo->findData(savedCreateType));
+    }
     ly->addWidget(shapeTypeCombo);
 
     shapeWidthSpin = makeSpin(frame, 1, 8192, "W");
@@ -1435,7 +1446,9 @@ void ArtifactToolOptionsBar::setShapeOptions(
     if (index >= 0) {
       impl_->shapeTypeCombo->setCurrentIndex(index);
     }
-    impl_->shapeTypeCombo->setEnabled(enabled);
+    // Keep the type picker available with no selected shape: in that state it
+    // chooses the primitive used by the next Shape-tool creation.
+    impl_->shapeTypeCombo->setEnabled(true);
   }
 
   const bool isLine =
@@ -1572,7 +1585,10 @@ void ArtifactToolOptionsBar::setShapeOptions(
 }
 
 void ArtifactToolOptionsBar::clearShapeOptions() {
-  setShapeOptions(static_cast<int>(Artifact::ShapeType::Rect), 200, 200, true,
+  const int createShapeType = impl_ && impl_->shapeTypeCombo
+      ? impl_->shapeTypeCombo->currentData().toInt()
+      : static_cast<int>(Artifact::ShapeType::Rect);
+  setShapeOptions(createShapeType, 200, 200, true,
                   false, 0,
                   static_cast<int>(Artifact::StrokeCap::Flat),
                   static_cast<int>(Artifact::StrokeJoin::Miter),

@@ -14167,6 +14167,12 @@ void ArtifactCompositionEditor::stop() {
       [](CompositionRenderController *controller) { controller->stop(); });
 }
 
+void ArtifactCompositionEditor::seekToFrame(qint64 frame) {
+  if (auto *playback = ArtifactPlaybackService::instance()) {
+    playback->goToFrame(FramePosition(frame));
+  }
+}
+
 void ArtifactCompositionEditor::resetView() {
   if (auto *controller = impl_ ? impl_->activeRenderController() : nullptr) {
     controller->resetView();

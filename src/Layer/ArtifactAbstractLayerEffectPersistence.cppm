@@ -77,6 +77,7 @@ void ArtifactAbstractLayer::applyPropertiesFromJson(const QJsonObject &obj) {
           eobj.value(QStringLiteral("pipelineStage")).toInt(
               static_cast<int>(EffectPipelineStage::Rasterizer))));
     }
+    setDirty(LayerDirtyFlag::Effect);
     if (!eobj.contains("properties") || !eobj["properties"].isArray())
       continue;
     auto props = eobj["properties"].toArray();

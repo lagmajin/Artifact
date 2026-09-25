@@ -7,10 +7,12 @@ module;
 #include <type_traits>
 #include <QImage>
 #include <QFont>
+#include <QString>
 #include <QLocale>
 #include <QRectF>
 #include <QMatrix4x4>
 #include <QDebug>
+#include <QLoggingCategory>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/CommandList.h>
@@ -43,6 +45,8 @@ namespace Artifact {
 
 using namespace Diligent;
 using namespace ArtifactCore;
+
+Q_LOGGING_CATEGORY(particleSubmitterLog, "artifact.render.particles")
 
 static void mapWriteDiscard(IDeviceContext* ctx, IBuffer* buf, const void* data, size_t size,
                             ArtifactCore::RenderCostStats* stats = nullptr)
@@ -211,6 +215,80 @@ static ParagraphStyle paragraphStyleFromRectAndAlignment(const QRectF& rect,
     return paragraph;
 }
 
+static size_t resolvedGlyphFontHash(const QFont& font)
+{
+    size_t mixed = qHash(font.family());
+    mixed ^= qHash(font.pointSizeF()) + 0x9e3779b9u +
+             (mixed << 6) + (mixed >> 2);
+    mixed ^= qHash(font.weight()) + 0x9e3779b9u +
+             (mixed << 6) + (mixed >> 2);
+    mixed ^= qHash(font.italic()) + 0x9e3779b9u +
+             (mixed << 6) + (mixed >> 2);
+    mixed ^= qHash(font.letterSpacing()) + 0x9e3779b9u +
+             (mixed << 6) + (mixed >> 2);
+    mixed ^= qHash(font.stretch()) + 0x9e3779b9u +
+             (mixed << 6) + (mixed >> 2);
+    return mixed;
+}
+
+const DiligentImmediateSubmitter::ResolvedGlyphFont&
+DiligentImmediateSubmitter::resolvedGlyphFont(
+    const QFont& font, size_t fontHash, char32_t codePoint,
+    GlyphRenderMode renderMode)
+{
+    if (!m_resolvedGlyphFontSlotsInitialized_) {
+        m_resolvedGlyphFontSlots_.fill(-1);
+        m_resolvedGlyphFontSlotsInitialized_ = true;
+    }
+    constexpr size_t slotMask = kResolvedGlyphFontSlotCount - 1;
+    const auto initialSlotFor = [slotMask](size_t sourceFontHash,
+                                            char32_t value,
+                                            GlyphRenderMode mode) {
+        size_t mixed = sourceFontHash ^
+                       (static_cast<size_t>(value) * 2654435761u);
+        mixed ^= static_cast<size_t>(mode) * 2246822519u;
+        return mixed & slotMask;
+    };
+    size_t slot = initialSlotFor(fontHash, codePoint, renderMode);
+    while (m_resolvedGlyphFontSlots_[slot] >= 0) {
+        const size_t cachedIndex = static_cast<size_t>(
+            m_resolvedGlyphFontSlots_[slot]);
+        const auto& cached = m_resolvedGlyphFonts_[cachedIndex];
+        if (cached.sourceFont == font && cached.codePoint == codePoint &&
+            cached.renderMode == renderMode) {
+            return cached;
+        }
+        slot = (slot + 1) & slotMask;
+    }
+
+    if (m_resolvedGlyphFonts_.size() >= 2048) {
+        m_resolvedGlyphFonts_.removeAll();
+        m_resolvedGlyphFontSlots_.fill(-1);
+        slot = initialSlotFor(fontHash, codePoint, renderMode);
+    }
+
+    const QString glyphText = QString::fromUcs4(&codePoint, 1);
+    const TextStyle style = textStyleFromQFont(font);
+    QFont resolvedFont = FontManager::makeFont(style, glyphText);
+    GlyphKey key{
+        codePoint,
+        style.fontSize,
+        static_cast<uint32_t>((style.fontWeight == FontWeight::Bold ? 0x1u : 0u) |
+                              (style.fontStyle == FontStyle::Italic ? 0x2u : 0u)),
+        resolvedFont.family().toStdString(),
+        {},
+        0,
+        {},
+        renderMode
+    };
+    const auto cacheIndex = static_cast<std::int16_t>(
+        m_resolvedGlyphFonts_.size());
+    m_resolvedGlyphFonts_.append(ResolvedGlyphFont{
+        font, codePoint, renderMode, std::move(resolvedFont), std::move(key)});
+    m_resolvedGlyphFontSlots_[slot] = cacheIndex;
+    return m_resolvedGlyphFonts_[m_resolvedGlyphFonts_.size() - 1];
+}
+
 // GlyphAtlas owns a fixed-size RGBA8888 image. Keep its GPU counterpart alive
 // for the submitter lifetime, updating contents only when the atlas changed.
 // This path is used by the simple text layer route as well as transformed text.
@@ -278,7 +356,8 @@ void DiligentImmediateSubmitter::createBuffers(RefCntAutoPtr<IRenderDevice> devi
 {
     if (!device) return;
     m_device = device;
-    m_glyph_submission_scratch_.reserve(1024);
+    m_glyph_submission_scratch_.reserve(2048);
+    m_resolvedGlyphFonts_.reserve(2048);
 
     {
         BufferDesc desc;
@@ -755,11 +834,9 @@ void DiligentImmediateSubmitter::beginFrameDebugCapture()
     m_currentFrameDebugPasses_.clear();
 }
 
-std::vector<ArtifactCore::FrameDebugPassRecord> DiligentImmediateSubmitter::endFrameDebugCapture()
+void DiligentImmediateSubmitter::endFrameDebugCapture()
 {
-    m_lastFrameDebugPasses_ = m_currentFrameDebugPasses_;
-    m_currentFrameDebugPasses_.clear();
-    return m_lastFrameDebugPasses_;
+    m_currentFrameDebugPasses_.swap(m_lastFrameDebugPasses_);
 }
 
 std::vector<ArtifactCore::FrameDebugPassRecord> DiligentImmediateSubmitter::frameDebugPasses() const
@@ -767,9 +844,9 @@ std::vector<ArtifactCore::FrameDebugPassRecord> DiligentImmediateSubmitter::fram
     return m_lastFrameDebugPasses_;
 }
 
-void DiligentImmediateSubmitter::recordDebugPass(const ArtifactCore::FrameDebugPassRecord& pass)
+void DiligentImmediateSubmitter::recordDebugPass(ArtifactCore::FrameDebugPassRecord&& pass)
 {
-    m_currentFrameDebugPasses_.push_back(pass);
+    m_currentFrameDebugPasses_.push_back(std::move(pass));
 }
 
 void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext* ctx)
@@ -1217,7 +1294,7 @@ void DiligentImmediateSubmitter::submitParticles(const ParticlePkt& p, IDeviceCo
         return;
     }
     m_particleRenderer_->draw(ctx, uploadedCount);
-    qDebug() << "[ParticleRenderer] submitParticles drawn"
+    qCDebug(particleSubmitterLog) << "[ParticleRenderer] submitParticles drawn"
              << "requested=" << p.data.particles.size()
              << "uploaded=" << uploadedCount
              << "state=" << m_particleRenderer_->debugState();
@@ -1268,7 +1345,7 @@ void DiligentImmediateSubmitter::submitSolidRectXform(const SolidRectXformPkt& p
     debugPass.shaderName = QStringLiteral("solidRectTransform");
     debugPass.debugBindings.push_back(makeBinding(QStringLiteral("color"), fmtFloat4(p.color), QStringLiteral("pixel")));
     debugPass.debugBindings.push_back(makeBinding(QStringLiteral("transform"), fmtRectMatrix(p.mat), QStringLiteral("vertex")));
-    recordDebugPass(debugPass);
+    recordDebugPass(std::move(debugPass));
 
     RectVertex vertices[4] = {
         {{0.0f, 0.0f}, p.color}, {{1.0f, 0.0f}, p.color},
@@ -1508,7 +1585,7 @@ void DiligentImmediateSubmitter::submitCheckerboard(const CheckerboardPkt& p, ID
     debugPass.debugBindings.push_back(makeBinding(QStringLiteral("color1"), fmtFloat4(p.helper.color1), QStringLiteral("pixel")));
     debugPass.debugBindings.push_back(makeBinding(QStringLiteral("color2"), fmtFloat4(p.helper.color2), QStringLiteral("pixel")));
     debugPass.debugBindings.push_back(makeBinding(QStringLiteral("baseColor"), fmtFloat4(p.baseColor), QStringLiteral("pixel")));
-    recordDebugPass(debugPass);
+    recordDebugPass(std::move(debugPass));
 
     RectVertex vertices[4] = {
         {{0,0},{1,1,1,1}}, {{1,0},{1,1,1,1}},
@@ -1563,7 +1640,7 @@ void DiligentImmediateSubmitter::submitGrid(const GridPkt& p, IDeviceContext* ct
     debugPass.debugBindings.push_back(makeBinding(QStringLiteral("thickness"), fmtFloat(p.helper.param1), QStringLiteral("pixel")));
     debugPass.debugBindings.push_back(makeBinding(QStringLiteral("lineColor"), fmtFloat4(p.helper.color1), QStringLiteral("pixel")));
     debugPass.debugBindings.push_back(makeBinding(QStringLiteral("baseColor"), fmtFloat4(p.baseColor), QStringLiteral("pixel")));
-    recordDebugPass(debugPass);
+    recordDebugPass(std::move(debugPass));
 
     RectVertex vertices[4] = {
         {{0,0},{1,1,1,1}}, {{1,0},{1,1,1,1}},
@@ -1703,7 +1780,7 @@ void DiligentImmediateSubmitter::submitSpriteXform(const SpriteXformPkt& p, IDev
     debugPass.debugBindings.push_back(makeBinding(QStringLiteral("opacity"), fmtFloat(p.opacity), QStringLiteral("pixel")));
     debugPass.debugBindings.push_back(makeBinding(QStringLiteral("texture"), p.pSRV ? QStringLiteral("bound") : QStringLiteral("null")));
     debugPass.debugBindings.push_back(makeBinding(QStringLiteral("transform"), fmtRectMatrix(p.mat), QStringLiteral("vertex")));
-    recordDebugPass(debugPass);
+    recordDebugPass(std::move(debugPass));
 
     IBuffer* vb;
     if (p.opacity == 1.0f && m_sprite_unit_quad_vb_) {
@@ -1894,26 +1971,19 @@ void DiligentImmediateSubmitter::submitGlyphText(const GlyphTextPkt& p, IDeviceC
     }
 
     const float zoom = std::max(0.001f, p.xform.scale.x);
+    const size_t fontHash = resolvedGlyphFontHash(p.font);
     auto& drawGlyphs = m_glyph_submission_scratch_;
     drawGlyphs.clear();
 
     for (const auto& glyph : glyphs) {
-        const QString glyphText = QString::fromUcs4(&glyph.charCode, 1);
-        const QFont resolvedFont = FontManager::makeFont(style, glyphText);
-        const GlyphKey key{
-            glyph.charCode,
-            style.fontSize,
-            static_cast<uint32_t>((style.fontWeight == FontWeight::Bold ? 0x1u : 0u) |
-                                  (style.fontStyle == FontStyle::Italic ? 0x2u : 0u)),
-            resolvedFont.family().toStdString(),
-            {},
-            0,
-            {},
-            glyph.renderMode
-        };
-        const GlyphRect glyphRect = m_glyph_atlas.acquire(key, resolvedFont);
+        const auto& resolved = resolvedGlyphFont(
+            p.font, fontHash, glyph.charCode, glyph.renderMode);
+        const GlyphRect glyphRect =
+            m_glyph_atlas.acquire(resolved.key, resolved.font);
         if (glyphRect.valid) {
-            drawGlyphs.push_back({glyph, glyphRect});
+            drawGlyphs.push_back({glyph.basePosition, glyph.offsetPosition,
+                                  glyph.offsetRotation, glyph.offsetScale,
+                                  glyph.offsetOpacity, glyphRect});
         }
     }
 
@@ -1947,16 +2017,16 @@ void DiligentImmediateSubmitter::submitGlyphText(const GlyphTextPkt& p, IDeviceC
             { th*K, -th*K }, { -th*K,-th*K },
         };
         for (const auto& glyph : drawGlyphs) {
-            const float left = static_cast<float>(glyph.item.basePosition.x() + glyph.item.offsetPosition.x()) + glyph.rect.bearingX;
-            const float top  = static_cast<float>(glyph.item.basePosition.y() + glyph.item.offsetPosition.y()) - glyph.rect.bearingY;
+            const float left = static_cast<float>(glyph.basePosition.x() + glyph.offsetPosition.x()) + glyph.rect.bearingX;
+            const float top  = static_cast<float>(glyph.basePosition.y() + glyph.offsetPosition.y()) - glyph.rect.bearingY;
             const float w = std::max(0.0f, static_cast<float>(glyph.rect.width));
             const float h = std::max(0.0f, static_cast<float>(glyph.rect.height));
             if (w <= 0.0f || h <= 0.0f) continue;
 
-            const float alpha = std::clamp(p.opacity * static_cast<float>(glyph.item.offsetOpacity), 0.0f, 1.0f);
+            const float alpha = std::clamp(p.opacity * glyph.offsetOpacity, 0.0f, 1.0f);
             const float4 oc  = { p.outlineColor.x * alpha, p.outlineColor.y * alpha,
                                   p.outlineColor.z * alpha, p.outlineColor.w * alpha };
-            const float angle = glyph.item.offsetRotation * 0.017453292519943295f;
+            const float angle = glyph.offsetRotation * 0.017453292519943295f;
             const float c = std::cos(angle);
             const float s = std::sin(angle);
             const auto rotated = [c, s](const float x, const float y) {
@@ -1979,7 +2049,7 @@ void DiligentImmediateSubmitter::submitGlyphText(const GlyphTextPkt& p, IDeviceC
                 RenderSolidTransform2D ox{};
                 ox.offset = { (left + d.x) * zoom + p.xform.offset.x,
                                (top  + d.y) * zoom + p.xform.offset.y };
-                const float glyphScale = std::max(0.0001f, glyph.item.offsetScale);
+                const float glyphScale = std::max(0.0001f, glyph.offsetScale);
                 ox.scale     = { w * zoom * glyphScale, h * zoom * glyphScale };
                 ox.screenSize = p.xform.screenSize;
                 mapWriteDiscard(ctx, m_draw_sprite_cb, &ox, sizeof(ox), m_frameCostStats_);
@@ -1990,19 +2060,19 @@ void DiligentImmediateSubmitter::submitGlyphText(const GlyphTextPkt& p, IDeviceC
     }
     // ---- Fill pass (original) ----
     for (const auto& glyph : drawGlyphs) {
-        const float left = static_cast<float>(glyph.item.basePosition.x() + glyph.item.offsetPosition.x()) + glyph.rect.bearingX;
-        const float top = static_cast<float>(glyph.item.basePosition.y() + glyph.item.offsetPosition.y()) - glyph.rect.bearingY;
+        const float left = static_cast<float>(glyph.basePosition.x() + glyph.offsetPosition.x()) + glyph.rect.bearingX;
+        const float top = static_cast<float>(glyph.basePosition.y() + glyph.offsetPosition.y()) - glyph.rect.bearingY;
         const float w = std::max(0.0f, static_cast<float>(glyph.rect.width));
         const float h = std::max(0.0f, static_cast<float>(glyph.rect.height));
         if (w <= 0.0f || h <= 0.0f) {
             continue;
         }
 
-        const float alpha = std::clamp(p.opacity * static_cast<float>(glyph.item.offsetOpacity), 0.0f, 1.0f);
+        const float alpha = std::clamp(p.opacity * glyph.offsetOpacity, 0.0f, 1.0f);
         const float4 color = glyph.rect.colorPreserved
             ? float4{1.0f, 1.0f, 1.0f, -alpha}
             : float4{p.color.x * alpha, p.color.y * alpha, p.color.z * alpha, p.color.w * alpha};
-        const float angle = glyph.item.offsetRotation * 0.017453292519943295f;
+        const float angle = glyph.offsetRotation * 0.017453292519943295f;
         const float c = std::cos(angle);
         const float s = std::sin(angle);
         const auto rotated = [c, s](const float x, const float y) {
@@ -2023,7 +2093,7 @@ void DiligentImmediateSubmitter::submitGlyphText(const GlyphTextPkt& p, IDeviceC
 
         RenderSolidTransform2D glyphXform{};
         glyphXform.offset = { left * zoom + p.xform.offset.x, top * zoom + p.xform.offset.y };
-        const float glyphScale = std::max(0.0001f, glyph.item.offsetScale);
+        const float glyphScale = std::max(0.0001f, glyph.offsetScale);
         glyphXform.scale = { w * zoom * glyphScale, h * zoom * glyphScale };
         glyphXform.screenSize = p.xform.screenSize;
 
@@ -2062,7 +2132,7 @@ void DiligentImmediateSubmitter::submitGlyphTextTransformed(const GlyphTextXform
     debugPass.debugBindings.push_back(makeBinding(QStringLiteral("transform"), fmtMatrix4x4Row0(p.transform),
                                                   QStringLiteral("vertex"),
                                                   QStringLiteral("row0 only preview")));
-    recordDebugPass(debugPass);
+    recordDebugPass(std::move(debugPass));
 
     const TextStyle style = textStyleFromQFont(p.font);
     const ParagraphStyle paragraph =
@@ -2074,24 +2144,17 @@ void DiligentImmediateSubmitter::submitGlyphTextTransformed(const GlyphTextXform
 
     auto& drawGlyphs = m_glyph_submission_scratch_;
     drawGlyphs.clear();
+    const size_t fontHash = resolvedGlyphFontHash(p.font);
 
     for (const auto& glyph : glyphs) {
-        const QString glyphText = QString::fromUcs4(&glyph.charCode, 1);
-        const QFont resolvedFont = FontManager::makeFont(style, glyphText);
-        const GlyphKey key{
-            glyph.charCode,
-            style.fontSize,
-            static_cast<uint32_t>((style.fontWeight == FontWeight::Bold ? 0x1u : 0u) |
-                                  (style.fontStyle == FontStyle::Italic ? 0x2u : 0u)),
-            resolvedFont.family().toStdString(),
-            {},
-            0,
-            {},
-            glyph.renderMode
-        };
-        const GlyphRect glyphRect = m_glyph_atlas.acquire(key, resolvedFont);
+        const auto& resolved = resolvedGlyphFont(
+            p.font, fontHash, glyph.charCode, glyph.renderMode);
+        const GlyphRect glyphRect =
+            m_glyph_atlas.acquire(resolved.key, resolved.font);
         if (glyphRect.valid) {
-            drawGlyphs.push_back({glyph, glyphRect});
+            drawGlyphs.push_back({glyph.basePosition, glyph.offsetPosition,
+                                  glyph.offsetRotation, glyph.offsetScale,
+                                  glyph.offsetOpacity, glyphRect});
         }
     }
 
@@ -2125,13 +2188,13 @@ void DiligentImmediateSubmitter::submitGlyphTextTransformed(const GlyphTextXform
             { th*K, -th*K }, { -th*K,-th*K },
         };
         for (const auto& glyph : drawGlyphs) {
-            const float left = static_cast<float>(glyph.item.basePosition.x() + glyph.item.offsetPosition.x()) + glyph.rect.bearingX * invDpr;
-            const float top  = static_cast<float>(glyph.item.basePosition.y() + glyph.item.offsetPosition.y()) - glyph.rect.bearingY * invDpr;
+            const float left = static_cast<float>(glyph.basePosition.x() + glyph.offsetPosition.x()) + glyph.rect.bearingX * invDpr;
+            const float top  = static_cast<float>(glyph.basePosition.y() + glyph.offsetPosition.y()) - glyph.rect.bearingY * invDpr;
             const float w = std::max(0.0f, static_cast<float>(glyph.rect.width)  * invDpr);
             const float h = std::max(0.0f, static_cast<float>(glyph.rect.height) * invDpr);
             if (w <= 0.0f || h <= 0.0f) continue;
 
-            const float alpha = std::clamp(p.opacity * static_cast<float>(glyph.item.offsetOpacity), 0.0f, 1.0f);
+            const float alpha = std::clamp(p.opacity * glyph.offsetOpacity, 0.0f, 1.0f);
             const float4 oc = { p.outlineColor.x * alpha, p.outlineColor.y * alpha,
                                  p.outlineColor.z * alpha, p.outlineColor.w * alpha };
             SpriteVertex ov[4] = {
@@ -2143,9 +2206,9 @@ void DiligentImmediateSubmitter::submitGlyphTextTransformed(const GlyphTextXform
             mapWriteDiscard(ctx, m_draw_sprite_vertex_buffer, ov, sizeof(ov), m_frameCostStats_);
             for (const auto& d : dirs) {
                 QMatrix4x4 om = p.transform;
-                const float glyphScale = std::max(0.0001f, glyph.item.offsetScale);
+                const float glyphScale = std::max(0.0001f, glyph.offsetScale);
                 om.translate(left + d.x + w * 0.5f, top + d.y + h * 0.5f, 0.0f);
-                om.rotate(glyph.item.offsetRotation, 0.0f, 0.0f, 1.0f);
+                om.rotate(glyph.offsetRotation, 0.0f, 0.0f, 1.0f);
                 om.scale(w * glyphScale, h * glyphScale, 1.0f);
                 om.translate(-0.5f, -0.5f, 0.0f);
                 RenderSolidRectTransform2D omat;
@@ -2161,15 +2224,15 @@ void DiligentImmediateSubmitter::submitGlyphTextTransformed(const GlyphTextXform
     }
     // ---- Fill pass (original) ----
     for (const auto& glyph : drawGlyphs) {
-        const float left = static_cast<float>(glyph.item.basePosition.x() + glyph.item.offsetPosition.x()) + glyph.rect.bearingX * invDpr;
-        const float top = static_cast<float>(glyph.item.basePosition.y() + glyph.item.offsetPosition.y()) - glyph.rect.bearingY * invDpr;
+        const float left = static_cast<float>(glyph.basePosition.x() + glyph.offsetPosition.x()) + glyph.rect.bearingX * invDpr;
+        const float top = static_cast<float>(glyph.basePosition.y() + glyph.offsetPosition.y()) - glyph.rect.bearingY * invDpr;
         const float w = std::max(0.0f, static_cast<float>(glyph.rect.width)  * invDpr);
         const float h = std::max(0.0f, static_cast<float>(glyph.rect.height) * invDpr);
         if (w <= 0.0f || h <= 0.0f) {
             continue;
         }
 
-        const float alpha = std::clamp(p.opacity * static_cast<float>(glyph.item.offsetOpacity), 0.0f, 1.0f);
+        const float alpha = std::clamp(p.opacity * glyph.offsetOpacity, 0.0f, 1.0f);
         const float4 color = glyph.rect.colorPreserved
             ? float4{1.0f, 1.0f, 1.0f, -alpha}
             : float4{p.color.x * alpha, p.color.y * alpha, p.color.z * alpha, p.color.w * alpha};
@@ -2181,9 +2244,9 @@ void DiligentImmediateSubmitter::submitGlyphTextTransformed(const GlyphTextXform
         };
 
         QMatrix4x4 glyphMat = p.transform;
-        const float glyphScale = std::max(0.0001f, glyph.item.offsetScale);
+        const float glyphScale = std::max(0.0001f, glyph.offsetScale);
         glyphMat.translate(left + w * 0.5f, top + h * 0.5f, 0.0f);
-        glyphMat.rotate(glyph.item.offsetRotation, 0.0f, 0.0f, 1.0f);
+        glyphMat.rotate(glyph.offsetRotation, 0.0f, 0.0f, 1.0f);
         glyphMat.scale(w * glyphScale, h * glyphScale, 1.0f);
         glyphMat.translate(-0.5f, -0.5f, 0.0f);
 

@@ -7635,7 +7635,7 @@ private:
             return false;
         }
         playback->goToEndFrame();
-        return playback->currentFrame() == playback->frameRange().endPosition();
+        return playback->currentFrame() == playback->playableEndFrame();
     }
 
     static QVariant playbackSetInPoint()

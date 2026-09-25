@@ -44,6 +44,7 @@ struct SourceCropDrawLayout {
   QImage getThumbnail(int width = 128, int height = 128) const override;
   const ArtifactCore::ImageF32x4_RGBA& currentFrameBuffer() const;
   bool hasCurrentFrameBuffer() const;
+  bool hasTemporarySourceOverride() const;
   void setTemporarySourceOverride(const ArtifactCore::ImageF32x4_RGBA* buffer);
 
  protected:
@@ -77,6 +78,7 @@ struct SourceCropDrawLayout {
    // Whole-value read for VP/undo use. Writes go through the
    // sourceCrop.* property paths so clamping and keyframes stay consistent.
    SourceCrop sourceCrop() const;
+   std::uint64_t sourceCropRevision() const;
    bool restoreSourceCropSnapshot(const QJsonObject& snapshot);
    QString sourceCropSignature() const;
   SourceCropDrawLayout sourceCropDrawLayout() const;

@@ -1599,6 +1599,7 @@ W_OBJECT_IMPL(ArtifactEffectService)
            UniString::fromQString(normalizedPropertyName), oldValue);
        return EffectServiceResult::fail("Effect property change was not applied");
      }
+    layer->setDirty(LayerDirtyFlag::Effect);
     ArtifactCore::globalEventBus().post<LayerChangedEvent>(LayerChangedEvent{
         comp->id().toString(), layerId.toString(),
         LayerChangedEvent::ChangeType::Modified});
@@ -1718,6 +1719,7 @@ W_OBJECT_IMPL(ArtifactEffectService)
       effect->modulationRouter().restoreSnapshot(before);
       return EffectServiceResult::fail("Effect modulation change was not applied");
      }
+     layer->setDirty(LayerDirtyFlag::Effect);
    }
    ArtifactCore::globalEventBus().post<LayerChangedEvent>(LayerChangedEvent{
        comp->id().toString(), layerId.toString(),

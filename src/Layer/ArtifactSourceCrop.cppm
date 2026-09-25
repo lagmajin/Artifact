@@ -118,12 +118,18 @@ QRectF clampRectToSource(const QRectF &rect, const QRectF &sourceBounds) {
 
 } // namespace
 
+std::uint64_t SourceCrop::revision() const {
+  return revision_;
+}
+
 bool SourceCrop::enabled() const {
   return enabled_;
 }
 
 void SourceCrop::setEnabled(bool enabled) {
+  if (enabled_ == enabled) return;
   enabled_ = enabled;
+  ++revision_;
 }
 
 QRectF SourceCrop::cropRect() const {
@@ -131,12 +137,16 @@ QRectF SourceCrop::cropRect() const {
 }
 
 void SourceCrop::setCropRect(const QRectF &rect) {
+  QRectF next;
   if (!ArtifactCore::artifactIsFinite(rect.x()) || !ArtifactCore::artifactIsFinite(rect.y()) ||
       !ArtifactCore::artifactIsFinite(rect.width()) || !ArtifactCore::artifactIsFinite(rect.height())) {
-    cropRect_ = QRectF();
-    return;
+    next = QRectF();
+  } else {
+    next = rect.normalized();
   }
-  cropRect_ = rect.normalized();
+  if (cropRect_ == next) return;
+  cropRect_ = next;
+  ++revision_;
 }
 
 QPointF SourceCrop::pan() const {
@@ -147,7 +157,10 @@ void SourceCrop::setPan(const QPointF &pan) {
   const auto safe = [](double value) {
     return ArtifactCore::artifactIsFinite(value) ? ArtifactCore::artifactClamp(value, -1000000.0, 1000000.0) : 0.0;
   };
-  pan_ = QPointF(safe(pan.x()), safe(pan.y()));
+  const QPointF next(safe(pan.x()), safe(pan.y()));
+  if (pan_ == next) return;
+  pan_ = next;
+  ++revision_;
 }
 
 double SourceCrop::zoom() const {
@@ -155,11 +168,11 @@ double SourceCrop::zoom() const {
 }
 
 void SourceCrop::setZoom(double zoom) {
-  if (!ArtifactCore::artifactIsFinite(zoom) || zoom <= 0.0) {
-    zoom_ = 1.0;
-    return;
-  }
-  zoom_ = ArtifactCore::artifactClamp(zoom, 0.001, 1000.0);
+  const double next = !ArtifactCore::artifactIsFinite(zoom) || zoom <= 0.0
+      ? 1.0 : ArtifactCore::artifactClamp(zoom, 0.001, 1000.0);
+  if (zoom_ == next) return;
+  zoom_ = next;
+  ++revision_;
 }
 
 double SourceCrop::rotation() const {
@@ -167,9 +180,12 @@ double SourceCrop::rotation() const {
 }
 
 void SourceCrop::setRotation(double rotation) {
-  rotation_ = ArtifactCore::artifactIsFinite(rotation)
+  const double next = ArtifactCore::artifactIsFinite(rotation)
       ? ArtifactCore::artifactClamp(rotation, -360000.0, 360000.0)
       : 0.0;
+  if (rotation_ == next) return;
+  rotation_ = next;
+  ++revision_;
 }
 
 QPointF SourceCrop::anchor() const {
@@ -177,7 +193,10 @@ QPointF SourceCrop::anchor() const {
 }
 
 void SourceCrop::setAnchor(const QPointF &anchor) {
-  anchor_ = clampAnchor(anchor);
+  const QPointF next = clampAnchor(anchor);
+  if (anchor_ == next) return;
+  anchor_ = next;
+  ++revision_;
 }
 
 bool SourceCrop::preserveAspect() const {
@@ -185,10 +204,17 @@ bool SourceCrop::preserveAspect() const {
 }
 
 void SourceCrop::setPreserveAspect(bool preserveAspect) {
+  if (preserveAspect_ == preserveAspect) return;
   preserveAspect_ = preserveAspect;
+  ++revision_;
 }
 
 void SourceCrop::reset() {
+  if (!enabled_ && cropRect_ == QRectF() && pan_ == QPointF(0.0, 0.0) &&
+      zoom_ == 1.0 && rotation_ == 0.0 && anchor_ == QPointF(0.5, 0.5) &&
+      preserveAspect_) {
+    return;
+  }
   enabled_ = false;
   cropRect_ = QRectF();
   pan_ = QPointF(0.0, 0.0);
@@ -196,21 +222,25 @@ void SourceCrop::reset() {
   rotation_ = 0.0;
   anchor_ = QPointF(0.5, 0.5);
   preserveAspect_ = true;
+  ++revision_;
 }
 
 void SourceCrop::clampToSource(const QSizeF &sourceSize) {
+  const QRectF previousCropRect = cropRect_;
+  const QPointF previousAnchor = anchor_;
   anchor_ = clampAnchor(anchor_);
   if (!hasSourceSize(sourceSize)) {
+    if (cropRect_ != previousCropRect || anchor_ != previousAnchor) ++revision_;
     return;
   }
 
   const QRectF sourceBounds = fullSourceRect(sourceSize);
   if (!cropRect_.isValid() || cropRect_.width() <= 0.0 || cropRect_.height() <= 0.0) {
     cropRect_ = sourceBounds;
-    return;
+  } else {
+    cropRect_ = clampRectToSource(cropRect_.normalized(), sourceBounds);
   }
-
-  cropRect_ = clampRectToSource(cropRect_.normalized(), sourceBounds);
+  if (cropRect_ != previousCropRect || anchor_ != previousAnchor) ++revision_;
 }
 
 QRectF SourceCrop::effectiveCropRect(const QSizeF &sourceSize) const {
@@ -293,6 +323,14 @@ QJsonObject SourceCrop::toJson() const {
 }
 
 void SourceCrop::fromJson(const QJsonObject &obj) {
+  const std::uint64_t previousRevision = revision_;
+  const bool previousEnabled = enabled_;
+  const QRectF previousCropRect = cropRect_;
+  const QPointF previousPan = pan_;
+  const double previousZoom = zoom_;
+  const double previousRotation = rotation_;
+  const QPointF previousAnchor = anchor_;
+  const bool previousPreserveAspect = preserveAspect_;
   enabled_ = obj.value(QStringLiteral("enabled")).toBool(false);
   cropRect_ = rectFromJson(obj.value(QStringLiteral("cropRect")).toArray(), QRectF());
   const QPointF storedPan = pointFromJson(
@@ -307,6 +345,13 @@ void SourceCrop::fromJson(const QJsonObject &obj) {
   setPan(storedPan);
   if (!cropRect_.isValid() || cropRect_.width() <= 0.0 || cropRect_.height() <= 0.0) {
     cropRect_ = QRectF();
+  }
+  if (revision_ == previousRevision &&
+      (enabled_ != previousEnabled || cropRect_ != previousCropRect ||
+       pan_ != previousPan || zoom_ != previousZoom ||
+       rotation_ != previousRotation || anchor_ != previousAnchor ||
+       preserveAspect_ != previousPreserveAspect)) {
+    ++revision_;
   }
 }
 

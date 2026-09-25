@@ -506,7 +506,7 @@ void ArtifactAbstractEffect::setContext(const EffectContext& context) {
         const bool hasModulation = !modulationPath.isEmpty() &&
             impl_->modulationRouter_.hasTarget(
                 Audio::Modulation::modulationTargetId(modulationPath.toStdString()));
-        if (property->getKeyFrames().empty() && !property->hasExpression() &&
+        if (!property->hasKeyFrames() && !property->hasExpression() &&
             !property->hasEnvelopes() && !hasModulation) {
             continue;
         }
@@ -588,7 +588,7 @@ ArtifactAbstractEffect::editableProperties() {
         }
 
         const auto& property = *existing;
-        if (property->getKeyFrames().empty() && !property->hasExpression() &&
+        if (!property->hasKeyFrames() && !property->hasExpression() &&
             !property->hasEnvelopes()) {
             property->setValue(current.getValue());
         }

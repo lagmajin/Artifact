@@ -950,6 +950,39 @@ QStringList collaborationLayersForEffect(
     }
     return layerIds;
 }
+
+void markEffectOwnersDirty(const QString& effectId) {
+    const QString normalizedId = effectId.trimmed();
+    auto project = ArtifactProjectManager::getInstance().getCurrentProjectSharedPtr();
+    if (normalizedId.isEmpty() || !project) return;
+
+    QVector<ProjectItem*> pending = project->projectItems();
+    while (!pending.isEmpty()) {
+        ProjectItem* item = pending.takeLast();
+        if (!item) continue;
+        if (item->type() == eProjectItemType::Composition) {
+            const auto* compositionItem = static_cast<const CompositionItem*>(item);
+            const auto resolved = project->findComposition(compositionItem->compositionId);
+            const auto composition = resolved.success ? resolved.ptr.lock()
+                                                      : ArtifactCompositionPtr{};
+            if (composition) {
+                for (const auto& layer : composition->allLayer()) {
+                    if (!layer) continue;
+                    const auto effects = layer->getEffects();
+                    const bool ownsEffect = std::any_of(
+                        effects.cbegin(), effects.cend(),
+                        [&normalizedId](const auto& candidate) {
+                            return candidate && candidate->effectID().toQString() == normalizedId;
+                        });
+                    if (ownsEffect) layer->setDirty(LayerDirtyFlag::Effect);
+                }
+            }
+        }
+        for (ProjectItem* child : item->children) {
+            if (child) pending.append(child);
+        }
+    }
+}
 }
 
 // --- SetPropertyCommand ---
@@ -1027,6 +1060,9 @@ void EffectPresetSnapshotCommand::redo() {
     if (firstRedo_) {
         firstRedo_ = false;
         lastOperationSucceeded_ = true;
+        if (auto manager = UndoManager::instance()) {
+            manager->notifyPropertyChanged(effectId_);
+        }
         return;
     }
     lastOperationSucceeded_ = applyEffectPresetSnapshot(
@@ -1159,6 +1195,26 @@ void ClonerTransformStackSnapshotCommand::redo() {
             layer->restoreClonerTransformsSnapshot(before_);
         }
     }
+}
+
+bool ClonerTransformStackSnapshotCommand::buildCollaborationOperation(
+    const QString& action, QString& operationType, QString& operationLayerId,
+    QJsonObject& payload) const {
+    if (!canSerialize() ||
+        (action != QStringLiteral("push") && action != QStringLiteral("undo") &&
+         action != QStringLiteral("redo")) ||
+        QJsonDocument(before_).toJson(QJsonDocument::Compact).size() > 262144 ||
+        QJsonDocument(after_).toJson(QJsonDocument::Compact).size() > 262144) {
+        return false;
+    }
+    const bool reverse = action == QStringLiteral("undo");
+    operationType = QStringLiteral("layer.stack");
+    operationLayerId = layerId_;
+    payload = QJsonObject{
+        {QStringLiteral("stackKind"), QStringLiteral("clonerTransforms")},
+        {QStringLiteral("expected"), reverse ? after_ : before_},
+        {QStringLiteral("value"), reverse ? before_ : after_}};
+    return true;
 }
 
 size_t ClonerTransformStackSnapshotCommand::estimatedMemoryBytes() const {
@@ -1582,6 +1638,7 @@ void EffectModulationSnapshotCommand::undo() {
             effect->modulationRouter(), before_, after_);
     }
     if (lastOperationSucceeded_) {
+        markEffectOwnersDirty(effectId_);
         if (auto manager = UndoManager::instance()) manager->notifyAnythingChanged();
     }
 }
@@ -1593,6 +1650,7 @@ void EffectModulationSnapshotCommand::redo() {
             effect->modulationRouter(), after_, before_);
     }
     if (lastOperationSucceeded_) {
+        markEffectOwnersDirty(effectId_);
         if (auto manager = UndoManager::instance()) manager->notifyAnythingChanged();
     }
 }
@@ -1658,6 +1716,29 @@ void LayerModulationSnapshotCommand::redo() {
     if (lastOperationSucceeded_) {
         if (auto manager = UndoManager::instance()) manager->notifyAnythingChanged();
     }
+}
+
+bool LayerModulationSnapshotCommand::buildCollaborationOperation(
+    const QString& action, QString& operationType, QString& operationLayerId,
+    QJsonObject& payload) const {
+    if (!canSerialize() ||
+        (action != QStringLiteral("push") && action != QStringLiteral("undo") &&
+         action != QStringLiteral("redo"))) {
+        return false;
+    }
+    const QJsonObject before = encodeModulationRouterSnapshot(before_);
+    const QJsonObject after = encodeModulationRouterSnapshot(after_);
+    if (QJsonDocument(before).toJson(QJsonDocument::Compact).size() > 262144 ||
+        QJsonDocument(after).toJson(QJsonDocument::Compact).size() > 262144) {
+        return false;
+    }
+    const bool reverse = action == QStringLiteral("undo");
+    operationType = QStringLiteral("layer.modulation");
+    operationLayerId = layerId_;
+    payload = QJsonObject{
+        {QStringLiteral("expected"), reverse ? after : before},
+        {QStringLiteral("value"), reverse ? before : after}};
+    return true;
 }
 
 QString LayerModulationSnapshotCommand::label() const { return label_; }
@@ -4547,6 +4628,7 @@ QStringList SetEffectMaskImagesCommand::collaborationTargetLayerIds() const {
 void SetEffectMaskImagesCommand::undo() {
     lastOperationSucceeded_ = applyEffectMaskImageSnapshot(effect_.lock(), beforeMasks_);
     if (lastOperationSucceeded_) {
+        markEffectOwnersDirty(effectId_);
         if (auto mgr = UndoManager::instance()) {
             mgr->notifyAnythingChanged();
         }
@@ -4556,6 +4638,7 @@ void SetEffectMaskImagesCommand::undo() {
 void SetEffectMaskImagesCommand::redo() {
     lastOperationSucceeded_ = applyEffectMaskImageSnapshot(effect_.lock(), afterMasks_);
     if (lastOperationSucceeded_) {
+        markEffectOwnersDirty(effectId_);
         if (auto mgr = UndoManager::instance()) {
             mgr->notifyAnythingChanged();
         }
@@ -5677,6 +5760,7 @@ UndoManager::UndoManager(): impl_(new Impl()) {
 UndoManager::~UndoManager() { delete impl_; }
 
 void UndoManager::notifyPropertyChanged(const QString& effectId) {
+    markEffectOwnersDirty(effectId);
     ArtifactCore::globalEventBus().publish<UndoManagerChangedEvent>(
         {UndoManagerChangeKind::PropertyChanged, effectId});
 }
@@ -6202,6 +6286,37 @@ bool UndoManager::applyCollaborativeLayerStack(
                          : QStringLiteral("clone.effectors"));
     notifyAnythingChanged();
     ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
+    return true;
+}
+
+bool UndoManager::applyCollaborativeLayerModulation(
+    const QString& layerId, const QJsonObject& payload) {
+    const QJsonValue expected = payload.value(QStringLiteral("expected"));
+    const QJsonValue next = payload.value(QStringLiteral("value"));
+    if (layerId.trimmed().isEmpty() || !expected.isObject() || !next.isObject() ||
+        QJsonDocument(expected.toObject()).toJson(QJsonDocument::Compact).size() >
+            262144 ||
+        QJsonDocument(next.toObject()).toJson(QJsonDocument::Compact).size() >
+            262144) {
+        return false;
+    }
+    Audio::Modulation::ModulationRouterSnapshot expectedSnapshot;
+    Audio::Modulation::ModulationRouterSnapshot nextSnapshot;
+    if (!decodeModulationRouterSnapshot(expected.toObject(), expectedSnapshot) ||
+        !decodeModulationRouterSnapshot(next.toObject(), nextSnapshot)) {
+        return false;
+    }
+    const auto layer = resolveLayer(layerId);
+    if (!layer ||
+        encodeModulationRouterSnapshot(layer->modulationRouter().snapshot()) !=
+            expected.toObject() ||
+        !applyModulationSnapshot(layer->modulationRouter(), nextSnapshot,
+                                 expectedSnapshot)) {
+        return false;
+    }
+    notifyAnythingChanged();
+    ArtifactCore::globalEventBus().publish<ProjectChangedEvent>(
+        {QString(), QString()});
     return true;
 }
 
@@ -8351,7 +8466,7 @@ bool restoreLayerSnapshotForResolutionRemap(
             prop = group.findProperty(psnap.propertyPath);
             if (prop) break;
         }
-        if (!prop || prop->getKeyFrames().size() != psnap.keyframes.size()) {
+        if (!prop || prop->keyFrameCount() != psnap.keyframes.size()) {
             success = false;
         }
     }

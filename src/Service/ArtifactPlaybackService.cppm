@@ -62,7 +62,6 @@ import Frame.Position;
 import Frame.Rate;
 import Frame.Range;
 import Frame.Debug;
-import Frame.SkipTracker;
 import Core.Diagnostics.Trace;
 import Diagnostics.Logger;
 import Image.ImageF32x4RGBAWithCache;
@@ -187,6 +186,8 @@ public:
   QElapsedTimer audioTimer_;
   double audioOffsetSeconds_ = 0.0;
   std::int64_t droppedFrameCount_ = 0;
+  std::int64_t lastPresentedFrame_ = -1;
+  int lastPresentedDirection_ = 0;
   std::atomic_bool audioRunning_{false};
   std::function<double()> externalAudioClockProvider_;
   std::function<double()> playbackClockProvider_;
@@ -288,6 +289,16 @@ public:
   std::atomic_uint64_t playbackSessionConcreteFrames_{0};
   QElapsedTimer seekPreviewMaintenanceClock_;
   uint64_t seekPreviewMaintenanceGeneration_ = 0;
+
+  void refreshPlaybackInOutRange() {
+    auto *points = owner_ ? owner_->inOutPoints() : nullptr;
+    if (engine_) {
+      engine_->setInOutPoints(points);
+    }
+    if (controller_) {
+      controller_->setInOutPoints(points);
+    }
+  }
 
   void beginPlaybackSessionCapture() {
     if (playbackSessionCaptureActive_) {
@@ -700,6 +711,14 @@ public:
         engine_, &ArtifactPlaybackEngine::playbackStateChanged, owner_,
         [this](PlaybackState state) {
           const auto publishState = [this, state]() {
+            const PlaybackState currentState =
+                engine_ ? (engine_->isPlaying() ? PlaybackState::Playing
+                             : engine_->isPaused() ? PlaybackState::Paused
+                                                   : PlaybackState::Stopped)
+                        : PlaybackState::Stopped;
+            if (currentState != state) {
+              return;
+            }
             if (state == PlaybackState::Playing) {
               beginPlaybackSessionCapture();
             } else if (state == PlaybackState::Paused) {
@@ -711,6 +730,10 @@ public:
               pauseAudioClock();
             } else if (state == PlaybackState::Stopped) {
               stopAudioClock();
+            }
+            if ((state == PlaybackState::Paused ||
+                 state == PlaybackState::Stopped) && currentComposition_) {
+              currentComposition_->pause();
             }
 
 
@@ -728,7 +751,10 @@ public:
             return;
           }
 
-          const QString compositionId = cachedCurrentCompositionIdStr_;
+          const auto engineComposition = engine_->composition();
+          const QString compositionId = engineComposition
+              ? engineComposition->id().toString()
+              : QString();
 
           const int64_t frameNumber = position.framePosition();
           ArtifactCore::ImageF32x4_RGBA frameBuffer;
@@ -739,26 +765,8 @@ public:
                                     : frame.convertToFormat(QImage::Format_RGBA8888);
             frameBuffer.setFromRGBA8(rgba.constBits(), rgba.width(), rgba.height());
           }
-          const QString diskCacheFramePath =
-              currentComposition_
-                  ? previewDiskCacheFramePathForNamespace(
-                        currentCompositionDiskCacheNamespace(), frameNumber)
-                  : QString();
-
           const auto publishFrame = [this, position, compositionId, frameNumber,
-                                     frameBuffer, hasConcreteFrame,
-                                     diskCacheFramePath]() {
-            // The engine emits from its worker thread. Keep all composition
-            // mutation on the PlaybackService/GUI thread together with the
-            // cache publication instead of calling into the composition from
-            // the DirectConnection callback.
-            syncCurrentCompositionFrame(position);
-            playbackSessionPublishedFrames_.fetch_add(
-                1, std::memory_order_relaxed);
-            if (hasConcreteFrame) {
-              playbackSessionConcreteFrames_.fetch_add(
-                  1, std::memory_order_relaxed);
-            }
+                                     frameBuffer, hasConcreteFrame]() {
             const QString currentCompositionId =
                 currentComposition_ ? cachedCurrentCompositionIdStr_
                                     : QString();
@@ -771,6 +779,21 @@ public:
                          << "currentComposition=" << currentCompositionId;
               return;
             }
+            const QString diskCacheFramePath = currentComposition_
+                ? previewDiskCacheFramePathForNamespace(
+                      currentCompositionDiskCacheNamespace(), frameNumber)
+                : QString();
+            // The engine emits from its worker thread. Keep all composition
+            // mutation on the PlaybackService/GUI thread together with the
+            // cache publication instead of calling into the composition from
+            // the DirectConnection callback.
+            syncCurrentCompositionFrame(position);
+            playbackSessionPublishedFrames_.fetch_add(
+                1, std::memory_order_relaxed);
+            if (hasConcreteFrame) {
+              playbackSessionConcreteFrames_.fetch_add(
+                  1, std::memory_order_relaxed);
+            }
             if (frameNumber == playbackSessionStartFrame_ ||
                 playbackSessionPublishedFrames_.load(
                     std::memory_order_relaxed) % 120 == 0) {
@@ -780,7 +803,6 @@ public:
                        << "composition=" << compositionId;
             }
             if (hasConcreteFrame) {
-              FrameSkipTracker::instance()->commitFrame(frameNumber);
               storeFrameImageInRam(frameNumber, frameBuffer,
                                    QStringLiteral("playback-frame"));
               if (previewDiskCacheEnabled_.load()) {
@@ -863,6 +885,14 @@ public:
 
     engine_->setAudioMasterVolume(audioMasterVolume_);
     engine_->setAudioMasterMuted(audioMasterMuted_);
+
+    eventBusSubscriptions_.push_back(
+        eventBus_.subscribe<PlaybackInOutPointsChangedEvent>(
+            [this](const PlaybackInOutPointsChangedEvent &) {
+              QMetaObject::invokeMethod(
+                  owner_, [this]() { refreshPlaybackInOutRange(); },
+                  Qt::QueuedConnection);
+            }));
 
     eventBusSubscriptions_.push_back(
         eventBus_.subscribe<LayerChangedEvent>([this](const LayerChangedEvent &event) {
@@ -2555,6 +2585,10 @@ void ArtifactPlaybackService::play() {
     impl_->finishPlaybackSessionCapture(QStringLiteral("rejected-no-composition"));
     return;
   }
+  if (impl_->engine_->currentFrame() == playableEndFrame() &&
+      !impl_->engine_->isLooping()) {
+    impl_->engine_->goToFrame(playableRange().startPosition());
+  }
 
   qInfo() << "[PlaybackService] play requested"
           << "frame=" << impl_->engine_->currentFrame().framePosition()
@@ -2591,6 +2625,9 @@ void ArtifactPlaybackService::play() {
   }
 
   impl_->startAudioClock();
+  impl_->lastPresentedFrame_ = impl_->engine_
+      ? impl_->engine_->currentFrame().framePosition() : -1;
+  impl_->lastPresentedDirection_ = 0;
   if (impl_->ramPreviewEnabled_) {
     impl_->ramPreviewAutoPlaybackActive_ = true;
   }
@@ -2729,12 +2766,19 @@ void ArtifactPlaybackService::shuttleStop() {
 }
 
 void ArtifactPlaybackService::goToFrame(const FramePosition &position) {
+  const auto range = frameRange();
+  const int64_t start = std::min(range.start(), range.end());
+  const int64_t end = std::max(start, std::max(range.start(), range.end()) - 1);
+  const auto target = std::clamp<int64_t>(
+    position.framePosition(), start, end);
+  impl_->lastPresentedFrame_ = -1;
+  impl_->lastPresentedDirection_ = 0;
   if (impl_->engine_) {
-    impl_->engine_->goToFrame(position);
+    impl_->engine_->goToFrame(FramePosition(target));
   } else if (impl_->controller_) {
-    impl_->controller_->goToFrame(position);
+    impl_->controller_->goToFrame(FramePosition(target));
   }
-  impl_->prewarmRamPreviewAround(position);
+  impl_->prewarmRamPreviewAround(FramePosition(target));
 }
 
 void ArtifactPlaybackService::goToNextFrame() {
@@ -2804,24 +2848,54 @@ FramePosition ArtifactPlaybackService::currentFrame() const {
                                    : FramePosition(0));
 }
 
+FrameRange ArtifactPlaybackService::playableRange() const {
+  const auto range = frameRange();
+  int64_t start = std::min(range.start(), range.end());
+  int64_t end = std::max(start, std::max(range.start(), range.end()) - 1);
+  if (const auto *points = inOutPoints();
+      points && points->hasInPoint()) {
+    start = std::max<int64_t>(start, points->inPoint().value().framePosition());
+  }
+  if (const auto *points = inOutPoints();
+      points && points->hasOutPoint()) {
+    end = std::min<int64_t>(end, points->outPoint().framePosition());
+  }
+  return FrameRange(start, std::max(start, end));
+}
+
+FramePosition ArtifactPlaybackService::playableEndFrame() const {
+  const auto range = playableRange();
+  return range.endPosition();
+}
+
 void ArtifactPlaybackService::setCurrentFrame(const FramePosition &position) {
   if (currentFrame() == position) {
     return;
   }
-  const bool wasPlaying = isPlaying();
-  if (impl_->engine_) {
-    impl_->engine_->setCurrentFrame(position);
-  } else if (impl_->controller_) {
-    impl_->controller_->setCurrentFrame(position);
+  const auto range = frameRange();
+  const int64_t start = std::min(range.start(), range.end());
+  const int64_t end = std::max(start, std::max(range.start(), range.end()) - 1);
+  const auto target = std::clamp<int64_t>(
+    position.framePosition(), start, end);
+  if (currentFrame() == target) {
+    return;
   }
-  impl_->syncCurrentCompositionFrame(position);
+  const bool wasPlaying = isPlaying();
+  impl_->lastPresentedFrame_ = -1;
+  impl_->lastPresentedDirection_ = 0;
+  if (impl_->engine_) {
+    impl_->engine_->setCurrentFrame(FramePosition(target));
+  } else if (impl_->controller_) {
+    impl_->controller_->setCurrentFrame(FramePosition(target));
+  }
+  impl_->syncCurrentCompositionFrame(FramePosition(target));
   const QString compositionId =
       impl_->currentComposition_ ? impl_->currentComposition_->id().toString()
                                  : QString();
   ArtifactCore::globalEventBus().publish<FrameChangedEvent>(
-      FrameChangedEvent{compositionId, position.framePosition()});
+      FrameChangedEvent{compositionId, target});
   if (!wasPlaying) {
-    impl_->prewarmRamPreviewAround(position);
+    impl_->prewarmRamPreviewAround(FramePosition(target));
   }
 }
 
@@ -3075,8 +3149,17 @@ QString ArtifactPlaybackService::audioOutputDeviceName() const {
 }
 
 void ArtifactPlaybackService::setCurrentComposition(
-    ArtifactCompositionPtr composition) {
+  ArtifactCompositionPtr composition) {
   if (impl_->currentComposition_ != composition) {
+    if (impl_->engine_ && impl_->engine_->isPlaying()) {
+      stop();
+    }
+    if (impl_->engine_) {
+      impl_->engine_->setInOutPoints(nullptr);
+    }
+    if (impl_->controller_) {
+      impl_->controller_->setInOutPoints(nullptr);
+    }
     // Remove the previously active namespace before replacing the composition
     // pointer; after replacement its state hash would address a new namespace.
     impl_->clearPreviewDiskCacheForCurrentComposition();
@@ -3108,6 +3191,7 @@ void ArtifactPlaybackService::setCurrentComposition(
       impl_->engine_->setFrameRate(composition->frameRate());
       impl_->engine_->setCurrentFrame(composition->framePosition());
       impl_->engine_->setComposition(composition);
+      impl_->engine_->setInOutPoints(composition->inOutPoints());
     }
 
     // コントローラーにも設定を反映
@@ -3115,6 +3199,7 @@ void ArtifactPlaybackService::setCurrentComposition(
       impl_->controller_->setFrameRange(composition->frameRange());
       impl_->controller_->setFrameRate(composition->frameRate());
       impl_->controller_->setCurrentFrame(composition->framePosition());
+      impl_->controller_->setInOutPoints(composition->inOutPoints());
     }
 
     ArtifactCore::globalEventBus().publish<PlaybackCompositionChangedEvent>(
@@ -3788,6 +3873,43 @@ double ArtifactPlaybackService::audioOffsetSeconds() const {
 
 std::int64_t ArtifactPlaybackService::droppedFrameCount() const {
   return impl_ ? impl_->droppedFrameCount_ : 0;
+}
+
+void ArtifactPlaybackService::recordPresentedFrame(int64_t frame) {
+  if (!impl_) {
+    return;
+  }
+
+  const int direction = playbackSpeed() < 0.0f ? -1 : 1;
+  const bool inPlaybackRange = frameRange().contains(frame);
+  const bool loopWrapped = inPlaybackRange &&
+      impl_->lastPresentedFrame_ >= 0 &&
+      frameRange().contains(impl_->lastPresentedFrame_) &&
+      ((direction > 0 && frame < impl_->lastPresentedFrame_) ||
+       (direction < 0 && frame > impl_->lastPresentedFrame_));
+  if (!isPlaying() || !inPlaybackRange || loopWrapped ||
+      impl_->lastPresentedFrame_ < 0 ||
+      impl_->lastPresentedDirection_ == 0 ||
+      impl_->lastPresentedDirection_ != direction) {
+    impl_->lastPresentedFrame_ = frame;
+    impl_->lastPresentedDirection_ = isPlaying() ? direction : 0;
+    return;
+  }
+
+  const int64_t delta = frame - impl_->lastPresentedFrame_;
+  if (delta < 0 && direction > 0) {
+    return;
+  }
+  if (delta > 0 && direction < 0) {
+    return;
+  }
+  if (playbackSkipMode() == PlaybackSkipMode::None) {
+    if (delta > 1 || delta < -1) {
+      impl_->droppedFrameCount_ += (delta > 0 ? delta - 1 : -delta - 1);
+    }
+  }
+  impl_->lastPresentedFrame_ = frame;
+  impl_->lastPresentedDirection_ = direction;
 }
 
 ArtifactCompositionPlaybackController *

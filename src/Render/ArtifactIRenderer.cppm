@@ -1,6 +1,7 @@
 module;
 #include <utility>
 #include <string>
+#include <cstddef>
 // ArtifactIRenderer maintenance rule:
 // Do not rewrite the existing D3D12-specific path by guesswork.
 // Do not replace this renderer with a Qt-only implementation.
@@ -27,6 +28,7 @@ module;
 #include <QSize>
 #include <QElapsedTimer>
 #include <QDebug>
+#include <QLoggingCategory>
 #include <QtConcurrent>
 #include <QTransform>
 #include <QMatrix4x4>
@@ -86,6 +88,8 @@ namespace Artifact
  using namespace Diligent;
  using namespace ArtifactCore;
  using float2 = Diligent::float2;
+
+ Q_LOGGING_CATEGORY(particleRendererLog, "artifact.render.particles")
 
 namespace {
   QImage extractRgbaChannelToGray(const QImage& image, int channelOffset)
@@ -473,6 +477,14 @@ namespace {
   std::unique_ptr<ArtifactCore::GpuContext> gpuContext_;
   std::unique_ptr<ArtifactCore::ParticleRenderer> particleRenderer_;
   QString lastParticleDebug_;
+  bool lastParticleDrawQueued_ = false;
+  std::size_t lastParticleDrawCount_ = 0;
+  QString lastParticleCameraMode_;
+  float lastParticleZoom_ = 1.0f;
+  float lastParticlePanX_ = 0.0f;
+  float lastParticlePanY_ = 0.0f;
+  float lastParticleViewportWidth_ = 0.0f;
+  float lastParticleViewportHeight_ = 0.0f;
 
   mutable DiligentImmediateSubmitter submitter_;
   mutable RenderCommandBuffer cmdBuf_;
@@ -1623,10 +1635,11 @@ namespace {
   { primitiveRenderer_.drawGrid(x, y, w, h, spacing, thickness, color); }
 
   void drawParticles(const ArtifactCore::ParticleRenderData& data) {
+    lastParticleDrawQueued_ = false;
     if (data.particles.empty()) {
       lastParticleDebug_ = QStringLiteral(
           "state=empty skipped=empty count=0 path=particle render=none");
-      qDebug() << "[ParticleRenderer] drawParticles skipped: empty particle buffer";
+      qCDebug(particleRendererLog) << "[ParticleRenderer] drawParticles skipped: empty particle buffer";
       return;
     }
 
@@ -1647,7 +1660,7 @@ namespace {
       particleRenderer_->setFrameCostStats(nullptr);
       particleRenderer_->initialize(100000); // Support up to 100k particles
       submitter_.setParticleRenderer(particleRenderer_.get());
-      qDebug() << "[ParticleRenderer] Initialized (max 100k particles)";
+      qCInfo(particleRendererLog) << "[ParticleRenderer] Initialized (max 100k particles)";
     }
 
     if (m_viewportWidth <= 0.0f || m_viewportHeight <= 0.0f) {
@@ -1667,7 +1680,7 @@ namespace {
     primitiveRenderer_.getPan(panX, panY);
     const float zoom = primitiveRenderer_.getZoom();
 
-    qDebug() << "[ParticleRenderer] Drawing" << data.particles.size()
+    qCDebug(particleRendererLog) << "[ParticleRenderer] Drawing" << data.particles.size()
              << "particles camera3D=" << particle3DCameraActive_
              << "zoom=" << zoom << "pan=(" << panX << "," << panY << ")"
              << "viewport=(" << m_viewportWidth << "x" << m_viewportHeight << ")";
@@ -1716,7 +1729,7 @@ namespace {
       }
     }
 
-    qInfo() << "[ParticleRenderer] matrices"
+    qCDebug(particleRendererLog) << "[ParticleRenderer] matrices"
             << "viewRow0=" << view.row(0)
             << "viewRow1=" << view.row(1)
             << "viewRow2=" << view.row(2)
@@ -1743,15 +1756,14 @@ namespace {
       return;
     }
 
-    lastParticleDebug_ = QStringLiteral(
-                             "state=queued count=%1 cameraMode=%2 zoom=%3 pan=%4,%5 viewport=%6x%7 rtv=bound path=particle")
-                             .arg(data.particles.size())
-                             .arg(cameraMode)
-                             .arg(QString::number(zoom, 'f', 3))
-                             .arg(QString::number(panX, 'f', 1))
-                             .arg(QString::number(panY, 'f', 1))
-                             .arg(m_viewportWidth)
-                             .arg(m_viewportHeight);
+    lastParticleDrawCount_ = data.particles.size();
+    lastParticleCameraMode_ = cameraMode;
+    lastParticleZoom_ = zoom;
+    lastParticlePanX_ = panX;
+    lastParticlePanY_ = panY;
+    lastParticleViewportWidth_ = m_viewportWidth;
+    lastParticleViewportHeight_ = m_viewportHeight;
+    lastParticleDrawQueued_ = true;
     cmdBuf_.targetRTV = pRTV;
     ParticlePkt pkt;
     pkt.data = data;
@@ -3058,6 +3070,7 @@ void ArtifactIRenderer::Impl::beginFrameCostCapture()
 {
   m_currentFrameCostStats_ = {};
   lastParticleDebug_.clear();
+  lastParticleDrawQueued_ = false;
   submitter_.beginFrameDebugCapture();
   submitter_.setFrameCostStats(&m_currentFrameCostStats_);
   primitiveRenderer3D_.setFrameCostStats(&m_currentFrameCostStats_);
@@ -4501,6 +4514,10 @@ void ArtifactIRenderer::drawSprite(float x, float y, float w, float h, const QIm
  {
   impl_->primitiveRenderer_.drawSpriteTransformed(x, y, w, h, transform, texture, opacity);
  }
+ void ArtifactIRenderer::drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, Diligent::ITextureView* texture, float opacity, const QRectF& uvRect)
+ {
+  impl_->primitiveRenderer_.drawSpriteTransformed(x, y, w, h, transform, texture, opacity, uvRect);
+ }
  void ArtifactIRenderer::drawMaskedTextureLocal(float x, float y, float w, float h, Diligent::ITextureView* sceneTexture, const QImage& maskImage, float opacity)
  {
   impl_->primitiveRenderer_.drawMaskedTextureLocal(x, y, w, h, sceneTexture, maskImage, opacity);
@@ -4576,6 +4593,13 @@ Diligent::ITextureView* ArtifactIRenderer::textureForImage(
 }
 
 Diligent::ITextureView* ArtifactIRenderer::textureForImage(
+    const ArtifactCore::ImageF32x4_RGBA& image, const QUuid& sourceIdentityId,
+    quint64 sourceVersion, qint64 sourceFrameContentKey) {
+  return impl_->primitiveRenderer_.textureForImage(
+      image, sourceIdentityId, sourceVersion, sourceFrameContentKey);
+}
+
+Diligent::ITextureView* ArtifactIRenderer::textureForImage(
     const QImage& image) {
   return impl_->primitiveRenderer_.textureForImage(image);
 }
@@ -4595,7 +4619,17 @@ QString ArtifactIRenderer::particleDebugState() const {
   if (!impl_) {
     return QStringLiteral("<no renderer>");
   }
-  QString state = impl_->lastParticleDebug_.isEmpty()
+  QString state = impl_->lastParticleDrawQueued_
+                      ? QStringLiteral(
+                            "state=queued count=%1 cameraMode=%2 zoom=%3 pan=%4,%5 viewport=%6x%7 rtv=bound path=particle")
+                            .arg(impl_->lastParticleDrawCount_)
+                            .arg(impl_->lastParticleCameraMode_)
+                            .arg(QString::number(impl_->lastParticleZoom_, 'f', 3))
+                            .arg(QString::number(impl_->lastParticlePanX_, 'f', 1))
+                            .arg(QString::number(impl_->lastParticlePanY_, 'f', 1))
+                            .arg(impl_->lastParticleViewportWidth_)
+                            .arg(impl_->lastParticleViewportHeight_)
+                      : impl_->lastParticleDebug_.isEmpty()
                       ? QStringLiteral("<none>")
                       : impl_->lastParticleDebug_;
   if (impl_->particleRenderer_) {
@@ -4610,6 +4644,10 @@ QString ArtifactIRenderer::particleDebugState() const {
     }
   }
   return state;
+}
+
+bool ArtifactIRenderer::particleDrawQueued() const {
+  return impl_ && impl_->lastParticleDrawQueued_;
 }
 
 QString ArtifactIRenderer::glyphAtlasDebugState() const {
@@ -5030,6 +5068,96 @@ bool ArtifactIRenderer::blendLayers(ArtifactCore::LayerBlendPipeline *pipeline,
   }
   return pipeline->blend(ctx, srcSRV, dstSRV, outUAV, mode, opacity);
  }
+bool ArtifactIRenderer::blendLayers(ArtifactCore::LayerBlendPipeline *pipeline,
+                                    Diligent::ITextureView *srcSRV,
+                                    Diligent::ITextureView *dstSRV,
+                                    Diligent::ITextureView *outUAV,
+                                    ArtifactCore::BlendMode mode,
+                                    float opacity,
+                                    const ArtifactCore::ComputeRegion &region) const
+ {
+  auto ctx = impl_->deviceManager_.immediateContext();
+  if (!pipeline || !ctx) {
+   return false;
+  }
+  return pipeline->blend(ctx, srcSRV, dstSRV, outUAV, mode, opacity, region);
+ }
+bool ArtifactIRenderer::copyTextureOutsideRegion(
+    Diligent::ITextureView *sourceSRV,
+    Diligent::ITextureView *destinationUAV,
+    const ArtifactCore::ComputeRegion &region) const
+{
+ auto context = impl_->deviceManager_.immediateContext();
+ if (!context || !sourceSRV || !destinationUAV) {
+  return false;
+ }
+
+ auto *sourceTexture = sourceSRV->GetTexture();
+ auto *destinationTexture = destinationUAV->GetTexture();
+ if (!sourceTexture || !destinationTexture ||
+     sourceTexture == destinationTexture) {
+  return false;
+ }
+
+ const auto &sourceDesc = sourceTexture->GetDesc();
+ const auto &destinationDesc = destinationTexture->GetDesc();
+ const auto &sourceViewDesc = sourceSRV->GetDesc();
+ const auto &destinationViewDesc = destinationUAV->GetDesc();
+ if (sourceViewDesc.ViewType != Diligent::TEXTURE_VIEW_SHADER_RESOURCE ||
+     destinationViewDesc.ViewType != Diligent::TEXTURE_VIEW_UNORDERED_ACCESS ||
+     sourceViewDesc.MostDetailedMip != 0 ||
+     destinationViewDesc.MostDetailedMip != 0 ||
+     sourceDesc.Type != Diligent::RESOURCE_DIM_TEX_2D ||
+     destinationDesc.Type != Diligent::RESOURCE_DIM_TEX_2D ||
+     sourceDesc.ArraySize != 1 || destinationDesc.ArraySize != 1 ||
+     sourceDesc.Width != destinationDesc.Width ||
+     sourceDesc.Height != destinationDesc.Height ||
+     sourceDesc.Format != destinationDesc.Format ||
+     (sourceDesc.Format != Diligent::TEX_FORMAT_RGBA16_FLOAT &&
+      sourceDesc.Format != Diligent::TEX_FORMAT_RGBA32_FLOAT) ||
+     sourceDesc.SampleCount != 1 || destinationDesc.SampleCount != 1 ||
+     !region.validFor(sourceDesc.Width, sourceDesc.Height)) {
+  return false;
+ }
+
+ const auto copyBox = [&](Diligent::Uint32 minX, Diligent::Uint32 maxX,
+                          Diligent::Uint32 minY, Diligent::Uint32 maxY) {
+  if (minX == maxX || minY == maxY) {
+   return;
+  }
+  const Diligent::Box sourceBox{minX, maxX, minY, maxY};
+  Diligent::CopyTextureAttribs copyAttrs = {};
+  copyAttrs.pSrcTexture = sourceTexture;
+  copyAttrs.pSrcBox = &sourceBox;
+  copyAttrs.SrcTextureTransitionMode =
+      Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+  copyAttrs.pDstTexture = destinationTexture;
+  copyAttrs.DstX = minX;
+  copyAttrs.DstY = minY;
+  copyAttrs.DstTextureTransitionMode =
+      Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+  context->CopyTexture(copyAttrs);
+ };
+
+ const Diligent::Uint32 right = region.x + region.width;
+ const Diligent::Uint32 bottom = region.y + region.height;
+ copyBox(0, sourceDesc.Width, 0, region.y);
+ copyBox(0, sourceDesc.Width, bottom, sourceDesc.Height);
+ copyBox(0, region.x, region.y, bottom);
+ copyBox(right, sourceDesc.Width, region.y, bottom);
+ return true;
+}
+bool ArtifactIRenderer::clearTextureRegion(
+    ArtifactCore::LayerBlendPipeline *pipeline,
+    Diligent::ITextureView *outUAV,
+    const ArtifactCore::ComputeRegion &region) const
+{
+ auto context = impl_->deviceManager_.immediateContext();
+ if (!pipeline || !context) {
+  return false;
+ }
+ return pipeline->clearRegion(context, outUAV, region);
+}
 bool ArtifactIRenderer::convertLayerToFloat(
     ArtifactCore::LayerBlendPipeline *pipeline,
     Diligent::ITextureView *srcSRV,
@@ -5042,6 +5170,21 @@ bool ArtifactIRenderer::convertLayerToFloat(
   return false;
  }
  return pipeline->convertLayerToFloat(ctx, srcSRV, outUAV, width, height);
+}
+bool ArtifactIRenderer::convertLayerToFloat(
+    ArtifactCore::LayerBlendPipeline *pipeline,
+    Diligent::ITextureView *srcSRV,
+    Diligent::ITextureView *outUAV,
+    Diligent::Uint32 width,
+    Diligent::Uint32 height,
+    const ArtifactCore::ComputeRegion &region) const
+{
+ auto ctx = impl_->deviceManager_.immediateContext();
+ if (!pipeline || !ctx) {
+  return false;
+ }
+ return pipeline->convertLayerToFloat(ctx, srcSRV, outUAV, width, height,
+                                      region);
 }
 bool ArtifactIRenderer::applyTrackMatte(
     ArtifactCore::LayerBlendPipeline *pipeline,

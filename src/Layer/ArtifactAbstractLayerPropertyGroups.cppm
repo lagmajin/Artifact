@@ -105,6 +105,65 @@ using LayerAbstractUtilities::finiteClampedValue;
 using namespace LayerAbstractUtilities;
 namespace LayerPhysics = LayerPhysicsBridge;
 
+bool isTimelineHiddenLayerPropertyGroup(const QString& groupName) {
+  return LayerAbstractUtilities::computeTimelineHiddenLayerPropertyGroup(
+      groupName);
+}
+
+bool isTimelineExpandedByDefaultLayerPropertyGroup(
+    const QString& groupName) {
+  return LayerAbstractUtilities::computeTimelineExpandedByDefaultLayerPropertyGroup(
+      groupName);
+}
+
+bool isInspectorHiddenLayerPropertyGroup(const QString& groupName) {
+  const QString normalized = groupName.trimmed();
+  const bool isComponentSettingsGroup =
+      normalized.compare(QStringLiteral("Components"), Qt::CaseInsensitive) == 0 ||
+      normalized.compare(QStringLiteral("Collision"), Qt::CaseInsensitive) == 0 ||
+      normalized.compare(QStringLiteral("Layout"), Qt::CaseInsensitive) == 0 ||
+      normalized.compare(QStringLiteral("Cloner"), Qt::CaseInsensitive) == 0 ||
+      normalized.compare(QStringLiteral("Crowd"), Qt::CaseInsensitive) == 0 ||
+      normalized.compare(QStringLiteral("Particle Emitter"), Qt::CaseInsensitive) == 0 ||
+      normalized.compare(QStringLiteral("Fluid"), Qt::CaseInsensitive) == 0;
+  return isComponentSettingsGroup ||
+         LayerAbstractUtilities::computeInspectorHiddenLayerPropertyGroup(
+             normalized);
+}
+
+bool isInspectorExpandedByDefaultLayerPropertyGroup(
+    const QString& groupName) {
+  return LayerAbstractUtilities::computeInspectorExpandedByDefaultLayerPropertyGroup(
+      groupName);
+}
+
+bool isClonerLayerPropertyGroup(const QString& groupName) {
+  return LayerAbstractUtilities::computeClonerLayerPropertyGroup(groupName);
+}
+
+bool isSourceReframeLayerPropertyGroup(const QString& groupName) {
+  return LayerAbstractUtilities::computeSourceReframeLayerPropertyGroup(
+      groupName);
+}
+
+bool isTimelineTextAnimatorLayerPropertyGroup(
+    const ArtifactCore::PropertyGroup& group) {
+  const auto properties = group.allProperties();
+  if (properties.empty()) return false;
+  for (const auto& property : properties) {
+    if (!property) return false;
+    const QStringList pathParts = property->getName().split(QLatin1Char('.'));
+    if (pathParts.size() < 4 || pathParts[0] != QStringLiteral("text") ||
+        pathParts[1] != QStringLiteral("animators")) {
+      return false;
+    }
+    bool indexIsNumeric = false;
+    pathParts[2].toUInt(&indexIsNumeric);
+    if (!indexIsNumeric) return false;
+  }
+  return true;
+}
+
 void notifyLayerMutation(ArtifactAbstractLayer* layer, LayerDirtyFlag flag,
                          LayerDirtyReason reason);
 QVariant evaluateAnimatedPropertyValue(

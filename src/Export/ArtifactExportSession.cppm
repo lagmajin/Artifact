@@ -147,19 +147,15 @@ bool ArtifactExportSession::build(QString* errorMessage) {
         exported.type = exported.serialized.value(QStringLiteral("type")).toInt();
         exported.visible = layer->isVisible();
         exported.is3D = layer->is3D();
-        const auto matteReferences = layer->matteReferences();
-        const auto layerId = layer->id();
-        const bool hasActiveMatte = std::any_of(
-            matteReferences.cbegin(), matteReferences.cend(),
-            [layerId](const LayerMatteReference& ref) {
-                return ref.enabled && !ref.sourceLayerId.isNil() &&
-                       ref.sourceLayerId != layerId;
-            });
+        const bool hasActiveMatte =
+            layer->hasEnabledExternalMatteReference();
+        const bool hasCpuRasterizerWork =
+            layerHasCpuRasterizerWork(layer.get());
         exported.requiresPreRender = exported.is3D ||
-                                     layerHasCpuRasterizerWork(layer.get()) ||
+                                     hasCpuRasterizerWork ||
                                      layer->hasMasks() ||
                                      hasActiveMatte ||
-                                     !layer->getEffects().empty() ||
+                                     layer->effectCount() > 0 ||
                                      needsExportRasterization(exported.serialized);
         collectAsset(exported.serialized.value(QStringLiteral("image.sourcePath")).toString());
         const QJsonArray sequencePaths = exported.serialized
@@ -175,9 +171,9 @@ bool ArtifactExportSession::build(QString* errorMessage) {
             exported.preRenderReason = QStringLiteral("マスク");
         } else if (hasActiveMatte) {
             exported.preRenderReason = QStringLiteral("マット");
-        } else if (layerHasCpuRasterizerWork(layer.get())) {
+        } else if (hasCpuRasterizerWork) {
             exported.preRenderReason = QStringLiteral("ラスターエフェクト");
-        } else if (!layer->getEffects().empty()) {
+        } else if (layer->effectCount() > 0) {
             exported.preRenderReason = QStringLiteral("エフェクト");
         } else if (needsExportRasterization(exported.serialized)) {
             const auto serialized = exported.serialized;

@@ -1332,6 +1332,12 @@ QUuid ArtifactVideoLayer::sourceAssetId() const
     return impl_->sourceAssetId_;
 }
 
+std::uint64_t ArtifactVideoLayer::sourceVersion() const
+{
+    return ArtifactCore::AssetManager::instance().sourceVersion(
+        impl_->sourceAssetId_);
+}
+
 bool ArtifactVideoLayer::localizeSourceIdentity()
 {
     if (impl_->sourceAssetId_.isNull() || isSourceIdentityLocalized()) return false;

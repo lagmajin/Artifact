@@ -139,8 +139,8 @@ namespace Artifact
   else if (impl_->activeComp_) impl_->activeComp_->goToEndFrame();
  }
 
- void ArtifactActiveContextService::seekToFrame(int64_t frame) {
-  if (impl_->handler_) QMetaObject::invokeMethod(impl_->handler_, "seekToFrame", Q_ARG(int64_t, frame));
+ void ArtifactActiveContextService::seekToFrame(qint64 frame) {
+  if (impl_->handler_) QMetaObject::invokeMethod(impl_->handler_, "seekToFrame", Q_ARG(qint64, frame));
   else if (auto* playback = ArtifactPlaybackService::instance()) playback->goToFrame(FramePosition(static_cast<int>(frame)));
   else if (impl_->activeComp_) impl_->activeComp_->goToFrame(frame);
  }

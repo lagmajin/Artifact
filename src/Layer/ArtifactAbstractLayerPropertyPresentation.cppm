@@ -53,18 +53,6 @@ void ArtifactAbstractLayer::append3DTransformProperties(
   rotYProp->setAnimatable(true);
   transformGroup.addProperty(rotYProp);
 
-  auto rotZProp = persistentLayerProperty(
-      QStringLiteral("transform.rotation.z"), PropertyType::Float,
-      transform.rotation(), -290);
-  rotZProp->setDisplayLabel(QStringLiteral("Rotation Z (alias)"));
-  rotZProp->setTooltip(QStringLiteral(
-      "Same channel as Rotation; explicit Z path for expressions."));
-  rotZProp->setUnit(QStringLiteral("deg"));
-  rotZProp->setStep(1.0);
-  rotZProp->setSoftRange(-180.0, 180.0);
-  rotZProp->setAnimatable(true);
-  transformGroup.addProperty(rotZProp);
-
   auto scaleZProp = persistentLayerProperty(
       QStringLiteral("transform.scale.z"), PropertyType::Float,
       transform.scaleZ(), -289);

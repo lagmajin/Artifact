@@ -621,12 +621,16 @@ enumOptionsForProperty(const ArtifactCore::AbstractProperty &property) {
         {1, QStringLiteral("Inside")},
         {2, QStringLiteral("Outside")}};
   }
-  if (name == QStringLiteral("shape.fillType")) {
+  if (name == QStringLiteral("shape.fillType") ||
+      (name.startsWith(QStringLiteral("shape.content.")) &&
+       name.endsWith(QStringLiteral(".fillType")))) {
     return ArtifactEnumPropertyEditor::OptionList{
         {0, QStringLiteral("Solid")},
         {1, QStringLiteral("Linear Gradient")},
         {2, QStringLiteral("Radial Gradient")},
-        {3, QStringLiteral("Conical Gradient")}};
+        {3, QStringLiteral("Conical Gradient")},
+        {4, QStringLiteral("Repeating Gradient")},
+        {5, QStringLiteral("Mirrored Gradient")}};
   }
   if (name == QStringLiteral("solid.fillType")) {
     return ArtifactEnumPropertyEditor::OptionList{

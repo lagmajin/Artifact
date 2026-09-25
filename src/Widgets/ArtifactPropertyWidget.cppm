@@ -1506,7 +1506,7 @@ void ArtifactPropertyWidget::Impl::updatePropertyValues() {
                                  animatedValue.isValid() ? animatedValue
                                                          : propertyPtr->getValue());
 
-    const bool hasAnyKeyframes = !propertyPtr->getKeyFrames().empty();
+    const bool hasAnyKeyframes = propertyPtr->hasKeyFrames();
     row->setKeyframeChecked(propertyPtr->hasKeyFrameAt(now));
     row->setKeyframeAnchor(propertyPtr->getKeyFrameAnchorAt(now));
     row->setKeyframeModeEnabled(row->isKeyframeModeEnabled() ||
