@@ -270,6 +270,14 @@ void ArtifactPuppetTool::ensureLayerLoaded(const LayerID& layerId,
         if (id.isEmpty() || !std::isfinite(originalLocal.x()) ||
             !std::isfinite(originalLocal.y()) || !std::isfinite(currentLocal.x()) ||
             !std::isfinite(currentLocal.y())) continue;
+        const double rotation =
+            object.value(QStringLiteral("rotation")).toDouble();
+        const double weight =
+            object.value(QStringLiteral("weight")).toDouble(1.0);
+        const double depth =
+            object.value(QStringLiteral("depth")).toDouble();
+        if (!std::isfinite(rotation) || !std::isfinite(weight) ||
+            !std::isfinite(depth)) continue;
         PinRecord pin;
         pin.id = id;
         pin.engineId = id.toStdString();
@@ -277,9 +285,10 @@ void ArtifactPuppetTool::ensureLayerLoaded(const LayerID& layerId,
         pin.originalPos = localToCanvas.map(originalLocal);
         pin.canvasPos = localToCanvas.map(currentLocal);
         pin.type = std::clamp(object.value(QStringLiteral("type")).toInt(), 0, 4);
-        pin.rotation = static_cast<float>(object.value(QStringLiteral("rotation")).toDouble());
-        pin.weight = static_cast<float>(object.value(QStringLiteral("weight")).toDouble(1.0));
-        pin.depth = static_cast<float>(object.value(QStringLiteral("depth")).toDouble());
+        pin.rotation = static_cast<float>(
+            std::clamp(rotation, -180.0, 180.0));
+        pin.weight = static_cast<float>(std::clamp(weight, 0.0, 1.0));
+        pin.depth = static_cast<float>(std::clamp(depth, -1.0, 1.0));
         restoreDeformerControlProperties(layer, id, object);
         lp->pins.push_back(std::move(pin));
     }
@@ -417,7 +426,8 @@ void ArtifactPuppetTool::persistLayerData(const LayerID& layerId)
                 keys.append(QJsonObject{
                     {QStringLiteral("frame"), QString::number(
                          key.time.rescaledTo(layer->keyframeTimeScale()))},
-                    {QStringLiteral("value"), key.value},
+                    {QStringLiteral("value"),
+                     QJsonValue::fromVariant(key.value)},
                     {QStringLiteral("interpolation"),
                      static_cast<int>(key.interpolation)},
                     {QStringLiteral("cp1_x"), key.cp1_x},
@@ -431,7 +441,8 @@ void ArtifactPuppetTool::persistLayerData(const LayerID& layerId)
             }
             object[axis + QStringLiteral("Keys")] = keys;
             if (!property->getKeyFrames().empty()) {
-                object[axis] = property->getKeyFrames().front().value;
+                object[axis] = QJsonValue::fromVariant(
+                    property->getKeyFrames().front().value);
             }
         }
         pins.append(object);
@@ -492,9 +503,9 @@ bool ArtifactPuppetTool::restoreLayerData(const LayerID& layerId,
     const QString selectedId = impl_->selectedPinId;
     impl_->selectedPinId.clear();
     ensureLayerLoaded(layerId, layer);
-    const QJsonObject state = layer->deformation2DData();
-    const QString mode = state.value(QStringLiteral("mode")).toString();
-    const QJsonArray controls = state.value(
+    const QJsonObject restoredState = layer->deformation2DData();
+    const QString mode = restoredState.value(QStringLiteral("mode")).toString();
+    const QJsonArray controls = restoredState.value(
         mode == QStringLiteral("grid")
             ? QStringLiteral("gridControls") : QStringLiteral("pins"))
         .toArray();
@@ -521,7 +532,7 @@ bool ArtifactPuppetTool::restoreLayerData(const LayerID& layerId,
     if (!selectedId.isEmpty() && impl_->findPin(selectedId)) {
         impl_->selectedPinId = selectedId;
     }
-    return layer->deformation2DData() == state;
+    return layer->deformation2DData() == restoredState;
 }
 
 bool ArtifactPuppetTool::setDeformation2DMode(
@@ -1101,13 +1112,15 @@ QJsonObject ArtifactPuppetTool::pinPositionAnimationSnapshot(
         const QString path = QStringLiteral("deformation2D.%1.%2").arg(pinId, axis);
         QJsonArray frames;
         if (const auto property = imageLayer->getProperty(path)) {
-            snapshot[axis + QStringLiteral("Base")] = property->getValue();
+            snapshot[axis + QStringLiteral("Base")] =
+                QJsonValue::fromVariant(property->getValue());
             for (const auto& key : property->getKeyFrames()) {
                 frames.append(QJsonObject{
                     {QStringLiteral("frame"),
                      QString::number(key.time.rescaledTo(
                          imageLayer->keyframeTimeScale()))},
-                    {QStringLiteral("value"), key.value}});
+                    {QStringLiteral("value"),
+                     QJsonValue::fromVariant(key.value)}});
                 QJsonObject savedKey = frames.last().toObject();
                 savedKey[QStringLiteral("interpolation")]
                     = static_cast<int>(key.interpolation);
@@ -1338,13 +1351,15 @@ bool ArtifactPuppetTool::renderDeformedLayer(
         ensureLayerLoaded(layerId, imageLayer);
         lp = impl_->getLayerPins(layerId);
     }
-    if (!lp || !lp->engine ||
-        (lp->mode == Deformation2DMode::Grid && lp->pins.empty()) ||
+    if (!lp || !lp->engine) return false;
+    const size_t expectedGridCount = static_cast<size_t>(lp->gridColumns * lp->gridRows);
+    if ((lp->mode == Deformation2DMode::Grid &&
+         lp->pins.size() != expectedGridCount) ||
         (lp->mode == Deformation2DMode::Pins && lp->pins.empty())) return false;
     ensureLayerLoaded(layerId, imageLayer);
     rebaseLayerPins(layerId, imageLayer);
     evaluatePinPositionsAtCurrentFrame(layerId, imageLayer);
-    const qint64 evaluationFrame = layerTimelineFrame(imageLayer.get());
+    const qint64 evaluationFrame = layerTimelineFrame(imageLayer);
     if (lp->lastEvaluationFrame != evaluationFrame) {
         lp->needsDeform = true;
         lp->lastEvaluationFrame = evaluationFrame;
@@ -1406,8 +1421,10 @@ bool ArtifactPuppetTool::renderDeformedLayer(
             lp->sourceHeight = cropPixels.height();
             lp->sourceCropPixels = cropPixels;
             lp->needsDeform = true;
-            if (lp->mode == Deformation2DMode::Grid) {
-                lp->engine->configureGrid(lp->gridColumns, lp->gridRows);
+            if (lp->mode == Deformation2DMode::Grid &&
+                !lp->engine->configureGrid(lp->gridColumns, lp->gridRows)) {
+                lp->needsRebind = true;
+                return false;
             }
         }
         lp->sourceVersion = sourceVersion;
@@ -1419,6 +1436,14 @@ bool ArtifactPuppetTool::renderDeformedLayer(
     lp->meshLocalTransform = cropLayout.localTransform;
 
     if (lp->needsDeform) {
+        if (lp->mode == Deformation2DMode::Grid &&
+            (!lp->engine->hasGrid() ||
+             lp->engine->gridColumns() != lp->gridColumns ||
+             lp->engine->gridRows() != lp->gridRows)) {
+            if (!lp->engine->configureGrid(lp->gridColumns, lp->gridRows)) {
+                return false;
+            }
+        }
         bool invertible = false;
         const QTransform canvasToLocal =
             imageLayer->getGlobalTransform().inverted(&invertible);
@@ -1451,7 +1476,8 @@ bool ArtifactPuppetTool::renderDeformedLayer(
                     }
                 }
                 if (const auto* stack =
-                        imageLayer->animationLayerStack(propertyPath);
+                        static_cast<const ArtifactImageLayer*>(imageLayer)
+                            ->animationLayerStack(propertyPath);
                     stack && stack->layerCount() > 0) {
                     result = stack->evaluateWithBase(
                         ArtifactCore::FramePosition(evaluationFrame),
@@ -1742,6 +1768,11 @@ bool ArtifactPuppetTool::prepareLayerDeformation(ArtifactAbstractLayer* layer)
         lp->layerBounds.width() > 0.0 && lp->layerBounds.height() > 0.0;
     if (!lp->hasCanvasToLocal) return false;
     evaluatePinPositionsAtCurrentFrame(layerId, layer);
+    if (lp->mode == Deformation2DMode::Grid) {
+        const size_t expectedGridCount =
+            static_cast<size_t>(lp->gridColumns * lp->gridRows);
+        return lp->pins.size() == expectedGridCount;
+    }
     return !lp->pins.empty();
 }
 

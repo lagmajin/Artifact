@@ -1372,8 +1372,12 @@ bool restoreTimelineLayerStateSnapshot(
     layer->setOutPoint(FramePosition(oldOutPoint));
     layer->setStartTime(FramePosition(oldStartTime));
     layer->changed();
-    if (propertyPath.startsWith(QStringLiteral("deformation2D."))) {
-      layer->syncDeformation2DControlProperty(propertyPath);
+    for (const auto &keyframeSnapshot : snapshot.keyframes) {
+      if (keyframeSnapshot.propertyPath.startsWith(
+              QStringLiteral("deformation2D."))) {
+        layer->syncDeformation2DControlProperty(
+            keyframeSnapshot.propertyPath);
+      }
     }
     return false;
   }
@@ -4593,18 +4597,7 @@ bool applyTimelineLayerRangeEdit(const ArtifactAbstractLayerPtr &layer,
         const QString path = QStringLiteral("deformation2D.%1.%2").arg(id, axis);
         const auto property = findLayerPropertyByPath(layer, path);
         if (!property || !property->isAnimatable()) continue;
-        for (const auto& keyframe : property->getKeyFrames()) {
-          ArtifactTimelineTrackPainterView::KeyframeMarkerVisual marker;
-          marker.layerId = layer->id();
-          marker.propertyPath = path;
-          marker.frame = static_cast<double>(
-              keyframe.time.rescaledTo(keyframe.time.scale()));
-          marker.value = keyframe.value;
-          marker.interpolation = keyframe.interpolation;
-          marker.anchor = keyframe.anchor;
-          marker.roving = keyframe.roving;
-          markers.push_back(std::move(marker));
-        }
+        layer->syncDeformation2DControlProperty(path);
       }
     }
   }

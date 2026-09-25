@@ -104,8 +104,9 @@ import Artifact.Layer.PhysicsBridge;
 using namespace Artifact;
 using namespace ArtifactCore;
 
+namespace Artifact {
 
-class ArtifactAbstractLayer::Impl {
+class ArtifactAbstractLayerImpl {
 public:
    bool is3D_ = false;
    bool projectionEnabled_ = false;
@@ -393,8 +394,8 @@ public:
   size_t activeVariantIndex_ = 0;
 
 public:
-  Impl();
-  ~Impl();
+  ArtifactAbstractLayerImpl();
+  ~ArtifactAbstractLayerImpl();
   void syncBuiltinComponentDescriptors();
   void syncBuiltinBoolsFromHost();
   std::type_index type_index_ = typeid(void);
@@ -429,3 +430,5 @@ public:
   bool hasModifiers() const;
 
 };
+
+} // namespace Artifact

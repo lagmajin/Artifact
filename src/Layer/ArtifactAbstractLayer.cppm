@@ -185,16 +185,16 @@ namespace {
 bool g_globalLayerCacheEnabled = true;
 }
 
-ArtifactAbstractLayer::Impl::Impl() {
+ArtifactAbstractLayerImpl::ArtifactAbstractLayerImpl() {
   // Avoid undefined draw bounds when a layer is queried before explicit size
   // assignment.
   sourceSize_ = Size_2D(1920, 1080);
   syncBuiltinComponentDescriptors();
 }
 
-ArtifactAbstractLayer::Impl::~Impl() {}
+ArtifactAbstractLayerImpl::~ArtifactAbstractLayerImpl() {}
 
-void ArtifactAbstractLayer::Impl::syncBuiltinComponentDescriptors() {
+void ArtifactAbstractLayerImpl::syncBuiltinComponentDescriptors() {
   physicsComponent_.settings().collisionEnabled =
       collisionComponentEnabled_;
   if (collisionComponentEnabled_ && !physicsComponent_.enabled()) {
@@ -416,7 +416,7 @@ void ArtifactAbstractLayer::Impl::syncBuiltinComponentDescriptors() {
   }
 }
 
-void ArtifactAbstractLayer::Impl::syncBuiltinBoolsFromHost() {
+void ArtifactAbstractLayerImpl::syncBuiltinBoolsFromHost() {
   auto boolFromHost = [this](const QString& typeId) -> bool {
     const auto* d = componentHost_.findByType(typeId);
     return d ? d->enabled : false;
@@ -449,19 +449,19 @@ void ArtifactAbstractLayer::Impl::syncBuiltinBoolsFromHost() {
   }
 }
 
-void ArtifactAbstractLayer::Impl::goToStartFrame()
+void ArtifactAbstractLayerImpl::goToStartFrame()
 {
   currentFrame_ = startTime_.framePosition();
 }
 
-void ArtifactAbstractLayer::Impl::goToEndFrame()
+void ArtifactAbstractLayerImpl::goToEndFrame()
 {
   const int64_t duration = std::max<int64_t>(
       1, outPoint_.framePosition() - inPoint_.framePosition());
   currentFrame_ = startTime_.framePosition() + duration - 1;
 }
 
-void ArtifactAbstractLayer::Impl::goToNextFrame()
+void ArtifactAbstractLayerImpl::goToNextFrame()
 {
   const int64_t endFrame = startTime_.framePosition() + std::max<int64_t>(
       1, outPoint_.framePosition() - inPoint_.framePosition()) - 1;
@@ -470,7 +470,7 @@ void ArtifactAbstractLayer::Impl::goToNextFrame()
   }
 }
 
-void ArtifactAbstractLayer::Impl::goToPrevFrame()
+void ArtifactAbstractLayerImpl::goToPrevFrame()
 {
   const int64_t startFrame = startTime_.framePosition();
   if (currentFrame_ > startFrame) {
@@ -478,9 +478,10 @@ void ArtifactAbstractLayer::Impl::goToPrevFrame()
   }
 }
 
-bool ArtifactAbstractLayer::Impl::is3D() const { return is3D_; }
+bool ArtifactAbstractLayerImpl::is3D() const { return is3D_; }
 
-ArtifactAbstractLayer::ArtifactAbstractLayer() : impl_(new Impl()) {
+ArtifactAbstractLayer::ArtifactAbstractLayer()
+    : impl_(new ArtifactAbstractLayerImpl()) {
   impl_->id = Id(); // Generate new ID
   impl_->variants_.push_back(std::make_unique<LayerVariant>(this, "A"));
   impl_->activeVariantIndex_ = 0;
@@ -2308,7 +2309,7 @@ void ArtifactAbstractLayer::setRotation3D(const QVector3D &rot) {
   }
 }
 
-void ArtifactAbstractLayer::Impl::addEffect(
+void ArtifactAbstractLayerImpl::addEffect(
     SharedPtr<ArtifactAbstractEffect> effect) {
   if (!effect)
     return;
@@ -2324,7 +2325,7 @@ void ArtifactAbstractLayer::Impl::addEffect(
                                  effect->effectID().toQString())));
 }
 
-void ArtifactAbstractLayer::Impl::removeEffect(const UniString &effectID) {
+void ArtifactAbstractLayerImpl::removeEffect(const UniString &effectID) {
   if (effects_.removeIf(
           [&effectID](const SharedPtr<ArtifactAbstractEffect>& effect) {
             return effect && effect->effectID() == effectID;
@@ -2334,18 +2335,18 @@ void ArtifactAbstractLayer::Impl::removeEffect(const UniString &effectID) {
   }
 }
 
-void ArtifactAbstractLayer::Impl::clearEffects() {
+void ArtifactAbstractLayerImpl::clearEffects() {
   effects_.clear();
   qDebug("[ArtifactAbstractLayer] All effects cleared");
 }
 
 std::vector<SharedPtr<ArtifactAbstractEffect>>
-ArtifactAbstractLayer::Impl::getEffects() const {
+ArtifactAbstractLayerImpl::getEffects() const {
   return effects_.toStdVector();
 }
 
 SharedPtr<ArtifactAbstractEffect>
-ArtifactAbstractLayer::Impl::getEffect(const UniString &effectID) const {
+ArtifactAbstractLayerImpl::getEffect(const UniString &effectID) const {
   for (const auto &effect : effects_) {
     if (effect && effect->effectID() == effectID) {
       return effect;
@@ -2354,11 +2355,11 @@ ArtifactAbstractLayer::Impl::getEffect(const UniString &effectID) const {
   return nullptr;
 }
 
-int ArtifactAbstractLayer::Impl::effectCount() const {
+int ArtifactAbstractLayerImpl::effectCount() const {
   return static_cast<int>(effects_.size());
 }
 
-void ArtifactAbstractLayer::Impl::addModifier(
+void ArtifactAbstractLayerImpl::addModifier(
     SharedPtr<ArtifactLayerModifier> modifier) {
   if (!modifier) {
     return;
@@ -2373,29 +2374,29 @@ void ArtifactAbstractLayer::Impl::addModifier(
   modifiers_.add(std::move(modifier));
 }
 
-void ArtifactAbstractLayer::Impl::removeModifier(const QString& modifierId) {
+void ArtifactAbstractLayerImpl::removeModifier(const QString& modifierId) {
   modifiers_.remove(modifierId);
 }
 
-void ArtifactAbstractLayer::Impl::clearModifiers() {
+void ArtifactAbstractLayerImpl::clearModifiers() {
   modifiers_.clear();
 }
 
 std::vector<SharedPtr<ArtifactLayerModifier>>
-ArtifactAbstractLayer::Impl::getModifiers() const {
+ArtifactAbstractLayerImpl::getModifiers() const {
   return modifiers_.modifiers();
 }
 
 SharedPtr<ArtifactLayerModifier>
-ArtifactAbstractLayer::Impl::getModifier(const QString& modifierId) const {
+ArtifactAbstractLayerImpl::getModifier(const QString& modifierId) const {
   return modifiers_.modifier(modifierId);
 }
 
-int ArtifactAbstractLayer::Impl::modifierCount() const {
+int ArtifactAbstractLayerImpl::modifierCount() const {
   return modifiers_.count();
 }
 
-bool ArtifactAbstractLayer::Impl::hasModifiers() const {
+bool ArtifactAbstractLayerImpl::hasModifiers() const {
   return !modifiers_.isEmpty();
 }
 

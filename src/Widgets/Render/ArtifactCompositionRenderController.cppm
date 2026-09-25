@@ -44175,7 +44175,7 @@ void CompositionRenderController::Impl::renderPartialRegion(
   if (!roi.isEmpty()) {
     damageTracker_.markFullRedraw(QString());
     invalidateBaseComposite();
-    markRenderDirty();
+    owner->markRenderDirty();
   }
   (void)owner;
 }

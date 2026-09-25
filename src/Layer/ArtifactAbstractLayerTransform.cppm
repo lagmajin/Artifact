@@ -412,7 +412,7 @@ QTransform ArtifactAbstractLayer::getLocalTransform() const {
   return transform;
 }
 
-QTransform ArtifactAbstractLayer::Impl::rigidBodyLocalTransform(
+QTransform ArtifactAbstractLayerImpl::rigidBodyLocalTransform(
     const ArtifactAbstractLayer* layer,
     const ArtifactCore::SharedPtr<ArtifactCore::RigidBody2D>& body) const {
   const auto position = body->position();

@@ -150,6 +150,7 @@ inline bool HasFlag(VariantOverrideFlags flags, VariantOverrideFlags flag) {
 }
 
 class ArtifactAbstractLayer;  // forward-declared within the same module – no tag mismatch
+class ArtifactAbstractLayerImpl;
 using ArtifactAbstractLayerPtr = SharedPtr<ArtifactAbstractLayer>;
 using ArtifactLayerJsonFactory =
     ArtifactAbstractLayerPtr (*)(const QJsonObject &);
@@ -352,8 +353,7 @@ bool isSourceReframeLayerPropertyGroup(const QString &groupName);
 class ArtifactAbstractLayer : public QObject {
   W_OBJECT(ArtifactAbstractLayer)
 private:
-  class Impl;
-  Impl *impl_;
+  ArtifactAbstractLayerImpl *impl_;
   void append3DTransformProperties(
       ArtifactCore::PropertyGroup &transformGroup,
       const ArtifactCore::AnimatableTransform3D &transform,
@@ -371,13 +371,6 @@ private:
 
 protected:
   void setSourceSize(const Size_2D &size);
-  SharedPtr<ArtifactCore::AbstractProperty>
-  persistentLayerProperty(const QString &propertyPath,
-                          ArtifactCore::PropertyType type,
-                          const QVariant &value,
-                          int priority = 0) const;
-  void removePersistentLayerPropertiesWithPrefix(
-      const QString &propertyPathPrefix) const;
   void setBuiltinLayerSourceComponentType(const QString &componentType);
   virtual const ArtifactCore::ImageF32x4_RGBA* resolveLayerSourceOverride() const;
 
@@ -747,6 +740,16 @@ public:
   virtual bool setLayerPropertyValue(const QString &propertyPath,
                                      const QVariant &value);
   SharedPtr<ArtifactCore::AbstractProperty> getProperty(const QString &name) const;
+  // Returns the layer-owned cached property for a dynamic or persistent path,
+  // creating it when needed. Editing adapters use this to keep keyframe edits
+  // attached to the layer's property cache.
+  SharedPtr<ArtifactCore::AbstractProperty>
+  persistentLayerProperty(const QString &propertyPath,
+                          ArtifactCore::PropertyType type,
+                          const QVariant &value,
+                          int priority = 0) const;
+  void removePersistentLayerPropertiesWithPrefix(
+      const QString &propertyPathPrefix) const;
   /*Generic Properties*/
 
   /*Masks*/

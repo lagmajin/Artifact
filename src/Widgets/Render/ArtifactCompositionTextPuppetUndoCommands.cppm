@@ -15,7 +15,7 @@ import Artifact.Composition.Abstract;
 import Artifact.Event.Types;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Image;
-import Artifact.Layer.Selection.Manager;
+import Artifact.Layers.Selection.Manager;
 import Artifact.Layer.Text;
 import Artifact.Render.IRenderer;
 import Artifact.Tool.PuppetTool;
