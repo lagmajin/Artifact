@@ -30,6 +30,7 @@ module Artifact.Project.Manager;
 import Artifact.Project.HookBridge;
 
 
+import Artifact.Color.OCIOManager;
 import Artifact.Event.Types;
 import Event.Bus;
 import Utils;
@@ -325,6 +326,10 @@ public:
 
 void ArtifactProjectManager::Impl::createProject(const QString& name, bool /*force*/)
 {
+ if (auto* ocio = ArtifactOCIOManager::instance()) {
+  ocio->setGeneratedColorPolicy(
+      GeneratedColorPolicy::ConvertToWorkingSpace);
+ }
  QString displayName = name.trimmed();
  if (displayName.isEmpty()) {
   displayName = defaultProjectDisplayName();

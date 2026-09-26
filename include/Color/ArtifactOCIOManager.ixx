@@ -12,10 +12,18 @@ module;
 export module Artifact.Color.OCIOManager;
 
 import Color.OCIOConfig;
+import Color.Float;
 import Color.ScienceManager;
 import Image.ImageF32x4_RGBA;
 
 export namespace Artifact {
+
+/// Persistence contract for colors authored by UI controls and procedural
+/// generators. Missing values in older projects resolve to LegacyEncoded.
+enum class GeneratedColorPolicy {
+    LegacyEncoded = 0,
+    ConvertToWorkingSpace = 1
+};
 
 /// OCIO Manager - bridges OCIOConfig (Core) with the Artifact color management layer.
 /// Manages config lifecycle, preset switching, and synchronizes with ColorScienceManager.
@@ -83,6 +91,25 @@ public:
         ArtifactCore::ImageF32x4_RGBA& image,
         const QString& sourceColorSpace,
         const QString& sourceTransferFunction) const;
+
+    /// Convert a UI-authored/generated sRGB-encoded color to scene-linear RGB
+    /// in the active working-space primaries. Alpha is preserved and RGB is
+    /// not clamped, so HDR values remain representable after later operations.
+    ArtifactCore::FloatColor generatedSrgbToWorkingColor(
+        const ArtifactCore::FloatColor& color) const;
+
+    /// Convert a scene-linear color in the active working-space primaries back
+    /// to an sRGB-encoded UI/storage boundary color. Alpha is preserved.
+    ArtifactCore::FloatColor workingToGeneratedSrgbColor(
+        const ArtifactCore::FloatColor& color) const;
+
+    /// Resolve an authored generated color according to the persisted project
+    /// policy. Legacy projects receive the original value unchanged.
+    ArtifactCore::FloatColor resolveGeneratedColorForRender(
+        const ArtifactCore::FloatColor& color) const;
+
+    GeneratedColorPolicy generatedColorPolicy() const;
+    void setGeneratedColorPolicy(GeneratedColorPolicy policy);
 
     // Persistence
     QJsonObject toJson() const;

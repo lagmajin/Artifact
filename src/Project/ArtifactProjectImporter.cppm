@@ -836,6 +836,10 @@ namespace Artifact
    if (auto* ocio = ArtifactOCIOManager::instance()) {
     ocio->fromJson(root[QStringLiteral("ocio")].toObject());
    }
+  } else if (auto* ocio = ArtifactOCIOManager::instance()) {
+   // Projects written before the OCIO root object stored generated UI colors
+   // as renderer-ready encoded values. Preserve that appearance explicitly.
+   ocio->setGeneratedColorPolicy(GeneratedColorPolicy::LegacyEncoded);
   }
 
   // 健康状態のチェックと自動修復の実行

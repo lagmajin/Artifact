@@ -4531,6 +4531,8 @@ bool SetTextAnimatorStackCommand::apply(
             textLayer->restoreTextAnimatorStack(compensationStack);
             return false;
         }
+        notifyLayerPropertyChanged(
+            layer, QStringLiteral("text.animators"));
         if (auto* manager = UndoManager::instance()) {
             manager->notifyAnythingChanged();
         }
@@ -4550,6 +4552,8 @@ void SetTextAnimatorStackCommand::redo() {
             ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer);
         if (textLayer && textLayer->textAnimatorStackSnapshot() == afterStack_) {
             lastOperationSucceeded_ = true;
+            notifyLayerPropertyChanged(
+                layer, QStringLiteral("text.animators"));
             if (auto* manager = UndoManager::instance()) manager->notifyAnythingChanged();
             return;
         }

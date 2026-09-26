@@ -17,12 +17,14 @@ module;
 module Artifact.Color.OCIOManager;
 
 import Color.OCIOConfig;
+import Color.Float;
 import Color.ScienceManager;
 import Color.ColorSpace;
 import Color.GamutConversion;
 import Color.TransferFunction;
 import Core.Parallel;
 import Image.ImageF32x4_RGBA;
+import Graphics.SurfaceColorContract;
 import Artifact.Event.Types;
 import Event.Bus;
 
@@ -60,21 +62,25 @@ public:
     OCIO::ConstConfigRcPtr ocioConfig_;
     float viewerExposure_ = 0.0f;
     float viewerGamma_ = 1.0f;
+    GeneratedColorPolicy generatedColorPolicy_ =
+        GeneratedColorPolicy::ConvertToWorkingSpace;
 
     static ArtifactCore::ColorSpace mapOCIOColorSpaceToEnum(const QString& csName)
     {
-        const QString lower = csName.toLower();
-        if (lower == QLatin1String("srgb") || lower == QLatin1String("sRGB"))
+        const auto matches = [&csName](const char* name) {
+            return csName.compare(QLatin1String(name), Qt::CaseInsensitive) == 0;
+        };
+        if (matches("srgb"))
             return ArtifactCore::ColorSpace::sRGB;
-        if (lower == QLatin1String("rec709") || lower == QLatin1String("rec.709"))
+        if (matches("rec709") || matches("rec.709"))
             return ArtifactCore::ColorSpace::Rec709;
-        if (lower == QLatin1String("rec2020") || lower == QLatin1String("rec.2020"))
+        if (matches("rec2020") || matches("rec.2020"))
             return ArtifactCore::ColorSpace::Rec2020;
-        if (lower == QLatin1String("p3") || lower == QLatin1String("dci-p3"))
+        if (matches("p3") || matches("dci-p3"))
             return ArtifactCore::ColorSpace::P3;
-        if (lower == QLatin1String("acescg") || lower == QLatin1String("ap1"))
+        if (matches("acescg") || matches("ap1"))
             return ArtifactCore::ColorSpace::ACES_AP1;
-        if (lower == QLatin1String("aces2065") || lower == QLatin1String("ap0"))
+        if (matches("aces2065") || matches("ap0"))
             return ArtifactCore::ColorSpace::ACES_AP0;
         return ArtifactCore::ColorSpace::Linear;
     }
@@ -99,6 +105,26 @@ public:
             // ColorSpace::Linear uses the sRGB/Rec.709 primaries in the
             // legacy converter; preserve that contract in the Gamut path.
             return ArtifactCore::Gamut::sRGB;
+        }
+    }
+
+    static ArtifactCore::SurfaceColorPrimaries mapColorSpaceToPrimaries(
+        ArtifactCore::ColorSpace space)
+    {
+        switch (space) {
+        case ArtifactCore::ColorSpace::Rec2020:
+            return ArtifactCore::SurfaceColorPrimaries::Rec2020_D65;
+        case ArtifactCore::ColorSpace::P3:
+            return ArtifactCore::SurfaceColorPrimaries::DisplayP3_D65;
+        case ArtifactCore::ColorSpace::ACES_AP0:
+            return ArtifactCore::SurfaceColorPrimaries::ACES_AP0;
+        case ArtifactCore::ColorSpace::ACES_AP1:
+            return ArtifactCore::SurfaceColorPrimaries::ACES_AP1;
+        case ArtifactCore::ColorSpace::sRGB:
+        case ArtifactCore::ColorSpace::Rec709:
+        case ArtifactCore::ColorSpace::Linear:
+        default:
+            return ArtifactCore::SurfaceColorPrimaries::SRGB_Rec709_D65;
         }
     }
 };
@@ -842,15 +868,21 @@ void ArtifactOCIOManager::applyInputTransformToWorkingImage(
     const QString& sourceColorSpace,
     const QString& sourceTransferFunction) const
 {
-    if (!impl_->config_.isValid() || !image.rgba32fData()) {
+    if (!image.rgba32fData()) {
         return;
     }
 
     const QString normalizedSourceColorSpace = sourceColorSpace.trimmed();
     const QString normalizedTransferFunction = sourceTransferFunction.trimmed();
+    const auto workingCS = Impl::mapOCIOColorSpaceToEnum(impl_->workingSpace_);
+    const auto sourceDescriptor = image.colorDescriptor();
+    const bool packedOcioCompatible =
+        sourceDescriptor.channelOrder != ArtifactCore::SurfaceChannelOrder::BGRA &&
+        sourceDescriptor.channelOrder != ArtifactCore::SurfaceChannelOrder::BGR &&
+        sourceDescriptor.alphaMode != ArtifactCore::SurfaceAlphaMode::Premultiplied;
 
     if (impl_->ocioConfig_ && !normalizedSourceColorSpace.isEmpty() &&
-        !impl_->workingSpace_.isEmpty()) {
+        !impl_->workingSpace_.isEmpty() && packedOcioCompatible) {
         try {
             const auto processor = impl_->ocioConfig_->getProcessor(
                 normalizedSourceColorSpace.toUtf8().constData(),
@@ -859,6 +891,12 @@ void ArtifactOCIOManager::applyInputTransformToWorkingImage(
             OCIO::PackedImageDesc pixels(image.rgba32fData(), image.width(),
                                           image.height(), 4);
             cpuProcessor->apply(pixels);
+            auto workingDescriptor = sourceDescriptor;
+            workingDescriptor.primaries = Impl::mapColorSpaceToPrimaries(workingCS);
+            workingDescriptor.transfer = ArtifactCore::TransferFunction::Linear;
+            workingDescriptor.transferKnown = true;
+            workingDescriptor.range = ArtifactCore::SurfaceColorRange::SceneReferred;
+            image.setColorDescriptor(workingDescriptor);
             return;
         } catch (const OCIO::Exception&) {
             // Fall through to the legacy transfer-function/matrix path.
@@ -866,7 +904,6 @@ void ArtifactOCIOManager::applyInputTransformToWorkingImage(
     }
 
     const auto sourceCS = Impl::mapOCIOColorSpaceToEnum(normalizedSourceColorSpace);
-    const auto workingCS = Impl::mapOCIOColorSpaceToEnum(impl_->workingSpace_);
     const QString transfer = normalizedTransferFunction.toLower();
     const auto transferFunction = [&]() {
         using ArtifactCore::TransferFunction;
@@ -914,18 +951,104 @@ void ArtifactOCIOManager::applyInputTransformToWorkingImage(
     const int w = image.width();
     const int h = image.height();
     float* data = image.rgba32fData();
+    const bool bgra = sourceDescriptor.channelOrder ==
+                      ArtifactCore::SurfaceChannelOrder::BGRA;
+    const bool premultiplied = sourceDescriptor.alphaMode ==
+                               ArtifactCore::SurfaceAlphaMode::Premultiplied;
+    const int redIndex = bgra ? 2 : 0;
+    const int blueIndex = bgra ? 0 : 2;
     ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
         float* row = data + static_cast<size_t>(y) * static_cast<size_t>(w) * 4u;
         for (int x = 0; x < w; ++x) {
             float* pixel = row + static_cast<size_t>(x) * 4u;
-            const float r = ArtifactCore::ColorTransferFunction::decode(pixel[0], transferFunction);
-            const float g = ArtifactCore::ColorTransferFunction::decode(pixel[1], transferFunction);
-            const float b = ArtifactCore::ColorTransferFunction::decode(pixel[2], transferFunction);
-            pixel[0] = matrix(0, r, g, b);
-            pixel[1] = matrix(1, r, g, b);
-            pixel[2] = matrix(2, r, g, b);
+            const float alpha = std::isfinite(pixel[3])
+                ? std::clamp(pixel[3], 0.0f, 1.0f) : 0.0f;
+            const float inverseAlpha = premultiplied && alpha > 1.0e-8f
+                ? 1.0f / alpha : 1.0f;
+            const float encodedR = premultiplied && alpha <= 1.0e-8f
+                ? 0.0f : pixel[redIndex] * inverseAlpha;
+            const float encodedG = premultiplied && alpha <= 1.0e-8f
+                ? 0.0f : pixel[1] * inverseAlpha;
+            const float encodedB = premultiplied && alpha <= 1.0e-8f
+                ? 0.0f : pixel[blueIndex] * inverseAlpha;
+            const float r = ArtifactCore::ColorTransferFunction::decode(
+                encodedR, transferFunction);
+            const float g = ArtifactCore::ColorTransferFunction::decode(
+                encodedG, transferFunction);
+            const float b = ArtifactCore::ColorTransferFunction::decode(
+                encodedB, transferFunction);
+            const float alphaScale = premultiplied ? alpha : 1.0f;
+            pixel[redIndex] = matrix(0, r, g, b) * alphaScale;
+            pixel[1] = matrix(1, r, g, b) * alphaScale;
+            pixel[blueIndex] = matrix(2, r, g, b) * alphaScale;
         }
     });
+    auto workingDescriptor = sourceDescriptor;
+    workingDescriptor.primaries = Impl::mapColorSpaceToPrimaries(workingCS);
+    workingDescriptor.transfer = ArtifactCore::TransferFunction::Linear;
+    workingDescriptor.transferKnown = true;
+    workingDescriptor.range = ArtifactCore::SurfaceColorRange::SceneReferred;
+    image.setColorDescriptor(workingDescriptor);
+}
+
+ArtifactCore::FloatColor ArtifactOCIOManager::generatedSrgbToWorkingColor(
+    const ArtifactCore::FloatColor& color) const
+{
+    const float linearR = ArtifactCore::ColorTransferFunction::decode(
+        color.r(), ArtifactCore::TransferFunction::sRGB);
+    const float linearG = ArtifactCore::ColorTransferFunction::decode(
+        color.g(), ArtifactCore::TransferFunction::sRGB);
+    const float linearB = ArtifactCore::ColorTransferFunction::decode(
+        color.b(), ArtifactCore::TransferFunction::sRGB);
+    const auto workingCS = Impl::mapOCIOColorSpaceToEnum(impl_->workingSpace_);
+    const auto matrix = ArtifactCore::ColorGamutConversion::getConversionMatrix(
+        ArtifactCore::Gamut::sRGB, Impl::mapColorSpaceToGamut(workingCS));
+    return ArtifactCore::FloatColor(
+        matrix(0, linearR, linearG, linearB),
+        matrix(1, linearR, linearG, linearB),
+        matrix(2, linearR, linearG, linearB), color.a());
+}
+
+ArtifactCore::FloatColor ArtifactOCIOManager::workingToGeneratedSrgbColor(
+    const ArtifactCore::FloatColor& color) const
+{
+    const auto workingCS = Impl::mapOCIOColorSpaceToEnum(impl_->workingSpace_);
+    const auto matrix = ArtifactCore::ColorGamutConversion::getConversionMatrix(
+        Impl::mapColorSpaceToGamut(workingCS), ArtifactCore::Gamut::sRGB);
+    const float linearR = matrix(0, color.r(), color.g(), color.b());
+    const float linearG = matrix(1, color.r(), color.g(), color.b());
+    const float linearB = matrix(2, color.r(), color.g(), color.b());
+    return ArtifactCore::FloatColor(
+        ArtifactCore::ColorTransferFunction::encode(
+            linearR, ArtifactCore::TransferFunction::sRGB),
+        ArtifactCore::ColorTransferFunction::encode(
+            linearG, ArtifactCore::TransferFunction::sRGB),
+        ArtifactCore::ColorTransferFunction::encode(
+            linearB, ArtifactCore::TransferFunction::sRGB),
+        color.a());
+}
+
+ArtifactCore::FloatColor ArtifactOCIOManager::resolveGeneratedColorForRender(
+    const ArtifactCore::FloatColor& color) const
+{
+    return impl_->generatedColorPolicy_ ==
+            GeneratedColorPolicy::ConvertToWorkingSpace
+        ? generatedSrgbToWorkingColor(color)
+        : color;
+}
+
+GeneratedColorPolicy ArtifactOCIOManager::generatedColorPolicy() const
+{
+    return impl_->generatedColorPolicy_;
+}
+
+void ArtifactOCIOManager::setGeneratedColorPolicy(GeneratedColorPolicy policy)
+{
+    if (impl_->generatedColorPolicy_ == policy) {
+        return;
+    }
+    impl_->generatedColorPolicy_ = policy;
+    publishOCIOConfigChanged();
 }
 
 QJsonObject ArtifactOCIOManager::toJson() const
@@ -938,6 +1061,8 @@ QJsonObject ArtifactOCIOManager::toJson() const
     obj[QStringLiteral("looks")] = impl_->looks_;
     obj[QStringLiteral("viewerExposure")] = impl_->viewerExposure_;
     obj[QStringLiteral("viewerGamma")] = impl_->viewerGamma_;
+    obj[QStringLiteral("generatedColorPolicy")] =
+        static_cast<int>(impl_->generatedColorPolicy_);
     obj[QStringLiteral("config")] = impl_->config_.toJson();
     return obj;
 }
@@ -965,6 +1090,13 @@ bool ArtifactOCIOManager::fromJson(const QJsonObject& obj)
     impl_->viewerGamma_ = std::isfinite(storedGamma)
                               ? std::clamp(storedGamma, 0.1f, 4.0f)
                               : 1.0f;
+    const int storedGeneratedColorPolicy =
+        obj.value(QStringLiteral("generatedColorPolicy"))
+            .toInt(static_cast<int>(GeneratedColorPolicy::LegacyEncoded));
+    impl_->generatedColorPolicy_ = storedGeneratedColorPolicy ==
+            static_cast<int>(GeneratedColorPolicy::ConvertToWorkingSpace)
+        ? GeneratedColorPolicy::ConvertToWorkingSpace
+        : GeneratedColorPolicy::LegacyEncoded;
 
     const QJsonObject configJson = obj.value(QStringLiteral("config")).toObject();
     if (!configJson.isEmpty()) {
