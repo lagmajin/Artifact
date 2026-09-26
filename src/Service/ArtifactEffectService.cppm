@@ -102,11 +102,18 @@ import PhotoFilterEffect;
 import GradientRampEffect;
 import FillEffect;
 import ColorBalanceEffect;
+import ColorTintEffect;
 import LevelsEffect;
 import ChannelMixerEffect;
 import SelectiveColorEffect;
+import ShadowHighlightEffect;
 import ColorWheelsEffect;
 import CurvesEffect;
+import VibranceEffect;
+import PosterizeEffect;
+import ThresholdEffect;
+import LUTEffect;
+import BlackAndWhiteEffect;
 import Artifact.Effect.Distort.DisplacementMap;
 import Artifact.Effect.Distort.ImageMorph;
 import Artifact.Effect.Distort.TimeDisplacement;
@@ -266,6 +273,9 @@ W_OBJECT_IMPL(ArtifactEffectService)
   if (effectId == QStringLiteral("surfacefx")) {
    return std::make_unique<SurfaceFXEffect>();
   }
+  if (effectId == QStringLiteral("effect.colorcorrection.shadowhighlight")) {
+   return std::make_unique<ShadowHighlightEffect>();
+  }
   if (effectId == QStringLiteral("effect.colorcorrection.colorwheels")) {
    return std::make_unique<ColorWheelsEffect>();
   }
@@ -361,6 +371,29 @@ W_OBJECT_IMPL(ArtifactEffectService)
   }
   if (effectId == QStringLiteral("effect.colorcorrection.selectivecolor")) {
    return std::make_unique<SelectiveColorEffect>();
+  }
+  if (effectId == QStringLiteral("effect.colorcorrection.vibrance") ||
+      effectId == QStringLiteral("vibrance")) {
+   return std::make_unique<VibranceEffect>();
+  }
+  if (effectId == QStringLiteral("effect.colorcorrection.posterize")) {
+   return std::make_unique<PosterizeEffect>();
+  }
+  if (effectId == QStringLiteral("effect.colorcorrection.threshold") ||
+      effectId == QStringLiteral("threshold")) {
+   return std::make_unique<ThresholdEffect>();
+  }
+  if (effectId == QStringLiteral("effect.colorcorrection.colortint") ||
+      effectId == QStringLiteral("colortint")) {
+   return std::make_unique<ColorTintEffect>();
+  }
+  if (effectId == QStringLiteral("effect.colorcorrection.lut") ||
+      effectId == QStringLiteral("lut")) {
+   return std::make_unique<LUTEffect>();
+  }
+  if (effectId == QStringLiteral("effect.colorcorrection.blackandwhite") ||
+      effectId == QStringLiteral("blackandwhite")) {
+   return std::make_unique<BlackAndWhiteEffect>();
   }
   if (effectId == QStringLiteral("chroma_key")) {
    auto effect = std::make_unique<ChromaKeyEffect>();
@@ -1140,6 +1173,7 @@ W_OBJECT_IMPL(ArtifactEffectService)
   effects.push_back({EffectID("effect.colorcorrection.hsl"), "Hue / Saturation"});
   effects.push_back({EffectID("effect.colorcorrection.exposure"), "Exposure"});
   effects.push_back({EffectID("effect.colorcorrection.grayscale"), "Grayscale"});
+  effects.push_back({EffectID("effect.colorcorrection.shadowhighlight"), "Shadow / Highlight"});
   effects.push_back({EffectID("effect.colorcorrection.colorwheels"), "Color Wheels"});
   effects.push_back({EffectID("effect.colorcorrection.curves"), "Curves"});
   effects.push_back({EffectID("effect.colorcorrection.tint"), "Tint"});
@@ -1278,6 +1312,12 @@ W_OBJECT_IMPL(ArtifactEffectService)
   effects.push_back({EffectID("hex_grid"), "Hex Grid"});
   effects.push_back({EffectID("edge"), "Edge"});
   effects.push_back({EffectID("effect.colorcorrection.invert"), "Invert"});
+  effects.push_back({EffectID("effect.colorcorrection.vibrance"), "Vibrance"});
+  effects.push_back({EffectID("effect.colorcorrection.posterize"), "Posterize"});
+  effects.push_back({EffectID("effect.colorcorrection.threshold"), "Threshold"});
+  effects.push_back({EffectID("effect.colorcorrection.colortint"), "Color Tint"});
+  effects.push_back({EffectID("effect.colorcorrection.lut"), "Apply LUT"});
+  effects.push_back({EffectID("effect.colorcorrection.blackandwhite"), "Black & White"});
 
   Artifact::Ofx::ArtifactOfxHost::instance().initialize();
   for (const auto& plugin : Artifact::Ofx::ArtifactOfxHost::instance().getLoadedPlugins()) {
