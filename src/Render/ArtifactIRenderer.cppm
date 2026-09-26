@@ -43,6 +43,7 @@ module;
 #include <windows.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
+#include <DiligentCore/Graphics/GraphicsEngine/interface/Buffer.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Query.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/SwapChain.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
@@ -70,6 +71,8 @@ import Image.ImageF32x4_RGBA;
 import Graphics.MeshRenderer;
 import Artifact.Render.DiligentDeviceManager;
 import Artifact.Render.ShaderManager;
+import Render.Shader.ViewerHelpers;
+import Graphics.Compute;
 import Artifact.Render.PrimitiveRenderer2D;
 import Artifact.Render.PrimitiveRenderer3D;
 import Artifact.Render.Config;
@@ -472,6 +475,11 @@ namespace {
    std::uint64_t contentHash = 0;
   };
   mutable std::map<QString, MeshGeometryState> meshRendererGeometry_;
+  // Per-cacheKey material index spans, rebuilt only when the mesh's slots
+  // change.  Keeps the multi-material draw path allocation-free per frame.
+  mutable std::map<QString,
+                   std::vector<ArtifactCore::MeshRenderer::MaterialRange>>
+      materialRangeCache_;
   std::unique_ptr<ArtifactCore::IRayTracingManager> rayTracingManager_;
   GlobalIlluminationSettings globalIlluminationSettings_;
   std::unique_ptr<ArtifactCore::GpuContext> gpuContext_;
@@ -491,6 +499,15 @@ namespace {
   ArtifactCore::RenderCostStats m_lastFrameCostStats_;
   ArtifactCore::RenderCostStats m_currentFrameCostStats_;
 
+  // Display-only viewport exposure (P1-5). Self-contained so it does not
+  // depend on ArtifactCore::LayerBlendPipeline, whose owner lives in the
+  // ArtifactCore child repository. Built once during initialize(); a null
+  // executor means the stage is unavailable and callers fall back to the
+  // unexposed surface.
+  std::unique_ptr<ArtifactCore::ComputeExecutor> viewportExposureExecutor_;
+  Diligent::RefCntAutoPtr<Diligent::IBuffer> viewportExposureParams_;
+  mutable bool viewportExposureReady_ = false;
+
   RefCntAutoPtr<ITexture> m_layerRT;
   RefCntAutoPtr<ITexture> m_layerDepthTex;
   RefCntAutoPtr<ITextureView> m_layerDepthDSV;
@@ -500,7 +517,16 @@ namespace {
   RefCntAutoPtr<ITextureView> m_shadowMapSRV;
   QMatrix4x4 m_shadowLightViewProjection;
   std::optional<ArtifactCore::Light> m_shadowLight;
-  std::vector<ArtifactCore::MeshRenderer*> m_shadowCasters;
+  // One entry per registered caster. The instance count is captured when the
+  // mesh is registered so the shadow prepass draws the same number of
+  // instances as the color pass (a CloneLayer with N clones used to cast a
+  // single shadow because the prepass hardcoded 1).
+  struct ShadowCaster {
+    ArtifactCore::MeshRenderer* renderer = nullptr;
+    size_t instanceCount = 1;
+    bool hasMaterialSlots = false;
+  };
+  std::vector<ShadowCaster> m_shadowCasters;
   bool m_shadowMapEnabled = false;
   bool m_shadowMapReady = false;
   static constexpr Uint32 kShadowMapResolution = 1024;
@@ -727,12 +753,17 @@ namespace {
     viewport.MaxDepth = 1.0f;
     context->SetViewports(1, &viewport, kShadowMapResolution,
                           kShadowMapResolution);
-    for (auto* caster : m_shadowCasters) {
-      if (!caster) {
+    for (const ShadowCaster& caster : m_shadowCasters) {
+      if (!caster.renderer) {
         continue;
       }
-      caster->prepareShadow(context, m_shadowLightViewProjection.constData());
-      caster->drawShadow(context, 1);
+      caster.renderer->prepareShadow(context,
+                                     m_shadowLightViewProjection.constData());
+      if (caster.hasMaterialSlots) {
+        caster.renderer->drawShadowMaterialSlots(context, caster.instanceCount);
+      } else {
+        caster.renderer->drawShadow(context, caster.instanceCount);
+      }
     }
     m_shadowMapReady = true;
     bindActiveRenderTargets(context);
@@ -760,7 +791,8 @@ namespace {
                 const QMatrix4x4* previousModelMatrix,
                 Diligent::ITextureView* baseColorTextureView,
                 const ArtifactCore::InstanceData* instancedData = nullptr,
-                size_t instancedCount = 0)
+                size_t instancedCount = 0,
+                const std::vector<ArtifactCore::Material>* multiMaterials = nullptr)
   {
     static const bool traceEnabled =
         !qEnvironmentVariableIsSet("ARTIFACT_DISABLE_3D_RENDER_TRACE");
@@ -1039,6 +1071,50 @@ namespace {
                                  modelMatrix.constData());
     renderer->setPreviousViewMatrix(previousMeshViewMatrix_.constData());
     renderer->setPreviousProjectionMatrix(previousMeshProjMatrix_.constData());
+    // A mesh that concatenates several source primitives (a USD stage with
+    // multiple UsdGeomMesh prims) carries material slots.  Publish the spans so
+    // the renderer can issue one draw per material instead of a single draw
+    // over the whole index buffer.  Spans come from the mesh and only change
+    // when the geometry does, so this runs outside the per-frame hot path.
+    if (multiMaterials && multiMaterials->size() > 1 &&
+        mesh.materialSlotCount() > 0) {
+      std::vector<ArtifactCore::MeshRenderer::MaterialRange>& ranges =
+          materialRangeCache_[cacheKey];
+      bool rangesDirty = ranges.size() !=
+                         static_cast<std::size_t>(mesh.materialSlotCount());
+      if (!rangesDirty) {
+        for (std::size_t i = 0; i < ranges.size(); ++i) {
+          const auto& slot = mesh.materialSlots()[static_cast<int>(i)];
+          if (slot.indexCount <= 0 ||
+              ranges[i].firstIndex != static_cast<std::uint32_t>(slot.firstIndex) ||
+              ranges[i].indexCount != static_cast<std::uint32_t>(slot.indexCount) ||
+              ranges[i].materialIndex !=
+                  static_cast<std::uint32_t>(slot.materialIndex)) {
+            rangesDirty = true;
+            break;
+          }
+        }
+      }
+      if (rangesDirty) {
+        ranges.clear();
+        ranges.reserve(static_cast<std::size_t>(mesh.materialSlotCount()));
+        for (int slotIndex = 0; slotIndex < mesh.materialSlotCount(); ++slotIndex) {
+          const auto& slot = mesh.materialSlots()[slotIndex];
+          if (slot.indexCount <= 0) {
+            continue;
+          }
+          ArtifactCore::MeshRenderer::MaterialRange range;
+          range.firstIndex = static_cast<std::uint32_t>(slot.firstIndex);
+          range.indexCount = static_cast<std::uint32_t>(slot.indexCount);
+          range.materialIndex = static_cast<std::uint32_t>(slot.materialIndex);
+          ranges.push_back(range);
+        }
+      }
+      renderer->setMaterialRanges(ranges.data(), ranges.size());
+    } else {
+      materialRangeCache_.erase(cacheKey);
+      renderer->clearMaterialRanges();
+    }
     // MeshRenderer owns texture loading and does not expose a raw-view setter.
     // Keep the material path as the single supported texture boundary.
     renderer->setBaseColorTexture(material.baseColorTexture().toQString());
@@ -1190,10 +1266,27 @@ namespace {
                                ? m_shadowLight->shadowSoftness()
                                : 0.0f);
     if (m_shadowMapEnabled && shadowLightIndex >= 0 && combinedAlpha >= 0.9999f &&
-        !material.hasOpacityTexture() &&
-        std::find(m_shadowCasters.begin(), m_shadowCasters.end(), renderer) ==
-            m_shadowCasters.end()) {
-      m_shadowCasters.push_back(renderer);
+        !material.hasOpacityTexture()) {
+      const bool usesMaterialSlots = multiMaterials && multiMaterials->size() > 1;
+      // Re-registration updates the instance count rather than adding a second
+      // entry, because one MeshRenderer can be reused by several layers and the
+      // prepass must see the largest instance count it was asked to draw.
+      const auto existing = std::find_if(
+          m_shadowCasters.begin(), m_shadowCasters.end(),
+          [renderer](const ShadowCaster& caster) {
+            return caster.renderer == renderer;
+          });
+      if (existing != m_shadowCasters.end()) {
+        existing->instanceCount =
+            std::max(existing->instanceCount, wantedInstances);
+        existing->hasMaterialSlots = existing->hasMaterialSlots || usesMaterialSlots;
+      } else {
+        ShadowCaster caster;
+        caster.renderer = renderer;
+        caster.instanceCount = wantedInstances;
+        caster.hasMaterialSlots = usesMaterialSlots;
+        m_shadowCasters.push_back(caster);
+      }
     }
 
     auto ctx = deviceManager_.immediateContext();
@@ -1241,7 +1334,11 @@ namespace {
     }
     if (!meshShaderDrawn) {
       renderer->prepare(ctx.RawPtr());
-      renderer->draw(ctx.RawPtr(), wantedInstances);
+      if (!multiMaterials || multiMaterials->size() <= 1) {
+        renderer->draw(ctx.RawPtr(), wantedInstances);
+      } else {
+        renderer->drawMaterialSlots(ctx.RawPtr(), wantedInstances);
+      }
     }
     const auto state = meshRendererGeometry_.find(cacheKey);
     traceResult(QStringLiteral("gpu-draw-issued"),
@@ -1263,6 +1360,7 @@ namespace {
   void initialize(QWidget* parent);
   void initializeHeadless(int width, int height);
   void initializeHeadlessWithAdapter(int width, int height, int adapterId);
+  bool initializeViewportExposure();
   QImage readbackToImage() const;
   ArtifactCore::ImageF32x4_RGBA readbackToImageF32() const;
   QImage readbackDepthToImage() const;
@@ -1806,6 +1904,10 @@ namespace {
    widget_ = widget;
    meshRenderers_.clear();
    meshRendererGeometry_.clear();
+   materialRangeCache_.clear();
+   viewportExposureExecutor_.reset();
+   viewportExposureParams_.Release();
+   viewportExposureReady_ = false;
    gpuContext_.reset();
 
    {
@@ -1862,6 +1964,7 @@ namespace {
 
   gpuContext_ = std::make_unique<ArtifactCore::GpuContext>(deviceManager_.device(),
                                                            deviceManager_.immediateContext());
+  initializeViewportExposure();
   meshViewMatrix_.setToIdentity();
   meshProjMatrix_.setToIdentity();
   previousMeshViewMatrix_.setToIdentity();
@@ -1896,6 +1999,10 @@ namespace {
   m_offlineHeight = height;
   meshRenderers_.clear();
   meshRendererGeometry_.clear();
+  materialRangeCache_.clear();
+  viewportExposureExecutor_.reset();
+  viewportExposureParams_.Release();
+  viewportExposureReady_ = false;
   gpuContext_.reset();
 
   if (adapterId >= 0) {
@@ -3220,6 +3327,7 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
   cmdBuf_.reset();
   meshRenderers_.clear();
   meshRendererGeometry_.clear();
+  materialRangeCache_.clear();
   for (auto& slot : m_readbackRing) {
    slot.staging = nullptr;
    slot.fence   = nullptr;
@@ -3262,6 +3370,9 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
   m_hasGpuFrameTiming = false;
   m_activeFrameQueryExecutionId = 0;
   m_lastGpuFrameTimingExecutionId = 0;
+  viewportExposureExecutor_.reset();
+  viewportExposureParams_.Release();
+  viewportExposureReady_ = false;
   primitiveRenderer_.destroy();
   primitiveRenderer3D_.destroy();
   particleRenderer_.reset();
@@ -5033,7 +5144,23 @@ void ArtifactIRenderer::drawMeshInstanced(
   impl_->drawMesh(cacheKey, mesh, material, identity, opacity, shadingMode,
                  nullptr, nullptr, instances.data(), instances.size());
 }
- void ArtifactIRenderer::setUpscaleConfig(bool enable, float sharpness)
+void ArtifactIRenderer::drawMeshMulti(
+    const QString& cacheKey, const ArtifactCore::Mesh& mesh,
+    const std::vector<ArtifactCore::Material>& materials,
+    const std::vector<ArtifactCore::InstanceData>& instances, float opacity,
+    int shadingMode)
+{
+  if (instances.empty() || materials.empty()) {
+    return;
+  }
+  // Identity model matrix: each instance already carries the world transform
+  // resolved from the source hierarchy (a USD Xform chain, for example).
+  const QMatrix4x4 identity;
+  impl_->drawMesh(cacheKey, mesh, materials.front(), identity, opacity,
+                  shadingMode, nullptr, nullptr, instances.data(),
+                  instances.size(), &materials);
+}
+void ArtifactIRenderer::setUpscaleConfig(bool enable, float sharpness)
  {
   impl_->m_upscaleEnabled = enable;
   impl_->m_upscaleSharpness = std::clamp(sharpness, 0.0f, 1.0f);
@@ -5204,6 +5331,128 @@ bool ArtifactIRenderer::applyTrackMatte(
  return pipeline->applyTrackMatte(ctx, layerSRV, matteSrc0SRV,
                                   matteSrc1SRV, matteSrc2SRV,
                                   outUAV, params, width, height);
+}
+namespace {
+// Fixed-size parameter block for the viewport exposure/clipping stage.
+struct ViewportExposureParams {
+  float gain;
+  float gamma;
+  float saturation;
+  float clippingWarningsEnabled;
+  float underThreshold;
+  float overThreshold;
+  float pad0;
+  float pad1;
+};
+static_assert(sizeof(ViewportExposureParams) == 32,
+              "ViewportExposureParams must match the HLSL cbuffer layout");
+
+// Returns a pointer to a function-local array so the raw pointer stored in
+// ComputePipelineDesc stays valid for the duration of the build() call.
+const ShaderResourceVariableDesc *viewportExposureVariables(Uint32 &count) {
+  static ShaderResourceVariableDesc vars[] = {
+      {SHADER_TYPE_COMPUTE, "ExposureParams", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+      {SHADER_TYPE_COMPUTE, "g_ExposureSrc", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+      {SHADER_TYPE_COMPUTE, "g_ExposureDst", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC}};
+  count = 3;
+  return vars;
+}
+} // namespace
+
+bool ArtifactIRenderer::Impl::initializeViewportExposure() {
+  auto device = deviceManager_.device();
+  if (!device || !gpuContext_) {
+    return false;
+  }
+
+  Diligent::Uint32 variableCount = 0;
+  auto *variables = viewportExposureVariables(variableCount);
+  ArtifactCore::ComputePipelineDesc desc;
+  desc.name = "Viewport Exposure PSO";
+  desc.shaderSource = g_viewportExposureCS.constData();
+  desc.entryPoint = "main";
+  desc.sourceLanguage = SHADER_SOURCE_LANGUAGE_HLSL;
+  desc.variables = variables;
+  desc.variableCount = variableCount;
+  desc.defaultVariableType = SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
+  auto executor = std::make_unique<ArtifactCore::ComputeExecutor>(*gpuContext_);
+  if (!executor->build(desc) || !executor->createShaderResourceBinding(true)) {
+    qWarning() << "[ArtifactIRenderer] viewport display-adjustment PSO build failed; "
+                  "exposure and clipping warnings disabled";
+    return false;
+  }
+
+  BufferDesc cbDesc;
+  cbDesc.Name = "Viewport Exposure/Params";
+  cbDesc.Size = sizeof(ViewportExposureParams);
+  cbDesc.Usage = USAGE_DYNAMIC;
+  cbDesc.BindFlags = BIND_UNIFORM_BUFFER;
+  cbDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
+  Diligent::RefCntAutoPtr<Diligent::IBuffer> paramsBuffer;
+  device->CreateBuffer(cbDesc, nullptr, &paramsBuffer);
+  if (!paramsBuffer) {
+    qWarning() << "[ArtifactIRenderer] viewport display-adjustment params buffer "
+                  "creation failed; exposure and clipping warnings disabled";
+    return false;
+  }
+
+  viewportExposureExecutor_ = std::move(executor);
+  viewportExposureParams_ = std::move(paramsBuffer);
+  viewportExposureReady_ = true;
+  return true;
+}
+
+bool ArtifactIRenderer::applyViewportExposure(
+    Diligent::ITextureView *srcSRV,
+    Diligent::ITextureView *dstUAV,
+    Diligent::Uint32 width,
+    Diligent::Uint32 height,
+    float gainStops,
+    float gamma,
+    float saturation,
+    bool clippingWarningsEnabled,
+    float underThreshold,
+    float overThreshold) const {
+  if (!srcSRV || !dstUAV || width == 0 || height == 0) {
+    return false;
+  }
+  // Aliasing src and dst would make the dispatch read what it writes.
+  if (srcSRV == dstUAV) {
+    return false;
+  }
+  auto ctx = impl_->deviceManager_.immediateContext();
+  if (!ctx) {
+    return false;
+  }
+
+  auto &executor = impl_->viewportExposureExecutor_;
+  auto paramsBuffer = impl_->viewportExposureParams_.RawPtr();
+  if (!impl_->viewportExposureReady_ || !executor || !paramsBuffer) {
+    return false;
+  }
+
+  // Exact identity at the documented exposure defaults when clipping warnings
+  // are disabled, so the stage can stay enabled without changing presentation.
+  const ViewportExposureParams params{
+      gainStops, gamma, saturation, clippingWarningsEnabled ? 1.0f : 0.0f,
+      underThreshold, overThreshold, 0.0f, 0.0f};
+  void *mapped = nullptr;
+  ctx->MapBuffer(paramsBuffer, MAP_WRITE, MAP_FLAG_DISCARD, mapped);
+  if (!mapped) {
+    return false;
+  }
+  std::memcpy(mapped, &params, sizeof(params));
+  ctx->UnmapBuffer(paramsBuffer, MAP_WRITE);
+
+  if (!executor->setBuffer("ExposureParams", paramsBuffer) ||
+      !executor->setTextureView("g_ExposureSrc", srcSRV) ||
+      !executor->setTextureView("g_ExposureDst", dstUAV)) {
+    return false;
+  }
+  executor->dispatch(ctx, ArtifactCore::ComputeExecutor::makeDispatchAttribs(
+                               width, height, 1, 8, 8, 1),
+                     RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+  return true;
 }
  Diligent::RefCntAutoPtr<Diligent::IRenderDevice> ArtifactIRenderer::device() const
  { return impl_->deviceManager_.device(); }

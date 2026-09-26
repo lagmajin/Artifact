@@ -523,6 +523,17 @@ public:
                          const ArtifactCore::Material &material,
                          const std::vector<ArtifactCore::InstanceData> &instances,
                          float opacity = 1.0f, int shadingMode = 3);
+  // Multi-material mesh draw. The mesh holds every source primitive already
+  // concatenated, and its material slots describe the contiguous index span
+  // each of the supplied materials covers.  Hierarchy transforms coming from a
+  // USD stage are applied per source mesh by passing one instance entry per
+  // mesh; the slot spans then pick the matching material.  The single-material
+  // drawMesh path above stays authoritative when slots are absent.
+  void drawMeshMulti(const QString &cacheKey,
+                     const ArtifactCore::Mesh &mesh,
+                     const std::vector<ArtifactCore::Material> &materials,
+                     const std::vector<ArtifactCore::InstanceData> &instances,
+                     float opacity = 1.0f, int shadingMode = 3);
 
   void drawCheckerboard(float x, float y, float w, float h, float tileSize,
                         const FloatColor &c1, const FloatColor &c2);
@@ -598,6 +609,19 @@ public:
                        const ArtifactCore::MatteTrackParams &params,
                        Diligent::Uint32 width,
                        Diligent::Uint32 height) const;
+   // Display-only viewport exposure and false-color clipping warnings. Writes
+   // to dstUAV and never mutates srcSRV, so readback and output stay untouched.
+   // gainStops is in stops; gamma/saturation and thresholds are dimensionless.
+   bool applyViewportExposure(Diligent::ITextureView *srcSRV,
+                              Diligent::ITextureView *dstUAV,
+                              Diligent::Uint32 width,
+                              Diligent::Uint32 height,
+                              float gainStops,
+                              float gamma,
+                              float saturation,
+                              bool clippingWarningsEnabled,
+                              float underThreshold,
+                              float overThreshold) const;
 
   Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device() const;
   Diligent::RefCntAutoPtr<Diligent::IDeviceContext> immediateContext() const;

@@ -6,7 +6,9 @@ export module Render.HDRMonitor;
 
 export import Core.ArtifactArray;
 import Color.Float;
-import Color.Luminance;
+export import Color.GamutConversion;
+export import Color.Luminance;
+export import Color.TransferFunction;
 
 export namespace Artifact {
 
@@ -29,15 +31,66 @@ struct HDRMonitorSettings {
   QRect monitorRect; // Screen position for overlay
 };
 
+enum class ScopeSignalDomain {
+  SceneLinear,
+  DisplayEncoded
+};
+
+enum class ScopeSignalRange {
+  Full,
+  VideoLegal
+};
+
+// Explicit contract for scope/QC analysis. The input buffer remains float RGBA;
+// this descriptor determines how its RGB values are interpreted.
+struct ScopeAnalysisDescriptor {
+  ScopeSignalDomain domain = ScopeSignalDomain::SceneLinear;
+  ScopeSignalRange signalRange = ScopeSignalRange::Full;
+  // Primaries used to interpret the incoming RGB triplet.
+  Gamut primaries = Gamut::Rec709;
+  // Delivery gamut used for chromaticity-gamut and legal-range inspection.
+  Gamut targetGamut = Gamut::Rec709;
+  LuminanceStandard luminanceStandard = LuminanceStandard::Rec709;
+  TransferFunction transferFunction = TransferFunction::Linear;
+  float referenceWhiteNits = 100.0f;
+  float peakLuminanceNits = 1000.0f;
+  float lowClipThreshold = 0.0f;
+  float highClipThreshold = 1.0f;
+  float gamutTolerance = 1.0e-5f;
+  int bitDepth = 10;
+  int sampleStep = 1;
+  int maxOutOfGamutSamples = 4096;
+  bool publishEvent = true;
+};
+
 struct HDRAnalysisResult {
   float minLuminance = 0.0f;
   float maxLuminance = 1.0f;
   float avgLuminance = 0.5f;
+  float minLuminanceNits = 0.0f;
+  float maxLuminanceNits = 0.0f;
+  float avgLuminanceNits = 0.0f;
+  float minRed = 0.0f;
+  float maxRed = 0.0f;
+  float minGreen = 0.0f;
+  float maxGreen = 0.0f;
+  float minBlue = 0.0f;
+  float maxBlue = 0.0f;
   ArtifactArray<FloatColor> outOfGamutPixels;
   bool hasClipping = false;
   int clippedHighlights = 0;
   int clippedShadows = 0;
   int broadcastSafeViolations = 0;
+  int luminanceLegalRangeViolations = 0;
+  int channelLegalRangeViolations = 0;
+  int nonFiniteSamples = 0;
+  int analyzedSamples = 0;
+  int validSamples = 0;
+  int outOfGamutSamples = 0;
+  int sourcePixels = 0;
+  int sampleStep = 1;
+  bool outOfGamutSamplesTruncated = false;
+  ScopeAnalysisDescriptor descriptor;
 };
 
 struct HDRMonitorSettingsChangedEvent {
@@ -65,6 +118,9 @@ public:
   // Analysis
   HDRAnalysisResult analyzeFrame(const ArtifactArray<FloatColor> &frameData,
                                  int width, int height);
+  HDRAnalysisResult analyzeFrame(const ArtifactArray<FloatColor> &frameData,
+                                 int width, int height,
+                                 const ScopeAnalysisDescriptor &descriptor);
 
   // Visualization
   ArtifactArray<FloatColor>

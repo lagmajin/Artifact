@@ -1976,7 +1976,8 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
         } else if (optionName == QStringLiteral("shapePrimary")) {
           switch (shapeLayer->shapeType()) {
           case Artifact::ShapeType::Rect:
-          case Artifact::ShapeType::Square: {
+          case Artifact::ShapeType::Square:
+          case Artifact::ShapeType::Diamond: {
             const float radius = std::max(0.0f, value.toFloat());
             if (std::abs(shapeLayer->cornerRadius() - radius) > 0.001f) {
               shapeLayer->setCornerRadius(radius);
@@ -2000,11 +2001,23 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
             }
             break;
           }
+          case Artifact::ShapeType::Gear: {
+            const int teeth = std::clamp(value.toInt(), 3, 64);
+            if (shapeLayer->polygonSides() != teeth) {
+              shapeLayer->setPolygonSides(teeth);
+              changed = true;
+            }
+            break;
+          }
           default:
             break;
           }
         } else if (optionName == QStringLiteral("shapeSecondary") &&
-                   shapeLayer->shapeType() == Artifact::ShapeType::Star) {
+                   (shapeLayer->shapeType() == Artifact::ShapeType::Star ||
+                    shapeLayer->shapeType() == Artifact::ShapeType::Arrow ||
+                    shapeLayer->shapeType() == Artifact::ShapeType::Heart ||
+                    shapeLayer->shapeType() == Artifact::ShapeType::Gear ||
+                    shapeLayer->shapeType() == Artifact::ShapeType::Cross)) {
           const float innerRadius =
               std::clamp(value.toFloat() / 100.0f, 0.0f, 1.0f);
           if (std::abs(shapeLayer->starInnerRadius() - innerRadius) > 0.001f) {
