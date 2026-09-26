@@ -2,6 +2,7 @@ module;
 #include <utility>
 #include <algorithm>
 #include <cmath>
+#include <vector>
 #include <QString>
 #include <QUuid>
 #include <QJsonObject>
@@ -79,6 +80,21 @@ export namespace Artifact {
     void setRenderMode(ModelRenderMode mode);
     const ArtifactCore::Mesh& mesh() const;
     const ArtifactCore::Material& material() const;
+    // Multi-mesh accessors.  A USD stage may contribute several source meshes;
+    // they are concatenated into `mesh()` while these expose the per-mesh
+    // material and the hierarchy transform resolved for each of them.  Both
+    // containers are empty for the ordinary single-mesh import path, and
+    // mesh()/material() keep returning the first entry in that case.
+    const std::vector<ArtifactCore::Material>& meshMaterials() const;
+    const std::vector<QMatrix4x4>& meshLocalTransforms() const;
+    // Writes the source USD composition back out as-is (identity export), so
+    // hierarchy, material bindings, skeletons and blend shapes survive.  Only
+    // layers whose source is a USD file can be exported; other formats report
+    // the reason through the return value.  Pass an empty path to overwrite the
+    // source file, or a destination ending in .usda / .usdc / .usdz to write a
+    // copy in that format.
+    bool exportSourceUsd(const QString& outputPath = QString()) const;
+    [[nodiscard]] bool hasExportableUsdSource() const;
     void setSkinPoseMatrices(const QVector<QMatrix4x4>& boneMatrices);
 
     // ArtifactIRenderer interface

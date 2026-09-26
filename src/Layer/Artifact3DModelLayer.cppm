@@ -114,6 +114,10 @@ public:
   int geometryRings_ = 12;
   ArtifactCore::Material material_ = ArtifactCore::Material::makeDefault();
   Mesh mesh_; // The 3D mesh data
+  // Per-source-mesh data for stages that concatenate several meshes (USD).
+  // Empty on the single-mesh import path; mesh_/material_ stay authoritative.
+  std::vector<ArtifactCore::Material> meshMaterials_;
+  std::vector<QMatrix4x4> meshLocalTransforms_;
   QString sourcePath_;
   QUuid sourceAssetId_;
   bool meshLoaded_ = false;
@@ -200,7 +204,76 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
     if (!impl_->mesh_.skinBones().isEmpty()) {
       impl_->mesh_.applyDeformers(impl_->mesh_.skinPoseMatrices());
     }
-    centerMeshPositions(impl_->mesh_);
+    // A multi-mesh source (a USD stage with several prims) carries per-mesh
+    // world transforms that the renderer applies as instances.  Centering the
+    // concatenated buffer would shift every primitive away from the transform
+    // that positions it, so the recentre step is skipped for that case.
+    const int sourceMeshCount = importer->sourceMeshCount();
+    if (sourceMeshCount > 1) {
+      impl_->meshMaterials_.clear();
+      impl_->meshLocalTransforms_.clear();
+      impl_->meshMaterials_.reserve(static_cast<std::size_t>(sourceMeshCount));
+      impl_->meshLocalTransforms_.reserve(
+          static_cast<std::size_t>(sourceMeshCount));
+      const auto& sourceTransforms = importer->sourceMeshTransforms();
+      const auto metallicFactors = importer->sourceMeshMetallicFactors();
+      const auto roughnessFactors = importer->sourceMeshRoughnessFactors();
+      const auto& baseColorTextures = importer->sourceMeshBaseColorTextures();
+      const auto& metallicRoughnessTextures =
+          importer->sourceMeshMetallicRoughnessTextures();
+      const auto& normalTextures = importer->sourceMeshNormalTextures();
+      const auto& emissionTextures = importer->sourceMeshEmissionTextures();
+      const auto& occlusionTextures = importer->sourceMeshOcclusionTextures();
+      const auto& opacityTextures = importer->sourceMeshOpacityTextures();
+      for (int sourceIndex = 0; sourceIndex < sourceMeshCount; ++sourceIndex) {
+        const auto slotIndex = static_cast<std::size_t>(sourceIndex);
+        ArtifactCore::Material sourceMaterial = impl_->material_;
+        const auto assignTexture = [&sourceMaterial](
+                                       const std::vector<UniString>& paths,
+                                       std::size_t index,
+                                       void (ArtifactCore::Material::*setter)(
+                                           const UniString&)) {
+          if (index < paths.size() && !paths[index].toQString().isEmpty()) {
+            (sourceMaterial.*setter)(paths[index]);
+          }
+        };
+        assignTexture(baseColorTextures, slotIndex,
+                      &ArtifactCore::Material::setBaseColorTexture);
+        assignTexture(metallicRoughnessTextures, slotIndex,
+                      &ArtifactCore::Material::setMetallicRoughnessTexture);
+        assignTexture(normalTextures, slotIndex,
+                      &ArtifactCore::Material::setNormalTexture);
+        assignTexture(emissionTextures, slotIndex,
+                      &ArtifactCore::Material::setEmissionTexture);
+        assignTexture(occlusionTextures, slotIndex,
+                      &ArtifactCore::Material::setOcclusionTexture);
+        assignTexture(opacityTextures, slotIndex,
+                      &ArtifactCore::Material::setOpacityTexture);
+        if (importer->hasSourceMeshMetallicFactor(sourceIndex)) {
+          sourceMaterial.setMetallic(importer->sourceMeshMetallicFactors()[slotIndex]);
+        }
+        if (importer->hasSourceMeshRoughnessFactor(sourceIndex)) {
+          sourceMaterial.setRoughness(importer->sourceMeshRoughnessFactors()[slotIndex]);
+        }
+        impl_->meshMaterials_.push_back(sourceMaterial);
+        QMatrix4x4 localTransform;
+        if (slotIndex < sourceTransforms.size()) {
+          const auto& sourceTransform = sourceTransforms[slotIndex];
+          for (int row = 0; row < 4; ++row) {
+            for (int col = 0; col < 4; ++col) {
+              localTransform[row][col] = sourceTransform.transform[row * 4 + col];
+            }
+          }
+        }
+        impl_->meshLocalTransforms_.push_back(localTransform);
+      }
+      qDebug() << "[Artifact3DLayer] Imported multi-mesh source with"
+               << sourceMeshCount << "primitives";
+    } else {
+      impl_->meshMaterials_.clear();
+      impl_->meshLocalTransforms_.clear();
+      centerMeshPositions(impl_->mesh_);
+    }
     impl_->meshLoaded_ = true;
     updateSourceSizeFromMesh();
     const QString importedTexture = importer->lastBaseColorTexture();
@@ -1478,6 +1551,45 @@ const ArtifactCore::Material& Artifact3DLayer::material() const
   return impl_->material_;
 }
 
+const std::vector<ArtifactCore::Material>& Artifact3DLayer::meshMaterials() const
+{
+  return impl_->meshMaterials_;
+}
+
+const std::vector<QMatrix4x4>& Artifact3DLayer::meshLocalTransforms() const
+{
+  return impl_->meshLocalTransforms_;
+}
+
+bool Artifact3DLayer::hasExportableUsdSource() const
+{
+  return impl_->animationImporter_ &&
+         impl_->animationImporter_->hasLoadedUsdStage();
+}
+
+bool Artifact3DLayer::exportSourceUsd(const QString& outputPath) const
+{
+  if (!impl_->animationImporter_ ||
+      !impl_->animationImporter_->hasLoadedUsdStage()) {
+    qWarning() << "[Artifact3DLayer] USD export skipped: source is not a USD file"
+               << impl_->sourcePath_;
+    return false;
+  }
+  // An empty destination overwrites the file the stage was opened from; any
+  // other path is written as a copy and the retained stage keeps its own name.
+  const QString target = outputPath.isEmpty()
+                             ? impl_->animationImporter_->loadedUsdPath()
+                             : outputPath;
+  if (!impl_->animationImporter_->exportLoadedUsdStage(
+          ArtifactCore::UniString::fromQString(target))) {
+    qWarning() << "[Artifact3DLayer] USD export failed:"
+               << impl_->animationImporter_->lastError();
+    return false;
+  }
+  qInfo() << "[Artifact3DLayer] Exported USD source to" << target;
+  return true;
+}
+
 void Artifact3DLayer::setSkinPoseMatrices(
     const QVector<QMatrix4x4>& boneMatrices)
 {
@@ -1760,6 +1872,56 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
           .arg(impl_->geometryRings_);
     }
     const int solidShadingMode = impl_->useTextureInSolid_ ? 3 : 8;
+    if (impl_->meshMaterials_.size() > 1) {
+      // Multi-primitive source (a USD stage with several UsdGeomMesh prims):
+      // the geometry is already concatenated into mesh_ and split by material
+      // slots, so one instance per source mesh reproduces the hierarchy while
+      // the renderer issues one draw per material span.
+      const std::size_t meshCount = std::min(
+          impl_->meshLocalTransforms_.size(), impl_->meshMaterials_.size());
+      if (meshCount > 1) {
+        std::vector<ArtifactCore::InstanceData> instances;
+        instances.reserve(meshCount);
+        const float layerAlpha = std::clamp(opacity(), 0.0f, 1.0f);
+        for (std::size_t meshIndex = 0; meshIndex < meshCount; ++meshIndex) {
+          const QMatrix4x4 combined = modelMatrix *
+                                      impl_->meshLocalTransforms_[meshIndex];
+          ArtifactCore::InstanceData instance{};
+          const float* modelData = combined.constData();
+          for (int row = 0; row < 4; ++row) {
+            for (int col = 0; col < 4; ++col) {
+              instance.transform[row * 4 + col] = modelData[col * 4 + row];
+              instance.previousTransform[row * 4 + col] =
+                  instance.transform[row * 4 + col];
+            }
+          }
+          instance.color[0] = impl_->material_.baseColor().redF();
+          instance.color[1] = impl_->material_.baseColor().greenF();
+          instance.color[2] = impl_->material_.baseColor().blueF();
+          instance.color[3] = layerAlpha;
+          instance.weight = 1.0f;
+          instance.timeOffset = static_cast<float>(solidShadingMode);
+          instances.push_back(instance);
+        }
+        renderer->drawMeshMulti(cacheKey, impl_->mesh_, impl_->meshMaterials_,
+                                instances, opacity(), solidShadingMode);
+        traceResult(
+            QStringLiteral("mesh-multi-submitted"),
+            QStringLiteral("meshes=%1 shading=%2")
+                .arg(static_cast<qulonglong>(meshCount))
+                .arg(solidShadingMode));
+        if (impl_->wireOverlay_) {
+          drawEdges(FloatColor{0.04f, 0.05f, 0.06f, opacity() * 0.72f}, 1.0f);
+          if (impl_->faceNormals_) {
+            drawFaceNormals();
+          }
+          if (impl_->vertexNormals_) {
+            drawVertexNormals();
+          }
+        }
+        return;
+      }
+    }
     renderer->drawMesh(cacheKey, impl_->mesh_, impl_->material_, modelMatrix,
                        opacity(), solidShadingMode, &previousModelMatrix);
     traceResult(
