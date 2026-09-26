@@ -1,5 +1,6 @@
 module;
 
+#include <cmath>
 #include <QDebug>
 #include <QJsonObject>
 #include <QString>
@@ -9,6 +10,8 @@ export module Artifact.Test.SolidLayer;
 import Artifact.Layer.Factory;
 import Artifact.Layer.InitParams;
 import Artifact.Layers.SolidImage;
+import Artifact.Color.OCIOManager;
+import Color.Float;
 
 namespace Artifact {
 
@@ -28,6 +31,37 @@ struct SolidLayerTestReport {
 export int runSolidLayerTests()
 {
     SolidLayerTestReport report;
+    auto* ocio = ArtifactOCIOManager::instance();
+    const QJsonObject savedOcio = ocio->toJson();
+    ocio->setWorkingSpace(QStringLiteral("sRGB"));
+    ocio->setGeneratedColorPolicy(
+        GeneratedColorPolicy::ConvertToWorkingSpace);
+    const auto workingMid = ocio->generatedSrgbToWorkingColor(
+        ArtifactCore::FloatColor(0.5f, 0.5f, 0.5f, 0.25f));
+    report.check(std::abs(workingMid.r() - 0.214041f) < 0.0005f &&
+                     std::abs(workingMid.g() - workingMid.r()) < 0.00001f &&
+                     std::abs(workingMid.b() - workingMid.r()) < 0.00001f &&
+                     std::abs(workingMid.a() - 0.25f) < 0.00001f,
+                 QStringLiteral("generated sRGB is decoded to linear working color"));
+    const auto encodedMid = ocio->workingToGeneratedSrgbColor(workingMid);
+    report.check(std::abs(encodedMid.r() - 0.5f) < 0.0005f &&
+                     std::abs(encodedMid.g() - 0.5f) < 0.0005f &&
+                     std::abs(encodedMid.b() - 0.5f) < 0.0005f &&
+                     std::abs(encodedMid.a() - 0.25f) < 0.00001f,
+                 QStringLiteral("working color round-trips to generated sRGB"));
+    report.check(
+        ocio->toJson().value(QStringLiteral("generatedColorPolicy")).toInt() ==
+            static_cast<int>(GeneratedColorPolicy::ConvertToWorkingSpace),
+        QStringLiteral("generated color policy is serialized"));
+
+    QJsonObject legacyOcio = savedOcio;
+    legacyOcio.remove(QStringLiteral("generatedColorPolicy"));
+    ocio->fromJson(legacyOcio);
+    report.check(
+        ocio->generatedColorPolicy() == GeneratedColorPolicy::LegacyEncoded,
+        QStringLiteral("missing generated color policy restores legacy behavior"));
+    ocio->fromJson(savedOcio);
+
     ArtifactLayerFactory factory;
     ArtifactSolidLayerInitParams params(QStringLiteral("Anamorphic Solid"));
     params.setWidth(720);

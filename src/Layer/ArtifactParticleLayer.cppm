@@ -52,6 +52,7 @@ import Memory.SharedPtr;
 
 import Artifact.Layer.Abstract;
 import Memory.SharedPtr;
+import Artifact.Color.OCIOManager;
 import Artifact.Composition.Abstract;
 import Artifact.Render.IRenderer;
 import Artifact.Generator.Particle;
@@ -64,6 +65,7 @@ import Utils.String.UniString;
 import Property.Abstract;
 import Property.Group;
 import Core.Parallel;
+import Color.Float;
 
 namespace Artifact {
 
@@ -226,6 +228,10 @@ ArtifactCore::ParticleRenderData toCoreParticleRenderData(
     ArtifactCore::ParticleRenderData converted;
     converted.frameNumber = source.frameNumber;
     converted.particles.reserve(source.particles.size());
+    const auto* colorManager = ArtifactOCIOManager::instance();
+    const bool convertGeneratedColors =
+        colorManager->generatedColorPolicy() ==
+        GeneratedColorPolicy::ConvertToWorkingSpace;
     const auto finiteClamped = [](float value, float fallback,
                                   float minimum, float maximum) {
         return std::isfinite(value)
@@ -240,10 +246,18 @@ ArtifactCore::ParticleRenderData toCoreParticleRenderData(
         vertex.vx = finiteClamped(particle.vx, 0.0f, -1000000.0f, 1000000.0f);
         vertex.vy = finiteClamped(particle.vy, 0.0f, -1000000.0f, 1000000.0f);
         vertex.vz = finiteClamped(particle.vz, 0.0f, -1000000.0f, 1000000.0f);
-        vertex.r = finiteClamped(particle.r, 0.0f, 0.0f, 1.0f);
-        vertex.g = finiteClamped(particle.g, 0.0f, 0.0f, 1.0f);
-        vertex.b = finiteClamped(particle.b, 0.0f, 0.0f, 1.0f);
-        vertex.a = finiteClamped(particle.a, 0.0f, 0.0f, 1.0f);
+        const FloatColor sourceColor(
+            finiteClamped(particle.r, 0.0f, 0.0f, 1.0f),
+            finiteClamped(particle.g, 0.0f, 0.0f, 1.0f),
+            finiteClamped(particle.b, 0.0f, 0.0f, 1.0f),
+            finiteClamped(particle.a, 0.0f, 0.0f, 1.0f));
+        const FloatColor renderColor = convertGeneratedColors
+            ? colorManager->generatedSrgbToWorkingColor(sourceColor)
+            : sourceColor;
+        vertex.r = renderColor.r();
+        vertex.g = renderColor.g();
+        vertex.b = renderColor.b();
+        vertex.a = renderColor.a();
         vertex.size = finiteClamped(particle.size, 0.0f, 0.0f, 1000000.0f);
         vertex.stretch = finiteClamped(particle.stretch, 1.0f, 1.0f, 1000000.0f);
         vertex.rotation = finiteClamped(particle.rotation, 0.0f, -1000000.0f, 1000000.0f);

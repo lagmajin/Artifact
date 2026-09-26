@@ -27,6 +27,7 @@
 
 module Artifact.Layer.FormParticle;
 
+import Artifact.Color.OCIOManager;
 import Artifact.Composition.Abstract;
 import Artifact.Render.IRenderer;
 import Memory.SharedPtr;
@@ -37,6 +38,7 @@ import Image.ImageF32x4_RGBA;
 import FloatRGBA;
 import Property.Abstract;
 import Property.Group;
+import Color.Float;
 
 namespace Artifact {
 
@@ -73,17 +75,6 @@ static float hashToUnit(std::uint32_t value)
     value *= 0x31848babU;
     value ^= value >> 14;
     return static_cast<float>(value & 0x00ffffffU) / static_cast<float>(0x01000000U - 1U);
-}
-
-static QColor lerpColor(const QColor& a, const QColor& b, float t)
-{
-    const float clamped = clampValue(t, 0.0f, 1.0f);
-    QColor result;
-    result.setRedF(a.redF() + (b.redF() - a.redF()) * clamped);
-    result.setGreenF(a.greenF() + (b.greenF() - a.greenF()) * clamped);
-    result.setBlueF(a.blueF() + (b.blueF() - a.blueF()) * clamped);
-    result.setAlphaF(a.alphaF() + (b.alphaF() - a.alphaF()) * clamped);
-    return result;
 }
 
 static QColor validColorOr(const QColor& value, const QColor& fallback)
@@ -563,23 +554,29 @@ static QVector3D applyField(const FormParticleSettings& settings,
     return result;
 }
 
-static QColor colorForPoint(const FormParticleSettings& settings,
-                            int column,
-                            int row,
-                            int depth,
-                            int columns,
-                            int rows,
-                            int depthCount)
+static FloatColor colorForPoint(const FormParticleSettings& settings,
+                                const FloatColor& solidColor,
+                                const FloatColor& gradientStartColor,
+                                const FloatColor& gradientEndColor,
+                                int column,
+                                int row,
+                                int depth,
+                                int columns,
+                                int rows,
+                                int depthCount)
 {
-    const QColor solidColor = validColorOr(settings.solidColor, QColor(255, 255, 255));
-    const QColor gradientStartColor =
-        validColorOr(settings.gradientStartColor, solidColor);
-    const QColor gradientEndColor =
-        validColorOr(settings.gradientEndColor, solidColor);
     switch (settings.colorMode) {
     case FormParticleSettings::ColorMode::AxisGradient: {
         const float t = clampValue((normalizedIndex(column, columns) + normalizedIndex(row, rows) + normalizedIndex(depth, depthCount)) / 3.0f, 0.0f, 1.0f);
-        return lerpColor(gradientStartColor, gradientEndColor, t);
+        return FloatColor(
+            gradientStartColor.r() +
+                (gradientEndColor.r() - gradientStartColor.r()) * t,
+            gradientStartColor.g() +
+                (gradientEndColor.g() - gradientStartColor.g()) * t,
+            gradientStartColor.b() +
+                (gradientEndColor.b() - gradientStartColor.b()) * t,
+            gradientStartColor.a() +
+                (gradientEndColor.a() - gradientStartColor.a()) * t);
     }
     case FormParticleSettings::ColorMode::SourceColor:
         return solidColor;
@@ -616,6 +613,24 @@ static ArtifactCore::ParticleRenderData buildRenderData(const FormParticleSettin
         ? clampValue(settings.depth, 1, 128)
         : 1;
     const int limit = clampValue(settings.maxParticles, 1, 100000);
+    const QColor authoredSolid =
+        validColorOr(settings.solidColor, QColor(255, 255, 255));
+    const QColor authoredGradientStart =
+        validColorOr(settings.gradientStartColor, authoredSolid);
+    const QColor authoredGradientEnd =
+        validColorOr(settings.gradientEndColor, authoredSolid);
+    const auto toFloatColor = [](const QColor& color) {
+        return FloatColor(color.redF(), color.greenF(), color.blueF(), color.alphaF());
+    };
+    const auto* colorManager = ArtifactOCIOManager::instance();
+    const FloatColor solidColor = colorManager->resolveGeneratedColorForRender(
+        toFloatColor(authoredSolid));
+    const FloatColor gradientStartColor =
+        colorManager->resolveGeneratedColorForRender(
+            toFloatColor(authoredGradientStart));
+    const FloatColor gradientEndColor =
+        colorManager->resolveGeneratedColorForRender(
+            toFloatColor(authoredGradientEnd));
     const std::size_t latticeCount =
         static_cast<std::size_t>(columns) * static_cast<std::size_t>(rows) *
         static_cast<std::size_t>(depth);
@@ -674,16 +689,19 @@ static ArtifactCore::ParticleRenderData buildRenderData(const FormParticleSettin
                 vertex.vx = displaced.x() - base.x();
                 vertex.vy = displaced.y() - base.y();
                 vertex.vz = displaced.z() - base.z();
-                const QColor color =
+                const bool useLayerMapColor =
                     settings.generatorMode == FormParticleSettings::GeneratorMode::LayerMap &&
-                            settings.colorMode == FormParticleSettings::ColorMode::SourceColor
-                        ? sourceColor
-                        : colorForPoint(settings, x, y, z, columns, rows, depth);
-                vertex.r = color.redF();
-                vertex.g = color.greenF();
-                vertex.b = color.blueF();
+                    settings.colorMode == FormParticleSettings::ColorMode::SourceColor;
+                const FloatColor color = useLayerMapColor
+                    ? FloatColor(sourceColor.redF(), sourceColor.greenF(),
+                                 sourceColor.blueF(), sourceColor.alphaF())
+                    : colorForPoint(settings, solidColor, gradientStartColor,
+                                    gradientEndColor, x, y, z, columns, rows, depth);
+                vertex.r = color.r();
+                vertex.g = color.g();
+                vertex.b = color.b();
                 vertex.a = clampValue(
-                    color.alphaF() * settings.particleOpacity * sourceOpacity *
+                    color.a() * settings.particleOpacity * sourceOpacity *
                         layerOpacity,
                     0.0f,
                     1.0f);
@@ -738,7 +756,12 @@ void ArtifactFormParticleLayer::draw(ArtifactIRenderer* renderer)
     const float timeSeconds = static_cast<float>(frameNumber) / fps;
     const QTransform transform = getGlobalTransform();
     const auto* layerMapSource = impl_->layerMapSource();
-    const quint64 signature = impl_->signatureForFrame(frameNumber, transform, opacity());
+    const auto* colorManager = ArtifactOCIOManager::instance();
+    quint64 signature = impl_->signatureForFrame(frameNumber, transform, opacity());
+    signature = mixSignature(
+        signature, static_cast<quint64>(colorManager->generatedColorPolicy()));
+    signature = mixSignature(
+        signature, static_cast<quint64>(qHash(colorManager->workingSpace())));
     if (impl_->cacheDirty || impl_->cachedFrame != frameNumber || impl_->cachedSignature != signature) {
         impl_->cachedRenderData = buildRenderData(
             impl_->settings,
