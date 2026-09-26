@@ -29,6 +29,24 @@ W_OBJECT_IMPL(ArtifactTimelineKeyframeModel)
 
 namespace {
 
+QString humanizeAnimatorField(QString field) {
+  if (field.isEmpty()) {
+    return field;
+  }
+  QString label;
+  label.reserve(field.size() + 8);
+  for (qsizetype index = 0; index < field.size(); ++index) {
+    const QChar ch = field.at(index);
+    if (index > 0 && ch.isUpper() &&
+        field.at(index - 1).isLetterOrNumber()) {
+      label += QLatin1Char(' ');
+    }
+    label += ch;
+  }
+  label[0] = label.at(0).toUpper();
+  return label;
+}
+
 QString editablePathDisplayLabel(const QString &propertyPath) {
   if (propertyPath.isEmpty()) {
     return {};
@@ -51,11 +69,7 @@ QString editablePathDisplayLabel(const QString &propertyPath) {
       return QStringLiteral("Text Animator %1")
           .arg(animatorIndex + 1);
     }
-    const QString field = parts[3];
-    QString fieldLabel = field;
-    if (!fieldLabel.isEmpty()) {
-      fieldLabel[0] = fieldLabel[0].toUpper();
-    }
+    const QString fieldLabel = humanizeAnimatorField(parts[3]);
     return QStringLiteral("Text Animator %1 / %2")
         .arg(animatorIndex + 1)
         .arg(fieldLabel);
@@ -132,6 +146,14 @@ bool ArtifactTimelineKeyframeModel::isTransformPropertyPath(
 bool ArtifactTimelineKeyframeModel::shouldHideTimelinePropertyGroup(
     const QString& groupName) {
   return isTimelineHiddenLayerPropertyGroup(groupName);
+}
+
+bool ArtifactTimelineKeyframeModel::shouldHideTimelinePropertyGroup(
+    const ArtifactCore::PropertyGroup& group) {
+  if (isTimelineTextAnimatorLayerPropertyGroup(group)) {
+    return false;
+  }
+  return isTimelineHiddenLayerPropertyGroup(group.name());
 }
 
 bool ArtifactTimelineKeyframeModel::isTimelinePropertyGroupExpandedByDefault(
@@ -355,8 +377,7 @@ ArtifactCore::AbstractPropertyPtr findLayerPropertyByPath(
     }
 
     for (const auto& group : layer->getLayerPropertyGroups()) {
-        if (ArtifactTimelineKeyframeModel::shouldHideTimelinePropertyGroup(
-                group.name())) {
+        if (ArtifactTimelineKeyframeModel::shouldHideTimelinePropertyGroup(group)) {
             continue;
         }
         if (const auto property = group.findProperty(propertyPath)) {
@@ -748,7 +769,7 @@ ArtifactTimelineKeyframeModel::collectDopeSheetKeyframesForLayer(
     }
 
     for (const auto& group : layer->getLayerPropertyGroups()) {
-        if (shouldHideTimelinePropertyGroup(group.name())) {
+        if (shouldHideTimelinePropertyGroup(group)) {
             continue;
         }
         for (const auto& property : group.sortedProperties()) {

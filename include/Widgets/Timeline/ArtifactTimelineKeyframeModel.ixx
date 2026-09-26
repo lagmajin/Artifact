@@ -51,6 +51,10 @@ public:
   static QString displayLabelForPropertyPath(QString propertyPath);
   static bool isTransformPropertyPath(const QString& propertyPath);
   static bool shouldHideTimelinePropertyGroup(const QString& groupName);
+  // Text Animator 動的グループは表示名では識別できないため、全プロパティ
+  // を保持したグループで判定する。上の名引版は従来動作を保つ。
+  static bool shouldHideTimelinePropertyGroup(
+      const ArtifactCore::PropertyGroup& group);
   static bool isTimelinePropertyGroupExpandedByDefault(
       const QString& groupName);
 

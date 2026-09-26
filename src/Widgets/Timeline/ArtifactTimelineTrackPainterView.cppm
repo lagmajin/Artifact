@@ -1025,8 +1025,7 @@ QVector<KeyframePropertyRef> collectAnimatablePropertyRefs(
 
   QSet<QString> seen;
   for (const auto &group : layer->getLayerPropertyGroups()) {
-    if (ArtifactTimelineKeyframeModel::shouldHideTimelinePropertyGroup(
-            group.name())) {
+    if (ArtifactTimelineKeyframeModel::shouldHideTimelinePropertyGroup(group)) {
       continue;
     }
     for (const auto &property : group.sortedProperties()) {
@@ -1246,8 +1245,7 @@ void shiftAnimatableLayerKeyframes(const ArtifactCompositionPtr &composition,
   const int64_t scale = timelineFrameRateScale(composition);
 
   for (const auto &group : layer->getLayerPropertyGroups()) {
-    if (ArtifactTimelineKeyframeModel::shouldHideTimelinePropertyGroup(
-            group.name())) {
+    if (ArtifactTimelineKeyframeModel::shouldHideTimelinePropertyGroup(group)) {
       continue;
     }
     for (const auto &property : group.sortedProperties()) {
@@ -4557,8 +4555,7 @@ bool applyTimelineLayerRangeEdit(const ArtifactAbstractLayerPtr &layer,
         static_cast<ArtifactAbstractComposition *>(layer->composition());
     const int64_t frameScale = timelineFrameRateScale(composition);
     for (const auto &group : layer->getLayerPropertyGroups()) {
-      if (ArtifactTimelineKeyframeModel::shouldHideTimelinePropertyGroup(
-              group.name())) {
+      if (ArtifactTimelineKeyframeModel::shouldHideTimelinePropertyGroup(group)) {
         continue;
       }
       for (const auto &property : group.sortedProperties()) {
@@ -5391,8 +5388,7 @@ collectAllKeyframeMarkersForLayers(
       continue;
     }
     for (const auto &group : layer->getLayerPropertyGroups()) {
-      if (ArtifactTimelineKeyframeModel::shouldHideTimelinePropertyGroup(
-              group.name())) {
+      if (ArtifactTimelineKeyframeModel::shouldHideTimelinePropertyGroup(group)) {
         continue;
       }
       for (const auto &property : group.sortedProperties()) {
