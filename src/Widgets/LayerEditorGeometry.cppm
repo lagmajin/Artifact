@@ -424,6 +424,17 @@ std::vector<QPointF> buildShapeEditSeedPoints(const ArtifactShapeLayer& shape)
  }
  case ShapeType::Line:
   break;
+ case ShapeType::Arrow:
+ case ShapeType::Heart:
+ case ShapeType::Diamond:
+ case ShapeType::Gear:
+ case ShapeType::Cross: {
+  const auto paths = shape.nativeShapePaths();
+  if (!paths.empty()) {
+   return paths.front().sampleEquidistant(48);
+  }
+  break;
+ }
  }
  return {};
 }

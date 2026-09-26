@@ -23,6 +23,7 @@ module;
 module Artifact.Layers.SolidImage;
 
 import Artifact.Layer.CloneEffectSupport;
+import Artifact.Color.OCIOManager;
 
 import Artifact.Layers.Abstract._2D;
 import Artifact.Composition.Abstract;
@@ -129,6 +130,11 @@ ArtifactCore::ImageF32x4_RGBA solidFillToFrameBuffer(const QImage &image) {
       ArtifactCore::SurfaceColorDescriptor::legacyOpenCvBgra32Float(
           ArtifactCore::TransferFunction::sRGB,
           ArtifactCore::SurfaceAlphaMode::Premultiplied));
+  if (ArtifactOCIOManager::instance()->generatedColorPolicy() ==
+      GeneratedColorPolicy::ConvertToWorkingSpace) {
+    ArtifactOCIOManager::instance()->applyInputTransformToWorkingImage(
+        buffer, QStringLiteral("sRGB"), QStringLiteral("sRGB"));
+  }
   return buffer;
 }
 } // namespace
@@ -639,10 +645,13 @@ void ArtifactSolidImageLayer::draw(ArtifactIRenderer *renderer) {
                      std::clamp(source.height, 1, 16384));
   const float displayWidth = static_cast<float>(size.width) *
                              static_cast<float>(pixelAspectRatio());
-  const auto color = this->color();
+  const auto* colorManager = ArtifactOCIOManager::instance();
+  const auto color = colorManager->resolveGeneratedColorForRender(this->color());
   const auto fillType = this->fillType();
-  const auto gradientStart = gradientStartColor();
-  const auto gradientEnd = gradientEndColor();
+  const auto gradientStart = colorManager->resolveGeneratedColorForRender(
+      gradientStartColor());
+  const auto gradientEnd = colorManager->resolveGeneratedColorForRender(
+      gradientEndColor());
   const float gradientAngle = gradientAngleDegrees();
   const bool gradientReverseValue = gradientReverse();
   const float gradientCenterXValue = gradientCenterX();

@@ -34,7 +34,22 @@ using ShapeDeformerPointMapper = QPointF (*)(
     void*, ArtifactAbstractLayer*, const QPointF&);
 using ShapeDeformerPrepare = bool (*)(void*, ArtifactAbstractLayer*);
 
-enum class ShapeType { Rect = 0, Ellipse = 1, Star = 2, Polygon = 3, Line = 4, Triangle = 5, Square = 6 };
+// Values are persisted in project JSON. Keep existing values stable and append
+// new primitives so older projects remain binary/source compatible.
+enum class ShapeType {
+  Rect = 0,
+  Ellipse = 1,
+  Star = 2,
+  Polygon = 3,
+  Line = 4,
+  Triangle = 5,
+  Square = 6,
+  Arrow = 7,
+  Heart = 8,
+  Diamond = 9,
+  Gear = 10,
+  Cross = 11
+};
 
 // Phase 3: Stroke style enums
 enum class StrokeCap  { Flat = 0, Round = 1, Square = 2 };

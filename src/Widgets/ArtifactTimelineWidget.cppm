@@ -9095,6 +9095,11 @@ void ArtifactTimelineWidget::refreshTracks() {
         case ShapeType::Line: shapeLabel = QStringLiteral("Line"); break;
         case ShapeType::Triangle: shapeLabel = QStringLiteral("Triangle"); break;
         case ShapeType::Square: shapeLabel = QStringLiteral("Square"); break;
+        case ShapeType::Arrow: shapeLabel = QStringLiteral("Arrow"); break;
+        case ShapeType::Heart: shapeLabel = QStringLiteral("Heart"); break;
+        case ShapeType::Diamond: shapeLabel = QStringLiteral("Diamond"); break;
+        case ShapeType::Gear: shapeLabel = QStringLiteral("Gear"); break;
+        case ShapeType::Cross: shapeLabel = QStringLiteral("Cross"); break;
         }
         visual.title = QStringLiteral("%1 · %2%3")
                            .arg(layer->layerName(), shapeLabel,

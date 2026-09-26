@@ -854,6 +854,11 @@ public:
     QAction* createShapeTriangleAction = nullptr;
     QAction* createShapeEllipseAction = nullptr;
     QAction* createShapeStarAction = nullptr;
+    QAction* createShapeBlockArrowAction = nullptr;
+    QAction* createShapeHeartAction = nullptr;
+    QAction* createShapeDiamondAction = nullptr;
+    QAction* createShapeGearAction = nullptr;
+    QAction* createShapeCrossAction = nullptr;
     QAction* createShapeLineAction = nullptr;
     QAction* createShapeDashedLineAction = nullptr;
     QAction* createShapeBezierCurveAction = nullptr;
@@ -1217,6 +1222,11 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createShapeEllipseAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_shape_ellipse.svg")));
     createShapeStarAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.polygon_star"), QStringLiteral("星形")), createShapeMenu);
     createShapeStarAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_shape_star.svg")));
+    createShapeBlockArrowAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.block_arrow"), QStringLiteral("ブロック矢印")), createShapeMenu);
+    createShapeHeartAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.heart"), QStringLiteral("ハート")), createShapeMenu);
+    createShapeDiamondAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.diamond"), QStringLiteral("ひし形")), createShapeMenu);
+    createShapeGearAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.gear"), QStringLiteral("歯車")), createShapeMenu);
+    createShapeCrossAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.cross"), QStringLiteral("十字")), createShapeMenu);
     createShapeLineAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.line"), QStringLiteral("ライン")), createShapeMenu);
     createShapeLineAction->setIcon(QIcon(resolveIconPath("Studio/toolbar_tool_shape.svg")));
     createShapeDashedLineAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.dashed"), QStringLiteral("破線")), createShapeMenu);
@@ -1247,6 +1257,11 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createShapeMenu->addAction(createShapeTriangleAction);
     createShapeMenu->addAction(createShapeEllipseAction);
     createShapeMenu->addAction(createShapeStarAction);
+    createShapeMenu->addAction(createShapeBlockArrowAction);
+    createShapeMenu->addAction(createShapeHeartAction);
+    createShapeMenu->addAction(createShapeDiamondAction);
+    createShapeMenu->addAction(createShapeGearAction);
+    createShapeMenu->addAction(createShapeCrossAction);
     createShapeMenu->addMenu(createLineMenu);
     createShapeMenu->addSeparator();
     createShapeMenu->addAction(cycleShapeForwardAction);
@@ -1727,6 +1742,11 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
         if (action == createShapeTriangleAction) { handleCreateShape(ShapeType::Triangle, QStringLiteral("Triangle 1")); return; }
         if (action == createShapeEllipseAction) { handleCreateShape(ShapeType::Ellipse, QStringLiteral("Ellipse 1")); return; }
         if (action == createShapeStarAction) { handleCreateShape(ShapeType::Star, QStringLiteral("Star 1")); return; }
+        if (action == createShapeBlockArrowAction) { handleCreateShape(ShapeType::Arrow, QStringLiteral("Arrow 1")); return; }
+        if (action == createShapeHeartAction) { handleCreateShape(ShapeType::Heart, QStringLiteral("Heart 1")); return; }
+        if (action == createShapeDiamondAction) { handleCreateShape(ShapeType::Diamond, QStringLiteral("Diamond 1")); return; }
+        if (action == createShapeGearAction) { handleCreateShape(ShapeType::Gear, QStringLiteral("Gear 1")); return; }
+        if (action == createShapeCrossAction) { handleCreateShape(ShapeType::Cross, QStringLiteral("Cross 1")); return; }
         if (action == createShapeLineAction) { handleCreateShape(ShapeType::Line, QStringLiteral("Line 1")); return; }
         if (action == createShapeDashedLineAction) { handleCreateDashedLine(); return; }
         if (action == createShapeBezierCurveAction) { handleCreateBezierCurve(); return; }
@@ -2176,6 +2196,11 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
     createShapeTriangleAction->setEnabled(hasProject);
     createShapeEllipseAction->setEnabled(hasProject);
     createShapeStarAction->setEnabled(hasProject);
+    createShapeBlockArrowAction->setEnabled(hasProject);
+    createShapeHeartAction->setEnabled(hasProject);
+    createShapeDiamondAction->setEnabled(hasProject);
+    createShapeGearAction->setEnabled(hasProject);
+    createShapeCrossAction->setEnabled(hasProject);
     createShapeLineAction->setEnabled(hasProject);
     createShapeDashedLineAction->setEnabled(hasProject);
     createShapeBezierCurveAction->setEnabled(hasProject);
@@ -3228,7 +3253,7 @@ void ArtifactLayerMenu::Impl::handleCycleShapeCreation(bool reverse)
     const auto now = std::chrono::steady_clock::now();
     const bool armed = lastAt.time_since_epoch().count() > 0 &&
                        (now - lastAt) <= std::chrono::seconds(4);
-    constexpr int count = 7;
+    constexpr int count = 12;
     if (!armed) {
         lastIndex = reverse ? count - 1 : 0;
     } else {
@@ -3244,6 +3269,11 @@ void ArtifactLayerMenu::Impl::handleCycleShapeCreation(bool reverse)
     case 4: handleCreateShape(ShapeType::Polygon, QStringLiteral("Polygon 1")); return;
     case 5: handleCreateShape(ShapeType::Star, QStringLiteral("Star 1")); return;
     case 6: handleCreateShape(ShapeType::Line, QStringLiteral("Line 1")); return;
+    case 7: handleCreateShape(ShapeType::Arrow, QStringLiteral("Arrow 1")); return;
+    case 8: handleCreateShape(ShapeType::Heart, QStringLiteral("Heart 1")); return;
+    case 9: handleCreateShape(ShapeType::Diamond, QStringLiteral("Diamond 1")); return;
+    case 10: handleCreateShape(ShapeType::Gear, QStringLiteral("Gear 1")); return;
+    case 11: handleCreateShape(ShapeType::Cross, QStringLiteral("Cross 1")); return;
     }
 }
 
@@ -3271,6 +3301,15 @@ void ArtifactLayerMenu::Impl::handleCreateShape(ShapeType type, const QString& n
                     // inheriting the generic shape's square bounds.
                     if (type == ShapeType::Line) {
                         shapeLayer->setSize(240, 1);
+                    } else if (type == ShapeType::Arrow) {
+                        shapeLayer->setStarInnerRadius(0.30f);
+                    } else if (type == ShapeType::Heart) {
+                        shapeLayer->setStarInnerRadius(0.50f);
+                    } else if (type == ShapeType::Gear) {
+                        shapeLayer->setPolygonSides(8);
+                        shapeLayer->setStarInnerRadius(0.70f);
+                    } else if (type == ShapeType::Cross) {
+                        shapeLayer->setStarInnerRadius(0.32f);
                     }
                 }
             }

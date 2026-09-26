@@ -11,6 +11,7 @@ export module Artifact.Test.ShapePath;
 
 import Artifact.Layer.Shape;
 import Shape.Operator;
+import Shape.Path;
 
 namespace Artifact {
 
@@ -94,6 +95,63 @@ export int runShapePathTests()
     const auto edited = layer.shapeContentAt(contentIndex);
     report.check(qFuzzyCompare(edited.transform.position.x(), 123.0),
                  QStringLiteral("content transform property updates the model"));
+
+    const ShapeType complexPresets[] = {
+        ShapeType::Arrow,
+        ShapeType::Heart,
+        ShapeType::Diamond,
+        ShapeType::Gear,
+        ShapeType::Cross,
+    };
+    for (const ShapeType preset : complexPresets) {
+        ArtifactShapeLayer presetLayer;
+        presetLayer.setShapeType(preset);
+        if (preset == ShapeType::Arrow) {
+            presetLayer.setStarInnerRadius(0.22f);
+        } else if (preset == ShapeType::Heart) {
+            presetLayer.setStarInnerRadius(0.25f);
+        } else if (preset == ShapeType::Diamond) {
+            presetLayer.setCornerRadius(14.0f);
+        } else if (preset == ShapeType::Gear) {
+            presetLayer.setPolygonSides(12);
+            presetLayer.setStarInnerRadius(0.68f);
+        } else if (preset == ShapeType::Cross) {
+            presetLayer.setStarInnerRadius(0.36f);
+        }
+        const auto nativePaths = presetLayer.nativeShapePaths();
+        report.check(!nativePaths.empty() && !nativePaths.front().commands().empty(),
+                     QStringLiteral("complex preset %1 produces a native path")
+                         .arg(static_cast<int>(preset)));
+
+        const auto restoredPreset =
+            ArtifactShapeLayer::fromJson(presetLayer.toJson());
+        report.check(restoredPreset && restoredPreset->shapeType() == preset &&
+                         qFuzzyCompare(restoredPreset->starInnerRadius(),
+                                       presetLayer.starInnerRadius()) &&
+                         qFuzzyCompare(restoredPreset->cornerRadius(),
+                                       presetLayer.cornerRadius()) &&
+                         restoredPreset->polygonSides() == presetLayer.polygonSides(),
+                     QStringLiteral("complex preset %1 survives JSON roundtrip")
+                         .arg(static_cast<int>(preset)));
+
+        const QString svg = presetLayer.shapeContentsToSvg();
+        report.check(svg.contains(QStringLiteral("<svg")) &&
+                         svg.contains(QStringLiteral("<path")),
+                     QStringLiteral("complex preset %1 exports as SVG path")
+                         .arg(static_cast<int>(preset)));
+        if (preset == ShapeType::Arrow || preset == ShapeType::Heart) {
+            presetLayer.setStarInnerRadius(
+                preset == ShapeType::Arrow ? 0.48f : 0.75f);
+            report.check(presetLayer.shapeContentsToSvg() != svg,
+                         preset == ShapeType::Arrow
+                             ? QStringLiteral("arrow head length changes exported geometry")
+                             : QStringLiteral("heart curvature changes exported geometry"));
+        } else if (preset == ShapeType::Diamond) {
+            presetLayer.setCornerRadius(0.0f);
+            report.check(presetLayer.shapeContentsToSvg() != svg,
+                         QStringLiteral("diamond corner radius changes exported geometry"));
+        }
+    }
 
     qInfo().noquote() << "[Shape Path Test] failures:" << report.failures;
     return report.failures;

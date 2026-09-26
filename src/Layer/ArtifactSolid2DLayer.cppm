@@ -17,6 +17,7 @@ module Artifact.Layer.Solid2D;
 
 import Artifact.Layer.CloneEffectSupport;
 
+import Artifact.Color.OCIOManager;
 import Artifact.Layers.Abstract._2D;
 import Artifact.Composition.Abstract;
 import Artifact.Render.IRenderer;
@@ -592,12 +593,15 @@ void ArtifactSolid2DLayer::draw(ArtifactIRenderer* renderer)
  const float displayWidth = static_cast<float>(size.width) *
                             static_cast<float>(pixelAspectRatio());
  const QMatrix4x4 baseTransform = getGlobalTransform4x4();
-  const FloatColor gradientStart = animatedSolidGradientColor(
-      this, QStringLiteral("solid.gradientStartColor"),
-      impl_->gradientStartColor());
-  const FloatColor gradientEnd = animatedSolidGradientColor(
-      this, QStringLiteral("solid.gradientEndColor"),
-      impl_->gradientEndColor());
+  const auto* colorManager = ArtifactOCIOManager::instance();
+  const FloatColor gradientStart = colorManager->resolveGeneratedColorForRender(
+      animatedSolidGradientColor(this, QStringLiteral("solid.gradientStartColor"),
+                                 impl_->gradientStartColor()));
+  const FloatColor gradientEnd = colorManager->resolveGeneratedColorForRender(
+      animatedSolidGradientColor(this, QStringLiteral("solid.gradientEndColor"),
+                                 impl_->gradientEndColor()));
+  const FloatColor solidColor =
+      colorManager->resolveGeneratedColorForRender(impl_->color());
   const float gradientAngle = animatedSolidGradientFloat(
       this, QStringLiteral("solid.gradientAngleDegrees"),
       impl_->gradientAngleDegrees());
@@ -613,7 +617,7 @@ void ArtifactSolid2DLayer::draw(ArtifactIRenderer* renderer)
   const float gradientOffset = animatedSolidGradientFloat(
       this, QStringLiteral("solid.gradientOffset"), impl_->gradientOffset());
   drawWithClonerEffect(this, baseTransform,
-      [renderer, size, displayWidth, this, gradientStart, gradientEnd, gradientAngle,
+      [renderer, size, displayWidth, this, gradientStart, gradientEnd, solidColor, gradientAngle,
        gradientReverse, gradientCenterX, gradientCenterY, gradientScale,
        gradientOffset](const QMatrix4x4& transform, float weight) {
    if (impl_->fillType() != ArtifactSolidFillType::Solid) {
@@ -624,8 +628,8 @@ void ArtifactSolid2DLayer::draw(ArtifactIRenderer* renderer)
        gradientScale, gradientOffset, this->opacity() * weight);
    return;
   }
-  const FloatColor src = impl_->color();
-  const FloatColor color(src.r(), src.g(), src.b(), src.a() * this->opacity() * weight);
+  const FloatColor color(solidColor.r(), solidColor.g(), solidColor.b(),
+                         solidColor.a() * this->opacity() * weight);
   renderer->drawSolidRectTransformed(0.0f, 0.0f,
                                      displayWidth,
                                      static_cast<float>(size.height),

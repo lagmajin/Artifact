@@ -38,6 +38,7 @@ module Artifact.Layer.Shape;
 import Artifact.Layers.Abstract._2D;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.CloneEffectSupport;
+import Artifact.Color.OCIOManager;
 import Artifact.Mask.LayerMask;
 import Artifact.Mask.Path;
 import Property.Types;
@@ -1923,6 +1924,112 @@ std::vector<QPointF> buildRoundedRectPoints(float x, float y, float w, float h, 
  return points;
 }
 
+std::vector<QPointF> buildRoundedDiamondPoints(float w, float h,
+                                               float cornerRadius) {
+ const std::array<QPointF, 4> vertices = {
+     QPointF(w * 0.5f, 0.0f), QPointF(w, h * 0.5f),
+     QPointF(w * 0.5f, h), QPointF(0.0f, h * 0.5f)};
+ const float edgeLength = static_cast<float>(QLineF(vertices[0], vertices[1]).length());
+ const float radius = std::clamp(cornerRadius, 0.0f, edgeLength * 0.45f);
+ if (radius <= 0.001f || edgeLength <= 0.001f) {
+  return std::vector<QPointF>(vertices.begin(), vertices.end());
+ }
+ constexpr int curveSegments = 4;
+ std::vector<QPointF> points;
+ points.reserve(vertices.size() * static_cast<size_t>(curveSegments + 1));
+ for (size_t i = 0; i < vertices.size(); ++i) {
+  const QPointF& previous = vertices[(i + vertices.size() - 1) % vertices.size()];
+  const QPointF& vertex = vertices[i];
+  const QPointF& next = vertices[(i + 1) % vertices.size()];
+  const QLineF incoming(vertex, previous);
+  const QLineF outgoing(vertex, next);
+  const QPointF entry = incoming.pointAt(radius / incoming.length());
+  const QPointF exit = outgoing.pointAt(radius / outgoing.length());
+  points.push_back(entry);
+  for (int segment = 1; segment <= curveSegments; ++segment) {
+   const float t = static_cast<float>(segment) /
+                   static_cast<float>(curveSegments);
+   const float oneMinusT = 1.0f - t;
+   points.push_back(entry * (oneMinusT * oneMinusT) +
+                    vertex * (2.0f * oneMinusT * t) + exit * (t * t));
+  }
+ }
+ return points;
+}
+
+std::vector<QPointF> buildComplexPresetPoints(
+    Artifact::ShapeType shapeType, float w, float h, float cornerRadius,
+    int polygonSides, float starInnerRadius) {
+ const float cx = w * 0.5f;
+ const float cy = h * 0.5f;
+ switch (shapeType) {
+ case Artifact::ShapeType::Arrow: {
+  const float headRatio = std::clamp(starInnerRadius, 0.1f, 0.5f);
+  const float headStart = w * (1.0f - headRatio);
+  constexpr float shaftHalfRatio = 0.14f;
+  return {QPointF(0.0f, cy - h * shaftHalfRatio),
+          QPointF(headStart, cy - h * shaftHalfRatio),
+          QPointF(headStart, 0.0f), QPointF(w, cy),
+          QPointF(headStart, h),
+          QPointF(headStart, cy + h * shaftHalfRatio),
+          QPointF(0.0f, cy + h * shaftHalfRatio)};
+ }
+ case Artifact::ShapeType::Heart: {
+  constexpr int segments = 48;
+  const float curvature = std::clamp(starInnerRadius, 0.1f, 0.8f);
+  std::vector<QPointF> points;
+  points.reserve(segments);
+  for (int i = 0; i < segments; ++i) {
+   const float t = static_cast<float>(i) * 2.0f * static_cast<float>(M_PI) /
+                   static_cast<float>(segments);
+   const float s = std::sin(t);
+   const float x = 16.0f * s * s * s;
+   const float y = 13.0f * std::cos(t) - 5.0f * std::cos(2.0f * t) -
+                   2.0f * std::cos(3.0f * t) - std::cos(4.0f * t);
+   const float px = (x + 17.0f) * (w / 34.0f);
+   float py = (12.0f - y) * (h / 29.0f);
+   const float centerDistance = std::abs(px - cx) / std::max(w * 0.22f, 1.0f);
+   const float notchInfluence =
+       std::max(0.0f, 1.0f - centerDistance) *
+       std::max(0.0f, 1.0f - py / std::max(h * 0.55f, 1.0f));
+   py += (curvature - 0.5f) * h * 0.45f * notchInfluence;
+   points.push_back(QPointF(px, py));
+  }
+  return points;
+ }
+ case Artifact::ShapeType::Diamond:
+  return buildRoundedDiamondPoints(w, h, cornerRadius);
+ case Artifact::ShapeType::Gear: {
+  const int teeth = std::clamp(polygonSides, 3, 64);
+  const float outerRadius = std::min(cx, cy);
+  const float innerRadius = outerRadius *
+      std::clamp(starInnerRadius, 0.15f, 0.95f);
+  std::vector<QPointF> points;
+  points.reserve(static_cast<size_t>(teeth * 4));
+  for (int i = 0; i < teeth * 4; ++i) {
+   const float angle = static_cast<float>(i) * 2.0f * static_cast<float>(M_PI) /
+                       static_cast<float>(teeth * 4) - static_cast<float>(M_PI) * 0.5f;
+   const float radius = (i % 4 == 1 || i % 4 == 2) ? outerRadius : innerRadius;
+   points.push_back(QPointF(cx + radius * std::cos(angle),
+                            cy + radius * std::sin(angle)));
+  }
+  return points;
+ }
+ case Artifact::ShapeType::Cross: {
+  const float halfArm = std::min(w, h) *
+      std::clamp(starInnerRadius, 0.1f, 0.45f) * 0.5f;
+  return {QPointF(cx - halfArm, 0.0f), QPointF(cx + halfArm, 0.0f),
+          QPointF(cx + halfArm, cy - halfArm), QPointF(w, cy - halfArm),
+          QPointF(w, cy + halfArm), QPointF(cx + halfArm, cy + halfArm),
+          QPointF(cx + halfArm, h), QPointF(cx - halfArm, h),
+          QPointF(cx - halfArm, cy + halfArm), QPointF(0.0f, cy + halfArm),
+          QPointF(0.0f, cy - halfArm), QPointF(cx - halfArm, cy - halfArm)};
+ }
+ default:
+  return {};
+ }
+}
+
 std::vector<QPointF> buildRenderablePoints(Artifact::ShapeType shapeType,
                                            int width, int height,
                                            float cornerRadius, int starPoints,
@@ -1993,6 +2100,13 @@ std::vector<QPointF> buildRenderablePoints(Artifact::ShapeType shapeType,
   }
   return points;
  }
+ case Artifact::ShapeType::Arrow:
+ case Artifact::ShapeType::Heart:
+ case Artifact::ShapeType::Diamond:
+ case Artifact::ShapeType::Gear:
+ case Artifact::ShapeType::Cross:
+  return buildComplexPresetPoints(shapeType, w, h, cornerRadius, polygonSides,
+                                  starInnerRadius);
  }
  return {};
 }
@@ -2077,6 +2191,15 @@ static ArtifactCore::ShapePath buildShapePath(Artifact::ShapeType shapeType,
    path.setRectangle(QRectF(left, top, side, side));
    break;
   }
+
+  case Artifact::ShapeType::Arrow:
+  case Artifact::ShapeType::Heart:
+  case Artifact::ShapeType::Diamond:
+  case Artifact::ShapeType::Gear:
+  case Artifact::ShapeType::Cross:
+   path.setPolygon(buildComplexPresetPoints(shapeType, w, h, cornerRadius, polygonSides,
+                                             starInnerRadius), true);
+   break;
  }
 
  return path;
@@ -2091,6 +2214,11 @@ QString shapeTypeName(int type) {
   case 4: return QStringLiteral("Line");
   case 5: return QStringLiteral("Triangle");
   case 6: return QStringLiteral("Square");
+  case 7: return QStringLiteral("Arrow");
+  case 8: return QStringLiteral("Heart");
+  case 9: return QStringLiteral("Diamond");
+  case 10: return QStringLiteral("Gear");
+  case 11: return QStringLiteral("Cross");
  }
  return QStringLiteral("Rect");
 }
@@ -2550,7 +2678,7 @@ bool ArtifactShapeLayer::isShapeLayer() const { return true; }
 
 void ArtifactShapeLayer::setShapeType(Artifact::ShapeType type) {
   const int raw = static_cast<int>(type);
-  if (raw < static_cast<int>(Artifact::ShapeType::Rect) || raw > static_cast<int>(Artifact::ShapeType::Square)) {
+  if (raw < static_cast<int>(Artifact::ShapeType::Rect) || raw > static_cast<int>(Artifact::ShapeType::Cross)) {
    impl_->shapeType_ = Artifact::ShapeType::Rect;
   } else {
    impl_->shapeType_ = type;
@@ -3620,7 +3748,7 @@ static Artifact::ShapeContent normalizedShapeContent(const Artifact::ShapeConten
   }
   const int rawType = static_cast<int>(g.type);
   g.type = (rawType < static_cast<int>(Artifact::ShapeType::Rect) ||
-            rawType > static_cast<int>(Artifact::ShapeType::Square))
+            rawType > static_cast<int>(Artifact::ShapeType::Cross))
       ? Artifact::ShapeType::Rect
       : g.type;
   g.cornerRadius = std::isfinite(g.cornerRadius)
@@ -4852,23 +4980,59 @@ static void paintGpuPaintItems(Artifact::ArtifactIRenderer* renderer,
     return;
   }
   const double tol = (std::isfinite(tolerance) && tolerance > 0.0) ? tolerance : 0.25;
+  const auto* colorManager = Artifact::ArtifactOCIOManager::instance();
+  const bool convertGeneratedColors = colorManager->generatedColorPolicy() ==
+      Artifact::GeneratedColorPolicy::ConvertToWorkingSpace;
   for (const auto& item : items) {
+    Artifact::ShapeContentFill resolvedFill;
+    copyGpuFillFields(resolvedFill, item.fill);
+    ArtifactCore::FloatColor resolvedStrokeColor = item.stroke.color;
+    ArtifactCore::FloatColor resolvedStrokeGradientStart =
+        item.stroke.gradientStart;
+    ArtifactCore::FloatColor resolvedStrokeGradientEnd =
+        item.stroke.gradientEnd;
+    std::array<Artifact::ShapeGradientStop, kMaxGradientStops> resolvedStops;
+    std::span<const Artifact::ShapeGradientStop> activeStops = item.gradientStops;
+    if (convertGeneratedColors) {
+      resolvedFill.color = colorManager->generatedSrgbToWorkingColor(
+          resolvedFill.color);
+      resolvedFill.gradientStart = colorManager->generatedSrgbToWorkingColor(
+          resolvedFill.gradientStart);
+      resolvedFill.gradientEnd = colorManager->generatedSrgbToWorkingColor(
+          resolvedFill.gradientEnd);
+      resolvedStrokeColor = colorManager->generatedSrgbToWorkingColor(
+          resolvedStrokeColor);
+      resolvedStrokeGradientStart = colorManager->generatedSrgbToWorkingColor(
+          resolvedStrokeGradientStart);
+      resolvedStrokeGradientEnd = colorManager->generatedSrgbToWorkingColor(
+          resolvedStrokeGradientEnd);
+      const size_t stopCount = std::min(item.gradientStops.size(),
+                                        resolvedStops.size());
+      for (size_t stopIndex = 0; stopIndex < stopCount; ++stopIndex) {
+        resolvedStops[stopIndex] = item.gradientStops[stopIndex];
+        resolvedStops[stopIndex].color =
+            colorManager->generatedSrgbToWorkingColor(
+                resolvedStops[stopIndex].color);
+      }
+      activeStops = std::span<const Artifact::ShapeGradientStop>(
+          resolvedStops.data(), stopCount);
+    }
     const float opacity = baseOpacity * item.itemOpacity;
     const bool hasStroke = item.stroke.enabled && item.stroke.width > 0.0f;
-    if (opacity <= 0.0f || (!item.fill.enabled && !hasStroke)) {
+    if (opacity <= 0.0f || (!resolvedFill.enabled && !hasStroke)) {
       continue;
     }
     const float gradW = item.gradientW > 0.0f ? item.gradientW : 1.0f;
     const float gradH = item.gradientH > 0.0f ? item.gradientH : 1.0f;
-    if (item.fill.enabled) {
+    if (resolvedFill.enabled) {
       for (const auto& path : item.fillPaths) {
         const auto triangles = path.triangulate(tol);
         for (const auto& tri : triangles) {
           const double cx = (tri.p0.x() + tri.p1.x() + tri.p2.x()) / 3.0;
           const double cy = (tri.p0.y() + tri.p1.y() + tri.p2.y()) / 3.0;
           ArtifactCore::FloatColor c = contentGradientColorAt(
-              item.fill, static_cast<float>(cx), static_cast<float>(cy), gradW, gradH,
-              item.gradientStops);
+              resolvedFill, static_cast<float>(cx), static_cast<float>(cy), gradW, gradH,
+              activeStops);
           c = ArtifactCore::FloatColor(c.r(), c.g(), c.b(), c.a() * opacity);
           const QPointF p0 = mapDeformerPoint(transform, tri.p0, deformerContext, pointMapper, layer);
           const QPointF p1 = mapDeformerPoint(transform, tri.p1, deformerContext, pointMapper, layer);
@@ -4894,14 +5058,14 @@ static void paintGpuPaintItems(Artifact::ArtifactIRenderer* renderer,
       const bool useTaper = hasTaper && item.stroke.dashPattern.empty();
       const float thickness = std::max(1.0f, item.stroke.width * renderScale);
       const ArtifactCore::FloatColor baseStroke = ArtifactCore::FloatColor(
-          item.stroke.color.r(), item.stroke.color.g(), item.stroke.color.b(),
-          item.stroke.color.a() * opacity);
+          resolvedStrokeColor.r(), resolvedStrokeColor.g(), resolvedStrokeColor.b(),
+          resolvedStrokeColor.a() * opacity);
       const ArtifactCore::FloatColor gradStrokeStart = ArtifactCore::FloatColor(
-          item.stroke.gradientStart.r(), item.stroke.gradientStart.g(),
-          item.stroke.gradientStart.b(), item.stroke.gradientStart.a() * opacity);
+          resolvedStrokeGradientStart.r(), resolvedStrokeGradientStart.g(),
+          resolvedStrokeGradientStart.b(), resolvedStrokeGradientStart.a() * opacity);
       const ArtifactCore::FloatColor gradStrokeEnd = ArtifactCore::FloatColor(
-          item.stroke.gradientEnd.r(), item.stroke.gradientEnd.g(),
-          item.stroke.gradientEnd.b(), item.stroke.gradientEnd.a() * opacity);
+          resolvedStrokeGradientEnd.r(), resolvedStrokeGradientEnd.g(),
+          resolvedStrokeGradientEnd.b(), resolvedStrokeGradientEnd.a() * opacity);
       for (const auto& strokePath : item.strokePaths) {
         const auto subpaths = strokePath.flattenSubpaths(tol);
         for (const auto& segments : subpaths) {
@@ -5109,10 +5273,11 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer,
     }
    }
    if (!processedOperatorPaths.empty()) {
-   const FloatColor fill(impl->fillColor_.r(), impl->fillColor_.g(),
-                         impl->fillColor_.b(), impl->fillColor_.a());
-   const FloatColor stroke(impl->strokeColor_.r(), impl->strokeColor_.g(),
-                           impl->strokeColor_.b(), impl->strokeColor_.a());
+   const auto* colorManager = ArtifactOCIOManager::instance();
+   const FloatColor fill = colorManager->resolveGeneratedColorForRender(
+       impl->fillColor_);
+   const FloatColor stroke = colorManager->resolveGeneratedColorForRender(
+       impl->strokeColor_);
    for (const auto& lensPass : twoPointFiveDRenderPasses(baseTransform)) {
    drawWithClonerEffect(
        this, lensPass.transform,
@@ -5272,16 +5437,22 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer,
                        opacity() * contentFieldWeight);
    return;
   }
+  const auto* colorManager = ArtifactOCIOManager::instance();
+  const FloatColor renderFillColor =
+      colorManager->resolveGeneratedColorForRender(impl->fillColor_);
+  const FloatColor renderStrokeColor =
+      colorManager->resolveGeneratedColorForRender(impl->strokeColor_);
   for (const auto& lensPass : twoPointFiveDRenderPasses(baseTransform)) {
   drawWithClonerEffect(this, lensPass.transform,
                        [renderer, impl, this, activeDeformerContext, pointMapper, contentFieldWeight, geomDims,
+                        renderFillColor, renderStrokeColor,
                         pathAnimated, &evaluatedPathVertices, lensOpacity = lensPass.opacity](const QMatrix4x4& transform, float weight) {
     const auto fill = FloatColor(
-        impl->fillColor_.r(), impl->fillColor_.g(), impl->fillColor_.b(),
-        impl->fillColor_.a() * this->opacity() * contentFieldWeight * weight * lensOpacity);
+        renderFillColor.r(), renderFillColor.g(), renderFillColor.b(),
+        renderFillColor.a() * this->opacity() * contentFieldWeight * weight * lensOpacity);
     const auto stroke = FloatColor(
-        impl->strokeColor_.r(), impl->strokeColor_.g(), impl->strokeColor_.b(),
-        impl->strokeColor_.a() * this->opacity() * contentFieldWeight * weight * lensOpacity);
+        renderStrokeColor.r(), renderStrokeColor.g(), renderStrokeColor.b(),
+        renderStrokeColor.a() * this->opacity() * contentFieldWeight * weight * lensOpacity);
 
     // A soft-body grid owns the rectangle's local vertices.  Keep all other
     // shape types on their existing path until they have a matching topology
@@ -5382,10 +5553,11 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactShapeLayer::getLayerPropertyGro
                                static_cast<int>(impl_->shapeType_),
                                -220,
                                false);
- shapeTypeProp->setHardRange(0, 6);
+ shapeTypeProp->setHardRange(0, 11);
  shapeTypeProp->setDisplayLabel(QStringLiteral("Type"));
  QString shapeTypeTooltip = QStringLiteral(
-     "0=Rect, 1=Ellipse, 2=Star, 3=Polygon, 4=Line, 5=Triangle, 6=Square");
+     "0=Rect, 1=Ellipse, 2=Star, 3=Polygon, 4=Line, 5=Triangle, 6=Square, "
+     "7=Arrow, 8=Heart, 9=Diamond, 10=Gear, 11=Cross");
  shapeTypeTooltip += QStringLiteral(" (current: ");
  shapeTypeTooltip += shapeTypeName(static_cast<int>(impl_->shapeType_));
  shapeTypeTooltip += QStringLiteral(")");
@@ -5676,27 +5848,63 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactShapeLayer::getLayerPropertyGro
  cornerProp->setDisplayLabel(QStringLiteral("Corner Radius"));
  cornerProp->setSoftRange(0.0, 256.0);
  cornerProp->setHardRange(0.0, 100000.0);
+ if (impl_->shapeType_ == ShapeType::Rect ||
+     impl_->shapeType_ == ShapeType::Square ||
+     impl_->shapeType_ == ShapeType::Diamond) {
   paramsGroup.addProperty(cornerProp);
+ }
  auto pointsProp = makeProp(QStringLiteral("shape.starPoints"),
                             ArtifactCore::PropertyType::Integer,
                             impl_->starPoints_, -199);
  pointsProp->setDisplayLabel(QStringLiteral("Points"));
  pointsProp->setHardRange(3, 2048);
+ if (impl_->shapeType_ == ShapeType::Star) {
   paramsGroup.addProperty(pointsProp);
+ }
 
  auto innerProp = makeProp(QStringLiteral("shape.starInnerRadius"),
                            ArtifactCore::PropertyType::Float,
                            impl_->starInnerRadius_, -198);
- innerProp->setDisplayLabel(QStringLiteral("Inner Radius"));
- innerProp->setSoftRange(0.0, 1.0);
- innerProp->setHardRange(0.0, 1.0);
+ innerProp->setDisplayLabel(
+     impl_->shapeType_ == ShapeType::Arrow ? QStringLiteral("Head Length") :
+     impl_->shapeType_ == ShapeType::Heart ? QStringLiteral("Curvature") :
+     impl_->shapeType_ == ShapeType::Gear ? QStringLiteral("Root Radius") :
+     impl_->shapeType_ == ShapeType::Cross ? QStringLiteral("Arm Width") :
+                                            QStringLiteral("Inner Radius"));
+ innerProp->setSoftRange(
+     impl_->shapeType_ == ShapeType::Arrow ? 0.1 :
+     impl_->shapeType_ == ShapeType::Heart ? 0.1 :
+     impl_->shapeType_ == ShapeType::Gear ? 0.15 :
+     impl_->shapeType_ == ShapeType::Cross ? 0.1 : 0.0,
+     impl_->shapeType_ == ShapeType::Arrow ? 0.5 :
+     impl_->shapeType_ == ShapeType::Heart ? 0.8 :
+     impl_->shapeType_ == ShapeType::Gear ? 0.95 :
+     impl_->shapeType_ == ShapeType::Cross ? 0.45 : 1.0);
+ innerProp->setHardRange(
+     impl_->shapeType_ == ShapeType::Arrow ? 0.1 :
+     impl_->shapeType_ == ShapeType::Heart ? 0.1 :
+     impl_->shapeType_ == ShapeType::Gear ? 0.15 :
+     impl_->shapeType_ == ShapeType::Cross ? 0.1 : 0.0,
+     impl_->shapeType_ == ShapeType::Arrow ? 0.5 :
+     impl_->shapeType_ == ShapeType::Heart ? 0.8 :
+     impl_->shapeType_ == ShapeType::Gear ? 0.95 :
+     impl_->shapeType_ == ShapeType::Cross ? 0.45 : 1.0);
+ if (impl_->shapeType_ == ShapeType::Star ||
+     impl_->shapeType_ == ShapeType::Arrow ||
+     impl_->shapeType_ == ShapeType::Heart ||
+     impl_->shapeType_ == ShapeType::Gear ||
+     impl_->shapeType_ == ShapeType::Cross) {
   paramsGroup.addProperty(innerProp);
+ }
  auto sidesProp = makeProp(QStringLiteral("shape.polygonSides"),
                            ArtifactCore::PropertyType::Integer,
                            impl_->polygonSides_, -197);
  sidesProp->setDisplayLabel(QStringLiteral("Sides"));
  sidesProp->setHardRange(3, 100000);
+ if (impl_->shapeType_ == ShapeType::Polygon ||
+     impl_->shapeType_ == ShapeType::Gear) {
   paramsGroup.addProperty(sidesProp);
+ }
  auto fillRuleProp = makeProp(QStringLiteral("shape.customPathFillRule"),
                               ArtifactCore::PropertyType::Integer,
                               static_cast<int>(impl_->customPathFillRule_), -196);

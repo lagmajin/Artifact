@@ -380,6 +380,16 @@ void ArtifactToolOptionsBar::Impl::createFrames(QHBoxLayout *parentLayout) {
                             static_cast<int>(Artifact::ShapeType::Triangle));
     shapeTypeCombo->addItem(QStringLiteral("Square"),
                             static_cast<int>(Artifact::ShapeType::Square));
+    shapeTypeCombo->addItem(QStringLiteral("Arrow"),
+                            static_cast<int>(Artifact::ShapeType::Arrow));
+    shapeTypeCombo->addItem(QStringLiteral("Heart"),
+                            static_cast<int>(Artifact::ShapeType::Heart));
+    shapeTypeCombo->addItem(QStringLiteral("Diamond"),
+                            static_cast<int>(Artifact::ShapeType::Diamond));
+    shapeTypeCombo->addItem(QStringLiteral("Gear"),
+                            static_cast<int>(Artifact::ShapeType::Gear));
+    shapeTypeCombo->addItem(QStringLiteral("Cross"),
+                            static_cast<int>(Artifact::ShapeType::Cross));
     shapeTypeCombo->setAccessibleName(QStringLiteral("Shape type"));
     shapeTypeCombo->setToolTip(
         QStringLiteral("Selected shape type and default type for new shapes"));
@@ -387,7 +397,7 @@ void ArtifactToolOptionsBar::Impl::createFrames(QHBoxLayout *parentLayout) {
         QStringLiteral("shape/createType"),
         static_cast<int>(Artifact::ShapeType::Rect)).toInt();
     if (savedCreateType >= static_cast<int>(Artifact::ShapeType::Rect) &&
-        savedCreateType <= static_cast<int>(Artifact::ShapeType::Square)) {
+        savedCreateType <= static_cast<int>(Artifact::ShapeType::Cross)) {
       shapeTypeCombo->setCurrentIndex(shapeTypeCombo->findData(savedCreateType));
     }
     ly->addWidget(shapeTypeCombo);
@@ -1525,10 +1535,13 @@ void ArtifactToolOptionsBar::setShapeOptions(
   int secondaryValue = 0;
   bool secondaryEnabled = false;
   bool secondaryPercent = false;
+  int secondaryMinimum = 0;
+  int secondaryMaximum = 100;
 
   switch (static_cast<Artifact::ShapeType>(shapeType)) {
   case Artifact::ShapeType::Rect:
   case Artifact::ShapeType::Square:
+  case Artifact::ShapeType::Diamond:
     primaryLabel = QStringLiteral("角丸");
     primaryValue = cornerRadius;
     primaryEnabled = true;
@@ -1547,6 +1560,41 @@ void ArtifactToolOptionsBar::setShapeOptions(
     primaryValue = polygonSides;
     primaryEnabled = true;
     break;
+  case Artifact::ShapeType::Gear:
+    primaryLabel = QStringLiteral("歯数");
+    primaryValue = polygonSides;
+    primaryEnabled = true;
+    secondaryLabel = QStringLiteral("谷径");
+    secondaryValue = starInnerRadiusPercent;
+    secondaryEnabled = true;
+    secondaryPercent = true;
+    secondaryMinimum = 15;
+    secondaryMaximum = 95;
+    break;
+  case Artifact::ShapeType::Arrow:
+    secondaryLabel = QStringLiteral("矢頭長");
+    secondaryValue = starInnerRadiusPercent;
+    secondaryEnabled = true;
+    secondaryPercent = true;
+    secondaryMinimum = 10;
+    secondaryMaximum = 50;
+    break;
+  case Artifact::ShapeType::Heart:
+    secondaryLabel = QStringLiteral("くぼみ");
+    secondaryValue = starInnerRadiusPercent;
+    secondaryEnabled = true;
+    secondaryPercent = true;
+    secondaryMinimum = 10;
+    secondaryMaximum = 80;
+    break;
+  case Artifact::ShapeType::Cross:
+    secondaryLabel = QStringLiteral("腕幅");
+    secondaryValue = starInnerRadiusPercent;
+    secondaryEnabled = true;
+    secondaryPercent = true;
+    secondaryMinimum = 10;
+    secondaryMaximum = 45;
+    break;
   default:
     primaryLabel = QStringLiteral("値");
     break;
@@ -1560,10 +1608,12 @@ void ArtifactToolOptionsBar::setShapeOptions(
     QSignalBlocker blocker(*impl_->shapePrimarySpin);
     impl_->shapePrimarySpin->setSuffix(QString());
     impl_->shapePrimarySpin->setRange(
-        primaryLabel == QStringLiteral("点数") || primaryLabel == QStringLiteral("辺数")
+        primaryLabel == QStringLiteral("点数") || primaryLabel == QStringLiteral("辺数") ||
+                primaryLabel == QStringLiteral("歯数")
             ? 3
             : 0,
-        primaryLabel == QStringLiteral("点数") || primaryLabel == QStringLiteral("辺数")
+        primaryLabel == QStringLiteral("点数") || primaryLabel == QStringLiteral("辺数") ||
+                primaryLabel == QStringLiteral("歯数")
             ? 64
             : 4096);
     impl_->shapePrimarySpin->setValue(std::max(0, primaryValue));
@@ -1577,8 +1627,9 @@ void ArtifactToolOptionsBar::setShapeOptions(
   if (impl_->shapeSecondarySpin) {
     QSignalBlocker blocker(*impl_->shapeSecondarySpin);
     impl_->shapeSecondarySpin->setSuffix(secondaryPercent ? "%" : QString());
-    impl_->shapeSecondarySpin->setRange(secondaryPercent ? 0 : 0,
-                                        secondaryPercent ? 100 : 4096);
+    impl_->shapeSecondarySpin->setRange(
+        secondaryPercent ? secondaryMinimum : 0,
+        secondaryPercent ? secondaryMaximum : 4096);
     impl_->shapeSecondarySpin->setValue(std::max(0, secondaryValue));
     impl_->shapeSecondarySpin->setEnabled(enabled && secondaryEnabled);
   }
