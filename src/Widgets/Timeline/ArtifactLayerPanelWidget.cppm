@@ -332,6 +332,48 @@ bool applyLayerPropertyValues(
   return applyLayerPanelCommand(std::move(macro));
 }
 
+bool applyTextAnimatorStackMutationWithUndo(
+    const ArtifactAbstractLayerPtr& layer, const QString& commandLabel,
+    const std::function<bool(ArtifactTextLayer&)>& mutation)
+{
+  const auto textLayer = ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer);
+  if (!textLayer || !mutation) {
+    return false;
+  }
+
+  auto* manager = UndoManager::instance();
+  if (manager && !manager->areLayerMutationsAllowed(
+                     QStringList{textLayer->id().toQString()})) {
+    return false;
+  }
+
+  const auto beforeStack = textLayer->textAnimatorStackSnapshot();
+  if (!mutation(*textLayer)) {
+    return false;
+  }
+  const auto afterStack = textLayer->textAnimatorStackSnapshot();
+  if (afterStack == beforeStack) {
+    return false;
+  }
+
+  if (manager &&
+      !manager->push(std::make_unique<SetTextAnimatorStackCommand>(
+          textLayer, beforeStack, afterStack, commandLabel))) {
+    textLayer->restoreTextAnimatorStack(beforeStack);
+    return false;
+  }
+
+  textLayer->setDirty(LayerDirtyFlag::Property);
+  textLayer->changed();
+  auto* composition = static_cast<ArtifactAbstractComposition*>(
+      textLayer->composition());
+  ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+      LayerChangedEvent{composition ? composition->id().toString() : QString{},
+                        textLayer->id().toString(),
+                        LayerChangedEvent::ChangeType::Modified});
+  return true;
+}
+
 void commitTimelinePropertyValue(const ArtifactAbstractLayerPtr& layer,
                                  const QString& path, const QString& label,
                                  const ArtifactCompositionPtr& comp,
@@ -1215,8 +1257,7 @@ namespace {
    QSet<QString> seenPropertyNames;
 
    for (const auto& group : layer->getLayerPropertyGroups()) {
-    if (ArtifactTimelineKeyframeModel::shouldHideTimelinePropertyGroup(
-            group.name())) {
+    if (ArtifactTimelineKeyframeModel::shouldHideTimelinePropertyGroup(group)) {
      continue;
     }
     for (const auto& property : group.sortedProperties()) {
@@ -1248,8 +1289,7 @@ namespace {
    std::vector<ArtifactCore::PropertyGroup> result;
    result.reserve(groups.size());
    for (const auto& group : groups) {
-    if (ArtifactTimelineKeyframeModel::shouldHideTimelinePropertyGroup(
-            group.name())) {
+    if (ArtifactTimelineKeyframeModel::shouldHideTimelinePropertyGroup(group)) {
      continue;
     }
     if (group.propertyCount() == 0) {
@@ -2969,8 +3009,7 @@ public:
          } else {
            const auto groups = l->getLayerPropertyGroups();
            for (const auto& group : groups) {
-             if (ArtifactTimelineKeyframeModel::shouldHideTimelinePropertyGroup(
-                     group.name())) {
+             if (ArtifactTimelineKeyframeModel::shouldHideTimelinePropertyGroup(group)) {
                continue;
              }
              groupNames.push_back(group.name());
@@ -5318,25 +5357,73 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     }
     if (layer->className().toQString() == QStringLiteral("ArtifactTextLayer")) {
       QMenu* textAnimatorMenu = menu.addMenu(tt("layer_panel.menu_text_animator", "Text Animator"));
-      const std::array<std::pair<const char*, int>, 7> presets = {{
+      QMenu* animateMenu = textAnimatorMenu->addMenu(
+          tt("property.animator.animate", "Animate"));
+      struct AnimatorPropertyMenuEntry {
+        const char* translationKey;
+        const char* fallbackLabel;
+        const char* propertyId;
+      };
+      const AnimatorPropertyMenuEntry animatorProperties[] = {
+          {"property.animator.position", "Position", "position"},
+          {"property.animator.scale", "Scale", "scale"},
+          {"property.animator.rotation", "Rotation", "rotation"},
+          {"property.animator.opacity", "Opacity", "opacity"},
+          {"property.animator.fill_color", "Fill Color", "fillColor"},
+          {"property.animator.stroke_color", "Stroke Color", "strokeColor"},
+          {"property.animator.tracking", "Tracking", "tracking"},
+          {"property.animator.skew", "Skew", "skew"},
+          {"property.animator.blur", "Blur", "blur"}};
+      for (const auto& property : animatorProperties) {
+        const QString propertyLabel =
+            tt(property.translationKey, property.fallbackLabel);
+        const QString propertyId = QString::fromLatin1(property.propertyId);
+        animateMenu->addAction(
+            propertyLabel,
+            [this, layer, propertyId, propertyLabel]() {
+              if (applyTextAnimatorStackMutationWithUndo(
+                      layer,
+                      QStringLiteral("Add Text Animator %1")
+                          .arg(propertyLabel),
+                      [propertyId](ArtifactTextLayer& textLayer) {
+                        return textLayer.addAnimatorProperty(propertyId);
+                      })) {
+                updateLayout();
+              }
+            });
+      }
+      textAnimatorMenu->addSeparator();
+      struct AnimatorPresetMenuEntry {
+        const char* label;
+        int presetId;
+      };
+      const AnimatorPresetMenuEntry presets[] = {
           {"Typewriter", 1}, {"Slide Up", 2}, {"Scale In", 3},
           {"Rotation In", 4}, {"Tracking Fade", 5},
-          {"Wiggly Position", 6}, {"Blur Reveal", 7}}};
-      for (const auto& [label, presetId] : presets) {
-        textAnimatorMenu->addAction(QString::fromLatin1(label), [this, layer, presetId]() {
-          if (!applyLayerPropertyValues(
-                  layer, QStringLiteral("Set Text Animator Preset"),
-                  {{QStringLiteral("text.animatorPreset"), QVariant(presetId)}})) {
-            return;
-          }
-          updateLayout();
-        });
+          {"Wiggly Position", 6}, {"Blur Reveal", 7}};
+      for (const auto& preset : presets) {
+        textAnimatorMenu->addAction(
+            QString::fromLatin1(preset.label),
+            [this, layer, presetId = preset.presetId]() {
+              if (!applyTextAnimatorStackMutationWithUndo(
+                      layer, QStringLiteral("Set Text Animator Preset"),
+                      [presetId](ArtifactTextLayer& textLayer) {
+                        return textLayer.setLayerPropertyValue(
+                            QStringLiteral("text.animatorPreset"), presetId);
+                      })) {
+                return;
+              }
+              updateLayout();
+            });
       }
       textAnimatorMenu->addSeparator();
       textAnimatorMenu->addAction(tt("layer_panel.menu_animator_clear", "Clear Animators"), [this, layer]() {
-        if (applyLayerPropertyValues(
+        if (applyTextAnimatorStackMutationWithUndo(
                 layer, QStringLiteral("Clear Text Animators"),
-                {{QStringLiteral("text.animatorPreset"), QVariant(0)}})) {
+                [](ArtifactTextLayer& textLayer) {
+                  return textLayer.setLayerPropertyValue(
+                      QStringLiteral("text.animatorPreset"), 0);
+                })) {
           updateLayout();
         }
       });

@@ -182,6 +182,11 @@ public:
      float paragraphSpacing() const;
 
      void addAnimator();
+     // Append one AE-style animator property with a visible, editable default
+     // amount. Supported ids: position, scale, rotation, opacity, fillColor,
+     // strokeColor, tracking, skew, blur.
+     bool addAnimatorProperty(const QString& propertyId);
+     bool addAnimatorPreset(int presetId);
      void removeAnimator(int index);
      void setAnimatorCount(int count);
      int animatorCount() const;

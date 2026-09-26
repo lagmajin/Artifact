@@ -69,6 +69,7 @@ module;
 module Artifact.Layer.Text;
 
 import Artifact.Layer.CloneEffectSupport;
+import Artifact.Color.OCIOManager;
 
 import Artifact.Layers.Abstract._2D;
 import Artifact.Composition.Abstract;
@@ -273,6 +274,31 @@ RationalTime effectiveTextTimelineTime(const ArtifactTextLayer *layer) {
 }
 
 using ResolvedTextAnimatorStack = std::vector<AnimatorSelectorSet>;
+
+void convertAnimatorStackGeneratedColorsForGpu(
+    ResolvedTextAnimatorStack &stack) {
+  const auto *colorManager = ArtifactOCIOManager::instance();
+  if (colorManager->generatedColorPolicy() !=
+      GeneratedColorPolicy::ConvertToWorkingSpace) {
+    return;
+  }
+  for (auto &animator : stack) {
+    if (animator.properties.colorEnabled) {
+      const auto &source = animator.properties.fillColor;
+      const FloatColor converted = colorManager->generatedSrgbToWorkingColor(
+          FloatColor(source.r(), source.g(), source.b(), source.a()));
+      animator.properties.fillColor = FloatRGBA(
+          converted.r(), converted.g(), converted.b(), converted.a());
+    }
+    if (animator.properties.strokeEnabled) {
+      const auto &source = animator.properties.strokeColor;
+      const FloatColor converted = colorManager->generatedSrgbToWorkingColor(
+          FloatColor(source.r(), source.g(), source.b(), source.a()));
+      animator.properties.strokeColor = FloatRGBA(
+          converted.r(), converted.g(), converted.b(), converted.a());
+    }
+  }
+}
 
 ResolvedTextAnimatorStack resolvedTextAnimatorStackAtTime(
     const ArtifactTextLayer *layer,
@@ -2280,6 +2306,69 @@ void ArtifactTextLayer::addAnimator() {
   markDirty();
 }
 
+bool ArtifactTextLayer::addAnimatorProperty(const QString& propertyId) {
+  if (animatorCount() >= 16) {
+    return false;
+  }
+
+  const QString id = propertyId.trimmed();
+  TextAnimatorState animator = defaultTextAnimatorState(animatorCount());
+  if (id == QStringLiteral("position")) {
+    animator.name = QStringLiteral("Position");
+    animator.properties.position = QPointF(0.0, 72.0);
+  } else if (id == QStringLiteral("scale")) {
+    animator.name = QStringLiteral("Scale");
+    animator.properties.scale = 0.0f;
+  } else if (id == QStringLiteral("rotation")) {
+    animator.name = QStringLiteral("Rotation");
+    animator.properties.rotation = 35.0f;
+  } else if (id == QStringLiteral("opacity")) {
+    animator.name = QStringLiteral("Opacity");
+    animator.properties.opacity = 0.0f;
+  } else if (id == QStringLiteral("fillColor")) {
+    animator.name = QStringLiteral("Fill Color");
+    animator.properties.colorEnabled = true;
+    animator.properties.fillColor = FloatRGBA(1.0f, 0.0f, 0.0f, 1.0f);
+  } else if (id == QStringLiteral("strokeColor")) {
+    animator.name = QStringLiteral("Stroke Color");
+    animator.properties.strokeEnabled = true;
+    animator.properties.strokeColor = FloatRGBA(1.0f, 0.0f, 0.0f, 1.0f);
+    animator.properties.strokeWidth = 2.0f;
+  } else if (id == QStringLiteral("tracking")) {
+    animator.name = QStringLiteral("Tracking");
+    animator.properties.tracking = 24.0f;
+  } else if (id == QStringLiteral("skew")) {
+    animator.name = QStringLiteral("Skew");
+    animator.properties.skew = 20.0f;
+  } else if (id == QStringLiteral("blur")) {
+    animator.name = QStringLiteral("Blur");
+    animator.properties.blur = 10.0f;
+  } else {
+    return false;
+  }
+
+  impl_->animators_.push_back(std::move(animator));
+  markDirty();
+  return true;
+}
+
+bool ArtifactTextLayer::addAnimatorPreset(const int presetId) {
+  if (animatorCount() >= 16) {
+    return false;
+  }
+  const auto presetAnimators = buildTextAnimatorPreset(presetId);
+  if (presetAnimators.empty()) {
+    return false;
+  }
+  impl_->animators_.push_back(presetAnimators.front());
+  impl_->animators_.back().name =
+      QStringLiteral("%1 %2")
+          .arg(presetAnimators.front().name)
+          .arg(animatorCount());
+  markDirty();
+  return true;
+}
+
 void ArtifactTextLayer::removeAnimator(const int index) {
   if (index < 0 || index >= animatorCount()) {
     return;
@@ -3053,15 +3142,16 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
     }
 
     const QMatrix4x4 baseTransform = getGlobalTransform4x4();
-    const auto fillColor = FloatColor(
+    const auto* colorManager = ArtifactOCIOManager::instance();
+    const auto fillColor = colorManager->resolveGeneratedColorForRender(FloatColor(
         impl_->textStyle_.fillColor.r(), impl_->textStyle_.fillColor.g(),
-        impl_->textStyle_.fillColor.b(), impl_->textStyle_.fillColor.a());
-    const auto strokeColor = FloatColor(
+        impl_->textStyle_.fillColor.b(), impl_->textStyle_.fillColor.a()));
+    const auto strokeColor = colorManager->resolveGeneratedColorForRender(FloatColor(
         impl_->textStyle_.strokeColor.r(), impl_->textStyle_.strokeColor.g(),
-        impl_->textStyle_.strokeColor.b(), impl_->textStyle_.strokeColor.a());
-    const auto shadowColor = FloatColor(
+        impl_->textStyle_.strokeColor.b(), impl_->textStyle_.strokeColor.a()));
+    const auto shadowColor = colorManager->resolveGeneratedColorForRender(FloatColor(
         impl_->textStyle_.shadowColor.r(), impl_->textStyle_.shadowColor.g(),
-        impl_->textStyle_.shadowColor.b(), impl_->textStyle_.shadowColor.a());
+        impl_->textStyle_.shadowColor.b(), impl_->textStyle_.shadowColor.a()));
 
     if (cachedGlyphGpuText && !impl_->glyphs_.empty()) {
       impl_->renderPath_ = QStringLiteral("gpu-text-cached-glyphs");
@@ -3099,15 +3189,16 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
     const auto size = sourceSize();
     if (!impl_->glyphs_.empty() && size.width > 0 && size.height > 0) {
       impl_->renderPath_ = QStringLiteral("gpu-glyph");
-      const FloatColor fillColor(
+      const auto* colorManager = ArtifactOCIOManager::instance();
+      const FloatColor fillColor = colorManager->resolveGeneratedColorForRender(FloatColor(
           impl_->textStyle_.fillColor.r(), impl_->textStyle_.fillColor.g(),
-          impl_->textStyle_.fillColor.b(), impl_->textStyle_.fillColor.a());
-      const FloatColor strokeColor(
+          impl_->textStyle_.fillColor.b(), impl_->textStyle_.fillColor.a()));
+      const FloatColor strokeColor = colorManager->resolveGeneratedColorForRender(FloatColor(
           impl_->textStyle_.strokeColor.r(), impl_->textStyle_.strokeColor.g(),
-          impl_->textStyle_.strokeColor.b(), impl_->textStyle_.strokeColor.a());
-      const FloatColor shadowColor(
+          impl_->textStyle_.strokeColor.b(), impl_->textStyle_.strokeColor.a()));
+      const FloatColor shadowColor = colorManager->resolveGeneratedColorForRender(FloatColor(
           impl_->textStyle_.shadowColor.r(), impl_->textStyle_.shadowColor.g(),
-          impl_->textStyle_.shadowColor.b(), impl_->textStyle_.shadowColor.a());
+          impl_->textStyle_.shadowColor.b(), impl_->textStyle_.shadowColor.a()));
       const QMatrix4x4 baseTransform = getGlobalTransform4x4();
       for (const auto& lensPass : twoPointFiveDRenderPasses(baseTransform)) {
       drawWithClonerEffect(
@@ -3414,8 +3505,9 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
         }
 
         const RationalTime animatorTime = effectiveTextTimelineTime(this);
-        const auto animatorStack = resolvedTextAnimatorStackAtTime(
+        auto animatorStack = resolvedTextAnimatorStackAtTime(
             this, impl_->animators_, animatorTime);
+        convertAnimatorStackGeneratedColorsForGpu(animatorStack);
         const std::vector<float> glyphFieldWeights =
             fieldDrivenGlyphWeights(this, evaluationGlyphs);
         TextAnimatorEngine::applyAnimatorSets(
@@ -3445,12 +3537,13 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
         }
       }
 
-      const FloatColor strokeColor(
+      const auto* colorManager = ArtifactOCIOManager::instance();
+      const FloatColor strokeColor = colorManager->resolveGeneratedColorForRender(FloatColor(
           impl_->textStyle_.strokeColor.r(), impl_->textStyle_.strokeColor.g(),
-          impl_->textStyle_.strokeColor.b(), impl_->textStyle_.strokeColor.a());
-      const FloatColor shadowColor(
+          impl_->textStyle_.strokeColor.b(), impl_->textStyle_.strokeColor.a()));
+      const FloatColor shadowColor = colorManager->resolveGeneratedColorForRender(FloatColor(
           impl_->textStyle_.shadowColor.r(), impl_->textStyle_.shadowColor.g(),
-          impl_->textStyle_.shadowColor.b(), impl_->textStyle_.shadowColor.a());
+          impl_->textStyle_.shadowColor.b(), impl_->textStyle_.shadowColor.a()));
       const QMatrix4x4 baseTransform = getGlobalTransform4x4();
       for (const auto& lensPass : twoPointFiveDRenderPasses(baseTransform)) {
       drawWithClonerEffect(
@@ -3460,8 +3553,11 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
           // runs into its std::function on each frame.
           [renderer, &runs, strokeColor, shadowColor,
            this, lensOpacity = lensPass.opacity](const QMatrix4x4& transform, float weight) {
-              const float drawOpacity = this->opacity() * weight * lensOpacity;
+            const float drawOpacity = this->opacity() * weight * lensOpacity;
             for (const Impl::RichGpuRun& run : runs) {
+              const FloatColor runFill =
+                  ArtifactOCIOManager::instance()->resolveGeneratedColorForRender(
+                      run.fill);
               if (impl_->textStyle_.shadowEnabled) {
                 renderer->drawGlyphsTransformed(
                     run.glyphs, run.style, shadowColor, transform,
@@ -3476,7 +3572,7 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
                     impl_->twoPointFiveDMaxBlur_);
               }
               renderer->drawGlyphsTransformed(
-                  run.glyphs, run.style, run.fill, transform, run.origin,
+                  run.glyphs, run.style, runFill, transform, run.origin,
                   drawOpacity, strokeColor,
                   impl_->textStyle_.strokeEnabled
                       ? impl_->textStyle_.strokeWidth
@@ -3496,7 +3592,7 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
                     static_cast<float>(run.origin.y() + metrics.ascent() +
                                        metrics.underlinePos()),
                     static_cast<float>(run.width), decorationHeight,
-                    transform, run.fill, drawOpacity);
+                    transform, runFill, drawOpacity);
               }
               if (run.strikethrough) {
                 renderer->drawSolidRectTransformed(
@@ -3504,7 +3600,7 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
                     static_cast<float>(run.origin.y() + metrics.ascent() -
                                        metrics.strikeOutPos()),
                     static_cast<float>(run.width), decorationHeight,
-                    transform, run.fill, drawOpacity);
+                    transform, runFill, drawOpacity);
               }
             }
             });
@@ -4622,15 +4718,7 @@ bool ArtifactTextLayer::setLayerPropertyValue(const QString &propertyPath,
     const int val = value.toInt();
     if (val >= 100) {
       const int presetId = val / 100;
-      if (presetId >= 1 && presetId <= 7) {
-        const auto presetAnimators = buildTextAnimatorPreset(presetId);
-        if (!presetAnimators.empty() && animatorCount() < 16) {
-          impl_->animators_.push_back(presetAnimators.front());
-          impl_->animators_.back().name = QStringLiteral("%1 %2")
-              .arg(presetAnimators.front().name)
-              .arg(animatorCount());
-        }
-      } else {
+      if (!addAnimatorPreset(presetId)) {
         addAnimator();
       }
     } else {
@@ -4882,8 +4970,11 @@ void ArtifactTextLayer::updateGlyphEvaluation(const bool rasterize) {
   if (impl_->perGlyphMode_) {
     const RationalTime time = effectiveTextTimelineTime(this);
     const float timeSeconds = static_cast<float>(time.toSeconds());
-    const auto animatorStack = resolvedTextAnimatorStackAtTime(
+    auto animatorStack = resolvedTextAnimatorStackAtTime(
         this, impl_->animators_, time);
+    if (!rasterize) {
+      convertAnimatorStackGeneratedColorsForGpu(animatorStack);
+    }
     const std::vector<float> glyphFieldWeights =
         fieldDrivenGlyphWeights(this, impl_->glyphs_);
     TextAnimatorEngine::applyAnimatorSets(
@@ -4977,6 +5068,12 @@ void ArtifactTextLayer::updateGlyphEvaluation(const bool rasterize) {
       impl_->renderedBuffer_->setFromCVMat(
           rgba, SurfaceColorDescriptor::legacyOpenCvBgra32Float(
                     TransferFunction::sRGB, SurfaceAlphaMode::Premultiplied));
+      if (ArtifactOCIOManager::instance()->generatedColorPolicy() ==
+          GeneratedColorPolicy::ConvertToWorkingSpace) {
+        ArtifactOCIOManager::instance()->applyInputTransformToWorkingImage(
+            *impl_->renderedBuffer_, QStringLiteral("sRGB"),
+            QStringLiteral("sRGB"));
+      }
     }
     impl_->isDirty_ = false;
     return;
@@ -5239,6 +5336,12 @@ void ArtifactTextLayer::updateGlyphEvaluation(const bool rasterize) {
     impl_->renderedBuffer_->setFromCVMat(
         rgba, SurfaceColorDescriptor::legacyOpenCvBgra32Float(
                   TransferFunction::sRGB, SurfaceAlphaMode::Premultiplied));
+    if (ArtifactOCIOManager::instance()->generatedColorPolicy() ==
+        GeneratedColorPolicy::ConvertToWorkingSpace) {
+      ArtifactOCIOManager::instance()->applyInputTransformToWorkingImage(
+          *impl_->renderedBuffer_, QStringLiteral("sRGB"),
+          QStringLiteral("sRGB"));
+    }
   }
   impl_->isDirty_ = false;
 }

@@ -1,4 +1,5 @@
 module;
+#include <algorithm>
 #include <QDialog>
 #include <QFileDialog>
 #include <QHBoxLayout>
@@ -27,7 +28,9 @@ ArtifactAnimatorCountPropertyEditor::ArtifactAnimatorCountPropertyEditor(
     : ArtifactAbstractPropertyEditor(parent) {
   setObjectName(QStringLiteral("propertyAnimatorCountEditor"));
   setAccessibleName(QStringLiteral("Animator count property editor"));
-  setAccessibleDescription(QStringLiteral("Adjust the number of text animators and choose an animator preset"));
+  setAccessibleDescription(QStringLiteral(
+      "Adjust the number of text animators, add an animator property, or "
+      "choose an animator preset"));
 
   const auto meta = property.metadata();
   minCount_ = meta.hardMin.isValid() ? meta.hardMin.toInt() : 0;
@@ -61,8 +64,10 @@ ArtifactAnimatorCountPropertyEditor::ArtifactAnimatorCountPropertyEditor(
 
   addButton_ = new PropertyCallbackButton(QStringLiteral("+"), this);
   addButton_->setAccessibleName(QStringLiteral("Add animator"));
-  addButton_->setAccessibleDescription(QStringLiteral("Add an animator or choose an animator preset"));
-  addButton_->setToolTip(QStringLiteral("Add animator (Click to select type)"));
+  addButton_->setAccessibleDescription(QStringLiteral(
+      "Add an animator property or choose an animator preset"));
+  addButton_->setToolTip(
+      QStringLiteral("Add animator (click to select a property or preset)"));
   addButton_->setFixedHeight(24);
   addButton_->setMinimumWidth(28);
   applyPropertyButtonPalette(addButton_, true);
@@ -72,6 +77,36 @@ ArtifactAnimatorCountPropertyEditor::ArtifactAnimatorCountPropertyEditor(
           return TranslationManager::instance().tr(key, fallback);
         };
         QAction *defaultAct = menu.addAction(text(QStringLiteral("property.animator.default"), QStringLiteral("Default Animator")));
+        QMenu *animateMenu = menu.addMenu(
+            text(QStringLiteral("property.animator.animate"),
+                 QStringLiteral("Animate")));
+        QAction *positionAct = animateMenu->addAction(
+            text(QStringLiteral("property.animator.position"),
+                 QStringLiteral("Position")));
+        QAction *scaleAct = animateMenu->addAction(
+            text(QStringLiteral("property.animator.scale"),
+                 QStringLiteral("Scale")));
+        QAction *rotationAct = animateMenu->addAction(
+            text(QStringLiteral("property.animator.rotation"),
+                 QStringLiteral("Rotation")));
+        QAction *opacityAct = animateMenu->addAction(
+            text(QStringLiteral("property.animator.opacity"),
+                 QStringLiteral("Opacity")));
+        QAction *fillColorAct = animateMenu->addAction(
+            text(QStringLiteral("property.animator.fill_color"),
+                 QStringLiteral("Fill Color")));
+        QAction *strokeColorAct = animateMenu->addAction(
+            text(QStringLiteral("property.animator.stroke_color"),
+                 QStringLiteral("Stroke Color")));
+        QAction *trackingAct = animateMenu->addAction(
+            text(QStringLiteral("property.animator.tracking"),
+                 QStringLiteral("Tracking")));
+        QAction *skewAct = animateMenu->addAction(
+            text(QStringLiteral("property.animator.skew"),
+                 QStringLiteral("Skew")));
+        QAction *blurAct = animateMenu->addAction(
+            text(QStringLiteral("property.animator.blur"),
+                 QStringLiteral("Blur")));
         menu.addSeparator();
         QAction *typewriterAct = menu.addAction(text(QStringLiteral("property.animator.typewriter"), QStringLiteral("Typewriter Preset")));
         QAction *slideUpAct = menu.addAction(text(QStringLiteral("property.animator.slide_up"), QStringLiteral("Slide Up Preset")));
@@ -98,6 +133,35 @@ ArtifactAnimatorCountPropertyEditor::ArtifactAnimatorCountPropertyEditor(
                                                   menu.sizeHint().width());
         QAction *chosen = menu.exec(QPoint(menuX, menuY));
         if (!chosen) {
+          return;
+        }
+
+        QString requestId;
+        if (chosen == defaultAct) requestId = QStringLiteral("default");
+        else if (chosen == positionAct) requestId = QStringLiteral("property.position");
+        else if (chosen == scaleAct) requestId = QStringLiteral("property.scale");
+        else if (chosen == rotationAct) requestId = QStringLiteral("property.rotation");
+        else if (chosen == opacityAct) requestId = QStringLiteral("property.opacity");
+        else if (chosen == fillColorAct) requestId = QStringLiteral("property.fillColor");
+        else if (chosen == strokeColorAct) requestId = QStringLiteral("property.strokeColor");
+        else if (chosen == trackingAct) requestId = QStringLiteral("property.tracking");
+        else if (chosen == skewAct) requestId = QStringLiteral("property.skew");
+        else if (chosen == blurAct) requestId = QStringLiteral("property.blur");
+        else if (chosen == typewriterAct) requestId = QStringLiteral("preset.1");
+        else if (chosen == slideUpAct) requestId = QStringLiteral("preset.2");
+        else if (chosen == scaleInAct) requestId = QStringLiteral("preset.3");
+        else if (chosen == rotationInAct) requestId = QStringLiteral("preset.4");
+        else if (chosen == trackingFadeAct) requestId = QStringLiteral("preset.5");
+        else if (chosen == wigglyPositionAct) requestId = QStringLiteral("preset.6");
+        else if (chosen == blurRevealAct) requestId = QStringLiteral("preset.7");
+        if (!requestId.isEmpty() && animatorMutationHandler_) {
+          if (animatorMutationHandler_(requestId)) {
+            currentCount_ = std::clamp(currentCount_ + 1, minCount_, maxCount_);
+            syncUi();
+          }
+          return;
+        }
+        if (requestId.startsWith(QStringLiteral("property."))) {
           return;
         }
 
@@ -141,10 +205,25 @@ void ArtifactAnimatorCountPropertyEditor::setValueFromVariant(
   syncUi();
 }
 
+void ArtifactAnimatorCountPropertyEditor::setAnimatorMutationHandler(
+    AnimatorMutationHandler handler) {
+  animatorMutationHandler_ = std::move(handler);
+}
+
 void ArtifactAnimatorCountPropertyEditor::stepCount(const int delta) {
   const int nextCount =
       std::clamp(currentCount_ + delta, minCount_, maxCount_);
   if (nextCount == currentCount_) {
+    return;
+  }
+  if (animatorMutationHandler_) {
+    const QString requestId =
+        delta < 0 ? QStringLiteral("removeLast")
+                  : QStringLiteral("default");
+    if (animatorMutationHandler_(requestId)) {
+      currentCount_ = nextCount;
+      syncUi();
+    }
     return;
   }
   currentCount_ = nextCount;

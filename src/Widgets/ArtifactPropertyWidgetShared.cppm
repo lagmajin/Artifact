@@ -1,6 +1,7 @@
 module;
 #include <QColor>
 #include <QGroupBox>
+#include <QJsonArray>
 #include <QLabel>
 #include <QLayout>
 #include <QLineEdit>
@@ -47,6 +48,7 @@ import Event.Bus;
 import Time.Rational;
 import Settings.Accessibility;
 import Undo.UndoManager;
+import Core.ArtifactArray;
 
 namespace Artifact {
 namespace detail {
@@ -1023,6 +1025,149 @@ void notifyLayerPropertyPreviewChanged(const ArtifactAbstractLayerPtr &layer) {
       layer->id().toString(), LayerChangedEvent::ChangeType::Modified});
 }
 
+bool applyTextAnimatorMutationRequest(ArtifactTextLayer &textLayer,
+                                      const QString &requestId) {
+  if (requestId == QStringLiteral("removeLast")) {
+    const int beforeCount = textLayer.animatorCount();
+    if (beforeCount <= 0) {
+      return false;
+    }
+    textLayer.removeAnimator(beforeCount - 1);
+    return textLayer.animatorCount() == beforeCount - 1;
+  }
+  if (requestId.startsWith(QStringLiteral("replacePreset."))) {
+    bool ok = false;
+    const int presetId =
+        requestId.mid(QStringLiteral("replacePreset.").size()).toInt(&ok);
+    return ok && presetId >= 0 && presetId <= 7 &&
+           textLayer.setLayerPropertyValue(
+               QStringLiteral("text.animatorPreset"), presetId);
+  }
+  if (textLayer.animatorCount() >= 16) {
+    return false;
+  }
+  if (requestId == QStringLiteral("default")) {
+    const int beforeCount = textLayer.animatorCount();
+    textLayer.addAnimator();
+    return textLayer.animatorCount() == beforeCount + 1;
+  }
+  if (requestId.startsWith(QStringLiteral("property."))) {
+    const QString propertyId =
+        requestId.mid(QStringLiteral("property.").size());
+    return textLayer.addAnimatorProperty(propertyId);
+  }
+  if (requestId.startsWith(QStringLiteral("preset."))) {
+    bool ok = false;
+    const int presetId =
+        requestId.mid(QStringLiteral("preset.").size()).toInt(&ok);
+    return ok && textLayer.addAnimatorPreset(presetId);
+  }
+  return false;
+}
+
+QString textAnimatorMutationCommandLabel(const QString &requestId) {
+  if (requestId == QStringLiteral("removeLast")) {
+    return QStringLiteral("Remove Text Animator");
+  }
+  if (requestId == QStringLiteral("replacePreset.0")) {
+    return QStringLiteral("Clear Text Animators");
+  }
+  if (requestId.startsWith(QStringLiteral("replacePreset."))) {
+    return QStringLiteral("Set Text Animator Preset");
+  }
+  if (requestId.startsWith(QStringLiteral("property."))) {
+    return QStringLiteral("Add Text Animator %1")
+        .arg(requestId.mid(QStringLiteral("property.").size()));
+  }
+  if (requestId.startsWith(QStringLiteral("preset."))) {
+    return QStringLiteral("Add Text Animator Preset");
+  }
+  return QStringLiteral("Add Text Animator");
+}
+
+bool applyTextAnimatorMutationWithUndo(
+    const ArtifactAbstractLayerPtr &primaryLayer,
+    const QStringList &mutationLayerIds, const QString &requestId) {
+  if (!primaryLayer) {
+    return false;
+  }
+
+  auto *manager = UndoManager::instance();
+  QStringList targetIds = mutationLayerIds;
+  if (targetIds.isEmpty() || !manager) {
+    targetIds = QStringList{primaryLayer->id().toQString()};
+  } else if (!targetIds.contains(primaryLayer->id().toQString())) {
+    targetIds.prepend(primaryLayer->id().toQString());
+  }
+  targetIds.removeDuplicates();
+  if (manager && !manager->areLayerMutationsAllowed(targetIds)) {
+    return false;
+  }
+
+  struct StackChange {
+    ArtifactAbstractLayerPtr layer;
+    QJsonArray before;
+    QJsonArray after;
+  };
+  ArtifactCore::ArtifactArray<StackChange> changes;
+  changes.reserve(targetIds.size());
+
+  const auto rollback = [&changes]() {
+    for (size_t index = changes.size(); index > 0; --index) {
+      const auto &change = changes[index - 1];
+      if (const auto textLayer =
+              ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(change.layer)) {
+        textLayer->restoreTextAnimatorStack(change.before);
+      }
+    }
+  };
+
+  for (const QString &targetId : targetIds) {
+    ArtifactAbstractLayerPtr target;
+    if (primaryLayer->id().toQString() == targetId) {
+      target = primaryLayer;
+    } else if (manager) {
+      target = manager->resolveLayer(targetId);
+    }
+    const auto textLayer =
+        ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(target);
+    if (!textLayer) {
+      rollback();
+      return false;
+    }
+    const QJsonArray before = textLayer->textAnimatorStackSnapshot();
+    if (!applyTextAnimatorMutationRequest(*textLayer, requestId)) {
+      rollback();
+      return false;
+    }
+    const QJsonArray after = textLayer->textAnimatorStackSnapshot();
+    if (after == before) {
+      textLayer->restoreTextAnimatorStack(before);
+      rollback();
+      return false;
+    }
+    changes.append(StackChange{textLayer, before, after});
+  }
+
+  const QString commandLabel = textAnimatorMutationCommandLabel(requestId);
+  if (manager) {
+    auto macro = std::make_unique<MacroUndoCommand>(commandLabel);
+    for (const auto &change : changes) {
+      macro->addChild(std::make_unique<SetTextAnimatorStackCommand>(
+          change.layer, change.before, change.after, commandLabel));
+    }
+    if (!manager->push(std::move(macro))) {
+      rollback();
+      return false;
+    }
+  }
+
+  for (const auto &change : changes) {
+    notifyLayerPropertyAnimationChanged(change.layer);
+  }
+  return true;
+}
+
 void launchExpressionCopilot(
     QWidget *parent, const QString &propertyName,
     const AbstractPropertyPtr &propertyPtr,
@@ -1161,6 +1306,14 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
         colorEditor->setLayer(textLayer);
       }
     }
+  }
+  if (auto *animatorEditor =
+          dynamic_cast<ArtifactAnimatorCountPropertyEditor *>(editor)) {
+    animatorEditor->setAnimatorMutationHandler(
+        [layer, mutationLayerIds](const QString &requestId) {
+          return applyTextAnimatorMutationWithUndo(
+              layer, mutationLayerIds, requestId);
+        });
   }
 
   const auto meta = property.metadata();
@@ -1306,6 +1459,31 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
       };
   editor->setPreviewHandler(applyPreviewValue);
   editor->setCommitHandler(applyCommitValue);
+  if (property.getName() == QStringLiteral("text.animatorPreset")) {
+    editor->setPreviewHandler({});
+    editor->setCommitHandler(
+        [layer, mutationLayerIds, propertyPtr, row, editor,
+         rowValueChanged](const QVariant &value) {
+          bool presetIdValid = false;
+          const int presetId = value.toInt(&presetIdValid);
+          const QString requestId = presetIdValid
+              ? QStringLiteral("replacePreset.%1").arg(presetId)
+              : QString{};
+          if (!requestId.isEmpty() &&
+              applyTextAnimatorMutationWithUndo(
+                  layer, mutationLayerIds, requestId)) {
+            propertyPtr->setValue(presetId);
+            if (rowValueChanged) {
+              rowValueChanged(row, propertyPtr, presetId);
+            }
+            if (row) {
+              row->setProperty("collaborationPreviewActive", false);
+            }
+            return;
+          }
+          editor->setValueFromVariant(propertyPtr->getValue());
+        });
+  }
   row->setCancelHandler([cancelValueEdit, propertyName = property.getName(),
                          restorePreviewBaseline]() {
     restorePreviewBaseline();

@@ -29,6 +29,7 @@ module;
 #include <QSlider>
 #include <QSize>
 #include <QSpinBox>
+#include <QString>
 #include <QTextEdit>
 #include <QWheelEvent>
 #include <wobjectdefs.h>
@@ -242,9 +243,12 @@ private:
 
 class ArtifactAnimatorCountPropertyEditor final : public ArtifactAbstractPropertyEditor {
 public:
+    using AnimatorMutationHandler = std::function<bool(const QString&)>;
+
     explicit ArtifactAnimatorCountPropertyEditor(const ArtifactCore::AbstractProperty& property, QWidget* parent = nullptr);
     QVariant value() const override;
     void setValueFromVariant(const QVariant& value) override;
+    void setAnimatorMutationHandler(AnimatorMutationHandler handler);
 
 private:
     void stepCount(int delta);
@@ -257,6 +261,7 @@ private:
     int currentCount_ = 0;
     int minCount_ = 0;
     int maxCount_ = 16;
+    AnimatorMutationHandler animatorMutationHandler_;
 };
 
 class ArtifactDashPatternPropertyEditor final : public ArtifactAbstractPropertyEditor {
