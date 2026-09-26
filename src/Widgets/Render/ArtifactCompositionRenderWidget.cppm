@@ -20,7 +20,9 @@ module;
 #include <QTimer>
 #include <QDebug>
 #include <QLoggingCategory>
+#include <QJsonArray>
 #include <QString>
+#include <QStringList>
 #include <condition_variable>
 #include <memory>
 #include <mutex>
@@ -76,6 +78,45 @@ QPoint accessibilityMenuPosition(const QMenu &menu, const QPoint &origin) {
   int y = origin.y();
   Accessibility::adjustContextMenuPosition(x, y, menu.sizeHint().width());
   return QPoint(x, y);
+}
+
+bool addDefaultTextAnimatorWithUndo(const ArtifactAbstractLayerPtr &layer) {
+  const auto textLayer =
+      ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer);
+  if (!textLayer) {
+    return false;
+  }
+
+  auto *manager = UndoManager::instance();
+  const QStringList targetIds{textLayer->id().toQString()};
+  if (manager && !manager->areLayerMutationsAllowed(targetIds)) {
+    return false;
+  }
+
+  const QJsonArray beforeStack = textLayer->textAnimatorStackSnapshot();
+  textLayer->addAnimator();
+  const QJsonArray afterStack = textLayer->textAnimatorStackSnapshot();
+  if (afterStack == beforeStack) {
+    return false;
+  }
+
+  const QString commandLabel = QStringLiteral("Add Text Animator");
+  if (manager &&
+      !manager->push(std::make_unique<SetTextAnimatorStackCommand>(
+          textLayer, beforeStack, afterStack, commandLabel))) {
+    textLayer->restoreTextAnimatorStack(beforeStack);
+    return false;
+  }
+
+  textLayer->setDirty(LayerDirtyFlag::Property);
+  textLayer->changed();
+  auto *composition = static_cast<ArtifactAbstractComposition *>(
+      textLayer->composition());
+  ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+      LayerChangedEvent{composition ? composition->id().toString() : QString{},
+                        textLayer->id().toString(),
+                        LayerChangedEvent::ChangeType::Modified});
+  return true;
 }
 
 enum class LayerDragMode {
@@ -1144,10 +1185,9 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
                       });
                       menu.addSeparator();
                   }
-                  if (auto *textLayer = dynamic_cast<ArtifactTextLayer *>(hit.layer.get())) {
-                      menu.addAction("Add Text Animator", [textLayer]() {
-                          textLayer->addAnimator();
-                          textLayer->changed();
+                  if (dynamic_cast<ArtifactTextLayer *>(hit.layer.get())) {
+                      menu.addAction("Add Text Animator", [layer = hit.layer]() {
+                          (void)addDefaultTextAnimatorWithUndo(layer);
                       });
                       menu.addSeparator();
                   }

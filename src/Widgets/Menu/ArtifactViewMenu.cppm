@@ -25,7 +25,14 @@ module;
 #include <QMessageBox>
 #include <QSignalBlocker>
 #include <QSettings>
+#include <QCheckBox>
+#include <QLabel>
+#include <QSlider>
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QWidgetAction>
 #include <algorithm>
+#include <functional>
 #include <optional>
 #include <vector>
 
@@ -37,6 +44,7 @@ import Artifact.Service.Playback;
 import Artifact.Application.Manager;
 import Artifact.MainWindow;
 import Artifact.Widgets.CompositionEditor;
+import Artifact.Widgets.CompositionRenderController;
 import Application.AppSettings;
 import Artifact.Grid.System;
 import Core.FastSettingsStore;
@@ -76,6 +84,42 @@ namespace Artifact {
   }
   return nullptr;
   }
+
+  class ViewportClippingCheckBox final : public QCheckBox {
+  public:
+   using ChangeHandler = std::function<void(bool)>;
+   explicit ViewportClippingCheckBox(QWidget* parent) : QCheckBox(parent) {}
+   ChangeHandler onChange;
+
+  protected:
+   void nextCheckState() override {
+    QCheckBox::nextCheckState();
+    if (onChange) onChange(isChecked());
+   }
+  };
+
+  class ViewportClippingThresholdSlider final : public QSlider {
+  public:
+   using ChangeHandler = std::function<void(int)>;
+   explicit ViewportClippingThresholdSlider(QWidget* parent)
+       : QSlider(Qt::Horizontal, parent) {}
+   ChangeHandler onChange;
+   void setValueFromModel(int value) {
+    synchronizing_ = true;
+    setValue(value);
+    synchronizing_ = false;
+   }
+
+  protected:
+   void sliderChange(SliderChange change) override {
+    QSlider::sliderChange(change);
+    if (change == SliderValueChange && !synchronizing_ && onChange)
+     onChange(value());
+   }
+
+  private:
+   bool synchronizing_ = false;
+  };
 
   QDockWidget* findDockByTitle(QWidget* window, const QString& title)
   {
@@ -904,6 +948,21 @@ namespace Artifact {
    QAction* gridPolarAction = nullptr;
    QAction* gridIsometricAction = nullptr;
 
+   // P1-5 display-only viewport exposure panel.
+   QWidget* viewportExposurePanel_ = nullptr;
+   QCheckBox* viewportExposureEnabledCheckBox_ = nullptr;
+   QSlider* viewportExposureGainSlider_ = nullptr;
+   QLabel* viewportExposureGainValueLabel_ = nullptr;
+   QSlider* viewportExposureGammaSlider_ = nullptr;
+   QLabel* viewportExposureGammaValueLabel_ = nullptr;
+   QSlider* viewportExposureSaturationSlider_ = nullptr;
+   QLabel* viewportExposureSaturationValueLabel_ = nullptr;
+   ViewportClippingCheckBox* viewportClippingWarningsCheckBox_ = nullptr;
+   ViewportClippingThresholdSlider* viewportClippingUnderSlider_ = nullptr;
+   QLabel* viewportClippingUnderValueLabel_ = nullptr;
+   ViewportClippingThresholdSlider* viewportClippingOverSlider_ = nullptr;
+   QLabel* viewportClippingOverValueLabel_ = nullptr;
+
    QMenu* qualityPresetMenu = nullptr;
    QActionGroup* qualityGroup = nullptr;
    QAction* qualityDraftAction = nullptr;
@@ -956,6 +1015,13 @@ namespace Artifact {
    void showSecondaryPreview();
    void showDetachedTaskTray();
    void refreshSecondaryPreview();
+
+   // P1-5: builds the display-only exposure submenu. Every control resolves the
+   // active composition's render controller on interaction, so switching
+   // compositions does not leave the panel bound to a stale controller.
+   void buildViewportExposureMenu(QMenu* exposureMenu, QMenu* owner);
+   CompositionRenderController* exposureController() const;
+   void refreshViewportExposurePanel();
    };
 
   ArtifactViewMenu::Impl::Impl(ArtifactViewMenu* menu)
@@ -1832,6 +1898,19 @@ namespace Artifact {
    overlaysMenu->addAction(viewportMagnifierAction);
    overlaysMenu->addAction(viewportMagnifierFollowAction);
 
+   // P1-5: display-only viewport exposure. QWidgetAction is used instead of a
+   // settings dialog because these controls must reach the active composition's
+   // render controller, which the application settings page does not hold.
+   auto *exposureMenu = overlaysMenu->addMenu(
+       TranslationManager::instance().tr(
+           QStringLiteral("menu.view.viewport_exposure"),
+           QStringLiteral("露出調整(&E)")));
+   exposureMenu->setAccessibleName(QStringLiteral("Viewport Exposure"));
+   exposureMenu->setAccessibleDescription(
+       QStringLiteral("Display-only gain, gamma and saturation. Rendered output, "
+                      "the color sampler and scopes are not affected."));
+   buildViewportExposureMenu(exposureMenu, menu);
+
    auto *rigMenu = menu->addMenu(QStringLiteral("Rig(&R)"));
    rigMenu->setAccessibleName(QStringLiteral("Rig"));
    rigMenu->setAccessibleDescription(QStringLiteral("Rig overlay display and pose tools"));
@@ -2508,9 +2587,293 @@ namespace Artifact {
   }
  }
 
+CompositionRenderController* ArtifactViewMenu::Impl::exposureController() const
+{
+  auto* editor = activeCompositionEditor(
+      mainWindow ? mainWindow : (menu_ ? menu_->window() : nullptr));
+  return editor ? editor->renderController() : nullptr;
+}
+
+void ArtifactViewMenu::Impl::refreshViewportExposurePanel()
+{
+  if (!viewportExposurePanel_) {
+    return;
+  }
+  auto* controller = exposureController();
+  if (!controller) {
+    viewportExposurePanel_->setEnabled(false);
+    return;
+  }
+  viewportExposurePanel_->setEnabled(true);
+  // Block signals so reading the controller does not write the values back.
+  const QSignalBlocker gainBlocker(viewportExposureGainSlider_);
+  const QSignalBlocker gammaBlocker(viewportExposureGammaSlider_);
+  const QSignalBlocker saturationBlocker(viewportExposureSaturationSlider_);
+  const QSignalBlocker enabledBlocker(viewportExposureEnabledCheckBox_);
+  viewportExposureGainSlider_->setValue(
+      qRound(controller->viewportExposureGain()));
+  viewportExposureGammaSlider_->setValue(
+      qRound(controller->viewportExposureGamma() * 10.0f));
+  viewportExposureSaturationSlider_->setValue(
+      qRound(controller->viewportExposureSaturation() * 10.0f));
+  viewportClippingWarningsCheckBox_->setChecked(
+      controller->isViewportClippingWarningsEnabled());
+  viewportClippingUnderSlider_->setValueFromModel(
+      qRound(controller->viewportClippingUnderThreshold() * 1000.0f));
+  viewportClippingOverSlider_->setValueFromModel(
+      qRound(controller->viewportClippingOverThreshold() * 1000.0f));
+  viewportExposureEnabledCheckBox_->setChecked(
+      controller->isViewportExposureEnabled());
+  viewportExposureGainValueLabel_->setText(
+      QStringLiteral("%1").arg(controller->viewportExposureGain(), 0, 'f', 1));
+  viewportExposureGammaValueLabel_->setText(
+      QStringLiteral("%1").arg(controller->viewportExposureGamma(), 0, 'f', 2));
+  viewportExposureSaturationValueLabel_->setText(QStringLiteral("%1").arg(
+      controller->viewportExposureSaturation(), 0, 'f', 2));
+  viewportClippingUnderValueLabel_->setText(QStringLiteral("%1").arg(
+      controller->viewportClippingUnderThreshold(), 0, 'f', 3));
+  viewportClippingOverValueLabel_->setText(QStringLiteral("%1").arg(
+      controller->viewportClippingOverThreshold(), 0, 'f', 3));
+  const bool enabled = controller->isViewportExposureEnabled();
+  viewportExposureGainSlider_->setEnabled(enabled);
+  viewportExposureGammaSlider_->setEnabled(enabled);
+  viewportExposureSaturationSlider_->setEnabled(enabled);
+  const bool clippingEnabled = controller->isViewportClippingWarningsEnabled();
+  viewportClippingUnderSlider_->setEnabled(clippingEnabled);
+  viewportClippingOverSlider_->setEnabled(clippingEnabled);
+}
+
+void ArtifactViewMenu::Impl::buildViewportExposureMenu(QMenu* exposureMenu,
+                                                        QMenu* owner)
+{
+  if (!exposureMenu || !owner) {
+    return;
+  }
+  auto* panel = new QWidget(owner);
+  panel->setObjectName(QStringLiteral("viewportExposurePanel"));
+  auto* layout = new QVBoxLayout(panel);
+  layout->setContentsMargins(8, 6, 8, 6);
+  viewportExposurePanel_ = panel;
+
+  auto* note = new QLabel(
+      TranslationManager::instance().tr(
+          QStringLiteral("menu.view.viewport_exposure.note"),
+          QStringLiteral("表示のみ。出力・カラーSampler・スコープには影響しません。")),
+      panel);
+  note->setWordWrap(true);
+  layout->addWidget(note);
+
+  viewportExposureEnabledCheckBox_ = new QCheckBox(
+      TranslationManager::instance().tr(
+          QStringLiteral("menu.view.viewport_exposure.enabled"),
+          QStringLiteral("露出調整を有効化")),
+      panel);
+  viewportExposureEnabledCheckBox_->setAccessibleName(
+      QStringLiteral("Enable viewport exposure"));
+  viewportExposureEnabledCheckBox_->setAccessibleDescription(
+      QStringLiteral("Turn the display-only exposure stage on or off"));
+  layout->addWidget(viewportExposureEnabledCheckBox_);
+
+  // gain is in stops (-6..+6); gamma (0..5) and saturation (0..4) use integer
+  // slider tenths so the neutral value 1.0 is exactly representable.
+  const auto addRow = [this, panel, layout](const QString& text,
+                                           const QString& accessibleName,
+                                           const QString& description,
+                                           int minimum, int maximum,
+                                           int defaultValue, QSlider*& slider,
+                                           QLabel*& valueLabel) {
+    auto* row = new QHBoxLayout();
+    auto* label = new QLabel(text, panel);
+    label->setMinimumWidth(72);
+    row->addWidget(label);
+    slider = new QSlider(Qt::Horizontal, panel);
+    slider->setRange(minimum, maximum);
+    slider->setValue(defaultValue);
+    slider->setSingleStep(1);
+    slider->setPageStep(1);
+    slider->setAccessibleName(accessibleName);
+    slider->setAccessibleDescription(description);
+    slider->setToolTip(description);
+    row->addWidget(slider, 1);
+    valueLabel = new QLabel(panel);
+    valueLabel->setMinimumWidth(44);
+    valueLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    // gain defaults to 0 stops; gamma and saturation default to the neutral 1.0.
+    valueLabel->setText(defaultValue == 0 ? QStringLiteral("0.0")
+                                          : QStringLiteral("1.00"));
+    row->addWidget(valueLabel);
+    layout->addLayout(row);
+  };
+
+  addRow(QStringLiteral("Gain"), QStringLiteral("Viewport exposure gain"),
+         QStringLiteral("Display gain in stops, from -6 to +6"),
+         -6, 6, 0, viewportExposureGainSlider_, viewportExposureGainValueLabel_);
+  addRow(QStringLiteral("Gamma"), QStringLiteral("Viewport exposure gamma"),
+         QStringLiteral("Display gamma from 0 to 5, 1 is neutral"),
+         0, 50, 10, viewportExposureGammaSlider_, viewportExposureGammaValueLabel_);
+  addRow(QStringLiteral("Saturation"),
+         QStringLiteral("Viewport exposure saturation"),
+         QStringLiteral("Display saturation from 0 to 4, 1 is neutral"),
+         0, 40, 10, viewportExposureSaturationSlider_,
+         viewportExposureSaturationValueLabel_);
+
+  viewportClippingWarningsCheckBox_ =
+      new ViewportClippingCheckBox(panel);
+  viewportClippingWarningsCheckBox_->setText(
+      TranslationManager::instance().tr(
+          QStringLiteral("menu.view.viewport_clipping_warnings.enabled"),
+          QStringLiteral("クリッピング警告を表示")));
+  viewportClippingWarningsCheckBox_->setAccessibleName(
+      QStringLiteral("Viewport clipping warnings"));
+  viewportClippingWarningsCheckBox_->setAccessibleDescription(
+      QStringLiteral("Show underexposed areas in blue and overexposed areas in red"));
+  viewportClippingWarningsCheckBox_->setToolTip(
+      QStringLiteral("Display-only false-color warning; does not change output or sampled values"));
+  layout->addWidget(viewportClippingWarningsCheckBox_);
+  auto* clippingThresholdNote = new QLabel(
+      TranslationManager::instance().tr(
+          QStringLiteral("menu.view.viewport_clipping_warnings.note"),
+          QStringLiteral("青は暗部、赤は明部。閾値は線形値です。")),
+      panel);
+  clippingThresholdNote->setWordWrap(true);
+  layout->addWidget(clippingThresholdNote);
+
+  const auto addThresholdRow = [panel, layout](
+                                   const QString& labelText,
+                                   const QString& accessibleName,
+                                   const QString& description,
+                                   int maximum, int defaultValue,
+                                   ViewportClippingThresholdSlider*& slider,
+                                   QLabel*& valueLabel) {
+    auto* row = new QHBoxLayout();
+    auto* label = new QLabel(labelText, panel);
+    label->setMinimumWidth(72);
+    row->addWidget(label);
+    slider = new ViewportClippingThresholdSlider(panel);
+    slider->setRange(0, maximum);
+    slider->setValue(defaultValue);
+    slider->setSingleStep(1);
+    slider->setPageStep(10);
+    slider->setAccessibleName(accessibleName);
+    slider->setAccessibleDescription(description);
+    slider->setToolTip(description);
+    row->addWidget(slider, 1);
+    valueLabel = new QLabel(panel);
+    valueLabel->setMinimumWidth(44);
+    valueLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    valueLabel->setText(QStringLiteral("%1").arg(defaultValue / 1000.0, 0, 'f', 3));
+    row->addWidget(valueLabel);
+    layout->addLayout(row);
+  };
+  addThresholdRow(TranslationManager::instance().tr(
+                      QStringLiteral("menu.view.viewport_clipping_warnings.under"),
+                      QStringLiteral("Under")),
+                  QStringLiteral("Underexposure warning threshold"),
+                  QStringLiteral("Blue warning for luminance at or below this linear value"),
+                  1000, 10, viewportClippingUnderSlider_,
+                  viewportClippingUnderValueLabel_);
+  addThresholdRow(TranslationManager::instance().tr(
+                      QStringLiteral("menu.view.viewport_clipping_warnings.over"),
+                      QStringLiteral("Over")),
+                  QStringLiteral("Overexposure warning threshold"),
+                  QStringLiteral("Red warning for any linear color channel at or above this value"),
+                  4000, 1000, viewportClippingOverSlider_,
+                  viewportClippingOverValueLabel_);
+
+  // Resolve the controller on every interaction so switching compositions does
+  // not leave the panel bound to a stale controller.
+  QObject::connect(viewportExposureEnabledCheckBox_, &QCheckBox::toggled, owner,
+                   [this](bool checked) {
+                     if (auto* controller = exposureController()) {
+                       controller->setViewportExposureEnabled(checked);
+                     }
+                   });
+  QObject::connect(
+      viewportExposureGainSlider_, &QSlider::valueChanged, owner,
+      [this](int value) {
+        if (auto* controller = exposureController()) {
+          controller->setViewportExposureGain(static_cast<float>(value));
+        }
+        viewportExposureGainValueLabel_->setText(
+            QStringLiteral("%1").arg(value, 0, 'f', 1));
+      });
+  QObject::connect(
+      viewportExposureGammaSlider_, &QSlider::valueChanged, owner,
+      [this](int value) {
+        if (auto* controller = exposureController()) {
+          controller->setViewportExposureGamma(
+              static_cast<float>(value) / 10.0f);
+        }
+        viewportExposureGammaValueLabel_->setText(
+            QStringLiteral("%1").arg(value / 10.0, 0, 'f', 2));
+      });
+  QObject::connect(
+      viewportExposureSaturationSlider_, &QSlider::valueChanged, owner,
+      [this](int value) {
+        if (auto* controller = exposureController()) {
+          controller->setViewportExposureSaturation(
+              static_cast<float>(value) / 10.0f);
+        }
+        viewportExposureSaturationValueLabel_->setText(
+            QStringLiteral("%1").arg(value / 10.0, 0, 'f', 2));
+      });
+
+  viewportClippingWarningsCheckBox_->onChange = [this](bool enabled) {
+    if (auto* controller = exposureController()) {
+      controller->setViewportClippingWarningsEnabled(enabled);
+    }
+    viewportClippingUnderSlider_->setEnabled(enabled);
+    viewportClippingOverSlider_->setEnabled(enabled);
+  };
+  viewportClippingUnderSlider_->onChange = [this](int value) {
+    const float threshold = static_cast<float>(value) / 1000.0f;
+    if (auto* controller = exposureController()) {
+      controller->setViewportClippingUnderThreshold(threshold);
+    }
+    viewportClippingUnderValueLabel_->setText(
+        QStringLiteral("%1").arg(threshold, 0, 'f', 3));
+  };
+  viewportClippingOverSlider_->onChange = [this](int value) {
+    const float threshold = static_cast<float>(value) / 1000.0f;
+    if (auto* controller = exposureController()) {
+      controller->setViewportClippingOverThreshold(threshold);
+    }
+    viewportClippingOverValueLabel_->setText(
+        QStringLiteral("%1").arg(threshold, 0, 'f', 3));
+  };
+
+  auto* panelAction = new QWidgetAction(exposureMenu);
+  panelAction->setDefaultWidget(panel);
+  exposureMenu->addAction(panelAction);
+  exposureMenu->addSeparator();
+
+  // Reset is a plain QAction, so it needs no new signal/slot wiring.
+  auto* resetAction = exposureMenu->addAction(
+      TranslationManager::instance().tr(
+          QStringLiteral("menu.view.viewport_exposure.reset"),
+          QStringLiteral("露出調整をリセット(&R)")));
+  resetAction->setToolTip(QStringLiteral("Reset exposure to neutral"));
+  QObject::connect(resetAction, &QAction::triggered, owner, [this] {
+    if (auto* controller = exposureController()) {
+      controller->setViewportExposureGain(0.0f);
+      controller->setViewportExposureGamma(1.0f);
+      controller->setViewportExposureSaturation(1.0f);
+      controller->setViewportClippingWarningsEnabled(false);
+      controller->setViewportClippingUnderThreshold(0.01f);
+      controller->setViewportClippingOverThreshold(1.0f);
+    }
+    refreshViewportExposurePanel();
+  });
+
+  QObject::connect(exposureMenu, &QMenu::aboutToShow, owner,
+                   [this] { refreshViewportExposurePanel(); });
+
+  refreshViewportExposurePanel();
+}
+
 void ArtifactViewMenu::Impl::rebuildWindowPanelsMenu()
 {
-  if (!windowPanelsMenu || !mainWindow) return;
+ if (!windowPanelsMenu || !mainWindow) return;
 
   const auto* artifactWindow = asArtifactMainWindow(mainWindow);
   const QStringList titles = dockTitles(mainWindow);

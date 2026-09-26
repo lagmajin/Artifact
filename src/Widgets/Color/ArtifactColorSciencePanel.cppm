@@ -6,6 +6,7 @@ module;
 #include <QComboBox>
 #include <QDialog>
 #include <QDesktopServices>
+#include <QElapsedTimer>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QDir>
@@ -34,11 +35,15 @@ module;
 #include <QPainter>
 #include <QPixmap>
 #include <QPushButton>
+#include <QPointer>
 #include <QFrame>
+#include <QSettings>
 #include <QStandardPaths>
 #include <QSlider>
 #include <QSizePolicy>
 #include <QUrl>
+#include <algorithm>
+#include <cmath>
 #include <limits>
 #include <QVBoxLayout>
 #include <wobjectimpl.h>
@@ -48,6 +53,7 @@ module;
 
 module Artifact.Widgets.ColorSciencePanel;
 import Memory.SharedPtr;
+import Color.Float;
 import Color.ScienceManager;
 import Color.LUT;
 import Artifact.Color.Palette;
@@ -56,6 +62,7 @@ import Event.Bus;
 import Artifact.Event.Types;
 import Artifact.Widgets.CompositionEditor;
 import Artifact.Widgets.CompositionRenderController;
+import Render.HDRMonitor;
 import Color.LUTWriter;
 import HistgramWidget;
 import VectorScopeWidget;
@@ -325,7 +332,15 @@ namespace {
 
 class ScopeDashboard final : public QWidget {
 public:
-  enum class ViewMode { Grid, Parade, Vectorscope, Waveform, Histogram };
+  enum class ViewMode {
+    Grid,
+    Dual,
+    Colorist,
+    Parade,
+    Vectorscope,
+    Waveform,
+    Histogram
+  };
 
   explicit ScopeDashboard(QWidget *parent = nullptr)
       : QWidget(parent), grid_(new QGridLayout(this)) {
@@ -338,28 +353,166 @@ public:
         "RGB parade, vectorscope, luma waveform, and histogram dashboard"));
   }
 
-  void setScopes(QWidget *parade, QWidget *vectorscope, QWidget *waveform,
-                 QWidget *histogram) {
-    paradeTile_ = makeTile(QStringLiteral("RGB PARADE"), parade);
+  void setScopes(ArtifactWidgets::ParadeScopeWidget *parade,
+                 ArtifactWidgets::VectorScopeWidget *vectorscope,
+                 ArtifactWidgets::WaveformScopeWidget *waveform,
+                 ArtifactWidgets::HistogramWidget *histogram) {
+    paradeScope_ = parade;
+    vectorscope_ = vectorscope;
+    waveform_ = waveform;
+    histogram_ = histogram;
+    paradeTile_ = makeTile(QStringLiteral("PARADE"), parade);
     vectorscopeTile_ = makeTile(QStringLiteral("VECTORSCOPE"), vectorscope);
-    waveformTile_ = makeTile(QStringLiteral("LUMA WAVEFORM"), waveform);
+    waveformTile_ = makeTile(QStringLiteral("WAVEFORM"), waveform);
     histogramTile_ = makeTile(QStringLiteral("HISTOGRAM"), histogram);
-    applyViewMode(ViewMode::Grid);
+    restorePreferences();
+    applyViewMode(viewMode_);
+  }
+
+  void setRefreshTimer(QTimer *timer) { refreshTimer_ = timer; }
+  bool frozen() const { return frozen_; }
+  int refreshIntervalMs() const { return refreshIntervalMs_; }
+  ScopeSignalRange qcSignalRange() const {
+    return videoLegalQc_ ? ScopeSignalRange::VideoLegal
+                         : ScopeSignalRange::Full;
+  }
+  quint64 revision() const { return preferenceRevision_; }
+  bool showsParade() const { return paradeTile_ && paradeTile_->isVisible(); }
+  bool showsVectorscope() const {
+    return vectorscopeTile_ && vectorscopeTile_->isVisible();
+  }
+  bool showsWaveform() const {
+    return waveformTile_ && waveformTile_->isVisible();
+  }
+  bool showsHistogram() const {
+    return histogramTile_ && histogramTile_->isVisible();
   }
 
 protected:
   void contextMenuEvent(QContextMenuEvent *event) override {
     QMenu menu(this);
-    QAction *gridAction = menu.addAction(QStringLiteral("2 x 2 Grid"));
+    QMenu *layoutMenu = menu.addMenu(QStringLiteral("Layout"));
+    QAction *gridAction = layoutMenu->addAction(QStringLiteral("Quad 2 x 2"));
+    QAction *dualAction = layoutMenu->addAction(QStringLiteral("Dual: Waveform + Vectorscope"));
+    QAction *coloristAction = layoutMenu->addAction(QStringLiteral("Colorist: Parade + Vectorscope + Histogram"));
+    layoutMenu->addSeparator();
+    QAction *paradeAction = layoutMenu->addAction(QStringLiteral("RGB Parade"));
+    QAction *vectorscopeAction = layoutMenu->addAction(QStringLiteral("Vectorscope"));
+    QAction *waveformAction = layoutMenu->addAction(QStringLiteral("Waveform"));
+    QAction *histogramAction = layoutMenu->addAction(QStringLiteral("Histogram"));
+
+    auto markLayout = [this](QAction *action, ViewMode mode) {
+      action->setCheckable(true);
+      action->setChecked(viewMode_ == mode);
+    };
+    markLayout(gridAction, ViewMode::Grid);
+    markLayout(dualAction, ViewMode::Dual);
+    markLayout(coloristAction, ViewMode::Colorist);
+    markLayout(paradeAction, ViewMode::Parade);
+    markLayout(vectorscopeAction, ViewMode::Vectorscope);
+    markLayout(waveformAction, ViewMode::Waveform);
+    markLayout(histogramAction, ViewMode::Histogram);
+
+    QMenu *waveformMenu = menu.addMenu(QStringLiteral("Waveform Mode"));
+    QAction *waveformLuma = waveformMenu->addAction(QStringLiteral("Luma"));
+    QAction *waveformRgb = waveformMenu->addAction(QStringLiteral("RGB Overlay"));
+    QAction *waveformYCbCr = waveformMenu->addAction(QStringLiteral("YCbCr"));
+    if (waveform_) {
+      waveformLuma->setCheckable(true);
+      waveformRgb->setCheckable(true);
+      waveformYCbCr->setCheckable(true);
+      waveformLuma->setChecked(waveform_->mode() == ArtifactWidgets::WaveformMode::Luma);
+      waveformRgb->setChecked(waveform_->mode() == ArtifactWidgets::WaveformMode::RGB);
+      waveformYCbCr->setChecked(waveform_->mode() == ArtifactWidgets::WaveformMode::YCbCr);
+    }
+
+    QMenu *vectorscopeMenu = menu.addMenu(QStringLiteral("Vectorscope Mode"));
+    QAction *vectorStandard = vectorscopeMenu->addAction(QStringLiteral("Standard"));
+    QAction *vectorHls = vectorscopeMenu->addAction(QStringLiteral("HLS"));
+    QAction *vectorSkin = vectorscopeMenu->addAction(QStringLiteral("Skin Tone Indicator"));
+    if (vectorscope_) {
+      vectorStandard->setCheckable(true);
+      vectorHls->setCheckable(true);
+      vectorSkin->setCheckable(true);
+      vectorStandard->setChecked(vectorscope_->mode() == ArtifactWidgets::VectorScopeMode::Standard);
+      vectorHls->setChecked(vectorscope_->mode() == ArtifactWidgets::VectorScopeMode::HLS);
+      vectorSkin->setChecked(vectorscope_->mode() == ArtifactWidgets::VectorScopeMode::Skin);
+    }
+
+    QMenu *paradeMenu = menu.addMenu(QStringLiteral("Parade Mode"));
+    QAction *paradeRgb = paradeMenu->addAction(QStringLiteral("RGB"));
+    QAction *paradeYCbCr = paradeMenu->addAction(QStringLiteral("YCbCr"));
+    QAction *paradeYRgb = paradeMenu->addAction(QStringLiteral("YRGB"));
+    if (paradeScope_) {
+      paradeRgb->setCheckable(true);
+      paradeYCbCr->setCheckable(true);
+      paradeYRgb->setCheckable(true);
+      paradeRgb->setChecked(paradeScope_->mode() == ArtifactWidgets::ParadeMode::RGB);
+      paradeYCbCr->setChecked(paradeScope_->mode() == ArtifactWidgets::ParadeMode::YCbCr);
+      paradeYRgb->setChecked(paradeScope_->mode() == ArtifactWidgets::ParadeMode::YRGB);
+    }
+
+    QMenu *histogramMenu = menu.addMenu(QStringLiteral("Histogram Mode"));
+    QAction *histCombined = histogramMenu->addAction(QStringLiteral("Combined"));
+    QAction *histLuma = histogramMenu->addAction(QStringLiteral("Luma"));
+    QAction *histRgb = histogramMenu->addAction(QStringLiteral("RGB Overlay"));
+    QAction *histParade = histogramMenu->addAction(QStringLiteral("RGB Parade"));
+    QAction *histLog = histogramMenu->addAction(QStringLiteral("Log Scale"));
+    if (histogram_) {
+      for (QAction *action : {histCombined, histLuma, histRgb, histParade, histLog}) {
+        action->setCheckable(true);
+      }
+      histCombined->setChecked(histogram_->mode() == ArtifactWidgets::HistogramMode::Combined);
+      histLuma->setChecked(histogram_->mode() == ArtifactWidgets::HistogramMode::Luma);
+      histRgb->setChecked(histogram_->mode() == ArtifactWidgets::HistogramMode::RGB);
+      histParade->setChecked(histogram_->mode() == ArtifactWidgets::HistogramMode::Parade);
+      histLog->setChecked(histogram_->logScale());
+    }
+
+    QMenu *intensityMenu = menu.addMenu(QStringLiteral("Trace Intensity"));
+    QAction *intensityLow = intensityMenu->addAction(QStringLiteral("Low (50%)"));
+    QAction *intensityMedium = intensityMenu->addAction(QStringLiteral("Medium (75%)"));
+    QAction *intensityHigh = intensityMenu->addAction(QStringLiteral("High (100%)"));
+    for (QAction *action : {intensityLow, intensityMedium, intensityHigh}) {
+      action->setCheckable(true);
+    }
+    intensityLow->setChecked(traceIntensity_ == 50);
+    intensityMedium->setChecked(traceIntensity_ == 75);
+    intensityHigh->setChecked(traceIntensity_ == 100);
+
+    QMenu *rateMenu = menu.addMenu(QStringLiteral("Refresh Rate"));
+    QAction *rate10 = rateMenu->addAction(QStringLiteral("10 fps"));
+    QAction *rate5 = rateMenu->addAction(QStringLiteral("5 fps"));
+    QAction *rate2 = rateMenu->addAction(QStringLiteral("2 fps"));
+    QAction *rate1 = rateMenu->addAction(QStringLiteral("1 fps"));
+    for (QAction *action : {rate10, rate5, rate2, rate1}) {
+      action->setCheckable(true);
+    }
+    rate10->setChecked(refreshIntervalMs_ == 100);
+    rate5->setChecked(refreshIntervalMs_ == 200);
+    rate2->setChecked(refreshIntervalMs_ == 500);
+    rate1->setChecked(refreshIntervalMs_ == 1000);
+
+    QMenu *qcRangeMenu = menu.addMenu(QStringLiteral("QC Signal Range"));
+    QAction *qcFull = qcRangeMenu->addAction(QStringLiteral("Full Range"));
+    QAction *qcLegal = qcRangeMenu->addAction(QStringLiteral("Video Legal (8-bit)"));
+    qcFull->setCheckable(true);
+    qcLegal->setCheckable(true);
+    qcFull->setChecked(!videoLegalQc_);
+    qcLegal->setChecked(videoLegalQc_);
+
     menu.addSeparator();
-    QAction *paradeAction = menu.addAction(QStringLiteral("RGB Parade"));
-    QAction *vectorscopeAction = menu.addAction(QStringLiteral("Vectorscope"));
-    QAction *waveformAction = menu.addAction(QStringLiteral("Luma Waveform"));
-    QAction *histogramAction = menu.addAction(QStringLiteral("Histogram"));
+    QAction *freezeAction = menu.addAction(QStringLiteral("Freeze Scopes"));
+    freezeAction->setCheckable(true);
+    freezeAction->setChecked(frozen_);
 
     QAction *selected = menu.exec(event->globalPos());
     if (selected == gridAction) {
       applyViewMode(ViewMode::Grid);
+    } else if (selected == dualAction) {
+      applyViewMode(ViewMode::Dual);
+    } else if (selected == coloristAction) {
+      applyViewMode(ViewMode::Colorist);
     } else if (selected == paradeAction) {
       applyViewMode(ViewMode::Parade);
     } else if (selected == vectorscopeAction) {
@@ -368,7 +521,57 @@ protected:
       applyViewMode(ViewMode::Waveform);
     } else if (selected == histogramAction) {
       applyViewMode(ViewMode::Histogram);
+    } else if (selected == waveformLuma && waveform_) {
+      waveform_->setMode(ArtifactWidgets::WaveformMode::Luma);
+    } else if (selected == waveformRgb && waveform_) {
+      waveform_->setMode(ArtifactWidgets::WaveformMode::RGB);
+    } else if (selected == waveformYCbCr && waveform_) {
+      waveform_->setMode(ArtifactWidgets::WaveformMode::YCbCr);
+    } else if (selected == vectorStandard && vectorscope_) {
+      vectorscope_->setMode(ArtifactWidgets::VectorScopeMode::Standard);
+    } else if (selected == vectorHls && vectorscope_) {
+      vectorscope_->setMode(ArtifactWidgets::VectorScopeMode::HLS);
+    } else if (selected == vectorSkin && vectorscope_) {
+      vectorscope_->setMode(ArtifactWidgets::VectorScopeMode::Skin);
+    } else if (selected == paradeRgb && paradeScope_) {
+      paradeScope_->setMode(ArtifactWidgets::ParadeMode::RGB);
+    } else if (selected == paradeYCbCr && paradeScope_) {
+      paradeScope_->setMode(ArtifactWidgets::ParadeMode::YCbCr);
+    } else if (selected == paradeYRgb && paradeScope_) {
+      paradeScope_->setMode(ArtifactWidgets::ParadeMode::YRGB);
+    } else if (selected == histCombined && histogram_) {
+      histogram_->setMode(ArtifactWidgets::HistogramMode::Combined);
+    } else if (selected == histLuma && histogram_) {
+      histogram_->setMode(ArtifactWidgets::HistogramMode::Luma);
+    } else if (selected == histRgb && histogram_) {
+      histogram_->setMode(ArtifactWidgets::HistogramMode::RGB);
+    } else if (selected == histParade && histogram_) {
+      histogram_->setMode(ArtifactWidgets::HistogramMode::Parade);
+    } else if (selected == histLog && histogram_) {
+      histogram_->setLogScale(histLog->isChecked());
+    } else if (selected == intensityLow) {
+      applyTraceIntensity(50);
+    } else if (selected == intensityMedium) {
+      applyTraceIntensity(75);
+    } else if (selected == intensityHigh) {
+      applyTraceIntensity(100);
+    } else if (selected == rate10) {
+      applyRefreshInterval(100);
+    } else if (selected == rate5) {
+      applyRefreshInterval(200);
+    } else if (selected == rate2) {
+      applyRefreshInterval(500);
+    } else if (selected == rate1) {
+      applyRefreshInterval(1000);
+    } else if (selected == qcFull) {
+      videoLegalQc_ = false;
+    } else if (selected == qcLegal) {
+      videoLegalQc_ = true;
+    } else if (selected == freezeAction) {
+      frozen_ = freezeAction->isChecked();
     }
+    if (selected) ++preferenceRevision_;
+    savePreferences();
   }
 
   bool eventFilter(QObject *watched, QEvent *event) override {
@@ -391,6 +594,7 @@ protected:
       } else {
         applyViewMode(ViewMode::Grid);
       }
+      savePreferences();
       return true;
     }
     return QWidget::eventFilter(watched, event);
@@ -444,6 +648,27 @@ private:
       return;
     }
 
+    if (mode == ViewMode::Dual) {
+      grid_->addWidget(waveformTile_, 0, 0);
+      grid_->addWidget(vectorscopeTile_, 0, 1);
+      waveformTile_->show();
+      vectorscopeTile_->show();
+      setAccessibleDescription(QStringLiteral("Dual waveform and vectorscope layout"));
+      return;
+    }
+
+    if (mode == ViewMode::Colorist) {
+      grid_->addWidget(paradeTile_, 0, 0, 2, 1);
+      grid_->addWidget(vectorscopeTile_, 0, 1);
+      grid_->addWidget(histogramTile_, 1, 1);
+      paradeTile_->show();
+      vectorscopeTile_->show();
+      histogramTile_->show();
+      setAccessibleDescription(QStringLiteral(
+          "Colorist layout with large parade, vectorscope, and histogram"));
+      return;
+    }
+
     QWidget *active = nullptr;
     if (mode == ViewMode::Parade) active = paradeTile_;
     else if (mode == ViewMode::Vectorscope) active = vectorscopeTile_;
@@ -458,12 +683,108 @@ private:
     }
   }
 
+  void applyTraceIntensity(int percent) {
+    traceIntensity_ = percent;
+    const float value = static_cast<float>(percent) / 100.0f;
+    if (paradeScope_) paradeScope_->setIntensity(value);
+    if (vectorscope_) vectorscope_->setIntensity(value);
+    if (waveform_) waveform_->setIntensity(value);
+  }
+
+  void applyRefreshInterval(int intervalMs) {
+    refreshIntervalMs_ = intervalMs;
+    if (refreshTimer_) refreshTimer_->setInterval(intervalMs);
+  }
+
+  void restorePreferences() {
+    QSettings settings;
+    settings.beginGroup(QStringLiteral("ColorScience/Scopes"));
+    const auto boundedEnumValue = [&settings](const QString &key,
+                                               int fallback,
+                                               int minimum,
+                                               int maximum) {
+      const int value = settings.value(key, fallback).toInt();
+      return value >= minimum && value <= maximum ? value : fallback;
+    };
+    const int savedLayout = settings.value(QStringLiteral("layout"),
+        static_cast<int>(ViewMode::Grid)).toInt();
+    viewMode_ = savedLayout >= static_cast<int>(ViewMode::Grid) &&
+                        savedLayout <= static_cast<int>(ViewMode::Histogram)
+                    ? static_cast<ViewMode>(savedLayout)
+                    : ViewMode::Grid;
+    frozen_ = settings.value(QStringLiteral("frozen"), false).toBool();
+    refreshIntervalMs_ = settings.value(QStringLiteral("refreshIntervalMs"), 200).toInt();
+    traceIntensity_ = settings.value(QStringLiteral("traceIntensity"), 75).toInt();
+    videoLegalQc_ = settings.value(QStringLiteral("videoLegalQc"), false).toBool();
+    if (refreshIntervalMs_ != 100 && refreshIntervalMs_ != 200 &&
+        refreshIntervalMs_ != 500 && refreshIntervalMs_ != 1000) {
+      refreshIntervalMs_ = 200;
+    }
+    if (traceIntensity_ != 50 && traceIntensity_ != 75 && traceIntensity_ != 100) {
+      traceIntensity_ = 75;
+    }
+    if (waveform_) waveform_->setMode(static_cast<ArtifactWidgets::WaveformMode>(
+        boundedEnumValue(QStringLiteral("waveformMode"),
+                         static_cast<int>(ArtifactWidgets::WaveformMode::Luma),
+                         static_cast<int>(ArtifactWidgets::WaveformMode::Luma),
+                         static_cast<int>(ArtifactWidgets::WaveformMode::YCbCr))));
+    if (vectorscope_) vectorscope_->setMode(static_cast<ArtifactWidgets::VectorScopeMode>(
+        boundedEnumValue(QStringLiteral("vectorscopeMode"),
+                         static_cast<int>(ArtifactWidgets::VectorScopeMode::Skin),
+                         static_cast<int>(ArtifactWidgets::VectorScopeMode::Standard),
+                         static_cast<int>(ArtifactWidgets::VectorScopeMode::Skin))));
+    if (paradeScope_) paradeScope_->setMode(static_cast<ArtifactWidgets::ParadeMode>(
+        boundedEnumValue(QStringLiteral("paradeMode"),
+                         static_cast<int>(ArtifactWidgets::ParadeMode::RGB),
+                         static_cast<int>(ArtifactWidgets::ParadeMode::RGB),
+                         static_cast<int>(ArtifactWidgets::ParadeMode::YRGB))));
+    if (histogram_) {
+      histogram_->setMode(static_cast<ArtifactWidgets::HistogramMode>(
+          boundedEnumValue(QStringLiteral("histogramMode"),
+                           static_cast<int>(ArtifactWidgets::HistogramMode::Combined),
+                           static_cast<int>(ArtifactWidgets::HistogramMode::Luma),
+                           static_cast<int>(ArtifactWidgets::HistogramMode::Combined))));
+      histogram_->setLogScale(settings.value(QStringLiteral("histogramLog"), true).toBool());
+    }
+    settings.endGroup();
+    applyTraceIntensity(traceIntensity_);
+    applyRefreshInterval(refreshIntervalMs_);
+  }
+
+  void savePreferences() const {
+    QSettings settings;
+    settings.beginGroup(QStringLiteral("ColorScience/Scopes"));
+    settings.setValue(QStringLiteral("layout"), static_cast<int>(viewMode_));
+    settings.setValue(QStringLiteral("frozen"), frozen_);
+    settings.setValue(QStringLiteral("refreshIntervalMs"), refreshIntervalMs_);
+    settings.setValue(QStringLiteral("traceIntensity"), traceIntensity_);
+    settings.setValue(QStringLiteral("videoLegalQc"), videoLegalQc_);
+    if (waveform_) settings.setValue(QStringLiteral("waveformMode"), static_cast<int>(waveform_->mode()));
+    if (vectorscope_) settings.setValue(QStringLiteral("vectorscopeMode"), static_cast<int>(vectorscope_->mode()));
+    if (paradeScope_) settings.setValue(QStringLiteral("paradeMode"), static_cast<int>(paradeScope_->mode()));
+    if (histogram_) {
+      settings.setValue(QStringLiteral("histogramMode"), static_cast<int>(histogram_->mode()));
+      settings.setValue(QStringLiteral("histogramLog"), histogram_->logScale());
+    }
+    settings.endGroup();
+  }
+
   QGridLayout *grid_ = nullptr;
   QFrame *paradeTile_ = nullptr;
   QFrame *vectorscopeTile_ = nullptr;
   QFrame *waveformTile_ = nullptr;
   QFrame *histogramTile_ = nullptr;
+  ArtifactWidgets::ParadeScopeWidget *paradeScope_ = nullptr;
+  ArtifactWidgets::VectorScopeWidget *vectorscope_ = nullptr;
+  ArtifactWidgets::WaveformScopeWidget *waveform_ = nullptr;
+  ArtifactWidgets::HistogramWidget *histogram_ = nullptr;
+  QTimer *refreshTimer_ = nullptr;
   ViewMode viewMode_ = ViewMode::Grid;
+  bool frozen_ = false;
+  int refreshIntervalMs_ = 200;
+  int traceIntensity_ = 75;
+  bool videoLegalQc_ = false;
+  quint64 preferenceRevision_ = 0;
 };
 
 } // namespace
@@ -486,6 +807,8 @@ public:
   };
 
   ArtifactColorScienceManager *manager_ = nullptr;
+  ArtifactHDRMonitor *scopeAnalyzer_ = nullptr;
+  ArtifactCore::ArtifactArray<ArtifactCore::FloatColor> scopeAnalysisSamples_;
   ArtifactCore::SharedPtr<ArtifactCore::Color::ColorPaletteManager> paletteManager_;
 
   // UI elements
@@ -519,12 +842,21 @@ public:
   QLabel *snapResultLabel_ = nullptr;
   ScopeDashboard *scopeDashboard_ = nullptr;
   QLabel *scopeStatusLabel_ = nullptr;
+  QLabel *scopeQcLabel_ = nullptr;
   ArtifactWidgets::HistogramWidget *histogramWidget_ = nullptr;
   ArtifactWidgets::VectorScopeWidget *vectorScopeWidget_ = nullptr;
   ArtifactWidgets::WaveformScopeWidget *waveformScopeWidget_ = nullptr;
   ArtifactWidgets::ParadeScopeWidget *paradeScopeWidget_ = nullptr;
   QTimer *scopeRefreshTimer_ = nullptr;
-  qint64 lastScopeFrameKey_ = 0;
+  QPointer<ArtifactCompositionEditor> lastScopeEditor_;
+  QPointer<ArtifactCompositionEditor> scopeRequestEditor_;
+  quint64 lastScopeFrameSerial_ = 0;
+  quint64 lastScopePreferenceRevision_ = 0;
+  quint64 scopeRequestGeneration_ = 0;
+  quint64 scopeAcceptedRequests_ = 0;
+  quint64 scopeDeferredRequests_ = 0;
+  bool scopeReadbackPending_ = false;
+  QElapsedTimer scopeReadbackElapsed_;
 
   std::vector<LutEntry> lutEntries_;
   std::vector<ColorRuleRow> colorRules_;
@@ -547,6 +879,10 @@ public:
   QString lutDescriptionForSource(const QString &source) const;
   QString defaultLUTDirectory() const;
   void refreshScopesFromViewport(QWidget *parent);
+  void applyScopeFrame(const QImage &frame, quint64 frameSerial,
+                       quint64 requestGeneration,
+                       ArtifactCompositionEditor *sourceEditor);
+  void updateScopeQcSummary(const QImage &frame);
 };
 
 static ArtifactCompositionEditor *findActiveCompositionEditor(QWidget *origin) {
@@ -585,6 +921,7 @@ ArtifactColorSciencePanel::ArtifactColorSciencePanel(QWidget *parent)
   setAccessibleName(QStringLiteral("Color science panel"));
   setAccessibleDescription(QStringLiteral("Configure color spaces, LUTs, OCIO color management, HDR, and color constraints"));
   impl_->manager_ = new ArtifactColorScienceManager();
+  impl_->scopeAnalyzer_ = new ArtifactHDRMonitor();
   impl_->paletteManager_ = ArtifactCore::makeShared<ArtifactCore::Color::ColorPaletteManager>();
   impl_->setupUI(this);
   impl_->connectSignals();
@@ -592,6 +929,8 @@ ArtifactColorSciencePanel::ArtifactColorSciencePanel(QWidget *parent)
 }
 
 ArtifactColorSciencePanel::~ArtifactColorSciencePanel() {
+  delete impl_->scopeAnalyzer_;
+  impl_->scopeAnalyzer_ = nullptr;
   delete impl_->manager_;
   delete impl_;
 }
@@ -762,7 +1101,8 @@ void ArtifactColorSciencePanel::Impl::setupScopesSection(QWidget *parent, QVBoxL
   auto *scopeLayout = new QVBoxLayout(scopeGroup);
 
   auto *scopeHeader = new QLabel(
-      "Auto-syncs to the active Composition Editor viewport preview.", scopeGroup);
+      "Async live scopes · latest frame wins · right-click for professional controls",
+      scopeGroup);
   scopeHeader->setWordWrap(true);
   scopeLayout->addWidget(scopeHeader);
 
@@ -803,10 +1143,17 @@ void ArtifactColorSciencePanel::Impl::setupScopesSection(QWidget *parent, QVBoxL
   scopeStatusLabel_->setWordWrap(true);
   scopeLayout->addWidget(scopeStatusLabel_);
 
+  scopeQcLabel_ = new QLabel(
+      QStringLiteral("QC · waiting for preview RGB samples"), scopeGroup);
+  scopeQcLabel_->setWordWrap(true);
+  scopeQcLabel_->setAccessibleName(QStringLiteral("Scope quality control summary"));
+  scopeLayout->addWidget(scopeQcLabel_);
+
   layout->addWidget(scopeGroup);
 
   scopeRefreshTimer_ = new QTimer(parent);
-  scopeRefreshTimer_->setInterval(180);
+  scopeDashboard_->setRefreshTimer(scopeRefreshTimer_);
+  scopeRefreshTimer_->setInterval(scopeDashboard_->refreshIntervalMs());
   QObject::connect(scopeRefreshTimer_, &QTimer::timeout, [this, parent]() {
     refreshScopesFromViewport(parent);
   });
@@ -1237,9 +1584,17 @@ void ArtifactColorSciencePanel::Impl::refreshScopesFromViewport(QWidget *parent)
     return;
   }
 
+  if (scopeDashboard_ && scopeDashboard_->frozen()) {
+    if (scopeStatusLabel_) {
+      scopeStatusLabel_->setText(QStringLiteral("Frozen · right-click to resume live scopes"));
+    }
+    return;
+  }
+
   ArtifactCompositionEditor *editor = findActiveCompositionEditor(parent);
   if (!editor) {
-    lastScopeFrameKey_ = 0;
+    lastScopeEditor_.clear();
+    lastScopeFrameSerial_ = 0;
     if (scopeStatusLabel_) {
       scopeStatusLabel_->setText(QStringLiteral("No visible Composition Editor"));
     }
@@ -1254,43 +1609,200 @@ void ArtifactColorSciencePanel::Impl::refreshScopesFromViewport(QWidget *parent)
     return;
   }
 
-  const QImage frame = controller->captureCurrentFrameImage();
-  if (frame.isNull()) {
-    lastScopeFrameKey_ = 0;
-    if (scopeStatusLabel_) {
-      scopeStatusLabel_->setText(QStringLiteral("Viewport preview frame is not ready yet"));
-    }
-    return;
-  }
-
-  const qint64 frameKey = frame.cacheKey();
-  if (frameKey == lastScopeFrameKey_) {
+  const quint64 frameSerial = controller->currentFrameSerial();
+  const quint64 preferenceRevision =
+      scopeDashboard_ ? scopeDashboard_->revision() : 0;
+  if (editor == lastScopeEditor_ && frameSerial != 0 &&
+      frameSerial == lastScopeFrameSerial_ &&
+      preferenceRevision == lastScopePreferenceRevision_) {
     if (scopeStatusLabel_) {
       scopeStatusLabel_->setText(
-          QStringLiteral("Linked to viewport: %1 x %2").arg(frame.width()).arg(frame.height()));
+          QStringLiteral("Live · frame %1 · accepted %2 · deferred %3")
+              .arg(frameSerial)
+              .arg(scopeAcceptedRequests_)
+              .arg(scopeDeferredRequests_));
     }
     return;
   }
 
-  lastScopeFrameKey_ = frameKey;
+  if (scopeReadbackPending_ && scopeRequestEditor_ != editor) {
+    scopeReadbackPending_ = false;
+    scopeRequestEditor_.clear();
+    ++scopeRequestGeneration_;
+    ++scopeDeferredRequests_;
+  }
 
-  if (histogramWidget_) {
+  if (scopeReadbackPending_) {
+    if (scopeReadbackElapsed_.isValid() && scopeReadbackElapsed_.elapsed() >= 2000) {
+      scopeReadbackPending_ = false;
+      scopeRequestEditor_.clear();
+      ++scopeRequestGeneration_;
+    } else {
+      ++scopeDeferredRequests_;
+      return;
+    }
+    ++scopeDeferredRequests_;
+  }
+
+  scopeReadbackPending_ = true;
+  scopeRequestEditor_ = editor;
+  scopeReadbackElapsed_.restart();
+  const quint64 requestGeneration = ++scopeRequestGeneration_;
+  QPointer<ArtifactColorSciencePanel> ownerGuard(owner_);
+  QPointer<ArtifactCompositionEditor> editorGuard(editor);
+  const bool accepted = controller->requestCurrentFrameImageAsync(
+      [this, ownerGuard, editorGuard, requestGeneration](QImage frame,
+                                                         quint64 completedSerial) mutable {
+        if (!ownerGuard) {
+          return;
+        }
+        QMetaObject::invokeMethod(
+            ownerGuard.data(),
+            [this, ownerGuard, editorGuard, requestGeneration, completedSerial,
+             frame = std::move(frame)]() mutable {
+              if (!ownerGuard) {
+                return;
+              }
+              applyScopeFrame(frame, completedSerial, requestGeneration,
+                              editorGuard.data());
+            },
+            Qt::QueuedConnection);
+      });
+
+  if (!accepted) {
+    scopeReadbackPending_ = false;
+    scopeRequestEditor_.clear();
+    ++scopeDeferredRequests_;
+    if (scopeStatusLabel_) {
+      scopeStatusLabel_->setText(
+          QStringLiteral("Live · readback ring busy · keeping the last scope frame"));
+    }
+  }
+}
+
+void ArtifactColorSciencePanel::Impl::applyScopeFrame(
+    const QImage &frame, quint64 frameSerial, quint64 requestGeneration,
+    ArtifactCompositionEditor *sourceEditor) {
+  if (requestGeneration != scopeRequestGeneration_) {
+    return;
+  }
+  scopeReadbackPending_ = false;
+  scopeRequestEditor_.clear();
+  if (scopeDashboard_ && scopeDashboard_->frozen()) return;
+  if (frame.isNull()) {
+    ++scopeDeferredRequests_;
+    if (scopeStatusLabel_) {
+      scopeStatusLabel_->setText(
+          QStringLiteral("Live · frame readback unavailable · keeping the last scopes"));
+    }
+    return;
+  }
+
+  if (!sourceEditor || sourceEditor != findActiveCompositionEditor(owner_)) {
+    ++scopeDeferredRequests_;
+    return;
+  }
+
+  lastScopeFrameSerial_ = frameSerial;
+  lastScopePreferenceRevision_ =
+      scopeDashboard_ ? scopeDashboard_->revision() : 0;
+  lastScopeEditor_ = sourceEditor;
+  ++scopeAcceptedRequests_;
+
+  if (histogramWidget_ &&
+      (!scopeDashboard_ || scopeDashboard_->showsHistogram())) {
     histogramWidget_->updateFrame(frame);
   }
-  if (vectorScopeWidget_) {
+  if (vectorScopeWidget_ &&
+      (!scopeDashboard_ || scopeDashboard_->showsVectorscope())) {
     vectorScopeWidget_->updateFrame(frame);
   }
-  if (waveformScopeWidget_) {
+  if (waveformScopeWidget_ &&
+      (!scopeDashboard_ || scopeDashboard_->showsWaveform())) {
     waveformScopeWidget_->updateFrame(frame);
   }
-  if (paradeScopeWidget_) {
+  if (paradeScopeWidget_ &&
+      (!scopeDashboard_ || scopeDashboard_->showsParade())) {
     paradeScopeWidget_->updateFrame(frame);
   }
 
+  updateScopeQcSummary(frame);
+
   if (scopeStatusLabel_) {
     scopeStatusLabel_->setText(
-        QStringLiteral("Linked to viewport: %1 x %2").arg(frame.width()).arg(frame.height()));
+        QStringLiteral("Live · frame %1 · %2 x %3 · accepted %4 · deferred %5")
+            .arg(frameSerial)
+            .arg(frame.width())
+            .arg(frame.height())
+            .arg(scopeAcceptedRequests_)
+            .arg(scopeDeferredRequests_));
   }
+}
+
+void ArtifactColorSciencePanel::Impl::updateScopeQcSummary(const QImage &frame) {
+  if (!scopeQcLabel_ || !scopeAnalyzer_ || frame.isNull()) {
+    return;
+  }
+
+  const qint64 pixelCount = static_cast<qint64>(frame.width()) * frame.height();
+  int sampleStep = std::max(
+      1, static_cast<int>(std::ceil(std::sqrt(
+             static_cast<double>(std::max<qint64>(1, pixelCount)) / 100000.0))));
+  const auto sampledExtent = [&sampleStep](int extent) {
+    return (static_cast<qint64>(extent) + sampleStep - 1) / sampleStep;
+  };
+  while (sampledExtent(frame.width()) * sampledExtent(frame.height()) > 100000) {
+    ++sampleStep;
+  }
+  const int sampleWidth = static_cast<int>(sampledExtent(frame.width()));
+  const int sampleHeight = static_cast<int>(sampledExtent(frame.height()));
+  const int sampleCount = sampleWidth * sampleHeight;
+  scopeAnalysisSamples_.resize(static_cast<size_t>(sampleCount));
+
+  int sampleIndex = 0;
+  for (int y = 0; y < frame.height(); y += sampleStep) {
+    for (int x = 0; x < frame.width(); x += sampleStep) {
+      const QColor color = frame.pixelColor(x, y);
+      scopeAnalysisSamples_[static_cast<size_t>(sampleIndex++)] =
+          ArtifactCore::FloatColor(color.redF(), color.greenF(), color.blueF(),
+                                   color.alphaF());
+    }
+  }
+
+  ScopeAnalysisDescriptor descriptor;
+  descriptor.domain = ScopeSignalDomain::DisplayEncoded;
+  descriptor.signalRange = scopeDashboard_
+      ? scopeDashboard_->qcSignalRange() : ScopeSignalRange::Full;
+  descriptor.primaries = ArtifactCore::Gamut::Rec709;
+  descriptor.targetGamut = ArtifactCore::Gamut::Rec709;
+  descriptor.luminanceStandard = ArtifactCore::LuminanceStandard::Rec709;
+  descriptor.transferFunction = ArtifactCore::TransferFunction::sRGB;
+  descriptor.referenceWhiteNits = 100.0f;
+  descriptor.peakLuminanceNits = 100.0f;
+  descriptor.bitDepth = 8;
+  descriptor.sampleStep = 1;
+  descriptor.maxOutOfGamutSamples = 0;
+  descriptor.publishEvent = false;
+  const HDRAnalysisResult result = scopeAnalyzer_->analyzeFrame(
+      scopeAnalysisSamples_, sampleWidth, sampleHeight, descriptor);
+  const double divisor =
+      static_cast<double>(std::max(1, result.validSamples));
+  scopeQcLabel_->setText(
+      QStringLiteral("QC SDR/Rec.709 %1 · Low %2% · High %3% · Range %4% · Gamut %5% · Avg %6 nits · Invalid %7 · sample 1/%8")
+          .arg(descriptor.signalRange == ScopeSignalRange::VideoLegal
+                   ? QStringLiteral("Legal") : QStringLiteral("Full"))
+          .arg(100.0 * static_cast<double>(result.clippedShadows) / divisor,
+               0, 'f', 2)
+          .arg(100.0 * static_cast<double>(result.clippedHighlights) / divisor,
+               0, 'f', 2)
+          .arg(100.0 * static_cast<double>(result.broadcastSafeViolations) /
+                   divisor,
+               0, 'f', 2)
+          .arg(100.0 * static_cast<double>(result.outOfGamutSamples) / divisor,
+               0, 'f', 2)
+          .arg(result.avgLuminanceNits, 0, 'f', 1)
+          .arg(result.nonFiniteSamples)
+          .arg(sampleStep * sampleStep));
 }
 
 ArtifactColorScienceManager *

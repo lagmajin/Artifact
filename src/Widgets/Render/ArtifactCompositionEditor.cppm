@@ -577,6 +577,16 @@ QString shapeTypeDisplayName(ShapeType type) {
     return QStringLiteral("Triangle");
   case ShapeType::Square:
     return QStringLiteral("Square");
+  case ShapeType::Arrow:
+    return QStringLiteral("Arrow");
+  case ShapeType::Heart:
+    return QStringLiteral("Heart");
+  case ShapeType::Diamond:
+    return QStringLiteral("Diamond");
+  case ShapeType::Gear:
+    return QStringLiteral("Gear");
+  case ShapeType::Cross:
+    return QStringLiteral("Cross");
   }
   return QStringLiteral("Shape");
 }
@@ -7354,6 +7364,16 @@ protected:
       event->accept();
       return;
     }
+    if (!event->isAutoRepeat() &&
+        shortcutBindings.matches(
+            event, ArtifactCore::ShortcutId::ViewToggleClippingWarnings)) {
+      if (controller_) {
+        controller_->setViewportClippingWarningsEnabled(
+            !controller_->isViewportClippingWarningsEnabled());
+      }
+      event->accept();
+      return;
+    }
     if (!event->isAutoRepeat() && (event->key() == Qt::Key_QuoteLeft ||
                                    event->key() == Qt::Key_AsciiTilde)) {
       beginTemporarySolo();
@@ -11390,7 +11410,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                      }
                      auto *dialog = new QDialog(this);
                      dialog->setAttribute(Qt::WA_DeleteOnClose);
-                     dialog->setWindowTitle(QStringLiteral("Preview Vectorscope"));
+                     dialog->setWindowTitle(QStringLiteral("Preview Scopes"));
                      dialog->resize(360, 380);
                      auto *layout = new QVBoxLayout(dialog);
                      auto *tabs = new QTabWidget(dialog);
@@ -11409,20 +11429,67 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                      tabs->addTab(histogramWidget, QStringLiteral("Histogram"));
                      layout->addWidget(tabs);
                      auto *timer = new QTimer(dialog);
+                     QPointer<QDialog> dialogGuard(dialog);
+                     QPointer<ArtifactWidgets::VectorScopeWidget> vectorGuard(vectorScope);
+                     QPointer<ArtifactWidgets::WaveformScopeWidget> waveformGuard(waveformScope);
+                     QPointer<ArtifactWidgets::ParadeScopeWidget> paradeGuard(paradeScope);
+                     QPointer<ArtifactWidgets::HistogramWidget> histogramGuard(histogramWidget);
+                     auto requestScopeFrame =
+                         [this, dialogGuard, vectorGuard, waveformGuard, paradeGuard,
+                          histogramGuard]() {
+                           if (!impl_ || !impl_->renderController_ || !dialogGuard ||
+                               !vectorGuard || !waveformGuard || !paradeGuard ||
+                               !histogramGuard ||
+                               dialogGuard->property("scopeReadbackPending").toBool()) {
+                             return;
+                           }
+                           const quint64 frameSerial =
+                               impl_->renderController_->currentFrameSerial();
+                           if (frameSerial != 0 &&
+                               dialogGuard->property("scopeFrameSerial").toULongLong() ==
+                                   frameSerial) {
+                             return;
+                           }
+                           dialogGuard->setProperty("scopeReadbackPending", true);
+                           const bool accepted =
+                               impl_->renderController_->requestCurrentFrameImageAsync(
+                                   [dialogGuard, vectorGuard, waveformGuard, paradeGuard,
+                                    histogramGuard](QImage frame,
+                                                    quint64 completedSerial) mutable {
+                                     if (!dialogGuard) {
+                                       return;
+                                     }
+                                     QMetaObject::invokeMethod(
+                                         dialogGuard.data(),
+                                         [dialogGuard, vectorGuard, waveformGuard,
+                                          paradeGuard, histogramGuard,
+                                          frame = std::move(frame),
+                                          completedSerial]() mutable {
+                                           if (!dialogGuard) {
+                                             return;
+                                           }
+                                           dialogGuard->setProperty(
+                                               "scopeReadbackPending", false);
+                                           if (frame.isNull() || !vectorGuard ||
+                                               !waveformGuard || !paradeGuard ||
+                                               !histogramGuard) {
+                                             return;
+                                           }
+                                           dialogGuard->setProperty(
+                                               "scopeFrameSerial", completedSerial);
+                                           vectorGuard->updateFrame(frame);
+                                           waveformGuard->updateFrame(frame);
+                                           paradeGuard->updateFrame(frame);
+                                           histogramGuard->updateFrame(frame);
+                                         },
+                                         Qt::QueuedConnection);
+                                   });
+                           if (!accepted && dialogGuard) {
+                             dialogGuard->setProperty("scopeReadbackPending", false);
+                           }
+                         };
                      QObject::connect(timer, &QTimer::timeout, dialog,
-                                      [this, vectorScope, waveformScope, paradeScope,
-                                       histogramWidget]() {
-                                        if (!impl_ || !impl_->renderController_ || !vectorScope ||
-                                            !waveformScope || !paradeScope || !histogramWidget) {
-                                          return;
-                                        }
-                                        const auto frame =
-                                            impl_->renderController_->captureCurrentFrameImage();
-                                        vectorScope->updateFrame(frame);
-                                        waveformScope->updateFrame(frame);
-                                        paradeScope->updateFrame(frame);
-                                        histogramWidget->updateFrame(frame);
-                                      });
+                                      requestScopeFrame);
                      QObject::connect(dialog, &QDialog::finished, this,
                                       [this]() {
                                         if (impl_) {
@@ -11432,19 +11499,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                      impl_->vectorScopeDialog_ = dialog;
                      dialog->show();
                      timer->start(150);
-                     QTimer::singleShot(0, dialog,
-                                        [this, vectorScope, waveformScope, paradeScope,
-                                         histogramWidget]() {
-                       if (impl_ && impl_->renderController_ && vectorScope && waveformScope &&
-                           paradeScope && histogramWidget) {
-                         const auto frame =
-                             impl_->renderController_->captureCurrentFrameImage();
-                         vectorScope->updateFrame(frame);
-                         waveformScope->updateFrame(frame);
-                         paradeScope->updateFrame(frame);
-                         histogramWidget->updateFrame(frame);
-                       }
-                     });
+                     requestScopeFrame();
                    });
   impl_->topToolbar_->addSeparator();
 

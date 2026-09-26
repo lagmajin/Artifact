@@ -2,6 +2,7 @@ module;
 #include <utility>
 #include <string>
 #include <cstdint>
+#include <functional>
 
 #include <wobjectdefs.h>
 #include <QObject>
@@ -305,6 +306,24 @@ void setShowAutoColorPaletteOverlay(bool show);
 bool isShowAutoColorPaletteOverlay() const;
 void setViewportChannelDisplayMode(ViewportChannelDisplayMode mode);
 ViewportChannelDisplayMode viewportChannelDisplayMode() const;
+
+// P1-5: display-only viewport exposure. Affects presentation only; the
+// composited surface used by the color sampler, Color Science scopes and the
+// Render Queue is never modified. Defaults are an exact identity.
+void setViewportExposureEnabled(bool enabled);
+bool isViewportExposureEnabled() const;
+void setViewportExposureGain(float gainStops);
+float viewportExposureGain() const;
+void setViewportExposureGamma(float gamma);
+float viewportExposureGamma() const;
+void setViewportExposureSaturation(float saturation);
+float viewportExposureSaturation() const;
+void setViewportClippingWarningsEnabled(bool enabled);
+bool isViewportClippingWarningsEnabled() const;
+void setViewportClippingUnderThreshold(float threshold);
+float viewportClippingUnderThreshold() const;
+void setViewportClippingOverThreshold(float threshold);
+float viewportClippingOverThreshold() const;
 bool setSelectedLayerMotionPathKeyframeAtCurrentFrame();
 bool removeSelectedLayerMotionPathKeyframeAtCurrentFrame();
 bool setSelectedLayerMotionPathInterpolationAtCurrentFrame(int interpolationType);
@@ -494,6 +513,12 @@ bool isInteractiveRenderRegionDragActive() const;
   // size; external callers must not call setMode() / setROI() on it.
   const Artifact::RenderContext& renderContext() const;
   QImage captureCurrentFrameImage() const;
+  // Queues a bounded renderer readback. Returns false when the fixed readback
+  // ring is busy; completion runs off the UI thread and carries the rendered
+  // frame serial so consumers can reject stale results.
+  bool requestCurrentFrameImageAsync(
+      std::function<void(QImage, quint64)> completion) const;
+  quint64 currentFrameSerial() const;
   ArtifactCore::FrameDebugSnapshot frameDebugSnapshot() const;
   ArtifactCore::FrameDebugSnapshot frameDebugCounters() const;
   double lastFrameTimeMs() const;

@@ -10955,6 +10955,19 @@ public:
 
   bool renderScheduled_ = false;
 
+  // P1-5: display-only viewport exposure. Applied to a scratch surface right
+  // before presentation, so the composited surface that readback paths (color
+  // sampler, Color Science scopes, magnifier, RAM preview) observe is never
+  // modified, and Render Queue output is unaffected. Defaults are an exact
+  // identity: gain 0 stops, gamma 1, saturation 1.
+  bool viewportExposureEnabled_ = true;
+  float viewportExposureGain_ = 0.0f;
+  float viewportExposureGamma_ = 1.0f;
+  float viewportExposureSaturation_ = 1.0f;
+  bool viewportClippingWarningsEnabled_ = false;
+  float viewportClippingUnderThreshold_ = 0.01f;
+  float viewportClippingOverThreshold_ = 1.0f;
+
   CompositionCompareMode compareMode_ = CompositionCompareMode::Off;
   CompositionLayerRenderFilter layerRenderFilter_ =
       CompositionLayerRenderFilter::All;
@@ -12778,6 +12791,33 @@ public:
     lastPresentedReadbackSRV_ = finalPresentSRV;
     compositeFinalizedThisFrame_ = true;
 
+    // P1-5/P1-10 display-only exposure and clipping warnings. Written to a
+    // scratch surface and applied only
+    // at the presentation selection below; finalPresentSRV and
+    // lastPresentedReadbackSRV_ are intentionally left untouched so the color
+    // sampler, Color Science scopes, magnifier and RAM preview readback keep
+    // seeing the unmodified composite. Restricted to Color mode so AOV and
+    // single-channel inspection stay neutral.
+    Diligent::ITextureView* exposedPresentSRV = nullptr;
+    const bool exposureTransformActive = viewportExposureEnabled_ &&
+        (viewportExposureGain_ != 0.0f || viewportExposureGamma_ != 1.0f ||
+         viewportExposureSaturation_ != 1.0f);
+    if ((exposureTransformActive || viewportClippingWarningsEnabled_) &&
+        viewportChannelDisplayMode_ == ViewportChannelDisplayMode::Color) {
+      const bool displayAdjustmentApplied = renderer_->applyViewportExposure(
+          finalPresentSRV, renderPipeline.tempUAV(),
+          static_cast<Diligent::Uint32>(renderPipeline.width()),
+          static_cast<Diligent::Uint32>(renderPipeline.height()),
+          exposureTransformActive ? viewportExposureGain_ : 0.0f,
+          exposureTransformActive ? viewportExposureGamma_ : 1.0f,
+          exposureTransformActive ? viewportExposureSaturation_ : 1.0f,
+          viewportClippingWarningsEnabled_,
+          viewportClippingUnderThreshold_, viewportClippingOverThreshold_);
+      if (displayAdjustmentApplied) {
+        exposedPresentSRV = renderPipeline.tempSRV();
+      }
+    }
+
     Diligent::ITextureView* channelComponentSource = nullptr;
     Diligent::Uint32 channelComponent = 0;
     switch (viewportChannelDisplayMode_) {
@@ -12895,10 +12935,17 @@ public:
         viewportChannelDisplaySRV_ = renderPipeline.tempSRV();
       }
     }
+    // P1-5: exposure takes precedence over the channel display surface. Both
+    // write to tempUAV(), so the exposed SRV is only valid when the channel
+    // display stage did not overwrite tempSRV() in the block above; Color mode
+    // (the only mode exposure runs in) never reaches that stage, so the two
+    // cannot collide.
     Diligent::ITextureView* presentationSRV =
-        presentComponentAsPrimary && viewportChannelDisplaySRV_
-            ? viewportChannelDisplaySRV_.RawPtr()
-            : finalPresentSRV;
+        exposedPresentSRV
+            ? exposedPresentSRV
+            : (presentComponentAsPrimary && viewportChannelDisplaySRV_
+                   ? viewportChannelDisplaySRV_.RawPtr()
+                   : finalPresentSRV);
 
     if (presentationLayout_ == CompositionViewportPresentationLayout::Quad) {
       const float leftW = std::floor(origViewW * 0.5f);
@@ -16614,6 +16661,36 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
       QStringLiteral("Viewport/AudioWaveformOverlay"), true);
   impl_->showAudioSpectrumOverlay_ = config.valueBool(
       QStringLiteral("Viewport/AudioSpectrumOverlay"), true);
+  // P1-5 display-only exposure. Defaults are the identity transform, so a
+  // project without these keys presents exactly as before.
+  impl_->viewportExposureEnabled_ = config.valueBool(
+      QStringLiteral("Viewport/Exposure/Enabled"), true);
+  impl_->viewportExposureGain_ = std::clamp(
+      static_cast<float>(config.valueDouble(
+          std::string_view("Viewport/Exposure/Gain"), 0.0)),
+      -6.0f, 6.0f);
+  impl_->viewportExposureGamma_ = std::clamp(
+      static_cast<float>(config.valueDouble(
+          std::string_view("Viewport/Exposure/Gamma"), 1.0)),
+      0.0f, 5.0f);
+  impl_->viewportExposureSaturation_ = std::clamp(
+      static_cast<float>(config.valueDouble(
+          std::string_view("Viewport/Exposure/Saturation"), 1.0)),
+      0.0f, 4.0f);
+  impl_->viewportClippingWarningsEnabled_ = config.valueBool(
+      QStringLiteral("Viewport/ClippingWarnings/Enabled"), false);
+  const float clippingUnderThreshold = static_cast<float>(config.valueDouble(
+      std::string_view("Viewport/ClippingWarnings/UnderThreshold"), 0.01));
+  impl_->viewportClippingUnderThreshold_ =
+      std::isfinite(clippingUnderThreshold)
+          ? std::clamp(clippingUnderThreshold, 0.0f, 1.0f)
+          : 0.01f;
+  const float clippingOverThreshold = static_cast<float>(config.valueDouble(
+      std::string_view("Viewport/ClippingWarnings/OverThreshold"), 1.0));
+  impl_->viewportClippingOverThreshold_ =
+      std::isfinite(clippingOverThreshold)
+          ? std::clamp(clippingOverThreshold, 0.0f, 4.0f)
+          : 1.0f;
   impl_->showRigOverlay_ = config.valueBool(
       QStringLiteral("Viewport/RigOverlayVisible"), false);
   impl_->rigWeightRadius_ = static_cast<float>(config.valueDouble(
@@ -19969,7 +20046,212 @@ CompositionRenderController::viewportChannelDisplayMode() const {
 
 }
 
+namespace {
+// Clamps the exposure controls to the ranges documented in
+// docs/planned/MILESTONE_VIEWPORT_DCC_PARITY_2026-09-22.md (P1-5). Non-finite
+// input falls back to the identity value so a bad config file cannot produce a
+// black or NaN viewport.
+float sanitizeExposureGain(float value) {
+  return std::isfinite(value) ? std::clamp(value, -6.0f, 6.0f) : 0.0f;
+}
+float sanitizeExposureGamma(float value) {
+  return std::isfinite(value) ? std::clamp(value, 0.0f, 5.0f) : 1.0f;
+}
+float sanitizeExposureSaturation(float value) {
+  return std::isfinite(value) ? std::clamp(value, 0.0f, 4.0f) : 1.0f;
+}
+float sanitizeClippingUnderThreshold(float value) {
+  return std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 0.01f;
+}
+float sanitizeClippingOverThreshold(float value) {
+  return std::isfinite(value) ? std::clamp(value, 0.0f, 4.0f) : 1.0f;
+}
+} // namespace
 
+void CompositionRenderController::setViewportExposureEnabled(bool enabled) {
+
+  if (!impl_ || impl_->viewportExposureEnabled_ == enabled) {
+
+    return;
+
+  }
+
+  impl_->viewportExposureEnabled_ = enabled;
+  ArtifactCore::LayeredConfigStore::instance().setValue(
+      QStringLiteral("Viewport/Exposure/Enabled"), enabled);
+  markRenderDirty();
+
+}
+
+bool CompositionRenderController::isViewportExposureEnabled() const {
+
+  return impl_ ? impl_->viewportExposureEnabled_ : false;
+
+}
+
+void CompositionRenderController::setViewportExposureGain(float gainStops) {
+
+  if (!impl_) {
+
+    return;
+
+  }
+
+  const float clamped = sanitizeExposureGain(gainStops);
+  if (impl_->viewportExposureGain_ == clamped) {
+
+    return;
+
+  }
+
+  impl_->viewportExposureGain_ = clamped;
+  ArtifactCore::LayeredConfigStore::instance().setValue(
+      QStringLiteral("Viewport/Exposure/Gain"), clamped);
+  markRenderDirty();
+
+}
+
+float CompositionRenderController::viewportExposureGain() const {
+
+  return impl_ ? impl_->viewportExposureGain_ : 0.0f;
+
+}
+
+void CompositionRenderController::setViewportExposureGamma(float gamma) {
+
+  if (!impl_) {
+
+    return;
+
+  }
+
+  const float clamped = sanitizeExposureGamma(gamma);
+  if (impl_->viewportExposureGamma_ == clamped) {
+
+    return;
+
+  }
+
+  impl_->viewportExposureGamma_ = clamped;
+  ArtifactCore::LayeredConfigStore::instance().setValue(
+      QStringLiteral("Viewport/Exposure/Gamma"), clamped);
+  markRenderDirty();
+
+}
+
+float CompositionRenderController::viewportExposureGamma() const {
+
+  return impl_ ? impl_->viewportExposureGamma_ : 1.0f;
+
+}
+
+void CompositionRenderController::setViewportExposureSaturation(float saturation) {
+
+  if (!impl_) {
+
+    return;
+
+  }
+
+  const float clamped = sanitizeExposureSaturation(saturation);
+  if (impl_->viewportExposureSaturation_ == clamped) {
+
+    return;
+
+  }
+
+  impl_->viewportExposureSaturation_ = clamped;
+  ArtifactCore::LayeredConfigStore::instance().setValue(
+      QStringLiteral("Viewport/Exposure/Saturation"), clamped);
+  markRenderDirty();
+
+}
+
+float CompositionRenderController::viewportExposureSaturation() const {
+
+  return impl_ ? impl_->viewportExposureSaturation_ : 1.0f;
+
+}
+
+void CompositionRenderController::setViewportClippingWarningsEnabled(
+    bool enabled) {
+
+  if (!impl_ || impl_->viewportClippingWarningsEnabled_ == enabled) {
+
+    return;
+
+  }
+
+  impl_->viewportClippingWarningsEnabled_ = enabled;
+  ArtifactCore::LayeredConfigStore::instance().setValue(
+      QStringLiteral("Viewport/ClippingWarnings/Enabled"), enabled);
+  markRenderDirty();
+
+}
+
+bool CompositionRenderController::isViewportClippingWarningsEnabled() const {
+
+  return impl_ ? impl_->viewportClippingWarningsEnabled_ : false;
+
+}
+
+void CompositionRenderController::setViewportClippingUnderThreshold(
+    float threshold) {
+
+  if (!impl_) {
+
+    return;
+
+  }
+
+  const float clamped = sanitizeClippingUnderThreshold(threshold);
+  if (impl_->viewportClippingUnderThreshold_ == clamped) {
+
+    return;
+
+  }
+
+  impl_->viewportClippingUnderThreshold_ = clamped;
+  ArtifactCore::LayeredConfigStore::instance().setValue(
+      QStringLiteral("Viewport/ClippingWarnings/UnderThreshold"), clamped);
+  markRenderDirty();
+
+}
+
+float CompositionRenderController::viewportClippingUnderThreshold() const {
+
+  return impl_ ? impl_->viewportClippingUnderThreshold_ : 0.01f;
+
+}
+
+void CompositionRenderController::setViewportClippingOverThreshold(
+    float threshold) {
+
+  if (!impl_) {
+
+    return;
+
+  }
+
+  const float clamped = sanitizeClippingOverThreshold(threshold);
+  if (impl_->viewportClippingOverThreshold_ == clamped) {
+
+    return;
+
+  }
+
+  impl_->viewportClippingOverThreshold_ = clamped;
+  ArtifactCore::LayeredConfigStore::instance().setValue(
+      QStringLiteral("Viewport/ClippingWarnings/OverThreshold"), clamped);
+  markRenderDirty();
+
+}
+
+float CompositionRenderController::viewportClippingOverThreshold() const {
+
+  return impl_ ? impl_->viewportClippingOverThreshold_ : 1.0f;
+
+}
 
 bool CompositionRenderController::setSelectedLayerMotionPathKeyframeAtCurrentFrame() {
 
@@ -22349,6 +22631,29 @@ QImage CompositionRenderController::captureCurrentFrameImage() const {
 
   return QImage();
 
+}
+
+bool CompositionRenderController::requestCurrentFrameImageAsync(
+    std::function<void(QImage, quint64)> completion) const {
+  if (!impl_ || !impl_->renderer_ || !completion) {
+    return false;
+  }
+
+  const quint64 frameSerial = impl_->renderFrameCounter_;
+  auto publish = [completion = std::move(completion), frameSerial](
+                     const QImage &capturedFrame) mutable {
+    completion(capturedFrame, frameSerial);
+  };
+
+  if (impl_->lastPresentedReadbackSRV_) {
+    return impl_->renderer_->readbackTextureViewToImageAsync(
+        impl_->lastPresentedReadbackSRV_, std::move(publish));
+  }
+  return impl_->renderer_->readbackToImageAsync(std::move(publish));
+}
+
+quint64 CompositionRenderController::currentFrameSerial() const {
+  return impl_ ? impl_->renderFrameCounter_ : 0;
 }
 
 
@@ -26465,7 +26770,7 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
             QStringLiteral("shape/createType"),
             static_cast<int>(ShapeType::Rect)).toInt();
         if (rawShapeType >= static_cast<int>(ShapeType::Rect) &&
-            rawShapeType <= static_cast<int>(ShapeType::Square)) {
+            rawShapeType <= static_cast<int>(ShapeType::Cross)) {
           createShapeType = static_cast<ShapeType>(rawShapeType);
         }
       }
@@ -26487,6 +26792,11 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
       case ShapeType::Rect:
       case ShapeType::Square:
       case ShapeType::Line:
+      case ShapeType::Arrow:
+      case ShapeType::Heart:
+      case ShapeType::Diamond:
+      case ShapeType::Gear:
+      case ShapeType::Cross:
         break;
       }
       impl_->rectangleToolShapeType_ = createShapeType;
@@ -32054,6 +32364,11 @@ void CompositionRenderController::handleMouseRelease() {
       case ShapeType::Line: baseName = QStringLiteral("Line"); break;
       case ShapeType::Triangle: baseName = QStringLiteral("Triangle"); break;
       case ShapeType::Square: baseName = QStringLiteral("Square"); break;
+      case ShapeType::Arrow: baseName = QStringLiteral("Arrow"); break;
+      case ShapeType::Heart: baseName = QStringLiteral("Heart"); break;
+      case ShapeType::Diamond: baseName = QStringLiteral("Diamond"); break;
+      case ShapeType::Gear: baseName = QStringLiteral("Gear"); break;
+      case ShapeType::Cross: baseName = QStringLiteral("Cross"); break;
       }
       const QString layerName = uniqueLayerNameForCurrentComposition(baseName);
 
@@ -32096,6 +32411,17 @@ void CompositionRenderController::handleMouseRelease() {
                   ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(createdLayer)) {
 
             shapeLayer->setShapeType(impl_->rectangleToolShapeType_);
+
+            if (impl_->rectangleToolShapeType_ == ShapeType::Arrow) {
+              shapeLayer->setStarInnerRadius(0.30f);
+            } else if (impl_->rectangleToolShapeType_ == ShapeType::Heart) {
+              shapeLayer->setStarInnerRadius(0.50f);
+            } else if (impl_->rectangleToolShapeType_ == ShapeType::Gear) {
+              shapeLayer->setPolygonSides(8);
+              shapeLayer->setStarInnerRadius(0.70f);
+            } else if (impl_->rectangleToolShapeType_ == ShapeType::Cross) {
+              shapeLayer->setStarInnerRadius(0.32f);
+            }
 
             shapeLayer->setSize(
 
@@ -47834,6 +48160,11 @@ void CompositionRenderController::Impl::drawViewportInteractionOverlay(
         case ShapeType::Line: shapeTypeName = QStringLiteral("Line"); break;
         case ShapeType::Triangle: shapeTypeName = QStringLiteral("Triangle"); break;
         case ShapeType::Square: shapeTypeName = QStringLiteral("Square"); break;
+        case ShapeType::Arrow: shapeTypeName = QStringLiteral("Arrow"); break;
+        case ShapeType::Heart: shapeTypeName = QStringLiteral("Heart"); break;
+        case ShapeType::Diamond: shapeTypeName = QStringLiteral("Diamond"); break;
+        case ShapeType::Gear: shapeTypeName = QStringLiteral("Gear"); break;
+        case ShapeType::Cross: shapeTypeName = QStringLiteral("Cross"); break;
         }
       }
 

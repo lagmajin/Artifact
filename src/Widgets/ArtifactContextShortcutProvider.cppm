@@ -42,6 +42,9 @@ QList<ArtifactShortcutHelpEntry> ArtifactContextShortcutProvider::getShortcutsFo
         addEntry(ArtifactCore::ShortcutId::CompositionViewportScaleGizmo,
                  QStringLiteral("Composition Viewport"),
                  QStringLiteral("Select scale gizmo"));
+        addEntry(ArtifactCore::ShortcutId::ViewToggleClippingWarnings,
+                 QStringLiteral("Composition Viewport"),
+                 QStringLiteral("Toggle viewport clipping warnings"));
     }
 
     if (mode == WorkspaceMode::Animation || mode == WorkspaceMode::Default) {
