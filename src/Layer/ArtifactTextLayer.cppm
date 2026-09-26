@@ -2303,6 +2303,10 @@ void ArtifactTextLayer::addAnimator() {
     return;
   }
   impl_->animators_.push_back(defaultTextAnimatorState(animatorCount()));
+  // Same reason as addAnimatorProperty: addDefaultTextAnimatorWithUndo() takes
+  // the after-snapshot right after this call and reads the new animator's
+  // properties through getProperty(), which returns null on a cache miss.
+  (void)getLayerPropertyGroups();
   markDirty();
 }
 
@@ -2348,6 +2352,13 @@ bool ArtifactTextLayer::addAnimatorProperty(const QString& propertyId) {
   }
 
   impl_->animators_.push_back(std::move(animator));
+  // Register the new animator's persistent properties before returning.
+  // applyTextAnimatorStackMutationWithUndo() takes the after-snapshot
+  // immediately after this call, and serializedAnimatorProperties() reads
+  // them through getProperty(), which returns null on a cache miss. Without
+  // this the new animator's keyframes, expression and envelopes would be
+  // missing from the snapshot and lost on undo.
+  (void)getLayerPropertyGroups();
   markDirty();
   return true;
 }
@@ -2365,6 +2376,9 @@ bool ArtifactTextLayer::addAnimatorPreset(const int presetId) {
       QStringLiteral("%1 %2")
           .arg(presetAnimators.front().name)
           .arg(animatorCount());
+  // Same reason as addAnimatorProperty: the undo snapshot is taken right
+  // after this returns and reads the properties through getProperty().
+  (void)getLayerPropertyGroups();
   markDirty();
   return true;
 }
