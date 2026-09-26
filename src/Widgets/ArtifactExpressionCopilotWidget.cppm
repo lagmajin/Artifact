@@ -20,23 +20,29 @@ module;
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QStandardPaths>
+#include <QAbstractTextDocumentLayout>
 #include <QAbstractItemView>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QListWidgetItem>
+#include <QPainter>
+#include <QPaintEvent>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QResizeEvent>
 #include <QSize>
 #include <QRegularExpression>
 #include <QSyntaxHighlighter>
 #include <QStringList>
+#include <QTextBlock>
+#include <QTextFormat>
 #include <QVariant>
 #include <QKeyEvent>
+#include <QMouseEvent>
 #include <QTextCursor>
 #include <QTextCharFormat>
 #include <QTextDocument>
-#include <QTextEdit>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QSplitter>
@@ -52,11 +58,155 @@ import Script.Expression.Evaluator;
 import Script.Expression.Parser;
 import Script.Expression.Value;
 import Core.ArtifactString;
+import UI.ShortcutBindings;
 import Widgets.Utils.CSS;
+import Artifact.Composition.Abstract;
+import Artifact.Layer.Abstract;
+import Artifact.Service.Project;
 
 namespace Artifact {
 
 namespace {
+
+constexpr int kBaseFontPointSize = 11;
+constexpr int kMinFontPointSize = 7;
+constexpr int kMaxFontPointSize = 32;
+
+// Renders the line number gutter and the current-line highlight. Implemented as
+// a QTextEdit subclass rather than a separate widget so the existing
+// ExtraSelection based error underline keeps working unchanged.
+class ExpressionTextEdit final : public QTextEdit {
+public:
+    explicit ExpressionTextEdit(QWidget* parent) : QTextEdit(parent) {}
+
+    void setLineNumbersVisible(bool visible) {
+        if (showLineNumbers_ == visible) {
+            return;
+        }
+        showLineNumbers_ = visible;
+        updateGutterWidth();
+    }
+
+    bool lineNumbersVisible() const { return showLineNumbers_; }
+
+    void setCurrentLineColor(const QColor& color) {
+        if (currentLineColor_ == color) {
+            return;
+        }
+        currentLineColor_ = color;
+        if (showCurrentLine_) {
+            refreshCurrentLineHighlight();
+        }
+    }
+
+    // Rebuilds the current-line band. Call after the caret moves so the band
+    // follows it.
+    void refreshCurrentLineHighlight() { rebuildExtraSelections(); }
+
+    // ExtraSelections are owned by the caller for error underlines; the
+    // current-line band is composed by this class and kept separate so the
+    // two never overwrite each other.
+    void setErrorSelections(const QList<QTextEdit::ExtraSelection>& selections) {
+        errorSelections_ = selections;
+        rebuildExtraSelections();
+    }
+
+    int lineNumberAreaWidth() const {
+        if (!showLineNumbers_) {
+            return 0;
+        }
+        int digits = 1;
+        int max = std::max(1, blockCount());
+        while (max >= 10) {
+            max /= 10;
+            ++digits;
+        }
+        return 10 + fontMetrics().horizontalAdvance(QLatin1Char('0')) * digits;
+    }
+
+protected:
+    void resizeEvent(QResizeEvent* event) override {
+        QTextEdit::resizeEvent(event);
+        updateGutterWidth();
+    }
+
+    void paintEvent(QPaintEvent* event) override {
+        QTextEdit::paintEvent(event);
+        // The gutter is painted last so it sits above the text column. The
+        // current-line band is not painted here: it is a FullWidthSelection
+        // ExtraSelection so that it cannot be overwritten by the error
+        // underline that shares the same list.
+        if (showLineNumbers_) {
+            paintLineNumbers(event);
+        }
+    }
+
+private:
+    void updateGutterWidth() {
+        setViewportMargins(lineNumberAreaWidth(), 0, 0, 0);
+    }
+
+    void refreshCurrentLineHighlight() {
+        rebuildExtraSelections();
+    }
+
+    void rebuildExtraSelections() {
+        QList<QTextEdit::ExtraSelection> combined;
+
+        // The band is skipped while the user has a real selection, otherwise it
+        // would tint the whole selected region.
+        if (showCurrentLine_ && !document()->isEmpty() && !textCursor().hasSelection()) {
+            QTextEdit::ExtraSelection band;
+            band.cursor = textCursor();
+            band.cursor.clearSelection();
+            band.format.setBackground(currentLineColor_);
+            band.format.setProperty(QTextFormat::FullWidthSelection, true);
+            combined.push_back(band);
+        }
+
+        combined.append(errorSelections_);
+        setExtraSelections(combined);
+    }
+
+    void paintLineNumbers(QPaintEvent* event) {
+        QPainter painter(viewport());
+        const int areaWidth = lineNumberAreaWidth();
+        painter.fillRect(0, 0, areaWidth, height(),
+                         palette().color(QPalette::Window));
+
+        QTextBlock block = firstVisibleBlock();
+        int blockNumber = block.blockNumber();
+        int top = static_cast<int>(blockBoundingGeometry(block)
+                                       .translated(contentOffset())
+                                       .top());
+        int bottom = top +
+                     static_cast<int>(blockBoundingRect(block).height());
+
+        painter.setPen(palette().color(QPalette::WindowText));
+        while (block.isValid() && top <= event->rect().bottom()) {
+            if (block.isVisible() && bottom >= event->rect().top()) {
+                // The active line is drawn bolder so the caret position is
+                // readable without following the cursor.
+                const bool active = blockNumber == textCursor().blockNumber();
+                QFont blockFont = painter.font();
+                blockFont.setBold(active);
+                painter.setFont(blockFont);
+                painter.drawText(0, top, areaWidth - 6, fontMetrics().height(),
+                                 Qt::AlignRight, QString::number(blockNumber + 1));
+            }
+            block = block.next();
+            top = bottom;
+            bottom = top + static_cast<int>(blockBoundingRect(block).height());
+            ++blockNumber;
+        }
+    }
+
+    bool showLineNumbers_ = true;
+    bool showCurrentLine_ = true;
+    QColor currentLineColor_ = QColor(255, 255, 255, 10);
+    QList<QTextEdit::ExtraSelection> errorSelections_;
+};
+
 
 class ExpressionSyntaxHighlighter final : public QSyntaxHighlighter {
 public:
@@ -274,7 +424,7 @@ public:
     };
 
     QLineEdit* promptInput = nullptr;
-    QTextEdit* expressionEdit = nullptr;
+    ExpressionTextEdit* expressionEdit = nullptr;
     QLabel* statusLabel = nullptr;
     QLabel* hintLabel = nullptr;
     QWidget* suggestionPopup = nullptr;
@@ -296,10 +446,32 @@ public:
     QPushButton* wiggleBtn = nullptr;
     QPushButton* loopBtn = nullptr;
     QPushButton* driftBtn = nullptr;
+    QPushButton* formatBtn = nullptr;
+    QWidget* problemsStrip = nullptr;
+    QListWidget* problemsList = nullptr;
+    QPushButton* problemsToggleBtn = nullptr;
+    QWidget* findBar = nullptr;
+    QLineEdit* findFindEdit = nullptr;
+    QLineEdit* findReplaceEdit = nullptr;
+    QLabel* findCountLabel = nullptr;
+    QPushButton* findPrevBtn = nullptr;
+    QPushButton* findNextBtn = nullptr;
+    QPushButton* findReplaceBtn = nullptr;
+    QPushButton* findReplaceAllBtn = nullptr;
+    QPushButton* findCloseBtn = nullptr;
     std::function<void(const QString& expression)> applyHandler;
     QTimer* validateTimer = nullptr;
     std::unique_ptr<ExpressionSyntaxHighlighter> highlighter;
     ArtifactCore::ExpressionParser parser;
+    // Evaluator owning the signature table the completion list is built from.
+    // Kept alive for the widget's lifetime so completion never has to
+    // construct an evaluator per keystroke.
+    std::unique_ptr<ArtifactCore::ExpressionEvaluator> signatureSource;
+    // Cached signature-derived completion candidates, refreshed only when the
+    // table changes rather than on every textChanged.
+    QList<SuggestionCandidate> cachedFunctionSuggestions;
+    int editorFontPointSize = kBaseFontPointSize;
+    bool problemsStripVisible = false;
     QString previewCompositionName;
     QSize previewCompositionSize;
     QStringList previewLayerNames;
@@ -313,30 +485,85 @@ public:
     QVariantList previewCompositionMarkers;
     double previewTimeSeconds = 0.0;
 
-    static QList<SuggestionCandidate> rootSuggestions()
+    // Variables exposed by the evaluator context. These are not built-in
+    // functions, so they stay hand-listed; every registered function is
+    // merged in from the signature table by functionSuggestions().
+    static QList<SuggestionCandidate> contextVariableSuggestions()
     {
         return {
             { QStringLiteral("thisComp"), QStringLiteral("thisComp"), QStringLiteral("Composition context") },
             { QStringLiteral("thisLayer"), QStringLiteral("thisLayer"), QStringLiteral("Current layer context") },
-            { QStringLiteral("time"), QStringLiteral("time"), QStringLiteral("Current time") },
+            { QStringLiteral("time"), QStringLiteral("time"), QStringLiteral("Current time in seconds") },
             { QStringLiteral("value"), QStringLiteral("value"), QStringLiteral("Current property value") },
-            { QStringLiteral("index"), QStringLiteral("index"), QStringLiteral("Layer index") },
-            { QStringLiteral("linear"), QStringLiteral("linear"), QStringLiteral("Linear interpolation") },
-            { QStringLiteral("ease"), QStringLiteral("ease"), QStringLiteral("Ease interpolation") },
-            { QStringLiteral("easeIn"), QStringLiteral("easeIn"), QStringLiteral("Ease-in interpolation") },
-            { QStringLiteral("easeOut"), QStringLiteral("easeOut"), QStringLiteral("Ease-out interpolation") },
-            { QStringLiteral("length"), QStringLiteral("length"), QStringLiteral("Vector or string length") },
-            { QStringLiteral("distance"), QStringLiteral("distance"), QStringLiteral("Distance between points") },
-            { QStringLiteral("normalize"), QStringLiteral("normalize"), QStringLiteral("Normalize a vector") },
-            { QStringLiteral("clamp"), QStringLiteral("clamp"), QStringLiteral("Clamp a value") },
-            { QStringLiteral("random"), QStringLiteral("random"), QStringLiteral("Random value") },
-            { QStringLiteral("wiggle"), QStringLiteral("wiggle"), QStringLiteral("Procedural motion") },
-            { QStringLiteral("sin"), QStringLiteral("sin"), QStringLiteral("Sine function") },
-            { QStringLiteral("cos"), QStringLiteral("cos"), QStringLiteral("Cosine function") },
-            { QStringLiteral("tan"), QStringLiteral("tan"), QStringLiteral("Tangent function") },
-            { QStringLiteral("degToRad"), QStringLiteral("degToRad"), QStringLiteral("Degrees to radians") },
-            { QStringLiteral("radToDeg"), QStringLiteral("radToDeg"), QStringLiteral("Radians to degrees") }
+            { QStringLiteral("index"), QStringLiteral("index"), QStringLiteral("1-based layer index") },
+            { QStringLiteral("keyframes"), QStringLiteral("keyframes"), QStringLiteral("Keyframe catalog of this property") }
         };
+    }
+
+    static QString exprValueTypeName(ArtifactCore::ExprValueType type)
+    {
+        switch (type) {
+        case ArtifactCore::ExprValueType::Number: return QStringLiteral("number");
+        case ArtifactCore::ExprValueType::Vec2: return QStringLiteral("vec2");
+        case ArtifactCore::ExprValueType::Vec3: return QStringLiteral("vec3");
+        case ArtifactCore::ExprValueType::Vec4: return QStringLiteral("vec4");
+        case ArtifactCore::ExprValueType::Array: return QStringLiteral("array");
+        case ArtifactCore::ExprValueType::String: return QStringLiteral("string");
+        case ArtifactCore::ExprValueType::Object: return QStringLiteral("object");
+        case ArtifactCore::ExprValueType::Null: break;
+        }
+        return QStringLiteral("any");
+    }
+
+    // Renders "name(a, b?) : number" for the completion list and hover.
+    static QString describeFunction(const ArtifactCore::ExpressionFunctionInfo& info)
+    {
+        QStringList parts;
+        parts.reserve(static_cast<int>(info.params.size()));
+        for (const auto& param : info.params) {
+            QString text = QString::fromStdString(param.name);
+            text += QLatin1String(": ");
+            text += exprValueTypeName(param.type);
+            if (param.variadic) {
+                text += QStringLiteral("...");
+            } else if (param.optional) {
+                text += QStringLiteral("?");
+            }
+            parts.push_back(text);
+        }
+        return QStringLiteral("%1(%2) : %3")
+            .arg(QString::fromStdString(info.name), parts.join(QStringLiteral(", ")),
+                 exprValueTypeName(info.returnType));
+    }
+
+    // Reads the live signature table from the evaluator. Constructing the
+    // candidate list is done once and cached, so the per-keystroke path only
+    // filters an already-built QList.
+    void refreshFunctionSuggestions()
+    {
+        cachedFunctionSuggestions.clear();
+        if (!signatureSource) {
+            return;
+        }
+        for (const auto& info : signatureSource->allFunctionInfos()) {
+            const QString signature = describeFunction(info);
+            SuggestionCandidate candidate;
+            candidate.display = signature;
+            candidate.insert = QString::fromStdString(info.name);
+            candidate.tooltip = info.docText.empty()
+                ? signature
+                : QString::fromStdString(info.docText) + QStringLiteral("\n\n") + signature;
+            cachedFunctionSuggestions.push_back(candidate);
+        }
+    }
+
+    // Context variables first so thisComp/thisLayer rank above the long
+    // function list, then every registered function.
+    QList<SuggestionCandidate> rootSuggestions() const
+    {
+        QList<SuggestionCandidate> candidates = contextVariableSuggestions();
+        candidates.append(cachedFunctionSuggestions);
+        return candidates;
     }
 
     static QList<SuggestionCandidate> thisCompSuggestions()
@@ -365,18 +592,6 @@ public:
             { QStringLiteral("comp"), QStringLiteral("thisLayer.comp"), QStringLiteral("Owning composition") },
             { QStringLiteral("selection_count"), QStringLiteral("thisLayer.selection_count"), QStringLiteral("Selection count") }
         };
-    }
-
-    static QList<SuggestionCandidate> suggestionsForPrefix(const QString& prefix)
-    {
-        const QString lowerPrefix = prefix.toLower();
-        if (lowerPrefix.startsWith(QStringLiteral("thiscomp."))) {
-            return thisCompSuggestions();
-        }
-        if (lowerPrefix.startsWith(QStringLiteral("thislayer."))) {
-            return thisLayerSuggestions();
-        }
-        return rootSuggestions();
     }
 
     static bool isLayerMemberContext(const QString& text)
@@ -600,8 +815,48 @@ public:
             selection.format.setUnderlineStyle(QTextCharFormat::WaveUnderline);
             extras.push_back(selection);
         }
-        expressionEdit->setExtraSelections(extras);
+        // Routed through the subclass so the current-line band survives: it owns
+        // the ExtraSelection list and re-adds its own entry.
+        expressionEdit->setErrorSelections(extras);
     }
+
+    // Replaces the Problems strip contents. Only the first diagnostic is shown
+    // because the evaluator stops at the first failing node; see the plan's
+    // "multi-error collection" follow-up.
+    void setProblem(const QString& message, int position, int length, bool isError)
+    {
+        if (!problemsList) {
+            return;
+        }
+        problemsList->clear();
+        if (message.isEmpty()) {
+            if (problemsToggleBtn) {
+                problemsToggleBtn->setText(QStringLiteral("Problems"));
+                problemsToggleBtn->setEnabled(false);
+            }
+            return;
+        }
+
+        const QString location =
+            position >= 0 ? posToLineColumn(expressionEdit ? expressionEdit->toPlainText()
+                                                           : QString(),
+                                          position)
+                          : QStringLiteral("expression");
+        auto* item = new QListWidgetItem(QStringLiteral("%1  (%2)").arg(message, location),
+                                         problemsList);
+        item->setData(Qt::UserRole + 1, position);
+        item->setData(Qt::UserRole + 2, length);
+        item->setForeground(QColor(isError ? 248 : 234, isError ? 113 : 179,
+                                   isError ? 113 : 8));
+        item->setToolTip(item->text());
+
+        if (problemsToggleBtn) {
+            problemsToggleBtn->setText(QStringLiteral("Problems (%1)").arg(problemsList->count()));
+            problemsToggleBtn->setEnabled(true);
+        }
+    }
+
+    void clearProblem() { setProblem(QString(), -1, 0, true); }
 
     void validateExpression() {
         if (!expressionEdit) {
@@ -618,6 +873,7 @@ public:
             setStatus(QStringLiteral("Expression is empty"), QColor(148, 163, 184));
             setHint(QStringLiteral("Try: thisComp.width, thisLayer.name, or wiggle(3, 50)"), QColor(148, 163, 184));
             applyErrorSelection(-1, 0, text);
+            clearProblem();
             return;
         }
 
@@ -648,10 +904,23 @@ public:
 
             const auto runtime = evaluator.evaluate(expr);
             if (evaluator.hasError()) {
+                const QString message = QString::fromStdString(evaluator.getError());
+                // The evaluator now reports the span of the node that failed,
+                // so a runtime error gets a squiggle exactly like a syntax one.
+                const std::size_t rawPosition = evaluator.getErrorPosition();
+                const int position = rawPosition == std::string::npos
+                    ? -1
+                    : static_cast<int>(rawPosition);
+                const int length = static_cast<int>(
+                    std::max<std::size_t>(1, evaluator.getErrorLength()));
                 setStatus(
-                    QStringLiteral("Runtime error: %1")
-                        .arg(QString::fromStdString(evaluator.getError())),
+                    position >= 0
+                        ? QStringLiteral("%1 at %2").arg(
+                              message, posToLineColumn(text, position))
+                        : QStringLiteral("Runtime error: %1").arg(message),
                     QColor(248, 113, 113));
+                applyErrorSelection(position, length, text);
+                setProblem(message, position, length, true);
             } else {
                 expressionValid = true;
                 setStatus(
@@ -660,9 +929,10 @@ public:
                                  ArtifactCore::toStdString(runtime.toString()))
                                  .left(96)),
                     QColor(74, 222, 128));
+                applyErrorSelection(-1, 0, text);
+                clearProblem();
             }
             setHint(currentHintText(text), QColor(96, 165, 250));
-            applyErrorSelection(-1, 0, text);
             if (applyBtn) {
                 applyBtn->setEnabled(expressionValid);
             }
@@ -672,11 +942,12 @@ public:
         const QString error = QString::fromStdString(parser.getError());
         const int position = static_cast<int>(parser.getErrorPosition());
         const int length = static_cast<int>(std::max<std::size_t>(1, parser.getErrorLength()));
-        const QString location = posToLineColumn(text, position);
-        setStatus(QStringLiteral("%1 at %2").arg(error.isEmpty() ? QStringLiteral("Syntax error") : error, location),
+        const QString message = error.isEmpty() ? QStringLiteral("Syntax error") : error;
+        setStatus(QStringLiteral("%1 at %2").arg(message, posToLineColumn(text, position)),
                   QColor(248, 113, 113));
         setHint(currentHintText(text), QColor(248, 180, 0));
         applyErrorSelection(position, length, text);
+        setProblem(message, position, length, true);
     }
 
     QString currentHintText(const QString&) const
@@ -741,6 +1012,480 @@ public:
         cursor.setPosition(pos, QTextCursor::KeepAnchor);
         cursor.insertText(bestCandidate);
         expressionEdit->setTextCursor(cursor);
+        return true;
+    }
+
+    // --- Editor chrome ----------------------------------------------------
+
+    void applyEditorFont(int pointSize)
+    {
+        editorFontPointSize = std::clamp(pointSize, kMinFontPointSize, kMaxFontPointSize);
+        if (!expressionEdit) {
+            return;
+        }
+        QFont font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+        font.setPointSize(editorFontPointSize);
+        font.setStyleHint(QFont::Monospace);
+        expressionEdit->setFont(font);
+        // Tab width must follow the font or indentation stops lining up.
+        expressionEdit->setTabStopDistance(
+            expressionEdit->fontMetrics().horizontalAdvance(QLatin1Char(' ')) * 4.0);
+    }
+
+    void adjustEditorFont(int delta)
+    {
+        applyEditorFont(editorFontPointSize + delta);
+        setStatus(QStringLiteral("Font size: %1 pt").arg(editorFontPointSize),
+                  QColor(148, 163, 184));
+    }
+
+    void toggleLineNumbers()
+    {
+        if (!expressionEdit) {
+            return;
+        }
+        expressionEdit->setLineNumbersVisible(!expressionEdit->lineNumbersVisible());
+        setStatus(expressionEdit->lineNumbersVisible()
+                      ? QStringLiteral("Line numbers on")
+                      : QStringLiteral("Line numbers off"),
+                  QColor(148, 163, 184));
+    }
+
+    void refreshCurrentLineHighlight()
+    {
+        if (expressionEdit) {
+            expressionEdit->refreshCurrentLineHighlight();
+        }
+    }
+
+    void toggleWordWrap()
+    {
+        if (!expressionEdit) {
+            return;
+        }
+        const bool wrap = expressionEdit->lineWrapMode() == QTextEdit::NoWrap;
+        expressionEdit->setLineWrapMode(wrap ? QTextEdit::WidgetWidth
+                                             : QTextEdit::NoWrap);
+        setStatus(wrap ? QStringLiteral("Word wrap on") : QStringLiteral("Word wrap off"),
+                  QColor(148, 163, 184));
+    }
+
+    void toggleProblemsStrip()
+    {
+        if (!problemsStrip) {
+            return;
+        }
+        problemsStripVisible = !problemsStripVisible;
+        problemsStrip->setVisible(problemsStripVisible);
+    }
+
+    // Moves the caret to a problem's offset and focuses the editor.
+    void gotoProblemOffset(int position)
+    {
+        if (!expressionEdit || position < 0) {
+            return;
+        }
+        QTextCursor cursor = expressionEdit->textCursor();
+        cursor.setPosition(std::min(position, static_cast<int>(expressionEdit->toPlainText().size())));
+        expressionEdit->setTextCursor(cursor);
+        expressionEdit->setFocus();
+    }
+
+    // --- Find / replace ---------------------------------------------------
+    // Standard in-document search. Replaces Ctrl+F, which QTextEdit would
+    // otherwise handle with its own (unstyled, non-localized) find bar.
+
+    void showFindBar(bool withReplace)
+    {
+        if (!findBar) {
+            return;
+        }
+        if (findBar->isVisible() && findReplaceEdit->isVisible() == withReplace) {
+            // Already open in the requested mode: just focus the field.
+            (withReplace ? findReplaceEdit : findFindEdit)->setFocus();
+            return;
+        }
+        findBar->setVisible(true);
+        findReplaceEdit->setVisible(withReplace);
+        // Seed the query from the current selection, matching every editor.
+        const QTextCursor cursor = expressionEdit ? expressionEdit->textCursor() : QTextCursor();
+        if (cursor.hasSelection() && findFindEdit->text().isEmpty()) {
+            findFindEdit->setText(cursor.selectedText().simplified());
+        }
+        findFindEdit->setFocus();
+        findFindEdit->selectAll();
+    }
+
+    void hideFindBar()
+    {
+        if (findBar) {
+            findBar->hide();
+        }
+        if (expressionEdit) {
+            expressionEdit->setFocus();
+        }
+    }
+
+    // Searches forward from the caret, wrapping when asked. Returns the number
+    // of matches so the field can show "3 of 12".
+    int findNext(bool wrap)
+    {
+        if (!expressionEdit || findFindEdit->text().isEmpty()) {
+            return 0;
+        }
+        const QString needle = findFindEdit->text();
+        if (expressionEdit->find(needle, wrap ? QTextDocument::FindBackward
+                                              : QTextDocument::FindForward)) {
+            highlightAllMatches(needle, expressionEdit->textCursor().position());
+        }
+        return countMatches(needle);
+    }
+
+    void findPrevious()
+    {
+        if (!expressionEdit || findFindEdit->text().isEmpty()) {
+            return;
+        }
+        const QString needle = findFindEdit->text();
+        if (expressionEdit->find(needle, QTextDocument::FindBackward)) {
+            highlightAllMatches(needle, expressionEdit->textCursor().position());
+        }
+    }
+
+    // Highlights the current match. Qt's QTextEdit::find already moved the
+    // caret, so the match is re-expressed as a selection to keep it distinct
+    // from the red error underline that shares the same list.
+    void highlightAllMatches(const QString& needle, int currentPosition)
+    {
+        if (!expressionEdit || needle.isEmpty()) {
+            return;
+        }
+        QTextEdit::ExtraSelection active;
+        active.cursor = expressionEdit->textCursor();
+        active.format.setBackground(QColor(96, 165, 250, 90));
+        active.format.setUnderlineColor(QColor(96, 165, 250));
+        active.format.setUnderlineStyle(QTextCharFormat::WaveUnderline);
+        expressionEdit->setErrorSelections({active});
+
+        setStatus(QStringLiteral("%1 of %2 matches")
+                      .arg(findMatchIndex(needle, currentPosition))
+                      .arg(countMatches(needle)),
+                  QColor(148, 163, 184));
+    }
+
+    int countMatches(const QString& needle) const
+    {
+        if (!expressionEdit || needle.isEmpty()) {
+            return 0;
+        }
+        return expressionEdit->document()->find(needle).size();
+    }
+
+    // 1-based ordinal of the match containing the given offset.
+    int findMatchIndex(const QString& needle, int position) const
+    {
+        if (!expressionEdit || needle.isEmpty()) {
+            return 0;
+        }
+        const QList<QTextEdit::ExtraSelection> found = expressionEdit->document()->find(needle);
+        int ordinal = 0;
+        for (const auto& selection : found) {
+            ++ordinal;
+            if (position >= selection.cursor.selectionStart() &&
+                position <= selection.cursor.selectionEnd()) {
+                return ordinal;
+            }
+        }
+        return ordinal > 0 ? ordinal : 1;
+    }
+
+    // Replaces the current match, or inserts when the caret sits on a match.
+    void replaceCurrentMatch()
+    {
+        if (!expressionEdit) {
+            return;
+        }
+        const QString needle = findFindEdit->text();
+        const QString replacement = findReplaceEdit->text();
+        if (needle.isEmpty()) {
+            return;
+        }
+        QTextCursor cursor = expressionEdit->textCursor();
+        if (cursor.hasSelection() && cursor.selectedText() == needle) {
+            cursor.insertText(replacement);
+        } else {
+            if (!expressionEdit->find(needle)) {
+                setStatus(QStringLiteral("No match for \"%1\"").arg(needle),
+                          QColor(248, 180, 0));
+                return;
+            }
+            cursor = expressionEdit->textCursor();
+            cursor.insertText(replacement);
+        }
+        expressionEdit->setTextCursor(cursor);
+        validateExpression();
+        findNext(true);
+    }
+
+    void replaceAllMatches()
+    {
+        if (!expressionEdit) {
+            return;
+        }
+        const QString needle = findFindEdit->text();
+        const QString replacement = findReplaceEdit->text();
+        if (needle.isEmpty()) {
+            return;
+        }
+        // Rewriting from a plain-text copy avoids the cursor loop entirely and
+        // is immune to a replacement that itself contains the needle.
+        const int count = countMatches(needle);
+        const QString updated = expressionEdit->toPlainText().replace(needle, replacement);
+        expressionEdit->setPlainText(updated);
+        validateExpression();
+        setStatus(QStringLiteral("Replaced %1 occurrence(s)").arg(count),
+                  QColor(74, 222, 128));
+    }
+
+    // --- Formatter --------------------------------------------------------
+    // Purely lexical cleanup: normalizes quotes, collapses redundant spaces and
+    // trims line padding. It never renames identifiers, and the result is
+    // re-parsed before it is accepted so a formatting pass can never turn a
+    // valid expression into an invalid one.
+    static QString formatExpression(const QString& source)
+    {
+        QString out;
+        out.reserve(source.size());
+
+        const QStringList lines = source.split(QLatin1Char('\n'));
+        for (int lineIndex = 0; lineIndex < lines.size(); ++lineIndex) {
+            if (lineIndex > 0) {
+                out += QLatin1Char('\n');
+            }
+
+            const QString line = lines.at(lineIndex);
+            QString formatted;
+            formatted.reserve(line.size());
+
+            bool inSingleQuote = false;
+            bool inDoubleQuote = false;
+            for (int i = 0; i < line.size(); ++i) {
+                const QChar ch = line.at(i);
+
+                // Keep string contents byte-for-byte; only the quote character
+                // is normalized, and never while already inside a string.
+                if (ch == QLatin1Char('\'') && !inDoubleQuote) {
+                    inSingleQuote = !inSingleQuote;
+                    formatted += QLatin1Char('"');
+                    continue;
+                }
+                if (ch == QLatin1Char('"') && !inSingleQuote) {
+                    inDoubleQuote = !inDoubleQuote;
+                    formatted += QLatin1Char('"');
+                    continue;
+                }
+                if (inSingleQuote || inDoubleQuote) {
+                    formatted += ch;
+                    continue;
+                }
+
+                if (ch == QLatin1Char('#') || (ch == QLatin1Char('/') && i + 1 < line.size() &&
+                                               line.at(i + 1) == QLatin1Char('/'))) {
+                    // Comment: copy the rest verbatim, trimmed on the right.
+                    formatted += line.mid(i).trimmed();
+                    i = line.size();
+                    continue;
+                }
+
+                if (ch.isSpace()) {
+                    // Collapse runs of whitespace, and drop it entirely after an
+                    // opening bracket or a comma.
+                    if (!formatted.isEmpty() && formatted.back().isSpace()) {
+                        continue;
+                    }
+                    const QChar previous = formatted.isEmpty() ? QChar() : formatted.back();
+                    const bool previousIsPunctuation =
+                        previous == QLatin1Char('(') || previous == QLatin1Char('[') ||
+                        previous == QLatin1Char(',');
+                    if (previousIsPunctuation) {
+                        continue;
+                    }
+                    formatted += QLatin1Char(' ');
+                    continue;
+                }
+
+                formatted += ch;
+            }
+
+            out += formatted.trimmed();
+        }
+
+        return out.trimmed();
+    }
+
+    // Returns false (and reports why) when formatting would break the parse.
+    bool applyFormatter()
+    {
+        if (!expressionEdit) {
+            return false;
+        }
+        const QString original = expressionEdit->toPlainText();
+        if (original.trimmed().isEmpty()) {
+            setStatus(QStringLiteral("Nothing to format"), QColor(148, 163, 184));
+            return false;
+        }
+
+        const QString formatted = formatExpression(original);
+        if (formatted == original.trimmed()) {
+            setStatus(QStringLiteral("Already formatted"), QColor(148, 163, 184));
+            return true;
+        }
+
+        // Roll back rather than commit a change that stops parsing. The user's
+        // own text is restored verbatim before returning.
+        ArtifactCore::ExpressionParser probe;
+        if (!probe.parse(formatted.toStdString())) {
+            expressionEdit->setPlainText(original);
+            expressionEdit->moveCursor(QTextCursor::End);
+            setStatus(QStringLiteral("Formatting skipped: result would not parse"),
+                      QColor(248, 180, 0));
+            return false;
+        }
+
+        const int cursorPosition = expressionEdit->textCursor().position();
+        expressionEdit->setPlainText(formatted);
+        QTextCursor restored = expressionEdit->textCursor();
+        restored.setPosition(std::min(cursorPosition, static_cast<int>(formatted.size())));
+        expressionEdit->setTextCursor(restored);
+        validateExpression();
+        setStatus(QStringLiteral("Expression formatted"), QColor(74, 222, 128));
+        return true;
+    }
+
+    // --- Pick Whip --------------------------------------------------------
+    // Finds the thisComp.layer("Name") call whose argument string contains the
+    // given offset. Returns an empty string when no such call exists.
+    static QString layerReferenceAt(const QString& text, int offset,
+                                    int* callStart, int* callLength)
+    {
+        static const QRegularExpression callRx(
+            QStringLiteral(R"(thisComp\s*\.\s*layer\s*\(\s*(["'])([^"']*)\1\s*\))"),
+            QRegularExpression::CaseInsensitiveOption);
+
+        auto it = callRx.globalMatch(text);
+        while (it.hasNext()) {
+            const auto match = it.next();
+            // The name is captured twice: the quote and the name itself.
+            const int nameStart = match.capturedStart(2);
+            const int nameEnd = nameStart + match.capturedLength(2);
+            if (offset >= nameStart && offset <= nameEnd) {
+                if (callStart) {
+                    *callStart = match.capturedStart();
+                }
+                if (callLength) {
+                    *callLength = match.capturedLength();
+                }
+                return match.captured(2);
+            }
+        }
+        return QString();
+    }
+
+    // Selects the layer named in the thisComp.layer("...") call under the
+    // cursor. Silently does nothing when the name does not resolve, since the
+    // expression may legitimately reference a layer from another composition.
+    bool pickWhipLayerAt(int offset)
+    {
+        if (!expressionEdit) {
+            return false;
+        }
+        int callStart = 0;
+        int callLength = 0;
+        const QString layerName =
+            layerReferenceAt(expressionEdit->toPlainText(), offset, &callStart, &callLength);
+        if (layerName.isEmpty()) {
+            return false;
+        }
+
+        auto* service = ArtifactProjectService::instance();
+        if (!service) {
+            return false;
+        }
+        // Scoped to the current composition on purpose: selectLayer rejects
+        // ids from other compositions, so there is nothing to switch to.
+        const auto composition = service->currentComposition().lock();
+        if (!composition) {
+            setStatus(QStringLiteral("No composition to pick from"), QColor(248, 180, 0));
+            return false;
+        }
+
+        for (const auto& layer : composition->allLayer()) {
+            if (layer && layer->layerName() == layerName) {
+                service->selectLayer(layer->id());
+                setStatus(QStringLiteral("Picked layer: %1").arg(layerName),
+                          QColor(96, 165, 250));
+                return true;
+            }
+        }
+
+        setStatus(QStringLiteral("Layer not found: %1").arg(layerName),
+                  QColor(248, 180, 0));
+        return false;
+    }
+
+    // Signature help for the function call surrounding the caret, shown in the
+    // hint label. Returns true when a signature was found.
+    bool showSignatureHelpAt(int offset)
+    {
+        if (!expressionEdit || !signatureSource) {
+            return false;
+        }
+        const QString text = expressionEdit->toPlainText();
+        if (offset <= 0 || offset > text.size()) {
+            return false;
+        }
+
+        // Walk back over an identifier to the character before the '('.
+        int nameEnd = offset;
+        while (nameEnd > 0) {
+            const QChar ch = text.at(nameEnd - 1);
+            if (!ch.isLetterOrNumber() && ch != QLatin1Char('_')) {
+                break;
+            }
+            --nameEnd;
+        }
+        if (nameEnd == offset) {
+            return false;
+        }
+
+        int openParen = nameEnd;
+        while (openParen < text.size() && text.at(openParen).isSpace()) {
+            ++openParen;
+        }
+        if (openParen >= text.size() || text.at(openParen) != QLatin1Char('(')) {
+            return false;
+        }
+
+        const QString name = text.mid(nameEnd, offset - nameEnd);
+        const ArtifactCore::ExpressionFunctionInfo* info =
+            signatureSource->functionInfo(name.toStdString());
+        if (!info) {
+            return false;
+        }
+
+        // Count the commas before the caret to highlight the active argument.
+        int argumentIndex = 0;
+        for (int i = openParen + 1; i < offset && i < text.size(); ++i) {
+            if (text.at(i) == QLatin1Char(',')) {
+                ++argumentIndex;
+            }
+        }
+
+        const QString signature = describeFunction(*info);
+        setHint(QStringLiteral("%1   —   argument %2")
+                    .arg(signature)
+                    .arg(argumentIndex + 1),
+                QColor(96, 165, 250));
         return true;
     }
 
@@ -892,17 +1637,20 @@ public:
         workspaceSplitter->setChildrenCollapsible(false);
         workspaceSplitter->setHandleWidth(1);
 
-        expressionEdit = new QTextEdit(workspaceSplitter);
-        expressionEdit->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+        expressionEdit = new ExpressionTextEdit(workspaceSplitter);
         expressionEdit->setPlaceholderText(QStringLiteral("Enter an expression here..."));
         expressionEdit->setLineWrapMode(QTextEdit::NoWrap);
         expressionEdit->setAcceptDrops(true);
         expressionEdit->setFrameShape(QFrame::NoFrame);
-        expressionEdit->setTabStopDistance(expressionEdit->fontMetrics().horizontalAdvance(QLatin1Char(' ')) * 4.0);
+        // A faint band marks the caret line; the gutter column reuses the panel
+        // color so it reads as chrome rather than as editable text.
+        expressionEdit->setCurrentLineColor(QColor(255, 255, 255, 10));
         QPalette editorPalette = rootPalette;
         editorPalette.setColor(QPalette::Base, editorColor);
         editorPalette.setColor(QPalette::Text, textColor);
+        editorPalette.setColor(QPalette::Window, panelColor);
         expressionEdit->setPalette(editorPalette);
+        applyEditorFont(kBaseFontPointSize);
 
         referencePanel = makeBar(panelColor);
         referencePanel->setParent(workspaceSplitter);
@@ -934,10 +1682,81 @@ public:
         workspaceSplitter->setSizes({720, 240});
         layout->addWidget(workspaceSplitter, 1);
 
+        // Problems strip. Hidden until the first diagnostic appears, so the
+        // default editor footprint matches what it was before.
+        problemsStrip = makeBar(QColor(28, 20, 22));
+        problemsStrip->setParent(parent);
+        auto* problemsLayout = new QVBoxLayout(problemsStrip);
+        problemsLayout->setContentsMargins(0, 0, 0, 0);
+        problemsLayout->setSpacing(0);
+        problemsList = new QListWidget(problemsStrip);
+        problemsList->setFrameShape(QFrame::NoFrame);
+        problemsList->setSelectionMode(QAbstractItemView::SingleSelection);
+        problemsList->setMaximumHeight(64);
+        problemsList->setToolTip(QStringLiteral("Click a problem to jump to it"));
+        QPalette problemsPalette = rootPalette;
+        problemsPalette.setColor(QPalette::Base, QColor(28, 20, 22));
+        problemsPalette.setColor(QPalette::Text, textColor);
+        problemsList->setPalette(problemsPalette);
+        problemsLayout->addWidget(problemsList);
+        problemsStrip->hide();
+        layout->addWidget(problemsStrip);
+
+        // Find / replace bar. Hidden until Ctrl+F or Ctrl+H, so it costs no
+        // vertical space in the default layout.
+        findBar = makeBar(QColor(24, 30, 38));
+        findBar->setParent(parent);
+        auto* findLayout = new QVBoxLayout(findBar);
+        findLayout->setContentsMargins(8, 5, 8, 5);
+        findLayout->setSpacing(5);
+
+        auto* findRow = new QHBoxLayout();
+        findRow->setContentsMargins(0, 0, 0, 0);
+        findRow->setSpacing(6);
+        findFindEdit = new QLineEdit(findBar);
+        findFindEdit->setPlaceholderText(QStringLiteral("Find"));
+        findFindEdit->setClearButtonEnabled(true);
+        findCountLabel = new QLabel(QStringLiteral("0 of 0"), findBar);
+        findCountLabel->setMinimumWidth(64);
+        setMuted(findCountLabel);
+        findPrevBtn = new QPushButton(QStringLiteral("Previous"), findBar);
+        findNextBtn = new QPushButton(QStringLiteral("Next"), findBar);
+        findCloseBtn = new QPushButton(QStringLiteral("Close"), findBar);
+        configureFlatAction(findPrevBtn);
+        configureFlatAction(findNextBtn);
+        configureFlatAction(findCloseBtn);
+        findRow->addWidget(findFindEdit, 1);
+        findRow->addWidget(findCountLabel);
+        findRow->addWidget(findPrevBtn);
+        findRow->addWidget(findNextBtn);
+        findRow->addWidget(findCloseBtn);
+        findLayout->addLayout(findRow);
+
+        auto* replaceRow = new QHBoxLayout();
+        replaceRow->setContentsMargins(0, 0, 0, 0);
+        replaceRow->setSpacing(6);
+        findReplaceEdit = new QLineEdit(findBar);
+        findReplaceEdit->setPlaceholderText(QStringLiteral("Replace with"));
+        findReplaceEdit->setClearButtonEnabled(true);
+        findReplaceBtn = new QPushButton(QStringLiteral("Replace"), findBar);
+        findReplaceAllBtn = new QPushButton(QStringLiteral("Replace All"), findBar);
+        configureFlatAction(findReplaceBtn);
+        configureFlatAction(findReplaceAllBtn);
+        replaceRow->addWidget(findReplaceEdit, 1);
+        replaceRow->addWidget(findReplaceBtn);
+        replaceRow->addWidget(findReplaceAllBtn);
+        findLayout->addLayout(replaceRow);
+
+        layout->addWidget(findBar);
+        findBar->hide();
+
         auto* statusBar = makeBar(QColor(18, 24, 31));
         auto* statusLayout = new QHBoxLayout(statusBar);
         statusLayout->setContentsMargins(12, 5, 12, 5);
         statusLayout->setSpacing(12);
+        problemsToggleBtn = new QPushButton(QStringLiteral("Problems"), statusBar);
+        configureFlatAction(problemsToggleBtn);
+        problemsToggleBtn->setEnabled(false);
         statusLabel = new QLabel(QStringLiteral("Ready"), statusBar);
         statusLabel->setWordWrap(true);
         {
@@ -954,6 +1773,7 @@ public:
         }
         statusLayout->addWidget(statusLabel, 1);
         statusLayout->addWidget(hintLabel);
+        statusLayout->addWidget(problemsToggleBtn);
         layout->addWidget(statusBar);
 
         suggestionPopup = new QWidget(parent, Qt::Popup | Qt::FramelessWindowHint);
@@ -999,6 +1819,8 @@ public:
         clearBtn = new QPushButton(QStringLiteral("Clear"));
         saveSnippetBtn = new QPushButton(QStringLiteral("Save Snippet"));
         loadSnippetBtn = new QPushButton(QStringLiteral("Load Snippet"));
+        formatBtn = new QPushButton(QStringLiteral("Format"));
+        configureFlatAction(formatBtn);
         configureFlatAction(saveSnippetBtn);
         configureFlatAction(loadSnippetBtn);
         configureFlatAction(copyBtn);
@@ -1007,6 +1829,7 @@ public:
         btnLayout->addWidget(loadSnippetBtn);
         btnLayout->addWidget(copyBtn);
         btnLayout->addWidget(clearBtn);
+        btnLayout->addWidget(formatBtn);
         btnLayout->addStretch();
         btnLayout->addWidget(revertBtn);
         btnLayout->addWidget(removeBtn);
@@ -1025,7 +1848,14 @@ public:
         validateTimer->setSingleShot(true);
         validateTimer->setInterval(140);
         highlighter = std::make_unique<ExpressionSyntaxHighlighter>(expressionEdit->document());
+        // One evaluator lives for the widget's lifetime; its constructor
+        // registers the standard functions together with their signatures, so
+        // the completion list never has to build an evaluator per keystroke.
+        signatureSource = std::make_unique<ArtifactCore::ExpressionEvaluator>();
+        refreshFunctionSuggestions();
         expressionEdit->installEventFilter(parent);
+        findFindEdit->installEventFilter(parent);
+        findReplaceEdit->installEventFilter(parent);
         suggestionPopup->installEventFilter(parent);
         suggestionList->installEventFilter(parent);
     }
@@ -1034,6 +1864,85 @@ public:
 ArtifactExpressionCopilotWidget::ArtifactExpressionCopilotWidget(QWidget* parent)
     : QWidget(parent), impl_(new Impl()) {
     impl_->setupUi(this);
+
+    connect(impl_->formatBtn, &QPushButton::clicked, this, [this]() {
+        impl_->applyFormatter();
+    });
+
+    // --- Find bar wiring. Every control also works via the event filter, so
+    // this only adds the mouse path for the same actions.
+    const auto updateFindCount = [this]() {
+        const int total = impl_->countMatches(impl_->findFindEdit->text());
+        impl_->findCountLabel->setText(total == 0
+                                            ? QStringLiteral("0 of 0")
+                                            : QStringLiteral("%1 of %2").arg(impl_->findMatchIndex(
+                                                  impl_->findFindEdit->text(),
+                                                  impl_->expressionEdit->textCursor().position())).arg(total));
+    };
+
+    connect(impl_->findFindEdit, &QLineEdit::textChanged, this, [this, updateFindCount](const QString&) {
+        if (impl_->findFindEdit->text().isEmpty()) {
+            impl_->findCountLabel->setText(QStringLiteral("0 of 0"));
+            // Clearing the query must also drop the match highlight.
+            impl_->applyErrorSelection(-1, 0, impl_->expressionEdit->toPlainText());
+            return;
+        }
+        impl_->findNext(true);
+        updateFindCount();
+    });
+
+    connect(impl_->findFindEdit, &QLineEdit::returnPressed, this, [this, updateFindCount]() {
+        impl_->findNext(true);
+        updateFindCount();
+    });
+
+    connect(impl_->findNextBtn, &QPushButton::clicked, this, [this, updateFindCount]() {
+        impl_->findNext(false);
+        updateFindCount();
+    });
+
+    connect(impl_->findPrevBtn, &QPushButton::clicked, this, [this, updateFindCount]() {
+        impl_->findPrevious();
+        updateFindCount();
+    });
+
+    connect(impl_->findReplaceBtn, &QPushButton::clicked, this, [this]() {
+        impl_->replaceCurrentMatch();
+    });
+
+    connect(impl_->findReplaceAllBtn, &QPushButton::clicked, this, [this]() {
+        impl_->replaceAllMatches();
+    });
+
+    connect(impl_->findCloseBtn, &QPushButton::clicked, this, [this]() {
+        // Drop the match highlight before handing focus back to the editor.
+        impl_->applyErrorSelection(-1, 0, impl_->expressionEdit->toPlainText());
+        impl_->hideFindBar();
+    });
+
+    // Enter in the replace field performs the replacement, matching every
+    // editor's expected flow.
+    connect(impl_->findReplaceEdit, &QLineEdit::returnPressed, this, [this]() {
+        impl_->replaceCurrentMatch();
+    });
+
+    connect(impl_->problemsToggleBtn, &QPushButton::clicked, this, [this]() {
+        // First press reveals the strip and selects the current problem, so the
+        // user lands on the diagnostic instead of just seeing it appear.
+        const bool wasVisible = impl_->problemsStripVisible;
+        impl_->toggleProblemsStrip();
+        if (!wasVisible && impl_->problemsList && impl_->problemsList->count() > 0) {
+            impl_->problemsList->setCurrentRow(0);
+        }
+    });
+
+    connect(impl_->problemsList, &QListWidget::itemClicked, this,
+            [this](QListWidgetItem* item) {
+        if (!item) {
+            return;
+        }
+        impl_->gotoProblemOffset(item->data(Qt::UserRole + 1).toInt());
+    });
 
     connect(impl_->wiggleBtn, &QPushButton::clicked, this, [this]() {
         impl_->promptInput->setText(QStringLiteral("wiggle 3 times a second"));
@@ -1190,6 +2099,13 @@ ArtifactExpressionCopilotWidget::ArtifactExpressionCopilotWidget(QWidget* parent
         impl_->validateExpression();
     });
 
+    // Signature help follows the caret as it moves through a call's arguments,
+    // and the current-line band has to be rebuilt whenever the block changes.
+    connect(impl_->expressionEdit, &QTextEdit::cursorPositionChanged, this, [this]() {
+        impl_->refreshCurrentLineHighlight();
+        impl_->showSignatureHelpAt(impl_->expressionEdit->textCursor().position());
+    });
+
     impl_->validateExpression();
 }
 
@@ -1284,12 +2200,124 @@ bool ArtifactExpressionCopilotWidget::eventFilter(QObject* watched, QEvent* even
         return QWidget::eventFilter(watched, event);
     }
 
+    if (watched == impl_->findFindEdit || watched == impl_->findReplaceEdit) {
+        if (event->type() == QEvent::KeyPress) {
+            auto* keyEvent = static_cast<QKeyEvent*>(event);
+            const auto& bindings = ArtifactCore::ShortcutBindings::instance();
+            // Enter advances the match instead of inserting a newline, and
+            // Escape returns to the editor. Both are resolved through the
+            // binding system rather than hard-coded.
+            if (bindings.matches(keyEvent, ArtifactCore::ShortcutId::ExpressionFindNext)) {
+                impl_->findNext(false);
+                event->accept();
+                return true;
+            }
+            if (bindings.matches(keyEvent, ArtifactCore::ShortcutId::ExpressionFindPrevious)) {
+                impl_->findPrevious();
+                event->accept();
+                return true;
+            }
+            if (bindings.matches(keyEvent, ArtifactCore::ShortcutId::ExpressionFindClose)) {
+                impl_->applyErrorSelection(
+                    -1, 0, impl_->expressionEdit->toPlainText());
+                impl_->hideFindBar();
+                event->accept();
+                return true;
+            }
+        }
+        return QWidget::eventFilter(watched, event);
+    }
+
     if (watched != impl_->expressionEdit) {
         return QWidget::eventFilter(watched, event);
     }
 
+    // Ctrl+click on a thisComp.layer("Name") reference selects that layer.
+    // A plain click keeps the normal text-selection behavior.
+    if (event->type() == QEvent::MouseButtonRelease) {
+        auto* mouseEvent = static_cast<QMouseEvent*>(event);
+        if (mouseEvent->button() == Qt::LeftButton &&
+            (mouseEvent->modifiers() & Qt::ControlModifier)) {
+            const int offset =
+                impl_->expressionEdit->cursorForPosition(mouseEvent->position().toPoint())
+                    .position();
+            if (impl_->pickWhipLayerAt(offset)) {
+                mouseEvent->accept();
+                return true;
+            }
+        }
+    }
+
     if (event->type() == QEvent::KeyPress) {
         auto* keyEvent = static_cast<QKeyEvent*>(event);
+
+        // Panel.ExpressionEditor owns these bindings. Resolved here, on the
+        // focused editor, rather than as application-wide QAction shortcuts so
+        // the timeline and project panels keep their same-key commands.
+        const auto& bindings = ArtifactCore::ShortcutBindings::instance();
+        if (bindings.matches(keyEvent, ArtifactCore::ShortcutId::ExpressionComplete)) {
+            if (impl_->completeCurrentWord()) {
+                impl_->validateExpression();
+                event->accept();
+                return true;
+            }
+        }
+        if (bindings.matches(keyEvent, ArtifactCore::ShortcutId::ExpressionFontSizeIncrease)) {
+            impl_->adjustEditorFont(1);
+            event->accept();
+            return true;
+        }
+        if (bindings.matches(keyEvent, ArtifactCore::ShortcutId::ExpressionFontSizeDecrease)) {
+            impl_->adjustEditorFont(-1);
+            event->accept();
+            return true;
+        }
+        if (bindings.matches(keyEvent, ArtifactCore::ShortcutId::ExpressionFontSizeReset)) {
+            impl_->applyEditorFont(kBaseFontPointSize);
+            impl_->setStatus(QStringLiteral("Font size reset"), QColor(148, 163, 184));
+            event->accept();
+            return true;
+        }
+        if (bindings.matches(keyEvent, ArtifactCore::ShortcutId::ExpressionFind)) {
+            impl_->showFindBar(false);
+            event->accept();
+            return true;
+        }
+        if (bindings.matches(keyEvent, ArtifactCore::ShortcutId::ExpressionReplace)) {
+            impl_->showFindBar(true);
+            event->accept();
+            return true;
+        }
+        if (bindings.matches(keyEvent, ArtifactCore::ShortcutId::ExpressionFindNext) &&
+            impl_->findBar->isVisible()) {
+            impl_->findNext(false);
+            event->accept();
+            return true;
+        }
+        if (bindings.matches(keyEvent, ArtifactCore::ShortcutId::ExpressionFindPrevious) &&
+            impl_->findBar->isVisible()) {
+            impl_->findPrevious();
+            event->accept();
+            return true;
+        }
+        if (bindings.matches(keyEvent, ArtifactCore::ShortcutId::ExpressionFindClose) &&
+            impl_->findBar->isVisible()) {
+            // Drop the match highlight so the editor shows no stale underline.
+            impl_->applyErrorSelection(-1, 0, impl_->expressionEdit->toPlainText());
+            impl_->hideFindBar();
+            event->accept();
+            return true;
+        }
+        if (bindings.matches(keyEvent, ArtifactCore::ShortcutId::ExpressionToggleLineNumbers)) {
+            impl_->toggleLineNumbers();
+            event->accept();
+            return true;
+        }
+        if (bindings.matches(keyEvent, ArtifactCore::ShortcutId::ExpressionToggleWordWrap)) {
+            impl_->toggleWordWrap();
+            event->accept();
+            return true;
+        }
         if (keyEvent->key() == Qt::Key_Tab) {
             if (impl_->completeCurrentWord()) {
                 impl_->validateExpression();
@@ -1364,6 +2392,8 @@ void ArtifactExpressionCopilotWidget::setInlineMode(const bool inlineMode) {
         if (impl_->loadSnippetBtn) {
             impl_->loadSnippetBtn->hide();
         }
+        // The strip is hidden by default and only revealed by its toggle, so
+        // it contributes no height to the inline editor either way.
         adjustSize();
     }
 }

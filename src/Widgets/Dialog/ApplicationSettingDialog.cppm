@@ -1825,8 +1825,12 @@ QString shortcutContext(ArtifactCore::ShortcutId id) {
     return QStringLiteral("Viewport.Composition");
   if (id == ShortcutId::ViewDetachedTasks)
     return QStringLiteral("Panel.DetachedTasks");
-  if (id == ShortcutId::ViewToggleMagnifier)
+  if (id >= ShortcutId::ViewToggleMagnifier &&
+      id <= ShortcutId::ViewToggleClippingWarnings)
     return QStringLiteral("Viewport.Composition");
+  if (id >= ShortcutId::ExpressionComplete &&
+      id <= ShortcutId::ExpressionToggleWordWrap)
+    return QStringLiteral("Panel.ExpressionEditor");
   return QStringLiteral("Workspace.Timeline");
 }
 
