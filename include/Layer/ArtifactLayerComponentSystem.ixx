@@ -892,4 +892,21 @@ inline LayerComponentDescriptor makeFluidComponentDescriptor(bool enabled) {
     };
 }
 
+// Pyro is the domain-owned combustion / smoke simulation. It is scoped to
+// Composition like the fluid component because a single simulation instance is
+// registered per layer in PhysicsSystem, not per clip or per generated copy.
+inline LayerComponentDescriptor makePyroComponentDescriptor(bool enabled) {
+    return {
+        QStringLiteral("builtin.pyro"),
+        QStringLiteral("artifact.component.pyro"),
+        1,
+        enabled,
+        LayerComponentPhase::Dynamics,
+        LayerComponentScope::Composition,
+        760,
+        {},
+        {},
+    };
+}
+
 } // namespace Artifact

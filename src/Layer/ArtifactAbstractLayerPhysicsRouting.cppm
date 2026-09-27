@@ -760,6 +760,173 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
                           LayerDirtyReason::PropertyChanged);
       return true;
     }
+    if (propertyPath == QStringLiteral("component.pyro.enabled")) {
+      impl_->pyroComponentEnabled_ = value.toBool();
+      impl_->syncBuiltinComponentDescriptors();
+      Q_EMIT changed();
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.pyro.gridWidth")) {
+      impl_->pyroGridWidth_ = std::clamp(value.toInt(), 4, 512);
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.pyro.gridHeight")) {
+      impl_->pyroGridHeight_ = std::clamp(value.toInt(), 4, 512);
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.pyro.gridDepth")) {
+      impl_->pyroGridDepth_ = std::clamp(value.toInt(), 2, 512);
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.pyro.voxelSize")) {
+      impl_->pyroVoxelSize_ = std::clamp(value.toFloat(), 0.001f, 1.0f);
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.pyro.sourceDensity")) {
+      impl_->pyroSourceDensity_ = std::clamp(value.toFloat(), 0.0f, 10.0f);
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.pyro.sourceTemperature")) {
+      impl_->pyroSourceTemperature_ = std::clamp(value.toFloat(), 0.0f, 10.0f);
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.pyro.sourceFuel")) {
+      impl_->pyroSourceFuel_ = std::clamp(value.toFloat(), 0.0f, 10.0f);
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.pyro.dissipation")) {
+      impl_->pyroDissipation_ = std::clamp(value.toFloat(), 0.0f, 1.0f);
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.pyro.coolingRate")) {
+      impl_->pyroCoolingRate_ = std::clamp(value.toFloat(), 0.0f, 10.0f);
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.pyro.buoyancy")) {
+      impl_->pyroBuoyancy_ = std::clamp(value.toFloat(), -5.0f, 5.0f);
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.pyro.vorticity")) {
+      impl_->pyroVorticity_ = std::clamp(value.toFloat(), 0.0f, 10.0f);
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.pyro.pressureIterations")) {
+      impl_->pyroPressureIterations_ = std::clamp(value.toFloat(), 1.0f, 200.0f);
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.pyro.advectionClamp")) {
+      impl_->pyroAdvectionClamp_ = std::clamp(value.toFloat(), 0.01f, 10.0f);
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.pyro.boundaryMode")) {
+      impl_->pyroBoundaryMode_ = value.toInt() != 0 ? 1.0f : 0.0f;
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.pyro.sourcePositionX")) {
+      impl_->pyroSourcePositionX_ = std::clamp(value.toFloat(), 0.0f, 1.0f);
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.pyro.sourcePositionY")) {
+      impl_->pyroSourcePositionY_ = std::clamp(value.toFloat(), 0.0f, 1.0f);
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.pyro.sourcePositionZ")) {
+      impl_->pyroSourcePositionZ_ = std::clamp(value.toFloat(), 0.0f, 1.0f);
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.pyro.sourceExtentX")) {
+      impl_->pyroSourceExtentX_ = std::clamp(value.toFloat(), 0.01f, 1.0f);
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.pyro.sourceExtentY")) {
+      impl_->pyroSourceExtentY_ = std::clamp(value.toFloat(), 0.01f, 1.0f);
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.pyro.sourceExtentZ")) {
+      impl_->pyroSourceExtentZ_ = std::clamp(value.toFloat(), 0.01f, 1.0f);
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.pyro.sourceVelocityX")) {
+      impl_->pyroSourceVelocityX_ = std::clamp(value.toFloat(), -10.0f, 10.0f);
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.pyro.sourceVelocityY")) {
+      impl_->pyroSourceVelocityY_ = std::clamp(value.toFloat(), -10.0f, 10.0f);
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.pyro.sourceVelocityZ")) {
+      impl_->pyroSourceVelocityZ_ = std::clamp(value.toFloat(), -10.0f, 10.0f);
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
     return false;
 }
 

@@ -294,6 +294,34 @@ public:
     FloatColor liquidColor_ = FloatColor(0.10f, 0.50f, 0.98f, 1.0f);
     FloatColor liquidFoamColor_ = FloatColor(0.78f, 0.93f, 1.0f, 1.0f);
     LayerFluidRuntimeState fluidRuntime_;
+
+    // Pyro component. The defaults mirror ArtifactCore PyroSimulationSettings
+    // (PyroSimulation.ixx:150-160) so a freshly added component behaves the same
+    // as a default-constructed PyroSimulation.
+    bool pyroComponentEnabled_ = false;
+    int pyroGridWidth_ = 64;
+    int pyroGridHeight_ = 64;
+    int pyroGridDepth_ = 32;
+    float pyroVoxelSize_ = 0.1f;
+    float pyroSourceDensity_ = 1.0f;
+    float pyroSourceTemperature_ = 1.0f;
+    float pyroSourceFuel_ = 1.0f;
+    float pyroDissipation_ = 0.01f;
+    float pyroCoolingRate_ = 0.1f;
+    float pyroBuoyancy_ = 0.5f;
+    float pyroVorticity_ = 0.0f;
+    float pyroPressureIterations_ = 20.0f;
+    float pyroAdvectionClamp_ = 1.0f;
+    float pyroBoundaryMode_ = 1.0f; // 0=Open, 1=Closed
+    float pyroSourcePositionX_ = 0.5f;
+    float pyroSourcePositionY_ = 0.5f;
+    float pyroSourcePositionZ_ = 0.0f;
+    float pyroSourceExtentX_ = 0.25f;
+    float pyroSourceExtentY_ = 0.25f;
+    float pyroSourceExtentZ_ = 0.25f;
+    float pyroSourceVelocityX_ = 0.0f;
+    float pyroSourceVelocityY_ = 0.0f;
+    float pyroSourceVelocityZ_ = 1.0f;
     NamedVector<ArtifactCore::ParticleVertex> componentParticles_{
         ContainerName{"Layer.ComponentParticles"}};
     mutable int64_t componentParticlesLastFrame_ =

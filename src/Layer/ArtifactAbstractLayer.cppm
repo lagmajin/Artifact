@@ -401,6 +401,52 @@ void ArtifactAbstractLayerImpl::syncBuiltinComponentDescriptors() {
   fluid.settings[QStringLiteral("liquidFoamColor")] = descriptorFoamColor;
   componentHost_.upsert(std::move(fluid));
 
+  auto pyro = makePyroComponentDescriptor(pyroComponentEnabled_);
+  pyro.settings[QStringLiteral("gridWidth")] = pyroGridWidth_;
+  pyro.settings[QStringLiteral("gridHeight")] = pyroGridHeight_;
+  pyro.settings[QStringLiteral("gridDepth")] = pyroGridDepth_;
+  pyro.settings[QStringLiteral("voxelSize")] =
+      static_cast<double>(pyroVoxelSize_);
+  pyro.settings[QStringLiteral("sourceDensity")] =
+      static_cast<double>(pyroSourceDensity_);
+  pyro.settings[QStringLiteral("sourceTemperature")] =
+      static_cast<double>(pyroSourceTemperature_);
+  pyro.settings[QStringLiteral("sourceFuel")] =
+      static_cast<double>(pyroSourceFuel_);
+  pyro.settings[QStringLiteral("dissipation")] =
+      static_cast<double>(pyroDissipation_);
+  pyro.settings[QStringLiteral("coolingRate")] =
+      static_cast<double>(pyroCoolingRate_);
+  pyro.settings[QStringLiteral("buoyancy")] =
+      static_cast<double>(pyroBuoyancy_);
+  pyro.settings[QStringLiteral("vorticity")] =
+      static_cast<double>(pyroVorticity_);
+  pyro.settings[QStringLiteral("pressureIterations")] =
+      static_cast<double>(pyroPressureIterations_);
+  pyro.settings[QStringLiteral("advectionClamp")] =
+      static_cast<double>(pyroAdvectionClamp_);
+  pyro.settings[QStringLiteral("boundaryMode")] =
+      static_cast<double>(pyroBoundaryMode_);
+  pyro.settings[QStringLiteral("sourcePositionX")] =
+      static_cast<double>(pyroSourcePositionX_);
+  pyro.settings[QStringLiteral("sourcePositionY")] =
+      static_cast<double>(pyroSourcePositionY_);
+  pyro.settings[QStringLiteral("sourcePositionZ")] =
+      static_cast<double>(pyroSourcePositionZ_);
+  pyro.settings[QStringLiteral("sourceExtentX")] =
+      static_cast<double>(pyroSourceExtentX_);
+  pyro.settings[QStringLiteral("sourceExtentY")] =
+      static_cast<double>(pyroSourceExtentY_);
+  pyro.settings[QStringLiteral("sourceExtentZ")] =
+      static_cast<double>(pyroSourceExtentZ_);
+  pyro.settings[QStringLiteral("sourceVelocityX")] =
+      static_cast<double>(pyroSourceVelocityX_);
+  pyro.settings[QStringLiteral("sourceVelocityY")] =
+      static_cast<double>(pyroSourceVelocityY_);
+  pyro.settings[QStringLiteral("sourceVelocityZ")] =
+      static_cast<double>(pyroSourceVelocityZ_);
+  componentHost_.upsert(std::move(pyro));
+
   const QString& sourceComponentType = builtinSourceComponentType_;
   if (!sourceComponentType.isEmpty()) {
     LayerComponentDescriptor sourceDescriptor;
@@ -427,6 +473,7 @@ void ArtifactAbstractLayerImpl::syncBuiltinBoolsFromHost() {
   collisionComponentEnabled_ = boolFromHost(QStringLiteral("artifact.component.collision"));
   particleEmitterComponentEnabled_ = boolFromHost(QStringLiteral("artifact.component.particle-emitter"));
   fluidComponentEnabled_ = boolFromHost(QStringLiteral("artifact.component.fluid"));
+  pyroComponentEnabled_ = boolFromHost(QStringLiteral("artifact.component.pyro"));
   scriptComponentEnabled_ = boolFromHost(QStringLiteral("artifact.component.script"));
   if (auto* d = componentHost_.findByType(QStringLiteral("artifact.component.fracture"))) {
     fractureEnabled_ = d->enabled;
@@ -2236,9 +2283,8 @@ bool ArtifactAbstractLayer::syncDeformation2DControlProperty(
   if (!property) return false;
   QJsonObject state = deformation2DData();
   const QString mode = state.value(QStringLiteral("mode")).toString();
-  const QString controlsKey = mode == QStringLiteral("grid")
-                                  ? QStringLiteral("gridControls")
-                                  : QStringLiteral("pins");
+  const QString controlsKey =
+      LayerAbstractUtilities::deformationControlsKey(mode);
   if ((parts[2] == QStringLiteral("rotation") ||
        parts[2] == QStringLiteral("weight")) && mode == QStringLiteral("grid")) {
     return false;

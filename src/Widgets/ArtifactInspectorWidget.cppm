@@ -2087,6 +2087,9 @@ QString componentInspectorFilter(const QString &componentName) {
   if (componentName == QStringLiteral("Fluid")) {
     return QStringLiteral("component.fluid.");
   }
+  if (componentName == QStringLiteral("Pyro")) {
+    return QStringLiteral("component.pyro.");
+  }
   if (componentName == QStringLiteral("Joint")) {
     return QStringLiteral("component.joint.");
   }

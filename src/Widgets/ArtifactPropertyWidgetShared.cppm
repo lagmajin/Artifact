@@ -212,6 +212,7 @@ bool isComponentActivationProperty(const QString &propertyName) {
       QStringLiteral("component.crowd.enabled"),
       QStringLiteral("component.particleEmitter.enabled"),
       QStringLiteral("component.fluid.enabled"),
+      QStringLiteral("component.pyro.enabled"),
   };
   return activationProperties.contains(propertyName, Qt::CaseInsensitive);
 }

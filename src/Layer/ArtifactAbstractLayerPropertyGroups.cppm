@@ -1097,6 +1097,37 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactAbstractLayer::getComponentProp
   componentGroup.addProperty(makeProp(QStringLiteral("component.particleEmitter.enabled"), PropertyType::Boolean, impl_->particleEmitterComponentEnabled_, -87));
   componentGroup.addProperty(makeProp(QStringLiteral("component.fluid.enabled"), PropertyType::Boolean, impl_->fluidComponentEnabled_, -86));
   groups.push_back(std::move(componentGroup));
+
+  // Pyro component. Unlike the fluid component, the pyro settings are exposed
+  // here as well: a PyroSimulation with default settings is an inert volume, so
+  // the grid / source / combustion values have to be editable from the
+  // Inspector rather than reachable only through setComponentDescriptorPropertyValue.
+  PropertyGroup pyroGroup(QStringLiteral("Pyro"));
+  pyroGroup.addProperty(makeProp(QStringLiteral("component.pyro.enabled"), PropertyType::Boolean, impl_->pyroComponentEnabled_, 0));
+  pyroGroup.addProperty(makeProp(QStringLiteral("component.pyro.gridWidth"), PropertyType::Integer, impl_->pyroGridWidth_, 1));
+  pyroGroup.addProperty(makeProp(QStringLiteral("component.pyro.gridHeight"), PropertyType::Integer, impl_->pyroGridHeight_, 1));
+  pyroGroup.addProperty(makeProp(QStringLiteral("component.pyro.gridDepth"), PropertyType::Integer, impl_->pyroGridDepth_, 1));
+  pyroGroup.addProperty(makeProp(QStringLiteral("component.pyro.voxelSize"), PropertyType::Float, static_cast<double>(impl_->pyroVoxelSize_), 2));
+  pyroGroup.addProperty(makeProp(QStringLiteral("component.pyro.boundaryMode"), PropertyType::Integer, static_cast<int>(impl_->pyroBoundaryMode_), 3));
+  pyroGroup.addProperty(makeProp(QStringLiteral("component.pyro.sourceDensity"), PropertyType::Float, static_cast<double>(impl_->pyroSourceDensity_), 4));
+  pyroGroup.addProperty(makeProp(QStringLiteral("component.pyro.sourceTemperature"), PropertyType::Float, static_cast<double>(impl_->pyroSourceTemperature_), 5));
+  pyroGroup.addProperty(makeProp(QStringLiteral("component.pyro.sourceFuel"), PropertyType::Float, static_cast<double>(impl_->pyroSourceFuel_), 6));
+  pyroGroup.addProperty(makeProp(QStringLiteral("component.pyro.dissipation"), PropertyType::Float, static_cast<double>(impl_->pyroDissipation_), 7));
+  pyroGroup.addProperty(makeProp(QStringLiteral("component.pyro.coolingRate"), PropertyType::Float, static_cast<double>(impl_->pyroCoolingRate_), 8));
+  pyroGroup.addProperty(makeProp(QStringLiteral("component.pyro.buoyancy"), PropertyType::Float, static_cast<double>(impl_->pyroBuoyancy_), 9));
+  pyroGroup.addProperty(makeProp(QStringLiteral("component.pyro.vorticity"), PropertyType::Float, static_cast<double>(impl_->pyroVorticity_), 10));
+  pyroGroup.addProperty(makeProp(QStringLiteral("component.pyro.pressureIterations"), PropertyType::Float, static_cast<double>(impl_->pyroPressureIterations_), 11));
+  pyroGroup.addProperty(makeProp(QStringLiteral("component.pyro.advectionClamp"), PropertyType::Float, static_cast<double>(impl_->pyroAdvectionClamp_), 12));
+  pyroGroup.addProperty(makeProp(QStringLiteral("component.pyro.sourcePositionX"), PropertyType::Float, static_cast<double>(impl_->pyroSourcePositionX_), 13));
+  pyroGroup.addProperty(makeProp(QStringLiteral("component.pyro.sourcePositionY"), PropertyType::Float, static_cast<double>(impl_->pyroSourcePositionY_), 14));
+  pyroGroup.addProperty(makeProp(QStringLiteral("component.pyro.sourcePositionZ"), PropertyType::Float, static_cast<double>(impl_->pyroSourcePositionZ_), 15));
+  pyroGroup.addProperty(makeProp(QStringLiteral("component.pyro.sourceExtentX"), PropertyType::Float, static_cast<double>(impl_->pyroSourceExtentX_), 16));
+  pyroGroup.addProperty(makeProp(QStringLiteral("component.pyro.sourceExtentY"), PropertyType::Float, static_cast<double>(impl_->pyroSourceExtentY_), 17));
+  pyroGroup.addProperty(makeProp(QStringLiteral("component.pyro.sourceExtentZ"), PropertyType::Float, static_cast<double>(impl_->pyroSourceExtentZ_), 18));
+  pyroGroup.addProperty(makeProp(QStringLiteral("component.pyro.sourceVelocityX"), PropertyType::Float, static_cast<double>(impl_->pyroSourceVelocityX_), 19));
+  pyroGroup.addProperty(makeProp(QStringLiteral("component.pyro.sourceVelocityY"), PropertyType::Float, static_cast<double>(impl_->pyroSourceVelocityY_), 20));
+  pyroGroup.addProperty(makeProp(QStringLiteral("component.pyro.sourceVelocityZ"), PropertyType::Float, static_cast<double>(impl_->pyroSourceVelocityZ_), 21));
+  groups.push_back(std::move(pyroGroup));
   return groups;
 }
 

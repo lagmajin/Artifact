@@ -504,6 +504,41 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   liquidFoamColorObj["b"] = impl_->liquidFoamColor_.b();
   liquidFoamColorObj["a"] = impl_->liquidFoamColor_.a();
   componentsObj["liquidFoamColor"] = liquidFoamColorObj;
+  componentsObj["pyroEnabled"] = impl_->pyroComponentEnabled_;
+  componentsObj["pyroGridWidth"] = impl_->pyroGridWidth_;
+  componentsObj["pyroGridHeight"] = impl_->pyroGridHeight_;
+  componentsObj["pyroGridDepth"] = impl_->pyroGridDepth_;
+  componentsObj["pyroVoxelSize"] = static_cast<double>(impl_->pyroVoxelSize_);
+  componentsObj["pyroSourceDensity"] =
+      static_cast<double>(impl_->pyroSourceDensity_);
+  componentsObj["pyroSourceTemperature"] =
+      static_cast<double>(impl_->pyroSourceTemperature_);
+  componentsObj["pyroSourceFuel"] = static_cast<double>(impl_->pyroSourceFuel_);
+  componentsObj["pyroDissipation"] = static_cast<double>(impl_->pyroDissipation_);
+  componentsObj["pyroCoolingRate"] = static_cast<double>(impl_->pyroCoolingRate_);
+  componentsObj["pyroBuoyancy"] = static_cast<double>(impl_->pyroBuoyancy_);
+  componentsObj["pyroVorticity"] = static_cast<double>(impl_->pyroVorticity_);
+  componentsObj["pyroPressureIterations"] =
+      static_cast<double>(impl_->pyroPressureIterations_);
+  componentsObj["pyroAdvectionClamp"] =
+      static_cast<double>(impl_->pyroAdvectionClamp_);
+  componentsObj["pyroBoundaryMode"] =
+      static_cast<int>(impl_->pyroBoundaryMode_);
+  componentsObj["pyroSourcePositionX"] =
+      static_cast<double>(impl_->pyroSourcePositionX_);
+  componentsObj["pyroSourcePositionY"] =
+      static_cast<double>(impl_->pyroSourcePositionY_);
+  componentsObj["pyroSourcePositionZ"] =
+      static_cast<double>(impl_->pyroSourcePositionZ_);
+  componentsObj["pyroSourceExtentX"] = static_cast<double>(impl_->pyroSourceExtentX_);
+  componentsObj["pyroSourceExtentY"] = static_cast<double>(impl_->pyroSourceExtentY_);
+  componentsObj["pyroSourceExtentZ"] = static_cast<double>(impl_->pyroSourceExtentZ_);
+  componentsObj["pyroSourceVelocityX"] =
+      static_cast<double>(impl_->pyroSourceVelocityX_);
+  componentsObj["pyroSourceVelocityY"] =
+      static_cast<double>(impl_->pyroSourceVelocityY_);
+  componentsObj["pyroSourceVelocityZ"] =
+      static_cast<double>(impl_->pyroSourceVelocityZ_);
   componentsObj["layoutMode"] = impl_->layoutMode_;
   componentsObj["layoutAnchorMode"] = impl_->layoutAnchorMode_;
   componentsObj["layoutHorizontalPin"] = impl_->layoutHorizontalPin_;
@@ -981,6 +1016,7 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
       impl_->crowdComponentEnabled_ = false;
       impl_->particleEmitterComponentEnabled_ = false;
       impl_->fluidComponentEnabled_ = false;
+      impl_->pyroComponentEnabled_ = false;
       impl_->extraCloneModifierDescriptors_.clear();
       impl_->scriptBinding_ = {};
   }
@@ -1221,6 +1257,105 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
             QStringLiteral("liquidFoamColor"),
             FloatColor(0.78f, 0.93f, 1.0f, 1.0f));
         impl_->fluidRuntime_.invalidateLiquidSimulation();
+        impl_->pyroComponentEnabled_ =
+            componentsObj.value(QStringLiteral("pyroEnabled")).toBool(false);
+        impl_->pyroGridWidth_ = std::clamp(
+            componentsObj.value(QStringLiteral("pyroGridWidth")).toInt(64), 4, 512);
+        impl_->pyroGridHeight_ = std::clamp(
+            componentsObj.value(QStringLiteral("pyroGridHeight")).toInt(64), 4, 512);
+        impl_->pyroGridDepth_ = std::clamp(
+            componentsObj.value(QStringLiteral("pyroGridDepth")).toInt(32), 2, 512);
+        impl_->pyroVoxelSize_ = std::clamp(
+            static_cast<float>(
+                componentsObj.value(QStringLiteral("pyroVoxelSize")).toDouble(0.1)),
+            0.001f, 1.0f);
+        impl_->pyroSourceDensity_ = std::clamp(
+            static_cast<float>(componentsObj
+                                   .value(QStringLiteral("pyroSourceDensity"))
+                                   .toDouble(1.0)),
+            0.0f, 10.0f);
+        impl_->pyroSourceTemperature_ = std::clamp(
+            static_cast<float>(componentsObj
+                                   .value(QStringLiteral("pyroSourceTemperature"))
+                                   .toDouble(1.0)),
+            0.0f, 10.0f);
+        impl_->pyroSourceFuel_ = std::clamp(
+            static_cast<float>(
+                componentsObj.value(QStringLiteral("pyroSourceFuel")).toDouble(1.0)),
+            0.0f, 10.0f);
+        impl_->pyroDissipation_ = std::clamp(
+            static_cast<float>(
+                componentsObj.value(QStringLiteral("pyroDissipation")).toDouble(0.01)),
+            0.0f, 1.0f);
+        impl_->pyroCoolingRate_ = std::clamp(
+            static_cast<float>(
+                componentsObj.value(QStringLiteral("pyroCoolingRate")).toDouble(0.1)),
+            0.0f, 10.0f);
+        impl_->pyroBuoyancy_ = std::clamp(
+            static_cast<float>(
+                componentsObj.value(QStringLiteral("pyroBuoyancy")).toDouble(0.5)),
+            -5.0f, 5.0f);
+        impl_->pyroVorticity_ = std::clamp(
+            static_cast<float>(
+                componentsObj.value(QStringLiteral("pyroVorticity")).toDouble(0.0)),
+            0.0f, 10.0f);
+        impl_->pyroPressureIterations_ = std::clamp(
+            static_cast<float>(componentsObj
+                                   .value(QStringLiteral("pyroPressureIterations"))
+                                   .toDouble(20.0)),
+            1.0f, 200.0f);
+        impl_->pyroAdvectionClamp_ = std::clamp(
+            static_cast<float>(componentsObj
+                                   .value(QStringLiteral("pyroAdvectionClamp"))
+                                   .toDouble(1.0)),
+            0.01f, 10.0f);
+        impl_->pyroBoundaryMode_ =
+            componentsObj.value(QStringLiteral("pyroBoundaryMode")).toInt(1) != 0 ? 1.0f : 0.0f;
+        impl_->pyroSourcePositionX_ = std::clamp(
+            static_cast<float>(componentsObj
+                                   .value(QStringLiteral("pyroSourcePositionX"))
+                                   .toDouble(0.5)),
+            0.0f, 1.0f);
+        impl_->pyroSourcePositionY_ = std::clamp(
+            static_cast<float>(componentsObj
+                                   .value(QStringLiteral("pyroSourcePositionY"))
+                                   .toDouble(0.5)),
+            0.0f, 1.0f);
+        impl_->pyroSourcePositionZ_ = std::clamp(
+            static_cast<float>(componentsObj
+                                   .value(QStringLiteral("pyroSourcePositionZ"))
+                                   .toDouble(0.0)),
+            0.0f, 1.0f);
+        impl_->pyroSourceExtentX_ = std::clamp(
+            static_cast<float>(componentsObj
+                                   .value(QStringLiteral("pyroSourceExtentX"))
+                                   .toDouble(0.25)),
+            0.01f, 1.0f);
+        impl_->pyroSourceExtentY_ = std::clamp(
+            static_cast<float>(componentsObj
+                                   .value(QStringLiteral("pyroSourceExtentY"))
+                                   .toDouble(0.25)),
+            0.01f, 1.0f);
+        impl_->pyroSourceExtentZ_ = std::clamp(
+            static_cast<float>(componentsObj
+                                   .value(QStringLiteral("pyroSourceExtentZ"))
+                                   .toDouble(0.25)),
+            0.01f, 1.0f);
+        impl_->pyroSourceVelocityX_ = std::clamp(
+            static_cast<float>(componentsObj
+                                   .value(QStringLiteral("pyroSourceVelocityX"))
+                                   .toDouble(0.0)),
+            -10.0f, 10.0f);
+        impl_->pyroSourceVelocityY_ = std::clamp(
+            static_cast<float>(componentsObj
+                                   .value(QStringLiteral("pyroSourceVelocityY"))
+                                   .toDouble(0.0)),
+            -10.0f, 10.0f);
+        impl_->pyroSourceVelocityZ_ = std::clamp(
+            static_cast<float>(componentsObj
+                                   .value(QStringLiteral("pyroSourceVelocityZ"))
+                                   .toDouble(1.0)),
+            -10.0f, 10.0f);
         impl_->layoutMode_ = std::clamp(
             componentsObj.value(QStringLiteral("layoutMode")).toInt(0), 0, 2);
         impl_->layoutAnchorMode_ = std::clamp(
