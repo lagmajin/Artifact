@@ -180,10 +180,6 @@ public:
   void setPingPong(bool enabled);
   bool isPingPong() const;
 
-  // Real-time mode
-  bool isRealTime() const;
-  void setRealTime(bool realTime);
-
   // Playback Range Mode
   void setPlaybackRangeMode(PlaybackRangeMode mode);
   PlaybackRangeMode playbackRangeMode() const;

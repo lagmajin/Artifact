@@ -3093,16 +3093,6 @@ void ArtifactPlaybackService::setLooping(bool loop) {
   }
 }
 
-bool ArtifactPlaybackService::isRealTime() const {
-  return impl_->controller_ ? impl_->controller_->isRealTime() : true;
-}
-
-void ArtifactPlaybackService::setRealTime(bool realTime) {
-  if (impl_->controller_) {
-    impl_->controller_->setRealTime(realTime);
-  }
-}
-
 void ArtifactPlaybackService::setAudioClockProvider(
     const std::function<double()> &provider) {
   if (!impl_)
