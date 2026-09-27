@@ -1155,7 +1155,7 @@ TextShapingResult layoutTextShape(const UniString &text,
     return result;
   }
 
-  QtShapingBackend backend;
+  HarfBuzzShapingBackend backend;
   TextShapingRequest request;
   request.text = text.toQString();
   request.style = style;
@@ -3484,7 +3484,7 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
         metadataRequest.writingMode = impl_->writingMode_;
         metadataRequest.baseDirection = inferredBaseDirection(richPlainText);
         metadataRequest.locale = QLocale::system().name();
-        const TextShapingResult metadata = QtShapingBackend{}.shape(metadataRequest);
+        const TextShapingResult metadata = HarfBuzzShapingBackend{}.shape(metadataRequest);
         QHash<int, const GlyphItem *> metadataByIndex;
         metadataByIndex.reserve(static_cast<qsizetype>(metadata.glyphs.size()));
         for (const auto &glyph : metadata.glyphs) {
