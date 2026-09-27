@@ -1312,6 +1312,14 @@ public:
     return DockBackendCapabilities{true, true, true};
   }
 
+  void setAreaTabPosition(DockArea area, bool atBottom) {
+    setAreaTabPositionImpl(area, atBottom);
+  }
+
+  bool areaTabPositionAtBottom(DockArea area) const {
+    return areaTabsAtBottom_.value(static_cast<int>(area), false);
+  }
+
 protected:
   void dragEnterEvent(QDragEnterEvent *event) override {
     if (event->mimeData()->hasFormat(
@@ -1710,7 +1718,7 @@ private:
     }
   }
 
-  void setAreaTabPosition(DockArea area, bool atBottom) {
+  void setAreaTabPositionImpl(DockArea area, bool atBottom) {
     auto *tabs = tabsForArea(area);
     if (!tabs || isFloatingTabSurface(tabs) ||
         (tabs->tabPosition() == QTabWidget::South) == atBottom) {
