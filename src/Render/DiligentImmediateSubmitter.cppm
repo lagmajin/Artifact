@@ -120,6 +120,17 @@ static QString fmtMatrix4x4Row0(const QMatrix4x4& mat)
         .arg(fmtFloat(data[0]), fmtFloat(data[4]), fmtFloat(data[8]), fmtFloat(data[12]));
 }
 
+static FrameDebugPassRecord makeDebugPass(const QString& name, const QString& shaderName)
+{
+    FrameDebugPassRecord pass;
+    pass.name = name;
+    pass.kind = FrameDebugPassKind::Draw;
+    pass.status = FrameDebugPassStatus::Success;
+    pass.backend = QStringLiteral("legacy");
+    pass.shaderName = shaderName;
+    return pass;
+}
+
 static FrameDebugBindingRecord makeBinding(const QString& key, const QString& value,
                                            const QString& stage = QString(),
                                            const QString& note = QString())
@@ -175,7 +186,7 @@ static std::vector<GlyphItem> shapeGlyphsForRender(const QString& text,
                                                   const TextStyle& style,
                                                   const ParagraphStyle& paragraph)
 {
-    QtShapingBackend backend;
+    HarfBuzzShapingBackend backend;
     TextShapingRequest request;
     request.text = text;
     request.style = style;
@@ -234,28 +245,39 @@ static size_t resolvedGlyphFontHash(const QFont& font)
 const DiligentImmediateSubmitter::ResolvedGlyphFont&
 DiligentImmediateSubmitter::resolvedGlyphFont(
     const QFont& font, size_t fontHash, char32_t codePoint,
-    GlyphRenderMode renderMode)
+    GlyphRenderMode renderMode, uint32_t shapedGlyphIndex,
+    const QString& clusterText, bool isEmojiSequence)
 {
     if (!m_resolvedGlyphFontSlotsInitialized_) {
         m_resolvedGlyphFontSlots_.fill(-1);
         m_resolvedGlyphFontSlotsInitialized_ = true;
     }
     constexpr size_t slotMask = kResolvedGlyphFontSlotCount - 1;
+    // Hash the shaped glyph and the cluster length; the full cluster text is
+    // only compared once a slot already matches.
     const auto initialSlotFor = [slotMask](size_t sourceFontHash,
                                             char32_t value,
-                                            GlyphRenderMode mode) {
+                                            GlyphRenderMode mode,
+                                            uint32_t shapedGlyph,
+                                            int clusterLength) {
         size_t mixed = sourceFontHash ^
                        (static_cast<size_t>(value) * 2654435761u);
         mixed ^= static_cast<size_t>(mode) * 2246822519u;
+        mixed ^= static_cast<size_t>(shapedGlyph) * 40503u;
+        mixed ^= static_cast<size_t>(clusterLength) * 2246822519u;
         return mixed & slotMask;
     };
-    size_t slot = initialSlotFor(fontHash, codePoint, renderMode);
+    size_t slot = initialSlotFor(fontHash, codePoint, renderMode,
+                                 shapedGlyphIndex,
+                                 static_cast<int>(clusterText.size()));
     while (m_resolvedGlyphFontSlots_[slot] >= 0) {
         const size_t cachedIndex = static_cast<size_t>(
             m_resolvedGlyphFontSlots_[slot]);
         const auto& cached = m_resolvedGlyphFonts_[cachedIndex];
         if (cached.sourceFont == font && cached.codePoint == codePoint &&
-            cached.renderMode == renderMode) {
+            cached.renderMode == renderMode &&
+            cached.shapedGlyphIndex == shapedGlyphIndex &&
+            cached.clusterText == clusterText) {
             return cached;
         }
         slot = (slot + 1) & slotMask;
@@ -264,10 +286,17 @@ DiligentImmediateSubmitter::resolvedGlyphFont(
     if (m_resolvedGlyphFonts_.size() >= 2048) {
         m_resolvedGlyphFonts_.removeAll();
         m_resolvedGlyphFontSlots_.fill(-1);
-        slot = initialSlotFor(fontHash, codePoint, renderMode);
+        slot = initialSlotFor(fontHash, codePoint, renderMode,
+                              shapedGlyphIndex,
+                              static_cast<int>(clusterText.size()));
     }
 
-    const QString glyphText = QString::fromUcs4(&codePoint, 1);
+    // Fallback resolution follows the cluster text, so an emoji sequence asks
+    // the font manager about the whole grapheme rather than its first
+    // code point.
+    const QString glyphText = clusterText.isEmpty()
+                                  ? QString::fromUcs4(&codePoint, 1)
+                                  : clusterText;
     const TextStyle style = textStyleFromQFont(font);
     QFont resolvedFont = FontManager::makeFont(style, glyphText);
     GlyphKey key{
@@ -276,15 +305,16 @@ DiligentImmediateSubmitter::resolvedGlyphFont(
         static_cast<uint32_t>((style.fontWeight == FontWeight::Bold ? 0x1u : 0u) |
                               (style.fontStyle == FontStyle::Italic ? 0x2u : 0u)),
         resolvedFont.family().toStdString(),
-        {},
-        0,
+        isEmojiSequence ? clusterText.toUtf8().toStdString() : std::string{},
+        shapedGlyphIndex,
         {},
         renderMode
     };
     const auto cacheIndex = static_cast<std::int16_t>(
         m_resolvedGlyphFonts_.size());
     m_resolvedGlyphFonts_.append(ResolvedGlyphFont{
-        font, codePoint, renderMode, std::move(resolvedFont), std::move(key)});
+        font, codePoint, renderMode, shapedGlyphIndex, clusterText,
+        std::move(resolvedFont), std::move(key)});
     m_resolvedGlyphFontSlots_[slot] = cacheIndex;
     return m_resolvedGlyphFonts_[m_resolvedGlyphFonts_.size() - 1];
 }
@@ -472,6 +502,30 @@ void DiligentImmediateSubmitter::createBuffers(RefCntAutoPtr<IRenderDevice> devi
         desc.CPUAccessFlags = CPU_ACCESS_WRITE;
         desc.Size           = sizeof(RectVertex) * 4;
         device->CreateBuffer(desc, nullptr, &m_draw_solid_rect_vertex_buffer);
+
+        // Immutable unit quad for the submitters whose rectangle geometry is a
+        // constant (0,0)-(1,1).  Their input layout binds ATTRIB0 as a float2
+        // with the RectVertex stride, so the vertex color in those payloads is
+        // never read: each of them also uploads its own color constant buffer.
+        // Re-uploading four identical vertices per draw is pure upload churn.
+        {
+            const RectVertex unitVerts[4] = {
+                {{0.0f, 0.0f}, {1.0f, 1.0f, 1.0f, 1.0f}},
+                {{1.0f, 0.0f}, {1.0f, 1.0f, 1.0f, 1.0f}},
+                {{0.0f, 1.0f}, {1.0f, 1.0f, 1.0f, 1.0f}},
+                {{1.0f, 1.0f}, {1.0f, 1.0f, 1.0f, 1.0f}},
+            };
+            BufferDesc unitDesc;
+            unitDesc.Name           = "DIS SolidRect Unit Quad VB";
+            unitDesc.BindFlags      = BIND_VERTEX_BUFFER;
+            unitDesc.Usage          = USAGE_IMMUTABLE;
+            unitDesc.CPUAccessFlags = CPU_ACCESS_NONE;
+            unitDesc.Size           = sizeof(unitVerts);
+            BufferData unitData;
+            unitData.pData    = unitVerts;
+            unitData.DataSize = sizeof(unitVerts);
+            device->CreateBuffer(unitDesc, &unitData, &m_draw_solid_rect_unit_quad_vb_);
+        }
 
         desc.Name = "DIS SolidTriangle VB";
         desc.Size = sizeof(RectVertex) * 3;
@@ -792,6 +846,7 @@ void DiligentImmediateSubmitter::destroy()
     m_primitiveRenderer3D_                  = nullptr;
     m_particleRenderer_                     = nullptr;
     m_sprite_unit_quad_vb_                  = nullptr;
+    m_draw_solid_rect_unit_quad_vb_        = nullptr;
     m_currentPSO_                           = nullptr;
     m_var_sprite_gTexture_                  = nullptr;
     m_var_spriteXform_gTexture_             = nullptr;
@@ -839,6 +894,11 @@ void DiligentImmediateSubmitter::endFrameDebugCapture()
     m_currentFrameDebugPasses_.swap(m_lastFrameDebugPasses_);
 }
 
+void DiligentImmediateSubmitter::setFrameDebugCaptureEnabled(bool enabled)
+{
+    m_frameDebugCaptureEnabled_ = enabled;
+}
+
 std::vector<ArtifactCore::FrameDebugPassRecord> DiligentImmediateSubmitter::frameDebugPasses() const
 {
     return m_lastFrameDebugPasses_;
@@ -846,6 +906,9 @@ std::vector<ArtifactCore::FrameDebugPassRecord> DiligentImmediateSubmitter::fram
 
 void DiligentImmediateSubmitter::recordDebugPass(ArtifactCore::FrameDebugPassRecord&& pass)
 {
+    if (!m_frameDebugCaptureEnabled_) {
+        return;
+    }
     m_currentFrameDebugPasses_.push_back(std::move(pass));
 }
 
@@ -881,6 +944,9 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
     // The transformed-rectangle batch currently produces a clear-only frame
     // on the swap-chain path. Keep its resources intact, but use the proven
     // per-packet submitters until the batched shader/input layout is validated.
+    // Enabling this collapses N SolidRectXform packets into one draw, so it is
+    // worth revisiting once the clear-only regression can actually be observed
+    // (it needs a rendered frame, which static review cannot establish).
     constexpr bool kSolidRectBatchValidated = false;
     const bool batchReady = kSolidRectBatchValidated
                          && m_batch_solid_rect_vb_ && m_batch_solid_rect_ib_
@@ -1279,17 +1345,16 @@ void DiligentImmediateSubmitter::submitParticles(const ParticlePkt& p, IDeviceCo
     if (uploadedCount == 0) {
         qWarning() << "[ParticleRenderer] submitParticles skipped: uploaded count is zero"
                    << "requested=" << p.data.particles.size()
-                   << "state=" << m_particleRenderer_->debugState();
+                   << "state=" << m_particleRenderer_->debugStateText();
         m_particleRenderer_->setFrameCostStats(nullptr);
         return;
     }
     m_particleRenderer_->prepare(ctx);
-    const QString preparedState = m_particleRenderer_->debugState();
-    if (!preparedState.startsWith(QStringLiteral("state=prepared"))) {
+    if (!m_particleRenderer_->isPrepared()) {
         qWarning() << "[ParticleRenderer] submitParticles skipped: prepare failed"
                    << "requested=" << p.data.particles.size()
                    << "uploaded=" << uploadedCount
-                   << "state=" << preparedState;
+                   << "state=" << m_particleRenderer_->debugStateText();
         m_particleRenderer_->setFrameCostStats(nullptr);
         return;
     }
@@ -1297,21 +1362,16 @@ void DiligentImmediateSubmitter::submitParticles(const ParticlePkt& p, IDeviceCo
     qCDebug(particleSubmitterLog) << "[ParticleRenderer] submitParticles drawn"
              << "requested=" << p.data.particles.size()
              << "uploaded=" << uploadedCount
-             << "state=" << m_particleRenderer_->debugState();
+             << "state=" << m_particleRenderer_->debugStateText();
     m_particleRenderer_->setFrameCostStats(nullptr);
 }
 
 void DiligentImmediateSubmitter::submitSolidRect(const SolidRectPkt& p, IDeviceContext* ctx, ITextureView* pRTV)
 {
     if (!pRTV || !m_draw_solid_rect_pso_and_srb.pPSO) return;
-    if (!m_draw_solid_rect_vertex_buffer || !m_draw_solid_rect_cb ||
+    if (!m_draw_solid_rect_unit_quad_vb_ || !m_draw_solid_rect_cb ||
         !m_draw_solid_rect_trnsform_cb   || !m_draw_solid_rect_index_buffer) return;
 
-    RectVertex vertices[4] = {
-        {{0.0f, 0.0f}, p.color}, {{1.0f, 0.0f}, p.color},
-        {{0.0f, 1.0f}, p.color}, {{1.0f, 1.0f}, p.color},
-    };
-    mapWriteDiscard(ctx, m_draw_solid_rect_vertex_buffer, vertices, sizeof(vertices), m_frameCostStats_);
     mapWriteDiscard(ctx, m_draw_solid_rect_cb,           &p.color, sizeof(p.color), m_frameCostStats_);
     mapWriteDiscard(ctx, m_draw_solid_rect_trnsform_cb,  &p.xform, sizeof(p.xform), m_frameCostStats_);
 
@@ -1320,7 +1380,7 @@ void DiligentImmediateSubmitter::submitSolidRect(const SolidRectPkt& p, IDeviceC
         ctx->SetPipelineState(m_draw_solid_rect_pso_and_srb.pPSO);
         m_currentPSO_ = m_draw_solid_rect_pso_and_srb.pPSO;
     }
-    IBuffer* pBufs[] = { m_draw_solid_rect_vertex_buffer };
+    IBuffer* pBufs[] = { m_draw_solid_rect_unit_quad_vb_.RawPtr() };
     Uint64   offs[]  = { 0 };
     ctx->SetVertexBuffers(0, 1, pBufs, offs, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
     ctx->SetIndexBuffer(m_draw_solid_rect_index_buffer, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
@@ -1334,24 +1394,16 @@ void DiligentImmediateSubmitter::submitSolidRect(const SolidRectPkt& p, IDeviceC
 void DiligentImmediateSubmitter::submitSolidRectXform(const SolidRectXformPkt& p, IDeviceContext* ctx, ITextureView* pRTV)
 {
     if (!pRTV || !m_draw_solid_rect_transform_pso_and_srb.pPSO) return;
-    if (!m_draw_solid_rect_vertex_buffer || !m_draw_solid_rect_cb ||
+    if (!m_draw_solid_rect_unit_quad_vb_ || !m_draw_solid_rect_cb ||
         !m_draw_solid_rect_transform_matrix_cb || !m_draw_solid_rect_index_buffer) return;
 
-    FrameDebugPassRecord debugPass;
-    debugPass.name = QStringLiteral("Solid Rect Xform");
-    debugPass.kind = FrameDebugPassKind::Draw;
-    debugPass.status = FrameDebugPassStatus::Success;
-    debugPass.backend = QStringLiteral("legacy");
-    debugPass.shaderName = QStringLiteral("solidRectTransform");
-    debugPass.debugBindings.push_back(makeBinding(QStringLiteral("color"), fmtFloat4(p.color), QStringLiteral("pixel")));
-    debugPass.debugBindings.push_back(makeBinding(QStringLiteral("transform"), fmtRectMatrix(p.mat), QStringLiteral("vertex")));
-    recordDebugPass(std::move(debugPass));
+    if (m_frameDebugCaptureEnabled_) {
+        FrameDebugPassRecord debugPass = makeDebugPass(QStringLiteral("Solid Rect Xform"), QStringLiteral("solidRectTransform"));
+        debugPass.debugBindings.push_back(makeBinding(QStringLiteral("color"), fmtFloat4(p.color), QStringLiteral("pixel")));
+        debugPass.debugBindings.push_back(makeBinding(QStringLiteral("transform"), fmtRectMatrix(p.mat), QStringLiteral("vertex")));
+        recordDebugPass(std::move(debugPass));
+    }
 
-    RectVertex vertices[4] = {
-        {{0.0f, 0.0f}, p.color}, {{1.0f, 0.0f}, p.color},
-        {{0.0f, 1.0f}, p.color}, {{1.0f, 1.0f}, p.color},
-    };
-    mapWriteDiscard(ctx, m_draw_solid_rect_vertex_buffer,      vertices, sizeof(vertices), m_frameCostStats_);
     mapWriteDiscard(ctx, m_draw_solid_rect_cb,                 &p.color, sizeof(p.color), m_frameCostStats_);
     mapWriteDiscard(ctx, m_draw_solid_rect_transform_matrix_cb, &p.mat,  sizeof(p.mat), m_frameCostStats_);
 
@@ -1360,7 +1412,7 @@ void DiligentImmediateSubmitter::submitSolidRectXform(const SolidRectXformPkt& p
         ctx->SetPipelineState(m_draw_solid_rect_transform_pso_and_srb.pPSO);
         m_currentPSO_ = m_draw_solid_rect_transform_pso_and_srb.pPSO;
     }
-    IBuffer* pBufs[] = { m_draw_solid_rect_vertex_buffer };
+    IBuffer* pBufs[] = { m_draw_solid_rect_unit_quad_vb_.RawPtr() };
     Uint64   offs[]  = { 0 };
     ctx->SetVertexBuffers(0, 1, pBufs, offs, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
     ctx->SetIndexBuffer(m_draw_solid_rect_index_buffer, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
@@ -1373,20 +1425,14 @@ void DiligentImmediateSubmitter::submitSolidRectXform(const SolidRectXformPkt& p
 
 void DiligentImmediateSubmitter::submitGradientRect(const GradientRectPkt& p, IDeviceContext* ctx, ITextureView* pRTV)
 {
-    if (!pRTV || !m_draw_gradient_rect_pso_and_srb.pPSO || !m_draw_solid_rect_vertex_buffer ||
+    if (!pRTV || !m_draw_gradient_rect_pso_and_srb.pPSO || !m_draw_solid_rect_unit_quad_vb_ ||
         !m_draw_gradient_cb || !m_draw_solid_rect_transform_matrix_cb || !m_draw_solid_rect_index_buffer) {
         return;
     }
 
-    const float4 vertexColor = {1.0f, 1.0f, 1.0f, p.opacity};
-    RectVertex vertices[4] = {
-        {{0.0f, 0.0f}, vertexColor}, {{1.0f, 0.0f}, vertexColor},
-        {{0.0f, 1.0f}, vertexColor}, {{1.0f, 1.0f}, vertexColor},
-    };
     auto gradientParams = p.params;
     gradientParams.startColor.w *= p.opacity;
     gradientParams.endColor.w *= p.opacity;
-    mapWriteDiscard(ctx, m_draw_solid_rect_vertex_buffer, vertices, sizeof(vertices), m_frameCostStats_);
     mapWriteDiscard(ctx, m_draw_solid_rect_transform_matrix_cb, &p.mat, sizeof(p.mat), m_frameCostStats_);
     mapWriteDiscard(ctx, m_draw_gradient_cb, &gradientParams, sizeof(gradientParams), m_frameCostStats_);
 
@@ -1397,7 +1443,7 @@ void DiligentImmediateSubmitter::submitGradientRect(const GradientRectPkt& p, ID
     }
     recordShaderResourceCommit(m_frameCostStats_);
     ctx->CommitShaderResources(m_draw_gradient_rect_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-    IBuffer* pBufs[] = { m_draw_solid_rect_vertex_buffer };
+    IBuffer* pBufs[] = { m_draw_solid_rect_unit_quad_vb_.RawPtr() };
     Uint64 offs[] = { 0 };
     ctx->SetVertexBuffers(0, 1, pBufs, offs, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
     ctx->SetIndexBuffer(m_draw_solid_rect_index_buffer, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
@@ -1568,30 +1614,21 @@ void DiligentImmediateSubmitter::submitSolidCircle(const SolidCirclePkt& p, IDev
 void DiligentImmediateSubmitter::submitCheckerboard(const CheckerboardPkt& p, IDeviceContext* ctx, ITextureView* pRTV)
 {
     if (!pRTV || !m_draw_checkerboard_pso_and_srb.pPSO) return;
-    if (!m_draw_solid_rect_vertex_buffer || !m_draw_solid_rect_cb ||
+    if (!m_draw_solid_rect_unit_quad_vb_ || !m_draw_solid_rect_cb ||
         !m_draw_viewer_helper_cb         || !m_draw_solid_rect_trnsform_cb) return;
 
-    FrameDebugPassRecord debugPass;
-    debugPass.name = QStringLiteral("Checkerboard");
-    debugPass.kind = FrameDebugPassKind::Draw;
-    debugPass.status = FrameDebugPassStatus::Success;
-    debugPass.backend = QStringLiteral("legacy");
-    debugPass.shaderName = QStringLiteral("checkerboard");
-    debugPass.debugBindings.push_back(makeBinding(QStringLiteral("offset"), fmtFloat2(p.xform.offset), QStringLiteral("vertex")));
-    debugPass.debugBindings.push_back(makeBinding(QStringLiteral("scale"), fmtFloat2(p.xform.scale), QStringLiteral("vertex")));
-    debugPass.debugBindings.push_back(makeBinding(QStringLiteral("screenSize"), fmtFloat2(p.xform.screenSize), QStringLiteral("vertex")));
-    debugPass.debugBindings.push_back(makeBinding(QStringLiteral("tileSize"), fmtFloat(p.helper.param0), QStringLiteral("pixel")));
-    debugPass.debugBindings.push_back(makeBinding(QStringLiteral("thickness"), fmtFloat(p.helper.param1), QStringLiteral("pixel")));
-    debugPass.debugBindings.push_back(makeBinding(QStringLiteral("color1"), fmtFloat4(p.helper.color1), QStringLiteral("pixel")));
-    debugPass.debugBindings.push_back(makeBinding(QStringLiteral("color2"), fmtFloat4(p.helper.color2), QStringLiteral("pixel")));
-    debugPass.debugBindings.push_back(makeBinding(QStringLiteral("baseColor"), fmtFloat4(p.baseColor), QStringLiteral("pixel")));
-    recordDebugPass(std::move(debugPass));
-
-    RectVertex vertices[4] = {
-        {{0,0},{1,1,1,1}}, {{1,0},{1,1,1,1}},
-        {{0,1},{1,1,1,1}}, {{1,1},{1,1,1,1}},
-    };
-    mapWriteDiscard(ctx, m_draw_solid_rect_vertex_buffer, vertices, sizeof(vertices), m_frameCostStats_);
+    if (m_frameDebugCaptureEnabled_) {
+        FrameDebugPassRecord debugPass = makeDebugPass(QStringLiteral("Checkerboard"), QStringLiteral("checkerboard"));
+        debugPass.debugBindings.push_back(makeBinding(QStringLiteral("offset"), fmtFloat2(p.xform.offset), QStringLiteral("vertex")));
+        debugPass.debugBindings.push_back(makeBinding(QStringLiteral("scale"), fmtFloat2(p.xform.scale), QStringLiteral("vertex")));
+        debugPass.debugBindings.push_back(makeBinding(QStringLiteral("screenSize"), fmtFloat2(p.xform.screenSize), QStringLiteral("vertex")));
+        debugPass.debugBindings.push_back(makeBinding(QStringLiteral("tileSize"), fmtFloat(p.helper.param0), QStringLiteral("pixel")));
+        debugPass.debugBindings.push_back(makeBinding(QStringLiteral("thickness"), fmtFloat(p.helper.param1), QStringLiteral("pixel")));
+        debugPass.debugBindings.push_back(makeBinding(QStringLiteral("color1"), fmtFloat4(p.helper.color1), QStringLiteral("pixel")));
+        debugPass.debugBindings.push_back(makeBinding(QStringLiteral("color2"), fmtFloat4(p.helper.color2), QStringLiteral("pixel")));
+        debugPass.debugBindings.push_back(makeBinding(QStringLiteral("baseColor"), fmtFloat4(p.baseColor), QStringLiteral("pixel")));
+        recordDebugPass(std::move(debugPass));
+    }
 
     struct CBViewerHelper { float tileSize; float thickness; float2 padding; float4 color1; float4 color2; };
     CBViewerHelper cb;
@@ -1609,7 +1646,7 @@ void DiligentImmediateSubmitter::submitCheckerboard(const CheckerboardPkt& p, ID
         ctx->SetPipelineState(m_draw_checkerboard_pso_and_srb.pPSO);
         m_currentPSO_ = m_draw_checkerboard_pso_and_srb.pPSO;
     }
-    IBuffer* pBufs[] = { m_draw_solid_rect_vertex_buffer };
+    IBuffer* pBufs[] = { m_draw_solid_rect_unit_quad_vb_.RawPtr() };
     Uint64   offs[]  = { 0 };
     ctx->SetVertexBuffers(0, 1, pBufs, offs, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
     recordShaderResourceCommit(m_frameCostStats_);
@@ -1624,29 +1661,20 @@ void DiligentImmediateSubmitter::submitCheckerboard(const CheckerboardPkt& p, ID
 void DiligentImmediateSubmitter::submitGrid(const GridPkt& p, IDeviceContext* ctx, ITextureView* pRTV)
 {
     if (!pRTV || !m_draw_grid_pso_and_srb.pPSO) return;
-    if (!m_draw_solid_rect_vertex_buffer || !m_draw_solid_rect_cb ||
+    if (!m_draw_solid_rect_unit_quad_vb_ || !m_draw_solid_rect_cb ||
         !m_draw_viewer_helper_cb         || !m_draw_solid_rect_trnsform_cb) return;
 
-    FrameDebugPassRecord debugPass;
-    debugPass.name = QStringLiteral("Grid");
-    debugPass.kind = FrameDebugPassKind::Draw;
-    debugPass.status = FrameDebugPassStatus::Success;
-    debugPass.backend = QStringLiteral("legacy");
-    debugPass.shaderName = QStringLiteral("grid");
-    debugPass.debugBindings.push_back(makeBinding(QStringLiteral("offset"), fmtFloat2(p.xform.offset), QStringLiteral("vertex")));
-    debugPass.debugBindings.push_back(makeBinding(QStringLiteral("scale"), fmtFloat2(p.xform.scale), QStringLiteral("vertex")));
-    debugPass.debugBindings.push_back(makeBinding(QStringLiteral("screenSize"), fmtFloat2(p.xform.screenSize), QStringLiteral("vertex")));
-    debugPass.debugBindings.push_back(makeBinding(QStringLiteral("spacing"), fmtFloat(p.helper.param0), QStringLiteral("pixel")));
-    debugPass.debugBindings.push_back(makeBinding(QStringLiteral("thickness"), fmtFloat(p.helper.param1), QStringLiteral("pixel")));
-    debugPass.debugBindings.push_back(makeBinding(QStringLiteral("lineColor"), fmtFloat4(p.helper.color1), QStringLiteral("pixel")));
-    debugPass.debugBindings.push_back(makeBinding(QStringLiteral("baseColor"), fmtFloat4(p.baseColor), QStringLiteral("pixel")));
-    recordDebugPass(std::move(debugPass));
-
-    RectVertex vertices[4] = {
-        {{0,0},{1,1,1,1}}, {{1,0},{1,1,1,1}},
-        {{0,1},{1,1,1,1}}, {{1,1},{1,1,1,1}},
-    };
-    mapWriteDiscard(ctx, m_draw_solid_rect_vertex_buffer, vertices, sizeof(vertices), m_frameCostStats_);
+    if (m_frameDebugCaptureEnabled_) {
+        FrameDebugPassRecord debugPass = makeDebugPass(QStringLiteral("Grid"), QStringLiteral("grid"));
+        debugPass.debugBindings.push_back(makeBinding(QStringLiteral("offset"), fmtFloat2(p.xform.offset), QStringLiteral("vertex")));
+        debugPass.debugBindings.push_back(makeBinding(QStringLiteral("scale"), fmtFloat2(p.xform.scale), QStringLiteral("vertex")));
+        debugPass.debugBindings.push_back(makeBinding(QStringLiteral("screenSize"), fmtFloat2(p.xform.screenSize), QStringLiteral("vertex")));
+        debugPass.debugBindings.push_back(makeBinding(QStringLiteral("spacing"), fmtFloat(p.helper.param0), QStringLiteral("pixel")));
+        debugPass.debugBindings.push_back(makeBinding(QStringLiteral("thickness"), fmtFloat(p.helper.param1), QStringLiteral("pixel")));
+        debugPass.debugBindings.push_back(makeBinding(QStringLiteral("lineColor"), fmtFloat4(p.helper.color1), QStringLiteral("pixel")));
+        debugPass.debugBindings.push_back(makeBinding(QStringLiteral("baseColor"), fmtFloat4(p.baseColor), QStringLiteral("pixel")));
+        recordDebugPass(std::move(debugPass));
+    }
 
     struct CBViewerHelper { float spacing; float thickness; float2 padding; float4 color1; float4 color2; };
     CBViewerHelper cb;
@@ -1664,7 +1692,7 @@ void DiligentImmediateSubmitter::submitGrid(const GridPkt& p, IDeviceContext* ct
         ctx->SetPipelineState(m_draw_grid_pso_and_srb.pPSO);
         m_currentPSO_ = m_draw_grid_pso_and_srb.pPSO;
     }
-    IBuffer* pBufs[] = { m_draw_solid_rect_vertex_buffer };
+    IBuffer* pBufs[] = { m_draw_solid_rect_unit_quad_vb_.RawPtr() };
     Uint64   offs[]  = { 0 };
     ctx->SetVertexBuffers(0, 1, pBufs, offs, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
     recordShaderResourceCommit(m_frameCostStats_);
@@ -1771,16 +1799,13 @@ void DiligentImmediateSubmitter::submitSpriteXform(const SpriteXformPkt& p, IDev
         return;
     }
 
-    FrameDebugPassRecord debugPass;
-    debugPass.name = QStringLiteral("Sprite Xform");
-    debugPass.kind = FrameDebugPassKind::Draw;
-    debugPass.status = FrameDebugPassStatus::Success;
-    debugPass.backend = QStringLiteral("legacy");
-    debugPass.shaderName = QStringLiteral("spriteTransform");
-    debugPass.debugBindings.push_back(makeBinding(QStringLiteral("opacity"), fmtFloat(p.opacity), QStringLiteral("pixel")));
-    debugPass.debugBindings.push_back(makeBinding(QStringLiteral("texture"), p.pSRV ? QStringLiteral("bound") : QStringLiteral("null")));
-    debugPass.debugBindings.push_back(makeBinding(QStringLiteral("transform"), fmtRectMatrix(p.mat), QStringLiteral("vertex")));
-    recordDebugPass(std::move(debugPass));
+    if (m_frameDebugCaptureEnabled_) {
+        FrameDebugPassRecord debugPass = makeDebugPass(QStringLiteral("Sprite Xform"), QStringLiteral("spriteTransform"));
+        debugPass.debugBindings.push_back(makeBinding(QStringLiteral("opacity"), fmtFloat(p.opacity), QStringLiteral("pixel")));
+        debugPass.debugBindings.push_back(makeBinding(QStringLiteral("texture"), p.pSRV ? QStringLiteral("bound") : QStringLiteral("null")));
+        debugPass.debugBindings.push_back(makeBinding(QStringLiteral("transform"), fmtRectMatrix(p.mat), QStringLiteral("vertex")));
+        recordDebugPass(std::move(debugPass));
+    }
 
     IBuffer* vb;
     if (p.opacity == 1.0f && m_sprite_unit_quad_vb_) {
@@ -1977,7 +2002,8 @@ void DiligentImmediateSubmitter::submitGlyphText(const GlyphTextPkt& p, IDeviceC
 
     for (const auto& glyph : glyphs) {
         const auto& resolved = resolvedGlyphFont(
-            p.font, fontHash, glyph.charCode, glyph.renderMode);
+            p.font, fontHash, glyph.charCode, glyph.renderMode,
+            glyph.shapedGlyphIndex, glyph.clusterText, glyph.isEmojiSequence);
         const GlyphRect glyphRect =
             m_glyph_atlas.acquire(resolved.key, resolved.font);
         if (glyphRect.valid) {
@@ -2113,26 +2139,23 @@ void DiligentImmediateSubmitter::submitGlyphTextTransformed(const GlyphTextXform
         return;
     }
 
-    FrameDebugPassRecord debugPass;
-    debugPass.name = QStringLiteral("Glyph Text Xform");
-    debugPass.kind = FrameDebugPassKind::Draw;
-    debugPass.status = FrameDebugPassStatus::Success;
-    debugPass.backend = QStringLiteral("legacy");
-    debugPass.shaderName = QStringLiteral("glyphTransform");
-    debugPass.debugBindings.push_back(makeBinding(QStringLiteral("text"), p.text.left(64)));
-    debugPass.debugBindings.push_back(makeBinding(QStringLiteral("rect"),
-        QStringLiteral("(%1, %2, %3, %4)")
-            .arg(QString::number(p.rect.x(), 'f', 2))
-            .arg(QString::number(p.rect.y(), 'f', 2))
-            .arg(QString::number(p.rect.width(), 'f', 2))
-            .arg(QString::number(p.rect.height(), 'f', 2))));
-    debugPass.debugBindings.push_back(makeBinding(QStringLiteral("opacity"), fmtFloat(p.opacity), QStringLiteral("pixel")));
-    debugPass.debugBindings.push_back(makeBinding(QStringLiteral("outlineThickness"), fmtFloat(p.outlineThickness), QStringLiteral("pixel")));
-    debugPass.debugBindings.push_back(makeBinding(QStringLiteral("color"), fmtFloat4(p.color), QStringLiteral("pixel")));
-    debugPass.debugBindings.push_back(makeBinding(QStringLiteral("transform"), fmtMatrix4x4Row0(p.transform),
-                                                  QStringLiteral("vertex"),
-                                                  QStringLiteral("row0 only preview")));
-    recordDebugPass(std::move(debugPass));
+    if (m_frameDebugCaptureEnabled_) {
+        FrameDebugPassRecord debugPass = makeDebugPass(QStringLiteral("Glyph Text Xform"), QStringLiteral("glyphTransform"));
+        debugPass.debugBindings.push_back(makeBinding(QStringLiteral("text"), p.text.left(64)));
+        debugPass.debugBindings.push_back(makeBinding(QStringLiteral("rect"),
+            QStringLiteral("(%1, %2, %3, %4)")
+                .arg(QString::number(p.rect.x(), 'f', 2))
+                .arg(QString::number(p.rect.y(), 'f', 2))
+                .arg(QString::number(p.rect.width(), 'f', 2))
+                .arg(QString::number(p.rect.height(), 'f', 2))));
+        debugPass.debugBindings.push_back(makeBinding(QStringLiteral("opacity"), fmtFloat(p.opacity), QStringLiteral("pixel")));
+        debugPass.debugBindings.push_back(makeBinding(QStringLiteral("outlineThickness"), fmtFloat(p.outlineThickness), QStringLiteral("pixel")));
+        debugPass.debugBindings.push_back(makeBinding(QStringLiteral("color"), fmtFloat4(p.color), QStringLiteral("pixel")));
+        debugPass.debugBindings.push_back(makeBinding(QStringLiteral("transform"), fmtMatrix4x4Row0(p.transform),
+                                                      QStringLiteral("vertex"),
+                                                      QStringLiteral("row0 only preview")));
+        recordDebugPass(std::move(debugPass));
+    }
 
     const TextStyle style = textStyleFromQFont(p.font);
     const ParagraphStyle paragraph =
@@ -2148,7 +2171,8 @@ void DiligentImmediateSubmitter::submitGlyphTextTransformed(const GlyphTextXform
 
     for (const auto& glyph : glyphs) {
         const auto& resolved = resolvedGlyphFont(
-            p.font, fontHash, glyph.charCode, glyph.renderMode);
+            p.font, fontHash, glyph.charCode, glyph.renderMode,
+            glyph.shapedGlyphIndex, glyph.clusterText, glyph.isEmojiSequence);
         const GlyphRect glyphRect =
             m_glyph_atlas.acquire(resolved.key, resolved.font);
         if (glyphRect.valid) {

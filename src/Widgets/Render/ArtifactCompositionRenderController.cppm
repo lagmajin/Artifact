@@ -38560,19 +38560,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
   const auto &layers = comp->allLayerRef();
 
-  FramePosition currentFrame = comp->framePosition();
-
-  if (auto *playback = ArtifactPlaybackService::instance()) {
-
-    const auto playbackComp = playback->currentComposition();
-
-    if (playbackComp && playbackComp->id() == comp->id()) {
-
-      currentFrame = playback->currentFrame();
-
-    }
-
-  }
+  const FramePosition currentFrame = currentFrameForComposition(comp);
 
   // Crowd and clone collision are owned by a composition-wide fixed-step
   // session. The layer-local code remains only as a fallback for isolated
@@ -44361,6 +44349,15 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
     }
 
+    // The three summary strings below are only consumed by the opt-in
+    // diagnostics surfaces (frameDebugSnapshot, the debug render harness and
+    // the FrameDebug view).  Rebuilding them unconditionally cost ~60 QString
+    // allocations per frame, which is measurable in the viewport hot path, so
+    // keep the whole block behind the same opt-in switch the trace and cost
+    // capture already use.  The strings are cleared otherwise so a stale frame
+    // can never be presented as if it described the current one.
+    if (captureRenderDiagnostics) {
+
     const auto textureCacheStats = gpuTextureCacheManager_
 
                                        ? gpuTextureCacheManager_->stats()
@@ -44541,6 +44538,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                      : QStringLiteral("none"));
 
+    // The layer visibility report below is a qWarning() that reports a real
+    // per-composition visibility problem.  It is already rate limited by
+    // baseInvalidationSerial_, so it costs nothing on a steady frame, and it
+    // must stay outside the diagnostics gate to keep reporting on a normal run.
     if (!layers.empty() &&
         lastLayerVisibilityReportSerial_ != baseInvalidationSerial_) {
       lastLayerVisibilityReportSerial_ = baseInvalidationSerial_;
@@ -44689,6 +44690,16 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                      ? QStringLiteral("none")
 
                      : blendMaskLayerNotes.join(QStringLiteral("; ")));
+
+    } else {
+
+      lastRenderPathSummary_.clear();
+
+      lastCompositionVisibilitySummary_.clear();
+
+      lastBlendMaskSummary_.clear();
+
+    }
 
     if (compositionViewLog().isDebugEnabled()) {
 

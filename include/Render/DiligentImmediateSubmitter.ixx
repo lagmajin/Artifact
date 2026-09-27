@@ -45,6 +45,7 @@ public:
     void setParticleRenderer(ArtifactCore::ParticleRenderer* renderer);
     void beginFrameDebugCapture();
     void endFrameDebugCapture();
+    void setFrameDebugCaptureEnabled(bool enabled);
     std::vector<ArtifactCore::FrameDebugPassRecord> frameDebugPasses() const;
 
     void submit(RenderCommandBuffer& buf, IDeviceContext* ctx) override;
@@ -92,6 +93,10 @@ private:
         QFont sourceFont;
         char32_t codePoint = 0;
         GlyphRenderMode renderMode = GlyphRenderMode::MonochromeCoverage;
+        // Part of the cache identity: two shaped glyphs can share one code
+        // point, and a combining mark has no glyph of its own at all.
+        uint32_t shapedGlyphIndex = 0;
+        QString clusterText;
         QFont font;
         GlyphKey key;
     };
@@ -104,7 +109,9 @@ private:
     bool m_resolvedGlyphFontSlotsInitialized_ = false;
     const ResolvedGlyphFont& resolvedGlyphFont(
         const QFont& font, size_t fontHash, char32_t codePoint,
-        GlyphRenderMode renderMode);
+        GlyphRenderMode renderMode, uint32_t shapedGlyphIndex = 0,
+        const QString& clusterText = QString(),
+        bool isEmojiSequence = false);
 
     // Reused by both glyph submit paths.  Capacity is allocated during renderer
     // setup so ordinary text edits do not allocate in frame submission.
@@ -114,12 +121,23 @@ private:
     ArtifactCore::ParticleRenderer* m_particleRenderer_ = nullptr;
     std::vector<ArtifactCore::FrameDebugPassRecord> m_currentFrameDebugPasses_;
     std::vector<ArtifactCore::FrameDebugPassRecord> m_lastFrameDebugPasses_;
+    // When false, the submit paths skip building FrameDebugPassRecord objects
+    // and their QString bindings entirely.  The records are only read when a
+    // diagnostics surface polls frameDebugSnapshot(), so collecting them every
+    // frame costs QString formatting for data nobody consumes.
+    bool m_frameDebugCaptureEnabled_ = false;
 
     // H3: Current PSO for per-submit deduplication
     IPipelineState* m_currentPSO_ = nullptr;
 
     // H5: Immutable unit-quad VB for opacity==1.0f sprites (avoids mapWriteDiscard per draw)
     RefCntAutoPtr<IBuffer> m_sprite_unit_quad_vb_;
+
+    // Immutable (0,0)-(1,1) quad shared by the submitters whose rectangle
+    // geometry is constant.  The solid-rect input layout binds ATTRIB0 as a
+    // float2 with the RectVertex stride, so the per-draw vertex color those
+    // submitters used to upload was never read by the shader.
+    RefCntAutoPtr<IBuffer> m_draw_solid_rect_unit_quad_vb_;
 
     // Phase 7a: deferred context for recording; nullptr = immediate fallback
     RefCntAutoPtr<IDeviceContext> m_deferredCtx_;

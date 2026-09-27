@@ -410,7 +410,8 @@ void ArtifactSolidImageLayer::fromJsonProperties(const QJsonObject &obj) {
         obj["solidColorKeyframes"].isArray()) {
       auto colorProperty = persistentLayerProperty(
           QStringLiteral("solid.color"), ArtifactCore::PropertyType::Color,
-          QVariant(), -120);
+          QColor::fromRgbF(color().r(), color().g(), color().b(), color().a()),
+          -120);
       ArtifactCore::SerializedProperty serialized;
       serialized.name = QStringLiteral("solid.color");
       serialized.type = static_cast<int>(ArtifactCore::PropertyType::Color);
@@ -462,10 +463,16 @@ ArtifactSolidImageLayer::getLayerPropertyGroups() const {
   auto groups = ArtifactAbstract2DLayer::getLayerPropertyGroups();
   ArtifactCore::PropertyGroup solidGroup(QStringLiteral("Solid"));
 
+  const auto c = color();
+  // Seed the property with the live colour, not a null QVariant.  The generic
+  // persistentLayerProperty() path re-applies this value on every
+  // getLayerPropertyGroups() call (the onion-skin path runs that per frame),
+  // and a null seed was rejected by setValue() each time, producing a
+  // per-frame rejection log.  Matches ArtifactSolid2DLayer.
   auto property = persistentLayerProperty(QStringLiteral("solid.color"),
                                           ArtifactCore::PropertyType::Color,
-                                          QVariant(), -120);
-  const auto c = color();
+                                          QColor::fromRgbF(c.r(), c.g(), c.b(), c.a()),
+                                          -120);
   property->setColorValue(QColor::fromRgbF(c.r(), c.g(), c.b(), c.a()));
   property->setValue(property->getColorValue());
   property->setAnimatable(true); // キーフレーム可能に設定

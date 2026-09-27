@@ -236,6 +236,13 @@ public:
     std::vector<ResolvedGlyph> glyphSubmissionScratch_;
     struct ResolvedGlyphFont {
         char32_t codePoint = 0;
+        // The shaped glyph and the cluster text are part of the cache identity.
+        // Keying on the code point alone collides whenever two different shaped
+        // glyphs share one code point (a "fi" ligature against a plain "f"),
+        // and it loses combining marks, whose standalone code point has no
+        // glyph of its own.
+        uint32_t shapedGlyphIndex = 0;
+        QString clusterText;
         QFont font;
         GlyphKey key;
     };
@@ -266,33 +273,75 @@ public:
     bool glyphCodePointIndexSaturated_ = false;
     bool glyphCodePointSlotsInitialized_ = false;
 
+    // Entry point for shaped glyphs.  The whole GlyphItem takes part in the
+    // cache identity so a combining mark or a ligature resolves to the atlas
+    // entry it was actually shaped into.
+    ResolvedGlyphFont& resolvedGlyphFont(const TextStyle& style,
+                                         const GlyphItem& glyph) {
+        return resolvedGlyphFontForKey(style, glyph.charCode,
+                                       glyph.shapedGlyphIndex,
+                                       glyph.shapedGlyphIndices,
+                                       glyph.clusterText,
+                                       glyph.isEmojiSequence,
+                                       glyph.renderMode);
+    }
+
     ResolvedGlyphFont& resolvedGlyphFont(const TextStyle& style,
                                          char32_t codePoint) {
+        return resolvedGlyphFontForKey(style, codePoint, 0, {}, QString(),
+                                       false,
+                                       renderModeForCodePoint(codePoint));
+    }
+
+    ResolvedGlyphFont& resolvedGlyphFontForKey(
+        const TextStyle& style,
+        char32_t codePoint,
+        uint32_t shapedGlyphIndex,
+        const std::vector<uint32_t>& shapedGlyphIndices,
+        const QString& clusterText,
+        bool isEmojiSequence,
+        GlyphRenderMode renderMode) {
         if (!glyphFontCacheStyle_ || *glyphFontCacheStyle_ != style) {
             glyphFontCacheStyle_ = style;
             glyphFontCache_.clear();
             glyphFontCacheSlots_.fill(-1);
         }
         constexpr size_t slotMask = kGlyphFontCacheSlotCount - 1;
-        const auto initialSlotFor = [slotMask](char32_t value) {
-            const auto mixed = static_cast<std::uint32_t>(value) * 2654435761u;
+        // Hash the shaped glyph and the cluster length so probe chains stay
+        // short; the full cluster text is only compared once a slot matches.
+        const auto initialSlotFor = [slotMask](char32_t value,
+                                               uint32_t shapedGlyph,
+                                               int clusterLength) {
+            auto mixed = static_cast<std::uint32_t>(value) * 2654435761u;
+            mixed ^= static_cast<std::uint32_t>(shapedGlyph) * 40503u;
+            mixed ^= static_cast<std::uint32_t>(clusterLength) * 2246822519u;
             return static_cast<size_t>(mixed) & slotMask;
         };
-        size_t slot = initialSlotFor(codePoint);
+        size_t slot = initialSlotFor(codePoint, shapedGlyphIndex,
+                                     static_cast<int>(clusterText.size()));
         while (glyphFontCacheSlots_[slot] >= 0) {
             const size_t cachedIndex = static_cast<size_t>(
                 glyphFontCacheSlots_[slot]);
-            if (glyphFontCache_[cachedIndex].codePoint == codePoint) {
-                return glyphFontCache_[cachedIndex];
+            const ResolvedGlyphFont& cached = glyphFontCache_[cachedIndex];
+            if (cached.codePoint == codePoint &&
+                cached.shapedGlyphIndex == shapedGlyphIndex &&
+                cached.clusterText == clusterText) {
+                return cached;
             }
             slot = (slot + 1) & slotMask;
         }
         if (glyphFontCache_.size() >= 2048) {
             glyphFontCache_.clear();
             glyphFontCacheSlots_.fill(-1);
-            slot = initialSlotFor(codePoint);
+            slot = initialSlotFor(codePoint, shapedGlyphIndex,
+                                  static_cast<int>(clusterText.size()));
         }
-        const QString glyphText = QString::fromUcs4(&codePoint, 1);
+        // Font fallback and the colour-mode decision follow the cluster text
+        // rather than the bare code point, so an emoji sequence asks the font
+        // manager about the whole grapheme.
+        const QString glyphText = clusterText.isEmpty()
+                                      ? QString::fromUcs4(&codePoint, 1)
+                                      : clusterText;
         QFont font = FontManager::makeFont(style, glyphText);
         GlyphKey key;
         key.codePoint = codePoint;
@@ -300,10 +349,16 @@ public:
         key.fontFamily = font.family().toStdString();
         key.styleFlags = (static_cast<uint32_t>(style.fontWeight) << 1) |
                          static_cast<uint32_t>(style.fontStyle);
-        key.renderMode = renderModeForCodePoint(codePoint);
+        key.renderMode = renderMode;
+        key.shapedGlyphIndex = shapedGlyphIndex;
+        key.shapedGlyphIndices = shapedGlyphIndices;
+        if (isEmojiSequence && !clusterText.isEmpty()) {
+            key.sequenceUtf8 = clusterText.toUtf8().toStdString();
+        }
         const auto cacheIndex = static_cast<std::int16_t>(
             glyphFontCache_.size());
-        glyphFontCache_.push_back({codePoint, std::move(font), std::move(key)});
+        glyphFontCache_.push_back({codePoint, shapedGlyphIndex, clusterText,
+                                   std::move(font), std::move(key)});
         glyphFontCacheSlots_[slot] = cacheIndex;
         return glyphFontCache_.back();
     }
@@ -1934,8 +1989,7 @@ void PrimitiveRenderer2D::drawGlyphs(std::span<const GlyphItem> glyphs,
     if (!impl_->pGlyphAtlas_ || glyphs.empty() || !impl_->cmdBuf_) return;
 
     for (const GlyphItem& glyph : glyphs) {
-        const auto& resolved =
-            impl_->resolvedGlyphFont(style, glyph.charCode);
+        const auto& resolved = impl_->resolvedGlyphFont(style, glyph);
         impl_->pGlyphAtlas_->acquire(resolved.key, resolved.font);
     }
 
@@ -1954,8 +2008,7 @@ void PrimitiveRenderer2D::drawGlyphs(std::span<const GlyphItem> glyphs,
     const float atlasH = static_cast<float>(impl_->pGlyphAtlas_->height());
 
     for (const GlyphItem& glyph : glyphs) {
-        const auto& resolved =
-            impl_->resolvedGlyphFont(style, glyph.charCode);
+        const auto& resolved = impl_->resolvedGlyphFont(style, glyph);
 
         const GlyphRect rect =
             impl_->pGlyphAtlas_->acquire(resolved.key, resolved.font);
@@ -2025,8 +2078,7 @@ void PrimitiveRenderer2D::drawGlyphsTransformed(
             continue;
         }
 
-        const auto& resolved =
-            impl_->resolvedGlyphFont(style, glyph.charCode);
+        const auto& resolved = impl_->resolvedGlyphFont(style, glyph);
         const GlyphRect rect =
             impl_->pGlyphAtlas_->acquire(resolved.key, resolved.font);
         if (rect.valid) {

@@ -526,6 +526,21 @@ namespace {
     size_t instanceCount = 1;
     bool hasMaterialSlots = false;
   };
+  // Cheap comparable form of the [RendererSubmitReport] diagnostic.  Building
+  // the diagnostic string costs nine QString::arg() calls, so the steady-state
+  // frame keeps only this tuple and formats the string when the tuple changes.
+  struct SubmitDiagnosticKey {
+   std::size_t packetCount = 0;
+   std::size_t solidRectCount = 0;
+   std::size_t solidRectXformCount = 0;
+   std::size_t spriteCount = 0;
+   std::size_t spriteXformCount = 0;
+   unsigned targetNull = 0;
+   unsigned targetIsBackBuffer = 0;
+   unsigned targetIsActive = 0;
+   unsigned activeIsBackBuffer = 0;
+   friend bool operator==(const SubmitDiagnosticKey&, const SubmitDiagnosticKey&) = default;
+  };
   std::vector<ShadowCaster> m_shadowCasters;
   bool m_shadowMapEnabled = false;
   bool m_shadowMapReady = false;
@@ -651,7 +666,7 @@ namespace {
   QMatrix4x4 stereoLeftViewMatrix_;
   QMatrix4x4 stereoRightViewMatrix_;
   QMatrix4x4 stereoProjectionMatrix_;
-  QString lastSubmitDiagnosticSignature_;
+  SubmitDiagnosticKey lastSubmitDiagnosticKey_;
 
 
   void initFrameQueries();
@@ -3179,6 +3194,15 @@ void ArtifactIRenderer::Impl::beginFrameCostCapture()
   lastParticleDebug_.clear();
   lastParticleDrawQueued_ = false;
   submitter_.beginFrameDebugCapture();
+  // Building a FrameDebugPassRecord formats up to twenty QString::number()
+  // values per submit.  Those records are only read when a diagnostics surface
+  // polls frameDebugSnapshot(), so gate the construction on the same opt-in
+  // flag the render controller uses for continuous render diagnostics.
+  // ARTIFACT_ENABLE_CONTINUOUS_RENDER_DIAGNOSTICS=1 restores the full content.
+  static const bool frameDebugEnabled =
+      qEnvironmentVariableIsSet("ARTIFACT_ENABLE_CONTINUOUS_RENDER_DIAGNOSTICS") &&
+      qEnvironmentVariable("ARTIFACT_ENABLE_CONTINUOUS_RENDER_DIAGNOSTICS") != QStringLiteral("0");
+  submitter_.setFrameDebugCaptureEnabled(frameDebugEnabled);
   submitter_.setFrameCostStats(&m_currentFrameCostStats_);
   primitiveRenderer3D_.setFrameCostStats(&m_currentFrameCostStats_);
 }
@@ -3413,21 +3437,30 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
      auto* const queuedTarget = cmdBuf_.targetRTV;
      auto* const backBufferTarget = sc->GetCurrentBackBufferRTV();
      auto* const activeTarget = activeColorView();
-     const QString submitSignature =
-         QStringLiteral("packets=%1 targetNull=%2 targetIsBackBuffer=%3 "
-                        "targetIsActive=%4 activeIsBackBuffer=%5 "
-                        "solid=%6 solidXform=%7 sprite=%8 spriteXform=%9")
-             .arg(cmdBuf_.packets().size())
-             .arg(queuedTarget ? 0 : 1)
-             .arg(queuedTarget == backBufferTarget ? 1 : 0)
-             .arg(queuedTarget == activeTarget ? 1 : 0)
-             .arg(activeTarget == backBufferTarget ? 1 : 0)
-             .arg(solidRectCount)
-             .arg(transformedSolidRectCount)
-             .arg(spriteCount)
-             .arg(transformedSpriteCount);
-     if (submitSignature != lastSubmitDiagnosticSignature_) {
-      lastSubmitDiagnosticSignature_ = submitSignature;
+     // Compare the cheap integer tuple first: the diagnostic string is only
+     // built when something actually changed, so the steady-state frame does
+     // not pay for nine QString::arg() calls that would be discarded.
+     const SubmitDiagnosticKey submitKey{
+      cmdBuf_.packets().size(), solidRectCount, transformedSolidRectCount,
+      spriteCount, transformedSpriteCount, queuedTarget ? 1u : 0u,
+      queuedTarget == backBufferTarget ? 1u : 0u,
+      queuedTarget == activeTarget ? 1u : 0u,
+      activeTarget == backBufferTarget ? 1u : 0u};
+     if (submitKey != lastSubmitDiagnosticKey_) {
+      const QString submitSignature =
+          QStringLiteral("packets=%1 targetNull=%2 targetIsBackBuffer=%3 "
+                         "targetIsActive=%4 activeIsBackBuffer=%5 "
+                         "solid=%6 solidXform=%7 sprite=%8 spriteXform=%9")
+              .arg(cmdBuf_.packets().size())
+              .arg(queuedTarget ? 0 : 1)
+              .arg(queuedTarget == backBufferTarget ? 1 : 0)
+              .arg(queuedTarget == activeTarget ? 1 : 0)
+              .arg(activeTarget == backBufferTarget ? 1 : 0)
+              .arg(solidRectCount)
+              .arg(transformedSolidRectCount)
+              .arg(spriteCount)
+              .arg(transformedSpriteCount);
+      lastSubmitDiagnosticKey_ = submitKey;
       qWarning().noquote()
           << "[CompositionView][RendererSubmitReport]" << submitSignature;
      }
@@ -4744,7 +4777,7 @@ QString ArtifactIRenderer::particleDebugState() const {
                       ? QStringLiteral("<none>")
                       : impl_->lastParticleDebug_;
   if (impl_->particleRenderer_) {
-    const QString rendererState = impl_->particleRenderer_->debugState();
+    const QString rendererState = impl_->particleRenderer_->debugStateText();
     if (!rendererState.isEmpty()) {
       if (state == QStringLiteral("<none>")) {
         state = rendererState;
