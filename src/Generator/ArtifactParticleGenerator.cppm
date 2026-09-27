@@ -653,6 +653,9 @@ QVector3D ParticleEmitter::getEmissionPosition() const
         }
             
         default:
+            // Mesh / Surface have no sampling source. The editor does not offer
+            // them and loading degrades them to Line, so reaching this branch
+            // emits from the emitter origin.
             break;
     }
     

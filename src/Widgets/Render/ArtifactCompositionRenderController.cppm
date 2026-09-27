@@ -15770,6 +15770,16 @@ public:
 
       }
 
+      // A 2D image/plane/solid layer is never drawn by this gizmo: the 3D
+      // manipulator and the projected frame own the visible handles.  Without
+      // this, the undrawn 2D gizmo still hit-tests its rotate ring and scale
+      // handles, so a press just outside the projected frame would start an
+      // invisible resize/rotate and commit it through a different transform
+      // and undo path than the drawn one.  Move stays live because the Design
+      // workspace's sibling-reorder gesture is driven from the Move handle.
+      gizmo_->setInvisibleHandlesSuppressed(
+          !useTextGizmo && layerUsesProjectedFrameGizmo(layer));
+
     }
 
   }
@@ -21031,6 +21041,25 @@ bool isAbsoluteLayoutLayer(const ArtifactAbstractLayerPtr &layer) {
                             : nullptr;
   return property && property->getValue().toInt() == 2;
 }
+
+namespace {
+
+// The legacy 2D TransformGizmo is not drawn for non-text layers: the 3D
+// manipulator and the camera-projected frame own their visible handles.  Its
+// only remaining legitimate owner is the Design workspace's sibling-reorder
+// gesture, which is driven from the Move handle.  Everywhere else the press
+// must not be offered to it, otherwise a click on empty space inside the
+// projected frame (or on the axis arrows) is claimed by a gizmo the user
+// cannot see and is committed through a different transform/undo path.
+bool legacy2DGizmoShouldOwnPress(const QObject *controller,
+                                  const ArtifactAbstractLayerPtr &layer) {
+  if (!layerUsesProjectedFrameGizmo(layer)) {
+    return true;
+  }
+  return isDesignWorkspace(controller);
+}
+
+} // namespace
 
 void CompositionRenderController::Impl::renderMotionPathOverlayForLayer(
     const ArtifactAbstractLayerPtr &layer, const ArtifactCompositionPtr &comp,
@@ -26606,10 +26635,19 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
         app->puppetTool()->setSelectedPinId(hitId);
 
         const LayerID controlLayerId = app->puppetTool()->pinLayerId(hitId);
-        app->puppetTool()->evaluatePinPositionsAtCurrentFrame(controlLayerId);
-        const QPointF pinPos = app->puppetTool()->pinPosition(hitId);
         const auto controlLayer = comp
             ? comp->layerById(controlLayerId) : ArtifactAbstractLayerPtr{};
+        // Same image-layer-only limitation as the add-pin path below: the
+        // move/rotation drag ends in Deformation2DStateUndoCommand, which
+        // cannot restore a text layer's pin state.
+        if (layerUsesTextGizmo(controlLayer)) {
+          app->puppetTool()->setSelectedPinId(QString());
+          markRenderDirty();
+          event->accept();
+          return;
+        }
+        app->puppetTool()->evaluatePinPositionsAtCurrentFrame(controlLayerId);
+        const QPointF pinPos = app->puppetTool()->pinPosition(hitId);
         impl_->puppetLayerUndoSnapshot_ = controlLayer
             ? controlLayer->deformation2DData() : QJsonObject{};
         impl_->puppetLayerUndoSnapshotValid_ = static_cast<bool>(controlLayer);
@@ -28339,7 +28377,8 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
 
       }
 
-    } else if (impl_->gizmo_) {
+    } else if (impl_->gizmo_ &&
+               legacy2DGizmoShouldOwnPress(this, gizmoLayer)) {
 
       impl_->gizmo_->handleMousePress(viewportPos, impl_->renderer_.get());
 
@@ -35986,8 +36025,17 @@ bool CompositionRenderController::deleteSelectedPuppetPin() {
   auto layer = impl_->previewPipeline_.composition()
       ? impl_->previewPipeline_.composition()->layerById(layerId)
       : ArtifactAbstractLayerPtr{};
-  const QJsonObject before = layer ? layer->deformation2DData() : QJsonObject{};
-  if (pinId.isEmpty() || !layer || !app->puppetTool()->removePin(pinId)) {
+  if (pinId.isEmpty() || !layer) {
+    return false;
+  }
+  // Deformation2DStateUndoCommand::apply restores the pin state through an
+  // ArtifactImageLayer cast.  Removing a text-layer pin would succeed here
+  // and then fail to undo, so refuse the edit.
+  if (layerUsesTextGizmo(layer)) {
+    return false;
+  }
+  const QJsonObject before = layer->deformation2DData();
+  if (!app->puppetTool()->removePin(pinId)) {
     return false;
   }
   const QJsonObject after = layer->deformation2DData();
@@ -36023,6 +36071,12 @@ bool CompositionRenderController::setSelectedPuppetPinType(int type) {
   auto layer = impl_->previewPipeline_.composition()
       ? impl_->previewPipeline_.composition()->layerById(layerId)
       : ArtifactAbstractLayerPtr{};
+  // Same reason as deleteSelectedPuppetPin: the undo restore path casts to
+  // ArtifactImageLayer, so a text-layer pin would change type without being
+  // undoable.
+  if (layerUsesTextGizmo(layer)) {
+    return false;
+  }
   const QJsonObject before = layer ? layer->deformation2DData() : QJsonObject{};
   app->puppetTool()->setPinTypeFor(pinId, type);
   if (!layer) {
@@ -36181,6 +36235,7 @@ bool CompositionRenderController::resetSelectedPuppetPinRotation() {
     const auto layer = composition ? composition->layerById(layerId)
                                   : ArtifactAbstractLayerPtr{};
     if (!layer) return false;
+    if (layerUsesTextGizmo(layer)) return false;
     const QJsonObject beforeState = layer->deformation2DData();
     app->puppetTool()->setPinWeight(pinId, 1.0f);
     if (manager && !manager->push(std::make_unique<Deformation2DStateUndoCommand>(
@@ -36199,6 +36254,7 @@ bool CompositionRenderController::resetSelectedPuppetPinRotation() {
           ? impl_->previewPipeline_.composition()->layerById(layerId)
           : ArtifactAbstractLayerPtr{};
       if (!layer) return false;
+      if (layerUsesTextGizmo(layer)) return false;
       const QJsonObject beforeState = layer->deformation2DData();
       app->puppetTool()->setPinRotation(pinId, 0.0f);
       app->puppetTool()->persistLayerData(layerId);
@@ -36223,6 +36279,7 @@ bool CompositionRenderController::resetSelectedPuppetPinRotation() {
     const auto layer = composition ? composition->layerById(layerId)
                                   : ArtifactAbstractLayerPtr{};
     if (!layer) return false;
+    if (layerUsesTextGizmo(layer)) return false;
     const QJsonObject beforeState = layer->deformation2DData();
     app->puppetTool()->setPinDepth(pinId, 0.0f);
     if (manager && !manager->push(std::make_unique<Deformation2DStateUndoCommand>(
@@ -36255,6 +36312,7 @@ bool CompositionRenderController::adjustSelectedPuppetPinWeightAt(
   const auto layer = composition ? composition->layerById(layerId)
                                 : ArtifactAbstractLayerPtr{};
   if (!layer) return false;
+  if (layerUsesTextGizmo(layer)) return false;
   const QJsonObject beforeState = layer->deformation2DData();
   const float before = app->puppetTool()->pinWeight(hitId);
   const float after = before + delta;
@@ -36290,6 +36348,7 @@ bool CompositionRenderController::adjustSelectedPuppetPinDepthAt(
   const auto layer = composition ? composition->layerById(layerId)
                                 : ArtifactAbstractLayerPtr{};
   if (!layer) return false;
+  if (layerUsesTextGizmo(layer)) return false;
   const QJsonObject beforeState = layer->deformation2DData();
   const float before = app->puppetTool()->pinDepth(hitId);
   const float after = before + delta;

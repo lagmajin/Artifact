@@ -135,6 +135,9 @@ struct ParticleRenderContext {
 
 /**
  * @brief Emitter shape types
+ *
+ * Mesh and Surface are declared but have no emission-position implementation.
+ * The editor only offers 0..5 and loading degrades 6/7 to Line.
  */
 enum class EmitterShape {
     Point,          // 点エミッター
@@ -295,6 +298,11 @@ public:
 
 /**
  * @brief Particle effector types
+ *
+ * Serialized by numeric value, so existing values must not be renumbered.
+ * Drag / Noise / Collision are declared but have no ParticleEffector subclass
+ * and are not offered by the editor; documents carrying them are dropped on
+ * load with a warning.
  */
 enum class EffectorType {
     Force,          // 力（重力など）

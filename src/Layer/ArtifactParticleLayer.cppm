@@ -8,6 +8,7 @@ module;
 #include <QTransform>
 #include <QSizeF>
 #include <QVariant>
+#include <QDebug>
 #include <wobjectimpl.h>
 
 #include <iostream>
@@ -1080,8 +1081,14 @@ void ArtifactParticleLayer::applyPropertiesFromJson(const QJsonObject& obj)
             EmitterParams params;
             
             if (emitterJson.contains("shape")) {
+                // Mesh(6) / Surface(7) have no emission-position implementation and
+                // would emit from a single point. Degrade them to Line so a saved
+                // document keeps a usable, visible emitter instead of a silent no-op.
                 params.shape = static_cast<EmitterShape>(
                     std::clamp(emitterJson["shape"].toInt(0), 0, 7));
+                if (params.shape == EmitterShape::Mesh || params.shape == EmitterShape::Surface) {
+                    params.shape = EmitterShape::Line;
+                }
             }
             if (emitterJson.contains("mode")) {
                 params.mode = static_cast<EmissionMode>(
@@ -1390,10 +1397,10 @@ void ArtifactParticleLayer::applyPropertiesFromJson(const QJsonObject& obj)
             params.burstCount = std::clamp(params.burstCount, 0, 10000000);
             params.auxCount = std::clamp(params.auxCount, 0, 1000000);
             params.auxInterval = safeEmitterValue(params.auxInterval, 0.0, 0.0, 1000000.0);
-            params.auxLifeScale = safeEmitterValue(params.auxLifeScale, 1.0, 0.0, 1000000.0);
-            params.auxSizeScale = safeEmitterValue(params.auxSizeScale, 1.0, 0.0, 1000000.0);
-            params.auxOpacityScale = safeEmitterValue(params.auxOpacityScale, 1.0, 0.0, 1.0);
-            params.auxVelocityScale = safeEmitterValue(params.auxVelocityScale, 1.0, 0.0, 1000000.0);
+            params.auxLifeScale = safeEmitterValue(params.auxLifeScale, 0.3, 0.0, 1000000.0);
+            params.auxSizeScale = safeEmitterValue(params.auxSizeScale, 0.65, 0.0, 1000000.0);
+            params.auxOpacityScale = safeEmitterValue(params.auxOpacityScale, 0.85, 0.0, 1.0);
+            params.auxVelocityScale = safeEmitterValue(params.auxVelocityScale, 0.35, 0.0, 1000000.0);
             const auto safeEmitterComponent = [&](const double value,
                                                    const double fallback = 0.0) {
                 return safeEmitterValue(value, fallback, -1000000.0, 1000000.0);
@@ -1458,6 +1465,12 @@ void ArtifactParticleLayer::applyPropertiesFromJson(const QJsonObject& obj)
                         case EffectorType::Kill: effector = std::make_unique<KillZoneEffector>(); break;
                     }
                     if (!effector) {
+                        // Drag(5) / Noise(7) / Collision(9) are declared in
+                        // EffectorType but have no ParticleEffector subclass, so a
+                        // document that stores one loses it silently. Report it
+                        // instead of dropping it without a trace.
+                        qWarning() << "ArtifactParticleLayer: fromJson dropped an"
+                                   << " unsupported effector type value" << typeValue;
                         continue;
                     }
                     ++restoredEffectorCount;
@@ -2328,6 +2341,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactParticleLayer::getLayerProperty
                                     ArtifactCore::PropertyType::Integer, 0, -198);
     addEffectorProp->setDisplayLabel(QStringLiteral("Add Effector Type"));
     addEffectorProp->setHardRange(0, 7);
+    // These numbers are an editor-only index, NOT the EffectorType enum value.
     addEffectorProp->setTooltip(QStringLiteral(
         "0=Force, 1=Vortex, 2=Turbulence, 3=Attractor, 4=Repeller, 5=Wind, 6=Flocking, 7=Kill"));
     effectorsGroup.addProperty(addEffectorProp);
@@ -2381,9 +2395,11 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactParticleLayer::getLayerProperty
     const EmitterParams emitter = impl_->primaryEmitterParams().value_or(EmitterParams{});
 
     auto emitterShapeProp = makeProp(QStringLiteral("particle.emitter.shape"), ArtifactCore::PropertyType::Integer, static_cast<int>(emitter.shape), -240);
-    emitterShapeProp->setHardRange(0, 7);
+    // Mesh(6) and Surface(7) have no emission-position implementation, so they are
+    // not offered here. JSON still accepts 0..7 to keep existing documents loadable.
+    emitterShapeProp->setHardRange(0, 5);
     emitterShapeProp->setDisplayLabel(QStringLiteral("Shape"));
-    emitterShapeProp->setTooltip(QStringLiteral("0=Point, 1=Sphere, 2=Box, 3=Circle, 4=Rectangle, 5=Line, 6=Mesh, 7=Surface"));
+    emitterShapeProp->setTooltip(QStringLiteral("0=Point, 1=Sphere, 2=Box, 3=Circle, 4=Rectangle, 5=Line"));
     emitterGroup.addProperty(emitterShapeProp);
 
     auto emitterModeProp = makeProp(QStringLiteral("particle.emitter.mode"), ArtifactCore::PropertyType::Integer, static_cast<int>(emitter.mode), -239);
@@ -3241,7 +3257,8 @@ bool ArtifactParticleLayer::setLayerPropertyValue(const QString& propertyPath, c
     }
     if (propertyPath == QStringLiteral("particle.emitter.shape")) {
         return applyPrimaryEmitterValue([&](EmitterParams& params) {
-            params.shape = static_cast<EmitterShape>(std::clamp(value.toInt(), 0, 7));
+            // Mesh(6) / Surface(7) have no emission-position implementation.
+            params.shape = static_cast<EmitterShape>(std::clamp(value.toInt(), 0, 5));
         });
     }
     if (propertyPath == QStringLiteral("particle.emitter.mode")) {
@@ -3653,22 +3670,22 @@ bool ArtifactParticleLayer::setLayerPropertyValue(const QString& propertyPath, c
     }
     if (propertyPath == QStringLiteral("particle.aux.lifeScale")) {
         return applyPrimaryEmitterValue([&](EmitterParams& params) {
-            params.auxLifeScale = safeParticleFloat(value, 1.0f, 0.0f, 1000000.0f);
+            params.auxLifeScale = safeParticleFloat(value, 0.3f, 0.0f, 1000000.0f);
         });
     }
     if (propertyPath == QStringLiteral("particle.aux.sizeScale")) {
         return applyPrimaryEmitterValue([&](EmitterParams& params) {
-            params.auxSizeScale = safeParticleFloat(value, 1.0f, 0.0f, 1000000.0f);
+            params.auxSizeScale = safeParticleFloat(value, 0.65f, 0.0f, 1000000.0f);
         });
     }
     if (propertyPath == QStringLiteral("particle.aux.opacityScale")) {
         return applyPrimaryEmitterValue([&](EmitterParams& params) {
-            params.auxOpacityScale = safeParticleFloat(value, 1.0f, 0.0f, 1.0f);
+            params.auxOpacityScale = safeParticleFloat(value, 0.85f, 0.0f, 1.0f);
         });
     }
     if (propertyPath == QStringLiteral("particle.aux.velocityScale")) {
         return applyPrimaryEmitterValue([&](EmitterParams& params) {
-            params.auxVelocityScale = safeParticleFloat(value, 1.0f, 0.0f, 1000000.0f);
+            params.auxVelocityScale = safeParticleFloat(value, 0.35f, 0.0f, 1000000.0f);
         });
     }
     if (propertyPath == QStringLiteral("particle.emitter.colorStart") ||

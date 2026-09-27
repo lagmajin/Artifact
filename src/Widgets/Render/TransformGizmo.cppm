@@ -2886,6 +2886,15 @@ bool TransformGizmo::beginHandleDrag(HandleType handle,
 }
 
 bool TransformGizmo::allowsHandle(HandleType handle) const {
+ // This gizmo is not drawn for non-text layers (the 3D manipulator and the
+ // projected frame own those handles), so its rotate ring and scale handles
+ // must not claim presses on an invisible target.  Move and Anchor stay
+ // available: Design-workspace reorder is driven from the Move handle.
+ if (invisibleHandlesSuppressed_ &&
+     handle != HandleType::None && handle != HandleType::Move &&
+     handle != HandleType::Anchor) {
+  return false;
+ }
  if (mode_ == Mode::All) {
   return handle != HandleType::None;
  }

@@ -272,6 +272,25 @@ public:
   // the ensured directory per namespace key.
   QString previewDiskEnsuredDirKey_;
   QString previewDiskEnsuredDirPath_;
+  // PERF: manifest.json parsing memo. A range probe validates one frame at a
+  // time, and the per-frame path re-read and re-parsed the whole manifest on
+  // every call, so one scan paid O(frames) manifest parses. The snapshot is
+  // keyed by (path, size, mtime, disk generation): a writer-thread rewrite or
+  // any invalidation changes one of those and drops the memo. Only the GUI
+  // thread touches this; the writer thread never validates frames.
+  struct PreviewDiskManifestFrame {
+    qint64 bytes = 0;
+    QString fileName;
+  };
+  struct PreviewDiskManifestSnapshot {
+    qint64 size = 0;
+    qint64 lastModifiedMs = 0;
+    uint64_t generation = 0;
+    bool identityMatches = false;
+    std::unordered_map<qint64, PreviewDiskManifestFrame> frames;
+  };
+  QString previewDiskManifestCachePath_;
+  PreviewDiskManifestSnapshot previewDiskManifestCache_;
   // The final-frame cache is valid only for the render contract that produced
   // it.  Layer state is still invalidated by the composition edit paths;
   // this contract closes the quality/render-path gap at the service boundary.
@@ -690,6 +709,11 @@ public:
               if (generation != previewDiskGeneration_.load()) {
                 return;
               }
+              // The writer thread rewrote manifest.json. Drop the parsed
+              // memo explicitly instead of relying on the size/mtime key: a
+              // rewrite that lands in the same millisecond at the same size
+              // would otherwise be mistaken for an unchanged manifest.
+              invalidatePreviewDiskManifestMemo();
               const QString currentCompositionId =
                   currentComposition_ ? currentComposition_->id().toString()
                                       : QString();
@@ -1344,6 +1368,7 @@ public:
       // recreate this directory after it has been cleared.
       std::lock_guard<std::mutex> lock(previewDiskWriteMutex_);
       ++previewDiskGeneration_;
+      invalidatePreviewDiskManifestMemo();
       std::erase_if(previewDiskWriteQueue_, [&compositionId](
                                             const PreviewDiskWriteTask &task) {
         return task.compositionId == compositionId;
@@ -1625,35 +1650,60 @@ public:
     return cpuImage;
   }
 
-  bool isPreviewDiskManifestFrameValid(const int64_t frame,
-                                       const QString &filePath) {
-    const QFileInfo frameInfo(filePath);
-    if (!frameInfo.isFile() || frameInfo.size() <= 0) {
+  void invalidatePreviewDiskManifestMemo() {
+    previewDiskManifestCachePath_.clear();
+    previewDiskManifestCache_ = PreviewDiskManifestSnapshot{};
+  }
+
+  // Loads and memoizes the parsed manifest for a namespace directory. The
+  // identity fields (schema/frameCount/namespace/compositionId/
+  // renderContract/stateHash) and every per-frame entry are validated here so
+  // the per-frame check below is a single map lookup plus a size compare.
+  // Any malformed entry invalidates the whole manifest, matching the previous
+  // behaviour of rejecting a directory whose manifest is not self-consistent.
+  bool loadPreviewDiskManifestSnapshot(const QString &manifestPath) {
+    const QFileInfo manifestInfo(manifestPath);
+    const uint64_t generation = previewDiskGeneration_.load();
+    if (!manifestInfo.isFile()) {
+      invalidatePreviewDiskManifestMemo();
       return false;
     }
-    QImageReader imageReader(filePath);
-    if (!imageReader.canRead()) {
-      return false;
+
+    const qint64 size = manifestInfo.size();
+    const qint64 lastModifiedMs = manifestInfo.lastModified().toMSecsSinceEpoch();
+    if (previewDiskManifestCache_.generation == generation &&
+        previewDiskManifestCachePath_ == manifestPath &&
+        previewDiskManifestCache_.size == size &&
+        previewDiskManifestCache_.lastModifiedMs == lastModifiedMs) {
+      return previewDiskManifestCache_.identityMatches;
     }
-    const QString manifestPath =
-        QDir(frameInfo.absolutePath()).filePath(QStringLiteral("manifest.json"));
+
+    PreviewDiskManifestSnapshot snapshot;
+    snapshot.size = size;
+    snapshot.lastModifiedMs = lastModifiedMs;
+    snapshot.generation = generation;
+
     QFile manifestFile(manifestPath);
-    if (!manifestFile.open(QIODevice::ReadOnly)) {
-      return false;
-    }
-    if (manifestFile.size() <= 0 || manifestFile.size() > 16 * 1024 * 1024) {
+    if (!manifestFile.open(QIODevice::ReadOnly) || size <= 0 ||
+        size > 16 * 1024 * 1024) {
+      previewDiskManifestCachePath_ = manifestPath;
+      previewDiskManifestCache_ = snapshot;
       return false;
     }
     QJsonParseError parseError;
     const QJsonDocument document =
         QJsonDocument::fromJson(manifestFile.readAll(), &parseError);
     if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+      previewDiskManifestCachePath_ = manifestPath;
+      previewDiskManifestCache_ = snapshot;
       return false;
     }
 
     const QJsonObject object = document.object();
     const QJsonArray frames = object.value(QStringLiteral("frames")).toArray();
     if (frames.size() > 100000) {
+      previewDiskManifestCachePath_ = manifestPath;
+      previewDiskManifestCache_ = snapshot;
       return false;
     }
     if (object.value(QStringLiteral("schema")).toInt() !=
@@ -1667,13 +1717,16 @@ public:
             previewDiskRenderContract_ ||
         object.value(QStringLiteral("stateHash")).toString() !=
             currentCompositionStateHash()) {
+      previewDiskManifestCachePath_ = manifestPath;
+      previewDiskManifestCache_ = snapshot;
       return false;
     }
 
-    std::unordered_set<qint64> manifestFrames;
-    manifestFrames.reserve(static_cast<size_t>(frames.size()));
+    snapshot.frames.reserve(static_cast<size_t>(frames.size()));
     for (const QJsonValue &value : frames) {
       if (!value.isObject()) {
+        previewDiskManifestCachePath_ = manifestPath;
+        previewDiskManifestCache_ = snapshot;
         return false;
       }
       const QJsonObject entry = value.toObject();
@@ -1684,18 +1737,45 @@ public:
       const QString entryFile = entry.value(QStringLiteral("file")).toString();
       if (entryFrame < 0 || entryBytes <= 0 || entryFile.isEmpty() ||
           QFileInfo(entryFile).fileName() != entryFile) {
+        previewDiskManifestCachePath_ = manifestPath;
+        previewDiskManifestCache_ = snapshot;
         return false;
       }
-      if (!manifestFrames.insert(entryFrame).second) {
+      if (!snapshot.frames.emplace(entryFrame,
+                                   PreviewDiskManifestFrame{entryBytes,
+                                                            entryFile})
+               .second) {
+        previewDiskManifestCachePath_ = manifestPath;
+        previewDiskManifestCache_ = snapshot;
         return false;
-      }
-      if (entryFile == frameInfo.fileName() &&
-              entryFrame == frame &&
-              entryBytes == frameInfo.size()) {
-        return true;
       }
     }
-    return false;
+
+    snapshot.identityMatches = true;
+    previewDiskManifestCachePath_ = manifestPath;
+    previewDiskManifestCache_ = std::move(snapshot);
+    return true;
+  }
+
+  bool isPreviewDiskManifestFrameValid(const int64_t frame,
+                                       const QString &filePath) {
+    const QFileInfo frameInfo(filePath);
+    if (!frameInfo.isFile() || frameInfo.size() <= 0) {
+      return false;
+    }
+    QImageReader imageReader(filePath);
+    if (!imageReader.canRead()) {
+      return false;
+    }
+    const QString manifestPath =
+        QDir(frameInfo.absolutePath()).filePath(QStringLiteral("manifest.json"));
+    if (!loadPreviewDiskManifestSnapshot(manifestPath)) {
+      return false;
+    }
+    const auto entry = previewDiskManifestCache_.frames.find(frame);
+    return entry != previewDiskManifestCache_.frames.end() &&
+           entry->second.fileName == frameInfo.fileName() &&
+           entry->second.bytes == frameInfo.size();
   }
 
   bool hasPreviewFrameOnDisk(const int64_t frame) {
@@ -2116,6 +2196,7 @@ public:
     // is global on purpose: a stale writer must never recreate an invalidated
     // frame after the file has been removed.
     ++previewDiskGeneration_;
+    invalidatePreviewDiskManifestMemo();
     for (int64_t frame = first; frame <= last; ++frame) {
       ramPreviewImageCache_.erase(frame);
       eraseRamPreviewImageLru(frame);
@@ -2128,6 +2209,11 @@ public:
         QFile::remove(previewDiskCacheFramePath(frame));
       }
     }
+    // The manifest still lists the removed frames. That is intentionally left
+    // alone: readback validates the requested frame against its own bytes, so
+    // a stale entry can only produce a false negative for the deleted frame,
+    // and the next disk write rebuilds the manifest from the surviving files.
+    // Rewriting it here would add a directory scan to the layer-edit path.
     emitRamPreviewStats();
     publishRamPreviewStateChanged(ramPreviewEnabled_, ramPreviewRange_);
   }
@@ -3462,6 +3548,7 @@ void ArtifactPlaybackService::setDiskPreviewCacheEnabled(bool enabled) {
   if (!enabled) {
     std::lock_guard<std::mutex> lock(impl_->previewDiskWriteMutex_);
     ++impl_->previewDiskGeneration_;
+    impl_->invalidatePreviewDiskManifestMemo();
     impl_->previewDiskWriteQueue_.clear();
   }
 }

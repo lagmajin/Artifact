@@ -109,6 +109,18 @@ export namespace Artifact {
    autoKeyPredicate_ = std::move(predicate);
   }
 
+   // When a non-text layer is selected the 3D manipulator (Artifact3DGizmo)
+   // plus the camera-projected frame own its visual handles, and this 2D gizmo
+   // is not drawn at all.  It must then not claim the rotate ring or the scale
+   // handles either, or it silently steals presses on an invisible target and
+   // routes them through a different transform/undo path than the drawn one.
+   // Move stays enabled because the Design workspace's sibling-reorder gesture
+   // is driven from this gizmo's Move handle.
+   void setInvisibleHandlesSuppressed(bool suppressed) {
+     invisibleHandlesSuppressed_ = suppressed;
+   }
+   bool invisibleHandlesSuppressed() const { return invisibleHandlesSuppressed_; }
+
    bool isDragging() const { return isDragging_; }
    HandleType activeHandle() const { return activeHandle_; }
    const std::vector<SnapLine>& activeSnapLines() const { return activeSnapLines_; }
@@ -176,6 +188,7 @@ private:
   QPointF lastCanvasMousePos_;
   std::chrono::steady_clock::time_point lastDragMutationNotify_{};
   bool resizeBadgeVisible_ = false;
+  bool invisibleHandlesSuppressed_ = false;
   std::vector<QString> resizeBadgeLines_;
   QPointF resizeBadgeAnchor_;
   QRectF resizeBadgeBox_;
