@@ -1094,6 +1094,10 @@ set(ARTIFACT_EFFECTS_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/VectorFlowGlitchEffect.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Distort/DisplacementMapEffect.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Distort/TimeDisplacementEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Distort/RippleEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Distort/MagnifyEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Distort/PinchBulgeEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Distort/PolarCoordinatesEffect.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/TurbulentDisplace/TurbulentDisplaceEffect.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Generate/SimpleRainEffect.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Generate/RadioWavesEffect.ixx"
@@ -1198,6 +1202,10 @@ set(ARTIFACT_EFFECTS_IMPL
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/VectorFlowGlitchEffect.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/DisplacementMap/DisplacementMapEffect.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/TimeDisplacement/TimeDisplacementEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Distort/RippleEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Distort/MagnifyEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Distort/PinchBulgeEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Distort/PolarCoordinatesEffect.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/TurbulentDisplace/TurbulentDisplaceEffect.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Generate/SimpleRainEffect.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Generate/RadioWavesEffect.cppm"
@@ -1538,11 +1546,19 @@ set(ARTIFACT_EFFECTS_DISTORT_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Distort/DisplacementMapEffect.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/TurbulentDisplace/TurbulentDisplaceEffect.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Distort/TimeDisplacementEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Distort/RippleEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Distort/MagnifyEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Distort/PinchBulgeEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Distort/PolarCoordinatesEffect.ixx"
 )
 set(ARTIFACT_EFFECTS_DISTORT_IMPL
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/DisplacementMap/DisplacementMapEffect.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/TurbulentDisplace/TurbulentDisplaceEffect.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/TimeDisplacement/TimeDisplacementEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Distort/RippleEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Distort/MagnifyEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Distort/PinchBulgeEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Distort/PolarCoordinatesEffect.cppm"
 )
 
 add_library(ArtifactEffectsDistort STATIC)

@@ -91,6 +91,10 @@ import Artifact.Effect.Rasterizer.TimeWarp;
 import Artifact.Effect.Rasterizer.VectorBlur;
 import Artifact.Effect.Render.PBRMaterial;
 import Artifact.Effect.Spherize;
+import Artifact.Effect.Rasterizer.Ripple;
+import Artifact.Effect.Rasterizer.Magnify;
+import Artifact.Effect.Rasterizer.PinchBulge;
+import Artifact.Effect.Rasterizer.PolarCoordinates;
 import Artifact.Effect.Transform.Bend;
 import Artifact.Effect.Transform.Twist;
 import Artifact.Effect.Wave;
@@ -686,6 +690,30 @@ W_OBJECT_IMPL(ArtifactEffectService)
    effect->setDisplayName(QStringLiteral("Spherize"));
    return effect;
   }
+  if (effectId == QStringLiteral("ripple")) {
+   auto effect = std::make_unique<RippleEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Ripple"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("magnify")) {
+   auto effect = std::make_unique<MagnifyEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Magnify"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("pinch_bulge")) {
+   auto effect = std::make_unique<PinchBulgeEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Pinch / Bulge"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("polar_coordinates")) {
+   auto effect = std::make_unique<PolarCoordinatesEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Polar Coordinates"));
+   return effect;
+  }
   if (effectId == QStringLiteral("directional_glow")) {
    auto effect = std::make_unique<DirectionalGlowEffect>();
    effect->setEffectID(UniString::fromQString(effectId));
@@ -1260,6 +1288,10 @@ W_OBJECT_IMPL(ArtifactEffectService)
   effects.push_back({EffectID("lens_distortion"), "Lens Distortion"});
   effects.push_back({EffectID("wave"), "Wave"});
   effects.push_back({EffectID("spherize"), "Spherize"});
+  effects.push_back({EffectID("ripple"), "Ripple"});
+  effects.push_back({EffectID("magnify"), "Magnify"});
+  effects.push_back({EffectID("pinch_bulge"), "Pinch / Bulge"});
+  effects.push_back({EffectID("polar_coordinates"), "Polar Coordinates"});
   effects.push_back({EffectID("twist"), "Twist"});
   effects.push_back({EffectID("bend"), "Bend"});
   effects.push_back({EffectID("pbr_material"), "PBR Material"});
