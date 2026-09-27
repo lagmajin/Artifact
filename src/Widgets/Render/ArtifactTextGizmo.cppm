@@ -10,7 +10,9 @@ module;
 #include <algorithm>
 #include <cstdint>
 #include <cmath>
+#include <initializer_list>
 #include <memory>
+#include <utility>
 #include <vector>
 
 module Artifact.Widgets.TextGizmo;
@@ -161,6 +163,24 @@ float selectorHandleY(const QRectF& bounds, const float percentage) {
     return static_cast<float>(bounds.top()) +
            static_cast<float>(bounds.height()) *
                std::clamp(percentage, 0.0f, 100.0f) / 100.0f;
+}
+
+// Returns the candidate whose coordinate is closest to `cursor` within
+// `threshold`, or -1 when none is in range.  Candidates keep the order they
+// are listed in, so the first one wins an exact tie.
+int textClosestRangeHandle(const float cursor,
+                           const std::initializer_list<std::pair<float, int>> &candidates,
+                           const float threshold) {
+    int best = -1;
+    float bestDistance = threshold;
+    for (const auto &[position, handle] : candidates) {
+        const float distance = std::abs(cursor - position);
+        if (distance < bestDistance) {
+            bestDistance = distance;
+            best = handle;
+        }
+    }
+    return best;
 }
 
 constexpr float kTextGizmoPi = 3.14159265358979323846f;
@@ -350,6 +370,10 @@ void TextGizmo::setLayer(ArtifactAbstractLayerPtr layer) {
     dragBeforeKeyframes_.clear();
     dragValueChanged_ = false;
     dragAccumulatedRotationDelta_ = 0.0f;
+    dragStartGlobalInverse_ = QTransform();
+    dragStartGlobalInvertible_ = false;
+    dragStartBoxWidth_ = 0.0f;
+    dragStartBoxHeight_ = 0.0f;
     transformDragChanged_ = false;
     transformBeforeStates_.clear();
 }
@@ -365,10 +389,13 @@ void TextGizmo::draw(ArtifactIRenderer* renderer) {
     const float handleWidth = HANDLE_WIDTH * invZoom;
     const float rangeLineHeight = RANGE_LINE_HEIGHT * invZoom;
 
-    // Get text layer bounds
+    // Get text layer bounds.  ArtifactTextLayer never reports an empty
+    // sourceSize (setSourceSize clamps to at least 1x1), so an empty box here
+    // means the layer is not a measurable text surface yet.  Bail out instead
+    // of synthesizing a 400x100 box unrelated to the layer.
     QRectF bbox = layer_->transformedBoundingBox();
-    if (bbox.isEmpty()) {
-        bbox = QRectF(0, 0, 400, 100);
+    if (!bbox.isValid() || bbox.width() <= 0.0 || bbox.height() <= 0.0) {
+        return;
     }
 
     // Draw text box bounds
@@ -606,10 +633,11 @@ TextGizmo::HandleType TextGizmo::hitTest(const QPointF& viewportPos, ArtifactIRe
     // マウス位置をキャンバス座標に変換
     auto canvasMouse = renderer->viewportToCanvas({(float)viewportPos.x(), (float)viewportPos.y()});
 
-    // Get text layer bounds
+    // Get text layer bounds.  See draw(): an empty box is not a measurable
+    // text surface, so no handle (including the range selectors) can be hit.
     QRectF bbox = layer_->transformedBoundingBox();
-    if (bbox.isEmpty()) {
-        bbox = QRectF(0, 0, 400, 100);
+    if (!bbox.isValid() || bbox.width() <= 0.0 || bbox.height() <= 0.0) {
+        return HandleType::None;
     }
 
     const float zoom = renderer->getZoom();
@@ -636,35 +664,38 @@ TextGizmo::HandleType TextGizmo::hitTest(const QPointF& viewportPos, ArtifactIRe
                 const float endY = selectorHandleY(bbox, end);
                 const float offsetY = selectorHandleY(
                     bbox, (start + end) * 0.5f + offset);
-                if (std::abs(canvasMouse.y - offsetY) < hitThreshold) {
-                    return HandleType::RangeOffset;
-                }
-                if (std::abs(canvasMouse.y - startY) < hitThreshold) {
-                    return HandleType::RangeStart;
-                }
-                if (std::abs(canvasMouse.y - endY) < hitThreshold) {
-                    return HandleType::RangeEnd;
+                // Pick the closest handle instead of a fixed priority so
+                // overlapping selectors resolve toward the cursor.
+                const int closest = textClosestRangeHandle(
+                    canvasMouse.y,
+                    {{startY, static_cast<int>(HandleType::RangeStart)},
+                     {endY, static_cast<int>(HandleType::RangeEnd)},
+                     {offsetY, static_cast<int>(HandleType::RangeOffset)}},
+                    hitThreshold);
+                if (closest >= 0) {
+                    return static_cast<HandleType>(closest);
                 }
             }
         } else {
-        const float selectorY = static_cast<float>(bbox.top()) - 7.0f / std::max(zoom, 0.0001f);
-        const bool selectorYHit =
-            std::abs(canvasMouse.y - selectorY) < hitThreshold;
-        if (selectorYHit) {
-            const float startX = selectorHandleX(bbox, start);
-            const float endX = selectorHandleX(bbox, end);
-            const float offsetX = selectorHandleX(
-                bbox, (start + end) * 0.5f + offset);
-            if (std::abs(canvasMouse.x - offsetX) < hitThreshold) {
-                return HandleType::RangeOffset;
+            const float selectorY =
+                static_cast<float>(bbox.top()) - 7.0f / std::max(zoom, 0.0001f);
+            const bool selectorYHit =
+                std::abs(canvasMouse.y - selectorY) < hitThreshold;
+            if (selectorYHit) {
+                const float startX = selectorHandleX(bbox, start);
+                const float endX = selectorHandleX(bbox, end);
+                const float offsetX = selectorHandleX(
+                    bbox, (start + end) * 0.5f + offset);
+                const int closest = textClosestRangeHandle(
+                    canvasMouse.x,
+                    {{startX, static_cast<int>(HandleType::RangeStart)},
+                     {endX, static_cast<int>(HandleType::RangeEnd)},
+                     {offsetX, static_cast<int>(HandleType::RangeOffset)}},
+                    hitThreshold);
+                if (closest >= 0) {
+                    return static_cast<HandleType>(closest);
+                }
             }
-            if (std::abs(canvasMouse.x - startX) < hitThreshold) {
-                return HandleType::RangeStart;
-            }
-            if (std::abs(canvasMouse.x - endX) < hitThreshold) {
-                return HandleType::RangeEnd;
-            }
-        }
         }
     }
 
@@ -798,10 +829,9 @@ bool TextGizmo::handleMousePress(const QPointF& viewportPos, ArtifactIRenderer* 
         dragStartCanvasPos_ = QPointF(canvasMouse.x, canvasMouse.y);
         dragStartLayerPosition_ = QPointF(layer_->transform3D().positionX(),
                                           layer_->transform3D().positionY());
+        // hitTest() already rejected empty boxes, so the bounding box captured
+        // here is the same one the handle was hit against.
         dragStartBounds_ = layer_->transformedBoundingBox();
-        if (dragStartBounds_.isEmpty()) {
-            dragStartBounds_ = QRectF(0, 0, 400, 100);
-        }
         if (activeHandle_ == HandleType::RangeStart) {
             dragAnimatorIndex_ = editableAnimatorIndex(
                 ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer_));
@@ -846,8 +876,18 @@ bool TextGizmo::handleMousePress(const QPointF& viewportPos, ArtifactIRenderer* 
             // Offset drag receives a canvas-space pointer delta.  Retain the
             // start transform so the new world anchor can be converted back
             // to this layer's parent-local Position, just as TransformGizmo
-            // does for nested layers.
+            // does for nested layers.  Box resize additionally needs the
+            // inverse: its canvas delta has to become a local-space size
+            // delta, otherwise scale and rotation make the box grow by a
+            // multiple of the intended amount.
             dragStartGlobalTransform_ = layer_->getGlobalTransform();
+            dragStartGlobalInverse_ = dragStartGlobalTransform_.inverted(
+                &dragStartGlobalInvertible_);
+            if (const auto textLayer =
+                    ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer_)) {
+                dragStartBoxWidth_ = textLayer->maxWidth();
+                dragStartBoxHeight_ = textLayer->boxHeight();
+            }
             transformDragChanged_ = false;
             captureTransformBeforeStates();
         }
@@ -982,6 +1022,22 @@ bool TextGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRenderer* r
             boxDX *= 0.1f;
             boxDY *= 0.1f;
         }
+    }
+
+    // Box handles edit text.maxWidth / text.boxHeight, which live in the
+    // layer's local units, but the pointer reports a canvas-space delta and
+    // dragStartBounds_ is the already-transformed world AABB.  Map the delta
+    // back through the inverse transform captured on press so a scaled or
+    // rotated text box resizes by the amount the pointer actually travelled
+    // instead of by a multiple of it.
+    if (dragStartGlobalInvertible_) {
+        const QPointF localStart =
+            dragStartGlobalInverse_.map(dragStartCanvasPos_);
+        const QPointF localCurrent =
+            dragStartGlobalInverse_.map(dragStartCanvasPos_ +
+                                        QPointF(boxDX, boxDY));
+        boxDX = static_cast<float>(localCurrent.x() - localStart.x());
+        boxDY = static_cast<float>(localCurrent.y() - localStart.y());
     }
 
     switch (activeHandle_) {
@@ -1202,32 +1258,42 @@ bool TextGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRenderer* r
             transformDragChanged_ = true;
             return true;
         }
+        // Box handles drive text.maxWidth / text.boxHeight, which are boxWidth
+        // / boxHeight in the layer's own local units.  Resizing the transformed
+        // world AABB and writing it back would compound scale and rotation into
+        // the size, so work from the local rect captured on press instead.
+        QRectF localBox(0.0, 0.0,
+                        static_cast<double>(std::max(0.0f, dragStartBoxWidth_)),
+                        static_cast<double>(std::max(0.0f, dragStartBoxHeight_)));
+        switch (activeHandle_) {
         case HandleType::BoxLeft:
-            bbox.setLeft(bbox.left() + boxDX);
+            localBox.setLeft(localBox.left() + boxDX);
             break;
         case HandleType::BoxRight:
-            bbox.setRight(bbox.right() + boxDX);
+            localBox.setRight(localBox.right() + boxDX);
             break;
         case HandleType::BoxTop:
-            bbox.setTop(bbox.top() + boxDY);
+            localBox.setTop(localBox.top() + boxDY);
             break;
         case HandleType::BoxBottom:
-            bbox.setBottom(bbox.bottom() + boxDY);
+            localBox.setBottom(localBox.bottom() + boxDY);
             break;
         case HandleType::BoxCornerTopLeft:
-            bbox.setTopLeft(bbox.topLeft() + QPointF(boxDX, boxDY));
+            localBox.setTopLeft(localBox.topLeft() + QPointF(boxDX, boxDY));
             break;
         case HandleType::BoxCornerTopRight:
-            bbox.setTopRight(bbox.topRight() + QPointF(boxDX, boxDY));
+            localBox.setTopRight(localBox.topRight() + QPointF(boxDX, boxDY));
             break;
         case HandleType::BoxCornerBottomLeft:
-            bbox.setBottomLeft(bbox.bottomLeft() + QPointF(boxDX, boxDY));
+            localBox.setBottomLeft(localBox.bottomLeft() + QPointF(boxDX, boxDY));
             break;
         case HandleType::BoxCornerBottomRight:
-            bbox.setBottomRight(bbox.bottomRight() + QPointF(boxDX, boxDY));
+            localBox.setBottomRight(localBox.bottomRight() + QPointF(boxDX, boxDY));
             break;
         default:
             return false;
+        }
+        bbox = localBox;
     }
 
     // Shift constrains corner box drags to a square, anchored at the

@@ -30,7 +30,6 @@ public:
         RangeOffset,
         Offset,
         Rotate,
-        CharacterSelect,
         AnchorPoint,
         // Text box bounds editing
         BoxLeft,
@@ -86,6 +85,17 @@ private:
     QPointF dragLastCanvasPos_;
     QRectF dragStartBounds_;
     QTransform dragStartGlobalTransform_;
+    // Inverse of dragStartGlobalTransform_, captured on press. Box resize
+    // receives a canvas-space pointer delta; converting it back to this
+    // layer's local units is what keeps the drag correct under scale and
+    // rotation. Valid only when dragStartGlobalInvertible_ is true.
+    QTransform dragStartGlobalInverse_;
+    bool dragStartGlobalInvertible_ = false;
+    // text.maxWidth / text.boxHeight at press time. Box resize works on this
+    // local rect, not on dragStartBounds_ (which is the transformed world
+    // AABB and therefore wrong to derive a local box size from).
+    float dragStartBoxWidth_ = 0.0f;
+    float dragStartBoxHeight_ = 0.0f;
     QRectF dragStartLocalBounds_;
     QPointF dragStartAnchor_;
     float dragStartScaleX_ = 1.0f;

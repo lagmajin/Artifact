@@ -19,6 +19,7 @@ import Event.Bus;
 import Artifact.Service.Project;
 import Artifact.Event.Types;
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Abstract.Utilities;
 import Property.Abstract;
 import Time.Rational;
 import Undo.UndoManager;
@@ -255,8 +256,7 @@ LayerPropertyLookup resolveLayerProperty(
             (deformationParts[2] == QStringLiteral("rotation") ||
              deformationParts[2] == QStringLiteral("weight"))) return result;
         const QJsonArray controls = state.value(
-            mode == QStringLiteral("grid")
-                ? QStringLiteral("gridControls") : QStringLiteral("pins"))
+            LayerAbstractUtilities::deformationControlsKey(mode))
             .toArray();
         bool controlExists = false;
         for (const QJsonValue& value : controls) {
@@ -350,8 +350,7 @@ QVector<QString> deformationControlPropertyPaths(
     const QJsonObject state = layer->deformation2DData();
     const QString mode = state.value(QStringLiteral("mode")).toString();
     const QJsonArray controls = state.value(
-        mode == QStringLiteral("grid")
-            ? QStringLiteral("gridControls") : QStringLiteral("pins"))
+        LayerAbstractUtilities::deformationControlsKey(mode))
         .toArray();
     paths.reserve(controls.size() * 2);
     for (const QJsonValue& value : controls) {
@@ -391,9 +390,9 @@ ArtifactCore::AbstractPropertyPtr findLayerPropertyByPath(
             const QString axis = propertyPath.section(QLatin1Char('.'), 2, 2);
             const QString controlId = propertyPath.section(QLatin1Char('.'), 1, 1);
             const QJsonObject state = layer->deformation2DData();
-            const QString controlsKey = state.value(QStringLiteral("mode"))
-                    .toString() == QStringLiteral("grid")
-                ? QStringLiteral("gridControls") : QStringLiteral("pins");
+            const QString controlsKey =
+                LayerAbstractUtilities::deformationControlsKey(
+                    state.value(QStringLiteral("mode")).toString());
             for (const QJsonValue& value : state.value(controlsKey).toArray()) {
                 const QJsonObject control = value.toObject();
                 if (control.value(QStringLiteral("id")).toString() == controlId) {

@@ -34,6 +34,7 @@ import Font.FreeFont;
 import Artifact.Application.Manager;
 import Artifact.Tool.MotionSketchTool;
 import Artifact.Layer.Shape;
+import Artifact.Layer.Abstract.Utilities;
 import Text.Style;
 import Settings.Accessibility;
 import FloatColorPickerDialog;
@@ -168,10 +169,14 @@ public:
   QCheckBox *puppetEnabledCheck = nullptr;
   QSpinBox *puppetColumnsSpin = nullptr;
   QSpinBox *puppetRowsSpin = nullptr;
+  QCheckBox *puppetProportionalCheck = nullptr;
+  QSpinBox *puppetProportionalRadiusSpin = nullptr;
   int lastPuppetMode = 0;
   int lastPuppetColumns = 5;
   int lastPuppetRows = 5;
   bool lastPuppetEnabled = true;
+  bool lastPuppetProportional = false;
+  double lastPuppetProportionalRadius = 120.0;
 
   void createFrames(QHBoxLayout *parentLayout);
   void connectSignals();
@@ -664,6 +669,24 @@ void ArtifactToolOptionsBar::Impl::createFrames(QHBoxLayout *parentLayout) {
     puppetRowsSpin->setPrefix(QStringLiteral("行 "));
     ly->addWidget(puppetColumnsSpin);
     ly->addWidget(puppetRowsSpin);
+    // Proportional editing は PuppetTool 側で既に movePin / movePinAtFrame に
+    // 実装済みだが UI が無く、半径は [ ] キーからのみ変更できた。ここに露出して
+    // キーボードに依存しない操作にする。
+    puppetProportionalCheck = new QCheckBox(QStringLiteral("比例"), frame);
+    puppetProportionalCheck->setAccessibleName(
+        QStringLiteral("Proportional editing"));
+    puppetProportionalCheck->setAccessibleDescription(
+        QStringLiteral("Move neighboring controls together with the dragged one"));
+    puppetProportionalCheck->installEventFilter(toolOptionsBar);
+    ly->addWidget(puppetProportionalCheck);
+    puppetProportionalRadiusSpin = makeSpin(
+        frame, static_cast<int>(LayerAbstractUtilities::kMinProportionalEditRadius),
+        static_cast<int>(LayerAbstractUtilities::kMaxProportionalEditRadius));
+    puppetProportionalRadiusSpin->setPrefix(QStringLiteral("半径 "));
+    puppetProportionalRadiusSpin->setAccessibleName(
+        QStringLiteral("Proportional editing radius"));
+    puppetProportionalRadiusSpin->installEventFilter(toolOptionsBar);
+    ly->addWidget(puppetProportionalRadiusSpin);
     ly->addStretch();
     optionFrames[PuppetTool] = frame;
     parentLayout->addWidget(frame);
@@ -1649,7 +1672,9 @@ void ArtifactToolOptionsBar::clearShapeOptions() {
 
 void ArtifactToolOptionsBar::setPuppetOptions(int mode, int columns, int rows,
                                                bool enabled,
-                                               bool deformerEnabled) {
+                                               bool deformerEnabled,
+                                               bool proportionalEnabled,
+                                               double proportionalRadius) {
   if (!impl_) return;
   {
     const QSignalBlocker blocker(impl_->puppetEnabledCheck);
@@ -1669,13 +1694,36 @@ void ArtifactToolOptionsBar::setPuppetOptions(int mode, int columns, int rows,
     const QSignalBlocker blocker(impl_->puppetRowsSpin);
     impl_->puppetRowsSpin->setValue(std::clamp(rows, 2, 64));
   }
+  {
+    const QSignalBlocker blocker(impl_->puppetProportionalCheck);
+    impl_->puppetProportionalCheck->setChecked(proportionalEnabled);
+  }
+  {
+    const QSignalBlocker blocker(impl_->puppetProportionalRadiusSpin);
+    // QSpinBox は int なので UI には丸めた値が入る。last* にも同じ値を入れ
+    // ておかないと eventFilter が毎回差分ありと判定して optionChanged が再発火し、
+    // 半径が往復ごとに切り捨てられる。
+    const int clampedProportionalRadius = static_cast<int>(
+        std::clamp(proportionalRadius,
+                   static_cast<double>(LayerAbstractUtilities::
+                       kMinProportionalEditRadius),
+                   static_cast<double>(LayerAbstractUtilities::
+                       kMaxProportionalEditRadius)));
+    impl_->puppetProportionalRadiusSpin->setValue(clampedProportionalRadius);
+    impl_->lastPuppetProportionalRadius = clampedProportionalRadius;
+  }
   impl_->puppetModeCombo->setEnabled(enabled);
   impl_->puppetColumnsSpin->setEnabled(enabled && mode == 1);
   impl_->puppetRowsSpin->setEnabled(enabled && mode == 1);
+  impl_->puppetProportionalCheck->setEnabled(enabled);
+  // 半径は比例編集が有効なときだけ意味を持つので連動して無効化する。
+  impl_->puppetProportionalRadiusSpin->setEnabled(enabled && proportionalEnabled);
   impl_->lastPuppetMode = std::clamp(mode, 0, 1);
   impl_->lastPuppetColumns = std::clamp(columns, 2, 64);
   impl_->lastPuppetRows = std::clamp(rows, 2, 64);
   impl_->lastPuppetEnabled = deformerEnabled;
+  impl_->lastPuppetProportional = proportionalEnabled;
+  // lastPuppetProportionalRadius は上で UI に入れた丸め済みの値を使う。
 }
 
 bool ArtifactToolOptionsBar::eventFilter(QObject *watched, QEvent *event) {
@@ -1683,7 +1731,9 @@ bool ArtifactToolOptionsBar::eventFilter(QObject *watched, QEvent *event) {
       (watched != impl_->puppetEnabledCheck &&
        watched != impl_->puppetModeCombo &&
        watched != impl_->puppetColumnsSpin &&
-       watched != impl_->puppetRowsSpin)) {
+       watched != impl_->puppetRowsSpin &&
+       watched != impl_->puppetProportionalCheck &&
+       watched != impl_->puppetProportionalRadiusSpin)) {
     return QWidget::eventFilter(watched, event);
   }
   const auto type = event->type();
@@ -1716,6 +1766,20 @@ bool ArtifactToolOptionsBar::eventFilter(QObject *watched, QEvent *event) {
         impl_->lastPuppetRows = rows;
         optionChanged(QStringLiteral("パペット"), QStringLiteral("rows"),
                       rows);
+      }
+      const bool proportional = impl_->puppetProportionalCheck->isChecked();
+      if (proportional != impl_->lastPuppetProportional) {
+        // 比例編集が無効の間は半径スピンを操作させない。
+        impl_->puppetProportionalRadiusSpin->setEnabled(proportional);
+        impl_->lastPuppetProportional = proportional;
+        optionChanged(QStringLiteral("パペット"),
+                      QStringLiteral("proportionalEnabled"), proportional);
+      }
+      const int proportionalRadius = impl_->puppetProportionalRadiusSpin->value();
+      if (proportionalRadius != impl_->lastPuppetProportionalRadius) {
+        impl_->lastPuppetProportionalRadius = proportionalRadius;
+        optionChanged(QStringLiteral("パペット"),
+                      QStringLiteral("proportionalRadius"), proportionalRadius);
       }
     });
   }

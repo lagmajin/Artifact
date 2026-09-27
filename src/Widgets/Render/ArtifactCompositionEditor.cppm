@@ -2839,6 +2839,41 @@ public:
     add(QStringLiteral("More Viewport Actions\u2026"),
         [this, viewportPos]() { showViewportDetailedContextMenu(viewportPos); });
 
+    // A selected 2D deformer control exposes its kinds here. The viewport
+    // context menu is a flat list, so each kind is its own row and the active
+    // one is check-marked instead of living in a nested submenu.
+    auto *puppetMenu = ArtifactApplicationManager::instance()
+                           ? ArtifactApplicationManager::instance()->puppetTool()
+                           : nullptr;
+    const QString selectedDeformerPin =
+        puppetMenu ? puppetMenu->selectedPinId() : QString();
+    if (puppetMenu && !selectedDeformerPin.isEmpty() &&
+        puppetMenu->pinTypeFor(selectedDeformerPin) < 4) {
+      addSeparator();
+      const int currentType = puppetMenu->pinTypeFor(selectedDeformerPin);
+      struct PinKindRow {
+        int type;
+        const char *label;
+      };
+      static constexpr PinKindRow kPinKinds[] = {
+          {0, "Position Pin"}, {1, "Starch Pin"},
+          {2, "Bend Pin"},    {3, "Overlap Pin"}};
+      for (const PinKindRow &row : kPinKinds) {
+        const int kind = row.type;
+        add(toggleLabel(QString::fromLatin1(row.label), currentType == kind),
+            [this, kind]() {
+              if (controller_) controller_->setSelectedPuppetPinType(kind);
+            },
+            true);
+      }
+      addSeparator();
+      add(QStringLiteral("Delete Deformer Control"),
+          [this]() {
+            if (controller_) controller_->deleteSelectedPuppetPin();
+          },
+          true);
+    }
+
     viewportOverlayActions_ = actions;
     viewportOverlayEnabledStates_ = enabledStates;
     controller_->showContextMenuOverlay(

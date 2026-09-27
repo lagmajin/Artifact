@@ -1421,7 +1421,9 @@ public:
         static_cast<int>(app->puppetTool()->deformation2DMode(layer->id())),
         std::clamp(state.value(QStringLiteral("columns")).toInt(5), 2, 64),
         std::clamp(state.value(QStringLiteral("rows")).toInt(5), 2, 64),
-        puppetActive, state.value(QStringLiteral("enabled")).toBool(true));
+        puppetActive, state.value(QStringLiteral("enabled")).toBool(true),
+        app->puppetTool()->isProportionalEditingEnabled(),
+        static_cast<double>(app->puppetTool()->proportionalEditRadius()));
   }
 };
 
@@ -1671,6 +1673,12 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
                 }
               }
             }
+          } else if (optionName == QStringLiteral("proportionalEnabled")) {
+            // 比例編集は編集中の扱いではなくツール状態のトグルなので Undo を
+            // 持たない。編集中のピンを消さないよう、単なる状態の切替とする。
+            puppet->setProportionalEditingEnabled(value.toBool());
+          } else if (optionName == QStringLiteral("proportionalRadius")) {
+            puppet->setProportionalEditRadius(value.toFloat());
           }
           return;
         }

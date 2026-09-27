@@ -88,6 +88,7 @@ import Artifact.Composition.Abstract;
 import Artifact.Composition.Nodes;
 import Translation.Manager;
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Abstract.Utilities;
 import UI.ShortcutBindings;
 import Artifact.Layer.Image;
 import Artifact.Layer.Text;
@@ -1346,9 +1347,9 @@ bool togglePropertyKeyframeAtCurrentTime(const ArtifactCompositionPtr& compositi
    if (!property && trimmedPropertyPath.startsWith(
                         QStringLiteral("deformation2D."))) {
     const QJsonObject state = layer->deformation2DData();
-    const QString controlsKey = state.value(QStringLiteral("mode"))
-            .toString() == QStringLiteral("grid")
-        ? QStringLiteral("gridControls") : QStringLiteral("pins");
+    const QString controlsKey =
+        LayerAbstractUtilities::deformationControlsKey(
+            state.value(QStringLiteral("mode")).toString());
     const QStringList parts = trimmedPropertyPath.split(QLatin1Char('.'));
     if (parts.size() == 3) {
      for (const QJsonValue& value : state.value(controlsKey).toArray()) {
@@ -3055,9 +3056,8 @@ public:
    const QJsonObject deformationState = node->deformation2DData();
    const QString deformationMode = deformationState.value(
        QStringLiteral("mode")).toString();
-   const QString deformationControlsKey = deformationMode ==
-           QStringLiteral("grid")
-       ? QStringLiteral("gridControls") : QStringLiteral("pins");
+   const QString deformationControlsKey =
+       LayerAbstractUtilities::deformationControlsKey(deformationMode);
    const QJsonArray deformationControls = deformationState.value(
        deformationControlsKey).toArray();
    const bool hasDeformationControls = !deformationControls.isEmpty();

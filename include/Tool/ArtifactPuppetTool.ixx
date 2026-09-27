@@ -22,6 +22,9 @@ enum class Deformation2DMode : int {
     Grid = 1
 };
 
+// デフォーマ制御点の記録。定義は実装ファイル側（struct PinRecord）。
+struct PinRecord;
+
 class ArtifactPuppetTool : public QObject {
     W_OBJECT(ArtifactPuppetTool)
 public:
@@ -93,6 +96,10 @@ public:
     int pinTypeFor(const QString& pinId) const;
 
 private:
+    // PinRecord は namespace Artifact 直下の実装詳細の struct。
+    double evaluateControlCoordinate(const PinRecord& pin, bool xAxis,
+                                     ArtifactAbstractLayer* layer,
+                                     qint64 evaluationFrame);
     void rebaseLayerPins(const LayerID& layerId, ArtifactAbstractLayer* layer);
     class Impl;
     Impl* impl_;

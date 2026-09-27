@@ -29,6 +29,7 @@ module Artifact.Tool.PuppetTool;
 import Utils.Id;
 import Color.Float;
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Abstract.Utilities;
 import Artifact.Layer.Image;
 import Artifact.Composition.Abstract;
 import Artifact.Composition.Manager;
@@ -51,13 +52,26 @@ qint64 layerTimelineFrame(const ArtifactAbstractLayer* layer)
            layer->inPoint().framePosition();
 }
 
+// Qt と OpenCV の座標型を相互変換する。Core の共有 MLS ヘルパーは
+// cv::Point2f を受け取るため、シェイプ経路の QPointF だけをここで橋渡しする。
+static inline cv::Point2f toPoint2F(const QPointF& point)
+{
+    return cv::Point2f(static_cast<float>(point.x()),
+                       static_cast<float>(point.y()));
+}
+
+// Schema version of the per-layer "deformation2D" JSON. Bump this whenever the
+// control-array layout changes so older readers can refuse the payload instead
+// of scattering unknown fields across the mesh.
+constexpr int kDeformation2DVersion = 1;
+
 struct PinRecord {
     QString id;
     std::string engineId;
     LayerID layerId;
     QPointF canvasPos;  // current position
     QPointF originalPos;
-    int type = 0; // 0=Position, 1=Starch, 2=Bend, 3=Overlap
+    int type = 0; // 0=Position, 1=Starch, 2=Bend, 3=Overlap, 4=Grid
     float rotation = 0.0f;
     float weight = 1.0f;
     float depth = 0.0f;
@@ -91,7 +105,65 @@ struct LayerPins {
     int gridColumns = 5;
     int gridRows = 5;
     std::vector<cv::Point2f> gridPositionScratch;
+    // mapDeformationPoint は頂点ごとに呼ばれる描画ホットパスなので、MLS 拘束点
+    // は毎フレーム 1 度だけ生成して使い回す。std::vector を頂点ごとに確保すると
+    // ホットパスのアロケーション禁止（docs/technical/HOT_PATH_RULES.md）に抵触する。
+    std::vector<ArtifactCore::PuppetPin> shapePinScratch;
+    std::vector<ArtifactCore::PuppetConstraint> shapeConstraintScratch;
+    // 拘束点数はピン数と一致しない（Bend は 1 ピンから 5 点、Overlap は 0 点）。
+    // キャッシュ世代は markDeformDirty（制御点更新）が立てるカウンタと、
+    // prepareLayerDeformation が毎フレーム更新する canvasToLocal の両方で判定する。
+    // 親レイヤー移動やアニメーション変換で座標系が変わるたびに再構築される。
+    qint64 shapeConstraintFrame = std::numeric_limits<qint64>::min();
+    QTransform shapeConstraintCanvasToLocal;
+    std::uint64_t shapeConstraintGeneration = 0;
+    std::uint64_t shapeConstraintBuiltGeneration = 0;
+    bool shapeConstraintValid = false;
 };
+
+// needsDeform とシェイプ経路のキャッシュ世代を同時に進める。制御点が動いた
+// ことを示すすべての更新経路は、needsDeform = true の代わりにこれを呼ぶ。
+void markDeformDirty(LayerPins& lp)
+{
+    lp.needsDeform = true;
+    ++lp.shapeConstraintGeneration;
+}
+
+// 制御点座標をキーフレームと AnimationLayer で評価する。画像メッシュ経路と
+// シェイプ点写像経路が同じ評価を通すことで、両者の絵とキーの挙動を一致させる。
+// xAxis が真なら X 座標、偽なら Y 座標を layer-local 空間で返す。
+double ArtifactPuppetTool::evaluateControlCoordinate(const PinRecord& pin,
+                                                      bool xAxis,
+                                                      ArtifactAbstractLayer* layer,
+                                                      qint64 evaluationFrame)
+{
+    bool transformInvertible = false;
+    const QTransform localToCanvas = layer->getGlobalTransform();
+    const QPointF local = localToCanvas.inverted(&transformInvertible)
+                              .map(pin.canvasPos);
+    const double base = transformInvertible
+        ? (xAxis ? local.x() : local.y())
+        : (xAxis ? pin.canvasPos.x() : pin.canvasPos.y());
+    const QString propertyPath = QStringLiteral("deformation2D.%1.%2")
+        .arg(pin.id, xAxis ? QStringLiteral("x") : QStringLiteral("y"));
+    double result = base;
+    if (const auto property = layer->getProperty(propertyPath);
+        property && property->isAnimatable() && property->hasKeyFrames()) {
+        const ArtifactCore::RationalTime time(evaluationFrame,
+                                              layer->keyframeTimeScale());
+        const QVariant value = property->interpolateValue(time);
+        if (value.isValid() && std::isfinite(value.toDouble())) {
+            result = value.toDouble();
+        }
+    }
+    if (const auto* stack = layer->animationLayerStack(propertyPath);
+        stack && stack->layerCount() > 0) {
+        result = stack->evaluateWithBase(
+            ArtifactCore::FramePosition(evaluationFrame),
+            static_cast<float>(result));
+    }
+    return std::isfinite(result) ? result : base;
+}
 
 QPointF pinAuthoredToDisplayCanvas(const LayerPins& lp,
                                    ArtifactAbstractLayer* layer,
@@ -244,6 +316,13 @@ void ArtifactPuppetTool::ensureLayerLoaded(const LayerID& layerId,
     lp->loadedFromLayer = true;
 
     QJsonObject state = layer->deformation2DData();
+    // Refuse payloads written by a newer build: the control-array layout could
+    // have changed, and guessing would scatter unknown fields across the mesh.
+    // Dropping to a bare descriptor leaves the layer undeformed but intact.
+    const int schemaVersion = state.value(QStringLiteral("version")).toInt(1);
+    if (schemaVersion > kDeformation2DVersion) {
+        state = QJsonObject{{QStringLiteral("version"), kDeformation2DVersion}};
+    }
     lp->enabled = state.value(QStringLiteral("enabled")).toBool(true);
     lp->mode = state.value(QStringLiteral("mode")).toString() ==
                        QStringLiteral("grid")
@@ -349,9 +428,8 @@ void ArtifactPuppetTool::persistLayerData(const LayerID& layerId)
         object[QStringLiteral("depth")] = pin.depth;
         const QJsonObject previousState = layer->deformation2DData();
         const QString previousControlsKey =
-            previousState.value(QStringLiteral("mode")).toString() ==
-                    QStringLiteral("grid")
-                ? QStringLiteral("gridControls") : QStringLiteral("pins");
+            LayerAbstractUtilities::deformationControlsKey(
+                previousState.value(QStringLiteral("mode")).toString());
         const QJsonArray previousControls =
             previousState.value(previousControlsKey).toArray();
         for (const QJsonValue& previousValue : previousControls) {
@@ -448,20 +526,21 @@ void ArtifactPuppetTool::persistLayerData(const LayerID& layerId)
         pins.append(object);
     }
     QJsonObject state = layer->deformation2DData();
-    state[QStringLiteral("version")] = 1;
+    state[QStringLiteral("version")] = kDeformation2DVersion;
     state[QStringLiteral("enabled")] =
         state.value(QStringLiteral("enabled")).toBool(true);
-    if (lp->mode == Deformation2DMode::Grid) {
-        state[QStringLiteral("mode")] = QStringLiteral("grid");
+    const bool grid = lp->mode == Deformation2DMode::Grid;
+    state[QStringLiteral("mode")] = grid ? QStringLiteral("grid")
+                                         : QStringLiteral("pins");
+    if (grid) {
         state[QStringLiteral("columns")] = lp->gridColumns;
         state[QStringLiteral("rows")] = lp->gridRows;
-        state[QStringLiteral("gridControls")] = pins;
-    } else {
-        state[QStringLiteral("mode")] = QStringLiteral("pins");
-        state[QStringLiteral("pins")] = pins;
     }
-    const QString inactiveArray = lp->mode == Deformation2DMode::Grid
-        ? QStringLiteral("pins") : QStringLiteral("gridControls");
+    state[LayerAbstractUtilities::deformationControlsKey(grid)] = pins;
+    // active でない側は空の配列で埋めて、モード切替時に前モードの制御点が
+    // 残らないようにする。grid なら inactive は pins なので !grid を渡す。
+    const QString inactiveArray =
+        LayerAbstractUtilities::deformationControlsKey(!grid);
     if (!state.contains(inactiveArray)) state[inactiveArray] = QJsonArray{};
     layer->setDeformation2DData(state);
     lp->pinSpaceToCanvas = layer->getGlobalTransform();
@@ -497,7 +576,7 @@ bool ArtifactPuppetTool::restoreLayerData(const LayerID& layerId,
         lp->pins.clear();
         lp->mode = Deformation2DMode::Pins;
         lp->needsRebind = true;
-        lp->needsDeform = true;
+        markDeformDirty(*lp);
         if (lp->engine) lp->engine->reset();
     }
     const QString selectedId = impl_->selectedPinId;
@@ -506,8 +585,7 @@ bool ArtifactPuppetTool::restoreLayerData(const LayerID& layerId,
     const QJsonObject restoredState = layer->deformation2DData();
     const QString mode = restoredState.value(QStringLiteral("mode")).toString();
     const QJsonArray controls = restoredState.value(
-        mode == QStringLiteral("grid")
-            ? QStringLiteral("gridControls") : QStringLiteral("pins"))
+        LayerAbstractUtilities::deformationControlsKey(mode))
         .toArray();
     QStringList controlIds;
     for (const QJsonValue& value : controls) {
@@ -565,7 +643,7 @@ bool ArtifactPuppetTool::setDeformation2DMode(
     lp->pins.clear();
     lp->mode = mode;
     lp->needsRebind = true;
-    lp->needsDeform = true;
+    markDeformDirty(*lp);
     if (lp->engine) lp->engine->reset();
     if (mode == Deformation2DMode::Grid) {
         lp->gridColumns = std::clamp(columns, 2, 64);
@@ -707,7 +785,7 @@ bool ArtifactPuppetTool::addPin(const LayerID& layerId, const QPointF& canvasPos
 
     lp->pins.push_back(pin);
     lp->needsRebind = true;
-    lp->needsDeform = true;
+    markDeformDirty(*lp);
     impl_->selectedPinId = pinId;
     persistLayerData(layerId);
     return true;
@@ -731,7 +809,7 @@ bool ArtifactPuppetTool::removePin(const QString& pinId)
             if (!lp.pins.empty()) layerId = lp.pins.front().layerId;
             lp.pins.erase(it, lp.pins.end());
             lp.needsRebind = true;
-            lp.needsDeform = true;
+            markDeformDirty(lp);
             if (lp.engine) {
                 lp.engine->reset();
             }
@@ -767,15 +845,15 @@ bool ArtifactPuppetTool::movePin(const QString& pinId, const QPointF& canvasPos)
                 if (other.id == pinId || other.layerId != pin->layerId) continue;
                 const QPointF offset = other.canvasPos - previousPos;
                 const float distance = static_cast<float>(std::hypot(offset.x(), offset.y()));
-                if (distance >= radius) continue;
-                const float t = std::clamp(distance / radius, 0.0f, 1.0f);
-                const float weight = (1.0f - t) * (1.0f - t);
+                const float weight = LayerAbstractUtilities::proportionalEditWeight(
+                    distance, radius);
+                if (weight <= 0.0f) continue;
                 other.canvasPos += delta * weight;
             }
         }
     }
 
-    if (auto* lp = impl_->getLayerPins(pin->layerId)) lp->needsDeform = true;
+    if (auto* lp = impl_->getLayerPins(pin->layerId)) markDeformDirty(*lp);
     return true;
 }
 
@@ -833,15 +911,15 @@ bool ArtifactPuppetTool::movePinAtFrame(const QString& pinId,
             const QPointF offset = otherLocal - currentLocal;
             const float distance = static_cast<float>(
                 std::hypot(offset.x(), offset.y()));
-            if (distance >= radius) continue;
-            const float t = std::clamp(distance / radius, 0.0f, 1.0f);
-            const double weight = (1.0 - t) * (1.0 - t);
+            const double weight = LayerAbstractUtilities::proportionalEditWeight(
+                distance, radius);
+            if (weight <= 0.0) continue;
             other.canvasPos = localToCanvas.map(otherLocal + delta * weight);
         }
     }
     pin->canvasPos = localToCanvas.map(targetLocal);
     if (auto* lp = impl_->getLayerPins(pin->layerId)) {
-        lp->needsDeform = true;
+        markDeformDirty(*lp);
     }
     return true;
 }
@@ -966,7 +1044,7 @@ bool ArtifactPuppetTool::restorePinPositionAnimation(
                 pin->weight = static_cast<float>(std::clamp(weight, 0.0, 1.0));
         }
     }
-    if (auto* lp = impl_->getLayerPins(layerId)) lp->needsDeform = true;
+    if (auto* lp = impl_->getLayerPins(layerId)) markDeformDirty(*lp);
     return true;
 }
 
@@ -1021,8 +1099,7 @@ void ArtifactPuppetTool::evaluatePinPositionsAtCurrentFrame(
             const QJsonObject state = layer->deformation2DData();
             const QString mode = state.value(QStringLiteral("mode")).toString();
             const QJsonArray controls = state.value(
-                mode == QStringLiteral("grid")
-                    ? QStringLiteral("gridControls") : QStringLiteral("pins"))
+                LayerAbstractUtilities::deformationControlsKey(mode))
                 .toArray();
             for (const QJsonValue& value : controls) {
                 if (!value.isObject()) continue;
@@ -1088,7 +1165,7 @@ void ArtifactPuppetTool::evaluatePinPositionsAtCurrentFrame(
     }
     lp->lastEvaluationFrame = timelineFrame;
     lp->lastEvaluationState = deformationState;
-    lp->needsDeform = true;
+    markDeformDirty(*lp);
 }
 
 QJsonObject ArtifactPuppetTool::pinPositionAnimationSnapshot(
@@ -1159,7 +1236,10 @@ float ArtifactPuppetTool::proportionalEditRadius() const
 void ArtifactPuppetTool::setProportionalEditRadius(float radius)
 {
     if (std::isfinite(radius)) {
-        impl_->proportionalEditRadius = std::clamp(radius, 1.0f, 100000.0f);
+        impl_->proportionalEditRadius = std::clamp(
+            radius,
+            LayerAbstractUtilities::kMinProportionalEditRadius,
+            LayerAbstractUtilities::kMaxProportionalEditRadius);
     }
 }
 
@@ -1198,7 +1278,7 @@ void ArtifactPuppetTool::setPinRotation(const QString& pinId, float degrees)
             : 0.0f;
         if (pin->rotation < 0.0f) pin->rotation += 360.0f;
         pin->rotation -= 180.0f;
-        if (auto* lp = impl_->getLayerPins(pin->layerId)) lp->needsDeform = true;
+        if (auto* lp = impl_->getLayerPins(pin->layerId)) markDeformDirty(*lp);
         auto* selection = ArtifactLayerSelectionManager::instance();
         const auto layer = selection ? selection->currentLayer()
                                      : ArtifactAbstractLayerPtr{};
@@ -1229,7 +1309,7 @@ void ArtifactPuppetTool::setPinWeight(const QString& pinId, float weight)
     if (auto* pin = impl_->findPin(pinId)) {
         const LayerID layerId = pin->layerId;
         pin->weight = std::isfinite(weight) ? std::clamp(weight, 0.0f, 1.0f) : 1.0f;
-        if (auto* lp = impl_->getLayerPins(layerId)) lp->needsDeform = true;
+        if (auto* lp = impl_->getLayerPins(layerId)) markDeformDirty(*lp);
         auto* selection = ArtifactLayerSelectionManager::instance();
         const auto layer = selection ? selection->currentLayer()
                                      : ArtifactAbstractLayerPtr{};
@@ -1260,7 +1340,7 @@ void ArtifactPuppetTool::setPinDepth(const QString& pinId, float depth)
     if (auto* pin = impl_->findPin(pinId)) {
         const LayerID layerId = pin->layerId;
         pin->depth = std::isfinite(depth) ? std::clamp(depth, -1.0f, 1.0f) : 0.0f;
-        if (auto* lp = impl_->getLayerPins(layerId)) lp->needsDeform = true;
+        if (auto* lp = impl_->getLayerPins(layerId)) markDeformDirty(*lp);
         persistLayerData(layerId);
     }
 }
@@ -1312,7 +1392,7 @@ void ArtifactPuppetTool::deformLayer(const LayerID& layerId, ArtifactIRenderer* 
     ensureLayerLoaded(layerId);
     auto* lp = impl_->getLayerPins(layerId);
     if (!lp || !lp->engine) return;
-    lp->needsDeform = true;
+    markDeformDirty(*lp);
 }
 
 bool ArtifactPuppetTool::renderDeformedLayer(
@@ -1342,9 +1422,8 @@ bool ArtifactPuppetTool::renderDeformedLayer(
         const QJsonObject savedData = imageLayer->deformation2DData();
         const QString mode = savedData.value(QStringLiteral("mode")).toString();
         const QJsonArray savedControls = savedData.value(
-            mode == QStringLiteral("grid")
-                ? QStringLiteral("gridControls") : QStringLiteral("pins"))
-                .toArray();
+            LayerAbstractUtilities::deformationControlsKey(mode))
+            .toArray();
         if (savedControls.isEmpty()) {
             return false;
         }
@@ -1361,7 +1440,7 @@ bool ArtifactPuppetTool::renderDeformedLayer(
     evaluatePinPositionsAtCurrentFrame(layerId, imageLayer);
     const qint64 evaluationFrame = layerTimelineFrame(imageLayer);
     if (lp->lastEvaluationFrame != evaluationFrame) {
-        lp->needsDeform = true;
+        markDeformDirty(*lp);
         lp->lastEvaluationFrame = evaluationFrame;
     }
 
@@ -1372,7 +1451,7 @@ bool ArtifactPuppetTool::renderDeformedLayer(
         ? imageLayer->sequenceCachedFrameContentKey() : -1;
     const bool cropRectChanged = lp->sourceCropPixels != cropPixels;
     const bool cropMappingChanged = lp->meshDisplayRect != cropLayout.outputLocalRect;
-    if (cropMappingChanged) lp->needsDeform = true;
+    if (cropMappingChanged) markDeformDirty(*lp);
     const bool sourceIdentityChanged = lp->sourceVersion != sourceVersion ||
         lp->sourceFrameIndex != sourceFrameIndex ||
         lp->sourceFrameContentKey != sourceFrameContentKey;
@@ -1420,7 +1499,7 @@ bool ArtifactPuppetTool::renderDeformedLayer(
             lp->sourceWidth = cropPixels.width();
             lp->sourceHeight = cropPixels.height();
             lp->sourceCropPixels = cropPixels;
-            lp->needsDeform = true;
+            markDeformDirty(*lp);
             if (lp->mode == Deformation2DMode::Grid &&
                 !lp->engine->configureGrid(lp->gridColumns, lp->gridRows)) {
                 lp->needsRebind = true;
@@ -1453,40 +1532,10 @@ bool ArtifactPuppetTool::renderDeformedLayer(
             return false;
         }
         const auto evaluateControlCoordinate =
-            [imageLayer, evaluationFrame](const PinRecord& pin, bool xAxis) {
-                bool transformInvertible = false;
-                const QTransform localToCanvas = imageLayer->getGlobalTransform();
-                const QPointF local = localToCanvas.inverted(&transformInvertible)
-                                          .map(pin.canvasPos);
-                const double base = transformInvertible
-                    ? (xAxis ? local.x() : local.y())
-                    : (xAxis ? pin.canvasPos.x() : pin.canvasPos.y());
-                const QString propertyPath = QStringLiteral("deformation2D.%1.%2")
-                    .arg(pin.id, xAxis ? QStringLiteral("x")
-                                       : QStringLiteral("y"));
-                double result = base;
-                if (const auto property = imageLayer->getProperty(propertyPath);
-                    property && property->isAnimatable() &&
-                    property->hasKeyFrames()) {
-                    const ArtifactCore::RationalTime time(
-                        evaluationFrame, imageLayer->keyframeTimeScale());
-                    const QVariant value = property->interpolateValue(time);
-                    if (value.isValid() && std::isfinite(value.toDouble())) {
-                        result = value.toDouble();
-                    }
-                }
-                if (const auto* stack =
-                        static_cast<const ArtifactImageLayer*>(imageLayer)
-                            ->animationLayerStack(propertyPath);
-                    stack && stack->layerCount() > 0) {
-                    result = stack->evaluateWithBase(
-                        ArtifactCore::FramePosition(evaluationFrame),
-                        static_cast<float>(result));
-                }
-                if (!std::isfinite(result)) {
-                    result = base;
-                }
-                return result;
+            [this, imageLayer, evaluationFrame](const PinRecord& pin,
+                                                bool xAxis) {
+                return ArtifactPuppetTool::evaluateControlCoordinate(
+                    pin, xAxis, imageLayer, evaluationFrame);
             };
         const auto toSource = [&](const QPointF& canvasPoint) {
             const QPointF local = canvasToLocal.map(canvasPoint);
@@ -1646,87 +1695,57 @@ QPointF ArtifactPuppetTool::mapDeformationPoint(
     const QTransform& canvasToLocal = lp->canvasToLocal;
     const QRectF& bounds = lp->layerBounds;
     if (lp->mode == Deformation2DMode::Pins) {
-        QPointF pStar;
-        QPointF qStar;
-        double sumWeight = 0.0;
-        bool exactControl = false;
-        QPointF exactTarget;
-        const auto visitConstraints = [&](auto&& visit) {
+        // 制御点生成と MLS 写像は Core の共有ヘルパーへ委譲し、画像メッシュ
+        // 経路と同じ式を使う。座標系だけが違うので layer-local へ写してから渡す。
+        // この関数は頂点ごとに呼ばれるため、拘束点はフレーム内で一度だけ作り直す。
+        const qint64 frame = layerTimelineFrame(layer);
+        // needsDeform は画像メッシュ経路と共有のフラグなのでここでは消費せず、
+        // markDeformDirty が立てた世代カウンタでキャッシュ失効を判定する。
+        const bool cacheValid =
+            lp->shapeConstraintValid &&
+            lp->shapeConstraintBuiltGeneration == lp->shapeConstraintGeneration &&
+            lp->shapeConstraintFrame == frame &&
+            lp->shapeConstraintCanvasToLocal == canvasToLocal;
+        if (!cacheValid) {
+            lp->shapePinScratch.clear();
+            lp->shapePinScratch.reserve(lp->pins.size());
             for (const PinRecord& pin : lp->pins) {
-                if (pin.type == 3) continue; // Overlap changes depth only.
-                const QPointF p = canvasToLocal.map(pin.originalPos);
-                const QPointF q = canvasToLocal.map(
-                    pin.type == 1 ? pin.originalPos : pin.canvasPos);
-                const double weight = std::clamp(
-                    static_cast<double>(std::isfinite(pin.weight) ? pin.weight : 1.0f),
-                    0.0, 1.0);
-                if (pin.type != 2) {
-                    visit(p, q, weight * (pin.type == 1 ? 50.0 : 1.0));
-                    continue;
-                }
-                visit(p, q, weight);
-                const double radius = 20.0 * weight;
-                const double angle = (std::isfinite(pin.rotation)
-                    ? pin.rotation : 0.0f) * 0.017453292519943295;
-                const double cosine = std::cos(angle);
-                const double sine = std::sin(angle);
-                const QPointF offsets[] = {
-                    {radius, 0.0}, {-radius, 0.0},
-                    {0.0, radius}, {0.0, -radius}};
-                for (const QPointF& offset : offsets) {
-                    const QPointF rotated(offset.x() * cosine - offset.y() * sine,
-                                          offset.x() * sine + offset.y() * cosine);
-                    visit(p + offset, q + rotated, weight * 0.5);
-                }
+                ArtifactCore::PuppetPin enginePin;
+                enginePin.id = pin.engineId;
+                enginePin.originalPosition = toPoint2F(
+                    canvasToLocal.map(pin.originalPos));
+                // 現在位置はキーフレームと AnimationLayer を評価した layer-local
+                // 座標から求める。画像メッシュ経路と同じ評価を通すので、同じキー
+                // が Image / Shape で同じ絵になる。evaluateControlCoordinate は
+                // layer-local を返すので、originalPosition と同じ空間に揃える。
+                // Starch は buildPuppetConstraints 側で現在位置を無視する。
+                const QPointF currentLocal(
+                    evaluateControlCoordinate(pin, true, layer, frame),
+                    evaluateControlCoordinate(pin, false, layer, frame));
+                enginePin.currentPosition = toPoint2F(currentLocal);
+                enginePin.type =
+                    static_cast<ArtifactCore::PuppetPinType>(pin.type);
+                enginePin.weight = std::isfinite(pin.weight)
+                    ? std::clamp(pin.weight, 0.0f, 1.0f) : 1.0f;
+                enginePin.rotation = (std::isfinite(pin.rotation)
+                    ? pin.rotation : 0.0f) * 0.017453292519943295f;
+                enginePin.depth = std::isfinite(pin.depth)
+                    ? std::clamp(pin.depth, -1.0f, 1.0f) : 0.0f;
+                lp->shapePinScratch.push_back(std::move(enginePin));
             }
-        };
-        visitConstraints([&](const QPointF& p, const QPointF& q, double weight) {
-            const QPointF delta = localPoint - p;
-            const double distanceSquared = QPointF::dotProduct(delta, delta);
-            if (distanceSquared < 1e-4) {
-                exactControl = true;
-                exactTarget = q;
-                return;
-            }
-            const double w = weight / (distanceSquared + 1e-8);
-            sumWeight += w;
-            pStar += p * w;
-            qStar += q * w;
-        });
-        if (exactControl) return exactTarget;
-        if (!(sumWeight > 0.0) || !std::isfinite(sumWeight)) return localPoint;
-        const double inverseWeight = 1.0 / sumWeight;
-        pStar *= inverseWeight;
-        qStar *= inverseWeight;
-        double mu = 0.0;
-        visitConstraints([&](const QPointF& p, const QPointF&, double weight) {
-            const QPointF delta = localPoint - p;
-            const double distanceSquared = QPointF::dotProduct(delta, delta);
-            const double w = (weight / (distanceSquared + 1e-8)) * inverseWeight;
-            const QPointF pHat = p - pStar;
-            mu += w * QPointF::dotProduct(pHat, pHat);
-        });
-        const QPointF vHat = localPoint - pStar;
-        QPointF mapped = qStar;
-        if (mu > 1e-6 && std::isfinite(mu)) {
-            double a = 0.0;
-            double b = 0.0;
-            visitConstraints([&](const QPointF& p, const QPointF& q, double weight) {
-                const QPointF delta = localPoint - p;
-                const double distanceSquared = QPointF::dotProduct(delta, delta);
-                const double w = (weight / (distanceSquared + 1e-8)) * inverseWeight;
-                const QPointF pHat = p - pStar;
-                const QPointF qHat = q - qStar;
-                a += w * QPointF::dotProduct(pHat, qHat);
-                b += w * (pHat.x() * qHat.y() - pHat.y() * qHat.x());
-            });
-            mapped += QPointF((a * vHat.x() - b * vHat.y()) / mu,
-                              (b * vHat.x() + a * vHat.y()) / mu);
-        } else {
-            mapped += vHat;
+            lp->shapeConstraintScratch =
+                ArtifactCore::buildPuppetConstraints(lp->shapePinScratch);
+            lp->shapeConstraintFrame = frame;
+            lp->shapeConstraintCanvasToLocal = canvasToLocal;
+            lp->shapeConstraintBuiltGeneration = lp->shapeConstraintGeneration;
+            lp->shapeConstraintValid = true;
         }
-        return std::isfinite(mapped.x()) && std::isfinite(mapped.y())
-            ? mapped : localPoint;
+        const cv::Point2f mapped = ArtifactCore::evaluatePuppetMLS(
+            lp->shapeConstraintScratch, toPoint2F(localPoint));
+        const QPointF result(static_cast<double>(mapped.x),
+                             static_cast<double>(mapped.y));
+        return std::isfinite(result.x()) && std::isfinite(result.y())
+            ? result : localPoint;
     }
     if (lp->gridColumns < 2 || lp->gridRows < 2 ||
         lp->pins.size() != static_cast<size_t>(lp->gridColumns * lp->gridRows) ||
@@ -1791,7 +1810,7 @@ void ArtifactPuppetTool::clearPins(const LayerID& layerId)
         lp->pins.clear();
         lp->mode = Deformation2DMode::Pins;
         lp->needsRebind = true;
-        lp->needsDeform = true;
+        markDeformDirty(*lp);
         if (lp->engine) lp->engine->reset();
     }
     impl_->selectedPinId.clear();
@@ -2012,7 +2031,7 @@ void ArtifactPuppetTool::setPinTypeFor(const QString& pinId, int type)
     if (pin) {
         const LayerID layerId = pin->layerId;
         pin->type = std::clamp(type, 0, 3);
-        if (auto* lp = impl_->getLayerPins(layerId)) lp->needsDeform = true;
+        if (auto* lp = impl_->getLayerPins(layerId)) markDeformDirty(*lp);
         persistLayerData(layerId);
     }
 }

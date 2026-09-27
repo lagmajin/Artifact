@@ -15,6 +15,7 @@ export module Artifact.Timeline.KeyframeApplyCommands;
 import Artifact.Composition.Abstract;
 import Artifact.Event.Types;
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Abstract.Utilities;
 import Event.Bus;
 import Property.Abstract;
 import Time.Rational;
@@ -43,7 +44,7 @@ ArtifactCore::AbstractPropertyPtr findLayerPropertyByPath(
     if (grid && (parts[2] == QStringLiteral("rotation") ||
                  parts[2] == QStringLiteral("weight"))) return {};
     const QJsonArray controls = state.value(
-        grid ? QStringLiteral("gridControls") : QStringLiteral("pins"))
+        LayerAbstractUtilities::deformationControlsKey(grid))
         .toArray();
     for (const QJsonValue& value : controls) {
       const QJsonObject control = value.toObject();

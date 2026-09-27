@@ -615,6 +615,7 @@ void handleMouseMove(const QPointF& viewportPos);
   bool resetSelectedPuppetPinRotation();
   bool adjustSelectedPuppetPinWeightAt(const QPointF& viewportPos, float delta);
   bool adjustSelectedPuppetPinDepthAt(const QPointF& viewportPos, float delta);
+  bool setSelectedPuppetPinType(int type);
 bool clearRigSelection();
 bool nudgeSelectedRigBoneRotation(float deltaDegrees);
 bool nudgeSelectedRigControl(const QVector2D &delta);

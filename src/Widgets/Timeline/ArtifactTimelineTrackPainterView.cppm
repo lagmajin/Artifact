@@ -61,6 +61,7 @@ import Artifact.Tool.Service;
 import Artifact.Tool.Manager;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Abstract.Utilities;
 import Layer.Blend;
 import Artifact.Layer.Audio;
 import Artifact.Layer.Image;
@@ -1042,9 +1043,9 @@ QVector<KeyframePropertyRef> collectAnimatablePropertyRefs(
     }
   }
   const QJsonObject deformation = layer->deformation2DData();
-  const QString controlsKey = deformation.value(QStringLiteral("mode"))
-          .toString() == QStringLiteral("grid")
-      ? QStringLiteral("gridControls") : QStringLiteral("pins");
+  const QString controlsKey =
+      LayerAbstractUtilities::deformationControlsKey(
+          deformation.value(QStringLiteral("mode")).toString());
   for (const QJsonValue& value : deformation.value(controlsKey).toArray()) {
     const QString id = value.toObject().value(QStringLiteral("id")).toString();
     if (id.isEmpty()) continue;
@@ -1274,9 +1275,9 @@ void shiftAnimatableLayerKeyframes(const ArtifactCompositionPtr &composition,
     }
   }
   const QJsonObject deformation = layer->deformation2DData();
-  const QString controlsKey = deformation.value(QStringLiteral("mode"))
-          .toString() == QStringLiteral("grid")
-      ? QStringLiteral("gridControls") : QStringLiteral("pins");
+  const QString controlsKey =
+      LayerAbstractUtilities::deformationControlsKey(
+          deformation.value(QStringLiteral("mode")).toString());
   for (const QJsonValue& value : deformation.value(controlsKey).toArray()) {
     const QString id = value.toObject().value(QStringLiteral("id")).toString();
     QStringList fields{QStringLiteral("x"), QStringLiteral("y")};
@@ -1991,9 +1992,9 @@ ArtifactCore::AbstractPropertyPtr findLayerPropertyByPath(
        parts[2] == QStringLiteral("rotation") ||
        parts[2] == QStringLiteral("weight"))) {
     const QJsonObject state = layer->deformation2DData();
-    const QString controlsKey = state.value(QStringLiteral("mode")).toString() ==
-            QStringLiteral("grid")
-        ? QStringLiteral("gridControls") : QStringLiteral("pins");
+    const QString controlsKey =
+        LayerAbstractUtilities::deformationControlsKey(
+            state.value(QStringLiteral("mode")).toString());
     if ((parts[2] == QStringLiteral("rotation") ||
          parts[2] == QStringLiteral("weight")) &&
         controlsKey == QStringLiteral("gridControls")) return {};
@@ -4582,9 +4583,9 @@ bool applyTimelineLayerRangeEdit(const ArtifactAbstractLayerPtr &layer,
       }
     }
     const QJsonObject deformation = layer->deformation2DData();
-    const QString controlsKey = deformation.value(QStringLiteral("mode"))
-            .toString() == QStringLiteral("grid")
-        ? QStringLiteral("gridControls") : QStringLiteral("pins");
+    const QString controlsKey =
+        LayerAbstractUtilities::deformationControlsKey(
+            deformation.value(QStringLiteral("mode")).toString());
     for (const QJsonValue& controlValue :
          deformation.value(controlsKey).toArray()) {
       const QString id = controlValue.toObject().value(
@@ -5412,9 +5413,8 @@ collectAllKeyframeMarkersForLayers(
     }
     const QJsonObject deformation = layer->deformation2DData();
     const QString deformationControlsKey =
-        deformation.value(QStringLiteral("mode")).toString() ==
-                QStringLiteral("grid")
-            ? QStringLiteral("gridControls") : QStringLiteral("pins");
+        LayerAbstractUtilities::deformationControlsKey(
+            deformation.value(QStringLiteral("mode")).toString());
     for (const QJsonValue& controlValue :
          deformation.value(deformationControlsKey).toArray()) {
       const QString id = controlValue.toObject().value(

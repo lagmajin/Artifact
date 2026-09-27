@@ -65,6 +65,7 @@ module Undo.UndoManager;
 import Utils.String.UniString;
 import Artifact.Effect.Abstract;
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Abstract.Utilities;
 import Artifact.Layer.Audio;
 import Artifact.Layer.Text;
 import Artifact.Layer.Clone;
@@ -3114,8 +3115,7 @@ bool applyLayerPropertyKeyframeSnapshot(
             const QJsonObject state = layer->deformation2DData();
             const QString mode = state.value(QStringLiteral("mode")).toString();
             const QJsonArray controls = state.value(
-                mode == QStringLiteral("grid")
-                    ? QStringLiteral("gridControls") : QStringLiteral("pins"))
+                LayerAbstractUtilities::deformationControlsKey(mode))
                 .toArray();
             const bool exists = std::any_of(
                 controls.begin(), controls.end(), [&parts](const QJsonValue& value) {

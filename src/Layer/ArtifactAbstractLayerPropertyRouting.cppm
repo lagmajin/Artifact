@@ -261,9 +261,8 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
             ? std::clamp(coordinate, -180.0, 180.0) : coordinate;
     QJsonObject state = deformation2DData();
     const QString mode = state.value(QStringLiteral("mode")).toString();
-    const QString controlsKey = mode == QStringLiteral("grid")
-                                    ? QStringLiteral("gridControls")
-                                    : QStringLiteral("pins");
+    const QString controlsKey =
+        LayerAbstractUtilities::deformationControlsKey(mode);
     if ((deformationParts[2] == QStringLiteral("rotation") ||
          deformationParts[2] == QStringLiteral("weight")) &&
         mode == QStringLiteral("grid")) return false;

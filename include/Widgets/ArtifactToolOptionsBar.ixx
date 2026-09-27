@@ -37,7 +37,9 @@ public:
                        int polygonSides, bool enabled = true);
   void clearShapeOptions();
   void setPuppetOptions(int mode, int columns, int rows, bool enabled = true,
-                        bool deformerEnabled = true);
+                        bool deformerEnabled = true,
+                        bool proportionalEnabled = false,
+                        double proportionalRadius = 120.0);
   bool eventFilter(QObject *watched, QEvent *event) override;
 
   void optionChanged(const QString &toolName, const QString &optionName,

@@ -159,6 +159,31 @@ QMatrix4x4 matrixFromTransform2D(const QTransform& transform) {
       static_cast<float>(transform.m13()), static_cast<float>(transform.m23()), 0.0f, static_cast<float>(transform.m33()));
 }
 
+// "grid" モードのとき gridControls、それ以外は pins を返す。2D デフォーマの
+// JSON はモード文字列と制御点配列名を別々に持つため、この対応は呼び出し元
+// ごとに複製されていた。ここに集約し、モードを追加するときは 1 箇所の修正で
+// 済むようにする。
+inline QString deformationControlsKey(bool grid) {
+  return grid ? QStringLiteral("gridControls") : QStringLiteral("pins");
+}
+
+inline QString deformationControlsKey(const QString& mode) {
+  return deformationControlsKey(mode == QStringLiteral("grid"));
+}
+
+// プロポーショナル編集（選択ピンに相似て近傍を変形）の影響率。距離 0 で 1、
+// 半径で 0 へ smoothstep で減衰する。レイヤー編集のマスク変形と同じ曲線を使い、
+// 同一の操作感・同一の半径範囲に揃える。
+inline float proportionalEditWeight(float distance, float radius) {
+  if (radius <= 0.0f) return distance <= 0.0f ? 1.0f : 0.0f;
+  if (distance >= radius) return 0.0f;
+  const float t = std::clamp(1.0f - distance / radius, 0.0f, 1.0f);
+  return t * t * (3.0f - 2.0f * t);
+}
+
+inline constexpr float kMinProportionalEditRadius = 8.0f;
+inline constexpr float kMaxProportionalEditRadius = 4096.0f;
+
 QString slugifyEffectId(const QString& text) {
   QString slug;
   bool lastWasDash = false;

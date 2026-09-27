@@ -26635,6 +26635,13 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
         }
 
       } else if (selectedLayer) {
+        // The 2D deformer drives the deformation through
+        // ArtifactPuppetTool::renderDeformedLayer and
+        // Deformation2DStateUndoCommand::apply, both of which require an
+        // ArtifactImageLayer.  Accepting a pin on a text layer would let the
+        // overlay draw while both the deform pass and the undo restore
+        // silently fail, so reject the edit instead of half-applying it.
+        if (!layerUsesTextGizmo(selectedLayer)) {
         const QJsonObject before = selectedLayer->deformation2DData();
         if (app->puppetTool()->addPin(selectedLayer->id(), canvasPt)) {
           const auto modifiers = event->modifiers();
@@ -26661,6 +26668,7 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
 
           app->puppetTool()->deformLayer(selectedLayer->id(), impl_->renderer_.get());
 
+        }
         }
 
       }
@@ -35754,6 +35762,15 @@ bool CompositionRenderController::isTransformGizmoHovered(
       impl_->gizmo3D_->hoverAxis() != GizmoAxis::None) {
     return true;
   }
+  if (impl_->textGizmo_ && impl_->renderer_) {
+    const auto textLayer = comp
+        ? comp->layerById(impl_->selectedLayerId_) : ArtifactAbstractLayerPtr{};
+    if (layerUsesTextGizmo(textLayer) &&
+        impl_->textGizmo_->hitTest(viewportPos, impl_->renderer_.get()) !=
+            TextGizmo::HandleType::None) {
+      return true;
+    }
+  }
   return impl_->gizmo_ && impl_->renderer_ &&
          impl_->gizmo_->handleAtViewportPos(viewportPos,
                                              impl_->renderer_.get()) !=
@@ -35983,6 +36000,45 @@ bool CompositionRenderController::deleteSelectedPuppetPin() {
     }
   }
   app->puppetTool()->setSelectedPinId(QString());
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+  return true;
+}
+
+bool CompositionRenderController::setSelectedPuppetPinType(int type) {
+  auto *app = ArtifactApplicationManager::instance();
+  if (!impl_ || !app || !app->puppetTool()) {
+    return false;
+  }
+  // Grid controls carry type 4 and are identified by the grid mode itself;
+  // only the four pin kinds the user can pick are reachable from the menu.
+  if (type < 0 || type > 3) {
+    return false;
+  }
+  const QString pinId = app->puppetTool()->selectedPinId();
+  if (pinId.isEmpty() || app->puppetTool()->pinTypeFor(pinId) == type) {
+    return false;
+  }
+  const LayerID layerId = app->puppetTool()->pinLayerId(pinId);
+  auto layer = impl_->previewPipeline_.composition()
+      ? impl_->previewPipeline_.composition()->layerById(layerId)
+      : ArtifactAbstractLayerPtr{};
+  const QJsonObject before = layer ? layer->deformation2DData() : QJsonObject{};
+  app->puppetTool()->setPinTypeFor(pinId, type);
+  if (!layer) {
+    impl_->invalidateOverlayComposite();
+    markRenderDirty();
+    return true;
+  }
+  const QJsonObject after = layer->deformation2DData();
+  if (auto* undo = UndoManager::instance()) {
+    if (!undo->push(std::make_unique<Deformation2DStateUndoCommand>(
+            layer, before, after, QStringLiteral("Change Deformer Control Type"),
+            app->puppetTool()))) {
+      app->puppetTool()->restoreLayerData(layerId, before);
+      return false;
+    }
+  }
   impl_->invalidateOverlayComposite();
   markRenderDirty();
   return true;
