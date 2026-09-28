@@ -18065,7 +18065,13 @@ void CompositionRenderController::notifyViewportInteractionActivity() {
 
   if (!wasInteracting) {
 
-    impl_->invalidateBaseComposite();
+    // damage 保持型で再合成する。無引数で呼ぶと damageTracker_ を clearAll し、
+    // 全 previewRenderPipelineSlots_ を full-redraw に戻すため、OnOff のような
+    // 1 操作でも画面全体が作り直される。到達する経路（Effect パラメータ編集・
+    // ギズモドラッグ）はいずれも recordLayerDamage 済みなので、保持型でも
+    // 必要な領域は再合成される。preview LOD は viewportInteracting_ 側で
+    // 制御されるため、引数とは独立に維持される。
+    impl_->invalidateBaseComposite(/*preserveLayerDamage=*/true);
 
   }
 

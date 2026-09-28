@@ -44,7 +44,6 @@ import Artifact.Layer.InitParams;
 import Artifact.Layers.Selection.Manager;
 import Application.AppSettings;
 import Artifact.Service.Playback;
-import Event.Bus;
 import Time.Rational;
 import Settings.Accessibility;
 import Undo.UndoManager;
@@ -1004,26 +1003,19 @@ void notifyLayerPropertyAnimationChanged(const ArtifactAbstractLayerPtr &layer) 
   if (!layer) {
     return;
   }
-  auto *composition =
-      static_cast<ArtifactAbstractComposition *>(layer->composition());
+  // changed() 自身が同期的に LayerChangedEvent を publish する。ここで重ねて
+  // publish すると 1 操作で 2 回発火し、レンダラの invalidation が二重になる。
   layer->setDirty(LayerDirtyFlag::Effect);
   layer->changed();
-  ArtifactCore::globalEventBus().publish(LayerChangedEvent{
-      composition ? composition->id().toString() : QString{},
-      layer->id().toString(), LayerChangedEvent::ChangeType::Modified});
 }
 
 void notifyLayerPropertyPreviewChanged(const ArtifactAbstractLayerPtr &layer) {
   if (!layer) {
     return;
   }
-  auto *composition =
-      static_cast<ArtifactAbstractComposition *>(layer->composition());
+  // notifyLayerPropertyAnimationChanged と同じ理由で changed() に一本化する。
   layer->setDirty(LayerDirtyFlag::Effect);
   layer->changed();
-  ArtifactCore::globalEventBus().publish(LayerChangedEvent{
-      composition ? composition->id().toString() : QString{},
-      layer->id().toString(), LayerChangedEvent::ChangeType::Modified});
 }
 
 bool applyTextAnimatorMutationRequest(ArtifactTextLayer &textLayer,

@@ -101,9 +101,13 @@ static QRectF computeBounds(const FormParticleSettings& settings)
     const int columns = std::max(1, settings.columns);
     const int rows = std::max(1, settings.rows);
     const int depth = std::max(1, settings.depth);
-    const float width = std::max(1.0f, static_cast<float>(columns - 1) * std::max(1.0f, settings.spacingX) + settings.particleSize * 2.0f);
-    const float height = std::max(1.0f, static_cast<float>(rows - 1) * std::max(1.0f, settings.spacingY) + settings.particleSize * 2.0f);
-    const float maxDepth = std::max(1.0f, static_cast<float>(depth - 1) * std::max(1.0f, settings.spacingZ) + settings.particleSize * 2.0f);
+    // Form particles are drawn only on the GPU path, where ParticleRenderer
+    // builds a quad spanning +-size*10 (see ParticleRenderer VS halfWidth). The
+    // per-point padding must use that same radius, not particleSize directly.
+    const float particleRadius = std::max(1.0f, settings.particleSize) * 10.0f;
+    const float width = std::max(1.0f, static_cast<float>(columns - 1) * std::max(1.0f, settings.spacingX) + particleRadius * 2.0f);
+    const float height = std::max(1.0f, static_cast<float>(rows - 1) * std::max(1.0f, settings.spacingY) + particleRadius * 2.0f);
+    const float maxDepth = std::max(1.0f, static_cast<float>(depth - 1) * std::max(1.0f, settings.spacingZ) + particleRadius * 2.0f);
     return QRectF(-width * 0.5, -height * 0.5, width, std::max(height, maxDepth));
 }
 
