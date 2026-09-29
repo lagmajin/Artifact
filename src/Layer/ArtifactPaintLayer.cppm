@@ -7,11 +7,10 @@ module;
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QMatrix4x4>
-#include <QImage>
 #include <QObject>
+#include <QUuid>
 #include <QString>
 #include <QRectF>
-#include <QPainter>
 
 module Artifact.Layer.Paint;
 
@@ -87,6 +86,8 @@ public:
     std::map<int64_t, ArtifactCore::ImageF32x4RGBAWithCache> frames_;
     std::map<int64_t, std::vector<ArtifactCore::ImageF32x4RGBAWithCache>> undoStacks_;
     std::map<int64_t, ArtifactCore::ImageF32x4RGBAWithCache> clearUndoFrames_;
+    std::map<int64_t, quint64> frameVersions_;
+    QUuid textureIdentity_;
     QSize defaultSize_{100, 100};
     ArtifactAbstractComposition* composition_ = nullptr;
 
@@ -129,15 +130,25 @@ void ArtifactPaintLayer::draw(ArtifactIRenderer* renderer) {
     FramePosition frame(currentFrame());
     auto* buf = frameBuffer(frame);
     if (!buf || buf->isEmpty()) return;
-    QImage image = buf->toQImage();
-    renderer->drawSprite(0, 0,
-        static_cast<float>(image.width()),
-        static_cast<float>(image.height()),
-        image, opacity());
+    const auto revision = impl_->frameVersions_.find(frame.framePosition());
+    const quint64 sourceVersion = revision != impl_->frameVersions_.end()
+        ? revision->second : 0;
+    if (impl_->textureIdentity_.isNull()) {
+        impl_->textureIdentity_ = QUuid(id().toString());
+    }
+    auto* texture = renderer->textureForImage(
+        *buf, impl_->textureIdentity_, sourceVersion, frame.framePosition());
+    if (!texture) return;
+    renderer->drawSprite(0, 0, static_cast<float>(buf->width()),
+                         static_cast<float>(buf->height()), texture, opacity());
 }
 
 void ArtifactPaintLayer::newFrame(const FramePosition& pos) {
+    const bool existed = hasFrame(pos);
     impl_->getOrCreateFrame(pos.framePosition());
+    if (!existed) {
+        markDirty(pos);
+    }
 }
 
 bool ArtifactPaintLayer::hasFrame(const FramePosition& pos) const {
@@ -148,16 +159,24 @@ void ArtifactPaintLayer::removeFrame(const FramePosition& pos) {
     impl_->frames_.erase(pos.framePosition());
     impl_->undoStacks_.erase(pos.framePosition());
     impl_->clearUndoFrames_.erase(pos.framePosition());
+    markDirty(pos);
+    changed();
 }
 
 void ArtifactPaintLayer::duplicateFrame(const FramePosition& src, const FramePosition& dst) {
     auto srcIt = impl_->frames_.find(src.framePosition());
     if (srcIt == impl_->frames_.end()) return;
     impl_->frames_[dst.framePosition()] = srcIt->second;
+    markDirty(dst);
+    changed();
 }
 
 void ArtifactPaintLayer::clearAllFrames() {
     impl_->clearUndoFrames_ = impl_->frames_;
+    for (const auto& [frame, buffer] : impl_->frames_) {
+        Q_UNUSED(buffer);
+        markDirty(FramePosition(frame));
+    }
     impl_->frames_.clear();
     impl_->undoStacks_.clear();
     markDirty(FramePosition(currentFrame()));
@@ -418,7 +437,10 @@ ArtifactCore::ImageF32x4_RGBA* ArtifactPaintLayer::frameBuffer(const FramePositi
 }
 
 void ArtifactPaintLayer::markDirty(const FramePosition& pos) {
-    Q_UNUSED(pos);
+    auto& revision = impl_->frameVersions_[pos.framePosition()];
+    if (++revision == 0) {
+        revision = 1;
+    }
 }
 
 std::vector<ArtifactCore::PropertyGroup> ArtifactPaintLayer::getLayerPropertyGroups() const {
@@ -453,6 +475,10 @@ QJsonObject ArtifactPaintLayer::toJson() const {
 
 void ArtifactPaintLayer::fromJsonProperties(const QJsonObject& obj) {
     ArtifactAbstract2DLayer::fromJsonProperties(obj);
+    for (const auto& [frame, buffer] : impl_->frames_) {
+        Q_UNUSED(buffer);
+        markDirty(FramePosition(frame));
+    }
     impl_->frames_.clear();
     impl_->undoStacks_.clear();
     impl_->defaultSize_.setWidth(std::clamp(obj.value("defaultWidth").toInt(100), 1, 100000));
@@ -467,6 +493,8 @@ void ArtifactPaintLayer::fromJsonProperties(const QJsonObject& obj) {
         auto& buffer = impl_->frames_[frame];
         if (!frameBufferFromJson(fObj, buffer)) {
             impl_->frames_.erase(frame);
+        } else {
+            markDirty(FramePosition(frame));
         }
     }
 }
