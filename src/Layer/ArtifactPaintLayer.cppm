@@ -72,9 +72,13 @@ bool frameBufferFromJson(const QJsonObject& obj, ArtifactCore::ImageF32x4RGBAWit
     if (pixelsB64.isEmpty()) {
         return true;
     }
+    const std::size_t maxEncodedBytes = ((requiredBytes + 2u) / 3u) * 4u;
+    if (pixelsB64.size() > static_cast<qsizetype>(maxEncodedBytes)) {
+        return false;
+    }
 
     const QByteArray bytes = QByteArray::fromBase64(pixelsB64.toLatin1());
-    if (bytes.size() < static_cast<qsizetype>(requiredBytes)) {
+    if (bytes.size() != static_cast<qsizetype>(requiredBytes)) {
         return false;
     }
 
