@@ -31795,11 +31795,24 @@ void CompositionRenderController::handleMouseRelease() {
         ? impl_->paintStrokeLayerId_ : impl_->selectedLayerId_;
     const auto layer = comp ? comp->layerById(brushLayerId)
                             : ArtifactAbstractLayerPtr{};
+    auto *brushTool = ArtifactApplicationManager::instance()
+                          ? ArtifactApplicationManager::instance()->brushTool()
+                          : nullptr;
+    if (!layer || !impl_->renderer_) {
+      if (brushTool && brushTool->isDragging()) {
+        brushTool->cancelStroke(layer);
+      }
+      impl_->paintStrokeLayerId_ = LayerID::Nil();
+      impl_->brushCursorVisible_ = false;
+      impl_->invalidateOverlayComposite();
+      markRenderDirty();
+      return;
+    }
     if (layer && impl_->renderer_) {
       const auto canvas = impl_->renderer_->viewportToCanvas(
           {static_cast<float>(impl_->brushLastViewportPos_.x()),
            static_cast<float>(impl_->brushLastViewportPos_.y())});
-      if (auto *brushTool = ArtifactApplicationManager::instance()->brushTool()) {
+      if (brushTool) {
         QPointF brushPosition(canvas.x, canvas.y);
         bool canDispatch = true;
         if (auto *paintLayer = dynamic_cast<ArtifactPaintLayer *>(layer.get())) {
@@ -31808,7 +31821,11 @@ void CompositionRenderController::handleMouseRelease() {
           canDispatch = invertible;
           if (canDispatch) brushPosition = inverse.map(brushPosition);
         }
-        if (canDispatch) brushTool->mouseReleaseEvent(layer, brushPosition);
+        if (canDispatch) {
+          brushTool->mouseReleaseEvent(layer, brushPosition);
+        } else {
+          brushTool->cancelStroke(layer);
+        }
         impl_->paintStrokeLayerId_ = LayerID::Nil();
         if (activeTool == ToolType::RotoBrush && impl_->rotoBrushEngine_) {
           if (auto *imageLayer = dynamic_cast<ArtifactImageLayer *>(layer.get())) {
@@ -36023,7 +36040,7 @@ bool CompositionRenderController::cancelBrushStroke() {
   auto *brushTool = ArtifactApplicationManager::instance()
                         ? ArtifactApplicationManager::instance()->brushTool()
                         : nullptr;
-  if (!layer || !brushTool || !brushTool->isDragging()) {
+  if (!brushTool || !brushTool->isDragging()) {
     return false;
   }
   brushTool->cancelStroke(layer);
