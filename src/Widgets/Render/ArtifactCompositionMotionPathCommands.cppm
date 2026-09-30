@@ -16,6 +16,7 @@ import Artifact.Event.Types;
 import Artifact.Layer.Abstract;
 import Animation.Transform3D;
 import Event.Bus;
+import Math.Vec;
 import Property.Abstract;
 import Time.Rational;
 import Undo.UndoManager;
@@ -122,8 +123,7 @@ struct MotionPathSample {
 
 struct MotionPathPositionSnapshot {
   bool hasPositionKey = false;
-  float x = 0.0f;
-  float y = 0.0f;
+  ArtifactCore::Coordinates::LayerParentPoint2 position{};
 };
 
 struct MotionPathKeySnapshot {
@@ -156,8 +156,8 @@ private:
     for (const auto &snapshot : snapshots) {
       const auto time = ArtifactCore::RationalTime(snapshot.frame, timeScale_);
       if (snapshot.value.hasPositionKey) {
-        transform.setPositionKeyFrameValueAt(time, snapshot.value.x,
-                                              snapshot.value.y);
+        transform.setPositionKeyFrameValueAt(time, snapshot.value.position.x,
+                                              snapshot.value.position.y);
         if (snapshot.hasTangents) {
           transform.setPositionKeyFrameSpatialTangentsAt(time,
                                                          snapshot.tangents);
@@ -214,7 +214,8 @@ private:
     const auto &time = time_;
     auto &t3d = layer->transform3D();
     if (snapshot.hasPositionKey) {
-      t3d.setPositionKeyFrameValueAt(time, snapshot.x, snapshot.y);
+      t3d.setPositionKeyFrameValueAt(
+          time, snapshot.position.x, snapshot.position.y);
     } else {
       t3d.removePositionKeyFrameAt(time);
     }
