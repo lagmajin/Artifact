@@ -2,6 +2,7 @@ module;
 #include <wobjectimpl.h>
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <utility>
 #include <QByteArray>
 #include <QJsonArray>
@@ -24,6 +25,7 @@ import Artifact.Layers.SolidImage;
 import Artifact.Render.IRenderer;
 import Image.ImageF32x4RGBAWithCache;
 import Image.ImageF32x4_RGBA;
+import Core.ArtifactArray;
 import FloatRGBA;
 import Utils.Id;
 
@@ -90,9 +92,18 @@ bool frameBufferFromJson(const QJsonObject& obj, ArtifactCore::ImageF32x4RGBAWit
 
 class ArtifactPaintLayer::Impl {
 public:
+    struct UndoPatch {
+        QRect rect;
+        ArtifactCore::ImageF32x4_RGBA pixels;
+    };
+    struct UndoStroke {
+        ArtifactCore::ArtifactArray<UndoPatch> patches;
+    };
     std::map<int64_t, ArtifactCore::ImageF32x4RGBAWithCache> frames_;
-    std::map<int64_t, std::vector<ArtifactCore::ImageF32x4RGBAWithCache>> undoStacks_;
+    std::map<int64_t, ArtifactCore::ArtifactArray<UndoStroke>> undoStacks_;
     std::map<int64_t, ArtifactCore::ImageF32x4RGBAWithCache> clearUndoFrames_;
+    int64_t activeUndoFrame_ = -1;
+    bool activeUndoStroke_ = false;
     std::map<int64_t, quint64> frameVersions_;
     QUuid textureIdentity_;
     ArtifactCore::LayerID targetLayerId_{ArtifactCore::Id::Nil()};
@@ -109,6 +120,42 @@ public:
             return buf;
         }
         return it->second;
+    }
+
+    void beginUndoStroke(int64_t frame) {
+        auto& history = undoStacks_[frame];
+        history.emplace_back();
+        if (history.size() > 20) {
+            history.removeAt(0);
+        }
+        activeUndoFrame_ = frame;
+        activeUndoStroke_ = true;
+    }
+
+    void appendUndoPatch(int64_t frame, const ArtifactCore::ImageF32x4_RGBA& image,
+                         const QRect& rect) {
+        if (!activeUndoStroke_ || activeUndoFrame_ != frame || rect.isEmpty()) {
+            return;
+        }
+        auto history = undoStacks_.find(frame);
+        if (history == undoStacks_.end() || history->second.isEmpty()) {
+            activeUndoStroke_ = false;
+            return;
+        }
+        UndoPatch patch;
+        patch.rect = rect;
+        patch.pixels.resize(rect.width(), rect.height());
+        const auto* source = image.rgba32fData();
+        auto* destination = patch.pixels.rgba32fData();
+        if (!source || !destination) return;
+        const std::size_t rowBytes = static_cast<std::size_t>(rect.width()) * 4u * sizeof(float);
+        for (int row = 0; row < rect.height(); ++row) {
+            const auto* rowSource = source +
+                (static_cast<std::size_t>(rect.y() + row) * image.width() + rect.x()) * 4u;
+            auto* rowDestination = destination + static_cast<std::size_t>(row) * rect.width() * 4u;
+            std::memcpy(rowDestination, rowSource, rowBytes);
+        }
+        history->second.back().patches.append(std::move(patch));
     }
 };
 
@@ -280,6 +327,9 @@ bool ArtifactPaintLayer::hasFrame(const FramePosition& pos) const {
 }
 
 void ArtifactPaintLayer::removeFrame(const FramePosition& pos) {
+    if (impl_->activeUndoFrame_ == pos.framePosition()) {
+        impl_->activeUndoStroke_ = false;
+    }
     impl_->frames_.erase(pos.framePosition());
     impl_->undoStacks_.erase(pos.framePosition());
     impl_->clearUndoFrames_.erase(pos.framePosition());
@@ -296,6 +346,8 @@ void ArtifactPaintLayer::duplicateFrame(const FramePosition& src, const FramePos
 }
 
 void ArtifactPaintLayer::clearAllFrames() {
+    impl_->activeUndoStroke_ = false;
+    impl_->undoStacks_.clear();
     impl_->clearUndoFrames_ = impl_->frames_;
     for (const auto& [frame, buffer] : impl_->frames_) {
         Q_UNUSED(buffer);
@@ -324,15 +376,43 @@ void ArtifactPaintLayer::applyStrokeAtFrame(const BrushStroke& stroke, const Fra
         impl_->clearUndoFrames_.clear();
     }
     auto& buf = impl_->getOrCreateFrame(frame.framePosition());
-    if (stroke.recordUndo) {
-        impl_->undoStacks_[frame.framePosition()].push_back(buf);
-        if (impl_->undoStacks_[frame.framePosition()].size() > 20)
-            impl_->undoStacks_[frame.framePosition()].erase(impl_->undoStacks_[frame.framePosition()].begin());
-    }
-
     auto& img = buf.image();
     int w = img.width(), h = img.height();
     if (w <= 0 || h <= 0) return;
+
+    double minX = static_cast<double>(w);
+    double minY = static_cast<double>(h);
+    double maxX = 0.0;
+    double maxY = 0.0;
+    bool hasFinitePoint = false;
+    const double brushExtent = std::max(0.001, static_cast<double>(stroke.radius)) *
+        (1.0 + std::clamp(static_cast<double>(stroke.sizeJitter), 0.0, 1.0) +
+         std::clamp(static_cast<double>(stroke.scatter), 0.0, 1.0)) + 2.0;
+    for (const auto& point : stroke.points) {
+        if (!std::isfinite(point.x()) || !std::isfinite(point.y())) continue;
+        hasFinitePoint = true;
+        minX = std::min(minX, std::clamp(point.x() - brushExtent, 0.0, static_cast<double>(w)));
+        minY = std::min(minY, std::clamp(point.y() - brushExtent, 0.0, static_cast<double>(h)));
+        maxX = std::max(maxX, std::clamp(point.x() + brushExtent, 0.0, static_cast<double>(w)));
+        maxY = std::max(maxY, std::clamp(point.y() + brushExtent, 0.0, static_cast<double>(h)));
+    }
+    const QRect undoRect = hasFinitePoint && maxX > minX && maxY > minY
+        ? QRect(static_cast<int>(std::floor(minX)), static_cast<int>(std::floor(minY)),
+                static_cast<int>(std::ceil(maxX)) - static_cast<int>(std::floor(minX)),
+                static_cast<int>(std::ceil(maxY)) - static_cast<int>(std::floor(minY)))
+        : QRect();
+    if (stroke.recordUndo && hasFinitePoint) {
+        impl_->beginUndoStroke(frame.framePosition());
+    }
+    if (hasFinitePoint) {
+        const bool continueStroke = impl_->activeUndoStroke_ &&
+            impl_->activeUndoFrame_ == frame.framePosition();
+        impl_->appendUndoPatch(frame.framePosition(), img, undoRect);
+        if (!stroke.recordUndo && !continueStroke) {
+            impl_->activeUndoStroke_ = false;
+        }
+    }
+
     float* pixels = img.rgba32fData();
 
     const float baseRadius = std::max(0.001f, stroke.radius);
@@ -431,10 +511,14 @@ void ArtifactPaintLayer::applyStrokeAtFrame(const BrushStroke& stroke, const Fra
             }
         }
     }
+    if (stroke.finalizeUndo && impl_->activeUndoFrame_ == frame.framePosition()) {
+        impl_->activeUndoStroke_ = false;
+    }
     markDirty(frame);
 }
 
 void ArtifactPaintLayer::undoLastStroke() {
+    impl_->activeUndoStroke_ = false;
     if (!impl_->clearUndoFrames_.empty()) {
         impl_->frames_ = std::move(impl_->clearUndoFrames_);
         impl_->clearUndoFrames_.clear();
@@ -444,9 +528,29 @@ void ArtifactPaintLayer::undoLastStroke() {
     }
     FramePosition frame(currentFrame());
     auto it = impl_->undoStacks_.find(frame.framePosition());
-    if (it == impl_->undoStacks_.end() || it->second.empty()) return;
-    impl_->frames_[frame.framePosition()] = it->second.back();
-    it->second.pop_back();
+    if (it == impl_->undoStacks_.end() || it->second.isEmpty()) return;
+    auto bufferIt = impl_->frames_.find(frame.framePosition());
+    if (bufferIt == impl_->frames_.end()) return;
+    auto& pixels = bufferIt->second.image();
+    auto* destination = pixels.rgba32fData();
+    const int width = pixels.width();
+    auto& patches = it->second.back().patches;
+    for (std::size_t patchIndex = patches.size(); patchIndex > 0; --patchIndex) {
+        const auto& patch = patches[patchIndex - 1];
+        const auto* source = patch.pixels.rgba32fData();
+        if (!source || patch.rect.isEmpty() || patch.rect.x() < 0 || patch.rect.y() < 0 ||
+            patch.rect.right() >= pixels.width() || patch.rect.bottom() >= pixels.height()) {
+            continue;
+        }
+        const std::size_t rowBytes = static_cast<std::size_t>(patch.rect.width()) * 4u * sizeof(float);
+        for (int row = 0; row < patch.rect.height(); ++row) {
+            auto* rowDestination = destination +
+                (static_cast<std::size_t>(patch.rect.y() + row) * width + patch.rect.x()) * 4u;
+            const auto* rowSource = source + static_cast<std::size_t>(row) * patch.rect.width() * 4u;
+            std::memcpy(rowDestination, rowSource, rowBytes);
+        }
+    }
+    it->second.removeLast();
     markDirty(frame);
     changed();
 }
@@ -488,20 +592,10 @@ void ArtifactPaintLayer::applyCloneStampFromLayerAtFrame(
         return;
     }
     radius = std::clamp(radius, 0.5f, 10000.0f);
-    const float* sourceData = sourceImage.rgba32fData();
-    if (recordUndo) {
-        impl_->clearUndoFrames_.clear();
-        impl_->undoStacks_[targetFrame.framePosition()].push_back(buffer);
-        auto& history = impl_->undoStacks_[targetFrame.framePosition()];
-        if (history.size() > 20) {
-            history.erase(history.begin());
-        }
-    }
-
     const int diameter = std::max(1, static_cast<int>(std::ceil(radius * 2.0f)));
     std::vector<float> sourcePixels(static_cast<size_t>(diameter) * diameter * 4u,
                                     0.0f);
-    float* pixels = image.rgba32fData();
+    const float* sourceData = sourceImage.rgba32fData();
     const int sourceLeft = static_cast<int>(std::floor(sourcePos.x() - radius));
     const int sourceTop = static_cast<int>(std::floor(sourcePos.y() - radius));
     for (int y = 0; y < diameter; ++y) {
@@ -515,11 +609,30 @@ void ArtifactPaintLayer::applyCloneStampFromLayerAtFrame(
             std::copy(src, src + 4, dst);
         }
     }
+
+    if (recordUndo) {
+        impl_->clearUndoFrames_.clear();
+        impl_->activeUndoStroke_ = false;
+        impl_->beginUndoStroke(targetFrame.framePosition());
+    }
+
+    float* pixels = image.rgba32fData();
     const float safeRadius = std::max(0.5f, radius);
     const float safeHardness = std::clamp(hardness, 0.0f, 1.0f);
     const float safeOpacity = std::clamp(opacity, 0.0f, 1.0f);
     const int destLeft = static_cast<int>(std::floor(destinationPos.x() - radius));
     const int destTop = static_cast<int>(std::floor(destinationPos.y() - radius));
+    const int patchLeft = std::clamp(destLeft, 0, width);
+    const int patchTop = std::clamp(destTop, 0, height);
+    const int patchRight = static_cast<int>(std::clamp(
+        static_cast<int64_t>(destLeft) + diameter, int64_t{0}, static_cast<int64_t>(width)));
+    const int patchBottom = static_cast<int>(std::clamp(
+        static_cast<int64_t>(destTop) + diameter, int64_t{0}, static_cast<int64_t>(height)));
+    if (recordUndo) {
+        impl_->appendUndoPatch(targetFrame.framePosition(), image,
+            QRect(patchLeft, patchTop, std::max(0, patchRight - patchLeft),
+                  std::max(0, patchBottom - patchTop)));
+    }
     for (int y = 0; y < diameter; ++y) {
         for (int x = 0; x < diameter; ++x) {
             const float dx = static_cast<float>(x) - radius;
@@ -545,6 +658,9 @@ void ArtifactPaintLayer::applyCloneStampFromLayerAtFrame(
             dst[3] = dst[3] * inverse + alpha;
         }
     }
+    if (impl_->activeUndoFrame_ == targetFrame.framePosition()) {
+        impl_->activeUndoStroke_ = false;
+    }
     markDirty(targetFrame);
     changed();
 }
@@ -552,7 +668,7 @@ void ArtifactPaintLayer::applyCloneStampFromLayerAtFrame(
 bool ArtifactPaintLayer::canUndo() const {
     FramePosition frame(currentFrame());
     auto it = impl_->undoStacks_.find(frame.framePosition());
-    return it != impl_->undoStacks_.end() && !it->second.empty();
+    return it != impl_->undoStacks_.end() && !it->second.isEmpty();
 }
 
 ArtifactCore::ImageF32x4_RGBA* ArtifactPaintLayer::frameBuffer(const FramePosition& pos) {
@@ -608,6 +724,7 @@ void ArtifactPaintLayer::fromJsonProperties(const QJsonObject& obj) {
     }
     impl_->frames_.clear();
     impl_->undoStacks_.clear();
+    impl_->activeUndoStroke_ = false;
     impl_->defaultSize_.setWidth(std::clamp(obj.value("defaultWidth").toInt(100), 1, 100000));
     impl_->defaultSize_.setHeight(std::clamp(obj.value("defaultHeight").toInt(100), 1, 100000));
     const QString targetLayerId = obj.value("targetLayerId").toString().trimmed();

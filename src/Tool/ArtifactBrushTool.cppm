@@ -121,6 +121,7 @@ bool ArtifactBrushTool::mouseMoveEvent(
     // リアルタイム適用（点が溜まりすぎる前に逐次適用）
     if (currentStroke_.points.size() >= 5) {
         currentStroke_.recordUndo = !undoRecorded_;
+        currentStroke_.finalizeUndo = false;
         if (paintLayer) paintLayer->applyStroke(currentStroke_);
         undoRecorded_ = true;
         currentStroke_.points.clear();
@@ -171,6 +172,7 @@ bool ArtifactBrushTool::mouseReleaseEvent(
             activeStrokePoints_.push_back(canvasPos);
         }
         currentStroke_.recordUndo = !undoRecorded_;
+        currentStroke_.finalizeUndo = true;
         if (paintLayer) paintLayer->applyStroke(currentStroke_);
         lastStrokePoints_ = activeStrokePoints_;
     }

@@ -47,6 +47,7 @@ struct BrushStroke {
     float roundnessJitter = 0.0f;
     float flowJitter = 0.0f;
     bool recordUndo = true;
+    bool finalizeUndo = true;
     bool eraser = false;
 };
 
