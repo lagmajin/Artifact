@@ -13249,6 +13249,8 @@ public:
 
   QPointF brushLastViewportPos_;
 
+  LayerID paintStrokeLayerId_;
+
   bool brushCursorVisible_ = false;
 
   bool cloneStampSourceSet_ = false;
@@ -26472,6 +26474,7 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
       (activeTool == ToolType::Brush || activeTool == ToolType::Eraser) &&
       (!selectedLayer ||
        dynamic_cast<ArtifactPaintLayer *>(selectedLayer.get()) == nullptr)) {
+    impl_->paintStrokeLayerId_ = LayerID::Nil();
     const auto targetLayer = selectedLayer;
     const bool paintableTarget = selectedLayer &&
         (dynamic_cast<ArtifactImageLayer *>(selectedLayer.get()) ||
@@ -26485,6 +26488,30 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
         event->accept();
         return;
       }
+      const QRectF targetBounds = targetLayer->localBounds();
+      const auto targetSourceSize = targetLayer->sourceSize();
+      const QSize targetSize = targetSourceSize.width > 0 &&
+                                       targetSourceSize.height > 0
+          ? QSize(targetSourceSize.width, targetSourceSize.height)
+          : QSize(static_cast<int>(std::ceil(targetBounds.width())),
+                  static_cast<int>(std::ceil(targetBounds.height())));
+      constexpr quint64 kMaxPaintFrameBytes = 512ull * 1024ull * 1024ull;
+      constexpr quint64 kBytesPerPaintPixel = 4ull * sizeof(float);
+      const quint64 paintFrameBytes =
+          static_cast<quint64>(std::max(0, targetSize.width())) *
+          static_cast<quint64>(std::max(0, targetSize.height())) *
+          kBytesPerPaintPixel;
+      if (targetSize.width() <= 0 || targetSize.height() <= 0 ||
+          targetSize.width() > 16384 || targetSize.height() > 16384 ||
+          paintFrameBytes > kMaxPaintFrameBytes) {
+        setInfoOverlayText(
+            activeTool == ToolType::Eraser ? QStringLiteral("Eraser")
+                                           : QStringLiteral("Brush"),
+            QStringLiteral("Layer exceeds the 512 MiB paint-frame limit"));
+        event->accept();
+        return;
+      }
+      const QSize boundedTargetSize(targetSize.width(), targetSize.height());
       const QString layerName =
           uniqueLayerNameForCurrentComposition(QStringLiteral("Paint"));
       ArtifactLayerInitParams params(layerName, LayerType::Paint);
@@ -26494,30 +26521,6 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
       if (selectedLayer && paintableTarget) {
         auto *paintLayer = dynamic_cast<ArtifactPaintLayer *>(selectedLayer.get());
         if (paintLayer) {
-          const QRectF targetBounds = targetLayer->localBounds();
-          const auto targetSourceSize = targetLayer->sourceSize();
-          const QSize targetSize = targetSourceSize.width > 0 &&
-                                           targetSourceSize.height > 0
-              ? QSize(targetSourceSize.width, targetSourceSize.height)
-              : QSize(static_cast<int>(std::ceil(targetBounds.width())),
-                      static_cast<int>(std::ceil(targetBounds.height())));
-          const QSize boundedTargetSize(
-              std::clamp(targetSize.width(), 1, 16384),
-              std::clamp(targetSize.height(), 1, 16384));
-          constexpr quint64 kMaxPaintFrameBytes = 512ull * 1024ull * 1024ull;
-          constexpr quint64 kBytesPerPaintPixel = 4ull * sizeof(float);
-          const quint64 paintFrameBytes =
-              static_cast<quint64>(boundedTargetSize.width()) *
-              static_cast<quint64>(boundedTargetSize.height()) *
-              kBytesPerPaintPixel;
-          if (paintFrameBytes > kMaxPaintFrameBytes) {
-            setInfoOverlayText(
-                activeTool == ToolType::Eraser ? QStringLiteral("Eraser")
-                                               : QStringLiteral("Brush"),
-                QStringLiteral("Layer exceeds the 512 MiB paint-frame limit"));
-            event->accept();
-            return;
-          }
           paintLayer->setSurfaceSize(boundedTargetSize);
           paintLayer->setTargetLayerId(targetLayer->id());
           paintLayer->changed();
@@ -26538,11 +26541,21 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
             const QTransform paintInverse =
                 paintLayer->paintSurfaceTransform().inverted(&paintInvertible);
             if (paintInvertible) {
+              impl_->paintStrokeLayerId_ = paintLayer->id();
               brushTool->setRotoInputMode(false);
               brushTool->setEraserMode(activeTool == ToolType::Eraser);
               brushTool->mousePressEvent(
                   selectedLayer,
                   paintInverse.map(QPointF(canvas.x, canvas.y)));
+            } else {
+              service->removeLayerFromComposition(comp->id(), paintLayer->id());
+              impl_->paintStrokeLayerId_ = LayerID::Nil();
+              setInfoOverlayText(
+                  activeTool == ToolType::Eraser ? QStringLiteral("Eraser")
+                                                 : QStringLiteral("Brush"),
+                  QStringLiteral("Paint surface transform is not invertible"));
+              event->accept();
+              return;
             }
           }
           impl_->brushCursorCanvasPos_ = QPointF(canvas.x, canvas.y);
@@ -26623,6 +26636,7 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
           return;
         }
         brushPosition = inverse.map(brushPosition);
+        impl_->paintStrokeLayerId_ = paintLayer->id();
       }
       brushTool->mousePressEvent(selectedLayer, brushPosition);
     }
@@ -29399,7 +29413,9 @@ void CompositionRenderController::handleMouseMove(
        activeTool == ToolType::Eraser) &&
       impl_->renderer_) {
     const auto comp = impl_->previewPipeline_.composition();
-    const auto layer = comp ? comp->layerById(impl_->selectedLayerId_)
+    const LayerID brushLayerId = !impl_->paintStrokeLayerId_.isNil()
+        ? impl_->paintStrokeLayerId_ : impl_->selectedLayerId_;
+    const auto layer = comp ? comp->layerById(brushLayerId)
                             : ArtifactAbstractLayerPtr{};
     const auto canvas = impl_->renderer_->viewportToCanvas(
         {static_cast<float>(viewportPos.x()),
@@ -31743,7 +31759,9 @@ void CompositionRenderController::handleMouseRelease() {
   if (activeTool == ToolType::Brush || activeTool == ToolType::RotoBrush ||
       activeTool == ToolType::Eraser) {
     const auto comp = impl_->previewPipeline_.composition();
-    const auto layer = comp ? comp->layerById(impl_->selectedLayerId_)
+    const LayerID brushLayerId = !impl_->paintStrokeLayerId_.isNil()
+        ? impl_->paintStrokeLayerId_ : impl_->selectedLayerId_;
+    const auto layer = comp ? comp->layerById(brushLayerId)
                             : ArtifactAbstractLayerPtr{};
     if (layer && impl_->renderer_) {
       const auto canvas = impl_->renderer_->viewportToCanvas(
@@ -31759,6 +31777,7 @@ void CompositionRenderController::handleMouseRelease() {
           if (canDispatch) brushPosition = inverse.map(brushPosition);
         }
         if (canDispatch) brushTool->mouseReleaseEvent(layer, brushPosition);
+        impl_->paintStrokeLayerId_ = LayerID::Nil();
         if (activeTool == ToolType::RotoBrush && impl_->rotoBrushEngine_) {
           if (auto *imageLayer = dynamic_cast<ArtifactImageLayer *>(layer.get())) {
             const QImage source = imageLayer->toQImage();
@@ -31857,6 +31876,7 @@ void CompositionRenderController::handleMouseRelease() {
         }
       }
     }
+    impl_->paintStrokeLayerId_ = LayerID::Nil();
     impl_->brushCursorVisible_ = false;
     impl_->invalidateOverlayComposite();
     markRenderDirty();
@@ -35965,7 +35985,9 @@ bool CompositionRenderController::cancelBrushStroke() {
     return false;
   }
   const auto comp = impl_->previewPipeline_.composition();
-  auto layer = comp ? comp->layerById(impl_->selectedLayerId_) : nullptr;
+  const LayerID strokeLayerId = !impl_->paintStrokeLayerId_.isNil()
+      ? impl_->paintStrokeLayerId_ : impl_->selectedLayerId_;
+  auto layer = comp ? comp->layerById(strokeLayerId) : nullptr;
   auto *brushTool = ArtifactApplicationManager::instance()
                         ? ArtifactApplicationManager::instance()->brushTool()
                         : nullptr;
@@ -35973,6 +35995,7 @@ bool CompositionRenderController::cancelBrushStroke() {
     return false;
   }
   brushTool->cancelStroke(layer);
+  impl_->paintStrokeLayerId_ = LayerID::Nil();
   impl_->invalidateOverlayComposite();
   markRenderDirty();
   return true;
