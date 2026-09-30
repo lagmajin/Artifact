@@ -8,17 +8,24 @@ module;
 #include <QJsonObject>
 #include <QMatrix4x4>
 #include <QObject>
+#include <QPointF>
 #include <QUuid>
 #include <QString>
+#include <QRect>
 #include <QRectF>
+#include <QSize>
+#include <QTransform>
 
 module Artifact.Layer.Paint;
 
 import Artifact.Composition.Abstract;
+import Artifact.Layer.Image;
+import Artifact.Layers.SolidImage;
 import Artifact.Render.IRenderer;
 import Image.ImageF32x4RGBAWithCache;
 import Image.ImageF32x4_RGBA;
 import FloatRGBA;
+import Utils.Id;
 
 namespace Artifact {
 
@@ -88,6 +95,7 @@ public:
     std::map<int64_t, ArtifactCore::ImageF32x4RGBAWithCache> clearUndoFrames_;
     std::map<int64_t, quint64> frameVersions_;
     QUuid textureIdentity_;
+    ArtifactCore::LayerID targetLayerId_{ArtifactCore::Id::Nil()};
     QSize defaultSize_{100, 100};
     ArtifactAbstractComposition* composition_ = nullptr;
 
@@ -126,6 +134,102 @@ QRectF ArtifactPaintLayer::localBounds() const {
     return QRectF(0, 0, impl_->defaultSize_.width(), impl_->defaultSize_.height());
 }
 
+void ArtifactPaintLayer::setSurfaceSize(const QSize& size) {
+    const QSize bounded(std::clamp(size.width(), 1, 16384),
+                        std::clamp(size.height(), 1, 16384));
+    if (impl_->defaultSize_ == bounded) return;
+    impl_->defaultSize_ = bounded;
+    changed();
+}
+
+void ArtifactPaintLayer::setTargetLayerId(const ArtifactCore::LayerID& layerId) {
+    impl_->targetLayerId_ = layerId;
+}
+
+const ArtifactCore::LayerID& ArtifactPaintLayer::targetLayerId() const {
+    return impl_->targetLayerId_;
+}
+
+bool ArtifactPaintLayer::hasTargetLayer() const {
+    return !impl_->targetLayerId_.isNil();
+}
+
+ArtifactPaintSurfaceLayout ArtifactPaintLayer::paintSurfaceLayout() const {
+    ArtifactPaintSurfaceLayout layout;
+    layout.transform = getGlobalTransform();
+    layout.drawRect = QRectF(0.0, 0.0, impl_->defaultSize_.width(),
+                             impl_->defaultSize_.height());
+    if (!impl_->composition_ || impl_->targetLayerId_.isNil()) return layout;
+
+    const auto target = impl_->composition_->layerById(impl_->targetLayerId_);
+    if (!target) {
+        layout.targetVisible = false;
+        return layout;
+    }
+    const QTransform targetTransform = target->getGlobalTransform();
+    layout.transform = targetTransform;
+    layout.targetOpacity = target->opacity();
+    const FramePosition compositionFrame = impl_->composition_->framePosition();
+    layout.targetVisible = target->isVisible() &&
+        target->isActiveAt(compositionFrame);
+    if (const auto* solidLayer =
+            dynamic_cast<const ArtifactSolidImageLayer*>(target.get())) {
+        const double pixelAspect = solidLayer->pixelAspectRatio();
+        if (std::isfinite(pixelAspect) && pixelAspect > 0.0 &&
+            std::abs(pixelAspect - 1.0) > 1e-6) {
+            const auto toLayerLocal = [pixelAspect](const QPointF& pixel) {
+                return QPointF(pixel.x() * pixelAspect, pixel.y());
+            };
+            const QPointF origin = targetTransform.map(toLayerLocal(QPointF()));
+            const QPointF xAxis = targetTransform.map(toLayerLocal(QPointF(1, 0))) - origin;
+            const QPointF yAxis = targetTransform.map(toLayerLocal(QPointF(0, 1))) - origin;
+            layout.transform = QTransform(xAxis.x(), xAxis.y(), yAxis.x(), yAxis.y(),
+                                          origin.x(), origin.y());
+        }
+    }
+    if (const auto* imageLayer = dynamic_cast<const ArtifactImageLayer*>(target.get())) {
+        const SourceCropDrawLayout crop = imageLayer->sourceCropDrawLayout();
+        const QRectF output = crop.outputLocalRect;
+        const QRect sourcePixels = crop.sourcePixelRect;
+        if (output.width() > 0.0 && output.height() > 0.0 &&
+            sourcePixels.width() > 0 && sourcePixels.height() > 0) {
+            const double scaleX = output.width() / sourcePixels.width();
+            const double scaleY = output.height() / sourcePixels.height();
+            const auto toLayerLocal = [&crop, output, sourcePixels, scaleX, scaleY]
+                (const QPointF& pixel) {
+                const QPointF outputPoint(
+                    output.left() + (pixel.x() - sourcePixels.left()) * scaleX,
+                    output.top() + (pixel.y() - sourcePixels.top()) * scaleY);
+                return crop.localTransform.toTransform().map(outputPoint);
+            };
+            const QPointF origin = targetTransform.map(toLayerLocal(QPointF()));
+            const QPointF xAxis = targetTransform.map(toLayerLocal(QPointF(1, 0))) - origin;
+            const QPointF yAxis = targetTransform.map(toLayerLocal(QPointF(0, 1))) - origin;
+            layout.transform = QTransform(xAxis.x(), xAxis.y(), yAxis.x(), yAxis.y(),
+                                          origin.x(), origin.y());
+            layout.drawRect = QRectF(sourcePixels);
+            const auto sourceSize = imageLayer->sourceSize();
+            const int width = imageLayer->hasCurrentFrameBuffer()
+                ? imageLayer->currentFrameBuffer().width()
+                : (sourceSize.width > 0 ? sourceSize.width : impl_->defaultSize_.width());
+            const int height = imageLayer->hasCurrentFrameBuffer()
+                ? imageLayer->currentFrameBuffer().height()
+                : (sourceSize.height > 0 ? sourceSize.height : impl_->defaultSize_.height());
+            if (width > 0 && height > 0) {
+                layout.uvRect = QRectF(static_cast<double>(sourcePixels.x()) / width,
+                                       static_cast<double>(sourcePixels.y()) / height,
+                                       static_cast<double>(sourcePixels.width()) / width,
+                                       static_cast<double>(sourcePixels.height()) / height);
+            }
+        }
+    }
+    return layout;
+}
+
+QTransform ArtifactPaintLayer::paintSurfaceTransform() const {
+    return paintSurfaceLayout().transform;
+}
+
 void ArtifactPaintLayer::draw(ArtifactIRenderer* renderer) {
     FramePosition frame(currentFrame());
     auto* buf = frameBuffer(frame);
@@ -139,8 +243,28 @@ void ArtifactPaintLayer::draw(ArtifactIRenderer* renderer) {
     auto* texture = renderer->textureForImage(
         *buf, impl_->textureIdentity_, sourceVersion, frame.framePosition());
     if (!texture) return;
-    renderer->drawSprite(0, 0, static_cast<float>(buf->width()),
-                         static_cast<float>(buf->height()), texture, opacity());
+    const ArtifactPaintSurfaceLayout surface = paintSurfaceLayout();
+    if (!surface.targetVisible) return;
+    const QTransform surfaceTransform = surface.transform;
+    const QRectF drawRect = surface.drawRect;
+    const QRectF uvRect = surface.uvRect;
+    const QMatrix4x4 transform(
+        static_cast<float>(surfaceTransform.m11()),
+        static_cast<float>(surfaceTransform.m21()), 0.0f,
+        static_cast<float>(surfaceTransform.m31()),
+        static_cast<float>(surfaceTransform.m12()),
+        static_cast<float>(surfaceTransform.m22()), 0.0f,
+        static_cast<float>(surfaceTransform.m32()),
+        0.0f, 0.0f, 1.0f, 0.0f,
+        static_cast<float>(surfaceTransform.m13()),
+        static_cast<float>(surfaceTransform.m23()), 0.0f,
+        static_cast<float>(surfaceTransform.m33()));
+    renderer->drawSpriteTransformed(
+        static_cast<float>(drawRect.x()),
+        static_cast<float>(drawRect.y()),
+        static_cast<float>(drawRect.width()),
+        static_cast<float>(drawRect.height()), transform,
+        texture, opacity() * surface.targetOpacity, uvRect);
 }
 
 void ArtifactPaintLayer::newFrame(const FramePosition& pos) {
@@ -470,6 +594,9 @@ QJsonObject ArtifactPaintLayer::toJson() const {
     obj["frames"] = framesArr;
     obj["defaultWidth"] = impl_->defaultSize_.width();
     obj["defaultHeight"] = impl_->defaultSize_.height();
+    if (!impl_->targetLayerId_.isNil()) {
+        obj["targetLayerId"] = impl_->targetLayerId_.toString();
+    }
     return obj;
 }
 
@@ -483,7 +610,10 @@ void ArtifactPaintLayer::fromJsonProperties(const QJsonObject& obj) {
     impl_->undoStacks_.clear();
     impl_->defaultSize_.setWidth(std::clamp(obj.value("defaultWidth").toInt(100), 1, 100000));
     impl_->defaultSize_.setHeight(std::clamp(obj.value("defaultHeight").toInt(100), 1, 100000));
-
+    const QString targetLayerId = obj.value("targetLayerId").toString().trimmed();
+    impl_->targetLayerId_ = targetLayerId.isEmpty()
+        ? ArtifactCore::LayerID(ArtifactCore::Id::Nil())
+        : ArtifactCore::LayerID(targetLayerId);
     const QJsonArray framesArr = obj.value("frames").toArray();
     const int frameCount = std::min(static_cast<int>(framesArr.size()), 10000);
     for (int frameIndex = 0; frameIndex < frameCount; ++frameIndex) {

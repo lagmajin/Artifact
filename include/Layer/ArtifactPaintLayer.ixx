@@ -3,6 +3,9 @@ module;
 #include <QString>
 #include <QObject>
 #include <QJsonObject>
+#include <QSize>
+#include <QRectF>
+#include <QTransform>
 #include <wobjectdefs.h>
 #include <memory>
 #include <vector>
@@ -12,11 +15,20 @@ export module Artifact.Layer.Paint;
 
 import Artifact.Layers.Abstract._2D;
 import Artifact.Render.IRenderer;
+import Utils.Id;
 import FloatRGBA;
 import Frame.Position;
 import Image.ImageF32x4_RGBA;
 
 export namespace Artifact {
+
+struct ArtifactPaintSurfaceLayout {
+    QTransform transform;
+    QRectF drawRect;
+    QRectF uvRect{0.0, 0.0, 1.0, 1.0};
+    float targetOpacity = 1.0f;
+    bool targetVisible = true;
+};
 
 /// ブラシストローク（Undo用）
 struct BrushStroke {
@@ -66,6 +78,12 @@ public:
     // ブラシ操作
     void applyStroke(const BrushStroke& stroke);
     void applyStrokeAtFrame(const BrushStroke& stroke, const FramePosition& frame);
+    void setSurfaceSize(const QSize& size);
+    void setTargetLayerId(const ArtifactCore::LayerID& layerId);
+    const ArtifactCore::LayerID& targetLayerId() const;
+    bool hasTargetLayer() const;
+    ArtifactPaintSurfaceLayout paintSurfaceLayout() const;
+    QTransform paintSurfaceTransform() const;
     void applyCloneStampAtFrame(const QPointF& sourcePos,
                                 const QPointF& destinationPos,
                                 float radius, float opacity, float hardness,

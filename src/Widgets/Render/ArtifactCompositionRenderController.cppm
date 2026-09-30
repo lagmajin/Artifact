@@ -62,6 +62,7 @@ module;
 
 #include <QRectF>
 #include <QInputDialog>
+#include <QSize>
 
 #include <QSizeF>
 
@@ -26468,18 +26469,79 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
       (activeTool == ToolType::Brush || activeTool == ToolType::Eraser) &&
       (!selectedLayer ||
        dynamic_cast<ArtifactPaintLayer *>(selectedLayer.get()) == nullptr)) {
+    const auto targetLayer = selectedLayer;
+    const bool paintableTarget = selectedLayer &&
+        (dynamic_cast<ArtifactImageLayer *>(selectedLayer.get()) ||
+         dynamic_cast<ArtifactSolidImageLayer *>(selectedLayer.get()));
     if (auto *service = ArtifactProjectService::instance()) {
+      if (!paintableTarget) {
+        setInfoOverlayText(
+            activeTool == ToolType::Eraser ? QStringLiteral("Eraser")
+                                           : QStringLiteral("Brush"),
+            QStringLiteral("Select an Image or Plane layer to paint"));
+        event->accept();
+        return;
+      }
       const QString layerName =
           uniqueLayerNameForCurrentComposition(QStringLiteral("Paint"));
       ArtifactLayerInitParams params(layerName, LayerType::Paint);
       service->addLayerToCurrentComposition(params, true);
       selectedLayer = comp ? comp->layerById(impl_->selectedLayerId_)
                            : ArtifactAbstractLayerPtr{};
+      if (selectedLayer && paintableTarget) {
+        auto *paintLayer = dynamic_cast<ArtifactPaintLayer *>(selectedLayer.get());
+        if (paintLayer) {
+          const QRectF targetBounds = targetLayer->localBounds();
+          const auto targetSourceSize = targetLayer->sourceSize();
+          const QSize targetSize = targetSourceSize.width > 0 &&
+                                           targetSourceSize.height > 0
+              ? QSize(targetSourceSize.width, targetSourceSize.height)
+              : QSize(static_cast<int>(std::ceil(targetBounds.width())),
+                      static_cast<int>(std::ceil(targetBounds.height())));
+          paintLayer->setSurfaceSize(QSize(
+              std::clamp(targetSize.width(), 1, 16384),
+              std::clamp(targetSize.height(), 1, 16384)));
+          paintLayer->setTargetLayerId(targetLayer->id());
+          paintLayer->changed();
+          impl_->publishLayerModified(selectedLayer, true);
+          impl_->invalidateBaseComposite();
+          if (!impl_->renderer_) {
+            impl_->invalidateOverlayComposite();
+            markRenderDirty();
+            event->accept();
+            return;
+          }
+          const auto canvas = impl_->renderer_->viewportToCanvas(
+              {static_cast<float>(viewportPos.x()),
+               static_cast<float>(viewportPos.y())});
+          auto *brushTool = ArtifactApplicationManager::instance()->brushTool();
+          if (brushTool) {
+            bool paintInvertible = false;
+            const QTransform paintInverse =
+                paintLayer->paintSurfaceTransform().inverted(&paintInvertible);
+            if (paintInvertible) {
+              brushTool->setRotoInputMode(false);
+              brushTool->setEraserMode(activeTool == ToolType::Eraser);
+              brushTool->mousePressEvent(
+                  selectedLayer,
+                  paintInverse.map(QPointF(canvas.x, canvas.y)));
+            }
+          }
+          impl_->brushCursorCanvasPos_ = QPointF(canvas.x, canvas.y);
+          impl_->brushLastViewportPos_ = viewportPos;
+          impl_->brushCursorVisible_ = true;
+          impl_->invalidateOverlayComposite();
+          markRenderDirty();
+          event->accept();
+          return;
+        }
+      }
       if (selectedLayer) {
         setInfoOverlayText(
             activeTool == ToolType::Eraser ? QStringLiteral("Eraser")
                                            : QStringLiteral("Brush"),
-            QStringLiteral("Paint layer created for this tool"));
+            paintableTarget ? QStringLiteral("Paint surface created for layer")
+                            : QStringLiteral("Paint layer created for this tool"));
       }
     }
   }
@@ -26534,8 +26596,17 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
     if (auto *brushTool = ArtifactApplicationManager::instance()->brushTool()) {
       brushTool->setRotoInputMode(activeTool == ToolType::RotoBrush);
       brushTool->setEraserMode(activeTool == ToolType::Eraser);
-      brushTool->mousePressEvent(selectedLayer,
-                                 {canvasPos.x, canvasPos.y});
+      QPointF brushPosition(canvasPos.x, canvasPos.y);
+      if (auto *paintLayer = dynamic_cast<ArtifactPaintLayer *>(selectedLayer.get())) {
+        bool invertible = false;
+        const QTransform inverse = paintLayer->paintSurfaceTransform().inverted(&invertible);
+        if (!invertible) {
+          event->accept();
+          return;
+        }
+        brushPosition = inverse.map(brushPosition);
+      }
+      brushTool->mousePressEvent(selectedLayer, brushPosition);
     }
     impl_->brushCursorCanvasPos_ = {canvasPos.x, canvasPos.y};
     impl_->brushLastViewportPos_ = viewportPos;
@@ -29319,7 +29390,15 @@ void CompositionRenderController::handleMouseMove(
     impl_->brushCursorVisible_ = true;
     if (layer) {
       if (auto *brushTool = ArtifactApplicationManager::instance()->brushTool()) {
-        brushTool->mouseMoveEvent(layer, {canvas.x, canvas.y});
+        QPointF brushPosition(canvas.x, canvas.y);
+        bool canDispatch = true;
+        if (auto *paintLayer = dynamic_cast<ArtifactPaintLayer *>(layer.get())) {
+          bool invertible = false;
+          const QTransform inverse = paintLayer->paintSurfaceTransform().inverted(&invertible);
+          canDispatch = invertible;
+          if (canDispatch) brushPosition = inverse.map(brushPosition);
+        }
+        if (canDispatch) brushTool->mouseMoveEvent(layer, brushPosition);
       }
     }
     impl_->invalidateOverlayComposite();
@@ -31643,7 +31722,15 @@ void CompositionRenderController::handleMouseRelease() {
           {static_cast<float>(impl_->brushLastViewportPos_.x()),
            static_cast<float>(impl_->brushLastViewportPos_.y())});
       if (auto *brushTool = ArtifactApplicationManager::instance()->brushTool()) {
-        brushTool->mouseReleaseEvent(layer, {canvas.x, canvas.y});
+        QPointF brushPosition(canvas.x, canvas.y);
+        bool canDispatch = true;
+        if (auto *paintLayer = dynamic_cast<ArtifactPaintLayer *>(layer.get())) {
+          bool invertible = false;
+          const QTransform inverse = paintLayer->paintSurfaceTransform().inverted(&invertible);
+          canDispatch = invertible;
+          if (canDispatch) brushPosition = inverse.map(brushPosition);
+        }
+        if (canDispatch) brushTool->mouseReleaseEvent(layer, brushPosition);
         if (activeTool == ToolType::RotoBrush && impl_->rotoBrushEngine_) {
           if (auto *imageLayer = dynamic_cast<ArtifactImageLayer *>(layer.get())) {
             const QImage source = imageLayer->toQImage();
@@ -48053,6 +48140,26 @@ void CompositionRenderController::Impl::drawViewportInteractionOverlay(
     const auto *brushTool = ArtifactApplicationManager::instance()
                                 ? ArtifactApplicationManager::instance()->brushTool()
                                 : nullptr;
+    const auto previewComposition = previewPipeline_.composition();
+    const auto previewLayer = previewComposition
+        ? previewComposition->layerById(selectedLayerId_)
+        : ArtifactAbstractLayerPtr{};
+    const auto *paintLayer = previewLayer
+        ? dynamic_cast<const ArtifactPaintLayer*>(previewLayer.get()) : nullptr;
+    const bool hasPaintSurfaceTransform = paintLayer != nullptr;
+    const QTransform paintSurfaceTransform = hasPaintSurfaceTransform
+        ? paintLayer->paintSurfaceTransform() : QTransform();
+    bool paintSurfaceInvertible = false;
+    const QTransform canvasToPaint = hasPaintSurfaceTransform
+        ? paintSurfaceTransform.inverted(&paintSurfaceInvertible) : QTransform();
+    const QPointF paintCursorPosition = hasPaintSurfaceTransform && paintSurfaceInvertible
+        ? canvasToPaint.map(brushCursorCanvasPos_) : QPointF();
+    const float paintSurfaceScale = hasPaintSurfaceTransform
+        ? static_cast<float>((std::hypot(paintSurfaceTransform.m11(),
+                                         paintSurfaceTransform.m12()) +
+                              std::hypot(paintSurfaceTransform.m21(),
+                                         paintSurfaceTransform.m22())) * 0.5)
+        : 1.0f;
     const float pressure = brushTool ? std::clamp(brushTool->pressure(), 0.0f,
                                                   1.0f)
                                      : 1.0f;
@@ -48065,10 +48172,11 @@ void CompositionRenderController::Impl::drawViewportInteractionOverlay(
             ? brushTool->flow() *
                   (brushTool->pressureAffectsFlow() ? pressure : 1.0f)
             : 1.0f;
-    const float radius = std::max(2.0f,
-                                  (brushTool ? brushTool->radius() : 10.0f) *
-                                      pressureSize *
-                                      std::max(0.001f, renderer_->getZoom()));
+    const float brushRadius = (brushTool ? brushTool->radius() : 10.0f) *
+                              pressureSize;
+    const float radius = std::max(2.0f, brushRadius *
+        std::max(0.001f, renderer_->getZoom()) *
+        (hasPaintSurfaceTransform ? paintSurfaceScale : 1.0f));
     const float previewAlpha =
         brushTool && brushTool->pressureAffectsOpacity()
             ? std::clamp(0.18f + pressure * 0.72f, 0.18f, 0.90f)
@@ -48106,25 +48214,39 @@ void CompositionRenderController::Impl::drawViewportInteractionOverlay(
     outline.reserve(33);
     for (int i = 0; i <= 32; ++i) {
       const float theta = 6.283185307179586f * static_cast<float>(i) / 32.0f;
-      const float localX = std::cos(theta) * radius;
-      const float localY = std::sin(theta) * radius * roundness;
-      const QPointF viewportPoint(
-          cursorViewport.x + localX * cosAngle - localY * sinAngle,
-          cursorViewport.y + localX * sinAngle + localY * cosAngle);
-      const auto canvasPoint = renderer_->viewportToCanvas(
-          {static_cast<float>(viewportPoint.x()),
-           static_cast<float>(viewportPoint.y())});
-      outline.emplace_back(canvasPoint.x, canvasPoint.y);
+      if (hasPaintSurfaceTransform && paintSurfaceInvertible) {
+        const float localX = std::cos(theta) * brushRadius;
+        const float localY = std::sin(theta) * brushRadius * roundness;
+        const QPointF surfacePoint(
+            paintCursorPosition.x() + localX * cosAngle - localY * sinAngle,
+            paintCursorPosition.y() + localX * sinAngle + localY * cosAngle);
+        const QPointF canvasPoint = paintSurfaceTransform.map(surfacePoint);
+        outline.emplace_back(static_cast<float>(canvasPoint.x()),
+                             static_cast<float>(canvasPoint.y()));
+      } else {
+        const float localX = std::cos(theta) * radius;
+        const float localY = std::sin(theta) * radius * roundness;
+        const QPointF viewportPoint(
+            cursorViewport.x + localX * cosAngle - localY * sinAngle,
+            cursorViewport.y + localX * sinAngle + localY * cosAngle);
+        const auto canvasPoint = renderer_->viewportToCanvas(
+            {static_cast<float>(viewportPoint.x()),
+             static_cast<float>(viewportPoint.y())});
+        outline.emplace_back(canvasPoint.x, canvasPoint.y);
+      }
     }
     renderer_->drawPolyline(outline, cursorColor, 1.4f /
                                                    std::max(0.001f, renderer_->getZoom()));
     if (brushTool && brushTool->scatter() > 0.001f) {
       const FloatColor scatterColor{
           cursorColor.r(), cursorColor.g(), cursorColor.b(), 0.34f};
+      const float scatterRadius = brushTool->radius() *
+          (hasPaintSurfaceTransform ? paintSurfaceScale : 1.0f) *
+          (1.0f + brushTool->scatter());
       renderer_->drawCircle(
           static_cast<float>(brushCursorCanvasPos_.x()),
           static_cast<float>(brushCursorCanvasPos_.y()),
-          brushTool->radius() * (1.0f + brushTool->scatter()), scatterColor,
+          scatterRadius, scatterColor,
           0.9f / std::max(0.001f, renderer_->getZoom()), false);
     }
 
@@ -48184,8 +48306,10 @@ void CompositionRenderController::Impl::drawViewportInteractionOverlay(
       std::vector<Detail::float2> strokePreview;
       strokePreview.reserve(brushTool->currentStrokePoints().size());
       for (const QPointF &point : brushTool->currentStrokePoints()) {
-        strokePreview.emplace_back(static_cast<float>(point.x()),
-                                   static_cast<float>(point.y()));
+        const QPointF canvasPoint = hasPaintSurfaceTransform
+            ? paintSurfaceTransform.map(point) : point;
+        strokePreview.emplace_back(static_cast<float>(canvasPoint.x()),
+                                   static_cast<float>(canvasPoint.y()));
       }
       const FloatColor previewColor =
           brushTool->eraserMode()
@@ -48206,7 +48330,8 @@ void CompositionRenderController::Impl::drawViewportInteractionOverlay(
                                0.06f, 0.70f)};
       renderer_->drawPolyline(
           strokePreview, previewColor,
-          std::max(1.0f, brushTool->radius() * 0.18f));
+          std::max(1.0f, brushTool->radius() * 0.18f *
+              (hasPaintSurfaceTransform ? paintSurfaceScale : 1.0f)));
     }
   }
 
