@@ -9,6 +9,7 @@ export module Artifact.Widgets.CompositionRenderWidget;
 
 
 import Color.Float;
+import Math.Vec;
 import Artifact.Composition.Abstract;
 import Artifact.Render.IRenderer;
 
@@ -60,9 +61,9 @@ export namespace Artifact {
   void zoomOut();
   void zoomFit();
   void zoom100();
-  void rotateCanvas(float degrees);
-  void setRotationSnapDegrees(float degrees);
-  float rotationSnapDegrees() const;
+  void rotateCanvas(ArtifactCore::Units::Degrees degrees);
+  void setRotationSnapDegrees(ArtifactCore::Units::Degrees degrees);
+  ArtifactCore::Units::Degrees rotationSnapDegrees() const;
  };
 
 }

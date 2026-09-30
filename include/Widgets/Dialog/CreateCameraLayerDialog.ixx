@@ -7,6 +7,7 @@ module;
 export module Artifact.Widgets.CreateCameraLayerDialog;
 
 import Artifact.Layer.Camera;
+import Math.Vec;
 
 export namespace Artifact {
 
@@ -22,12 +23,12 @@ public:
 
     // Returned settings
     QString cameraName() const;
-    float   focalLength() const;   // mm
-    float   fov() const;           // degrees
-    float   zoom() const;          // px
-    float   focusDistance() const;
-    float   blurAmount() const;    // 0–100 %
-    float   apertureF() const;     // F-number (1.4, 2, 2.8, 4, 5.6, 8 ...)
+    ArtifactCore::Units::Millimeters focalLength() const;
+    ArtifactCore::Units::Degrees fov() const;
+    ArtifactCore::Units::Pixels zoom() const;
+    ArtifactCore::Units::Pixels focusDistance() const;
+    ArtifactCore::Units::Percent blurAmount() const;
+    ArtifactCore::Units::FStop apertureF() const;
     bool    depthOfFieldEnabled() const;
     bool    motionBlur() const;
     bool    cameraLocked() const;

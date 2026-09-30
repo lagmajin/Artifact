@@ -33,6 +33,7 @@ module Artifact.Widgets.CompositionRenderOverlay;
 import Color.Float;
 import Settings.Accessibility;
 import Artifact.Layer.Camera;
+import Math.Vec;
 import Artifact.Layer.Video;
 import Artifact.Layer.Shape;
 import Artifact.Layer.Paint;
@@ -2049,16 +2050,16 @@ void drawCameraSelectionOverlay(ArtifactIRenderer *renderer,
           : QStringLiteral("Perspective");
   const QString lensText = camera->projectionMode() == ProjectionMode::Orthographic
                                ? QStringLiteral("Ortho %1 x %2")
-                                     .arg(camera->orthoWidth(), 0, 'f', 0)
-                                     .arg(camera->orthoHeight(), 0, 'f', 0)
+                                     .arg(camera->orthoWidth().value, 0, 'f', 0)
+                                     .arg(camera->orthoHeight().value, 0, 'f', 0)
                                : QStringLiteral("%1mm | FOV %2")
-                                     .arg(camera->focalLength(), 0, 'f', 1)
-                                     .arg(camera->fov(), 0, 'f', 1);
+                                     .arg(camera->focalLength().value, 0, 'f', 1)
+                                     .arg(camera->fov().value, 0, 'f', 1);
   const QString dofText =
       camera->depthOfField() ? QStringLiteral("DOF On") : QStringLiteral("DOF Off");
   const QString motionBlurText =
       camera->motionBlur()
-          ? QStringLiteral("MB %1%").arg(camera->blurAmount(), 0, 'f', 0)
+          ? QStringLiteral("MB %1%").arg(camera->blurAmount().value, 0, 'f', 0)
           : QStringLiteral("MB Off");
 
   renderer->drawText(QRectF(panelAnchor.x() + 12.0, panelAnchor.y() + 6.0,
@@ -2090,9 +2091,9 @@ void drawCameraPoiOverlay(ArtifactIRenderer *renderer,
     return;
   }
 
-  // The POI is authored in the camera's parent (usually world) space, which
-  // matches the space the camera transform maps into.
-  const QVector3D poi = camera->pointOfInterest();
+  // The POI is stored in the camera parent's space and projected in world space.
+  const QVector3D poi = ArtifactCore::Coordinates::toQVector3D(
+      camera->pointOfInterestWorld());
   renderer->set3DCameraMatrices(cameraView, cameraProj);
 
   const FloatColor shadow{0.02f, 0.03f, 0.04f, 0.85f};

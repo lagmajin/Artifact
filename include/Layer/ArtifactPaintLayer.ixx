@@ -1,5 +1,6 @@
 module;
 #include <utility>
+#include <QPointF>
 #include <QString>
 #include <QObject>
 #include <QJsonObject>
@@ -66,6 +67,9 @@ public:
     // ブラシ操作
     void applyStroke(const BrushStroke& stroke);
     void applyStrokeAtFrame(const BrushStroke& stroke, const FramePosition& frame);
+    bool floodFillAtFrame(const QPointF& position, const FloatRGBA& color,
+                          float opacity, float tolerance,
+                          const FramePosition& frame);
     void applyCloneStampAtFrame(const QPointF& sourcePos,
                                 const QPointF& destinationPos,
                                 float radius, float opacity, float hardness,

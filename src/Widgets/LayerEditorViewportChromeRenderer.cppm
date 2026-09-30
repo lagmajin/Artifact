@@ -4,8 +4,8 @@ module;
 #include <QFont>
 #include <QFontMetrics>
 #include <QRectF>
-#include <QSize>
 #include <QString>
+#include <algorithm>
 
 
 module Artifact.Widgets.LayerEditor.ViewportChromeRenderer;
@@ -47,9 +47,8 @@ void drawLayerEditorViewportChrome(
 {
  if (!renderer) return;
 
- const QSize viewportSize = state.viewportSize;
- const float viewportW = static_cast<float>(ArtifactCore::artifactMax(1, viewportSize.width()));
- const float viewportH = static_cast<float>(ArtifactCore::artifactMax(1, viewportSize.height()));
+ const float viewportW = std::max(1.0f, state.viewportSize.width);
+ const float viewportH = std::max(1.0f, state.viewportSize.height);
  const float currentZoom = renderer->getZoom();
  float currentPanX = 0.0f;
  float currentPanY = 0.0f;
@@ -622,9 +621,10 @@ void drawLayerEditorViewportChrome(
 
  renderer->setZoom(currentZoom);
  renderer->setPan(currentPanX, currentPanY);
- if (state.restoreCanvasSize.width() > 0 && state.restoreCanvasSize.height() > 0) {
-  renderer->setCanvasSize(static_cast<float>(state.restoreCanvasSize.width()),
-                          static_cast<float>(state.restoreCanvasSize.height()));
+ if (state.restoreCanvasSize.width > 0.0f &&
+     state.restoreCanvasSize.height > 0.0f) {
+  renderer->setCanvasSize(state.restoreCanvasSize.width,
+                          state.restoreCanvasSize.height);
  }
 }
 

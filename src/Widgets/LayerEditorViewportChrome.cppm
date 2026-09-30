@@ -2,7 +2,6 @@ module;
 
 #include <QRectF>
 #include <QPointF>
-#include <QSize>
 #include <QString>
 
 
@@ -12,6 +11,7 @@ import Core.ArtifactMath;
 import Tool;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Shape;
+import Math.Vec;
 import Memory.SharedPtr;
 
 namespace Artifact {
@@ -154,38 +154,40 @@ QString layerEditorChromeToolTip(int control)
  }
 }
 
-int layerEditorChromeControlAt(const QPointF& position,
-                               const QSize& viewportSize,
+int layerEditorChromeControlAt(
+                               ArtifactCore::Coordinates::ScreenPhysicalPoint2 position,
+                               ArtifactCore::Coordinates::ScreenPhysicalExtent2 viewportSize,
                                LayerEditorSurfaceMode surfaceMode,
                                bool hasLayer)
 {
- const float width = static_cast<float>(viewportSize.width());
- const float height = static_cast<float>(viewportSize.height());
+ const QPointF qtPosition(position.x, position.y);
+ const float width = viewportSize.width;
+ const float height = viewportSize.height;
  const QRectF surface = layerEditorSurfaceModeRect(width, height);
  const QRectF surfaceItems = layerEditorSurfaceModeItemsRect(width, height);
  if (!surface.isEmpty()) {
-  if (hasLayer && layerEditorSurfaceSoloRect(width, height).contains(position)) return 43;
-  if (surfaceItems.contains(position)) {
+  if (hasLayer && layerEditorSurfaceSoloRect(width, height).contains(qtPosition)) return 43;
+  if (surfaceItems.contains(qtPosition)) {
    const float itemWidth = static_cast<float>((surfaceItems.width() - 8.0) / 3.0);
    return 30 + ArtifactCore::artifactClamp(
-       static_cast<int>((position.x() - surfaceItems.left() - 4.0) / itemWidth), 0, 2);
+       static_cast<int>((qtPosition.x() - surfaceItems.left() - 4.0) / itemWidth), 0, 2);
   }
   const QRectF tools = layerEditorEditToolRect(width, height);
-  if (surfaceMode == LayerEditorSurfaceMode::Edit && tools.contains(position))
-   return ArtifactCore::artifactClamp(static_cast<int>((position.y() - tools.top() - 4.0) / 36.0), 0, 3);
+  if (surfaceMode == LayerEditorSurfaceMode::Edit && tools.contains(qtPosition))
+   return ArtifactCore::artifactClamp(static_cast<int>((qtPosition.y() - tools.top() - 4.0) / 36.0), 0, 3);
  }
  const QRectF display = layerEditorDisplayModeRect(width, height);
- if (display.contains(position))
+ if (display.contains(qtPosition))
   return 10 + ArtifactCore::artifactClamp(
-      static_cast<int>((position.x() - display.left() - 4.0) / 71.0), 0, 3);
+      static_cast<int>((qtPosition.x() - display.left() - 4.0) / 71.0), 0, 3);
  const QRectF state = layerEditorStateCardRect(width, height);
- if (hasLayer && state.contains(position))
+ if (hasLayer && state.contains(qtPosition))
   return 40 + ArtifactCore::artifactClamp(
-      static_cast<int>((position.x() - state.left()) / (state.width() / 3.0)), 0, 2);
+      static_cast<int>((qtPosition.x() - state.left()) / (state.width() / 3.0)), 0, 2);
  const QRectF zoom = layerEditorZoomRect(width, height);
- if (zoom.contains(position))
+ if (zoom.contains(qtPosition))
   return 20 + layerEditorZoomControlIndex(
-      static_cast<float>(zoom.width()), static_cast<float>(position.x() - zoom.left()));
+      static_cast<float>(zoom.width()), static_cast<float>(qtPosition.x() - zoom.left()));
  return -1;
 }
 

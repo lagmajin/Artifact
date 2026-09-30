@@ -7,6 +7,7 @@ module Artifact.Widgets.LayerEditor.FrameBackground;
 import Core.ArtifactMath;
 import Artifact.Render.IRenderer;
 import Artifact.Widgets.LayerEditor.ContextMenu;
+import Math.Vec;
 
 namespace Artifact {
 
@@ -14,10 +15,10 @@ void drawLayerEditorFrameBackground(
     ArtifactIRenderer& renderer,
     const LayerEditorFrameBackgroundState& state)
 {
- const float viewportWidth = static_cast<float>(
-     ArtifactCore::artifactMax(1, state.viewportSize.width()));
- const float viewportHeight = static_cast<float>(
-     ArtifactCore::artifactMax(1, state.viewportSize.height()));
+ const float viewportWidth =
+     ArtifactCore::artifactMax(1.0f, state.viewportSize.width);
+ const float viewportHeight =
+     ArtifactCore::artifactMax(1.0f, state.viewportSize.height);
  if (state.mode == LayerEditorBackgroundMode::Alpha) {
   renderer.drawCheckerboard(0.0f, 0.0f, viewportWidth, viewportHeight, 56.0f,
                             FloatColor(0.33f, 0.34f, 0.35f, 1.0f),

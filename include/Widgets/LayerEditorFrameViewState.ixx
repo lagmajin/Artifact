@@ -7,19 +7,19 @@ class QWidget;
 export module Artifact.Widgets.LayerEditor.FrameViewState;
 
 import Artifact.Render.IRenderer;
+import Math.Vec;
 
 export namespace Artifact {
 
 struct LayerEditorFrameViewState {
- float zoom = 1.0f;
- float panX = 0.0f;
- float panY = 0.0f;
+ ArtifactCore::Units::ScaleFactor zoom{};
+ ArtifactCore::Coordinates::ScreenPhysicalVector2 pan{};
 };
 
 QSize layerEditorPhysicalViewportSize(const QWidget* widget);
 LayerEditorFrameViewState beginLayerEditorFrameView(
     ArtifactIRenderer& renderer,
-    const QSize& viewportSize);
+    ArtifactCore::Coordinates::ScreenPhysicalExtent2 viewportSize);
 void restoreLayerEditorFrameView(
     ArtifactIRenderer& renderer,
     const LayerEditorFrameViewState& state);

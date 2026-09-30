@@ -11,23 +11,24 @@ module;
 export module Artifact.Render.DepthOfFieldPass;
 import Graphics.GPUcomputeContext;
 import Graphics.Compute;
+import Math.Vec;
 
 export namespace Artifact {
 
 struct DepthOfFieldSettings {
   bool enabled = false;
-  float focusDistance = 1000.0f; // view-space units
-  float nearClip = 1.0f;         // camera near plane (projection contract)
-  float farClip = 100000.0f;     // camera far plane
-  float maxCocRadius = 16.0f;    // pixels at full defocus
-  float cocScale = 1.0f;         // authored blur amount normalization
+  ArtifactCore::Units::Pixels focusDistance{1000.0f};
+  ArtifactCore::Units::Pixels nearClip{1.0f};
+  ArtifactCore::Units::Pixels farClip{100000.0f};
+  ArtifactCore::Units::Pixels maxCocRadius{16.0f}; // output pixels at full defocus
+  ArtifactCore::Units::ScaleFactor cocScale{1.0f};
 
   // Thin-lens physical model (used when fStop > 0):
   //   CoC(d) = |aperture * focalLength * (focusDistance - d)|
   //            / (focusDistance * (d - focalLength)) * maxCocRadius
   // aperture is the authored aperture value interpreted as an f-stop scale.
-  float focalLength = 50.0f;     // mm, 35mm-equivalent lens
-  float fStop = 0.0f;            // <= 0 falls back to the linear ramp
+  ArtifactCore::Units::Millimeters focalLength{50.0f}; // 35mm-equivalent lens
+  ArtifactCore::Units::FStop fStop{}; // zero selects the linear ramp
 
   unsigned sampleCount = 12;
 };

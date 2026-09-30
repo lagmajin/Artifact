@@ -126,7 +126,7 @@ void ArtifactAbstractLayer::appendMaskPropertyGroups(
 
       auto featherProp = makeProp(pathPrefix + QStringLiteral(".feather"),
                                   PropertyType::Float,
-                                  static_cast<double>(path.feather()),
+                                  static_cast<double>(path.feather().value),
                                   -228 - pathIndex);
       featherProp->setAnimatable(true);
       featherProp->setSoftRange(0.0, 128.0);
@@ -136,7 +136,7 @@ void ArtifactAbstractLayer::appendMaskPropertyGroups(
 
       auto fhProp = makeProp(pathPrefix + QStringLiteral(".featherHorizontal"),
                              PropertyType::Float,
-                             static_cast<double>(path.featherHorizontal()),
+                             static_cast<double>(path.featherHorizontal().value),
                              -232 - pathIndex);
       fhProp->setAnimatable(true);
       fhProp->setSoftRange(0.0, 128.0);
@@ -146,7 +146,7 @@ void ArtifactAbstractLayer::appendMaskPropertyGroups(
 
       auto fvProp = makeProp(pathPrefix + QStringLiteral(".featherVertical"),
                              PropertyType::Float,
-                             static_cast<double>(path.featherVertical()),
+                             static_cast<double>(path.featherVertical().value),
                              -233 - pathIndex);
       fvProp->setAnimatable(true);
       fvProp->setSoftRange(0.0, 128.0);
@@ -156,7 +156,7 @@ void ArtifactAbstractLayer::appendMaskPropertyGroups(
 
       auto fiProp = makeProp(pathPrefix + QStringLiteral(".featherInner"),
                              PropertyType::Float,
-                             static_cast<double>(path.featherInner()),
+                             static_cast<double>(path.featherInner().value),
                              -234 - pathIndex);
       fiProp->setAnimatable(true);
       fiProp->setSoftRange(0.0, 128.0);
@@ -166,7 +166,7 @@ void ArtifactAbstractLayer::appendMaskPropertyGroups(
 
       auto foProp = makeProp(pathPrefix + QStringLiteral(".featherOuter"),
                              PropertyType::Float,
-                             static_cast<double>(path.featherOuter()),
+                             static_cast<double>(path.featherOuter().value),
                              -235 - pathIndex);
       foProp->setAnimatable(true);
       foProp->setSoftRange(0.0, 128.0);
@@ -188,7 +188,7 @@ void ArtifactAbstractLayer::appendMaskPropertyGroups(
 
       auto expansionProp = makeProp(pathPrefix + QStringLiteral(".expansion"),
                                     PropertyType::Float,
-                                    static_cast<double>(path.expansion()),
+                                    static_cast<double>(path.expansion().value),
                                     -227 - pathIndex);
       expansionProp->setAnimatable(true);
       expansionProp->setSoftRange(-256.0, 256.0);

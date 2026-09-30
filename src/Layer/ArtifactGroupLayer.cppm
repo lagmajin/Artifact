@@ -82,13 +82,13 @@ static qint64 maskSignatureForLayer(const ArtifactAbstractLayer *layer, int widt
             mix(static_cast<int>(path.mode()));
             mix(path.isInverted() ? 1 : 0);
             mix(static_cast<int>(std::lround(path.opacity() * 1000.0f)));
-            mix(static_cast<int>(std::lround(path.feather() * 1000.0f)));
-            mix(static_cast<int>(std::lround(path.featherHorizontal() * 1000.0f)));
-            mix(static_cast<int>(std::lround(path.featherVertical() * 1000.0f)));
-            mix(static_cast<int>(std::lround(path.featherInner() * 1000.0f)));
-            mix(static_cast<int>(std::lround(path.featherOuter() * 1000.0f)));
+            mix(static_cast<int>(std::lround(path.feather().value * 1000.0f)));
+            mix(static_cast<int>(std::lround(path.featherHorizontal().value * 1000.0f)));
+            mix(static_cast<int>(std::lround(path.featherVertical().value * 1000.0f)));
+            mix(static_cast<int>(std::lround(path.featherInner().value * 1000.0f)));
+            mix(static_cast<int>(std::lround(path.featherOuter().value * 1000.0f)));
             mix(static_cast<int>(path.falloff()));
-            mix(static_cast<int>(std::lround(path.expansion() * 1000.0f)));
+            mix(static_cast<int>(std::lround(path.expansion().value * 1000.0f)));
             mix(path.vertexCount());
             mix(qHash(path.name().toQString()));
         }

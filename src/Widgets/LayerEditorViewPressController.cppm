@@ -1,6 +1,7 @@
 module;
 
 #include <Qt>
+#include <QPointF>
 
 module Artifact.Widgets.LayerEditor.ViewPressController;
 
@@ -8,6 +9,7 @@ import Artifact.Layer.Abstract;
 import Artifact.Render.IRenderer;
 import Artifact.Widgets.LayerEditor.ShapeParameterController;
 import Artifact.Widgets.TransformGizmo;
+import Math.Vec;
 
 namespace Artifact {
 
@@ -19,14 +21,15 @@ LayerEditorViewPressResult LayerEditorViewPressController::handle(
     TransformGizmo* transformGizmo) const
 {
  if (state.button == Qt::LeftButton && callbacks.pressViewportChrome &&
-     callbacks.pressViewportChrome(state.viewportPosition)) {
+     callbacks.pressViewportChrome(state.logicalViewportPosition)) {
   return {true};
  }
  if (state.button == Qt::MiddleButton ||
      (state.button == Qt::RightButton && state.altModifier)) {
   if (callbacks.clearViewportChromeHover) callbacks.clearViewportChromeHover();
   if (state.panning) *state.panning = true;
-  if (state.lastMousePosition) *state.lastMousePosition = state.viewportPosition;
+  if (state.lastMousePosition)
+   *state.lastMousePosition = state.logicalViewportPosition;
   return {true, false, LayerEditorViewPressCursor::Pan};
  }
  if (state.button == Qt::LeftButton && state.layer &&
@@ -38,10 +41,10 @@ LayerEditorViewPressResult LayerEditorViewPressController::handle(
 
  if (state.layer && state.layer->isVisible() && !state.layer->isLocked()) {
   const auto canvas = renderer->viewportToCanvas(
-      {static_cast<float>(state.viewportPosition.x()),
-       static_cast<float>(state.viewportPosition.y())});
+      {state.viewportPosition.x, state.viewportPosition.y});
   if (parameterController.begin(
-          state.layer, QPointF(canvas.x, canvas.y), state.viewportPosition,
+          state.layer, QPointF(canvas.x, canvas.y),
+          ArtifactCore::Coordinates::toQPointF(state.viewportPosition),
           renderer->getZoom())) {
    const bool corner = parameterController.activeHandle() ==
                        LayerEditorShapeParameterHandle::CornerRadius;
@@ -51,7 +54,7 @@ LayerEditorViewPressResult LayerEditorViewPressController::handle(
   }
  }
  if (state.layer && transformGizmo->handleMousePress(
-         state.viewportPosition, renderer)) {
+         ArtifactCore::Coordinates::toQPointF(state.viewportPosition), renderer)) {
   return {true, true, LayerEditorViewPressCursor::Gizmo,
           transformGizmo->activeHandle()};
  }

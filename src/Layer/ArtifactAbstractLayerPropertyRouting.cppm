@@ -565,19 +565,19 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     } else if (maskAddress->field == QStringLiteral("opacity")) {
       path.setOpacity(static_cast<float>(value.toDouble()));
     } else if (maskAddress->field == QStringLiteral("feather")) {
-      path.setFeather(static_cast<float>(value.toDouble()));
+      path.setFeather({static_cast<float>(value.toDouble())});
     } else if (maskAddress->field == QStringLiteral("featherHorizontal")) {
-      path.setFeatherHorizontal(static_cast<float>(value.toDouble()));
+      path.setFeatherHorizontal({static_cast<float>(value.toDouble())});
     } else if (maskAddress->field == QStringLiteral("featherVertical")) {
-      path.setFeatherVertical(static_cast<float>(value.toDouble()));
+      path.setFeatherVertical({static_cast<float>(value.toDouble())});
     } else if (maskAddress->field == QStringLiteral("featherInner")) {
-      path.setFeatherInner(static_cast<float>(value.toDouble()));
+      path.setFeatherInner({static_cast<float>(value.toDouble())});
     } else if (maskAddress->field == QStringLiteral("featherOuter")) {
-      path.setFeatherOuter(static_cast<float>(value.toDouble()));
+      path.setFeatherOuter({static_cast<float>(value.toDouble())});
     } else if (maskAddress->field == QStringLiteral("falloff")) {
       path.setFalloff(static_cast<MaskFeatherFalloff>(value.toInt()));
     } else if (maskAddress->field == QStringLiteral("expansion")) {
-      path.setExpansion(static_cast<float>(value.toDouble()));
+      path.setExpansion({static_cast<float>(value.toDouble())});
     } else if (maskAddress->field == QStringLiteral("inverted")) {
       path.setInverted(value.toBool());
     } else if (maskAddress->field == QStringLiteral("mode")) {

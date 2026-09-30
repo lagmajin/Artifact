@@ -546,13 +546,13 @@ QJsonObject maskPathToJson(const MaskPath& path)
     obj["vertices"] = vertsArray;
     obj["closed"] = path.isClosed();
     obj["opacity"] = static_cast<double>(path.opacity());
-    obj["feather"] = static_cast<double>(path.feather());
-    obj["featherHorizontal"] = static_cast<double>(path.featherHorizontal());
-    obj["featherVertical"] = static_cast<double>(path.featherVertical());
-    obj["featherInner"] = static_cast<double>(path.featherInner());
-    obj["featherOuter"] = static_cast<double>(path.featherOuter());
+    obj["feather"] = static_cast<double>(path.feather().value);
+    obj["featherHorizontal"] = static_cast<double>(path.featherHorizontal().value);
+    obj["featherVertical"] = static_cast<double>(path.featherVertical().value);
+    obj["featherInner"] = static_cast<double>(path.featherInner().value);
+    obj["featherOuter"] = static_cast<double>(path.featherOuter().value);
     obj["falloff"] = static_cast<int>(path.falloff());
-    obj["expansion"] = static_cast<double>(path.expansion());
+    obj["expansion"] = static_cast<double>(path.expansion().value);
     obj["inverted"] = path.isInverted();
     obj["mode"] = static_cast<int>(path.mode());
     obj["name"] = path.name().toQString();
@@ -578,13 +578,13 @@ MaskPath maskPathFromJson(const QJsonObject& obj)
     }
     path.setClosed(obj.value("closed").toBool(true));
     path.setOpacity(static_cast<float>(obj.value("opacity").toDouble(1.0)));
-    path.setFeather(static_cast<float>(obj.value("feather").toDouble(0.0)));
-    path.setFeatherHorizontal(static_cast<float>(obj.value("featherHorizontal").toDouble(0.0)));
-    path.setFeatherVertical(static_cast<float>(obj.value("featherVertical").toDouble(0.0)));
-    path.setFeatherInner(static_cast<float>(obj.value("featherInner").toDouble(0.0)));
-    path.setFeatherOuter(static_cast<float>(obj.value("featherOuter").toDouble(0.0)));
+    path.setFeather({static_cast<float>(obj.value("feather").toDouble(0.0))});
+    path.setFeatherHorizontal({static_cast<float>(obj.value("featherHorizontal").toDouble(0.0))});
+    path.setFeatherVertical({static_cast<float>(obj.value("featherVertical").toDouble(0.0))});
+    path.setFeatherInner({static_cast<float>(obj.value("featherInner").toDouble(0.0))});
+    path.setFeatherOuter({static_cast<float>(obj.value("featherOuter").toDouble(0.0))});
     path.setFalloff(static_cast<MaskFeatherFalloff>(std::clamp(obj.value("falloff").toInt(0), 0, 3)));
-    path.setExpansion(static_cast<float>(obj.value("expansion").toDouble(0.0)));
+    path.setExpansion({static_cast<float>(obj.value("expansion").toDouble(0.0))});
     path.setInverted(obj.value("inverted").toBool(false));
     path.setMode(static_cast<MaskMode>(std::clamp(
         obj.value("mode").toInt(static_cast<int>(MaskMode::Add)), 0, 3)));

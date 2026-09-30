@@ -13,6 +13,7 @@ module;
 #include <QMatrix4x4>
 #include <QDebug>
 #include <QLoggingCategory>
+#include <QByteArray>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/CommandList.h>
@@ -38,6 +39,7 @@ import Artifact.Render.ShaderManager;
 import Artifact.Render.TextGlyphSubmitter.Contract;
 import Artifact.Render.TextGlyphPipelineAdapter;
 import Artifact.Render.RenderCommandBuffer;
+import Configuration.LayeredConfigStore;
 import Frame.Debug;
 import ArtifactCore.Utils.PerformanceProfiler;
 
@@ -89,6 +91,58 @@ static void recordShaderResourceCommit(ArtifactCore::RenderCostStats* stats)
     if (stats) {
         ++stats->srbCommits;
     }
+}
+
+// --- Solid-rect batch diagnostic switches -------------------------------------
+// The batched solid-rect path is disabled by a compile-time constant because a
+// swap-chain regression (clear-only frame) could not be reproduced from static
+// review.  These switches make the two independent variables separable at
+// runtime so the regression can finally be observed.  Resolution order is
+// startup JSON > environment > default, matching the app's config layering:
+//
+//   Render/SolidRectBatch     in ArtifactStartup.json, or
+//                             ARTIFACT_SOLIDRECT_BATCH     (default 1)
+//   Render/SolidRectIndirect  in ArtifactStartup.json, or
+//                             ARTIFACT_SOLIDRECT_INDIRECT  (default 0)
+//   Render/SolidRectVerbose   in ArtifactStartup.json, or
+//                             ARTIFACT_SOLIDRECT_VERBOSE   (default 0)
+//
+// The indirect path stays opt-in because it is the less proven of the two and
+// isolating it first is what distinguishes the two failure modes.
+static int solidRectBatchDebugFlag(const char* name, const char* configKey,
+                                   const int defaultValue)
+{
+    // Contract (docs/technical/STARTUP_FLAGS_CONTRACT_2026-09-29.md):
+    // JSON wins over the environment, and a conflict is reported once so a
+    // stale env var cannot silently win forever.  System sits below User /
+    // Project, so a real user setting still overrides the startup file.
+    const QByteArray raw = qgetenv(name);
+    const bool hasEnv = !raw.isEmpty();
+    const bool hasConfig = configKey != nullptr && *configKey != '\0';
+    QVariant configured;
+    if (hasConfig) {
+        configured = ArtifactCore::LayeredConfigStore::instance()
+                         .value(QString::fromLatin1(configKey));
+    }
+    if (configured.isValid()) {
+        if (hasEnv) {
+            static bool reported = false;
+            if (!reported) {
+                reported = true;
+                qWarning().noquote()
+                    << "[StartupFlags]" << name << "is set in the environment but"
+                    << configKey << "is set in ArtifactStartup.json; the JSON value wins."
+                    << "Remove the environment variable to avoid confusion.";
+            }
+        }
+        return configured.toBool() ? 1 : 0;
+    }
+    if (!hasEnv) {
+        return defaultValue;
+    }
+    bool ok = false;
+    const int parsed = raw.toInt(&ok);
+    return ok ? (parsed != 0 ? 1 : 0) : defaultValue;
 }
 
 static QString fmtFloat(const float value)
@@ -941,21 +995,59 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
     recordCtx->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION); // H2
     m_currentPSO_ = nullptr; // H3: reset PSO dedup state per submit
     m_batchSolidRectCount_ = 0;
-    // The transformed-rectangle batch currently produces a clear-only frame
-    // on the swap-chain path. Keep its resources intact, but use the proven
-    // per-packet submitters until the batched shader/input layout is validated.
-    // Enabling this collapses N SolidRectXform packets into one draw, so it is
-    // worth revisiting once the clear-only regression can actually be observed
-    // (it needs a rendered frame, which static review cannot establish).
-    constexpr bool kSolidRectBatchValidated = false;
-    const bool batchReady = kSolidRectBatchValidated
+    // The transformed-rectangle batch produced a clear-only frame on the
+    // swap-chain path in an earlier iteration, and the regression could not be
+    // reproduced from static review.  Batching is therefore now runtime
+    // switchable so the two candidate causes (the AA batched PSO itself, and the
+    // DrawIndexedIndirect fallback used for runs of 64+ rects) can be isolated
+    // without rebuilding.  Set ARTIFACT_SOLIDRECT_BATCH=0 to fall back to the
+    // proven per-packet submitter.
+    const bool batchEnabled = solidRectBatchDebugFlag(
+        "ARTIFACT_SOLIDRECT_BATCH", "Render/SolidRectBatch", 1) != 0;
+    const bool indirectEnabled = solidRectBatchDebugFlag(
+        "ARTIFACT_SOLIDRECT_INDIRECT", "Render/SolidRectIndirect", 0) != 0;
+    const bool verboseEnabled = solidRectBatchDebugFlag(
+        "ARTIFACT_SOLIDRECT_VERBOSE", "Render/SolidRectVerbose", 0) != 0;
+    // One log per submit keeps the diagnostic available without turning a
+    // per-frame path into a log source; the AGENTS.md hot-path rule requires the
+    // verbose branch to be opt-in and not evaluated unconditionally.
+    int solidRectBatchLogBudget = verboseEnabled ? 1 : 0;
+    const auto solidRectBatchVerbose = [&]() {
+        return solidRectBatchLogBudget > 0 && (solidRectBatchLogBudget--, true);
+    };
+    const bool batchReady = batchEnabled
                          && m_batch_solid_rect_vb_ && m_batch_solid_rect_ib_
                          && m_draw_batch_solid_rect_pso_and_srb.pPSO
                          && !m_batch_solid_rect_cpu_.empty();
 
+    // A batchReady=false fallback that is actually caused by a missing resource
+    // (rather than the switch being off) is the failure mode that silently keeps
+    // the proven path alive forever.  Report it once so it is not invisible.
+    if (batchEnabled && !batchReady && solidRectBatchVerbose()) {
+        qWarning().noquote()
+            << "[SolidRectBatch] batchEnabled but not ready:"
+            << " vb=" << (m_batch_solid_rect_vb_ ? "ok" : "null")
+            << " ib=" << (m_batch_solid_rect_ib_ ? "ok" : "null")
+            << " pso=" << (m_draw_batch_solid_rect_pso_and_srb.pPSO ? "ok" : "null")
+            << " cpu=" << (m_batch_solid_rect_cpu_.empty() ? "empty" : "ok");
+    }
+
     // Flush all accumulated SolidRectPkts as a single batched draw call
     auto flushSolidRectBatch = [&]() {
         if (m_batchSolidRectCount_ == 0) return;
+        if (solidRectBatchVerbose()) {
+            // One-shot per submit so a regression is observable without turning
+            // the hot path into a log source.  The vertex range actually written
+            // is the thing worth checking: a zero/small count here with a
+            // clear-only frame means the draw is fine but the batch never filled.
+            qWarning().noquote()
+                << "[SolidRectBatch] flush count=" << m_batchSolidRectCount_
+                << " indirect=" << (indirectEnabled ? 1 : 0)
+                << " indirectSupported=" << (m_batch_solid_rect_indirect_supported_ ? 1 : 0)
+                << " vbSize=" << m_batch_solid_rect_vb_->GetDesc().Size
+                << " ibSize=" << m_batch_solid_rect_ib_->GetDesc().Size
+                << " pso=" << (m_draw_batch_solid_rect_pso_and_srb.pPSO ? "ok" : "null");
+        }
         recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.SolidRect");
         mapWriteDiscard(recordCtx, m_batch_solid_rect_vb_,
             m_batch_solid_rect_cpu_.data(),
@@ -973,7 +1065,7 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
         recordShaderResourceCommit(m_frameCostStats_);
         recordCtx->CommitShaderResources(m_draw_batch_solid_rect_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
         recordDrawCall(m_frameCostStats_, true);
-        if (m_batch_solid_rect_indirect_supported_ &&
+        if (indirectEnabled && m_batch_solid_rect_indirect_supported_ &&
             m_batch_solid_rect_indirect_args_ &&
             m_batchSolidRectCount_ >= 64) {
             const Uint32 args[5] = {

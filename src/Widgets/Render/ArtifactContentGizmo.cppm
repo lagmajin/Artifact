@@ -35,6 +35,17 @@ FloatColor sizeColor() { return FloatColor{0.3f, 0.85f, 1.0f, 1.0f}; }
 FloatColor gradientColor() { return FloatColor{0.9f, 0.4f, 0.9f, 1.0f}; }
 FloatColor handleOutline() { return FloatColor{0.1f, 0.1f, 0.1f, 1.0f}; }
 
+ArtifactCore::Coordinates::SourcePixelBounds2 sourcePixelBoundsFromRect(
+    const QRectF& rect) noexcept {
+  return {{rect.left(), rect.top()}, {rect.right(), rect.bottom()}};
+}
+
+QRectF sourcePixelRectFromBounds(
+    ArtifactCore::Coordinates::SourcePixelBounds2 bounds) noexcept {
+  return QRectF(QPointF(bounds.minimum.x, bounds.minimum.y),
+                QPointF(bounds.maximum.x, bounds.maximum.y));
+}
+
 QPointF toCanvas(ArtifactIRenderer* renderer, const QPointF& viewportPos) {
   const auto p = renderer->viewportToCanvas(
       Detail::float2{static_cast<float>(viewportPos.x()),
@@ -474,14 +485,17 @@ bool ContentGizmo::handleMousePress(const QPointF& viewportPos,
                                          true);
     }
     const SourceCrop enabled = imageLayer->sourceCrop();
-    dragCropStart_ = enabled.cropRect();
+    QRectF cropStart = enabled.cropRect();
     const auto sourceSize = imageLayer->sourceSize();
-    dragCropSourceSize_ = QSizeF(static_cast<qreal>(sourceSize.width),
-                                 static_cast<qreal>(sourceSize.height));
-    if (!dragCropStart_.isValid() || dragCropStart_.width() <= 0.0 ||
-        dragCropStart_.height() <= 0.0) {
-      dragCropStart_ = QRectF(QPointF(0.0, 0.0), dragCropSourceSize_);
+    dragCropSourceSize_ = {static_cast<double>(sourceSize.width),
+                           static_cast<double>(sourceSize.height)};
+    if (!cropStart.isValid() || cropStart.width() <= 0.0 ||
+        cropStart.height() <= 0.0) {
+      cropStart = QRectF(QPointF(0.0, 0.0),
+                         QSizeF(dragCropSourceSize_.width,
+                                dragCropSourceSize_.height));
     }
+    dragCropStart_ = sourcePixelBoundsFromRect(cropStart);
     return true;
   }
   if (targetKind_ == TargetKind::Solid) {
@@ -526,8 +540,8 @@ bool ContentGizmo::handleMouseMove(const QPointF& viewportPos,
     if (!imageLayer) {
       return false;
     }
-    if (dragCropSourceSize_.width() <= 0.0 ||
-        dragCropSourceSize_.height() <= 0.0) {
+    if (dragCropSourceSize_.width <= 0.0 ||
+        dragCropSourceSize_.height <= 0.0) {
       return false;
     }
     // Canvas delta -> layer-local delta -> source-pixel delta. The output
@@ -543,7 +557,9 @@ bool ContentGizmo::handleMouseMove(const QPointF& viewportPos,
     QRectF current = imageLayer->sourceCrop().cropRect();
     if (!current.isValid() || current.width() <= 0.0 ||
         current.height() <= 0.0) {
-      current = QRectF(QPointF(0.0, 0.0), dragCropSourceSize_);
+      current = QRectF(
+          QPointF(0.0, 0.0),
+          QSizeF(dragCropSourceSize_.width, dragCropSourceSize_.height));
     }
     const double scaleX = current.width() / output.width();
     const double scaleY = current.height() / output.height();
@@ -555,9 +571,9 @@ bool ContentGizmo::handleMouseMove(const QPointF& viewportPos,
     QRectF next = current;
     const bool lockAspect =
         dragAspectLock_ || imageLayer->sourceCrop().preserveAspect();
-    const double startRatio = (dragCropStart_.height() > 0.0)
-                                  ? dragCropStart_.width() /
-                                        dragCropStart_.height()
+    const QRectF cropStart = sourcePixelRectFromBounds(dragCropStart_);
+    const double startRatio = (cropStart.height() > 0.0)
+                                  ? cropStart.width() / cropStart.height()
                                   : 1.0;
     const auto applyLeft = [&](double dx) {
       next.setLeft(next.left() + dx);
@@ -786,8 +802,9 @@ void ContentGizmo::handleMouseRelease() {
       const SourceCrop after = imageLayer->sourceCrop();
       SourceCrop before = after;
       before.setEnabled(dragCropWasEnabled_);
-      before.setCropRect(dragCropStart_.isValid() ? dragCropStart_
-                                                  : after.cropRect());
+      const QRectF cropStart = sourcePixelRectFromBounds(dragCropStart_);
+      before.setCropRect(cropStart.isValid() ? cropStart
+                                             : after.cropRect());
       const bool changed = before.enabled() != after.enabled() ||
                            before.cropRect() != after.cropRect();
       if (changed) {
@@ -879,16 +896,17 @@ bool ContentGizmo::cancelInteraction() {
   if (targetKind_ == TargetKind::ImageCrop) {
     if (const auto imageLayer =
             ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(layer_)) {
+      const QRectF cropStart = sourcePixelRectFromBounds(dragCropStart_);
       imageLayer->setLayerPropertyValue(QStringLiteral("sourceCrop.enabled"),
                                          dragCropWasEnabled_);
       imageLayer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropX"),
-                                         dragCropStart_.x());
+                                         cropStart.x());
       imageLayer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropY"),
-                                         dragCropStart_.y());
+                                         cropStart.y());
       imageLayer->setLayerPropertyValue(
-          QStringLiteral("sourceCrop.cropWidth"), dragCropStart_.width());
+          QStringLiteral("sourceCrop.cropWidth"), cropStart.width());
       imageLayer->setLayerPropertyValue(
-          QStringLiteral("sourceCrop.cropHeight"), dragCropStart_.height());
+          QStringLiteral("sourceCrop.cropHeight"), cropStart.height());
     }
   } else if (targetKind_ == TargetKind::Solid) {
     if (const auto solid =

@@ -5156,6 +5156,27 @@ int main(int argc, char *argv[]) {
 
   qInfo() << "[AppMain] Validation diagnostics will be initialized on demand";
 
+  // ============================================================
+  // Startup config (ArtifactStartup.json): load the file that sits beside
+  // the executable into the System layer, giving boot-time switches (currently
+  // the solid-rect batch diagnostics) a weaker default than Project/User
+  // settings.  Keys use the same Group/Name spelling as the config schema.
+  // ============================================================
+  {
+    const QString startupConfigPath = QDir(QCoreApplication::applicationDirPath())
+                                          .filePath(QStringLiteral("ArtifactStartup.json"));
+    if (QFileInfo::exists(startupConfigPath)) {
+      const int applied = ArtifactCore::LayeredConfigStore::instance()
+                              .importSystemJson(startupConfigPath);
+      if (applied < 0) {
+        qWarning() << "[AppMain] Failed to parse startup config:" << startupConfigPath;
+      } else {
+        qInfo() << "[AppMain] Startup config applied keys=" << applied
+                << "path=" << startupConfigPath;
+      }
+    }
+  }
+
   if (qEnvironmentVariableIsSet("ARTIFACT_RUN_BUILTIN_TESTS")) {
     const int builtinTestFailures = Artifact::runAllTests();
     if (builtinTestFailures != 0) {

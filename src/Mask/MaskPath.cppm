@@ -48,6 +48,7 @@ module Artifact.Mask.Path;
 
 
 import Utils.String.UniString;
+import Math.Vec;
 import Shape.Path;
 
 namespace Artifact {
@@ -77,13 +78,13 @@ void applySnapshotToPath(MaskPath& path, const MaskPathKeyframeSnapshot& snapsho
     }
     path.setClosed(snapshot.closed);
     path.setOpacity(snapshot.opacity);
-    path.setFeather(snapshot.feather);
-    path.setFeatherHorizontal(snapshot.featherHorizontal);
-    path.setFeatherVertical(snapshot.featherVertical);
-    path.setFeatherInner(snapshot.featherInner);
-    path.setFeatherOuter(snapshot.featherOuter);
+    path.setFeather({snapshot.feather});
+    path.setFeatherHorizontal({snapshot.featherHorizontal});
+    path.setFeatherVertical({snapshot.featherVertical});
+    path.setFeatherInner({snapshot.featherInner});
+    path.setFeatherOuter({snapshot.featherOuter});
     path.setFalloff(snapshot.falloff);
-    path.setExpansion(snapshot.expansion);
+    path.setExpansion({snapshot.expansion});
     path.setInverted(snapshot.inverted);
     path.setMode(snapshot.mode);
     path.setName(snapshot.name);
@@ -256,30 +257,45 @@ void MaskPath::setOpacity(float opacity) {
     impl_->opacity = std::clamp(opacity, 0.0f, 1.0f);
 }
 
-float MaskPath::feather() const { return impl_->feather; }
-void MaskPath::setFeather(float feather) {
-    if (!std::isfinite(feather)) return;
-    impl_->feather = std::max(0.0f, feather);
+ArtifactCore::Units::LayerLocalLength MaskPath::feather() const
+{
+    return {impl_->feather};
 }
-float MaskPath::featherHorizontal() const { return impl_->featherHorizontal; }
-void MaskPath::setFeatherHorizontal(float feather) {
-    if (!std::isfinite(feather)) return;
-    impl_->featherHorizontal = std::max(0.0f, feather);
+void MaskPath::setFeather(ArtifactCore::Units::LayerLocalLength feather) {
+    if (!std::isfinite(feather.value)) return;
+    impl_->feather = std::max(0.0f, feather.value);
 }
-float MaskPath::featherVertical() const { return impl_->featherVertical; }
-void MaskPath::setFeatherVertical(float feather) {
-    if (!std::isfinite(feather)) return;
-    impl_->featherVertical = std::max(0.0f, feather);
+ArtifactCore::Units::LayerLocalLength MaskPath::featherHorizontal() const
+{
+    return {impl_->featherHorizontal};
 }
-float MaskPath::featherInner() const { return impl_->featherInner; }
-void MaskPath::setFeatherInner(float feather) {
-    if (!std::isfinite(feather)) return;
-    impl_->featherInner = std::max(0.0f, feather);
+void MaskPath::setFeatherHorizontal(ArtifactCore::Units::LayerLocalLength feather) {
+    if (!std::isfinite(feather.value)) return;
+    impl_->featherHorizontal = std::max(0.0f, feather.value);
 }
-float MaskPath::featherOuter() const { return impl_->featherOuter; }
-void MaskPath::setFeatherOuter(float feather) {
-    if (!std::isfinite(feather)) return;
-    impl_->featherOuter = std::max(0.0f, feather);
+ArtifactCore::Units::LayerLocalLength MaskPath::featherVertical() const
+{
+    return {impl_->featherVertical};
+}
+void MaskPath::setFeatherVertical(ArtifactCore::Units::LayerLocalLength feather) {
+    if (!std::isfinite(feather.value)) return;
+    impl_->featherVertical = std::max(0.0f, feather.value);
+}
+ArtifactCore::Units::LayerLocalLength MaskPath::featherInner() const
+{
+    return {impl_->featherInner};
+}
+void MaskPath::setFeatherInner(ArtifactCore::Units::LayerLocalLength feather) {
+    if (!std::isfinite(feather.value)) return;
+    impl_->featherInner = std::max(0.0f, feather.value);
+}
+ArtifactCore::Units::LayerLocalLength MaskPath::featherOuter() const
+{
+    return {impl_->featherOuter};
+}
+void MaskPath::setFeatherOuter(ArtifactCore::Units::LayerLocalLength feather) {
+    if (!std::isfinite(feather.value)) return;
+    impl_->featherOuter = std::max(0.0f, feather.value);
 }
 MaskFeatherFalloff MaskPath::falloff() const { return impl_->falloff; }
 void MaskPath::setFalloff(MaskFeatherFalloff falloff) {
@@ -287,10 +303,13 @@ void MaskPath::setFalloff(MaskFeatherFalloff falloff) {
     impl_->falloff = static_cast<MaskFeatherFalloff>(std::clamp(v, 0, 3));
 }
 
-float MaskPath::expansion() const { return impl_->expansion; }
-void MaskPath::setExpansion(float expansion) {
-    if (!std::isfinite(expansion)) return;
-    impl_->expansion = expansion;
+ArtifactCore::Units::LayerLocalLength MaskPath::expansion() const
+{
+    return {impl_->expansion};
+}
+void MaskPath::setExpansion(ArtifactCore::Units::LayerLocalLength expansion) {
+    if (!std::isfinite(expansion.value)) return;
+    impl_->expansion = expansion.value;
 }
 
 bool MaskPath::isInverted() const { return impl_->inverted; }

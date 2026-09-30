@@ -44,8 +44,8 @@ export namespace Artifact {
     path.setName(UniString(roto.name()));
     path.setMode(static_cast<MaskMode>(roto.mode()));
     path.setOpacity(roto.opacity(time));
-    path.setFeather(roto.feather(time));
-    path.setExpansion(roto.expansion(time));
+    path.setFeather({roto.feather(time)});
+    path.setExpansion({roto.expansion(time)});
     path.setInverted(roto.isInverted());
     return path;
 }
@@ -59,8 +59,8 @@ export namespace Artifact {
     roto.setMode(static_cast<ArtifactCore::RotoMaskMode>(path.mode()));
     roto.setInverted(path.isInverted());
     roto.setOpacity(path.opacity(), time);
-    roto.setFeather(path.feather(), time);
-    roto.setExpansion(path.expansion(), time);
+    roto.setFeather(path.feather().value, time);
+    roto.setExpansion(path.expansion().value, time);
 
     const int count = path.vertexCount();
     // Iterate in reverse so the linked-list insertion order matches the

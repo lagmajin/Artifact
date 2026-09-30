@@ -167,6 +167,7 @@ QString toolLabelForType(Artifact::ToolType type)
     case Artifact::ToolType::Move:        return QStringLiteral("移動");
     case Artifact::ToolType::Scale:       return QStringLiteral("スケール");
     case Artifact::ToolType::Brush:       return QStringLiteral("ブラシ");
+    case Artifact::ToolType::Fill:        return QStringLiteral("塗りつぶし");
     case Artifact::ToolType::RotoBrush:   return QStringLiteral("ロトブラシ");
     case Artifact::ToolType::Clone:       return QStringLiteral("コピースタンプ");
     case Artifact::ToolType::Eraser:      return QStringLiteral("消しゴム");
@@ -256,6 +257,7 @@ public:
   QAction *penTool_ = nullptr;
   QAction *textTool_ = nullptr;
   QAction *brushTool_ = nullptr;
+  QAction *fillTool_ = nullptr;
   QAction *rotoBrushTool_ = nullptr;
   QAction *cloneStampTool_ = nullptr;
   QAction *eraserTool_ = nullptr;
@@ -472,6 +474,9 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
                          QStringLiteral("Material/brush.svg")},
              "ブラシ", "ブラシツール (Ctrl+B)",
              QKeySequence(Qt::CTRL | Qt::Key_B));
+  createTool(impl_->fillTool_,
+             QStringList{QStringLiteral("Studio/toolbar_tool_fill.svg")},
+             "塗りつぶし", "連結領域を前景色で塗りつぶす", QKeySequence());
   createTool(impl_->rotoBrushTool_,
              QStringList{QString::fromLatin1(kToolbarIconBrush),
                          QStringLiteral("MaterialVS/neutral/brush.svg"),
@@ -641,6 +646,7 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
           editMode = EditMode::Mask;
           break;
         case ToolType::Brush:
+        case ToolType::Fill:
         case ToolType::RotoBrush:
         case ToolType::Clone:
         case ToolType::Eraser:
@@ -695,6 +701,8 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
                        setTool(ToolType::Text);
                     } else if (action == impl_->brushTool_) {
                        setTool(ToolType::Brush);
+                    } else if (action == impl_->fillTool_) {
+                       setTool(ToolType::Fill);
                     } else if (action == impl_->rotoBrushTool_) {
                        setTool(ToolType::RotoBrush);
                      } else if (action == impl_->cloneStampTool_) {
@@ -960,10 +968,10 @@ void ArtifactToolBar::Impl::arrangeToolRail() {
   addGroup(shapeTool_, {ellipseTool_});
   toolBar->addAction(penTool_);
   toolBar->addAction(textTool_);
-  addGroup(brushTool_, {rotoBrushTool_, cloneStampTool_, eraserTool_});
+  addGroup(brushTool_, {fillTool_, rotoBrushTool_, cloneStampTool_, eraserTool_});
   addGroup(cameraTool_, {trackPointTool_});
 
-  toolActions_.secondaryActions = {panBehindTool_, ellipseTool_, rotoBrushTool_,
+  toolActions_.secondaryActions = {panBehindTool_, ellipseTool_, fillTool_, rotoBrushTool_,
       cloneStampTool_, eraserTool_, puppetTool_, rigSelectTool_, rigWeightTool_,
       trackPointTool_, motionSketchTool_, scrubPreviewTool_};
   setupMoreActionsMenu();

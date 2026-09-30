@@ -81,6 +81,7 @@ import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentImmediateSubmitter;
 import Artifact.Render.RenderCommandBuffer;
 import Core.Light;
+import Math.Vec;
 import Core.Parallel;
 import ArtifactCore.Utils.PerformanceProfiler;
 import Color.TransferFunction;

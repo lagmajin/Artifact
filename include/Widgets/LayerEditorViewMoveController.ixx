@@ -1,7 +1,3 @@
-module;
-
-#include <QPointF>
-
 export module Artifact.Widgets.LayerEditor.ViewMoveController;
 
 import Artifact.Layer.Abstract;
@@ -10,13 +6,14 @@ import Artifact.Widgets.LayerEditor.ModalTransformController;
 import Artifact.Widgets.LayerEditor.ShapeEditSession;
 import Artifact.Widgets.LayerEditor.ShapeParameterController;
 import Artifact.Widgets.TransformGizmo;
+import Math.Vec;
 
 export namespace Artifact {
 
 enum class LayerEditorViewMoveCursor { Unchanged, Unset, Gizmo };
 
 struct LayerEditorViewMoveState {
- QPointF viewportPosition;
+ ArtifactCore::Coordinates::ScreenPhysicalPoint2 viewportPosition;
  bool precision = false;
  bool snap = false;
  bool transformViewEnabled = false;

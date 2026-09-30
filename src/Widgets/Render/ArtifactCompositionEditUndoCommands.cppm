@@ -21,6 +21,7 @@ import Artifact.Layer.Abstract;
 import Artifact.Layer.Camera;
 import Artifact.Layer.Shape;
 import Event.Bus;
+import Math.Vec;
 import Time.Rational;
 import Undo.UndoManager;
 
@@ -193,8 +194,10 @@ private:
 
 class CameraPoiUndoCommand final : public UndoCommand {
 public:
-  CameraPoiUndoCommand(ArtifactAbstractLayerPtr layer, QVector3D before,
-                       QVector3D after)
+  CameraPoiUndoCommand(
+      ArtifactAbstractLayerPtr layer,
+      ArtifactCore::Coordinates::LayerParentPoint3 before,
+      ArtifactCore::Coordinates::LayerParentPoint3 after)
       : layer_(layer), before_(before), after_(after) {}
 
   void undo() override { lastOperationSucceeded_ = apply(before_); }
@@ -205,7 +208,7 @@ public:
   }
 
 private:
-  bool apply(const QVector3D &poi) {
+  bool apply(ArtifactCore::Coordinates::LayerParentPoint3 poi) {
     auto layer = layer_.lock();
     if (!layer) return false;
     if (auto *camera = dynamic_cast<ArtifactCameraLayer *>(layer.get())) {
@@ -229,8 +232,8 @@ private:
   }
 
   ArtifactAbstractLayerWeak layer_;
-  QVector3D before_;
-  QVector3D after_;
+  ArtifactCore::Coordinates::LayerParentPoint3 before_;
+  ArtifactCore::Coordinates::LayerParentPoint3 after_;
   bool lastOperationSucceeded_ = true;
 };
 

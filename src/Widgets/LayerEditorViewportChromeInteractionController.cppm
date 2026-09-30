@@ -10,6 +10,7 @@ import Core.ArtifactMath;
 import Artifact.Layer.Abstract;
 import Artifact.Render.IRenderer;
 import Artifact.Widgets.LayerEditor.ViewportChrome;
+import Math.Vec;
 import Tool;
 
 namespace Artifact {
@@ -20,8 +21,10 @@ LayerEditorViewportChromeInteractionController::press(
     const LayerEditorViewportChromeCallbacks& callbacks,
     ArtifactIRenderer& renderer) const
 {
+ const auto physicalPosition = ArtifactCore::Coordinates::toScreenPhysical(
+     state.viewportPosition, state.devicePixelRatio.value);
  const int control = layerEditorChromeControlAt(
-     state.viewportPosition * state.devicePixelRatio,
+     physicalPosition,
      state.physicalViewportSize, state.surfaceMode,
      state.hasLayerIdentity);
  if (control < 0) return {};
@@ -55,19 +58,20 @@ LayerEditorViewportChromeInteractionController::press(
  if (control < 20 || control > 23 || !state.zoomLevel) return {};
 
  if (control == 20)
-  *state.zoomLevel = ArtifactCore::artifactClamp(renderer.getZoom() / 1.1f, 0.05f, 32.0f);
+  *state.zoomLevel = {ArtifactCore::artifactClamp(
+      renderer.getZoom() / 1.1f, 0.05f, 32.0f)};
  else if (control == 21)
-  *state.zoomLevel = 1.0f;
+  *state.zoomLevel = {1.0f};
  else if (control == 22)
-  *state.zoomLevel = ArtifactCore::artifactClamp(renderer.getZoom() * 1.1f, 0.05f, 32.0f);
+  *state.zoomLevel = {ArtifactCore::artifactClamp(
+      renderer.getZoom() * 1.1f, 0.05f, 32.0f)};
  if (control <= 22) {
   renderer.zoomAroundViewportPoint(
-      {static_cast<float>(state.physicalViewportCenter.x()),
-       static_cast<float>(state.physicalViewportCenter.y())},
-      *state.zoomLevel);
+      {state.physicalViewportCenter.x, state.physicalViewportCenter.y},
+      state.zoomLevel->value);
  } else {
   renderer.fitToViewport();
-  *state.zoomLevel = renderer.getZoom();
+  *state.zoomLevel = {renderer.getZoom()};
  }
  return {true, true};
 }
@@ -76,8 +80,10 @@ LayerEditorViewportChromeHoverResult
 LayerEditorViewportChromeInteractionController::hover(
     const LayerEditorViewportChromeInteractionState& state) const
 {
+ const auto physicalPosition = ArtifactCore::Coordinates::toScreenPhysical(
+     state.viewportPosition, state.devicePixelRatio.value);
  const int nextControl = layerEditorChromeControlAt(
-     state.viewportPosition * state.devicePixelRatio,
+     physicalPosition,
      state.physicalViewportSize, state.surfaceMode,
      state.hasLayerIdentity);
  bool enabled = true;

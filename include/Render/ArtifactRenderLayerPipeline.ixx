@@ -81,15 +81,37 @@ export namespace Artifact
 
   // Apply a pointwise effect stack to the current accumulation entirely on GPU.
   // The result remains available through accumSRV().
-  bool applyPointwise(
-   IDeviceContext* ctx,
-   const ArtifactCore::PointwiseEffectStack& stack,
-   ITextureView* backgroundSRV = nullptr,
-   ITextureView* lutSRV = nullptr,
-   ITextureView* historySRV = nullptr
-  );
+  //
+  // maskSRV is optional.  When supplied, the stack must have been marked with
+  // PointwiseEffectStack::kMaskMixParameterSlot (layer opacity) and the segments
+  // must carry requiresMaskMix, so the shader lerps the adjusted result against
+  // the untouched accumulation instead of replacing it.  The mask view must be
+  // a single-channel texture matching the accumulation resolution.
+   bool applyPointwise(
+    IDeviceContext* ctx,
+    const ArtifactCore::PointwiseEffectStack& stack,
+    ITextureView* backgroundSRV = nullptr,
+    ITextureView* lutSRV = nullptr,
+    ITextureView* historySRV = nullptr,
+    ITextureView* maskSRV = nullptr
+   );
 
-  // Execute one backend-neutral spatial node over existing GPU-resident
+   // Folds the current accumulation back over the pre-adjustment snapshot using
+   // an external blend pipeline and the given blend mode.  Used by adjustment
+   // layers whose pointwise pass rewrote the accumulation in place: the blend
+   // function only exists in this fold, so Screen/Multiply/etc. are applied
+   // here rather than by the pointwise pass itself.
+   //
+   // Requires a prior applyPointwise() call with a mask/opacity mix so that the
+   // pre-adjustment backdrop is still snapshotted.  Returns false when the
+   // pipeline is not ready or the blend could not be dispatched, leaving the
+   // accumulation as the pointwise pass produced it.
+   bool foldAdjustmentBlend(
+    IDeviceContext* ctx,
+    ArtifactCore::LayerBlendPipeline* blendPipeline,
+    ArtifactCore::BlendMode mode);
+
+   // Execute one backend-neutral spatial node over existing GPU-resident
   // RGBA16F targets. Scratch and output must be distinct UAVs.
   bool applySpatialEffect(
    IDeviceContext* ctx, ITextureView* inputSRV,

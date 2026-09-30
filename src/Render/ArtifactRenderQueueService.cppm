@@ -133,6 +133,7 @@ import Artifact.Layer.Procedural3D;
 import Artifact.Layers.Model3D;
 import Artifact.Layer.Camera;
 import Artifact.Layer.Light;
+import Math.Vec;
 import Layer.Blend;
 import Color.Float;
 import Composition.TemplateLock;
@@ -3263,13 +3264,14 @@ namespace Artifact
                             {QStringLiteral("g"), lightColor.g()},
                             {QStringLiteral("b"), lightColor.b()},
                             {QStringLiteral("a"), lightColor.a()}});
-                        layerObject.insert(QStringLiteral("light.intensity"), light->intensity());
-                        layerObject.insert(QStringLiteral("light.range"), light->range());
-                        layerObject.insert(QStringLiteral("light.areaWidth"), light->areaWidth());
-                        layerObject.insert(QStringLiteral("light.areaHeight"), light->areaHeight());
+                        layerObject.insert(QStringLiteral("light.intensity"),
+                                           light->intensity().value);
+                        layerObject.insert(QStringLiteral("light.range"), light->range().value);
+                        layerObject.insert(QStringLiteral("light.areaWidth"), light->areaWidth().value);
+                        layerObject.insert(QStringLiteral("light.areaHeight"), light->areaHeight().value);
                         layerObject.insert(QStringLiteral("light.areaShape"), static_cast<int>(light->areaShape()));
-                        layerObject.insert(QStringLiteral("light.coneAngle"), light->coneAngle());
-                        layerObject.insert(QStringLiteral("light.coneFeather"), light->coneFeather());
+                        layerObject.insert(QStringLiteral("light.coneAngle"), light->coneAngle().value);
+                        layerObject.insert(QStringLiteral("light.coneFeather"), light->coneFeather().value);
                         layerObject.insert(QStringLiteral("light.castsShadows"), light->castsShadows());
                     }
                     externalLayers.append(layerObject);

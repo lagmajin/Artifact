@@ -37,6 +37,7 @@ export module Artifact.Mask.Path;
 
 
 import Core.ArtifactTuple;
+export import Math.Vec;
 import Utils.String.UniString;
 import Shape.Path;
 
@@ -125,21 +126,21 @@ public:
     float opacity() const;
     void setOpacity(float opacity);
 
-    float feather() const;
-    void setFeather(float feather);
-    float featherHorizontal() const;
-    void setFeatherHorizontal(float feather);
-    float featherVertical() const;
-    void setFeatherVertical(float feather);
-    float featherInner() const;
-    void setFeatherInner(float feather);
-    float featherOuter() const;
-    void setFeatherOuter(float feather);
+    ArtifactCore::Units::LayerLocalLength feather() const;
+    void setFeather(ArtifactCore::Units::LayerLocalLength feather);
+    ArtifactCore::Units::LayerLocalLength featherHorizontal() const;
+    void setFeatherHorizontal(ArtifactCore::Units::LayerLocalLength feather);
+    ArtifactCore::Units::LayerLocalLength featherVertical() const;
+    void setFeatherVertical(ArtifactCore::Units::LayerLocalLength feather);
+    ArtifactCore::Units::LayerLocalLength featherInner() const;
+    void setFeatherInner(ArtifactCore::Units::LayerLocalLength feather);
+    ArtifactCore::Units::LayerLocalLength featherOuter() const;
+    void setFeatherOuter(ArtifactCore::Units::LayerLocalLength feather);
     MaskFeatherFalloff falloff() const;
     void setFalloff(MaskFeatherFalloff falloff);
 
-    float expansion() const;
-    void setExpansion(float expansion);
+    ArtifactCore::Units::LayerLocalLength expansion() const;
+    void setExpansion(ArtifactCore::Units::LayerLocalLength expansion);
 
     bool isInverted() const;
     void setInverted(bool inverted);

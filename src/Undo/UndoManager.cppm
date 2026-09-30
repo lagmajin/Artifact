@@ -3574,12 +3574,12 @@ QJsonObject encodeMask(const LayerMask& mask) {
         }
         paths.append(QJsonObject{
             {QStringLiteral("vertices"), vertices}, {QStringLiteral("closed"), path.isClosed()},
-            {QStringLiteral("opacity"), path.opacity()}, {QStringLiteral("feather"), path.feather()},
-            {QStringLiteral("featherHorizontal"), path.featherHorizontal()},
-            {QStringLiteral("featherVertical"), path.featherVertical()},
-            {QStringLiteral("featherInner"), path.featherInner()}, {QStringLiteral("featherOuter"), path.featherOuter()},
+            {QStringLiteral("opacity"), path.opacity()}, {QStringLiteral("feather"), path.feather().value},
+            {QStringLiteral("featherHorizontal"), path.featherHorizontal().value},
+            {QStringLiteral("featherVertical"), path.featherVertical().value},
+            {QStringLiteral("featherInner"), path.featherInner().value}, {QStringLiteral("featherOuter"), path.featherOuter().value},
             {QStringLiteral("falloff"), static_cast<int>(path.falloff())},
-            {QStringLiteral("expansion"), path.expansion()}, {QStringLiteral("inverted"), path.isInverted()},
+            {QStringLiteral("expansion"), path.expansion().value}, {QStringLiteral("inverted"), path.isInverted()},
             {QStringLiteral("mode"), static_cast<int>(path.mode())}, {QStringLiteral("name"), path.name().toQString()}});
     }
     return QJsonObject{{QStringLiteral("enabled"), mask.isEnabled()},
@@ -3595,13 +3595,13 @@ LayerMask decodeMask(const QJsonObject& object) {
         MaskPath path;
         path.setClosed(pathObject.value(QStringLiteral("closed")).toBool(true));
         path.setOpacity(static_cast<float>(pathObject.value(QStringLiteral("opacity")).toDouble(1.0)));
-        path.setFeather(static_cast<float>(pathObject.value(QStringLiteral("feather")).toDouble()));
-        path.setFeatherHorizontal(static_cast<float>(pathObject.value(QStringLiteral("featherHorizontal")).toDouble()));
-        path.setFeatherVertical(static_cast<float>(pathObject.value(QStringLiteral("featherVertical")).toDouble()));
-        path.setFeatherInner(static_cast<float>(pathObject.value(QStringLiteral("featherInner")).toDouble()));
-        path.setFeatherOuter(static_cast<float>(pathObject.value(QStringLiteral("featherOuter")).toDouble()));
+        path.setFeather({static_cast<float>(pathObject.value(QStringLiteral("feather")).toDouble())});
+        path.setFeatherHorizontal({static_cast<float>(pathObject.value(QStringLiteral("featherHorizontal")).toDouble())});
+        path.setFeatherVertical({static_cast<float>(pathObject.value(QStringLiteral("featherVertical")).toDouble())});
+        path.setFeatherInner({static_cast<float>(pathObject.value(QStringLiteral("featherInner")).toDouble())});
+        path.setFeatherOuter({static_cast<float>(pathObject.value(QStringLiteral("featherOuter")).toDouble())});
         path.setFalloff(static_cast<MaskFeatherFalloff>(pathObject.value(QStringLiteral("falloff")).toInt(0)));
-        path.setExpansion(static_cast<float>(pathObject.value(QStringLiteral("expansion")).toDouble()));
+        path.setExpansion({static_cast<float>(pathObject.value(QStringLiteral("expansion")).toDouble())});
         path.setInverted(pathObject.value(QStringLiteral("inverted")).toBool(false));
         path.setMode(static_cast<MaskMode>(pathObject.value(QStringLiteral("mode")).toInt()));
         path.setName(UniString::fromQString(pathObject.value(QStringLiteral("name")).toString()));

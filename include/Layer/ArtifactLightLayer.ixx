@@ -11,6 +11,7 @@ import Artifact.Layer.Abstract;
 import Property.Group;
 import Color.Float;
 import Memory.SharedPtr;
+import Math.Vec;
 
 export namespace Artifact {
 
@@ -51,39 +52,40 @@ export namespace Artifact {
   ArtifactCore::FloatColor color() const;
   void setColor(const ArtifactCore::FloatColor& color);
 
-  float intensity() const;
-  void setIntensity(float intensity);
+  ArtifactCore::Units::Percent intensity() const;
+  void setIntensity(ArtifactCore::Units::Percent intensity);
 
-  float range() const;
-  void setRange(float range);
-  float areaWidth() const;
-  float areaHeight() const;
-  void setAreaSize(float width, float height);
+  ArtifactCore::Units::Pixels range() const;
+  void setRange(ArtifactCore::Units::Pixels range);
+  ArtifactCore::Units::Pixels areaWidth() const;
+  ArtifactCore::Units::Pixels areaHeight() const;
+  void setAreaSize(ArtifactCore::Units::Pixels width,
+                   ArtifactCore::Units::Pixels height);
   AreaLightShape areaShape() const;
   void setAreaShape(AreaLightShape shape);
 
   // Spot-light cone. These are authored in composition-space units and are
   // also the source values for a future volumetric-light render bridge.
-  float coneAngle() const;
-  void setConeAngle(float degrees);
-  float coneFeather() const;
-  void setConeFeather(float degrees);
-  float coneLength() const;
-  void setConeLength(float length);
+  ArtifactCore::Units::Degrees coneAngle() const;
+  void setConeAngle(ArtifactCore::Units::Degrees degrees);
+  ArtifactCore::Units::Degrees coneFeather() const;
+  void setConeFeather(ArtifactCore::Units::Degrees degrees);
+  ArtifactCore::Units::Pixels coneLength() const;
+  void setConeLength(ArtifactCore::Units::Pixels length);
 
   // Spot-light GOBO / cookie projection.
   QString goboTexturePath() const;
   void setGoboTexturePath(const QString& path);
   float goboIntensity() const;
   void setGoboIntensity(float intensity);
-  float goboRotation() const;
-  void setGoboRotation(float degrees);
+  ArtifactCore::Units::Degrees goboRotation() const;
+  void setGoboRotation(ArtifactCore::Units::Degrees degrees);
   bool goboInvert() const;
   void setGoboInvert(bool enabled);
 
   // RT Shadow specific: Larger radius = Softer shadows
-  float shadowRadius() const;
-  void setShadowRadius(float radius);
+  ArtifactCore::Units::Pixels shadowRadius() const;
+  void setShadowRadius(ArtifactCore::Units::Pixels radius);
 
    bool castsShadows() const;
    void setCastsShadows(bool enabled);

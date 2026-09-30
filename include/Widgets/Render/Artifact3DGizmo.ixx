@@ -11,6 +11,7 @@ export module Artifact.Widgets.Gizmo3D;
 
 import Artifact.Render.IRenderer;
 import Color.Float;
+import Math.Vec;
 
 export namespace Artifact {
 
@@ -18,14 +19,19 @@ enum class GizmoMode {
     Move,
     Rotate,
     Scale,
-    Full
+    Full,
+    // Anchor-only manipulator: a single draggable point at the layer anchor.
+    // Owned by this gizmo so projected-frame layers (image / solid / 3D plane)
+    // can move their anchor without reviving the legacy 2D gizmo's press path.
+    AnchorPoint
 };
 
 enum class GizmoOperation {
     None,
     Translate,
     Rotate,
-    Scale
+    Scale,
+    Anchor
 };
 
 enum class GizmoSpace {
@@ -42,12 +48,23 @@ enum class GizmoAxis {
     XY,
     YZ,
     XZ,
-    Screen
+    Screen,
+    // Single anchor point handle (Mode::AnchorPoint only).
+    Anchor
 };
 
 struct Ray {
     QVector3D origin;
     QVector3D direction;
+};
+
+// Typed boundary for rays consumed by the 3D gizmo. The controller supplies
+// an unprojected near-plane world point and a normalized world-space direction.
+// The implementation keeps its existing QVector3D geometry after converting
+// once on API entry.
+struct WorldRay {
+    ArtifactCore::Coordinates::WorldPoint3 origin;
+    ArtifactCore::Coordinates::WorldVector3 direction;
 };
 
 export class Artifact3DGizmo : public QObject {
@@ -60,19 +77,25 @@ public:
     GizmoMode mode() const { return mode_; }
     void setSpace(GizmoSpace space) { space_ = space; }
     GizmoSpace space() const { return space_; }
-    void setViewBasis(const QVector3D& xAxis, const QVector3D& yAxis,
-                      const QVector3D& zAxis);
+    // View-camera basis directions expressed in world coordinates.
+    void setViewBasis(ArtifactCore::Coordinates::WorldVector3 xAxis,
+                      ArtifactCore::Coordinates::WorldVector3 yAxis,
+                      ArtifactCore::Coordinates::WorldVector3 zAxis);
 
-    void setTransform(const QVector3D& position, const QVector3D& rotation);
+    void setTransform(ArtifactCore::Coordinates::WorldPoint3 position,
+                      ArtifactCore::Units::EulerDegrees3 rotation);
     void resetState();
-    void setLocalBasis(const QVector3D& xAxis, const QVector3D& yAxis,
-                       const QVector3D& zAxis);
-    QVector3D position() const;
-    QVector3D rotation() const;
-    void setScale(const QVector3D& scale);
-    QVector3D scale() const;
-    void setBoundingBox(const QVector3D& minBounds,
-                        const QVector3D& maxBounds);
+    // The object's local axes expressed in world coordinates.
+    void setLocalBasis(ArtifactCore::Coordinates::WorldVector3 xAxis,
+                       ArtifactCore::Coordinates::WorldVector3 yAxis,
+                       ArtifactCore::Coordinates::WorldVector3 zAxis);
+    ArtifactCore::Coordinates::WorldPoint3 position() const;
+    ArtifactCore::Units::EulerDegrees3 rotation() const;
+    void setScale(ArtifactCore::Units::Scale3 scale);
+    ArtifactCore::Units::Scale3 scale() const;
+    // Bounds use the active target layer's local coordinate space.
+    void setBoundingBox(ArtifactCore::Coordinates::LayerLocalPoint3 minBounds,
+                        ArtifactCore::Coordinates::LayerLocalPoint3 maxBounds);
     void clearBoundingBox();
     bool hasBoundingBox() const { return boundingBoxEnabled_; }
     void setDepthEnabled(bool enabled) { depthEnabled_ = enabled; }
@@ -83,21 +106,27 @@ public:
     }
     
     // Hit testing
-    GizmoAxis hitTest(const Ray& ray, const QMatrix4x4& view, const QMatrix4x4& proj);
+    GizmoAxis hitTest(const WorldRay& ray, const QMatrix4x4& view, const QMatrix4x4& proj);
     
     // Interaction
-    void beginDrag(GizmoAxis axis, const Ray& ray, float axisDirectionSign = 1.0f);
-    void beginDrag(GizmoAxis axis, const Ray& ray,
+    void beginDrag(GizmoAxis axis, const WorldRay& ray, float axisDirectionSign = 1.0f);
+    void beginDrag(GizmoAxis axis, const WorldRay& ray,
                    const QVector3D& scaleSigns);
-    void constrainDrag(GizmoAxis axis, const Ray& currentRay);
-    void setNumericInput(float value);
-    void setNumericPlanarScaleInput(float factor);
+    void constrainDrag(GizmoAxis axis, const WorldRay& currentRay);
+    void setNumericInput(ArtifactCore::Units::WorldLength value);
+    void setNumericInput(ArtifactCore::Units::Degrees value);
+    void setNumericInput(ArtifactCore::Units::ScaleFactor factor);
+    void setNumericPlanarScaleInput(ArtifactCore::Units::ScaleFactor factor);
     void clearNumericInput();
-    void updateDrag(const Ray& ray);
+    void updateDrag(const WorldRay& ray);
     void endDrag();
     bool isDragging() const { return activeAxis_ != GizmoAxis::None; }
     GizmoAxis activeAxis() const { return activeAxis_; }
-    QVector3D dragAxisDirection() const;
+    // World-space offset of an AnchorPoint drag, valid while dragging with
+    // activeAxis() == GizmoAxis::Anchor.  The controller converts this into
+    // layer-local anchor coordinates; the gizmo never mutates position for it.
+    ArtifactCore::Coordinates::WorldVector3 anchorDragDelta() const;
+    ArtifactCore::Coordinates::WorldVector3 dragAxisDirection() const;
     GizmoAxis hoverAxis() const { return hoverAxis_; }
     float hoverAxisDirectionSign() const { return hoverAxisDirectionSign_; }
     QVector3D hoverScaleAxes() const { return hoverScaleAxes_; }
@@ -125,8 +154,8 @@ private:
     GizmoOperation hoverOperation_ = GizmoOperation::None;
     bool depthEnabled_ = true;
     bool boundingBoxEnabled_ = false;
-    QVector3D boundingBoxMin_;
-    QVector3D boundingBoxMax_;
+    ArtifactCore::Coordinates::LayerLocalPoint3 boundingBoxMin_{};
+    ArtifactCore::Coordinates::LayerLocalPoint3 boundingBoxMax_{};
     bool snapEnabled_ = false;
     bool fineAdjustment_ = false;
     bool fullModeDrag_ = false;

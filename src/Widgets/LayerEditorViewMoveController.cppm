@@ -1,5 +1,6 @@
 module;
 
+#include <QPointF>
 
 module Artifact.Widgets.LayerEditor.ViewMoveController;
 
@@ -22,7 +23,7 @@ LayerEditorViewMoveResult LayerEditorViewMoveController::handle(
 {
  if (modalTransform.active()) {
   const auto target = modalTransform.update(
-      state.viewportPosition,
+      ArtifactCore::Coordinates::toQPointF(state.viewportPosition),
       ArtifactCore::artifactMax(0.001, static_cast<double>(renderer.getZoom())),
       state.precision, state.snap);
   if (target == LayerEditorModalTransformTarget::Path)
@@ -34,11 +35,12 @@ LayerEditorViewMoveResult LayerEditorViewMoveController::handle(
 
  bool requestRender = false;
  const auto canvas = renderer.viewportToCanvas(
-     {static_cast<float>(state.viewportPosition.x()),
-      static_cast<float>(state.viewportPosition.y())});
+     {state.viewportPosition.x, state.viewportPosition.y});
  const QPointF canvasPosition(canvas.x, canvas.y);
  if (parameterController.active() &&
-     parameterController.update(canvasPosition, state.viewportPosition)) {
+     parameterController.update(
+         canvasPosition,
+         ArtifactCore::Coordinates::toQPointF(state.viewportPosition))) {
   return {true, true};
  }
  if (state.transformViewEnabled && state.layer &&
@@ -54,14 +56,16 @@ LayerEditorViewMoveResult LayerEditorViewMoveController::handle(
   return {false, requestRender, LayerEditorViewMoveCursor::Unset};
  }
  if (transformGizmo->isDragging()) {
-  if (transformGizmo->handleMouseMove(state.viewportPosition, &renderer)) {
+  if (transformGizmo->handleMouseMove(
+          ArtifactCore::Coordinates::toQPointF(state.viewportPosition), &renderer)) {
    return {true, true, LayerEditorViewMoveCursor::Gizmo,
            transformGizmo->activeHandle(), true};
   }
   return {false, requestRender};
  }
  return {false, requestRender, LayerEditorViewMoveCursor::Gizmo,
-         transformGizmo->handleAtViewportPos(state.viewportPosition, &renderer),
+         transformGizmo->handleAtViewportPos(
+             ArtifactCore::Coordinates::toQPointF(state.viewportPosition), &renderer),
          false};
 }
 

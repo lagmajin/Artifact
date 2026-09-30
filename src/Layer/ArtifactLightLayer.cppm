@@ -20,6 +20,7 @@ import Graphics.ParticleData;
 import Property.Group;
 import Property;
 import Color.Float;
+import Math.Vec;
 
 namespace Artifact {
 
@@ -53,19 +54,19 @@ W_OBJECT_IMPL(ArtifactLightLayer)
 struct ArtifactLightLayer::Impl {
     LightType type_ = LightType::Point;
     ArtifactCore::FloatColor color_{1.0f, 1.0f, 1.0f, 1.0f};
-    float intensity_ = 100.0f;
-    float range_ = 500.0f;
-    float areaWidth_ = 100.0f;
-    float areaHeight_ = 100.0f;
+    ArtifactCore::Units::Percent intensity_{100.0f};
+    ArtifactCore::Units::Pixels range_{500.0f};
+    ArtifactCore::Units::Pixels areaWidth_{100.0f};
+    ArtifactCore::Units::Pixels areaHeight_{100.0f};
     AreaLightShape areaShape_ = AreaLightShape::Rectangle;
-    float coneAngle_ = 45.0f;
-    float coneFeather_ = 10.0f;
-    float coneLength_ = 300.0f;
+    ArtifactCore::Units::Degrees coneAngle_{45.0f};
+    ArtifactCore::Units::Degrees coneFeather_{10.0f};
+    ArtifactCore::Units::Pixels coneLength_{300.0f};
     QString goboTexturePath_;
     float goboIntensity_ = 1.0f;
     float goboRotation_ = 0.0f;
     bool goboInvert_ = false;
-    float shadowRadius_ = 10.0f;
+    ArtifactCore::Units::Pixels shadowRadius_{10.0f};
     bool castsShadows_ = true;
     bool glowEnabled_ = true;
     float glowSize_ = 1.0f;
@@ -96,19 +97,19 @@ QJsonObject ArtifactLightLayer::toJson() const
   obj[QStringLiteral("light.color.g")] = lightImpl_->color_.g();
   obj[QStringLiteral("light.color.b")] = lightImpl_->color_.b();
   obj[QStringLiteral("light.color.a")] = lightImpl_->color_.a();
-  obj[QStringLiteral("light.intensity")] = lightImpl_->intensity_;
-  obj[QStringLiteral("light.range")] = lightImpl_->range_;
-  obj[QStringLiteral("light.areaWidth")] = lightImpl_->areaWidth_;
-  obj[QStringLiteral("light.areaHeight")] = lightImpl_->areaHeight_;
+  obj[QStringLiteral("light.intensity")] = lightImpl_->intensity_.value;
+  obj[QStringLiteral("light.range")] = lightImpl_->range_.value;
+  obj[QStringLiteral("light.areaWidth")] = lightImpl_->areaWidth_.value;
+  obj[QStringLiteral("light.areaHeight")] = lightImpl_->areaHeight_.value;
   obj[QStringLiteral("light.areaShape")] = static_cast<int>(lightImpl_->areaShape_);
-  obj[QStringLiteral("light.coneAngle")] = lightImpl_->coneAngle_;
-  obj[QStringLiteral("light.coneFeather")] = lightImpl_->coneFeather_;
-  obj[QStringLiteral("light.coneLength")] = lightImpl_->coneLength_;
+  obj[QStringLiteral("light.coneAngle")] = lightImpl_->coneAngle_.value;
+  obj[QStringLiteral("light.coneFeather")] = lightImpl_->coneFeather_.value;
+  obj[QStringLiteral("light.coneLength")] = lightImpl_->coneLength_.value;
   obj[QStringLiteral("light.goboTexturePath")] = lightImpl_->goboTexturePath_;
   obj[QStringLiteral("light.goboIntensity")] = lightImpl_->goboIntensity_;
   obj[QStringLiteral("light.goboRotation")] = lightImpl_->goboRotation_;
   obj[QStringLiteral("light.goboInvert")] = lightImpl_->goboInvert_;
-  obj[QStringLiteral("light.shadowRadius")] = lightImpl_->shadowRadius_;
+  obj[QStringLiteral("light.shadowRadius")] = lightImpl_->shadowRadius_.value;
   obj[QStringLiteral("light.castsShadows")] = lightImpl_->castsShadows_;
   obj[QStringLiteral("light.glowEnabled")] = lightImpl_->glowEnabled_;
   obj[QStringLiteral("light.glowSize")] = lightImpl_->glowSize_;
@@ -137,34 +138,43 @@ void ArtifactLightLayer::fromJsonProperties(const QJsonObject& obj)
         static_cast<float>(obj.value(QStringLiteral("light.color.a")).toDouble(1.0))));
   }
   if (obj.contains(QStringLiteral("light.intensity"))) setIntensity(
-      static_cast<float>(obj.value(QStringLiteral("light.intensity")).toDouble()));
+      ArtifactCore::Units::Percent{static_cast<float>(obj.value(
+          QStringLiteral("light.intensity")).toDouble(intensity().value))});
   if (obj.contains(QStringLiteral("light.range"))) setRange(
-      static_cast<float>(obj.value(QStringLiteral("light.range")).toDouble()));
+      ArtifactCore::Units::Pixels{static_cast<float>(obj.value(
+          QStringLiteral("light.range")).toDouble(range().value))});
   if (obj.contains(QStringLiteral("light.areaWidth")) ||
       obj.contains(QStringLiteral("light.areaHeight"))) {
     setAreaSize(
-        static_cast<float>(obj.value(QStringLiteral("light.areaWidth")).toDouble(areaWidth())),
-        static_cast<float>(obj.value(QStringLiteral("light.areaHeight")).toDouble(areaHeight())));
+        ArtifactCore::Units::Pixels{static_cast<float>(obj.value(
+            QStringLiteral("light.areaWidth")).toDouble(areaWidth().value))},
+        ArtifactCore::Units::Pixels{static_cast<float>(obj.value(
+            QStringLiteral("light.areaHeight")).toDouble(areaHeight().value))});
   }
   if (obj.contains(QStringLiteral("light.areaShape"))) setAreaShape(
       static_cast<AreaLightShape>(std::clamp(
           obj.value(QStringLiteral("light.areaShape")).toInt(), 0, 1)));
   if (obj.contains(QStringLiteral("light.coneAngle"))) setConeAngle(
-      static_cast<float>(obj.value(QStringLiteral("light.coneAngle")).toDouble()));
+      ArtifactCore::Units::Degrees{static_cast<float>(
+          obj.value(QStringLiteral("light.coneAngle")).toDouble())});
   if (obj.contains(QStringLiteral("light.coneFeather"))) setConeFeather(
-      static_cast<float>(obj.value(QStringLiteral("light.coneFeather")).toDouble()));
+      ArtifactCore::Units::Degrees{static_cast<float>(
+          obj.value(QStringLiteral("light.coneFeather")).toDouble())});
   if (obj.contains(QStringLiteral("light.coneLength"))) setConeLength(
-      static_cast<float>(obj.value(QStringLiteral("light.coneLength")).toDouble()));
+      ArtifactCore::Units::Pixels{static_cast<float>(obj.value(
+          QStringLiteral("light.coneLength")).toDouble(coneLength().value))});
   if (obj.contains(QStringLiteral("light.goboTexturePath"))) setGoboTexturePath(
       obj.value(QStringLiteral("light.goboTexturePath")).toString());
   if (obj.contains(QStringLiteral("light.goboIntensity"))) setGoboIntensity(
       static_cast<float>(obj.value(QStringLiteral("light.goboIntensity")).toDouble(1.0)));
   if (obj.contains(QStringLiteral("light.goboRotation"))) setGoboRotation(
-      static_cast<float>(obj.value(QStringLiteral("light.goboRotation")).toDouble()));
+      ArtifactCore::Units::Degrees{static_cast<float>(
+          obj.value(QStringLiteral("light.goboRotation")).toDouble())});
   if (obj.contains(QStringLiteral("light.goboInvert"))) setGoboInvert(
       obj.value(QStringLiteral("light.goboInvert")).toBool());
   if (obj.contains(QStringLiteral("light.shadowRadius"))) setShadowRadius(
-      static_cast<float>(obj.value(QStringLiteral("light.shadowRadius")).toDouble()));
+      ArtifactCore::Units::Pixels{static_cast<float>(obj.value(
+          QStringLiteral("light.shadowRadius")).toDouble(shadowRadius().value))});
   if (obj.contains(QStringLiteral("light.castsShadows"))) setCastsShadows(
       obj.value(QStringLiteral("light.castsShadows")).toBool());
   if (obj.contains(QStringLiteral("light.glowEnabled"))) setGlowEnabled(
@@ -198,7 +208,8 @@ void ArtifactLightLayer::draw(ArtifactIRenderer* renderer) {
 
   const auto type = lightType();
   const auto lightColor = color();
-  const float intensityScale = std::clamp(lightImpl_->intensity_ / 100.0f, 0.2f, 4.0f);
+  const float intensityScale = std::clamp(
+      lightImpl_->intensity_.value / 100.0f, 0.2f, 4.0f);
   const ArtifactCore::FloatColor tintColor{
       std::min(1.0f, lightColor.r() * 0.85f + 0.10f * intensityScale),
       std::min(1.0f, lightColor.g() * 0.95f + 0.12f * intensityScale),
@@ -220,7 +231,8 @@ void ArtifactLightLayer::draw(ArtifactIRenderer* renderer) {
   renderer->drawGizmoRing(p, float3{0, 0, 1}, baseSize, tintColor, 1.0f);
 
   if (lightImpl_->castsShadows_) {
-    const float shadowRing = baseSize + std::max(2.0f, lightImpl_->shadowRadius_ * 0.05f);
+    const float shadowRing = baseSize + std::max(
+        2.0f, lightImpl_->shadowRadius_.value * 0.05f);
     renderer->drawGizmoRing(p, float3{0, 1, 0}, shadowRing,
                             ArtifactCore::FloatColor{lightColor.r(), lightColor.g(),
                                                      lightColor.b(), 0.18f},
@@ -252,14 +264,14 @@ void ArtifactLightLayer::draw(ArtifactIRenderer* renderer) {
     const ArtifactCore::FloatColor shadowTint{
         lightColor.r(), lightColor.g(), lightColor.b(), 0.18f};
     const float shadowSize =
-        baseSize + std::max(2.0f, lightImpl_->shadowRadius_ * 0.05f);
+        baseSize + std::max(2.0f, lightImpl_->shadowRadius_.value * 0.05f);
     if (type == LightType::Point) {
       renderer->drawGizmoRing(p, float3{1, 0, 0}, shadowSize, shadowTint, 0.9f);
       renderer->drawGizmoRing(p, float3{0, 1, 0}, shadowSize, shadowTint, 0.9f);
       renderer->drawGizmoRing(p, float3{0, 0, 1}, shadowSize, shadowTint, 0.9f);
     } else if (type == LightType::Spot) {
-      const float coneLength = std::max(1.0f, lightImpl_->coneLength_);
-      const float coneRadius = std::tan(std::clamp(lightImpl_->coneAngle_,
+      const float coneLength = std::max(1.0f, lightImpl_->coneLength_.value);
+      const float coneRadius = std::tan(std::clamp(lightImpl_->coneAngle_.value,
                                                     0.1f, 179.0f) *
                                         3.14159265f / 360.0f) * coneLength;
       const QVector3D coneCenter = pos + forward * coneLength;
@@ -269,7 +281,8 @@ void ArtifactLightLayer::draw(ArtifactIRenderer* renderer) {
           coneRadius * 0.95f, shadowTint, 0.9f);
     } else if (type == LightType::Area) {
       const float shadowRadius = std::max(
-          1.0f, std::min(lightImpl_->areaWidth_, lightImpl_->areaHeight_) * 0.5f);
+          1.0f, std::min(lightImpl_->areaWidth_.value,
+                         lightImpl_->areaHeight_.value) * 0.5f);
       const QVector3D normal = m.mapVector(QVector3D(0, 0, 1)).normalized();
       renderer->drawGizmoRing(
           float3{pos.x(), pos.y(), pos.z()},
@@ -284,7 +297,8 @@ void ArtifactLightLayer::draw(ArtifactIRenderer* renderer) {
   }
 
   if (type == LightType::Point) {
-    const float rangeVisual = std::max(baseSize * 1.5f, lightImpl_->range_);
+    const float rangeVisual = std::max(baseSize * 1.5f,
+                                       lightImpl_->range_.value);
     const ArtifactCore::FloatColor rangeColor{lightColor.r(), lightColor.g(),
                                                lightColor.b(), 0.16f};
     renderer->drawGizmoRing(p, float3{1, 0, 0}, rangeVisual, rangeColor, 0.8f);
@@ -300,15 +314,15 @@ void ArtifactLightLayer::draw(ArtifactIRenderer* renderer) {
     renderer->drawGizmoRing(p, float3{0, 1, 0}, baseSize * 1.35f, tintColor, 1.0f);
   } else if (type == LightType::Area) {
     if (lightImpl_->areaShape_ == AreaLightShape::Disk) {
-      const float radius = std::max(1.0f, std::min(lightImpl_->areaWidth_,
-                                                    lightImpl_->areaHeight_) * 0.5f);
+      const float radius = std::max(1.0f, std::min(lightImpl_->areaWidth_.value,
+                                                    lightImpl_->areaHeight_.value) * 0.5f);
       const QVector3D normal = m.mapVector(QVector3D(0, 0, 1)).normalized();
       renderer->drawGizmoRing(float3{pos.x(), pos.y(), pos.z()},
                               float3{normal.x(), normal.y(), normal.z()},
                               radius, tintColor, 1.2f);
     } else {
-      const QVector3D areaSide = m.mapVector(QVector3D(lightImpl_->areaWidth_ * 0.5f, 0, 0));
-      const QVector3D areaUp = m.mapVector(QVector3D(0, lightImpl_->areaHeight_ * 0.5f, 0));
+      const QVector3D areaSide = m.mapVector(QVector3D(lightImpl_->areaWidth_.value * 0.5f, 0, 0));
+      const QVector3D areaUp = m.mapVector(QVector3D(0, lightImpl_->areaHeight_.value * 0.5f, 0));
       const QVector3D a = pos - areaSide - areaUp;
       const QVector3D b = pos + areaSide - areaUp;
       const QVector3D c = pos + areaSide + areaUp;
@@ -334,8 +348,8 @@ void ArtifactLightLayer::draw(ArtifactIRenderer* renderer) {
     // attenuation kicks in before the cone ends. (Previously coneLength was
     // silently clamped to range_, which made the gizmo and the property
     // value disagree.)
-    const float coneLength = std::max(1.0f, lightImpl_->coneLength_);
-    const float coneRadius = std::tan(std::clamp(lightImpl_->coneAngle_,
+    const float coneLength = std::max(1.0f, lightImpl_->coneLength_.value);
+    const float coneRadius = std::tan(std::clamp(lightImpl_->coneAngle_.value,
                                                   0.1f, 179.0f) *
                                       3.14159265f / 360.0f) * coneLength;
     QVector3D coneSide = m.mapVector(QVector3D(1, 0, 0));
@@ -363,10 +377,11 @@ void ArtifactLightLayer::draw(ArtifactIRenderer* renderer) {
     // Feather ring: inner edge = outer edge - feather angle (inward). Always
     // shown when feather is non-zero, even if it is very small, so the user
     // can see the soft band develop live as they drag the property.
-    if (lightImpl_->coneFeather_ > 0.0f) {
+    if (lightImpl_->coneFeather_.value > 0.0f) {
       const float featherAngle =
-          std::max(0.0f, lightImpl_->coneAngle_ - lightImpl_->coneFeather_);
-      if (featherAngle < lightImpl_->coneAngle_) {
+          std::max(0.0f, lightImpl_->coneAngle_.value -
+                             lightImpl_->coneFeather_.value);
+      if (featherAngle < lightImpl_->coneAngle_.value) {
         const float innerRadius = std::tan(featherAngle * 3.14159265f / 360.0f) *
                                   coneLength;
         renderer->drawGizmoRing(float3{coneCenter.x(), coneCenter.y(), coneCenter.z()},
@@ -375,14 +390,14 @@ void ArtifactLightLayer::draw(ArtifactIRenderer* renderer) {
       }
     }
     // Attenuation range indicator: only when range_ extends past the cone.
-    if (lightImpl_->range_ > coneLength + 0.5f) {
+    if (lightImpl_->range_.value > coneLength + 0.5f) {
       const ArtifactCore::FloatColor rangeColor{lightColor.r(), lightColor.g(),
                                                  lightColor.b(), 0.16f};
-      const float rangeRadius = std::tan(std::clamp(lightImpl_->coneAngle_,
+      const float rangeRadius = std::tan(std::clamp(lightImpl_->coneAngle_.value,
                                                     0.1f, 179.0f) *
                                         3.14159265f / 360.0f) *
-                                 lightImpl_->range_;
-      const QVector3D rangeCenter = pos + forward * lightImpl_->range_;
+                                 lightImpl_->range_.value;
+      const QVector3D rangeCenter = pos + forward * lightImpl_->range_.value;
       renderer->drawGizmoRing(float3{rangeCenter.x(), rangeCenter.y(), rangeCenter.z()},
                               float3{forward.x(), forward.y(), forward.z()}, rangeRadius,
                               rangeColor, 0.9f);
@@ -425,12 +440,12 @@ void ArtifactLightLayer::draw(ArtifactIRenderer* renderer) {
       (type == LightType::Point || type == LightType::Spot ||
        type == LightType::Area)) {
     const float falloffBase = type == LightType::Spot
-        ? std::max(1.0f, lightImpl_->coneLength_)
-        : std::max(1.0f, lightImpl_->range_);
+        ? std::max(1.0f, lightImpl_->coneLength_.value)
+        : std::max(1.0f, lightImpl_->range_.value);
     const float glowRadius = std::clamp(
         falloffBase * 0.25f * lightImpl_->glowSize_, 1.0f, 100000.0f);
     const float glowAlpha = std::clamp(
-        (lightImpl_->intensity_ / 100.0f) * lightImpl_->glowIntensity_ *
+        (lightImpl_->intensity_.value / 100.0f) * lightImpl_->glowIntensity_ *
             opacity(),
         0.0f, 1.0f);
     if (glowAlpha > 0.001f) {
@@ -472,22 +487,37 @@ void ArtifactLightLayer::setLightType(LightType t) {
 ArtifactCore::FloatColor ArtifactLightLayer::color() const { return lightImpl_->color_; }
 void ArtifactLightLayer::setColor(const ArtifactCore::FloatColor& c) { lightImpl_->color_ = c; changed(); }
 
-float ArtifactLightLayer::intensity() const { return lightImpl_->intensity_; }
-void ArtifactLightLayer::setIntensity(float i) { lightImpl_->intensity_ = i; changed(); }
-
-float ArtifactLightLayer::range() const { return lightImpl_->range_; }
-void ArtifactLightLayer::setRange(float range)
-{
-  lightImpl_->range_ = std::max(1.0f, range);
+ArtifactCore::Units::Percent ArtifactLightLayer::intensity() const {
+  return lightImpl_->intensity_;
+}
+void ArtifactLightLayer::setIntensity(ArtifactCore::Units::Percent intensity) {
+  lightImpl_->intensity_ = intensity;
   changed();
 }
 
-float ArtifactLightLayer::areaWidth() const { return lightImpl_->areaWidth_; }
-float ArtifactLightLayer::areaHeight() const { return lightImpl_->areaHeight_; }
-void ArtifactLightLayer::setAreaSize(float width, float height)
+ArtifactCore::Units::Pixels ArtifactLightLayer::range() const {
+  return lightImpl_->range_;
+}
+void ArtifactLightLayer::setRange(ArtifactCore::Units::Pixels range)
 {
-  lightImpl_->areaWidth_ = std::max(1.0f, width);
-  lightImpl_->areaHeight_ = std::max(1.0f, height);
+  lightImpl_->range_ = ArtifactCore::Units::Pixels{
+      std::max(1.0f, range.value)};
+  changed();
+}
+
+ArtifactCore::Units::Pixels ArtifactLightLayer::areaWidth() const {
+  return lightImpl_->areaWidth_;
+}
+ArtifactCore::Units::Pixels ArtifactLightLayer::areaHeight() const {
+  return lightImpl_->areaHeight_;
+}
+void ArtifactLightLayer::setAreaSize(ArtifactCore::Units::Pixels width,
+                                     ArtifactCore::Units::Pixels height)
+{
+  lightImpl_->areaWidth_ = ArtifactCore::Units::Pixels{
+      std::max(1.0f, width.value)};
+  lightImpl_->areaHeight_ = ArtifactCore::Units::Pixels{
+      std::max(1.0f, height.value)};
   changed();
 }
 
@@ -499,25 +529,36 @@ void ArtifactLightLayer::setAreaShape(AreaLightShape shape)
   changed();
 }
 
-float ArtifactLightLayer::coneAngle() const { return lightImpl_->coneAngle_; }
-void ArtifactLightLayer::setConeAngle(float degrees)
+ArtifactCore::Units::Degrees ArtifactLightLayer::coneAngle() const {
+  return lightImpl_->coneAngle_;
+}
+void ArtifactLightLayer::setConeAngle(ArtifactCore::Units::Degrees degrees)
 {
-  lightImpl_->coneAngle_ = std::clamp(degrees, 0.1f, 179.0f);
-  lightImpl_->coneFeather_ = std::clamp(lightImpl_->coneFeather_, 0.0f, lightImpl_->coneAngle_);
+  lightImpl_->coneAngle_ = ArtifactCore::Units::Degrees{
+      std::clamp(degrees.value, 0.1f, 179.0f)};
+  lightImpl_->coneFeather_ = ArtifactCore::Units::Degrees{
+      std::clamp(lightImpl_->coneFeather_.value, 0.0f,
+                 lightImpl_->coneAngle_.value)};
   changed();
 }
 
-float ArtifactLightLayer::coneFeather() const { return lightImpl_->coneFeather_; }
-void ArtifactLightLayer::setConeFeather(float degrees)
+ArtifactCore::Units::Degrees ArtifactLightLayer::coneFeather() const {
+  return lightImpl_->coneFeather_;
+}
+void ArtifactLightLayer::setConeFeather(ArtifactCore::Units::Degrees degrees)
 {
-  lightImpl_->coneFeather_ = std::clamp(degrees, 0.0f, lightImpl_->coneAngle_);
+  lightImpl_->coneFeather_ = ArtifactCore::Units::Degrees{
+      std::clamp(degrees.value, 0.0f, lightImpl_->coneAngle_.value)};
   changed();
 }
 
-float ArtifactLightLayer::coneLength() const { return lightImpl_->coneLength_; }
-void ArtifactLightLayer::setConeLength(float length)
+ArtifactCore::Units::Pixels ArtifactLightLayer::coneLength() const {
+  return lightImpl_->coneLength_;
+}
+void ArtifactLightLayer::setConeLength(ArtifactCore::Units::Pixels length)
 {
-  lightImpl_->coneLength_ = std::max(1.0f, length);
+  lightImpl_->coneLength_ = ArtifactCore::Units::Pixels{
+      std::max(1.0f, length.value)};
   changed();
 }
 
@@ -536,10 +577,12 @@ void ArtifactLightLayer::setGoboIntensity(float intensity)
   lightImpl_->goboIntensity_ = std::clamp(intensity, 0.0f, 1.0f);
   changed();
 }
-float ArtifactLightLayer::goboRotation() const { return lightImpl_->goboRotation_; }
-void ArtifactLightLayer::setGoboRotation(float degrees)
+ArtifactCore::Units::Degrees ArtifactLightLayer::goboRotation() const {
+  return {lightImpl_->goboRotation_};
+}
+void ArtifactLightLayer::setGoboRotation(ArtifactCore::Units::Degrees degrees)
 {
-  lightImpl_->goboRotation_ = std::fmod(degrees, 360.0f);
+  lightImpl_->goboRotation_ = std::fmod(degrees.value, 360.0f);
   changed();
 }
 bool ArtifactLightLayer::goboInvert() const { return lightImpl_->goboInvert_; }
@@ -549,12 +592,17 @@ void ArtifactLightLayer::setGoboInvert(bool enabled)
   changed();
 }
 
-float ArtifactLightLayer::shadowRadius() const { return lightImpl_->shadowRadius_; }
-void ArtifactLightLayer::setShadowRadius(float r) {
+ArtifactCore::Units::Pixels ArtifactLightLayer::shadowRadius() const {
+  return lightImpl_->shadowRadius_;
+}
+void ArtifactLightLayer::setShadowRadius(ArtifactCore::Units::Pixels radius) {
   // UI radius maps to Core softness via /10; MeshRenderer clamps softness to
   // 0..2, so 0..20 is the effective range. Keep the stored value in range so
   // the slider, JSON, and rendered result agree.
-  lightImpl_->shadowRadius_ = std::isfinite(r) ? std::clamp(r, 0.0f, 20.0f) : 10.0f;
+  lightImpl_->shadowRadius_ = ArtifactCore::Units::Pixels{
+      std::isfinite(radius.value)
+          ? std::clamp(radius.value, 0.0f, 20.0f)
+          : 10.0f};
   changed();
 }
 
@@ -623,7 +671,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactLightLayer::getLayerPropertyGro
 
     auto intensityProp = persistentLayerProperty(QStringLiteral("Light/Intensity"),
                                                  ArtifactCore::PropertyType::Float,
-                                                 static_cast<double>(lightImpl_->intensity_), -140);
+                                                 static_cast<double>(lightImpl_->intensity_.value), -140);
     intensityProp->setHardRange(0.0, 1000.0);
     intensityProp->setSoftRange(0.0, 250.0);
     intensityProp->setUnit(QStringLiteral("%"));
@@ -633,7 +681,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactLightLayer::getLayerPropertyGro
         lightImpl_->type_ == LightType::Area) {
     auto rangeProp = persistentLayerProperty(
         QStringLiteral("Light/Range"), ArtifactCore::PropertyType::Float,
-        static_cast<double>(lightImpl_->range_), -139);
+        static_cast<double>(lightImpl_->range_.value), -139);
     rangeProp->setHardRange(1.0, 100000.0);
     rangeProp->setSoftRange(25.0, 5000.0);
     rangeProp->setUnit(QStringLiteral("px"));
@@ -644,14 +692,14 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactLightLayer::getLayerPropertyGro
     if (lightImpl_->type_ == LightType::Area) {
     auto widthProp = persistentLayerProperty(QStringLiteral("Light/Area Width"),
                                              ArtifactCore::PropertyType::Float,
-                                             static_cast<double>(lightImpl_->areaWidth_), -138);
+                                             static_cast<double>(lightImpl_->areaWidth_.value), -138);
     widthProp->setHardRange(1.0, 100000.0);
     widthProp->setSoftRange(10.0, 2000.0);
     widthProp->setUnit(QStringLiteral("px"));
     lightOptions.addProperty(widthProp);
     auto heightProp = persistentLayerProperty(QStringLiteral("Light/Area Height"),
                                               ArtifactCore::PropertyType::Float,
-                                              static_cast<double>(lightImpl_->areaHeight_), -137);
+                                              static_cast<double>(lightImpl_->areaHeight_.value), -137);
     heightProp->setHardRange(1.0, 100000.0);
     heightProp->setSoftRange(10.0, 2000.0);
     heightProp->setUnit(QStringLiteral("px"));
@@ -666,7 +714,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactLightLayer::getLayerPropertyGro
     if (lightImpl_->type_ == LightType::Spot) {
     auto coneAngleProp = persistentLayerProperty(QStringLiteral("Light/Cone Angle"),
                                                   ArtifactCore::PropertyType::Float,
-                                                  static_cast<double>(lightImpl_->coneAngle_), -138);
+                                                  static_cast<double>(lightImpl_->coneAngle_.value), -138);
     coneAngleProp->setHardRange(0.1, 179.0);
     coneAngleProp->setSoftRange(1.0, 120.0);
     coneAngleProp->setUnit(QStringLiteral("deg"));
@@ -677,7 +725,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactLightLayer::getLayerPropertyGro
 
     auto coneFeatherProp = persistentLayerProperty(QStringLiteral("Light/Cone Feather"),
                                                     ArtifactCore::PropertyType::Float,
-                                                    static_cast<double>(lightImpl_->coneFeather_), -137);
+                                                    static_cast<double>(lightImpl_->coneFeather_.value), -137);
     coneFeatherProp->setHardRange(0.0, 179.0);
     coneFeatherProp->setSoftRange(0.0, 60.0);
     coneFeatherProp->setUnit(QStringLiteral("deg"));
@@ -686,7 +734,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactLightLayer::getLayerPropertyGro
 
     auto coneLengthProp = persistentLayerProperty(QStringLiteral("Light/Cone Length"),
                                                    ArtifactCore::PropertyType::Float,
-                                                   static_cast<double>(lightImpl_->coneLength_), -136);
+                                                   static_cast<double>(lightImpl_->coneLength_.value), -136);
     coneLengthProp->setHardRange(1.0, 10000.0);
     coneLengthProp->setSoftRange(25.0, 1000.0);
     coneLengthProp->setUnit(QStringLiteral("px"));
@@ -732,7 +780,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactLightLayer::getLayerPropertyGro
     auto radiusProp = persistentLayerProperty(
         QStringLiteral("Light/Shadow Radius"),
         ArtifactCore::PropertyType::Float,
-        static_cast<double>(lightImpl_->shadowRadius_), -120);
+        static_cast<double>(lightImpl_->shadowRadius_.value), -120);
     radiusProp->setHardRange(0.0, 20.0);
     radiusProp->setSoftRange(0.0, 10.0);
     radiusProp->setUnit(QStringLiteral("px"));
@@ -814,28 +862,28 @@ bool ArtifactLightLayer::setLayerPropertyValue(const QString& propertyPath, cons
         ));
         return true;
     } else if (propertyPath == "Light/Intensity") {
-        setIntensity(value.toFloat());
+        setIntensity(ArtifactCore::Units::Percent{value.toFloat()});
         return true;
     } else if (propertyPath == "Light/Range") {
-        setRange(value.toFloat());
+        setRange(ArtifactCore::Units::Pixels{value.toFloat()});
         return true;
     } else if (propertyPath == "Light/Area Width") {
-        setAreaSize(value.toFloat(), areaHeight());
+        setAreaSize(ArtifactCore::Units::Pixels{value.toFloat()}, areaHeight());
         return true;
     } else if (propertyPath == "Light/Area Height") {
-        setAreaSize(areaWidth(), value.toFloat());
+        setAreaSize(areaWidth(), ArtifactCore::Units::Pixels{value.toFloat()});
         return true;
     } else if (propertyPath == "Light/Area Shape") {
         setAreaShape(static_cast<AreaLightShape>(value.toInt()));
         return true;
     } else if (propertyPath == "Light/Cone Angle") {
-        setConeAngle(value.toFloat());
+        setConeAngle(ArtifactCore::Units::Degrees{value.toFloat()});
         return true;
     } else if (propertyPath == "Light/Cone Feather") {
-        setConeFeather(value.toFloat());
+        setConeFeather(ArtifactCore::Units::Degrees{value.toFloat()});
         return true;
     } else if (propertyPath == "Light/Cone Length") {
-        setConeLength(value.toFloat());
+        setConeLength(ArtifactCore::Units::Pixels{value.toFloat()});
         return true;
     } else if (propertyPath == "Light/GOBO Texture") {
         setGoboTexturePath(value.toString());
@@ -844,7 +892,7 @@ bool ArtifactLightLayer::setLayerPropertyValue(const QString& propertyPath, cons
         setGoboIntensity(value.toFloat());
         return true;
     } else if (propertyPath == "Light/GOBO Rotation") {
-        setGoboRotation(value.toFloat());
+        setGoboRotation(ArtifactCore::Units::Degrees{value.toFloat()});
         return true;
     } else if (propertyPath == "Light/GOBO Invert") {
         setGoboInvert(value.toBool());
@@ -853,7 +901,7 @@ bool ArtifactLightLayer::setLayerPropertyValue(const QString& propertyPath, cons
         setCastsShadows(value.toBool());
         return true;
     } else if (propertyPath == "Light/Shadow Radius") {
-        setShadowRadius(value.toFloat());
+        setShadowRadius(ArtifactCore::Units::Pixels{value.toFloat()});
         return true;
     } else if (propertyPath == "Light/Glow") {
         setGlowEnabled(value.toBool());

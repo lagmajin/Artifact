@@ -1088,8 +1088,16 @@ void ScreenSpaceGIResolveCS(uint3 dispatchId : SV_DispatchThreadID)
  {
  public:
   RefCntAutoPtr<IRenderDevice> device_;
-  TextureBundle accum_;
-  TextureBundle temp_;
+ TextureBundle accum_;
+ TextureBundle temp_;
+ // Untouched copy of accum_ taken before an adjustment-layer pointwise pass.
+ // The mask mix needs the pre-adjustment pixels to lerp against, and accum_
+ // is overwritten in place, so it cannot serve as its own reference.
+ TextureBundle adjustmentOriginal_;
+ // Third scratch target for the adjustment blend fold.  The fold needs a
+ // distinct destination because blendLayers reads SrcTex and DstTex while
+ // writing OutTex, and accum_/temp_ are both live at that point.
+ TextureBundle adjustmentBlend_;
  TextureBundle layer_;
  TextureBundle layerFloat_;
   std::array<TextureBundle, 3> matteSources_;
@@ -1219,6 +1227,8 @@ bool RenderPipeline::initialize(IRenderDevice* device,
  {
   impl_->accum_ = {};
   impl_->temp_ = {};
+  impl_->adjustmentOriginal_ = {};
+  impl_->adjustmentBlend_ = {};
   impl_->layer_ = {};
   impl_->layerFloat_ = {};
   for (auto& matteSource : impl_->matteSources_) {
@@ -2095,11 +2105,12 @@ bool RenderPipeline::initialize(IRenderDevice* device,
     const ArtifactCore::PointwiseEffectStack& stack,
     ITextureView* backgroundSRV,
     ITextureView* lutSRV,
-    ITextureView* historySRV)
+    ITextureView* historySRV,
+    ITextureView* maskSRV)
  {
-  if (!ctx || !ready() || stack.nodes().empty()) {
-   return false;
-  }
+   if (!ctx || !ready() || stack.nodes().empty()) {
+    return false;
+   }
   if (!impl_->blendPipeline_) {
    impl_->blendContext_ = ArtifactCore::makeShared<GpuContext>(impl_->device_, ctx);
    impl_->blendPipeline_ = std::make_unique<LayerBlendPipeline>(impl_->blendContext_);
@@ -2110,11 +2121,11 @@ bool RenderPipeline::initialize(IRenderDevice* device,
    }
   }
 
-  const auto segments = stack.segments();
-  if (segments.empty()) {
+  const auto baseSegments = stack.segments();
+  if (baseSegments.empty()) {
    return false;
   }
-  for (const auto& segment : segments) {
+  for (const auto& segment : baseSegments) {
    if (!ArtifactCore::PointwiseEffectFusion::validateSegment(
            stack.nodes(), segment).valid) {
     // A mixed stack must remain on the existing compositor path until its
@@ -2125,6 +2136,39 @@ bool RenderPipeline::initialize(IRenderDevice* device,
   }
   if (!impl_->blendPipeline_->updatePointwiseParameters(ctx, stack)) {
    return false;
+  }
+
+  // Adjustment scoping: a mask or a non-unity opacity must restrict *where*
+  // the effect applies rather than scale its result, so the shader lerps the
+  // adjusted pixels against the untouched accumulation.  Without a mask the
+  // lerp degenerates to a pure opacity fade, which is still the correct
+  // semantic, so both cases take this path.
+  const bool wantsMaskMix = maskSRV != nullptr;
+  std::vector<ArtifactCore::PointwiseFusionSegment> segments;
+  segments.reserve(baseSegments.size());
+  for (const auto& segment : baseSegments) {
+   auto marked = segment;
+   marked.requiresMaskMix = wantsMaskMix;
+   segments.push_back(std::move(marked));
+  }
+
+  if (wantsMaskMix) {
+   if (!impl_->adjustmentOriginal_.texture) {
+    return false;
+   }
+   // Preserve the pre-adjustment accumulation for every segment: after the
+   // ping-pong below, accum_ is overwritten, so a single copy taken up front
+   // is the reference all segments lerp against.
+   const Diligent::Box box(0, impl_->width_, 0, impl_->height_, 0, 1);
+   Diligent::CopyTextureAttribs copyAttribs = {};
+   copyAttribs.pSrcTexture = impl_->accum_.texture;
+   copyAttribs.pSrcBox = &box;
+   copyAttribs.SrcTextureTransitionMode =
+       Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+   copyAttribs.pDstTexture = impl_->adjustmentOriginal_.texture;
+   copyAttribs.DstTextureTransitionMode =
+       Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+   ctx->CopyTexture(copyAttribs);
   }
 
   bool applied = false;
@@ -2138,13 +2182,54 @@ bool RenderPipeline::initialize(IRenderDevice* device,
    if (!plan.valid() || !impl_->blendPipeline_->applyPointwise(
            ctx, impl_->accum_.srv, impl_->temp_.uav,
            impl_->blendPipeline_->createPointwiseParameterBuffer(), plan,
-           backgroundSRV, lutSRV, historySRV)) {
+           backgroundSRV, lutSRV, historySRV,
+           wantsMaskMix ? impl_->adjustmentOriginal_.srv : nullptr,
+           wantsMaskMix ? maskSRV : nullptr)) {
     return false;
    }
-   std::swap(impl_->accum_, impl_->temp_);
-   applied = true;
+    std::swap(impl_->accum_, impl_->temp_);
+    applied = true;
   }
   return applied;
+ }
+
+ bool RenderPipeline::foldAdjustmentBlend(
+    IDeviceContext* ctx,
+    ArtifactCore::LayerBlendPipeline* blendPipeline,
+    ArtifactCore::BlendMode mode)
+ {
+  if (!ctx || !blendPipeline || mode == ArtifactCore::BlendMode::Normal) {
+   // Nothing to fold: a Normal adjustment is already fully represented by the
+   // pointwise result.
+   return true;
+  }
+  if (!impl_->adjustmentOriginal_.texture || !impl_->adjustmentOriginal_.srv ||
+      !impl_->adjustmentBlend_.texture || !impl_->adjustmentBlend_.uav) {
+   return false;
+  }
+
+  // The blend reads the adjusted accumulation as the foreground and the
+  // snapshotted original as the backdrop, so both must be live at dispatch.
+  // adjustmentBlend_ is the dedicated output because accum_ and temp_ are
+  // still needed by the caller afterwards.
+  if (!blendPipeline->blend(ctx, impl_->accum_.srv,
+                            impl_->adjustmentOriginal_.srv,
+                            impl_->adjustmentBlend_.uav, mode, 1.0f)) {
+   return false;
+  }
+  // Promote the fold result into the accumulation without disturbing temp_,
+  // whose identity the surrounding layer loop still tracks.
+  const Diligent::Box box(0, impl_->width_, 0, impl_->height_, 0, 1);
+  Diligent::CopyTextureAttribs copyAttribs = {};
+  copyAttribs.pSrcTexture = impl_->adjustmentBlend_.texture;
+  copyAttribs.pSrcBox = &box;
+  copyAttribs.SrcTextureTransitionMode =
+      Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+  copyAttribs.pDstTexture = impl_->accum_.texture;
+  copyAttribs.DstTextureTransitionMode =
+      Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+  ctx->CopyTexture(copyAttribs);
+  return true;
  }
 
  bool RenderPipeline::ready() const
@@ -2671,9 +2756,24 @@ bool RenderPipeline::createTextures(IRenderDevice* device,
   {
    return false;
   }
-   if (!createTextureBundle(device, width, height, RenderConfig::MainRTVFormat,
-                            BIND_RENDER_TARGET | BIND_SHADER_RESOURCE,
-                            "RenderPipeline.Layer", impl_->layer_))
+  if (!createTextureBundle(device, width, height, RenderConfig::MainRTVFormat,
+                           BIND_RENDER_TARGET | BIND_SHADER_RESOURCE,
+                           "RenderPipeline.Layer", impl_->layer_))
+  {
+   return false;
+  }
+  // Adjustment-layer reference copy. Allocated unconditionally: it is a single
+  // composition-sized RGBA16F target, and allocating it lazily would introduce
+  // a per-frame resource check on the adjustment path.
+  if (!createTextureBundle(device, width, height, format,
+                           BIND_RENDER_TARGET | BIND_SHADER_RESOURCE | BIND_UNORDERED_ACCESS,
+                           "RenderPipeline.AdjustmentOriginal", impl_->adjustmentOriginal_))
+  {
+   return false;
+  }
+  if (!createTextureBundle(device, width, height, format,
+                           BIND_RENDER_TARGET | BIND_SHADER_RESOURCE | BIND_UNORDERED_ACCESS,
+                           "RenderPipeline.AdjustmentBlend", impl_->adjustmentBlend_))
   {
    return false;
   }

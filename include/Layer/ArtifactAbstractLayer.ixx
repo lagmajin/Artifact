@@ -37,6 +37,7 @@ import Layer.Blend;
 import Layer.State;
 import Animation.Transform2D;
 import Animation.Transform3D;
+import Math.Vec;
 import Animation.Value;
 import Time.Rational;
 import Time.TimeRemap;
@@ -459,8 +460,8 @@ public:
   void bakeAnimationLayersOverRange(int64_t startFrame, int64_t endFrame,
                                     int64_t step = 1);
   
-  QVector3D position3D() const;
-  void setPosition3D(const QVector3D &pos);
+  ArtifactCore::Coordinates::LayerLocalPoint3 position3D() const;
+  void setPosition3D(ArtifactCore::Coordinates::LayerLocalPoint3 pos);
   QVector3D rotation3D() const;
   void setRotation3D(const QVector3D &rot);
 

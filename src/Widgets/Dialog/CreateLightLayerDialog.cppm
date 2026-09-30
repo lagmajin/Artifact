@@ -25,6 +25,7 @@ module;
 module Artifact.Widgets.CreateLightLayerDialog;
 
 import Core.ArtifactMath;
+import Math.Vec;
 import FloatColorPickerDialog;
 import Artifact.Widgets.Dialog.FloatColorPickerHooks;
 import Widgets.Utils.CSS;
@@ -433,16 +434,27 @@ CreateLightLayerDialog::~CreateLightLayerDialog()
 QString CreateLightLayerDialog::lightName() const { return impl_->name->text().trimmed(); }
 LightType CreateLightLayerDialog::lightType() const { return impl_->selectedType; }
 ArtifactCore::FloatColor CreateLightLayerDialog::color() const { return impl_->selectedColor; }
-float CreateLightLayerDialog::intensity() const { return static_cast<float>(impl_->intensity->value()); }
-float CreateLightLayerDialog::range() const
-{
-  return static_cast<float>(impl_->selectedType == LightType::Spot
-                                ? impl_->spotRange->value() : impl_->range->value());
+ArtifactCore::Units::Percent CreateLightLayerDialog::intensity() const {
+  return {static_cast<float>(impl_->intensity->value())};
 }
-float CreateLightLayerDialog::coneAngle() const { return static_cast<float>(impl_->coneAngle->value()); }
-float CreateLightLayerDialog::coneFeather() const { return static_cast<float>(impl_->coneFeather->value()); }
-float CreateLightLayerDialog::areaWidth() const { return static_cast<float>(impl_->areaWidth->value()); }
-float CreateLightLayerDialog::areaHeight() const { return static_cast<float>(impl_->areaHeight->value()); }
+ArtifactCore::Units::Pixels CreateLightLayerDialog::range() const
+{
+  return {static_cast<float>(impl_->selectedType == LightType::Spot
+                                 ? impl_->spotRange->value()
+                                 : impl_->range->value())};
+}
+ArtifactCore::Units::Degrees CreateLightLayerDialog::coneAngle() const {
+  return {static_cast<float>(impl_->coneAngle->value())};
+}
+ArtifactCore::Units::Degrees CreateLightLayerDialog::coneFeather() const {
+  return {static_cast<float>(impl_->coneFeather->value())};
+}
+ArtifactCore::Units::Pixels CreateLightLayerDialog::areaWidth() const {
+  return {static_cast<float>(impl_->areaWidth->value())};
+}
+ArtifactCore::Units::Pixels CreateLightLayerDialog::areaHeight() const {
+  return {static_cast<float>(impl_->areaHeight->value())};
+}
 AreaLightShape CreateLightLayerDialog::areaShape() const
 {
   return static_cast<AreaLightShape>(impl_->areaShape->currentData().toInt());
@@ -517,7 +529,8 @@ void CreateLightLayerDialog::applyTo(ArtifactLightLayer& layer) const
   }
   if (lightType() == LightType::Spot) {
     layer.setConeAngle(coneAngle());
-    layer.setConeFeather(ArtifactCore::artifactMin(coneFeather(), coneAngle()));
+    layer.setConeFeather(ArtifactCore::Units::Degrees{
+        ArtifactCore::artifactMin(coneFeather().value, coneAngle().value)});
   }
   if (lightType() == LightType::Area) {
     layer.setAreaShape(areaShape());

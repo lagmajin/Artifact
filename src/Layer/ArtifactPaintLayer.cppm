@@ -2,6 +2,8 @@ module;
 #include <wobjectimpl.h>
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <initializer_list>
 #include <utility>
 #include <QByteArray>
 #include <QJsonArray>
@@ -308,6 +310,146 @@ void ArtifactPaintLayer::applyStrokeAtFrame(const BrushStroke& stroke, const Fra
         }
     }
     markDirty(frame);
+}
+
+bool ArtifactPaintLayer::floodFillAtFrame(
+    const QPointF& position, const FloatRGBA& color, float opacity,
+    float tolerance, const FramePosition& frame) {
+    if (!std::isfinite(position.x()) || !std::isfinite(position.y()) ||
+        !std::isfinite(opacity) || !std::isfinite(tolerance)) {
+        return false;
+    }
+    const auto safeChannel = [](float value) {
+        return std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 0.0f;
+    };
+    const FloatRGBA fillColor(safeChannel(color.r()), safeChannel(color.g()),
+                              safeChannel(color.b()), safeChannel(color.a()));
+    const float alpha = std::clamp(fillColor.a() * opacity, 0.0f, 1.0f);
+    if (alpha <= 0.0f) return false;
+
+    auto& buffer = impl_->getOrCreateFrame(frame.framePosition());
+    auto& image = buffer.image();
+    const int width = image.width();
+    const int height = image.height();
+    if (width <= 0 || height <= 0 || position.x() < 0.0 ||
+        position.y() < 0.0 || position.x() >= width || position.y() >= height) {
+        return false;
+    }
+
+    constexpr std::size_t kMaxFillPixels = 64u * 1024u * 1024u;
+    constexpr std::size_t kMaxFillSpans = 4u * 1024u * 1024u;
+    const auto pixelCount = static_cast<std::size_t>(width) *
+                            static_cast<std::size_t>(height);
+    if (pixelCount > kMaxFillPixels) return false;
+
+    struct SpanSeed { int x; int y; };
+    std::vector<std::uint64_t> visited((pixelCount + 63u) / 64u, 0u);
+    std::vector<SpanSeed> pending;
+    std::vector<SpanSeed> spans;
+    pending.reserve(std::min<std::size_t>(height, 256u));
+    spans.reserve(std::min<std::size_t>(height, 256u));
+
+    const int seedX = static_cast<int>(position.x());
+    const int seedY = static_cast<int>(position.y());
+    const FloatRGBA target = image.getPixel(seedX, seedY);
+    const float safeTolerance = std::clamp(tolerance, 0.0f, 1.0f);
+    const auto matchesTarget = [&](int x, int y) {
+        const auto pixel = image.getPixel(x, y);
+        return std::abs(pixel.r() - target.r()) <= safeTolerance &&
+               std::abs(pixel.g() - target.g()) <= safeTolerance &&
+               std::abs(pixel.b() - target.b()) <= safeTolerance &&
+               std::abs(pixel.a() - target.a()) <= safeTolerance;
+    };
+    const auto isVisited = [&visited, width](int x, int y) {
+        const auto index = static_cast<std::size_t>(y) * width + x;
+        return (visited[index >> 6u] &
+                (std::uint64_t{1} << (index & 63u))) != 0u;
+    };
+    const auto markVisited = [&visited, width](int x, int y) {
+        const auto index = static_cast<std::size_t>(y) * width + x;
+        visited[index >> 6u] |= std::uint64_t{1} << (index & 63u);
+    };
+
+    pending.push_back({seedX, seedY});
+    while (!pending.empty()) {
+        const SpanSeed point = pending.back();
+        pending.pop_back();
+        if (isVisited(point.x, point.y) ||
+            !matchesTarget(point.x, point.y)) {
+            continue;
+        }
+
+        int left = point.x;
+        while (left > 0 && !isVisited(left - 1, point.y) &&
+               matchesTarget(left - 1, point.y)) {
+            --left;
+        }
+        int right = point.x;
+        while (right + 1 < width && !isVisited(right + 1, point.y) &&
+               matchesTarget(right + 1, point.y)) {
+            ++right;
+        }
+        if (spans.size() >= kMaxFillSpans) return false;
+        spans.push_back({left, point.y});
+        for (int x = left; x <= right; ++x) markVisited(x, point.y);
+
+        for (const int adjacentY : {point.y - 1, point.y + 1}) {
+            if (adjacentY < 0 || adjacentY >= height) continue;
+            int x = left;
+            while (x <= right) {
+                while (x <= right &&
+                       (isVisited(x, adjacentY) || !matchesTarget(x, adjacentY))) {
+                    ++x;
+                }
+                if (x <= right) {
+                    if (pending.size() >= kMaxFillSpans) return false;
+                    pending.push_back({x, adjacentY});
+                    do {
+                        ++x;
+                    } while (x <= right && !isVisited(x, adjacentY) &&
+                             matchesTarget(x, adjacentY));
+                }
+            }
+        }
+    }
+
+    if (spans.empty()) return false;
+    bool changedPixels = false;
+    for (const SpanSeed span : spans) {
+        int right = span.x;
+        while (right + 1 < width && isVisited(right + 1, span.y)) ++right;
+        for (int x = span.x; x <= right; ++x) {
+            const auto oldPixel = image.getPixel(x, span.y);
+            const FloatRGBA newPixel(
+                oldPixel.r() * (1.0f - alpha) + fillColor.r() * alpha,
+                oldPixel.g() * (1.0f - alpha) + fillColor.g() * alpha,
+                oldPixel.b() * (1.0f - alpha) + fillColor.b() * alpha,
+                oldPixel.a() * (1.0f - alpha) + alpha);
+            changedPixels = changedPixels || oldPixel.r() != newPixel.r() ||
+                oldPixel.g() != newPixel.g() || oldPixel.b() != newPixel.b() ||
+                oldPixel.a() != newPixel.a();
+        }
+    }
+    if (!changedPixels) return false;
+
+    auto& history = impl_->undoStacks_[frame.framePosition()];
+    history.push_back(buffer);
+    if (history.size() > 20) history.erase(history.begin());
+    for (const SpanSeed span : spans) {
+        int right = span.x;
+        while (right + 1 < width && isVisited(right + 1, span.y)) ++right;
+        for (int x = span.x; x <= right; ++x) {
+            const auto oldPixel = image.getPixel(x, span.y);
+            image.setPixel(x, span.y, FloatRGBA(
+                oldPixel.r() * (1.0f - alpha) + fillColor.r() * alpha,
+                oldPixel.g() * (1.0f - alpha) + fillColor.g() * alpha,
+                oldPixel.b() * (1.0f - alpha) + fillColor.b() * alpha,
+                oldPixel.a() * (1.0f - alpha) + alpha));
+        }
+    }
+    markDirty(frame);
+    changed();
+    return true;
 }
 
 void ArtifactPaintLayer::undoLastStroke() {

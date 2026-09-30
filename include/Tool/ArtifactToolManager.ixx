@@ -39,7 +39,8 @@ export namespace Artifact {
   Eraser,
   // 2D rig editing
   RigSelect,
-  RigWeight
+  RigWeight,
+  Fill
  };
 
  class ArtifactToolManager : public QObject {

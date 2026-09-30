@@ -1,7 +1,5 @@
 module;
 
-#include <QPointF>
-#include <QSize>
 #include <QString>
 
 #include <functional>
@@ -11,6 +9,7 @@ export module Artifact.Widgets.LayerEditor.ViewportChromeInteractionController;
 import Artifact.Layer.Abstract;
 import Artifact.Render.IRenderer;
 import Artifact.Widgets.LayerEditor.ViewportChrome;
+import Math.Vec;
 import Tool;
 
 export namespace Artifact {
@@ -20,16 +19,16 @@ enum class LayerEditorChromeCursor {
 };
 
 struct LayerEditorViewportChromeInteractionState {
- QPointF viewportPosition;
- QSize physicalViewportSize;
- QPointF physicalViewportCenter;
- qreal devicePixelRatio = 1.0;
+ ArtifactCore::Coordinates::ScreenLogicalPoint2 viewportPosition;
+ ArtifactCore::Coordinates::ScreenPhysicalExtent2 physicalViewportSize;
+ ArtifactCore::Coordinates::ScreenPhysicalPoint2 physicalViewportCenter;
+ ArtifactCore::Units::ScaleFactor devicePixelRatio{};
  LayerEditorSurfaceMode surfaceMode = LayerEditorSurfaceMode::Edit;
  EditMode editMode = EditMode::View;
  bool hasLayerIdentity = false;
  ArtifactAbstractLayerPtr layer;
  int* hoveredControl = nullptr;
- float* zoomLevel = nullptr;
+ ArtifactCore::Units::ScaleFactor* zoomLevel = nullptr;
 };
 
 struct LayerEditorViewportChromeCallbacks {

@@ -1,12 +1,11 @@
 module;
 
-#include <QPointF>
-
 #include <functional>
 
 export module Artifact.Widgets.LayerEditor.ViewKeyInputController;
 
 import Artifact.Render.IRenderer;
+import Math.Vec;
 import Tool;
 import Artifact.Widgets.LayerEditor.ViewportChrome;
 
@@ -17,8 +16,8 @@ struct LayerEditorViewKeyInputState {
  bool altModifier = false;
  bool autoRepeat = false;
  bool hasTargetLayer = false;
- QPointF viewportCenter;
- float* zoomLevel = nullptr;
+ ArtifactCore::Coordinates::ScreenPhysicalPoint2 viewportCenter;
+ ArtifactCore::Units::ScaleFactor* zoomLevel = nullptr;
 };
 
 struct LayerEditorViewKeyInputCallbacks {

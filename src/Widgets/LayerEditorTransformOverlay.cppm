@@ -3,8 +3,8 @@ module;
 #include <QApplication>
 #include <QFont>
 #include <QRectF>
-#include <QSize>
 #include <QString>
+#include <algorithm>
 
 
 module Artifact.Widgets.LayerEditor.TransformOverlay;
@@ -14,13 +14,15 @@ import Artifact.Layer.Abstract;
 import Artifact.Render.IRenderer;
 import Artifact.Widgets.LayerEditor.ViewportChrome;
 import Color.Float;
+import Math.Vec;
 
 namespace Artifact {
 
 void drawLayerEditorTransformHud(
     ArtifactIRenderer* renderer, const ArtifactAbstractLayerPtr& layer,
-    const QRectF& activeBounds, const QSize& viewportSize,
-    const QSize& restoreCanvasSize)
+    const QRectF& activeBounds,
+    ArtifactCore::Coordinates::ScreenPhysicalExtent2 viewportSize,
+    ArtifactCore::Coordinates::CompositionExtent2 restoreCanvasSize)
 {
  if (!renderer || !layer || !activeBounds.isValid() || activeBounds.isEmpty()) return;
  const Detail::float2 bottomRight = renderer->canvasToViewport(
@@ -32,8 +34,8 @@ void drawLayerEditorTransformHud(
      .arg(QString::number(activeBounds.y(), 'f', 0))
      .arg(QString::number(activeBounds.width(), 'f', 0))
      .arg(QString::number(activeBounds.height(), 'f', 0));
- const float viewportWidth = static_cast<float>(ArtifactCore::artifactMax(1, viewportSize.width()));
- const float viewportHeight = static_cast<float>(ArtifactCore::artifactMax(1, viewportSize.height()));
+ const float viewportWidth = std::max(1.0f, viewportSize.width);
+ const float viewportHeight = std::max(1.0f, viewportSize.height);
  constexpr float width = 132.0f;
  constexpr float height = 54.0f;
  constexpr float gap = 8.0f;
@@ -85,9 +87,9 @@ void drawLayerEditorTransformHud(
                     Qt::AlignLeft | Qt::AlignVCenter, 1.0f);
  renderer->setZoom(savedZoom);
  renderer->setPan(savedPanX, savedPanY);
- if (restoreCanvasSize.width() > 0 && restoreCanvasSize.height() > 0)
-  renderer->setCanvasSize(static_cast<float>(restoreCanvasSize.width()),
-                          static_cast<float>(restoreCanvasSize.height()));
+ if (restoreCanvasSize.width > 0.0f && restoreCanvasSize.height > 0.0f)
+  renderer->setCanvasSize(restoreCanvasSize.width,
+                          restoreCanvasSize.height);
 }
 
 }

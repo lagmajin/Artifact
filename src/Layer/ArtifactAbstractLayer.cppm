@@ -49,6 +49,7 @@ import Utils;
 import Layer.State;
 import Animation.Transform2D;
 import Animation.Dynamics;
+import Math.Vec;
 import Frame.Position;
 import Time.Rational;
 import Frame.Rate;
@@ -2368,17 +2369,19 @@ void ArtifactAbstractLayer::bakeAnimationLayersOverRange(int64_t startFrame,
                       LayerDirtyReason::PropertyChanged);
 }
 
-QVector3D ArtifactAbstractLayer::position3D() const {
+ArtifactCore::Coordinates::LayerLocalPoint3
+ArtifactAbstractLayer::position3D() const {
   const auto time = currentTimelineTime(this);
-  return QVector3D(impl_->transform_.positionXAt(time),
-                   impl_->transform_.positionYAt(time),
-                   impl_->transform_.positionZAt(time));
+  return {impl_->transform_.positionXAt(time),
+          impl_->transform_.positionYAt(time),
+          impl_->transform_.positionZAt(time)};
 }
 
-void ArtifactAbstractLayer::setPosition3D(const QVector3D &pos) {
+void ArtifactAbstractLayer::setPosition3D(
+    ArtifactCore::Coordinates::LayerLocalPoint3 pos) {
   const auto time = currentTimelineTime(this);
-  impl_->transform_.setPosition(time, pos.x(), pos.y());
-  impl_->transform_.setPositionZ(time, pos.z());
+  impl_->transform_.setPosition(time, pos.x, pos.y);
+  impl_->transform_.setPositionZ(time, pos.z);
   changed();
   if (hasRigidBodyPhysics()) {
     syncRigidBodyPhysicsToBounds();

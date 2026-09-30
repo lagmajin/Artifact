@@ -7,6 +7,7 @@ module Artifact.Widgets.LayerEditor.ViewKeyInputController;
 
 import Core.ArtifactMath;
 import Artifact.Render.IRenderer;
+import Math.Vec;
 import Tool;
 import Artifact.Widgets.LayerEditor.ViewportChrome;
 
@@ -54,31 +55,33 @@ LayerEditorViewKeyInputResult LayerEditorViewKeyInputController::handle(
  switch (state.key) {
   case Qt::Key_F:
    renderer.fitToViewport();
-   *state.zoomLevel = renderer.getZoom();
+   *state.zoomLevel = {renderer.getZoom()};
    return {true, true};
   case Qt::Key_R:
    renderer.resetView();
-   *state.zoomLevel = 1.0f;
+   *state.zoomLevel = {1.0f};
    return {true, true};
   case Qt::Key_1:
-   *state.zoomLevel = 1.0f;
+   *state.zoomLevel = {1.0f};
    renderer.zoomAroundViewportPoint(
-       {static_cast<float>(state.viewportCenter.x()),
-        static_cast<float>(state.viewportCenter.y())}, *state.zoomLevel);
+       {state.viewportCenter.x, state.viewportCenter.y},
+       state.zoomLevel->value);
    return {true, true};
   case Qt::Key_Plus:
   case Qt::Key_Equal:
-   *state.zoomLevel = ArtifactCore::artifactClamp(*state.zoomLevel * 1.1f, 0.05f, 32.0f);
+   *state.zoomLevel = {ArtifactCore::artifactClamp(
+       state.zoomLevel->value * 1.1f, 0.05f, 32.0f)};
    renderer.zoomAroundViewportPoint(
-       {static_cast<float>(state.viewportCenter.x()),
-        static_cast<float>(state.viewportCenter.y())}, *state.zoomLevel);
+       {state.viewportCenter.x, state.viewportCenter.y},
+       state.zoomLevel->value);
    return {true, true};
   case Qt::Key_Minus:
   case Qt::Key_Underscore:
-   *state.zoomLevel = ArtifactCore::artifactClamp(*state.zoomLevel / 1.1f, 0.05f, 32.0f);
+   *state.zoomLevel = {ArtifactCore::artifactClamp(
+       state.zoomLevel->value / 1.1f, 0.05f, 32.0f)};
    renderer.zoomAroundViewportPoint(
-       {static_cast<float>(state.viewportCenter.x()),
-        static_cast<float>(state.viewportCenter.y())}, *state.zoomLevel);
+       {state.viewportCenter.x, state.viewportCenter.y},
+       state.zoomLevel->value);
    return {true, true};
   case Qt::Key_Left: renderer.panBy(24.0f, 0.0f); return {true, true};
   case Qt::Key_Right: renderer.panBy(-24.0f, 0.0f); return {true, true};

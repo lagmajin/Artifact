@@ -13,6 +13,7 @@ import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import Core.Parallel;
 import Image.ImageF32x4RGBAWithCache;
+import Math.Vec;
 import Property.Abstract;
 import Utils.String.UniString;
 
@@ -43,10 +44,10 @@ class ShadowHighlightEffectCPUImpl : public ArtifactEffectImplBase {
 public:
     float shadowAmount_ = 50.0f;
     float shadowTonalWidth_ = 50.0f;
-    float shadowRadius_ = 30.0f;
+    ArtifactCore::Units::Pixels shadowRadius_{30.0f};
     float highlightAmount_ = 0.0f;
     float highlightTonalWidth_ = 50.0f;
-    float highlightRadius_ = 30.0f;
+    ArtifactCore::Units::Pixels highlightRadius_{30.0f};
     float colorCorrection_ = 20.0f;
     float midtoneContrast_ = 0.0f;
     float blackClip_ = 0.01f;
@@ -74,8 +75,8 @@ public:
         const float colorCorrection = std::clamp(colorCorrection_, -100.0f, 100.0f) / 100.0f;
         const float midtoneContrast = std::clamp(midtoneContrast_, -100.0f, 100.0f) / 100.0f;
 
-        const float shadowRadius = std::max(shadowRadius_, 0.0f);
-        const float highlightRadius = std::max(highlightRadius_, 0.0f);
+        const float shadowRadius = std::max(shadowRadius_.value, 0.0f);
+        const float highlightRadius = std::max(highlightRadius_.value, 0.0f);
 
         const bool shadowActive = shadowAmount > 0.0f && shadowRadius > 0.0f;
         const bool highlightActive = highlightAmount > 0.0f && highlightRadius > 0.0f;
@@ -181,9 +182,10 @@ void ShadowHighlightEffect::setShadowTonalWidth(float v) {
     syncImpls();
 }
 
-float ShadowHighlightEffect::shadowRadius() const { return shadowRadius_; }
-void ShadowHighlightEffect::setShadowRadius(float v) {
-    shadowRadius_ = std::isfinite(v) ? std::max(v, 0.0f) : 30.0f;
+ArtifactCore::Units::Pixels ShadowHighlightEffect::shadowRadius() const { return shadowRadius_; }
+void ShadowHighlightEffect::setShadowRadius(ArtifactCore::Units::Pixels v) {
+    shadowRadius_ = ArtifactCore::Units::Pixels{
+        std::isfinite(v.value) ? std::max(v.value, 0.0f) : 30.0f};
     syncImpls();
 }
 
@@ -199,9 +201,10 @@ void ShadowHighlightEffect::setHighlightTonalWidth(float v) {
     syncImpls();
 }
 
-float ShadowHighlightEffect::highlightRadius() const { return highlightRadius_; }
-void ShadowHighlightEffect::setHighlightRadius(float v) {
-    highlightRadius_ = std::isfinite(v) ? std::max(v, 0.0f) : 30.0f;
+ArtifactCore::Units::Pixels ShadowHighlightEffect::highlightRadius() const { return highlightRadius_; }
+void ShadowHighlightEffect::setHighlightRadius(ArtifactCore::Units::Pixels v) {
+    highlightRadius_ = ArtifactCore::Units::Pixels{
+        std::isfinite(v.value) ? std::max(v.value, 0.0f) : 30.0f};
     syncImpls();
 }
 
@@ -255,7 +258,7 @@ std::vector<AbstractProperty> ShadowHighlightEffect::getProperties() const {
     props[1].setDefaultValue(50.0);  props[1].setHardRange(1.0, 100.0);
 
     props[2].setName("Shadow Radius");        props[2].setType(PropertyType::Float);
-    props[2].setValue(QVariant(static_cast<double>(shadowRadius_)));
+    props[2].setValue(QVariant(static_cast<double>(shadowRadius_.value)));
     props[2].setDefaultValue(30.0);  props[2].setHardRange(0.0, 200.0);
 
     props[3].setName("Highlight Amount");     props[3].setType(PropertyType::Float);
@@ -267,7 +270,7 @@ std::vector<AbstractProperty> ShadowHighlightEffect::getProperties() const {
     props[4].setDefaultValue(50.0);  props[4].setHardRange(1.0, 100.0);
 
     props[5].setName("Highlight Radius");     props[5].setType(PropertyType::Float);
-    props[5].setValue(QVariant(static_cast<double>(highlightRadius_)));
+    props[5].setValue(QVariant(static_cast<double>(highlightRadius_.value)));
     props[5].setDefaultValue(30.0);  props[5].setHardRange(0.0, 200.0);
 
     props[6].setName("Color Correction");     props[6].setType(PropertyType::Float);
@@ -293,10 +296,10 @@ void ShadowHighlightEffect::setPropertyValue(const UniString& name, const QVaria
     const QString key = name.toQString();
     if (key == QStringLiteral("Shadow Amount"))         setShadowAmount(value.toFloat());
     else if (key == QStringLiteral("Shadow Tonal Width"))   setShadowTonalWidth(value.toFloat());
-    else if (key == QStringLiteral("Shadow Radius"))        setShadowRadius(value.toFloat());
+    else if (key == QStringLiteral("Shadow Radius"))        setShadowRadius(ArtifactCore::Units::Pixels{value.toFloat()});
     else if (key == QStringLiteral("Highlight Amount"))     setHighlightAmount(value.toFloat());
     else if (key == QStringLiteral("Highlight Tonal Width"))setHighlightTonalWidth(value.toFloat());
-    else if (key == QStringLiteral("Highlight Radius"))     setHighlightRadius(value.toFloat());
+    else if (key == QStringLiteral("Highlight Radius"))     setHighlightRadius(ArtifactCore::Units::Pixels{value.toFloat()});
     else if (key == QStringLiteral("Color Correction"))     setColorCorrection(value.toFloat());
     else if (key == QStringLiteral("Midtone Contrast"))     setMidtoneContrast(value.toFloat());
     else if (key == QStringLiteral("Black Clip"))           setBlackClip(value.toFloat());

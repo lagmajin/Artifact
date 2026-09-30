@@ -10,6 +10,7 @@ import Artifact.Layer.Abstract;
 import Artifact.Render.IRenderer;
 import Artifact.Widgets.LayerEditor.ShapeParameterController;
 import Artifact.Widgets.TransformGizmo;
+import Math.Vec;
 
 export namespace Artifact {
 
@@ -24,15 +25,16 @@ enum class LayerEditorViewPressCursor {
 struct LayerEditorViewPressState {
  int button = 0;
  bool altModifier = false;
- QPointF viewportPosition;
+ ArtifactCore::Coordinates::ScreenPhysicalPoint2 viewportPosition;
+ ArtifactCore::Coordinates::ScreenLogicalPoint2 logicalViewportPosition;
  bool transformViewEnabled = false;
  ArtifactAbstractLayerPtr layer;
  bool* panning = nullptr;
- QPointF* lastMousePosition = nullptr;
+ ArtifactCore::Coordinates::ScreenLogicalPoint2* lastMousePosition = nullptr;
 };
 
 struct LayerEditorViewPressCallbacks {
- std::function<bool(const QPointF&)> pressViewportChrome;
+ std::function<bool(ArtifactCore::Coordinates::ScreenLogicalPoint2)> pressViewportChrome;
  std::function<void()> clearViewportChromeHover;
 };
 

@@ -35,6 +35,7 @@ import Artifact.Service.Project;
 import Artifact.Render.Queue.Service;
 import Artifact.Preview.Pipeline;
 import Artifact.Widgets.Gizmo3D;
+import Math.Vec;
 import Artifact.Widgets.PieMenu;
 import Geometry.CameraGuide;
 import Utils.Id;
@@ -181,14 +182,37 @@ enum class CompositionViewportPresentationLayout {
  };
 
  struct WorkCursorState {
-  float x = 0.0f;
-  float y = 0.0f;
-  float z = 0.0f;
-  float rotationX = 0.0f;
-  float rotationY = 0.0f;
-  float rotationZ = 0.0f;
+  ArtifactCore::Coordinates::CompositionPoint2 canvasPosition{};
+  ArtifactCore::Coordinates::WorldPoint3 worldPosition{};
+  ArtifactCore::Units::EulerDegrees3 rotation{};
   bool spatial = false;
  };
+
+ using CompositionBounds2 = ArtifactCore::Coordinates::CompositionBounds2;
+ using SourcePixelBounds2 = ArtifactCore::Coordinates::SourcePixelBounds2;
+
+ using ScreenPhysicalBounds2 =
+     ArtifactCore::Coordinates::ScreenPhysicalBounds2;
+
+ [[nodiscard]] inline QRectF toQRectF(ScreenPhysicalBounds2 bounds) {
+  return QRectF(QPointF(bounds.minimum.x, bounds.minimum.y),
+                QPointF(bounds.maximum.x, bounds.maximum.y));
+ }
+
+ [[nodiscard]] inline ScreenPhysicalBounds2 toScreenPhysicalBounds2(
+     const QRectF& rect) {
+  return {{rect.left(), rect.top()}, {rect.right(), rect.bottom()}};
+ }
+
+ [[nodiscard]] inline QRectF toQRectF(SourcePixelBounds2 bounds) {
+  return QRectF(QPointF(bounds.minimum.x, bounds.minimum.y),
+                QPointF(bounds.maximum.x, bounds.maximum.y));
+ }
+
+ [[nodiscard]] inline SourcePixelBounds2 toSourcePixelBounds2(
+     const QRectF& rect) {
+  return {{rect.left(), rect.top()}, {rect.right(), rect.bottom()}};
+ }
 
  class CompositionRenderController : public QObject
  {
@@ -212,18 +236,18 @@ enum class CompositionViewportPresentationLayout {
   bool isRunning() const;
 
   void recreateSwapChain(QWidget* hostWidget);
-void setViewportSize(float width, float height);
+void setViewportSize(ArtifactCore::Coordinates::ScreenLogicalExtent2 size);
 void setPresentationLayout(CompositionViewportPresentationLayout layout);
 CompositionViewportPresentationLayout presentationLayout() const;
 void setPreviewQualityPreset(PreviewQualityPreset preset);
-void panBy(const QPointF& viewportDelta);
+void panBy(ArtifactCore::Coordinates::ScreenLogicalVector2 viewportDelta);
 void notifyViewportInteractionActivity();
 void finishViewportInteraction();
 void undoView();
 void redoView();
 bool canUndoView() const;
 bool canRedoView() const;
-QPointF viewportPan() const;
+ArtifactCore::Coordinates::ScreenPhysicalVector2 viewportPan() const;
 float viewportZoom() const;
 
   void setComposition(ArtifactCompositionPtr composition);
@@ -280,7 +304,8 @@ void setGridPolarMode(bool enabled);
 bool isGridPolarMode() const;
 void setGridIsometricMode(bool enabled);
 bool isGridIsometricMode() const;
-QPointF snapCanvasToGrid(const QPointF& canvasPosition) const;
+ArtifactCore::Coordinates::CompositionPoint2 snapCanvasToGrid(
+    ArtifactCore::Coordinates::CompositionPoint2 canvasPosition) const;
 void setShowGuides(bool show);
 bool isShowGuides() const;
 void setSnapToGuides(bool snap);
@@ -358,7 +383,9 @@ void setMagnifierFollowCursor(bool follow);
 bool isMagnifierFollowCursor() const;
 // Adjust the magnifier scale from a mouse wheel over the loupe. Returns true
 // only when the position is inside the loupe and the wheel was consumed.
-bool adjustMagnifierScaleAt(const QPointF& viewportPosLogical, float delta);
+bool adjustMagnifierScaleAt(
+    ArtifactCore::Coordinates::ScreenLogicalPoint2 viewportPosLogical,
+    float delta);
 void setOnionSkinFrameCount(int count);
 int onionSkinFrameCount() const;
 void setOnionSkinOpacity(int percent);
@@ -369,7 +396,7 @@ int onionSkinOpacity() const;
    bool isRenderQueueActive() const;
 
 // Ghost previews are composited in the controller render pass, not by a QWidget overlay.
-void setDropGhostPreview(const QRectF& viewportRect,
+void setDropGhostPreview(ScreenPhysicalBounds2 viewportBounds,
                          const QString& title,
                          const QString& hint,
                          const QString& label);
@@ -379,15 +406,21 @@ void clearDropGhostPreview();
 void setInfoOverlayText(const QString& title, const QString& detail = QString());
 void clearInfoOverlayText();
 void showCommandPaletteOverlay(const QString& query, const QStringList& items);
-void showContextMenuOverlay(const QPointF& viewportPos, const QStringList& items,
-                           const QString& title = QString(),
-                           const QString& subtitle = QString(),
-                           const QVector<bool>& enabledStates = QVector<bool>());
-void showPieMenuOverlay(const PieMenuModel& model, const QPointF& viewportPos);
-bool placeWorkCursorAtViewportPos(const QPointF& viewportPos);
-void setWorkCursorCanvasPosition(const QPointF& canvasPos);
-QPointF workCursorCanvasPosition() const;
-void setWorkCursorWorldPosition(float x, float y, float z);
+void showContextMenuOverlay(
+    ArtifactCore::Coordinates::ScreenLogicalPoint2 viewportPos,
+    const QStringList& items, const QString& title = QString(),
+    const QString& subtitle = QString(),
+    const QVector<bool>& enabledStates = QVector<bool>());
+void showPieMenuOverlay(
+    const PieMenuModel& model,
+    ArtifactCore::Coordinates::ScreenLogicalPoint2 viewportPos);
+bool placeWorkCursorAtViewportPos(
+    ArtifactCore::Coordinates::ScreenLogicalPoint2 viewportPos);
+void setWorkCursorCanvasPosition(
+    ArtifactCore::Coordinates::CompositionPoint2 canvasPos);
+ArtifactCore::Coordinates::CompositionPoint2 workCursorCanvasPosition() const;
+void setWorkCursorWorldPosition(
+    ArtifactCore::Coordinates::WorldPoint3 position);
 WorkCursorState workCursorState() const;
 bool moveWorkCursorToSelection();
 void moveWorkCursorToWorldOrigin();
@@ -399,10 +432,13 @@ void clearWorkCursor();
 void hideViewportOverlay();
 bool isViewportOverlayVisible() const;
 bool isContextMenuOverlayVisible() const;
-int viewportOverlayItemAt(const QPointF& viewportPos) const;
+int viewportOverlayItemAt(
+    ArtifactCore::Coordinates::ScreenLogicalPoint2 viewportPos) const;
 QString confirmPieMenuOverlaySelection();
-void updatePieMenuOverlayMousePos(const QPointF& viewportPos);
-void updateContextMenuOverlayMousePos(const QPointF& viewportPos);
+void updatePieMenuOverlayMousePos(
+    ArtifactCore::Coordinates::ScreenLogicalPoint2 viewportPos);
+void updateContextMenuOverlayMousePos(
+    ArtifactCore::Coordinates::ScreenLogicalPoint2 viewportPos);
 void cancelPieMenuOverlay();
 bool isPieMenuOverlayVisible() const;
 
@@ -416,9 +452,11 @@ void setDebugMode(bool enabled);
 bool isDebugMode() const;
 
 void resetView();
-void zoomInAt(const QPointF& viewportPos);
-void zoomOutAt(const QPointF& viewportPos);
-void zoomAtFactor(const QPointF& viewportPos, float factor);
+// Pointer positions accepted by navigation APIs are Qt logical viewport px.
+void zoomInAt(ArtifactCore::Coordinates::ScreenLogicalPoint2 viewportPos);
+void zoomOutAt(ArtifactCore::Coordinates::ScreenLogicalPoint2 viewportPos);
+void zoomAtFactor(ArtifactCore::Coordinates::ScreenLogicalPoint2 viewportPos,
+                  ArtifactCore::Units::ScaleFactor factor);
 void zoomFit();
 void zoomFitSelection();
 void zoomFitVisible();
@@ -430,8 +468,11 @@ void zoomFill();
 // mouse press; release inside the rectangle zooms in, outside zooms out.
 // The crop variant (false = zoom, true = crop-window) is reserved for a
 // later milestone (P2-8 View Regions) and intentionally no-op today.
-bool beginBoxZoomInteraction(const QPointF& viewportPos, bool cropWindow = false);
-void updateBoxZoomInteraction(const QPointF& viewportPos);
+bool beginBoxZoomInteraction(
+    ArtifactCore::Coordinates::ScreenLogicalPoint2 viewportPos,
+    bool cropWindow = false);
+void updateBoxZoomInteraction(
+    ArtifactCore::Coordinates::ScreenLogicalPoint2 viewportPos);
 bool endBoxZoomInteraction();
 void cancelBoxZoomInteraction();
 bool isBoxZoomInteractionActive() const;
@@ -440,10 +481,11 @@ bool isBoxZoomInteractionActive() const;
 // cursor-under point as a temporary tumble pivot and feeds it into the
 // viewport orientation view matrix without touching the camera layer's
 // stored target. No-op while the viewport is in Front orthographic mode.
-bool setTumblePivotAtViewportPos(const QPointF& viewportPos);
+bool setTumblePivotAtViewportPos(
+    ArtifactCore::Coordinates::ScreenLogicalPoint2 viewportPos);
 void clearTumblePivot();
 bool isTumblePivotOverrideEnabled() const;
-QPointF tumblePivotCanvasPos() const;
+ArtifactCore::Coordinates::CompositionPoint2 tumblePivotCanvasPos() const;
 
 // C4D Interactive Render Region / Nuke Pre-render Region analogue.
 // P0-3a scope is viewport-only: the rectangle is owned by the controller
@@ -451,10 +493,10 @@ QPointF tumblePivotCanvasPos() const;
 // requires a separate RenderContext integration pass (P0-3b) because the
 // current CompositionRenderController render loop does not consume the
 // RenderContext structure directly.
-void setInteractiveRenderRegion(const QRectF& canvasRect);
+void setInteractiveRenderRegion(CompositionBounds2 canvasBounds);
 void clearInteractiveRenderRegion();
 bool isInteractiveRenderRegionActive() const;
-QRectF interactiveRenderRegion() const;
+CompositionBounds2 interactiveRenderRegion() const;
 // Resolution slider value in the range [0.25, 1.0]. Affects the HUD
 // readout only in this milestone; future P0-3b will consume it.
 void setInteractiveRenderRegionResolutionScale(float scale);
@@ -463,9 +505,12 @@ float interactiveRenderRegionResolutionScale() const;
 //   0 = no handle (background click),
 //   1 = move (drag the whole rect),
 //   2..9 = corner/edge handles (NW, N, NE, E, SE, S, SW, W).
-int interactiveRenderRegionHandleAt(const QPointF& viewportPos) const;
-bool beginInteractiveRenderRegionDrag(int handle, const QPointF& viewportPos);
-void updateInteractiveRenderRegionDrag(const QPointF& viewportPos);
+int interactiveRenderRegionHandleAt(
+    ArtifactCore::Coordinates::ScreenLogicalPoint2 viewportPos) const;
+bool beginInteractiveRenderRegionDrag(
+    int handle, ArtifactCore::Coordinates::ScreenLogicalPoint2 viewportPos);
+void updateInteractiveRenderRegionDrag(
+    ArtifactCore::Coordinates::ScreenLogicalPoint2 viewportPos);
 bool endInteractiveRenderRegionDrag();
 void cancelInteractiveRenderRegionDrag();
 bool isInteractiveRenderRegionDragActive() const;
@@ -477,18 +522,31 @@ bool isInteractiveRenderRegionDragActive() const;
   void setGizmoScale(float scale);
   float gizmoScale() const;
 
-  LayerID layerAtViewportPos(const QPointF& viewportPos) const;
+  LayerID layerAtViewportPos(
+      ArtifactCore::Coordinates::ScreenLogicalPoint2 viewportPos) const;
   // Click-to-focus: exact ray-triangle hit distance projected onto the
   // active camera forward axis. Returns true when a focus distance was set.
-  bool focusActiveCameraAtViewportPos(const QPointF& viewportPos);
-  bool resetProjectedFrameHandleAt(const QPointF& viewportPos);
+  bool focusActiveCameraAtViewportPos(
+      ArtifactCore::Coordinates::ScreenLogicalPoint2 viewportPos);
+  bool resetProjectedFrameHandleAt(
+      ArtifactCore::Coordinates::ScreenLogicalPoint2 viewportPos);
   bool resetSelected3DAnchorToCenter();
+  // Applies a world-space anchor offset from the 3D gizmo's AnchorPoint mode to
+  // the selected layer's transform3D anchor, compensating the position so the
+  // artwork stays put.  Works for any layer type, including 2D projected-frame
+  // layers whose press path never reaches the legacy 2D gizmo.
+  bool applyProjectedFrameAnchorDelta(
+      ArtifactCore::Coordinates::WorldVector3 worldAnchorDelta);
+  // Pushes the single Undo entry for a finished anchor drag.  Called from the
+  // release path; safe to call when no anchor drag is pending.
+  bool commitProjectedFrameAnchorDrag();
   bool resetSelected3DTransform();
   // 0: location, 1: rotation, 2: scale (Blender Alt+G/R/S semantics).
   bool resetSelectedTransformComponent(int component);
-  bool setSelected3DTransform(const QVector3D& position,
-                              const QVector3D& rotation,
-                              const QVector3D& scale);
+  bool setSelected3DTransform(
+      ArtifactCore::Coordinates::LayerLocalPoint3 position,
+      ArtifactCore::Units::EulerDegrees3 rotation,
+      ArtifactCore::Units::Scale3 scale);
    bool resetSelected2DAnchorToCenter();
    // Quick-set the 2D anchor to one of the nine local-bounds presets:
    // 0..2 top, 3..5 middle, 6..8 bottom (left/center/right).
@@ -501,6 +559,7 @@ bool isInteractiveRenderRegionDragActive() const;
    // Image-layer source crop (V1). Rect is in source pixels. Enabling is
    // implicit on first set; reset keeps the rect and only disables.
    bool selectedSupportsCrop() const;
+   bool setSelectedCropRect(SourcePixelBounds2 sourceRect);
    bool setSelectedCropRect(const QRectF& sourceRect);
    bool resetSelectedCrop();
    bool setSelectedCropEnabled(bool enabled);
@@ -525,14 +584,15 @@ bool isInteractiveRenderRegionDragActive() const;
   double averageFrameTimeMs() const;
 
 void handleMousePress(QMouseEvent* event);
-void handleMouseMove(const QPointF& viewportPos);
+void handleMouseMove(ArtifactCore::Coordinates::ScreenLogicalPoint2 viewportPos);
   void handleMouseRelease();
   bool isPhysicsDragActive() const;
   bool beginModalGizmoInteraction(TransformGizmo::Mode mode,
-                                  const QPointF& viewportPos);
+      ArtifactCore::Coordinates::ScreenLogicalPoint2 viewportPos);
   // Returns 0 (width) or 1 (height) when a visible frame-size badge begins
   // a Scale modal interaction; otherwise returns -1.
-  int beginFrameSizeBadgeInput(const QPointF& viewportPos);
+  int beginFrameSizeBadgeInput(
+      ArtifactCore::Coordinates::ScreenLogicalPoint2 viewportPos);
   // In-viewport text editing session (quick edit mode for text layers).
   bool startTextEditSession(const ArtifactAbstractLayerPtr& layer);
   // Ends the session. Discards live edits when discardChanges is true,
@@ -549,11 +609,19 @@ void handleMouseMove(const QPointF& viewportPos);
   void textSessionToggleCaretBlink();
   // UTF-16 string position for a viewport click, or -1 when the click falls
   // outside the shaped glyph layout.
-  int textSessionCaretPositionAt(const QPointF& viewportPos) const;
-  bool constrainModalGizmoInteraction(int axis, const QPointF& viewportPos);
-  bool setModalGizmoNumericInput(float value, const QPointF& viewportPos);
-  bool setModalGizmoFrameDimension(int dimension, float pixels,
-                                   const QPointF& viewportPos);
+  int textSessionCaretPositionAt(
+      ArtifactCore::Coordinates::ScreenLogicalPoint2 viewportPos) const;
+  bool constrainModalGizmoInteraction(
+      int axis, ArtifactCore::Coordinates::ScreenLogicalPoint2 viewportPos);
+  bool setModalGizmoNumericInput(ArtifactCore::Units::WorldLength value,
+      ArtifactCore::Coordinates::ScreenLogicalPoint2 viewportPos);
+  bool setModalGizmoNumericInput(ArtifactCore::Units::Degrees value,
+      ArtifactCore::Coordinates::ScreenLogicalPoint2 viewportPos);
+  bool setModalGizmoNumericInput(ArtifactCore::Units::ScaleFactor factor,
+      ArtifactCore::Coordinates::ScreenLogicalPoint2 viewportPos);
+  bool setModalGizmoFrameDimension(
+      int dimension, ArtifactCore::Units::Pixels pixels,
+      ArtifactCore::Coordinates::ScreenLogicalPoint2 viewportPos);
   void clearModalGizmoNumericInput();
   bool commitModalGizmoInteraction();
   bool isModalGizmoInteractionActive() const;
@@ -577,19 +645,26 @@ void handleMouseMove(const QPointF& viewportPos);
   bool removeLastPendingMaskVertex();
   bool removeLastPendingShapePathVertex();
   // Main-VP custom shape path vertex editing.
-  bool beginShapePathVertexDrag(const QPointF& viewportPos);
-  void updateShapePathVertexDrag(const QPointF& viewportPos);
-  void updateShapePathHover(const QPointF& viewportPos);
+  bool beginShapePathVertexDrag(
+      ArtifactCore::Coordinates::ScreenPhysicalPoint2 viewportPos);
+  void updateShapePathVertexDrag(
+      ArtifactCore::Coordinates::ScreenPhysicalPoint2 viewportPos);
+  void updateShapePathHover(
+      ArtifactCore::Coordinates::ScreenPhysicalPoint2 viewportPos);
   void endShapePathVertexDrag();
   bool isEditingShapePathVertices() const;
   // F2: Rect/Square cornerRadius and Star innerRadius parameter handles.
-  bool beginShapeParamDrag(const QPointF& viewportPos);
-  void updateShapeParamDrag(const QPointF& viewportPos);
+  bool beginShapeParamDrag(
+      ArtifactCore::Coordinates::ScreenPhysicalPoint2 viewportPos);
+  void updateShapeParamDrag(
+      ArtifactCore::Coordinates::ScreenPhysicalPoint2 viewportPos);
   void endShapeParamDrag();
   bool isEditingShapeParam() const;
   // F2: custom polygon vertex drag/insert.
-  bool beginShapePolygonDrag(const QPointF& viewportPos);
-  void updateShapePolygonDrag(const QPointF& viewportPos);
+  bool beginShapePolygonDrag(
+      ArtifactCore::Coordinates::ScreenPhysicalPoint2 viewportPos);
+  void updateShapePolygonDrag(
+      ArtifactCore::Coordinates::ScreenPhysicalPoint2 viewportPos);
   void endShapePolygonDrag();
   bool isEditingShapePolygon() const;
   // F4: vertex selection grammar (Shift toggle, Ctrl add, plain replace;
@@ -606,18 +681,24 @@ void handleMouseMove(const QPointF& viewportPos);
   bool toggleHoveredShapePathClosed();
   bool toggleHoveredShapePathSmooth();
   // F5: operator HUD/trim handles (first TrimPaths + first single-value op).
-  bool beginShapeOperatorDrag(const QPointF& viewportPos);
-  void updateShapeOperatorDrag(const QPointF& viewportPos);
+  bool beginShapeOperatorDrag(
+      ArtifactCore::Coordinates::ScreenPhysicalPoint2 viewportPos);
+  void updateShapeOperatorDrag(
+      ArtifactCore::Coordinates::ScreenPhysicalPoint2 viewportPos);
   void endShapeOperatorDrag();
   bool isEditingShapeOperator() const;
   bool cancelTextToolInteraction();
   bool deleteSelectedPuppetPin();
   bool resetSelectedPuppetPinRotation();
-  bool adjustSelectedPuppetPinWeightAt(const QPointF& viewportPos, float delta);
-  bool adjustSelectedPuppetPinDepthAt(const QPointF& viewportPos, float delta);
+  bool adjustSelectedPuppetPinWeightAt(
+      ArtifactCore::Coordinates::ScreenPhysicalPoint2 viewportPos,
+      float delta);
+  bool adjustSelectedPuppetPinDepthAt(
+      ArtifactCore::Coordinates::ScreenPhysicalPoint2 viewportPos,
+      float delta);
   bool setSelectedPuppetPinType(int type);
 bool clearRigSelection();
-bool nudgeSelectedRigBoneRotation(float deltaDegrees);
+bool nudgeSelectedRigBoneRotation(ArtifactCore::Units::Degrees delta);
 bool nudgeSelectedRigControl(const QVector2D &delta);
 void adjustRigWeightBrush(float radiusDelta, float opacityDelta = 0.0f);
 float rigWeightBrushRadius() const;
@@ -651,25 +732,30 @@ void clearRigPoseSlots();
   bool toggleHoveredMaskLocked();
   bool duplicateHoveredMask();
   bool duplicateHoveredMaskForSelectedLayers();
-  bool rotateSelectedMaskVertices(float centerX, float centerY,
-                                  float angleDegrees);
-  bool scaleSelectedMaskVertices(float centerX, float centerY,
-                                 float scaleX, float scaleY);
+  bool rotateSelectedMaskVertices(ArtifactCore::Coordinates::LayerLocalPoint2 center,
+                                  ArtifactCore::Units::Degrees angle);
+  bool scaleSelectedMaskVertices(ArtifactCore::Coordinates::LayerLocalPoint2 center,
+                                 ArtifactCore::Units::Scale2 scale);
   bool moveHoveredMask(int direction);
   bool moveHoveredMaskForSelectedLayers(int direction);
   bool copyHoveredMask();
   bool pasteMask();
   bool toggleHoveredMaskInverted();
   bool toggleHoveredMaskInvertedForSelectedLayers();
-  bool adjustHoveredMaskGeometry(float featherDelta, float expansionDelta);
-  bool adjustHoveredMaskGeometryForSelectedLayers(float featherDelta,
-                                                   float expansionDelta);
-  bool adjustHoveredMaskOpacity(float opacityDelta);
-  bool adjustHoveredMaskOpacityForSelectedLayers(float opacityDelta);
+  bool adjustHoveredMaskGeometry(ArtifactCore::Units::LayerLocalLength featherDelta,
+                                 ArtifactCore::Units::LayerLocalLength expansionDelta);
+  bool adjustHoveredMaskGeometryForSelectedLayers(
+      ArtifactCore::Units::LayerLocalLength featherDelta,
+      ArtifactCore::Units::LayerLocalLength expansionDelta);
+  bool adjustHoveredMaskOpacity(ArtifactCore::Units::OpacityDelta opacityDelta);
+  bool adjustHoveredMaskOpacityForSelectedLayers(
+      ArtifactCore::Units::OpacityDelta opacityDelta);
   bool setHoveredMaskColor(const FloatColor& color);
-   bool createTextLayerAtCanvas(const QPointF& canvasPos,
-                                const QSizeF& boxSize = QSizeF());
-   bool editTextAtViewport(const QPointF& viewportPos);
+   bool createTextLayerAtCanvas(
+       ArtifactCore::Coordinates::CompositionPoint2 canvasPos,
+       const QSizeF& boxSize = QSizeF());
+   bool editTextAtViewport(
+       ArtifactCore::Coordinates::ScreenLogicalPoint2 viewportPos);
    // Stores ShaderNode graph JSON on the selected 3D layer. The renderer
    // compiles it on next draw; project save/load carries it via
    // material.graph. Returns false when no 3D layer is selected.
@@ -679,19 +765,20 @@ void clearRigPoseSlots();
 
 TransformGizmo* gizmo() const;
  class Artifact3DGizmo* gizmo3D() const;
- bool isTransformGizmoHovered(const QPointF& viewportPos) const;
+ bool isTransformGizmoHovered(
+     ArtifactCore::Coordinates::ScreenLogicalPoint2 viewportPos) const;
  ArtifactPointTrackerGizmo* trackerGizmo() const;
  struct CameraFrustumVisual {
   bool valid = false;
   LayerID layerId = LayerID::Nil();
-  QVector3D cameraPosition;
+  ArtifactCore::Coordinates::WorldPoint3 cameraPosition;
   QMatrix4x4 viewMatrix;
   QMatrix4x4 projectionMatrix;
   ArtifactCore::CameraGuidePrimitive guide;
-  QVector<QVector3D> nearPlaneCorners;
-  QVector<QVector3D> farPlaneCorners;
-  float aspect = 1.0f;
-  float zoom = 0.0f;
+  QVector<ArtifactCore::Coordinates::WorldPoint3> nearPlaneCorners;
+  QVector<ArtifactCore::Coordinates::WorldPoint3> farPlaneCorners;
+  ArtifactCore::Units::ScaleFactor aspect{1.0f};
+  ArtifactCore::Units::Pixels zoom{};
  };
  CameraFrustumVisual cameraFrustumVisual() const;
 void setViewportOrientation(ArtifactCore::ViewOrientationHotspot hotspot);
@@ -702,8 +789,10 @@ void setViewportOrientationQuaternion(const QQuaternion& orientation);
 void setPreviewOrbitActive(bool active);
 bool isPreviewOrbitActive() const;
 void pushViewHistory();
- Ray createPickingRay(const QPointF& viewportPos) const;
-  Qt::CursorShape cursorShapeForViewportPos(const QPointF& viewportPos) const;
+WorldRay createPickingRay(
+    ArtifactCore::Coordinates::ScreenPhysicalPoint2 viewportPos) const;
+  Qt::CursorShape cursorShapeForViewportPos(
+      ArtifactCore::Coordinates::ScreenLogicalPoint2 viewportPos) const;
 
   // Tracker operations (TrackPoint tool)
   void trackerInitialize();
@@ -735,6 +824,9 @@ void pushViewHistory();
   void trackerApplyToAnchor();
   void trackerApplyAllPoints();
   void trackerApplyPlanarCornerPin();
+  // Applies the active planar track to the first mask of the selected layer by
+  // writing per-frame MaskPath keyframes.  Requires TrackerType::Planar.
+  void trackerApplyToMask();
   void trackerDelete();
   void trackerCaptureNextFrame(std::uint64_t generation);
   void trackerPollJob(std::uint64_t generation);

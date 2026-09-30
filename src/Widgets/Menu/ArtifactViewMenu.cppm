@@ -1052,6 +1052,34 @@ namespace Artifact {
    fitToScreenAction->setToolTip(QStringLiteral("Fit to Screen"));
    fitToScreenAction->setStatusTip(QStringLiteral("Fit the composition to the viewport"));
 
+   // These four were constructed, given default shortcuts, added to the menu
+   // and enabled, but never connected: pressing them (or their documented
+   // Ctrl+= / Ctrl+- / Ctrl+/ / Shift+/ defaults) did nothing.  Reuse the same
+   // event-bus command the toolbar zoom buttons publish so both surfaces drive
+   // one code path instead of duplicating zoom logic here.  The editor
+   // subscribes and dispatches these kinds unconditionally, so no editor
+   // lookup is needed at trigger time.
+   const auto publishViewCommand = [](CompositionViewCommandKind kind) {
+     ArtifactCore::globalEventBus().publish(
+         CompositionViewCommandRequestedEvent{kind});
+   };
+   QObject::connect(zoomInAction, &QAction::triggered, menu,
+                    [publishViewCommand]() {
+                      publishViewCommand(CompositionViewCommandKind::ZoomIn);
+                    });
+   QObject::connect(zoomOutAction, &QAction::triggered, menu,
+                    [publishViewCommand]() {
+                      publishViewCommand(CompositionViewCommandKind::ZoomOut);
+                    });
+   QObject::connect(defaultZoomAction, &QAction::triggered, menu,
+                    [publishViewCommand]() {
+                      publishViewCommand(CompositionViewCommandKind::Zoom100);
+                    });
+   QObject::connect(fitToScreenAction, &QAction::triggered, menu,
+                    [publishViewCommand]() {
+                      publishViewCommand(CompositionViewCommandKind::ZoomFit);
+                    });
+
    viewportBookmarkMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.view.camera_bookmark_accel"), QStringLiteral("Camera ブックマーク(&B)")));
    viewportBookmarkMenu->setObjectName(QStringLiteral("viewportBookmarkMenu"));
    viewportBookmarkMenu->setIcon(QIcon(resolveIconPath("Studio/viewmenu_bookmarks.svg")));

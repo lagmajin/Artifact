@@ -2294,15 +2294,14 @@ void ArtifactProjectService::Impl::addLayerToCurrentComposition(
         const float compCenterY =
             static_cast<float>(compSize.height() > 0 ? compSize.height() : 1080) *
             0.5f;
-        const QVector3D current = result.layer->position3D();
+        const auto current = result.layer->position3D();
         // QMatrix4x4 perspective cameras look down local -Z. Keeping a newly
         // created camera at the same Z as the scene puts every model on the
         // near plane, so the whole 3D scene is clipped away.
         const float initialZ = params.layerType() == LayerType::Camera
             ? 1000.0f
             : current.z();
-        result.layer->setPosition3D(
-            QVector3D(compCenterX, compCenterY, initialZ));
+        result.layer->setPosition3D({compCenterX, compCenterY, initialZ});
         // LayerCreated is published by the project manager before this
         // post-create placement is applied. Notify the existing render path
         // once more so a new 3D primitive is visible without requiring the

@@ -12,7 +12,9 @@ module;
 #include <QImage>
 #include <QCursor>
 #include <QPointer>
+#include <QPointF>
 #include <QRectF>
+#include <QSize>
 #include <QStandardPaths>
 #include <QTransform>
 #include <functional>
@@ -24,6 +26,7 @@ module;
 #include <limits>
 
 module Artifact.Widgets.LayerEditorWidget;
+import Math.Vec;
 import Graphics;
 import Frame.Position;
 import Graphics.Shader.Set;
@@ -129,6 +132,39 @@ bool isShapeEditingMode(EditMode mode)
   return mode == EditMode::Paint || mode == EditMode::Shape;
 }
 
+ArtifactCore::Coordinates::ScreenPhysicalExtent2
+layerEditorPhysicalExtent(const QWidget* widget)
+{
+  const QSize size = layerEditorPhysicalViewportSize(widget);
+  return {static_cast<float>(size.width()),
+          static_cast<float>(size.height())};
+}
+
+ArtifactCore::Coordinates::ScreenPhysicalPoint2 layerEditorPhysicalPoint(
+    const QWidget* widget,
+    ArtifactCore::Coordinates::ScreenLogicalPoint2 logicalPosition)
+{
+  const float dpr = widget ? static_cast<float>(widget->devicePixelRatioF()) : 1.0f;
+  return ArtifactCore::Coordinates::toScreenPhysical(logicalPosition, dpr);
+}
+
+ArtifactCore::Coordinates::CompositionPoint2 layerEditorCanvasPointAt(
+    const QWidget* widget, ArtifactIRenderer& renderer,
+    ArtifactCore::Coordinates::ScreenLogicalPoint2 logicalPosition)
+{
+  const auto physicalPosition = layerEditorPhysicalPoint(widget, logicalPosition);
+  const auto canvas = renderer.viewportToCanvas(
+      {physicalPosition.x, physicalPosition.y});
+  return {canvas.x, canvas.y};
+}
+
+ArtifactCore::Coordinates::CompositionExtent2 compositionExtentFromQSize(
+    const QSize& size)
+{
+  return {static_cast<float>(size.width()),
+          static_cast<float>(size.height())};
+}
+
 } // namespace
 
  class ArtifactLayerEditorWidget::Impl {
@@ -143,8 +179,8 @@ bool isShapeEditingMode(EditMode mode)
   std::unique_ptr<CompositionRenderer> compositionRenderer_;
   bool initialized_ = false;
   bool isPanning_=false;
-  QPointF lastMousePos_;
-  float zoomLevel_ = 1.0f;
+  ArtifactCore::Coordinates::ScreenLogicalPoint2 lastMousePos_{};
+  ArtifactCore::Units::ScaleFactor zoomLevel_{};
   QPointer<QWidget> widget_;
   //bool isPanning_ = false;
   bool isPlay_ = false;
@@ -266,7 +302,8 @@ bool isShapeEditingMode(EditMode mode)
   void drawCompositionGuideOverlay();
   void drawViewportChrome(const ArtifactAbstractLayerPtr& layer);
   void refreshSurfaceInfo(const ArtifactAbstractLayerPtr& layer);
-  bool handleViewportChromePress(const QPointF& viewportPos);
+  bool handleViewportChromePress(
+      ArtifactCore::Coordinates::ScreenLogicalPoint2 viewportPos);
   bool updateViewportChromeHover(const QPointF& viewportPos);
   void drawCustomPathOverlay(const ArtifactAbstractLayerPtr& layer);
   void beginPathEditTransaction(const ArtifactAbstractLayerPtr& layer);
@@ -281,7 +318,7 @@ bool isShapeEditingMode(EditMode mode)
 
   LayerEditorModalTransformController modalTransform_;
   bool beginModalTransform(LayerEditorModalTransformMode mode,
-                           const QPointF& viewportPosition);
+                           ArtifactCore::Coordinates::ScreenPhysicalPoint2 viewportPosition);
   void commitModalTransform();
   void cancelModalTransform();
 };
@@ -459,8 +496,10 @@ bool ArtifactLayerEditorWidget::Impl::toggleLayerState(int stateIndex)
       .altModifier = event->modifiers().testFlag(Qt::AltModifier),
       .autoRepeat = event->isAutoRepeat(),
       .hasTargetLayer = static_cast<bool>(targetLayer()),
-      .viewportCenter = QPointF(widget_->width() * 0.5,
-                                widget_->height() * 0.5),
+      .viewportCenter = ArtifactCore::Coordinates::toScreenPhysical(
+          ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+              QPointF(widget_->width() * 0.5, widget_->height() * 0.5)),
+          static_cast<float>(widget_->devicePixelRatioF())),
       .zoomLevel = &zoomLevel_};
   const LayerEditorViewKeyInputCallbacks callbacks{
       .toggleLayerState = [this](int stateIndex) {
@@ -675,10 +714,11 @@ void ArtifactLayerEditorWidget::Impl::drawTransformHUD(const ArtifactAbstractLay
   const QRectF draggingBounds = transformGizmo_->currentCanvasBoundingRect();
   if (draggingBounds.isValid() && !draggingBounds.isEmpty()) bounds = draggingBounds;
  }
- QSize restoreCanvasSize;
+ ArtifactCore::Coordinates::CompositionExtent2 restoreCanvasSize{};
  if (auto* service = ArtifactProjectService::instance()) {
   if (auto composition = service->currentComposition().lock())
-   restoreCanvasSize = composition->settings().compositionSize();
+   restoreCanvasSize = compositionExtentFromQSize(
+       composition->settings().compositionSize());
  }
  drawLayerEditorTransformHud(
      renderer_.get(), layer, bounds, layerEditorPhysicalViewportSize(widget_), restoreCanvasSize);
@@ -747,7 +787,7 @@ void ArtifactLayerEditorWidget::Impl::drawViewportChrome(
  if (!renderer_ || !widget_) return;
  if (surfaceMode_ != LayerSurfaceMode::Edit) refreshSurfaceInfo(layer);
  LayerEditorViewportChromeState state;
- state.viewportSize = layerEditorPhysicalViewportSize(widget_);
+ state.viewportSize = layerEditorPhysicalExtent(widget_);
  state.surfaceMode = surfaceMode_;
  state.editMode = editMode_;
  state.displayMode = displayMode_;
@@ -763,21 +803,23 @@ void ArtifactLayerEditorWidget::Impl::drawViewportChrome(
  state.maskToolEnabled = layerEditorEditModeAvailable(layer, EditMode::Mask);
  if (auto* service = ArtifactProjectService::instance()) {
   if (auto composition = service->currentComposition().lock())
-   state.restoreCanvasSize = composition->settings().compositionSize();
+   state.restoreCanvasSize = compositionExtentFromQSize(
+       composition->settings().compositionSize());
  }
  drawLayerEditorViewportChrome(renderer_.get(), layer, state);
 }
 bool ArtifactLayerEditorWidget::Impl::handleViewportChromePress(
-    const QPointF& viewportPos)
+    ArtifactCore::Coordinates::ScreenLogicalPoint2 viewportPos)
 {
  if (!renderer_ || !widget_) return false;
  const qreal dpr = widget_->devicePixelRatioF();
  const LayerEditorViewportChromeInteractionState state{
      .viewportPosition = viewportPos,
-     .physicalViewportSize = layerEditorPhysicalViewportSize(widget_),
-     .physicalViewportCenter = QPointF(
-         widget_->width() * 0.5 * dpr, widget_->height() * 0.5 * dpr),
-     .devicePixelRatio = dpr,
+     .physicalViewportSize = layerEditorPhysicalExtent(widget_),
+     .physicalViewportCenter = {
+         static_cast<float>(widget_->width() * 0.5 * dpr),
+         static_cast<float>(widget_->height() * 0.5 * dpr)},
+     .devicePixelRatio = {static_cast<float>(dpr)},
      .surfaceMode = surfaceMode_,
      .editMode = editMode_,
      .hasLayerIdentity = !targetLayerId_.isNil(),
@@ -808,10 +850,11 @@ bool ArtifactLayerEditorWidget::Impl::updateViewportChromeHover(
  if (!widget_) return false;
  const qreal dpr = widget_->devicePixelRatioF();
  const LayerEditorViewportChromeInteractionState state{
-     .viewportPosition = viewportPos,
-     .physicalViewportSize = layerEditorPhysicalViewportSize(widget_),
+     .viewportPosition =
+         ArtifactCore::Coordinates::screenLogicalPointFromQPointF(viewportPos),
+     .physicalViewportSize = layerEditorPhysicalExtent(widget_),
      .physicalViewportCenter = {},
-     .devicePixelRatio = dpr,
+     .devicePixelRatio = {static_cast<float>(dpr)},
      .surfaceMode = surfaceMode_,
      .editMode = editMode_,
      .hasLayerIdentity = !targetLayerId_.isNil(),
@@ -959,12 +1002,13 @@ void ArtifactLayerEditorWidget::Impl::renderOneFrame()
   return;
  renderer_->clear();
  const QSize viewportSize = layerEditorPhysicalViewportSize(widget_);
- const auto frameViewState = beginLayerEditorFrameView(*renderer_, viewportSize);
+ const auto frameViewState = beginLayerEditorFrameView(
+     *renderer_, layerEditorPhysicalExtent(widget_));
  if (backgroundMode_ == LayerBackgroundMode::MayaGradient) {
   refreshBackgroundCache();
  }
  drawLayerEditorFrameBackground(*renderer_, {
-     .viewportSize = viewportSize,
+     .viewportSize = layerEditorPhysicalExtent(widget_),
      .mode = backgroundMode_,
      .mayaGradientSprite = &cachedMayaGradientSprite_,
      .clearColor = clearColor_});
@@ -1273,13 +1317,16 @@ ArtifactLayerEditorWidget::ArtifactLayerEditorWidget(QWidget* parent /*= nullptr
 }
 
 bool ArtifactLayerEditorWidget::Impl::beginModalTransform(
-    LayerEditorModalTransformMode mode, const QPointF& viewportPosition)
+    LayerEditorModalTransformMode mode,
+    ArtifactCore::Coordinates::ScreenPhysicalPoint2 viewportPosition)
 {
  auto layer = targetLayer();
  if (!layer || !layer->isVisible() || layer->isLocked()) return false;
  auto shape = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(
      ArtifactCore::SharedPtr<ArtifactAbstractLayer>(layer));
- if (!shape || !modalTransform_.begin(mode, layer, viewportPosition,
+ if (!shape || !modalTransform_.begin(
+                                      mode, layer,
+                                      ArtifactCore::Coordinates::toQPointF(viewportPosition),
                                       selectedShapeVertexIndices_,
                                       selectedPathVertexIndices_)) return false;
  if (modalTransform_.editsPath()) beginPathEditTransaction(layer);
@@ -1326,7 +1373,11 @@ void ArtifactLayerEditorWidget::Impl::cancelModalTransform()
       .selectedPathIndices = &impl_->selectedPathVertexIndices_};
   LayerEditorKeyInputCallbacks callbacks;
   callbacks.beginModalTransform = [this](LayerEditorModalTransformMode mode) {
-    return impl_->beginModalTransform(mode, mapFromGlobal(QCursor::pos()));
+    const auto logicalPosition =
+        ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+            QPointF(mapFromGlobal(QCursor::pos())));
+    return impl_->beginModalTransform(
+        mode, layerEditorPhysicalPoint(this, logicalPosition));
   };
   callbacks.commitModalTransform = [this]() { impl_->commitModalTransform(); };
   callbacks.cancelModalTransform = [this]() { impl_->cancelModalTransform(); };
@@ -1423,13 +1474,19 @@ void ArtifactLayerEditorWidget::Impl::cancelModalTransform()
   const LayerEditorViewPressState viewState{
       .button = static_cast<int>(event->button()),
       .altModifier = event->modifiers().testFlag(Qt::AltModifier),
-      .viewportPosition = event->position(),
+      .viewportPosition =
+          layerEditorPhysicalPoint(
+              this, ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+                        event->position())),
+      .logicalViewportPosition =
+          ArtifactCore::Coordinates::screenLogicalPointFromQPointF(event->position()),
       .transformViewEnabled = transformViewEnabled,
       .layer = impl_->targetLayer(),
       .panning = &impl_->isPanning_,
       .lastMousePosition = &impl_->lastMousePos_};
   const LayerEditorViewPressCallbacks viewCallbacks{
-      .pressViewportChrome = [this](const QPointF& position) {
+      .pressViewportChrome = [this](
+          ArtifactCore::Coordinates::ScreenLogicalPoint2 position) {
         return impl_->handleViewportChromePress(position);
       },
       .clearViewportChromeHover = [this]() {
@@ -1467,13 +1524,14 @@ void ArtifactLayerEditorWidget::Impl::cancelModalTransform()
      isShapeEditingMode(impl_->editMode_) &&
      event->button() == Qt::LeftButton && impl_->renderer_) {
   const auto layer = impl_->targetLayer();
-  const Detail::float2 canvasPos = impl_->renderer_->viewportToCanvas(
-      {static_cast<float>(event->position().x()),
-       static_cast<float>(event->position().y())});
+  const auto canvasPos = layerEditorCanvasPointAt(
+      this, *impl_->renderer_,
+      ArtifactCore::Coordinates::screenLogicalPointFromQPointF(event->position()));
   const auto state = impl_->interactionStateController_.shapePressState(
       impl_->proportionalEditingEnabled_);
   const auto result = impl_->shapePressInteractionController_.handle(
-      layer, QPointF(canvasPos.x, canvasPos.y), impl_->renderer_->getZoom(),
+      layer, ArtifactCore::Coordinates::toQPointF(canvasPos),
+      impl_->renderer_->getZoom(),
       event->modifiers().testFlag(Qt::ShiftModifier) ||
           event->modifiers().testFlag(Qt::ControlModifier),
       state, impl_->shapeHoverController_, impl_->shapeEditSession_);
@@ -1493,15 +1551,16 @@ void ArtifactLayerEditorWidget::Impl::cancelModalTransform()
   if (impl_->editMode_ == EditMode::Mask &&
       event->button() == Qt::LeftButton && impl_->renderer_) {
    const auto layer = impl_->targetLayer();
-   const Detail::float2 canvas = impl_->renderer_->viewportToCanvas(
-       {static_cast<float>(event->position().x()),
-        static_cast<float>(event->position().y())});
+   const auto canvas = layerEditorCanvasPointAt(
+       this, *impl_->renderer_,
+       ArtifactCore::Coordinates::screenLogicalPointFromQPointF(event->position()));
    const bool additiveSelection =
        event->modifiers().testFlag(Qt::ShiftModifier);
    const auto state = impl_->interactionStateController_.maskPressState(
        impl_->proportionalEditingEnabled_, additiveSelection);
    const auto result = impl_->maskPressInteractionController_.handle(
-       layer, QPointF(canvas.x, canvas.y), impl_->renderer_->getZoom(), state,
+       layer, ArtifactCore::Coordinates::toQPointF(canvas),
+       impl_->renderer_->getZoom(), state,
        impl_->maskHoverController_, impl_->maskEditSession_);
    if (result.consumed) {
     if (impl_->isDraggingMaskVertex_ && !impl_->proportionalEditingEnabled_ && layer) {
@@ -1538,7 +1597,7 @@ void ArtifactLayerEditorWidget::Impl::cancelModalTransform()
    int segmentPath = -1;
    int segmentIndex = -1;
    if (layer && hitTestMaskBezierSegmentGeometry(
-                    layer, QPointF(canvas.x, canvas.y),
+                    layer, ArtifactCore::Coordinates::toQPointF(canvas),
                     6.0f / std::max(0.1f, impl_->renderer_->getZoom()),
                     segmentMask, segmentPath, segmentIndex)) {
     if (!additiveSelection) impl_->selectedMaskVertices_.clear();
@@ -1558,7 +1617,8 @@ void ArtifactLayerEditorWidget::Impl::cancelModalTransform()
    }
    if (layer && layer->isVisible() && !layer->isLocked()) {
     impl_->isMaskRubberBandSelecting_ = true;
-    impl_->maskRubberBandStartCanvas_ = QPointF(canvas.x, canvas.y);
+    impl_->maskRubberBandStartCanvas_ =
+        ArtifactCore::Coordinates::toQPointF(canvas);
     impl_->maskRubberBandCurrentCanvas_ = impl_->maskRubberBandStartCanvas_;
     if (!additiveSelection) impl_->selectedMaskVertices_.clear();
     impl_->requestRender();
@@ -1654,12 +1714,13 @@ void ArtifactLayerEditorWidget::mouseReleaseEvent(QMouseEvent* event)
  if (impl_->editMode_ == EditMode::Mask && event->button() == Qt::LeftButton && impl_->renderer_) {
    auto layer = impl_->targetLayer();
    if (layer && layer->isVisible() && !layer->isLocked()) {
-     const Detail::float2 canvasPos = impl_->renderer_->viewportToCanvas(
-         {(float)event->position().x(), (float)event->position().y()});
-     const QPointF canvasPoint(static_cast<qreal>(canvasPos.x),
-                               static_cast<qreal>(canvasPos.y));
+     const auto canvasPoint = layerEditorCanvasPointAt(
+         this, *impl_->renderer_,
+         ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+             event->position()));
     if (impl_->maskPressController_.closeOpenPathOnDoubleClick(
-            layer, canvasPoint, impl_->renderer_->getZoom(),
+            layer, ArtifactCore::Coordinates::toQPointF(canvasPoint),
+            impl_->renderer_->getZoom(),
             impl_->maskEditSession_)) {
       impl_->requestRender();
       event->accept();
@@ -1673,19 +1734,24 @@ void ArtifactLayerEditorWidget::mouseReleaseEvent(QMouseEvent* event)
 void ArtifactLayerEditorWidget::mouseMoveEvent(QMouseEvent* event)
  {
   if (impl_->isPanning_) {
-   const QPointF currentPos = event->position();
-   const QPointF delta = currentPos - impl_->lastMousePos_;
+   const auto currentPos =
+       ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+           event->position());
+   const auto delta = currentPos - impl_->lastMousePos_;
    impl_->lastMousePos_ = currentPos;
-   panBy(delta);
+   panBy(ArtifactCore::Coordinates::toScreenPhysical(
+       delta,
+       static_cast<float>(devicePixelRatioF())));
    event->accept();
    return;
   }
 
   if (impl_->isMaskRubberBandSelecting_ && impl_->renderer_) {
-   const Detail::float2 canvasPos = impl_->renderer_->viewportToCanvas(
-       {static_cast<float>(event->position().x()),
-        static_cast<float>(event->position().y())});
-   impl_->maskRubberBandCurrentCanvas_ = QPointF(canvasPos.x, canvasPos.y);
+   const auto canvasPos = layerEditorCanvasPointAt(
+       this, *impl_->renderer_,
+       ArtifactCore::Coordinates::screenLogicalPointFromQPointF(event->position()));
+   impl_->maskRubberBandCurrentCanvas_ =
+       ArtifactCore::Coordinates::toQPointF(canvasPos);
    impl_->requestRender();
    event->accept();
    return;
@@ -1704,7 +1770,9 @@ void ArtifactLayerEditorWidget::mouseMoveEvent(QMouseEvent* event)
        impl_->editMode_ != EditMode::Mask &&
        !isShapeEditingMode(impl_->editMode_);
    const LayerEditorViewMoveState state{
-       .viewportPosition = event->position(),
+       .viewportPosition = layerEditorPhysicalPoint(
+           this, ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+                     event->position())),
        .precision = event->modifiers().testFlag(Qt::ShiftModifier),
        .snap = event->modifiers().testFlag(Qt::ControlModifier),
        .transformViewEnabled = transformViewEnabled,
@@ -1728,16 +1796,17 @@ void ArtifactLayerEditorWidget::mouseMoveEvent(QMouseEvent* event)
 
   if (impl_->editMode_ == EditMode::Mask && impl_->renderer_) {
    auto layer = impl_->targetLayer();
-   const Detail::float2 canvasPos = impl_->renderer_->viewportToCanvas(
-       {static_cast<float>(event->position().x()),
-        static_cast<float>(event->position().y())});
+   const auto canvasPos = layerEditorCanvasPointAt(
+       this, *impl_->renderer_,
+       ArtifactCore::Coordinates::screenLogicalPointFromQPointF(event->position()));
    if (layer && impl_->isDraggingMaskVertex_ &&
        impl_->selectedMaskVerticesBefore_.size() > 1 &&
        !impl_->proportionalEditingEnabled_) {
     bool invertible = false;
     const QTransform inverse = layer->getGlobalTransform().inverted(&invertible);
     if (invertible) {
-     const QPointF target = inverse.map(QPointF(canvasPos.x, canvasPos.y));
+     const QPointF target = inverse.map(
+         ArtifactCore::Coordinates::toQPointF(canvasPos));
      const QPointF delta = target - impl_->selectedMaskDragOrigin_;
      for (const auto& entry : impl_->selectedMaskVerticesBefore_) {
       const auto& address = entry.first;
@@ -1764,7 +1833,8 @@ void ArtifactLayerEditorWidget::mouseMoveEvent(QMouseEvent* event)
    const auto state = impl_->interactionStateController_.maskMoveState(
        impl_->proportionalEditRadius_);
    const auto result = impl_->maskMoveController_.handle(
-       layer, QPointF(canvasPos.x, canvasPos.y), impl_->renderer_->getZoom(),
+       layer, ArtifactCore::Coordinates::toQPointF(canvasPos),
+       impl_->renderer_->getZoom(),
        state, impl_->maskDragController_, impl_->maskHoverController_,
        impl_->maskEditSession_);
    if (result.kind == LayerEditorMaskMoveKind::GeometryChanged) {
@@ -1783,13 +1853,14 @@ void ArtifactLayerEditorWidget::mouseMoveEvent(QMouseEvent* event)
   if (impl_->displayMode_ != DisplayMode::Mask &&
       isShapeEditingMode(impl_->editMode_) && impl_->renderer_) {
    auto layer = impl_->targetLayer();
-   const Detail::float2 canvasPos = impl_->renderer_->viewportToCanvas(
-       {static_cast<float>(event->position().x()),
-        static_cast<float>(event->position().y())});
+   const auto canvasPos = layerEditorCanvasPointAt(
+       this, *impl_->renderer_,
+       ArtifactCore::Coordinates::screenLogicalPointFromQPointF(event->position()));
    const auto state = impl_->interactionStateController_.shapeMoveState(
        impl_->proportionalEditingEnabled_, impl_->proportionalEditRadius_);
    const auto result = impl_->shapeMoveController_.handle(
-       layer, QPointF(canvasPos.x, canvasPos.y), impl_->renderer_->getZoom(),
+       layer, ArtifactCore::Coordinates::toQPointF(canvasPos),
+       impl_->renderer_->getZoom(),
        event->modifiers().testFlag(Qt::AltModifier), state,
        impl_->shapeDragController_, impl_->shapeHoverController_,
        impl_->shapeEditSession_);
@@ -1830,9 +1901,14 @@ void ArtifactLayerEditorWidget::wheelEvent(QWheelEvent* event)
    impl_->requestRender();
   }
  } else if (result.action == LayerEditorViewWheelAction::Zoom) {
-  impl_->zoomLevel_ = std::clamp(
-      impl_->renderer_->getZoom() * result.value, 0.05f, 32.0f);
-  zoomAroundPoint(event->position(), impl_->zoomLevel_);
+  impl_->zoomLevel_ = {std::clamp(
+      impl_->renderer_->getZoom() * result.value, 0.05f, 32.0f)};
+  zoomAroundPoint(
+      ArtifactCore::Coordinates::toScreenPhysical(
+          ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+              event->position()),
+          static_cast<float>(devicePixelRatioF())),
+      impl_->zoomLevel_);
  }
  event->accept();
 }
@@ -1911,7 +1987,7 @@ void ArtifactLayerEditorWidget::showEvent(QShowEvent* event)
   if (impl_->initialized_) {
    impl_->initializeSwapChain(this);
    impl_->renderer_->fitToViewport();
-   impl_->zoomLevel_ = impl_->renderer_->getZoom();
+   impl_->zoomLevel_ = {impl_->renderer_->getZoom()};
   }
  }
  if (impl_->initialized_) {
@@ -2017,7 +2093,7 @@ void ArtifactLayerEditorWidget::setTargetLayer(const LayerID& id)
      }
       impl_->syncTransformGizmo(layer);
       impl_->renderer_->fitToViewport();
-      impl_->zoomLevel_ = impl_->renderer_->getZoom();
+      impl_->zoomLevel_ = {impl_->renderer_->getZoom()};
       impl_->requestRender();
       return;
      }
@@ -2035,7 +2111,7 @@ void ArtifactLayerEditorWidget::setTargetLayer(const LayerID& id)
  {
   if (impl_->renderer_) {
    impl_->renderer_->resetView();
-   impl_->zoomLevel_ = impl_->renderer_->getZoom();
+   impl_->zoomLevel_ = {impl_->renderer_->getZoom()};
    impl_->requestRender();
   }
  }
@@ -2044,23 +2120,27 @@ void ArtifactLayerEditorWidget::setTargetLayer(const LayerID& id)
   {
    if (impl_->renderer_) {
     impl_->renderer_->fitToViewport();
-    impl_->zoomLevel_ = impl_->renderer_->getZoom();
+    impl_->zoomLevel_ = {impl_->renderer_->getZoom()};
     impl_->requestRender();
    }
   }
  
-void ArtifactLayerEditorWidget::panBy(const QPointF& delta)
+void ArtifactLayerEditorWidget::panBy(
+    ArtifactCore::Coordinates::ScreenPhysicalVector2 delta)
 {
   if (impl_->renderer_) {
-   impl_->renderer_->panBy((float)delta.x(), (float)delta.y());
+   impl_->renderer_->panBy(delta.x, delta.y);
    impl_->requestRender();
   }
 }
 
-void ArtifactLayerEditorWidget::zoomAroundPoint(const QPointF& viewportPos, float newZoom)
+void ArtifactLayerEditorWidget::zoomAroundPoint(
+    ArtifactCore::Coordinates::ScreenPhysicalPoint2 viewportPos,
+    ArtifactCore::Units::ScaleFactor newZoom)
 {
   if (impl_->renderer_) {
-      impl_->renderer_->zoomAroundViewportPoint({(float)viewportPos.x(), (float)viewportPos.y()}, newZoom);
+      impl_->renderer_->zoomAroundViewportPoint(
+          {viewportPos.x, viewportPos.y}, newZoom.value);
       impl_->requestRender();
   }
 }
@@ -2144,15 +2224,16 @@ void ArtifactLayerEditorWidget::zoomAroundPoint(const QPointF& viewportPos, floa
   }
  }
 
-void ArtifactLayerEditorWidget::setPan(const QPointF& offset)
+void ArtifactLayerEditorWidget::setPan(
+    ArtifactCore::Coordinates::ScreenPhysicalVector2 offset)
 {
  if (impl_->renderer_) {
-  impl_->renderer_->setPan((float)offset.x(), (float)offset.y());
+  impl_->renderer_->setPan(offset.x, offset.y);
   impl_->requestRender();
  }
 }
 
- float ArtifactLayerEditorWidget::zoom() const
+ ArtifactCore::Units::ScaleFactor ArtifactLayerEditorWidget::zoom() const
  {
   return impl_->zoomLevel_;
  }

@@ -11,6 +11,7 @@ export module Artifact.Widgets.ContentGizmo;
 
 import Artifact.Render.IRenderer;
 import Artifact.Layer.Abstract;
+import Math.Vec;
 
 namespace Artifact {
 
@@ -81,8 +82,8 @@ export class ContentGizmo {
   QPointF dragLastCanvasPos_;
   // Crop drag state (source pixels).
   bool dragCropWasEnabled_ = false;
-  QRectF dragCropStart_;
-  QSizeF dragCropSourceSize_;
+  ArtifactCore::Coordinates::SourcePixelBounds2 dragCropStart_{};
+  ArtifactCore::Coordinates::SourcePixelExtent2 dragCropSourceSize_{};
   // Solid drag state.
   QSize dragSizeBefore_;
   QSize dragSizeStart_;

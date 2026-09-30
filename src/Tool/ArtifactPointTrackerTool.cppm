@@ -22,9 +22,96 @@ import Animation.Transform3D;
 import Time.Rational;
 import Artifact.Service.Effect;
 import Artifact.Effect.Abstract;
+import Artifact.Mask.LayerMask;
+import Artifact.Mask.Path;
 import Undo.UndoManager;
 
 namespace Artifact {
+
+namespace {
+
+/// Solves the 3x3 homography H with H * p ~= q for four point correspondences.
+/// Uses the standard 8x8 formulation with H(2,2) fixed to 1 and Gaussian
+/// elimination with partial pivoting.  Returns false when the system is
+/// singular (degenerate or collinear quad) or a coefficient is not finite.
+bool solveHomography4Point(const std::array<QPointF, 4>& source,
+                           const std::array<QPointF, 4>& target,
+                           double matrix[9])
+{
+    double rows[8][9] = {};
+    for (int i = 0; i < 4; ++i) {
+        const double x = source[static_cast<size_t>(i)].x();
+        const double y = source[static_cast<size_t>(i)].y();
+        const double u = target[static_cast<size_t>(i)].x();
+        const double v = target[static_cast<size_t>(i)].y();
+        if (!std::isfinite(x) || !std::isfinite(y) ||
+            !std::isfinite(u) || !std::isfinite(v)) {
+            return false;
+        }
+        rows[2 * i + 0][0] = x;  rows[2 * i + 0][1] = y;  rows[2 * i + 0][2] = 1.0;
+        rows[2 * i + 0][6] = -u * x; rows[2 * i + 0][7] = -u * y; rows[2 * i + 0][8] = u;
+        rows[2 * i + 1][3] = x;  rows[2 * i + 1][4] = y;  rows[2 * i + 1][5] = 1.0;
+        rows[2 * i + 1][6] = -v * x; rows[2 * i + 1][7] = -v * y; rows[2 * i + 1][8] = v;
+    }
+    for (int col = 0; col < 8; ++col) {
+        int pivot = col;
+        for (int row = col + 1; row < 8; ++row) {
+            if (std::abs(rows[row][col]) > std::abs(rows[pivot][col])) {
+                pivot = row;
+            }
+        }
+        if (std::abs(rows[pivot][col]) < 1.0e-12) {
+            return false;
+        }
+        if (pivot != col) {
+            for (int k = 0; k < 9; ++k) {
+                std::swap(rows[col][k], rows[pivot][k]);
+            }
+        }
+        for (int row = col + 1; row < 8; ++row) {
+            const double factor = rows[row][col] / rows[col][col];
+            for (int k = col; k < 9; ++k) {
+                rows[row][k] -= factor * rows[col][k];
+            }
+        }
+    }
+    double solution[8] = {};
+    for (int row = 7; row >= 0; --row) {
+        double sum = rows[row][8];
+        for (int k = row + 1; k < 8; ++k) {
+            sum -= rows[row][k] * solution[k];
+        }
+        solution[row] = sum / rows[row][row];
+        if (!std::isfinite(solution[row])) {
+            return false;
+        }
+    }
+    matrix[0] = solution[0]; matrix[1] = solution[1]; matrix[2] = solution[2];
+    matrix[3] = solution[3]; matrix[4] = solution[4]; matrix[5] = solution[5];
+    matrix[6] = solution[6]; matrix[7] = solution[7]; matrix[8] = 1.0;
+    return true;
+}
+
+/// Applies a row-major 3x3 homography.  Returns a null QPointF when the point
+/// maps behind the horizon (w ~ 0) or to a non-finite coordinate, so callers can
+/// reject the whole frame instead of writing a broken vertex.
+QPointF applyHomography3x3(const double matrix[9], const QPointF& point)
+{
+    const double x = point.x();
+    const double y = point.y();
+    const double w = matrix[6] * x + matrix[7] * y + matrix[8];
+    if (std::abs(w) < 1.0e-12) {
+        return QPointF();
+    }
+    const double px = (matrix[0] * x + matrix[1] * y + matrix[2]) / w;
+    const double py = (matrix[3] * x + matrix[4] * y + matrix[5]) / w;
+    if (!std::isfinite(px) || !std::isfinite(py)) {
+        return QPointF();
+    }
+    return QPointF(px, py);
+}
+
+} // namespace
 
 export class ArtifactPointTrackerTool {
 public:
@@ -382,6 +469,161 @@ public:
         }
         targetLayer->setDirty(LayerDirtyFlag::Effect);
         targetLayer->changed();
+        return true;
+    }
+
+    /// Planar tracking の homography を対象マスクのベジェ頂点へ適用し、
+    /// フレームごとの MaskPath キーフレームを生成する（AE の Mask Tracking に相当）。
+    ///
+    /// sourceRect はトラッキング開始時のマスク外接矩形を渡す。 Corners は毎フレーム
+    /// 4 隅が移動するため、平行移動だけでなく回転・スケール・スキューも反映される。
+    /// 頂点数はフレーム間で一定なので、MaskPath の頂点列を保ったまま
+    /// setAnimationKeyframe を積む。Undo は 1 コマンドにまとめる。
+    static bool applyPlanarResultAsMask(
+        ArtifactAbstractComposition* comp,
+        const ArtifactCore::MotionTracker& tracker,
+        const QRectF& sourceRect,
+        ArtifactAbstractLayerPtr targetLayer,
+        int maskIndex,
+        int pathIndex)
+    {
+        if (!comp || !targetLayer || tracker.trackerType() !=
+            ArtifactCore::TrackerType::Planar || !sourceRect.isValid()) {
+            return false;
+        }
+        if (maskIndex < 0 || maskIndex >= targetLayer->maskCount()) {
+            return false;
+        }
+        LayerMask mask = targetLayer->mask(maskIndex);
+        if (pathIndex < 0 || pathIndex >= mask.maskPathCount()) {
+            return false;
+        }
+        const MaskPath sourcePath = mask.maskPath(pathIndex);
+        if (sourcePath.vertexCount() < 3) {
+            return false;
+        }
+
+        const double fpsValue = comp->frameRate().framerate();
+        if (!std::isfinite(fpsValue) || fpsValue <= 0.0 || fpsValue > 240.0) {
+            return false;
+        }
+        const auto compositionRange = comp->frameRange();
+        if (!compositionRange.isValid()) return false;
+
+        // The quad is defined in layer-local space, which is also the space the
+        // tracked corners arrive in, so one homography per frame maps the mask
+        // vertices directly without any canvas round-trip.
+        const std::array<QPointF, 4> sourceQuad = {
+            QPointF(sourceRect.left(), sourceRect.top()),
+            QPointF(sourceRect.right(), sourceRect.top()),
+            QPointF(sourceRect.right(), sourceRect.bottom()),
+            QPointF(sourceRect.left(), sourceRect.bottom())};
+
+        // Solve every frame before mutating the layer: a failure part-way through
+        // must not leave a half-tracked mask, and MaskPath would otherwise
+        // interpolate straight across any skipped frame.
+        const int vertexCount = sourcePath.vertexCount();
+        std::vector<MaskPathKeyframeSnapshot> snapshots;
+        snapshots.reserve(static_cast<size_t>(compositionRange.end() -
+                                             compositionRange.start() + 1));
+        for (int64_t frame = compositionRange.start();
+             frame <= compositionRange.end(); ++frame) {
+            const double timeSeconds = static_cast<double>(frame) / fpsValue;
+            std::array<QPointF, 4> trackedQuad{};
+            if (!tracker.projectRegionAt(timeSeconds, sourceRect, trackedQuad)) {
+                continue;
+            }
+            double matrix[9] = {};
+            if (!solveHomography4Point(sourceQuad, trackedQuad, matrix)) {
+                continue;
+            }
+
+            MaskPathKeyframeSnapshot snapshot;
+            snapshot.frame = frame;
+            snapshot.closed = sourcePath.isClosed();
+            snapshot.opacity = sourcePath.opacity();
+            snapshot.feather = sourcePath.feather().value;
+            snapshot.featherHorizontal = sourcePath.featherHorizontal().value;
+            snapshot.featherVertical = sourcePath.featherVertical().value;
+            snapshot.featherInner = sourcePath.featherInner().value;
+            snapshot.featherOuter = sourcePath.featherOuter().value;
+            snapshot.falloff = sourcePath.falloff();
+            snapshot.expansion = sourcePath.expansion().value;
+            snapshot.inverted = sourcePath.isInverted();
+            snapshot.mode = sourcePath.mode();
+            snapshot.name = sourcePath.name();
+            snapshot.vertices.reserve(static_cast<size_t>(vertexCount));
+
+            bool frameUsable = true;
+            for (int v = 0; v < vertexCount && frameUsable; ++v) {
+                const MaskVertex vertex = sourcePath.vertex(v);
+                // Tangents are relative offsets, so they must be transformed as
+                // direction vectors: map the anchor point and the absolute
+                // tangent point, then difference them.  Transforming the offset
+                // itself with a projective matrix would be wrong.
+                const QPointF position = applyHomography3x3(matrix, vertex.position);
+                const QPointF inAnchor =
+                    applyHomography3x3(matrix, vertex.position + vertex.inTangent);
+                const QPointF outAnchor =
+                    applyHomography3x3(matrix, vertex.position + vertex.outTangent);
+                if (!position.isFinite() || !inAnchor.isFinite() ||
+                    !outAnchor.isFinite()) {
+                    frameUsable = false;
+                    break;
+                }
+                MaskVertex moved;
+                moved.position = position;
+                moved.inTangent = inAnchor - position;
+                moved.outTangent = outAnchor - position;
+                snapshot.vertices.push_back(moved);
+            }
+            if (frameUsable) {
+                snapshots.push_back(std::move(snapshot));
+            }
+        }
+        if (snapshots.size() < 2) {
+            return false;
+        }
+
+        // Capture the full mask list before mutating so the Undo command can
+        // restore every mask, matching how the interactive mask-edit
+        // transaction behaves.  Kept as a copy because the rollback path below
+        // still needs it after the command has consumed its own argument.
+        std::vector<LayerMask> beforeMasks;
+        beforeMasks.reserve(static_cast<size_t>(targetLayer->maskCount()));
+        for (int i = 0; i < targetLayer->maskCount(); ++i) {
+            beforeMasks.push_back(targetLayer->mask(i));
+        }
+
+        MaskPath tracked = sourcePath;
+        tracked.clearAnimationKeyframes();
+        for (const auto& snapshot : snapshots) {
+            tracked.setAnimationKeyframe(snapshot.frame, snapshot);
+        }
+        mask.setMaskPath(pathIndex, tracked);
+        targetLayer->setMask(maskIndex, mask);
+        targetLayer->setDirty(LayerDirtyFlag::Mask);
+        targetLayer->changed();
+
+        std::vector<LayerMask> afterMasks;
+        afterMasks.reserve(static_cast<size_t>(targetLayer->maskCount()));
+        for (int i = 0; i < targetLayer->maskCount(); ++i) {
+            afterMasks.push_back(targetLayer->mask(i));
+        }
+        if (auto* undo = UndoManager::instance()) {
+            if (!undo->push(std::make_unique<MaskEditCommand>(
+                    targetLayer, beforeMasks, afterMasks))) {
+                // The undo stack refused the command: fail closed by restoring
+                // the original mask rather than leaving an untracked mask that
+                // the user cannot undo.
+                for (int i = 0; i < beforeMasks.size(); ++i) {
+                    targetLayer->setMask(i, beforeMasks[static_cast<size_t>(i)]);
+                }
+                targetLayer->setDirty(LayerDirtyFlag::Mask);
+                targetLayer->changed();
+                return false;
+            }
+        }
         return true;
     }
 };

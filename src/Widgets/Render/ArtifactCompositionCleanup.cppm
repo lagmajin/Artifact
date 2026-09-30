@@ -442,9 +442,10 @@ void previewCompositionCleanupCandidate(
               std::min(topLeft.y, bottomRight.y)),
       QPointF(std::max(topLeft.x, bottomRight.x),
               std::max(topLeft.y, bottomRight.y)));
-  controller->setDropGhostPreview(viewportBounds, candidate.actionLabel,
-                                  candidate.message,
-                                  QStringLiteral("Cleanup preview"));
+  controller->setDropGhostPreview(
+      toScreenPhysicalBounds2(viewportBounds),
+      candidate.actionLabel, candidate.message,
+      QStringLiteral("Cleanup preview"));
 }
 
 void showCompositionCleanupDialog(

@@ -137,7 +137,7 @@ export int runPreComposeTests()
                 const int originalIndex0 = originalOrder.indexOf(layerIds[0]);
                 const auto firstLayer = comp->layerById(layerIds[0]);
                 if (firstLayer) {
-                    firstLayer->setPosition3D(QVector3D(12.0f, -8.0f, 3.0f));
+                    firstLayer->setPosition3D({12.0f, -8.0f, 3.0f});
                     firstLayer->setOpacity(0.42f);
                 }
                 const bool precomposed = service->precomposeLayersWithUndo(
@@ -249,8 +249,10 @@ export int runPreComposeTests()
                             report.check(static_cast<bool>(comp->layerById(layerIds[1])),
                                          QStringLiteral("second source layer restored after unprecompose"));
                             if (restoredFirstLayer) {
-                                report.check(restoredFirstLayer->position3D() ==
-                                                 QVector3D(12.0f, -8.0f, 3.0f),
+                                const auto position = restoredFirstLayer->position3D();
+                                report.check(position.x == 12.0f &&
+                                                 position.y == -8.0f &&
+                                                 position.z == 3.0f,
                                              QStringLiteral("unprecompose preserves source layer position"));
                                 report.check(restoredFirstLayer->opacity() == 0.42f,
                                              QStringLiteral("unprecompose preserves source layer opacity"));
@@ -289,8 +291,10 @@ export int runPreComposeTests()
                             if (restoredPrecompLayer) {
                                 const auto restoredFirstLayer = comp->layerById(layerIds[0]);
                                 if (restoredFirstLayer) {
-                                    report.check(restoredFirstLayer->position3D() ==
-                                                     QVector3D(12.0f, -8.0f, 3.0f),
+                                    const auto position = restoredFirstLayer->position3D();
+                                    report.check(position.x == 12.0f &&
+                                                     position.y == -8.0f &&
+                                                     position.z == 3.0f,
                                                  QStringLiteral("undo after unprecompose keeps source layer position"));
                                     report.check(restoredFirstLayer->opacity() == 0.42f,
                                                  QStringLiteral("undo after unprecompose keeps source layer opacity"));

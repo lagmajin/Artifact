@@ -12,6 +12,7 @@ module;
 module Artifact.Layer.Camera;
 
 import Artifact.Layer.Abstract;
+import Math.Vec;
 import Artifact.Composition.Abstract;
 import Artifact.Render.IRenderer;
 import Property.Group;
@@ -44,35 +45,35 @@ double cameraTimelineFps(const ArtifactCameraLayer* layer)
 W_OBJECT_IMPL(ArtifactCameraLayer)
 
 struct ArtifactCameraLayer::Impl {
-    float zoom_ = 1000.0f;
-    float focusDistance_ = 1000.0f;
-    float aperture_ = 4.0f;
+    ArtifactCore::Units::Pixels zoom_{1000.0f};
+    ArtifactCore::Units::Pixels focusDistance_{1000.0f};
+    ArtifactCore::Units::FStop aperture_{4.0f};
     bool depthOfField_ = false;
     bool motionBlur_ = false;
-    float blurAmount_ = 100.0f;
+    ArtifactCore::Units::Percent blurAmount_{100.0f};
 
     // Projection mode
     ProjectionMode projectionMode_ = ProjectionMode::Perspective;
     StereoMode stereoMode_ = StereoMode::Mono;
-    float ipd_ = 0.064f;
+    ArtifactCore::Units::Meters ipd_{0.064f};
     bool activeCamera_ = true;
     int cameraPriority_ = 0;
 
     // Two-node camera (Point of Interest)
     bool poiEnabled_ = false;
-    QVector3D pointOfInterest_{0.0f, 0.0f, 0.0f};
+    ArtifactCore::Coordinates::LayerParentPoint3 pointOfInterest_{};
 
     // Perspective-specific
-    float fov_ = 0.0f; // 0 = auto from zoom, >0 = manual FOV
+    ArtifactCore::Units::Degrees fov_{}; // 0 = auto from zoom, >0 = manual FOV
     bool useManualFov_ = false;
 
     // Orthographic-specific
-    float orthoWidth_ = 1920.0f;
-    float orthoHeight_ = 1080.0f;
+    ArtifactCore::Units::Pixels orthoWidth_{1920.0f};
+    ArtifactCore::Units::Pixels orthoHeight_{1080.0f};
 
     // Clipping planes
-    float nearClipPlane_ = 1.0f;
-    float farClipPlane_ = 100000.0f;
+    ArtifactCore::Units::Pixels nearClipPlane_{1.0f};
+    ArtifactCore::Units::Pixels farClipPlane_{100000.0f};
 
     QVector3D shakeOffset_;
     QVector3D shakeRotation_;
@@ -93,7 +94,7 @@ ArtifactCameraLayer::ArtifactCameraLayer()
     setIs3D(true);
     // A usable default camera must sit in front of the Z=0 composition plane.
     // Explicit project transforms loaded afterwards still override this value.
-    setPosition3D(QVector3D(0.0f, 0.0f, camImpl_->zoom_));
+    setPosition3D({0.0f, 0.0f, camImpl_->zoom_.value});
 }
 
 ArtifactCameraLayer::~ArtifactCameraLayer()
@@ -137,14 +138,14 @@ void ArtifactCameraLayer::draw(ArtifactIRenderer* renderer)
 
     // 3. Draw Frustum / Ortho frame.  Keep the guide tied to the authored
     // clip planes so it also explains the actual camera range in the VP.
-    const float nearDist = std::max(0.01f, nearClipPlane());
-    const float farDist = std::max(nearDist + 0.01f, farClipPlane());
-    const float fovV = fov();
+    const float nearDist = std::max(0.01f, nearClipPlane().value);
+    const float farDist = std::max(nearDist + 0.01f, farClipPlane().value);
+    const float fovV = fov().value;
     const float tanHalfV = std::tan(fovV * 0.5f * kDegreesToRadians);
     const auto halfExtentsAt = [&](float distance) {
         if (type == ProjectionMode::Orthographic) {
-            return QVector2D(std::max(20.0f, camImpl_->orthoWidth_ * 0.02f),
-                             std::max(20.0f, camImpl_->orthoHeight_ * 0.02f));
+            return QVector2D(std::max(20.0f, camImpl_->orthoWidth_.value * 0.02f),
+                             std::max(20.0f, camImpl_->orthoHeight_.value * 0.02f));
         }
         const float halfH = std::max(0.1f, distance * tanHalfV);
         return QVector2D(halfH * 1.777f, halfH);
@@ -177,7 +178,8 @@ void ArtifactCameraLayer::draw(ArtifactIRenderer* renderer)
     drawPlane(nearDist, camColor, 0.7f, true);
     drawPlane(farDist, ArtifactCore::FloatColor{camColor.r(), camColor.g(), camColor.b(), 0.40f}, 0.5f, false);
     if (depthOfField()) {
-        const float focusDist = std::clamp(focusDistance(), nearDist, farDist);
+        const float focusDist =
+            std::clamp(focusDistance().value, nearDist, farDist);
         drawPlane(focusDist, ArtifactCore::FloatColor{0.35f, 1.0f, 0.72f, 0.95f}, 1.4f, false);
     }
     if (motionBlur()) {
@@ -188,25 +190,34 @@ void ArtifactCameraLayer::draw(ArtifactIRenderer* renderer)
                                      previousTransform.positionZAt(previousTime));
         renderer->drawGizmoLine({previousPos.x(), previousPos.y(), previousPos.z()},
                                 p, ArtifactCore::FloatColor{1.0f, 0.45f, 0.18f, 0.80f},
-                                std::clamp(0.8f + blurAmount() / 100.0f, 0.8f, 2.0f));
+                                std::clamp(0.8f + blurAmount().value / 100.0f, 0.8f, 2.0f));
     }
 }
 
-float ArtifactCameraLayer::zoom() const { return camImpl_->zoom_; }
-void ArtifactCameraLayer::setZoom(float z) {
-    camImpl_->zoom_ = std::isfinite(z) ? std::max(0.001f, z) : 0.001f;
+ArtifactCore::Units::Pixels ArtifactCameraLayer::zoom() const {
+    return camImpl_->zoom_;
+}
+void ArtifactCameraLayer::setZoom(ArtifactCore::Units::Pixels z) {
+    camImpl_->zoom_ = ArtifactCore::Units::Pixels{
+        std::isfinite(z.value) ? std::max(0.001f, z.value) : 0.001f};
     changed();
 }
 
-float ArtifactCameraLayer::focusDistance() const { return camImpl_->focusDistance_; }
-void ArtifactCameraLayer::setFocusDistance(float d) {
-    camImpl_->focusDistance_ = std::isfinite(d) ? std::max(0.001f, d) : 0.001f;
+ArtifactCore::Units::Pixels ArtifactCameraLayer::focusDistance() const {
+    return camImpl_->focusDistance_;
+}
+void ArtifactCameraLayer::setFocusDistance(ArtifactCore::Units::Pixels d) {
+    camImpl_->focusDistance_ = ArtifactCore::Units::Pixels{
+        std::isfinite(d.value) ? std::max(0.001f, d.value) : 0.001f};
     changed();
 }
 
-float ArtifactCameraLayer::aperture() const { return camImpl_->aperture_; }
-void ArtifactCameraLayer::setAperture(float a) {
-    camImpl_->aperture_ = std::isfinite(a) ? std::max(0.0f, a) : 0.0f;
+ArtifactCore::Units::FStop ArtifactCameraLayer::aperture() const {
+    return camImpl_->aperture_;
+}
+void ArtifactCameraLayer::setAperture(ArtifactCore::Units::FStop aperture) {
+    camImpl_->aperture_ = ArtifactCore::Units::FStop{
+        std::isfinite(aperture.value) ? std::max(0.0f, aperture.value) : 0.0f};
     changed();
 }
 
@@ -216,25 +227,34 @@ void ArtifactCameraLayer::setDepthOfField(bool e) { camImpl_->depthOfField_ = e;
 bool ArtifactCameraLayer::motionBlur() const { return camImpl_->motionBlur_; }
 void ArtifactCameraLayer::setMotionBlur(bool e) { camImpl_->motionBlur_ = e; changed(); }
 
-float ArtifactCameraLayer::blurAmount() const { return camImpl_->blurAmount_; }
-void ArtifactCameraLayer::setBlurAmount(float a) {
-    camImpl_->blurAmount_ = std::isfinite(a) ? std::clamp(a, 0.0f, 100.0f) : 0.0f;
+ArtifactCore::Units::Percent ArtifactCameraLayer::blurAmount() const {
+    return camImpl_->blurAmount_;
+}
+void ArtifactCameraLayer::setBlurAmount(ArtifactCore::Units::Percent amount) {
+    camImpl_->blurAmount_ = ArtifactCore::Units::Percent{
+        std::isfinite(amount.value)
+            ? std::clamp(amount.value, 0.0f, 100.0f)
+            : 0.0f};
     changed();
 }
 
 CameraDOFParameters ArtifactCameraLayer::depthOfFieldParameters() const {
     CameraDOFParameters parameters;
     parameters.enabled = camImpl_->depthOfField_;
-    parameters.focusDistance = std::max(0.001f, camImpl_->focusDistance_);
-    parameters.apertureSize = std::max(0.0f, camImpl_->aperture_);
-    parameters.focalLength = std::max(0.001f, camImpl_->zoom_);
+    parameters.focusDistance = {
+        std::max(0.001f, camImpl_->focusDistance_.value)};
+    parameters.apertureSize = {
+        std::max(0.0f, camImpl_->aperture_.value)};
+    parameters.focalLength = {std::max(0.001f, camImpl_->zoom_.value)};
 
     // Keep authored blur as a normalized scale. Disabled DOF produces zero
     // CoC values so a renderer can bypass the pass without image changes.
-    const float blurScale = std::clamp(camImpl_->blurAmount_ / 100.0f, 0.0f, 1.0f);
-    parameters.cocScale = parameters.enabled ? blurScale : 0.0f;
+    const float blurScale =
+        std::clamp(camImpl_->blurAmount_.value / 100.0f, 0.0f, 1.0f);
+    parameters.cocScale = {
+        parameters.enabled ? blurScale : 0.0f};
     parameters.maxCoc = parameters.enabled
-        ? parameters.apertureSize * blurScale
+        ? parameters.apertureSize.value * blurScale
         : 0.0f;
     return parameters;
 }
@@ -253,7 +273,7 @@ void ArtifactCameraLayer::setStereoMode(StereoMode mode) {
     changed();
 }
 
-float ArtifactCameraLayer::fov() const {
+ArtifactCore::Units::Degrees ArtifactCameraLayer::fov() const {
     if (camImpl_->useManualFov_) {
         return camImpl_->fov_;
     }
@@ -262,10 +282,13 @@ float ArtifactCameraLayer::fov() const {
     // vFov = 2 * atan( (height/2) / zoom )
     // Default to 1080p height (540 half) if comp is unknown, 
     // but typically zoom is set relative to the composition height in AE.
-    return static_cast<float>(2.0 * std::atan(540.0 / camImpl_->zoom_) * 180.0 / 3.14159265358979);
+    return {static_cast<float>(2.0 * std::atan(540.0 / camImpl_->zoom_.value) * 180.0 / 3.14159265358979)};
 }
-void ArtifactCameraLayer::setFov(float fovDegrees) {
-    camImpl_->fov_ = std::isfinite(fovDegrees) ? std::clamp(fovDegrees, 1.0f, 179.0f) : 60.0f;
+void ArtifactCameraLayer::setFov(ArtifactCore::Units::Degrees fov) {
+    const float fovDegrees = fov.value;
+    camImpl_->fov_ = ArtifactCore::Units::Degrees{
+        std::isfinite(fovDegrees) ? std::clamp(fovDegrees, 1.0f, 179.0f)
+                                  : 60.0f};
     camImpl_->useManualFov_ = true;
     changed();
 }
@@ -287,52 +310,79 @@ void ArtifactCameraLayer::resetFovToZoom() {
     changed();
 }
 
-float ArtifactCameraLayer::focalLength() const {
+ArtifactCore::Units::Millimeters ArtifactCameraLayer::focalLength() const {
     // 35mm-equivalent: horizontal FOV over a 36mm sensor width.
     // fov = 2*atan(18/fl)  ->  fl = 18/tan(fov/2)
-    const float fovDegrees = fov();
+    const float fovDegrees = fov().value;
     if (fovDegrees <= 0.0f || fovDegrees >= 179.0f) {
-        return 35.0f;
+        return {35.0f};
     }
     const double radians = static_cast<double>(fovDegrees) * 0.5 *
                            3.14159265358979;
-    return static_cast<float>(18.0 / std::tan(radians));
+    return {static_cast<float>(18.0 / std::tan(radians))};
 }
 
-void ArtifactCameraLayer::setFocalLength(float mm) {
-    if (!std::isfinite(mm) || mm <= 0.0f) {
+void ArtifactCameraLayer::setFocalLength(ArtifactCore::Units::Millimeters mm) {
+    if (!std::isfinite(mm.value) || mm.value <= 0.0f) {
         return;
     }
-    setFov(static_cast<float>(
-        2.0 * std::atan(18.0 / static_cast<double>(mm)) * 180.0 /
-        3.14159265358979));
+    setFov(ArtifactCore::Units::Degrees{static_cast<float>(
+        2.0 * std::atan(18.0 / static_cast<double>(mm.value)) * 180.0 /
+        3.14159265358979)});
 }
 
-float ArtifactCameraLayer::orthoWidth() const { return camImpl_->orthoWidth_; }
-void ArtifactCameraLayer::setOrthoWidth(float w) { camImpl_->orthoWidth_ = std::isfinite(w) ? std::clamp(w, 10.0f, 100000.0f) : 1920.0f; changed(); }
-
-float ArtifactCameraLayer::orthoHeight() const { return camImpl_->orthoHeight_; }
-void ArtifactCameraLayer::setOrthoHeight(float h) { camImpl_->orthoHeight_ = std::isfinite(h) ? std::clamp(h, 10.0f, 100000.0f) : 1080.0f; changed(); }
-
-float ArtifactCameraLayer::nearClipPlane() const { return camImpl_->nearClipPlane_; }
-void ArtifactCameraLayer::setNearClipPlane(float d) {
-    camImpl_->nearClipPlane_ = std::isfinite(d) ? std::clamp(d, 0.01f, 100000.0f) : 0.1f;
-    camImpl_->farClipPlane_ = std::max(camImpl_->farClipPlane_,
-                                       camImpl_->nearClipPlane_ + 0.01f);
+ArtifactCore::Units::Pixels ArtifactCameraLayer::orthoWidth() const {
+    return camImpl_->orthoWidth_;
+}
+void ArtifactCameraLayer::setOrthoWidth(ArtifactCore::Units::Pixels w) {
+    camImpl_->orthoWidth_ = ArtifactCore::Units::Pixels{
+        std::isfinite(w.value) ? std::clamp(w.value, 10.0f, 100000.0f)
+                               : 1920.0f};
     changed();
 }
 
-float ArtifactCameraLayer::farClipPlane() const { return camImpl_->farClipPlane_; }
-void ArtifactCameraLayer::setFarClipPlane(float d) {
-    camImpl_->farClipPlane_ = std::isfinite(d)
-        ? std::clamp(std::max(camImpl_->nearClipPlane_ + 0.01f, d), 1.0f, 1000000.0f)
-        : std::max(camImpl_->nearClipPlane_ + 0.01f, 1000.0f);
+ArtifactCore::Units::Pixels ArtifactCameraLayer::orthoHeight() const {
+    return camImpl_->orthoHeight_;
+}
+void ArtifactCameraLayer::setOrthoHeight(ArtifactCore::Units::Pixels h) {
+    camImpl_->orthoHeight_ = ArtifactCore::Units::Pixels{
+        std::isfinite(h.value) ? std::clamp(h.value, 10.0f, 100000.0f)
+                               : 1080.0f};
     changed();
 }
 
-float ArtifactCameraLayer::ipd() const { return camImpl_->ipd_; }
-void ArtifactCameraLayer::setIpd(float ipd) {
-    camImpl_->ipd_ = std::isfinite(ipd) ? std::clamp(ipd, 0.0f, 1.0f) : 0.064f;
+ArtifactCore::Units::Pixels ArtifactCameraLayer::nearClipPlane() const {
+    return camImpl_->nearClipPlane_;
+}
+void ArtifactCameraLayer::setNearClipPlane(ArtifactCore::Units::Pixels d) {
+    camImpl_->nearClipPlane_ = ArtifactCore::Units::Pixels{
+        std::isfinite(d.value) ? std::clamp(d.value, 0.01f, 100000.0f)
+                               : 0.1f};
+    camImpl_->farClipPlane_ = ArtifactCore::Units::Pixels{
+        std::max(camImpl_->farClipPlane_.value,
+                 camImpl_->nearClipPlane_.value + 0.01f)};
+    changed();
+}
+
+ArtifactCore::Units::Pixels ArtifactCameraLayer::farClipPlane() const {
+    return camImpl_->farClipPlane_;
+}
+void ArtifactCameraLayer::setFarClipPlane(ArtifactCore::Units::Pixels d) {
+    camImpl_->farClipPlane_ = ArtifactCore::Units::Pixels{
+        std::isfinite(d.value)
+            ? std::clamp(std::max(camImpl_->nearClipPlane_.value + 0.01f,
+                                  d.value), 1.0f, 1000000.0f)
+            : std::max(camImpl_->nearClipPlane_.value + 0.01f, 1000.0f)};
+    changed();
+}
+
+ArtifactCore::Units::Meters ArtifactCameraLayer::ipd() const {
+    return camImpl_->ipd_;
+}
+void ArtifactCameraLayer::setIpd(ArtifactCore::Units::Meters ipd) {
+    camImpl_->ipd_ = ArtifactCore::Units::Meters{
+        std::isfinite(ipd.value) ? std::clamp(ipd.value, 0.0f, 1.0f)
+                                 : 0.064f};
     changed();
 }
 
@@ -360,13 +410,47 @@ void ArtifactCameraLayer::setPointOfInterestEnabled(bool enabled) {
     changed();
 }
 
-QVector3D ArtifactCameraLayer::pointOfInterest() const { return camImpl_->pointOfInterest_; }
-void ArtifactCameraLayer::setPointOfInterest(const QVector3D& poi) {
+ArtifactCore::Coordinates::LayerParentPoint3
+ArtifactCameraLayer::pointOfInterest() const {
+    return camImpl_->pointOfInterest_;
+}
+
+void ArtifactCameraLayer::setPointOfInterest(
+    ArtifactCore::Coordinates::LayerParentPoint3 poi) {
     const auto safe = [](float value) {
         return std::isfinite(value) ? std::clamp(value, -1000000.0f, 1000000.0f) : 0.0f;
     };
-    camImpl_->pointOfInterest_ = QVector3D(safe(poi.x()), safe(poi.y()), safe(poi.z()));
+    camImpl_->pointOfInterest_ = {safe(poi.x), safe(poi.y), safe(poi.z)};
     changed();
+}
+
+ArtifactCore::Coordinates::WorldPoint3
+ArtifactCameraLayer::pointOfInterestWorld() const {
+    const QVector3D parentPoint =
+        ArtifactCore::Coordinates::toQVector3D(camImpl_->pointOfInterest_);
+    if (const auto parent = parentLayer()) {
+        return ArtifactCore::Coordinates::worldPoint3FromQVector3D(
+            parent->getGlobalTransform4x4().map(parentPoint));
+    }
+    return ArtifactCore::Coordinates::worldPoint3FromQVector3D(parentPoint);
+}
+
+bool ArtifactCameraLayer::setPointOfInterestWorld(
+    ArtifactCore::Coordinates::WorldPoint3 worldPoi) {
+    QVector3D parentPoint(
+        static_cast<float>(worldPoi.x), static_cast<float>(worldPoi.y),
+        static_cast<float>(worldPoi.z));
+    if (const auto parent = parentLayer()) {
+        bool invertible = false;
+        const QMatrix4x4 inverse =
+            parent->getGlobalTransform4x4().inverted(&invertible);
+        if (!invertible) return false;
+        parentPoint = inverse.map(
+            ArtifactCore::Coordinates::toQVector3D(worldPoi));
+    }
+    setPointOfInterest(
+        ArtifactCore::Coordinates::layerParentPoint3FromQVector3D(parentPoint));
+    return true;
 }
 
 QMatrix4x4 ArtifactCameraLayer::effectiveGlobalTransform() const
@@ -380,11 +464,16 @@ QMatrix4x4 ArtifactCameraLayer::effectiveGlobalTransform() const
     }
 
     const auto frameTime = RationalTime(currentFrame(), cameraTimelineFps(this));
-    const auto &t3 = transform3D();
-    const QVector3D eye(t3.positionXAt(frameTime),
-                        t3.positionYAt(frameTime),
-                        t3.positionZAt(frameTime));
-    const QVector3D target = camImpl_->pointOfInterest_;
+    const auto& transform = transform3D();
+    const QVector3D authoredEye(transform.positionXAt(frameTime),
+                                transform.positionYAt(frameTime),
+                                transform.positionZAt(frameTime));
+    const auto parent = parentLayer();
+    const QVector3D eye = parent
+        ? parent->getGlobalTransform4x4().map(authoredEye)
+        : authoredEye;
+    const QVector3D target =
+        ArtifactCore::Coordinates::toQVector3D(pointOfInterestWorld());
     QVector3D forward = target - eye;
     if (forward.lengthSquared() < 1e-12f) {
         // Degenerate: keep the authored transform.
@@ -551,8 +640,8 @@ QMatrix4x4 ArtifactCameraLayer::projectionMatrix(float aspect) const
     
     if (camImpl_->projectionMode_ == ProjectionMode::Orthographic) {
         // Orthographic projection
-        float halfW = camImpl_->orthoWidth_ * 0.5f;
-        float halfH = camImpl_->orthoHeight_ * 0.5f;
+        float halfW = camImpl_->orthoWidth_.value * 0.5f;
+        float halfH = camImpl_->orthoHeight_.value * 0.5f;
         
         // Adjust for aspect ratio if needed
         if (safeAspect > 1.0f) {
@@ -562,14 +651,14 @@ QMatrix4x4 ArtifactCameraLayer::projectionMatrix(float aspect) const
         }
         
         proj.ortho(-halfW, halfW, -halfH, halfH,
-                   camImpl_->nearClipPlane_,
-                   camImpl_->farClipPlane_);
+                   camImpl_->nearClipPlane_.value,
+                   camImpl_->farClipPlane_.value);
     } else {
         // Perspective projection
-        float vFov = fov();
+        float vFov = fov().value;
         proj.perspective(vFov, safeAspect,
-                        camImpl_->nearClipPlane_,
-                        camImpl_->farClipPlane_);
+                        camImpl_->nearClipPlane_.value,
+                        camImpl_->farClipPlane_.value);
     }
     // Match the viewport-orientation and fallback camera paths used by the
     // Diligent render target coordinate convention.
@@ -630,7 +719,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactCameraLayer::getLayerPropertyGr
 
     auto poiXProp = persistentLayerProperty(
         QStringLiteral("Camera Options/POI X"), ArtifactCore::PropertyType::Float,
-        static_cast<double>(camImpl_->pointOfInterest_.x()), -144);
+        static_cast<double>(camImpl_->pointOfInterest_.x), -144);
     poiXProp->setHardRange(-100000.0, 100000.0);
     poiXProp->setSoftRange(-5000.0, 5000.0);
     poiXProp->setUnit(QStringLiteral("px"));
@@ -638,7 +727,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactCameraLayer::getLayerPropertyGr
 
     auto poiYProp = persistentLayerProperty(
         QStringLiteral("Camera Options/POI Y"), ArtifactCore::PropertyType::Float,
-        static_cast<double>(camImpl_->pointOfInterest_.y()), -143);
+        static_cast<double>(camImpl_->pointOfInterest_.y), -143);
     poiYProp->setHardRange(-100000.0, 100000.0);
     poiYProp->setSoftRange(-5000.0, 5000.0);
     poiYProp->setUnit(QStringLiteral("px"));
@@ -646,7 +735,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactCameraLayer::getLayerPropertyGr
 
     auto poiZProp = persistentLayerProperty(
         QStringLiteral("Camera Options/POI Z"), ArtifactCore::PropertyType::Float,
-        static_cast<double>(camImpl_->pointOfInterest_.z()), -142);
+        static_cast<double>(camImpl_->pointOfInterest_.z), -142);
     poiZProp->setHardRange(-100000.0, 100000.0);
     poiZProp->setSoftRange(-5000.0, 5000.0);
     poiZProp->setUnit(QStringLiteral("px"));
@@ -662,7 +751,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactCameraLayer::getLayerPropertyGr
     // Perspective: Zoom / FOV
     auto zoomProp = persistentLayerProperty(QStringLiteral("Camera Options/Zoom"),
                                             ArtifactCore::PropertyType::Float,
-                                            static_cast<double>(camImpl_->zoom_), -140);
+                                            static_cast<double>(camImpl_->zoom_.value), -140);
     zoomProp->setHardRange(10.0, 10000.0);
     zoomProp->setSoftRange(100.0, 5000.0);
     zoomProp->setUnit(QStringLiteral("px"));
@@ -671,7 +760,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactCameraLayer::getLayerPropertyGr
 
     auto fovProp = persistentLayerProperty(QStringLiteral("Camera Options/FOV"),
                                            ArtifactCore::PropertyType::Float,
-                                           static_cast<double>(fov()), -135);
+                                           static_cast<double>(fov().value), -135);
     fovProp->setHardRange(1.0, 179.0);
     fovProp->setSoftRange(10.0, 120.0);
     fovProp->setUnit(QStringLiteral("deg"));
@@ -683,7 +772,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactCameraLayer::getLayerPropertyGr
     auto focalLengthProp = persistentLayerProperty(
         QStringLiteral("Camera Options/Focal Length"),
         ArtifactCore::PropertyType::Float,
-        static_cast<double>(focalLength()), -134);
+                                           static_cast<double>(focalLength().value), -134);
     focalLengthProp->setHardRange(1.0, 2000.0);
     focalLengthProp->setSoftRange(10.0, 200.0);
     focalLengthProp->setUnit(QStringLiteral("mm"));
@@ -694,7 +783,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactCameraLayer::getLayerPropertyGr
     // Orthographic: Width / Height
     auto orthoWProp = persistentLayerProperty(QStringLiteral("Camera Options/Ortho Width"),
                                               ArtifactCore::PropertyType::Float,
-                                              static_cast<double>(camImpl_->orthoWidth_), -130);
+                                              static_cast<double>(camImpl_->orthoWidth_.value), -130);
     orthoWProp->setHardRange(10.0, 100000.0);
     orthoWProp->setSoftRange(100.0, 10000.0);
     orthoWProp->setUnit(QStringLiteral("px"));
@@ -703,7 +792,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactCameraLayer::getLayerPropertyGr
 
     auto orthoHProp = persistentLayerProperty(QStringLiteral("Camera Options/Ortho Height"),
                                               ArtifactCore::PropertyType::Float,
-                                              static_cast<double>(camImpl_->orthoHeight_), -125);
+                                              static_cast<double>(camImpl_->orthoHeight_.value), -125);
     orthoHProp->setHardRange(10.0, 100000.0);
     orthoHProp->setSoftRange(100.0, 10000.0);
     orthoHProp->setUnit(QStringLiteral("px"));
@@ -713,7 +802,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactCameraLayer::getLayerPropertyGr
     // Clipping planes
     auto nearProp = persistentLayerProperty(QStringLiteral("Camera Options/Near Clip"),
                                             ArtifactCore::PropertyType::Float,
-                                            static_cast<double>(camImpl_->nearClipPlane_), -120);
+                                            static_cast<double>(camImpl_->nearClipPlane_.value), -120);
     nearProp->setHardRange(0.01f, 10000.0);
     nearProp->setSoftRange(1.0, 1000.0);
     nearProp->setUnit(QStringLiteral("px"));
@@ -721,7 +810,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactCameraLayer::getLayerPropertyGr
 
     auto farProp = persistentLayerProperty(QStringLiteral("Camera Options/Far Clip"),
                                            ArtifactCore::PropertyType::Float,
-                                           static_cast<double>(camImpl_->farClipPlane_), -115);
+                                           static_cast<double>(camImpl_->farClipPlane_.value), -115);
     farProp->setHardRange(1.0, 1000000.0);
     farProp->setSoftRange(1000.0, 100000.0);
     farProp->setUnit(QStringLiteral("px"));
@@ -729,7 +818,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactCameraLayer::getLayerPropertyGr
 
     auto ipdProp = persistentLayerProperty(QStringLiteral("Camera Options/IPD"),
                                            ArtifactCore::PropertyType::Float,
-                                           static_cast<double>(camImpl_->ipd_), -114);
+                                           static_cast<double>(ipd().value), -114);
     ipdProp->setHardRange(0.0, 1.0);
     ipdProp->setSoftRange(0.02, 0.10);
     ipdProp->setUnit(QStringLiteral("m"));
@@ -752,7 +841,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactCameraLayer::getLayerPropertyGr
     auto blurAmountProp = persistentLayerProperty(
         QStringLiteral("Camera Options/Blur Amount"),
         ArtifactCore::PropertyType::Float,
-        static_cast<double>(camImpl_->blurAmount_), -107);
+        static_cast<double>(camImpl_->blurAmount_.value), -107);
     blurAmountProp->setHardRange(0.0, 100.0);
     blurAmountProp->setSoftRange(0.0, 100.0);
     blurAmountProp->setUnit(QStringLiteral("%"));
@@ -762,7 +851,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactCameraLayer::getLayerPropertyGr
     auto focusProp = persistentLayerProperty(
         QStringLiteral("Camera Options/Focus Distance"),
         ArtifactCore::PropertyType::Float,
-        static_cast<double>(camImpl_->focusDistance_), -105);
+        static_cast<double>(camImpl_->focusDistance_.value), -105);
     focusProp->setHardRange(10.0, 10000.0);
     focusProp->setSoftRange(100.0, 5000.0);
     focusProp->setUnit(QStringLiteral("px"));
@@ -771,7 +860,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactCameraLayer::getLayerPropertyGr
     auto apertureProp = persistentLayerProperty(
         QStringLiteral("Camera Options/Aperture"),
         ArtifactCore::PropertyType::Float,
-        static_cast<double>(camImpl_->aperture_), -100);
+        static_cast<double>(camImpl_->aperture_.value), -100);
     apertureProp->setHardRange(0.0, 1000.0);
     apertureProp->setSoftRange(0.0, 250.0);
     apertureProp->setTooltip(QStringLiteral("Aperture / f-stop"));
@@ -836,43 +925,43 @@ bool ArtifactCameraLayer::setLayerPropertyValue(const QString& propertyPath, con
         setPointOfInterestEnabled(value.toBool());
         return true;
     } else if (propertyPath == "Camera Options/POI X") {
-        setPointOfInterest(QVector3D(value.toFloat(), camImpl_->pointOfInterest_.y(),
-                                     camImpl_->pointOfInterest_.z()));
+        setPointOfInterest({value.toFloat(), camImpl_->pointOfInterest_.y,
+                            camImpl_->pointOfInterest_.z});
         return true;
     } else if (propertyPath == "Camera Options/POI Y") {
-        setPointOfInterest(QVector3D(camImpl_->pointOfInterest_.x(), value.toFloat(),
-                                     camImpl_->pointOfInterest_.z()));
+        setPointOfInterest({camImpl_->pointOfInterest_.x, value.toFloat(),
+                            camImpl_->pointOfInterest_.z});
         return true;
     } else if (propertyPath == "Camera Options/POI Z") {
-        setPointOfInterest(QVector3D(camImpl_->pointOfInterest_.x(),
-                                     camImpl_->pointOfInterest_.y(), value.toFloat()));
+        setPointOfInterest({camImpl_->pointOfInterest_.x,
+                            camImpl_->pointOfInterest_.y, value.toFloat()});
         return true;
     } else if (propertyPath == "Camera Options/Manual FOV") {
         setUseManualFov(value.toBool());
         return true;
     } else if (propertyPath == "Camera Options/Zoom") {
-        setZoom(value.toFloat());
+        setZoom(ArtifactCore::Units::Pixels{value.toFloat()});
         return true;
     } else if (propertyPath == "Camera Options/FOV") {
-        setFov(value.toFloat());
+        setFov(ArtifactCore::Units::Degrees{value.toFloat()});
         return true;
     } else if (propertyPath == "Camera Options/Focal Length") {
-        setFocalLength(value.toFloat());
+        setFocalLength(ArtifactCore::Units::Millimeters{value.toFloat()});
         return true;
     } else if (propertyPath == "Camera Options/Ortho Width") {
-        setOrthoWidth(value.toFloat());
+        setOrthoWidth(ArtifactCore::Units::Pixels{value.toFloat()});
         return true;
     } else if (propertyPath == "Camera Options/Ortho Height") {
-        setOrthoHeight(value.toFloat());
+        setOrthoHeight(ArtifactCore::Units::Pixels{value.toFloat()});
         return true;
     } else if (propertyPath == "Camera Options/Near Clip") {
-        setNearClipPlane(value.toFloat());
+        setNearClipPlane(ArtifactCore::Units::Pixels{value.toFloat()});
         return true;
     } else if (propertyPath == "Camera Options/Far Clip") {
-        setFarClipPlane(value.toFloat());
+        setFarClipPlane(ArtifactCore::Units::Pixels{value.toFloat()});
         return true;
     } else if (propertyPath == "Camera Options/IPD") {
-        setIpd(value.toFloat());
+        setIpd(ArtifactCore::Units::Meters{value.toFloat()});
         return true;
     } else if (propertyPath == "Camera Options/Depth of Field") {
         setDepthOfField(value.toBool());
@@ -881,13 +970,13 @@ bool ArtifactCameraLayer::setLayerPropertyValue(const QString& propertyPath, con
         setMotionBlur(value.toBool());
         return true;
     } else if (propertyPath == "Camera Options/Blur Amount") {
-        setBlurAmount(value.toFloat());
+        setBlurAmount(ArtifactCore::Units::Percent{value.toFloat()});
         return true;
     } else if (propertyPath == "Camera Options/Focus Distance") {
-        setFocusDistance(value.toFloat());
+        setFocusDistance(ArtifactCore::Units::Pixels{value.toFloat()});
         return true;
     } else if (propertyPath == "Camera Options/Aperture") {
-        setAperture(value.toFloat());
+        setAperture(ArtifactCore::Units::FStop{value.toFloat()});
         return true;
     } else if (propertyPath == "Camera Shake/Trauma") {
         camImpl_->trauma_ = std::clamp(value.toFloat(), 0.0f, 1.0f);
@@ -922,24 +1011,24 @@ QJsonObject ArtifactCameraLayer::toJson() const
     obj["cameraProjectionMode"] = static_cast<int>(camImpl_->projectionMode_);
     obj["cameraStereoMode"] = static_cast<int>(camImpl_->stereoMode_);
     obj["cameraUseManualFov"] = camImpl_->useManualFov_;
-    obj["cameraFov"] = static_cast<double>(camImpl_->fov_);
-    obj["cameraZoom"] = static_cast<double>(camImpl_->zoom_);
-    obj["cameraFocusDistance"] = static_cast<double>(camImpl_->focusDistance_);
-    obj["cameraAperture"] = static_cast<double>(camImpl_->aperture_);
+    obj["cameraFov"] = static_cast<double>(camImpl_->fov_.value);
+    obj["cameraZoom"] = static_cast<double>(camImpl_->zoom_.value);
+    obj["cameraFocusDistance"] = static_cast<double>(camImpl_->focusDistance_.value);
+    obj["cameraAperture"] = static_cast<double>(camImpl_->aperture_.value);
     obj["cameraDepthOfField"] = camImpl_->depthOfField_;
     obj["cameraMotionBlur"] = camImpl_->motionBlur_;
-    obj["cameraBlurAmount"] = static_cast<double>(camImpl_->blurAmount_);
-    obj["cameraOrthoWidth"] = static_cast<double>(camImpl_->orthoWidth_);
-    obj["cameraOrthoHeight"] = static_cast<double>(camImpl_->orthoHeight_);
-    obj["cameraNearClip"] = static_cast<double>(camImpl_->nearClipPlane_);
-    obj["cameraFarClip"] = static_cast<double>(camImpl_->farClipPlane_);
-    obj["cameraIpd"] = static_cast<double>(camImpl_->ipd_);
+    obj["cameraBlurAmount"] = static_cast<double>(camImpl_->blurAmount_.value);
+    obj["cameraOrthoWidth"] = static_cast<double>(camImpl_->orthoWidth_.value);
+    obj["cameraOrthoHeight"] = static_cast<double>(camImpl_->orthoHeight_.value);
+    obj["cameraNearClip"] = static_cast<double>(camImpl_->nearClipPlane_.value);
+    obj["cameraFarClip"] = static_cast<double>(camImpl_->farClipPlane_.value);
+    obj["cameraIpd"] = static_cast<double>(ipd().value);
     obj["cameraActive"] = camImpl_->activeCamera_;
     obj["cameraPriority"] = camImpl_->cameraPriority_;
     obj["cameraPoiEnabled"] = camImpl_->poiEnabled_;
-    obj["cameraPoiX"] = static_cast<double>(camImpl_->pointOfInterest_.x());
-    obj["cameraPoiY"] = static_cast<double>(camImpl_->pointOfInterest_.y());
-    obj["cameraPoiZ"] = static_cast<double>(camImpl_->pointOfInterest_.z());
+    obj["cameraPoiX"] = static_cast<double>(camImpl_->pointOfInterest_.x);
+    obj["cameraPoiY"] = static_cast<double>(camImpl_->pointOfInterest_.y);
+    obj["cameraPoiZ"] = static_cast<double>(camImpl_->pointOfInterest_.z);
     obj["cameraShakeTrauma"] = static_cast<double>(camImpl_->trauma_);
     obj["cameraShakeTraumaDecay"] = static_cast<double>(camImpl_->traumaDecay_);
     obj["cameraShakeFrequency"] = static_cast<double>(camImpl_->shakeFrequency_);
@@ -962,17 +1051,22 @@ void ArtifactCameraLayer::fromJsonProperties(const QJsonObject& obj)
         setUseManualFov(obj.value("cameraUseManualFov").toBool());
     }
     if (obj.contains("cameraFov")) {
-        const float fov = static_cast<float>(obj.value("cameraFov").toDouble(camImpl_->fov_));
-        camImpl_->fov_ = std::isfinite(fov) ? std::clamp(fov, 1.0f, 179.0f) : 60.0f;
+        const float fov = static_cast<float>(
+            obj.value("cameraFov").toDouble(camImpl_->fov_.value));
+        camImpl_->fov_ = ArtifactCore::Units::Degrees{
+            std::isfinite(fov) ? std::clamp(fov, 1.0f, 179.0f) : 60.0f};
     }
     if (obj.contains("cameraZoom")) {
-        setZoom(static_cast<float>(obj.value("cameraZoom").toDouble(camImpl_->zoom_)));
+        setZoom(ArtifactCore::Units::Pixels{static_cast<float>(
+            obj.value("cameraZoom").toDouble(camImpl_->zoom_.value))});
     }
     if (obj.contains("cameraFocusDistance")) {
-        setFocusDistance(static_cast<float>(obj.value("cameraFocusDistance").toDouble(camImpl_->focusDistance_)));
+        setFocusDistance(ArtifactCore::Units::Pixels{static_cast<float>(
+            obj.value("cameraFocusDistance").toDouble(camImpl_->focusDistance_.value))});
     }
     if (obj.contains("cameraAperture")) {
-        setAperture(static_cast<float>(obj.value("cameraAperture").toDouble(camImpl_->aperture_)));
+        setAperture(ArtifactCore::Units::FStop{static_cast<float>(
+            obj.value("cameraAperture").toDouble(camImpl_->aperture_.value))});
     }
     if (obj.contains("cameraDepthOfField")) {
         setDepthOfField(obj.value("cameraDepthOfField").toBool());
@@ -981,22 +1075,28 @@ void ArtifactCameraLayer::fromJsonProperties(const QJsonObject& obj)
         setMotionBlur(obj.value("cameraMotionBlur").toBool());
     }
     if (obj.contains("cameraBlurAmount")) {
-        setBlurAmount(static_cast<float>(obj.value("cameraBlurAmount").toDouble(camImpl_->blurAmount_)));
+        setBlurAmount(ArtifactCore::Units::Percent{static_cast<float>(
+            obj.value("cameraBlurAmount").toDouble(camImpl_->blurAmount_.value))});
     }
     if (obj.contains("cameraOrthoWidth")) {
-        setOrthoWidth(static_cast<float>(obj.value("cameraOrthoWidth").toDouble(camImpl_->orthoWidth_)));
+        setOrthoWidth(ArtifactCore::Units::Pixels{static_cast<float>(
+            obj.value("cameraOrthoWidth").toDouble(camImpl_->orthoWidth_.value))});
     }
     if (obj.contains("cameraOrthoHeight")) {
-        setOrthoHeight(static_cast<float>(obj.value("cameraOrthoHeight").toDouble(camImpl_->orthoHeight_)));
+        setOrthoHeight(ArtifactCore::Units::Pixels{static_cast<float>(
+            obj.value("cameraOrthoHeight").toDouble(camImpl_->orthoHeight_.value))});
     }
     if (obj.contains("cameraNearClip")) {
-        setNearClipPlane(static_cast<float>(obj.value("cameraNearClip").toDouble(camImpl_->nearClipPlane_)));
+        setNearClipPlane(ArtifactCore::Units::Pixels{static_cast<float>(
+            obj.value("cameraNearClip").toDouble(camImpl_->nearClipPlane_.value))});
     }
     if (obj.contains("cameraFarClip")) {
-        setFarClipPlane(static_cast<float>(obj.value("cameraFarClip").toDouble(camImpl_->farClipPlane_)));
+        setFarClipPlane(ArtifactCore::Units::Pixels{static_cast<float>(
+            obj.value("cameraFarClip").toDouble(camImpl_->farClipPlane_.value))});
     }
     if (obj.contains("cameraIpd")) {
-        setIpd(static_cast<float>(obj.value("cameraIpd").toDouble(camImpl_->ipd_)));
+        setIpd(ArtifactCore::Units::Meters{static_cast<float>(
+            obj.value("cameraIpd").toDouble(camImpl_->ipd_.value))});
     }
     if (obj.contains("cameraActive")) {
         setActiveCamera(obj.value("cameraActive").toBool());
@@ -1009,10 +1109,10 @@ void ArtifactCameraLayer::fromJsonProperties(const QJsonObject& obj)
     }
     if (obj.contains("cameraPoiX") || obj.contains("cameraPoiY") ||
         obj.contains("cameraPoiZ")) {
-        const QVector3D poi(
-            static_cast<float>(obj.value("cameraPoiX").toDouble(camImpl_->pointOfInterest_.x())),
-            static_cast<float>(obj.value("cameraPoiY").toDouble(camImpl_->pointOfInterest_.y())),
-            static_cast<float>(obj.value("cameraPoiZ").toDouble(camImpl_->pointOfInterest_.z())));
+        const ArtifactCore::Coordinates::LayerParentPoint3 poi{
+            static_cast<float>(obj.value("cameraPoiX").toDouble(camImpl_->pointOfInterest_.x)),
+            static_cast<float>(obj.value("cameraPoiY").toDouble(camImpl_->pointOfInterest_.y)),
+            static_cast<float>(obj.value("cameraPoiZ").toDouble(camImpl_->pointOfInterest_.z))};
         setPointOfInterest(poi);
     }
     if (obj.contains("cameraShakeTrauma")) {

@@ -12,6 +12,7 @@ export module ShadowHighlightEffect;
 import Artifact.Effect.Abstract;
 import Utils.String.UniString;
 import Property.Abstract;
+export import Math.Vec;
 
 export namespace Artifact {
 
@@ -33,12 +34,14 @@ export namespace Artifact {
         // ── Shadows ──
         float shadowAmount()    const;  void setShadowAmount(float v);    // 0-100 %
         float shadowTonalWidth() const; void setShadowTonalWidth(float v);// 0-100 %
-        float shadowRadius()    const;  void setShadowRadius(float v);    // px
+        Units::Pixels shadowRadius() const;
+        void setShadowRadius(Units::Pixels v);
 
         // ── Highlights ──
         float highlightAmount()    const;  void setHighlightAmount(float v);    // 0-100 %
         float highlightTonalWidth() const; void setHighlightTonalWidth(float v);// 0-100 %
-        float highlightRadius()    const;  void setHighlightRadius(float v);    // px
+        Units::Pixels highlightRadius() const;
+        void setHighlightRadius(Units::Pixels v);
 
         // ── Adjustments ──
         float colorCorrection() const; void setColorCorrection(float v); // -100..100
@@ -56,12 +59,12 @@ export namespace Artifact {
         // Shadows
         float shadowAmount_     = 50.0f;
         float shadowTonalWidth_ = 50.0f;
-        float shadowRadius_     = 30.0f;
+        Units::Pixels shadowRadius_{30.0f};
 
         // Highlights
         float highlightAmount_     = 0.0f;
         float highlightTonalWidth_ = 50.0f;
-        float highlightRadius_     = 30.0f;
+        Units::Pixels highlightRadius_{30.0f};
 
         // Adjustments
         float colorCorrection_ = 20.0f;

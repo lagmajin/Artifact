@@ -88,6 +88,7 @@ module;
 #include <QDockWidget>
 #include <QDoubleSpinBox>
 #include <QWidget>
+import Math.Vec;
 #include <QWidgetAction>
 #include <QtSVG/QSvgRenderer>
 #include <algorithm>
@@ -110,6 +111,7 @@ module Artifact.Widgets.CompositionEditor;
 import Memory.SharedPtr;
 
 import Artifact.Widgets.CompositionRenderController;
+import Math.Vec;
 import Artifact.Widgets.CompositionEmptyOverlay;
 import Artifact.Widgets.CompositionTextEditor;
 import Artifact.Widgets.CompositionCleanup;
@@ -972,8 +974,10 @@ public:
       }
       const QSize pendingSize =
           pendingResizeSize_.isValid() ? pendingResizeSize_ : size();
-      controller_->setViewportSize(static_cast<float>(pendingSize.width()),
-                                   static_cast<float>(pendingSize.height()));
+      controller_->setViewportSize(
+          ArtifactCore::Coordinates::screenLogicalExtent(
+              static_cast<float>(pendingSize.width()),
+              static_cast<float>(pendingSize.height())));
       controller_->recreateSwapChain(this);
       controller_->markRenderDirty();
       resizePending_ = false;
@@ -1127,8 +1131,9 @@ public:
       initializedNow = true;
     }
 
-    controller_->setViewportSize(static_cast<float>(width()),
-                                 static_cast<float>(height()));
+    controller_->setViewportSize(
+        ArtifactCore::Coordinates::screenLogicalExtent(
+            static_cast<float>(width()), static_cast<float>(height())));
 
     auto *renderer = controller_->renderer();
     const bool hostChanged = lastReadyHostWinId_ != hostWinId;
@@ -1213,7 +1218,8 @@ public:
     if (!controller_ || !controller_->isViewportOverlayVisible()) {
       return false;
     }
-    const int index = controller_->viewportOverlayItemAt(viewportPos);
+    const int index = controller_->viewportOverlayItemAt(
+        ArtifactCore::Coordinates::screenLogicalPointFromQPointF(viewportPos));
     if (index < 0 || index >= static_cast<int>(viewportOverlayActions_.size())) {
       hideViewportOverlay();
       return true;
@@ -2781,7 +2787,9 @@ public:
           .arg(checked ? QStringLiteral("\u2713") : QStringLiteral(" "), label);
     };
 
-    const LayerID layerId = controller_->layerAtViewportPos(viewportPos);
+    const LayerID layerId = controller_->layerAtViewportPos(
+        ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+            viewportPos));
     const auto comp = currentComposition();
     const auto layer = (!layerId.isNil() && comp)
                            ? comp->layerById(layerId)
@@ -2877,7 +2885,8 @@ public:
     viewportOverlayActions_ = actions;
     viewportOverlayEnabledStates_ = enabledStates;
     controller_->showContextMenuOverlay(
-        viewportPos, items, QStringLiteral("VIEWPORT"), QString(), enabledStates);
+        ArtifactCore::Coordinates::screenLogicalPointFromQPointF(viewportPos),
+        items, QStringLiteral("VIEWPORT"), QString(), enabledStates);
   }
 
   void showViewportDetailedContextMenu(const QPointF &viewportPos) {
@@ -2903,7 +2912,9 @@ public:
       }
     };
 
-    const LayerID layerId = controller_->layerAtViewportPos(viewportPos);
+    const LayerID layerId = controller_->layerAtViewportPos(
+        ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+            viewportPos));
     const auto comp = currentComposition();
     const auto layer =
         (!layerId.isNil() && comp) ? comp->layerById(layerId)
@@ -3094,7 +3105,9 @@ public:
     add(QStringLiteral("Place Work Cursor Here"),
         [this, viewportPos]() {
           if (controller_) {
-            controller_->placeWorkCursorAtViewportPos(viewportPos);
+            controller_->placeWorkCursorAtViewportPos(
+                ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+                    viewportPos));
             controller_->setWorkCursorLabel(
                 QStringLiteral("Placed in %1").arg(QStringLiteral("Active View")));
             controller_->setInfoOverlayText(
@@ -3109,7 +3122,9 @@ public:
           }
           const QSize size = comp->settings().compositionSize();
           controller_->setWorkCursorCanvasPosition(
-              QPointF(size.width() * 0.5, size.height() * 0.5));
+              ArtifactCore::Coordinates::CompositionPoint2{
+                  static_cast<float>(size.width() * 0.5),
+                  static_cast<float>(size.height() * 0.5)});
           controller_->setWorkCursorLabel(
               QStringLiteral("Centered in %1").arg(QStringLiteral("Active View")));
           controller_->setInfoOverlayText(
@@ -3703,9 +3718,9 @@ public:
         const float compCenterY =
             static_cast<float>(compSize.height() > 0 ? compSize.height() : 1080) *
             0.5f;
-        const QVector3D current = clickedLayer->position3D();
-        const float deltaX = compCenterX - current.x();
-        const float deltaY = compCenterY - current.y();
+        const auto current = clickedLayer->position3D();
+        const float deltaX = compCenterX - current.x;
+        const float deltaY = compCenterY - current.y;
         if (std::abs(deltaX) <= 0.0001f && std::abs(deltaY) <= 0.0001f) {
           return;
         }
@@ -3743,13 +3758,13 @@ public:
                                            label, value, minimum, maximum, 3,
                                            &accepted);
           };
-          const double px = read(QStringLiteral("Position X"), currentPosition.x(),
+          const double px = read(QStringLiteral("Position X"), currentPosition.x,
                                  -1000000.0, 1000000.0);
           if (!accepted) return;
-          const double py = read(QStringLiteral("Position Y"), currentPosition.y(),
+          const double py = read(QStringLiteral("Position Y"), currentPosition.y,
                                  -1000000.0, 1000000.0);
           if (!accepted) return;
-          const double pz = read(QStringLiteral("Position Z"), currentPosition.z(),
+          const double pz = read(QStringLiteral("Position Z"), currentPosition.z,
                                  -1000000.0, 1000000.0);
           if (!accepted) return;
           const double rx = read(QStringLiteral("Rotation X"), currentRotation.x(),
@@ -3772,7 +3787,10 @@ public:
           const QVector3D rotation(static_cast<float>(rx), static_cast<float>(ry),
                                    static_cast<float>(rz));
           const QVector3D scale(static_cast<float>(sx), static_cast<float>(sy), 1.0f);
-          controller_->setSelected3DTransform(position, rotation, scale);
+          controller_->setSelected3DTransform(
+              ArtifactCore::Coordinates::layerLocalPoint3FromQVector3D(position),
+              ArtifactCore::Units::eulerDegreesFromQVector3D(rotation),
+              ArtifactCore::Units::scale3FromQVector3D(scale));
         });
         add(QStringLiteral("Copy 3D Transform"), [layer]() {
           if (!layer || !layer->is3D()) return;
@@ -3812,7 +3830,10 @@ public:
               !finite(scale.x()) || !finite(scale.y()) || !finite(scale.z())) {
             return;
           }
-          controller_->setSelected3DTransform(position, rotation, scale);
+          controller_->setSelected3DTransform(
+              ArtifactCore::Coordinates::layerLocalPoint3FromQVector3D(position),
+              ArtifactCore::Units::eulerDegreesFromQVector3D(rotation),
+              ArtifactCore::Units::scale3FromQVector3D(scale));
         }, transformClipboard.size() >= 8);
         add(QStringLiteral("Clear 3D Transform Clipboard"), []() {
           auto& config = ArtifactCore::LayeredConfigStore::instance();
@@ -4582,6 +4603,10 @@ public:
             [this, ctrl = controller_]() {
               if (ctrl) ctrl->trackerApplyPlanarCornerPin();
             });
+        add(QStringLiteral("Apply Planar Track to Mask"),
+            [this, ctrl = controller_]() {
+              if (ctrl) ctrl->trackerApplyToMask();
+            });
         addSeparator();
         add(QStringLiteral("Delete Tracker"),
             [this, ctrl = controller_]() {
@@ -4667,8 +4692,9 @@ public:
 
     viewportOverlayActions_ = actions;
     viewportOverlayEnabledStates_ = enabledStates;
-    controller_->showContextMenuOverlay(viewportPos, items, title, subtitle,
-                                        enabledStates);
+    controller_->showContextMenuOverlay(
+        ArtifactCore::Coordinates::screenLogicalPointFromQPointF(viewportPos),
+        items, title, subtitle, enabledStates);
   }
 
   void updateViewportCursor(const QPointF &pos) {
@@ -4680,7 +4706,8 @@ public:
     const ToolType activeTool =
         toolManager ? toolManager->activeTool() : ToolType::Selection;
     const Qt::CursorShape cursorShape =
-        controller_->cursorShapeForViewportPos(pos);
+        controller_->cursorShapeForViewportPos(
+            ArtifactCore::Coordinates::screenLogicalPointFromQPointF(pos));
     if (activeTool == ToolType::Pen && cursorShape == Qt::CrossCursor) {
       setCursor(makeMaskAddCursor());
       return;
@@ -4783,8 +4810,9 @@ public:
     if (!controller_ || !asset.hasDropViewportPos) {
       return false;
     }
-    const LayerID hitId =
-        controller_->layerAtViewportPos(asset.dropViewportPos);
+    const LayerID hitId = controller_->layerAtViewportPos(
+        ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+            asset.dropViewportPos));
     if (hitId.isNil()) {
       return false;
     }
@@ -5055,8 +5083,10 @@ protected:
     }
 
     if (controller_->isInitialized()) {
-      controller_->setViewportSize(static_cast<float>(event->size().width()),
-                                   static_cast<float>(event->size().height()));
+      controller_->setViewportSize(
+          ArtifactCore::Coordinates::screenLogicalExtent(
+              static_cast<float>(event->size().width()),
+              static_cast<float>(event->size().height())));
       pendingResizeSize_ = event->size();
       resizePending_ = true;
       if (resizeDebounceTimer_) {
@@ -5180,7 +5210,9 @@ protected:
     // Wheel over the accessibility magnifier changes its scale instead of
     // zooming the viewport.
     if (controller_->adjustMagnifierScaleAt(
-            event->position(), static_cast<float>(angleDelta.y()))) {
+            ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+                event->position()),
+            static_cast<float>(angleDelta.y()))) {
       if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
         settings->setAccessibilityViewportMagnifierScale(
             controller_->magnifierScale());
@@ -5220,13 +5252,18 @@ protected:
         !modifiers.testFlag(Qt::AltModifier) &&
         !modifiers.testFlag(Qt::ControlModifier) && angleDelta.y() != 0.0) {
       const float weightDelta = angleDelta.y() > 0.0 ? 0.05f : -0.05f;
-      if (controller_->adjustSelectedPuppetPinWeightAt(event->position(),
+      const auto pointerPhysical =
+          ArtifactCore::Coordinates::toScreenPhysical(
+              ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+                  event->position()),
+              static_cast<float>(devicePixelRatioF()));
+      if (controller_->adjustSelectedPuppetPinWeightAt(pointerPhysical,
                                                         weightDelta)) {
         event->accept();
         return;
       }
       const float depthDelta = angleDelta.y() > 0.0 ? 0.05f : -0.05f;
-      if (controller_->adjustSelectedPuppetPinDepthAt(event->position(),
+      if (controller_->adjustSelectedPuppetPinDepthAt(pointerPhysical,
                                                        depthDelta)) {
         event->accept();
         return;
@@ -5237,9 +5274,13 @@ protected:
         modifiers.testFlag(Qt::ControlModifier)) {
       // AE Style: Alt/Ctrl + Wheel = Zoom
       if (angleDelta.y() > 0) {
-        controller_->zoomInAt(event->position());
+        controller_->zoomInAt(
+            ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+                event->position()));
       } else if (angleDelta.y() < 0) {
-        controller_->zoomOutAt(event->position());
+        controller_->zoomOutAt(
+            ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+                event->position()));
       }
     } else if (modifiers.testFlag(Qt::ShiftModifier)) {
       // AE Style: Shift + Wheel = Horizontal Pan
@@ -5248,15 +5289,21 @@ protected:
       const float deltaX = angleDelta.x() != 0.0
           ? static_cast<float>(angleDelta.x())
           : static_cast<float>(angleDelta.y());
-      controller_->panBy(QPointF(deltaX, 0));
+      controller_->panBy(
+          ArtifactCore::Coordinates::screenLogicalVectorFromQPointF(
+              QPointF(deltaX, 0)));
     } else {
       // Wheel without modifier = Zoom (industry-standard default).
       // Previously this panned vertically (AE style), but users expect
       // plain scroll to zoom in composition editors.
       if (angleDelta.y() > 0) {
-        controller_->zoomInAt(event->position());
+        controller_->zoomInAt(
+            ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+                event->position()));
       } else if (angleDelta.y() < 0) {
-        controller_->zoomOutAt(event->position());
+        controller_->zoomOutAt(
+            ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+                event->position()));
       }
     }
 
@@ -5274,7 +5321,9 @@ protected:
       // Single Alt+LMB stays orbit; plain double-click keeps its reset/inline
       // edit behavior below.
       if (event->modifiers().testFlag(Qt::AltModifier) &&
-          controller_->focusActiveCameraAtViewportPos(event->position())) {
+          controller_->focusActiveCameraAtViewportPos(
+              ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+                  event->position()))) {
         event->accept();
         return;
       }
@@ -5282,7 +5331,9 @@ protected:
         event->accept();
         return;
       }
-      if (controller_->resetProjectedFrameHandleAt(event->position())) {
+      if (controller_->resetProjectedFrameHandleAt(
+              ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+                  event->position()))) {
         event->accept();
         return;
       }
@@ -5311,7 +5362,9 @@ protected:
         event->accept();
         return;
       }
-      const auto layerId = controller_->layerAtViewportPos(event->position());
+      const auto layerId = controller_->layerAtViewportPos(
+          ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+              event->position()));
       if (!layerId.isNil()) {
         if (const auto comp = currentComposition()) {
           if (auto layer = comp->layerById(layerId)) {
@@ -5333,7 +5386,9 @@ protected:
 
   void contextMenuEvent(QContextMenuEvent *event) override {
     if (controller_) {
-      controller_->handleMouseMove(event->pos());
+      controller_->handleMouseMove(
+          ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+              event->pos()));
       QMenu maskMenu(this);
       maskMenu.setTitle(QStringLiteral("Mask Mode"));
       const std::array<std::pair<const char *, int>, 4> modes = {{
@@ -5488,29 +5543,49 @@ protected:
             } else if (action == QStringLiteral("invertSelected")) {
               controller_->toggleHoveredMaskInvertedForSelectedLayers();
             } else if (action == QStringLiteral("featherIn")) {
-              controller_->adjustHoveredMaskGeometry(5.0f, 0.0f);
+              controller_->adjustHoveredMaskGeometry(
+                  ArtifactCore::Units::LayerLocalLength{5.0f},
+                  ArtifactCore::Units::LayerLocalLength{0.0f});
             } else if (action == QStringLiteral("featherInSelected")) {
-              controller_->adjustHoveredMaskGeometryForSelectedLayers(5.0f, 0.0f);
+              controller_->adjustHoveredMaskGeometryForSelectedLayers(
+                  ArtifactCore::Units::LayerLocalLength{5.0f},
+                  ArtifactCore::Units::LayerLocalLength{0.0f});
             } else if (action == QStringLiteral("featherOut")) {
-              controller_->adjustHoveredMaskGeometry(-5.0f, 0.0f);
+              controller_->adjustHoveredMaskGeometry(
+                  ArtifactCore::Units::LayerLocalLength{-5.0f},
+                  ArtifactCore::Units::LayerLocalLength{0.0f});
             } else if (action == QStringLiteral("featherOutSelected")) {
-              controller_->adjustHoveredMaskGeometryForSelectedLayers(-5.0f, 0.0f);
+              controller_->adjustHoveredMaskGeometryForSelectedLayers(
+                  ArtifactCore::Units::LayerLocalLength{-5.0f},
+                  ArtifactCore::Units::LayerLocalLength{0.0f});
             } else if (action == QStringLiteral("expand")) {
-              controller_->adjustHoveredMaskGeometry(0.0f, 5.0f);
+              controller_->adjustHoveredMaskGeometry(
+                  ArtifactCore::Units::LayerLocalLength{0.0f},
+                  ArtifactCore::Units::LayerLocalLength{5.0f});
             } else if (action == QStringLiteral("expandSelected")) {
-              controller_->adjustHoveredMaskGeometryForSelectedLayers(0.0f, 5.0f);
+              controller_->adjustHoveredMaskGeometryForSelectedLayers(
+                  ArtifactCore::Units::LayerLocalLength{0.0f},
+                  ArtifactCore::Units::LayerLocalLength{5.0f});
             } else if (action == QStringLiteral("contract")) {
-              controller_->adjustHoveredMaskGeometry(0.0f, -5.0f);
+              controller_->adjustHoveredMaskGeometry(
+                  ArtifactCore::Units::LayerLocalLength{0.0f},
+                  ArtifactCore::Units::LayerLocalLength{-5.0f});
             } else if (action == QStringLiteral("contractSelected")) {
-              controller_->adjustHoveredMaskGeometryForSelectedLayers(0.0f, -5.0f);
+              controller_->adjustHoveredMaskGeometryForSelectedLayers(
+                  ArtifactCore::Units::LayerLocalLength{0.0f},
+                  ArtifactCore::Units::LayerLocalLength{-5.0f});
             } else if (action == QStringLiteral("opacityIn")) {
-              controller_->adjustHoveredMaskOpacity(0.1f);
+              controller_->adjustHoveredMaskOpacity(
+                  ArtifactCore::Units::OpacityDelta{0.1f});
             } else if (action == QStringLiteral("opacityInSelected")) {
-              controller_->adjustHoveredMaskOpacityForSelectedLayers(0.1f);
+              controller_->adjustHoveredMaskOpacityForSelectedLayers(
+                  ArtifactCore::Units::OpacityDelta{0.1f});
             } else if (action == QStringLiteral("opacityOut")) {
-              controller_->adjustHoveredMaskOpacity(-0.1f);
+              controller_->adjustHoveredMaskOpacity(
+                  ArtifactCore::Units::OpacityDelta{-0.1f});
             } else if (action == QStringLiteral("opacityOutSelected")) {
-              controller_->adjustHoveredMaskOpacityForSelectedLayers(-0.1f);
+              controller_->adjustHoveredMaskOpacityForSelectedLayers(
+                  ArtifactCore::Units::OpacityDelta{-0.1f});
             }
           }
         }
@@ -5553,7 +5628,9 @@ protected:
     if (event && event->button() == Qt::LeftButton && controller_ &&
         !controller_->isModalGizmoInteractionActive()) {
       const int frameDimension =
-          controller_->beginFrameSizeBadgeInput(event->position());
+          controller_->beginFrameSizeBadgeInput(
+              ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+                  event->position()));
       if (frameDimension >= 0) {
         modalTransformNumericInput_ =
             frameDimension == 0 ? QStringLiteral("w") : QStringLiteral("h");
@@ -5564,7 +5641,9 @@ protected:
     }
     if (event && event->button() == Qt::LeftButton && controller_ &&
         controller_->isModalGizmoInteractionActive()) {
-      controller_->handleMouseMove(event->position());
+      controller_->handleMouseMove(
+          ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+              event->position()));
       controller_->commitModalGizmoInteraction();
       modalTransformNumericInput_.clear();
       updateViewportCursor(event->position());
@@ -5641,7 +5720,9 @@ protected:
     if (event->button() == Qt::LeftButton &&
         event->modifiers().testFlag(Qt::AltModifier) &&
         !event->modifiers().testFlag(Qt::ControlModifier) && controller_ &&
-        !controller_->isTransformGizmoHovered(event->position()) &&
+        !controller_->isTransformGizmoHovered(
+            ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+                event->position())) &&
         !maskNavigationLocked() &&
         !(ArtifactApplicationManager::instance() &&
           ArtifactApplicationManager::instance()->toolManager() &&
@@ -5662,7 +5743,9 @@ protected:
     if (event->button() == Qt::LeftButton &&
         event->modifiers().testFlag(Qt::ControlModifier) &&
         event->modifiers().testFlag(Qt::AltModifier) && controller_) {
-      controller_->placeWorkCursorAtViewportPos(event->position());
+      controller_->placeWorkCursorAtViewportPos(
+          ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+              event->position()));
       event->accept();
       return;
     }
@@ -5708,7 +5791,9 @@ protected:
         QKeyEvent keyProbe(QEvent::KeyPress, bindingKey, event->modifiers());
         if (ArtifactCore::ShortcutBindings::instance().matches(
                 &keyProbe, ArtifactCore::ShortcutId::ViewBoxZoom) &&
-            controller_->beginBoxZoomInteraction(event->position())) {
+            controller_->beginBoxZoomInteraction(
+                ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+                    event->position()))) {
           if (QWidget::mouseGrabber() != this) {
             grabMouse();
           }
@@ -5721,10 +5806,13 @@ protected:
       if (event->button() == Qt::LeftButton &&
           controller_->isInteractiveRenderRegionActive()) {
         const int handle = controller_->interactiveRenderRegionHandleAt(
-            event->position());
+            ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+                event->position()));
         if (handle != 0 &&
             controller_->beginInteractiveRenderRegionDrag(
-                handle, event->position())) {
+                handle,
+                ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+                    event->position()))) {
           if (QWidget::mouseGrabber() != this) {
             grabMouse();
           }
@@ -5750,12 +5838,16 @@ protected:
 
   void mouseMoveEvent(QMouseEvent *event) override {
     if (controller_ && controller_->isPieMenuOverlayVisible()) {
-      controller_->updatePieMenuOverlayMousePos(event->position());
+      controller_->updatePieMenuOverlayMousePos(
+          ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+              event->position()));
       event->accept();
       return;
     }
     if (controller_ && controller_->isContextMenuOverlayVisible()) {
-      controller_->updateContextMenuOverlayMousePos(event->position());
+      controller_->updateContextMenuOverlayMousePos(
+          ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+              event->position()));
       event->accept();
       return;
     }
@@ -5797,7 +5889,10 @@ protected:
       controller_->notifyViewportInteractionActivity();
       const float zoomDelta = static_cast<float>(-delta.y()) * 0.01f;
       const float factor = std::exp(std::clamp(zoomDelta, -0.35f, 0.35f));
-      controller_->zoomAtFactor(event->position(), factor);
+      controller_->zoomAtFactor(
+          ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+              event->position()),
+          ArtifactCore::Units::ScaleFactor{factor});
       event->accept();
       return;
     }
@@ -5813,7 +5908,8 @@ protected:
       panVelocityPerMs_.setY(std::clamp(panVelocityPerMs_.y(), -3.0, 3.0));
       lastPanSampleAt_ = now;
       controller_->notifyViewportInteractionActivity();
-      controller_->panBy(delta);
+      controller_->panBy(
+          ArtifactCore::Coordinates::screenLogicalVectorFromQPointF(delta));
       qDebug() << "[VP] panning, delta=" << delta;
 
       if (didSpacePan_) {
@@ -5828,7 +5924,9 @@ protected:
     }
 
     if (controller_) {
-      controller_->handleMouseMove(event->position());
+      controller_->handleMouseMove(
+          ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+              event->position()));
       if (isSpatialGizmoDragging()) {
         // Phase 3: Use fixed-rate render tick instead of singleShot(16) + renderOneFrame().
         controller_->markRenderDirty();
@@ -5867,7 +5965,9 @@ protected:
         *momentumStep = [this, weakMomentum]() {
           if (!controller_ || !panMomentumActive_) return;
           controller_->notifyViewportInteractionActivity();
-          controller_->panBy(panVelocityPerMs_ * 16.0);
+          controller_->panBy(
+              ArtifactCore::Coordinates::screenLogicalVectorFromQPointF(
+                  panVelocityPerMs_ * 16.0));
           panVelocityPerMs_ *= 0.86;
           if (std::hypot(panVelocityPerMs_.x(), panVelocityPerMs_.y()) < 0.015) {
             panVelocityPerMs_ = {};
@@ -5993,7 +6093,9 @@ protected:
       controller_->handleMousePress(&synth);
     } else if (event->type() == QEvent::TabletMove) {
       controller_->notifyViewportInteractionActivity();
-      controller_->handleMouseMove(event->position());
+      controller_->handleMouseMove(
+          ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+              event->position()));
     } else if (event->type() == QEvent::TabletRelease) {
       controller_->handleMouseRelease();
       controller_->finishViewportInteraction();
@@ -6103,7 +6205,9 @@ protected:
           controller_->notifyViewportInteractionActivity();
       } else if (altDown && (GetKeyState(VK_CONTROL) & 0x8000) == 0 &&
                  controller_ &&
-                 !controller_->isTransformGizmoHovered(logPos) &&
+                 !controller_->isTransformGizmoHovered(
+                     ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+                         logPos)) &&
                  !maskNavigationLocked()) {
         isAltOrbiting_ = true;
         setNavigationFeedback(NavigationFeedbackMode::Orbit);
@@ -6116,7 +6220,8 @@ protected:
         controller_->notifyViewportInteractionActivity();
       } else if (altDown && (GetKeyState(VK_CONTROL) & 0x8000) != 0 &&
                  controller_) {
-        controller_->placeWorkCursorAtViewportPos(logPos);
+        controller_->placeWorkCursorAtViewportPos(
+            ArtifactCore::Coordinates::screenLogicalPointFromQPointF(logPos));
       } else if (controller_) {
         QMouseEvent synth(QEvent::MouseButtonPress, logPos,
                           mapToGlobal(logPos), Qt::LeftButton,
@@ -6205,7 +6310,8 @@ protected:
 
     case WM_MOUSEMOVE:
       if (controller_ && controller_->isPieMenuOverlayVisible()) {
-        controller_->updatePieMenuOverlayMousePos(logPos);
+        controller_->updatePieMenuOverlayMousePos(
+            ArtifactCore::Coordinates::screenLogicalPointFromQPointF(logPos));
         return true;
       }
       if (isAltOrbiting_ && controller_) {
@@ -6236,14 +6342,17 @@ protected:
         controller_->notifyViewportInteractionActivity();
         const float zoomDelta = static_cast<float>(-delta.y()) * 0.01f;
         const float factor = std::exp(std::clamp(zoomDelta, -0.35f, 0.35f));
-        controller_->zoomAtFactor(logPos, factor);
+        controller_->zoomAtFactor(
+            ArtifactCore::Coordinates::screenLogicalPointFromQPointF(logPos),
+            ArtifactCore::Units::ScaleFactor{factor});
         return true;
       }
       if (isPanning_ && controller_) {
         const QPointF delta = logPos - lastMousePos_;
         lastMousePos_ = logPos;
         controller_->notifyViewportInteractionActivity();
-        controller_->panBy(delta);
+        controller_->panBy(
+            ArtifactCore::Coordinates::screenLogicalVectorFromQPointF(delta));
         return true;
       }
       if (((msg->wParam & MK_LBUTTON) || isSpatialGizmoDragging()) &&
@@ -6253,7 +6362,8 @@ protected:
           nativePointerCaptureActive_ = true;
           nativeControllerDragActive_ = true;
         }
-        controller_->handleMouseMove(logPos);
+        controller_->handleMouseMove(
+            ArtifactCore::Coordinates::screenLogicalPointFromQPointF(logPos));
         if (isSpatialGizmoDragging()) {
           // Phase 3: Use fixed-rate render tick instead of singleShot(16) + renderOneFrame().
           controller_->markRenderDirty();
@@ -6355,7 +6465,9 @@ protected:
               (pointer.y() - viewportH * 0.3f - panY) / zoom,
               (viewportW * 0.6f) / zoom,
               (viewportH * 0.6f) / zoom);
-          controller_->setInteractiveRenderRegion(canvasRect);
+          controller_->setInteractiveRenderRegion(
+              {{canvasRect.left(), canvasRect.top()},
+               {canvasRect.right(), canvasRect.bottom()}});
         }
       }
       event->accept();
@@ -6367,7 +6479,8 @@ protected:
         ArtifactCore::ShortcutBindings::instance().matches(
             event, ArtifactCore::ShortcutId::ViewTumblePivotUnderCursor)) {
       const QPointF pointer = mapFromGlobal(QCursor::pos());
-      controller_->setTumblePivotAtViewportPos(pointer);
+      controller_->setTumblePivotAtViewportPos(
+          ArtifactCore::Coordinates::screenLogicalPointFromQPointF(pointer));
       event->accept();
       return;
     }
@@ -6412,11 +6525,27 @@ protected:
         bool numericOk = false;
         const float numericValue = numericToken.toFloat(&numericOk);
         if (!numericOk) return false;
-        const QPointF pointer = mapFromGlobal(QCursor::pos());
-        return frameDimension >= 0
-            ? controller_->setModalGizmoFrameDimension(
-                  frameDimension, numericValue, pointer)
-            : controller_->setModalGizmoNumericInput(numericValue, pointer);
+        const auto pointer =
+            ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+                mapFromGlobal(QCursor::pos()));
+        if (frameDimension >= 0) {
+          return controller_->setModalGizmoFrameDimension(
+              frameDimension, ArtifactCore::Units::Pixels{numericValue},
+              pointer);
+        }
+        switch (controller_->gizmoMode()) {
+        case TransformGizmo::Mode::Move:
+          return controller_->setModalGizmoNumericInput(
+              ArtifactCore::Units::WorldLength{numericValue}, pointer);
+        case TransformGizmo::Mode::Rotate:
+          return controller_->setModalGizmoNumericInput(
+              ArtifactCore::Units::Degrees{numericValue}, pointer);
+        case TransformGizmo::Mode::Scale:
+          return controller_->setModalGizmoNumericInput(
+              ArtifactCore::Units::ScaleFactor{numericValue}, pointer);
+        default:
+          return false;
+        }
       };
       if ((event->key() == Qt::Key_Return ||
            event->key() == Qt::Key_Enter) &&
@@ -6443,7 +6572,9 @@ protected:
       if (event->key() == Qt::Key_Z) constraintAxis = 2;
       if (constraintAxis >= 0 && event->modifiers() == Qt::NoModifier &&
           controller_->constrainModalGizmoInteraction(
-              constraintAxis, mapFromGlobal(QCursor::pos()))) {
+              constraintAxis,
+              ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+                  mapFromGlobal(QCursor::pos())))) {
         if (!modalTransformNumericInput_.isEmpty() &&
             modalTransformNumericInput_ != QStringLiteral("-")) {
           applyModalNumericInput();
@@ -6463,7 +6594,9 @@ protected:
             modalTransformNumericInput_.compare(QStringLiteral("h"),
                                                 Qt::CaseInsensitive) == 0) {
           controller_->clearModalGizmoNumericInput();
-          controller_->handleMouseMove(mapFromGlobal(QCursor::pos()));
+          controller_->handleMouseMove(
+              ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+                  mapFromGlobal(QCursor::pos())));
         } else {
           applyModalNumericInput();
         }
@@ -6791,12 +6924,15 @@ protected:
             }
             controller_->setSelectedLayerId(duplicates.front()->id());
             if (toolManager) toolManager->setActiveTool(ToolType::Move);
-            QPointF modalStart = mapFromGlobal(QCursor::pos());
-            if (!rect().contains(modalStart.toPoint())) {
-              modalStart = QPointF(rect().center()) + QPointF(80.0, 0.0);
+            QPointF modalStartQPointF = mapFromGlobal(QCursor::pos());
+            if (!rect().contains(modalStartQPointF.toPoint())) {
+              modalStartQPointF =
+                  QPointF(rect().center()) + QPointF(80.0, 0.0);
             }
             controller_->beginModalGizmoInteraction(
-                TransformGizmo::Mode::Move, modalStart);
+                TransformGizmo::Mode::Move,
+                ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+                    modalStartQPointF));
             modalTransformNumericInput_.clear();
             controller_->setInfoOverlayText(
                 QStringLiteral("Duplicate"),
@@ -6878,7 +7014,8 @@ protected:
                                   ? ArtifactApplicationManager::instance()->toolManager()
                                   : nullptr;
           toolManager && toolManager->activeTool() == ToolType::RigSelect &&
-          controller_->nudgeSelectedRigBoneRotation(15.0f)) {
+          controller_->nudgeSelectedRigBoneRotation(
+              ArtifactCore::Units::Degrees{15.0f})) {
         event->accept();
         return;
       }
@@ -6890,7 +7027,8 @@ protected:
                                   ? ArtifactApplicationManager::instance()->toolManager()
                                   : nullptr;
           toolManager && toolManager->activeTool() == ToolType::RigSelect &&
-          controller_->nudgeSelectedRigBoneRotation(-15.0f)) {
+          controller_->nudgeSelectedRigBoneRotation(
+              ArtifactCore::Units::Degrees{-15.0f})) {
         event->accept();
         return;
       }
@@ -6995,8 +7133,10 @@ protected:
         (event->key() == Qt::Key_BracketLeft ||
          event->key() == Qt::Key_BracketRight)) {
       if (toolManager && toolManager->activeTool() == ToolType::Pen) {
-        const float delta = event->key() == Qt::Key_BracketRight ? 0.1f : -0.1f;
-        if (controller_->adjustHoveredMaskOpacity(delta)) {
+        const ArtifactCore::Units::OpacityDelta delta{
+            event->key() == Qt::Key_BracketRight ? 0.1f : -0.1f};
+        if (controller_->adjustHoveredMaskOpacity(
+                delta)) {
           event->accept();
           return;
         }
@@ -7516,7 +7656,8 @@ protected:
         unsetCursor();
        if (controller_) {
          setCursor(controller_->cursorShapeForViewportPos(
-             mapFromGlobal(QCursor::pos())));
+             ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+                 mapFromGlobal(QCursor::pos()))));
        }
        if (shouldTogglePlayback) {
          executePlaybackToggleAction();
@@ -7736,9 +7877,9 @@ protected:
         static_cast<float>(compSize.height() > 0 ? compSize.height() : 1080) *
         0.5f;
 
-    const QVector3D current = layer->position3D();
-    const float deltaX = compCenterX - current.x();
-    const float deltaY = compCenterY - current.y();
+    const auto current = layer->position3D();
+    const float deltaX = compCenterX - current.x;
+    const float deltaY = compCenterY - current.y;
     if (std::abs(deltaX) <= 0.0001f && std::abs(deltaY) <= 0.0001f) {
       return;
     }
@@ -7876,7 +8017,9 @@ protected:
            }
          }});
 
-    controller_->showPieMenuOverlay(model, mapFromGlobal(QCursor::pos()));
+    controller_->showPieMenuOverlay(
+        model, ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+                   mapFromGlobal(QCursor::pos())));
   }
 
   void saveCurrentFrame(CompositionRenderController *controller) {
@@ -8268,8 +8411,12 @@ protected:
     dropGhostHint_ = svgShapeFile ? QStringLiteral("Shape layer")
                                    : kindLabelForFileType(fileType);
     if (controller_) {
-      controller_->setDropGhostPreview(dropGhostRect_, dropGhostTitle_,
-                                       dropGhostHint_, dropCandidateLabel_);
+      const QRectF viewportRect =
+          renderer ? dropGhostRect_
+                   : QRectF(pos.x() - 110.0, pos.y() - 70.0, 220.0, 140.0);
+      controller_->setDropGhostPreview(
+          toScreenPhysicalBounds2(viewportRect),
+          dropGhostTitle_, dropGhostHint_, dropCandidateLabel_);
     }
   }
 
@@ -9825,6 +9972,9 @@ public:
       break;
     case ToolType::Brush:
       toolModeButton_->setText(QStringLiteral("Brush"));
+      break;
+    case ToolType::Fill:
+      toolModeButton_->setText(QStringLiteral("Fill"));
       break;
     case ToolType::Clone:
       toolModeButton_->setText(QStringLiteral("Clone"));
@@ -13926,7 +14076,9 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                          return;
                        }
                        controller->placeWorkCursorAtViewportPos(
-                           QPointF(view->width() * 0.5, view->height() * 0.5));
+                           ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+                               QPointF(view->width() * 0.5,
+                                       view->height() * 0.5)));
                        controller->setWorkCursorLabel(
                            QStringLiteral("Placed in %1")
                                .arg(impl_->activePaneViewLabel()));
@@ -13951,8 +14103,10 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                            return;
                          }
                          const QSize size = comp->settings().compositionSize();
-                         controller->setWorkCursorCanvasPosition(QPointF(
-                             size.width() * 0.5, size.height() * 0.5));
+                         controller->setWorkCursorCanvasPosition(
+                             ArtifactCore::Coordinates::CompositionPoint2{
+                                 static_cast<float>(size.width() * 0.5),
+                                 static_cast<float>(size.height() * 0.5)});
                          controller->setWorkCursorLabel(
                              QStringLiteral("Centered in %1")
                                  .arg(impl_->activePaneViewLabel()));
@@ -14275,7 +14429,8 @@ void ArtifactCompositionEditor::zoomIn() {
   auto *view = impl_ ? impl_->activeViewport() : nullptr;
   if (controller && view) {
     controller->zoomInAt(
-        QPointF(view->width() * 0.5, view->height() * 0.5));
+        ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+            QPointF(view->width() * 0.5, view->height() * 0.5)));
     impl_->refreshViewportStateLabels();
   }
 }
@@ -14285,7 +14440,8 @@ void ArtifactCompositionEditor::zoomOut() {
   auto *view = impl_ ? impl_->activeViewport() : nullptr;
   if (controller && view) {
     controller->zoomOutAt(
-        QPointF(view->width() * 0.5, view->height() * 0.5));
+        ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+            QPointF(view->width() * 0.5, view->height() * 0.5)));
     impl_->refreshViewportStateLabels();
   }
 }

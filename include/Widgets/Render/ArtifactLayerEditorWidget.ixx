@@ -7,6 +7,7 @@ export module Artifact.Widgets.LayerEditorWidget;
 
 import Core.Scale.Zoom;
 import Color.Float;
+import Math.Vec;
 import Utils.Id;
 //import Core;
 import Tool;
@@ -46,13 +47,14 @@ export namespace Artifact {
   void setDisplayMode(DisplayMode mode);
   //void setTargetLayerId(int id);
   void setTargetLayer(const LayerID& id);
-  void setPan(const QPointF& offset);
+  void setPan(ArtifactCore::Coordinates::ScreenPhysicalVector2 offset);
   void resetView();
   void fitToViewport();
-  void panBy(const QPointF& delta);
-  void zoomAroundPoint(const QPointF& viewportPos, float newZoom);
+  void panBy(ArtifactCore::Coordinates::ScreenPhysicalVector2 delta);
+  void zoomAroundPoint(ArtifactCore::Coordinates::ScreenPhysicalPoint2 viewportPos,
+                       ArtifactCore::Units::ScaleFactor newZoom);
  
-  float zoom() const;
+  ArtifactCore::Units::ScaleFactor zoom() const;
   void setTargetLayer(LayerID& id);
   void clearTargetLayer();
   QImage grabScreenShot();

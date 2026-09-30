@@ -30,6 +30,7 @@ import Artifact.Layers.SolidImage;
 import Artifact.Layer.SourceCrop;
 import Event.Bus;
 import Memory.SharedPtr;
+import Math.Vec;
 import Property.Abstract;
 import Time.Rational;
 import Undo.UndoManager;
@@ -46,9 +47,9 @@ struct GizmoPropertyKeySnapshot {
 };
 
 struct GizmoTransformSnapshot {
-  QVector3D position;
-  QVector3D rotation;
-  QVector3D scale{1.0f, 1.0f, 1.0f};
+  ArtifactCore::Coordinates::LayerLocalPoint3 position{};
+  ArtifactCore::Units::EulerDegrees3 rotation{};
+  ArtifactCore::Units::Scale3 scale{};
   bool is3D = false;
   bool hasPositionKey = false;
   bool hasRotationKey = false;
@@ -259,7 +260,7 @@ struct GizmoGroupLayerState {
   ArtifactAbstractLayerPtr layer;
   int64_t frame = 0;
   GizmoTransformSnapshot before;
-  QVector3D worldAnchor;
+  ArtifactCore::Coordinates::WorldPoint3 worldAnchor{};
   QMatrix4x4 parentWorldInverse;
   bool parentWorldInvertible = true;
 };

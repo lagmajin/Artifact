@@ -29,6 +29,7 @@ module;
 #include <wobjectimpl.h>
 
 module Artifact.Widgets.CreateCameraLayerDialog;
+import Math.Vec;
 
 import Core.ArtifactMath;
 import Artifact.Widgets.DialogButtons;
@@ -719,24 +720,42 @@ CreateCameraLayerDialog::~CreateCameraLayerDialog()
 
 // ── Accessors ────────────────────────────────────────────────────────────────
 QString CreateCameraLayerDialog::cameraName()       const { return impl_->nameEdit       ? impl_->nameEdit->text()                                       : QString(); }
-float   CreateCameraLayerDialog::focalLength()      const { return impl_->focalLengthSpin ? static_cast<float>(impl_->focalLengthSpin->value())          : 35.0f; }
-float   CreateCameraLayerDialog::fov()              const { return impl_->fovSpin         ? static_cast<float>(impl_->fovSpin->value())                  : 54.0f; }
-float   CreateCameraLayerDialog::zoom()             const { return impl_->zoomSpin        ? static_cast<float>(impl_->zoomSpin->value())                 : 1000.0f; }
-float   CreateCameraLayerDialog::focusDistance()    const { return impl_->focusDistSpin   ? static_cast<float>(impl_->focusDistSpin->value())            : 1000.0f; }
-float   CreateCameraLayerDialog::blurAmount()       const { return impl_->blurAmountSpin  ? static_cast<float>(impl_->blurAmountSpin->value())           : 100.0f; }
+ArtifactCore::Units::Millimeters CreateCameraLayerDialog::focalLength() const {
+    return {impl_->focalLengthSpin
+                ? static_cast<float>(impl_->focalLengthSpin->value())
+                : 35.0f};
+}
+ArtifactCore::Units::Degrees CreateCameraLayerDialog::fov() const {
+    return {impl_->fovSpin ? static_cast<float>(impl_->fovSpin->value())
+                           : 54.0f};
+}
+ArtifactCore::Units::Pixels CreateCameraLayerDialog::zoom() const {
+    return {impl_->zoomSpin ? static_cast<float>(impl_->zoomSpin->value())
+                            : 1000.0f};
+}
+ArtifactCore::Units::Pixels CreateCameraLayerDialog::focusDistance() const {
+    return {impl_->focusDistSpin
+                ? static_cast<float>(impl_->focusDistSpin->value())
+                : 1000.0f};
+}
+ArtifactCore::Units::Percent CreateCameraLayerDialog::blurAmount() const {
+    return {impl_->blurAmountSpin
+                ? static_cast<float>(impl_->blurAmountSpin->value())
+                : 100.0f};
+}
 bool    CreateCameraLayerDialog::depthOfFieldEnabled() const { return impl_->dofCheck    ? impl_->dofCheck->isChecked()                                 : false; }
 bool    CreateCameraLayerDialog::motionBlur()       const { return impl_->motionBlurCheck ? impl_->motionBlurCheck->isChecked()                         : false; }
 bool    CreateCameraLayerDialog::cameraLocked()     const { return impl_->lockCameraCheck ? impl_->lockCameraCheck->isChecked()                         : false; }
 
-float CreateCameraLayerDialog::apertureF() const
+ArtifactCore::Units::FStop CreateCameraLayerDialog::apertureF() const
 {
-    if (!impl_->apertureFCombo) return 4.0f;
+    if (!impl_->apertureFCombo) return {4.0f};
     const QString t = impl_->apertureFCombo->currentText(); // "f/4"
     const int slash = t.indexOf('/');
-    if (slash < 0) return 4.0f;
+    if (slash < 0) return {4.0f};
     bool ok = false;
     const float v = t.mid(slash + 1).toFloat(&ok);
-    return ok ? v : 4.0f;
+    return {ok ? v : 4.0f};
 }
 
 // ── Drag ─────────────────────────────────────────────────────────────────────

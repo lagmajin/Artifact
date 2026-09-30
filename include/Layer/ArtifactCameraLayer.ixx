@@ -11,6 +11,7 @@ export module Artifact.Layer.Camera;
 
 
 import Artifact.Layer.Abstract;
+import Math.Vec;
 import Property.Group;
 import Memory.SharedPtr;
 
@@ -29,10 +30,10 @@ export namespace Artifact {
 
  struct CameraDOFParameters {
   bool enabled = false;
-  float focusDistance = 1000.0f;
-  float apertureSize = 4.0f;
-  float focalLength = 1000.0f;
-  float cocScale = 0.0f;
+  ArtifactCore::Units::Pixels focusDistance{1000.0f};
+  ArtifactCore::Units::FStop apertureSize{4.0f};
+  ArtifactCore::Units::Pixels focalLength{1000.0f};
+  ArtifactCore::Units::ScaleFactor cocScale{0.0f};
   float maxCoc = 0.0f;
  };
 
@@ -51,14 +52,14 @@ export namespace Artifact {
   QRectF localBounds() const override;
 
   // Camera specific properties (AE standard)
-  float zoom() const;
-  void setZoom(float zoom);
+  ArtifactCore::Units::Pixels zoom() const;
+  void setZoom(ArtifactCore::Units::Pixels zoom);
 
-  float focusDistance() const;
-  void setFocusDistance(float distance);
+  ArtifactCore::Units::Pixels focusDistance() const;
+  void setFocusDistance(ArtifactCore::Units::Pixels distance);
 
-  float aperture() const;
-  void setAperture(float aperture);
+  ArtifactCore::Units::FStop aperture() const;
+  void setAperture(ArtifactCore::Units::FStop aperture);
 
   bool depthOfField() const;
   void setDepthOfField(bool enabled);
@@ -66,8 +67,8 @@ export namespace Artifact {
   bool motionBlur() const;
   void setMotionBlur(bool enabled);
 
-  float blurAmount() const;
-  void setBlurAmount(float amount);
+  ArtifactCore::Units::Percent blurAmount() const;
+  void setBlurAmount(ArtifactCore::Units::Percent amount);
 
   // Normalized values consumed by the future depth-of-field render pass.
   CameraDOFParameters depthOfFieldParameters() const;
@@ -80,8 +81,8 @@ export namespace Artifact {
   void setStereoMode(StereoMode mode);
 
   // Perspective-specific
-  float fov() const;
-  void setFov(float fovDegrees);
+  ArtifactCore::Units::Degrees fov() const;
+  void setFov(ArtifactCore::Units::Degrees fov);
   bool useManualFov() const;
   void setUseManualFov(bool enable);
   void resetFovToZoom();
@@ -89,25 +90,25 @@ export namespace Artifact {
   // 35mm-equivalent focal length (AE-compatible unit system). Horizontal
   // FOV over a 36mm sensor width: fov = 2*atan(18/focalLength).
   // Reading derives from the effective FOV; writing switches to manual FOV.
-  float focalLength() const;
-  void setFocalLength(float mm);
+  ArtifactCore::Units::Millimeters focalLength() const;
+  void setFocalLength(ArtifactCore::Units::Millimeters mm);
 
   // Orthographic-specific
-  float orthoWidth() const;
-  void setOrthoWidth(float width);
+  ArtifactCore::Units::Pixels orthoWidth() const;
+  void setOrthoWidth(ArtifactCore::Units::Pixels width);
 
-  float orthoHeight() const;
-  void setOrthoHeight(float height);
+  ArtifactCore::Units::Pixels orthoHeight() const;
+  void setOrthoHeight(ArtifactCore::Units::Pixels height);
 
   // Clipping planes
-  float nearClipPlane() const;
-  void setNearClipPlane(float distance);
+  ArtifactCore::Units::Pixels nearClipPlane() const;
+  void setNearClipPlane(ArtifactCore::Units::Pixels distance);
 
-  float farClipPlane() const;
-  void setFarClipPlane(float distance);
+  ArtifactCore::Units::Pixels farClipPlane() const;
+  void setFarClipPlane(ArtifactCore::Units::Pixels distance);
 
-  float ipd() const;
-  void setIpd(float ipd);
+  ArtifactCore::Units::Meters ipd() const;
+  void setIpd(ArtifactCore::Units::Meters ipd);
 
   // Composition camera selection.  Several cameras may be visible for
   // editing, while only the enabled camera with the highest priority drives
@@ -117,13 +118,15 @@ export namespace Artifact {
   int cameraPriority() const;
   void setCameraPriority(int priority);
 
-  // Two-node camera: aim the camera at an explicit Point of Interest.
-  // When enabled, the camera orientation is derived from the transform
-  // position toward the POI instead of the authored rotation values.
+  // Two-node camera: the POI is authored in the camera parent's coordinate
+  // space (the world space for an unparented camera).
   bool pointOfInterestEnabled() const;
   void setPointOfInterestEnabled(bool enabled);
-  QVector3D pointOfInterest() const;
-  void setPointOfInterest(const QVector3D& poi);
+  ArtifactCore::Coordinates::LayerParentPoint3 pointOfInterest() const;
+  void setPointOfInterest(ArtifactCore::Coordinates::LayerParentPoint3 poi);
+  ArtifactCore::Coordinates::WorldPoint3 pointOfInterestWorld() const;
+  bool setPointOfInterestWorld(
+      ArtifactCore::Coordinates::WorldPoint3 worldPoi);
 
   // Global transform with POI orientation applied (identity-equivalent to
   // getGlobalTransform4x4() when the POI is disabled).

@@ -59,6 +59,7 @@ import Artifact.Layer.Video;
 import Artifact.Layer.Text;
 import Artifact.Layer.Audio;
 import Artifact.Layer.Camera;
+import Math.Vec;
 import Artifact.Layer.Light;
 import Artifact.Layer.Particle;
 import Artifact.Layer.Paint;
@@ -213,7 +214,7 @@ LayerMask quickLayerMask(const QuickLayerCreationOptions& options) {
         }
     }
     path.setClosed(true);
-    path.setFeather(options.maskFeather);
+    path.setFeather({options.maskFeather});
 
     LayerMask mask;
     mask.addMaskPath(path);
@@ -1603,6 +1604,14 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     distributeSpacingAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.distribute_evenly"), QStringLiteral("等間隔に配置")), distributeMenu);
     distributeSpacingAction->setShortcut(
         ShortcutBindings::instance().shortcut(ShortcutId::LayerDistributeSpacing));
+    // The submenu is attached to the Layer menu further down, so without these
+    // it opened empty: the three actions existed, carried default shortcuts and
+    // were dispatched by handleDistribute()/handleDistributeSpacing(), but were
+    // never added to any visible menu, making both the entries and the
+    // LayerDistribute* shortcuts dead.
+    distributeMenu->addAction(distributeHCenterAction);
+    distributeMenu->addAction(distributeVCenterAction);
+    distributeMenu->addAction(distributeSpacingAction);
     resolveLayoutCollisionsAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.auto_avoid_collisions"), QStringLiteral("衝突を自動回避")), menu);
 
     openInspectorAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.open_inspector"), QStringLiteral("Inspector を開く")), menu);
@@ -2907,16 +2916,16 @@ void ArtifactLayerMenu::Impl::handleCreateCamera()
 
     camera->setZoom(dialog.zoom());
     camera->setFocusDistance(dialog.focusDistance());
-    camera->setAperture(dialog.apertureF());
+            camera->setAperture(dialog.apertureF());
     camera->setDepthOfField(dialog.depthOfFieldEnabled());
     camera->setMotionBlur(dialog.motionBlur());
     camera->setBlurAmount(dialog.blurAmount());
     // Focal length (35mm-equivalent) drives manual FOV, keeping the dialog
     // preset unit system intact through to the layer.
     camera->setFocalLength(dialog.focalLength());
-    const QVector3D cameraPosition = camera->position3D();
-    camera->setPosition3D(QVector3D(cameraPosition.x(), cameraPosition.y(),
-                                    std::max(1.0f, dialog.zoom())));
+    const auto cameraPosition = camera->position3D();
+    camera->setPosition3D({cameraPosition.x, cameraPosition.y,
+                           std::max(1.0f, dialog.zoom().value)});
     camera->setLocked(dialog.cameraLocked());
 }
 

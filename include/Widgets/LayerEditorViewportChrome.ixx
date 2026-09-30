@@ -2,13 +2,13 @@ module;
 
 #include <QRectF>
 #include <QPointF>
-#include <QSize>
 #include <QString>
 
 export module Artifact.Widgets.LayerEditor.ViewportChrome;
 
 import Tool;
 import Artifact.Layer.Abstract;
+import Math.Vec;
 
 export namespace Artifact {
 
@@ -30,8 +30,9 @@ float layerEditorZoomStop(float panelWidth, int stop);
 int layerEditorZoomControlIndex(float panelWidth, float relativeX);
 QRectF layerEditorStateCardRect(float viewportWidth, float viewportHeight);
 QString layerEditorChromeToolTip(int control);
-int layerEditorChromeControlAt(const QPointF& position,
-                               const QSize& viewportSize,
+int layerEditorChromeControlAt(
+                               ArtifactCore::Coordinates::ScreenPhysicalPoint2 position,
+                               ArtifactCore::Coordinates::ScreenPhysicalExtent2 viewportSize,
                                LayerEditorSurfaceMode surfaceMode,
                                bool hasLayer);
 

@@ -10,6 +10,7 @@ module;
 module Artifact.Render.DepthOfFieldPass;
 import Graphics.GPUcomputeContext;
 import Graphics.Compute;
+import Math.Vec;
 
 namespace Artifact {
 using namespace Diligent;
@@ -155,17 +156,17 @@ bool DepthOfFieldPass::apply(IDeviceContext* context, ITextureView* color,
   if (!impl_->ready || !context || !color || !depth || !output ||
       width == 0 || height == 0 || !settings.enabled) return false;
   DepthOfFieldParams params{
-      std::max(settings.focusDistance, settings.nearClip),
-      std::max(settings.nearClip, 0.001f),
-      std::max(settings.farClip, settings.nearClip * 2.0f),
-      std::max(settings.maxCocRadius, 0.0f),
-      std::clamp(settings.cocScale, 0.0f, 1.0f),
+      std::max(settings.focusDistance.value, settings.nearClip.value),
+      std::max(settings.nearClip.value, 0.001f),
+      std::max(settings.farClip.value, settings.nearClip.value * 2.0f),
+      std::max(settings.maxCocRadius.value, 0.0f),
+      std::clamp(settings.cocScale.value, 0.0f, 1.0f),
       std::clamp(settings.sampleCount, 4u, 64u),
       width, height,
-      std::max(settings.focalLength, 1.0f),
+      std::max(settings.focalLength.value, 1.0f),
       // Aperture authored as an f-stop-like scale: larger value = more blur.
-      std::max(settings.fStop, 0.0f),
-      settings.fStop > 0.0f ? 1u : 0u};
+      std::max(settings.fStop.value, 0.0f),
+      settings.fStop.value > 0.0f ? 1u : 0u};
   void* mapped = nullptr;
   context->MapBuffer(impl_->params, MAP_WRITE, MAP_FLAG_DISCARD, mapped);
   if (!mapped) return false;

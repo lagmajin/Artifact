@@ -7,6 +7,7 @@ module Artifact.Widgets.LayerEditor.FrameViewState;
 
 import Core.ArtifactMath;
 import Artifact.Render.IRenderer;
+import Math.Vec;
 
 namespace Artifact {
 
@@ -21,15 +22,18 @@ QSize layerEditorPhysicalViewportSize(const QWidget* widget)
 
 LayerEditorFrameViewState beginLayerEditorFrameView(
     ArtifactIRenderer& renderer,
-    const QSize& viewportSize)
+    ArtifactCore::Coordinates::ScreenPhysicalExtent2 viewportSize)
 {
  LayerEditorFrameViewState state;
- state.zoom = renderer.getZoom();
- renderer.getPan(state.panX, state.panY);
+ state.zoom = {renderer.getZoom()};
+ float panX = 0.0f;
+ float panY = 0.0f;
+ renderer.getPan(panX, panY);
+ state.pan = {panX, panY};
  const float viewportWidth = static_cast<float>(
-     ArtifactCore::artifactMax(1, viewportSize.width()));
+     ArtifactCore::artifactMax(1.0f, viewportSize.width));
  const float viewportHeight = static_cast<float>(
-     ArtifactCore::artifactMax(1, viewportSize.height()));
+     ArtifactCore::artifactMax(1.0f, viewportSize.height));
  renderer.setViewportSize(viewportWidth, viewportHeight);
  renderer.setCanvasSize(viewportWidth, viewportHeight);
  renderer.setZoom(1.0f);
@@ -44,8 +48,8 @@ void restoreLayerEditorFrameView(
     ArtifactIRenderer& renderer,
     const LayerEditorFrameViewState& state)
 {
- renderer.setZoom(state.zoom);
- renderer.setPan(state.panX, state.panY);
+ renderer.setZoom(state.zoom.value);
+ renderer.setPan(state.pan.x, state.pan.y);
 }
 
 }

@@ -21,6 +21,7 @@ import Artifact.Layer.Abstract;
 import Artifact.Layer.Shape;
 import Event.Bus;
 import Memory.SharedPtr;
+import Math.Vec;
 import Time.Rational;
 import Undo.UndoManager;
 
@@ -45,8 +46,10 @@ export namespace Artifact {
 class AnchorPointUndoCommand final : public UndoCommand {
 public:
   AnchorPointUndoCommand(ArtifactAbstractLayerPtr layer, int64_t frame,
-                         QVector3D beforeAnchor, QVector3D beforePosition,
-                         QVector3D afterAnchor, QVector3D afterPosition)
+                         ArtifactCore::Coordinates::LayerLocalPoint3 beforeAnchor,
+                         ArtifactCore::Coordinates::LayerLocalPoint3 beforePosition,
+                         ArtifactCore::Coordinates::LayerLocalPoint3 afterAnchor,
+                         ArtifactCore::Coordinates::LayerLocalPoint3 afterPosition)
       : layer_(layer), frame_(frame), beforeAnchor_(beforeAnchor),
         beforePosition_(beforePosition), afterAnchor_(afterAnchor),
         afterPosition_(afterPosition) {}
@@ -61,19 +64,24 @@ public:
   QString label() const override { return QStringLiteral("Reset Anchor Point"); }
 
 private:
-  bool apply(const QVector3D &anchor, const QVector3D &position) {
+  bool apply(ArtifactCore::Coordinates::LayerLocalPoint3 anchor,
+             ArtifactCore::Coordinates::LayerLocalPoint3 position) {
     auto layer = layer_.lock();
-    if (!layer || !layer->is3D()) return false;
+    // Not restricted to 3D layers: 2D projected-frame layers (image / solid /
+    // 3D plane) also carry a transform3D anchor, and the AnchorPoint tool edits
+    // it through the 3D gizmo.  transform3D() is valid for every layer type.
+    if (!layer) return false;
     const auto time = transformTime(layer, frame_);
     auto &transform = layer->transform3D();
-    transform.setAnchor(time, anchor.x(), anchor.y(), anchor.z());
-    transform.setPosition(time, position.x(), position.y());
+    transform.setAnchor(time, anchor.x, anchor.y, anchor.z);
+    transform.setPosition(time, position.x, position.y);
+    transform.setPositionZ(time, position.z);
     const auto actual = transform.snapshotAt(time);
-    if (std::abs(actual.anchorX - anchor.x()) > 0.000001f ||
-        std::abs(actual.anchorY - anchor.y()) > 0.000001f ||
-        std::abs(actual.anchorZ - anchor.z()) > 0.000001f ||
-        std::abs(actual.positionX - position.x()) > 0.000001f ||
-        std::abs(actual.positionY - position.y()) > 0.000001f) {
+    if (std::abs(actual.anchorX - anchor.x) > 0.000001f ||
+        std::abs(actual.anchorY - anchor.y) > 0.000001f ||
+        std::abs(actual.anchorZ - anchor.z) > 0.000001f ||
+        std::abs(actual.positionX - position.x) > 0.000001f ||
+        std::abs(actual.positionY - position.y) > 0.000001f) {
       return false;
     }
     layer->setDirty(LayerDirtyFlag::Transform);
@@ -90,10 +98,10 @@ private:
 
   ArtifactAbstractLayerWeak layer_;
   int64_t frame_ = 0;
-  QVector3D beforeAnchor_;
-  QVector3D beforePosition_;
-  QVector3D afterAnchor_;
-  QVector3D afterPosition_;
+  ArtifactCore::Coordinates::LayerLocalPoint3 beforeAnchor_{};
+  ArtifactCore::Coordinates::LayerLocalPoint3 beforePosition_{};
+  ArtifactCore::Coordinates::LayerLocalPoint3 afterAnchor_{};
+  ArtifactCore::Coordinates::LayerLocalPoint3 afterPosition_{};
   bool lastOperationSucceeded_ = true;
 };
 

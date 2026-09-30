@@ -1,6 +1,5 @@
 module;
 
-#include <QSize>
 #include <QString>
 
 export module Artifact.Widgets.LayerEditor.ViewportChromeRenderer;
@@ -8,13 +7,14 @@ export module Artifact.Widgets.LayerEditor.ViewportChromeRenderer;
 import Artifact.Layer.Abstract;
 import Artifact.Render.IRenderer;
 import Artifact.Widgets.LayerEditor.ViewportChrome;
+import Math.Vec;
 import Tool;
 
 export namespace Artifact {
 
 struct LayerEditorViewportChromeState {
- QSize viewportSize;
- QSize restoreCanvasSize;
+ ArtifactCore::Coordinates::ScreenPhysicalExtent2 viewportSize;
+ ArtifactCore::Coordinates::CompositionExtent2 restoreCanvasSize;
  LayerEditorSurfaceMode surfaceMode = LayerEditorSurfaceMode::Edit;
  EditMode editMode = EditMode::View;
  DisplayMode displayMode = DisplayMode::Color;
