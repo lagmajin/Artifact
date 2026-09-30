@@ -95,7 +95,10 @@ public:
         const QPointF& destinationPos, float radius, float opacity,
         float hardness, bool recordUndo = true,
         const FramePosition& sourceFrame = FramePosition(-1),
-        const FramePosition& targetFrame = FramePosition(-1));
+        const FramePosition& targetFrame = FramePosition(-1),
+        bool finalizeUndo = true);
+    void finalizeUndoStroke(const FramePosition& frame);
+    bool cancelActiveUndoStroke(const FramePosition& frame);
     void undoLastStroke();
     bool canUndo() const;
 

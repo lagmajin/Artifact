@@ -158,6 +158,39 @@ public:
         history->second.back().patches.append(std::move(patch));
     }
 
+    bool restoreUndoStroke(int64_t frame) {
+        auto history = undoStacks_.find(frame);
+        auto buffer = frames_.find(frame);
+        if (history == undoStacks_.end() || history->second.isEmpty() ||
+            buffer == frames_.end()) {
+            return false;
+        }
+        auto& image = buffer->second.image();
+        auto* destination = image.rgba32fData();
+        if (!destination) return false;
+        const int width = image.width();
+        auto& patches = history->second.back().patches;
+        for (std::size_t patchIndex = patches.size(); patchIndex > 0; --patchIndex) {
+            const auto& patch = patches[patchIndex - 1];
+            const auto* source = patch.pixels.rgba32fData();
+            if (!source || patch.rect.isEmpty() || patch.rect.x() < 0 || patch.rect.y() < 0 ||
+                patch.rect.right() >= image.width() || patch.rect.bottom() >= image.height()) {
+                continue;
+            }
+            const std::size_t rowBytes = static_cast<std::size_t>(patch.rect.width()) *
+                4u * sizeof(float);
+            for (int row = 0; row < patch.rect.height(); ++row) {
+                auto* rowDestination = destination +
+                    (static_cast<std::size_t>(patch.rect.y() + row) * width + patch.rect.x()) * 4u;
+                const auto* rowSource = source +
+                    static_cast<std::size_t>(row) * patch.rect.width() * 4u;
+                std::memcpy(rowDestination, rowSource, rowBytes);
+            }
+        }
+        history->second.removeLast();
+        return true;
+    }
+
 };
 
 ArtifactPaintLayer::ArtifactPaintLayer() : impl_(new Impl()) {
@@ -528,30 +561,7 @@ void ArtifactPaintLayer::undoLastStroke() {
         return;
     }
     FramePosition frame(currentFrame());
-    auto it = impl_->undoStacks_.find(frame.framePosition());
-    if (it == impl_->undoStacks_.end() || it->second.isEmpty()) return;
-    auto bufferIt = impl_->frames_.find(frame.framePosition());
-    if (bufferIt == impl_->frames_.end()) return;
-    auto& pixels = bufferIt->second.image();
-    auto* destination = pixels.rgba32fData();
-    const int width = pixels.width();
-    auto& patches = it->second.back().patches;
-    for (std::size_t patchIndex = patches.size(); patchIndex > 0; --patchIndex) {
-        const auto& patch = patches[patchIndex - 1];
-        const auto* source = patch.pixels.rgba32fData();
-        if (!source || patch.rect.isEmpty() || patch.rect.x() < 0 || patch.rect.y() < 0 ||
-            patch.rect.right() >= pixels.width() || patch.rect.bottom() >= pixels.height()) {
-            continue;
-        }
-        const std::size_t rowBytes = static_cast<std::size_t>(patch.rect.width()) * 4u * sizeof(float);
-        for (int row = 0; row < patch.rect.height(); ++row) {
-            auto* rowDestination = destination +
-                (static_cast<std::size_t>(patch.rect.y() + row) * width + patch.rect.x()) * 4u;
-            const auto* rowSource = source + static_cast<std::size_t>(row) * patch.rect.width() * 4u;
-            std::memcpy(rowDestination, rowSource, rowBytes);
-        }
-    }
-    it->second.removeLast();
+    if (!impl_->restoreUndoStroke(frame.framePosition())) return;
     markDirty(frame);
     changed();
 }
@@ -567,7 +577,7 @@ void ArtifactPaintLayer::applyCloneStampFromLayerAtFrame(
     ArtifactPaintLayer* sourceLayer, const QPointF& sourcePos,
     const QPointF& destinationPos, float radius, float opacity, float hardness,
     bool recordUndo, const FramePosition& sourceFrame,
-    const FramePosition& targetFrameInput) {
+    const FramePosition& targetFrameInput, bool finalizeUndo) {
     const FramePosition targetFrame = targetFrameInput.framePosition() >= 0
         ? targetFrameInput
         : FramePosition(currentFrame());
@@ -594,22 +604,30 @@ void ArtifactPaintLayer::applyCloneStampFromLayerAtFrame(
     }
     radius = std::clamp(radius, 0.5f, 10000.0f);
     const int diameter = std::max(1, static_cast<int>(std::ceil(radius * 2.0f)));
-    std::vector<float> sourcePixels(static_cast<size_t>(diameter) * diameter * 4u,
-                                    0.0f);
     const float* sourceData = sourceImage.rgba32fData();
-    const int sourceLeft = static_cast<int>(std::floor(sourcePos.x() - radius));
-    const int sourceTop = static_cast<int>(std::floor(sourcePos.y() - radius));
-    for (int y = 0; y < diameter; ++y) {
-        for (int x = 0; x < diameter; ++x) {
-            const int sx = std::clamp(sourceLeft + x, 0, sourceWidth - 1);
-            const int sy = std::clamp(sourceTop + y, 0, sourceHeight - 1);
-            const float* src = sourceData +
-                (static_cast<size_t>(sy) * sourceWidth + sx) * 4u;
-            float* dst = sourcePixels.data() +
-                         (static_cast<size_t>(y) * diameter + x) * 4u;
-            std::copy(src, src + 4, dst);
-        }
-    }
+    if (!sourceData) return;
+
+    const int destLeft = static_cast<int>(std::clamp(
+        std::floor(destinationPos.x() - radius), -static_cast<double>(diameter),
+        static_cast<double>(width)));
+    const int destTop = static_cast<int>(std::clamp(
+        std::floor(destinationPos.y() - radius), -static_cast<double>(diameter),
+        static_cast<double>(height)));
+    const int sourceLeft = static_cast<int>(std::clamp(
+        std::floor(sourcePos.x() - radius), -static_cast<double>(diameter),
+        static_cast<double>(sourceWidth)));
+    const int sourceTop = static_cast<int>(std::clamp(
+        std::floor(sourcePos.y() - radius), -static_cast<double>(diameter),
+        static_cast<double>(sourceHeight)));
+    const int patchLeft = std::clamp(destLeft, 0, width);
+    const int patchTop = std::clamp(destTop, 0, height);
+    const int patchRight = static_cast<int>(std::clamp(
+        static_cast<int64_t>(destLeft) + diameter, int64_t{0}, static_cast<int64_t>(width)));
+    const int patchBottom = static_cast<int>(std::clamp(
+        static_cast<int64_t>(destTop) + diameter, int64_t{0}, static_cast<int64_t>(height)));
+    const int patchWidth = std::max(0, patchRight - patchLeft);
+    const int patchHeight = std::max(0, patchBottom - patchTop);
+    if (patchWidth == 0 || patchHeight == 0) return;
 
     if (recordUndo) {
         impl_->clearUndoFrames_.clear();
@@ -620,22 +638,34 @@ void ArtifactPaintLayer::applyCloneStampFromLayerAtFrame(
     const float safeRadius = std::max(0.5f, radius);
     const float safeHardness = std::clamp(hardness, 0.0f, 1.0f);
     const float safeOpacity = std::clamp(opacity, 0.0f, 1.0f);
-    const int destLeft = static_cast<int>(std::floor(destinationPos.x() - radius));
-    const int destTop = static_cast<int>(std::floor(destinationPos.y() - radius));
-    const int patchLeft = std::clamp(destLeft, 0, width);
-    const int patchTop = std::clamp(destTop, 0, height);
-    const int patchRight = static_cast<int>(std::clamp(
-        static_cast<int64_t>(destLeft) + diameter, int64_t{0}, static_cast<int64_t>(width)));
-    const int patchBottom = static_cast<int>(std::clamp(
-        static_cast<int64_t>(destTop) + diameter, int64_t{0}, static_cast<int64_t>(height)));
-    if (recordUndo) {
+    const bool hasActiveUndoStroke = impl_->activeUndoStroke_ &&
+        impl_->activeUndoFrame_ == targetFrame.framePosition();
+    if (recordUndo || hasActiveUndoStroke) {
         impl_->appendUndoPatch(targetFrame.framePosition(), image,
             QRect(patchLeft, patchTop, std::max(0, patchRight - patchLeft),
                   std::max(0, patchBottom - patchTop)));
     }
     float* pixels = image.rgba32fData();
-    for (int y = 0; y < diameter; ++y) {
-        for (int x = 0; x < diameter; ++x) {
+    const bool readsSameFrame = sourceLayer == this &&
+        resolvedSourceFrame.framePosition() == targetFrame.framePosition();
+    const int sourceOffsetX = sourceLeft - destLeft;
+    const int sourceOffsetY = sourceTop - destTop;
+    // If source and target alias, traverse like memmove so an overlapping
+    // destination write cannot replace source pixels before they are sampled.
+    const int yStep = readsSameFrame && sourceOffsetY < 0 ? -1 : 1;
+    const int xStep = readsSameFrame && sourceOffsetX < 0 ? -1 : 1;
+    const int firstPatchY = yStep > 0 ? 0 : patchHeight - 1;
+    const int endPatchY = yStep > 0 ? patchHeight : -1;
+    const int firstPatchX = xStep > 0 ? 0 : patchWidth - 1;
+    const int endPatchX = xStep > 0 ? patchWidth : -1;
+    for (int patchY = firstPatchY; patchY != endPatchY; patchY += yStep) {
+        const int destinationY = patchTop + patchY;
+        const int y = destinationY - destTop;
+        const int sy = std::clamp(sourceTop + y, 0, sourceHeight - 1);
+        for (int patchX = firstPatchX; patchX != endPatchX; patchX += xStep) {
+            const int destinationX = patchLeft + patchX;
+            const int x = destinationX - destLeft;
+            const int sx = std::clamp(sourceLeft + x, 0, sourceWidth - 1);
             const float dx = static_cast<float>(x) - radius;
             const float dy = static_cast<float>(y) - radius;
             const float distance = std::sqrt(dx * dx + dy * dy) / safeRadius;
@@ -645,12 +675,10 @@ void ArtifactPaintLayer::applyCloneStampFromLayerAtFrame(
                 : (safeHardness < 1.0f
                     ? 1.0f - (distance - safeHardness) / (1.0f - safeHardness)
                     : 0.0f);
-            const int dxp = destLeft + x;
-            const int dyp = destTop + y;
-            if (dxp < 0 || dxp >= width || dyp < 0 || dyp >= height) continue;
-            const float* src = sourcePixels.data() +
-                (static_cast<size_t>(y) * diameter + x) * 4u;
-            float* dst = pixels + (static_cast<size_t>(dyp) * width + dxp) * 4u;
+            const float* src = sourceData +
+                (static_cast<size_t>(sy) * sourceWidth + sx) * 4u;
+            float* dst = pixels +
+                (static_cast<size_t>(destinationY) * width + destinationX) * 4u;
             const float alpha = std::clamp(src[3] * safeOpacity * falloff, 0.0f, 1.0f);
             const float inverse = 1.0f - alpha;
             dst[0] = dst[0] * inverse + src[0] * alpha;
@@ -659,11 +687,28 @@ void ArtifactPaintLayer::applyCloneStampFromLayerAtFrame(
             dst[3] = dst[3] * inverse + alpha;
         }
     }
-    if (impl_->activeUndoFrame_ == targetFrame.framePosition()) {
+    if (finalizeUndo && impl_->activeUndoFrame_ == targetFrame.framePosition()) {
         impl_->activeUndoStroke_ = false;
     }
     markDirty(targetFrame);
     changed();
+}
+
+void ArtifactPaintLayer::finalizeUndoStroke(const FramePosition& frame) {
+    if (impl_->activeUndoFrame_ == frame.framePosition()) {
+        impl_->activeUndoStroke_ = false;
+    }
+}
+
+bool ArtifactPaintLayer::cancelActiveUndoStroke(const FramePosition& frame) {
+    if (!impl_->activeUndoStroke_ || impl_->activeUndoFrame_ != frame.framePosition()) {
+        return false;
+    }
+    impl_->activeUndoStroke_ = false;
+    if (!impl_->restoreUndoStroke(frame.framePosition())) return false;
+    markDirty(frame);
+    changed();
+    return true;
 }
 
 bool ArtifactPaintLayer::canUndo() const {

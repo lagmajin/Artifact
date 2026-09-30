@@ -13253,6 +13253,7 @@ public:
 
   bool cloneStampSourceSet_ = false;
   bool cloneStampDragging_ = false;
+  int64_t cloneStampTargetFrame_ = -1;
   ArtifactAbstractLayerWeak cloneStampSourceLayer_;
   QPointF cloneStampSourceCanvas_;
   QPointF cloneStampStartCanvas_;
@@ -26441,6 +26442,7 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
     }
     impl_->cloneStampStartCanvas_ = {canvasPos.x, canvasPos.y};
     impl_->cloneStampLastCanvas_ = impl_->cloneStampStartCanvas_;
+    impl_->cloneStampTargetFrame_ = paintLayer->currentFrame();
     impl_->cloneStampDragging_ = true;
     impl_->brushCursorCanvasPos_ = impl_->cloneStampStartCanvas_;
     impl_->brushLastViewportPos_ = viewportPos;
@@ -26456,7 +26458,8 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
           sourcePaintLayer,
           impl_->cloneStampSourceCanvas_, impl_->cloneStampStartCanvas_, radius,
           brushTool ? brushTool->opacity() : 1.0f,
-          brushTool ? brushTool->hardness() : 1.0f, true, sourceFrame);
+          brushTool ? brushTool->hardness() : 1.0f, true, sourceFrame,
+          FramePosition(impl_->cloneStampTargetFrame_), false);
     }
     impl_->invalidateBaseComposite();
     impl_->invalidateOverlayComposite();
@@ -29378,7 +29381,8 @@ void CompositionRenderController::handleMouseMove(
               sourcePaintLayer, source, destination,
               brushTool ? brushTool->radius() : 20.0f,
               brushTool ? brushTool->opacity() : 1.0f,
-              brushTool ? brushTool->hardness() : 1.0f, false, sourceFrame);
+              brushTool ? brushTool->hardness() : 1.0f, false, sourceFrame,
+              FramePosition(impl_->cloneStampTargetFrame_), false);
         }
         impl_->cloneStampLastCanvas_ = destination;
         impl_->invalidateBaseComposite();
@@ -31721,7 +31725,16 @@ void CompositionRenderController::handleMouseRelease() {
   const auto activeTool =
       toolManager ? toolManager->activeTool() : ToolType::Selection;
   if (activeTool == ToolType::Clone && impl_->cloneStampDragging_) {
+    const auto comp = impl_->previewPipeline_.composition();
+    const auto layer = comp ? comp->layerById(impl_->selectedLayerId_)
+                            : ArtifactAbstractLayerPtr{};
+    if (auto *paintLayer = layer
+            ? dynamic_cast<ArtifactPaintLayer *>(layer.get())
+            : nullptr) {
+      paintLayer->finalizeUndoStroke(FramePosition(impl_->cloneStampTargetFrame_));
+    }
     impl_->cloneStampDragging_ = false;
+    impl_->cloneStampTargetFrame_ = -1;
     impl_->brushCursorVisible_ = false;
     impl_->invalidateOverlayComposite();
     markRenderDirty();
@@ -36111,7 +36124,23 @@ bool CompositionRenderController::cancelCloneStamp() {
                  !impl_->cloneStampDragging_)) {
     return false;
   }
+  bool paintWasCanceled = false;
+  if (impl_->cloneStampDragging_ && impl_->cloneStampTargetFrame_ >= 0) {
+    const auto comp = impl_->previewPipeline_.composition();
+    const auto layer = comp ? comp->layerById(impl_->selectedLayerId_)
+                            : ArtifactAbstractLayerPtr{};
+    if (auto *paintLayer = layer
+            ? dynamic_cast<ArtifactPaintLayer *>(layer.get())
+            : nullptr) {
+      paintWasCanceled = paintLayer->cancelActiveUndoStroke(
+          FramePosition(impl_->cloneStampTargetFrame_));
+      if (paintWasCanceled) {
+        impl_->publishLayerModified(layer);
+      }
+    }
+  }
   impl_->cloneStampDragging_ = false;
+  impl_->cloneStampTargetFrame_ = -1;
   impl_->cloneStampSourceSet_ = false;
   impl_->cloneStampSourceLayer_.reset();
   impl_->cloneStampSourceCanvas_ = {};
@@ -36119,6 +36148,9 @@ bool CompositionRenderController::cancelCloneStamp() {
   impl_->cloneStampLastCanvas_ = {};
   impl_->brushCursorVisible_ = false;
   impl_->invalidateOverlayComposite();
+  if (paintWasCanceled) {
+    impl_->invalidateBaseComposite();
+  }
   markRenderDirty();
   return true;
 }
