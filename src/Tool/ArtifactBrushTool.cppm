@@ -15,10 +15,27 @@ constexpr float kRadiansToDegrees = 57.29577951308232f;
 bool isFinitePoint(const QPointF& point) {
     return std::isfinite(point.x()) && std::isfinite(point.y());
 }
+
+void compactStrokePoints(std::vector<QPointF>& points) {
+    if (points.size() < 4096) return;
+    const QPointF lastPoint = points.back();
+    std::size_t outputIndex = 0;
+    for (std::size_t inputIndex = 0; inputIndex < points.size(); inputIndex += 2) {
+        points[outputIndex++] = points[inputIndex];
+    }
+    if (outputIndex == 0 || points[outputIndex - 1] != lastPoint) {
+        points[outputIndex++] = lastPoint;
+    }
+    points.resize(outputIndex);
+}
 }
 
 ArtifactBrushTool::ArtifactBrushTool(QObject* parent)
-    : QObject(parent) {}
+    : QObject(parent) {
+    previewStrokePoints_.reserve(4096);
+    lastStrokePoints_.reserve(4096);
+    activeStrokePoints_.reserve(4096);
+}
 ArtifactBrushTool::~ArtifactBrushTool() = default;
 
 bool ArtifactBrushTool::mousePressEvent(
@@ -32,6 +49,7 @@ bool ArtifactBrushTool::mousePressEvent(
     currentStrokeFrame_ = paintLayer
         ? paintLayer->paintFramePosition() : FramePosition(-1);
     currentStroke_ = BrushStroke{};
+    currentStroke_.points.reserve(5);
     previewStrokePoints_.clear();
     activeStrokePoints_.clear();
     if (currentStroke_.points.empty() ||
@@ -86,6 +104,7 @@ bool ArtifactBrushTool::mouseMoveEvent(
         return true;
     }
     currentStroke_.points.push_back(canvasPos);
+    compactStrokePoints(activeStrokePoints_);
     activeStrokePoints_.push_back(canvasPos);
     currentStroke_.radius = radius_ *
         (pressureAffectsSize_ ? pressure_ : 1.0f);
@@ -108,18 +127,8 @@ bool ArtifactBrushTool::mouseMoveEvent(
     currentStroke_.angleJitter = angleJitter_;
     currentStroke_.roundnessJitter = roundnessJitter_;
     currentStroke_.flowJitter = flowJitter_;
+    compactStrokePoints(previewStrokePoints_);
     previewStrokePoints_.push_back(canvasPos);
-    if (previewStrokePoints_.size() > 4096) {
-        std::vector<QPointF> compacted;
-        compacted.reserve(2049);
-        for (size_t i = 0; i < previewStrokePoints_.size(); i += 2) {
-            compacted.push_back(previewStrokePoints_[i]);
-        }
-        if (compacted.back() != previewStrokePoints_.back()) {
-            compacted.push_back(previewStrokePoints_.back());
-        }
-        previewStrokePoints_.swap(compacted);
-    }
     // リアルタイム適用（点が溜まりすぎる前に逐次適用）
     if (currentStroke_.points.size() >= 5) {
         currentStroke_.recordUndo = !undoRecorded_;
@@ -176,7 +185,9 @@ bool ArtifactBrushTool::mouseReleaseEvent(
             QLineF(currentStroke_.points.back(), canvasPos).length() >=
             std::max(0.5f, radius_ * spacing_)) {
             currentStroke_.points.push_back(canvasPos);
+            compactStrokePoints(previewStrokePoints_);
             previewStrokePoints_.push_back(canvasPos);
+            compactStrokePoints(activeStrokePoints_);
             activeStrokePoints_.push_back(canvasPos);
         }
         currentStroke_.recordUndo = !undoRecorded_;

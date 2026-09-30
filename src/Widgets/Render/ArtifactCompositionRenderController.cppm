@@ -13251,6 +13251,18 @@ public:
 
   LayerID paintStrokeLayerId_;
 
+  std::vector<Detail::float2> brushCursorOutlineScratch_ = [] {
+    std::vector<Detail::float2> points;
+    points.reserve(33);
+    return points;
+  }();
+
+  std::vector<Detail::float2> brushStrokePreviewScratch_ = [] {
+    std::vector<Detail::float2> points;
+    points.reserve(4096);
+    return points;
+  }();
+
   bool brushCursorVisible_ = false;
 
   bool cloneStampSourceSet_ = false;
@@ -48222,8 +48234,13 @@ void CompositionRenderController::Impl::drawViewportInteractionOverlay(
                                 ? ArtifactApplicationManager::instance()->brushTool()
                                 : nullptr;
     const auto previewComposition = previewPipeline_.composition();
+    const LayerID previewPaintLayerId =
+        !cloneStampTargetLayerId_.isNil()
+            ? cloneStampTargetLayerId_
+            : (!paintStrokeLayerId_.isNil() ? paintStrokeLayerId_
+                                             : selectedLayerId_);
     const auto previewLayer = previewComposition
-        ? previewComposition->layerById(selectedLayerId_)
+        ? previewComposition->layerById(previewPaintLayerId)
         : ArtifactAbstractLayerPtr{};
     const auto *paintLayer = previewLayer
         ? dynamic_cast<const ArtifactPaintLayer*>(previewLayer.get()) : nullptr;
@@ -48291,8 +48308,8 @@ void CompositionRenderController::Impl::drawViewportInteractionOverlay(
          tiltAngle);
     const float cosAngle = std::cos(angle);
     const float sinAngle = std::sin(angle);
-    std::vector<Detail::float2> outline;
-    outline.reserve(33);
+    auto &outline = brushCursorOutlineScratch_;
+    outline.clear();
     for (int i = 0; i <= 32; ++i) {
       const float theta = 6.283185307179586f * static_cast<float>(i) / 32.0f;
       if (hasPaintSurfaceTransform && paintSurfaceInvertible) {
@@ -48384,8 +48401,8 @@ void CompositionRenderController::Impl::drawViewportInteractionOverlay(
 
     if (brushTool && brushTool->isDragging() &&
         brushTool->currentStrokePoints().size() >= 2) {
-      std::vector<Detail::float2> strokePreview;
-      strokePreview.reserve(brushTool->currentStrokePoints().size());
+      auto &strokePreview = brushStrokePreviewScratch_;
+      strokePreview.clear();
       for (const QPointF &point : brushTool->currentStrokePoints()) {
         const QPointF canvasPoint = hasPaintSurfaceTransform
             ? paintSurfaceTransform.map(point) : point;
