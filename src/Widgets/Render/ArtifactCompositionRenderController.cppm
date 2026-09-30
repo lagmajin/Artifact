@@ -26498,9 +26498,24 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
               ? QSize(targetSourceSize.width, targetSourceSize.height)
               : QSize(static_cast<int>(std::ceil(targetBounds.width())),
                       static_cast<int>(std::ceil(targetBounds.height())));
-          paintLayer->setSurfaceSize(QSize(
+          const QSize boundedTargetSize(
               std::clamp(targetSize.width(), 1, 16384),
-              std::clamp(targetSize.height(), 1, 16384)));
+              std::clamp(targetSize.height(), 1, 16384));
+          constexpr quint64 kMaxPaintFrameBytes = 512ull * 1024ull * 1024ull;
+          constexpr quint64 kBytesPerPaintPixel = 4ull * sizeof(float);
+          const quint64 paintFrameBytes =
+              static_cast<quint64>(boundedTargetSize.width()) *
+              static_cast<quint64>(boundedTargetSize.height()) *
+              kBytesPerPaintPixel;
+          if (paintFrameBytes > kMaxPaintFrameBytes) {
+            setInfoOverlayText(
+                activeTool == ToolType::Eraser ? QStringLiteral("Eraser")
+                                               : QStringLiteral("Brush"),
+                QStringLiteral("Layer exceeds the 512 MiB paint-frame limit"));
+            event->accept();
+            return;
+          }
+          paintLayer->setSurfaceSize(boundedTargetSize);
           paintLayer->setTargetLayerId(targetLayer->id());
           paintLayer->changed();
           impl_->publishLayerModified(selectedLayer, true);
