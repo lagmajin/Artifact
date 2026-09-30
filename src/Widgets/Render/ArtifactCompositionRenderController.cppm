@@ -26508,6 +26508,17 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
         event->accept();
         return;
       }
+      if (const auto *imageLayer =
+              dynamic_cast<const ArtifactImageLayer *>(targetLayer.get());
+          imageLayer && imageLayer->isImageSequence() &&
+          imageLayer->sequenceCachedFrameIndex() < 0) {
+        setInfoOverlayText(
+            activeTool == ToolType::Eraser ? QStringLiteral("Eraser")
+                                           : QStringLiteral("Brush"),
+            QStringLiteral("Wait for the Image sequence frame to load"));
+        event->accept();
+        return;
+      }
       const QRectF targetBounds = targetLayer->localBounds();
       const auto targetSourceSize = targetLayer->sourceSize();
       const QSize targetSize = targetSourceSize.width > 0 &&

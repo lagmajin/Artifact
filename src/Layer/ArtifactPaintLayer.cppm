@@ -237,22 +237,23 @@ bool ArtifactPaintLayer::hasTargetLayer() const {
 }
 
 FramePosition ArtifactPaintLayer::paintFramePosition() const {
-    if (impl_->composition_ && !impl_->targetLayerId_.isNil()) {
+    if (!impl_->targetLayerId_.isNil()) {
+        if (!impl_->composition_) return FramePosition(-1);
         const auto target = impl_->composition_->layerById(impl_->targetLayerId_);
-        if (target) {
-            if (const auto* videoLayer =
-                    dynamic_cast<const ArtifactVideoLayer*>(target.get())) {
-                return FramePosition(videoLayer->currentSourceFrameValue());
-            }
-            if (const auto* imageLayer =
-                    dynamic_cast<const ArtifactImageLayer*>(target.get());
-                imageLayer && imageLayer->isImageSequence()) {
-                const qint64 sequenceFrame =
-                    imageLayer->sequenceCachedFrameIndex();
-                if (sequenceFrame >= 0) return FramePosition(sequenceFrame);
-            }
-            return FramePosition(target->currentFrame());
+        if (!target) return FramePosition(-1);
+        if (const auto* videoLayer =
+                dynamic_cast<const ArtifactVideoLayer*>(target.get())) {
+            return FramePosition(videoLayer->currentSourceFrameValue());
         }
+        if (const auto* imageLayer =
+                dynamic_cast<const ArtifactImageLayer*>(target.get());
+            imageLayer && imageLayer->isImageSequence()) {
+            const qint64 sequenceFrame =
+                imageLayer->sequenceCachedFrameIndex();
+            if (sequenceFrame >= 0) return FramePosition(sequenceFrame);
+            return FramePosition(-1);
+        }
+        return FramePosition(target->currentFrame());
     }
     return FramePosition(currentFrame());
 }
@@ -262,7 +263,11 @@ ArtifactPaintSurfaceLayout ArtifactPaintLayer::paintSurfaceLayout() const {
     layout.transform = getGlobalTransform();
     layout.drawRect = QRectF(0.0, 0.0, impl_->defaultSize_.width(),
                              impl_->defaultSize_.height());
-    if (!impl_->composition_ || impl_->targetLayerId_.isNil()) return layout;
+    if (impl_->targetLayerId_.isNil()) return layout;
+    if (!impl_->composition_) {
+        layout.targetVisible = false;
+        return layout;
+    }
 
     const auto target = impl_->composition_->layerById(impl_->targetLayerId_);
     if (!target) {
@@ -340,7 +345,9 @@ void ArtifactPaintLayer::draw(ArtifactIRenderer* renderer) {
 void ArtifactPaintLayer::drawFrameOverlay(
     ArtifactIRenderer* renderer, const FramePosition& frame,
     const float opacityMultiplier) {
-    if (!renderer) return;
+    if (!renderer || frame.framePosition() < 0) return;
+    const ArtifactPaintSurfaceLayout surface = paintSurfaceLayout();
+    if (!surface.targetVisible) return;
     auto* buf = frameBuffer(frame);
     if (!buf || buf->isEmpty()) return;
     const auto revision = impl_->frameVersions_.find(frame.framePosition());
@@ -352,8 +359,6 @@ void ArtifactPaintLayer::drawFrameOverlay(
     auto* texture = renderer->textureForImage(
         *buf, impl_->textureIdentity_, sourceVersion, frame.framePosition());
     if (!texture) return;
-    const ArtifactPaintSurfaceLayout surface = paintSurfaceLayout();
-    if (!surface.targetVisible) return;
     const QTransform surfaceTransform = surface.transform;
     const QRectF drawRect = surface.drawRect;
     const QRectF uvRect = surface.uvRect;
@@ -426,6 +431,12 @@ void ArtifactPaintLayer::applyStroke(const BrushStroke& stroke) {
 }
 
 void ArtifactPaintLayer::applyStrokeAtFrame(const BrushStroke& stroke, const FramePosition& frame) {
+    if (frame.framePosition() < 0 ||
+        (!impl_->targetLayerId_.isNil() &&
+         (!impl_->composition_ ||
+          !impl_->composition_->layerById(impl_->targetLayerId_)))) {
+        return;
+    }
     if (!std::isfinite(stroke.radius) || !std::isfinite(stroke.opacity) ||
         !std::isfinite(stroke.hardness) || !std::isfinite(stroke.flow) ||
         !std::isfinite(stroke.angle) || !std::isfinite(stroke.roundness) ||
@@ -589,6 +600,7 @@ void ArtifactPaintLayer::undoLastStroke() {
         return;
     }
     const FramePosition frame = paintFramePosition();
+    if (frame.framePosition() < 0) return;
     if (!impl_->restoreUndoStroke(frame.framePosition())) return;
     markDirty(frame);
     changed();
@@ -613,6 +625,10 @@ void ArtifactPaintLayer::applyCloneStampFromLayerAtFrame(
         ? sourceFrame
         : (sourceLayer ? sourceLayer->paintFramePosition()
                        : paintFramePosition());
+    if (targetFrame.framePosition() < 0 ||
+        resolvedSourceFrame.framePosition() < 0) {
+        return;
+    }
     auto& buffer = impl_->getOrCreateFrame(targetFrame.framePosition());
     auto& image = buffer.image();
     const int width = image.width();
@@ -742,6 +758,7 @@ bool ArtifactPaintLayer::cancelActiveUndoStroke(const FramePosition& frame) {
 
 bool ArtifactPaintLayer::canUndo() const {
     const FramePosition frame = paintFramePosition();
+    if (frame.framePosition() < 0) return false;
     auto it = impl_->undoStacks_.find(frame.framePosition());
     return it != impl_->undoStacks_.end() && !it->second.isEmpty();
 }

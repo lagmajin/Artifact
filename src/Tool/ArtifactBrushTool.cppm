@@ -43,6 +43,9 @@ bool ArtifactBrushTool::mousePressEvent(
 {
     auto* paintLayer = dynamic_cast<ArtifactPaintLayer*>(layer.get());
     if ((!paintLayer && !rotoInputMode_) || !isFinitePoint(canvasPos)) return false;
+    if (paintLayer && paintLayer->paintFramePosition().framePosition() < 0) {
+        return false;
+    }
 
     dragging_ = true;
     undoRecorded_ = false;
