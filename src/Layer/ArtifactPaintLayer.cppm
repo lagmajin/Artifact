@@ -334,7 +334,13 @@ QTransform ArtifactPaintLayer::paintSurfaceTransform() const {
 }
 
 void ArtifactPaintLayer::draw(ArtifactIRenderer* renderer) {
-    const FramePosition frame = paintFramePosition();
+    drawFrameOverlay(renderer, paintFramePosition(), opacity());
+}
+
+void ArtifactPaintLayer::drawFrameOverlay(
+    ArtifactIRenderer* renderer, const FramePosition& frame,
+    const float opacityMultiplier) {
+    if (!renderer) return;
     auto* buf = frameBuffer(frame);
     if (!buf || buf->isEmpty()) return;
     const auto revision = impl_->frameVersions_.find(frame.framePosition());
@@ -367,7 +373,7 @@ void ArtifactPaintLayer::draw(ArtifactIRenderer* renderer) {
         static_cast<float>(drawRect.y()),
         static_cast<float>(drawRect.width()),
         static_cast<float>(drawRect.height()), transform,
-        texture, opacity() * surface.targetOpacity, uvRect);
+        texture, opacityMultiplier * surface.targetOpacity, uvRect);
 }
 
 void ArtifactPaintLayer::newFrame(const FramePosition& pos) {

@@ -66,6 +66,8 @@ public:
     void setComposition(QObject* comp) override;
     void setComposition(void* comp) override;
     void draw(ArtifactIRenderer* renderer) override;
+    void drawFrameOverlay(ArtifactIRenderer* renderer,
+                          const FramePosition& frame, float opacityMultiplier);
     bool isPaintLayer() const { return true; }
     QRectF localBounds() const override;
 

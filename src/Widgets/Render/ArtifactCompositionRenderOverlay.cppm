@@ -2522,22 +2522,12 @@ void drawPaintLayerOnionSkinOverlay(ArtifactIRenderer *renderer,
 
     const float alpha = std::clamp(opacityPercent / 100.0f, 0.05f, 0.8f);
     const FramePosition currentFrame = paint->paintFramePosition();
-    auto bounds = paintLayer->localBounds();
 
     for (int i = -frameCount; i <= frameCount; ++i) {
         if (i == 0) continue;
         FramePosition f(std::max<int64_t>(0, currentFrame.framePosition() + i));
-        auto* buf = paint->frameBuffer(f);
-        if (!buf || buf->isEmpty()) continue;
-
         float fade = 1.0f - static_cast<float>(std::abs(i)) / (frameCount + 1);
-        const QImage frameImage = buf->toQImage();
-        renderer->drawSprite(
-            static_cast<float>(bounds.x()),
-            static_cast<float>(bounds.y()),
-            static_cast<float>(bounds.width()),
-            static_cast<float>(bounds.height()),
-            frameImage, alpha * fade);
+        paint->drawFrameOverlay(renderer, f, alpha * fade);
     }
 }
 } // namespace Artifact
