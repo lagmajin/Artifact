@@ -157,6 +157,7 @@ public:
         }
         history->second.back().patches.append(std::move(patch));
     }
+
 };
 
 ArtifactPaintLayer::ArtifactPaintLayer() : impl_(new Impl()) {
@@ -598,6 +599,11 @@ void ArtifactPaintLayer::applyCloneStampFromLayerAtFrame(
     const float* sourceData = sourceImage.rgba32fData();
     const int sourceLeft = static_cast<int>(std::floor(sourcePos.x() - radius));
     const int sourceTop = static_cast<int>(std::floor(sourcePos.y() - radius));
+    if (recordUndo) {
+        impl_->appendUndoPatch(targetFrame.framePosition(), image,
+            QRect(patchLeft, patchTop, std::max(0, patchRight - patchLeft),
+                  std::max(0, patchBottom - patchTop)));
+    }
     for (int y = 0; y < diameter; ++y) {
         for (int x = 0; x < diameter; ++x) {
             const int sx = std::clamp(sourceLeft + x, 0, sourceWidth - 1);
