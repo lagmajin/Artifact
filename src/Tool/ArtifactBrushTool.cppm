@@ -29,6 +29,8 @@ bool ArtifactBrushTool::mousePressEvent(
 
     dragging_ = true;
     undoRecorded_ = false;
+    currentStrokeFrame_ = paintLayer
+        ? paintLayer->paintFramePosition() : FramePosition(-1);
     currentStroke_ = BrushStroke{};
     previewStrokePoints_.clear();
     activeStrokePoints_.clear();
@@ -122,7 +124,13 @@ bool ArtifactBrushTool::mouseMoveEvent(
     if (currentStroke_.points.size() >= 5) {
         currentStroke_.recordUndo = !undoRecorded_;
         currentStroke_.finalizeUndo = false;
-        if (paintLayer) paintLayer->applyStroke(currentStroke_);
+        if (paintLayer) {
+            if (currentStrokeFrame_.framePosition() >= 0) {
+                paintLayer->applyStrokeAtFrame(currentStroke_, currentStrokeFrame_);
+            } else {
+                paintLayer->applyStroke(currentStroke_);
+            }
+        }
         undoRecorded_ = true;
         currentStroke_.points.clear();
         currentStroke_.points.push_back(canvasPos);
@@ -173,12 +181,19 @@ bool ArtifactBrushTool::mouseReleaseEvent(
         }
         currentStroke_.recordUndo = !undoRecorded_;
         currentStroke_.finalizeUndo = true;
-        if (paintLayer) paintLayer->applyStroke(currentStroke_);
+        if (paintLayer) {
+            if (currentStrokeFrame_.framePosition() >= 0) {
+                paintLayer->applyStrokeAtFrame(currentStroke_, currentStrokeFrame_);
+            } else {
+                paintLayer->applyStroke(currentStroke_);
+            }
+        }
         lastStrokePoints_ = activeStrokePoints_;
     }
     currentStroke_.points.clear();
     activeStrokePoints_.clear();
     previewStrokePoints_.clear();
+    currentStrokeFrame_ = FramePosition(-1);
     return true;
 }
 
@@ -186,7 +201,9 @@ void ArtifactBrushTool::cancelStroke(const ArtifactAbstractLayerPtr& layer)
 {
     if (undoRecorded_) {
         if (auto *paintLayer = dynamic_cast<ArtifactPaintLayer*>(layer.get())) {
-            paintLayer->undoLastStroke();
+            if (currentStrokeFrame_.framePosition() >= 0) {
+                paintLayer->cancelActiveUndoStroke(currentStrokeFrame_);
+            }
         }
     }
     dragging_ = false;
@@ -194,6 +211,7 @@ void ArtifactBrushTool::cancelStroke(const ArtifactAbstractLayerPtr& layer)
     currentStroke_.points.clear();
     activeStrokePoints_.clear();
     previewStrokePoints_.clear();
+    currentStrokeFrame_ = FramePosition(-1);
 }
 
 } // namespace Artifact

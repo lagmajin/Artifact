@@ -11,6 +11,7 @@ export module Artifact.Tool.Brush;
 
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Paint;
+import Frame.Position;
 import FloatRGBA;
 
 export namespace Artifact {
@@ -144,6 +145,7 @@ private:
     int cloneTimeOffset_ = 0;
     bool dragging_ = false;
     bool undoRecorded_ = false;
+    FramePosition currentStrokeFrame_{-1};
     BrushStroke currentStroke_;
     std::vector<QPointF> previewStrokePoints_;
     std::vector<QPointF> lastStrokePoints_;

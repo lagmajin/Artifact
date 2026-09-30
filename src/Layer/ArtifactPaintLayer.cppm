@@ -21,6 +21,7 @@ module Artifact.Layer.Paint;
 
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Image;
+import Artifact.Layer.Video;
 import Artifact.Layers.SolidImage;
 import Artifact.Render.IRenderer;
 import Image.ImageF32x4RGBAWithCache;
@@ -235,6 +236,27 @@ bool ArtifactPaintLayer::hasTargetLayer() const {
     return !impl_->targetLayerId_.isNil();
 }
 
+FramePosition ArtifactPaintLayer::paintFramePosition() const {
+    if (impl_->composition_ && !impl_->targetLayerId_.isNil()) {
+        const auto target = impl_->composition_->layerById(impl_->targetLayerId_);
+        if (target) {
+            if (const auto* videoLayer =
+                    dynamic_cast<const ArtifactVideoLayer*>(target.get())) {
+                return FramePosition(videoLayer->currentSourceFrameValue());
+            }
+            if (const auto* imageLayer =
+                    dynamic_cast<const ArtifactImageLayer*>(target.get());
+                imageLayer && imageLayer->isImageSequence()) {
+                const qint64 sequenceFrame =
+                    imageLayer->sequenceCachedFrameIndex();
+                if (sequenceFrame >= 0) return FramePosition(sequenceFrame);
+            }
+            return FramePosition(target->currentFrame());
+        }
+    }
+    return FramePosition(currentFrame());
+}
+
 ArtifactPaintSurfaceLayout ArtifactPaintLayer::paintSurfaceLayout() const {
     ArtifactPaintSurfaceLayout layout;
     layout.transform = getGlobalTransform();
@@ -312,7 +334,7 @@ QTransform ArtifactPaintLayer::paintSurfaceTransform() const {
 }
 
 void ArtifactPaintLayer::draw(ArtifactIRenderer* renderer) {
-    FramePosition frame(currentFrame());
+    const FramePosition frame = paintFramePosition();
     auto* buf = frameBuffer(frame);
     if (!buf || buf->isEmpty()) return;
     const auto revision = impl_->frameVersions_.find(frame.framePosition());
@@ -389,12 +411,12 @@ void ArtifactPaintLayer::clearAllFrames() {
     }
     impl_->frames_.clear();
     impl_->undoStacks_.clear();
-    markDirty(FramePosition(currentFrame()));
+    markDirty(paintFramePosition());
     changed();
 }
 
 void ArtifactPaintLayer::applyStroke(const BrushStroke& stroke) {
-    applyStrokeAtFrame(stroke, FramePosition(currentFrame()));
+    applyStrokeAtFrame(stroke, paintFramePosition());
 }
 
 void ArtifactPaintLayer::applyStrokeAtFrame(const BrushStroke& stroke, const FramePosition& frame) {
@@ -556,11 +578,11 @@ void ArtifactPaintLayer::undoLastStroke() {
     if (!impl_->clearUndoFrames_.empty()) {
         impl_->frames_ = std::move(impl_->clearUndoFrames_);
         impl_->clearUndoFrames_.clear();
-        markDirty(FramePosition(currentFrame()));
+        markDirty(paintFramePosition());
         changed();
         return;
     }
-    FramePosition frame(currentFrame());
+    const FramePosition frame = paintFramePosition();
     if (!impl_->restoreUndoStroke(frame.framePosition())) return;
     markDirty(frame);
     changed();
@@ -580,10 +602,11 @@ void ArtifactPaintLayer::applyCloneStampFromLayerAtFrame(
     const FramePosition& targetFrameInput, bool finalizeUndo) {
     const FramePosition targetFrame = targetFrameInput.framePosition() >= 0
         ? targetFrameInput
-        : FramePosition(currentFrame());
+        : paintFramePosition();
     const FramePosition resolvedSourceFrame = sourceFrame.framePosition() >= 0
         ? sourceFrame
-        : FramePosition(sourceLayer ? sourceLayer->currentFrame() : currentFrame());
+        : (sourceLayer ? sourceLayer->paintFramePosition()
+                       : paintFramePosition());
     auto& buffer = impl_->getOrCreateFrame(targetFrame.framePosition());
     auto& image = buffer.image();
     const int width = image.width();
@@ -712,7 +735,7 @@ bool ArtifactPaintLayer::cancelActiveUndoStroke(const FramePosition& frame) {
 }
 
 bool ArtifactPaintLayer::canUndo() const {
-    FramePosition frame(currentFrame());
+    const FramePosition frame = paintFramePosition();
     auto it = impl_->undoStacks_.find(frame.framePosition());
     return it != impl_->undoStacks_.end() && !it->second.isEmpty();
 }

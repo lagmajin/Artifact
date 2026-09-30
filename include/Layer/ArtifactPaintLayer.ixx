@@ -83,6 +83,7 @@ public:
     void setTargetLayerId(const ArtifactCore::LayerID& layerId);
     const ArtifactCore::LayerID& targetLayerId() const;
     bool hasTargetLayer() const;
+    FramePosition paintFramePosition() const;
     ArtifactPaintSurfaceLayout paintSurfaceLayout() const;
     QTransform paintSurfaceTransform() const;
     void applyCloneStampAtFrame(const QPointF& sourcePos,

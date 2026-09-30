@@ -2521,7 +2521,7 @@ void drawPaintLayerOnionSkinOverlay(ArtifactIRenderer *renderer,
     if (frameCount <= 0) return;
 
     const float alpha = std::clamp(opacityPercent / 100.0f, 0.05f, 0.8f);
-    auto currentFrame = comp->framePosition();
+    const FramePosition currentFrame = paint->paintFramePosition();
     auto bounds = paintLayer->localBounds();
 
     for (int i = -frameCount; i <= frameCount; ++i) {

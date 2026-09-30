@@ -13255,7 +13255,9 @@ public:
 
   bool cloneStampSourceSet_ = false;
   bool cloneStampDragging_ = false;
+  LayerID cloneStampTargetLayerId_;
   int64_t cloneStampTargetFrame_ = -1;
+  int64_t cloneStampSourceFrame_ = -1;
   ArtifactAbstractLayerWeak cloneStampSourceLayer_;
   QPointF cloneStampSourceCanvas_;
   QPointF cloneStampStartCanvas_;
@@ -26444,7 +26446,10 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
     }
     impl_->cloneStampStartCanvas_ = {canvasPos.x, canvasPos.y};
     impl_->cloneStampLastCanvas_ = impl_->cloneStampStartCanvas_;
-    impl_->cloneStampTargetFrame_ = paintLayer->currentFrame();
+    impl_->cloneStampTargetLayerId_ = paintLayer->id();
+    impl_->cloneStampTargetFrame_ =
+        paintLayer->paintFramePosition().framePosition();
+    impl_->cloneStampSourceFrame_ = -1;
     impl_->cloneStampDragging_ = true;
     impl_->brushCursorCanvasPos_ = impl_->cloneStampStartCanvas_;
     impl_->brushLastViewportPos_ = viewportPos;
@@ -26453,9 +26458,12 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
     const float radius = brushTool ? brushTool->radius() : 20.0f;
     if (auto sourceLayer = impl_->cloneStampSourceLayer_.lock()) {
       auto *sourcePaintLayer = dynamic_cast<ArtifactPaintLayer *>(sourceLayer.get());
-      const FramePosition sourceFrame(
-          (sourcePaintLayer ? sourcePaintLayer->currentFrame() : 0) +
-          (brushTool ? brushTool->cloneTimeOffset() : 0));
+      impl_->cloneStampSourceFrame_ =
+          (sourcePaintLayer
+               ? sourcePaintLayer->paintFramePosition().framePosition()
+               : 0) +
+          (brushTool ? brushTool->cloneTimeOffset() : 0);
+      const FramePosition sourceFrame(impl_->cloneStampSourceFrame_);
       paintLayer->applyCloneStampFromLayerAtFrame(
           sourcePaintLayer,
           impl_->cloneStampSourceCanvas_, impl_->cloneStampStartCanvas_, radius,
@@ -29372,7 +29380,7 @@ void CompositionRenderController::handleMouseMove(
   if (activeTool == ToolType::Clone && impl_->cloneStampDragging_ &&
       impl_->renderer_) {
     const auto comp = impl_->previewPipeline_.composition();
-    const auto layer = comp ? comp->layerById(impl_->selectedLayerId_)
+    const auto layer = comp ? comp->layerById(impl_->cloneStampTargetLayerId_)
                             : ArtifactAbstractLayerPtr{};
     auto *paintLayer = layer ? dynamic_cast<ArtifactPaintLayer *>(layer.get()) : nullptr;
     if (paintLayer) {
@@ -29389,8 +29397,7 @@ void CompositionRenderController::handleMouseMove(
           auto *sourcePaintLayer =
               dynamic_cast<ArtifactPaintLayer *>(sourceLayer.get());
           const FramePosition sourceFrame(
-              (sourcePaintLayer ? sourcePaintLayer->currentFrame() : 0) +
-              (brushTool ? brushTool->cloneTimeOffset() : 0));
+              impl_->cloneStampSourceFrame_);
           paintLayer->applyCloneStampFromLayerAtFrame(
               sourcePaintLayer, source, destination,
               brushTool ? brushTool->radius() : 20.0f,
@@ -31742,7 +31749,7 @@ void CompositionRenderController::handleMouseRelease() {
       toolManager ? toolManager->activeTool() : ToolType::Selection;
   if (activeTool == ToolType::Clone && impl_->cloneStampDragging_) {
     const auto comp = impl_->previewPipeline_.composition();
-    const auto layer = comp ? comp->layerById(impl_->selectedLayerId_)
+    const auto layer = comp ? comp->layerById(impl_->cloneStampTargetLayerId_)
                             : ArtifactAbstractLayerPtr{};
     if (auto *paintLayer = layer
             ? dynamic_cast<ArtifactPaintLayer *>(layer.get())
@@ -31750,7 +31757,9 @@ void CompositionRenderController::handleMouseRelease() {
       paintLayer->finalizeUndoStroke(FramePosition(impl_->cloneStampTargetFrame_));
     }
     impl_->cloneStampDragging_ = false;
+    impl_->cloneStampTargetLayerId_ = LayerID::Nil();
     impl_->cloneStampTargetFrame_ = -1;
+    impl_->cloneStampSourceFrame_ = -1;
     impl_->brushCursorVisible_ = false;
     impl_->invalidateOverlayComposite();
     markRenderDirty();
@@ -36150,7 +36159,7 @@ bool CompositionRenderController::cancelCloneStamp() {
   bool paintWasCanceled = false;
   if (impl_->cloneStampDragging_ && impl_->cloneStampTargetFrame_ >= 0) {
     const auto comp = impl_->previewPipeline_.composition();
-    const auto layer = comp ? comp->layerById(impl_->selectedLayerId_)
+    const auto layer = comp ? comp->layerById(impl_->cloneStampTargetLayerId_)
                             : ArtifactAbstractLayerPtr{};
     if (auto *paintLayer = layer
             ? dynamic_cast<ArtifactPaintLayer *>(layer.get())
@@ -36163,7 +36172,9 @@ bool CompositionRenderController::cancelCloneStamp() {
     }
   }
   impl_->cloneStampDragging_ = false;
+  impl_->cloneStampTargetLayerId_ = LayerID::Nil();
   impl_->cloneStampTargetFrame_ = -1;
+  impl_->cloneStampSourceFrame_ = -1;
   impl_->cloneStampSourceSet_ = false;
   impl_->cloneStampSourceLayer_.reset();
   impl_->cloneStampSourceCanvas_ = {};
