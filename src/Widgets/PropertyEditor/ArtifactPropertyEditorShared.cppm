@@ -449,7 +449,9 @@ bool isPathProperty(const ArtifactCore::AbstractProperty &property) {
     return false;
   }
   const QString name = property.getName();
-  return name.compare(QStringLiteral("video.sourcePath"),
+  return name == QStringLiteral("reveal.timingPath") ||
+         name == QStringLiteral("reveal.supportPath") ||
+         name.compare(QStringLiteral("video.sourcePath"),
                       Qt::CaseInsensitive) == 0 ||
          name.compare(QStringLiteral("model.sourcePath"),
                       Qt::CaseInsensitive) == 0 ||

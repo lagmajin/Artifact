@@ -80,6 +80,7 @@ private:
 public:
     ArtifactTextLayer();
     ~ArtifactTextLayer();
+  bool supportsReveal() const override { return true; }
 
     void setText(const UniString& text);
     UniString text() const;

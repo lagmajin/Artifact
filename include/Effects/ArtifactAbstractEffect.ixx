@@ -72,6 +72,7 @@ enum class GpuSpatialEffectKind : std::uint8_t {
     Generic,
     LensDistortion,
     ChromaKey,
+    Reveal,
 };
 
 enum class GpuRasterEffectDomain : std::uint8_t {

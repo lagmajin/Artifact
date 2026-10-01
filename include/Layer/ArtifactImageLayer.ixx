@@ -40,6 +40,7 @@ struct SourceCropDrawLayout {
  public:
   ArtifactImageLayer();
   ~ArtifactImageLayer();
+  bool supportsReveal() const override { return true; }
   QImage toQImage() const;
   QImage getThumbnail(int width = 128, int height = 128) const override;
   const ArtifactCore::ImageF32x4_RGBA& currentFrameBuffer() const;
