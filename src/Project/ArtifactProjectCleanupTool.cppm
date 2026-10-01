@@ -16,6 +16,8 @@ import Artifact.Project;
 import Artifact.Project.Items;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Composition;
+import Artifact.Layer.Video;
 import Property.Abstract;
 import Property.Group;
 import Artifact.Project.Statistics;
@@ -151,6 +153,76 @@ int ArtifactProjectCleanupTool::removeUnusedAssets(ArtifactProject* project) {
 
     qDebug() << "ArtifactProjectCleanupTool::removeUnusedAssets removed" << removed << "items";
     return removed;
+}
+
+int projectItemUsageCount(ArtifactProject* project, const ProjectItem* item) {
+    if (!project || !item) {
+        return 0;
+    }
+
+    const auto normalizePath = [](const QString& path) {
+        return QDir::cleanPath(path.trimmed());
+    };
+    const auto matchesFootagePath = [&](const FootageItem* footage,
+                                        const QString& candidatePath) {
+        if (!footage) {
+            return false;
+        }
+        const QString normalizedCandidate = normalizePath(candidatePath);
+        if (normalizedCandidate.isEmpty()) {
+            return false;
+        }
+        if (normalizedCandidate == normalizePath(footage->filePath)) {
+            return true;
+        }
+        for (const QString& sequencePath : footage->sequencePaths) {
+            if (normalizedCandidate == normalizePath(sequencePath)) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    int usageCount = 0;
+    std::function<void(const ProjectItem*)> walkItems;
+    walkItems = [&](const ProjectItem* current) {
+        if (!current) {
+            return;
+        }
+        if (current->type() == eProjectItemType::Composition) {
+            const auto* compositionItem = static_cast<const CompositionItem*>(current);
+            const auto found = project->findComposition(compositionItem->compositionId);
+            auto composition = found.ptr.lock();
+            if (composition) {
+                for (const auto& layer : composition->allLayerRef()) {
+                    if (!layer) {
+                        continue;
+                    }
+                    if (item->type() == eProjectItemType::Composition) {
+                        auto* compositionLayer = dynamic_cast<ArtifactCompositionLayer*>(layer.get());
+                        if (compositionLayer && compositionLayer->sourceCompositionId() ==
+                            static_cast<const CompositionItem*>(item)->compositionId) {
+                            ++usageCount;
+                        }
+                    } else if (item->type() == eProjectItemType::Footage) {
+                        auto* footageLayer = dynamic_cast<ArtifactVideoLayer*>(layer.get());
+                        if (footageLayer && matchesFootagePath(
+                                static_cast<const FootageItem*>(item), footageLayer->sourceFile())) {
+                            ++usageCount;
+                        }
+                    }
+                }
+            }
+        }
+        for (const auto* child : current->children) {
+            walkItems(child);
+        }
+    };
+
+    for (const auto* root : project->projectItems()) {
+        walkItems(root);
+    }
+    return usageCount;
 }
 
 } // namespace Artifact

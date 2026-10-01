@@ -813,6 +813,7 @@ void ArtifactAssetBrowserToolBar::addWidget(QWidget* widget, int stretch)
   bool findAssetItemByPath(const QString& filePath, AssetMenuItem* outItem) const;
   void toggleFavoritePath(const QString& filePath);
   QStringList selectedAssetPaths() const;
+  void importAssetPaths(const QStringList& filePaths, const QString& infoPath = {});
   void syncProjectAssetRoot();
   void syncDirectorySelection();
   void refreshUnusedAssetCache();
@@ -1094,6 +1095,64 @@ QStringList ArtifactAssetBrowser::Impl::selectedAssetPaths() const
   }
   paths.removeDuplicates();
   return paths;
+}
+
+void ArtifactAssetBrowser::Impl::importAssetPaths(const QStringList& filePaths,
+                                                 const QString& infoPath)
+{
+  if (filePaths.isEmpty()) {
+   return;
+  }
+  auto* svc = ArtifactProjectService::instance();
+  if (!svc || !owner_) {
+   return;
+  }
+  QPointer<ArtifactAssetBrowser> owner(owner_);
+  svc->importAssetsFromPathsAsync(
+   filePaths, [owner, filePaths, infoPath](QStringList imported) {
+    if (!owner) {
+     return;
+    }
+    if (imported.isEmpty()) {
+     QMessageBox::warning(
+         owner, QStringLiteral("Import Failed"),
+         QStringLiteral("No requested files could be imported."));
+     return;
+    }
+    if (imported.size() < filePaths.size()) {
+     QMessageBox::warning(
+         owner, QStringLiteral("Import Incomplete"),
+         QStringLiteral("Imported %1 of %2 requested files.")
+             .arg(imported.size())
+             .arg(filePaths.size()));
+    }
+    if (auto* service = ArtifactProjectService::instance()) {
+     if (auto project = service->getCurrentProjectSharedPtr()) {
+      QStringList unrecorded;
+      for (const QString& importedPath : imported) {
+       auto* undo = UndoManager::instance();
+       if (undo) {
+        if (!undo->push(std::make_unique<AssetRegistrationCommand>(
+                project, importedPath))) {
+         project->removeAssetByPath(importedPath);
+         unrecorded.append(importedPath);
+        }
+       } else {
+        project->addAssetFromPath(importedPath);
+       }
+      }
+      if (!unrecorded.isEmpty()) {
+       QMessageBox::warning(
+           owner, QStringLiteral("Import Undo Not Recorded"),
+           QStringLiteral("%1 imported asset(s) could not be added to Undo history and were removed from the project.")
+               .arg(unrecorded.size()));
+      }
+     }
+    }
+    owner->impl_->applyFilters();
+    // Keep the info/preview pane in sync with the refreshed row status.
+    owner->updateFileInfo(infoPath.isEmpty() ? imported.first() : infoPath);
+   });
 }
 
 bool ArtifactAssetBrowser::Impl::isUnusedAssetPath(const QString& filePath) const
@@ -1920,6 +1979,9 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
    } else if (currentStatusFilter_ == QStringLiteral("unused")) {
     statusText = QStringLiteral("Unused");
    }
+   const QString scopeText = currentSearchScope_ == QStringLiteral("project")
+       ? QStringLiteral("Project Assets")
+       : QStringLiteral("Current Folder");
    QString typeText = QStringLiteral("All");
    if (currentFileTypeFilter_ == QStringLiteral("images")) typeText = QStringLiteral("Images");
    else if (currentFileTypeFilter_ == QStringLiteral("videos")) typeText = QStringLiteral("Videos");
@@ -1930,14 +1992,15 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
        ? QString()
        : QStringLiteral("  •  Search: \"%1\"").arg(searchText);
    leftHubSummaryLabel_->setText(
-       QStringLiteral("Showing: %1  •  Favorites: %2  •  Sources: %3  •  Type: %4  •  Status: %5%6")
+       QStringLiteral("Showing: %1  •  Scope: %2  •  Favorites: %3  •  Sources: %4  •  Type: %5  •  Status: %6%7")
            .arg(visibleCount)
+           .arg(scopeText)
            .arg(favoriteCount)
            .arg(sourceCount)
            .arg(typeText)
            .arg(statusText)
            .arg(searchPart));
-   leftHubSummaryLabel_->setToolTip(QStringLiteral("Status follows the current asset filter."));
+   leftHubSummaryLabel_->setToolTip(QStringLiteral("Scope selects the scanned folder; status selects which assets are listed."));
   }
   if (leftHubRecentLabel_) {
    const QVector<RecentEntry> entries = directoryModel_ ? directoryModel_->recentEntries() : QVector<RecentEntry>{};
@@ -2131,7 +2194,18 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
      const qint64 gap = seq[frameIndex].frame - seq[frameIndex - 1].frame - 1;
      if (gap > 0) missingFrameCount += gap;
     }
-    for (const auto& sf : seq) {
+    // Reading every frame header cost one synchronous open+decode-probe per
+    // frame on the UI thread, so a 1000-frame sequence paid 1000 of them on
+    // every refresh. Gaps are already detected exactly from the frame numbers
+    // above; the unreadable / size-mismatch badges now sample the first, middle
+    // and last frame instead, which is enough to catch a truncated or mixed
+    // sequence without the full scan.
+    const int frameTotal = static_cast<int>(seq.size());
+    const int sampleCount = std::min(3, frameTotal);
+    for (int sample = 0; sample < sampleCount; ++sample) {
+     const int frameIndex =
+        sampleCount == 1 ? 0 : sample * (frameTotal - 1) / (sampleCount - 1);
+     const auto& sf = seq[static_cast<size_t>(frameIndex)];
      QImageReader reader(sf.fullPath);
      if (!reader.canRead()) {
       ++unreadableFrameCount;
@@ -2174,9 +2248,7 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
     AssetStatusSummary status = assetStatusForPaths(item.path.toQString(), item.sequencePaths);
     status.missing = status.missing || missingFrameCount > 0 ||
                      unreadableFrameCount > 0 || hasSizeMismatch;
-    if ((currentSearchScope_ == QStringLiteral("missing") && !status.missing) ||
-        (currentSearchScope_ == QStringLiteral("unused") && !status.unused) ||
-        !matchesStatusFilter(status)) {
+    if (!matchesStatusFilter(status)) {
      continue;
     }
 
@@ -2186,7 +2258,8 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
      frameDetailMarkers.append(QStringLiteral("Missing Frames: %1").arg(missingFrameCount));
     }
     if (unreadableFrameCount > 0) {
-     frameDetailMarkers.append(QStringLiteral("Unreadable: %1").arg(unreadableFrameCount));
+     frameDetailMarkers.append(
+         QStringLiteral("Unreadable: %1 sampled").arg(unreadableFrameCount));
     }
     if (hasSizeMismatch) {
      frameDetailMarkers.append(QStringLiteral("Size Mismatch"));
@@ -2211,13 +2284,18 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
           QStringLiteral("  └ %1").arg(sf.name));
       frameItem.path = UniString::fromQString(sf.fullPath);
       QStringList frameMarkers;
+      // This loop only runs for an expanded sequence, and each row reports its
+      // own diagnostic, so it stays per-frame. Calling size() once instead of
+      // twice avoids re-probing the header for the mismatch comparison.
       QImageReader frameReader(sf.fullPath);
       if (!frameReader.canRead()) {
        frameMarkers.append(QStringLiteral("Unreadable"));
-      } else if (sequenceFrameSize.isValid() &&
-                 frameReader.size().isValid() &&
-                 frameReader.size() != sequenceFrameSize) {
-       frameMarkers.append(QStringLiteral("Size Mismatch"));
+      } else {
+       const QSize frameSize = frameReader.size();
+       if (sequenceFrameSize.isValid() && frameSize.isValid() &&
+           frameSize != sequenceFrameSize) {
+        frameMarkers.append(QStringLiteral("Size Mismatch"));
+       }
       }
       if (isMissingAssetPath(sf.fullPath)) {
        frameMarkers.append(QStringLiteral("Missing"));
@@ -2279,6 +2357,28 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
     }
    }
 
+   // Stat every surviving row exactly once. The sort comparator used to build
+   // a QFileInfo per comparison, which turned one refresh into O(n log n)
+   // synchronous stat calls; the model already carries both fields. A sequence
+   // row is represented by its first frame, matching its item.path, and its
+   // expanded frame rows inherit that row's values instead of stat-ing again.
+   for (int index = 0; index < items.size(); ++index) {
+    AssetMenuItem& item = items[index];
+    if (item.isFolder) {
+     continue;
+    }
+    if (item.isSequenceFrame) {
+     if (index > 0 && items[index - 1].path.toQString() == item.sequenceParentPath) {
+      item.fileSizeBytes = items[index - 1].fileSizeBytes;
+      item.lastModified = items[index - 1].lastModified;
+     }
+     continue;
+    }
+    const QFileInfo info(item.path.toQString());
+    item.fileSizeBytes = info.size();
+    item.lastModified = info.lastModified();
+   }
+
    // Source use count is project state, so decorate the browser metadata only
    // after the filesystem scan has completed. This keeps the parallel scan
    // focused on filesystem/project filtering and avoids adding row widgets.
@@ -2328,17 +2428,15 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
      int result = compareNaturalName();
      return sortAscending_ ? result < 0 : result > 0;
     } else if (currentSortBy_ == "date_name") {
-     QFileInfo infoA(a.path.toQString());
-     QFileInfo infoB(b.path.toQString());
-     const QDateTime dateA = infoA.lastModified();
-     const QDateTime dateB = infoB.lastModified();
-     int result = dateA < dateB ? -1 : (dateA > dateB ? 1 : 0);
+     int result = a.lastModified < b.lastModified
+                      ? -1
+                      : (a.lastModified > b.lastModified ? 1 : 0);
      if (result == 0) result = compareNaturalName();
      return sortAscending_ ? result < 0 : result > 0;
     } else if (currentSortBy_ == "size_name") {
-     const qint64 sizeA = QFileInfo(a.path.toQString()).size();
-     const qint64 sizeB = QFileInfo(b.path.toQString()).size();
-     int result = sizeA < sizeB ? -1 : (sizeA > sizeB ? 1 : 0);
+     int result = a.fileSizeBytes < b.fileSizeBytes
+                      ? -1
+                      : (a.fileSizeBytes > b.fileSizeBytes ? 1 : 0);
      if (result == 0) result = compareNaturalName();
      return sortAscending_ ? result < 0 : result > 0;
     } else if (currentSortBy_ == "type_name") {
@@ -2346,17 +2444,15 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
      if (result == 0) result = compareNaturalName();
      return sortAscending_ ? result < 0 : result > 0;
     } else if (currentSortBy_ == "date") {
-     QFileInfo infoA(a.path.toQString());
-     QFileInfo infoB(b.path.toQString());
-     QDateTime dateA = infoA.lastModified();
-     QDateTime dateB = infoB.lastModified();
-     int result = dateA < dateB ? -1 : (dateA > dateB ? 1 : 0);
+     int result = a.lastModified < b.lastModified
+                      ? -1
+                      : (a.lastModified > b.lastModified ? 1 : 0);
      if (result == 0) result = compareNaturalName();
      return sortAscending_ ? result < 0 : result > 0;
     } else if (currentSortBy_ == "size") {
-     qint64 sizeA = QFileInfo(a.path.toQString()).size();
-     qint64 sizeB = QFileInfo(b.path.toQString()).size();
-     int result = sizeA < sizeB ? -1 : (sizeA > sizeB ? 1 : 0);
+     int result = a.fileSizeBytes < b.fileSizeBytes
+                      ? -1
+                      : (a.fileSizeBytes > b.fileSizeBytes ? 1 : 0);
      if (result == 0) result = compareNaturalName();
      return sortAscending_ ? result < 0 : result > 0;
     } else if (currentSortBy_ == "type") {
@@ -2496,7 +2592,7 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
    typeFiltersLayout->addStretch();
 
    auto statusAllBtn = new QToolButton(this);
-   statusAllBtn->setText("Status: All");
+   statusAllBtn->setText("All");
    statusAllBtn->setAccessibleName(QStringLiteral("All asset statuses"));
    statusAllBtn->setAccessibleDescription(QStringLiteral("Show assets with any status"));
    statusAllBtn->setCheckable(true);
@@ -2541,20 +2637,12 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
    scopeProjectBtn->setText(QStringLiteral("Project Assets"));
    scopeProjectBtn->setCheckable(true);
    scopeProjectBtn->setAccessibleName(QStringLiteral("Search project assets"));
-   auto* scopeMissingBtn = new QToolButton(this);
-   scopeMissingBtn->setText(QStringLiteral("Missing"));
-   scopeMissingBtn->setCheckable(true);
-   scopeMissingBtn->setAccessibleName(QStringLiteral("Search missing assets"));
-   auto* scopeUnusedBtn = new QToolButton(this);
-   scopeUnusedBtn->setText(QStringLiteral("Unused"));
-   scopeUnusedBtn->setCheckable(true);
-   scopeUnusedBtn->setAccessibleName(QStringLiteral("Search unused assets"));
+   // Scope only decides WHERE the scan runs. Missing/Unused are status filters
+   // and are driven exclusively by statusGroup, so they are not duplicated here.
    auto* scopeGroup = new QButtonGroup(this);
    scopeGroup->setExclusive(true);
    scopeGroup->addButton(scopeCurrentBtn, 0);
    scopeGroup->addButton(scopeProjectBtn, 1);
-   scopeGroup->addButton(scopeMissingBtn, 2);
-   scopeGroup->addButton(scopeUnusedBtn, 3);
    auto& config = ArtifactCore::LayeredConfigStore::instance();
    const QString savedStatusFilter = config.valueString(
        QStringLiteral("AssetBrowser/StatusFilter"), QStringLiteral("all"));
@@ -2572,18 +2660,32 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
    }
    const QString savedScope = config.valueString(
        QStringLiteral("AssetBrowser/SearchScope"), QStringLiteral("current"));
+   // Earlier builds persisted "missing"/"unused" as a search scope, but those
+   // values were only ever applied to sequence rows, never to standalone
+   // files. Migrate them onto the status filter that now owns the concept and
+   // fall back to the project-wide scope they were paired with.
+   QString normalizedScope = savedScope;
+   if (savedScope == QStringLiteral("missing") ||
+       savedScope == QStringLiteral("unused")) {
+    impl_->currentStatusFilter_ = savedScope;
+    config.setValue(QStringLiteral("AssetBrowser/StatusFilter"), savedScope);
+    if (auto* migratedStatusButton = statusGroup->button(
+            statusIds.value(savedScope, 0))) {
+     migratedStatusButton->setChecked(true);
+    }
+    normalizedScope = QStringLiteral("project");
+   }
    const QHash<QString, int> scopeIds{{QStringLiteral("current"), 10},
-                                      {QStringLiteral("project"), 11},
-                                      {QStringLiteral("missing"), 12},
-                                      {QStringLiteral("unused"), 13}};
-   impl_->currentSearchScope_ = scopeIds.contains(savedScope)
-       ? savedScope : QStringLiteral("current");
+                                      {QStringLiteral("project"), 11}};
+   impl_->currentSearchScope_ = scopeIds.contains(normalizedScope)
+       ? normalizedScope : QStringLiteral("current");
+   config.setValue(QStringLiteral("AssetBrowser/SearchScope"),
+                   impl_->currentSearchScope_);
    if (auto* savedScopeButton = scopeGroup->button(
            scopeIds.value(impl_->currentSearchScope_, 10) - 10)) {
     savedScopeButton->setChecked(true);
    }
-   for (auto* button : {scopeCurrentBtn, scopeProjectBtn, scopeMissingBtn,
-                        scopeUnusedBtn}) {
+   for (auto* button : {scopeCurrentBtn, scopeProjectBtn}) {
     button->setAutoRaise(true);
     button->setMinimumHeight(26);
     button->setCursor(Qt::PointingHandCursor);
@@ -2592,8 +2694,6 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
    assetToolBar->addSeparator();
    assetToolBar->addWidget(scopeCurrentBtn);
    assetToolBar->addWidget(scopeProjectBtn);
-   assetToolBar->addWidget(scopeMissingBtn);
-   assetToolBar->addWidget(scopeUnusedBtn);
    const QString savedTypeFilter = config.valueString(
        QStringLiteral("AssetBrowser/FileTypeFilter"), QStringLiteral("all"));
    const QHash<QString, int> typeIds{{QStringLiteral("all"), 0},
@@ -2609,39 +2709,34 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
     savedTypeButton->setChecked(true);
    }
 
-   // Status filters remain available to the model/context menu, but the main
-   // browser header follows the mockup's compact type-first presentation.
-   for (auto* button : {statusAllBtn, importedBtn, favoriteBtn, missingBtn,
-                        unusedBtn}) {
-    button->hide();
-   }
-
-   for (auto *filterButton : {allButton, imagesButton, videosButton,
-                              audioButton, fontsButton, statusAllBtn,
-                              importedBtn, favoriteBtn, missingBtn, unusedBtn}) {
+   for (auto* filterButton : {allButton, imagesButton, videosButton,
+                              audioButton, fontsButton}) {
     filterButton->setAutoRaise(true);
     filterButton->setMinimumHeight(26);
     filterButton->setCursor(Qt::PointingHandCursor);
     applyAssetBrowserFilterPalette(filterButton);
    }
+   for (auto* button : {statusAllBtn, importedBtn, favoriteBtn, missingBtn,
+                        unusedBtn}) {
+    button->setAutoRaise(true);
+    button->setMinimumHeight(26);
+    button->setCursor(Qt::PointingHandCursor);
+    applyAssetBrowserFilterPalette(button);
+   }
 
-   assetToolBar->addSeparator();
-
-   // Keep the unused-asset query close to the type filters.  The underlying
-   // reference scan is already shared with the status filter; exposing this
-   // action avoids requiring a context-menu-only workflow.
-   unusedBtn->show();
-   unusedBtn->setText(QStringLiteral("Unused"));
-   unusedBtn->setToolTip(QStringLiteral("Show assets with no project references"));
-   assetToolBar->addWidget(unusedBtn);
-
-   // Missing uses the same status aggregation as row markers and relink
-   // actions; keep it visible beside Unused so the existing filter is
-   // reachable without requiring an external setStatusFilter() call.
-   missingBtn->show();
-   missingBtn->setText(QStringLiteral("Missing"));
+   // The status row is fully visible: the left hub "All Favorites" button
+   // drives favoriteBtn, so hiding it left that action with no feedback.
+   statusAllBtn->setToolTip(QStringLiteral("Show assets with any status"));
+   importedBtn->setToolTip(QStringLiteral("Show assets already imported into the project"));
+   favoriteBtn->setToolTip(QStringLiteral("Show favorite assets"));
    missingBtn->setToolTip(QStringLiteral("Show assets whose source is missing"));
+   unusedBtn->setToolTip(QStringLiteral("Show assets with no project references"));
+   assetToolBar->addSeparator();
+   assetToolBar->addWidget(statusAllBtn);
+   assetToolBar->addWidget(importedBtn);
+   assetToolBar->addWidget(favoriteBtn);
    assetToolBar->addWidget(missingBtn);
+   assetToolBar->addWidget(unusedBtn);
 
    // Sort by combo box
    auto* sortByCombo = new QComboBox();
@@ -2698,9 +2793,7 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
    });
    connect(scopeGroup, &QButtonGroup::idClicked, this, [this](int id) {
     static const QStringList scopes = {QStringLiteral("current"),
-                                       QStringLiteral("project"),
-                                       QStringLiteral("missing"),
-                                       QStringLiteral("unused")};
+                                       QStringLiteral("project")};
     impl_->currentSearchScope_ = scopes.at(id);
     ArtifactCore::LayeredConfigStore::instance().setValue(
         QStringLiteral("AssetBrowser/SearchScope"), impl_->currentSearchScope_);
@@ -2789,18 +2882,22 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
   impl_->leftHubRecentLabel_ = new QLabel(leftHubCard);
   impl_->leftHubSelectionLabel_ = new QLabel(leftHubCard);
   impl_->recentFolderButtons_.clear();
-  impl_->currentPathLabel_->setWordWrap(false);
+  impl_->currentPathLabel_->setWordWrap(true);
   impl_->leftHubSummaryLabel_->setWordWrap(true);
   impl_->leftHubRecentLabel_->setWordWrap(true);
   impl_->leftHubSelectionLabel_->setWordWrap(true);
-  impl_->currentPathLabel_->setMaximumHeight(24);
-  impl_->leftHubSummaryLabel_->setMaximumHeight(40);
-  impl_->leftHubRecentLabel_->setMaximumHeight(40);
-  impl_->leftHubSelectionLabel_->setMaximumHeight(40);
   impl_->currentPathLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
   impl_->leftHubSummaryLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
   impl_->leftHubRecentLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
   impl_->leftHubSelectionLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+  // The summary labels are visible again, so they need a policy that lets the
+  // wrapped text grow. The height caps keep a long path from pushing the
+  // folder tree out of the panel.
+  for (QLabel* label : {impl_->currentPathLabel_, impl_->leftHubSummaryLabel_,
+                         impl_->leftHubRecentLabel_, impl_->leftHubSelectionLabel_}) {
+   label->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::MinimumExpanding);
+   label->setMaximumHeight(56);
+  }
   applyAssetBrowserPanelPalette(leftHubTitle);
   applyAssetBrowserPanelPalette(impl_->currentPathLabel_);
   applyAssetBrowserPanelPalette(impl_->leftHubSummaryLabel_);
@@ -2831,10 +2928,6 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
   leftHubLayout->addWidget(allFavoritesButton);
   connect(allFavoritesButton, &QToolButton::clicked, favoriteBtn,
           &QToolButton::click);
-  impl_->currentPathLabel_->hide();
-  impl_->leftHubSummaryLabel_->hide();
-  impl_->leftHubRecentLabel_->hide();
-  impl_->leftHubSelectionLabel_->hide();
   auto* leftHubRecentSection = new QLabel(QStringLiteral("RECENT"), leftHubCard);
   {
    QFont font = leftHubRecentSection->font();
@@ -2874,7 +2967,9 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
   fileView->setAcceptDrops(true);
   fileView->setDropIndicatorShown(true);
   fileView->setDragDropMode(QAbstractItemView::DragDrop);
-  fileView->setDefaultDropAction(Qt::CopyAction);
+  // The folder tree only accepts a move (AssetDirectoryModel::dropMimeData
+  // rejects anything but Qt::MoveAction), so the view must not propose a copy.
+  fileView->setDefaultDropAction(Qt::MoveAction);
   fileView->setSelectionMode(QAbstractItemView::ExtendedSelection);
   fileView->setContextMenuPolicy(Qt::CustomContextMenu);  // Enable custom context menu
   fileView->setMouseTracking(true);
@@ -3133,7 +3228,7 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
   detailsLayout->addWidget(fileInfoLabel, 1);
   auto* importButton = new QPushButton(QStringLiteral("Import"), detailsColumn);
   importButton->setAccessibleName(QStringLiteral("Import selected asset"));
-  importButton->setAccessibleDescription(QStringLiteral("Import the selected asset into the project"));
+  importButton->setAccessibleDescription(QStringLiteral("Import the selected asset or assets into the project"));
   importButton->setMinimumWidth(92);
   importButton->setMinimumHeight(30);
   importButton->setIcon(style()->standardIcon(QStyle::SP_ArrowDown));
@@ -3155,26 +3250,24 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
 
   connect(fileView->selectionModel(), &QItemSelectionModel::selectionChanged,
           this, [fileView, importButton]() {
-            importButton->setEnabled(
-                fileView->selectionModel() &&
-                !fileView->selectionModel()->selectedIndexes().isEmpty());
+            const int selectedCount =
+                fileView->selectionModel()
+                    ? static_cast<int>(fileView->selectionModel()->selectedIndexes().size())
+                    : 0;
+            importButton->setEnabled(selectedCount > 0);
+            importButton->setText(selectedCount > 1
+                                       ? QStringLiteral("Import %1").arg(selectedCount)
+                                       : QStringLiteral("Import"));
           });
   connect(importButton, &QPushButton::clicked, this, [this]() {
-    if (!impl_ || !impl_->fileView_ || !impl_->fileView_->selectionModel()) {
+    if (!impl_) {
       return;
     }
-    QStringList paths;
-    for (const QModelIndex& index :
-         impl_->fileView_->selectionModel()->selectedIndexes()) {
-      const AssetMenuItem item = impl_->assetModel_->itemAt(index.row());
-      if (!item.isFolder && !item.path.toQString().isEmpty()) {
-        paths.append(item.path.toQString());
-      }
-    }
-    if (auto* service = ArtifactProjectService::instance();
-        service && !paths.isEmpty()) {
-      service->importAssetsFromPathsAsync(paths, {});
-    }
+    // selectedAssetPaths() already expands sequence parents and frame rows to
+    // their full frame list, so the button path no longer imports a lone first
+    // frame and shares the undo/refresh handling of the context menu.
+    const QStringList paths = impl_->selectedAssetPaths();
+    impl_->importAssetPaths(paths, paths.value(0));
   });
 
   // Initial load
@@ -3213,17 +3306,17 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
   titleRow->addWidget(browserTitle);
   titleRow->addWidget(breadcrumbBar, 1);
   navigationHeaderLayout->addLayout(titleRow);
+  navigationHeaderLayout->addWidget(impl_->syncStateLabel_);
   navigationHeaderLayout->addWidget(assetToolBar);
   navigationHeaderLayout->addLayout(typeFiltersLayout);
+  navigationHeaderLayout->addWidget(thumbnailControlGroup);
 
   auto* browserSurface = makeAssetBrowserPanel(this);
   auto* VBoxLayout = new QVBoxLayout(browserSurface);
   VBoxLayout->setContentsMargins(0, 0, 0, 0);
   VBoxLayout->setSpacing(0);
-  impl_->syncStateLabel_->hide();
   VBoxLayout->addWidget(fileView);
   VBoxLayout->addWidget(fileInfoGroup);
-  thumbnailControlGroup->hide();
 
   auto* contentTabs = new QTabWidget(this);
   contentTabs->setObjectName(QStringLiteral("assetBrowserContentTabs"));
@@ -3349,19 +3442,17 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
 
   // Ctrl+V — クリップボードのファイルをインポート
   if (event->key() == Qt::Key_V && (event->modifiers() & Qt::ControlModifier)) {
-   const QMimeData* mime = QApplication::clipboard()->mimeData();
-   if (mime && mime->hasUrls()) {
-    QStringList paths;
-    for (const QUrl& url : mime->urls()) {
-     if (url.isLocalFile()) paths.append(url.toLocalFile());
+    const QMimeData* mime = QApplication::clipboard()->mimeData();
+    if (mime && mime->hasUrls()) {
+     QStringList paths;
+     for (const QUrl& url : mime->urls()) {
+      if (url.isLocalFile()) paths.append(url.toLocalFile());
+     }
+     impl_->importAssetPaths(paths, paths.value(0));
     }
-    if (!paths.isEmpty() && ArtifactProjectService::instance()) {
-     ArtifactProjectService::instance()->importAssetsFromPathsAsync(paths, {});
-    }
+    event->accept();
+    return;
    }
-   event->accept();
-   return;
-  }
 
   // Delete — 選択ファイルをプロジェクトから削除 + 物理ファイル削除
   if (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) {
@@ -3530,16 +3621,11 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
     }
    }
 
-   if (!filePaths.isEmpty()) {
-    auto* svc = ArtifactProjectService::instance();
-    if (svc) {
-     svc->importAssetsFromPathsAsync(filePaths, {});
+    if (!filePaths.isEmpty()) {
+     impl_->importAssetPaths(filePaths, filePaths.value(0));
     }
-    // Refresh file view
-    impl_->applyFilters();
-   }
 
-   event->acceptProposedAction();
+    event->acceptProposedAction();
   }
  }
 
@@ -3658,15 +3744,25 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
    QString info;
    info += QString("<b>%1</b><br>").arg(fileInfo.fileName());
    const auto assetMeta = ArtifactCore::ArtifactAssetMetaFile::load(filePath);
-   if (assetMeta.isValid()) {
-    const QStringList tags = assetMeta.tags();
-    if (!tags.isEmpty()) {
-     info += QStringLiteral("Tags: %1<br>").arg(tags.join(QStringLiteral(", ")));
+   // Tags と proxy 設定はプロジェクトの FootageItem が権威（.assetmeta ではない）。
+   // .assetmeta を読んでいた前は、タグは恒久的に空で proxy はキー不一致により
+   // 恒久的に非表示だった。
+   if (auto* projectService = ArtifactProjectService::instance()) {
+    if (const FootageItem* footage =
+            projectService->findFootageItemByPath(filePath)) {
+     const QStringList tags = footage->tags;
+     if (!tags.isEmpty()) {
+      info += QStringLiteral("Tags: %1<br>").arg(tags.join(QStringLiteral(", ")));
+     }
+     if (!footage->proxyQualityLabel.isEmpty()) {
+      info += QStringLiteral("Proxy Quality: %1<br>").arg(footage->proxyQualityLabel);
+     }
+     if (!footage->proxyEnabled) {
+      info += QStringLiteral("Proxy Playback: Disabled<br>");
+     }
     }
-    const QString proxy = assetMeta.proxyPath(QStringLiteral("2K"));
-    if (!proxy.isEmpty()) {
-     info += QStringLiteral("Proxy: %1<br>").arg(QFileInfo(proxy).fileName());
-    }
+   }
+if (assetMeta.isValid()) {
     const QVariant vectorKind = assetMeta.customValue(QStringLiteral("vector/sourceKind"));
     if (vectorKind.isValid()) {
      info += QStringLiteral("Vector: %1 (%2)<br>")
@@ -3708,15 +3804,20 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
    info += QString("Modified: %1<br>").arg(fileInfo.lastModified().toString("yyyy-MM-dd hh:mm"));
    const ArtifactCore::AssetType detectedAssetType =
        ArtifactCore::AssetImporter::detectType(filePath);
-   if (detectedAssetType != ArtifactCore::AssetType::Unknown &&
-       detectedAssetType != ArtifactCore::AssetType::Folder) {
-    const QUuid persistedAssetId = assetMeta.isValid() ? assetMeta.uuid() : QUuid{};
-    const QUuid assetId = ArtifactCore::AssetDatabase::instance().registerAsset(
-        filePath, detectedAssetType, persistedAssetId);
-    if (!assetId.isNull()) {
-     info += QString("Asset ID: %1<br>").arg(assetId.toString(QUuid::WithoutBraces));
+if (detectedAssetType != ArtifactCore::AssetType::Unknown &&
+        detectedAssetType != ArtifactCore::AssetType::Folder) {
+     // 既存 ID は正本解決の結果を preferred として渡す。 앞에서表示した ID と
+     // キャッシュ登録後の ID が食い違わないようにする。
+     auto* projectService = ArtifactProjectService::instance();
+     const QUuid preferredId = projectService
+         ? projectService->resolveAssetIdForPath(filePath)
+         : QUuid{};
+     const QUuid assetId = ArtifactCore::AssetDatabase::instance().registerAsset(
+         filePath, detectedAssetType, preferredId);
+     if (!assetId.isNull()) {
+      info += QString("Asset ID: %1<br>").arg(assetId.toString(QUuid::WithoutBraces));
+     }
     }
-   }
    info += impl_->assetStatusInfoHtml(impl_->assetStatusForPaths(filePath, sequencePaths));
    info += QString("Source Uses: %1<br>").arg(impl_->sourceUseCountForPath(filePath, sequencePaths));
    info += QString("Thumbnail: %1<br>").arg(impl_->thumbnailDebugStatus(filePath).toHtmlEscaped());
@@ -3968,55 +4069,11 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
    addActionLabel = QStringLiteral("Add to Project");
   }
   addAction(frequentMenu, addActionLabel, [this, importTargets, filePath]() {
-   if (importTargets.isEmpty() && filePath.isEmpty()) return;
-   auto* svc = ArtifactProjectService::instance();
-   if (!svc) return;
-   const QStringList requested =
-       importTargets.isEmpty() ? QStringList{filePath} : importTargets;
-   QPointer<ArtifactAssetBrowser> owner(this);
-   svc->importAssetsFromPathsAsync(
-       requested, [owner, requested, filePath](QStringList imported) {
-    if (!owner) return;
-    if (imported.isEmpty()) {
-     QMessageBox::warning(
-         owner, QStringLiteral("Import Failed"),
-         QStringLiteral("No requested files could be imported."));
-     return;
-    }
-    if (imported.size() < requested.size()) {
-     QMessageBox::warning(
-         owner, QStringLiteral("Import Incomplete"),
-         QStringLiteral("Imported %1 of %2 requested files.")
-             .arg(imported.size())
-             .arg(requested.size()));
-    }
-    if (auto* service = ArtifactProjectService::instance()) {
-     if (auto project = service->getCurrentProjectSharedPtr()) {
-       QStringList unrecorded;
-       for (const QString& importedPath : imported) {
-        auto* undo = UndoManager::instance();
-        if (undo) {
-         if (!undo->push(std::make_unique<AssetRegistrationCommand>(
-                 project, importedPath))) {
-          project->removeAssetByPath(importedPath);
-          unrecorded.append(importedPath);
-         }
-        } else {
-         project->addAssetFromPath(importedPath);
-        }
-      }
-      if (!unrecorded.isEmpty()) {
-       QMessageBox::warning(
-           owner, QStringLiteral("Import Undo Not Recorded"),
-           QStringLiteral("%1 imported asset(s) could not be added to Undo history and were removed from the project.")
-               .arg(unrecorded.size()));
-      }
-     }
-    }
-    owner->impl_->applyFilters();
-    // Keep the info/preview pane in sync with the refreshed row status.
-    owner->updateFileInfo(filePath.isEmpty() ? imported.first() : filePath);
-   });
+    if (importTargets.isEmpty() && filePath.isEmpty()) return;
+    if (!impl_) return;
+    impl_->importAssetPaths(
+        importTargets.isEmpty() ? QStringList{filePath} : importTargets,
+        filePath);
   });
 
   if (!item.isFolder) {
@@ -4526,11 +4583,10 @@ if (!item.isFolder) {
    QApplication::clipboard()->setText(filePath);
   });
 
-  const auto assetMeta = ArtifactCore::ArtifactAssetMetaFile::load(filePath);
-  const QUuid assetId = assetMeta.isValid() && !assetMeta.uuid().isNull()
-      ? assetMeta.uuid()
-      : ArtifactCore::AssetDatabase::instance().findAssetByPath(filePath);
-  if (!assetId.isNull()) {
+  const QUuid assetId = ArtifactProjectService::instance()
+                           ? ArtifactProjectService::instance()->resolveAssetIdForPath(filePath)
+                           : QUuid{};
+ if (!assetId.isNull()) {
    addAction(frequentMenu, QStringLiteral("Copy Asset ID"), [assetId]() {
     if (auto* clipboard = QApplication::clipboard()) {
      clipboard->setText(assetId.toString(QUuid::WithoutBraces));
@@ -4538,29 +4594,26 @@ if (!item.isFolder) {
    });
   }
   if (selectedAssetPaths.size() > 1) {
-   addAction(frequentMenu, QStringLiteral("Copy Asset IDs"),
-             [selectedAssetPaths]() {
-    QStringList lines;
-    lines.reserve(selectedAssetPaths.size());
-    for (const QString& selectedPath : selectedAssetPaths) {
-     const QFileInfo selectedInfo(selectedPath);
-     if (!selectedInfo.isFile()) continue;
-     const auto selectedMeta = ArtifactCore::ArtifactAssetMetaFile::load(
-         selectedPath);
-     const QUuid selectedId =
-         selectedMeta.isValid() && !selectedMeta.uuid().isNull()
-             ? selectedMeta.uuid()
-             : ArtifactCore::AssetDatabase::instance().findAssetByPath(
-                   selectedPath);
-     if (selectedId.isNull()) continue;
-     lines.append(QStringLiteral("%1\t%2")
-                      .arg(selectedPath)
-                      .arg(selectedId.toString(QUuid::WithoutBraces)));
-    }
-    if (auto* clipboard = QApplication::clipboard()) {
-     clipboard->setText(lines.join(QLatin1Char('\n')));
-    }
-   });
+addAction(frequentMenu, QStringLiteral("Copy Asset IDs"),
+              [selectedAssetPaths]() {
+     auto* projectService = ArtifactProjectService::instance();
+     QStringList lines;
+     lines.reserve(selectedAssetPaths.size());
+     for (const QString& selectedPath : selectedAssetPaths) {
+      const QFileInfo selectedInfo(selectedPath);
+      if (!selectedInfo.isFile()) continue;
+      const QUuid selectedId = projectService
+          ? projectService->resolveAssetIdForPath(selectedPath)
+          : QUuid{};
+      if (selectedId.isNull()) continue;
+      lines.append(QStringLiteral("%1\t%2")
+                       .arg(selectedPath)
+                       .arg(selectedId.toString(QUuid::WithoutBraces)));
+     }
+     if (auto* clipboard = QApplication::clipboard()) {
+      clipboard->setText(lines.join(QLatin1Char('\n')));
+     }
+    });
   }
 
   // Rename action (F2)

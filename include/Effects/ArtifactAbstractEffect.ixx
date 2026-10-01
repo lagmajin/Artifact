@@ -90,6 +90,17 @@ struct GpuSpatialEffectNode {
     // Key into the shared generic-resident shader registry. Only meaningful
     // when kind == GpuSpatialEffectKind::Generic; ignored otherwise.
     std::uint32_t genericKey = 0;
+    // Which retained frame, relative to the frame being rendered, this node
+    // reads as its second texture input.  0 means "no history input" and the
+    // shader keeps its single-input contract.  -1 is the previous frame.
+    // The render pipeline binds it to g_HistoryTexture; a shader may ignore
+    // the binding, so this is safe for non-temporal effects.
+    std::int32_t historyFrameOffset = 0;
+    // False when there is no valid frame to read (cold start, seek, or an
+    // invalidated history).  The pipeline then binds the current frame and
+    // sets g_HistoryValid to 0 so the shader can degrade instead of
+    // sampling an unrelated frame.
+    bool historyValid = false;
 };
 
 struct GpuSpatialEffectStack {

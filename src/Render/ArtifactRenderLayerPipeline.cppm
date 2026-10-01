@@ -558,6 +558,11 @@ cbuffer ResidentGenericParams : register(b0)
     float g_Height;
     float g_Time;
     float g_Frame;
+    // 1.0 when g_HistoryTexture holds a real neighbouring frame, 0.0 when the
+    // caller had none (cold start, seek, or an invalidated history).  A
+    // temporal shader must check this and degrade rather than blend against
+    // an unrelated frame.  Non-temporal shaders simply ignore it.
+    float g_HistoryValid;
 };
 )";
 
@@ -843,7 +848,8 @@ void ChromaKeyCS(uint3 dispatchId : SV_DispatchThreadID)
   };
 
   // Mirrors kResidentGenericPrelude: 8 effect parameters followed by the
-  // standard width/height/time/frame uniforms. 48 bytes, 16-byte aligned.
+  // standard width/height/time/frame uniforms plus the history-valid flag.
+  // 52 bytes, 16-byte aligned.
   struct ResidentGenericParams
   {
    float p[8] = {};
@@ -851,6 +857,7 @@ void ChromaKeyCS(uint3 dispatchId : SV_DispatchThreadID)
    float height = 0.0f;
    float time = 0.0f;
    float frame = 0.0f;
+   float historyValid = 0.0f;
   };
 
   struct GenericResidentEntry
@@ -1145,6 +1152,27 @@ void ScreenSpaceGIResolveCS(uint3 dispatchId : SV_DispatchThreadID)
   TextureBundle screenSpaceGIHistory_[2];
   Uint32 screenSpaceGIHistoryWriteIndex_ = 0;
   bool screenSpaceGIHistoryValid_ = false;
+  // Per-layer history for GPU-resident temporal effects.  Separate from the
+  // CPU-side ArtifactEffectFrameSampler because these are GPU textures that
+  // must stay on the device: a readback would violate the hot-path rule that
+  // rendered results must not round-trip through the CPU.
+  //
+  // Slot is assigned per layer so a layer's own previous frame is available
+  // without aliasing another layer's.  Frames older than the ring are simply
+  // unavailable and the node reports historyValid == false.
+  struct LayerHistorySlot {
+    bool used = false;
+    bool valid = false;
+    std::uint32_t key = 0;
+    std::int64_t lastRenderedFrame = 0;
+    TextureBundle frame[2];
+    Uint32 writeIndex = 0;
+  };
+  // Fixed capacity: a bounded pool, not a growable map.  Layers beyond the
+  // capacity get no GPU history and fall back to the CPU path, which is the
+  // explicit bounded policy the hot-path rules require.
+  static constexpr Uint32 kMaxLayerHistorySlots = 8;
+  std::array<LayerHistorySlot, kMaxLayerHistorySlots> layerHistory_;
   Uint32 width_ = 0;
   Uint32 height_ = 0;
   TEXTURE_FORMAT format_ = TEX_FORMAT_UNKNOWN;
@@ -1279,6 +1307,15 @@ bool RenderPipeline::initialize(IRenderDevice* device,
   impl_->screenSpaceGIHistory_[1] = {};
   impl_->screenSpaceGIHistoryWriteIndex_ = 0;
   impl_->screenSpaceGIHistoryValid_ = false;
+  for (auto& slot : impl_->layerHistory_) {
+   slot.used = false;
+   slot.valid = false;
+   slot.key = 0;
+   slot.lastRenderedFrame = 0;
+   slot.writeIndex = 0;
+   slot.frame[0] = {};
+   slot.frame[1] = {};
+  }
   impl_->width_ = 0;
   impl_->height_ = 0;
   impl_->format_ = TEX_FORMAT_UNKNOWN;
@@ -1289,7 +1326,9 @@ bool RenderPipeline::initialize(IRenderDevice* device,
  bool RenderPipeline::applySpatialEffect(
     IDeviceContext* ctx, ITextureView* inputSRV,
     ITextureView* scratchUAV, ITextureView* outputUAV,
-    const GpuSpatialEffectNode& node)
+    const GpuSpatialEffectNode& node,
+    ITextureView* historySRV,
+    bool historyValid)
  {
   if (!ctx || !impl_->device_ || !inputSRV || !scratchUAV || !outputUAV ||
       scratchUAV == outputUAV ||
@@ -1565,6 +1604,9 @@ bool RenderPipeline::initialize(IRenderDevice* device,
         {SHADER_TYPE_COMPUTE, "ResidentGenericParams", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
         {SHADER_TYPE_COMPUTE, "g_InputTexture", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
         {SHADER_TYPE_COMPUTE, "g_OutputTexture", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+        // Optional second input for temporal effects.  A shader that does not
+        // declare g_HistoryTexture simply leaves the binding unbound.
+        {SHADER_TYPE_COMPUTE, "g_HistoryTexture", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
     };
     static const ShaderResourceVariableDesc generatorVariables[] = {
         {SHADER_TYPE_COMPUTE, "ResidentGenericParams", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
@@ -1595,19 +1637,29 @@ bool RenderPipeline::initialize(IRenderDevice* device,
    if (!mapped) return false;
    ResidentGenericParams params;
    for (std::size_t i = 0; i < 8; ++i) params.p[i] = node.parameters[i];
-   params.width = static_cast<float>(impl_->width_);
-   params.height = static_cast<float>(impl_->height_);
-   params.time = 0.0f;
-   params.frame = 0.0f;
-   std::memcpy(mapped, &params, sizeof(params));
-   ctx->UnmapBuffer(entry.params, MAP_WRITE);
-   if (needsInput &&
-       !entry.executor->setTextureView("g_InputTexture", inputSRV)) {
-    return false;
-   }
-   if (!entry.executor->setTextureView("g_OutputTexture", scratchUAV)) {
-    return false;
-   }
+params.width = static_cast<float>(impl_->width_);
+    params.height = static_cast<float>(impl_->height_);
+    params.time = 0.0f;
+    params.frame = 0.0f;
+    params.historyValid = historyValid ? 1.0f : 0.0f;
+    std::memcpy(mapped, &params, sizeof(params));
+    ctx->UnmapBuffer(entry.params, MAP_WRITE);
+    if (needsInput &&
+        !entry.executor->setTextureView("g_InputTexture", inputSRV)) {
+     return false;
+    }
+    if (needsInput && node.historyFrameOffset != 0) {
+     // Temporal node: bind the neighbour.  When the caller has no valid frame
+     // to offer, bind the current input instead so the texture slot is never
+     // null; g_HistoryValid then tells the shader the sample is meaningless.
+     const ITextureView* neighbour = (historyValid && historySRV) ? historySRV : inputSRV;
+     if (!entry.executor->setTextureView("g_HistoryTexture", neighbour)) {
+      return false;
+     }
+    }
+    if (!entry.executor->setTextureView("g_OutputTexture", scratchUAV)) {
+     return false;
+    }
    entry.executor->dispatch(
        ctx, ArtifactCore::ComputeExecutor::makeDispatchAttribs(
                 impl_->width_, impl_->height_, 1, 8, 8, 1),
@@ -2670,6 +2722,160 @@ void RenderPipeline::resetScreenSpaceGlobalIlluminationHistory()
  impl_->screenSpaceGIHistoryValid_ = false;
  impl_->screenSpaceGIHistoryWriteIndex_ = 0;
 }
+
+// ---------------------------------------------------------------------------
+// GPU-resident temporal effect history
+// ---------------------------------------------------------------------------
+
+// Stable per-layer key from a layer id, used to index the fixed slot pool.
+std::uint32_t RenderPipeline::temporalLayerKey(const QString& layerId)
+{
+ std::uint32_t seed = 2166136261u;
+ for (const QChar c : layerId) {
+  seed ^= static_cast<std::uint32_t>(c.unicode());
+  seed *= 16777619u;
+ }
+ // 0 marks "free" in the pool, so never hand it out as a real key.
+ return seed == 0u ? 1u : seed;
+}
+
+bool RenderPipeline::ensureLayerHistoryStorage()
+{
+ for (auto& slot : impl_->layerHistory_) {
+  if (slot.used) continue;
+  for (Uint32 i = 0; i < 2; ++i) {
+   if (!createTextureBundle(impl_->device_, impl_->width_, impl_->height_,
+                            TEX_FORMAT_RGBA16_FLOAT,
+                            BIND_SHADER_RESOURCE | BIND_UNORDERED_ACCESS,
+                            "RenderPipeline.LayerTemporalHistory",
+                            slot.frame[i])) {
+    return false;
+   }
+  }
+  slot.valid = false;
+  slot.writeIndex = 0;
+  slot.lastRenderedFrame = 0;
+ }
+ return true;
+}
+
+bool RenderPipeline::recordLayerFrame(std::uint32_t layerKey,
+                                      std::int64_t frame,
+                                      ITextureView* sourceSRV)
+{
+ if (layerKey == 0 || !sourceSRV || impl_->width_ == 0 || impl_->height_ == 0) {
+  return false;
+ }
+ if (!ensureLayerHistoryStorage()) {
+  return false;
+ }
+
+ // Fixed pool: find this layer's slot, else take a free one.  A full pool is
+ // a bounded backpressure condition and is reported as failure so the caller
+ // falls back to the CPU history path; it never grows the allocation.
+ LayerHistorySlot* target = nullptr;
+ for (auto& slot : impl_->layerHistory_) {
+  if (slot.used && slot.key == layerKey) {
+   target = &slot;
+   break;
+  }
+ }
+ if (!target) {
+  for (auto& slot : impl_->layerHistory_) {
+   if (!slot.used) {
+    // A free slot keeps its key clear so a lookup by key can never match it.
+    slot.used = true;
+    slot.key = layerKey;
+    target = &slot;
+    break;
+   }
+  }
+ }
+ if (!target) {
+  // Pool exhausted: bounded backpressure. Report it so the caller falls back
+  // to the CPU history path instead of allocating a slot on demand.
+  return false;
+ }
+
+ // A discontinuous jump (seek, reverse, edit) means the retained frame is not
+ // a neighbour of `frame`; drop it instead of letting a later effect blend
+ // against an unrelated image.
+ if (target->valid && frame != target->lastRenderedFrame + 1) {
+  target->valid = false;
+ }
+
+ // Write into the slot that is NOT the one being read this frame, so a
+ // temporal effect can sample the previous frame while we record this one.
+ const Uint32 writeIndex = 1u - target->writeIndex;
+ CopyTextureAttribs copy;
+ copy.pSrcTexture = sourceSRV->GetTexture();
+ copy.SrcTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+ copy.pDstTexture = target->frame[writeIndex].texture;
+ copy.DstTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+ impl_->device_->GetImmediateContext()->CopyTexture(copy);
+
+ target->writeIndex = writeIndex;
+ target->lastRenderedFrame = frame;
+ target->valid = true;
+ return true;
+}
+
+bool RenderPipeline::layerHistoryView(std::uint32_t layerKey,
+                                      std::int64_t currentFrame,
+                                      ITextureView** outSRV)
+{
+ if (outSRV) {
+  *outSRV = nullptr;
+ }
+ if (layerKey == 0 || !outSRV) {
+  return false;
+ }
+
+ for (const auto& slot : impl_->layerHistory_) {
+  if (!slot.used || slot.key != layerKey) {
+   continue;
+  }
+  // Only the immediately preceding frame is a valid neighbour.  Anything else
+  // (cold start, seek, a multi-frame jump) is reported invalid so the effect
+  // degrades instead of blending a distant frame.
+  if (!slot.valid || slot.lastRenderedFrame != currentFrame - 1) {
+   return false;
+  }
+  const Uint32 readIndex = 1u - slot.writeIndex;
+  const auto& bundle = slot.frame[readIndex];
+  if (!bundle.srv) {
+   return false;
+  }
+  *outSRV = bundle.srv;
+  return true;
+ }
+
+ return false;
+}
+
+void RenderPipeline::invalidateLayerHistory(std::uint32_t layerKey)
+{
+ for (auto& slot : impl_->layerHistory_) {
+  if (slot.used && slot.key == layerKey) {
+   // Release the slot so the pool is not permanently consumed by a layer that
+   // no longer needs history; its textures stay allocated for reuse.
+   slot.valid = false;
+   slot.used = false;
+   slot.key = 0;
+   return;
+  }
+ }
+}
+
+void RenderPipeline::invalidateAllLayerHistory()
+{
+ for (auto& slot : impl_->layerHistory_) {
+  slot.valid = false;
+  slot.used = false;
+  slot.key = 0;
+ }
+}
+
 Uint32 RenderPipeline::screenSpaceGlobalIlluminationWidth() const
 {
  return impl_->screenSpaceGI_.texture

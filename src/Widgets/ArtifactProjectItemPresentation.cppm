@@ -41,6 +41,7 @@ import Widgets.Utils.CSS;
 import Artifact.Widgets.SoftwareRenderInspectors;
 import Artifact.Widgets.ProjectResponsiveLayout;
 import Artifact.Project.Items;
+import Artifact.Project.Cleanup;
 import Artifact.Project.Roles;
 import Artifact.Service.Project;
 import Artifact.Composition.Abstract;
@@ -55,39 +56,10 @@ export namespace Artifact {
 
 namespace detail {
 
-enum class AssetKind { Image, Video, Audio, Font, Other };
+using AssetKind = ProjectAssetKind;
 
 AssetKind assetKindFromPath(const QString& path) {
-    const QString lower = path.toLower();
-    if (lower.endsWith(".png") || lower.endsWith(".jpg") ||
-        lower.endsWith(".jpeg") || lower.endsWith(".bmp") ||
-        lower.endsWith(".gif") || lower.endsWith(".tga") ||
-        lower.endsWith(".tiff") || lower.endsWith(".exr")) {
-        return AssetKind::Image;
-    }
-    if (lower.endsWith(".mp4") || lower.endsWith(".mov") ||
-        lower.endsWith(".avi") || lower.endsWith(".mkv") ||
-        lower.endsWith(".webm") || lower.endsWith(".m4v") ||
-        lower.endsWith(".flv") || lower.endsWith(".m2ts") ||
-        lower.endsWith(".ts") || lower.endsWith(".mpg") ||
-        lower.endsWith(".mpeg") || lower.endsWith(".wmv") ||
-        lower.endsWith(".3gp") || lower.endsWith(".3g2") ||
-        lower.endsWith(".ogv") || lower.endsWith(".ogm") ||
-        lower.endsWith(".mts") || lower.endsWith(".mxf") ||
-        lower.endsWith(".vob") || lower.endsWith(".asf")) {
-        return AssetKind::Video;
-    }
-    if (lower.endsWith(".mp3") || lower.endsWith(".wav") ||
-        lower.endsWith(".ogg") || lower.endsWith(".flac") ||
-        lower.endsWith(".aac") || lower.endsWith(".m4a")) {
-        return AssetKind::Audio;
-    }
-    if (lower.endsWith(".ttf") || lower.endsWith(".otf") ||
-        lower.endsWith(".ttc") || lower.endsWith(".woff") ||
-        lower.endsWith(".woff2")) {
-        return AssetKind::Font;
-    }
-    return AssetKind::Other;
+    return projectAssetKindFromPath(path);
 }
 
 bool isImportableAssetFile(const QString& path) {
@@ -95,21 +67,10 @@ bool isImportableAssetFile(const QString& path) {
 }
 
 QString projectItemFootageKindLabel(const QString& path) {
-    switch (assetKindFromPath(path)) {
-    case AssetKind::Image:
-        return QStringLiteral("Image");
-    case AssetKind::Video:
-        return QStringLiteral("Video");
-    case AssetKind::Audio:
-        return QStringLiteral("Audio");
-    case AssetKind::Font:
-        return QStringLiteral("Font");
-    default:
-        return QStringLiteral("Footage");
-    }
+    return projectAssetKindLabel(assetKindFromPath(path));
 }
 
-int projectItemUsageCount(ProjectItem* item)
+int presentationProjectItemUsageCount(ProjectItem* item)
 {
     if (!item) {
         return 0;
@@ -125,70 +86,7 @@ int projectItemUsageCount(ProjectItem* item)
         return 0;
     }
 
-    const auto normalizePath = [](const QString& path) {
-        return QDir::cleanPath(path.trimmed());
-    };
-
-    const auto matchesFootagePath = [&](const FootageItem* footage, const QString& candidatePath) {
-        if (!footage) {
-            return false;
-        }
-        const QString normalizedCandidate = normalizePath(candidatePath);
-        if (normalizedCandidate.isEmpty()) {
-            return false;
-        }
-        if (normalizedCandidate == normalizePath(footage->filePath)) {
-            return true;
-        }
-        for (const QString& sequencePath : footage->sequencePaths) {
-            if (normalizedCandidate == normalizePath(sequencePath)) {
-                return true;
-            }
-        }
-        return false;
-    };
-
-    int usageCount = 0;
-    std::function<void(ProjectItem*)> walkItems;
-    walkItems = [&](ProjectItem* current) {
-        if (!current) {
-            return;
-        }
-        if (current->type() == eProjectItemType::Composition) {
-            auto* compItem = static_cast<CompositionItem*>(current);
-            const auto found = project->findComposition(compItem->compositionId);
-            auto comp = found.ptr.lock();
-            if (comp) {
-                for (const auto& layer : comp->allLayerRef()) {
-                    if (!layer) {
-                        continue;
-                    }
-                    if (item->type() == eProjectItemType::Composition) {
-                        auto* compositionLayer = dynamic_cast<ArtifactCompositionLayer*>(layer.get());
-                        if (compositionLayer && compositionLayer->sourceCompositionId() ==
-                                                    static_cast<CompositionItem*>(item)->compositionId) {
-                            ++usageCount;
-                        }
-                    } else if (item->type() == eProjectItemType::Footage) {
-                        auto* footageLayer = dynamic_cast<ArtifactVideoLayer*>(layer.get());
-                        if (footageLayer && matchesFootagePath(static_cast<FootageItem*>(item),
-                                                               footageLayer->sourceFile())) {
-                            ++usageCount;
-                        }
-                    }
-                }
-            }
-        }
-        for (auto* child : current->children) {
-            walkItems(child);
-        }
-    };
-
-    for (auto* root : project->projectItems()) {
-        walkItems(root);
-    }
-
-    return usageCount;
+    return projectItemUsageCount(project.get(), item);
 }
 
 int projectItemSourceUseCount(ProjectItem* item)
@@ -213,8 +111,6 @@ int projectItemSourceUseCount(ProjectItem* item)
     }
     return sourceId.isNull() ? 0 : assetManager.useCount(sourceId);
 }
-
-QString projectRenderInputRoleLabel(ProjectRenderInputRole role);
 
 QString projectItemTileBadgeText(ProjectItem* item)
 {
@@ -267,19 +163,6 @@ QString projectItemTypeLabel(eProjectItemType type)
         return QStringLiteral("Solid");
     default:
         return QStringLiteral("Item");
-    }
-}
-
-QString projectRenderInputRoleLabel(const ProjectRenderInputRole role)
-{
-    switch (role) {
-    case ProjectRenderInputRole::AlphaMatte: return QStringLiteral("Alpha Matte");
-    case ProjectRenderInputRole::LumaMatte: return QStringLiteral("Luma Matte");
-    case ProjectRenderInputRole::DisplacementMap: return QStringLiteral("Displacement");
-    case ProjectRenderInputRole::DepthMap: return QStringLiteral("Depth");
-    case ProjectRenderInputRole::NormalMap: return QStringLiteral("Normal");
-    case ProjectRenderInputRole::Texture: return QStringLiteral("Texture");
-    default: return QStringLiteral("Render Input");
     }
 }
 
@@ -377,19 +260,22 @@ struct ProxyMeta {
     QString qualityLabel;
 };
 
+// 生成 Cowboy の一時情報（sourceLastModified など）だけを持つプロセス内ストア。
+// 品質・有効状態・表示ラベルは FootageItem がプロジェクトの権威として保持し、
+// ここには保存しない（以前はここだけが保持しており、リロードで消えていた）。
 QHash<QString, ProxyMeta>& proxyMetadata() {
     static QHash<QString, ProxyMeta> meta;
     return meta;
 }
 
-QString proxyFilePathForFootage(const QString& sourceFilePath)
+QString proxyFilePathForFootage(const QString& sourceFilePath,
+                                ProxyQuality quality = ProxyQuality::Half)
 {
     const QFileInfo src(sourceFilePath);
     if (src.filePath().isEmpty() || src.completeBaseName().isEmpty()) {
         return {};
     }
     if (assetKindFromPath(src.absoluteFilePath()) == AssetKind::Video) {
-        const ProxyQuality quality = proxyMetadata().value(src.absoluteFilePath()).quality;
         const ProxyServiceQuality serviceQuality =
             quality == ProxyQuality::Eighth ? ProxyServiceQuality::Eighth
             : quality == ProxyQuality::Quarter ? ProxyServiceQuality::Quarter
@@ -423,7 +309,8 @@ QString projectItemStatusChipText(ProjectItem* item)
         if (!info.exists()) {
             return QStringLiteral("Missing");
         }
-        const QString proxyPath = proxyFilePathForFootage(footage->filePath);
+        const QString proxyPath = proxyFilePathForFootage(
+            footage->filePath, static_cast<ProxyQuality>(footage->proxyQuality));
         if (!proxyPath.isEmpty() && QFileInfo(proxyPath).exists()) {
             const auto it = proxyMetadata().constFind(footage->filePath);
             if (it != proxyMetadata().constEnd() && it->sourceLastModified.isValid()) {
@@ -533,22 +420,6 @@ QPixmap projectItemPreviewPixmap(ProjectItem* item, const QSize& targetSize)
         return {};
     }
 
-    const auto isImageFile = [](const QString& lowerPath) {
-        return lowerPath.endsWith(".png") || lowerPath.endsWith(".jpg") ||
-               lowerPath.endsWith(".jpeg") || lowerPath.endsWith(".bmp") ||
-               lowerPath.endsWith(".gif") || lowerPath.endsWith(".tga") ||
-               lowerPath.endsWith(".tiff") || lowerPath.endsWith(".webp") ||
-               lowerPath.endsWith(".hdr") || lowerPath.endsWith(".exr") ||
-               lowerPath.endsWith(".ico") || lowerPath.endsWith(".dds") ||
-               lowerPath.endsWith(".ktx") || lowerPath.endsWith(".psd") ||
-               lowerPath.endsWith(".psb");
-    };
-    const auto isVideoFile = [](const QString& lowerPath) {
-        return lowerPath.endsWith(".mp4") || lowerPath.endsWith(".mov") ||
-               lowerPath.endsWith(".avi") || lowerPath.endsWith(".mkv") ||
-               lowerPath.endsWith(".webm");
-    };
-
     if (item->type() == eProjectItemType::Footage) {
         const QString path = static_cast<FootageItem*>(item)->filePath;
         const QFileInfo info(path);
@@ -556,8 +427,8 @@ QPixmap projectItemPreviewPixmap(ProjectItem* item, const QSize& targetSize)
             return {};
         }
 
-        QString lowerPath = path.toLower();
-        if (isImageFile(lowerPath)) {
+        const ProjectAssetKind kind = projectAssetKindFromPath(path);
+        if (kind == ProjectAssetKind::Image) {
             QPixmap pix(path);
             if (pix.isNull()) {
                 return {};
@@ -565,7 +436,7 @@ QPixmap projectItemPreviewPixmap(ProjectItem* item, const QSize& targetSize)
             return pix.scaled(targetSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
         }
 
-        if (isVideoFile(lowerPath)) {
+        if (kind == ProjectAssetKind::Video) {
             QPixmap pix(targetSize);
             pix.fill(Qt::transparent);
             QPainter painter(&pix);
@@ -608,31 +479,6 @@ QStringList projectItemMetadataLines(const QModelIndex& sourceIndex, ProjectItem
     }
     Q_UNUSED(sourceIndex);
     QStringList lines;
-    const auto isImageFile = [](const QString& lowerPath) {
-        return lowerPath.endsWith(".png") || lowerPath.endsWith(".jpg") ||
-               lowerPath.endsWith(".jpeg") || lowerPath.endsWith(".bmp") ||
-               lowerPath.endsWith(".gif") || lowerPath.endsWith(".tga") ||
-               lowerPath.endsWith(".tiff") || lowerPath.endsWith(".webp") ||
-               lowerPath.endsWith(".hdr") || lowerPath.endsWith(".exr") ||
-               lowerPath.endsWith(".ico") || lowerPath.endsWith(".dds") ||
-               lowerPath.endsWith(".ktx") || lowerPath.endsWith(".psd") ||
-               lowerPath.endsWith(".psb");
-    };
-    const auto isVideoFile = [](const QString& lowerPath) {
-        return lowerPath.endsWith(".mp4") || lowerPath.endsWith(".mov") ||
-               lowerPath.endsWith(".avi") || lowerPath.endsWith(".mkv") ||
-               lowerPath.endsWith(".webm");
-    };
-    const auto isAudioFile = [](const QString& lowerPath) {
-        return lowerPath.endsWith(".wav") || lowerPath.endsWith(".mp3") ||
-               lowerPath.endsWith(".flac") || lowerPath.endsWith(".ogg") ||
-               lowerPath.endsWith(".m4a") || lowerPath.endsWith(".aac");
-    };
-    const auto isFontFile = [](const QString& lowerPath) {
-        return lowerPath.endsWith(".ttf") || lowerPath.endsWith(".otf") ||
-               lowerPath.endsWith(".ttc") || lowerPath.endsWith(".woff") ||
-               lowerPath.endsWith(".woff2");
-    };
 
     // Composition metadata
     if (item->type() == eProjectItemType::Composition) {
@@ -672,7 +518,7 @@ QStringList projectItemMetadataLines(const QModelIndex& sourceIndex, ProjectItem
                 lines << QStringLiteral("Composition ID: %1")
                              .arg(composition->compositionId.toString());
                 lines << QStringLiteral("Used In: %1")
-                             .arg(projectItemUsageCount(item));
+                             .arg(presentationProjectItemUsageCount(item));
             } else {
                 lines << QStringLiteral("Status: Composition data unavailable");
             }
@@ -700,12 +546,12 @@ QStringList projectItemMetadataLines(const QModelIndex& sourceIndex, ProjectItem
             lines << QStringLiteral("Status: Missing");
         }
         lines << QStringLiteral("Used In: %1 layers • Source Uses: %2")
-                     .arg(projectItemUsageCount(item))
+                     .arg(presentationProjectItemUsageCount(item))
                      .arg(projectItemSourceUseCount(item));
 
-        QString lowerPath = path.toLower();
         if (exists) {
-            if (isImageFile(lowerPath)) {
+            const ProjectAssetKind kind = projectAssetKindFromPath(path);
+            if (kind == ProjectAssetKind::Image) {
                 QImageReader imageReader(path);
                 const QSize imageSize = imageReader.size();
                 if (imageSize.isValid()) {
@@ -715,12 +561,12 @@ QStringList projectItemMetadataLines(const QModelIndex& sourceIndex, ProjectItem
                         lines << QStringLiteral("Format: %1").arg(QString::fromLatin1(format).toUpper());
                     }
                 }
-            } else if (isVideoFile(lowerPath)) {
+            } else if (kind == ProjectAssetKind::Video) {
                 lines << QStringLiteral("Kind: Video");
                 lines << QStringLiteral("Preview: Generated thumbnail");
-            } else if (isAudioFile(lowerPath)) {
+            } else if (kind == ProjectAssetKind::Audio) {
                 lines << QStringLiteral("Kind: Audio");
-            } else if (isFontFile(lowerPath)) {
+            } else if (kind == ProjectAssetKind::Font) {
                 lines << QStringLiteral("Kind: Font");
             }
         }

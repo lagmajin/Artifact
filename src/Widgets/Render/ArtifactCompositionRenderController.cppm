@@ -248,8 +248,6 @@ import Artifact.Tool.PointTracker;
 
 import Tracking.MotionTracker;
 
-import Track.NccTracker;
-
 import Artifact.Render.OffscreenComposition;
 import Artifact.Render.PointwiseEffectFusion;
 
@@ -4195,6 +4193,20 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer *targetLayer,
 
 
 
+    // A temporal effect must not look back into frames that were rendered before
+    // the layer's effect parameters or content changed, and must not look back
+    // across a discontinuous time jump.  Both make the retained pixels a wrong
+    // neighbour.  The sampler's own entry point (makeControllerEffectContext)
+    // binds the active layer and frame; here we only drop stale entries before
+    // the effect stack runs so the first temporal effect of the frame already
+    // sees a consistent history.
+    auto& frameSampler = ArtifactEffectFrameSampler::instance();
+    frameSampler.setActiveLayerId(targetLayer->id().toString());
+    frameSampler.setCurrentCompositionFrame(
+        makeControllerEffectContext(targetLayer).compositionFrame);
+    frameSampler.invalidateIfRevisionChanged(targetLayer->id().toString(),
+                                            targetLayer->effectRevision());
+
     for (const auto &effect : effects) {
 
       if (!effect || !effect->isEnabled() ||
@@ -4240,9 +4252,11 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer *targetLayer,
     // Publish only the completed rasterizer result.  Temporal effects can
     // sample deterministic, layer-local history without recursively reading
     // an intermediate effect stage from the frame currently being evaluated.
-    auto& frameSampler = ArtifactEffectFrameSampler::instance();
+    // The revision stamps the entry so a later parameter or content change can
+    // invalidate exactly these frames instead of leaking stale pixels.
     frameSampler.storeLayerFrame(targetLayer->id().toString(),
-        makeControllerEffectContext(targetLayer).compositionFrame, current);
+        makeControllerEffectContext(targetLayer).compositionFrame, current,
+        targetLayer->effectRevision());
 
     mat = current.image().toCVMat();
 
@@ -10961,6 +10975,9 @@ public:
   std::unique_ptr<ArtifactPointTrackerGizmo> trackerGizmo_;
 
   ArtifactCore::MotionTracker* trackerMotionTracker_ = nullptr;
+  // Snapshot taken before a solve / clear / smoothing mutates the tracker, so
+  // the operation can be pushed as an undoable command once it succeeds.
+  QString trackerPreSolveJson_;
 
   std::unique_ptr<Artifact::OffscreenCompositionRenderer> trackerOffscreenRenderer_;
 
@@ -12742,6 +12759,16 @@ public:
 
     ++layerToFloatConvertCount;
 
+    // The frame this layer is being rendered for.  Resolved once here because
+    // both the temporal history lookup and the history record below need it.
+    const std::int64_t effectFrame = [layer]() -> std::int64_t {
+      if (auto* composition =
+              static_cast<ArtifactAbstractComposition*>(layer->composition())) {
+        return composition->framePosition().framePosition();
+      }
+      return layer->currentFrame();
+    }();
+
     if (rasterEffectPlan && rasterEffectPlan->count > 0) {
       const auto context = renderer_->immediateContext();
       if (!context) return nullptr;
@@ -12755,15 +12782,50 @@ public:
                        << "layer=" << layer->id().toString();
             return nullptr;
           }
-        } else if (!renderPipeline.applySpatialEffect(
-                       context.RawPtr(), layerFloatSRV, tempUAV, layerFloatUAV,
-                       pass.spatial)) {
-          qWarning() << "[CompositionView] layer spatial GPU pass failed; "
-                        "rejecting the layer rather than dropping an effect"
-                     << "layer=" << layer->id().toString()
-                     << "node=" << static_cast<int>(pass.spatial.kind);
-          return nullptr;
+        } else {
+          // A temporal node needs the previous frame as a second input.
+          // layerHistoryView only reports a frame when it is genuinely the
+          // immediately preceding one, so a seek or a cold start degrades
+          // instead of sampling a distant frame.
+          ITextureView* historySRV = nullptr;
+          const bool historyValid =
+              pass.spatial.historyFrameOffset != 0 &&
+              renderPipeline.layerHistoryView(
+                  RenderPipeline::temporalLayerKey(layer->id().toString()),
+                  effectFrame, &historySRV);
+          if (!renderPipeline.applySpatialEffect(
+                  context.RawPtr(), layerFloatSRV, tempUAV, layerFloatUAV,
+                  pass.spatial, historySRV, historyValid)) {
+            qWarning() << "[CompositionView] layer spatial GPU pass failed; "
+                          "rejecting the layer rather than dropping an effect"
+                       << "layer=" << layer->id().toString()
+                       << "node=" << static_cast<int>(pass.spatial.kind);
+            return nullptr;
+          }
         }
+      }
+    }
+
+    // Record the layer's post-effect result so a temporal effect on the NEXT
+    // frame has a real neighbour to sample.  This is a GPU-to-GPU copy into
+    // the pipeline's pre-allocated slot; no readback and no allocation, so it
+    // is safe on the hot path.  It happens before every early return below so a
+    // matted layer also gets a history entry.  A bounded pool running out simply
+    // reports false and the effect falls back to the CPU sampler.
+    if (rasterEffectPlan) {
+      bool anyTemporal = false;
+      for (std::size_t i = 0; i < rasterEffectPlan->count; ++i) {
+        const auto& pass = rasterEffectPlan->passes[i];
+        if (pass.kind == GpuRasterPassKind::Spatial &&
+            pass.spatial.historyFrameOffset != 0) {
+          anyTemporal = true;
+          break;
+        }
+      }
+      if (anyTemporal && layerFloatSRV) {
+        renderPipeline.recordLayerFrame(
+            RenderPipeline::temporalLayerKey(layer->id().toString()),
+            effectFrame, layerFloatSRV);
       }
     }
 
@@ -14004,6 +14066,11 @@ public:
 
   int currentFrameForOverlay_ = 0;
 
+  // Composition frame of the last render tick.  A step that is not exactly
+  // +1 (a seek, a reverse, a dropped tick) means retained temporal history is
+  // no longer a neighbour and is dropped.  -1 means "not yet evaluated".
+  qint64 lastEvaluatedTemporalFrame_ = -1;
+
   quint64 renderFrameCounter_ = 0;
 
   std::deque<double> recentFrameTimesMs_;
@@ -14959,11 +15026,13 @@ public:
   Qt::KeyboardModifiers draggingMotionPathModifiers_ = Qt::NoModifier;
   MotionPathGroupTransform draggingMotionPathGroupTransform_ =
       MotionPathGroupTransform::Translate;
-  QPointF draggingMotionPathGroupPivot_;
+  ArtifactCore::Coordinates::LayerParentBoundsPoint2
+      draggingMotionPathGroupPivot_{};
   float draggingMotionPathGroupStartAngle_ = 0.0f;
   float draggingMotionPathGroupStartRadius_ = 1.0f;
 
-  QPointF draggingMotionPathStartLocalPos_;
+  ArtifactCore::Coordinates::LayerParentPoint2
+      draggingMotionPathStartLocalPos_{};
 
   int hoveredMotionPathFrame_ = -1;
   MotionPathTangentHandle hoveredMotionPathTangentHandle_ =
@@ -15351,7 +15420,7 @@ public:
 
   int draggingVertexIndex_ = -1;
 
-  QPointF dragStartVertexLocal_;
+  ArtifactCore::Coordinates::LayerLocalPoint2 dragStartVertexLocal_{};
 
   std::vector<MaskVertexAddress> selectedMaskVertices_;
   bool maskProportionalEditingEnabled_ = false;
@@ -15367,7 +15436,7 @@ public:
 
   int draggingMaskHandleType_ = -1;
 
-  QPointF draggingMaskHandleStartLocal_;
+  ArtifactCore::Coordinates::LayerLocalPoint2 draggingMaskHandleStartLocal_{};
 
   ArtifactCore::Units::LayerLocalLength draggingMaskHandleStartFeather_{};
 
@@ -15377,7 +15446,7 @@ public:
 
   bool isDraggingMaskGeometry_ = false;
 
-  QPointF draggingMaskGeometryStartLocal_;
+  ArtifactCore::Coordinates::LayerLocalPoint2 draggingMaskGeometryStartLocal_{};
 
   ArtifactCore::Units::LayerLocalLength draggingMaskGeometryStartFeather_{};
 
@@ -15734,14 +15803,16 @@ public:
 
     draggingMotionPathBefore_ = before;
     draggingMotionPathStartLocalPos_ =
-        ArtifactCore::Coordinates::toQPointF(canvasPos);
+        ArtifactCore::Coordinates::layerParentPoint2FromComposition(canvasPos);
     if (const auto parent = layer->parentLayer()) {
       bool invertible = false;
       const QTransform inverseParent =
           parent->getGlobalTransformAt(frame).inverted(&invertible);
       if (invertible) {
         draggingMotionPathStartLocalPos_ =
-            inverseParent.map(draggingMotionPathStartLocalPos_);
+            ArtifactCore::Coordinates::layerParentPoint2FromQPointF(
+                inverseParent.map(
+                    ArtifactCore::Coordinates::toQPointF(canvasPos)));
       }
     }
     draggingMotionPathModifiers_ = modifiers;
@@ -15764,8 +15835,8 @@ public:
       MotionPathKeySnapshot snapshot;
       snapshot.frame = selectedFrame;
       snapshot.value.hasPositionKey = transform.hasPositionKeyFrameAt(time);
-      snapshot.value.x = transform.positionXAt(time);
-      snapshot.value.y = transform.positionYAt(time);
+      snapshot.value.position.x = transform.positionXAt(time);
+      snapshot.value.position.y = transform.positionYAt(time);
       if (snapshot.value.hasPositionKey) {
         snapshot.hasTangents =
             transform.positionKeyFrameSpatialTangentsAt(time,
@@ -15773,13 +15844,20 @@ public:
         draggingMotionPathGroupBefore_.push_back(snapshot);
       }
     }
-    for (const auto &snapshot : draggingMotionPathGroupBefore_)
-      draggingMotionPathGroupPivot_ +=
-          QPointF(snapshot.value.x, snapshot.value.y);
-    if (!draggingMotionPathGroupBefore_.isEmpty())
-      draggingMotionPathGroupPivot_ /= draggingMotionPathGroupBefore_.size();
-    const QPointF startVector = draggingMotionPathStartLocalPos_ -
-                                 draggingMotionPathGroupPivot_;
+    for (const auto &snapshot : draggingMotionPathGroupBefore_) {
+      draggingMotionPathGroupPivot_.x += snapshot.value.position.x;
+      draggingMotionPathGroupPivot_.y += snapshot.value.position.y;
+    }
+    if (!draggingMotionPathGroupBefore_.isEmpty()) {
+      const double divisor = static_cast<double>(
+          draggingMotionPathGroupBefore_.size());
+      draggingMotionPathGroupPivot_.x /= divisor;
+      draggingMotionPathGroupPivot_.y /= divisor;
+    }
+    const QPointF startVector =
+        ArtifactCore::Coordinates::toQPointF(
+            draggingMotionPathStartLocalPos_) -
+        draggingMotionPathGroupPivot_;
     draggingMotionPathGroupStartAngle_ =
         std::atan2(static_cast<float>(startVector.y()),
                    static_cast<float>(startVector.x()));
@@ -16027,9 +16105,9 @@ public:
     return true;
   }
 
-  bool applyMotionPathDrag(const ArtifactAbstractLayerPtr &layer,
-
-                           const QPointF &canvasPos) {
+  bool applyMotionPathDrag(
+      const ArtifactAbstractLayerPtr &layer,
+      ArtifactCore::Coordinates::CompositionPoint2 canvasPos) {
 
     auto draggingLayer = draggingMotionPathLayer_.lock();
 
@@ -16043,7 +16121,8 @@ public:
 
 
 
-    QPointF localPos = canvasPos;
+    ArtifactCore::Coordinates::LayerParentPoint2 localParentPos =
+        ArtifactCore::Coordinates::layerParentPoint2FromComposition(canvasPos);
 
     if (const auto parent = layer->parentLayer()) {
 
@@ -16061,7 +16140,10 @@ public:
 
       }
 
-      localPos = invParent.map(canvasPos);
+      localParentPos =
+          ArtifactCore::Coordinates::layerParentPoint2FromQPointF(
+              invParent.map(
+                  ArtifactCore::Coordinates::toQPointF(canvasPos)));
 
     }
 
@@ -16071,9 +16153,16 @@ public:
 
     const auto time = gizmoTransformTime(layer, draggingMotionPathFrame_);
 
-    const QPointF delta = localPos - draggingMotionPathStartLocalPos_;
+    const ArtifactCore::Coordinates::LayerParentVector2 typedDelta =
+        localParentPos - draggingMotionPathStartLocalPos_;
+    const QPointF localPos =
+        ArtifactCore::Coordinates::toQPointF(localParentPos);
+    const QPointF delta =
+        ArtifactCore::Coordinates::toQPointF(typedDelta);
+    const QPointF groupPivot = ArtifactCore::Coordinates::toQPointF(
+        draggingMotionPathGroupPivot_);
     if (draggingMotionPathGroupBefore_.size() > 1) {
-      const QPointF currentVector = localPos - draggingMotionPathGroupPivot_;
+      const QPointF currentVector = localPos - groupPivot;
       const float currentAngle = std::atan2(
           static_cast<float>(currentVector.y()),
           static_cast<float>(currentVector.x()));
@@ -16085,12 +16174,13 @@ public:
           0.05f, 20.0f);
       for (const auto &snapshot : draggingMotionPathGroupBefore_) {
         const auto keyTime = gizmoTransformTime(layer, snapshot.frame);
-        QPointF point(snapshot.value.x, snapshot.value.y);
+        QPointF point = ArtifactCore::Coordinates::toQPointF(
+            snapshot.value.position);
         if (draggingMotionPathGroupTransform_ ==
             MotionPathGroupTransform::Translate) {
           point += delta;
         } else {
-          point -= draggingMotionPathGroupPivot_;
+          point -= groupPivot;
           if (draggingMotionPathGroupTransform_ ==
               MotionPathGroupTransform::Scale) {
             point *= scale;
@@ -16100,7 +16190,7 @@ public:
             point = QPointF(point.x() * c - point.y() * s,
                             point.x() * s + point.y() * c);
           }
-          point += draggingMotionPathGroupPivot_;
+          point += groupPivot;
         }
         t3d.setPositionKeyFrameValueAt(keyTime, static_cast<float>(point.x()),
                                        static_cast<float>(point.y()));
@@ -17923,7 +18013,46 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
 
           } renderGuard(impl_->renderInProgress_);
 
+          // Temporal history is only meaningful across a contiguous step.  A
+          // seek, a reverse step, or any other discontinuity makes the retained
+          // frames the wrong neighbours, so drop them rather than letting a
+          // temporal effect blend against a distant frame.  Forward playback
+          // leaves history intact.
+          //
+          // The GPU-side slot pool lives in the per-frame RenderPipeline, whose
+          // identity follows the composition/view being rendered; a composition
+          // or view change therefore gets a fresh pool rather than needing an
+          // explicit invalidate here.  Only the process-wide CPU sampler needs
+          // to be told.
+          std::int64_t temporalFrame = -1;
+          bool temporalDiscontinuity = false;
+          if (const auto* playback = ArtifactPlaybackService::instance()) {
+            temporalFrame = playback->currentFrame();
+            temporalDiscontinuity =
+                temporalFrame >= 0 && impl_->lastEvaluatedTemporalFrame_ >= 0 &&
+                temporalFrame != impl_->lastEvaluatedTemporalFrame_ + 1;
+            if (temporalDiscontinuity) {
+              ArtifactEffectFrameSampler::instance().invalidateAll();
+            }
+            impl_->lastEvaluatedTemporalFrame_ = temporalFrame;
+          }
+
           renderCrashTrace("tick-render-begin", impl_->renderFrameCounter_);
+
+          // Pre-roll: on a discontinuity the retained history was just dropped,
+          // so a temporal effect would have no neighbour for this very frame.
+          // Render exactly one frame of history first, then restore the
+          // playhead, so frame N can sample N-1.  Deliberately a single frame
+          // and not a range: a deeper lookback should be amortised by the
+          // caller (RenderFarm / final render), not paid on every scrub.
+          if (temporalDiscontinuity && temporalFrame > 0) {
+            if (auto* composition = impl_->previewPipeline_.composition()) {
+              const auto savedFrame = composition->framePosition();
+              composition->goToFrame(temporalFrame - 1);
+              impl_->renderOneFrameImpl(this);
+              composition->goToFrame(savedFrame);
+            }
+          }
 
           impl_->renderOneFrameImpl(this);
 
@@ -20834,13 +20963,13 @@ bool CompositionRenderController::setSelectedLayerMotionPathKeyframeAtCurrentFra
 
   before.hasPositionKey = t3d.hasPositionKeyFrameAt(time);
 
-  before.x = t3d.positionXAt(time);
+  before.position.x = t3d.positionXAt(time);
 
-  before.y = t3d.positionYAt(time);
+  before.position.y = t3d.positionYAt(time);
 
 
 
-  t3d.setPositionKeyFrameValueAt(time, before.x, before.y);
+  t3d.setPositionKeyFrameValueAt(time, before.position.x, before.position.y);
 
 
 
@@ -20848,17 +20977,17 @@ bool CompositionRenderController::setSelectedLayerMotionPathKeyframeAtCurrentFra
 
   after.hasPositionKey = t3d.hasPositionKeyFrameAt(time);
 
-  after.x = t3d.positionXAt(time);
+  after.position.x = t3d.positionXAt(time);
 
-  after.y = t3d.positionYAt(time);
+  after.position.y = t3d.positionYAt(time);
 
 
 
   const bool changed = before.hasPositionKey != after.hasPositionKey ||
 
-                       std::abs(before.x - after.x) > 0.0001f ||
+                       std::abs(before.position.x - after.position.x) > 0.0001f ||
 
-                       std::abs(before.y - after.y) > 0.0001f;
+                       std::abs(before.position.y - after.position.y) > 0.0001f;
 
   if (!changed) {
 
@@ -20872,7 +21001,7 @@ bool CompositionRenderController::setSelectedLayerMotionPathKeyframeAtCurrentFra
   if (mgr && !mgr->push(std::make_unique<MotionPathUndoCommand>(
                             layer, time, before, after))) {
     if (before.hasPositionKey) {
-      t3d.setPositionKeyFrameValueAt(time, before.x, before.y);
+      t3d.setPositionKeyFrameValueAt(time, before.position.x, before.position.y);
     } else {
       t3d.removePositionKeyFrameAt(time);
     }
@@ -20953,9 +21082,9 @@ bool CompositionRenderController::removeSelectedLayerMotionPathKeyframeAtCurrent
 
   before.hasPositionKey = true;
 
-  before.x = t3d.positionXAt(time);
+  before.position.x = t3d.positionXAt(time);
 
-  before.y = t3d.positionYAt(time);
+  before.position.y = t3d.positionYAt(time);
 
 
 
@@ -20967,16 +21096,16 @@ bool CompositionRenderController::removeSelectedLayerMotionPathKeyframeAtCurrent
 
   after.hasPositionKey = false;
 
-  after.x = t3d.positionXAt(time);
+  after.position.x = t3d.positionXAt(time);
 
-  after.y = t3d.positionYAt(time);
+  after.position.y = t3d.positionYAt(time);
 
 
 
   auto *mgr = UndoManager::instance();
   if (mgr && !mgr->push(std::make_unique<MotionPathUndoCommand>(
                             layer, time, before, after))) {
-    t3d.setPositionKeyFrameValueAt(time, before.x, before.y);
+    t3d.setPositionKeyFrameValueAt(time, before.position.x, before.position.y);
     layer->setDirty(LayerDirtyFlag::Transform);
     layer->changed();
     return false;
@@ -27831,7 +27960,8 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
 
         impl_->draggingMaskHandleType_ = static_cast<int>(handleType);
 
-        impl_->draggingMaskHandleStartLocal_ = localPos;
+        impl_->draggingMaskHandleStartLocal_ =
+            ArtifactCore::Coordinates::layerLocalPoint2FromQPointF(localPos);
 
         impl_->draggingMaskHandleStartFeather_ =
             handleType == MaskEditHandleType::FeatherHandle
@@ -27967,7 +28097,9 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
 
               impl_->isDraggingVertex_ = true;
 
-              impl_->dragStartVertexLocal_ = vertex.position;
+              impl_->dragStartVertexLocal_ =
+                  ArtifactCore::Coordinates::layerLocalPoint2FromQPointF(
+                      vertex.position);
 
               const auto selectedVertex = ArtifactCore::artifactMakeTuple(m, p, v);
               if (!event->modifiers().testFlag(Qt::ShiftModifier)) {
@@ -28083,7 +28215,8 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
           impl_->isDraggingMaskGeometry_ = true;
           impl_->draggingMaskIndex_ = segmentMaskIndex;
           impl_->draggingPathIndex_ = segmentPathIndex;
-          impl_->draggingMaskGeometryStartLocal_ = localPos;
+          impl_->draggingMaskGeometryStartLocal_ =
+              ArtifactCore::Coordinates::layerLocalPoint2FromQPointF(localPos);
           impl_->draggingMaskGeometryStartFeather_ = geometryPath.feather();
           impl_->draggingMaskGeometryStartExpansion_ =
               geometryPath.expansion();
@@ -28105,7 +28238,8 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
 
           impl_->isDraggingVertex_ = true;
 
-          impl_->dragStartVertexLocal_ = localPos;
+          impl_->dragStartVertexLocal_ =
+              ArtifactCore::Coordinates::layerLocalPoint2FromQPointF(localPos);
 
           impl_->selectedMaskVertices_.clear();
           impl_->selectedMaskVertices_.emplace_back(
@@ -28552,8 +28686,8 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
         const auto &transform = selectedLayer->transform3D();
         MotionPathPositionSnapshot before;
         before.hasPositionKey = transform.hasPositionKeyFrameAt(time);
-        before.x = transform.positionXAt(time);
-        before.y = transform.positionYAt(time);
+        before.position.x = transform.positionXAt(time);
+        before.position.y = transform.positionYAt(time);
         if (before.hasPositionKey) {
           impl_->beginPastPlaneFrameDrag(selectedLayer, pastPlaneFrame,
                                          startHit, before);
@@ -28644,9 +28778,9 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
 
         before.hasPositionKey = t3d.hasPositionKeyFrameAt(time);
 
-        before.x = t3d.positionXAt(time);
+        before.position.x = t3d.positionXAt(time);
 
-        before.y = t3d.positionYAt(time);
+        before.position.y = t3d.positionYAt(time);
 
         if (before.hasPositionKey) {
 
@@ -28658,16 +28792,16 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
 
           after.hasPositionKey = false;
 
-          after.x = mutableT3d.positionXAt(time);
+          after.position.x = mutableT3d.positionXAt(time);
 
-          after.y = mutableT3d.positionYAt(time);
+          after.position.y = mutableT3d.positionYAt(time);
 
           auto *mgr = UndoManager::instance();
           if (mgr && !mgr->push(std::make_unique<MotionPathUndoCommand>(
                                     selectedLayer, time,
                                     before, after))) {
             mutableT3d.setPositionKeyFrameValueAt(
-                time, before.x, before.y);
+                time, before.position.x, before.position.y);
             if (!before.hasPositionKey) {
               mutableT3d.removePositionKeyFrameAt(time);
             }
@@ -28716,9 +28850,9 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
 
       before.hasPositionKey = t3d.hasPositionKeyFrameAt(time);
 
-      before.x = t3d.positionXAt(time);
+      before.position.x = t3d.positionXAt(time);
 
-      before.y = t3d.positionYAt(time);
+      before.position.y = t3d.positionYAt(time);
 
       impl_->beginMotionPathDrag(selectedLayer, hitSample.framePosition,
 
@@ -30434,7 +30568,9 @@ void CompositionRenderController::handleMouseMove(
 
         if (impl_->applyMotionPathDrag(
 
-                selectedLayer, QPointF(canvasPos.x, canvasPos.y))) {
+                selectedLayer,
+                ArtifactCore::Coordinates::CompositionPoint2{
+                    canvasPos.x, canvasPos.y})) {
 
           impl_->invalidateMotionPathCache();
 
@@ -30780,10 +30916,11 @@ if (activeTool == ToolType::Pen && impl_->isDraggingMaskGeometry_ &&
       LayerMask mask = selectedLayer->mask(impl_->draggingMaskIndex_);
       if (impl_->draggingPathIndex_ < mask.maskPathCount()) {
         MaskPath path = mask.maskPath(impl_->draggingPathIndex_);
+        const QPointF geometryStartLocal =
+            ArtifactCore::Coordinates::toQPointF(
+                impl_->draggingMaskGeometryStartLocal_);
         const ArtifactCore::Units::LayerLocalLength delta{
-            static_cast<float>(
-                -(localPos.y() -
-                  impl_->draggingMaskGeometryStartLocal_.y()))};
+            static_cast<float>(-(localPos.y() - geometryStartLocal.y()))};
         if (impl_->draggingMaskGeometryExpansion_) {
               path.setExpansion({
                   impl_->draggingMaskGeometryStartExpansion_.value + delta.value});
@@ -30911,7 +31048,10 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
           const QPointF previousPosition = vertex.position;
           QPointF constrainedLocalPos = localPos;
           if (QGuiApplication::keyboardModifiers().testFlag(Qt::ShiftModifier)) {
-            const QPointF delta = localPos - impl_->dragStartVertexLocal_;
+            const QPointF dragStartVertexLocal =
+                ArtifactCore::Coordinates::toQPointF(
+                    impl_->dragStartVertexLocal_);
+            const QPointF delta = localPos - dragStartVertexLocal;
             const double distance = std::hypot(delta.x(), delta.y());
             if (distance > 0.0001) {
               constexpr double kPi = 3.14159265358979323846;
@@ -30919,7 +31059,7 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
               const double snapped =
                   std::round(angle / (kPi / 4.0)) * (kPi / 4.0);
               constrainedLocalPos =
-                  impl_->dragStartVertexLocal_ + QPointF(
+              dragStartVertexLocal + QPointF(
                       std::cos(snapped) * distance,
                       std::sin(snapped) * distance);
             }
@@ -31120,7 +31260,8 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
                   const QPointF normal(-tangent.y(), tangent.x());
                   feather.value = std::max(0.0f, static_cast<float>(
                       QPointF::dotProduct(
-                          localPos - impl_->draggingMaskHandleStartLocal_,
+                          localPos - ArtifactCore::Coordinates::toQPointF(
+                              impl_->draggingMaskHandleStartLocal_),
                           normal)));
                 }
               }
@@ -32944,8 +33085,8 @@ void CompositionRenderController::handleMouseRelease() {
       const auto &transform = layer->transform3D();
       MotionPathPositionSnapshot after;
       after.hasPositionKey = transform.hasPositionKeyFrameAt(time);
-      after.x = transform.positionXAt(time);
-      after.y = transform.positionYAt(time);
+      after.position.x = transform.positionXAt(time);
+      after.position.y = transform.positionYAt(time);
       auto *mgr = UndoManager::instance();
       if (mgr && !mgr->push(std::make_unique<MotionPathUndoCommand>(
                                 layer, time,
@@ -32953,7 +33094,7 @@ void CompositionRenderController::handleMouseRelease() {
         const auto &before = impl_->draggingPastPlaneBefore_;
         auto &mutableTransform = layer->transform3D();
         if (before.hasPositionKey) {
-          mutableTransform.setPositionKeyFrameValueAt(time, before.x, before.y);
+          mutableTransform.setPositionKeyFrameValueAt(time, before.position.x, before.position.y);
         } else {
           mutableTransform.removePositionKeyFrameAt(time);
         }
@@ -32982,17 +33123,17 @@ void CompositionRenderController::handleMouseRelease() {
 
       after.hasPositionKey = t3d.hasPositionKeyFrameAt(time);
 
-      after.x = t3d.positionXAt(time);
+      after.position.x = t3d.positionXAt(time);
 
-      after.y = t3d.positionYAt(time);
+      after.position.y = t3d.positionYAt(time);
 
 
 
       const bool changed = impl_->draggingMotionPathBefore_.hasPositionKey != after.hasPositionKey ||
 
-                           std::abs(impl_->draggingMotionPathBefore_.x - after.x) > 0.0001f ||
+                           std::abs(impl_->draggingMotionPathBefore_.position.x - after.position.x) > 0.0001f ||
 
-                           std::abs(impl_->draggingMotionPathBefore_.y - after.y) > 0.0001f;
+                           std::abs(impl_->draggingMotionPathBefore_.position.y - after.position.y) > 0.0001f;
 
       if (changed) {
         auto *mgr = UndoManager::instance();
@@ -33006,8 +33147,8 @@ void CompositionRenderController::handleMouseRelease() {
               MotionPathKeySnapshot current;
               current.frame = beforeKey.frame;
               current.value.hasPositionKey = t3d.hasPositionKeyFrameAt(keyTime);
-              current.value.x = t3d.positionXAt(keyTime);
-              current.value.y = t3d.positionYAt(keyTime);
+              current.value.position.x = t3d.positionXAt(keyTime);
+              current.value.position.y = t3d.positionYAt(keyTime);
                current.hasTangents =
                    t3d.positionKeyFrameSpatialTangentsAt(keyTime,
                                                          current.tangents);
@@ -33028,7 +33169,7 @@ void CompositionRenderController::handleMouseRelease() {
               const auto keyTime = gizmoTransformTime(layer, beforeKey.frame);
               if (beforeKey.value.hasPositionKey) {
                 mutableTransform.setPositionKeyFrameValueAt(
-                    keyTime, beforeKey.value.x, beforeKey.value.y);
+                    keyTime, beforeKey.value.position.x, beforeKey.value.position.y);
                 if (beforeKey.hasTangents) {
                   mutableTransform.setPositionKeyFrameSpatialTangentsAt(
                       keyTime, beforeKey.tangents);
@@ -33041,7 +33182,7 @@ void CompositionRenderController::handleMouseRelease() {
             const auto &before = impl_->draggingMotionPathBefore_;
             if (before.hasPositionKey) {
               mutableTransform.setPositionKeyFrameValueAt(
-                  time, before.x, before.y);
+                  time, before.position.x, before.position.y);
             } else {
               mutableTransform.removePositionKeyFrameAt(time);
             }
@@ -37575,13 +37716,15 @@ void CompositionRenderController::trackerUsePointMode() {
     trackerInitialize();
   }
   if (!impl_->trackerMotionTracker_) return;
+  const QString previousJson = impl_->trackerMotionTracker_->toJson();
   impl_->trackerMotionTracker_->setTrackerType(ArtifactCore::TrackerType::Point);
   impl_->trackerMotionTracker_->clearTrackingData();
+  pushTrackerUndo(previousJson, impl_->trackerMotionTracker_->toJson());
   if (impl_->trackerGizmo_) {
     impl_->trackerGizmo_->setTracker(impl_->trackerMotionTracker_);
   }
   setInfoOverlayText(QStringLiteral("Point Tracker"),
-                    QStringLiteral("Set the feature point and search region"));
+                     QStringLiteral("Set the feature point and search region"));
   markRenderDirty();
 }
 
@@ -37591,24 +37734,43 @@ void CompositionRenderController::trackerUsePlanarMode() {
     trackerInitialize();
   }
   if (!impl_->trackerMotionTracker_) return;
+  const QString previousJson = impl_->trackerMotionTracker_->toJson();
   impl_->trackerMotionTracker_->setTrackerType(ArtifactCore::TrackerType::Planar);
   impl_->trackerMotionTracker_->clearTrackingData();
+  pushTrackerUndo(previousJson, impl_->trackerMotionTracker_->toJson());
   if (impl_->trackerGizmo_) {
     impl_->trackerGizmo_->setTracker(impl_->trackerMotionTracker_);
   }
   setInfoOverlayText(QStringLiteral("Planar Tracker"),
-                    QStringLiteral("Planar mode enabled; track the four-corner region"));
+                     QStringLiteral("Planar mode enabled; track the four-corner region"));
   markRenderDirty();
 }
 
 static QString trackerModeTitle(const ArtifactCore::MotionTracker *tracker);
 
+// Pushes an undo entry for a tracker mutation that already happened. `cleared`
+// selects the post-state JSON because reset produces an empty tracker.
+void CompositionRenderController::pushTrackerUndo(
+    const QString& previousJson, const QString& currentJson) {
+  if (!impl_ || !impl_->trackerMotionTracker_) return;
+  const QString previous = previousJson.isEmpty()
+                               ? impl_->trackerMotionTracker_->toJson()
+                               : previousJson;
+  if (previous.isEmpty() || previous == currentJson) return;
+  if (auto* undo = UndoManager::instance()) {
+    undo->push(std::make_unique<TrackerResultCommand>(
+        impl_->trackerMotionTracker_->id(), previous, currentJson, true));
+  }
+}
+
 void CompositionRenderController::trackerReset() {
   if (!impl_ || trackerJobRunning() || !impl_->trackerMotionTracker_) return;
   impl_->trackerMotionTracker_->stopTracking();
+  const QString previousJson = impl_->trackerMotionTracker_->toJson();
   impl_->trackerMotionTracker_->clearTrackingData();
   impl_->trackerMotionTracker_->clearTrackPoints();
   impl_->trackerMotionTracker_->clearTrackRegions();
+  pushTrackerUndo(previousJson, QString());
   if (impl_->trackerGizmo_) {
     impl_->trackerGizmo_->setTracker(impl_->trackerMotionTracker_);
   }
@@ -37709,7 +37871,7 @@ int CompositionRenderController::trackerProblemFrameCount() const {
 
 int CompositionRenderController::trackerResultFrameCount() const {
   return impl_ && impl_->trackerMotionTracker_
-             ? static_cast<int>(impl_->trackerMotionTracker_->result().frames.size())
+             ? static_cast<int>(impl_->trackerMotionTracker_->resultRef().frames.size())
              : 0;
 }
 
@@ -37754,7 +37916,7 @@ void CompositionRenderController::trackerNextProblemFrame() {
 void CompositionRenderController::trackerSmooth() {
   if (!impl_ || trackerJobRunning() || !impl_->trackerMotionTracker_) return;
   if (!impl_->trackerMotionTracker_->hasResult() ||
-      impl_->trackerMotionTracker_->result().frames.size() < 5u) {
+      impl_->trackerMotionTracker_->resultRef().frames.size() < 5u) {
     setInfoOverlayText(trackerModeTitle(impl_->trackerMotionTracker_),
                        QStringLiteral("Track at least five frames before smoothing"));
     return;
@@ -37762,7 +37924,9 @@ void CompositionRenderController::trackerSmooth() {
 
   // Use the Core default deliberately: it is bounded, leaves inactive points
   // untouched, and recomputes per-frame confidence after filtering.
+  const QString previousJson = impl_->trackerMotionTracker_->toJson();
   impl_->trackerMotionTracker_->smoothTrack();
+  pushTrackerUndo(previousJson, impl_->trackerMotionTracker_->toJson());
   setInfoOverlayText(trackerModeTitle(impl_->trackerMotionTracker_),
                      QStringLiteral("Applied five-frame track smoothing"));
   markRenderDirty();
@@ -37778,7 +37942,9 @@ void CompositionRenderController::trackerRemoveOutliers() {
 
   // Keep the UI action aligned with MotionTracker's public default (3.0),
   // rather than inventing a second app-only threshold contract.
+  const QString previousJson = impl_->trackerMotionTracker_->toJson();
   impl_->trackerMotionTracker_->removeOutliers();
+  pushTrackerUndo(previousJson, impl_->trackerMotionTracker_->toJson());
   setInfoOverlayText(trackerModeTitle(impl_->trackerMotionTracker_),
                      QStringLiteral("Removed velocity outliers; review flagged frames"));
   markRenderDirty();
@@ -37795,7 +37961,9 @@ void CompositionRenderController::trackerFilterByConfidence() {
   // default is 0.50, but the tracker owns the effective setting.
   const double threshold =
       impl_->trackerMotionTracker_->settings().confidenceThreshold;
+  const QString previousJson = impl_->trackerMotionTracker_->toJson();
   impl_->trackerMotionTracker_->filterByConfidence(threshold);
+  pushTrackerUndo(previousJson, impl_->trackerMotionTracker_->toJson());
   setInfoOverlayText(trackerModeTitle(impl_->trackerMotionTracker_),
                      QStringLiteral("Deactivated points below %1 confidence")
                          .arg(threshold, 0, 'f', 2));
@@ -37849,6 +38017,7 @@ void CompositionRenderController::trackerCaptureNextFrame(
       return;
     }
 
+    impl_->trackerPreSolveJson_ = tracker->toJson();
     tracker->clearTrackingData();
     const auto &state = gizmo->state();
     const QRectF featureRect(
@@ -38012,6 +38181,15 @@ void CompositionRenderController::trackerPollJob(std::uint64_t generation) {
   if (impl_->trackerGizmo_) {
     impl_->trackerGizmo_->setTracker(impl_->trackerMotionTracker_);
   }
+  // A completed solve replaces the whole result set, so the previous snapshot
+  // has to become undoable or the user cannot get the old track back.
+  if (succeeded && !cancelled && impl_->trackerMotionTracker_ &&
+      !impl_->trackerPreSolveJson_.isEmpty()) {
+    const QString previousJson = impl_->trackerPreSolveJson_;
+    pushTrackerUndo(previousJson, impl_->trackerMotionTracker_->toJson());
+    markRenderDirty();
+  }
+  impl_->trackerPreSolveJson_.clear();
   const QString detail =
       cancelled
           ? QStringLiteral("Cancelled; partial result was not accepted")

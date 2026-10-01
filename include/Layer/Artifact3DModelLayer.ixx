@@ -61,6 +61,12 @@ export namespace Artifact {
     void loadFromFileAtTime(const QString& filePath, double time,
                             int clipIndex = 0);
     void setAnimationTime(double time, int clipIndex = 0);
+    // Advances the skin pose to the layer's current composition frame and
+    // updates mesh() in place. Safe to call before drawing; a no-op when the
+    // layer has no clips or animation is disabled. Consumers that render the
+    // mesh outside draw() (CloneLayer instancing) call this so they observe the
+    // same pose the layer itself would evaluate.
+    void evaluateSkinAnimation();
     void setSkinAnimationEnabled(bool enabled);
     bool skinAnimationEnabled() const;
     void setSkinAnimationClipIndex(int clipIndex);

@@ -164,7 +164,7 @@ ShadowHighlightEffect::ShadowHighlightEffect() {
     setDisplayName(UniString("Shadow / Highlight"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
     setCPUImpl(ArtifactCore::makeShared<ShadowHighlightEffectCPUImpl>());
-    setComputeMode(ComputeMode::CPU_ONLY);
+    setComputeMode(ComputeMode::CPU);
     syncImpls();
 }
 

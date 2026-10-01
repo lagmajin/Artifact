@@ -128,7 +128,9 @@ QString layerOverlayDetailText(const ArtifactAbstractLayerPtr &layer)
                 .arg(trackerId)
                 .arg(tracker->trackPointCount())
                 .arg(tracker->trackRegionCount())
-                .arg(tracker->hasResult() ? static_cast<int>(tracker->result().frameCount()) : 0)
+                .arg(tracker->hasResult()
+                    ? static_cast<int>(tracker->resultRef().frameCount())
+                    : 0)
                 .arg(tracker->averageConfidence(), 0, 'f', 2)
           : QStringLiteral("Tracker #%1 (missing)").arg(trackerId);
       detail += QStringLiteral(" | %1").arg(trackerLabel);

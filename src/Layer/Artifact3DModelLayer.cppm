@@ -139,6 +139,10 @@ public:
   float pointSize_ = 1.0f;
   QString lastRenderTraceOutcome_;
   ArtifactCore::MeshImporter* animationImporter_ = nullptr;
+  // Scratch buffer for world-space overlay vertices. Retained between frames so
+  // the overlay paths reuse capacity instead of reallocating per draw.
+  QVector<QVector3D> overlayVertices_;
+  int64_t overlayVertexCount_ = 0;
   Impl() {}
   ~Impl() { delete animationImporter_; }
 };
@@ -1426,6 +1430,54 @@ void Artifact3DLayer::setAnimationTime(const double time, const int clipIndex)
   loadFromFileAtTime(impl_->sourcePath_, time, clipIndex);
 }
 
+void Artifact3DLayer::evaluateSkinAnimation()
+{
+  if (!impl_->meshLoaded_ || impl_->updatingSkinAnimation_) {
+    return;
+  }
+  const int64_t frame = currentFrame();
+  if (impl_->sourcePath_.isEmpty() ||
+      impl_->mesh_.skinAnimationClips().isEmpty() ||
+      !impl_->skinAnimationEnabled_ ||
+      impl_->lastSkinAnimationFrame_ == frame) {
+    return;
+  }
+  const int clipCount = static_cast<int>(
+      impl_->mesh_.skinAnimationClips().size());
+  impl_->skinAnimationClipIndex_ = std::clamp(
+      impl_->skinAnimationClipIndex_, 0, clipCount - 1);
+  impl_->updatingSkinAnimation_ = true;
+  const auto* clip = impl_->mesh_.skinAnimationClip(
+      impl_->skinAnimationClipIndex_);
+  if (clip && std::isfinite(clip->timeBegin) &&
+      std::isfinite(clip->timeEnd) && clip->timeEnd > clip->timeBegin) {
+    const double compositionFps = std::isfinite(compositionFrameRate()) &&
+                                  compositionFrameRate() > 0.0
+          ? compositionFrameRate()
+          : 30.0;
+    const double duration = clip->timeEnd - clip->timeBegin;
+    const double requestedTime = static_cast<double>(frame) / compositionFps;
+    const double speed = std::isfinite(impl_->animationSpeed_)
+        ? std::clamp(impl_->animationSpeed_, 0.0f, 8.0f) : 1.0f;
+    const double local = std::isfinite(requestedTime)
+        ? std::max(0.0, requestedTime - clip->timeBegin) *
+          static_cast<double>(speed)
+        : 0.0;
+    double relativeTime = std::fmod(local, duration);
+    if (impl_->animationPlaybackMode_ == 1) {
+      relativeTime = std::min(local, duration);
+    } else if (impl_->animationPlaybackMode_ == 2) {
+      const double span = duration * 2.0;
+      const double phase = span > 0.0 ? std::fmod(local, span) : 0.0;
+      relativeTime = phase <= duration ? phase : span - phase;
+    }
+    setAnimationTime(clip->timeBegin + relativeTime,
+                     impl_->skinAnimationClipIndex_);
+  }
+  impl_->updatingSkinAnimation_ = false;
+  impl_->lastSkinAnimationFrame_ = frame;
+}
+
 void Artifact3DLayer::setSkinAnimationEnabled(const bool enabled)
 {
   impl_->skinAnimationEnabled_ = enabled;
@@ -1648,42 +1700,7 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
                                 compositionFrameRate() > 0.0
       ? compositionFrameRate()
       : 30.0;
-  if (!impl_->sourcePath_.isEmpty() &&
-      !impl_->mesh_.skinAnimationClips().isEmpty() &&
-      impl_->skinAnimationEnabled_ &&
-      impl_->lastSkinAnimationFrame_ != frame &&
-      !impl_->updatingSkinAnimation_) {
-    const int clipCount = static_cast<int>(
-        impl_->mesh_.skinAnimationClips().size());
-    impl_->skinAnimationClipIndex_ = std::clamp(
-        impl_->skinAnimationClipIndex_, 0, clipCount - 1);
-    impl_->updatingSkinAnimation_ = true;
-    const auto* clip = impl_->mesh_.skinAnimationClip(
-        impl_->skinAnimationClipIndex_);
-    if (clip && std::isfinite(clip->timeBegin) &&
-        std::isfinite(clip->timeEnd) && clip->timeEnd > clip->timeBegin) {
-      const double duration = clip->timeEnd - clip->timeBegin;
-      const double requestedTime = static_cast<double>(frame) / compositionFps;
-      const double speed = std::isfinite(impl_->animationSpeed_)
-          ? std::clamp(impl_->animationSpeed_, 0.0f, 8.0f) : 1.0f;
-      const double local = std::isfinite(requestedTime)
-          ? std::max(0.0, requestedTime - clip->timeBegin) *
-            static_cast<double>(speed)
-          : 0.0;
-      double relativeTime = std::fmod(local, duration);
-      if (impl_->animationPlaybackMode_ == 1) {
-        relativeTime = std::min(local, duration);
-      } else if (impl_->animationPlaybackMode_ == 2) {
-        const double span = duration * 2.0;
-        const double phase = span > 0.0 ? std::fmod(local, span) : 0.0;
-        relativeTime = phase <= duration ? phase : span - phase;
-      }
-      setAnimationTime(clip->timeBegin + relativeTime,
-                       impl_->skinAnimationClipIndex_);
-    }
-    impl_->updatingSkinAnimation_ = false;
-    impl_->lastSkinAnimationFrame_ = frame;
-  }
+  evaluateSkinAnimation();
   const RationalTime frameTime(currentFrame(), compositionFps);
   const auto snapshot = t3.snapshotAt(frameTime);
   const RationalTime previousFrameTime(
@@ -1715,12 +1732,24 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
     return;
   }
 
-  // Transform vertices
-  QVector<QVector3D> transformedVertices;
-  transformedVertices.resize(positions->data().size());
-  ArtifactCore::Parallel::For(0, static_cast<int>(positions->data().size()), static_cast<int>(positions->data().size()), [&](int index) {
-    transformedVertices[index] = modelMatrix.map(positions->data()[index]);
-  });
+  const bool isPointCloud = impl_->mesh_.polygonCount() == 0 && !positions->data().isEmpty();
+  const bool needsWireOverlay =
+      impl_->renderMode_ == ModelRenderMode::Wireframe || impl_->wireOverlay_;
+  // The solid path hands the mesh to the GPU renderer as-is; world-space overlay
+  // vertices are only needed for the wire/point/normal overlays. Populate the
+  // scratch buffer on demand so the common solid-without-overlay case does no
+  // per-vertex transform work or allocation at all.
+  QVector<QVector3D> &transformedVertices = impl_->overlayVertices_;
+  const int vertexCount = static_cast<int>(positions->data().size());
+  if (needsWireOverlay || isPointCloud) {
+    if (impl_->overlayVertexCount_ != vertexCount) {
+      transformedVertices.resize(vertexCount);
+      impl_->overlayVertexCount_ = vertexCount;
+    }
+    ArtifactCore::Parallel::For(0, vertexCount, vertexCount, [&](int index) {
+      transformedVertices[index] = modelMatrix.map(positions->data()[index]);
+    });
+  }
 
   const FloatColor wireframeColor{1.0f, 1.0f, 1.0f, opacity()};
   const float thickness = 2.0f;
@@ -1770,7 +1799,6 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
     }
     return drawn;
   };
-  const bool isPointCloud = impl_->mesh_.polygonCount() == 0 && !transformedVertices.isEmpty();
   const auto drawFaceNormals = [&]() {
     const FloatColor normalColor{1.0f, 0.35f, 0.08f, opacity() * 0.9f};
     const auto normalMatrix = modelMatrix.normalMatrix();

@@ -27,7 +27,6 @@ import Utils.String.UniString;
 
 import Composition.Settings;
 import Container;
-import Asset.File;
 import Asset;
 
 import Artifact.Composition.Abstract;
@@ -46,6 +45,7 @@ import Asset.Manager;
 import Asset.Database;
 import Asset.Importer;
 import AssetType;
+import Tracking.MotionTracker;
 import Memory.SharedPtr;
 
 import Artifact.Project.Items;
@@ -92,13 +92,126 @@ namespace Artifact {
 
  }
 
- struct ArtifactProjectNode
- {
+struct ArtifactProjectNode
+   {
 
- };
+   };
+
+ namespace project_item_json
+ {
+   constexpr std::size_t kMaxSequenceEntries = 100000;
+
+   QStringList readStringList(const QJsonValue& value)
+   {
+    QStringList result;
+    const QJsonArray array = value.toArray();
+    result.reserve(array.size());
+    for (const QJsonValue& entry : array) {
+     if (entry.isString()) {
+      result.append(entry.toString());
+     }
+    }
+    return result;
+   }
+
+   ProjectRenderInputRole renderInputRoleFromString(const QString& role)
+   {
+    if (role.compare(QStringLiteral("alphaMatte"), Qt::CaseInsensitive) == 0) {
+     return ProjectRenderInputRole::AlphaMatte;
+    }
+    if (role.compare(QStringLiteral("lumaMatte"), Qt::CaseInsensitive) == 0) {
+     return ProjectRenderInputRole::LumaMatte;
+    }
+    if (role.compare(QStringLiteral("displacementMap"), Qt::CaseInsensitive) == 0) {
+     return ProjectRenderInputRole::DisplacementMap;
+    }
+    if (role.compare(QStringLiteral("depthMap"), Qt::CaseInsensitive) == 0) {
+     return ProjectRenderInputRole::DepthMap;
+    }
+    if (role.compare(QStringLiteral("normalMap"), Qt::CaseInsensitive) == 0) {
+     return ProjectRenderInputRole::NormalMap;
+    }
+    if (role.compare(QStringLiteral("texture"), Qt::CaseInsensitive) == 0) {
+     return ProjectRenderInputRole::Texture;
+    }
+    return ProjectRenderInputRole::Generic;
+   }
+
+   // 単一の実装を、プロジェクト保存からの復元 (restoreProjectItems) と
+   // UI clipboard bundle からの追加 (addProjectItemsFromJson) の両経路で共有する。
+   // sequencePaths / isSequence / frameRate / subimageIndex / inputColorSpace /
+   // inputTransferFunction は保存されるのに復元側で読み取られておらず、
+   // 保存 -> ロードで row が落ちる事故の原因になっていた。
+   void readFootageFields(FootageItem& footage, const QJsonObject& obj)
+   {
+    footage.filePath = obj.value(QStringLiteral("filePath")).toString();
+    footage.assetId = QUuid::fromString(
+        obj.value(QStringLiteral("assetId")).toString());
+    if (footage.assetId.isNull() && !footage.filePath.isEmpty()) {
+     const AssetType detectedAssetType =
+         AssetImporter::detectType(footage.filePath);
+     if (detectedAssetType != AssetType::Unknown) {
+      footage.assetId = AssetDatabase::instance().registerAsset(
+          footage.filePath, detectedAssetType);
+     }
+    } else if (!footage.assetId.isNull() && !footage.filePath.isEmpty()) {
+     const AssetType detectedAssetType =
+         AssetImporter::detectType(footage.filePath);
+     if (detectedAssetType != AssetType::Unknown) {
+      const QUuid registeredId = AssetDatabase::instance().registerAsset(
+          footage.filePath, detectedAssetType, footage.assetId);
+      if (!registeredId.isNull()) {
+       footage.assetId = registeredId;
+      }
+     }
+    }
+    footage.isSequence = obj.value(QStringLiteral("isSequence")).toBool(false);
+    footage.subimageIndex =
+        std::max(-1, obj.value(QStringLiteral("subimageIndex")).toInt(-1));
+    footage.frameRate = obj.value(QStringLiteral("frameRate")).toDouble(0.0);
+    footage.inputColorSpace =
+        obj.value(QStringLiteral("inputColorSpace")).toString();
+    footage.inputTransferFunction =
+        obj.value(QStringLiteral("inputTransferFunction")).toString();
+    footage.proxyQuality =
+        std::clamp(obj.value(QStringLiteral("proxyQuality")).toInt(2), 1, 4);
+    footage.proxyEnabled =
+        obj.value(QStringLiteral("proxyEnabled")).toBool(true);
+    footage.proxyQualityLabel =
+        obj.value(QStringLiteral("proxyQualityLabel")).toString();
+    if (obj.value(QStringLiteral("assetUsage")).toString().compare(
+            QStringLiteral("renderInput"), Qt::CaseInsensitive) == 0) {
+     footage.assetUsage = ProjectAssetUsage::RenderInput;
+     footage.renderInputRole =
+         renderInputRoleFromString(
+             obj.value(QStringLiteral("renderInputRole")).toString());
+    }
+    const QJsonArray sequenceArray =
+        obj.value(QStringLiteral("sequencePaths")).toArray();
+    if (!sequenceArray.isEmpty()) {
+     QStringList sequencePaths;
+     sequencePaths.reserve(sequenceArray.size());
+     for (const QJsonValue& value : sequenceArray) {
+      if (sequencePaths.size() >= kMaxSequenceEntries) {
+       break;
+      }
+      if (value.isString()) {
+       sequencePaths.append(value.toString());
+      }
+     }
+     footage.sequencePaths = sequencePaths;
+     if (sequencePaths.size() > 1) {
+      footage.isSequence = true;
+      // Keep the logical footage identity aligned with the sequence
+      // after reload; relink and lookup both use filePath as the anchor.
+      footage.filePath = sequencePaths.first();
+     }
+    }
+   }
+ }
 
  class ArtifactProject::Impl {
-  private:
+   private:
    ArtifactProjectSettings projectSettings_;
    ArtifactLayerFactory layerFactory_;
    bool isDirty_; // ダーティ状態フラグ
@@ -179,8 +292,7 @@ namespace Artifact {
    CreationDefaultsState creationDefaultsState() const { return creationDefaultsState_; }
    void setCreationDefaultsState(const CreationDefaultsState& state) { creationDefaultsState_ = state; }
    CompositionID currentCompositionId() const;
-   void setCurrentCompositionId(const CompositionID& id, bool markDirty = true);
-  AssetMultiIndexContainer assetContainer_;
+void setCurrentCompositionId(const CompositionID& id, bool markDirty = true);
   ArtifactCompositionMultiIndexContainer container_;
   std::vector<std::unique_ptr<ProjectItem>> ownedItems_; // owns all allocated items
  };
@@ -500,72 +612,7 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names)
       if (!idStr.isEmpty()) {
         footageUp->id = Id(idStr);
       }
-      footageUp->filePath = obj.value(QStringLiteral("filePath")).toString();
-      footageUp->assetId = QUuid::fromString(
-          obj.value(QStringLiteral("assetId")).toString());
-      if (footageUp->assetId.isNull() && !footageUp->filePath.isEmpty()) {
-        const AssetType detectedAssetType =
-            AssetImporter::detectType(footageUp->filePath);
-        if (detectedAssetType != AssetType::Unknown) {
-          footageUp->assetId = AssetDatabase::instance().registerAsset(
-              footageUp->filePath, detectedAssetType);
-        }
-      } else if (!footageUp->assetId.isNull() && !footageUp->filePath.isEmpty()) {
-        const AssetType detectedAssetType =
-            AssetImporter::detectType(footageUp->filePath);
-        if (detectedAssetType != AssetType::Unknown) {
-          const QUuid registeredId = AssetDatabase::instance().registerAsset(
-              footageUp->filePath, detectedAssetType, footageUp->assetId);
-          if (!registeredId.isNull()) {
-            footageUp->assetId = registeredId;
-          }
-        }
-      }
-      footageUp->isSequence = obj.value(QStringLiteral("isSequence")).toBool(false);
-      footageUp->subimageIndex = std::max(-1, obj.value(QStringLiteral("subimageIndex")).toInt(-1));
-      footageUp->frameRate = obj.value(QStringLiteral("frameRate")).toDouble(0.0);
-      footageUp->inputColorSpace =
-          obj.value(QStringLiteral("inputColorSpace")).toString();
-      footageUp->inputTransferFunction =
-          obj.value(QStringLiteral("inputTransferFunction")).toString();
-      if (obj.value(QStringLiteral("assetUsage")).toString().compare(
-              QStringLiteral("renderInput"), Qt::CaseInsensitive) == 0) {
-        footageUp->assetUsage = ProjectAssetUsage::RenderInput;
-        const QString role = obj.value(QStringLiteral("renderInputRole")).toString();
-        if (role.compare(QStringLiteral("alphaMatte"), Qt::CaseInsensitive) == 0) {
-          footageUp->renderInputRole = ProjectRenderInputRole::AlphaMatte;
-        } else if (role.compare(QStringLiteral("lumaMatte"), Qt::CaseInsensitive) == 0) {
-          footageUp->renderInputRole = ProjectRenderInputRole::LumaMatte;
-        } else if (role.compare(QStringLiteral("displacementMap"), Qt::CaseInsensitive) == 0) {
-          footageUp->renderInputRole = ProjectRenderInputRole::DisplacementMap;
-        } else if (role.compare(QStringLiteral("depthMap"), Qt::CaseInsensitive) == 0) {
-          footageUp->renderInputRole = ProjectRenderInputRole::DepthMap;
-        } else if (role.compare(QStringLiteral("normalMap"), Qt::CaseInsensitive) == 0) {
-          footageUp->renderInputRole = ProjectRenderInputRole::NormalMap;
-        } else if (role.compare(QStringLiteral("texture"), Qt::CaseInsensitive) == 0) {
-          footageUp->renderInputRole = ProjectRenderInputRole::Texture;
-        }
-      }
-      const QJsonArray sequenceArray = obj.value(QStringLiteral("sequencePaths")).toArray();
-      if (!sequenceArray.isEmpty()) {
-        QStringList sequencePaths;
-        sequencePaths.reserve(sequenceArray.size());
-        for (const auto& value : sequenceArray) {
-          if (sequencePaths.size() >= 100000) {
-            break;
-          }
-          if (value.isString()) {
-            sequencePaths.append(value.toString());
-          }
-        }
-        footageUp->sequencePaths = sequencePaths;
-        if (sequencePaths.size() > 1) {
-          footageUp->isSequence = true;
-          // Keep the logical footage identity aligned with the sequence
-          // after reload; relink and lookup both use filePath as the anchor.
-          footageUp->filePath = sequencePaths.first();
-        }
-      }
+      project_item_json::readFootageFields(*footageUp, obj);
       return appendChild(std::move(footageUp));
     }
 
@@ -876,6 +923,12 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names)
   QJsonObject assets;
   assets.insert(QStringLiteral("sourceRegistry"),
                 ArtifactCore::AssetManager::instance().sourceRegistrySnapshot());
+  // Motion tracking セッション。従来はレイヤー側の motionTrackerId (int) しか
+  // 保存されず、トラッキング点/フレーム/homography は再オープンで消えていた。
+  const QJsonArray trackerArray = TrackerManager::instance().toJson();
+  if (!trackerArray.isEmpty()) {
+   assets.insert(QStringLiteral("trackers"), trackerArray);
+  }
   result.insert(QStringLiteral("assets"), assets);
 
 QJsonArray compsArray;
@@ -914,8 +967,7 @@ QJsonArray compsArray;
        if (!footage->assetId.isNull()) {
         obj["assetId"] = footage->assetId.toString(QUuid::WithoutBraces);
        }
-       obj["filePathExists"] = QFileInfo(footage->filePath).exists();
-       if (footage->subimageIndex >= 0) {
+if (footage->subimageIndex >= 0) {
         obj["subimageIndex"] = footage->subimageIndex;
        }
        if (footage->isSequence) {
@@ -923,17 +975,28 @@ QJsonArray compsArray;
        }
        if (!footage->sequencePaths.isEmpty()) {
         QJsonArray sequenceArray;
-        for (const QString& sequencePath : footage->sequencePaths) {
-         sequenceArray.append(sequencePath);
+for (const QString& sequencePath : footage->sequencePaths) {
+          sequenceArray.append(sequencePath);
+         }
+         obj["sequencePaths"] = sequenceArray;
         }
-        obj["sequencePaths"] = sequenceArray;
-       }
-       if (footage->frameRate > 0.0) {
-        obj["frameRate"] = footage->frameRate;
-       }
-       if (footage->assetUsage == ProjectAssetUsage::RenderInput) {
-        obj["assetUsage"] = "renderInput";
-        switch (footage->renderInputRole) {
+        if (footage->frameRate > 0.0) {
+         obj["frameRate"] = footage->frameRate;
+        }
+        if (!footage->inputColorSpace.isEmpty()) {
+         obj["inputColorSpace"] = footage->inputColorSpace;
+        }
+        if (!footage->inputTransferFunction.isEmpty()) {
+         obj["inputTransferFunction"] = footage->inputTransferFunction;
+        }
+        obj["proxyQuality"] = footage->proxyQuality;
+        obj["proxyEnabled"] = footage->proxyEnabled;
+        if (!footage->proxyQualityLabel.isEmpty()) {
+         obj["proxyQualityLabel"] = footage->proxyQualityLabel;
+        }
+        if (footage->assetUsage == ProjectAssetUsage::RenderInput) {
+         obj["assetUsage"] = "renderInput";
+         switch (footage->renderInputRole) {
         case ProjectRenderInputRole::AlphaMatte: obj["renderInputRole"] = "alphaMatte"; break;
         case ProjectRenderInputRole::LumaMatte: obj["renderInputRole"] = "lumaMatte"; break;
         case ProjectRenderInputRole::DisplacementMap: obj["renderInputRole"] = "displacementMap"; break;
@@ -2005,45 +2068,7 @@ void ArtifactProject::restoreProjectItems(const QJsonArray& items)
       auto footageUp = std::make_unique<FootageItem>();
       footageUp->name.setQString(name);
       footageUp->tags = tags;
-      footageUp->filePath = obj["filePath"].toString();
-      footageUp->assetId = QUuid::fromString(
-          obj.value(QStringLiteral("assetId")).toString());
-      if (footageUp->assetId.isNull() && !footageUp->filePath.isEmpty()) {
-        const AssetType detectedAssetType =
-            AssetImporter::detectType(footageUp->filePath);
-        if (detectedAssetType != AssetType::Unknown) {
-          footageUp->assetId = AssetDatabase::instance().registerAsset(
-              footageUp->filePath, detectedAssetType);
-        }
-      } else if (!footageUp->assetId.isNull() && !footageUp->filePath.isEmpty()) {
-        const AssetType detectedAssetType =
-            AssetImporter::detectType(footageUp->filePath);
-        if (detectedAssetType != AssetType::Unknown) {
-          const QUuid registeredId = AssetDatabase::instance().registerAsset(
-              footageUp->filePath, detectedAssetType, footageUp->assetId);
-          if (!registeredId.isNull()) {
-            footageUp->assetId = registeredId;
-          }
-        }
-      }
-      if (obj.value(QStringLiteral("assetUsage")).toString().compare(
-              QStringLiteral("renderInput"), Qt::CaseInsensitive) == 0) {
-        footageUp->assetUsage = ProjectAssetUsage::RenderInput;
-        const QString role = obj.value(QStringLiteral("renderInputRole")).toString();
-        if (role.compare(QStringLiteral("alphaMatte"), Qt::CaseInsensitive) == 0) {
-          footageUp->renderInputRole = ProjectRenderInputRole::AlphaMatte;
-        } else if (role.compare(QStringLiteral("lumaMatte"), Qt::CaseInsensitive) == 0) {
-          footageUp->renderInputRole = ProjectRenderInputRole::LumaMatte;
-        } else if (role.compare(QStringLiteral("displacementMap"), Qt::CaseInsensitive) == 0) {
-          footageUp->renderInputRole = ProjectRenderInputRole::DisplacementMap;
-        } else if (role.compare(QStringLiteral("depthMap"), Qt::CaseInsensitive) == 0) {
-          footageUp->renderInputRole = ProjectRenderInputRole::DepthMap;
-        } else if (role.compare(QStringLiteral("normalMap"), Qt::CaseInsensitive) == 0) {
-          footageUp->renderInputRole = ProjectRenderInputRole::NormalMap;
-        } else if (role.compare(QStringLiteral("texture"), Qt::CaseInsensitive) == 0) {
-          footageUp->renderInputRole = ProjectRenderInputRole::Texture;
-        }
-      }
+      project_item_json::readFootageFields(*footageUp, obj);
       if (!idStr.isEmpty()) {
         footageUp->id = Id(idStr);
       }

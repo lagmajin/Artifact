@@ -76,6 +76,8 @@ import Artifact.Composition.Abstract;
 import Artifact.Project.Manager;
 import Artifact.Project.Items;
 import Artifact.Project.PresetManager;
+import Tracking.MotionTracker;
+import Artifact.Layer.Video;
 import Artifact.Undo.ProjectItemSupport;
 import Artifact.Event.Types;
 import Event.Bus;
@@ -7753,6 +7755,115 @@ bool SetFootageAssetRoleCommand::deserialize(const QJsonObject& data) {
     newUsage_ = static_cast<ProjectAssetUsage>(newUsage);
     newRole_ = static_cast<ProjectRenderInputRole>(newRole);
     return !itemId_.isEmpty();
+}
+
+static bool applyTrackerJsonForUndo(int trackerId, const QString& json) {
+    if (trackerId <= 0 || json.isEmpty()) {
+        return false;
+    }
+    ArtifactCore::MotionTracker* tracker =
+        ArtifactCore::TrackerManager::instance().tracker(trackerId);
+    return tracker && tracker->fromJson(json);
+}
+
+TrackerResultCommand::TrackerResultCommand(int trackerId, const QString& oldJson,
+                                           const QString& newJson)
+    : trackerId_(trackerId), oldJson_(oldJson), newJson_(newJson) {}
+
+TrackerResultCommand::TrackerResultCommand(int trackerId, const QString& oldJson,
+                                           const QString& newJson,
+                                           bool alreadyApplied)
+    : TrackerResultCommand(trackerId, oldJson, newJson) {
+    alreadyApplied_ = alreadyApplied;
+}
+
+void TrackerResultCommand::undo() {
+    lastOperationSucceeded_ = applyTrackerJsonForUndo(trackerId_, oldJson_);
+}
+
+void TrackerResultCommand::redo() {
+    if (alreadyApplied_) {
+        lastOperationSucceeded_ = true;
+        return;
+    }
+    lastOperationSucceeded_ = applyTrackerJsonForUndo(trackerId_, newJson_);
+}
+
+QString TrackerResultCommand::label() const {
+    return QStringLiteral("Motion Tracking Result");
+}
+
+size_t TrackerResultCommand::estimatedMemoryBytes() const {
+    return sizeof(*this) +
+           static_cast<size_t>(oldJson_.size() + newJson_.size()) * sizeof(QChar);
+}
+
+QJsonObject TrackerResultCommand::serialize() const {
+    return QJsonObject{{QStringLiteral("trackerId"), trackerId_},
+                       {QStringLiteral("oldJson"), oldJson_},
+                       {QStringLiteral("newJson"), newJson_}};
+}
+
+bool TrackerResultCommand::deserialize(const QJsonObject& data) {
+    const int trackerId = data.value(QStringLiteral("trackerId")).toInt(0);
+    if (trackerId <= 0) {
+        return false;
+    }
+    trackerId_ = trackerId;
+    oldJson_ = data.value(QStringLiteral("oldJson")).toString();
+    newJson_ = data.value(QStringLiteral("newJson")).toString();
+    return !oldJson_.isEmpty() && !newJson_.isEmpty();
+}
+
+SetLayerMotionTrackerCommand::SetLayerMotionTrackerCommand(
+    const ArtifactAbstractLayerPtr& layer, int oldTrackerId, int newTrackerId)
+    : layer_(ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)),
+      layerId_(layer ? layer->id().toQString() : QString()),
+      oldTrackerId_(oldTrackerId), newTrackerId_(newTrackerId) {}
+
+QStringList SetLayerMotionTrackerCommand::collaborationTargetLayerIds() const {
+    return layerId_.isEmpty() ? QStringList{} : QStringList{layerId_};
+}
+
+void SetLayerMotionTrackerCommand::undo() {
+    if (!layer_) {
+        lastOperationSucceeded_ = false;
+        return;
+    }
+    layer_->setMotionTrackerId(oldTrackerId_);
+    layer_->changed();
+    lastOperationSucceeded_ = layer_->motionTrackerId() == oldTrackerId_;
+}
+
+void SetLayerMotionTrackerCommand::redo() {
+    if (!layer_) {
+        lastOperationSucceeded_ = false;
+        return;
+    }
+    layer_->setMotionTrackerId(newTrackerId_);
+    layer_->changed();
+    lastOperationSucceeded_ = layer_->motionTrackerId() == newTrackerId_;
+}
+
+QString SetLayerMotionTrackerCommand::label() const {
+    return QStringLiteral("Link Motion Tracker");
+}
+
+size_t SetLayerMotionTrackerCommand::estimatedMemoryBytes() const {
+    return sizeof(*this) + static_cast<size_t>(layerId_.size()) * sizeof(QChar);
+}
+
+QJsonObject SetLayerMotionTrackerCommand::serialize() const {
+    return QJsonObject{{QStringLiteral("layerId"), layerId_},
+                       {QStringLiteral("oldTrackerId"), oldTrackerId_},
+                       {QStringLiteral("newTrackerId"), newTrackerId_}};
+}
+
+bool SetLayerMotionTrackerCommand::deserialize(const QJsonObject& data) {
+    layerId_ = data.value(QStringLiteral("layerId")).toString();
+    oldTrackerId_ = data.value(QStringLiteral("oldTrackerId")).toInt(0);
+    newTrackerId_ = data.value(QStringLiteral("newTrackerId")).toInt(0);
+    return !layerId_.isEmpty();
 }
 
 MoveProjectItemCommand::MoveProjectItemCommand(ProjectItem* item,

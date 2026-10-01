@@ -2985,18 +2985,17 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                                  QStringLiteral("Set Input Source Role..."),
                                  [this, footageItem, svc]() {
                     const QStringList choices{
-                        QStringLiteral("Production Source"),
-                        QStringLiteral("Generic Render Input"),
-                        QStringLiteral("Alpha Matte"),
-                        QStringLiteral("Luma Matte"),
-                        QStringLiteral("Displacement Map"),
-                        QStringLiteral("Depth Map"),
-                        QStringLiteral("Normal Map"),
-                        QStringLiteral("Texture")};
-                    int currentIndex = 0;
-                    if (footageItem->assetUsage == ProjectAssetUsage::RenderInput) {
-                        currentIndex = static_cast<int>(footageItem->renderInputRole) + 1;
-                    }
+        QStringLiteral("Production Source"),
+        projectRenderInputRoleLabel(ProjectRenderInputRole::Generic)};
+    for (int role = static_cast<int>(ProjectRenderInputRole::AlphaMatte);
+         role <= static_cast<int>(ProjectRenderInputRole::Texture); ++role) {
+        choices.append(projectRenderInputRoleLabel(
+            static_cast<ProjectRenderInputRole>(role)));
+    }
+    int currentIndex = 0;
+    if (footageItem->assetUsage == ProjectAssetUsage::RenderInput) {
+        currentIndex = static_cast<int>(footageItem->renderInputRole) + 1;
+    }
                     bool accepted = false;
                     const QString choice = QInputDialog::getItem(
                         this, QStringLiteral("Input Source Role"),
@@ -3053,7 +3052,13 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                 }
             }, loadProjectViewIcon(QStringLiteral("Studio/replay.svg")));
             const QString normalizedFootagePath = QFileInfo(footagePath).absoluteFilePath();
-            const bool proxyEnabled = proxyMetadata().value(normalizedFootagePath).enabled;
+            const bool proxyEnabled = [&] {
+                FootageItem* footage = nullptr;
+                if (auto* svc = ArtifactProjectService::instance()) {
+                    footage = svc->findFootageItemByPath(normalizedFootagePath);
+                }
+                return footage ? footage->proxyEnabled : true;
+            }();
             addTrackedAction(
                 QStringLiteral("toggle_proxy_for_selected"),
                 proxyEnabled ? QStringLiteral("Disable Proxy Playback")
@@ -3998,7 +4003,10 @@ void ArtifactProjectView::focusOutEvent(QFocusEvent* event)
              return;
          }
      }
-     if (event->key() == Qt::Key_F2) { if (currentIndex().isValid()) editIndex(currentIndex()); return; }
+     // Rename / expand / collapse は Manager 側の QShortcut (ArtifactProjectManagerWidget)
+     // が ShortcutBindings 経由で処理するため、ここでは扱わない。
+     // Reveal は QShortcut を持たないため、このビューの 키経路で処理する。
+     auto& shortcutBindings = ArtifactCore::ShortcutBindings::instance();
      
      // Ctrl+A で全選択
      if (event->matches(QKeySequence::SelectAll)) {
@@ -4034,7 +4042,8 @@ void ArtifactProjectView::focusOutEvent(QFocusEvent* event)
      }
      
      // R キーで選択フッテージをエクスプローラーで表示
-     if (event->key() == Qt::Key_R) {
+     if (event && shortcutBindings.matches(
+                      event, ArtifactCore::ShortcutId::ProjectRevealInExplorer)) {
          QModelIndex idx = currentIndex();
          if (idx.isValid()) {
              QModelIndex sourceIdx = idx;
@@ -4050,18 +4059,6 @@ void ArtifactProjectView::focusOutEvent(QFocusEvent* event)
                  return;
              }
          }
-     }
-
-     // * で全て展開 / Shift+* で全て折りたたみ
-     if (event->key() == Qt::Key_Asterisk && !shift) {
-         expandAll();
-         event->accept();
-         return;
-     }
-     if (event->key() == Qt::Key_Asterisk && shift) {
-         collapseAll();
-         event->accept();
-         return;
      }
      
      QModelIndex target = currentIndex();
@@ -4744,7 +4741,10 @@ public:
         int staleCount = 0;
         QString firstReadyFileName;
         for (const QString& path : footagePaths) {
-            const QString proxyPath = proxyFilePathForFootage(path);
+            FootageItem* footage = footageItemForPath(path);
+            const QString proxyPath = proxyFilePathForFootage(
+                path, footage ? static_cast<ProxyQuality>(footage->proxyQuality)
+                              : ProxyQuality::Half);
             if (!proxyPath.isEmpty() && QFileInfo(proxyPath).exists()) {
                 ++readyCount;
                 if (firstReadyFileName.isEmpty()) {
@@ -4762,9 +4762,9 @@ public:
         }
         const QString qualityTag = [&]() -> QString {
             if (footagePaths.size() == 1) {
-                const auto it = proxyMetadata().constFind(footagePaths.first());
-                if (it != proxyMetadata().constEnd() && !it->qualityLabel.isEmpty())
-                    return it->qualityLabel;
+                if (const FootageItem* footage = footageItemForPath(footagePaths.first())) {
+                    return footage->proxyQualityLabel;
+                }
             }
             return {};
         }();
@@ -5355,7 +5355,8 @@ public:
             return;
         }
         const QString path = static_cast<FootageItem*>(item)->filePath;
-        if (!proxyMetadata().contains(path) || proxyMetadata()[path].qualityLabel.isEmpty()) {
+        FootageItem* footage = static_cast<FootageItem*>(item);
+        if (footage->proxyQualityLabel.isEmpty()) {
             auto* parentW = projectView_ ? projectView_->parentWidget() : nullptr;
             QDialog dlg(parentW);
             dlg.setWindowTitle(QStringLiteral("Proxy Quality"));
@@ -5377,16 +5378,20 @@ public:
             dl->addWidget(btns);
             if (dlg.exec() != QDialog::Accepted) return;
             const auto q = static_cast<ProxyQuality>(combo->itemData(combo->currentIndex()).toInt());
-            proxyMetadata()[path].quality = q;
-            proxyMetadata()[path].qualityLabel = combo->currentText();
+            footage->proxyQuality = static_cast<int>(q);
+            footage->proxyQualityLabel = combo->currentText();
+            if (auto project = svc->getCurrentProjectSharedPtr()) {
+                project->projectChanged();
+            }
         }
         QVector<FootageItem*> footage;
         auto* footageItem = static_cast<FootageItem*>(item);
         footage.append(footageItem);
         queueProxyGeneration(footage);
-        const QString proxyPath = proxyFilePathForFootage(footageItem->filePath);
-        const bool enabled = proxyMetadata().value(footageItem->filePath).enabled;
-        syncProxyPathToProject(footageItem->filePath, proxyPath, enabled, proxyGlobalEnabled_);
+        const QString proxyPath = proxyFilePathForFootage(
+            footageItem->filePath, static_cast<ProxyQuality>(footageItem->proxyQuality));
+        syncProxyPathToProject(footageItem->filePath, proxyPath,
+                               footageItem->proxyEnabled, proxyGlobalEnabled_);
     }
 
     void generateProxyForFilePath(const QString& sourceFilePath) {
@@ -5404,7 +5409,11 @@ public:
         }
 
         // Prompt quality selection on first generation for this source
-        if (!proxyMetadata().contains(targetPath) || proxyMetadata()[targetPath].qualityLabel.isEmpty()) {
+        FootageItem* targetFootage = footageItemForPath(targetPath);
+        if (!targetFootage) {
+            return;
+        }
+        if (targetFootage->proxyQualityLabel.isEmpty()) {
             auto* parentW = projectView_ ? projectView_->parentWidget() : nullptr;
             QDialog dlg(parentW);
             dlg.setWindowTitle(QStringLiteral("Proxy Quality"));
@@ -5427,8 +5436,9 @@ public:
             if (dlg.exec() != QDialog::Accepted) return;
             const int selIdx = combo->currentIndex();
             const auto q = static_cast<ProxyQuality>(combo->itemData(selIdx).toInt());
-            proxyMetadata()[targetPath].quality = q;
-            proxyMetadata()[targetPath].qualityLabel = combo->currentText();
+            targetFootage->proxyQuality = static_cast<int>(q);
+            targetFootage->proxyQualityLabel = combo->currentText();
+            project->projectChanged();
         }
 
         QVector<FootageItem*> footage;
@@ -5457,9 +5467,10 @@ public:
             return;
         }
         queueProxyGeneration(footage);
-        const QString proxyPath = proxyFilePathForFootage(targetPath);
-        const bool enabled = proxyMetadata().value(targetPath).enabled;
-        syncProxyPathToProject(targetPath, proxyPath, enabled, proxyGlobalEnabled_);
+        const QString proxyPath = proxyFilePathForFootage(
+            targetPath, static_cast<ProxyQuality>(targetFootage->proxyQuality));
+        syncProxyPathToProject(targetPath, proxyPath,
+                               targetFootage->proxyEnabled, proxyGlobalEnabled_);
         if (auto* widget = projectView_ ? qobject_cast<ArtifactProjectManagerWidget*>(projectView_->parentWidget()) : nullptr) {
             widget->updateRequested();
         }
@@ -5486,7 +5497,9 @@ public:
         if (!item || item->type() != eProjectItemType::Footage) {
             return;
         }
-        const QString proxyPath = proxyFilePathForFootage(static_cast<FootageItem*>(item)->filePath);
+        const QString proxyPath = proxyFilePathForFootage(static_cast<FootageItem*>(item)->filePath,
+                                                      static_cast<ProxyQuality>(
+                                                          static_cast<FootageItem*>(item)->proxyQuality));
         if (proxyPath.isEmpty() || !QFileInfo(proxyPath).exists()) {
             QMessageBox::information(parent, QStringLiteral("Proxy"), QStringLiteral("Proxy file is not available yet."));
             return;
@@ -5496,7 +5509,10 @@ public:
 
     void revealProxyForFilePath(const QString& sourceFilePath, QWidget* parent) {
         Q_UNUSED(parent);
-        const QString proxyPath = proxyFilePathForFootage(sourceFilePath);
+        FootageItem* footage = footageItemForPath(sourceFilePath);
+        const QString proxyPath = proxyFilePathForFootage(
+            sourceFilePath, footage ? static_cast<ProxyQuality>(footage->proxyQuality)
+                                    : ProxyQuality::Half);
         if (proxyPath.isEmpty() || !QFileInfo(proxyPath).exists()) {
             QMessageBox::information(parent, QStringLiteral("Proxy"), QStringLiteral("Proxy file is not available yet."));
             return;
@@ -5506,7 +5522,10 @@ public:
 
     bool clearProxyForFilePath(const QString& sourceFilePath, QWidget* parent) {
         const QString targetPath = QFileInfo(sourceFilePath).absoluteFilePath();
-        const QString proxyPath = proxyFilePathForFootage(targetPath);
+        FootageItem* footage = footageItemForPath(sourceFilePath);
+        const QString proxyPath = proxyFilePathForFootage(
+            targetPath, footage ? static_cast<ProxyQuality>(footage->proxyQuality)
+                                : ProxyQuality::Half);
         if (proxyPath.isEmpty()) {
             return false;
         }
@@ -5514,6 +5533,8 @@ public:
             QMessageBox::warning(parent, QStringLiteral("Proxy"), QStringLiteral("Proxy file could not be removed."));
             return false;
         }
+        // 生成状態 (sourceLastModified) のみ消す。品質/有効設定は FootageItem が
+        // 保持しており、proxy ファイルを消しても選択は保持する。
         proxyMetadata().remove(targetPath);
         auto* svc = ArtifactProjectService::instance();
         if (!svc) {
@@ -5544,15 +5565,33 @@ public:
         return true;
     }
 
-    void toggleProxyPlaybackForFilePath(const QString& sourceFilePath) {
+    // Proxy 設定 (quality / enabled / label) は FootageItem がプロジェクトの権威。
+    // プロセス内 static へ書き込むとリロードで消えるため、必ずこちらを使う。
+    FootageItem* footageItemForPath(const QString& sourceFilePath) {
         const QString targetPath = QFileInfo(sourceFilePath).absoluteFilePath();
         if (targetPath.isEmpty()) {
+            return nullptr;
+        }
+        auto* svc = ArtifactProjectService::instance();
+        return svc ? svc->findFootageItemByPath(targetPath) : nullptr;
+    }
+
+    void toggleProxyPlaybackForFilePath(const QString& sourceFilePath) {
+        FootageItem* footage = footageItemForPath(sourceFilePath);
+        if (!footage) {
             return;
         }
-        auto& metadata = proxyMetadata()[targetPath];
-        metadata.enabled = !metadata.enabled;
-        syncProxyPathToProject(targetPath, proxyFilePathForFootage(targetPath),
-                               metadata.enabled, proxyGlobalEnabled_);
+        footage->proxyEnabled = !footage->proxyEnabled;
+        if (auto* svc = ArtifactProjectService::instance()) {
+            if (auto project = svc->getCurrentProjectSharedPtr()) {
+                project->projectChanged();
+            }
+        }
+        syncProxyPathToProject(footage->filePath,
+                               proxyFilePathForFootage(
+                                   footage->filePath,
+                                   static_cast<ProxyQuality>(footage->proxyQuality)),
+                               footage->proxyEnabled, proxyGlobalEnabled_);
         refreshSelectionChrome();
     }
 
@@ -5698,17 +5737,22 @@ public:
             if (!f || f->filePath.isEmpty()) continue;
             const QFileInfo src(f->filePath);
             if (!src.exists()) continue;
-            const QString out = proxyFilePathForFootage(src.absoluteFilePath());
+            FootageItem* footage = footageItemForPath(src.absoluteFilePath());
+            const ProxyQuality quality = footage
+                ? static_cast<ProxyQuality>(footage->proxyQuality)
+                : ProxyQuality::Half;
+            const QString out = proxyFilePathForFootage(src.absoluteFilePath(), quality);
             if (out.isEmpty()) {
                 continue;
             }
 
             auto& meta = proxyMetadata()[src.absoluteFilePath()];
             meta.sourceLastModified = src.lastModified();
+            meta.quality = quality;
 
-            const double scale = meta.quality == ProxyQuality::Eighth ? 0.125
-                               : meta.quality == ProxyQuality::Quarter ? 0.25
-                               : meta.quality == ProxyQuality::Full  ? 1.0
+            const double scale = quality == ProxyQuality::Eighth ? 0.125
+                               : quality == ProxyQuality::Quarter ? 0.25
+                               : quality == ProxyQuality::Full  ? 1.0
                                : 0.5;
             const QString suffix = src.suffix().toLower();
             const bool video = QStringList{QStringLiteral("mp4"), QStringLiteral("mov"),
@@ -5836,8 +5880,10 @@ public:
             if (succeeded) {
                 auto& metadata = proxyMetadata()[activeProxyJob_.inputPath];
                 metadata.sourceLastModified = activeProxyJob_.sourceLastModified;
+                FootageItem* footage = footageItemForPath(activeProxyJob_.inputPath);
+                const bool enabled = footage ? footage->proxyEnabled : true;
                 syncProxyPathToProject(activeProxyJob_.inputPath, activeProxyJob_.outputPath,
-                                       metadata.enabled, proxyGlobalEnabled_);
+                                       enabled, proxyGlobalEnabled_);
                 if (!activeProxyPreviousPath_.isEmpty()) {
                     QFile::remove(activeProxyPreviousPath_);
                 }

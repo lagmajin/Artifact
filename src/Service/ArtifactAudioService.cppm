@@ -24,18 +24,11 @@ import Memory.SharedPtr;
 namespace Artifact {
 
 namespace {
-QString layerBusName(const ArtifactCore::LayerID& layerId)
-{
- const auto name = ArtifactCore::AudioMixer::layerBusName(layerId);
- return QString::fromUtf8(name.data(), static_cast<int>(name.length()));
-}
-
-float linearToDecibels(const float volume)
-{
- const float safeVolume = std::isfinite(volume)
-     ? std::max(0.001f, volume) : 1.0f;
- return 20.0f * std::log10(safeVolume);
-}
+ QString layerBusName(const ArtifactCore::LayerID& layerId)
+ {
+  const auto name = ArtifactCore::AudioMixer::layerBusName(layerId);
+  return QString::fromUtf8(name.data(), static_cast<int>(name.length()));
+ }
 }
 
 class ArtifactAudioService::Impl {
@@ -112,13 +105,13 @@ bool ArtifactAudioService::syncCurrentComposition()
   if (!bus) {
    continue;
   }
+  // Volume and pan are owned by the layer and already applied to the PCM it
+  // produces, so they are deliberately not mirrored onto the layer bus.
+  // Mute stays: ArtifactVideoLayer::getAudio has no mute check, so the bus mute
+  // is the only mute that reaches a video layer's audio.
   if (const auto audioLayer = ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer)) {
-   bus->setVolume(linearToDecibels(audioLayer->volume()));
-   bus->setPan(audioLayer->pan());
    bus->setMute(audioLayer->isMuted());
   } else if (const auto videoLayer = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) {
-   bus->setVolume(linearToDecibels(static_cast<float>(videoLayer->audioVolume())));
-   bus->setPan(static_cast<float>(videoLayer->audioPan()));
    bus->setMute(videoLayer->isAudioMuted());
   }
   bus->setSolo(layer->isSolo());
@@ -240,7 +233,9 @@ bool ArtifactAudioService::setLayerBusVolume(
    layer->changed();
   }
  }
- bus->setVolume(linearToDecibels(normalized));
+ // The layer bus is a routing node, not a second fader stage. The layer
+ // applies its volume while producing PCM, so mirroring it here would square
+ // the requested gain.
  return true;
 }
 
@@ -260,7 +255,8 @@ bool ArtifactAudioService::setLayerBusPan(
    layer->changed();
   }
  }
- bus->setPan(normalized);
+ // The layer bus is a routing node, not a second fader stage. The layer
+ // applies its pan while producing PCM, so mirroring it here would pan twice.
  return true;
 }
 

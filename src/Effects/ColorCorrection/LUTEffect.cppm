@@ -79,7 +79,7 @@ LUTEffect::LUTEffect() {
     setDisplayName(UniString("Apply LUT"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
     setCPUImpl(ArtifactCore::makeShared<LUTEffectCPUImpl>());
-    setComputeMode(ComputeMode::CPU_ONLY);
+    setComputeMode(ComputeMode::CPU);
     updateLUT();
 }
 

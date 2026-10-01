@@ -4680,8 +4680,12 @@ void ArtifactLayerMenu::Impl::handleCreateMotionTracker()
         return;
     }
 
-    videoLayer->setMotionTrackerId(tracker->id());
-    videoLayer->changed();
+    const int previousTrackerId = videoLayer->motionTrackerId();
+    if (!applyLayerMenuUndoCommand(std::make_unique<SetLayerMotionTrackerCommand>(
+            layer, previousTrackerId, tracker->id()))) {
+        QMessageBox::warning(menu_->window(), "Motion Tracker", TranslationManager::instance().tr(QStringLiteral("dialog.layer.tracker_create_failed"), QStringLiteral("トラッカーを作成できませんでした。")));
+        return;
+    }
     ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
         LayerChangedEvent{comp->id().toString(), videoLayer->id().toString(),
                           LayerChangedEvent::ChangeType::Modified});

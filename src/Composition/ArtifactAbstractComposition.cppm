@@ -3798,14 +3798,16 @@ bool ArtifactAbstractComposition::getAudio(AudioSegment &outSegment, const Frame
                 if (!bus) continue;
                 AudioSegment layerSegment;
                 if (layer->getAudio(layerSegment, start, frameCount, sampleRate)) {
-                    // ArtifactAudioLayer applies its animated clip volume while
-                    // producing PCM. Applying it again at the layer bus would
-                    // square the requested gain, including for SpatialAudio.
-                    float layerVol = 1.0f;
-                    if (auto vl = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) {
-                        layerVol = static_cast<float>(vl->audioVolume());
-                    }
-                    bus->setVolume(20.0f * std::log10(std::max(0.001f, layerVol)));
+                    // Every audio-producing layer already applies its own volume
+                    // and pan to the PCM it produces. The layer bus is therefore
+                    // a neutral routing node: re-applying either value here would
+                    // apply the same gain or pan twice in series. Both are forced
+                    // to a deterministic neutral so a value restored from a saved
+                    // project cannot reintroduce the double application.
+                    // Mute is the exception: ArtifactVideoLayer::getAudio has no
+                    // mute check, so the bus mute is its only mute.
+                    bus->setVolume(0.0f);
+                    bus->setPan(0.0f);
                     outputChannels = std::max(outputChannels, layerSegment.channelCount());
                     pendingInputs.push_back(
                         {bus, std::move(layerSegment), evaluationGainForLayer(layer->id())});

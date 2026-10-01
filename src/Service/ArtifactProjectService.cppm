@@ -6338,6 +6338,31 @@ ArtifactProjectService::findFootageItemByPath(const QString &filePath) const {
   return nullptr;
 }
 
+QUuid ArtifactProjectService::resolveAssetIdForPath(
+    const QString &filePath) const {
+  if (filePath.trimmed().isEmpty()) {
+    return QUuid{};
+  }
+  // 1) プロジェクト文書 (FootageItem::assetId) が正本。
+  if (const FootageItem *footage = findFootageItemByPath(filePath)) {
+    if (!footage->assetId.isNull()) {
+      return footage->assetId;
+    }
+  }
+  // 2) プロセス内 ID キャッシュ。
+  const QUuid cachedId =
+      ArtifactCore::AssetDatabase::instance().findAssetByPath(filePath);
+  if (!cachedId.isNull()) {
+    return cachedId;
+  }
+  // 3) ファイルごとのサイドカー (.assetmeta)。
+  const auto meta = ArtifactCore::ArtifactAssetMetaFile::load(filePath);
+  if (meta.isValid()) {
+    return meta.uuid();
+  }
+  return QUuid{};
+}
+
 bool ArtifactProjectService::relinkFootageByPath(const QString &oldFilePath,
                                                  const QString &newFilePath) {
   if (oldFilePath.isEmpty() || newFilePath.isEmpty()) {
@@ -6387,21 +6412,7 @@ QVector<RelinkCandidate> ArtifactProjectService::findRelinkCandidates(
   static const QRegularExpression sequencePattern(
       QStringLiteral(R"(^(.*?)(\d+)(\.[^.]+)$)"));
   const auto oldSequenceMatch = sequencePattern.match(oldName);
-  const FootageItem *oldFootage = findFootageItemByPath(oldFilePath);
-  QUuid oldAssetId;
-  if (oldFootage) {
-    oldAssetId = oldFootage->assetId;
-  }
-  if (oldAssetId.isNull()) {
-    oldAssetId = ArtifactCore::AssetDatabase::instance().findAssetByPath(
-        oldFilePath);
-  }
-  if (oldAssetId.isNull()) {
-    const auto oldMeta = ArtifactCore::ArtifactAssetMetaFile::load(oldFilePath);
-    if (oldMeta.isValid()) {
-      oldAssetId = oldMeta.uuid();
-    }
-  }
+  const QUuid oldAssetId = resolveAssetIdForPath(oldFilePath);
   QDirIterator iterator(root.absolutePath(), QDir::Files,
                         QDirIterator::Subdirectories);
   while (iterator.hasNext()) {
@@ -6420,9 +6431,7 @@ QVector<RelinkCandidate> ArtifactProjectService::findRelinkCandidates(
     bool identityMatch = false;
     QStringList reasons;
     if (!oldAssetId.isNull()) {
-      const auto candidateMeta = ArtifactCore::ArtifactAssetMetaFile::load(
-          candidateInfo.absoluteFilePath());
-      if (candidateMeta.isValid() && candidateMeta.uuid() == oldAssetId) {
+      if (resolveAssetIdForPath(candidateInfo.absoluteFilePath()) == oldAssetId) {
         score += 500;
         identityMatch = true;
         reasons.append(QStringLiteral("same logical asset ID"));

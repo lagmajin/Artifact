@@ -853,6 +853,12 @@ AudioChannelStripWidget::AudioChannelStripWidget(
     panSlider->setAccessibleDescription(QStringLiteral("Adjust stereo pan for %1").arg(busName));
     connect(panSlider, &QSlider::valueChanged, this, [this](int val) {
         if (!bus_) return;
+        // A layer bus is a routing node whose pan is already baked into the
+        // layer's PCM, so mirroring the slider there would pan twice. Group and
+        // return buses have no such upstream stage and keep their own pan.
+        if (mixer_ && mixer_->busKind(bus_) == ArtifactCore::AudioBusKind::Layer) {
+            return;
+        }
         bus_->setPan(val / 100.0f);
     });
     layout->addWidget(panSlider);
@@ -868,6 +874,12 @@ AudioChannelStripWidget::AudioChannelStripWidget(
     fader->setAccessibleDescription(QStringLiteral("Adjust volume for %1 in decibels").arg(busName));
     connect(fader, &QSlider::valueChanged, this, [this](int val) {
         if (!bus_) return;
+        // A layer bus is a routing node whose volume is already applied to the
+        // layer's PCM, so a fader here would square the gain. Group and return
+        // buses have no such upstream stage and keep their own fader.
+        if (mixer_ && mixer_->busKind(bus_) == ArtifactCore::AudioBusKind::Layer) {
+            return;
+        }
         bus_->setVolume(val / 10.0f);
     });
     faderArea->addWidget(fader);

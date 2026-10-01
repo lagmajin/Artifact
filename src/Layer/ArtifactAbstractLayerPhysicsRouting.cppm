@@ -160,6 +160,7 @@ bool ArtifactAbstractLayer::setComponentPhysicsPropertyValue(
       resyncActiveCollisionPhysics();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.collision.enabled"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.collision.displayColor")) {
@@ -171,6 +172,7 @@ bool ArtifactAbstractLayer::setComponentPhysicsPropertyValue(
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.collision.displayColor"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.collision.shape")) {
@@ -431,6 +433,7 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.crowd.enabled"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.crowd.cohesion")) {
@@ -512,7 +515,11 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
       return true;
     }
     if (propertyPath == QStringLiteral("component.fluid.enabled")) {
-      impl_->fluidComponentEnabled_ = value.toBool();
+      const bool enabled = value.toBool();
+      if (impl_->fluidComponentEnabled_ == enabled) {
+        return true;
+      }
+      impl_->fluidComponentEnabled_ = enabled;
       if (impl_->fluidComponentEnabled_) {
         impl_->physicsComponent_.authoring().solverKind =
             PhysicsSolverKind::Fluid2D;
@@ -526,7 +533,9 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
         impl_->fluidRuntime_.invalidateLiquidSimulation();
       }
       impl_->syncBuiltinComponentDescriptors();
-      Q_EMIT changed();
+      syncRoutedPropertyCache(QStringLiteral("component.fluid.enabled"));
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
       return true;
     }
     if (propertyPath == QStringLiteral("component.fluid.mode")) {
@@ -761,9 +770,15 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
       return true;
     }
     if (propertyPath == QStringLiteral("component.pyro.enabled")) {
-      impl_->pyroComponentEnabled_ = value.toBool();
+      const bool enabled = value.toBool();
+      if (impl_->pyroComponentEnabled_ == enabled) {
+        return true;
+      }
+      impl_->pyroComponentEnabled_ = enabled;
       impl_->syncBuiltinComponentDescriptors();
-      Q_EMIT changed();
+      syncRoutedPropertyCache(QStringLiteral("component.pyro.enabled"));
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
       return true;
     }
     if (propertyPath == QStringLiteral("component.pyro.gridWidth")) {
@@ -771,6 +786,7 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.pyro.gridWidth"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.pyro.gridHeight")) {
@@ -778,6 +794,7 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.pyro.gridHeight"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.pyro.gridDepth")) {
@@ -785,6 +802,7 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.pyro.gridDepth"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.pyro.voxelSize")) {
@@ -792,6 +810,7 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.pyro.voxelSize"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.pyro.sourceDensity")) {
@@ -799,6 +818,7 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.pyro.sourceDensity"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.pyro.sourceTemperature")) {
@@ -806,6 +826,7 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.pyro.sourceTemperature"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.pyro.sourceFuel")) {
@@ -813,6 +834,7 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.pyro.sourceFuel"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.pyro.dissipation")) {
@@ -820,6 +842,7 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.pyro.dissipation"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.pyro.coolingRate")) {
@@ -827,6 +850,7 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.pyro.coolingRate"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.pyro.buoyancy")) {
@@ -834,6 +858,7 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.pyro.buoyancy"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.pyro.vorticity")) {
@@ -841,6 +866,7 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.pyro.vorticity"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.pyro.pressureIterations")) {
@@ -848,6 +874,7 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.pyro.pressureIterations"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.pyro.advectionClamp")) {
@@ -855,6 +882,7 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.pyro.advectionClamp"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.pyro.boundaryMode")) {
@@ -862,6 +890,7 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.pyro.boundaryMode"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.pyro.sourcePositionX")) {
@@ -869,6 +898,7 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.pyro.sourcePositionX"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.pyro.sourcePositionY")) {
@@ -876,6 +906,7 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.pyro.sourcePositionY"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.pyro.sourcePositionZ")) {
@@ -883,6 +914,7 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.pyro.sourcePositionZ"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.pyro.sourceExtentX")) {
@@ -890,6 +922,7 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.pyro.sourceExtentX"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.pyro.sourceExtentY")) {
@@ -897,6 +930,7 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.pyro.sourceExtentY"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.pyro.sourceExtentZ")) {
@@ -904,6 +938,7 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.pyro.sourceExtentZ"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.pyro.sourceVelocityX")) {
@@ -911,6 +946,7 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.pyro.sourceVelocityX"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.pyro.sourceVelocityY")) {
@@ -918,6 +954,7 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.pyro.sourceVelocityY"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.pyro.sourceVelocityZ")) {
@@ -925,6 +962,7 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.pyro.sourceVelocityZ"));
       return true;
     }
     return false;

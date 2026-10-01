@@ -352,11 +352,16 @@ bool ArtifactCloneLayer::drawInstancedSource(ArtifactIRenderer* renderer) {
         return false;
     }
     const auto source = composition->layerById(sourceId);
-    const auto* modelSource =
-        source ? dynamic_cast<const Artifact3DLayer*>(source.get()) : nullptr;
+    auto* modelSource =
+        source ? dynamic_cast<Artifact3DLayer*>(source.get()) : nullptr;
     if (!modelSource) {
         return false;
     }
+    // Advance the source's skin pose to the current composition frame before
+    // reading mesh(). Without this the clone renders whatever pose the source
+    // layer happened to leave behind, which is stale when the source is hidden
+    // or drawn after the clone.
+    modelSource->evaluateSkinAnimation();
     const ArtifactCore::Mesh& mesh = modelSource->mesh();
     if (mesh.vertexCount() <= 0) {
         return true;
@@ -370,10 +375,13 @@ bool ArtifactCloneLayer::drawInstancedSource(ArtifactIRenderer* renderer) {
     if (instances.empty()) {
         return true;
     }
-    // Geometry-identity key: source id plus mesh revision so source edits
-    // re-upload instead of serving stale geometry.
-    const QString cacheKey = QStringLiteral("clone3d|src=%1|rev=%2")
-        .arg(sourceId.toString(), QString::number(mesh.revision()));
+    // Stable geometry-identity key. The revision must stay out of this key:
+    // an animated source bumps mesh.revision() every frame, which would mint a
+    // fresh MeshRenderer (and its full GPU buffer set) on every single frame.
+    // The renderer compares mesh identity + revision internally
+    // (meshRendererGeometry_) and re-uploads only when the pose actually
+    // changed, so a revision-free key still refreshes edited geometry.
+    const QString cacheKey = QStringLiteral("clone3d|src=%1").arg(sourceId.toString());
     renderer->drawMeshInstanced(cacheKey, mesh, modelSource->material(),
                                 instances, 1.0f, 3);
     return true;

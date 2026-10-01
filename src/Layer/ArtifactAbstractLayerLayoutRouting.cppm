@@ -179,118 +179,225 @@ SharedPtr<ArtifactCore::AbstractProperty> transformChannelProperty(
 bool ArtifactAbstractLayer::setComponentLayoutPropertyValue(
     const QString &propertyPath, const QVariant &value) {
     if (propertyPath == QStringLiteral("component.layout.enabled")) {
-      impl_->layoutComponentEnabled_ = value.toBool();
+      const bool enabled = value.toBool();
+      // syncBuiltinComponentDescriptors() rebuilds all twelve descriptors, so
+      // re-entering with an unchanged value would repeat a few hundred
+      // QJsonObject inserts for nothing. Undo/redo and expression re-evaluation
+      // both land here with the value that is already in place.
+      if (impl_->layoutComponentEnabled_ == enabled &&
+          (enabled || !impl_->layoutResponsiveEnabled_)) {
+        return true;
+      }
+      impl_->layoutComponentEnabled_ = enabled;
       if (!impl_->layoutComponentEnabled_) impl_->layoutResponsiveEnabled_ = false;
       impl_->syncBuiltinComponentDescriptors();
-      Q_EMIT changed();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.layout.enabled"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.layout.mode")) {
-      impl_->layoutMode_ = std::clamp(value.toInt(), 0, 2);
+      const int mode = std::clamp(value.toInt(), 0, 2);
+      if (impl_->layoutMode_ == mode) {
+        return true;
+      }
+      impl_->layoutMode_ = mode;
       impl_->syncBuiltinComponentDescriptors();
-      Q_EMIT changed();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.layout.mode"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.layout.responsiveEnabled")) {
-      impl_->layoutResponsiveEnabled_ = value.toBool();
+      const bool enabled = value.toBool();
+      if (impl_->layoutResponsiveEnabled_ == enabled &&
+          (!enabled || impl_->layoutComponentEnabled_)) {
+        return true;
+      }
+      impl_->layoutResponsiveEnabled_ = enabled;
       if (impl_->layoutResponsiveEnabled_) impl_->layoutComponentEnabled_ = true;
       impl_->syncBuiltinComponentDescriptors();
-      Q_EMIT changed();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.layout.responsiveEnabled"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.layout.anchorMode")) {
-      impl_->layoutAnchorMode_ = std::clamp(value.toInt(), 0, 2);
+      const int anchorMode = std::clamp(value.toInt(), 0, 2);
+      if (impl_->layoutAnchorMode_ == anchorMode) {
+        return true;
+      }
+      impl_->layoutAnchorMode_ = anchorMode;
       impl_->syncBuiltinComponentDescriptors();
-      Q_EMIT changed();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.layout.anchorMode"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.layout.horizontalPin")) {
-      impl_->layoutHorizontalPin_ = std::clamp(value.toInt(), 0, 3);
+      const int pin = std::clamp(value.toInt(), 0, 3);
+      if (impl_->layoutHorizontalPin_ == pin) {
+        return true;
+      }
+      impl_->layoutHorizontalPin_ = pin;
       impl_->syncBuiltinComponentDescriptors();
-      Q_EMIT changed();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.layout.horizontalPin"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.layout.verticalPin")) {
-      impl_->layoutVerticalPin_ = std::clamp(value.toInt(), 0, 3);
+      const int pin = std::clamp(value.toInt(), 0, 3);
+      if (impl_->layoutVerticalPin_ == pin) {
+        return true;
+      }
+      impl_->layoutVerticalPin_ = pin;
       impl_->syncBuiltinComponentDescriptors();
-      Q_EMIT changed();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.layout.verticalPin"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.layout.scaleMode")) {
-      impl_->layoutScaleMode_ = std::clamp(value.toInt(), 0, 3);
+      const int scaleMode = std::clamp(value.toInt(), 0, 3);
+      if (impl_->layoutScaleMode_ == scaleMode) {
+        return true;
+      }
+      impl_->layoutScaleMode_ = scaleMode;
       impl_->syncBuiltinComponentDescriptors();
-      Q_EMIT changed();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.layout.scaleMode"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.layout.responsiveOffsetX")) {
-      impl_->layoutResponsiveOffsetX_ = static_cast<float>(finiteClampedValue(
+      const float offsetX = static_cast<float>(finiteClampedValue(
           value.toDouble(), impl_->layoutResponsiveOffsetX_, -100000.0, 100000.0));
+      if (impl_->layoutResponsiveOffsetX_ == offsetX) {
+        return true;
+      }
+      impl_->layoutResponsiveOffsetX_ = offsetX;
       impl_->syncBuiltinComponentDescriptors();
-      Q_EMIT changed();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.layout.responsiveOffsetX"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.layout.responsiveOffsetY")) {
-      impl_->layoutResponsiveOffsetY_ = static_cast<float>(finiteClampedValue(
+      const float offsetY = static_cast<float>(finiteClampedValue(
           value.toDouble(), impl_->layoutResponsiveOffsetY_, -100000.0, 100000.0));
+      if (impl_->layoutResponsiveOffsetY_ == offsetY) {
+        return true;
+      }
+      impl_->layoutResponsiveOffsetY_ = offsetY;
       impl_->syncBuiltinComponentDescriptors();
-      Q_EMIT changed();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.layout.responsiveOffsetY"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.layout.safeAreaEnabled")) {
-      impl_->layoutSafeAreaEnabled_ = value.toBool();
+      const bool enabled = value.toBool();
+      if (impl_->layoutSafeAreaEnabled_ == enabled) {
+        return true;
+      }
+      impl_->layoutSafeAreaEnabled_ = enabled;
       impl_->syncBuiltinComponentDescriptors();
-      Q_EMIT changed();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.layout.safeAreaEnabled"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.layout.safeAreaPaddingX")) {
-      impl_->layoutSafeAreaPaddingX_ = finiteClampedValue(
+      const double paddingX = finiteClampedValue(
           value.toDouble(), impl_->layoutSafeAreaPaddingX_, -100000.0,
           100000.0);
+      if (impl_->layoutSafeAreaPaddingX_ == paddingX) {
+        return true;
+      }
+      impl_->layoutSafeAreaPaddingX_ = paddingX;
       impl_->syncBuiltinComponentDescriptors();
-      Q_EMIT changed();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.layout.safeAreaPaddingX"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.layout.safeAreaPaddingY")) {
-      impl_->layoutSafeAreaPaddingY_ = finiteClampedValue(
+      const double paddingY = finiteClampedValue(
           value.toDouble(), impl_->layoutSafeAreaPaddingY_, -100000.0,
           100000.0);
+      if (impl_->layoutSafeAreaPaddingY_ == paddingY) {
+        return true;
+      }
+      impl_->layoutSafeAreaPaddingY_ = paddingY;
       impl_->syncBuiltinComponentDescriptors();
-      Q_EMIT changed();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.layout.safeAreaPaddingY"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.layout.stackDirection")) {
-      impl_->layoutStackDirection_ = std::clamp(value.toInt(), 0, 1);
-      Q_EMIT changed();
+      const int direction = std::clamp(value.toInt(), 0, 1);
+      if (impl_->layoutStackDirection_ == direction) {
+        return true;
+      }
+      impl_->layoutStackDirection_ = direction;
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.layout.stackDirection"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.layout.gap")) {
-      impl_->layoutGap_ = finiteClampedValue(
+      const double gap = finiteClampedValue(
           value.toDouble(), impl_->layoutGap_, -100000.0, 100000.0);
-      Q_EMIT changed();
+      if (impl_->layoutGap_ == gap) {
+        return true;
+      }
+      impl_->layoutGap_ = gap;
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.layout.gap"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.layout.maxPerRow")) {
-      impl_->layoutMaxPerRow_ = std::max(0, value.toInt());
-      Q_EMIT changed();
+      const int maxPerRow = std::max(0, value.toInt());
+      if (impl_->layoutMaxPerRow_ == maxPerRow) {
+        return true;
+      }
+      impl_->layoutMaxPerRow_ = maxPerRow;
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.layout.maxPerRow"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.cloner.enabled")) {
-      impl_->clonerComponentEnabled_ = value.toBool();
+      const bool enabled = value.toBool();
+      if (impl_->clonerComponentEnabled_ == enabled) {
+        return true;
+      }
+      impl_->clonerComponentEnabled_ = enabled;
       impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.cloner.enabled"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.cloner.mode")) {
-      impl_->clonerMode_ = value.toInt();
+      const int mode = value.toInt();
+      if (impl_->clonerMode_ == mode) {
+        return true;
+      }
+      impl_->clonerMode_ = mode;
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.cloner.mode"));
       return true;
     }
       if (propertyPath == QStringLiteral("component.cloner.cloneCount")) {
         impl_->clonerCloneCount_ = std::clamp(value.toInt(), 1, 256);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.cloner.cloneCount"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.cloner.timeOffsetStep")) {
@@ -298,12 +405,14 @@ bool ArtifactAbstractLayer::setComponentLayoutPropertyValue(
           value.toDouble(), impl_->clonerTimeOffsetStep_, -10000.0, 10000.0);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.cloner.timeOffsetStep"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.cloner.sequenceEnabled")) {
       impl_->clonerSequenceEnabled_ = value.toBool();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.cloner.sequenceEnabled"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.cloner.sequenceRate")) {
@@ -311,6 +420,7 @@ bool ArtifactAbstractLayer::setComponentLayoutPropertyValue(
           value.toDouble(), impl_->clonerSequenceRate_, 0.01, 240.0);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.cloner.sequenceRate"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.cloner.sequenceSoftness")) {
@@ -318,6 +428,7 @@ bool ArtifactAbstractLayer::setComponentLayoutPropertyValue(
           value.toDouble(), impl_->clonerSequenceSoftness_, 0.01, 32.0);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.cloner.sequenceSoftness"));
       return true;
     }
   if (propertyPath == QStringLiteral("component.cloner.offsetX")) {
@@ -325,6 +436,7 @@ bool ArtifactAbstractLayer::setComponentLayoutPropertyValue(
         value.toDouble(), impl_->clonerOffsetX_, -100000.0, 100000.0);
     notifyLayerMutation(this, LayerDirtyFlag::Effect,
                         LayerDirtyReason::PropertyChanged);
+    syncRoutedPropertyCache(QStringLiteral("component.cloner.offsetX"));
     return true;
   }
     if (propertyPath == QStringLiteral("component.cloner.offsetY")) {
@@ -332,6 +444,7 @@ bool ArtifactAbstractLayer::setComponentLayoutPropertyValue(
           value.toDouble(), impl_->clonerOffsetY_, -100000.0, 100000.0);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.cloner.offsetY"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.cloner.offsetZ")) {
@@ -339,6 +452,7 @@ bool ArtifactAbstractLayer::setComponentLayoutPropertyValue(
           value.toDouble(), impl_->clonerOffsetZ_, -100000.0, 100000.0);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.cloner.offsetZ"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.cloner.jitterX")) {
@@ -346,6 +460,7 @@ bool ArtifactAbstractLayer::setComponentLayoutPropertyValue(
           value.toDouble(), impl_->clonerJitterX_, -100000.0, 100000.0);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.cloner.jitterX"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.cloner.jitterY")) {
@@ -353,6 +468,7 @@ bool ArtifactAbstractLayer::setComponentLayoutPropertyValue(
           value.toDouble(), impl_->clonerJitterY_, -100000.0, 100000.0);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.cloner.jitterY"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.cloner.jitterZ")) {
@@ -360,30 +476,35 @@ bool ArtifactAbstractLayer::setComponentLayoutPropertyValue(
           value.toDouble(), impl_->clonerJitterZ_, -100000.0, 100000.0);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.cloner.jitterZ"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.cloner.seed")) {
       impl_->clonerSeed_ = value.toInt();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.cloner.seed"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.cloner.columns")) {
       impl_->clonerColumns_ = std::max(1, value.toInt());
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.cloner.columns"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.cloner.rows")) {
       impl_->clonerRows_ = std::max(1, value.toInt());
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.cloner.rows"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.cloner.depth")) {
       impl_->clonerDepth_ = std::max(1, value.toInt());
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.cloner.depth"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.cloner.spacingX")) {
@@ -391,6 +512,7 @@ bool ArtifactAbstractLayer::setComponentLayoutPropertyValue(
           value.toDouble(), impl_->clonerSpacingX_, -100000.0, 100000.0);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.cloner.spacingX"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.cloner.spacingY")) {
@@ -398,6 +520,7 @@ bool ArtifactAbstractLayer::setComponentLayoutPropertyValue(
           value.toDouble(), impl_->clonerSpacingY_, -100000.0, 100000.0);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.cloner.spacingY"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.cloner.spacingZ")) {
@@ -405,12 +528,14 @@ bool ArtifactAbstractLayer::setComponentLayoutPropertyValue(
           value.toDouble(), impl_->clonerSpacingZ_, -100000.0, 100000.0);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.cloner.spacingZ"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.cloner.radialCount")) {
       impl_->clonerRadialCount_ = std::max(1, value.toInt());
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.cloner.radialCount"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.cloner.radius")) {
@@ -418,6 +543,7 @@ bool ArtifactAbstractLayer::setComponentLayoutPropertyValue(
           value.toDouble(), impl_->clonerRadius_, -100000.0, 100000.0);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.cloner.radius"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.cloner.startAngle")) {
@@ -425,6 +551,7 @@ bool ArtifactAbstractLayer::setComponentLayoutPropertyValue(
           value.toDouble(), impl_->clonerStartAngle_, -360000.0, 360000.0);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.cloner.startAngle"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.cloner.endAngle")) {
@@ -432,6 +559,7 @@ bool ArtifactAbstractLayer::setComponentLayoutPropertyValue(
           value.toDouble(), impl_->clonerEndAngle_, -360000.0, 360000.0);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.cloner.endAngle"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.cloner.rotationStep")) {
@@ -439,6 +567,7 @@ bool ArtifactAbstractLayer::setComponentLayoutPropertyValue(
           value.toDouble(), impl_->clonerRotationStep_, -360000.0, 360000.0);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.cloner.rotationStep"));
       return true;
     }
     if (propertyPath == QStringLiteral("component.cloner.opacityDecay")) {
@@ -446,6 +575,7 @@ bool ArtifactAbstractLayer::setComponentLayoutPropertyValue(
           value.toDouble(), impl_->clonerOpacityDecay_, 0.0, 1.0);
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
+      syncRoutedPropertyCache(QStringLiteral("component.cloner.opacityDecay"));
       return true;
     }
   return false;

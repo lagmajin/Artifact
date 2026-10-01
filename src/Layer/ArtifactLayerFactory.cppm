@@ -612,7 +612,9 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(const Artifa
           if (json.contains("fixedGeometry")) {
               ArtifactFixedGeometry3DLayerInitParams fixedParams(
                   name, static_cast<FixedGeometry3D>(ArtifactCore::artifactClamp(
-                      json.value("fixedGeometry").toInt(), 0, 5)));
+                      json.value("fixedGeometry").toInt(),
+                      static_cast<int>(FixedGeometry3D::Auto),
+                      static_cast<int>(FixedGeometry3D::Pyramid))));
               auto result = factory.createLayer(fixedParams);
               if (result.success && result.layer) {
                   if (auto modelLayer = dynamic_cast<Artifact3DLayer*>(result.layer.get())) {

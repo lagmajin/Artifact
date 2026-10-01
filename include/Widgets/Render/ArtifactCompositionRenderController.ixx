@@ -830,6 +830,9 @@ WorldRay createPickingRay(
   void trackerDelete();
   void trackerCaptureNextFrame(std::uint64_t generation);
   void trackerPollJob(std::uint64_t generation);
+  // Registers an undo entry for a tracker mutation that has already been
+  // applied to the tracker, so reset / solve / smoothing stay recoverable.
+  void pushTrackerUndo(const QString& previousJson, const QString& currentJson);
   void cancelMotionSketch();
   bool cancelBrushStroke();
   bool undoSelectedPaintStroke();

@@ -1,4 +1,5 @@
 module;
+#include <cstdint>
 #include <utility>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
@@ -111,12 +112,20 @@ export namespace Artifact
     ArtifactCore::LayerBlendPipeline* blendPipeline,
     ArtifactCore::BlendMode mode);
 
-   // Execute one backend-neutral spatial node over existing GPU-resident
-  // RGBA16F targets. Scratch and output must be distinct UAVs.
-  bool applySpatialEffect(
-   IDeviceContext* ctx, ITextureView* inputSRV,
-   ITextureView* scratchUAV, ITextureView* outputUAV,
-   const GpuSpatialEffectNode& node);
+// Execute one backend-neutral spatial node over existing GPU-resident
+   // RGBA16F targets. Scratch and output must be distinct UAVs.
+   //
+   // historySRV / historyValid let a temporal node read a neighbouring frame
+   // as a second texture input.  Both are optional: when historyValid is false
+   // the caller has no frame to offer and the shader receives the current
+   // input together with historyValid == 0 so it can degrade instead of
+   // blending against an unrelated image.
+   bool applySpatialEffect(
+    IDeviceContext* ctx, ITextureView* inputSRV,
+    ITextureView* scratchUAV, ITextureView* outputUAV,
+    const GpuSpatialEffectNode& node,
+    ITextureView* historySRV = nullptr,
+    bool historyValid = false);
 
   ITextureView* accumSRV() const;
   ITextureView* accumUAV() const;
@@ -177,6 +186,33 @@ export namespace Artifact
       IDeviceContext* ctx, ITextureView* sourceColor,
       ITextureView* destinationColor);
   void resetScreenSpaceGlobalIlluminationHistory();
+
+  // ---- GPU-resident temporal effect history ----
+  //
+  // Stable per-layer key for the fixed history slot pool.  Callers pass the
+  // layer id so the mapping stays identical for a layer across frames.
+  static std::uint32_t temporalLayerKey(const QString& layerId);
+
+  // A layer's rendered result is recorded here so a temporal effect can read
+  // the previous frame as a second texture input without a CPU round trip.
+  // Storage is a fixed pool of bounded ping-pong slots, pre-allocated on
+  // initialize/resize; recordLayerFrame only copies between existing
+  // textures and never allocates.
+  //
+  // layerKey must be stable for a layer across frames (its id is a natural
+  // choice).  Returns false when the pool is exhausted, which tells the
+  // caller to use the CPU history path instead — an explicit bounded
+  // fallback rather than unbounded growth.
+  bool recordLayerFrame(std::uint32_t layerKey, std::int64_t frame,
+                        ITextureView* sourceSRV);
+  // Returns the retained frame for `frame` when it is exactly the previous
+  // frame of `currentFrame`, and reports validity.  A seek, a reverse step, or
+  // an explicit invalidateLayerHistory call makes this return false so the
+  // effect degrades instead of blending against a distant frame.
+  bool layerHistoryView(std::uint32_t layerKey, std::int64_t currentFrame,
+                        ITextureView** outSRV);
+  void invalidateLayerHistory(std::uint32_t layerKey);
+  void invalidateAllLayerHistory();
   ITextureView* screenSpaceGlobalIlluminationSRV() const;
   Uint32 screenSpaceGlobalIlluminationWidth() const;
   Uint32 screenSpaceGlobalIlluminationHeight() const;
@@ -199,6 +235,11 @@ export namespace Artifact
  private:
   bool createTextures(IRenderDevice* device, Uint32 width, Uint32 height,
                       TEXTURE_FORMAT format, AuxiliaryTargetRequest request);
+
+  // Pre-allocates the ping-pong textures for every slot in the fixed pool.
+  // Called from recordLayerFrame; a no-op once the slots exist, so the
+  // steady-state render path performs no allocation.
+  bool ensureLayerHistoryStorage();
 
   struct Impl;
   Impl* impl_ = nullptr;

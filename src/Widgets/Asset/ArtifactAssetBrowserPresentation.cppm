@@ -201,7 +201,12 @@ class AssetFileListView final : public QListView
 
    qDebug() << "[AssetBrowser][Drag]" << "mimeMs=" << dragTimer.elapsed()
             << "items=" << indexes.size();
-   drag->exec(supportedActions, Qt::CopyAction);
+   // A file dragged onto the folder tree relocates it, and
+   // AssetDirectoryModel::dropMimeData only accepts Qt::MoveAction. Proposing
+   // Copy here made every internal folder drop a silent no-op.
+   const Qt::DropAction defaultAction =
+       (supportedActions & Qt::MoveAction) ? Qt::MoveAction : Qt::CopyAction;
+   drag->exec(supportedActions, defaultAction);
   }
 
  protected:

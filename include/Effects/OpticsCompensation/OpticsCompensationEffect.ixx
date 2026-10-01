@@ -6,9 +6,6 @@ export module Artifact.Effect.Rasterizer.OpticsCompensation;
 
 import Artifact.Effect.Abstract;
 import Property.Abstract;
-import Image.ImageF32x4_RGBA;
-import Image.ImageF32x4RGBAWithCache;
-import ImageProcessing.Distortion;
 import Utils.String.UniString;
 
 export namespace Artifact {
@@ -19,7 +16,8 @@ private:
     float centerY_ = 0.5f;
     float fov_ = 45.0f;
     int direction_ = 1;
-    void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst);
+
+    void syncImpls();
 
 public:
     OpticsCompensationEffect();
@@ -36,6 +34,8 @@ public:
 
     std::vector<ArtifactCore::AbstractProperty> getProperties() const override;
     void setPropertyValue(const UniString& name, const QVariant& value) override;
+
+    bool supportsGPU() const override { return false; }
 };
 
 }

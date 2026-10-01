@@ -12,6 +12,7 @@ module;
 #include <QStringList>
 #include <QVector>
 #include <QObject>
+#include <QUuid>
 export module Artifact.Service.Project;
 
 import Utils;
@@ -254,6 +255,10 @@ export namespace Artifact {
        const QString& oldFilePath, const QString& searchRoot,
        int maxCandidates = 32) const;
    FootageItem* findFootageItemByPath(const QString& filePath) const;
+   // 論理アセット ID の正本解決。優先順位は FootageItem::assetId (プロジェクト
+   // 文書) -> AssetDatabase (プロセス内キャッシュ) -> .assetmeta サイドカーの順。
+   // 同じフォールバックが複数箇所にコピペされていたため、ここへ集約する。
+   QUuid resolveAssetIdForPath(const QString& filePath) const;
   public:
    void selectLayer(const LayerID& id);
    void projectSettingChanged(const ArtifactProjectSettings& setting);

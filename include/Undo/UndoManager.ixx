@@ -1086,6 +1086,58 @@ private:
     bool lastOperationSucceeded_ = true;
 };
 
+class TrackerResultCommand : public UndoCommand {
+public:
+    TrackerResultCommand(int trackerId, const QString& oldJson, const QString& newJson);
+    // The state may already be applied (e.g. an asynchronous solve that
+    // finished after the mutation). In that case redo() is a no-op so the
+    // manager does not re-run an expensive restore on push.
+    TrackerResultCommand(int trackerId, const QString& oldJson, const QString& newJson,
+                    bool alreadyApplied);
+    void undo() override;
+    void redo() override;
+    QString label() const override;
+    size_t estimatedMemoryBytes() const override;
+    QString commandType() const override { return QStringLiteral("TrackerResultCommand"); }
+    bool canSerialize() const override {
+        return trackerId_ > 0 && !oldJson_.isEmpty() && !newJson_.isEmpty();
+    }
+    QJsonObject serialize() const override;
+    bool deserialize(const QJsonObject& data) override;
+    bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+private:
+    int trackerId_ = 0;
+    QString oldJson_;
+    QString newJson_;
+    bool lastOperationSucceeded_ = true;
+    bool alreadyApplied_ = false;
+};
+
+
+class SetLayerMotionTrackerCommand : public UndoCommand {
+public:
+    SetLayerMotionTrackerCommand(const ArtifactAbstractLayerPtr& layer, int oldTrackerId, int newTrackerId);
+    void undo() override;
+    void redo() override;
+    QString label() const override;
+    size_t estimatedMemoryBytes() const override;
+    QString commandType() const override { return QStringLiteral("SetLayerMotionTrackerCommand"); }
+    QStringList collaborationTargetLayerIds() const override;
+    bool collaborationTargetScopeResolved() const override {
+        return !collaborationTargetLayerIds().isEmpty();
+    }
+    bool canSerialize() const override { return !layerId_.isEmpty(); }
+    QJsonObject serialize() const override;
+    bool deserialize(const QJsonObject& data) override;
+    bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+private:
+    ArtifactAbstractLayerPtr layer_;
+    QString layerId_;
+    int oldTrackerId_ = 0;
+    int newTrackerId_ = 0;
+    bool lastOperationSucceeded_ = true;
+};
+
 class MoveProjectItemCommand : public UndoCommand {
 public:
     MoveProjectItemCommand(ProjectItem* item, ProjectItem* newParent);

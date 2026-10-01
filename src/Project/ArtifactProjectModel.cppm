@@ -49,7 +49,6 @@ module Artifact.Project.Model;
 
 import Artifact.Project;
 import Artifact.Project.Items;
-import Artifact.Project.Cleanup;
 import Artifact.Service.Project;
 import Artifact.Project.Manager;
 import Artifact.Project.Roles;
@@ -132,15 +131,13 @@ QStandardItem* projectItemFromModelIndex(const QModelIndex& index)
 
   ArtifactProjectWeakPtr projectPtr_;
   QStandardItemModel* model_ = nullptr;
-  QSet<QString> unusedAssetPaths_;
   ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
   std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
   void refreshTree();
   static ArtifactProjectService* projectService();
-  Impl();
+Impl();
   ~Impl();
-  void updateUnusedAssetPaths();
-  };
+   };
 
 ArtifactProjectModel::Impl::Impl()
 {
@@ -152,20 +149,6 @@ ArtifactProjectModel::Impl::Impl()
 
 ArtifactProjectModel::Impl::~Impl()
 {
-}
-
-void ArtifactProjectModel::Impl::updateUnusedAssetPaths()
-{
- auto shared = projectPtr_.lock();
- if (!shared) {
-  unusedAssetPaths_.clear();
-  return;
- }
- const QStringList unused = ArtifactProjectCleanupTool::findUnusedAssetPaths(shared.get());
- unusedAssetPaths_.clear();
- for (const QString& path : unused) {
-  unusedAssetPaths_.insert(QDir::cleanPath(path));
- }
 }
 
 void ArtifactProjectModel::Impl::refreshTree()
@@ -203,37 +186,8 @@ void ArtifactProjectModel::Impl::refreshTree()
     return makeProjectItemIcon(fallbackColor, fallbackText);
   };
 
-  auto isImageFile = [](const QString& suffix) {
-    return QStringList{QStringLiteral("png"), QStringLiteral("jpg"), QStringLiteral("jpeg"), QStringLiteral("bmp"),
-                       QStringLiteral("gif"), QStringLiteral("tif"), QStringLiteral("tiff"), QStringLiteral("webp"),
-                       QStringLiteral("tga"), QStringLiteral("hdr"), QStringLiteral("exr"), QStringLiteral("ico"),
-                       QStringLiteral("dds"), QStringLiteral("ktx"), QStringLiteral("ktx2"),
-                       QStringLiteral("avif"), QStringLiteral("heic"), QStringLiteral("heif"),
-                       QStringLiteral("jxl"), QStringLiteral("jp2"), QStringLiteral("j2k"),
-                       QStringLiteral("ppm"), QStringLiteral("pgm"), QStringLiteral("pbm"),
-                       QStringLiteral("pam"), QStringLiteral("pfm"),
-                       QStringLiteral("psd"), QStringLiteral("psb")}.contains(suffix);
-  };
-  auto isVideoFile = [](const QString& suffix) {
-    return QStringList{QStringLiteral("mp4"), QStringLiteral("mov"), QStringLiteral("avi"), QStringLiteral("mkv"),
-                       QStringLiteral("webm")}.contains(suffix);
-  };
-  auto isAudioFile = [](const QString& suffix) {
-    return QStringList{QStringLiteral("wav"), QStringLiteral("mp3"), QStringLiteral("flac"), QStringLiteral("ogg"),
-                       QStringLiteral("m4a"), QStringLiteral("aac")}.contains(suffix);
-  };
-  auto isFontFile = [](const QString& suffix) {
-    return QStringList{QStringLiteral("ttf"), QStringLiteral("otf"), QStringLiteral("ttc"), QStringLiteral("woff"),
-                       QStringLiteral("woff2")}.contains(suffix);
-  };
-  auto isModelFile = [](const QString& suffix) {
-    return QStringList{QStringLiteral("obj"), QStringLiteral("fbx"), QStringLiteral("gltf"),
-                       QStringLiteral("glb"), QStringLiteral("pmd"), QStringLiteral("ply"),
-                       QStringLiteral("las"), QStringLiteral("usd"), QStringLiteral("usda"),
-                       QStringLiteral("usdc"), QStringLiteral("usdz"), QStringLiteral("abc"),
-                       QStringLiteral("blend"), QStringLiteral("dae"), QStringLiteral("pmx"),
-                       QStringLiteral("stl")}
-        .contains(suffix);
+  auto assetKindForSuffix = [](const QString& suffix) {
+    return projectAssetKindFromPath(QLatin1Char('.') + suffix);
   };
 
   auto iconForProjectItem = [&](Artifact::ProjectItem* it) -> QIcon {
@@ -256,25 +210,23 @@ void ArtifactProjectModel::Impl::refreshTree()
       }
 
       const QString suffix = info.suffix().toLower();
-      if (isFontFile(suffix)) {
+      switch (assetKindForSuffix(suffix)) {
+      case Artifact::ProjectAssetKind::Font:
         return iconOrFallback(QStringLiteral("MaterialVS/purple/title.svg"), QColor(121, 82, 168), QStringLiteral("T"));
-      }
-      if (isImageFile(suffix)) {
+      case Artifact::ProjectAssetKind::Image:
         // Project model resets happen for structural edits such as creating a
         // composition. Do not decode every image again just to build a 16 px
         // row icon; tile previews own the richer thumbnail path.
         return iconOrFallback(QStringLiteral("MaterialVS/green/photo_library.svg"), QColor(66, 148, 98), QStringLiteral("I"));
-      }
-      if (isVideoFile(suffix)) {
+      case Artifact::ProjectAssetKind::Video:
         return iconOrFallback(QStringLiteral("MaterialVS/green/movie.svg"), QColor(66, 148, 98), QStringLiteral("V"));
-      }
-      if (isAudioFile(suffix)) {
+      case Artifact::ProjectAssetKind::Audio:
         return iconOrFallback(QStringLiteral("MaterialVS/green/music_note.svg"), QColor(66, 148, 98), QStringLiteral("A"));
-      }
-      if (isModelFile(suffix)) {
+      case Artifact::ProjectAssetKind::Model:
         return iconOrFallback(QStringLiteral("Studio/asset_file_3d.svg"), QColor(72, 122, 168), QStringLiteral("3D"));
+      default:
+        return iconOrFallback(QStringLiteral("MaterialVS/green/attach_file.svg"), QColor(66, 148, 98), QStringLiteral("F"));
       }
-      return iconOrFallback(QStringLiteral("MaterialVS/green/attach_file.svg"), QColor(66, 148, 98), QStringLiteral("F"));
     }
     default:
       return makeProjectItemIcon(QColor(90, 90, 90), QStringLiteral("?"));
@@ -331,20 +283,11 @@ void ArtifactProjectModel::Impl::refreshTree()
         updatedItem->setText(info.lastModified().toString(QStringLiteral("yyyy-MM-dd HH:mm")));
 
         const QString suffix = info.suffix().toLower();
-        if (isImageFile(suffix)) {
-          if (footage->isSequence) {
-            typeItem->setText(QStringLiteral("Sequence"));
-          } else {
-            typeItem->setText(QStringLiteral("Image"));
-          }
-        } else if (isVideoFile(suffix)) {
-          typeItem->setText(QStringLiteral("Video"));
-        } else if (isAudioFile(suffix)) {
-          typeItem->setText(QStringLiteral("Audio"));
-        } else if (isFontFile(suffix)) {
-          typeItem->setText(QStringLiteral("Font"));
-        } else if (isModelFile(suffix)) {
-          typeItem->setText(QStringLiteral("3D"));
+        const Artifact::ProjectAssetKind kind = assetKindForSuffix(suffix);
+        if (kind == Artifact::ProjectAssetKind::Image && footage->isSequence) {
+          typeItem->setText(QStringLiteral("Sequence"));
+        } else {
+          typeItem->setText(Artifact::projectAssetKindLabel(kind));
         }
       } else {
         statusItem->setText(QStringLiteral("Missing"));
@@ -439,14 +382,13 @@ void ArtifactProjectModel::onCompositionCreated(const ArtifactCore::CompositionI
 
 ArtifactProjectModel::ArtifactProjectModel(QObject* parent/*=nullptr*/) :QAbstractItemModel(parent), impl_(new Impl())
 {
-  impl_->eventBusSubscriptions_.push_back(
-      impl_->eventBus_.subscribe<LayerChangedEvent>([this](const LayerChangedEvent&) {
-        if (impl_->projectPtr_.lock()) {
-          beginResetModel();
-          impl_->refreshTree();
-          endResetModel();
-        }
-      }));
+  // No LayerChangedEvent subscription on purpose: the project tree only carries
+  // ProjectItem columns (name, kind, file presence, size, modified date, id),
+  // none of which is derived from a layer's runtime state, so a layer edit --
+  // a component toggle included -- cannot change a row here. Resetting the whole
+  // model on every LayerChangedEvent rebuilt the entire tree for no visible
+  // change. Structural edits arrive through ProjectChangedEvent and the
+  // creation/removal subscribers below.
   impl_->eventBusSubscriptions_.push_back(
       impl_->eventBus_.subscribe<ProjectChangedEvent>([this](const ProjectChangedEvent&) {
         if (impl_->projectPtr_.lock()) {
@@ -504,25 +446,7 @@ QVariant ArtifactProjectModel::data(const QModelIndex& index, int role) const
 
   switch (role) {
   case Qt::DisplayRole: // 「画面に表示する文字は何？」
-   {
-     QVariant baseData = item->data(Qt::DisplayRole);
-     if (item) {
-       const int ptrRole = Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr);
-       const quintptr rawPtr = item->data(ptrRole).value<quintptr>();
-       if (auto* projItem = reinterpret_cast<Artifact::ProjectItem*>(rawPtr)) {
-         if (projItem->type() == Artifact::eProjectItemType::Footage) {
-           auto* footage = static_cast<Artifact::FootageItem*>(projItem);
-           if (!footage->filePath.isEmpty()) {
-             const QString cleanPath = QDir::cleanPath(footage->filePath);
-             if (impl_->unusedAssetPaths_.contains(cleanPath)) {
-               return QString("[Unused] %1").arg(baseData.toString());
-             }
-           }
-         }
-       }
-     }
-     return baseData;
-   }
+   return item->data(Qt::DisplayRole);
 
   case Qt::UserRole + 1: // CompositionID文字列
    return item->data(Qt::UserRole + 1);
@@ -534,26 +458,22 @@ QVariant ArtifactProjectModel::data(const QModelIndex& index, int role) const
    return item->data(Qt::DecorationRole);
 
   case Qt::ForegroundRole: // 「文字の色は何色？」
-   if (item) {
-     const int ptrRole = Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr);
-     const quintptr rawPtr = item->data(ptrRole).value<quintptr>();
-     if (auto* projItem = reinterpret_cast<Artifact::ProjectItem*>(rawPtr)) {
-       if (projItem->type() == Artifact::eProjectItemType::Footage) {
-         auto* footage = static_cast<Artifact::FootageItem*>(projItem);
-         if (!footage->filePath.isEmpty()) {
-           QFileInfo fi(footage->filePath);
-           if (!fi.exists()) {
-             return QColor(180, 60, 60); // Red for missing
-           }
-           const QString cleanPath = QDir::cleanPath(footage->filePath);
-           if (impl_->unusedAssetPaths_.contains(cleanPath)) {
-             return QColor(150, 150, 60); // Yellow-ish for unused
-           }
-         }
-       }
-     }
-   }
-   return QVariant();
+    if (item) {
+      const int ptrRole = Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr);
+      const quintptr rawPtr = item->data(ptrRole).value<quintptr>();
+      if (auto* projItem = reinterpret_cast<Artifact::ProjectItem*>(rawPtr)) {
+        if (projItem->type() == Artifact::eProjectItemType::Footage) {
+          auto* footage = static_cast<Artifact::FootageItem*>(projItem);
+          if (!footage->filePath.isEmpty()) {
+            QFileInfo fi(footage->filePath);
+            if (!fi.exists()) {
+              return QColor(180, 60, 60); // Red for missing
+            }
+          }
+        }
+      }
+    }
+    return QVariant();
 
   case Qt::TextAlignmentRole: // 「文字の配置は？」
    // Left align text and vertically center

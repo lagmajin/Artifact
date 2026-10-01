@@ -28,6 +28,7 @@ module;
 #include <QLoggingCategory>
 #include <QPair>
 #include <QStringList>
+#include <QTimer>
 #include <QVector>
 #include <vector>
 #include <cmath>
@@ -930,6 +931,10 @@ public:
     PreviewNavigationState nav_;
     bool isPanning_ = false;
     QPointF lastMousePos_;
+    // Layer changes arrive synchronously and unbatched, so one toggle used to
+    // force a full CPU composite per event. Coalesce them instead.
+    QTimer previewDebounce_;
+    bool previewDebounceConnected_ = false;
 
     ArtifactCompositionPtr selectedComposition() const
     {
@@ -943,7 +948,6 @@ public:
         const auto found = service_->findComposition(ArtifactCore::CompositionID(idString));
         return found.success ? found.ptr.lock() : ArtifactCompositionPtr();
     }
-
     void setCurrentCompositionSelection(const ArtifactCore::CompositionID& id)
     {
         if (!compositionCombo_ || id.isNil()) {
@@ -1021,6 +1025,21 @@ public:
                                               << "hasComp=" << static_cast<bool>(composition);
         }
     }
+
+    void schedulePreviewRefresh()
+    {
+        if (!owner_) {
+            return;
+        }
+        if (!previewDebounceConnected_) {
+            connect(&previewDebounce_, &QTimer::timeout, this,
+                    [this]() { refreshPreview(); });
+            previewDebounce_.setSingleShot(true);
+            previewDebounce_.setInterval(16);
+            previewDebounceConnected_ = true;
+        }
+        previewDebounce_.start();
+    }
 };
 
 class ArtifactSoftwareLayerTestWidget::Impl {
@@ -1040,6 +1059,10 @@ public:
     PreviewNavigationState nav_;
     bool isPanning_ = false;
     QPointF lastMousePos_;
+    // Layer changes arrive synchronously and unbatched, so one toggle used to
+    // force a full CPU composite per event. Coalesce them instead.
+    QTimer previewDebounce_;
+    bool previewDebounceConnected_ = false;
 
     ArtifactCompositionPtr selectedComposition() const;
     ArtifactAbstractLayerPtr selectedLayer() const;
@@ -1048,6 +1071,7 @@ public:
     void reloadCompositions();
     void reloadLayers();
     void refreshPreview();
+    void schedulePreviewRefresh();
 };
 
 ArtifactCompositionPtr ArtifactSoftwareLayerTestWidget::Impl::selectedComposition() const
@@ -1226,6 +1250,21 @@ void ArtifactSoftwareLayerTestWidget::Impl::refreshPreview()
     }
 }
 
+void ArtifactSoftwareLayerTestWidget::Impl::schedulePreviewRefresh()
+{
+    if (!owner_) {
+        return;
+    }
+    if (!previewDebounceConnected_) {
+        connect(&previewDebounce_, &QTimer::timeout, this,
+                [this]() { refreshPreview(); });
+        previewDebounce_.setSingleShot(true);
+        previewDebounce_.setInterval(16);
+        previewDebounceConnected_ = true;
+    }
+    previewDebounce_.start();
+}
+
 ArtifactSoftwareCompositionTestWidget::ArtifactSoftwareCompositionTestWidget(QWidget* parent)
     : QWidget(parent), impl_(new Impl())
 {
@@ -1299,7 +1338,7 @@ ArtifactSoftwareCompositionTestWidget::ArtifactSoftwareCompositionTestWidget(QWi
     impl_->eventBusSubscriptions_.push_back(
         impl_->eventBus_.subscribe<LayerChangedEvent>(
             [this](const LayerChangedEvent&) {
-                impl_->refreshPreview();
+                impl_->schedulePreviewRefresh();
             }));
 }
 
@@ -1457,7 +1496,7 @@ ArtifactSoftwareLayerTestWidget::ArtifactSoftwareLayerTestWidget(QWidget* parent
     impl_->eventBusSubscriptions_.push_back(
         impl_->eventBus_.subscribe<LayerChangedEvent>(
             [this](const LayerChangedEvent&) {
-                impl_->refreshPreview();
+                impl_->schedulePreviewRefresh();
             }));
     impl_->eventBusSubscriptions_.push_back(
         impl_->eventBus_.subscribe<LayerSelectionChangedEvent>(

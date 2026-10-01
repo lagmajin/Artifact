@@ -145,8 +145,14 @@ void restoreLayerTransform(const QJsonObject& object,
 bool ArtifactAbstractLayer::setComponentDescriptorPropertyValue(
     const QString &propertyPath, const QVariant &value) {
   if (propertyPath == QStringLiteral("component.script.enabled")) {
-    impl_->scriptComponentEnabled_ = value.toBool();
-    Q_EMIT changed();
+    const bool enabled = value.toBool();
+    if (impl_->scriptComponentEnabled_ == enabled) {
+      return true;
+    }
+    impl_->scriptComponentEnabled_ = enabled;
+    notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                        LayerDirtyReason::PropertyChanged);
+    syncRoutedPropertyCache(QStringLiteral("component.script.enabled"));
     return true;
   }
     if (propertyPath == QStringLiteral("component.generators.add")) {

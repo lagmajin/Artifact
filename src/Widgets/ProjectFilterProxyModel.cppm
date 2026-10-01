@@ -12,30 +12,16 @@ module Artifact.Widgets.ProjectFilterProxyModel;
 
 import Artifact.Project;
 import Artifact.Project.Items;
+import Artifact.Project.Cleanup;
 import Artifact.Project.Roles;
 import Artifact.Layer.Search.Query;
 import Artifact.Service.Project;
 import Artifact.Composition.Abstract;
-import Artifact.Layer.Composition;
-import Artifact.Layer.Video;
 
 namespace Artifact {
 namespace {
 
-QString renderInputRoleLabel(const ProjectRenderInputRole role)
-{
-    switch (role) {
-    case ProjectRenderInputRole::AlphaMatte: return QStringLiteral("Alpha Matte");
-    case ProjectRenderInputRole::LumaMatte: return QStringLiteral("Luma Matte");
-    case ProjectRenderInputRole::DisplacementMap: return QStringLiteral("Displacement");
-    case ProjectRenderInputRole::DepthMap: return QStringLiteral("Depth");
-    case ProjectRenderInputRole::NormalMap: return QStringLiteral("Normal");
-    case ProjectRenderInputRole::Texture: return QStringLiteral("Texture");
-    default: return QStringLiteral("Render Input");
-    }
-}
-
-int projectItemUsageCount(ProjectItem* item)
+int localProjectItemUsageCount(ProjectItem* item)
 {
     if (!item) {
         return 0;
@@ -49,70 +35,7 @@ int projectItemUsageCount(ProjectItem* item)
     if (!project) {
         return 0;
     }
-
-    const auto normalizePath = [](const QString& path) {
-        return QDir::cleanPath(path.trimmed());
-    };
-    const auto matchesFootagePath = [&](const FootageItem* footage,
-                                        const QString& candidatePath) {
-        if (!footage) {
-            return false;
-        }
-        const QString normalizedCandidate = normalizePath(candidatePath);
-        if (normalizedCandidate.isEmpty()) {
-            return false;
-        }
-        if (normalizedCandidate == normalizePath(footage->filePath)) {
-            return true;
-        }
-        for (const QString& sequencePath : footage->sequencePaths) {
-            if (normalizedCandidate == normalizePath(sequencePath)) {
-                return true;
-            }
-        }
-        return false;
-    };
-
-    int usageCount = 0;
-    std::function<void(ProjectItem*)> walkItems;
-    walkItems = [&](ProjectItem* current) {
-        if (!current) {
-            return;
-        }
-        if (current->type() == eProjectItemType::Composition) {
-            auto* compositionItem = static_cast<CompositionItem*>(current);
-            const auto found = project->findComposition(compositionItem->compositionId);
-            auto composition = found.ptr.lock();
-            if (composition) {
-                for (const auto& layer : composition->allLayerRef()) {
-                    if (!layer) {
-                        continue;
-                    }
-                    if (item->type() == eProjectItemType::Composition) {
-                        auto* compositionLayer = dynamic_cast<ArtifactCompositionLayer*>(layer.get());
-                        if (compositionLayer && compositionLayer->sourceCompositionId() ==
-                            static_cast<CompositionItem*>(item)->compositionId) {
-                            ++usageCount;
-                        }
-                    } else if (item->type() == eProjectItemType::Footage) {
-                        auto* footageLayer = dynamic_cast<ArtifactVideoLayer*>(layer.get());
-                        if (footageLayer && matchesFootagePath(
-                                static_cast<FootageItem*>(item), footageLayer->sourceFile())) {
-                            ++usageCount;
-                        }
-                    }
-                }
-            }
-        }
-        for (auto* child : current->children) {
-            walkItems(child);
-        }
-    };
-
-    for (auto* root : project->projectItems()) {
-        walkItems(root);
-    }
-    return usageCount;
+    return projectItemUsageCount(project.get(), item);
 }
 
 }
@@ -176,7 +99,7 @@ QVariant ProjectFilterProxyModel::data(const QModelIndex& index, int role) const
             }
             if (renderInput && !text.contains(QStringLiteral("[Input: "))) {
                 text = QStringLiteral("[Input: %1] %2")
-                    .arg(renderInputRoleLabel(footage->renderInputRole), text);
+                    .arg(projectRenderInputRoleLabel(footage->renderInputRole), text);
             }
             return text;
         }
@@ -382,7 +305,7 @@ bool ProjectFilterProxyModel::matchesAdvanced(const QModelIndex& index,
 
     const bool classifiedRenderInput = item && itemType == eProjectItemType::Footage &&
         static_cast<const FootageItem*>(item)->assetUsage == ProjectAssetUsage::RenderInput;
-    if (usedOnly_ && (!item || (!classifiedRenderInput && projectItemUsageCount(item) <= 0))) {
+    if (usedOnly_ && (!item || (!classifiedRenderInput && localProjectItemUsageCount(item) <= 0))) {
         return false;
     }
 
@@ -398,11 +321,11 @@ bool ProjectFilterProxyModel::matchesAdvanced(const QModelIndex& index,
         searchBlob += QStringLiteral(" ") + path;
         if (classifiedRenderInput) {
             searchBlob += QStringLiteral(" input source render input ") +
-                renderInputRoleLabel(footage->renderInputRole);
+                projectRenderInputRoleLabel(footage->renderInputRole);
         }
         if (unusedOnly_ && classifiedRenderInput) return false;
         if (unusedOnly_ && !unusedAssetPaths_.contains(normalizedPath) &&
-            projectItemUsageCount(item) > 0) return false;
+            localProjectItemUsageCount(item) > 0) return false;
         if (missingOnly_) {
             bool missing = !QFileInfo(path).exists();
             if (footage->isSequence) {
@@ -416,7 +339,7 @@ bool ProjectFilterProxyModel::matchesAdvanced(const QModelIndex& index,
             if (!missing) return false;
         }
     } else if (unusedOnly_ || missingOnly_) {
-        if (unusedOnly_ && projectItemUsageCount(item) > 0) return false;
+        if (unusedOnly_ && localProjectItemUsageCount(item) > 0) return false;
         if (missingOnly_) return false;
     }
 

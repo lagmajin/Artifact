@@ -755,6 +755,13 @@ public:
                           ArtifactCore::PropertyType type,
                           const QVariant &value,
                           int priority = 0) const;
+  // Refresh the cached AbstractProperty for a routed physics / component /
+  // fracture / motion / trail path from the impl value that the routing setter
+  // just wrote. The cached copy is a second source of truth: the Inspector and
+  // the Python API mutate impl_ directly, and without this write-back the cache
+  // kept its old value, so before == after and no undo command was recorded.
+  // Unknown paths are ignored, so callers can pass the property path directly.
+  void syncRoutedPropertyCache(const QString &propertyPath) const;
   void removePersistentLayerPropertiesWithPrefix(
       const QString &propertyPathPrefix) const;
   /*Generic Properties*/

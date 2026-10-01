@@ -703,8 +703,10 @@ void AudioMixer::syncFromComposition(ArtifactCompositionPtr composition)
                     } else {
                         strip->setRoutingTargetName(QStringLiteral("Master"));
                     }
-                    bus->setVolume(volumeToCoreDb(strip->volume()));
-                    bus->setPan(readLayerPan(layer));
+                    // Volume and pan stay with the layer, which already applies
+                    // them to the PCM it produces. Mute is mirrored because
+                    // ArtifactVideoLayer::getAudio never checks its own mute
+                    // flag, so the bus is its only mute stage.
                     bus->setMute(readLayerMuted(layer));
                     bus->setSolo(layer->isSolo());
                 } else {
@@ -723,9 +725,10 @@ void AudioMixer::syncFromComposition(ArtifactCompositionPtr composition)
                     return;
                 }
                 applyLayerVolume(layer, volume);
-                if (strip->coreBus()) {
-                    strip->coreBus()->setVolume(volumeToCoreDb(volume));
-                }
+                // The layer bus is a routing node, not a second fader stage.
+                // applyLayerVolume already writes the layer's volume, which the
+                // layer's getAudio applies to the produced PCM; mirroring it
+                // here would square the requested gain.
                 impl_->refreshDerivedLevels();
             });
         QObject::connect(strip, &AudioMixerChannelStrip::panChanged, this,
@@ -735,9 +738,10 @@ void AudioMixer::syncFromComposition(ArtifactCompositionPtr composition)
                     return;
                 }
                 applyLayerPan(layer, pan);
-                if (strip->coreBus()) {
-                    strip->coreBus()->setPan(pan);
-                }
+                // The layer bus is a routing node, not a second fader stage.
+                // applyLayerPan already writes the layer's pan, which
+                // ArtifactAudioLayer::getAudio applies to the produced PCM.
+                // Mirroring it onto the bus would pan the signal twice.
                 impl_->refreshDerivedLevels();
             });
         QObject::connect(strip, &AudioMixerChannelStrip::muteChanged, this,

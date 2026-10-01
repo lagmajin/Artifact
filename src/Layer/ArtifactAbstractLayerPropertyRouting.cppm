@@ -230,6 +230,435 @@ ArtifactAbstractLayer::persistentLayerProperty(const QString &propertyPath,
   return property;
 }
 
+namespace {
+// Descriptor of a property the Inspector actually exposes. The routing
+// setters below mutate impl_ fields, but the cached AbstractProperty keeps its
+// own copy, and ArtifactPropertyWidget only records an undo command when
+// before != after. Without a write-back the cached copy never moves, so every
+// physics / component / fracture edit compared equal and Ctrl+Z did nothing.
+// getLayerPropertyGroups() and getComponentPropertyGroups() already build these
+// with the correct type, priority and clamped value; the table below mirrors
+// those entries so the setters can refresh the cache in place.
+struct RoutedPropertyMeta {
+  PropertyType type;
+  int priority;
+  QVariant (*read)(const ArtifactAbstractLayerImpl& impl);
+};
+
+const QHash<QString, RoutedPropertyMeta>& routedPropertyMetaTable() {
+  static const QHash<QString, RoutedPropertyMeta> table = {
+      // --- Physics group (ArtifactAbstractLayerPropertyGroups.cppm) ---
+      {QStringLiteral("physics.enabled"),
+       {PropertyType::Boolean, -100,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(i.physicsComponent_.settings().enabled);
+        }}},
+      {QStringLiteral("physics.softBody.enabled"),
+       {PropertyType::Boolean, -99,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(i.softBodyPhysicsEnabled_);
+        }}},
+      {QStringLiteral("physics.cloth3D.enabled"),
+       {PropertyType::Boolean, -99,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(i.cloth3DPhysicsEnabled_);
+        }}},
+      {QStringLiteral("physics.stiffness"),
+       {PropertyType::Float, -99,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(
+              i.physicsComponent_.settings().stiffness));
+        }}},
+      {QStringLiteral("physics.material.enabled"),
+       {PropertyType::Boolean, -98,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(i.materialPhysicsEnabled_);
+        }}},
+      {QStringLiteral("physics.damping"),
+       {PropertyType::Float, -98,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(
+              i.physicsComponent_.settings().damping));
+        }}},
+      {QStringLiteral("physics.followThroughGain"),
+       {PropertyType::Float, -97,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(
+              i.physicsComponent_.settings().followThroughGain));
+        }}},
+      {QStringLiteral("physics.material.preset"),
+       {PropertyType::Integer, -97,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(i.materialPhysicsPreset_);
+        }}},
+      {QStringLiteral("physics.gravityY"),
+       {PropertyType::Float, -96,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(
+              i.physicsComponent_.settings().gravityY));
+        }}},
+      {QStringLiteral("physics.linearDamping"),
+       {PropertyType::Float, -95,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(
+              i.physicsComponent_.settings().linearDamping));
+        }}},
+      {QStringLiteral("physics.angularDamping"),
+       {PropertyType::Float, -94,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(
+              i.physicsComponent_.settings().angularDamping));
+        }}},
+      {QStringLiteral("physics.restitution"),
+       {PropertyType::Float, -94,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(
+              i.physicsComponent_.settings().restitution));
+        }}},
+      {QStringLiteral("physics.gravityScale"),
+       {PropertyType::Float, -93,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(
+              i.physicsComponent_.settings().gravityScale));
+        }}},
+      {QStringLiteral("physics.wiggleAmp"),
+       {PropertyType::Float, -93,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(
+              i.physicsComponent_.settings().wiggleAmp));
+        }}},
+      {QStringLiteral("physics.wiggleFreq"),
+       {PropertyType::Float, -93,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(
+              i.physicsComponent_.settings().wiggleFreq));
+        }}},
+      {QStringLiteral("physics.wind.enabled"),
+       {PropertyType::Boolean, -92,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(i.physicsComponent_.settings().windEnabled);
+        }}},
+      {QStringLiteral("physics.wind.strength"),
+       {PropertyType::Float, -92,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(
+              i.physicsComponent_.settings().windStrength));
+        }}},
+      {QStringLiteral("physics.wind.torque"),
+       {PropertyType::Float, -92,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(
+              i.physicsComponent_.settings().windTorque));
+        }}},
+      {QStringLiteral("physics.wind.x"),
+       {PropertyType::Float, -92,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(
+              i.physicsComponent_.settings().windX));
+        }}},
+      {QStringLiteral("physics.wind.y"),
+       {PropertyType::Float, -92,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(
+              i.physicsComponent_.settings().windY));
+        }}},
+      {QStringLiteral("physics.initialVelocityY"),
+       {PropertyType::Float, -92,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(i.clonePhysicsInitialVelocityY_));
+        }}},
+      {QStringLiteral("physics.maxBounces"),
+       {PropertyType::Integer, -91,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(i.clonePhysicsMaxBounces_);
+        }}},
+      {QStringLiteral("physics.fallProfile"),
+       {PropertyType::Integer, -96,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(i.physicsComponent_.settings().fallProfile);
+        }}},
+      // --- Motion group ---
+      {QStringLiteral("motion.enabled"),
+       {PropertyType::Boolean, -92,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(i.motionDynamicsEnabled_);
+        }}},
+      {QStringLiteral("motion.mode"),
+       {PropertyType::Integer, -91,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(i.motionDynamicsMode_);
+        }}},
+      {QStringLiteral("motion.stiffness"),
+       {PropertyType::Float, -90,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(i.motionDynamicsStiffness_));
+        }}},
+      {QStringLiteral("motion.damping"),
+       {PropertyType::Float, -89,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(i.motionDynamicsDamping_));
+        }}},
+      {QStringLiteral("motion.mass"),
+       {PropertyType::Float, -88,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(i.motionDynamicsMass_));
+        }}},
+      {QStringLiteral("motion.lagTau"),
+       {PropertyType::Float, -87,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(i.motionDynamicsLagTau_));
+        }}},
+      {QStringLiteral("motion.clampOvershoot"),
+       {PropertyType::Boolean, -86,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(i.motionDynamicsClampOvershoot_);
+        }}},
+      {QStringLiteral("motion.overshootLimit"),
+       {PropertyType::Float, -85,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(
+              i.motionDynamicsOvershootLimit_));
+        }}},
+      // --- Components group ---
+      {QStringLiteral("component.script.enabled"),
+       {PropertyType::Boolean, -100,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(i.scriptComponentEnabled_);
+        }}},
+      {QStringLiteral("component.cloner.enabled"),
+       {PropertyType::Boolean, -90,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(i.clonerComponentEnabled_);
+        }}},
+      {QStringLiteral("component.collision.enabled"),
+       {PropertyType::Boolean, -89,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(i.collisionComponentEnabled_);
+        }}},
+      {QStringLiteral("component.collision.displayColor"),
+       {PropertyType::Color, -88,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(i.collisionDisplayColor_);
+        }}},
+      {QStringLiteral("component.crowd.enabled"),
+       {PropertyType::Boolean, -88,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(i.crowdComponentEnabled_);
+        }}},
+      {QStringLiteral("component.particleEmitter.enabled"),
+       {PropertyType::Boolean, -87,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(i.particleEmitterComponentEnabled_);
+        }}},
+      {QStringLiteral("component.fluid.enabled"),
+       {PropertyType::Boolean, -86,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(i.fluidComponentEnabled_);
+        }}},
+      // --- Pyro group ---
+      {QStringLiteral("component.pyro.enabled"),
+       {PropertyType::Boolean, 0,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(i.pyroComponentEnabled_);
+        }}},
+      {QStringLiteral("component.pyro.gridWidth"),
+       {PropertyType::Integer, 1,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(i.pyroGridWidth_);
+        }}},
+      {QStringLiteral("component.pyro.gridHeight"),
+       {PropertyType::Integer, 1,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(i.pyroGridHeight_);
+        }}},
+      {QStringLiteral("component.pyro.gridDepth"),
+       {PropertyType::Integer, 1,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(i.pyroGridDepth_);
+        }}},
+      {QStringLiteral("component.pyro.voxelSize"),
+       {PropertyType::Float, 2,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(i.pyroVoxelSize_));
+        }}},
+      {QStringLiteral("component.pyro.boundaryMode"),
+       {PropertyType::Integer, 3,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<int>(i.pyroBoundaryMode_));
+        }}},
+      {QStringLiteral("component.pyro.sourceDensity"),
+       {PropertyType::Float, 4,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(i.pyroSourceDensity_));
+        }}},
+      {QStringLiteral("component.pyro.sourceTemperature"),
+       {PropertyType::Float, 5,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(i.pyroSourceTemperature_));
+        }}},
+      {QStringLiteral("component.pyro.sourceFuel"),
+       {PropertyType::Float, 6,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(i.pyroSourceFuel_));
+        }}},
+      {QStringLiteral("component.pyro.dissipation"),
+       {PropertyType::Float, 7,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(i.pyroDissipation_));
+        }}},
+      {QStringLiteral("component.pyro.coolingRate"),
+       {PropertyType::Float, 8,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(i.pyroCoolingRate_));
+        }}},
+      {QStringLiteral("component.pyro.buoyancy"),
+       {PropertyType::Float, 9,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(i.pyroBuoyancy_));
+        }}},
+      {QStringLiteral("component.pyro.vorticity"),
+       {PropertyType::Float, 10,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(i.pyroVorticity_));
+        }}},
+      {QStringLiteral("component.pyro.pressureIterations"),
+       {PropertyType::Float, 11,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(i.pyroPressureIterations_));
+        }}},
+      {QStringLiteral("component.pyro.advectionClamp"),
+       {PropertyType::Float, 12,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(i.pyroAdvectionClamp_));
+        }}},
+      {QStringLiteral("component.pyro.sourcePositionX"),
+       {PropertyType::Float, 13,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(i.pyroSourcePositionX_));
+        }}},
+      {QStringLiteral("component.pyro.sourcePositionY"),
+       {PropertyType::Float, 14,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(i.pyroSourcePositionY_));
+        }}},
+      {QStringLiteral("component.pyro.sourcePositionZ"),
+       {PropertyType::Float, 15,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(i.pyroSourcePositionZ_));
+        }}},
+      {QStringLiteral("component.pyro.sourceExtentX"),
+       {PropertyType::Float, 16,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(i.pyroSourceExtentX_));
+        }}},
+      {QStringLiteral("component.pyro.sourceExtentY"),
+       {PropertyType::Float, 17,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(i.pyroSourceExtentY_));
+        }}},
+      {QStringLiteral("component.pyro.sourceExtentZ"),
+       {PropertyType::Float, 18,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(i.pyroSourceExtentZ_));
+        }}},
+      {QStringLiteral("component.pyro.sourceVelocityX"),
+       {PropertyType::Float, 19,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(i.pyroSourceVelocityX_));
+        }}},
+      {QStringLiteral("component.pyro.sourceVelocityY"),
+       {PropertyType::Float, 20,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(i.pyroSourceVelocityY_));
+        }}},
+      {QStringLiteral("component.pyro.sourceVelocityZ"),
+       {PropertyType::Float, 21,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(i.pyroSourceVelocityZ_));
+        }}},
+      // --- Fracture group ---
+      {QStringLiteral("fracture.enabled"),
+       {PropertyType::Boolean, -84,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(i.fractureEnabled_);
+        }}},
+      {QStringLiteral("fracture.preGenerate"),
+       {PropertyType::Boolean, -835,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(i.fracturePreGenerate_);
+        }}},
+      {QStringLiteral("fracture.preset"),
+       {PropertyType::Integer, -83,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(i.fracturePreset_);
+        }}},
+      {QStringLiteral("fracture.crackThreshold"),
+       {PropertyType::Float, -82,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(i.fractureCrackThreshold_));
+        }}},
+      {QStringLiteral("fracture.shatterThreshold"),
+       {PropertyType::Float, -81,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(i.fractureShatterThreshold_));
+        }}},
+      {QStringLiteral("fracture.shardCount"),
+       {PropertyType::Integer, -80,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(i.fractureShardCount_);
+        }}},
+      {QStringLiteral("fracture.shardDamping"),
+       {PropertyType::Float, -79,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(i.fractureShardDamping_));
+        }}},
+      {QStringLiteral("fracture.shardGravity"),
+       {PropertyType::Float, -78,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(i.fractureShardGravity_));
+        }}},
+      {QStringLiteral("fracture.impactSensitivity"),
+       {PropertyType::Float, -77,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(i.fractureImpactSensitivity_));
+        }}},
+      // --- Trail group ---
+      {QStringLiteral("trail.enabled"),
+       {PropertyType::Boolean, -76,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(i.motionTrailEnabled_);
+        }}},
+      {QStringLiteral("trail.length"),
+       {PropertyType::Integer, -75,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(i.motionTrailLength_);
+        }}},
+      {QStringLiteral("trail.fade"),
+       {PropertyType::Float, -74,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(i.motionTrailFade_));
+        }}},
+      {QStringLiteral("trail.width"),
+       {PropertyType::Float, -73,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(static_cast<double>(i.motionTrailWidth_));
+        }}},
+  };
+  return table;
+}
+} // namespace
+
+void ArtifactAbstractLayer::syncRoutedPropertyCache(
+    const QString &propertyPath) const {
+  const auto &table = routedPropertyMetaTable();
+  const auto meta = table.constFind(propertyPath);
+  if (meta == table.cend()) {
+    return;
+  }
+  persistentLayerProperty(propertyPath, meta->type, meta->read(*impl_),
+                          meta->priority);
+}
+
 void ArtifactAbstractLayer::removePersistentLayerPropertiesWithPrefix(
     const QString &propertyPathPrefix) const {
   if (propertyPathPrefix.isEmpty()) return;
@@ -603,6 +1032,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     }
     notifyLayerMutation(this, LayerDirtyFlag::Effect,
                         LayerDirtyReason::PropertyChanged);
+    syncRoutedPropertyCache(QStringLiteral("physics.softBody.enabled"));
     return true;
   }
   if (propertyPath == QStringLiteral("physics.cloth3D.enabled")) {
@@ -613,6 +1043,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     }
     notifyLayerMutation(this, LayerDirtyFlag::Effect,
                         LayerDirtyReason::PropertyChanged);
+    syncRoutedPropertyCache(QStringLiteral("physics.cloth3D.enabled"));
     return true;
   }
   if (propertyPath == QStringLiteral("physics.material.enabled")) {
@@ -623,6 +1054,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     }
     notifyLayerMutation(this, LayerDirtyFlag::Effect,
                         LayerDirtyReason::PropertyChanged);
+    syncRoutedPropertyCache(QStringLiteral("physics.material.enabled"));
     return true;
   }
   if (propertyPath == QStringLiteral("physics.material.preset")) {
@@ -632,16 +1064,29 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     }
     notifyLayerMutation(this, LayerDirtyFlag::Effect,
                         LayerDirtyReason::PropertyChanged);
+    syncRoutedPropertyCache(QStringLiteral("physics.material.preset"));
     return true;
   }
   if (propertyPath == QStringLiteral("physics.enabled")) {
     const bool enabled = value.toBool();
+    // syncBuiltinComponentDescriptors() rebuilds every descriptor, so skip it
+    // when the flag would not move. collisionComponentEnabled_ can force
+    // physics on independently, so compare the state that would result rather
+    // than the requested value alone.
+    const bool alreadyEnabled = impl_->physicsComponent_.enabled();
+    const bool wouldBeEnabled = enabled || impl_->collisionComponentEnabled_;
+    if (alreadyEnabled == wouldBeEnabled &&
+        (!enabled || !impl_->collisionOwnsPhysicsEnable_)) {
+      return true;
+    }
     impl_->physicsComponent_.setEnabled(enabled);
     if (enabled) {
       impl_->collisionOwnsPhysicsEnable_ = false;
     }
     impl_->syncBuiltinComponentDescriptors();
-    Q_EMIT changed();
+    notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                        LayerDirtyReason::PropertyChanged);
+    syncRoutedPropertyCache(QStringLiteral("physics.enabled"));
     return true;
   }
   if (propertyPath == QStringLiteral("physics.stiffness")) {
@@ -866,13 +1311,25 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     return true;
   }
   if (propertyPath == QStringLiteral("motion.enabled")) {
-    impl_->motionDynamicsEnabled_ = value.toBool();
-    Q_EMIT changed();
+    const bool enabled = value.toBool();
+    if (impl_->motionDynamicsEnabled_ == enabled) {
+      return true;
+    }
+    impl_->motionDynamicsEnabled_ = enabled;
+    notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                        LayerDirtyReason::PropertyChanged);
+    syncRoutedPropertyCache(QStringLiteral("motion.enabled"));
     return true;
   }
   if (propertyPath == QStringLiteral("motion.mode")) {
-    impl_->motionDynamicsMode_ = std::clamp(value.toInt(), 0, 2);
-    Q_EMIT changed();
+    const int mode = std::clamp(value.toInt(), 0, 2);
+    if (impl_->motionDynamicsMode_ == mode) {
+      return true;
+    }
+    impl_->motionDynamicsMode_ = mode;
+    notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                        LayerDirtyReason::PropertyChanged);
+    syncRoutedPropertyCache(QStringLiteral("motion.mode"));
     return true;
   }
   if (propertyPath == QStringLiteral("motion.stiffness")) {
@@ -905,10 +1362,16 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     return true;
   }
   if (propertyPath == QStringLiteral("trail.enabled")) {
-    impl_->motionTrailEnabled_ = value.toBool();
+    const bool enabled = value.toBool();
+    if (impl_->motionTrailEnabled_ == enabled) {
+      return true;
+    }
+    impl_->motionTrailEnabled_ = enabled;
     impl_->motionTrailHistory_.clear();
     impl_->motionTrailLastFrame_ = std::numeric_limits<int64_t>::min();
-    Q_EMIT changed();
+    notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                        LayerDirtyReason::PropertyChanged);
+    syncRoutedPropertyCache(QStringLiteral("trail.enabled"));
     return true;
   }
   if (propertyPath == QStringLiteral("trail.length")) {
@@ -981,7 +1444,9 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       impl_->fractureEnabled_ = enabled;
       resetFractureState();
     }
-    Q_EMIT changed();
+    notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                        LayerDirtyReason::PropertyChanged);
+    syncRoutedPropertyCache(QStringLiteral("fracture.enabled"));
     return true;
   }
   if (propertyPath == QStringLiteral("fracture.preGenerate")) {
@@ -990,7 +1455,9 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       impl_->fracturePreGenerate_ = enabled;
       resetFractureState();
     }
-    Q_EMIT changed();
+    notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                        LayerDirtyReason::PropertyChanged);
+    syncRoutedPropertyCache(QStringLiteral("fracture.preGenerate"));
     return true;
   }
   if (propertyPath == QStringLiteral("fracture.triggerFrame")) {
@@ -999,7 +1466,8 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       impl_->fractureTriggerFrame_ = triggerFrame;
       resetFractureState();
     }
-    Q_EMIT changed();
+    notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                        LayerDirtyReason::PropertyChanged);
     return true;
   }
   if (propertyPath == QStringLiteral("fracture.preset")) {
@@ -1008,7 +1476,9 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       impl_->fracturePreset_ = preset;
       resetFractureState();
     }
-    Q_EMIT changed();
+    notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                        LayerDirtyReason::PropertyChanged);
+    syncRoutedPropertyCache(QStringLiteral("fracture.preset"));
     return true;
   }
   if (propertyPath == QStringLiteral("fracture.crackThreshold")) {
@@ -1018,7 +1488,9 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       impl_->fractureCrackThreshold_ = threshold;
       resetFractureState();
     }
-    Q_EMIT changed();
+    notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                        LayerDirtyReason::PropertyChanged);
+    syncRoutedPropertyCache(QStringLiteral("fracture.crackThreshold"));
     return true;
   }
   if (propertyPath == QStringLiteral("fracture.shatterThreshold")) {
@@ -1028,7 +1500,9 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       impl_->fractureShatterThreshold_ = threshold;
       resetFractureState();
     }
-    Q_EMIT changed();
+    notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                        LayerDirtyReason::PropertyChanged);
+    syncRoutedPropertyCache(QStringLiteral("fracture.shatterThreshold"));
     return true;
   }
   if (propertyPath == QStringLiteral("fracture.shardCount")) {
@@ -1037,7 +1511,9 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       impl_->fractureShardCount_ = shardCount;
       resetFractureState();
     }
-    Q_EMIT changed();
+    notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                        LayerDirtyReason::PropertyChanged);
+    syncRoutedPropertyCache(QStringLiteral("fracture.shardCount"));
     return true;
   }
   if (propertyPath == QStringLiteral("fracture.shardDamping")) {
@@ -1047,7 +1523,9 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       impl_->fractureShardDamping_ = damping;
       resetFractureState();
     }
-    Q_EMIT changed();
+    notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                        LayerDirtyReason::PropertyChanged);
+    syncRoutedPropertyCache(QStringLiteral("fracture.shardDamping"));
     return true;
   }
   if (propertyPath == QStringLiteral("fracture.shardGravity")) {
@@ -1057,7 +1535,9 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       impl_->fractureShardGravity_ = gravity;
       resetFractureState();
     }
-    Q_EMIT changed();
+    notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                        LayerDirtyReason::PropertyChanged);
+    syncRoutedPropertyCache(QStringLiteral("fracture.shardGravity"));
     return true;
   }
   if (propertyPath == QStringLiteral("fracture.impactSensitivity")) {
@@ -1067,7 +1547,9 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       impl_->fractureImpactSensitivity_ = sensitivity;
       resetFractureState();
     }
-    Q_EMIT changed();
+    notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                        LayerDirtyReason::PropertyChanged);
+    syncRoutedPropertyCache(QStringLiteral("fracture.impactSensitivity"));
     return true;
   }
 

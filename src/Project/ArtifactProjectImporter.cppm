@@ -50,6 +50,7 @@ import Artifact.Project.CreationDefaults;
 import Artifact.Composition.Abstract;
 import Artifact.Composition.InitParams;
 import Asset.Manager;
+import Tracking.MotionTracker;
 import Memory.SharedPtr;
 import Artifact.Color.OCIOManager;
 import Serialization.ProjectSerializer;
@@ -567,6 +568,11 @@ namespace Artifact
    qDebug() << "[Importer] Creation defaults restored";
   }
 
+  if (root.contains("guideSet") && root["guideSet"].isObject()) {
+   projectPtr->setGuideSet(GuideSet::fromJson(root["guideSet"].toObject()));
+   qDebug() << "[Importer] Guide set restored";
+  }
+
   // Restore source identities and versions before layer construction. Older
   // projects legitimately omit this section and rebuild it from source paths.
   // Reset only after the project metadata has passed the importer checks, so an
@@ -574,6 +580,17 @@ namespace Artifact
   ArtifactCore::AssetManager::instance().resetSourceRegistry();
   if (root.contains("assets") && root["assets"].isObject()) {
    QJsonObject assets = root["assets"].toObject();
+   // Motion tracking セッションを復元する。従来は復元経路が無く、
+   // レイヤー側の motionTrackerId が孤児 ID のまま残っていた。
+   if (assets.contains("trackers") && assets["trackers"].isArray()) {
+    ArtifactCore::TrackerManager::instance().fromJson(
+        assets["trackers"].toArray());
+    qDebug() << "[Importer] Motion trackers restored:"
+             << ArtifactCore::TrackerManager::instance().trackerCount();
+   } else {
+    // 旧プロジェクトにトラッキングは無いので、登録済み分を落とす。
+    ArtifactCore::TrackerManager::instance().clearTrackers();
+   }
    if (assets.contains("sourceRegistry") && assets["sourceRegistry"].isObject()) {
     QJsonObject sourceRegistry = assets["sourceRegistry"].toObject();
     QJsonArray sources = sourceRegistry.value(QStringLiteral("sources")).toArray();

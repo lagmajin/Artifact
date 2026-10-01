@@ -49,6 +49,7 @@ import Artifact.Layer.Result;
 import Artifact.Layer.Factory;
 import Core.Diagnostics.DiagnosticEngine;
 import Artifact.Project.CreationDefaults;
+import Asset.Database;
 import Memory.SharedPtr;
 import Memory.SharedPtr;
 
@@ -532,11 +533,16 @@ ArtifactProjectManager::ArtifactProjectManager(QObject* parent /*= nullptr*/) :Q
 
 bool ArtifactProjectManager::closeCurrentProject()
 {
- ++impl_->projectOperationGeneration_;
- impl_->currentProjectPtr_.reset();
- impl_->currentProjectPath_.clear();
- impl_->projectRootPath_.clear();
-  impl_->isCreated_ = false;
+  ++impl_->projectOperationGeneration_;
+  impl_->currentProjectPtr_.reset();
+  impl_->currentProjectPath_.clear();
+  impl_->projectRootPath_.clear();
+   impl_->isCreated_ = false;
+  // Asset identity is scoped to a project: the project document and the
+  // per-asset .assetmeta sidecar both replay their UUIDs on the next load, so
+  // keeping this cache would let the previous project's paths answer lookups
+  // in the next one.
+  ArtifactCore::AssetDatabase::instance().clear();
  return true;
 }
 
