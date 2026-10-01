@@ -1,4 +1,7 @@
 module;
+#include <QTransform>
+#include <QPointF>
+#include <QRectF>
 #include <QObject>
 #include <QList>
 #include <QThread>
@@ -26,7 +29,6 @@ module;
 #include <QSaveFile>
 #include <QStandardPaths>
 #include <QStringList>
-#include <QPointF>
 #include <QRegularExpression>
 #include <QLoggingCategory>
 #include <QProcess>
@@ -119,6 +121,8 @@ import IO.VectorExport;
 import Image.ExportOptions;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
+import Artifact.Render.Pipeline;
+import Artifact.Effect.Abstract;
 import Artifact.Layer.Matte;
 import Artifact.Layer.Image;
 import Artifact.Layer.Composition;
@@ -2535,6 +2539,7 @@ namespace Artifact
         std::chrono::steady_clock::time_point lastPreviewPublishTime_{};
 
         std::unique_ptr<ArtifactIRenderer> gpuRenderer_;
+        RenderPipeline gpuRevealPipeline_;
         std::unique_ptr<ArtifactCore::LayerBlendPipeline> gpuMattePipeline_;
         int gpuRendererWidth_ = 0;
         int gpuRendererHeight_ = 0;
@@ -2651,6 +2656,7 @@ namespace Artifact
             QHash<QString, LayerSurfaceCacheEntry>* gpuSurfaceCache = nullptr;
             GPUTextureCacheManager* gpuTextureCacheManager = nullptr;
             GpuMatteResourcePool* gpuMatteResourcePool = nullptr;
+            RenderPipeline* gpuRevealPipeline = nullptr;
             QStringList* htmlFrameFiles = nullptr;
         };
 
@@ -2686,12 +2692,18 @@ namespace Artifact
             QString& failureReason);
 
         struct GpuFinalWorker {
+            GpuFinalWorker() = default;
+            GpuFinalWorker(const GpuFinalWorker&) = delete;
+            GpuFinalWorker& operator=(const GpuFinalWorker&) = delete;
+            GpuFinalWorker(GpuFinalWorker&&) = delete;
+            GpuFinalWorker& operator=(GpuFinalWorker&&) = delete;
             std::unique_ptr<ArtifactIRenderer> renderer;
             ArtifactCompositionPtr composition;
             QHash<QString, LayerSurfaceCacheEntry> surfaceCache;
             std::unique_ptr<GPUTextureCacheManager> textureCache;
             std::unique_ptr<ArtifactCore::LayerBlendPipeline> mattePipeline;
             std::unique_ptr<GpuMatteResourcePool> matteResourcePool;
+            RenderPipeline revealPipeline;
             int rendererWidth = 0;
             int rendererHeight = 0;
             int adapterId = -1;
@@ -3711,6 +3723,7 @@ namespace Artifact
             snap.gpuSurfaceCache = &worker.surfaceCache;
             snap.gpuTextureCacheManager = worker.textureCache.get();
             snap.gpuMatteResourcePool = worker.matteResourcePool.get();
+            snap.gpuRevealPipeline = &worker.revealPipeline;
             return renderSingleFrameNoLock(
                 worker.renderer.get(), &worker.mattePipeline,
                 worker.rendererWidth, worker.rendererHeight,
@@ -6382,6 +6395,15 @@ namespace Artifact
             failureReason = QStringLiteral("Null composition in frame snapshot");
             return false;
         }
+        const bool hasReveal = std::any_of(snap.composition->allLayerRef().begin(),
+            snap.composition->allLayerRef().end(), [&snap](const auto& layer) {
+                return layer && layer->revealEnabled() && layer->isVisible() &&
+                    layer->isActiveAt(ArtifactCore::FramePosition(snap.frameNumber)) && layer->shouldIncludeInFinalRender();
+            });
+        if (hasReveal && !snap.useGpuBackend) {
+            failureReason = QStringLiteral("Reveal requires the GPU render backend");
+            return false;
+        }
         if (snap.useGpuBackend && (!renderer || !mattePipelineSlot)) {
             failureReason = QStringLiteral("Invalid GPU renderer state in frame snapshot");
             return false;
@@ -6443,6 +6465,17 @@ namespace Artifact
                 }
                 return true;
             };
+            auto& revealPipeline = snap.gpuRevealPipeline ? *snap.gpuRevealPipeline : gpuRevealPipeline_;
+            if (hasReveal) {
+                const auto context = renderer->immediateContext();
+                if (!context || !revealPipeline.initialize(renderer->device(),
+                    static_cast<Diligent::Uint32>(rendererWidth), static_cast<Diligent::Uint32>(rendererHeight),
+                    Diligent::TEX_FORMAT_RGBA16_FLOAT) || !revealPipeline.prepareReveal(context.RawPtr())) {
+                    failureReason = QStringLiteral("Reveal GPU resources could not be prepared");
+                    return false;
+                }
+                revealPipeline.prepareRevealMaps(context.RawPtr(), gpuLayers);
+            }
             QHash<ArtifactCore::Id, QImage> matteSourceImages;
             for (const auto& layer : gpuLayers) {
                 if (!layer) {
@@ -6591,7 +6624,7 @@ namespace Artifact
                         gpuMatteRefs.clear();
                     }
                 }
-                if (!gpuMatteRefs.empty()) {
+                if (!gpuMatteRefs.empty() && !layer->revealEnabled()) {
                     auto* layerResources = snap.gpuMatteResourcePool
                         ? snap.gpuMatteResourcePool->acquire(true)
                         : nullptr;
@@ -6651,6 +6684,59 @@ namespace Artifact
                             continue;
                         }
                     }
+                }
+                if (layer->revealEnabled()) {
+                    layer->goToFrame(snap.frameNumber);
+                    const auto settings = layer->revealSettings();
+                    const auto map = layer->revealMapView();
+                    auto* mapSRV = settings.pattern >= 3 ? revealPipeline.revealMapSRV(layer.get()) : nullptr;
+                    if (map.failed || (settings.pattern >= 3 && !mapSRV)) {
+                        failureReason = QStringLiteral("Reveal map is unavailable or the map cache is full: %1").arg(layer->layerName());
+                        return false;
+                    }
+                    renderer->flush();
+                    renderer->pushRenderTarget(revealPipeline.layerRTV(), nullptr);
+                    renderer->setClearColor(FloatColor{0,0,0,0}); renderer->clear();
+                    drawLayerForCompositionView(layer.get(), renderer, 1.0f, nullptr,
+                        snap.gpuSurfaceCache, snap.gpuTextureCacheManager, snap.frameNumber,
+                        true, DetailLevel::High, nullptr, &matteSourceImages);
+                    renderer->flush(); renderer->popRenderTarget();
+                    renderer->unbindColorTargetsForCompute();
+                    const QRectF bounds = layer->localBounds();
+                    bool invertible = false;
+                    const QTransform inverse = layer->getGlobalTransform().inverted(&invertible);
+                    if (!invertible || bounds.width() <= 0 || bounds.height() <= 0) {
+                        failureReason = QStringLiteral("Invalid Reveal layer bounds or transform"); return false;
+                    }
+                    const auto localUV = [&](float x, float y) {
+                        const auto canvas = renderer->viewportToCanvas({x,y});
+                        const QPointF local = inverse.map(QPointF(canvas.x,canvas.y));
+                        return QPointF((local.x()-bounds.left())/bounds.width(), (local.y()-bounds.top())/bounds.height());
+                    };
+                    const QPointF origin = localUV(0,0), dx = localUV(1,0)-origin, dy = localUV(0,1)-origin;
+                    GpuSpatialEffectNode node; node.kind = GpuSpatialEffectKind::Reveal;
+                    node.parameters = {static_cast<float>(dx.x()),static_cast<float>(dy.x()),static_cast<float>(origin.x()),static_cast<float>(bounds.width()/bounds.height()),
+                        static_cast<float>(dx.y()),static_cast<float>(dy.y()),static_cast<float>(origin.y()),1.0f,
+                        settings.progress,settings.softness,static_cast<float>(settings.pattern),settings.angle*0.017453292519943295f,
+                        settings.centerX,settings.centerY,static_cast<float>(settings.seed),settings.reverse ? 1.0f : 0.0f};
+
+                    for (const float parameter : node.parameters) {
+                        if (!std::isfinite(parameter)) { failureReason = QStringLiteral("Invalid Reveal coordinate mapping"); return false; }
+                    }
+                    const auto context = renderer->immediateContext();
+                    if (!gpuMattePipeline || !renderer->convertLayerToFloat(gpuMattePipeline,
+                        revealPipeline.layerSRV(), revealPipeline.layerFloatUAV(), rendererWidth, rendererHeight) ||
+                        !revealPipeline.applySpatialEffect(context.RawPtr(), revealPipeline.layerFloatSRV(),
+                            revealPipeline.tempUAV(), revealPipeline.layerFloatUAV(), node,
+                            nullptr, false, mapSRV)) {
+                        failureReason = QStringLiteral("Reveal GPU dispatch failed"); return false;
+                    }
+                    const auto topLeft = renderer->viewportToCanvas({0,0});
+                    const auto bottomRight = renderer->viewportToCanvas({static_cast<float>(rendererWidth),static_cast<float>(rendererHeight)});
+                    renderer->drawSprite(topLeft.x,topLeft.y,bottomRight.x-topLeft.x,bottomRight.y-topLeft.y,
+                        revealPipeline.layerFloatSRV(),1.0f);
+                    renderer->flush();
+                    continue;
                 }
                 drawLayerForCompositionView(layer.get(), renderer, 1.0f, nullptr,
                                             snap.gpuSurfaceCache, snap.gpuTextureCacheManager,
@@ -6872,6 +6958,7 @@ namespace Artifact
         baseSnap.videoBackend = videoBackend;
         baseSnap.gpuSurfaceCache = &gpuSurfaceCache;
         baseSnap.gpuTextureCacheManager = gpuTextureCacheManager;
+        baseSnap.gpuRevealPipeline = useGpuBackend ? &gpuRevealPipeline_ : nullptr;
         baseSnap.gpuMatteResourcePool = useGpuBackend
             ? &gpuMatteResourcePool : nullptr;
         baseSnap.htmlFrameFiles = &htmlFrameFiles;
@@ -6941,7 +7028,9 @@ namespace Artifact
         // compositionFrameStateMutex_ is retained (MFR Phase 0 pending).
         std::vector<ArtifactCompositionPtr> xpuMixedCpuCompositions;
         bool useXpuMixed = false;
-        if (xpuMixedRequested() && useMultiGpu && !usesComponentSimulation &&
+        const bool revealGpuOnly = std::any_of(compositionForRender->allLayerRef().begin(),
+            compositionForRender->allLayerRef().end(), [](const auto& layer) { return layer && layer->revealEnabled(); });
+        if (!revealGpuOnly && xpuMixedRequested() && useMultiGpu && !usesComponentSimulation &&
             tileRenderMode_ != TileRenderMode::Tiled &&
             !isHtmlPlayer && !job.multiChannelExportEnabled &&
             !job.deepExportEnabled &&
@@ -8255,7 +8344,7 @@ namespace Artifact
                         (*compositionForRender)->allLayerRef().end(),
                         [](const ArtifactAbstractLayerPtr& layer) {
                             return layer &&
-                                (dynamic_cast<ArtifactProcedural3DLayer*>(layer.get()) != nullptr ||
+                                (layer->revealEnabled() || dynamic_cast<ArtifactProcedural3DLayer*>(layer.get()) != nullptr ||
                                  dynamic_cast<ArtifactFormParticleLayer*>(layer.get()) != nullptr);
                         });
                 bool useGpuBackend = false;
@@ -8272,7 +8361,7 @@ namespace Artifact
                             if (requiresGeneratorGpu) {
                                 success.store(false, std::memory_order_relaxed);
                                 failureReason = QStringLiteral(
-                                    "Procedural 3D and Form layers require the GPU render path: %1")
+                                    "Reveal, Procedural 3D and Form layers require the GPU render path: %1")
                                                     .arg(gpuFailureReason);
                             } else {
                                 qWarning() << "[RenderQueue] GPU backend unavailable, falling back to CPU"

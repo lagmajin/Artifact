@@ -1,5 +1,6 @@
 module;
 #include <algorithm>
+#include <QUuid>
 #include <cmath>
 #include <cstdint>
 #include <memory>
@@ -41,6 +42,7 @@ module;
 module Artifact.Layer.Abstract;
 
 import :Impl;
+import Asset.Manager;
 import Memory.SharedPtr;
 import Utils;
 import Layer.State;
@@ -194,6 +196,33 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   obj["isShy"] = impl_->isShy_;
   obj["labelColorIndex"] = impl_->labelColorIndex_;
   obj["opacity"] = static_cast<double>(impl_->opacity_);
+  const auto& reveal = impl_->reveal_;
+  QJsonObject revealObject{
+      {QStringLiteral("version"), 1},
+      {QStringLiteral("enabled"), reveal.enabled},
+      {QStringLiteral("pattern"), reveal.pattern},
+      {QStringLiteral("progress"), reveal.progress},
+      {QStringLiteral("softness"), reveal.softness},
+      {QStringLiteral("reverse"), reveal.reverse},
+      {QStringLiteral("angle"), reveal.angle},
+      {QStringLiteral("centerX"), reveal.centerX},
+      {QStringLiteral("centerY"), reveal.centerY},
+      {QStringLiteral("seed"), reveal.seed},
+      {QStringLiteral("brushRadius"), impl_->revealBrushRadius_},
+      {QStringLiteral("brushPreset"), impl_->revealBrushPreset_},
+      {QStringLiteral("strokes"), impl_->revealStrokeData_},
+      {QStringLiteral("timingPath"), impl_->revealTimingPath_},
+      {QStringLiteral("supportPath"), impl_->revealSupportPath_},
+      {QStringLiteral("timingAssetId"), impl_->revealTimingAsset_.toString()},
+      {QStringLiteral("supportAssetId"), impl_->revealSupportAsset_.toString()}};
+  if (impl_->revealProgress_) {
+    const auto property = PropertySerializationBridge::serializeProperty(impl_->revealProgress_);
+    revealObject[QStringLiteral("keyframes")] = property.keyframes;
+    revealObject[QStringLiteral("expression")] = property.expression;
+    revealObject[QStringLiteral("envelopes")] = property.envelopes;
+  }
+  obj[QStringLiteral("reveal")] = revealObject;
+
   if (impl_->timeRemapEffect_) {
     QJsonObject timeRemap;
     timeRemap["enabled"] = impl_->timeRemapEffect_->isEnabled();
@@ -764,6 +793,49 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
     setShy(obj["isShy"].toBool());
   if (obj.contains("labelColorIndex"))
     setLabelColorIndex(obj["labelColorIndex"].toInt(0));
+  AssetManager::instance().releaseSource(impl_->revealTimingAsset_);
+  AssetManager::instance().releaseSource(impl_->revealSupportAsset_);
+  impl_->revealTimingAsset_ = {}; impl_->revealSupportAsset_ = {};
+  impl_->revealTimingPath_.clear(); impl_->revealSupportPath_.clear();
+  impl_->revealStrokeData_.clear(); impl_->revealBrushRadius_ = 0.16f;
+  impl_->revealBrushPreset_ = 0;
+  impl_->reveal_ = LayerRevealSettings{};
+  if (impl_->revealProgress_) {
+    impl_->revealProgress_->clearKeyFrames();
+    impl_->revealProgress_->setExpression(QString());
+    impl_->revealProgress_->setValue(1.0f);
+  }
+  const auto revealObject = obj.value(QStringLiteral("reveal")).toObject();
+  if (revealObject.value(QStringLiteral("version")).toInt() == 1) {
+    auto& r = impl_->reveal_;
+    r.enabled = revealObject.value(QStringLiteral("enabled")).toBool(false);
+    r.pattern = std::clamp(revealObject.value(QStringLiteral("pattern")).toInt(), 0, 4);
+    r.progress = static_cast<float>(finiteClampedValue(revealObject.value(QStringLiteral("progress")).toDouble(1.0), 1.0, 0.0, 1.0));
+    r.softness = static_cast<float>(finiteClampedValue(revealObject.value(QStringLiteral("softness")).toDouble(), 0.0, 0.0, 1.0));
+    r.reverse = revealObject.value(QStringLiteral("reverse")).toBool();
+    r.angle = static_cast<float>(finiteClampedValue(revealObject.value(QStringLiteral("angle")).toDouble(), 0.0, -360.0, 360.0));
+    r.centerX = static_cast<float>(finiteClampedValue(revealObject.value(QStringLiteral("centerX")).toDouble(0.5), 0.5, 0.0, 1.0));
+    r.centerY = static_cast<float>(finiteClampedValue(revealObject.value(QStringLiteral("centerY")).toDouble(0.5), 0.5, 0.0, 1.0));
+    r.seed = std::clamp(revealObject.value(QStringLiteral("seed")).toInt(), 0, 16777215);
+    impl_->revealBrushRadius_ = static_cast<float>(finiteClampedValue(revealObject.value(QStringLiteral("brushRadius")).toDouble(0.16), 0.16, 0.005, 0.5));
+    impl_->revealBrushPreset_ = std::clamp(revealObject.value(QStringLiteral("brushPreset")).toInt(), 0, 2);
+    impl_->revealStrokeData_ = revealObject.value(QStringLiteral("strokes")).toString().left(32768);
+    impl_->revealTimingPath_ = revealObject.value(QStringLiteral("timingPath")).toString().left(32768);
+    impl_->revealSupportPath_ = revealObject.value(QStringLiteral("supportPath")).toString().left(32768);
+    impl_->revealTimingAsset_ = QUuid(revealObject.value(QStringLiteral("timingAssetId")).toString());
+    impl_->revealSupportAsset_ = QUuid(revealObject.value(QStringLiteral("supportAssetId")).toString());
+    if (!AssetManager::instance().acquireExistingSource(impl_->revealTimingAsset_)) impl_->revealTimingAsset_ = {};
+    if (!AssetManager::instance().acquireExistingSource(impl_->revealSupportAsset_)) impl_->revealSupportAsset_ = {};
+    impl_->revealProgress_ = persistentLayerProperty(QStringLiteral("reveal.progress"), PropertyType::Float, r.progress);
+    impl_->revealProgress_->setAnimatable(true);
+    SerializedProperty progress;
+    progress.value = r.progress;
+    progress.keyframes = revealObject.value(QStringLiteral("keyframes")).toArray();
+    progress.expression = revealObject.value(QStringLiteral("expression")).toString();
+    progress.envelopes = revealObject.value(QStringLiteral("envelopes")).toArray();
+    PropertySerializationBridge::deserializeProperty(impl_->revealProgress_, progress);
+  }
+  rebuildRevealMap();
   if (obj.contains("opacity"))
     setOpacity(static_cast<float>(obj["opacity"].toDouble(1.0)));
   if (obj.value(QStringLiteral("timeRemap")).isObject()) {

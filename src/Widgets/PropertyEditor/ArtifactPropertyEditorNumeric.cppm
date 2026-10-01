@@ -57,7 +57,8 @@ constexpr qint64 kSliderPreviewIntervalMs = 16;
 
 bool isScalePercentProperty(const ArtifactCore::AbstractProperty &property) {
   const QString name = property.getName();
-  return name.compare(QStringLiteral("transform.scale.x"),
+  return name.compare(QStringLiteral("reveal.progress"), Qt::CaseInsensitive) == 0 ||
+         name.compare(QStringLiteral("transform.scale.x"),
                       Qt::CaseInsensitive) == 0 ||
          name.compare(QStringLiteral("transform.scale.y"),
                       Qt::CaseInsensitive) == 0;

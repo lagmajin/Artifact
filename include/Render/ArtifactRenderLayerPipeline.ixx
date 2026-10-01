@@ -112,20 +112,21 @@ export namespace Artifact
     ArtifactCore::LayerBlendPipeline* blendPipeline,
     ArtifactCore::BlendMode mode);
 
-// Execute one backend-neutral spatial node over existing GPU-resident
-   // RGBA16F targets. Scratch and output must be distinct UAVs.
-   //
-   // historySRV / historyValid let a temporal node read a neighbouring frame
-   // as a second texture input.  Both are optional: when historyValid is false
-   // the caller has no frame to offer and the shader receives the current
-   // input together with historyValid == 0 so it can degrade instead of
-   // blending against an unrelated image.
-   bool applySpatialEffect(
-    IDeviceContext* ctx, ITextureView* inputSRV,
-    ITextureView* scratchUAV, ITextureView* outputUAV,
-    const GpuSpatialEffectNode& node,
-    ITextureView* historySRV = nullptr,
-    bool historyValid = false);
+  // Execute one backend-neutral spatial node over existing GPU-resident
+  // RGBA16F targets. Scratch and output must be distinct UAVs.
+  // Cold-path preparation; dispatch never allocates Reveal resources.
+  bool prepareReveal(IDeviceContext* ctx);
+  void prepareRevealMaps(IDeviceContext* ctx, const std::vector<ArtifactAbstractLayerPtr>& layers);
+  ITextureView* revealMapSRV(const ArtifactAbstractLayer* layer) const;
+
+  // historySRV / historyValid let temporal nodes read a neighbouring frame.
+  bool applySpatialEffect(
+   IDeviceContext* ctx, ITextureView* inputSRV,
+   ITextureView* scratchUAV, ITextureView* outputUAV,
+   const GpuSpatialEffectNode& node,
+   ITextureView* historySRV = nullptr,
+   bool historyValid = false,
+   ITextureView* revealMap = nullptr);
 
   ITextureView* accumSRV() const;
   ITextureView* accumUAV() const;

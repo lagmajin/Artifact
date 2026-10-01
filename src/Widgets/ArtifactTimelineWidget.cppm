@@ -4507,14 +4507,18 @@ public:
 protected:
   bool eventFilter(QObject *, QEvent *event) override {
     if (event->type() == QEvent::Resize && !updating_) {
-      // 同期的にコールバックを呼び出し、次の描画前にズームを確定させる。
-      // callback_ がスクロールバーの表示/非表示を変更してビューポートが
-      // 再リサイズされた場合、updating_ ガードにより再帰を防止する。
-      // フローティングモードではこの再帰が振動ループの原因だったため、
-      // 遅延リトライは行わない。
-      updating_ = true;
-      callback_();
-      updating_ = false;
+      const auto *resize = static_cast<const QResizeEvent *>(event);
+      // 高さだけの変化は水平マッピングに影響しない。幅が変わるときだけ
+      // コールバックを呼ぶことで、レイアウトの僅かな揺れで全クリップ幅が
+      // 再スケールされるのを防ぐ。
+      if (resize->oldSize().width() != resize->size().width()) {
+        // 同期的にコールバックを呼び出し、次の描画前にオフセットを確定させる。
+        // callback_ が可視範囲を再配置してビューポートが再リサイズされた
+        // 場合、updating_ ガードにより再帰を防止する。
+        updating_ = true;
+        callback_();
+        updating_ = false;
+      }
     }
     return false;
   }
@@ -7308,6 +7312,8 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   }
 
   auto updateZoom = [this]() { syncTimelineViewportFromNavigator(); };
+  // 幅変化ではズームを確定し直さず、スクロール範囲とルーラーだけ追従させる。
+  auto updateViewportAfterResize = [this]() { syncTimelineViewportAfterResize(); };
 
   auto syncPainterSelectionState = [this](bool forceRefresh = false) {
     this->syncPainterSelectionState(forceRefresh);
@@ -8104,7 +8110,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
 
   if (painterTrackView) {
     auto *viewResizeFilter =
-        new ViewportResizeFilter(rightPanel, updateZoom, rightPanel);
+        new ViewportResizeFilter(rightPanel, updateViewportAfterResize, rightPanel);
     painterTrackView->installEventFilter(viewResizeFilter);
   }
 
@@ -10511,6 +10517,32 @@ void ArtifactTimelineWidget::syncTimelineViewportFromNavigator()
   syncPlayheadOverlay();
 }
 
+void ArtifactTimelineWidget::syncTimelineViewportAfterResize()
+{
+  if (!impl_ || !impl_->painterTrackView_ || !impl_->workArea_ ||
+      !impl_->navigator_) {
+    return;
+  }
+
+  // Width changes must never rescale content. pixelsPerFrame is an explicit
+  // user/navigator decision; re-deriving it from the widget width makes every
+  // clip jump whenever the surrounding layout settles by a pixel or two.
+  // Only the scroll clamp and the navigator range follow the new width.
+  auto *view = impl_->painterTrackView_;
+  if (view->width() <= 0) {
+    return;
+  }
+
+  // Re-clamp against the new width, then republish the unchanged zoom. The
+  // TimelineZoomLevelChangedEvent subscription already re-derives the
+  // navigator range from the current offset/pixelsPerFrame, so the navigator
+  // tracks the visible window without a fit-to-width pass.
+  const double ppf = std::max(0.001, view->pixelsPerFrame());
+  syncTimelineHorizontalOffset(view->horizontalOffset());
+  zoomLevelChanged(ppf * 100.0);
+  syncPlayheadOverlay();
+}
+
 void ArtifactTimelineWidget::syncGpuTimelineSnapshot()
 {
   if (!impl_ || !impl_->gpuTimelineWindow_ ||
@@ -10809,14 +10841,24 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
   const double ppf = std::max(0.001, view->pixelsPerFrame());
   const double horizontalOffset = view->horizontalOffset();
   const double verticalOffset = view->verticalOffset();
-  const int viewportWidth = std::max(
-      1, impl_->gpuTimelineContainer_
-             ? impl_->gpuTimelineContainer_->width()
-             : view->width());
-  const int viewportHeight = std::max(
-      1, impl_->gpuTimelineContainer_
-             ? impl_->gpuTimelineContainer_->height()
-             : view->height());
+  // The snapshot is rasterized by the QWindow, so its logical size is the only
+  // authoritative viewport. The container widget can still be one layout cycle
+  // ahead of the native surface; using it here clipped the right edge of every
+  // clip until the next snapshot landed.
+  const int surfaceWidth =
+      impl_->gpuTimelineWindow_ ? impl_->gpuTimelineWindow_->width() : 0;
+  const int surfaceHeight =
+      impl_->gpuTimelineWindow_ ? impl_->gpuTimelineWindow_->height() : 0;
+  const int viewportWidth = surfaceWidth > 0
+      ? surfaceWidth
+      : std::max(1, impl_->gpuTimelineContainer_
+                        ? impl_->gpuTimelineContainer_->width()
+                        : view->width());
+  const int viewportHeight = surfaceHeight > 0
+      ? surfaceHeight
+      : std::max(1, impl_->gpuTimelineContainer_
+                        ? impl_->gpuTimelineContainer_->height()
+                        : view->height());
   const auto& clips = view->clipsView();
   const auto& keyframeMarkers = view->keyframeMarkersView();
   const auto& compositionMarkers = view->compositionMarkersView();
@@ -10843,6 +10885,12 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
       staticCache.keyframePreview == keyframePreview;
   const auto& trackTops = view->trackTopsView();
   if (trackTops.size() != view->trackCount()) {
+    // Track rows and their top cache are briefly out of sync while a layer is
+    // added or removed. Drop the cached lane instead of returning with a stale
+    // one live, otherwise the old geometry stays on screen until something
+    // else happens to invalidate it.
+    impl_->gpuTimelineStatic_.valid = false;
+    impl_->gpuTimelineDynamicValid_ = false;
     return;
   }
   const auto trackTop = [&](const int track) {
@@ -11292,14 +11340,15 @@ void ArtifactTimelineWidget::setCurrentFrameForAll(double frame)
     const double playheadX = clamped * ppf -
                              impl_->painterTrackView_->horizontalOffset();
     constexpr double kFollowMargin = 24.0;
-    if (playheadX < kFollowMargin ||
-        playheadX > impl_->painterTrackView_->width() - kFollowMargin) {
-      const double targetX = playheadX < kFollowMargin
-                                 ? kFollowMargin
-                                 : std::max(
-                                       kFollowMargin,
-                                       static_cast<double>(impl_->painterTrackView_->width()) -
-                                           kFollowMargin);
+    // Mirrors the playback-timer follow test. Without the lower bound a
+    // narrow or not-yet-laid-out view makes width() - kFollowMargin negative,
+    // so every seek looks like an out-of-viewport jump and the whole content
+    // slides on each call.
+    const double followX = std::max(
+        kFollowMargin,
+        static_cast<double>(impl_->painterTrackView_->width()) - kFollowMargin);
+    if (playheadX < kFollowMargin || playheadX > followX) {
+      const double targetX = playheadX < kFollowMargin ? kFollowMargin : followX;
       const double targetOffset = clamped * ppf - targetX;
       syncTimelineHorizontalOffset(std::max(0.0, targetOffset));
     }

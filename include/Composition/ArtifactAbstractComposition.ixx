@@ -56,6 +56,30 @@ export namespace Artifact {
  using ArtifactCompositionPtr = ArtifactCore::SharedPtr<ArtifactAbstractComposition>;
  using ArtifactCompositionWeakPtr = ArtifactCore::WeakPtr<ArtifactAbstractComposition>;
 
+ // A standalone group container owns no layer state of its own, so its switch
+ // column is always a read-only aggregate of the children. Writing a switch
+ // means "apply to every child", never "store a container level flag".
+ enum class GroupContainerSwitch {
+  Visible,
+  Locked,
+  Solo,
+  Shy
+ };
+
+ enum class GroupContainerSwitchState {
+  Off,
+  Mixed,
+  On
+ };
+
+ struct GroupContainerSwitchStates {
+  GroupContainerSwitchState visible = GroupContainerSwitchState::Off;
+  GroupContainerSwitchState locked = GroupContainerSwitchState::Off;
+  GroupContainerSwitchState solo = GroupContainerSwitchState::Off;
+  GroupContainerSwitchState shy = GroupContainerSwitchState::Off;
+  int childCount = 0;
+ };
+
  struct ResponsiveLayoutVariant {
   QString variantId;
   QString displayName;
@@ -428,6 +452,20 @@ export namespace Artifact {
   bool removeGroupContainer(const QString& containerId);
   bool setGroupContainerDisplayName(const QString& containerId,
                                     const QString& displayName);
+  // Timeline disclosure state. It is persisted in the node so a reopened
+  // composition restores the same outline, and falls back to the caller
+  // supplied value when the node predates the property.
+  bool groupContainerExpanded(const QString& containerId,
+                              bool defaultExpanded = true) const;
+  bool setGroupContainerExpanded(const QString& containerId, bool expanded);
+  // Aggregate switch read for a standalone container. A container holds no
+  // switch state of its own, so every value is derived from the children: On
+  // when every child is on, Off when every child is off, Mixed otherwise. This
+  // is the single source of truth for the container switch column so every
+  // surface renders the same value. All four switches are resolved in one
+  // child walk so paint does not repeat the lookup per cell.
+  GroupContainerSwitchStates groupContainerSwitchStates(
+      const QString& containerId) const;
   QVector<LayerID> groupContainerChildLayerIds(const QString& containerId) const;
   const QList<ArtifactAbstractLayerPtr>& allLayerRef() const;
   QList<ArtifactAbstractLayerPtr> childLayersOf(const LayerID& parentId) const;

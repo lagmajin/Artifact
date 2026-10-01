@@ -169,6 +169,7 @@ private:
 public:
   ArtifactShapeLayer();
   ~ArtifactShapeLayer();
+  bool supportsReveal() const override { return true; }
 
   void addShape();
   bool isShapeLayer() const;

@@ -4051,6 +4051,80 @@ bool ArtifactAbstractComposition::setGroupContainerDisplayName(
   return true;
 }
 
+bool ArtifactAbstractComposition::groupContainerExpanded(
+    const QString& containerId, const bool defaultExpanded) const
+{
+  const auto* node = impl_->nodeStore_.node(containerId.trimmed());
+  if (!node || node->kind != CompositionNodeKind::GroupContainer) {
+    return defaultExpanded;
+  }
+  const auto it = node->properties.constFind(QStringLiteral("expanded"));
+  if (it == node->properties.constEnd() || !it->isBool()) {
+    return defaultExpanded;
+  }
+  return it->toBool();
+}
+
+bool ArtifactAbstractComposition::setGroupContainerExpanded(
+    const QString& containerId, const bool expanded)
+{
+  const QString normalizedId = containerId.trimmed();
+  const auto* node = impl_->nodeStore_.node(normalizedId);
+  if (!node || node->kind != CompositionNodeKind::GroupContainer ||
+      impl_->layerMultiIndex_.findById(LayerID(normalizedId))) {
+    return false;
+  }
+  const auto current = node->properties.constFind(QStringLiteral("expanded"));
+  if (current != node->properties.constEnd() && current->isBool() &&
+      current->toBool() == expanded) {
+    return false;
+  }
+  if (!impl_->nodeStore_.setProperties(
+          normalizedId,
+          QJsonObject{{QStringLiteral("expanded"), expanded}})) {
+    return false;
+  }
+  Q_EMIT changed();
+  ArtifactCore::globalEventBus().publish(LayerChangedEvent{
+      id().toString(), normalizedId, LayerChangedEvent::ChangeType::Modified});
+  return true;
+}
+
+GroupContainerSwitchStates ArtifactAbstractComposition::groupContainerSwitchStates(
+    const QString& containerId) const
+{
+  GroupContainerSwitchStates states;
+  const auto childIds = groupContainerChildLayerIds(containerId);
+  states.childCount = static_cast<int>(childIds.size());
+  if (childIds.isEmpty()) {
+    return states;
+  }
+  int visibleOn = 0;
+  int lockedOn = 0;
+  int soloOn = 0;
+  int shyOn = 0;
+  for (const auto& childId : childIds) {
+    const auto child = impl_->layerMultiIndex_.findById(childId);
+    if (!child) {
+      continue;
+    }
+    if (child->isVisible()) ++visibleOn;
+    if (child->isLocked()) ++lockedOn;
+    if (child->isSolo()) ++soloOn;
+    if (child->isShy()) ++shyOn;
+  }
+  const auto resolve = [states](const int on) {
+    if (on <= 0) return GroupContainerSwitchState::Off;
+    return on >= states.childCount ? GroupContainerSwitchState::On
+                                   : GroupContainerSwitchState::Mixed;
+  };
+  states.visible = resolve(visibleOn);
+  states.locked = resolve(lockedOn);
+  states.solo = resolve(soloOn);
+  states.shy = resolve(shyOn);
+  return states;
+}
+
 QVector<LayerID> ArtifactAbstractComposition::groupContainerChildLayerIds(
     const QString& containerId) const
 {

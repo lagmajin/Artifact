@@ -43,6 +43,61 @@ namespace Artifact
 
  namespace
  {
+ static constexpr const char* kRevealShader = R"(
+cbuffer RevealParams : register(b0) {
+ float4 RowX; float4 RowY; float4 Settings; float4 Pattern;
+};
+Texture2D<float4> g_InputTexture : register(t0);
+RWTexture2D<float4> g_OutputTexture : register(u0);
+Texture2D<float2> g_RevealMap : register(t1);
+uint revealHash(uint value) {
+ value ^= value >> 16; value *= 0x7feb352du;
+ value ^= value >> 15; value *= 0x846ca68bu;
+ return value ^ (value >> 16);
+}
+[numthreads(8,8,1)]
+void RevealCS(uint3 id : SV_DispatchThreadID) {
+ uint width, height; g_OutputTexture.GetDimensions(width, height);
+ if (id.x >= width || id.y >= height) return;
+ float2 pixel = float2(id.xy) + 0.5;
+ float2 uv = float2(dot(RowX.xy, pixel) + RowX.z, dot(RowY.xy, pixel) + RowY.z);
+ float coverage = 0.0;
+ // Settings: progress, softness, pattern, angle radians.
+ if (all(uv >= 0.0) && all(uv <= 1.0) && Settings.x > 0.0) {
+  float t;
+  float support = 1.0;
+  if (Settings.z >= 2.5) {
+   uint mapWidth, mapHeight; g_RevealMap.GetDimensions(mapWidth, mapHeight);
+   uint2 cell = min(uint2(uv * float2(mapWidth, mapHeight)), uint2(mapWidth - 1, mapHeight - 1));
+   float2 map = g_RevealMap.Load(int3(cell, 0));
+   t = saturate(map.x); support = saturate(map.y);
+  } else if (Settings.z < 0.5) {
+   float2 axis = float2(cos(Settings.w) * RowX.w, sin(Settings.w));
+   float low = min(0.0, axis.x) + min(0.0, axis.y);
+   t = saturate((dot(uv, axis) - low) / max(1e-6, abs(axis.x) + abs(axis.y)));
+  } else if (Settings.z < 1.5) {
+   float2 extent = max(Pattern.xy, 1.0 - Pattern.xy);
+   float2 metric = float2(RowX.w, 1.0);
+   t = saturate(length((uv - Pattern.xy) * metric) / max(1e-6, length(extent * metric)));
+  } else {
+   uint2 cell = min(uint2(floor(uv * 128.0)), uint2(127,127));
+   t = float(revealHash(cell.x ^ revealHash(cell.y ^ uint(Pattern.z))) & 0x00ffffffu) / 16777215.0;
+  }
+  if (Pattern.w > 0.5) t = 1.0 - t;
+  coverage = Settings.x >= 1.0 ? 1.0 :
+     (Settings.y <= 0.0 ? (Settings.x >= t ? 1.0 : 0.0) :
+      smoothstep(t - Settings.y * 0.5, t + Settings.y * 0.5, Settings.x));
+  coverage *= support;
+ }
+ // Resident input is linear-premultiplied; scale all components together.
+ float4 color = g_InputTexture[id.xy] * coverage;
+ // Export sprite PSO uses SRC_ALPHA, so its boundary explicitly requests
+ // linear straight RGBA; viewport compositing keeps premultiplied RGBA.
+ if (RowY.w > 0.5) color.rgb = color.a > 1e-6 ? color.rgb / color.a : float3(0,0,0);
+ g_OutputTexture[id.xy] = color;
+}
+)";
+
   inline constexpr const char* kScreenSpaceGlobalIlluminationShader = R"(
 cbuffer SSGIParams : register(b0)
 {
@@ -1141,6 +1196,19 @@ void ScreenSpaceGIResolveCS(uint3 dispatchId : SV_DispatchThreadID)
    std::unique_ptr<ArtifactCore::ComputeExecutor> kaleidoscopeExecutor_;
    RefCntAutoPtr<IBuffer> kaleidoscopeParams_;
    std::unordered_map<std::uint32_t, GenericResidentEntry> genericEntries_;
+  struct RevealMapSlot {
+    const ArtifactAbstractLayer* owner = nullptr;
+    std::uint64_t revision = 0;
+    RefCntAutoPtr<ITexture> texture;
+  };
+  RevealMapSlot revealMaps_[32]; // 64 MiB maximum per pipeline at 512x512 RG32F.
+  ArtifactCore::ComputeExecutor* revealExecutor_ = nullptr;
+  RefCntAutoPtr<IBuffer> revealParams_;
+  bool revealPreparationAttempted_ = false;
+  bool revealCapacityReported_ = false;
+  std::uint64_t revealMapPreparedEpoch_ = 0;
+  const void* revealLayersData_ = nullptr;
+  std::size_t revealLayerCount_ = 0;
   std::unique_ptr<ArtifactCore::ComputeExecutor> vignetteExecutor_;
   RefCntAutoPtr<IBuffer> vignetteParams_;
   std::unique_ptr<ArtifactCore::ComputeExecutor> chromaticAberrationExecutor_;
@@ -1190,6 +1258,99 @@ void ScreenSpaceGIResolveCS(uint3 dispatchId : SV_DispatchThreadID)
   delete impl_;
   impl_ = nullptr;
  }
+
+void RenderPipeline::prepareRevealMaps(IDeviceContext* ctx,
+    const std::vector<ArtifactAbstractLayerPtr>& layers) {
+ if (!ctx || !impl_->device_) return;
+ const auto epoch = ArtifactAbstractLayer::revealPreparationEpoch();
+ if (impl_->revealMapPreparedEpoch_ == epoch && impl_->revealLayersData_ == layers.data() &&
+     impl_->revealLayerCount_ == layers.size()) return;
+ impl_->revealMapPreparedEpoch_ = epoch;
+ impl_->revealLayersData_ = layers.data(); impl_->revealLayerCount_ = layers.size();
+ // Cold setup boundary: only changed maps create/upload resources. Never
+ // upload a Progress change. Slots absent from this composition are retired.
+ for (auto& slot : impl_->revealMaps_) {
+  if (!slot.owner) continue;
+  const auto found = std::find_if(layers.begin(), layers.end(), [&](const auto& layer) {
+   return layer.get() == slot.owner && layer->revealEnabled() && layer->revealMapView().width > 0;
+  });
+  if (found == layers.end()) slot = {};
+ }
+ for (const auto& layer : layers) {
+  if (!layer || !layer->revealEnabled()) continue;
+  const auto map = layer->revealMapView();
+  if (!map.timingSupport || map.failed) continue;
+  Impl::RevealMapSlot* slot = nullptr;
+  for (auto& candidate : impl_->revealMaps_) {
+   if (candidate.owner == layer.get()) { slot = &candidate; break; }
+  }
+  if (slot && slot->revision == map.revision) continue;
+  if (!slot) for (auto& candidate : impl_->revealMaps_) {
+   if (!candidate.owner) { slot = &candidate; break; }
+  }
+  if (!slot) {
+   if (!impl_->revealCapacityReported_) {
+    qWarning() << "[Reveal] map cache capacity exceeded (32 maps); pending layers require a released slot";
+    impl_->revealCapacityReported_ = true;
+   }
+   continue; // Retry when a slot is released; never allocate an extra texture.
+  }
+  *slot = {};
+  slot->owner = layer.get(); slot->revision = map.revision;
+  TextureDesc desc;
+  desc.Name = "Layer Reveal Timing Support"; desc.Type = RESOURCE_DIM_TEX_2D;
+  desc.Width = static_cast<Uint32>(map.width); desc.Height = static_cast<Uint32>(map.height);
+  desc.Format = TEX_FORMAT_RG32_FLOAT; desc.Usage = USAGE_IMMUTABLE;
+  desc.BindFlags = BIND_SHADER_RESOURCE;
+  TextureSubResData subresource;
+  subresource.pData = map.timingSupport;
+  subresource.Stride = static_cast<Uint64>(map.width) * sizeof(float) * 2;
+  TextureData data; data.pSubResources = &subresource; data.NumSubresources = 1;
+  impl_->device_->CreateTexture(desc, &data, &slot->texture);
+ }
+}
+
+ITextureView* RenderPipeline::revealMapSRV(const ArtifactAbstractLayer* layer) const {
+ if (!layer) return nullptr;
+ const auto map = layer->revealMapView();
+ for (const auto& slot : impl_->revealMaps_) {
+  if (slot.owner == layer && slot.revision == map.revision && slot.texture)
+   return slot.texture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
+ }
+ return nullptr;
+}
+
+bool RenderPipeline::prepareReveal(IDeviceContext* ctx) {
+ if (impl_->revealExecutor_) return true;
+ if (!ctx || !impl_->device_ || impl_->revealPreparationAttempted_) return false;
+ impl_->revealPreparationAttempted_ = true;
+ impl_->screenSpaceGIContext_ = impl_->screenSpaceGIContext_
+     ? impl_->screenSpaceGIContext_ : ArtifactCore::makeShared<GpuContext>(impl_->device_, ctx);
+ auto* executor = new ArtifactCore::ComputeExecutor(*impl_->screenSpaceGIContext_);
+ BufferDesc buffer;
+ buffer.Name = "Composition Reveal Params";
+ buffer.Usage = USAGE_DYNAMIC; buffer.Size = sizeof(float) * 16;
+ buffer.BindFlags = BIND_UNIFORM_BUFFER; buffer.CPUAccessFlags = CPU_ACCESS_WRITE;
+ impl_->device_->CreateBuffer(buffer, nullptr, &impl_->revealParams_);
+ static const ShaderResourceVariableDesc variables[] = {
+   {SHADER_TYPE_COMPUTE, "g_RevealMap", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+   {SHADER_TYPE_COMPUTE, "RevealParams", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+   {SHADER_TYPE_COMPUTE, "g_InputTexture", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+   {SHADER_TYPE_COMPUTE, "g_OutputTexture", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC}};
+ ArtifactCore::ComputePipelineDesc desc;
+ desc.name = "Composition Reveal PSO"; desc.shaderSource = kRevealShader;
+ desc.entryPoint = "RevealCS"; desc.sourceLanguage = SHADER_SOURCE_LANGUAGE_HLSL;
+ desc.variables = variables; desc.variableCount = 4;
+ desc.defaultVariableType = SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
+ if (!impl_->revealParams_ || !executor->build(desc) ||
+     !executor->createShaderResourceBinding(true) ||
+     !executor->setBuffer("RevealParams", impl_->revealParams_)) {
+   qWarning() << "[Reveal] GPU shader/resource preparation failed";
+   delete executor; impl_->revealParams_.Release(); return false;
+ }
+ impl_->revealExecutor_ = executor;
+ return true;
+}
 
 bool RenderPipeline::initialize(IRenderDevice* device,
                                 Uint32 width,
@@ -1274,6 +1435,14 @@ bool RenderPipeline::initialize(IRenderDevice* device,
   impl_->blendPipeline_.reset();
   impl_->blendContext_.reset();
   impl_->screenSpaceGIExecutor_.reset();
+  delete impl_->revealExecutor_;
+  impl_->revealExecutor_ = nullptr;
+  impl_->revealParams_.Release();
+  impl_->revealPreparationAttempted_ = false;
+  impl_->revealCapacityReported_ = false;
+  impl_->revealMapPreparedEpoch_ = 0;
+  impl_->revealLayersData_ = nullptr; impl_->revealLayerCount_ = 0;
+  for (auto& slot : impl_->revealMaps_) slot = {};
   impl_->screenSpaceGIContext_.reset();
   impl_->screenSpaceGIParams_.Release();
   impl_->screenSpaceGIResolveExecutor_.reset();
@@ -1328,7 +1497,8 @@ bool RenderPipeline::initialize(IRenderDevice* device,
     ITextureView* scratchUAV, ITextureView* outputUAV,
     const GpuSpatialEffectNode& node,
     ITextureView* historySRV,
-    bool historyValid)
+    bool historyValid,
+    ITextureView* revealMap)
  {
   if (!ctx || !impl_->device_ || !inputSRV || !scratchUAV || !outputUAV ||
       scratchUAV == outputUAV ||
@@ -1854,6 +2024,27 @@ params.width = static_cast<float>(impl_->width_);
    impl_->chromaticAberrationExecutor_->dispatch(
        ctx, ArtifactCore::ComputeExecutor::makeDispatchAttribs(
                 impl_->width_, impl_->height_, 1, 8, 8, 1),
+       RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+   CopyTextureAttribs copy;
+   copy.pSrcTexture = scratchUAV->GetTexture();
+   copy.SrcTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+   copy.pDstTexture = outputUAV->GetTexture();
+   copy.DstTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+   ctx->CopyTexture(copy);
+   return true;
+  }
+  if (node.kind == GpuSpatialEffectKind::Reveal) {
+   if (!impl_->revealExecutor_ || !impl_->revealParams_) return false;
+   void* mapped = nullptr;
+   ctx->MapBuffer(impl_->revealParams_, MAP_WRITE, MAP_FLAG_DISCARD, mapped);
+   if (!mapped) return false;
+   std::memcpy(mapped, node.parameters.data(), sizeof(float) * 16);
+   ctx->UnmapBuffer(impl_->revealParams_, MAP_WRITE);
+   if (!impl_->revealExecutor_->setTextureView("g_RevealMap", revealMap ? revealMap : inputSRV) ||
+       !impl_->revealExecutor_->setTextureView("g_InputTexture", inputSRV) ||
+       !impl_->revealExecutor_->setTextureView("g_OutputTexture", scratchUAV)) return false;
+   impl_->revealExecutor_->dispatch(ctx,
+       ArtifactCore::ComputeExecutor::makeDispatchAttribs(impl_->width_, impl_->height_, 1, 8, 8, 1),
        RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
    CopyTextureAttribs copy;
    copy.pSrcTexture = scratchUAV->GetTexture();

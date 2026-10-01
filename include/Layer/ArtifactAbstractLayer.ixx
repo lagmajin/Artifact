@@ -153,6 +153,17 @@ inline bool HasFlag(VariantOverrideFlags flags, VariantOverrideFlags flag) {
 
 class ArtifactAbstractLayer;  // forward-declared within the same module – no tag mismatch
 class ArtifactAbstractLayerImpl;
+struct LayerRevealSettings {
+  bool enabled = false;
+  int pattern = 0; // Linear, Radial, Noise, Brush, Custom
+  float progress = 1.0f;
+  float softness = 0.0f;
+  bool reverse = false;
+  float angle = 0.0f;
+  float centerX = 0.5f;
+  float centerY = 0.5f;
+  int seed = 0;
+};
 using ArtifactAbstractLayerPtr = SharedPtr<ArtifactAbstractLayer>;
 using ArtifactLayerJsonFactory =
     ArtifactAbstractLayerPtr (*)(const QJsonObject &);
@@ -640,6 +651,20 @@ public:
 
   // Opacity
   float opacity() const;
+  struct RevealMapView {
+    const float* timingSupport = nullptr;
+    int width = 0;
+    int height = 0;
+    std::uint64_t revision = 0;
+    bool failed = false;
+  };
+  static std::uint64_t revealPreparationEpoch() noexcept;
+  RevealMapView revealMapView() const;
+  void rebuildRevealMap(); // Explicit cold-path generation / asset decode.
+  bool revealEnabled() const;
+  LayerRevealSettings revealSettings() const;
+  virtual bool supportsReveal() const { return false; }
+  void appendRevealPropertyGroup(std::vector<ArtifactCore::PropertyGroup>& groups) const;
   void setOpacity(float value);
   ArtifactCore::Audio::Modulation::ModulationRouter& modulationRouter();
   QString modulationPropertyPath(const QString& propertyPath) const;

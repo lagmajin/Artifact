@@ -6350,6 +6350,7 @@ auto countProp = makeProp(QStringLiteral("shape.contents.count"),
   }), groups.end());
  }
 
+ appendRevealPropertyGroup(groups);
  return groups;
 }
 

@@ -1,4 +1,5 @@
 module;
+#include <QUuid>
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -44,6 +45,7 @@ module;
 module Artifact.Layer.Abstract;
 
 import :Impl;
+import Asset.Manager;
 import Memory.SharedPtr;
 import Utils;
 import Layer.State;
@@ -193,7 +195,10 @@ ArtifactAbstractLayerImpl::ArtifactAbstractLayerImpl() {
   syncBuiltinComponentDescriptors();
 }
 
-ArtifactAbstractLayerImpl::~ArtifactAbstractLayerImpl() {}
+ArtifactAbstractLayerImpl::~ArtifactAbstractLayerImpl() {
+  if (!revealTimingAsset_.isNull()) ArtifactCore::AssetManager::instance().releaseSource(revealTimingAsset_);
+  if (!revealSupportAsset_.isNull()) ArtifactCore::AssetManager::instance().releaseSource(revealSupportAsset_);
+}
 
 void ArtifactAbstractLayerImpl::syncBuiltinComponentDescriptors() {
   physicsComponent_.settings().collisionEnabled =
@@ -1761,6 +1766,7 @@ bool ArtifactAbstractLayer::isAdjustmentLayer() const {
 void ArtifactAbstractLayer::setAdjustmentLayer(bool isAdjustment) {
   if (impl_->isAdjustmentLayer_ != isAdjustment) {
     impl_->isAdjustmentLayer_ = isAdjustment;
+    if (impl_->reveal_.enabled) rebuildRevealMap();
     notifyLayerMutation(this, LayerDirtyFlag::Effect,
                         LayerDirtyReason::PropertyChanged);
   }
@@ -1847,6 +1853,7 @@ void ArtifactAbstractLayer::setIs3D(bool value) {
     if (!assignIfChanged(impl_->is3D_, value)) {
       return;
     }
+    if (impl_->reveal_.enabled) rebuildRevealMap();
     notifyLayerMutation(this, LayerDirtyFlag::Transform,
                         LayerDirtyReason::PropertyChanged);
 }

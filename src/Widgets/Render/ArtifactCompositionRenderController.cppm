@@ -4955,7 +4955,7 @@ bool layerNeedsFrameSyncForCompositionView(ArtifactAbstractLayer *layer) {
 
 
 
-  if (layer->hasSourceTimeMapping() || layer->hasMasks() ||
+  if (layer->revealEnabled() || layer->hasSourceTimeMapping() || layer->hasMasks() ||
 
       layer->hasModifiers() ||
 
@@ -10667,6 +10667,7 @@ class CompositionRenderController::Impl {
 public:
 
   std::unique_ptr<ArtifactIRenderer> renderer_;
+  bool revealFallbackReported_ = false;
   CompositionViewportPresentationLayout presentationLayout_ =
       CompositionViewportPresentationLayout::Single;
   std::unique_ptr<ArtifactCore::OpenCVRotoBrushEngine> rotoBrushEngine_ =
@@ -12826,6 +12827,42 @@ public:
         renderPipeline.recordLayerFrame(
             RenderPipeline::temporalLayerKey(layer->id().toString()),
             effectFrame, layerFloatSRV);
+      }
+    }
+
+    const auto reveal = layer->revealSettings();
+    if (reveal.enabled && !layer->revealMapView().failed) {
+      const auto context = renderer_->immediateContext();
+      const QRectF bounds = layer->localBounds();
+      bool invertible = false;
+      const QTransform inverse = layer->getGlobalTransform().inverted(&invertible);
+      if (!context || !invertible || bounds.width() <= 0.0 || bounds.height() <= 0.0) return nullptr;
+      const auto normalizedLocal = [&](float x, float y) {
+        const auto canvas = renderer_->viewportToCanvas({x, y});
+        const QPointF local = inverse.map(QPointF(canvas.x, canvas.y));
+        return QPointF((local.x() - bounds.left()) / bounds.width(),
+                       (local.y() - bounds.top()) / bounds.height());
+      };
+      const QPointF origin = normalizedLocal(0.0f, 0.0f);
+      const QPointF axisX = normalizedLocal(1.0f, 0.0f) - origin;
+      const QPointF axisY = normalizedLocal(0.0f, 1.0f) - origin;
+      GpuSpatialEffectNode node;
+      node.kind = GpuSpatialEffectKind::Reveal;
+      node.parameters = {
+          static_cast<float>(axisX.x()), static_cast<float>(axisY.x()),
+          static_cast<float>(origin.x()), static_cast<float>(bounds.width() / bounds.height()),
+          static_cast<float>(axisX.y()), static_cast<float>(axisY.y()),
+          static_cast<float>(origin.y()), 0.0f,
+          reveal.progress, reveal.softness, static_cast<float>(reveal.pattern),
+          reveal.angle * 0.017453292519943295f,
+          reveal.centerX, reveal.centerY, static_cast<float>(reveal.seed), reveal.reverse ? 1.0f : 0.0f};
+      for (const float parameter : node.parameters) if (!std::isfinite(parameter)) return nullptr;
+      auto* mapSRV = reveal.pattern >= 3 ? renderPipeline.revealMapSRV(layer) : nullptr;
+      if (reveal.pattern >= 3 && !mapSRV) return nullptr;
+      if (!renderPipeline.applySpatialEffect(context.RawPtr(), layerFloatSRV,
+                                             tempUAV, layerFloatUAV, node,
+                                             nullptr, false, mapSRV)) {
+        return nullptr;
       }
     }
 
@@ -40869,7 +40906,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                       }
 
-                       return layer->layerBlendType() !=
+                       return layer->revealEnabled() || layer->layerBlendType() !=
 
                                   ArtifactCore::LAYER_BLEND_TYPE::BLEND_NORMAL;
 
@@ -41090,6 +41127,24 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               RenderConfig::PipelineFormatF32,
 
               auxiliaryRequest);
+        }
+
+        // Resource preparation belongs to the pipeline setup boundary, before
+        // any layer dispatch. Reveal dispatch itself only updates constants.
+        bool revealPrepared = false;
+        for (const auto& layer : layers) {
+          if (!layer || !layer->revealEnabled() || !layer->isVisible() || !layer->isActiveAt(currentFrame)) continue;
+          if (!revealPrepared) {
+            if (!renderPipeline.prepareReveal(renderer_->immediateContext().RawPtr())) return;
+            renderPipeline.prepareRevealMaps(renderer_->immediateContext().RawPtr(), layers);
+            revealPrepared = true;
+          }
+          const auto map = layer->revealMapView();
+          if (!map.failed && map.width > 0 && !renderPipeline.revealMapSRV(layer.get())) {
+            // Keep the last presented frame while a map cannot be prepared.
+            // A partial composition with a dropped layer must not be presented.
+            return;
+          }
         }
 
         if (!ensurePreviewRenderPipelineDepthSlot(
@@ -42082,7 +42137,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                             !effectExpandedLayerBounds(layer.get()).isValid()) {
                           return false;
                         }
-                        return !layer->hasModifiers() &&
+                        return !layer->revealEnabled() && !layer->hasModifiers() &&
                                !layerHasEnabledMatteReferences(layer.get());
                       });
       const bool partialGpuRecomposeEligible =
@@ -43578,6 +43633,11 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                                           renderFrameCounter_};
 
           RenderPassResources directResources;
+
+          if (layer->revealEnabled() && !revealFallbackReported_) {
+            qWarning() << "[CompositionView] Reveal requires GPU compositing; direct preview bypasses Reveal";
+            revealFallbackReported_ = true;
+          }
 
           FunctionalRenderPass directCompositePass(
 

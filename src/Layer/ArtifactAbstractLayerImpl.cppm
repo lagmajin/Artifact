@@ -1,6 +1,7 @@
 module;
 #include <algorithm>
 #include <atomic>
+#include <QUuid>
 #include <cmath>
 #include <cstdint>
 #include <memory>
@@ -94,6 +95,7 @@ import Container.NamedVector;
 import Image.ImageF32x4_RGBA;
 import Image.ImageF32x4RGBAWithCache;
 import Graphics.ParticleData;
+import Core.ArtifactArray;
 import Property.Abstract;
 import Property.Group;
 import Property.SerializationBridge;
@@ -159,6 +161,18 @@ public:
   LayerCachePolicy layerCachePolicy_ = LayerCachePolicy::Default;
   int labelColorIndex_ = 0;
   float opacity_ = 1.0f; // Opacity (0.0 - 1.0)
+  LayerRevealSettings reveal_;
+  Array<float> revealMap_;
+  std::uint64_t revealMapRevision_ = 0;
+  bool revealMapFailed_ = false;
+  float revealBrushRadius_ = 0.16f;
+  int revealBrushPreset_ = 0;
+  QUuid revealTimingAsset_;
+  QUuid revealSupportAsset_;
+  QString revealStrokeData_;
+  QString revealTimingPath_;
+  QString revealSupportPath_;
+  SharedPtr<AbstractProperty> revealProgress_;
   LayerEffectEnvelope effectEnvelope_;
 
     // Physics component

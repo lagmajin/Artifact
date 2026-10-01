@@ -2829,7 +2829,11 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         }
         if (name.startsWith(QStringLiteral("component.cloner."), Qt::CaseInsensitive) ||
             name.compare(QStringLiteral("component.layout.enabled"), Qt::CaseInsensitive) == 0 ||
-            name.compare(QStringLiteral("solid.fillType"), Qt::CaseInsensitive) == 0) {
+            name.compare(QStringLiteral("solid.fillType"), Qt::CaseInsensitive) == 0 ||
+            name == QStringLiteral("reveal.enabled") ||
+            name == QStringLiteral("reveal.pattern") ||
+            name == QStringLiteral("reveal.timingPath") ||
+            name == QStringLiteral("reveal.supportPath")) {
           scheduleRebuild(0);
         }
       }
@@ -2911,6 +2915,15 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     auto previewLayerValue = [this, layer, groupPreviewOpacity](
                                   const QString &name, const QVariant &value) {
       if (!layer) { return; }
+      // Map generation / decode is a commit-boundary operation. Numeric
+      // dragging must not rebuild large maps in continuous input callbacks.
+      if (name == QStringLiteral("reveal.enabled") ||
+          name == QStringLiteral("reveal.pattern") ||
+          name == QStringLiteral("reveal.brushRadius") ||
+          name == QStringLiteral("reveal.brushPreset") ||
+          name == QStringLiteral("reveal.timingPath") ||
+          name == QStringLiteral("reveal.supportPath")) return;
+
       ScopedPropertyEditGuard guard(localPropertyEditDepth);
       if (name.compare(QStringLiteral("layer.opacity"),
                        Qt::CaseInsensitive) == 0) {

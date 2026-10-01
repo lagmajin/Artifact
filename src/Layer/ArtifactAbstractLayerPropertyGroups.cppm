@@ -1077,9 +1077,78 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
       groups.push_back(std::move(animationGroup));
     }
   }
+  appendRevealPropertyGroup(groups);
   groups.push_back(std::move(layerGroup));
   appendMaskPropertyGroups(groups);
   return groups;
+}
+
+void ArtifactAbstractLayer::appendRevealPropertyGroup(
+    std::vector<ArtifactCore::PropertyGroup>& groups) const {
+  using namespace ArtifactCore;
+  if (supportsReveal() && !is3D() && !isAdjustmentLayer()) {
+    PropertyGroup revealGroup(QStringLiteral("Reveal"));
+    auto addReveal = [&](const QString& name, PropertyType type, const QVariant& value,
+                         const QString& label) {
+      auto property = persistentLayerProperty(name, type, value);
+      property->setDisplayLabel(label);
+      property->setAnimatable(false);
+      QVariant defaultValue = 0;
+      if (type == PropertyType::String) defaultValue = QString();
+      else if (type == PropertyType::Boolean) defaultValue = false;
+      else if (name == QStringLiteral("reveal.progress")) defaultValue = 1.0;
+      else if (name == QStringLiteral("reveal.centerX") || name == QStringLiteral("reveal.centerY")) defaultValue = 0.5;
+      else if (name == QStringLiteral("reveal.brushRadius")) defaultValue = 0.16;
+      property->setDefaultValue(defaultValue);
+      revealGroup.addProperty(property);
+      return property;
+    };
+    const auto& r = impl_->reveal_;
+    auto enabled = addReveal(QStringLiteral("reveal.enabled"), PropertyType::Boolean, r.enabled, QStringLiteral("Enabled"));
+    if (impl_->revealMapFailed_) enabled->setInlineHelp(QStringLiteral("Reveal map unavailable. Preview bypasses Reveal; check map paths or stroke data."));
+    auto progress = addReveal(QStringLiteral("reveal.progress"), PropertyType::Float, r.progress, QStringLiteral("Progress"));
+    progress->setHardRange(0.0, 1.0);
+    progress->setSoftRange(0.0, 1.0);
+    progress->setStep(0.01);
+    progress->setAnimatable(true);
+    impl_->revealProgress_ = progress;
+    auto pattern = addReveal(QStringLiteral("reveal.pattern"), PropertyType::Integer, r.pattern, QStringLiteral("Pattern"));
+    pattern->setHardRange(0.0, 4.0);
+    pattern->setTooltip(QStringLiteral("0=Linear, 1=Radial, 2=Noise, 3=Brush, 4=Custom"));
+    auto softness = addReveal(QStringLiteral("reveal.softness"), PropertyType::Float, r.softness, QStringLiteral("Softness"));
+    softness->setHardRange(0.0, 1.0);
+    softness->setStep(0.01);
+    addReveal(QStringLiteral("reveal.reverse"), PropertyType::Boolean, r.reverse, QStringLiteral("Reverse"));
+    if (r.pattern == 0) {
+      auto angle = addReveal(QStringLiteral("reveal.angle"), PropertyType::Float, r.angle, QStringLiteral("Direction"));
+      angle->setHardRange(-360.0, 360.0);
+      angle->setUnit(QStringLiteral("deg"));
+    } else if (r.pattern == 1) {
+      auto x = addReveal(QStringLiteral("reveal.centerX"), PropertyType::Float, r.centerX, QStringLiteral("Center X"));
+      auto y = addReveal(QStringLiteral("reveal.centerY"), PropertyType::Float, r.centerY, QStringLiteral("Center Y"));
+      x->setHardRange(0.0, 1.0); y->setHardRange(0.0, 1.0);
+    } else if (r.pattern == 2) {
+      auto seed = addReveal(QStringLiteral("reveal.seed"), PropertyType::Integer, r.seed, QStringLiteral("Seed"));
+      seed->setHardRange(0.0, 16777215.0);
+    }
+    if (r.pattern == 3) {
+      auto radius = addReveal(QStringLiteral("reveal.brushRadius"), PropertyType::Float,
+          impl_->revealBrushRadius_, QStringLiteral("Brush Radius"));
+      radius->setHardRange(0.005, 0.5); radius->setStep(0.01);
+      auto preset = addReveal(QStringLiteral("reveal.brushPreset"), PropertyType::Integer,
+          impl_->revealBrushPreset_, QStringLiteral("Stroke"));
+      preset->setHardRange(0, 2);
+      preset->setTooltip(QStringLiteral("0=Single, 1=Multiple, 2=Handwriting"));
+    } else if (r.pattern == 4) {
+      auto timing = addReveal(QStringLiteral("reveal.timingPath"), PropertyType::String,
+          impl_->revealTimingPath_, QStringLiteral("Timing Map"));
+      timing->setInlineHelp(QStringLiteral("Raw channel 0; up to 2048 x 2048. Changes reload the map."));
+      auto support = addReveal(QStringLiteral("reveal.supportPath"), PropertyType::String,
+          impl_->revealSupportPath_, QStringLiteral("Support Map"));
+      support->setInlineHelp(QStringLiteral("Optional raw channel 0. Empty means full coverage."));
+    }
+    groups.push_back(std::move(revealGroup));
+  }
 }
 
 std::vector<ArtifactCore::PropertyGroup> ArtifactAbstractLayer::getComponentPropertyGroups() const {

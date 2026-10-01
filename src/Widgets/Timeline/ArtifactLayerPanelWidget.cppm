@@ -67,6 +67,7 @@ module;
 #include <algorithm>
 #include <cmath>
 #include <memory>
+#include <optional>
 #include <functional>
 #include <limits>
 #include <vector>
@@ -1790,9 +1791,11 @@ private:
 class RemoveGroupContainerCommand final : public UndoCommand {
 public:
  RemoveGroupContainerCommand(ArtifactCompositionPtr composition, QString containerId,
-                             QString displayName, QVector<LayerID> childIds)
+                             QString displayName, QVector<LayerID> childIds,
+                             bool expanded = true)
      : composition_(std::move(composition)), containerId_(std::move(containerId)),
-       displayName_(std::move(displayName)), childIds_(std::move(childIds)) {}
+       displayName_(std::move(displayName)), childIds_(std::move(childIds)),
+       expanded_(expanded) {}
 
  void redo() override {
   lastOperationSucceeded_ = composition_ && composition_->removeGroupContainer(containerId_);
@@ -1808,6 +1811,9 @@ public:
   lastOperationSucceeded_ = !composition_->createGroupContainer(
       displayName_, childIds_, containerId_).isEmpty();
   if (lastOperationSucceeded_) {
+   // createGroupContainer seeds expanded=true; restore what the node had so an
+   // ungroup/redo round-trip does not silently reopen the group.
+   composition_->setGroupContainerExpanded(containerId_, expanded_);
    if (auto* manager = UndoManager::instance()) manager->notifyAnythingChanged();
   }
  }
@@ -1819,7 +1825,102 @@ private:
  QString containerId_;
  QString displayName_;
  QVector<LayerID> childIds_;
+ bool expanded_ = true;
  bool lastOperationSucceeded_ = true;
+};
+
+// Column index -> container switch. Audio (3) and Pick Whip (5) have no
+// container-level meaning and are reported as no switch.
+std::optional<GroupContainerSwitch> groupContainerSwitchForColumn(int column)
+{
+ switch (column) {
+ case 0: return GroupContainerSwitch::Visible;
+ case 1: return GroupContainerSwitch::Locked;
+ case 2: return GroupContainerSwitch::Solo;
+ case 4: return GroupContainerSwitch::Shy;
+ default: return std::nullopt;
+ }
+}
+
+// Applies one switch to every child of a standalone container as a single undo
+// step. Children that are already locked are skipped for the non-lock switches,
+// mirroring the per-layer rule so a locked child never changes implicitly.
+bool applyGroupContainerSwitchToChildren(
+ const ArtifactCompositionPtr& composition, const QString& containerId,
+ const GroupContainerSwitch which, const bool target)
+{
+ if (!composition) return false;
+ const auto childIds = composition->groupContainerChildLayerIds(containerId);
+ if (childIds.isEmpty()) return false;
+ QVector<ArtifactAbstractLayerPtr> targets;
+ targets.reserve(childIds.size());
+ for (const auto& childId : childIds) {
+  auto child = composition->layerById(childId);
+  if (!child) continue;
+  if (which != GroupContainerSwitch::Locked && child->isLocked()) continue;
+  targets.push_back(std::move(child));
+ }
+ if (targets.isEmpty()) return false;
+ const auto makeCommand = [&](const ArtifactAbstractLayerPtr& layer) {
+  switch (which) {
+  case GroupContainerSwitch::Visible:
+   return std::make_unique<SetLayerVisibilityCommand>(layer, target);
+  case GroupContainerSwitch::Locked:
+   return std::make_unique<SetLayerLockCommand>(layer, target);
+  case GroupContainerSwitch::Solo:
+   return std::make_unique<SetLayerSoloCommand>(layer, target);
+  case GroupContainerSwitch::Shy:
+   return std::make_unique<SetLayerShyCommand>(layer, target);
+  }
+  return std::unique_ptr<UndoCommand>{};
+ };
+ if (auto* undo = UndoManager::instance()) {
+  // One macro so a container switch is a single undo step for the whole group.
+  auto macro = std::make_unique<MacroUndoCommand>(
+   QStringLiteral("Set Group Container Switch"));
+  for (const auto& layer : targets) {
+   if (auto child = makeCommand(layer)) macro->addChild(std::move(child));
+  }
+  return undo->push(std::move(macro));
+ }
+ bool applied = false;
+ for (const auto& layer : targets) {
+  auto command = makeCommand(layer);
+  if (!command) continue;
+  command->redo();
+  applied = applied || command->lastOperationSucceeded();
+ }
+ return applied;
+}
+
+class SetGroupContainerExpandedCommand final : public UndoCommand {
+public:
+  SetGroupContainerExpandedCommand(ArtifactCompositionPtr composition,
+                                   QString containerId, bool beforeExpanded,
+                                   bool afterExpanded)
+      : composition_(std::move(composition)), containerId_(std::move(containerId)),
+        beforeExpanded_(beforeExpanded), afterExpanded_(afterExpanded) {}
+
+  void redo() override { lastOperationSucceeded_ = apply(afterExpanded_); }
+  void undo() override { lastOperationSucceeded_ = apply(beforeExpanded_); }
+  QString label() const override { return QStringLiteral("Expand/Collapse Group Container"); }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+
+private:
+  bool apply(const bool expanded) {
+   if (!composition_) return false;
+   const bool changed = composition_->setGroupContainerExpanded(containerId_, expanded);
+   if (changed) {
+    if (auto* manager = UndoManager::instance()) manager->notifyAnythingChanged();
+   }
+   return changed;
+  }
+
+  ArtifactCompositionPtr composition_;
+  QString containerId_;
+  bool beforeExpanded_ = true;
+  bool afterExpanded_ = true;
+  bool lastOperationSucceeded_ = true;
 };
 
 QString groupLayerSummaryText(const ArtifactAbstractLayerPtr& layer)
@@ -3356,7 +3457,10 @@ public:
         !comp->layerById(LayerID(root.id));
     if (standaloneContainer) {
       const QString groupKey = QStringLiteral("container::") + root.id;
-      const bool expanded = expandedByGroupKey.value(groupKey, true);
+      // Persisted disclosure state; the in-session override wins so a toggle
+      // stays responsive until the row list is rebuilt from the node.
+      const bool expanded = expandedByGroupKey.value(
+          groupKey, comp->groupContainerExpanded(root.id, true));
       const auto childIds = comp->nodeStore().childrenOf(root.id);
       const QString label = root.properties.value(QStringLiteral("displayName"))
                                 .toString(QStringLiteral("Group"));
@@ -3954,10 +4058,80 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
   if (row.kind == RowKind::Container) {
     impl_->clearMaskSelection();
     impl_->selectedContainerId = row.nodeId;
+    const int rowY = impl_->rowViewportY(idx);
     if (event->button() == Qt::LeftButton) {
-      if (!row.groupKey.trimmed().isEmpty()) {
-        impl_->expandedByGroupKey[row.groupKey] = !row.expanded;
-        updateLayout();
+      // Switch columns come first: a container has no state of its own, so a
+      // click writes through to every child as one undo step.
+      int cumX = impl_->switchStart(width());
+      for (int ci = 0; ci < kLayerPropertyColumnCount; ++ci) {
+        if (!impl_->columnVisible_[ci]) continue;
+        const int nextCumX = cumX + impl_->columnWidths_[ci];
+        if (clickX < cumX || clickX >= nextCumX) {
+          cumX = nextCumX;
+          continue;
+        }
+        const auto which = groupContainerSwitchForColumn(ci);
+        if (!which) {
+          break;
+        }
+        auto comp = safeCompositionLookup(impl_->compositionId);
+        if (comp) {
+          // Aggregate toggle: fully off turns the whole container on, anything
+          // else turns it off.
+          const auto states = comp->groupContainerSwitchStates(row.nodeId);
+          const auto stateFor = [&states](const GroupContainerSwitch target) {
+            switch (target) {
+            case GroupContainerSwitch::Visible: return states.visible;
+            case GroupContainerSwitch::Locked: return states.locked;
+            case GroupContainerSwitch::Solo: return states.solo;
+            case GroupContainerSwitch::Shy: return states.shy;
+            }
+            return GroupContainerSwitchState::Off;
+          };
+          if (applyGroupContainerSwitchToChildren(
+                  comp, row.nodeId, *which,
+                  stateFor(*which) == GroupContainerSwitchState::Off)) {
+            updateLayout();
+            event->accept();
+            return;
+          }
+          // Nothing changed, so every child was locked. Mirror the layer row
+          // feedback instead of silently doing nothing.
+          if (*which != GroupContainerSwitch::Locked &&
+              stateFor(GroupContainerSwitch::Locked) ==
+                  GroupContainerSwitchState::On) {
+            impl_->lockFlashTimer_.start();
+            impl_->lockFlashRowY_ = rowY;
+            update(0, rowY, width(), rowH);
+            QToolTip::showText(
+                event->globalPos(),
+                QStringLiteral("このグループ内のレイヤーはロックされています"), this);
+          }
+        }
+        event->accept();
+        return;
+      }
+      // Disclosure owns its own hit area, matching the layer rows. Toggling on
+      // any click made selecting a container impossible without collapsing it.
+      if (!row.groupKey.trimmed().isEmpty() && row.hasChildren) {
+        const int nameStartX = 0;
+        const int indent = 14;
+        const int toggleSize = 10;
+        const int toggleX = nameStartX + row.depth * indent + 2;
+        const QRect disclosureRect(toggleX, rowY, toggleSize, rowH);
+        if (disclosureRect.contains(event->pos())) {
+          const bool nextExpanded = !row.expanded;
+          impl_->expandedByGroupKey[row.groupKey] = nextExpanded;
+          auto comp = safeCompositionLookup(impl_->compositionId);
+          auto command = std::make_unique<SetGroupContainerExpandedCommand>(
+              comp, row.nodeId, row.expanded, nextExpanded);
+          if (auto* undo = UndoManager::instance()) {
+            undo->push(std::move(command));
+          } else {
+            command->redo();
+          }
+          updateLayout();
+        }
       }
     } else if (event->button() == Qt::RightButton) {
       auto comp = safeCompositionLookup(impl_->compositionId);
@@ -4007,7 +4181,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       } else if (chosen == ungroupAction) {
         const auto childIds = comp->groupContainerChildLayerIds(row.nodeId);
         auto command = std::make_unique<RemoveGroupContainerCommand>(
-            comp, row.nodeId, displayName, childIds);
+            comp, row.nodeId, displayName, childIds, row.expanded);
         bool applied = false;
         if (auto* undo = UndoManager::instance()) {
           applied = undo->push(std::move(command));
@@ -7863,6 +8037,10 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
   const int endRow = std::min(static_cast<int>(impl_->visibleRows.size() - 1),
                               static_cast<int>(std::floor((dirtyRect.bottom() + impl_->verticalOffset) / rowH)));
 
+  // Hoisted out of the row loop: the container switch aggregate needs the
+  // composition, and a lookup per visible row would repeat it for every layer.
+  auto *containerComp = safeCompositionLookup(impl_->compositionId);
+
   for (int i = startRow; i <= endRow; ++i) {
     int y = i * rowH;
     const auto& row = impl_->visibleRows[i];
@@ -7891,16 +8069,59 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
         p.setBrush(text.darker(25));
         p.drawPolygon(tri);
       }
+      // The switch block is shared with the layer rows so the columns line up.
+      // A container owns no state, so each cell renders the aggregate of its
+      // children and stays read-only; writing happens on click. The aggregate
+      // is resolved once per row instead of once per cell.
+      const int switchStartX = impl_->switchStart(width());
+      const GroupContainerSwitchStates states =
+          containerComp ? containerComp->groupContainerSwitchStates(row.nodeId)
+                        : GroupContainerSwitchStates{};
+      const QPixmap* colIcons[kLayerPropertyColumnCount] = {
+          &impl_->visibilityIcon, &impl_->lockIcon, &impl_->soloIcon,
+          &impl_->audioIcon, &impl_->shyIcon, &impl_->parentWhipIcon};
+      int curX = switchStartX;
+      for (int ci = 0; ci < kLayerPropertyColumnCount; ++ci) {
+        if (!impl_->columnVisible_[ci]) continue;
+        const int cw = impl_->columnWidths_[ci];
+        // Audio (3) and Pick Whip (5) have no container-level meaning.
+        GroupContainerSwitchState state = GroupContainerSwitchState::Off;
+        switch (ci) {
+        case 0: state = states.visible; break;
+        case 1: state = states.locked; break;
+        case 2: state = states.solo; break;
+        case 4: state = states.shy; break;
+        default: break;
+        }
+        p.setOpacity(state == GroupContainerSwitchState::On
+                         ? 1.0
+                         : (state == GroupContainerSwitchState::Mixed ? 0.55 : 0.15));
+        if (!colIcons[ci]->isNull()) {
+          p.drawPixmap(QRect(curX + offset, y + offset, iconSize, iconSize),
+                       *colIcons[ci]);
+        }
+        curX += cw;
+        p.setOpacity(1.0);
+        p.drawLine(curX - 1, y, curX - 1, y + rowH);
+      }
+      // Reserve the switch block so the label and the item count cannot run
+      // underneath it.
+      const int labelRight = switchStartX - 8;
+      const int auxWidth = 78;
       QFont containerFont = p.font();
       containerFont.setBold(true);
       p.setFont(containerFont);
+      const QFontMetrics containerMetrics(containerFont);
       p.setPen(mixColor(text, accent, 0.28));
       const int textX = toggleX + toggleSize + 6;
-      p.drawText(textX, y, std::max(20, width() - textX - 92), rowH,
-                 Qt::AlignVCenter | Qt::AlignLeft, row.label);
+      const int labelWidth = std::max(20, labelRight - textX - auxWidth);
+      p.drawText(textX, y, labelWidth, rowH, Qt::AlignVCenter | Qt::AlignLeft,
+                 containerMetrics.elidedText(row.label, Qt::ElideRight, labelWidth));
       p.setPen(mixColor(text, surface, 0.38));
-      p.drawText(width() - 86, y, 78, rowH,
-                 Qt::AlignVCenter | Qt::AlignRight, row.auxiliaryText);
+      p.drawText(labelRight - auxWidth, y, auxWidth, rowH,
+                 Qt::AlignVCenter | Qt::AlignRight,
+                 containerMetrics.elidedText(row.auxiliaryText, Qt::ElideRight,
+                                            auxWidth - 4));
       p.setFont(previousFont);
       p.setPen(border.darker(120));
       p.drawLine(0, y + rowH, width(), y + rowH);

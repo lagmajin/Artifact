@@ -1,5 +1,9 @@
 module;
 #include <algorithm>
+#include <atomic>
+#include <QJsonDocument>
+#include <QUuid>
+#include <OpenImageIO/imageio.h>
 #include <cmath>
 #include <cstdint>
 #include <memory>
@@ -41,6 +45,9 @@ module;
 module Artifact.Layer.Abstract;
 
 import :Impl;
+import Core.ArtifactArray;
+import Asset.Manager;
+import AssetType;
 import Memory.SharedPtr;
 import Utils;
 import Layer.State;
@@ -173,6 +180,151 @@ SharedPtr<ArtifactCore::AbstractProperty> transformChannelProperty(
     return transform.channelProperty(ArtifactCore::TransformChannel::AnchorZ);
   return {};
 }
+}
+
+namespace { std::atomic<std::uint64_t> revealPreparationGeneration{1}; }
+
+std::uint64_t ArtifactAbstractLayer::revealPreparationEpoch() noexcept {
+  return revealPreparationGeneration.load(std::memory_order_relaxed);
+}
+
+ArtifactAbstractLayer::RevealMapView ArtifactAbstractLayer::revealMapView() const {
+  return {(impl_->revealMap_.size() == 0) ? nullptr : impl_->revealMap_.data(),
+          (impl_->revealMap_.size() == 0) ? 0 : 512, (impl_->revealMap_.size() == 0) ? 0 : 512,
+          impl_->revealMapRevision_, impl_->revealMapFailed_};
+}
+
+void ArtifactAbstractLayer::rebuildRevealMap() {
+  // This API runs only at property mutation / restore boundaries, never for
+  // animated Progress or Opacity. Fixed 512x512 RG float map: 2 MiB per layer.
+  impl_->revealMapRevision_ = revealPreparationGeneration.fetch_add(1, std::memory_order_relaxed) + 1;
+  impl_->revealMapFailed_ = false;
+  impl_->revealMap_ = Array<float>{};
+  if (!revealEnabled() || impl_->reveal_.pattern < 3) return;
+  constexpr int extent = 512;
+  impl_->revealMap_.resize(extent * extent * 2, 0.0f);
+  if (impl_->reveal_.pattern == 3) {
+    QPointF points[256]{};
+    bool starts[256]{};
+    float distances[256]{};
+    int count = 0;
+    if (impl_->revealStrokeData_.isEmpty()) {
+      points[0] = QPointF(0.15, 0.65); points[1] = QPointF(0.85, 0.35);
+      starts[0] = true; count = 2;
+      if (impl_->revealBrushPreset_ == 1) {
+        count = 6;
+        for (int i = 0; i < 3; ++i) {
+          points[i*2] = QPointF(0.15, 0.25+i*0.25);
+          points[i*2+1] = QPointF(0.85, 0.15+i*0.25);
+          starts[i*2] = true;
+        }
+      } else if (impl_->revealBrushPreset_ == 2) {
+        count = 6;
+        points[0] = QPointF(0.2,0.2); points[1] = QPointF(0.8,0.2);
+        points[2] = QPointF(0.2,0.5); points[3] = QPointF(0.8,0.5);
+        points[4] = QPointF(0.2,0.8); points[5] = QPointF(0.8,0.8);
+      }
+    } else {
+      const auto document = QJsonDocument::fromJson(impl_->revealStrokeData_.toUtf8());
+      const auto strokes = document.array();
+      bool valid = document.isArray();
+      for (const auto& stroke : strokes) {
+        if (!stroke.isArray() || stroke.toArray().size() < 2) { valid = false; break; }
+        bool first = true;
+        for (const auto& value : stroke.toArray()) {
+          const auto pair = value.toArray();
+          if (count >= 256 || pair.size() != 2 || !pair[0].isDouble() || !pair[1].isDouble()) { valid = false; break; }
+          const double x = pair[0].toDouble(), y = pair[1].toDouble();
+          if (!std::isfinite(x) || !std::isfinite(y) || x < 0 || x > 1 || y < 0 || y > 1) { valid = false; break; }
+          points[count] = QPointF(x, y); starts[count] = first; ++count; first = false;
+        }
+        if (!valid) break;
+      }
+      if (!valid || count < 2) { impl_->revealMapFailed_ = true; impl_->revealMap_ = Array<float>{}; return; }
+    }
+    float total = 0.0f;
+    for (int i = 1; i < count; ++i) {
+      if (!starts[i]) total += static_cast<float>(std::hypot(points[i].x() - points[i-1].x(), points[i].y() - points[i-1].y()));
+      distances[i] = total;
+    }
+    if (total <= 1e-6f) { impl_->revealMapFailed_ = true; impl_->revealMap_ = Array<float>{}; return; }
+    for (int y = 0; y < extent; ++y) for (int x = 0; x < extent; ++x) {
+      const QPointF p((x + 0.5) / extent, (y + 0.5) / extent);
+      float timing = 1.0f, support = 0.0f;
+      for (int i = 1; i < count; ++i) {
+        if (starts[i]) continue;
+        const QPointF delta = points[i] - points[i-1];
+        const double length2 = delta.x()*delta.x() + delta.y()*delta.y();
+        const QPointF offset = p - points[i-1];
+        const double t = length2 <= 1e-12 ? 0.0 : std::clamp((offset.x()*delta.x() + offset.y()*delta.y()) / length2, 0.0, 1.0);
+        const QPointF d = offset - delta*t;
+        const double distance = std::hypot(d.x(), d.y());
+        const float coverage = static_cast<float>(std::clamp((impl_->revealBrushRadius_ - distance) * extent + 0.5, 0.0, 1.0));
+        if (coverage <= 0.0f) continue;
+        support = std::max(support, coverage);
+        timing = std::min(timing, (distances[i-1] + static_cast<float>(t*std::sqrt(length2))) / total);
+      }
+      const int offset = (y*extent+x)*2;
+      impl_->revealMap_[offset] = timing; impl_->revealMap_[offset+1] = support;
+    }
+    return;
+  }
+  const auto resolveAsset = [&](QString& path, QUuid& id) {
+    auto& manager = AssetManager::instance();
+    if (id.isNull() && !path.isEmpty()) id = manager.acquireSource(path, AssetType::Image);
+    if (id.isNull()) return;
+    const auto sources = manager.sourceRegistrySnapshot().value(QStringLiteral("sources")).toArray();
+    for (const auto& source : sources) {
+      const auto object = source.toObject();
+      if (QUuid(object.value(QStringLiteral("id")).toString()) == id) {
+        path = object.value(QStringLiteral("path")).toString(path); break;
+      }
+    }
+  };
+  resolveAsset(impl_->revealTimingPath_, impl_->revealTimingAsset_);
+  resolveAsset(impl_->revealSupportPath_, impl_->revealSupportAsset_);
+  // Custom input is raw channel 0, with no sRGB/color transform. Support is
+  // explicitly supplied as a second file; omission means full support.
+  const auto loadChannel = [&](const QString& path, int outputChannel) {
+    auto input = OIIO::ImageInput::open(path.toStdString());
+    if (!input) return false;
+    const auto spec = input->spec();
+    if (spec.width <= 0 || spec.height <= 0 || spec.width > 2048 || spec.height > 2048 || spec.depth > 1 || spec.nchannels < 1 || spec.nchannels > 4) return false;
+    Array<float> pixels;
+    pixels.resize(static_cast<std::size_t>(spec.width)*spec.height);
+    if (!input->read_image(0, 0, 0, 1, OIIO::TypeDesc::FLOAT, pixels.data())) return false;
+    input->close();
+    for (int y = 0; y < extent; ++y) for (int x = 0; x < extent; ++x) {
+      const int sourceX = std::min(spec.width-1, static_cast<int>((x+0.5)*spec.width/extent));
+      const int sourceY = std::min(spec.height-1, static_cast<int>((y+0.5)*spec.height/extent));
+      const float value = pixels[sourceY*spec.width+sourceX];
+      if (!std::isfinite(value)) return false;
+      impl_->revealMap_[(y*extent+x)*2+outputChannel] = std::clamp(value, 0.0f, 1.0f);
+    }
+    return true;
+  };
+  if (impl_->revealSupportPath_.isEmpty()) {
+    for (int i = 0; i < extent*extent; ++i) impl_->revealMap_[i*2+1] = 1.0f;
+  }
+  if (!loadChannel(impl_->revealTimingPath_, 0) ||
+      (!impl_->revealSupportPath_.isEmpty() && !loadChannel(impl_->revealSupportPath_, 1))) {
+    impl_->revealMapFailed_ = true; impl_->revealMap_ = Array<float>{};
+  }
+}
+
+bool ArtifactAbstractLayer::revealEnabled() const {
+  return impl_->reveal_.enabled && supportsReveal() && !is3D() && !isAdjustmentLayer();
+}
+
+LayerRevealSettings ArtifactAbstractLayer::revealSettings() const {
+  auto settings = impl_->reveal_;
+  settings.enabled = revealEnabled();
+  if (settings.enabled && impl_->revealProgress_) {
+    const double progress = evaluateAnimatedPropertyValue(
+        *impl_->revealProgress_, currentTimelineTime(this)).toDouble();
+    settings.progress = static_cast<float>(finiteClampedValue(progress, 1.0, 0.0, 1.0));
+  }
+  return settings;
 }
 
 SharedPtr<ArtifactCore::AbstractProperty>
@@ -675,6 +827,73 @@ void ArtifactAbstractLayer::removePersistentLayerPropertiesWithPrefix(
 
 bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
                                                   const QVariant &value) {
+  if (propertyPath.startsWith(QStringLiteral("reveal."))) {
+    auto& r = impl_->reveal_;
+    if (propertyPath == QStringLiteral("reveal.enabled")) {
+      if (r.enabled != value.toBool()) revealPreparationGeneration.fetch_add(1, std::memory_order_relaxed);
+      r.enabled = value.toBool();
+    }
+    else if (propertyPath == QStringLiteral("reveal.pattern")) r.pattern = std::clamp(value.toInt(), 0, 4);
+    else if (propertyPath == QStringLiteral("reveal.progress")) {
+      r.progress = static_cast<float>(finiteClampedValue(value.toDouble(), 1.0, 0.0, 1.0));
+      impl_->revealProgress_ = persistentLayerProperty(propertyPath, PropertyType::Float, r.progress);
+      impl_->revealProgress_->setAnimatable(true);
+      impl_->revealProgress_->setValue(r.progress);
+      if (impl_->revealProgress_->hasKeyFrames()) {
+        impl_->revealProgress_->addKeyFrame(currentTimelineTime(this), r.progress);
+      }
+    }
+    else if (propertyPath == QStringLiteral("reveal.softness")) r.softness = static_cast<float>(finiteClampedValue(value.toDouble(), 0.0, 0.0, 1.0));
+    else if (propertyPath == QStringLiteral("reveal.reverse")) r.reverse = value.toBool();
+    else if (propertyPath == QStringLiteral("reveal.angle")) r.angle = static_cast<float>(finiteClampedValue(value.toDouble(), 0.0, -360.0, 360.0));
+    else if (propertyPath == QStringLiteral("reveal.centerX")) r.centerX = static_cast<float>(finiteClampedValue(value.toDouble(), 0.5, 0.0, 1.0));
+    else if (propertyPath == QStringLiteral("reveal.centerY")) r.centerY = static_cast<float>(finiteClampedValue(value.toDouble(), 0.5, 0.0, 1.0));
+    else if (propertyPath == QStringLiteral("reveal.seed")) r.seed = std::clamp(value.toInt(), 0, 16777215);
+    else if (propertyPath == QStringLiteral("reveal.brushRadius")) impl_->revealBrushRadius_ = static_cast<float>(finiteClampedValue(value.toDouble(), 0.16, 0.005, 0.5));
+    else if (propertyPath == QStringLiteral("reveal.brushPreset")) {
+      impl_->revealBrushPreset_ = std::clamp(value.toInt(), 0, 2);
+    }
+    else if (propertyPath == QStringLiteral("reveal.strokeData")) {
+      if (value.toString().size() > 32768) return false;
+      impl_->revealStrokeData_ = value.toString();
+    }
+    else if (propertyPath == QStringLiteral("reveal.timingPath")) {
+      AssetManager::instance().releaseSource(impl_->revealTimingAsset_);
+      impl_->revealTimingAsset_ = {};
+      impl_->revealTimingPath_ = value.toString().left(32768);
+    }
+    else if (propertyPath == QStringLiteral("reveal.supportPath")) {
+      AssetManager::instance().releaseSource(impl_->revealSupportAsset_);
+      impl_->revealSupportAsset_ = {};
+      impl_->revealSupportPath_ = value.toString().left(32768);
+    }
+    else return false;
+    if (propertyPath == QStringLiteral("reveal.enabled") ||
+        propertyPath == QStringLiteral("reveal.pattern") ||
+        propertyPath == QStringLiteral("reveal.brushRadius") ||
+        propertyPath == QStringLiteral("reveal.brushPreset") ||
+        propertyPath == QStringLiteral("reveal.strokeData") ||
+        propertyPath == QStringLiteral("reveal.timingPath") ||
+        propertyPath == QStringLiteral("reveal.supportPath")) rebuildRevealMap();
+    if (const auto property = getProperty(propertyPath)) {
+      QVariant stored = value;
+      if (propertyPath == QStringLiteral("reveal.enabled")) stored = r.enabled;
+      else if (propertyPath == QStringLiteral("reveal.pattern")) stored = r.pattern;
+      else if (propertyPath == QStringLiteral("reveal.softness")) stored = r.softness;
+      else if (propertyPath == QStringLiteral("reveal.reverse")) stored = r.reverse;
+      else if (propertyPath == QStringLiteral("reveal.angle")) stored = r.angle;
+      else if (propertyPath == QStringLiteral("reveal.centerX")) stored = r.centerX;
+      else if (propertyPath == QStringLiteral("reveal.centerY")) stored = r.centerY;
+      else if (propertyPath == QStringLiteral("reveal.seed")) stored = r.seed;
+      else if (propertyPath == QStringLiteral("reveal.brushRadius")) stored = impl_->revealBrushRadius_;
+      else if (propertyPath == QStringLiteral("reveal.brushPreset")) stored = impl_->revealBrushPreset_;
+      else if (propertyPath == QStringLiteral("reveal.timingPath")) stored = impl_->revealTimingPath_;
+      else if (propertyPath == QStringLiteral("reveal.supportPath")) stored = impl_->revealSupportPath_;
+      if (propertyPath != QStringLiteral("reveal.progress")) property->setValue(stored);
+    }
+    notifyLayerMutation(this, LayerDirtyFlag::Property, LayerDirtyReason::PropertyChanged);
+    return true;
+  }
   const QStringList deformationParts = propertyPath.split(QLatin1Char('.'));
   if (deformationParts.size() == 3 &&
       deformationParts[0] == QStringLiteral("deformation2D") &&
