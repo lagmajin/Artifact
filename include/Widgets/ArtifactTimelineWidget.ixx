@@ -31,6 +31,7 @@ class ArtifactTimelineWidget :public QWidget {
   void updateCacheVisuals();
   void syncPlayheadOverlay();
   void syncTimelineViewportFromNavigator();
+  void syncTimelineViewportAfterResize();
   void syncTimelineHorizontalOffset(double offset);
   void syncTimelineVerticalOffset(double offset);
   void syncWorkAreaFromCurrentComposition();
