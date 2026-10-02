@@ -637,9 +637,9 @@ ArtifactAssetBrowserToolBar::Impl::Impl()
   impl_->searchWidget->setPlaceholderText(QStringLiteral("Search assets"));
   impl_->searchWidget->setAccessibleName(QStringLiteral("Asset search"));
   impl_->searchWidget->setAccessibleDescription(QStringLiteral(
-      "Search asset names, or use tag:NAME to match an imported asset tag."));
+      "Search names; use tag:NAME, tags:all(a,b), tags:any(a,b), or tags:not(name)."));
   impl_->searchWidget->setToolTip(QStringLiteral(
-      "Search asset names, or use tag:NAME to filter by an imported asset tag."));
+      "Search names; use tag:NAME, tags:all(a,b), tags:any(a,b), or tags:not(name)."));
   impl_->searchWidget->setClearButtonEnabled(true);
   impl_->searchWidget->setMinimumWidth(220);
   impl_->searchWidget->setMinimumHeight(30);
@@ -757,6 +757,9 @@ void ArtifactAssetBrowserToolBar::addWidget(QWidget* widget, int stretch)
     QString currentFileTypeFilter_ = "all";
     QString currentStatusFilter_ = "all";
     QString currentSearchFilter_;
+    mutable QString cachedTagFilterQuery_;
+    mutable QStringList cachedTagFilterTerms_;
+    mutable int cachedTagFilterMode_ = -2; // any=0, all=1, none=2, invalid=-1
     QString currentSearchScope_ = QStringLiteral("current");
     QString currentSortBy_ = "date";  // name, date, size, type
     bool sortAscending_ = false;
@@ -981,7 +984,8 @@ ArtifactAssetBrowser::Impl::~Impl()
  bool ArtifactAssetBrowser::Impl::matchesSearchFilter(const QString& fileName) const
  {
   const QString search = currentSearchFilter_.trimmed();
-  if (search.isEmpty() || search.startsWith(QStringLiteral("tag:"), Qt::CaseInsensitive)) return true;
+  if (search.isEmpty() || search.startsWith(QStringLiteral("tag:"), Qt::CaseInsensitive) ||
+      search.startsWith(QStringLiteral("tags:"), Qt::CaseInsensitive)) return true;
   return fileName.contains(search, Qt::CaseInsensitive);
  }
 
@@ -1089,9 +1093,46 @@ bool ArtifactAssetBrowser::Impl::isImportedAssetPath(const QString& filePath) co
 bool ArtifactAssetBrowser::Impl::matchesTagSearch(const QString& filePath) const
 {
   const QString search = currentSearchFilter_.trimmed();
-  if (!search.startsWith(QStringLiteral("tag:"), Qt::CaseInsensitive)) {
+  const bool legacyTag = search.startsWith(QStringLiteral("tag:"), Qt::CaseInsensitive);
+  const bool compoundTag = search.startsWith(QStringLiteral("tags:"), Qt::CaseInsensitive);
+  if (!legacyTag && !compoundTag) {
     return true;
   }
+  if (cachedTagFilterQuery_ != search) {
+    cachedTagFilterQuery_ = search;
+    cachedTagFilterTerms_.clear();
+    cachedTagFilterMode_ = 0;
+    QString requested = legacyTag ? search.mid(4).trimmed() : search.mid(5).trimmed();
+    if (compoundTag) {
+      const auto parseGroup = [&](const QString& prefix, int mode) {
+        if (!requested.startsWith(prefix, Qt::CaseInsensitive) ||
+            !requested.endsWith(QLatin1Char(')'))) return false;
+        requested = requested.mid(prefix.size(), requested.size() - prefix.size() - 1);
+        cachedTagFilterMode_ = mode;
+        return true;
+      };
+      if (!parseGroup(QStringLiteral("all("), 1) &&
+          !parseGroup(QStringLiteral("any("), 0) &&
+          !parseGroup(QStringLiteral("not("), 2)) cachedTagFilterMode_ = -1;
+    }
+    if (requested.contains(QLatin1Char('(')) || requested.contains(QLatin1Char(')'))) {
+      cachedTagFilterMode_ = -1;
+    } else if (!requested.isEmpty()) {
+      const auto parts = requested.split(QLatin1Char(','), Qt::KeepEmptyParts);
+      for (const QString& part : parts) {
+        const QString tag = part.trimmed();
+        if (tag.isEmpty()) {
+          cachedTagFilterMode_ = -1;
+          cachedTagFilterTerms_.clear();
+          break;
+        }
+        cachedTagFilterTerms_.append(tag);
+      }
+    } else if (compoundTag) {
+      cachedTagFilterMode_ = -1;
+    }
+  }
+  if (cachedTagFilterMode_ < 0) return false;
   if (filePath.trimmed().isEmpty()) {
     return false;
   }
@@ -1103,17 +1144,23 @@ bool ArtifactAssetBrowser::Impl::matchesTagSearch(const QString& filePath) const
   normalizedPath = normalizedPath.toCaseFolded();
 #endif
   const auto tags = assetTagsByNormalizedPath_.constFind(normalizedPath);
-  if (tags == assetTagsByNormalizedPath_.cend()) {
-    return false;
+  if (cachedTagFilterTerms_.isEmpty()) {
+    return legacyTag && tags != assetTagsByNormalizedPath_.cend() && !tags->isEmpty();
   }
-  const QString requestedTag = search.mid(4).trimmed();
-  if (requestedTag.isEmpty()) {
-    return !tags->isEmpty();
+  const auto hasTag = [&](const QString& requestedTag) {
+    if (tags == assetTagsByNormalizedPath_.cend()) return false;
+    return std::any_of(tags->cbegin(), tags->cend(),
+                       [&requestedTag](const QString& tag) {
+      return tag.compare(requestedTag, Qt::CaseInsensitive) == 0;
+    });
+  };
+  if (cachedTagFilterMode_ == 1) {
+    return std::all_of(cachedTagFilterTerms_.cbegin(), cachedTagFilterTerms_.cend(), hasTag);
   }
-  return std::any_of(tags->cbegin(), tags->cend(),
-                     [&requestedTag](const QString& tag) {
-    return tag.compare(requestedTag, Qt::CaseInsensitive) == 0;
-  });
+  if (cachedTagFilterMode_ == 2) {
+    return std::none_of(cachedTagFilterTerms_.cbegin(), cachedTagFilterTerms_.cend(), hasTag);
+  }
+  return std::any_of(cachedTagFilterTerms_.cbegin(), cachedTagFilterTerms_.cend(), hasTag);
 }
 
 bool ArtifactAssetBrowser::Impl::isFavoriteAssetPath(const QString& filePath) const
