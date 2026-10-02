@@ -4661,6 +4661,8 @@ if (!item.isFolder) {
           return false;
         };
     QStringList references;
+    QStringList referenceCompositionIds;
+    QStringList referenceLayerIds;
     if (project) {
       std::function<void(ProjectItem*)> visit = [&](ProjectItem *item) {
         if (!item) return;
@@ -4671,9 +4673,13 @@ if (!item.isFolder) {
             for (const auto &layer : composition->allLayerRef()) {
               if (!layer) continue;
               if (containsReferencePath(QJsonValue(layer->toJson()), false)) {
-                references.push_back(QStringLiteral("Composition %1 / %2 (%3)")
-                                         .arg(composition->id().toString(),
-                                              layer->layerName(), layer->id().toString()));
+                references.push_back(QStringLiteral("%1 / %2  [Composition %3, Layer %4]")
+                                         .arg(compositionItem->name.toQString(),
+                                              layer->layerName(),
+                                              composition->id().toString(),
+                                              layer->id().toString()));
+                referenceCompositionIds.push_back(composition->id().toString());
+                referenceLayerIds.push_back(layer->id().toString());
               }
             }
           }
@@ -4682,12 +4688,31 @@ if (!item.isFolder) {
       };
       for (auto *root : project->projectItems()) visit(root);
     }
-    QMessageBox::information(
+    if (references.isEmpty()) {
+      QMessageBox::information(
+          this, QStringLiteral("Find References"),
+          QStringLiteral("No references found in the current project."));
+      return;
+    }
+    bool accepted = false;
+    const QString chosenReference = QInputDialog::getItem(
         this, QStringLiteral("Find References"),
-        references.isEmpty()
-            ? QStringLiteral("No references found in the current project.")
-            : QStringLiteral("References in the current project:\n\n%1")
-                  .arg(references.join(QStringLiteral("\n"))));
+        QStringLiteral("Select a reference to open its composition and layer."),
+        references, 0, false, &accepted);
+    if (!accepted) return;
+    const int chosenIndex = references.indexOf(chosenReference);
+    if (chosenIndex < 0 || chosenIndex >= referenceCompositionIds.size() ||
+        chosenIndex >= referenceLayerIds.size()) {
+      return;
+    }
+    auto* projectService = ArtifactProjectService::instance();
+    if (!projectService) return;
+    const auto compositionResult = projectService->changeCurrentComposition(
+        ArtifactCore::CompositionID(referenceCompositionIds.at(chosenIndex)));
+    if (compositionResult.success) {
+      projectService->selectLayer(
+          ArtifactCore::LayerID(referenceLayerIds.at(chosenIndex)));
+    }
   });
 
   QAction* editTagsAction = nullptr;
