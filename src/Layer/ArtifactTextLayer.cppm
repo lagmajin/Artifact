@@ -167,6 +167,29 @@ public:
   };
   std::optional<CacheKey> lastCacheKey_;
 
+  // Animator-free shaping result.  Animators only write GlyphItem::offset*
+  // (TextAnimatorEngine::applyAnimator), so the shaped baseline itself is
+  // frame-invariant while an animation plays.  Kept separately so the animated
+  // working copy in glyphs_ can be rebuilt from it every frame without forcing
+  // a HarfBuzz re-shape.
+  //
+  // HOT_PATH_RULES exception: restoring the baseline copies one
+  // vector<GlyphItem> per evaluated frame.  GlyphItem carries several QString
+  // members, so this is a deep copy rather than a memcpy; it still replaces a
+  // full HarfBuzz shape of the whole text (ICU bidi + cluster mapping +
+  // FreeType metric lookups per codepoint).  Capacity is bounded by the layer's
+  // own shaped glyph count, which is already held live in glyphs_ for the draw
+  // call, and glyphs_ keeps its capacity across frames because only its
+  // contents are assigned here.
+  std::vector<GlyphItem> shapedGlyphBaseline_;
+  std::optional<CacheKey> shapedBaselineKey_;
+  TextLayoutContract shapedBaselineContract_;
+  // Selector problems from the last animator evaluation (invalid regex,
+  // malformed expression selector, empty glyph domain). Surfaced through the
+  // text.selectorDiagnostic property so a silently unanimated layer is
+  // explainable instead of just not moving.
+  QStringList lastAnimatorDiagnostics_;
+
   struct RichGpuRun {
     std::vector<GlyphItem> glyphs;
     TextStyle style;
@@ -361,6 +384,13 @@ ResolvedTextAnimatorStack resolvedTextAnimatorStackAtTime(
         -100000.0f, 100000.0f));
     resolved.properties.scale = finiteFloat(QStringLiteral("scale"),
                                             resolved.properties.scale, 0.0f, 8.0f);
+    // -1 is the 「not authored」 sentinel, so the clamp floor stays negative.
+    resolved.properties.scaleX = finiteFloat(QStringLiteral("scaleX"),
+                                             resolved.properties.scaleX,
+                                             -1.0f, 8.0f);
+    resolved.properties.scaleY = finiteFloat(QStringLiteral("scaleY"),
+                                             resolved.properties.scaleY,
+                                             -1.0f, 8.0f);
     resolved.properties.rotation = finiteFloat(
         QStringLiteral("rotation"), resolved.properties.rotation,
         -360000.0f, 360000.0f);
@@ -451,6 +481,8 @@ bool isAnimatorPropertyAnimatable(const QString &suffix) {
          suffix == QStringLiteral("positionX") ||
          suffix == QStringLiteral("positionY") ||
          suffix == QStringLiteral("scale") ||
+         suffix == QStringLiteral("scaleX") ||
+         suffix == QStringLiteral("scaleY") ||
          suffix == QStringLiteral("rotation") ||
          suffix == QStringLiteral("opacity") ||
          suffix == QStringLiteral("skew") ||
@@ -464,13 +496,14 @@ bool isAnimatorPropertyAnimatable(const QString &suffix) {
          suffix == QStringLiteral("blur");
 }
 
-const std::array<QString, 21> &animatableTextAnimatorPropertySuffixes() {
-  static const std::array<QString, 21> suffixes{
+const std::array<QString, 23> &animatableTextAnimatorPropertySuffixes() {
+  static const std::array<QString, 23> suffixes{
       QStringLiteral("start"), QStringLiteral("end"),
       QStringLiteral("offset"), QStringLiteral("wigglesPerSecond"),
       QStringLiteral("correlation"), QStringLiteral("phase"),
       QStringLiteral("seed"), QStringLiteral("positionX"),
       QStringLiteral("positionY"), QStringLiteral("scale"),
+      QStringLiteral("scaleX"), QStringLiteral("scaleY"),
       QStringLiteral("rotation"), QStringLiteral("opacity"),
       QStringLiteral("skew"), QStringLiteral("tracking"),
       QStringLiteral("z"), QStringLiteral("fillColor"),
@@ -1657,8 +1690,12 @@ QTransform glyphTransform(const GlyphItem &glyph, const QPainterPath &path,
                     0.0);
   }
   transform.rotate(glyph.baseRotation + glyph.offsetRotation);
-  const qreal scale = std::max<qreal>(0.0001, glyph.baseScale * glyph.offsetScale);
-  transform.scale(scale, scale);
+  // Per-axis scale; both equal baseScale * offsetScale for a uniform animation.
+  const qreal scaleX =
+      std::max<qreal>(0.0001, glyph.baseScale * glyph.offsetScaleX);
+  const qreal scaleY =
+      std::max<qreal>(0.0001, glyph.baseScale * glyph.offsetScaleY);
+  transform.scale(scaleX, scaleY);
   transform.translate(-center.x(), -center.y());
   return transform;
 }
@@ -1840,6 +1877,11 @@ void ArtifactTextLayer::markDirty() {
   if (impl_) {
     impl_->isDirty_ = true;
     ++impl_->contentRevision_;
+    // The shaped baseline is keyed on text/style/layout only, so it cannot see
+    // a font-database change on its own (FontManager's revision counter is
+    // module-private).  Dropping the key here forces one re-shape, which is
+    // the safe direction: markDirty is a cold path driven by property edits.
+    impl_->shapedBaselineKey_.reset();
   }
 }
 
@@ -3025,14 +3067,24 @@ QString ArtifactTextLayer::selectorOverviewSummary() const {
                   [](const TextAnimatorState &animator) {
                     return animator.expression.enabled;
                   });
-  const bool hasExpressionDiagnostic =
-      std::any_of(impl_->animators_.begin(), impl_->animators_.end(),
-                  [](const TextAnimatorState &animator) {
-                    return !animator.expression.diagnostic.isEmpty();
-                  });
-  const QString expressionSummary = hasExpressionDiagnostic
-      ? QStringLiteral("error")
-      : (hasExpressionSelector ? QStringLiteral("on") : QStringLiteral("off"));
+  // Prefer the message the evaluator actually produced (invalid regex, malformed
+  // expression) over a bare "error", so a selector that silently matches nothing
+  // can be diagnosed from this row alone.  animators_ is scanned rather than
+  // index 0 because the offending animator is not necessarily the first one.
+  QString authoredExpressionDiagnostic;
+  for (const auto &animator : impl_->animators_) {
+    if (!animator.expression.diagnostic.isEmpty()) {
+      authoredExpressionDiagnostic = animator.expression.diagnostic;
+      break;
+    }
+  }
+  const QString expressionSummary =
+      !impl_->lastAnimatorDiagnostics_.isEmpty()
+          ? impl_->lastAnimatorDiagnostics_.front()
+          : (!authoredExpressionDiagnostic.isEmpty()
+                 ? authoredExpressionDiagnostic
+                 : (hasExpressionSelector ? QStringLiteral("on")
+                                          : QStringLiteral("off")));
   const bool hasRuby = !impl_->rubyText_.isEmpty();
   const bool hasCjk = FontManager::containsCjkCharacters(displayText);
   const bool isRichText = Qt::mightBeRichText(displayText);
@@ -3043,6 +3095,12 @@ QString ArtifactTextLayer::selectorOverviewSummary() const {
   const QString tagSummary = selectorTagLabelForText(displayText);
   const QString scriptSummary = selectorScriptLabelForContract(impl_->layoutContract_);
   const QString verticalSummary = selectorVerticalLabelForContract(impl_->layoutContract_);
+  // A diagnostic can contain the user's own regex/expression text, so fold it to
+  // a single line before embedding: this string is a key=value row, and a raw
+  // newline or a ';' inside it would break the row's own grammar.
+  const QString expressionSummaryField =
+      QString(expressionSummary).replace(QRegularExpression(QStringLiteral("[\\r\\n;]")),
+                                        QStringLiteral(" ")).trimmed();
   return QStringLiteral("target=%1;%2;%3;%4;regex=%5;expr=%6;%7;%8;%9;vertical=%10;clusters=%11;lines=%12")
       .arg(selectorDebugSummary())
       .arg(textWritingModeLabel(impl_->writingMode_))
@@ -3051,7 +3109,7 @@ QString ArtifactTextLayer::selectorOverviewSummary() const {
                                           isRichText, impl_->writingMode_,
                                           lineAware))
       .arg(hasRegexSelector ? QStringLiteral("on") : QStringLiteral("off"))
-      .arg(expressionSummary)
+      .arg(expressionSummaryField)
       .arg(tagSummary)
       .arg(tokenSummary)
       .arg(scriptSummary)
@@ -4166,7 +4224,7 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
     expressionEnabledProp->setTooltip(
         QStringLiteral("Evaluate an expression per glyph using textIndex and textTotal."));
     expressionEnabledProp->setInlineHelp(QStringLiteral("Custom per-letter selection logic."));
-    expressionEnabledProp->setWhatsThis(QStringLiteral("Runs your expression once per glyph.\ntextIndex is the glyph number, textTotal the count; return 0..1 as the selection weight.\nExample: textIndex / textTotal selects a left-to-right wipe."));
+    expressionEnabledProp->setWhatsThis(QStringLiteral("Runs your expression once per glyph.\ntextIndex is the glyph number, textTotal the count; time is the current time in seconds.\nReturn 0..1 as the selection weight.\nExample: textIndex / textTotal selects a left-to-right wipe.\nExample: wiggle(textIndex, 4) jitters each letter independently."));
     animatorGroup.addProperty(expressionEnabledProp);
 
     auto expressionProp = makeAnimatorProp(
@@ -4258,9 +4316,9 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
                          animator.range.regexEnabled, -113);
     regexEnabledProp->setDisplayLabel(QStringLiteral("Regex"));
     regexEnabledProp->setTooltip(
-        QStringLiteral("Enable regular-expression filtering against cluster id, tag, and glyph index."));
+        QStringLiteral("Enable regular-expression filtering against the source text."));
     regexEnabledProp->setInlineHelp(QStringLiteral("Pick letters by pattern."));
-    regexEnabledProp->setWhatsThis(QStringLiteral("Selects glyphs by regular-expression match.\nMatches against cluster id, script tag and glyph index.\nWrite the pattern in the Pattern row below."));
+    regexEnabledProp->setWhatsThis(QStringLiteral("Selects glyphs by matching a regular expression against the source text.\nA match selects every glyph of the matched character range, so multi-character matches work.\nWrite the pattern in the Pattern row below."));
     animatorGroup.addProperty(regexEnabledProp);
 
     auto selectorPatternProp = makeAnimatorProp(
@@ -4268,9 +4326,9 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
         animator.range.selectorPattern, -112);
     selectorPatternProp->setDisplayLabel(QStringLiteral("Pattern"));
     selectorPatternProp->setTooltip(
-        QStringLiteral("Pattern matched against cluster id, tag, and glyph index when Regex is on."));
+        QStringLiteral("Regular expression matched against the source text when Regex is on."));
     selectorPatternProp->setInlineHelp(QStringLiteral("Example: [0-9] picks digits."));
-    selectorPatternProp->setWhatsThis(QStringLiteral("Regular-expression pattern for glyph selection.\nExample: [0-9] animates digits only; [A-Z] capitals only.\nIgnored unless Regex above is on."));
+    selectorPatternProp->setWhatsThis(QStringLiteral("Regular-expression pattern for glyph selection.\nExample: [0-9] animates digits only; [A-Z] capitals only.\nAn invalid pattern is reported in Selector Overview.\nIgnored unless Regex above is on."));
     animatorGroup.addProperty(selectorPatternProp);
 
     auto easeHighProp = makeAnimatorProp(
@@ -4351,6 +4409,30 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
     scaleProp->setSoftRange(0.0, 2.0);
     scaleProp->setStep(0.01);
     animatorGroup.addProperty(scaleProp);
+
+    auto scaleXProp = makeAnimatorProp(QStringLiteral("scaleX"),
+                                       ArtifactCore::PropertyType::Float,
+                                       animator.properties.scaleX, -1055);
+    scaleXProp->setDisplayLabel(QStringLiteral("Scale X"));
+    scaleXProp->setHardRange(-1.0, 8.0);
+    scaleXProp->setSoftRange(0.0, 2.0);
+    scaleXProp->setStep(0.01);
+    scaleXProp->setTooltip(
+        QStringLiteral("Optional horizontal scale. Leave negative to follow Scale; set it to take over from Scale."));
+    scaleXProp->setWhatsThis(QStringLiteral("Overrides Scale on the horizontal axis only.\nWhile this stays negative the animator uses the uniform Scale value.\nOnce either axis is authored the pair Scale X / Scale Y drives the glyph scale and Scale is ignored."));
+    animatorGroup.addProperty(scaleXProp);
+
+    auto scaleYProp = makeAnimatorProp(QStringLiteral("scaleY"),
+                                       ArtifactCore::PropertyType::Float,
+                                       animator.properties.scaleY, -1054);
+    scaleYProp->setDisplayLabel(QStringLiteral("Scale Y"));
+    scaleYProp->setHardRange(-1.0, 8.0);
+    scaleYProp->setSoftRange(0.0, 2.0);
+    scaleYProp->setStep(0.01);
+    scaleYProp->setTooltip(
+        QStringLiteral("Optional vertical scale. Leave negative to follow Scale; set it to take over from Scale."));
+    scaleYProp->setWhatsThis(QStringLiteral("Overrides Scale on the vertical axis only.\nWhile this stays negative the animator uses the uniform Scale value.\nOnce either axis is authored the pair Scale X / Scale Y drives the glyph scale and Scale is ignored."));
+    animatorGroup.addProperty(scaleYProp);
 
     auto rotationProp = makeAnimatorProp(QStringLiteral("rotation"),
                                          ArtifactCore::PropertyType::Float,
@@ -4945,6 +5027,25 @@ void ArtifactTextLayer::updateGlyphEvaluation(const bool rasterize) {
                             impl_->paragraphStyle_, impl_->writingMode_,
                             impl_->rubyText_, impl_->rubyScale_,
                             impl_->layoutMode_, impl_->pathSegments_};
+  const bool isRichText = Qt::mightBeRichText(displayText);
+  if (impl_->textStyle_.allCaps && !isRichText) {
+    displayText = displayText.toUpper();
+  }
+  if (displayText.isEmpty()) {
+    displayText = QStringLiteral(" ");
+  }
+  Impl::CacheKey shapedKey = currentKey;
+  shapedKey.text = UniString(displayText);
+
+  // Shaping only depends on the resolved text and the style/layout keys, while
+  // animators exclusively mutate GlyphItem::offset* on an already-shaped glyph
+  // stream.  Re-shape only when that key changes; otherwise reuse the stored
+  // baseline and re-apply the animators onto a fresh working copy.  Without
+  // this, enabling a single animator forced a HarfBuzz shape of the whole text
+  // on every rendered frame even when nothing about the text had changed.
+  const bool shapedBaselineValid =
+      impl_->shapedBaselineKey_ && *impl_->shapedBaselineKey_ == shapedKey;
+
   const bool contentUnchanged = !impl_->isDirty_ && impl_->lastCacheKey_ &&
                                 *impl_->lastCacheKey_ == currentKey;
   if (contentUnchanged && !hasAnimators && !sourceTextAnimated) {
@@ -4955,31 +5056,31 @@ void ArtifactTextLayer::updateGlyphEvaluation(const bool rasterize) {
   }
   impl_->lastCacheKey_ = currentKey;
 
-  const bool isRichText = Qt::mightBeRichText(displayText);
-  if (impl_->textStyle_.allCaps && !isRichText) {
-    displayText = displayText.toUpper();
-  }
-  if (displayText.isEmpty()) {
-    displayText = QStringLiteral(" ");
-  }
-
-  impl_->glyphs_.clear();
-  impl_->layoutContract_ = TextLayoutContract{};
-  if (!isRichText) {
-    const TextShapingResult shaped = layoutTextShape(
-        UniString(displayText), impl_->textStyle_, impl_->paragraphStyle_,
-        impl_->writingMode_,
-        buildRubyAttachments(UniString(displayText), impl_->rubyText_,
-                             impl_->rubyScale_),
-        impl_->layoutMode_, impl_->pathSegments_);
-    impl_->glyphs_ = shaped.glyphs;
-    impl_->layoutContract_ = shaped.contract;
+  impl_->perGlyphMode_ = !isRichText;
+  if (shapedBaselineValid) {
+    impl_->glyphs_ = impl_->shapedGlyphBaseline_;
+    impl_->layoutContract_ = impl_->shapedBaselineContract_;
+  } else {
+    impl_->glyphs_.clear();
+    impl_->layoutContract_ = TextLayoutContract{};
+    if (!isRichText) {
+      const TextShapingResult shaped = layoutTextShape(
+          UniString(displayText), impl_->textStyle_, impl_->paragraphStyle_,
+          impl_->writingMode_,
+          buildRubyAttachments(UniString(displayText), impl_->rubyText_,
+                               impl_->rubyScale_),
+          impl_->layoutMode_, impl_->pathSegments_);
+      impl_->glyphs_ = shaped.glyphs;
+      impl_->layoutContract_ = shaped.contract;
+    }
+    impl_->shapedGlyphBaseline_ = impl_->glyphs_;
+    impl_->shapedBaselineContract_ = impl_->layoutContract_;
+    impl_->shapedBaselineKey_ = shapedKey;
   }
   // Keep plain-text rasterization (effects/masks) on the same shaped-glyph
   // source as the direct GPU path. Falling back to QTextDocument only when an
   // effect was attached produced decoration-like horizontal artifacts and
   // made the source appearance depend on whether effects were enabled.
-  impl_->perGlyphMode_ = !isRichText;
 
   if (impl_->perGlyphMode_) {
     const RationalTime time = effectiveTextTimelineTime(this);
@@ -4993,7 +5094,7 @@ void ArtifactTextLayer::updateGlyphEvaluation(const bool rasterize) {
         fieldDrivenGlyphWeights(this, impl_->glyphs_);
     TextAnimatorEngine::applyAnimatorSets(
         impl_->glyphs_, animatorStack, timeSeconds, displayText,
-        glyphFieldWeights);
+        glyphFieldWeights, impl_->lastAnimatorDiagnostics_);
 
     const QRectF glyphBounds = animatedGlyphBounds(impl_->glyphs_,
                                                    impl_->textStyle_);

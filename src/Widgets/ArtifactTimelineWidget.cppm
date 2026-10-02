@@ -521,8 +521,10 @@ protected:
     QPainter painter(this);
     const bool active = isChecked();
     painter.fillRect(rect(), active ? QColor(35, 62, 85) : QColor(35, 39, 43));
-    painter.setPen(active ? QColor(61, 184, 234) : QColor(62, 67, 72));
-    painter.drawRect(rect().adjusted(0, 0, -1, -1));
+    painter.setBrush(Qt::NoBrush);
+    painter.setPen(QPen(active ? QColor(61, 184, 234) : QColor(78, 90, 100), 1.0));
+    // Keep the complete stroke inside the widget, including the top/left edges.
+    painter.drawRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5));
     painter.setPen(isEnabled() ? QColor(221, 227, 232) : QColor(126, 136, 144));
     painter.drawText(rect(), Qt::AlignCenter, text());
     if (hasFocus()) {

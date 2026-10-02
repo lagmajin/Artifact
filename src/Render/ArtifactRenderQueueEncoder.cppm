@@ -50,6 +50,69 @@ namespace Artifact {
             .contains(encoderName, Qt::CaseInsensitive);
     }
 
+    // ffmpeg.exe が「エンコーダ一覧に載っている」だけでなく、実際にその
+    // エンコーダを開けるかを 1 フレームの試しエンコードで検証する。NVENC 等は
+    // ドライバ側の API バージョン不足で avcodec_open2 の時点で失敗するため、
+    // -encoders の一覧だけでは判定できない（例: 同梱 ffmpeg は NVENC API 13.1 を
+    // 要求するが実ドライバは 13.0 のみ）。事前に弾くことで Auto 経路が
+    // ソフトウェア (libx264) へフォールバックできる。
+    static bool ffmpegExeCanOpenEncoder(const QString& ffmpegPath,
+                                        const QString& encoderName,
+                                        const QStringList& deviceArgs,
+                                        int width,
+                                        int height,
+                                        double fps)
+    {
+        if (ffmpegPath.trimmed().isEmpty() || encoderName.trimmed().isEmpty()) {
+            return false;
+        }
+        const int probeWidth = std::max(64, width);
+        const int probeHeight = std::max(64, height);
+        const double probeFps = fps > 0.0 ? fps : 30.0;
+        const bool vulkanEncoder = encoderName.endsWith(QStringLiteral("_vulkan"));
+
+        QStringList args;
+        args << QStringLiteral("-hide_banner")
+             << QStringLiteral("-loglevel") << QStringLiteral("error");
+        for (const QString& arg : deviceArgs) {
+            args << arg;
+        }
+        args << QStringLiteral("-f") << QStringLiteral("rawvideo")
+             << QStringLiteral("-pixel_format") << QStringLiteral("rgba")
+             << QStringLiteral("-video_size")
+             << QStringLiteral("%1x%2").arg(probeWidth).arg(probeHeight)
+             << QStringLiteral("-framerate") << QString::number(probeFps, 'f', 6)
+             << QStringLiteral("-i") << QStringLiteral("-")
+             << QStringLiteral("-frames:v") << QStringLiteral("1")
+             << QStringLiteral("-c:v") << encoderName;
+        if (vulkanEncoder) {
+            args << QStringLiteral("-vf") << QStringLiteral("format=rgba,hwupload");
+        } else {
+            args << QStringLiteral("-pix_fmt") << QStringLiteral("yuv420p");
+        }
+        args << QStringLiteral("-f") << QStringLiteral("null") << QStringLiteral("-");
+
+        QProcess probe;
+        probe.setProcessChannelMode(QProcess::MergedChannels);
+        probe.start(ffmpegPath, args);
+        if (!probe.waitForStarted(5000)) {
+            probe.kill();
+            probe.waitForFinished(1000);
+            return false;
+        }
+        const QByteArray frame(
+            static_cast<int>(static_cast<qint64>(probeWidth) * probeHeight * 4),
+            '\0');
+        probe.write(frame);
+        probe.closeWriteChannel();
+        if (!probe.waitForFinished(10000)) {
+            probe.kill();
+            probe.waitForFinished(1000);
+            return false;
+        }
+        return probe.exitStatus() == QProcess::NormalExit && probe.exitCode() == 0;
+    }
+
     enum class VideoEncodeBackendKind {
         Auto,
         Pipe,
@@ -683,11 +746,34 @@ namespace Artifact {
                     : (codec == QStringLiteral("h265"))
                     ? QStringLiteral("hevc_nvenc")
                     : QStringLiteral("h264_nvenc");
+                QStringList hwDeviceArgs;
+                if (preferVulkan_) {
+                    hwDeviceArgs << QStringLiteral("-init_hw_device")
+                                 << QStringLiteral("vulkan=artifact_vk:0")
+                                 << QStringLiteral("-filter_hw_device")
+                                 << QStringLiteral("artifact_vk");
+                }
                 if (!ffmpegExeSupportsEncoder(ffmpegPath, hwEncoder)) {
                     if (errorMessage) {
                         *errorMessage = QStringLiteral("ffmpeg.exe does not advertise %1").arg(hwEncoder);
                     }
                     lastError_ = QStringLiteral("Missing hardware encoder: %1").arg(hwEncoder);
+                    recordEncodeFailure("encode.open_failed", lastError_, job.outputPath);
+                    close(nullptr);
+                    return false;
+                }
+                // 一覧に載っていても実ドライバで開けないハードウェア
+                // エンコーダ（NVENC の API バージョン不足等）を事前に弾き、
+                // 呼び出し側がソフトウェアエンコードへフォールバックできるようにする。
+                if (!ffmpegExeCanOpenEncoder(ffmpegPath, hwEncoder, hwDeviceArgs,
+                                             width, height, fps)) {
+                    if (errorMessage) {
+                        *errorMessage = QStringLiteral(
+                            "ffmpeg.exe cannot open %1 on this system (driver/API mismatch)")
+                                            .arg(hwEncoder);
+                    }
+                    lastError_ = QStringLiteral(
+                        "Hardware encoder unavailable at runtime: %1").arg(hwEncoder);
                     recordEncodeFailure("encode.open_failed", lastError_, job.outputPath);
                     close(nullptr);
                     return false;

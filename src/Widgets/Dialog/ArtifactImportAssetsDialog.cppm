@@ -364,8 +364,14 @@ ArtifactProjectOpenPickerDialog::ArtifactProjectOpenPickerDialog(
   footer->addWidget(systemPicker);
   footer->addWidget(status);
   footer->addStretch();
+#ifdef _WIN32
+  footer->addWidget(open);
+  footer->addWidget(cancel);
+  QWidget::setTabOrder(open, cancel);
+#else
   footer->addWidget(cancel);
   footer->addWidget(open);
+#endif
   root->addLayout(footer);
   refreshProjectPickerDetails(this);
 }
@@ -576,8 +582,14 @@ ArtifactMediaImportPickerDialog::ArtifactMediaImportPickerDialog(QWidget* parent
   footer->addWidget(system);
   footer->addWidget(status);
   footer->addStretch();
+#ifdef _WIN32
+  footer->addWidget(proceed);
+  footer->addWidget(cancel);
+  QWidget::setTabOrder(proceed, cancel);
+#else
   footer->addWidget(cancel);
   footer->addWidget(proceed);
+#endif
   root->addLayout(footer);
 }
 

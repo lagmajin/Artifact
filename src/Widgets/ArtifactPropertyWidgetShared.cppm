@@ -1367,7 +1367,7 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
 
   const auto applyPreviewValue =
       [handler = previewValue ? previewValue : commitValue, propertyPtr, layer,
-       guardedLayerIds, cancelValueEdit,
+       guardedLayerIds, cancelValueEdit, currentTimeProvider, playback,
        propertyName = property.getName(), row, rowValueChanged, beginValueEdit,
        restorePreviewBaseline](const QVariant &value) {
         if (!guardedLayerIds.isEmpty()) {
@@ -1388,6 +1388,15 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
         }
         if (propertyPtr) {
           propertyPtr->setValue(value);
+          // beginValueEdit saved the track before this temporary key update,
+          // so cancel and Undo can restore it while rendering sees the preview.
+          if (propertyName.startsWith(QStringLiteral("text.animators.")) &&
+              row && row->isKeyframeModeEnabled() &&
+              (currentTimeProvider || playback)) {
+            const auto now = currentTimeProvider ? currentTimeProvider()
+                                                : currentPlaybackTime(playback);
+            propertyPtr->addKeyFrame(now, value);
+          }
         }
         if (rowValueChanged) {
           rowValueChanged(row, propertyPtr, value);

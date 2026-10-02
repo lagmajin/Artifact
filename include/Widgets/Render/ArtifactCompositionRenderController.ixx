@@ -767,6 +767,11 @@ TransformGizmo* gizmo() const;
  class Artifact3DGizmo* gizmo3D() const;
  bool isTransformGizmoHovered(
      ArtifactCore::Coordinates::ScreenLogicalPoint2 viewportPos) const;
+ // True while any interactable gizmo (2D transform, 3D frame, 2D text, 2D
+ // content) owns an active drag.  The viewport uses this to take mouse capture
+ // and to keep drag-state bookkeeping in sync for every gizmo, including the
+ // text/content ones that are not reachable through gizmo()/gizmo3D().
+ bool isGizmoDragActive() const;
  ArtifactPointTrackerGizmo* trackerGizmo() const;
  struct CameraFrustumVisual {
   bool valid = false;

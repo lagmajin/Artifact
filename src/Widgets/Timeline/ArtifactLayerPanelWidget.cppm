@@ -226,8 +226,14 @@ public:
     cancel->setMinimumSize(100, 34);
     apply->setMinimumSize(100, 34);
     apply->setDefault(true);
+#ifdef _WIN32
+    actions->addWidget(apply);
+    actions->addWidget(cancel);
+    QWidget::setTabOrder(apply, cancel);
+#else
     actions->addWidget(cancel);
     actions->addWidget(apply);
+#endif
     root->addLayout(actions);
     cancel->action = [this] { reject(); };
     apply->action = [this] {
@@ -2782,6 +2788,28 @@ public:
   QVariant valueEditOriginal;
   QVariant valueEditPreview;
   bool valueEditDragging = false;
+  AbstractPropertyPtr valueEditAnimatorProperty;
+  ArtifactAbstractLayerWeak valueEditAnimatorLayer;
+  QVariant valueEditPreviousOverride;
+  bool valueEditHadOverride = false;
+
+  void clearAnimatorValuePreview(bool notify = true) {
+    if (!valueEditAnimatorProperty) return;
+    if (valueEditHadOverride) {
+      valueEditAnimatorProperty->setExternalOverride(valueEditPreviousOverride);
+    } else {
+      valueEditAnimatorProperty->clearExternalOverride();
+    }
+    const auto layer = valueEditAnimatorLayer.lock();
+    valueEditAnimatorProperty.reset();
+    valueEditAnimatorLayer.reset();
+    valueEditPreviousOverride.clear();
+    valueEditHadOverride = false;
+    if (layer) {
+      layer->setDirty(LayerDirtyFlag::Effect);
+      if (notify) layer->changed();
+    }
+  }
   double valueEditStep = 1.0;
   double valueEditMin = -std::numeric_limits<double>::infinity();
   double valueEditMax = std::numeric_limits<double>::infinity();
@@ -3658,11 +3686,15 @@ ArtifactLayerPanelWidget::ArtifactLayerPanelWidget(QWidget* parent)
 
 ArtifactLayerPanelWidget::~ArtifactLayerPanelWidget()
 {
+  impl_->clearAnimatorValuePreview(false);
   delete impl_;
 }
 
 void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
 {
+  impl_->valueEditRow = -1;
+  impl_->valueEditDragging = false;
+  impl_->clearAnimatorValuePreview();
   impl_->compositionId = id;
   impl_->propertyGroupSearchCache.clear();
   impl_->selectedLayerId = LayerID();
@@ -4045,6 +4077,7 @@ QString ArtifactLayerPanelWidget::currentPropertyPath() const {
 void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
 {
   setFocus();
+  impl_->clearAnimatorValuePreview();
   impl_->valueEditRow = -1;
   impl_->valueEditDragging = false;
   const int rowH = impl_->rowHeight;
@@ -5536,7 +5569,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       browseMaterialPresetsAction->setData(QVariantMap{
           {QStringLiteral("kind"), QStringLiteral("material_preset_browser")}});
     }
-    if (layer->className().toQString() == QStringLiteral("ArtifactTextLayer")) {
+    if (dynamic_cast<ArtifactTextLayer*>(layer.get())) {
       QMenu* textAnimatorMenu = menu.addMenu(tt("layer_panel.menu_text_animator", "Text Animator"));
       QMenu* animateMenu = textAnimatorMenu->addMenu(
           tt("property.animator.animate", "Animate"));
@@ -6917,6 +6950,30 @@ void ArtifactLayerPanelWidget::mouseMoveEvent(QMouseEvent* event)
         QVariant preview = number;
         if (preview.convert(impl_->valueEditOriginal.metaType())) {
           impl_->valueEditPreview = preview;
+          const auto row = impl_->visibleRows[impl_->valueEditRow];
+          const auto layer = row.layer;
+          if (layer && !layer->isLocked() &&
+              !impl_->collaborationLockedLayerIds.contains(layer->id()) &&
+              row.propertyPath.startsWith(QStringLiteral("text.animators."))) {
+            const auto property = layer->getProperty(row.propertyPath);
+            if (property) {
+              if (impl_->valueEditAnimatorProperty &&
+                  impl_->valueEditAnimatorProperty != property) {
+                impl_->clearAnimatorValuePreview();
+              }
+              if (!impl_->valueEditAnimatorProperty) {
+                impl_->valueEditAnimatorProperty = property;
+                impl_->valueEditAnimatorLayer = layer;
+                impl_->valueEditHadOverride = property->hasExternalOverride();
+                if (impl_->valueEditHadOverride) {
+                  impl_->valueEditPreviousOverride = property->evaluateValue(impl_->currentTime);
+                }
+              }
+              property->setExternalOverride(preview);
+              layer->setDirty(LayerDirtyFlag::Effect);
+              layer->changed();
+            }
+          }
           update(0, impl_->rowViewportY(impl_->valueEditRow), width(), impl_->rowHeight);
         }
       }
@@ -7081,6 +7138,7 @@ void ArtifactLayerPanelWidget::mouseMoveEvent(QMouseEvent* event)
     const QVariant preview = impl_->valueEditPreview;
     impl_->valueEditRow = -1;
     impl_->valueEditDragging = false;
+    impl_->clearAnimatorValuePreview();
     unsetCursor();
     if (rowIndex < impl_->visibleRows.size()) {
       const auto row = impl_->visibleRows[rowIndex];
@@ -7255,6 +7313,13 @@ void ArtifactLayerPanelWidget::focusInEvent(QFocusEvent* event)
 
 void ArtifactLayerPanelWidget::focusOutEvent(QFocusEvent* event)
 {
+  if (impl_->valueEditAnimatorProperty) {
+    impl_->valueEditRow = -1;
+    impl_->valueEditDragging = false;
+    impl_->clearAnimatorValuePreview();
+    unsetCursor();
+    update();
+  }
   if (auto* input = InputOperator::instance()) {
     if (input->activeContext() == QString::fromLatin1(kLayerPanelContext)) {
       input->setActiveContext(QStringLiteral("Global"));
@@ -7303,6 +7368,15 @@ bool ArtifactLayerPanelWidget::deleteSelectedMask()
 
 void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
 {
+  if (event && event->key() == Qt::Key_Escape && impl_->valueEditRow >= 0) {
+    impl_->valueEditRow = -1;
+    impl_->valueEditDragging = false;
+    impl_->clearAnimatorValuePreview();
+    unsetCursor();
+    update();
+    event->accept();
+    return;
+  }
   if (auto* input = InputOperator::instance()) {
     input->setActiveContext(QString::fromLatin1(kLayerPanelContext));
     if (event && input->processKeyPress(this, event->key(), event->modifiers())) {

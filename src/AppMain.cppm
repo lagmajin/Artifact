@@ -5381,7 +5381,10 @@ int main(int argc, char *argv[]) {
   compositionEditorTotalTimer.start();
   QElapsedTimer compositionEditorFactoryTimer;
   compositionEditorFactoryTimer.start();
-  auto *compositionEditor = new ArtifactCompositionEditor(mw);
+  // Deferred debug updates and dock factories can outlive the viewport widget.
+  // Capture a guarded reference so their existing checks observe its destruction.
+  QPointer<ArtifactCompositionEditor> compositionEditor =
+      new ArtifactCompositionEditor(mw);
   const double compositionEditorFactoryMs =
       static_cast<double>(compositionEditorFactoryTimer.nsecsElapsed()) /
       1000000.0;
@@ -6050,7 +6053,8 @@ int main(int argc, char *argv[]) {
     inspectorWidget->setMinimumWidth(240);
     mw->addDockedWidget(QStringLiteral("Inspector"), DockArea::Right,
                         inspectorWidget);
-    if (auto *trackerPanel = compositionEditor->trackerPanelWidget()) {
+    if (auto *trackerPanel =
+            compositionEditor ? compositionEditor->trackerPanelWidget() : nullptr) {
       mw->addDockedWidgetTabbed(QStringLiteral("Tracker"), DockArea::Right,
                                 trackerPanel, QStringLiteral("Inspector"));
     }

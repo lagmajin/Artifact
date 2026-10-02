@@ -864,8 +864,14 @@ CompositionAnchorPreset nearestAnchorPreset(const QPointF &value)
   cancelBtn->setAccessibleDescription(QStringLiteral("Close without creating a composition"));
   cancelBtn->setFixedSize(104, 34);
   fLayout->addStretch();
+#ifdef _WIN32
+  fLayout->addWidget(okBtn);
+  fLayout->addWidget(cancelBtn);
+  QWidget::setTabOrder(okBtn, cancelBtn);
+#else
   fLayout->addWidget(cancelBtn);
   fLayout->addWidget(okBtn);
+#endif
   mainLayout->addWidget(footer);
 
   QObject::connect(okBtn, &QPushButton::clicked, this, [this]() { impl_->ok(this); });

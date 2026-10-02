@@ -1636,6 +1636,12 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
         // Soft bodies retain their existing snapshot policy. Shared rigid
         // bodies restart from authored values on rewind / a large seek.
         physics.restoreSoftBodySnapshots(nextFrame);
+        // A rewind has no forward clock to rejoin, so a soft body that missed
+        // its snapshot must go back to its built shape instead of carrying the
+        // last solution into the new timeline position.
+        if (advancedFrames <= 0) {
+            physics.resetSoftBodiesToRestState();
+        }
         resetRigidBodySimulation();
         evaluateLayerCollisionPairs();
         evaluateJointConstraints();
@@ -1655,9 +1661,14 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
         evaluateRigidBodyContacts();
         evaluateJointBreaks();
         position_ = FramePosition(previousFrame + step + 1);
-        // goToFrame historically restores other solvers without integrating
-        // them. Keep this change scoped to shared 2D rigid bodies.
-        if (!advanceOtherPhysics) continue;
+        // goToFrame restores the other solver families without integrating
+        // them, so soft bodies need their own narrow step here.  They are the
+        // only per-layer solver on that path, and leaving them frozen makes
+        // an enabled Soft Body Grid look like a static, rigid rectangle.
+        if (!advanceOtherPhysics) {
+            physics.advanceSoftBodyFrame(fixedDeltaSeconds);
+            continue;
+        }
         physics.advancePhysicsFrame(fixedDeltaSeconds, 0.0f, 9.8f, false);
         for (const auto& event : physics.takeMaterialFractureEvents()) {
             const auto layer = layerMultiIndex_.findById(event.layerId);

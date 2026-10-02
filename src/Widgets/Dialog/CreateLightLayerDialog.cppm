@@ -404,8 +404,14 @@ CreateLightLayerDialog::CreateLightLayerDialog(QWidget* parent)
   primaryPalette.setColor(QPalette::ButtonText, Qt::white);
   create->setPalette(primaryPalette);
   create->setAutoFillBackground(true);
+#ifdef _WIN32
+  footer->addWidget(create);
+  footer->addWidget(cancel);
+  QWidget::setTabOrder(create, cancel);
+#else
   footer->addWidget(cancel);
   footer->addWidget(create);
+#endif
   root->addLayout(footer);
 
   auto* refreshFilter = new PresentationRefreshFilter(this, this);

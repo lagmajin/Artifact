@@ -17672,6 +17672,9 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
                   // pixels for every interactive property update.
                   const bool lightweightCompositeChange =
 
+                      !(layer->isDirty(LayerDirtyFlag::Property) &&
+                        dynamic_cast<ArtifactTextLayer *>(layer.get())) &&
+
                       !layer->isDirty(LayerDirtyFlag::Effect) &&
 
                       !layer->isDirty(LayerDirtyFlag::Mask) &&
@@ -27586,6 +27589,24 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
 
   if (event->button() == Qt::LeftButton && activeTool == ToolType::Text &&
       comp && ArtifactProjectService::instance()) {
+    // A press that lands on the selected text layer's gizmo is a transform
+    // gesture, not the seed of a new text layer.  Hand it to the 2D TextGizmo
+    // so the handles stay interactive while the Text tool is active; only a
+    // press off the gizmo starts the new-text candidate below.
+    if (impl_->textGizmo_ && selectedLayer &&
+        layerUsesTextGizmo(selectedLayer)) {
+      impl_->textGizmo_->setLayer(selectedLayer);
+      impl_->textGizmo_->handleMousePress(viewportPos,
+                                          impl_->renderer_.get());
+      if (impl_->textGizmo_->isDragging()) {
+        impl_->textGizmoDragActive_ = true;
+        notifyViewportInteractionActivity();
+        impl_->invalidateOverlayComposite();
+        markRenderDirty();
+        impl_->gizmoDragRenderTimer_.restart();
+        return;
+      }
+    }
     const auto canvasPos = impl_->renderer_->viewportToCanvas(
         {(float)viewportPos.x(), (float)viewportPos.y()});
     impl_->textToolCandidate_ = true;
@@ -37107,6 +37128,30 @@ Artifact3DGizmo *CompositionRenderController::gizmo3D() const {
 
 }
 
+
+
+bool CompositionRenderController::isGizmoDragActive() const {
+
+  if (!impl_) {
+
+    return false;
+
+  }
+
+  // Every gizmo that can own a viewport drag has to be listed here: the text
+  // and content gizmos are bound instead of gizmo_ while their layer type is
+  // selected, so a check limited to gizmo()/gizmo3D() would miss them and the
+  // viewport would never take mouse capture for their drags.
+  return (impl_->gizmo_ && impl_->gizmo_->isDragging()) ||
+
+         (impl_->gizmo3D_ && impl_->gizmo3D_->isDragging()) ||
+
+         (impl_->textGizmo_ && impl_->textGizmo_->isDragging()) ||
+
+         (impl_->contentGizmo_ && impl_->contentGizmo_->isDragging());
+
+}
+
 bool CompositionRenderController::isTransformGizmoHovered(
     ArtifactCore::Coordinates::ScreenLogicalPoint2 viewportPos) const {
   if (!impl_) {
@@ -37142,7 +37187,8 @@ bool CompositionRenderController::isTransformGizmoHovered(
     const auto textLayer = comp
         ? comp->layerById(impl_->selectedLayerId_) : ArtifactAbstractLayerPtr{};
     if (layerUsesTextGizmo(textLayer) &&
-        impl_->textGizmo_->hitTest(logical, impl_->renderer_.get()) !=
+        impl_->textGizmo_->hitTest(logical * impl_->devicePixelRatio_,
+                                 impl_->renderer_.get()) !=
             TextGizmo::HandleType::None) {
       return true;
     }

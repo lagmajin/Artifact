@@ -74,16 +74,22 @@ namespace Artifact
   impl_->frameNumberLabel_->setAccessibleName(QStringLiteral("Frame number"));
 
   {
+   const QColor toolbarBackground(35, 39, 43);
+   QPalette toolbarPalette = palette();
+   toolbarPalette.setColor(QPalette::Window, toolbarBackground);
+   setPalette(toolbarPalette);
    const QColor textColor = QColor(ArtifactCore::currentDCCTheme().textColor);
    const QColor mutedTextColor = textColor.darker(150);
 
    QPalette timePal = impl_->timecodeLabel_->palette();
+   timePal.setColor(QPalette::Window, toolbarBackground);
    timePal.setColor(QPalette::WindowText, textColor);
    timePal.setColor(QPalette::Text, textColor);
    impl_->timecodeLabel_->setPalette(timePal);
    impl_->timecodeLabel_->setAutoFillBackground(false);
 
    QPalette framePal = impl_->frameNumberLabel_->palette();
+   framePal.setColor(QPalette::Window, toolbarBackground);
    framePal.setColor(QPalette::WindowText, mutedTextColor);
    framePal.setColor(QPalette::Text, mutedTextColor);
    impl_->frameNumberLabel_->setPalette(framePal);
@@ -95,10 +101,16 @@ namespace Artifact
   auto* firstDivider = new QLabel(QStringLiteral("|"));
   auto* secondDivider = new QLabel(QStringLiteral("|"));
   QPalette dividerPalette = firstDivider->palette();
+  dividerPalette.setColor(QPalette::Window, QColor(35, 39, 43));
   dividerPalette.setColor(QPalette::WindowText,
                           QColor(ArtifactCore::currentDCCTheme().borderColor));
   firstDivider->setPalette(dividerPalette);
   secondDivider->setPalette(dividerPalette);
+  for (auto* label : {impl_->timecodeLabel_, impl_->frameNumberLabel_,
+                      impl_->fpsLabel_, firstDivider, secondDivider}) {
+   label->setAttribute(Qt::WA_StyledBackground, false);
+   label->setAutoFillBackground(false);
+  }
   layout->addWidget(impl_->timecodeLabel_);
   layout->addWidget(firstDivider);
   layout->addWidget(impl_->frameNumberLabel_);

@@ -2144,8 +2144,12 @@ void PrimitiveRenderer2D::drawGlyphsTransformed(
                                rect.bearingX + xOffset;
             const float top = static_cast<float>(origin.y()) + penY -
                               rect.bearingY + yOffset;
-            const float glyphScale = std::max(
-                0.0001f, glyph.baseScale * glyph.offsetScale);
+            // Per-axis scale. Both equal baseScale * offsetScale for every uniform
+            // animation, so this is a no-op unless scaleX/scaleY were authored.
+            const float glyphScaleX = std::max(
+                0.0001f, glyph.baseScale * glyph.offsetScaleX);
+            const float glyphScaleY = std::max(
+                0.0001f, glyph.baseScale * glyph.offsetScaleY);
             const float depth = useTwoPointFiveD
                 ? std::clamp(glyph.offsetZ, -cameraDistance * 0.95f,
                              cameraDistance * 0.95f)
@@ -2173,7 +2177,7 @@ void PrimitiveRenderer2D::drawGlyphsTransformed(
             }
             model.rotate(glyph.baseRotation + glyph.offsetRotation,
                          0.0f, 0.0f, 1.0f);
-            model.scale(glyphScale, glyphScale, 1.0f);
+            model.scale(glyphScaleX, glyphScaleY, 1.0f);
             model.translate(-width * 0.5f, -height * 0.5f, 0.0f);
             model.scale(width, height, 1.0f);
 

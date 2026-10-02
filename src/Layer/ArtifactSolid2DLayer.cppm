@@ -179,7 +179,8 @@ bool animatedSolidGradientBool(const ArtifactSolid2DLayer* layer,
 
  FloatColor ArtifactSolid2DLayer::color() const
  {
-  return impl_->color();
+  return animatedSolidGradientColor(this, QStringLiteral("solid.color"),
+                                   impl_->color());
  }
 
  void ArtifactSolid2DLayer::setColor(const FloatColor& color)
@@ -517,10 +518,16 @@ void ArtifactSolid2DLayer::setSourceItemId(const QString& id)
 
  bool ArtifactSolid2DLayer::setLayerPropertyValue(const QString& propertyPath, const QVariant& value)
  {
+  const auto notifySolidPropertyChanged = [this]() {
+   setDirty(LayerDirtyFlag::Effect);
+   addDirtyReason(LayerDirtyReason::PropertyChanged);
+   Q_EMIT changed();
+  };
   if (propertyPath == QStringLiteral("solid.color")) {
    const auto c = value.value<QColor>();
+   if (!c.isValid()) return false;
    setColor(FloatColor(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
-   Q_EMIT changed();
+   notifySolidPropertyChanged();
    return true;
   }
   if (propertyPath == QStringLiteral("solid.fillType")) {
@@ -531,54 +538,56 @@ void ArtifactSolid2DLayer::setSourceItemId(const QString& id)
                          : type == 4 ? ArtifactSolidFillType::RepeatingGradient
                          : type == 5 ? ArtifactSolidFillType::MirroredGradient
                                      : ArtifactSolidFillType::LinearGradient);
-   Q_EMIT changed();
+   notifySolidPropertyChanged();
    return true;
   }
   if (propertyPath == QStringLiteral("solid.pixelAspectRatio")) {
    setPixelAspectRatio(value.toDouble());
-   Q_EMIT changed();
+   notifySolidPropertyChanged();
    return true;
   }
   if (propertyPath == QStringLiteral("solid.gradientStartColor")) {
    const auto c = value.value<QColor>();
+   if (!c.isValid()) return false;
    setGradientStartColor(FloatColor(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
-   Q_EMIT changed();
+   notifySolidPropertyChanged();
    return true;
   }
   if (propertyPath == QStringLiteral("solid.gradientEndColor")) {
    const auto c = value.value<QColor>();
+   if (!c.isValid()) return false;
    setGradientEndColor(FloatColor(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
-   Q_EMIT changed();
+   notifySolidPropertyChanged();
    return true;
   }
   if (propertyPath == QStringLiteral("solid.gradientAngleDegrees")) {
    setGradientAngleDegrees(value.toFloat());
-   Q_EMIT changed();
+   notifySolidPropertyChanged();
    return true;
   }
   if (propertyPath == QStringLiteral("solid.gradientReverse")) {
    setGradientReverse(value.toBool());
-   Q_EMIT changed();
+   notifySolidPropertyChanged();
    return true;
   }
   if (propertyPath == QStringLiteral("solid.gradientCenterX")) {
    setGradientCenterX(value.toFloat());
-   Q_EMIT changed();
+   notifySolidPropertyChanged();
    return true;
   }
   if (propertyPath == QStringLiteral("solid.gradientCenterY")) {
    setGradientCenterY(value.toFloat());
-   Q_EMIT changed();
+   notifySolidPropertyChanged();
    return true;
   }
   if (propertyPath == QStringLiteral("solid.gradientScale")) {
    setGradientScale(value.toFloat());
-   Q_EMIT changed();
+   notifySolidPropertyChanged();
    return true;
   }
   if (propertyPath == QStringLiteral("solid.gradientOffset")) {
    setGradientOffset(value.toFloat());
-   Q_EMIT changed();
+   notifySolidPropertyChanged();
    return true;
   }
   return ArtifactAbstract2DLayer::setLayerPropertyValue(propertyPath, value);
@@ -601,7 +610,7 @@ void ArtifactSolid2DLayer::draw(ArtifactIRenderer* renderer)
       animatedSolidGradientColor(this, QStringLiteral("solid.gradientEndColor"),
                                  impl_->gradientEndColor()));
   const FloatColor solidColor =
-      colorManager->resolveGeneratedColorForRender(impl_->color());
+      colorManager->resolveGeneratedColorForRender(color());
   const float gradientAngle = animatedSolidGradientFloat(
       this, QStringLiteral("solid.gradientAngleDegrees"),
       impl_->gradientAngleDegrees());

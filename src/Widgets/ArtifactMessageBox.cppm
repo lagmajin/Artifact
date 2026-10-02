@@ -177,8 +177,14 @@ public:
         renameButton_->setMinimumSize(112, 34);
         renameButton_->setDefault(true);
         renameButton_->setAutoDefault(true);
+#ifdef _WIN32
+        actions->addWidget(renameButton_);
+        actions->addWidget(cancel);
+        QWidget::setTabOrder(renameButton_, cancel);
+#else
         actions->addWidget(cancel);
         actions->addWidget(renameButton_);
+#endif
         root->addLayout(actions);
 
         cancel->setCallback([this]() { reject(); });

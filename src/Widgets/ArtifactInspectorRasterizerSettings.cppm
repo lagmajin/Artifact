@@ -251,8 +251,14 @@ public:
         QStringLiteral("Add Effect"), this, QDialog::Accepted);
     applyInspectorButton(cancelButton, false);
     applyInspectorButton(addButton, true);
+#ifdef _WIN32
+    buttons->addWidget(addButton);
+    buttons->addWidget(cancelButton);
+    QWidget::setTabOrder(addButton, cancelButton);
+#else
     buttons->addWidget(cancelButton);
     buttons->addWidget(addButton);
+#endif
     layout->addLayout(buttons);
   }
 

@@ -210,6 +210,9 @@ void notifyLayerPropertyChanged(const ArtifactAbstractLayerPtr& layer,
         dirtyFlag = LayerDirtyFlag::Mask;
     } else if (propertyPath.startsWith(QStringLiteral("source."))) {
         dirtyFlag = LayerDirtyFlag::Source;
+    } else if (propertyPath.startsWith(QStringLiteral("text."))) {
+        // Text keyframes change glyph pixels, including edits at the same frame.
+        dirtyFlag = LayerDirtyFlag::Effect;
     }
     layer->setDirty(dirtyFlag);
     layer->addDirtyReason(LayerDirtyReason::PropertyChanged);
@@ -3303,9 +3306,21 @@ bool applyLayerPropertyValue(const ArtifactAbstractLayerPtr& layer,
         return false;
     }
     const auto property = layer->getProperty(propertyPath);
-    if (!property ||
-        QJsonValue::fromVariant(property->getValue()) !=
-            QJsonValue::fromVariant(expectedValue)) {
+    if (!property) {
+        return false;
+    }
+    const QJsonValue currentValue = QJsonValue::fromVariant(property->getValue());
+    const QJsonValue expectedJson = QJsonValue::fromVariant(expectedValue);
+    const QJsonValue requestedJson = QJsonValue::fromVariant(value);
+    // Property editors update the cached property and backing layer as the
+    // user previews/commits a value, then push this command to record Undo.
+    // In that path redo is already applied: accept the matching target as an
+    // idempotent success instead of rejecting it against the old snapshot and
+    // letting UndoManager compensate the edit back to its previous value.
+    if (currentValue == requestedJson) {
+        return true;
+    }
+    if (currentValue != expectedJson) {
         return false;
     }
     if (layer->setLayerPropertyValue(propertyPath, value)) {

@@ -233,9 +233,13 @@ void textSyncAnimatedProperty(const ArtifactAbstractLayerPtr& layer,
         return;
     }
     const auto property = layer->getProperty(propertyPath);
-    if (property && property->isAnimatable() &&
-        property->hasKeyFrames()) {
-        property->addKeyFrame(time, value);
+    if (property) {
+        // Global transforms prefer the cached property even without keys.
+        // Keep static drags visible and give Undo the actual edited value.
+        property->setValue(value);
+        if (property->isAnimatable() && property->hasKeyFrames()) {
+            property->addKeyFrame(time, value);
+        }
     }
 }
 
@@ -388,6 +392,15 @@ void TextGizmo::draw(ArtifactIRenderer* renderer) {
     const float invZoom = zoom > 0.0001f ? 1.0f / zoom : 1.0f;
     const float handleWidth = HANDLE_WIDTH * invZoom;
     const float rangeLineHeight = RANGE_LINE_HEIGHT * invZoom;
+    // RectOutline is a screen-space packet; text handles and hit tests use
+    // canvas coordinates. Draw the outline with the same canvas mapping.
+    const auto drawCanvasOutline = [renderer, invZoom](
+        float x, float y, float w, float h, const FloatColor& color) {
+        renderer->drawThickLineLocal({x, y}, {x + w, y}, invZoom, color);
+        renderer->drawThickLineLocal({x + w, y}, {x + w, y + h}, invZoom, color);
+        renderer->drawThickLineLocal({x + w, y + h}, {x, y + h}, invZoom, color);
+        renderer->drawThickLineLocal({x, y + h}, {x, y}, invZoom, color);
+    };
 
     // Get text layer bounds.  ArtifactTextLayer never reports an empty
     // sourceSize (setSourceSize clamps to at least 1x1), so an empty box here
@@ -400,7 +413,7 @@ void TextGizmo::draw(ArtifactIRenderer* renderer) {
 
     // Draw text box bounds
     FloatColor boundsColor{0.5f, 0.8f, 1.0f, 0.8f}; // Light blue
-    renderer->drawRectOutline(bbox.left(), bbox.top(), bbox.width(), bbox.height(), boundsColor);
+    drawCanvasOutline(bbox.left(), bbox.top(), bbox.width(), bbox.height(), boundsColor);
 
     // Draw resize handles
     FloatColor handleColor{0.5f, 0.8f, 1.0f, 1.0f};
@@ -445,7 +458,7 @@ void TextGizmo::draw(ArtifactIRenderer* renderer) {
                                     offsetY - selectorHandleHeight,
                                     selectorWidth * 0.5f,
                                     selectorHandleHeight * 2.0f, offsetColor);
-            renderer->drawRectOutline(selectorX + selectorWidth * 0.45f,
+            drawCanvasOutline(selectorX + selectorWidth * 0.45f,
                                       std::min(startY, endY),
                                       std::max(invZoom, selectorWidth * 0.1f),
                                       std::abs(endY - startY),
@@ -468,7 +481,7 @@ void TextGizmo::draw(ArtifactIRenderer* renderer) {
                                 selectorY + selectorHeight * 0.25f,
                                 selectorHandleWidth * 2.0f,
                                 selectorHeight * 0.5f, offsetColor);
-        renderer->drawRectOutline(std::min(startX, endX),
+        drawCanvasOutline(std::min(startX, endX),
                                   selectorY + selectorHeight * 0.45f,
                                   std::abs(endX - startX),
                                   std::max(invZoom, selectorHeight * 0.1f),
@@ -500,7 +513,7 @@ void TextGizmo::draw(ArtifactIRenderer* renderer) {
             const float x = bbox.left() + stripW * static_cast<float>(i);
             renderer->drawSolidRect(x, heatY, std::max(1.0f, stripW - 1.0f * invZoom), heatH, color);
         }
-        renderer->drawRectOutline(bbox.left(), heatY, bbox.width(), heatH,
+        drawCanvasOutline(bbox.left(), heatY, bbox.width(), heatH,
                                   FloatColor{0.9f, 0.9f, 0.95f, 0.5f});
 
         const auto clusterBoundaries = textLayer->selectorClusterBoundaryPreview();
@@ -887,6 +900,15 @@ bool TextGizmo::handleMousePress(const QPointF& viewportPos, ArtifactIRenderer* 
                     ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer_)) {
                 dragStartBoxWidth_ = textLayer->maxWidth();
                 dragStartBoxHeight_ = textLayer->boxHeight();
+                // Point text has no explicit box dimensions. Resize from the
+                // measured text extent instead of a zero-sized rectangle.
+                const QRectF localBounds = textLayer->localBounds();
+                if (dragStartBoxWidth_ <= 0.0f) {
+                    dragStartBoxWidth_ = static_cast<float>(localBounds.width());
+                }
+                if (dragStartBoxHeight_ <= 0.0f) {
+                    dragStartBoxHeight_ = static_cast<float>(localBounds.height());
+                }
             }
             transformDragChanged_ = false;
             captureTransformBeforeStates();
@@ -1380,8 +1402,38 @@ bool TextGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRenderer* r
         QStringLiteral("text.boxHeight"), newBoxHeight);
     transformDragChanged_ = true;
 
-    // Update position if needed (simplified)
-    // layer_->transform2D().setPosition(...)
+    // Keep the opposite edge fixed when the left/top of the local box moves.
+    // The new local box begins at zero after re-layout, so compensate Position
+    // by the dragged origin in canvas space and then the parent's local space.
+    auto &transform = textLayer->transform3D();
+    const QPointF startWorldAnchor = dragStartGlobalTransform_.map(
+        QPointF(transform.anchorX(), transform.anchorY()));
+    const QPointF originDelta = dragStartGlobalTransform_.map(bbox.topLeft()) -
+                                dragStartGlobalTransform_.map(QPointF());
+    bool parentInvertible = true;
+    QTransform parentInverse;
+    if (const auto parent = textLayer->parentLayer()) {
+        parentInverse = parent->getGlobalTransform().inverted(&parentInvertible);
+    }
+    const QPointF worldPosition = startWorldAnchor + originDelta;
+    const QPointF position = parentInvertible
+        ? parentInverse.map(worldPosition) : worldPosition;
+    const RationalTime editTime(dragStartFrame_, dragStartTimeScale_);
+    const float positionX = static_cast<float>(position.x());
+    const float positionY = static_cast<float>(position.y());
+    if (transform.hasPositionKeyFrameAt(editTime) ||
+        transform.getPositionKeyFrameCount() > 0) {
+        const float initialX = transform.positionX() - transform.positionXAt(editTime);
+        const float initialY = transform.positionY() - transform.positionYAt(editTime);
+        transform.setPosition(editTime, positionX - initialX, positionY - initialY);
+    } else {
+        transform.removePositionKeyFrameAt(editTime);
+        transform.setInitialPosition(editTime, positionX, positionY);
+    }
+    textSyncAnimatedProperty(layer_, QStringLiteral("transform.position.x"),
+                             editTime, positionX);
+    textSyncAnimatedProperty(layer_, QStringLiteral("transform.position.y"),
+                             editTime, positionY);
 
     textLayer->setDirty();
     textLayer->updateImage();

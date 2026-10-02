@@ -1089,8 +1089,14 @@ DialogChrome buildDialogChrome(QDialog* dlg)
     QObject::connect(cancelBtn, &QPushButton::clicked,
                      chrome.buttonBox->button(QDialogButtonBox::Cancel), &QPushButton::click);
     footerLayout->addStretch();
+#ifdef _WIN32
+    footerLayout->addWidget(okBtn);
+    footerLayout->addWidget(cancelBtn);
+    QWidget::setTabOrder(okBtn, cancelBtn);
+#else
     footerLayout->addWidget(cancelBtn);
     footerLayout->addWidget(okBtn);
+#endif
     chrome.mainLayout->addWidget(footer);
 
     return chrome;

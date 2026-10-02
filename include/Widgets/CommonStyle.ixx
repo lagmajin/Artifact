@@ -20,6 +20,9 @@ public:
 
   void polish(QWidget* widget) override;
   void polish(QPalette& palette) override;
+  int styleHint(StyleHint hint, const QStyleOption* option = nullptr,
+                const QWidget* widget = nullptr,
+                QStyleHintReturn* returnData = nullptr) const override;
   int pixelMetric(PixelMetric metric, const QStyleOption* option = nullptr,
                   const QWidget* widget = nullptr) const override;
   QSize sizeFromContents(ContentsType type, const QStyleOption* option,

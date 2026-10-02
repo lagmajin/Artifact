@@ -8236,13 +8236,10 @@ protected:
   }
 
   bool isSpatialGizmoDragging() const {
-    if (!controller_) {
-      return false;
-    }
-    const auto *gizmo2D = controller_->gizmo();
-    const auto *gizmo3D = controller_->gizmo3D();
-    return (gizmo2D && gizmo2D->isDragging()) ||
-           (gizmo3D && gizmo3D->isDragging());
+    // Delegate to the controller so the text/content gizmos, which are bound
+    // in place of gizmo_/gizmo3D_ for their layer types, also count as an
+    // active spatial drag and therefore receive mouse capture.
+    return controller_ && controller_->isGizmoDragActive();
   }
 
   bool isScaleDragActive() const {

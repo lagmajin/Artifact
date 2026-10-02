@@ -175,8 +175,14 @@ bool editGradientStop(QWidget* parent, QJsonObject& stopObject) {
   accept->setCallback([&dialog]() { dialog.accept(); });
   cancel->setCallback([&dialog]() { dialog.reject(); });
   actions->addStretch(1);
+#ifdef _WIN32
+  actions->addWidget(accept);
+  actions->addWidget(cancel);
+  QWidget::setTabOrder(accept, cancel);
+#else
   actions->addWidget(cancel);
   actions->addWidget(accept);
+#endif
   layout->addLayout(actions);
 
   if (dialog.exec() != QDialog::Accepted) {

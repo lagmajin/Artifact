@@ -264,8 +264,14 @@ ArtifactLutColorReferencePickerDialog::ArtifactLutColorReferencePickerDialog(
   footer->addWidget(importButton);
   footer->addWidget(count);
   footer->addStretch();
+#ifdef _WIN32
+  footer->addWidget(use);
+  footer->addWidget(cancel);
+  QWidget::setTabOrder(use, cancel);
+#else
   footer->addWidget(cancel);
   footer->addWidget(use);
+#endif
   root->addLayout(footer);
 }
 

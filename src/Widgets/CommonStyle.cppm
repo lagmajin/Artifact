@@ -5,6 +5,7 @@ module;
 #include <QApplication>
 #include <QComboBox>
 #include <QDialog>
+#include <QDialogButtonBox>
 #include <QFrame>
 #include <QGroupBox>
 #include <QHeaderView>
@@ -613,6 +614,17 @@ void ArtifactCommonStyle::polish(QWidget* widget)
 void ArtifactCommonStyle::polish(QPalette& palette)
 {
   QCommonStyle::polish(palette);
+}
+
+int ArtifactCommonStyle::styleHint(StyleHint hint, const QStyleOption* option,
+                                   const QWidget* widget,
+                                   QStyleHintReturn* returnData) const {
+#ifdef _WIN32
+  if (hint == SH_DialogButtonLayout) {
+    return QDialogButtonBox::WinLayout;
+  }
+#endif
+  return QCommonStyle::styleHint(hint, option, widget, returnData);
 }
 
 int ArtifactCommonStyle::pixelMetric(PixelMetric metric, const QStyleOption* option,

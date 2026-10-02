@@ -7130,6 +7130,9 @@ namespace Artifact
         std::atomic<size_t> outputBufferMemory{0};
         std::atomic<int> nextFrameToRender{startF};
         std::atomic<bool> anyWorkerFailed{false};
+        // 消費者ループが早期終了（エンコード失敗・キャンセル等）した際に、
+        // 出力バッファ満杯で待機しているプロデューサを解放するためのフラグ。
+        std::atomic<bool> producerCancel{false};
         QStringList workerFailureReasons;
 
         // Shared: render a single frame, return true on success.
@@ -7139,19 +7142,22 @@ namespace Artifact
                                    bool compositionIsIsolated,
                                    GpuFinalWorker* gpuWorker = nullptr,
                                    bool forceCpuPath = false) -> bool {
-            if (shutdownRequested_.load(std::memory_order_acquire))
+            if (shutdownRequested_.load(std::memory_order_acquire) ||
+                producerCancel.load(std::memory_order_acquire))
                 return false;
 
             {
                 std::unique_lock<std::mutex> lock(outputBufferMutex);
                 while (!shutdownRequested_.load(std::memory_order_acquire) &&
+                       !producerCancel.load(std::memory_order_acquire) &&
                        (static_cast<int>(outputBuffer.size()) >= maxOutputBufferFrames_ ||
                         outputBufferMemory.load(std::memory_order_relaxed) >=
                             maxOutputBufferMemoryBytes_)) {
                     bufferSpaceCv.wait_for(lock, std::chrono::milliseconds(50));
                 }
             }
-            if (shutdownRequested_)
+            if (shutdownRequested_.load(std::memory_order_acquire) ||
+                producerCancel.load(std::memory_order_acquire))
                 return false;
 
             FrameRenderSnapshot snap = baseSnap;
@@ -7464,7 +7470,8 @@ namespace Artifact
                         : hasXpuMixedCpuComposition
                         ? xpuMixedCpuCompositions[static_cast<size_t>(mixedCpuIndex)]
                         : compositionForRender;
-                while (!anyWorkerFailed.load(std::memory_order_relaxed)) {
+                while (!anyWorkerFailed.load(std::memory_order_relaxed) &&
+                       !producerCancel.load(std::memory_order_acquire)) {
                     const int f = nextFrameCounter.fetch_add(1, std::memory_order_relaxed);
                     if (f >= endF) break;
                     if (shutdownRequested_.load(std::memory_order_acquire)) {
@@ -7930,6 +7937,13 @@ namespace Artifact
                 queueManager.setJobProgress(jobIndex, pct);
             }, Qt::QueuedConnection);
         }
+
+        // 消費者ループが早期終了（エンコード失敗・キャンセル等）した場合、
+        // 出力バッファ満杯で待機しているプロデューサを解放する。これが無いと
+        // worker.join() が返らず、ジョブが進行しないまま shutdown まで固まる。
+        producerCancel.store(true, std::memory_order_release);
+        bufferSpaceCv.notify_all();
+        outputBufferCv.notify_all();
 
         // XPU P3: final drain for async sequence writes (output-invariant join).
         if (xpuAsyncSequence) {
@@ -8502,6 +8516,21 @@ namespace Artifact
                         failureReason = finalizeError.trimmed().isEmpty()
                             ? QStringLiteral("Video encoder finalization failed")
                             : finalizeError;
+                    }
+                }
+
+                // 失敗時、エンコーダがファイルを作成（truncate）したまま
+                // フレームを書けずに終わると 0 バイトの壊れた出力が残る。
+                // 成功していない場合のみサイズ 0 の出力を掃除する。
+                if (!success.load(std::memory_order_relaxed) && isVideo) {
+                    const QStringList failedArtifacts{videoRenderPath, outputPath};
+                    for (const QString& artifact : failedArtifacts) {
+                        if (artifact.trimmed().isEmpty()) continue;
+                        const QFileInfo artifactInfo(artifact);
+                        if (artifactInfo.exists() && artifactInfo.isFile() &&
+                            artifactInfo.size() == 0) {
+                            QFile::remove(artifact);
+                        }
                     }
                 }
 

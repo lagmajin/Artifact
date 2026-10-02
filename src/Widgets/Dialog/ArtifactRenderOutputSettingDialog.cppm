@@ -407,8 +407,14 @@ namespace Artifact
    use->setClickHandler([this]() { accept(); });
    footer->addWidget(policy);
    footer->addStretch();
+#ifdef _WIN32
+   footer->addWidget(use);
+   footer->addWidget(cancel);
+   QWidget::setTabOrder(use, cancel);
+#else
    footer->addWidget(cancel);
    footer->addWidget(use);
+#endif
    root->addLayout(footer);
    for (QLineEdit* edit : {folderEdit_, baseEdit_, extensionEdit_}) edit->installEventFilter(this);
    versionSpin_->installEventFilter(this);

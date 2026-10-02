@@ -2212,7 +2212,14 @@ bool layerBooleanProperty(const ArtifactAbstractLayerPtr &layer,
   }
   const auto groups = layer->getLayerPropertyGroups();
   Q_UNUSED(groups);
-  const auto property = layer->getProperty(propertyPath);
+  auto property = layer->getProperty(propertyPath);
+  if (!property && propertyPath.startsWith(QStringLiteral("component."))) {
+    // Component properties are intentionally absent from the normal layer
+    // groups. Seed their cache before the header reads/toggles an enabled flag.
+    const auto componentGroups = layer->getComponentPropertyGroups();
+    Q_UNUSED(componentGroups);
+    property = layer->getProperty(propertyPath);
+  }
   return property ? property->getValue().toBool() : false;
 }
 

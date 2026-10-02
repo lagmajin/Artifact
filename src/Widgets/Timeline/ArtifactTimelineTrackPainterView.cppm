@@ -6822,10 +6822,9 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
     if (isHovered && !isSelected) {
       fill = fill.lighter(108);
     }
-    QColor selectedFill = clip.fillColor;
-    selectedFill.setAlpha(36);
+    const QColor selectedFill(39, 104, 169);
     const QColor border = isSelected ? theme.accent.lighter(130)
-                                     : theme.border.darker(160);
+                                     : fill.lighter(132);
     drawClipBar(p, clipRect, impl_->clipBarStyle_,
                 isSelected ? selectedFill : fill,
                 QPen(border, isSelected ? 2 : 1));
@@ -6863,7 +6862,7 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
     }
 
     if (!clip.title.isEmpty() && clipRect.width() > 28.0) {
-      p.setPen(clip.selected ? theme.background : theme.text);
+      p.setPen(theme.text);
       const QString text = metrics.elidedText(
           clip.title, Qt::ElideRight,
           static_cast<int>(clipRect.width()) - (kClipPadding * 2));
