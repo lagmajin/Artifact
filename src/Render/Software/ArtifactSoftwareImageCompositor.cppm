@@ -55,6 +55,19 @@ inline ArtifactCore::FloatColor composeBlendResult(const ArtifactCore::FloatColo
                                  outA);
 }
 
+// Mirrors the GPU stencil/silhouette luma evaluation in
+// ArtifactCore LayerBlendComputeShader.ixx: src pixels arrive display-encoded,
+// so they must be decoded to scene-linear before Rec709 luminance is taken.
+inline float sceneLinearLuma(const float r, const float g, const float b) {
+  const auto srgbToLinear = [](const float value) {
+   const float cutoff = value <= 0.04045f ? 1.0f : 0.0f;
+   const float low = value / 12.92f;
+   const float high = std::pow((value + 0.055f) / 1.055f, 2.4f);
+   return low * cutoff + high * (1.0f - cutoff);
+  };
+  return 0.2126f * srgbToLinear(r) + 0.7152f * srgbToLinear(g) + 0.0722f * srgbToLinear(b);
+}
+
 inline ArtifactCore::FloatColor applyStencilLikeBlend(const ArtifactCore::FloatColor& base,
                                                       const float factor) {
  const float clampedFactor = clamp01(factor);
@@ -178,12 +191,12 @@ inline ArtifactCore::FloatColor blendColor(const ArtifactCore::FloatColor& base,
   return applyStencilLikeBlend(base, srcAlpha);
  case ArtifactCore::BlendMode::StencilLuma:
   return applyStencilLikeBlend(
-   base, clamp01(ArtifactCore::ColorLuminance::calculate(blendColor.r(), blendColor.g(), blendColor.b()) * srcAlpha));
+   base, clamp01(sceneLinearLuma(blendColor.r(), blendColor.g(), blendColor.b()) * srcAlpha));
  case ArtifactCore::BlendMode::SilhouetteAlpha:
   return applySilhouetteLikeBlend(base, srcAlpha);
  case ArtifactCore::BlendMode::SilhouetteLuma:
   return applySilhouetteLikeBlend(
-   base, clamp01(ArtifactCore::ColorLuminance::calculate(blendColor.r(), blendColor.g(), blendColor.b()) * srcAlpha));
+   base, clamp01(sceneLinearLuma(blendColor.r(), blendColor.g(), blendColor.b()) * srcAlpha));
  default:
   return base;
  }

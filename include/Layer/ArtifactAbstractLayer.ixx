@@ -680,7 +680,7 @@ public:
   // Dirty Management
   void setDirty(LayerDirtyFlag flag = LayerDirtyFlag::All);
   std::uint64_t effectRevision() const;
-  bool hasAnimatedEffectProperties();
+  bool hasAnimatedEffectProperties() const;
   void clearDirty(LayerDirtyFlag flag = LayerDirtyFlag::All);
   bool isDirty(LayerDirtyFlag flag = LayerDirtyFlag::All) const;
   void addDirtyReason(LayerDirtyReason reason);

@@ -2944,7 +2944,7 @@ FrameRange ArtifactPlaybackService::playableRange() const {
   }
   if (const auto *points = inOutPoints();
       points && points->hasOutPoint()) {
-    end = std::min<int64_t>(end, points->outPoint().framePosition());
+    end = std::min<int64_t>(end, points->outPoint().value().framePosition());
   }
   return FrameRange(start, std::max(start, end));
 }
@@ -2963,7 +2963,7 @@ void ArtifactPlaybackService::setCurrentFrame(const FramePosition &position) {
   const int64_t end = std::max(start, std::max(range.start(), range.end()) - 1);
   const auto target = std::clamp<int64_t>(
     position.framePosition(), start, end);
-  if (currentFrame() == target) {
+  if (currentFrame().framePosition() == target) {
     return;
   }
   const bool wasPlaying = isPlaying();

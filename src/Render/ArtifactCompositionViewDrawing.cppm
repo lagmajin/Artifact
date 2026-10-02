@@ -56,6 +56,7 @@ import Artifact.Composition.Abstract;
 import Memory.SharedPtr;
 import Layer.Matte;
 import Image.ImageF32x4_RGBA;
+import Image.ImageF32x4RGBAWithCache;
 import Graphics.SurfaceColorContract;
 import Core.Light;
 import CvUtils;
@@ -2214,8 +2215,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
         }
         Diligent::ITextureView* sourceTexture = cachedBinding.isValid()
             ? nullptr
-            : renderer->textureForImage(
-                  buffer, layer->id(), svgLayer->sourceVersion(), 0);
+            : renderer->textureForImage(buffer);
         drawWithClonerEffect(layer, globalTransform4x4,
           [&](const QMatrix4x4& instanceTransform, float instanceWeight) {
             if (cachedBinding.isValid()) {

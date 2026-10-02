@@ -1,8 +1,13 @@
 module;
+#ifdef _WIN32
 #include <windows.h>
+#endif
 
 #include <cstring>
 #include <cstdarg>
+#include <cstdio>
+#include <cstdlib>
+#include <cstdint>
 #include <algorithm>
 #include <memory>
 #include <string>
@@ -25,6 +30,17 @@ module;
 #include <ofx/ofxImageEffect.h>
 #include <ofx/ofxParam.h>
 #include <ofx/ofxProperty.h>
+#include <ofx/ofxMemory.h>
+#include <ofx/ofxTimeLine.h>
+#include <ofx/ofxMessage.h>
+
+// kOfxImageEffectPropStatusMessage is part of the OFX spec (an outArgs key the
+// render action may set) but is absent from the vendored 1.5 headers, which
+// only cover the deprecated kOfxStatusMessage naming. Defined locally so the
+// spec key can be passed through unchanged.
+#ifndef kOfxImageEffectPropStatusMessage
+#define kOfxImageEffectPropStatusMessage "OfxImageEffectPropStatusMessage"
+#endif
 
 export module Artifact.Effect.Ofx.Host;
 
@@ -37,10 +53,19 @@ namespace Artifact {
 namespace Ofx {
 
 struct OfxPluginDescriptor;
+struct ImageEffectState;
 class ArtifactOfxHost;
-ArtifactOfxHost &artifactOfxHostInstance();
 
 using namespace ArtifactCore;
+
+// Plugin libraries are loaded dynamically. Only Windows is wired up today;
+// on other platforms the scanner finds candidates but never opens them, so the
+// handle type must still exist for the descriptor to compile.
+#ifdef _WIN32
+using OfxLibraryHandle = HMODULE;
+#else
+using OfxLibraryHandle = void *;
+#endif
 
 export struct OfxPropertySetStruct {
   enum class Kind {
@@ -77,6 +102,13 @@ export struct ParamSetState {
 
 export struct ClipState {
   OfxPropertySetStruct properties;
+  // A clip handle is only meaningful together with the effect instance that
+  // owns it. The host hands plugin code an OfxImageClipHandle that must be
+  // resolvable back to that instance during a render action, so the ownership
+  // link lives in the clip itself rather than being recovered by scanning the
+  // loaded-plugin list (which only ever contains descriptor clips).
+  ImageEffectState *owner = nullptr;
+  QString clipName;
 };
 
 export struct ImageMemoryState {
@@ -98,9 +130,44 @@ export struct ImageEffectState {
     int srcRowBytes = 0;
     const unsigned char* dstPixelData = nullptr;
     int dstRowBytes = 0;
+    // The frame time the instance is currently being evaluated at, exposed to
+    // plugins through the TimeLine suite.
+    double currentTime = 0.0;
   };
   RenderFrameData renderFrame;
+
+  // Scratch property sets returned by clipGetImage. The OFX spec says an
+  // image handle is valid only for the duration of the clipGetImage call, but
+  // plugins routinely hold on to the handle they got for the current input and
+  // then fetch the output clip. One buffer per clip keeps those two handles
+  // distinct instead of aliasing a single shared set.
+  std::unordered_map<std::string, OfxPropertySetStruct> clipImageScratch;
+
+  // Called once when the host is about to hand this instance to a render
+  // action, so the source/destination buffers match the frame actually being
+  // processed. Set by the bridge before each pluginActionRender call.
+  void (*prepareRenderFrame)(ImageEffectState *state,
+                             const unsigned char *srcPixelData,
+                             int srcWidth, int srcHeight,
+                             int srcRowBytes,
+                             unsigned char *dstPixelData,
+                             int dstRowBytes) = nullptr;
+
+  // Identity contract used by clipGetImage to decide whether a clip carries
+  // the host input (source) or the render target (output).
+  bool isOutputClip(const char *clipName) const;
 };
+
+bool ImageEffectState::isOutputClip(const char *clipName) const {
+  if (!clipName) {
+    return false;
+  }
+  // OFX reserves the exact name "Output" for the output clip of an image
+  // effect. Compare case-insensitively because plugins are inconsistent about
+  // the casing they pass back through paramGetHandle/clipGetHandle.
+  return QString::fromUtf8(clipName).compare(QStringLiteral("Output"),
+                                             Qt::CaseInsensitive) == 0;
+}
 
 std::unique_ptr<ParamState> cloneParamState(const ParamState &src) {
   auto dst = std::make_unique<ParamState>();
@@ -129,7 +196,12 @@ export struct OfxPluginDescriptor {
   QStringList supportedContexts;
   std::vector<AbstractProperty> previewProperties;
   SharedPtr<ImageEffectState> descriptorState;
-  HMODULE libraryHandle = nullptr;
+  OfxLibraryHandle libraryHandle = nullptr;
+  // Host scan generation this descriptor was produced by. A rescan bumps the
+  // host generation and frees the previous libraries, so any effect object that
+  // captured a descriptor can detect that its library handle went stale instead
+  // of calling GetProcAddress on unmapped memory.
+  std::uint64_t generation = 0;
 };
 
 ImageEffectState *imageEffectForClip(const ClipState *clip);
@@ -321,6 +393,35 @@ OfxStatus getDimension(const PropertySet *set, const char *property,
 OfxPropertySuiteV1 makePropertySuite();
 const OfxPropertySuiteV1 *propertySuite();
 
+// Logs the message a plugin passes to the message suite. This is also the only
+// diagnostic channel available to clipGetImage, which has no outArgs.
+OfxStatus ofxMessageFunc(void * /*handle*/, const char * /*type*/,
+                         const char * /*messageId*/, const char *format, ...) {
+  if (!format) {
+    return kOfxStatOK;
+  }
+  // Walk the format string substituting printf-style %s arguments. Logging the
+  // raw template would drop every substitution the plugin supplied; anything
+  // other than %s is copied through verbatim.
+  QString message;
+  va_list args;
+  va_start(args, format);
+  const QByteArray pattern = QByteArray(format);
+  for (int i = 0; i < pattern.size();) {
+    if (pattern[i] == '%' && i + 1 < pattern.size() && pattern[i + 1] == 's') {
+      const char *value = va_arg(args, const char *);
+      message += QString::fromUtf8(value ? value : "(null)");
+      i += 2;
+      continue;
+    }
+    message += QChar::fromLatin1(pattern[i]);
+    ++i;
+  }
+  va_end(args);
+  qWarning("[OFX] %s", message.toUtf8().constData());
+  return kOfxStatOK;
+}
+
 OfxStatus propSetPointer(OfxPropertySetHandle properties, const char *property,
                          int index, void *value) {
   return setPointerValue(asSet(properties), property, index, value);
@@ -455,8 +556,8 @@ OfxStatus propGetInt(OfxPropertySetHandle properties, const char *property,
 
 OfxStatus propGetPointerN(OfxPropertySetHandle properties, const char *property,
                           int count, void **value) {
-  if (count < 0) {
-    return kOfxStatErrBadIndex;
+  if (count < 0 || !value) {
+    return kOfxStatErrBadHandle;
   }
   for (int i = 0; i < count; ++i) {
     OfxStatus status = propGetPointer(properties, property, i, &value[i]);
@@ -469,8 +570,8 @@ OfxStatus propGetPointerN(OfxPropertySetHandle properties, const char *property,
 
 OfxStatus propGetStringN(OfxPropertySetHandle properties, const char *property,
                          int count, char **value) {
-  if (count < 0) {
-    return kOfxStatErrBadIndex;
+  if (count < 0 || !value) {
+    return kOfxStatErrBadHandle;
   }
   for (int i = 0; i < count; ++i) {
     OfxStatus status = propGetString(properties, property, i, &value[i]);
@@ -483,8 +584,8 @@ OfxStatus propGetStringN(OfxPropertySetHandle properties, const char *property,
 
 OfxStatus propGetDoubleN(OfxPropertySetHandle properties, const char *property,
                          int count, double *value) {
-  if (count < 0) {
-    return kOfxStatErrBadIndex;
+  if (count < 0 || !value) {
+    return kOfxStatErrBadHandle;
   }
   for (int i = 0; i < count; ++i) {
     OfxStatus status = propGetDouble(properties, property, i, &value[i]);
@@ -497,8 +598,8 @@ OfxStatus propGetDoubleN(OfxPropertySetHandle properties, const char *property,
 
 OfxStatus propGetIntN(OfxPropertySetHandle properties, const char *property,
                       int count, int *value) {
-  if (count < 0) {
-    return kOfxStatErrBadIndex;
+  if (count < 0 || !value) {
+    return kOfxStatErrBadHandle;
   }
   for (int i = 0; i < count; ++i) {
     OfxStatus status = propGetInt(properties, property, i, &value[i]);
@@ -554,10 +655,6 @@ void setPointerProperty(PropertySet &set, const char *property, void *value) {
   setPointerValue(&set, property, 0, value);
 }
 
-PropertySet *asPropertySet(OfxPropertySetHandle handle) {
-  return asSet(handle);
-}
-
 ParamSetState *asParamSet(OfxParamSetHandle handle) {
   return reinterpret_cast<ParamSetState *>(handle);
 }
@@ -605,6 +702,8 @@ ClipState *ensureClip(ImageEffectState *effect, const char *name) {
     setStringProperty(properties, kOfxPropName, name);
     setStringProperty(properties, kOfxPropLabel, name);
   }
+  entry->owner = effect;
+  entry->clipName = QString::fromUtf8(name);
   return entry.get();
 }
 
@@ -727,25 +826,45 @@ OfxStatus effectClipGetImage(OfxImageClipHandle clip, OfxTime /*time*/,
     return kOfxStatFailed;
   }
   auto *effect = imageEffectForClip(asClip(clip));
-  if (!effect || !effect->renderFrame.srcPixelData) {
+  if (!effect) {
     *imageHandle = nullptr;
     return kOfxStatFailed;
   }
   auto &rf = effect->renderFrame;
-  static thread_local PropertySet s_imageProps;
-  PropertySet &imageProps = s_imageProps;
+
+  // The output clip must hand back the destination buffer so the plugin can
+  // push its pixels; every other clip hands back the host input. Returning the
+  // source buffer for "Output" made every effect a no-op and let plugins
+  // scribble over the read-only input.
+  auto *clipState = asClip(clip);
+  const QByteArray clipNameUtf8 = clipState->clipName.toUtf8();
+  const bool isOutput = effect->isOutputClip(clipNameUtf8.constData());
+  const unsigned char *pixelData = isOutput ? rf.dstPixelData : rf.srcPixelData;
+  const int rowBytes = isOutput ? rf.dstRowBytes : rf.srcRowBytes;
+  if (!pixelData) {
+    // No outArgs channel exists on clipGetImage, so the diagnostic goes out
+    // through the message suite instead of being dropped silently.
+    ofxMessageFunc(nullptr, kOfxMessageError, kOfxImageEffectPropStatusMessage,
+                   "Artifact OFX host: clip '%s' has no image available",
+                   clipNameUtf8.constData());
+    *imageHandle = nullptr;
+    return kOfxStatFailed;
+  }
+
+  // One scratch buffer per clip: a plugin holding the source handle while
+  // fetching the output clip no longer sees the source properties replaced.
+  auto &imageProps = effect->clipImageScratch[std::string(clipNameUtf8.constData())];
   imageProps.entries.clear();
-  imageProps.entries[std::string(kOfxPropType)].kind = PropertyKind::String;
-  imageProps.entries[std::string(kOfxPropType)].values = {QString::fromLatin1(kOfxTypeImage)};
-  imageProps.entries[std::string(kOfxPropType)].stringStorage = {kOfxTypeImage};
+  setStringProperty(imageProps, kOfxPropType, kOfxTypeImage);
   setPointerProperty(imageProps, kOfxImagePropData,
-                     const_cast<unsigned char *>(rf.srcPixelData));
+                     const_cast<unsigned char *>(pixelData));
   setDoubleProperty(imageProps, kOfxImagePropPixelAspectRatio, 1.0);
   setStringProperty(imageProps, kOfxImagePropField, kOfxImageFieldNone);
   setStringProperty(imageProps, kOfxImageEffectPropPixelDepth, kOfxBitDepthFloat);
   setStringProperty(imageProps, kOfxImageEffectPropComponents, kOfxImageComponentRGBA);
-  setIntProperty(imageProps, kOfxImagePropRowBytes, rf.srcRowBytes);
-  setIntPropertyN(imageProps, kOfxImagePropBounds, 4, {0, 0, rf.srcWidth, rf.srcHeight});
+  setIntProperty(imageProps, kOfxImagePropRowBytes, rowBytes);
+  setIntPropertyN(imageProps, kOfxImagePropBounds, 4,
+                  {0, 0, rf.srcWidth, rf.srcHeight});
   setDoublePropertyN(imageProps, kOfxImagePropRegionOfDefinition, 4,
                      {0.0, 0.0, (double)rf.srcWidth, (double)rf.srcHeight});
   setIntProperty(imageProps, kOfxImagePropUniqueIdentifier, 1);
@@ -760,13 +879,21 @@ OfxStatus effectClipReleaseImage(OfxPropertySetHandle /*imageHandle*/) {
 OfxStatus effectClipGetRod(OfxImageClipHandle clip, OfxTime /*time*/,
                            OfxRectD *bounds) {
   if (!bounds) return kOfxStatErrBadHandle;
-  auto *effect = imageEffectForClip(asClip(clip));
-  if (!effect || !effect->renderFrame.srcPixelData) {
+  auto *clipState = asClip(clip);
+  auto *effect = imageEffectForClip(clipState);
+  if (!effect) {
     bounds->x1 = 0.0; bounds->y1 = 0.0;
     bounds->x2 = 0.0; bounds->y2 = 0.0;
     return kOfxStatFailed;
   }
   auto &rf = effect->renderFrame;
+  const bool isOutput = effect->isOutputClip(clipState->clipName.toUtf8().constData());
+  const unsigned char *pixelData = isOutput ? rf.dstPixelData : rf.srcPixelData;
+  if (!pixelData) {
+    bounds->x1 = 0.0; bounds->y1 = 0.0;
+    bounds->x2 = 0.0; bounds->y2 = 0.0;
+    return kOfxStatFailed;
+  }
   bounds->x1 = 0.0;
   bounds->y1 = 0.0;
   bounds->x2 = (double)rf.srcWidth;
@@ -774,7 +901,82 @@ OfxStatus effectClipGetRod(OfxImageClipHandle clip, OfxTime /*time*/,
   return kOfxStatOK;
 }
 
-int effectAbort(OfxImageEffectHandle imageEffect) {
+OfxStatus ofxMemoryAlloc(void * /*handle*/, size_t nBytes,
+                         void **allocatedData) {
+  if (!allocatedData) {
+    return kOfxStatErrBadHandle;
+  }
+  // Aligned like malloc so plugins may treat the block as ordinary memory.
+  void *block = std::malloc(nBytes);
+  if (!block) {
+    *allocatedData = nullptr;
+    return kOfxStatErrMemory;
+  }
+  *allocatedData = block;
+  return kOfxStatOK;
+}
+
+OfxStatus ofxMemoryFree(void *allocatedData) {
+  if (!allocatedData) {
+    return kOfxStatErrBadHandle;
+  }
+  std::free(allocatedData);
+  return kOfxStatOK;
+}
+
+OfxMemorySuiteV1 makeMemorySuite() {
+  OfxMemorySuiteV1 suite{};
+  suite.memoryAlloc = &ofxMemoryAlloc;
+  suite.memoryFree = &ofxMemoryFree;
+  return suite;
+}
+
+const OfxMemorySuiteV1 *memorySuite() {
+  static const OfxMemorySuiteV1 suite = makeMemorySuite();
+  return &suite;
+}
+
+OfxStatus ofxTimelineGetTime(void *instance, double *time) {
+  if (!time) {
+    return kOfxStatErrBadHandle;
+  }
+  auto *effect = static_cast<ImageEffectState *>(instance);
+  // The host renders synchronously and owns time; report the frame the effect
+  // instance is currently being evaluated at.
+  *time = effect ? effect->renderFrame.currentTime : 0.0;
+  return kOfxStatOK;
+}
+
+OfxStatus ofxTimelineGotoTime(void * /*instance*/, double /*time*/) {
+  // The host has no timeline view a plugin can drive; changing time is the
+  // host's decision, not the plugin's.
+  return kOfxStatFailed;
+}
+
+OfxStatus ofxTimelineGetTimeBounds(void * /*instance*/, double *firstTime,
+                                   double *lastTime) {
+  if (!firstTime || !lastTime) {
+    return kOfxStatErrBadHandle;
+  }
+  *firstTime = 0.0;
+  *lastTime = 0.0;
+  return kOfxStatFailed;
+}
+
+OfxTimeLineSuiteV1 makeTimelineSuite() {
+  OfxTimeLineSuiteV1 suite{};
+  suite.getTime = &ofxTimelineGetTime;
+  suite.gotoTime = &ofxTimelineGotoTime;
+  suite.getTimeBounds = &ofxTimelineGetTimeBounds;
+  return suite;
+}
+
+const OfxTimeLineSuiteV1 *timelineSuite() {
+  static const OfxTimeLineSuiteV1 suite = makeTimelineSuite();
+  return &suite;
+}
+
+OfxStatus effectAbort(OfxImageEffectHandle imageEffect) {
   if (!imageEffect) {
     return 1;
   }
@@ -867,7 +1069,10 @@ OfxStatus paramDefine(OfxParamSetHandle paramSet, const char *paramType,
   setStringProperty(properties, kOfxPropName, name);
   setStringProperty(properties, kOfxPropLabel, name);
   setStringProperty(properties, kOfxParamPropType, paramType);
-  setIntProperty(properties, kOfxParamPropAnimates, 1);
+  // Keyframes are unimplemented on this host, so parameters must advertise
+  // themselves as non-animatable; claiming otherwise makes plugins build
+  // animated controls the host silently discards.
+  setIntProperty(properties, kOfxParamPropAnimates, 0);
   setIntProperty(properties, kOfxParamPropCanUndo, 1);
   setIntProperty(properties, kOfxParamPropPersistant, 1);
   setIntProperty(properties, kOfxParamPropEvaluateOnChange, 1);
@@ -913,7 +1118,7 @@ OfxStatus paramGetPropertySet(OfxParamHandle param,
   return kOfxStatOK;
 }
 
-OfxStatus paramGetValueUnsupported(OfxParamHandle paramHandle, ...) {
+OfxStatus paramGetValue(OfxParamHandle paramHandle, ...) {
   va_list args;
   va_start(args, paramHandle);
   const OfxStatus status = paramGetValueImpl(paramHandle, args);
@@ -921,8 +1126,11 @@ OfxStatus paramGetValueUnsupported(OfxParamHandle paramHandle, ...) {
   return status;
 }
 
-OfxStatus paramGetValueAtTimeUnsupported(OfxParamHandle paramHandle,
-                                         OfxTime time, ...) {
+OfxStatus paramGetValueAtTime(OfxParamHandle paramHandle, OfxTime /*time*/,
+                              ...) {
+  // Keyframes are not supported, so every time collapses onto the single
+  // current value. Time is still consumed positionally to keep the variadic
+  // argument list aligned with what the plugin passed.
   va_list args;
   va_start(args, time);
   const OfxStatus status = paramGetValueImpl(paramHandle, args);
@@ -941,7 +1149,7 @@ OfxStatus paramGetIntegralUnsupported(OfxParamHandle /*paramHandle*/,
   return kOfxStatErrUnsupported;
 }
 
-OfxStatus paramSetValueUnsupported(OfxParamHandle paramHandle, ...) {
+OfxStatus paramSetValue(OfxParamHandle paramHandle, ...) {
   va_list args;
   va_start(args, paramHandle);
   const OfxStatus status = paramSetValueImpl(paramHandle, args);
@@ -949,8 +1157,7 @@ OfxStatus paramSetValueUnsupported(OfxParamHandle paramHandle, ...) {
   return status;
 }
 
-OfxStatus paramSetValueAtTimeUnsupported(OfxParamHandle paramHandle,
-                                         OfxTime time, ...) {
+OfxStatus paramSetValueAtTime(OfxParamHandle paramHandle, OfxTime time, ...) {
   va_list args;
   va_start(args, time);
   const OfxStatus status = paramSetValueImpl(paramHandle, args);
@@ -1259,8 +1466,10 @@ AbstractProperty toAbstractProperty(const ParamState &state, const QString &name
   } else {
     prop.setValue(defaultValue);
   }
-  prop.setAnimatable(true);
-  prop.setAnimatable(readBoolProperty(state.properties, kOfxParamPropAnimates, true));
+  // A single assignment: the previous pair set this to true and then
+  // immediately overwrote it with the host property, so the first call was
+  // dead code.
+  prop.setAnimatable(readBoolProperty(state.properties, kOfxParamPropAnimates, false));
   if (!hint.isEmpty()) {
     prop.setTooltip(hint);
   }
@@ -1294,12 +1503,12 @@ OfxParameterSuiteV1 makeParameterSuite() {
   suite.paramGetHandle = &paramGetHandle;
   suite.paramSetGetPropertySet = &paramSetGetPropertySet;
   suite.paramGetPropertySet = &paramGetPropertySet;
-  suite.paramGetValue = &paramGetValueUnsupported;
-  suite.paramGetValueAtTime = &paramGetValueAtTimeUnsupported;
+  suite.paramGetValue = &paramGetValue;
+  suite.paramGetValueAtTime = &paramGetValueAtTime;
   suite.paramGetDerivative = &paramGetDerivativeUnsupported;
   suite.paramGetIntegral = &paramGetIntegralUnsupported;
-  suite.paramSetValue = &paramSetValueUnsupported;
-  suite.paramSetValueAtTime = &paramSetValueAtTimeUnsupported;
+  suite.paramSetValue = &paramSetValue;
+  suite.paramSetValueAtTime = &paramSetValueAtTime;
   suite.paramGetNumKeys = &paramGetNumKeysUnsupported;
   suite.paramGetKeyTime = &paramGetKeyTimeUnsupported;
   suite.paramGetKeyIndex = &paramGetKeyIndexUnsupported;
@@ -1470,7 +1679,7 @@ export OfxStatus pluginActionCreateInstance(OfxPlugin *plugin, ImageEffectState 
                            nullptr, nullptr);
 }
 
-OfxStatus pluginActionDestroyInstance(OfxPlugin *plugin, ImageEffectState &instanceState) {
+export OfxStatus pluginActionDestroyInstance(OfxPlugin *plugin, ImageEffectState &instanceState) {
   if (!plugin || !plugin->mainEntry) return kOfxStatErrBadHandle;
   return plugin->mainEntry(kOfxActionDestroyInstance,
                            reinterpret_cast<const void *>(&instanceState),
@@ -1489,19 +1698,28 @@ export OfxStatus pluginActionBeginSequenceRender(OfxPlugin *plugin, ImageEffectS
 }
 
 export OfxStatus pluginActionRender(OfxPlugin *plugin, ImageEffectState &instanceState,
-                              OfxTime time, const OfxPointD &renderScale) {
+                              OfxTime time, const OfxPointD &renderScale,
+                              QString *failureMessage = nullptr) {
   if (!plugin || !plugin->mainEntry) return kOfxStatErrBadHandle;
   PropertySet inArgs;
   setDoubleProperty(inArgs, kOfxPropTime, time);
   setDoublePropertyN(inArgs, kOfxImageEffectPropRenderScale, 2, {renderScale.x, renderScale.y});
   setStringProperty(inArgs, kOfxImageEffectPropFieldToRender, kOfxImageFieldNone);
-  return plugin->mainEntry(kOfxImageEffectActionRender,
-                           reinterpret_cast<const void *>(&instanceState),
-                           reinterpret_cast<OfxPropertySetHandle>(&inArgs),
-                           nullptr);
+  // The render action may write a status message describing why it produced no
+  // result; the spec requires the host to surface it rather than swallow it.
+  PropertySet outArgs;
+  const OfxStatus status = plugin->mainEntry(
+      kOfxImageEffectActionRender,
+      reinterpret_cast<const void *>(&instanceState),
+      reinterpret_cast<OfxPropertySetHandle>(&inArgs),
+      reinterpret_cast<OfxPropertySetHandle>(&outArgs));
+  if (failureMessage) {
+    *failureMessage = readStringProperty(outArgs, kOfxImageEffectPropStatusMessage);
+  }
+  return status;
 }
 
-OfxStatus pluginActionEndSequenceRender(OfxPlugin *plugin, ImageEffectState &instanceState,
+export OfxStatus pluginActionEndSequenceRender(OfxPlugin *plugin, ImageEffectState &instanceState,
                                          const OfxPointD &renderScale) {
   if (!plugin || !plugin->mainEntry) return kOfxStatErrBadHandle;
   PropertySet inArgs;
@@ -1512,9 +1730,71 @@ OfxStatus pluginActionEndSequenceRender(OfxPlugin *plugin, ImageEffectState &ins
                            nullptr);
 }
 
-OfxStatus ofxMessageFunc(void * /*handle*/, const char * /*type*/,
-                        const char * /*messageId*/, const char * /*format*/, ...) {
-  return kOfxStatOK;
+// Depth/component negotiation. The host works in 32-bit float RGBA, so it
+// declares exactly what it can deliver and lets the plugin pick from that.
+// Returning kOfxStatReplyDefault would leave the clip properties unset, which
+// makes plugins fall back to assumptions about depth and pixel layout.
+export OfxStatus pluginActionGetClipPreferences(OfxPlugin *plugin,
+                                                ImageEffectState &instanceState) {
+  if (!plugin || !plugin->mainEntry) return kOfxStatErrBadHandle;
+  PropertySet inArgs;
+  PropertySet outArgs;
+  const OfxStatus status = plugin->mainEntry(
+      kOfxImageEffectActionGetClipPreferences,
+      reinterpret_cast<const void *>(&instanceState),
+      reinterpret_cast<OfxPropertySetHandle>(&inArgs),
+      reinterpret_cast<OfxPropertySetHandle>(&outArgs));
+
+  // The host's own capability, written to every clip regardless of what the
+  // plugin asked for. Per the spec these keys are the literal property names
+  // with the clip name appended ("OfxImageClipPropComponents_<clipName>").
+  for (const auto &kv : instanceState.clips) {
+    PropertySet &target = kv.second->properties;
+    const QByteArray suffix = kv.second->clipName.toUtf8();
+    setStringProperty(target,
+                      (QStringLiteral("OfxImageClipPropComponents_") +
+                       QString::fromUtf8(suffix)).toUtf8().constData(),
+                      kOfxImageComponentRGBA);
+    setStringProperty(target,
+                      (QStringLiteral("OfxImageClipPropDepth_") +
+                       QString::fromUtf8(suffix)).toUtf8().constData(),
+                      kOfxBitDepthFloat);
+    setDoubleProperty(target,
+                      (QStringLiteral("OfxImageClipPropPAR_") +
+                       QString::fromUtf8(suffix)).toUtf8().constData(),
+                      1.0);
+  }
+  setDoubleProperty(outArgs, kOfxImageEffectPropFrameRate, 30.0);
+  setStringProperty(outArgs, kOfxImageClipPropFieldOrder, kOfxImageFieldNone);
+  setStringProperty(outArgs, kOfxImageEffectPropPreMultiplication, kOfxImageOpaque);
+  setIntProperty(outArgs, kOfxImageClipPropContinuousSamples, 0);
+  setIntProperty(outArgs, kOfxImageEffectFrameVarying, 0);
+  return status;
+}
+
+// Lets a plugin report that it can pass its input through untouched, which the
+// host then uses to skip the render call entirely.
+export bool pluginActionIsIdentity(OfxPlugin *plugin,
+                                   ImageEffectState &instanceState,
+                                   OfxTime time,
+                                   const OfxPointD &renderScale) {
+  if (!plugin || !plugin->mainEntry) return false;
+  PropertySet inArgs;
+  setDoubleProperty(inArgs, kOfxPropTime, time);
+  setDoublePropertyN(inArgs, kOfxImageEffectPropRenderScale, 2, {renderScale.x, renderScale.y});
+  setStringProperty(inArgs, kOfxImageEffectPropFieldToRender, kOfxImageFieldNone);
+  PropertySet outArgs;
+  const OfxStatus status = plugin->mainEntry(
+      kOfxImageEffectActionIsIdentity,
+      reinterpret_cast<const void *>(&instanceState),
+      reinterpret_cast<OfxPropertySetHandle>(&inArgs),
+      reinterpret_cast<OfxPropertySetHandle>(&outArgs));
+  if (status != kOfxStatOK) {
+    return false;
+  }
+  const QString identityClip =
+      readStringProperty(outArgs, kOfxPropName);
+  return !identityClip.isEmpty();
 }
 
 OfxMessageSuiteV1 makeMessageSuite() {
@@ -1612,23 +1892,27 @@ public:
     hostDescriptor_.entries[kOfxImageEffectPropSetableFielding].defaults =
         hostDescriptor_.entries[kOfxImageEffectPropSetableFielding].values;
 
+    // The bridge drives values directly, but the keyframe suite is not
+    // implemented: every key query below returns kOfxStatErrUnsupported. A
+    // plugin that trusts these flags builds animated controls the host silently
+    // ignores, so they must advertise the host's actual capability.
     hostDescriptor_.entries[kOfxParamHostPropSupportsCustomAnimation].kind = PropertyKind::Int;
-    hostDescriptor_.entries[kOfxParamHostPropSupportsCustomAnimation].values = {1};
+    hostDescriptor_.entries[kOfxParamHostPropSupportsCustomAnimation].values = {0};
     hostDescriptor_.entries[kOfxParamHostPropSupportsCustomAnimation].defaults =
         hostDescriptor_.entries[kOfxParamHostPropSupportsCustomAnimation].values;
 
     hostDescriptor_.entries[kOfxParamHostPropSupportsStringAnimation].kind = PropertyKind::Int;
-    hostDescriptor_.entries[kOfxParamHostPropSupportsStringAnimation].values = {1};
+    hostDescriptor_.entries[kOfxParamHostPropSupportsStringAnimation].values = {0};
     hostDescriptor_.entries[kOfxParamHostPropSupportsStringAnimation].defaults =
         hostDescriptor_.entries[kOfxParamHostPropSupportsStringAnimation].values;
 
     hostDescriptor_.entries[kOfxParamHostPropSupportsBooleanAnimation].kind = PropertyKind::Int;
-    hostDescriptor_.entries[kOfxParamHostPropSupportsBooleanAnimation].values = {1};
+    hostDescriptor_.entries[kOfxParamHostPropSupportsBooleanAnimation].values = {0};
     hostDescriptor_.entries[kOfxParamHostPropSupportsBooleanAnimation].defaults =
         hostDescriptor_.entries[kOfxParamHostPropSupportsBooleanAnimation].values;
 
     hostDescriptor_.entries[kOfxParamHostPropSupportsChoiceAnimation].kind = PropertyKind::Int;
-    hostDescriptor_.entries[kOfxParamHostPropSupportsChoiceAnimation].values = {1};
+    hostDescriptor_.entries[kOfxParamHostPropSupportsChoiceAnimation].values = {0};
     hostDescriptor_.entries[kOfxParamHostPropSupportsChoiceAnimation].defaults =
         hostDescriptor_.entries[kOfxParamHostPropSupportsChoiceAnimation].values;
 
@@ -1708,9 +1992,21 @@ public:
     for (const auto &kv : desc->descriptorState->clips) {
       auto cs = std::make_unique<ClipState>();
       cs->properties = kv.second->properties;
+      cs->clipName = kv.second->clipName;
+      // Re-point the owner at the new instance. Without this the clip handles
+      // the plugin receives never resolve back to the instance they came from,
+      // so every clipGetImage failed during the render action.
+      cs->owner = state.get();
       state->clips[kv.first] = std::move(cs);
     }
     return state;
+  }
+
+  // False once a rescan has invalidated the library handle this descriptor
+  // captured. Callers must treat a stale descriptor as "cannot render" and
+  // pass the frame through untouched rather than calling into freed code.
+  bool isGenerationCurrent(const OfxPluginDescriptor &descriptor) const {
+    return descriptor.generation == generation_;
   }
 
 private:
@@ -1718,11 +2014,16 @@ private:
   ~ArtifactOfxHost() { clearLoadedPlugins(); }
 
   void clearLoadedPlugins() {
+    // Invalidate every descriptor that points at the libraries being released
+    // before the handles actually go away.
+    ++generation_;
+#ifdef _WIN32
     for (const HMODULE handle : loadedLibraries_) {
       if (handle != nullptr) {
         FreeLibrary(handle);
       }
     }
+#endif
     loadedLibraries_.clear();
     plugins_.clear();
   }
@@ -1744,6 +2045,16 @@ private:
     }
     if (std::strcmp(suiteName, kOfxMessageSuite) == 0) {
       return messageSuite();
+    }
+    // These two are optional in the Image Effect API, but the OFX C++ support
+    // library fetches them unconditionally: a plugin built with it aborts on a
+    // null suite. Providing working implementations is cheaper than making
+    // every such plugin tolerate a missing host.
+    if (std::strcmp(suiteName, kOfxMemorySuite) == 0) {
+      return memorySuite();
+    }
+    if (std::strcmp(suiteName, kOfxTimeLineSuite) == 0) {
+      return timelineSuite();
     }
     return nullptr;
   }
@@ -1890,6 +2201,7 @@ private:
               .arg(static_cast<unsigned int>(plugin->pluginVersionMajor))
               .arg(static_cast<unsigned int>(plugin->pluginVersionMinor)));
       descriptor.libraryHandle = handle;
+      descriptor.generation = generation_;
 
       if (!describePlugin(plugin, bundleDisplayPath(bundlePath, binaryPath), descriptor)) {
         continue;
@@ -1911,26 +2223,21 @@ private:
   }
 
   std::vector<OfxPluginDescriptor> plugins_;
-  std::vector<HMODULE> loadedLibraries_;
+  std::vector<OfxLibraryHandle> loadedLibraries_;
   PropertySet hostDescriptor_;
   OfxHost hostStruct_{};
   bool initialized_ = false;
+  // Bumped on every scan so effect objects holding a descriptor can tell that
+  // their library handle was unloaded by a rescan.
+  std::uint64_t generation_ = 0;
 };
 
-ArtifactOfxHost &artifactOfxHostInstance() {
-  return ArtifactOfxHost::instance();
-}
-
 ImageEffectState *imageEffectForClip(const ClipState *clip) {
-  if (!clip) return nullptr;
-  for (const auto &desc : ArtifactOfxHost::instance().getLoadedPlugins()) {
-    if (desc.descriptorState) {
-      for (const auto &kv : desc.descriptorState->clips) {
-        if (kv.second.get() == clip) return desc.descriptorState.get();
-      }
-    }
-  }
-  return nullptr;
+  // The clip carries a direct owner pointer. Walking the loaded-plugin list
+  // could never resolve a render instance's clips: createRenderInstance
+  // allocates fresh ClipState objects, so their addresses are absent from every
+  // descriptor and the reverse lookup failed for all render-time fetches.
+  return clip ? clip->owner : nullptr;
 }
 
 } // namespace Ofx

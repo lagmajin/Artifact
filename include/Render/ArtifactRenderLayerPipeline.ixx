@@ -5,6 +5,7 @@ module;
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
+#include <QList>
 #include "../../../ArtifactCore/include/Define/DllExportMacro.hpp"
 #include <vector>
 
@@ -116,7 +117,8 @@ export namespace Artifact
   // RGBA16F targets. Scratch and output must be distinct UAVs.
   // Cold-path preparation; dispatch never allocates Reveal resources.
   bool prepareReveal(IDeviceContext* ctx);
-  void prepareRevealMaps(IDeviceContext* ctx, const std::vector<ArtifactAbstractLayerPtr>& layers);
+  void prepareRevealMaps(IDeviceContext* ctx,
+                         const QList<ArtifactAbstractLayerPtr>& layers);
   ITextureView* revealMapSRV(const ArtifactAbstractLayer* layer) const;
 
   // historySRV / historyValid let temporal nodes read a neighbouring frame.
@@ -204,7 +206,8 @@ export namespace Artifact
   // choice).  Returns false when the pool is exhausted, which tells the
   // caller to use the CPU history path instead — an explicit bounded
   // fallback rather than unbounded growth.
-  bool recordLayerFrame(std::uint32_t layerKey, std::int64_t frame,
+  bool recordLayerFrame(IDeviceContext* ctx, std::uint32_t layerKey,
+                        std::int64_t frame,
                         ITextureView* sourceSRV);
   // Returns the retained frame for `frame` when it is exactly the previous
   // frame of `currentFrame`, and reports validity.  A seek, a reverse step, or

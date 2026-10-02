@@ -9,6 +9,7 @@ import Property.Abstract;
 import Time.Rational;
 
 // Qt preprocessor macros are not carried by an imported IFC.
+#undef QStringLiteral
 #define QStringLiteral(text) QString::fromUtf8(text)
 
 namespace Artifact {

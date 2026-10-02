@@ -487,8 +487,8 @@ bool ContentGizmo::handleMousePress(const QPointF& viewportPos,
     const SourceCrop enabled = imageLayer->sourceCrop();
     QRectF cropStart = enabled.cropRect();
     const auto sourceSize = imageLayer->sourceSize();
-    dragCropSourceSize_ = {static_cast<double>(sourceSize.width),
-                           static_cast<double>(sourceSize.height)};
+    dragCropSourceSize_ = {static_cast<float>(sourceSize.width),
+                           static_cast<float>(sourceSize.height)};
     if (!cropStart.isValid() || cropStart.width() <= 0.0 ||
         cropStart.height() <= 0.0) {
       cropStart = QRectF(QPointF(0.0, 0.0),

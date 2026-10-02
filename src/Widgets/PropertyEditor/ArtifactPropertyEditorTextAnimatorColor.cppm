@@ -206,7 +206,8 @@ bool editGradientStops(QWidget* parent, QJsonArray& stops) {
   actions->addWidget(done);
   layout->addLayout(actions);
 
-  auto rebuildRows = [&]() {
+  std::function<void()> rebuildRows;
+  rebuildRows = [&]() {
     while (QLayoutItem* item = rows->takeAt(0)) {
       if (QWidget* widget = item->widget()) {
         widget->hide();

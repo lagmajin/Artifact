@@ -45,6 +45,7 @@ module;
 module Artifact.Widgets.AudioMixer;
 
 import Audio.Bus;
+import Audio.Effect;
 import Audio.Mixer;
 import Audio.Effect.Spectrum;
 import Artifact.VST.Effect;
@@ -221,6 +222,81 @@ PluginEditorDialog* openPluginEditorDialog(
     openEditors[editorKey] = dialog;
     dialog->show();
     return dialog;
+}
+
+// 外部ホスト実装（VST / CLAP）のエディタ編集を 1 経路に集約する binding。
+// ここでの dynamic_cast は 2 箇所だけの分岐に閉じており、
+// メニュー構築側は具象型を知らずに同じ編集経路を使える。
+// identity はダイアログの再オープン判定用のキーで、
+// エディタ操作はクロージャが各エフェクトを捕まえるため型に依存しない。
+struct ExternalPluginEditorBinding {
+    const void* identity = nullptr;
+    std::function<bool()> hasEditor;
+    std::function<bool(QWidget*, void*, int&, int&, void*,
+                       bool (*)(void*, int, int), bool&)> openEditor;
+    std::function<bool(int&, int&)> resizeEditor;
+    std::function<void()> closeEditor;
+};
+
+static ExternalPluginEditorBinding bindExternalPluginEditor(
+    ArtifactCore::SharedPtr<ArtifactCore::AudioEffect> effect) {
+    ExternalPluginEditorBinding binding;
+    if (auto vst = ArtifactCore::dynamicPointerCast<Artifact::VSTEffect>(effect)) {
+        binding.identity = vst.get();
+        binding.hasEditor = [vst]() { return vst->hasEditor(); };
+        binding.openEditor = [vst](QWidget*, void* nativeParent, int& width,
+                                   int& height, void* resizeContext,
+                                   bool (*resizeCallback)(void*, int, int),
+                                   bool& resizable) {
+            return vst->openEditorWindow(nativeParent, resizeContext,
+                                         resizeCallback, width, height,
+                                         resizable);
+        };
+        binding.resizeEditor = [vst](int& width, int& height) {
+            return vst->resizeEditor(width, height);
+        };
+        binding.closeEditor = [vst]() { vst->closeEditor(); };
+        return binding;
+    }
+    if (auto clapEffect =
+            ArtifactCore::dynamicPointerCast<clap::ClapEffect>(effect)) {
+        binding.identity = clapEffect.get();
+        binding.hasEditor = [clapEffect]() { return clapEffect->hasEditor(); };
+        binding.openEditor = [clapEffect](QWidget*, void* nativeParent,
+                                          int& width, int& height,
+                                          void* resizeContext,
+                                          bool (*resizeCallback)(void*, int, int),
+                                          bool& resizable) {
+            const clap_window parent =
+                clapWindowForNativeHandle(nativeParent);
+            if (!parent.api) return false;
+            uint32_t pluginWidth = 0;
+            uint32_t pluginHeight = 0;
+            const bool opened = clapEffect->openEditor(
+                parent, resizeContext, resizeCallback,
+                pluginWidth, pluginHeight, resizable);
+            if (opened) {
+                width = static_cast<int>(pluginWidth);
+                height = static_cast<int>(pluginHeight);
+            }
+            return opened;
+        };
+        binding.resizeEditor = [clapEffect](int& width, int& height) {
+            if (width <= 0 || height <= 0) return false;
+            uint32_t pluginWidth = static_cast<uint32_t>(width);
+            uint32_t pluginHeight = static_cast<uint32_t>(height);
+            const bool resized = clapEffect->resizeEditor(
+                pluginWidth, pluginHeight);
+            if (resized) {
+                width = static_cast<int>(pluginWidth);
+                height = static_cast<int>(pluginHeight);
+            }
+            return resized;
+        };
+        binding.closeEditor = [clapEffect]() { clapEffect->closeEditor(); };
+        return binding;
+    }
+    return binding;
 }
 
 class RoutingComboBox final : public QComboBox {
@@ -484,69 +560,16 @@ void AudioEffectSlotWidget::mousePressEvent(QMouseEvent* event) {
             });
         }
 
-        if (auto vst = ArtifactCore::dynamicPointerCast<Artifact::VSTEffect>(effect)) {
-            if (vst->hasEditor()) {
-                menu.addAction("Open Plug-in UI...", [this, vst]() {
-                    const QString title = QString::fromStdString(
-                        vst->getPluginName());
-                    openPluginEditorDialog(
-                        this, vst.get(), title,
-                        [vst](QWidget*, void* nativeParent, int& width,
-                              int& height, void* resizeContext,
-                              bool (*resizeCallback)(void*, int, int),
-                              bool& resizable) {
-                            return vst->openEditorWindow(
-                                nativeParent, resizeContext, resizeCallback,
-                                width, height, resizable);
-                        },
-                        [vst](int& width, int& height) {
-                            return vst->resizeEditor(width, height);
-                        },
-                        [vst]() { vst->closeEditor(); });
-                });
-            }
-        }
-        if (auto clapEffect =
-                ArtifactCore::dynamicPointerCast<clap::ClapEffect>(effect)) {
-            if (clapEffect->hasEditor()) {
-                menu.addAction("Open Plug-in UI...", [this, clapEffect]() {
-                    const QString title = QString::fromStdString(
-                        ArtifactCore::toStdString(clapEffect->getName()));
-                    openPluginEditorDialog(
-                        this, clapEffect.get(), title,
-                        [clapEffect](QWidget*, void* nativeParent, int& width,
-                                     int& height, void* resizeContext,
-                                     bool (*resizeCallback)(void*, int, int),
-                                     bool& resizable) {
-                            const clap_window parent =
-                                clapWindowForNativeHandle(nativeParent);
-                            if (!parent.api) return false;
-                            uint32_t pluginWidth = 0;
-                            uint32_t pluginHeight = 0;
-                            const bool opened = clapEffect->openEditor(
-                                parent, resizeContext, resizeCallback,
-                                pluginWidth, pluginHeight, resizable);
-                            if (opened) {
-                                width = static_cast<int>(pluginWidth);
-                                height = static_cast<int>(pluginHeight);
-                            }
-                            return opened;
-                        },
-                        [clapEffect](int& width, int& height) {
-                            if (width <= 0 || height <= 0) return false;
-                            uint32_t pluginWidth = static_cast<uint32_t>(width);
-                            uint32_t pluginHeight = static_cast<uint32_t>(height);
-                            const bool resized = clapEffect->resizeEditor(
-                                pluginWidth, pluginHeight);
-                            if (resized) {
-                                width = static_cast<int>(pluginWidth);
-                                height = static_cast<int>(pluginHeight);
-                            }
-                            return resized;
-                        },
-                        [clapEffect]() { clapEffect->closeEditor(); });
-                });
-            }
+        const ExternalPluginEditorBinding binding = bindExternalPluginEditor(effect);
+        if (binding.identity && binding.hasEditor && binding.hasEditor()) {
+            menu.addAction("Open Plug-in UI...", [this, effect, binding]() {
+                const QString title = QString::fromStdString(
+                    ArtifactCore::toStdString(effect->getName()));
+                openPluginEditorDialog(
+                    this, binding.identity, title,
+                    binding.openEditor, binding.resizeEditor,
+                    binding.closeEditor);
+            });
         }
     }
 

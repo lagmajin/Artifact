@@ -566,8 +566,12 @@ public:
                     applyHomography3x3(matrix, vertex.position + vertex.inTangent);
                 const QPointF outAnchor =
                     applyHomography3x3(matrix, vertex.position + vertex.outTangent);
-                if (!position.isFinite() || !inAnchor.isFinite() ||
-                    !outAnchor.isFinite()) {
+                if (!std::isfinite(position.x()) ||
+                    !std::isfinite(position.y()) ||
+                    !std::isfinite(inAnchor.x()) ||
+                    !std::isfinite(inAnchor.y()) ||
+                    !std::isfinite(outAnchor.x()) ||
+                    !std::isfinite(outAnchor.y())) {
                     frameUsable = false;
                     break;
                 }

@@ -150,7 +150,7 @@ std::vector<AbstractProperty> LUTEffect::getProperties() const {
     std::vector<AbstractProperty> props(3);
 
     props[0].setName("Preset");
-    props[0].setType(ArtifactCore::PropertyType::Int);
+    props[0].setType(ArtifactCore::PropertyType::Integer);
     props[0].setValue(QVariant(static_cast<int>(preset_)));
 
     props[1].setName("LUT File");

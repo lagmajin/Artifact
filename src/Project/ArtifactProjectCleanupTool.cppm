@@ -5,6 +5,7 @@ module;
 #include <QVector>
 #include <QSet>
 #include <QDebug>
+#include <QDir>
 #include <QFileInfo>
 #include <QVariant>
 #include <QMetaType>

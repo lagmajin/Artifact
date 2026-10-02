@@ -29,12 +29,15 @@
 #include <numeric>
 #include <regex>
 #include <random>
+#include <QString>
+#include <QtGlobal>
 export module Artifact.VST.Effect;
 
 
 
 
 import Audio.Segment;
+import Audio.Effect;
 import Artifact.Audio.Effects.Base;
 
 export namespace Artifact {
@@ -57,10 +60,20 @@ public:
     void process(ArtifactCore::AudioSegment& segment, const ArtifactCore::AudioSegment* sideChain = nullptr) override;
     String getName() const override { return String("VST Effect"); }
     String getDescription() const override { return String("VST plugin effect"); }
-    
+
     std::vector<AudioEffectParameter> getUiParameters() const override;
     void setParameter(const String& name, float value) override;
     float getParameter(const String& name) const override;
+
+    // ArtifactCore::AudioEffect インターフェース — CLAP 側と同じ経路。
+    // シリアライズと latencySamples()/tailSamples() 集約が UI に依らず機能する。
+    std::vector<ArtifactCore::EffectParameter> getParameters() const override;
+    void setParameterValue(const ArtifactCore::String& id, float value) override;
+    float getParameterValue(const ArtifactCore::String& id) const override;
+    ArtifactCore::String effectType() const override;
+
+    qint64 latencySamples() const override;
+    qint64 tailSamples() const override;
 
     // VST 固有メソッド
     void openEditor(void* parentWindow);

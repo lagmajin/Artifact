@@ -313,7 +313,6 @@ void ArtifactPointTrackerGizmo::draw(ArtifactIRenderer* renderer) {
                     Qt::AlignLeft | Qt::AlignVCenter);
             }
         }
-        }
     }
 }
 
@@ -489,6 +488,8 @@ bool ArtifactPointTrackerGizmo::handleMousePress(const QPointF& viewportPos, Art
         // PathPoint ドラッグ開始
         const int pointId = impl_->tracker->firstTrackPointId();
         const auto path = impl_->tracker->motionPath(pointId);
+        buildPathToFrameIndex(impl_->tracker->resultRef(), pointId,
+                              impl_->pathToFrameIndex);
         const int idx = impl_->hitPathIndex;
         if (idx >= 0 && idx < static_cast<int>(path.size())) {
             impl_->draggedPathIndex = idx;
@@ -528,8 +529,9 @@ bool ArtifactPointTrackerGizmo::handleMouseMove(const QPointF& viewportPos, Arti
         const auto& frames = result.frames;
         const int idx = impl_->draggedPathIndex;
         const int pointId = impl_->tracker->firstTrackPointId();
-        const int frameIndex = frameIndexForPathIndex(result, pointId, idx);
-        if (pointId >= 0 && frameIndex >= 0) {
+        const auto& frameIndices = impl_->pathToFrameIndex;
+        if (idx >= 0 && static_cast<std::size_t>(idx) < frameIndices.size()) {
+            const int frameIndex = frameIndices[static_cast<std::size_t>(idx)];
             impl_->tracker->applyCorrection(
                 frames[static_cast<std::size_t>(frameIndex)].time, pointId,
                 correctedPos);

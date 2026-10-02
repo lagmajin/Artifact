@@ -322,7 +322,7 @@ public:
         while (glyphFontCacheSlots_[slot] >= 0) {
             const size_t cachedIndex = static_cast<size_t>(
                 glyphFontCacheSlots_[slot]);
-            const ResolvedGlyphFont& cached = glyphFontCache_[cachedIndex];
+            ResolvedGlyphFont& cached = glyphFontCache_[cachedIndex];
             if (cached.codePoint == codePoint &&
                 cached.shapedGlyphIndex == shapedGlyphIndex &&
                 cached.clusterText == clusterText) {

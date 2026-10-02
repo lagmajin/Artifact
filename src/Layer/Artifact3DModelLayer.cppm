@@ -265,7 +265,7 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
           const auto& sourceTransform = sourceTransforms[slotIndex];
           for (int row = 0; row < 4; ++row) {
             for (int col = 0; col < 4; ++col) {
-              localTransform[row][col] = sourceTransform.transform[row * 4 + col];
+              localTransform(row, col) = sourceTransform.transform[row * 4 + col];
             }
           }
         }

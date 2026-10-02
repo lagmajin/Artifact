@@ -13,6 +13,7 @@ import Property.Abstract;
 import Property.Group;
 
 // Qt preprocessor macros are not carried by an imported IFC.
+#undef QStringLiteral
 #define QStringLiteral(text) QString::fromUtf8(text)
 
 namespace Artifact {

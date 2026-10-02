@@ -29,6 +29,9 @@ private slots:
     void onRestoreB();
     void onBranch();
     void onDiff();
+    void onMerge();
+    void onKeepOurs();
+    void onKeepTheirs();
 
 private:
     class Impl;

@@ -98,6 +98,18 @@ int findSnapshotIndex(QComboBox* combo, const QString& snapshotId) {
     return index;
 }
 
+QString conflictKindLabel(RevisionMergeConflict::Kind kind) {
+    switch (kind) {
+    case RevisionMergeConflict::Kind::Content:
+        return QStringLiteral("content");
+    case RevisionMergeConflict::Kind::DeleteModify:
+        return QStringLiteral("delete/modify");
+    case RevisionMergeConflict::Kind::Order:
+        return QStringLiteral("order");
+    }
+    return QStringLiteral("conflict");
+}
+
 QString joinChangedPaths(const QJsonArray& changes) {
     QStringList paths;
     for (const auto& value : changes) {
@@ -175,6 +187,11 @@ public:
     SnapshotActionButton* restoreAButton = nullptr;
     SnapshotActionButton* restoreBButton = nullptr;
     SnapshotActionButton* diffButton = nullptr;
+    SnapshotActionButton* mergeButton = nullptr;
+    QWidget* conflictPanel = nullptr;
+    QListWidget* conflictList = nullptr;
+    SnapshotActionButton* keepOursButton = nullptr;
+    SnapshotActionButton* keepTheirsButton = nullptr;
 
     QLabel* statusLabel = nullptr;
     QFrame* divider = nullptr;
@@ -183,6 +200,8 @@ public:
     QString currentSnapshotA;
     QString currentSnapshotB;
     std::vector<QString> availableSnapshots;
+    // Paths the user chose to take from the other side instead of ours.
+    QStringList pathsTakingTheirs;
 };
 
 ArtifactSnapshotCompareWidget::ArtifactSnapshotCompareWidget(QWidget* parent)
@@ -222,12 +241,14 @@ ArtifactSnapshotCompareWidget::ArtifactSnapshotCompareWidget(QWidget* parent)
     impl_->restoreBButton = new SnapshotActionButton("Restore B", this);
     impl_->branchButton = new SnapshotActionButton("Branch", this);
     impl_->diffButton = new SnapshotActionButton("Diff", this);
+    impl_->mergeButton = new SnapshotActionButton("Merge B into A", this);
 
     actionLayout->addWidget(impl_->compareButton);
     actionLayout->addWidget(impl_->restoreAButton);
     actionLayout->addWidget(impl_->restoreBButton);
     actionLayout->addWidget(impl_->branchButton);
     actionLayout->addWidget(impl_->diffButton);
+    actionLayout->addWidget(impl_->mergeButton);
 
     root->addLayout(actionLayout);
 
@@ -275,6 +296,33 @@ ArtifactSnapshotCompareWidget::ArtifactSnapshotCompareWidget(QWidget* parent)
 
     root->addWidget(splitter, 1);
 
+    // Conflict resolution panel. Hidden until a merge reports conflicts so the
+    // compare view stays uncluttered for the common case.
+    impl_->conflictPanel = new QWidget(this);
+    auto* conflictLayout = new QVBoxLayout(impl_->conflictPanel);
+    conflictLayout->setContentsMargins(4, 4, 4, 4);
+    conflictLayout->setSpacing(4);
+
+    auto* conflictLabel = new QLabel("Merge conflicts", impl_->conflictPanel);
+    conflictLabel->setFont(QFont(conflictLabel->font().family(), -1, QFont::Bold));
+    conflictLayout->addWidget(conflictLabel);
+
+    impl_->conflictList = new QListWidget(impl_->conflictPanel);
+    impl_->conflictList->setAlternatingRowColors(true);
+    conflictLayout->addWidget(impl_->conflictList);
+
+    auto* resolveLayout = new QHBoxLayout();
+    resolveLayout->setSpacing(8);
+    impl_->keepOursButton = new SnapshotActionButton("Keep Mine", impl_->conflictPanel);
+    impl_->keepTheirsButton = new SnapshotActionButton("Keep Theirs", impl_->conflictPanel);
+    resolveLayout->addWidget(impl_->keepOursButton);
+    resolveLayout->addWidget(impl_->keepTheirsButton);
+    resolveLayout->addStretch(1);
+    conflictLayout->addLayout(resolveLayout);
+
+    impl_->conflictPanel->setVisible(false);
+    root->addWidget(impl_->conflictPanel);
+
     // Status bar
     impl_->statusLabel = new QLabel("No snapshots selected", this);
     {
@@ -290,8 +338,14 @@ ArtifactSnapshotCompareWidget::ArtifactSnapshotCompareWidget(QWidget* parent)
     impl_->restoreBButton->setCallback([this]() { onRestoreB(); });
     impl_->branchButton->setCallback([this]() { onBranch(); });
     impl_->diffButton->setCallback([this]() { onDiff(); });
+    impl_->mergeButton->setCallback([this]() { onMerge(); });
+    impl_->keepOursButton->setCallback([this]() { onKeepOurs(); });
+    impl_->keepTheirsButton->setCallback([this]() { onKeepTheirs(); });
 
     impl_->compareButton->setToolTip(QStringLiteral("Compare the selected snapshots"));
+    impl_->mergeButton->setToolTip(QStringLiteral("Merge Snapshot B into Snapshot A and create a merge revision"));
+    impl_->keepOursButton->setToolTip(QStringLiteral("Resolve the selected conflicts with the current project's value"));
+    impl_->keepTheirsButton->setToolTip(QStringLiteral("Resolve the selected conflicts with the other snapshot's value"));
     impl_->restoreAButton->setToolTip(QStringLiteral("Restore Snapshot A to the current project"));
     impl_->restoreBButton->setToolTip(QStringLiteral("Restore Snapshot B to the current project"));
     impl_->branchButton->setToolTip(QStringLiteral("Restore the selected snapshot and commit a branch snapshot"));
@@ -450,17 +504,155 @@ void ArtifactSnapshotCompareWidget::onBranch()
         return;
     }
 
+    // Switch to the branch point first, then open a branch there. Creating a
+    // named ref keeps the original history intact instead of rewriting it.
     if (!service->restoreRevision(sourceId)) {
         impl_->statusLabel->setText(QStringLiteral("Failed to restore source snapshot"));
         return;
     }
-
-    const QString message = QStringLiteral("Branch from snapshot %1").arg(sourceId.left(8));
-    if (service->commitCurrentProject(message, QString(), {QStringLiteral("branch"), sourceId.left(8)})) {
-        impl_->statusLabel->setText(QStringLiteral("Created branch from %1").arg(sourceId.left(8)));
+    const QString branchName =
+        QStringLiteral("branch-%1").arg(sourceId.left(8));
+    if (service->createBranch(branchName, sourceId)) {
+        impl_->statusLabel->setText(
+            QStringLiteral("Created branch %1 from %2").arg(branchName, sourceId.left(8)));
     } else {
-        impl_->statusLabel->setText(QStringLiteral("Branch commit failed"));
+        impl_->statusLabel->setText(QStringLiteral("Branch creation failed"));
     }
+}
+
+void ArtifactSnapshotCompareWidget::onMerge()
+{
+    auto* service = ArtifactRevisionService::instance();
+    if (!service) {
+        impl_->statusLabel->setText(QStringLiteral("Snapshot service unavailable"));
+        return;
+    }
+
+    const QString oursId = selectedSnapshotId(impl_->snapshotASelector);
+    const QString theirsId = selectedSnapshotId(impl_->snapshotBSelector);
+    if (oursId.isEmpty() || theirsId.isEmpty()) {
+        impl_->statusLabel->setText(QStringLiteral("Select two snapshots first"));
+        return;
+    }
+    if (oursId == theirsId) {
+        impl_->statusLabel->setText(QStringLiteral("Select two different snapshots to merge"));
+        return;
+    }
+
+    // First pass: only preview. Committing happens on the second press once
+    // the user has seen the conflicts and picked a side for each one.
+    const bool hasChoices = !impl_->pathsTakingTheirs.isEmpty();
+    const RevisionMergeResult preview =
+        service->mergeRevisions(oursId, theirsId);
+    if (!preview.ok) {
+        impl_->statusLabel->setText(QStringLiteral("Merge failed"));
+        return;
+    }
+
+    const auto autoResolvedNote = [](const RevisionMergeResult& result) {
+        if (result.autoResolved.isEmpty()) {
+            return QString();
+        }
+        return QStringLiteral(" (%1 auto-resolved)").arg(result.autoResolved.size());
+    };
+
+    if (preview.conflicts.isEmpty()) {
+        if (service->mergeRevisionIntoProject(oursId, theirsId)) {
+            loadSnapshots({});
+            impl_->conflictPanel->setVisible(false);
+            impl_->pathsTakingTheirs.clear();
+            impl_->statusLabel->setText(
+                QStringLiteral("Merged %1 into %2%3")
+                    .arg(theirsId.left(8), oursId.left(8),
+                         autoResolvedNote(preview)));
+        } else {
+            impl_->statusLabel->setText(QStringLiteral("Merge commit failed"));
+        }
+        return;
+    }
+
+    impl_->conflictList->clear();
+    for (const auto& conflict : preview.conflicts) {
+        auto* item = new QListWidgetItem(
+            QStringLiteral("%1 [%2]").arg(conflict.path, conflictKindLabel(conflict.kind)),
+            impl_->conflictList);
+        item->setData(Qt::UserRole, conflict.path);
+        item->setToolTip(QStringLiteral("mine: %1\ntheirs: %2")
+                             .arg(conflict.oursValue.toVariant().toString(),
+                                  conflict.theirsValue.toVariant().toString()));
+    }
+    impl_->conflictPanel->setVisible(true);
+
+    // The merge only lands once every conflict has an explicit side. Unresolved
+    // ones default to ours, so pressing Merge again without touching the list
+    // is a valid "take mine everywhere" action.
+    int unresolved = 0;
+    for (int i = 0; i < impl_->conflictList->count(); ++i) {
+        const QString path =
+            impl_->conflictList->item(i)->data(Qt::UserRole).toString();
+        if (!impl_->pathsTakingTheirs.contains(path)) {
+            ++unresolved;
+        }
+    }
+
+    if (hasChoices) {
+        const int resolutionCount = impl_->pathsTakingTheirs.size();
+        if (service->mergeRevisionIntoProject(
+                oursId, theirsId, impl_->pathsTakingTheirs)) {
+            loadSnapshots({});
+            impl_->conflictPanel->setVisible(false);
+            impl_->pathsTakingTheirs.clear();
+            impl_->statusLabel->setText(
+                QStringLiteral("Merged %1 into %2 with %3 resolution(s)%4")
+                    .arg(theirsId.left(8), oursId.left(8))
+                    .arg(resolutionCount)
+                    .arg(autoResolvedNote(preview)));
+        } else {
+            impl_->statusLabel->setText(QStringLiteral("Merge commit failed"));
+        }
+        return;
+    }
+
+    impl_->statusLabel->setText(
+        QStringLiteral("Merge has %1 conflict(s) from base %2 — %3 remain, unresolved ones keep mine%4")
+            .arg(preview.conflicts.size())
+            .arg(preview.mergeBaseRevisionId.isEmpty()
+                     ? QStringLiteral("(none)")
+                     : preview.mergeBaseRevisionId.left(8))
+            .arg(unresolved)
+            .arg(autoResolvedNote(preview)));
+}
+
+void ArtifactSnapshotCompareWidget::onKeepOurs()
+{
+    if (!impl_->conflictList) {
+        return;
+    }
+    QListWidgetItem* item = impl_->conflictList->currentItem();
+    if (!item) {
+        impl_->statusLabel->setText(QStringLiteral("Select a conflict first"));
+        return;
+    }
+    const QString path = item->data(Qt::UserRole).toString();
+    impl_->pathsTakingTheirs.removeAll(path);
+    impl_->statusLabel->setText(QStringLiteral("Keeping mine for %1").arg(path));
+}
+
+void ArtifactSnapshotCompareWidget::onKeepTheirs()
+{
+    if (!impl_->conflictList) {
+        return;
+    }
+    QListWidgetItem* item = impl_->conflictList->currentItem();
+    if (!item) {
+        impl_->statusLabel->setText(QStringLiteral("Select a conflict first"));
+        return;
+    }
+    const QString path = item->data(Qt::UserRole).toString();
+    if (!impl_->pathsTakingTheirs.contains(path)) {
+        impl_->pathsTakingTheirs.push_back(path);
+    }
+    impl_->statusLabel->setText(QStringLiteral("Keeping theirs for %1").arg(path));
 }
 
 void ArtifactSnapshotCompareWidget::onDiff()

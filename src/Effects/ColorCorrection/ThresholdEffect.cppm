@@ -26,6 +26,7 @@ import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
 import Core.Parallel;
 import Memory.SharedPtr;
+import Graphics.SurfaceColorContract;
 
 namespace Artifact {
 
@@ -196,7 +197,7 @@ public:
 private:
     struct ParamsCB {
         float threshold = 0.5f;
-        float3 pad = {0.0f, 0.0f, 0.0f};
+        float pad[3] = {};
     };
 
     static constexpr const char* kThresholdHlsl = R"(
@@ -265,7 +266,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
                                Diligent::ITexture* src,
                                Diligent::RefCntAutoPtr<Diligent::ITexture>& staging,
                                ImageF32x4RGBAWithCache& dst,
-                               const ArtifactCore::ImageColorDescriptor& colorDescriptor,
+                               const ArtifactCore::SurfaceColorDescriptor& colorDescriptor,
                                const char* name)
     {
         if (!device || !ctx || !src) return false;

@@ -2298,7 +2298,7 @@ void ArtifactProjectService::Impl::addLayerToCurrentComposition(
         // QMatrix4x4 perspective cameras look down local -Z. Keeping a newly
         // created camera at the same Z as the scene puts every model on the
         // near plane, so the whole 3D scene is clipped away.
-        const float initialZ = params.layerType() == LayerType::Camera
+        const float initialZ = effectiveParams->layerType() == LayerType::Camera
             ? 1000.0f
             : current.z();
         result.layer->setPosition3D({compCenterX, compCenterY, initialZ});
@@ -6412,6 +6412,7 @@ QVector<RelinkCandidate> ArtifactProjectService::findRelinkCandidates(
   static const QRegularExpression sequencePattern(
       QStringLiteral(R"(^(.*?)(\d+)(\.[^.]+)$)"));
   const auto oldSequenceMatch = sequencePattern.match(oldName);
+  const FootageItem *oldFootage = findFootageItemByPath(oldFilePath);
   const QUuid oldAssetId = resolveAssetIdForPath(oldFilePath);
   QDirIterator iterator(root.absolutePath(), QDir::Files,
                         QDirIterator::Subdirectories);

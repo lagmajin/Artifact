@@ -33,6 +33,7 @@ module;
 #include <cmath>
 #include <limits>
 #include <map>
+#include <optional>
 #include <vector>
 
 module Artifact.Composition.Abstract;
@@ -3610,7 +3611,7 @@ bool ArtifactAbstractComposition::hasLayerComponentSimulationSnapshot(
        impl_->componentSimulation_.snapshots.contains(frame));
 }
 
-ArtifactCore::Optional<std::int64_t>
+std::optional<qint64>
 ArtifactAbstractComposition::layerComponentSimulationSnapshotAtOrBefore(
     std::int64_t frame) const
 {

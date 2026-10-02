@@ -434,33 +434,15 @@ public:
             QJsonObject customOperationPayload;
             const QString operationAction = preflight
                 ? action.mid(QStringLiteral("preflight.").size()) : action;
+            // Single edits declare their own wire payload through the command
+            // itself. Only macro batches still aggregate child payloads here.
             const bool customCollaborationCommand = dispatchCommand &&
                 dispatchCommand->buildCollaborationOperation(
                     operationAction, customOperationType, customLayerId,
                     customOperationPayload);
-            const bool singlePropertyCommand = dispatchCommand &&
-                dispatchCommand->commandType() ==
-                    QStringLiteral("SetLayerPropertyValueCommand");
-            const bool singleKeyframeCommand = dispatchCommand &&
-                dispatchCommand->commandType() ==
-                    QStringLiteral("SetLayerPropertyKeyframesCommand");
-            const bool singleExpressionCommand = dispatchCommand &&
-                dispatchCommand->commandType() ==
-                    QStringLiteral("SetLayerPropertyExpressionCommand");
-            const bool singleComponentsCommand = dispatchCommand &&
-                dispatchCommand->commandType() ==
-                    QStringLiteral("LayerComponentDescriptorSnapshotCommand");
-            const bool singleStackCommand = dispatchCommand &&
-                (dispatchCommand->commandType() ==
-                     QStringLiteral("ClonerTransformStackSnapshotCommand") ||
-                 dispatchCommand->commandType() ==
-                     QStringLiteral("CloneEffectorStackSnapshotCommand"));
             const bool macroBatch = !dispatchCommand &&
                 command.commandType() == QStringLiteral("MacroUndoCommand");
-            if (!singlePropertyCommand && !singleKeyframeCommand &&
-                !singleExpressionCommand && !singleComponentsCommand &&
-                !singleStackCommand &&
-                !macroBatch && !customCollaborationCommand) {
+            if (!macroBatch && !customCollaborationCommand) {
               if (widget_) {
                 widget_->setLayerEditBlockedStatus(
                     QStringLiteral("This edit type is not synchronized in the current collaboration session"));
@@ -470,29 +452,8 @@ public:
             if (macroBatch && !command.canSerialize()) {
               return UndoManager::CollaborationEditDispatch{false, {}, -1};
             }
-            if (singleKeyframeCommand && !dispatchCommand->canSerialize()) {
-              if (widget_) {
-                widget_->setLayerEditBlockedStatus(
-                    QStringLiteral("This keyframe value cannot be represented by the collaboration protocol"));
-              }
-              return UndoManager::CollaborationEditDispatch{false, {}, -1};
-            }
-            if (singleComponentsCommand && !dispatchCommand->canSerialize()) {
-              return UndoManager::CollaborationEditDispatch{false, {}, -1};
-            }
-            if (singleStackCommand && !dispatchCommand->canSerialize()) {
-              return UndoManager::CollaborationEditDispatch{false, {}, -1};
-            }
             const bool undo = action == QStringLiteral("undo");
             QJsonArray changes;
-            QString keyframeLayerId;
-            QJsonObject keyframePayload;
-            QString expressionLayerId;
-            QJsonObject expressionPayload;
-            QString componentsLayerId;
-            QJsonObject componentsPayload;
-            QString stackLayerId;
-            QJsonObject stackPayload;
             const auto appendPropertyChange =
                 [&changes, undo](const QJsonObject& data) {
                   const QString layerId =
@@ -562,91 +523,7 @@ public:
                   return changes.size() <= 128;
                 };
             if (customCollaborationCommand) {
-              // The command supplied its own collaboration wire payload above.
-            } else if (singlePropertyCommand) {
-              if (!appendPropertyChange(dispatchCommand->serialize())) {
-                return UndoManager::CollaborationEditDispatch{false, {}, -1};
-              }
-            } else if (singleKeyframeCommand) {
-              const QJsonObject data = dispatchCommand->serialize();
-              keyframeLayerId =
-                  data.value(QStringLiteral("layerId")).toString();
-              const QString propertyPath =
-                  data.value(QStringLiteral("propertyPath")).toString();
-              const QJsonValue before = data.value(QStringLiteral("before"));
-              const QJsonValue after = data.value(QStringLiteral("after"));
-              if (keyframeLayerId.isEmpty() || propertyPath.isEmpty() ||
-                  !before.isArray() || !after.isArray()) {
-                return UndoManager::CollaborationEditDispatch{false, {}, -1};
-              }
-              keyframePayload.insert(QStringLiteral("propertyPath"), propertyPath);
-              keyframePayload.insert(QStringLiteral("expectedKeyframes"),
-                                     undo ? after : before);
-              keyframePayload.insert(QStringLiteral("keyframes"),
-                                     undo ? before : after);
-              const bool hasBeforeAnimatable =
-                  data.contains(QStringLiteral("beforeAnimatable"));
-              const bool hasAfterAnimatable =
-                  data.contains(QStringLiteral("afterAnimatable"));
-              if (hasBeforeAnimatable != hasAfterAnimatable) {
-                return UndoManager::CollaborationEditDispatch{false, {}, -1};
-              }
-              if (hasBeforeAnimatable) {
-                const QJsonValue beforeAnimatable =
-                    data.value(QStringLiteral("beforeAnimatable"));
-                const QJsonValue afterAnimatable =
-                    data.value(QStringLiteral("afterAnimatable"));
-                if (!beforeAnimatable.isBool() || !afterAnimatable.isBool()) {
-                  return UndoManager::CollaborationEditDispatch{false, {}, -1};
-                }
-                keyframePayload.insert(QStringLiteral("expectedAnimatable"),
-                                       undo ? afterAnimatable : beforeAnimatable);
-                keyframePayload.insert(QStringLiteral("animatable"),
-                                       undo ? beforeAnimatable : afterAnimatable);
-              }
-            } else if (singleExpressionCommand) {
-              const QJsonObject data = dispatchCommand->serialize();
-              expressionLayerId = data.value(QStringLiteral("layerId")).toString();
-              const QString propertyPath = data.value(QStringLiteral("propertyPath")).toString();
-              const QJsonValue before = data.value(QStringLiteral("beforeExpression"));
-              const QJsonValue after = data.value(QStringLiteral("afterExpression"));
-              if (expressionLayerId.isEmpty() || propertyPath.isEmpty() ||
-                  !before.isString() || !after.isString()) {
-                return UndoManager::CollaborationEditDispatch{false, {}, -1};
-              }
-              expressionPayload.insert(QStringLiteral("propertyPath"), propertyPath);
-              expressionPayload.insert(QStringLiteral("expectedExpression"), undo ? after : before);
-              expressionPayload.insert(QStringLiteral("expression"), undo ? before : after);
-            } else if (singleComponentsCommand) {
-              const QJsonObject data = dispatchCommand->serialize();
-              componentsLayerId = data.value(QStringLiteral("layerId")).toString();
-              const QJsonValue before = data.value(QStringLiteral("before"));
-              const QJsonValue after = data.value(QStringLiteral("after"));
-              if (componentsLayerId.isEmpty() || !before.isObject() ||
-                  !after.isObject() ||
-                  QJsonDocument(before.toObject()).toJson(QJsonDocument::Compact).size() > 262144 ||
-                  QJsonDocument(after.toObject()).toJson(QJsonDocument::Compact).size() > 262144) {
-                return UndoManager::CollaborationEditDispatch{false, {}, -1};
-              }
-              componentsPayload.insert(QStringLiteral("expected"), undo ? after : before);
-              componentsPayload.insert(QStringLiteral("value"), undo ? before : after);
-            } else if (singleStackCommand) {
-              const QJsonObject data = dispatchCommand->serialize();
-              stackLayerId = data.value(QStringLiteral("layerId")).toString();
-              const QJsonValue before = data.value(QStringLiteral("before"));
-              const QJsonValue after = data.value(QStringLiteral("after"));
-              const QString stackKind = dispatchCommand->commandType() ==
-                      QStringLiteral("ClonerTransformStackSnapshotCommand")
-                  ? QStringLiteral("clonerTransforms")
-                  : QStringLiteral("cloneEffectors");
-              if (stackLayerId.isEmpty() || !before.isArray() || !after.isArray() ||
-                  QJsonDocument(before.toArray()).toJson(QJsonDocument::Compact).size() > 262144 ||
-                  QJsonDocument(after.toArray()).toJson(QJsonDocument::Compact).size() > 262144) {
-                return UndoManager::CollaborationEditDispatch{false, {}, -1};
-              }
-              stackPayload.insert(QStringLiteral("stackKind"), stackKind);
-              stackPayload.insert(QStringLiteral("expected"), undo ? after : before);
-              stackPayload.insert(QStringLiteral("value"), undo ? before : after);
+              // The command already produced its wire payload above.
             } else {
               const QJsonArray children =
                   command.serialize().value(QStringLiteral("children")).toArray();
@@ -694,26 +571,6 @@ public:
               request.type = customOperationType;
               request.layerId = customLayerId;
               request.payload = customOperationPayload;
-              request.timestampMs = nowMs;
-            } else if (singleKeyframeCommand) {
-              request.type = QString::fromLatin1(kOpPropertyKeyframes);
-              request.layerId = keyframeLayerId;
-              request.payload = keyframePayload;
-              request.timestampMs = nowMs;
-            } else if (singleExpressionCommand) {
-              request.type = QString::fromLatin1(kOpPropertyExpression);
-              request.layerId = expressionLayerId;
-              request.payload = expressionPayload;
-              request.timestampMs = nowMs;
-            } else if (singleComponentsCommand) {
-              request.type = QString::fromLatin1(kOpLayerComponents);
-              request.layerId = componentsLayerId;
-              request.payload = componentsPayload;
-              request.timestampMs = nowMs;
-            } else if (singleStackCommand) {
-              request.type = QString::fromLatin1(kOpLayerStack);
-              request.layerId = stackLayerId;
-              request.payload = stackPayload;
               request.timestampMs = nowMs;
             } else if (changes.size() == 1) {
               const QJsonObject change = changes.at(0).toObject();

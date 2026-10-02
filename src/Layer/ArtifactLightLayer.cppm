@@ -19,12 +19,18 @@ import Time.Rational;
 import Graphics.ParticleData;
 import Property.Group;
 import Property;
+import Property.SerializationBridge;
+import Script.Expression.Evaluator;
 import Color.Float;
 import Math.Vec;
 
 namespace Artifact {
 
+void notifyLayerMutation(ArtifactAbstractLayer* layer, LayerDirtyFlag flag,
+                         LayerDirtyReason reason);
+
 namespace {
+
 QColor toQColor(const ArtifactCore::FloatColor& color) {
     return QColor::fromRgbF(
         static_cast<qreal>(color.r()),
@@ -47,6 +53,102 @@ double lightTimelineFps(const ArtifactLightLayer* layer)
     }
     return 30;
 }
+
+bool isAnimated(const ArtifactCore::AbstractProperty& property) {
+    return property.isAnimatable() ||
+           property.hasExpression() ||
+           property.hasEnvelopes() ||
+           property.hasExternalOverride();
+}
+
+} // namespace
+
+// --- Animated read path -----------------------------------------------------
+// The light's authored value lives in Impl, but a keyed or expression-driven
+// property is the source of truth once one exists. Every accessor below reads
+// the property first and only falls back to Impl, so the viewport gizmo, the
+// 3D render bridge and the Inspector all see the same animated number.
+
+double ArtifactLightLayer::animatedDouble(const QString& propertyPath,
+                                          double fallback) const
+{
+    const auto property = getProperty(propertyPath);
+    if (!property || !isAnimated(*property)) {
+        return fallback;
+    }
+    const RationalTime time(static_cast<int64_t>(currentFrame()),
+                            lightTimelineFps(this));
+    const QVariant value = property->interpolateValue(time);
+    if (value.isValid()) {
+        return value.toDouble();
+    }
+    if (property->hasExpression()) {
+        ArtifactCore::ExpressionEvaluator evaluator;
+        const QVariant expressionValue = property->evaluateValue(time, &evaluator);
+        if (expressionValue.isValid()) {
+            return expressionValue.toDouble();
+        }
+    }
+    return fallback;
+}
+
+bool ArtifactLightLayer::animatedBool(const QString& propertyPath,
+                                      bool fallback) const
+{
+    const auto property = getProperty(propertyPath);
+    if (!property || !isAnimated(*property)) {
+        return fallback;
+    }
+    const RationalTime time(static_cast<int64_t>(currentFrame()),
+                            lightTimelineFps(this));
+    const QVariant value = property->interpolateValue(time);
+    return value.isValid() ? value.toBool() : fallback;
+}
+
+ArtifactCore::FloatColor ArtifactLightLayer::animatedColor(
+    const QString& propertyPath,
+    const ArtifactCore::FloatColor& fallback) const
+{
+    const auto property = getProperty(propertyPath);
+    if (!property || !isAnimated(*property)) {
+        return fallback;
+    }
+    const RationalTime time(static_cast<int64_t>(currentFrame()),
+                            lightTimelineFps(this));
+    QVariant value = property->interpolateValue(time);
+    if (!value.isValid() && property->hasExpression()) {
+        ArtifactCore::ExpressionEvaluator evaluator;
+        value = property->evaluateValue(time, &evaluator);
+    }
+    const QColor qc = value.value<QColor>();
+    if (!qc.isValid()) {
+        return fallback;
+    }
+    return ArtifactCore::FloatColor(static_cast<float>(qc.redF()),
+                                    static_cast<float>(qc.greenF()),
+                                    static_cast<float>(qc.blueF()),
+                                    static_cast<float>(qc.alphaF()));
+}
+
+// The Inspector reads a property's cached value before and after
+// setLayerPropertyValue to decide whether to record an undo command. Without
+// this write-back the cached copy never moves, so Light edits compared equal
+// and Ctrl+Z did nothing. A keyed or expression-driven property is skipped:
+// there `Impl` is no longer authoritative.
+void ArtifactLightLayer::syncLightPropertyCache(const QString& propertyPath)
+{
+    const auto property = getProperty(propertyPath);
+    if (!property) {
+        return;
+    }
+    if ((property->isAnimatable() && property->hasKeyFrames()) ||
+        property->hasExpression()) {
+        return;
+    }
+    const QVariant mirrored = lightPropertyCacheValue(propertyPath);
+    if (mirrored.isValid()) {
+        property->setValue(mirrored);
+    }
 }
 
 W_OBJECT_IMPL(ArtifactLightLayer)
@@ -75,6 +177,79 @@ struct ArtifactLightLayer::Impl {
     QString linkedLayerIdsText_;
     QString excludedLayerIdsText_;
 };
+
+QVariant ArtifactLightLayer::lightPropertyCacheValue(
+    const QString& propertyPath) const
+{
+    const auto& impl = *lightImpl_;
+    if (propertyPath == QStringLiteral("Light/Type")) {
+        return static_cast<int>(impl.type_);
+    }
+    if (propertyPath == QStringLiteral("Light/Color")) {
+        return toQColor(impl.color_);
+    }
+    if (propertyPath == QStringLiteral("Light/Intensity")) {
+        return static_cast<double>(impl.intensity_.value);
+    }
+    if (propertyPath == QStringLiteral("Light/Range")) {
+        return static_cast<double>(impl.range_.value);
+    }
+    if (propertyPath == QStringLiteral("Light/Area Width")) {
+        return static_cast<double>(impl.areaWidth_.value);
+    }
+    if (propertyPath == QStringLiteral("Light/Area Height")) {
+        return static_cast<double>(impl.areaHeight_.value);
+    }
+    if (propertyPath == QStringLiteral("Light/Area Shape")) {
+        return static_cast<int>(impl.areaShape_);
+    }
+    if (propertyPath == QStringLiteral("Light/Cone Angle")) {
+        return static_cast<double>(impl.coneAngle_.value);
+    }
+    if (propertyPath == QStringLiteral("Light/Cone Feather")) {
+        return static_cast<double>(impl.coneFeather_.value);
+    }
+    if (propertyPath == QStringLiteral("Light/Cone Length")) {
+        return static_cast<double>(impl.coneLength_.value);
+    }
+    if (propertyPath == QStringLiteral("Light/GOBO Texture")) {
+        return impl.goboTexturePath_;
+    }
+    if (propertyPath == QStringLiteral("Light/GOBO Intensity")) {
+        return static_cast<double>(impl.goboIntensity_);
+    }
+    if (propertyPath == QStringLiteral("Light/GOBO Rotation")) {
+        return static_cast<double>(impl.goboRotation_);
+    }
+    if (propertyPath == QStringLiteral("Light/GOBO Invert")) {
+        return impl.goboInvert_;
+    }
+    if (propertyPath == QStringLiteral("Light/Shadows")) {
+        return impl.castsShadows_;
+    }
+    if (propertyPath == QStringLiteral("Light/Shadow Radius")) {
+        return static_cast<double>(impl.shadowRadius_.value);
+    }
+    if (propertyPath == QStringLiteral("Light/Glow")) {
+        return impl.glowEnabled_;
+    }
+    if (propertyPath == QStringLiteral("Light/Glow Size")) {
+        return static_cast<double>(impl.glowSize_);
+    }
+    if (propertyPath == QStringLiteral("Light/Glow Intensity")) {
+        return static_cast<double>(impl.glowIntensity_);
+    }
+    if (propertyPath == QStringLiteral("Light Linking/Link Mode")) {
+        return static_cast<int>(impl.linkMode_);
+    }
+    if (propertyPath == QStringLiteral("Light Linking/Include Layer IDs")) {
+        return impl.linkedLayerIdsText_;
+    }
+    if (propertyPath == QStringLiteral("Light Linking/Exclude Layer IDs")) {
+        return impl.excludedLayerIdsText_;
+    }
+    return {};
+}
 
 ArtifactLightLayer::ArtifactLightLayer()
     : lightImpl_(new Impl())
@@ -117,6 +292,32 @@ QJsonObject ArtifactLightLayer::toJson() const
   obj[QStringLiteral("light.linkMode")] = static_cast<int>(lightImpl_->linkMode_);
   obj[QStringLiteral("light.linkedLayerIds")] = lightImpl_->linkedLayerIdsText_;
   obj[QStringLiteral("light.excludedLayerIds")] = lightImpl_->excludedLayerIdsText_;
+
+  // Keyframes / expressions are the source of truth once present, so they must
+  // survive a save. The flat light.* scalars above only describe the static
+  // fallback and are ignored by the read path while a curve exists.
+  QJsonObject animated;
+  for (const QString &path : animatablePropertyPaths()) {
+    const auto property = getProperty(path);
+    if (!property || !property->hasKeyFrames()) {
+      continue;
+    }
+    animated[path] = ArtifactCore::PropertySerializationBridge::serializeProperty(property).keyframes;
+  }
+  if (!animated.isEmpty()) {
+    // Expressions travel in the same bundle so a keyed light keeps its
+    // expression when the curves are temporarily removed.
+    for (const QString &path : animatablePropertyPaths()) {
+      const auto property = getProperty(path);
+      if (property && property->hasExpression()) {
+        animated[path + QStringLiteral(".expression")] =
+            property->getExpression();
+      }
+    }
+  }
+  if (!animated.isEmpty()) {
+    obj[QStringLiteral("light.animatedProperties")] = animated;
+  }
   return obj;
 }
 
@@ -190,6 +391,39 @@ void ArtifactLightLayer::fromJsonProperties(const QJsonObject& obj)
       obj.value(QStringLiteral("light.linkedLayerIds")).toString());
   if (obj.contains(QStringLiteral("light.excludedLayerIds"))) setExcludedLayerIdsText(
       obj.value(QStringLiteral("light.excludedLayerIds")).toString());
+
+  // Restore curves and expressions after the static values above: declaring
+  // the property groups first is what puts the animatable flags in place, and
+  // the curve then takes precedence over the flat fallback on the read path.
+  const QJsonValue animatedValue = obj.value(QStringLiteral("light.animatedProperties"));
+  if (animatedValue.isObject()) {
+    const QJsonObject animated = animatedValue.toObject();
+    // Build the groups once so each path is declared animatable, then attach
+    // the serialized curves.
+    static_cast<void>(getLayerPropertyGroups());
+    for (const QString &path : animatablePropertyPaths()) {
+      auto property = getProperty(path);
+      if (!property) {
+        continue;
+      }
+      property->setAnimatable(true);
+      if (animated.contains(path) && animated.value(path).isArray()) {
+        ArtifactCore::SerializedProperty serialized;
+        serialized.name = path;
+        serialized.type = static_cast<int>(property->getType());
+        serialized.value = QJsonValue::fromVariant(property->getValue());
+        serialized.keyframes = animated.value(path).toArray();
+        ArtifactCore::PropertySerializationBridge::deserializeProperty(
+            property, serialized);
+      }
+      const QString expressionKey = path + QStringLiteral(".expression");
+      if (animated.contains(expressionKey)) {
+        property->setExpression(animated.value(expressionKey).toString());
+      }
+    }
+    notifyLayerMutation(this, LayerDirtyFlag::Property,
+                        LayerDirtyReason::PropertyChanged);
+  }
 }
 
 void ArtifactLightLayer::draw(ArtifactIRenderer* renderer) {
@@ -209,14 +443,28 @@ void ArtifactLightLayer::draw(ArtifactIRenderer* renderer) {
   const auto type = lightType();
   const auto lightColor = color();
   const float intensityScale = std::clamp(
-      lightImpl_->intensity_.value / 100.0f, 0.2f, 4.0f);
+      intensity().value / 100.0f, 0.2f, 4.0f);
   const ArtifactCore::FloatColor tintColor{
       std::min(1.0f, lightColor.r() * 0.85f + 0.10f * intensityScale),
       std::min(1.0f, lightColor.g() * 0.95f + 0.12f * intensityScale),
       std::min(1.0f, lightColor.b() * 1.05f + 0.25f * intensityScale),
       std::min(1.0f, lightColor.a() * (0.38f + 0.62f * std::min(1.0f, intensityScale)))};
-  
-  // Calculate gizmo size (scale inversely with zoom to keep constant screen size if desired, 
+
+  // Animated values are read through the public getters so a keyed light's
+  // gizmo tracks the same number the 3D render bridge consumes.
+  const bool shadowsEnabled = castsShadows();
+  const float shadowRadiusValue = shadowRadius().value;
+  const float coneAngleValue = coneAngle().value;
+  const float coneFeatherValue = coneFeather().value;
+  const float coneLengthValue = coneLength().value;
+  const float rangeValue = range().value;
+  const float areaWidthValue = areaWidth().value;
+  const float areaHeightValue = areaHeight().value;
+  const float glowSizeValue = glowSize();
+  const float glowIntensityValue = glowIntensity();
+  const AreaLightShape shape = areaShape();
+
+  // Calculate gizmo size (scale inversely with zoom to keep constant screen size if desired,
   // or just use a fixed 3D size). Here we use a fixed size that's easy to see.
   const float zoom = renderer->getZoom();
   const float baseSize = 15.0f * intensityScale / (zoom > 0.001f ? zoom : 1.0f);
@@ -230,9 +478,9 @@ void ArtifactLightLayer::draw(ArtifactIRenderer* renderer) {
   renderer->drawGizmoRing(p, float3{0, 1, 0}, baseSize, tintColor, 1.0f);
   renderer->drawGizmoRing(p, float3{0, 0, 1}, baseSize, tintColor, 1.0f);
 
-  if (lightImpl_->castsShadows_) {
+  if (shadowsEnabled) {
     const float shadowRing = baseSize + std::max(
-        2.0f, lightImpl_->shadowRadius_.value * 0.05f);
+        2.0f, shadowRadiusValue * 0.05f);
     renderer->drawGizmoRing(p, float3{0, 1, 0}, shadowRing,
                             ArtifactCore::FloatColor{lightColor.r(), lightColor.g(),
                                                      lightColor.b(), 0.18f},
@@ -260,18 +508,18 @@ void ArtifactLightLayer::draw(ArtifactIRenderer* renderer) {
   // exists for every type. Point: 3-axis wider ring; Spot: a thin inner cone
   // surface; Area: a thin inner disk on the same normal; Parallel/Ambient:
   // no shadow cue (the concept does not apply in their reference frame).
-  if (lightImpl_->castsShadows_) {
+  if (shadowsEnabled) {
     const ArtifactCore::FloatColor shadowTint{
         lightColor.r(), lightColor.g(), lightColor.b(), 0.18f};
     const float shadowSize =
-        baseSize + std::max(2.0f, lightImpl_->shadowRadius_.value * 0.05f);
+        baseSize + std::max(2.0f, shadowRadiusValue * 0.05f);
     if (type == LightType::Point) {
       renderer->drawGizmoRing(p, float3{1, 0, 0}, shadowSize, shadowTint, 0.9f);
       renderer->drawGizmoRing(p, float3{0, 1, 0}, shadowSize, shadowTint, 0.9f);
       renderer->drawGizmoRing(p, float3{0, 0, 1}, shadowSize, shadowTint, 0.9f);
     } else if (type == LightType::Spot) {
-      const float coneLength = std::max(1.0f, lightImpl_->coneLength_.value);
-      const float coneRadius = std::tan(std::clamp(lightImpl_->coneAngle_.value,
+      const float coneLength = std::max(1.0f, coneLengthValue);
+      const float coneRadius = std::tan(std::clamp(coneAngleValue,
                                                     0.1f, 179.0f) *
                                         3.14159265f / 360.0f) * coneLength;
       const QVector3D coneCenter = pos + forward * coneLength;
@@ -281,8 +529,7 @@ void ArtifactLightLayer::draw(ArtifactIRenderer* renderer) {
           coneRadius * 0.95f, shadowTint, 0.9f);
     } else if (type == LightType::Area) {
       const float shadowRadius = std::max(
-          1.0f, std::min(lightImpl_->areaWidth_.value,
-                         lightImpl_->areaHeight_.value) * 0.5f);
+          1.0f, std::min(areaWidthValue, areaHeightValue) * 0.5f);
       const QVector3D normal = m.mapVector(QVector3D(0, 0, 1)).normalized();
       renderer->drawGizmoRing(
           float3{pos.x(), pos.y(), pos.z()},
@@ -297,8 +544,7 @@ void ArtifactLightLayer::draw(ArtifactIRenderer* renderer) {
   }
 
   if (type == LightType::Point) {
-    const float rangeVisual = std::max(baseSize * 1.5f,
-                                       lightImpl_->range_.value);
+    const float rangeVisual = std::max(baseSize * 1.5f, rangeValue);
     const ArtifactCore::FloatColor rangeColor{lightColor.r(), lightColor.g(),
                                                lightColor.b(), 0.16f};
     renderer->drawGizmoRing(p, float3{1, 0, 0}, rangeVisual, rangeColor, 0.8f);
@@ -313,16 +559,16 @@ void ArtifactLightLayer::draw(ArtifactIRenderer* renderer) {
   } else if (type == LightType::Ambient) {
     renderer->drawGizmoRing(p, float3{0, 1, 0}, baseSize * 1.35f, tintColor, 1.0f);
   } else if (type == LightType::Area) {
-    if (lightImpl_->areaShape_ == AreaLightShape::Disk) {
-      const float radius = std::max(1.0f, std::min(lightImpl_->areaWidth_.value,
-                                                    lightImpl_->areaHeight_.value) * 0.5f);
+    if (shape == AreaLightShape::Disk) {
+      const float radius = std::max(
+          1.0f, std::min(areaWidthValue, areaHeightValue) * 0.5f);
       const QVector3D normal = m.mapVector(QVector3D(0, 0, 1)).normalized();
       renderer->drawGizmoRing(float3{pos.x(), pos.y(), pos.z()},
                               float3{normal.x(), normal.y(), normal.z()},
                               radius, tintColor, 1.2f);
     } else {
-      const QVector3D areaSide = m.mapVector(QVector3D(lightImpl_->areaWidth_.value * 0.5f, 0, 0));
-      const QVector3D areaUp = m.mapVector(QVector3D(0, lightImpl_->areaHeight_.value * 0.5f, 0));
+      const QVector3D areaSide = m.mapVector(QVector3D(areaWidthValue * 0.5f, 0, 0));
+      const QVector3D areaUp = m.mapVector(QVector3D(0, areaHeightValue * 0.5f, 0));
       const QVector3D a = pos - areaSide - areaUp;
       const QVector3D b = pos + areaSide - areaUp;
       const QVector3D c = pos + areaSide + areaUp;
@@ -342,14 +588,13 @@ void ArtifactLightLayer::draw(ArtifactIRenderer* renderer) {
     renderer->drawGizmoRing(float3{tip.x(), tip.y(), tip.z()}, float3{0, 1, 0},
                             baseSize * 0.75f, tintColor, 1.0f);
 
-    // Spot cone: the gizmo always honors the user-authored coneLength_.
-    // The attenuation range_ is shown as a separate, lighter ring only when
-    // coneLength_ is shorter than range_, so the user can see whether the
-    // attenuation kicks in before the cone ends. (Previously coneLength was
-    // silently clamped to range_, which made the gizmo and the property
-    // value disagree.)
-    const float coneLength = std::max(1.0f, lightImpl_->coneLength_.value);
-    const float coneRadius = std::tan(std::clamp(lightImpl_->coneAngle_.value,
+    // Spot cone: coneLength_ is the single authored reach. It drives both the
+    // gizmo here and the shading attenuation in makeSceneLightFromLayer, so
+    // the wireframe always ends where the light stops reaching. The separate
+    // range_ ring is no longer drawn because it would reintroduce a second,
+    // unrelated "how far does this reach" value (see the 2026-10-01 fix).
+    const float coneLength = std::max(1.0f, coneLengthValue);
+    const float coneRadius = std::tan(std::clamp(coneAngleValue,
                                                   0.1f, 179.0f) *
                                       3.14159265f / 360.0f) * coneLength;
     QVector3D coneSide = m.mapVector(QVector3D(1, 0, 0));
@@ -377,30 +622,15 @@ void ArtifactLightLayer::draw(ArtifactIRenderer* renderer) {
     // Feather ring: inner edge = outer edge - feather angle (inward). Always
     // shown when feather is non-zero, even if it is very small, so the user
     // can see the soft band develop live as they drag the property.
-    if (lightImpl_->coneFeather_.value > 0.0f) {
-      const float featherAngle =
-          std::max(0.0f, lightImpl_->coneAngle_.value -
-                             lightImpl_->coneFeather_.value);
-      if (featherAngle < lightImpl_->coneAngle_.value) {
+    if (coneFeatherValue > 0.0f) {
+      const float featherAngle = std::max(0.0f, coneAngleValue - coneFeatherValue);
+      if (featherAngle < coneAngleValue) {
         const float innerRadius = std::tan(featherAngle * 3.14159265f / 360.0f) *
                                   coneLength;
         renderer->drawGizmoRing(float3{coneCenter.x(), coneCenter.y(), coneCenter.z()},
                                 float3{forward.x(), forward.y(), forward.z()},
                                 innerRadius, featherColor, 1.0f);
       }
-    }
-    // Attenuation range indicator: only when range_ extends past the cone.
-    if (lightImpl_->range_.value > coneLength + 0.5f) {
-      const ArtifactCore::FloatColor rangeColor{lightColor.r(), lightColor.g(),
-                                                 lightColor.b(), 0.16f};
-      const float rangeRadius = std::tan(std::clamp(lightImpl_->coneAngle_.value,
-                                                    0.1f, 179.0f) *
-                                        3.14159265f / 360.0f) *
-                                 lightImpl_->range_.value;
-      const QVector3D rangeCenter = pos + forward * lightImpl_->range_.value;
-      renderer->drawGizmoRing(float3{rangeCenter.x(), rangeCenter.y(), rangeCenter.z()},
-                              float3{forward.x(), forward.y(), forward.z()}, rangeRadius,
-                              rangeColor, 0.9f);
     }
   } else if (type == LightType::Parallel) {
     // Parallel (Directional) light is position-less. Draw the sun-style
@@ -481,35 +711,54 @@ LightType ArtifactLightLayer::lightType() const { return lightImpl_->type_; }
 void ArtifactLightLayer::setLightType(LightType t) {
   lightImpl_->type_ = static_cast<LightType>(std::clamp(
       static_cast<int>(t), 0, 4));
-  changed();
+  notifyLayerMutation(this, LayerDirtyFlag::Property,
+                      LayerDirtyReason::PropertyChanged);
 }
 
-ArtifactCore::FloatColor ArtifactLightLayer::color() const { return lightImpl_->color_; }
-void ArtifactLightLayer::setColor(const ArtifactCore::FloatColor& c) { lightImpl_->color_ = c; changed(); }
+ArtifactCore::FloatColor ArtifactLightLayer::color() const {
+  return animatedColor(QStringLiteral("Light/Color"), lightImpl_->color_);
+}
+void ArtifactLightLayer::setColor(const ArtifactCore::FloatColor& c) {
+  lightImpl_->color_ = c;
+  syncLightPropertyCache(QStringLiteral("Light/Color"));
+  notifyLayerMutation(this, LayerDirtyFlag::Property,
+                      LayerDirtyReason::PropertyChanged);
+}
 
 ArtifactCore::Units::Percent ArtifactLightLayer::intensity() const {
-  return lightImpl_->intensity_;
+  return ArtifactCore::Units::Percent{static_cast<float>(
+      animatedDouble(QStringLiteral("Light/Intensity"),
+                     lightImpl_->intensity_.value))};
 }
 void ArtifactLightLayer::setIntensity(ArtifactCore::Units::Percent intensity) {
   lightImpl_->intensity_ = intensity;
-  changed();
+  syncLightPropertyCache(QStringLiteral("Light/Intensity"));
+  notifyLayerMutation(this, LayerDirtyFlag::Property,
+                      LayerDirtyReason::PropertyChanged);
 }
 
 ArtifactCore::Units::Pixels ArtifactLightLayer::range() const {
-  return lightImpl_->range_;
+  return ArtifactCore::Units::Pixels{static_cast<float>(
+      animatedDouble(QStringLiteral("Light/Range"), lightImpl_->range_.value))};
 }
 void ArtifactLightLayer::setRange(ArtifactCore::Units::Pixels range)
 {
   lightImpl_->range_ = ArtifactCore::Units::Pixels{
       std::max(1.0f, range.value)};
-  changed();
+  syncLightPropertyCache(QStringLiteral("Light/Range"));
+  notifyLayerMutation(this, LayerDirtyFlag::Property,
+                      LayerDirtyReason::PropertyChanged);
 }
 
 ArtifactCore::Units::Pixels ArtifactLightLayer::areaWidth() const {
-  return lightImpl_->areaWidth_;
+  return ArtifactCore::Units::Pixels{static_cast<float>(
+      animatedDouble(QStringLiteral("Light/Area Width"),
+                     lightImpl_->areaWidth_.value))};
 }
 ArtifactCore::Units::Pixels ArtifactLightLayer::areaHeight() const {
-  return lightImpl_->areaHeight_;
+  return ArtifactCore::Units::Pixels{static_cast<float>(
+      animatedDouble(QStringLiteral("Light/Area Height"),
+                     lightImpl_->areaHeight_.value))};
 }
 void ArtifactLightLayer::setAreaSize(ArtifactCore::Units::Pixels width,
                                      ArtifactCore::Units::Pixels height)
@@ -518,7 +767,10 @@ void ArtifactLightLayer::setAreaSize(ArtifactCore::Units::Pixels width,
       std::max(1.0f, width.value)};
   lightImpl_->areaHeight_ = ArtifactCore::Units::Pixels{
       std::max(1.0f, height.value)};
-  changed();
+  syncLightPropertyCache(QStringLiteral("Light/Area Width"));
+  syncLightPropertyCache(QStringLiteral("Light/Area Height"));
+  notifyLayerMutation(this, LayerDirtyFlag::Property,
+                      LayerDirtyReason::PropertyChanged);
 }
 
 AreaLightShape ArtifactLightLayer::areaShape() const { return lightImpl_->areaShape_; }
@@ -526,11 +778,15 @@ void ArtifactLightLayer::setAreaShape(AreaLightShape shape)
 {
   lightImpl_->areaShape_ = static_cast<AreaLightShape>(std::clamp(
       static_cast<int>(shape), 0, 1));
-  changed();
+  syncLightPropertyCache(QStringLiteral("Light/Area Shape"));
+  notifyLayerMutation(this, LayerDirtyFlag::Property,
+                      LayerDirtyReason::PropertyChanged);
 }
 
 ArtifactCore::Units::Degrees ArtifactLightLayer::coneAngle() const {
-  return lightImpl_->coneAngle_;
+  return ArtifactCore::Units::Degrees{static_cast<float>(
+      animatedDouble(QStringLiteral("Light/Cone Angle"),
+                     lightImpl_->coneAngle_.value))};
 }
 void ArtifactLightLayer::setConeAngle(ArtifactCore::Units::Degrees degrees)
 {
@@ -539,27 +795,38 @@ void ArtifactLightLayer::setConeAngle(ArtifactCore::Units::Degrees degrees)
   lightImpl_->coneFeather_ = ArtifactCore::Units::Degrees{
       std::clamp(lightImpl_->coneFeather_.value, 0.0f,
                  lightImpl_->coneAngle_.value)};
-  changed();
+  syncLightPropertyCache(QStringLiteral("Light/Cone Angle"));
+  syncLightPropertyCache(QStringLiteral("Light/Cone Feather"));
+  notifyLayerMutation(this, LayerDirtyFlag::Property,
+                      LayerDirtyReason::PropertyChanged);
 }
 
 ArtifactCore::Units::Degrees ArtifactLightLayer::coneFeather() const {
-  return lightImpl_->coneFeather_;
+  return ArtifactCore::Units::Degrees{static_cast<float>(
+      animatedDouble(QStringLiteral("Light/Cone Feather"),
+                     lightImpl_->coneFeather_.value))};
 }
 void ArtifactLightLayer::setConeFeather(ArtifactCore::Units::Degrees degrees)
 {
   lightImpl_->coneFeather_ = ArtifactCore::Units::Degrees{
       std::clamp(degrees.value, 0.0f, lightImpl_->coneAngle_.value)};
-  changed();
+  syncLightPropertyCache(QStringLiteral("Light/Cone Feather"));
+  notifyLayerMutation(this, LayerDirtyFlag::Property,
+                      LayerDirtyReason::PropertyChanged);
 }
 
 ArtifactCore::Units::Pixels ArtifactLightLayer::coneLength() const {
-  return lightImpl_->coneLength_;
+  return ArtifactCore::Units::Pixels{static_cast<float>(
+      animatedDouble(QStringLiteral("Light/Cone Length"),
+                     lightImpl_->coneLength_.value))};
 }
 void ArtifactLightLayer::setConeLength(ArtifactCore::Units::Pixels length)
 {
   lightImpl_->coneLength_ = ArtifactCore::Units::Pixels{
       std::max(1.0f, length.value)};
-  changed();
+  syncLightPropertyCache(QStringLiteral("Light/Cone Length"));
+  notifyLayerMutation(this, LayerDirtyFlag::Property,
+                      LayerDirtyReason::PropertyChanged);
 }
 
 QString ArtifactLightLayer::goboTexturePath() const { return lightImpl_->goboTexturePath_; }
@@ -569,31 +836,47 @@ void ArtifactLightLayer::setGoboTexturePath(const QString& path)
   lightImpl_->goboTexturePath_ = trimmedPath.isEmpty()
       ? QString{}
       : QDir::cleanPath(trimmedPath);
-  changed();
+  syncLightPropertyCache(QStringLiteral("Light/GOBO Texture"));
+  notifyLayerMutation(this, LayerDirtyFlag::Property,
+                      LayerDirtyReason::PropertyChanged);
 }
-float ArtifactLightLayer::goboIntensity() const { return lightImpl_->goboIntensity_; }
+float ArtifactLightLayer::goboIntensity() const {
+  return static_cast<float>(animatedDouble(
+      QStringLiteral("Light/GOBO Intensity"),
+      static_cast<double>(lightImpl_->goboIntensity_)));
+}
 void ArtifactLightLayer::setGoboIntensity(float intensity)
 {
   lightImpl_->goboIntensity_ = std::clamp(intensity, 0.0f, 1.0f);
-  changed();
+  syncLightPropertyCache(QStringLiteral("Light/GOBO Intensity"));
+  notifyLayerMutation(this, LayerDirtyFlag::Property,
+                      LayerDirtyReason::PropertyChanged);
 }
 ArtifactCore::Units::Degrees ArtifactLightLayer::goboRotation() const {
-  return {lightImpl_->goboRotation_};
+  return ArtifactCore::Units::Degrees{static_cast<float>(animatedDouble(
+      QStringLiteral("Light/GOBO Rotation"),
+      static_cast<double>(lightImpl_->goboRotation_)))};
 }
 void ArtifactLightLayer::setGoboRotation(ArtifactCore::Units::Degrees degrees)
 {
   lightImpl_->goboRotation_ = std::fmod(degrees.value, 360.0f);
-  changed();
+  syncLightPropertyCache(QStringLiteral("Light/GOBO Rotation"));
+  notifyLayerMutation(this, LayerDirtyFlag::Property,
+                      LayerDirtyReason::PropertyChanged);
 }
 bool ArtifactLightLayer::goboInvert() const { return lightImpl_->goboInvert_; }
 void ArtifactLightLayer::setGoboInvert(bool enabled)
 {
   lightImpl_->goboInvert_ = enabled;
-  changed();
+  syncLightPropertyCache(QStringLiteral("Light/GOBO Invert"));
+  notifyLayerMutation(this, LayerDirtyFlag::Property,
+                      LayerDirtyReason::PropertyChanged);
 }
 
 ArtifactCore::Units::Pixels ArtifactLightLayer::shadowRadius() const {
-  return lightImpl_->shadowRadius_;
+  return ArtifactCore::Units::Pixels{static_cast<float>(animatedDouble(
+      QStringLiteral("Light/Shadow Radius"),
+      static_cast<double>(lightImpl_->shadowRadius_.value)))};
 }
 void ArtifactLightLayer::setShadowRadius(ArtifactCore::Units::Pixels radius) {
   // UI radius maps to Core softness via /10; MeshRenderer clamps softness to
@@ -603,31 +886,60 @@ void ArtifactLightLayer::setShadowRadius(ArtifactCore::Units::Pixels radius) {
       std::isfinite(radius.value)
           ? std::clamp(radius.value, 0.0f, 20.0f)
           : 10.0f};
-  changed();
+  syncLightPropertyCache(QStringLiteral("Light/Shadow Radius"));
+  notifyLayerMutation(this, LayerDirtyFlag::Property,
+                      LayerDirtyReason::PropertyChanged);
 }
 
-bool ArtifactLightLayer::castsShadows() const { return lightImpl_->castsShadows_; }
-void ArtifactLightLayer::setCastsShadows(bool e) { lightImpl_->castsShadows_ = e; changed(); }
+bool ArtifactLightLayer::castsShadows() const {
+  return animatedBool(QStringLiteral("Light/Shadows"),
+                      lightImpl_->castsShadows_);
+}
+void ArtifactLightLayer::setCastsShadows(bool e) {
+  lightImpl_->castsShadows_ = e;
+  syncLightPropertyCache(QStringLiteral("Light/Shadows"));
+  notifyLayerMutation(this, LayerDirtyFlag::Property,
+                      LayerDirtyReason::PropertyChanged);
+}
 
-bool ArtifactLightLayer::glowEnabled() const { return lightImpl_->glowEnabled_; }
-void ArtifactLightLayer::setGlowEnabled(bool e) { lightImpl_->glowEnabled_ = e; changed(); }
+bool ArtifactLightLayer::glowEnabled() const {
+  return animatedBool(QStringLiteral("Light/Glow"), lightImpl_->glowEnabled_);
+}
+void ArtifactLightLayer::setGlowEnabled(bool e) {
+  lightImpl_->glowEnabled_ = e;
+  syncLightPropertyCache(QStringLiteral("Light/Glow"));
+  notifyLayerMutation(this, LayerDirtyFlag::Property,
+                      LayerDirtyReason::PropertyChanged);
+}
 
-float ArtifactLightLayer::glowSize() const { return lightImpl_->glowSize_; }
+float ArtifactLightLayer::glowSize() const {
+  return static_cast<float>(animatedDouble(
+      QStringLiteral("Light/Glow Size"),
+      static_cast<double>(lightImpl_->glowSize_)));
+}
 void ArtifactLightLayer::setGlowSize(float multiplier)
 {
   lightImpl_->glowSize_ = std::isfinite(multiplier)
       ? std::clamp(multiplier, 0.0f, 8.0f)
       : 1.0f;
-  changed();
+  syncLightPropertyCache(QStringLiteral("Light/Glow Size"));
+  notifyLayerMutation(this, LayerDirtyFlag::Property,
+                      LayerDirtyReason::PropertyChanged);
 }
 
-float ArtifactLightLayer::glowIntensity() const { return lightImpl_->glowIntensity_; }
+float ArtifactLightLayer::glowIntensity() const {
+  return static_cast<float>(animatedDouble(
+      QStringLiteral("Light/Glow Intensity"),
+      static_cast<double>(lightImpl_->glowIntensity_)));
+}
 void ArtifactLightLayer::setGlowIntensity(float multiplier)
 {
   lightImpl_->glowIntensity_ = std::isfinite(multiplier)
       ? std::clamp(multiplier, 0.0f, 4.0f)
       : 1.0f;
-  changed();
+  syncLightPropertyCache(QStringLiteral("Light/Glow Intensity"));
+  notifyLayerMutation(this, LayerDirtyFlag::Property,
+                      LayerDirtyReason::PropertyChanged);
 }
 
 LightLinkMode ArtifactLightLayer::lightLinkMode() const { return lightImpl_->linkMode_; }
@@ -635,29 +947,66 @@ void ArtifactLightLayer::setLightLinkMode(LightLinkMode mode)
 {
   lightImpl_->linkMode_ = static_cast<LightLinkMode>(std::clamp(
       static_cast<int>(mode), 0, 2));
-  changed();
+  syncLightPropertyCache(QStringLiteral("Light Linking/Link Mode"));
+  notifyLayerMutation(this, LayerDirtyFlag::Property,
+                      LayerDirtyReason::PropertyChanged);
 }
 
 QString ArtifactLightLayer::linkedLayerIdsText() const { return lightImpl_->linkedLayerIdsText_; }
 void ArtifactLightLayer::setLinkedLayerIdsText(const QString& ids)
 {
   lightImpl_->linkedLayerIdsText_ = ids.trimmed();
-  changed();
+  syncLightPropertyCache(QStringLiteral("Light Linking/Include Layer IDs"));
+  notifyLayerMutation(this, LayerDirtyFlag::Property,
+                      LayerDirtyReason::PropertyChanged);
 }
 
 QString ArtifactLightLayer::excludedLayerIdsText() const { return lightImpl_->excludedLayerIdsText_; }
 void ArtifactLightLayer::setExcludedLayerIdsText(const QString& ids)
 {
   lightImpl_->excludedLayerIdsText_ = ids.trimmed();
-  changed();
+  syncLightPropertyCache(QStringLiteral("Light Linking/Exclude Layer IDs"));
+  notifyLayerMutation(this, LayerDirtyFlag::Property,
+                      LayerDirtyReason::PropertyChanged);
+}
+
+const std::vector<QString>& ArtifactLightLayer::animatablePropertyPaths()
+{
+  static const std::vector<QString> paths = {
+      QStringLiteral("Light/Color"),
+      QStringLiteral("Light/Intensity"),
+      QStringLiteral("Light/Range"),
+      QStringLiteral("Light/Area Width"),
+      QStringLiteral("Light/Area Height"),
+      QStringLiteral("Light/Cone Angle"),
+      QStringLiteral("Light/Cone Feather"),
+      QStringLiteral("Light/Cone Length"),
+      QStringLiteral("Light/GOBO Intensity"),
+      QStringLiteral("Light/GOBO Rotation"),
+      QStringLiteral("Light/Shadow Radius"),
+      QStringLiteral("Light/Glow Size"),
+      QStringLiteral("Light/Glow Intensity"),
+  };
+  return paths;
 }
 
 std::vector<ArtifactCore::PropertyGroup> ArtifactLightLayer::getLayerPropertyGroups() const
 {
     auto groups = ArtifactAbstractLayer::getLayerPropertyGroups();
-    
+
+    // Marks the light's value properties animatable so the Inspector offers
+    // the stopwatch / keyframe / expression controls and the dope sheet
+    // collects their keys. Structural switches (Light/Type, Light/Area Shape,
+    // Light Linking/*) stay animatable-free: they decide WHICH paths exist,
+    // so keying them would orphan curves whenever the switch changes.
+    const auto animatablePaths = animatablePropertyPaths();
+    const auto asAnimatable = [this, &animatablePaths](const QString &path) {
+      return std::find(animatablePaths.cbegin(), animatablePaths.cend(), path) !=
+             animatablePaths.cend();
+    };
+
     ArtifactCore::PropertyGroup lightOptions("Light");
-    
+
     auto typeProp = persistentLayerProperty(QStringLiteral("Light/Type"),
                                             ArtifactCore::PropertyType::Integer,
                                             static_cast<int>(lightImpl_->type_), -150);
@@ -667,25 +1016,30 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactLightLayer::getLayerPropertyGro
     auto colorProp = persistentLayerProperty(QStringLiteral("Light/Color"),
                                              ArtifactCore::PropertyType::Color,
                                              toQColor(lightImpl_->color_), -145);
+    colorProp->setAnimatable(asAnimatable(QStringLiteral("Light/Color")));
     lightOptions.addProperty(colorProp);
 
     auto intensityProp = persistentLayerProperty(QStringLiteral("Light/Intensity"),
                                                  ArtifactCore::PropertyType::Float,
                                                  static_cast<double>(lightImpl_->intensity_.value), -140);
+    intensityProp->setAnimatable(asAnimatable(QStringLiteral("Light/Intensity")));
     intensityProp->setHardRange(0.0, 1000.0);
     intensityProp->setSoftRange(0.0, 250.0);
     intensityProp->setUnit(QStringLiteral("%"));
     lightOptions.addProperty(intensityProp);
 
-    if (lightImpl_->type_ == LightType::Point || lightImpl_->type_ == LightType::Spot ||
-        lightImpl_->type_ == LightType::Area) {
+    // Range is the reach for Point and Area only. Spot uses Cone Length as its
+    // single authored reach, so showing Range there would offer two competing
+    // "how far" values for one light.
+    if (lightImpl_->type_ == LightType::Point || lightImpl_->type_ == LightType::Area) {
     auto rangeProp = persistentLayerProperty(
         QStringLiteral("Light/Range"), ArtifactCore::PropertyType::Float,
         static_cast<double>(lightImpl_->range_.value), -139);
+    rangeProp->setAnimatable(asAnimatable(QStringLiteral("Light/Range")));
     rangeProp->setHardRange(1.0, 100000.0);
     rangeProp->setSoftRange(25.0, 5000.0);
     rangeProp->setUnit(QStringLiteral("px"));
-    rangeProp->setTooltip(QStringLiteral("Effective point/spot light range"));
+    rangeProp->setTooltip(QStringLiteral("Effective point/area light range"));
     lightOptions.addProperty(rangeProp);
     }
 
@@ -693,6 +1047,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactLightLayer::getLayerPropertyGro
     auto widthProp = persistentLayerProperty(QStringLiteral("Light/Area Width"),
                                              ArtifactCore::PropertyType::Float,
                                              static_cast<double>(lightImpl_->areaWidth_.value), -138);
+    widthProp->setAnimatable(asAnimatable(QStringLiteral("Light/Area Width")));
     widthProp->setHardRange(1.0, 100000.0);
     widthProp->setSoftRange(10.0, 2000.0);
     widthProp->setUnit(QStringLiteral("px"));
@@ -700,6 +1055,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactLightLayer::getLayerPropertyGro
     auto heightProp = persistentLayerProperty(QStringLiteral("Light/Area Height"),
                                               ArtifactCore::PropertyType::Float,
                                               static_cast<double>(lightImpl_->areaHeight_.value), -137);
+    heightProp->setAnimatable(asAnimatable(QStringLiteral("Light/Area Height")));
     heightProp->setHardRange(1.0, 100000.0);
     heightProp->setSoftRange(10.0, 2000.0);
     heightProp->setUnit(QStringLiteral("px"));
@@ -715,6 +1071,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactLightLayer::getLayerPropertyGro
     auto coneAngleProp = persistentLayerProperty(QStringLiteral("Light/Cone Angle"),
                                                   ArtifactCore::PropertyType::Float,
                                                   static_cast<double>(lightImpl_->coneAngle_.value), -138);
+    coneAngleProp->setAnimatable(asAnimatable(QStringLiteral("Light/Cone Angle")));
     coneAngleProp->setHardRange(0.1, 179.0);
     coneAngleProp->setSoftRange(1.0, 120.0);
     coneAngleProp->setUnit(QStringLiteral("deg"));
@@ -726,6 +1083,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactLightLayer::getLayerPropertyGro
     auto coneFeatherProp = persistentLayerProperty(QStringLiteral("Light/Cone Feather"),
                                                     ArtifactCore::PropertyType::Float,
                                                     static_cast<double>(lightImpl_->coneFeather_.value), -137);
+    coneFeatherProp->setAnimatable(asAnimatable(QStringLiteral("Light/Cone Feather")));
     coneFeatherProp->setHardRange(0.0, 179.0);
     coneFeatherProp->setSoftRange(0.0, 60.0);
     coneFeatherProp->setUnit(QStringLiteral("deg"));
@@ -735,6 +1093,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactLightLayer::getLayerPropertyGro
     auto coneLengthProp = persistentLayerProperty(QStringLiteral("Light/Cone Length"),
                                                    ArtifactCore::PropertyType::Float,
                                                    static_cast<double>(lightImpl_->coneLength_.value), -136);
+    coneLengthProp->setAnimatable(asAnimatable(QStringLiteral("Light/Cone Length")));
     coneLengthProp->setHardRange(1.0, 10000.0);
     coneLengthProp->setSoftRange(25.0, 1000.0);
     coneLengthProp->setUnit(QStringLiteral("px"));
@@ -753,12 +1112,14 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactLightLayer::getLayerPropertyGro
     auto goboIntensityProp = persistentLayerProperty(
         QStringLiteral("Light/GOBO Intensity"), ArtifactCore::PropertyType::Float,
         static_cast<double>(lightImpl_->goboIntensity_), -134);
+    goboIntensityProp->setAnimatable(asAnimatable(QStringLiteral("Light/GOBO Intensity")));
     goboIntensityProp->setHardRange(0.0, 1.0);
     goboIntensityProp->setSoftRange(0.0, 1.0);
     lightOptions.addProperty(goboIntensityProp);
     auto goboRotationProp = persistentLayerProperty(
         QStringLiteral("Light/GOBO Rotation"), ArtifactCore::PropertyType::Float,
         static_cast<double>(lightImpl_->goboRotation_), -133);
+    goboRotationProp->setAnimatable(asAnimatable(QStringLiteral("Light/GOBO Rotation")));
     goboRotationProp->setHardRange(-360.0, 360.0);
     goboRotationProp->setUnit(QStringLiteral("deg"));
     lightOptions.addProperty(goboRotationProp);
@@ -781,6 +1142,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactLightLayer::getLayerPropertyGro
         QStringLiteral("Light/Shadow Radius"),
         ArtifactCore::PropertyType::Float,
         static_cast<double>(lightImpl_->shadowRadius_.value), -120);
+    radiusProp->setAnimatable(asAnimatable(QStringLiteral("Light/Shadow Radius")));
     radiusProp->setHardRange(0.0, 20.0);
     radiusProp->setSoftRange(0.0, 10.0);
     radiusProp->setUnit(QStringLiteral("px"));
@@ -800,6 +1162,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactLightLayer::getLayerPropertyGro
         QStringLiteral("Light/Glow Size"),
         ArtifactCore::PropertyType::Float,
         static_cast<double>(lightImpl_->glowSize_), -118);
+    glowSizeProp->setAnimatable(asAnimatable(QStringLiteral("Light/Glow Size")));
     glowSizeProp->setHardRange(0.0, 8.0);
     glowSizeProp->setSoftRange(0.25, 4.0);
     glowSizeProp->setTooltip(QStringLiteral("Glow radius multiplier relative to the light range"));
@@ -809,6 +1172,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactLightLayer::getLayerPropertyGro
         QStringLiteral("Light/Glow Intensity"),
         ArtifactCore::PropertyType::Float,
         static_cast<double>(lightImpl_->glowIntensity_), -117);
+    glowIntensityProp->setAnimatable(asAnimatable(QStringLiteral("Light/Glow Intensity")));
     glowIntensityProp->setHardRange(0.0, 4.0);
     glowIntensityProp->setSoftRange(0.0, 2.0);
     lightOptions.addProperty(glowIntensityProp);
@@ -841,7 +1205,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactLightLayer::getLayerPropertyGro
     excludeProp->setInlineHelp(QStringLiteral("Used only when Link Mode is 2 (Except)."));
     excludeProp->setWhatsThis(QStringLiteral("Layer IDs this light ignores when Link Mode is Except.\nPrefer the Timeline right-click quick action over hand-typing IDs.\nUnknown IDs are ignored silently."));
     linkingOptions.addProperty(excludeProp);
-    
+
     groups.push_back(lightOptions);
     groups.push_back(linkingOptions);
     return groups;

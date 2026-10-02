@@ -1260,7 +1260,7 @@ void ScreenSpaceGIResolveCS(uint3 dispatchId : SV_DispatchThreadID)
  }
 
 void RenderPipeline::prepareRevealMaps(IDeviceContext* ctx,
-    const std::vector<ArtifactAbstractLayerPtr>& layers) {
+    const QList<ArtifactAbstractLayerPtr>& layers) {
  if (!ctx || !impl_->device_) return;
  const auto epoch = ArtifactAbstractLayer::revealPreparationEpoch();
  if (impl_->revealMapPreparedEpoch_ == epoch && impl_->revealLayersData_ == layers.data() &&
@@ -1822,7 +1822,8 @@ params.width = static_cast<float>(impl_->width_);
      // Temporal node: bind the neighbour.  When the caller has no valid frame
      // to offer, bind the current input instead so the texture slot is never
      // null; g_HistoryValid then tells the shader the sample is meaningless.
-     const ITextureView* neighbour = (historyValid && historySRV) ? historySRV : inputSRV;
+      ITextureView* neighbour =
+          (historyValid && historySRV) ? historySRV : inputSRV;
      if (!entry.executor->setTextureView("g_HistoryTexture", neighbour)) {
       return false;
      }
@@ -2950,12 +2951,14 @@ bool RenderPipeline::ensureLayerHistoryStorage()
  return true;
 }
 
-bool RenderPipeline::recordLayerFrame(std::uint32_t layerKey,
+bool RenderPipeline::recordLayerFrame(IDeviceContext* ctx,
+                                      std::uint32_t layerKey,
                                       std::int64_t frame,
                                       ITextureView* sourceSRV)
 {
- if (layerKey == 0 || !sourceSRV || impl_->width_ == 0 || impl_->height_ == 0) {
-  return false;
+  if (!ctx || layerKey == 0 || !sourceSRV || impl_->width_ == 0 ||
+      impl_->height_ == 0) {
+    return false;
  }
  if (!ensureLayerHistoryStorage()) {
   return false;
@@ -2964,7 +2967,7 @@ bool RenderPipeline::recordLayerFrame(std::uint32_t layerKey,
  // Fixed pool: find this layer's slot, else take a free one.  A full pool is
  // a bounded backpressure condition and is reported as failure so the caller
  // falls back to the CPU history path; it never grows the allocation.
- LayerHistorySlot* target = nullptr;
+  Impl::LayerHistorySlot* target = nullptr;
  for (auto& slot : impl_->layerHistory_) {
   if (slot.used && slot.key == layerKey) {
    target = &slot;
@@ -3003,7 +3006,7 @@ bool RenderPipeline::recordLayerFrame(std::uint32_t layerKey,
  copy.SrcTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
  copy.pDstTexture = target->frame[writeIndex].texture;
  copy.DstTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
- impl_->device_->GetImmediateContext()->CopyTexture(copy);
+ ctx->CopyTexture(copy);
 
  target->writeIndex = writeIndex;
  target->lastRenderedFrame = frame;

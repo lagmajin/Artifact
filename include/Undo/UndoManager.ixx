@@ -310,6 +310,10 @@ public:
     bool canSerialize() const override {
         return !layerId_.isEmpty() && !layer_.expired();
     }
+    bool buildCollaborationOperation(const QString& action,
+                                      QString& operationType,
+                                      QString& operationLayerId,
+                                      QJsonObject& payload) const override;
     QJsonObject serialize() const override;
     bool deserialize(const QJsonObject& data) override;
 private:
@@ -338,6 +342,10 @@ public:
     bool canSerialize() const override {
         return !layerId_.isEmpty() && !layer_.expired();
     }
+    bool buildCollaborationOperation(const QString& action,
+                                      QString& operationType,
+                                      QString& operationLayerId,
+                                      QJsonObject& payload) const override;
     QJsonObject serialize() const override;
     bool deserialize(const QJsonObject& data) override;
 private:
@@ -677,6 +685,10 @@ public:
     size_t estimatedMemoryBytes() const override;
     QString commandType() const override { return QStringLiteral("SetLayerPropertyKeyframesCommand"); }
     bool canSerialize() const override;
+    bool buildCollaborationOperation(const QString& action,
+                                      QString& operationType,
+                                      QString& operationLayerId,
+                                      QJsonObject& payload) const override;
     QJsonObject serialize() const override;
     bool deserialize(const QJsonObject& data) override;
 private:
@@ -706,6 +718,10 @@ public:
     size_t estimatedMemoryBytes() const override;
     QString commandType() const override { return QStringLiteral("SetLayerPropertyValueCommand"); }
     bool canSerialize() const override;
+    bool buildCollaborationOperation(const QString& action,
+                                      QString& operationType,
+                                      QString& layerId,
+                                      QJsonObject& payload) const override;
     QJsonObject serialize() const override;
     bool deserialize(const QJsonObject& data) override;
 private:
@@ -763,6 +779,10 @@ public:
     size_t estimatedMemoryBytes() const override;
     QString commandType() const override { return QStringLiteral("SetLayerPropertyExpressionCommand"); }
     bool canSerialize() const override { return !layerId_.isEmpty() && !layer_.expired() && !propertyPath_.isEmpty(); }
+    bool buildCollaborationOperation(const QString& action,
+                                      QString& operationType,
+                                      QString& operationLayerId,
+                                      QJsonObject& payload) const override;
     QJsonObject serialize() const override;
     bool deserialize(const QJsonObject& data) override;
 private:

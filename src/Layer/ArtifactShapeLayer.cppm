@@ -809,26 +809,6 @@ static ArtifactCore::ShapePath buildShapePath(Artifact::ShapeType shapeType,
                                 float starInnerRadius,
                                 int polygonSides);
 
-void ArtifactShapeLayer::setPathKeyframe(int64_t frame,
-                                         const std::vector<CustomPathVertex>& verts) {
- auto property = getProperty(QStringLiteral("shape.path.keyframes"));
- if (!property) {
-  property = persistentLayerProperty(
-      QStringLiteral("shape.path.keyframes"),
-      ArtifactCore::PropertyType::String, QString{}, -190);
- }
- property->setAnimatable(true);
- QJsonDocument doc =
-     QJsonDocument::fromJson(
-         property->getValue().toString().toUtf8());
- QJsonObject root = doc.object();
- root[QString::number(static_cast<qint64>(frame))] =
-     serializePathVertices(verts);
- property->setValue(QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact)));
- ++impl_->contentRevision_;
- Q_EMIT changed();
-}
-
 bool ArtifactShapeLayer::hasPathKeyframes() const {
  auto property = getProperty(QStringLiteral("shape.path.keyframes"));
  if (!property) {
@@ -2652,6 +2632,26 @@ public:
   }
 };
 
+void ArtifactShapeLayer::setPathKeyframe(int64_t frame,
+                                         const std::vector<CustomPathVertex>& verts) {
+ auto property = getProperty(QStringLiteral("shape.path.keyframes"));
+ if (!property) {
+  property = persistentLayerProperty(
+      QStringLiteral("shape.path.keyframes"),
+      ArtifactCore::PropertyType::String, QString{}, -190);
+ }
+ property->setAnimatable(true);
+ QJsonDocument doc =
+     QJsonDocument::fromJson(
+         property->getValue().toString().toUtf8());
+ QJsonObject root = doc.object();
+ root[QString::number(static_cast<qint64>(frame))] =
+     serializePathVertices(verts);
+ property->setValue(QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact)));
+ impl_->markDirty();
+ Q_EMIT changed();
+}
+
 // ============================================================
 // Constructor / Destructor
 // ============================================================
@@ -4459,7 +4459,7 @@ QImage ArtifactShapeLayer::renderContentsToImage() const {
           content.fill.gradientEnd.b(),
           content.fill.gradientEnd.a() * content.opacity)));
       // F10: multi-stop replaces the 2-stop endpoints when present.
-      const auto evaluatedStops = impl->evaluatedContentGradientStops(
+      const auto evaluatedStops = impl_->evaluatedContentGradientStops(
           this, static_cast<int>(ci), content.fill.gradientStops);
       if (!evaluatedStops.empty()) {
         applyGradientStopsToQGradient(grad, evaluatedStops,
@@ -5383,7 +5383,8 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer,
    legacyItem.fill.type = impl->fillType_;
    legacyItem.fill.gradientStart = impl->fillGradientStartColor_;
    legacyItem.fill.gradientEnd = impl->fillGradientEndColor_;
-   legacyItem.gradientStops = &effectiveStops;
+   legacyItem.gradientStops =
+       std::span<const Artifact::ShapeGradientStop>(effectiveStops);
    legacyItem.fill.gradientAngleDegrees = impl->fillGradientAngleDegrees_;
    legacyItem.fill.gradientCenterX = impl->fillGradientCenterX_;
    legacyItem.fill.gradientCenterY = impl->fillGradientCenterY_;

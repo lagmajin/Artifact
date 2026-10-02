@@ -23,6 +23,7 @@ import Property.Abstract;
 import Utils.String.UniString;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
+import Graphics.SurfaceColorContract;
 import Artifact.Render.DiligentDeviceManager;
 import Core.Parallel;
 import Memory.SharedPtr;
@@ -189,7 +190,7 @@ public:
 private:
     struct ParamsCB {
         float levels = 4.0f;
-        float3 pad = {0.0f, 0.0f, 0.0f};
+        float pad[3] = {0.0f, 0.0f, 0.0f};
     };
 
     static constexpr const char* kPosterizeHlsl = R"(
@@ -257,7 +258,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
                                Diligent::ITexture* src,
                                Diligent::RefCntAutoPtr<Diligent::ITexture>& staging,
                                ImageF32x4RGBAWithCache& dst,
-                               const ArtifactCore::ImageColorDescriptor& colorDescriptor,
+                               const ArtifactCore::SurfaceColorDescriptor& colorDescriptor,
                                const char* name)
     {
         if (!device || !ctx || !src) return false;

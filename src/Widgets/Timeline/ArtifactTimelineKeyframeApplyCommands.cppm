@@ -44,7 +44,7 @@ ArtifactCore::AbstractPropertyPtr findLayerPropertyByPath(
     if (grid && (parts[2] == QStringLiteral("rotation") ||
                  parts[2] == QStringLiteral("weight"))) return {};
     const QJsonArray controls = state.value(
-        LayerAbstractUtilities::deformationControlsKey(grid))
+        Artifact::LayerAbstractUtilities::deformationControlsKey(grid))
         .toArray();
     for (const QJsonValue& value : controls) {
       const QJsonObject control = value.toObject();

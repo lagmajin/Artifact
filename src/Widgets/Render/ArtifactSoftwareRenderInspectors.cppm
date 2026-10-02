@@ -1032,7 +1032,7 @@ public:
             return;
         }
         if (!previewDebounceConnected_) {
-            connect(&previewDebounce_, &QTimer::timeout, this,
+            connect(&previewDebounce_, &QTimer::timeout, owner_,
                     [this]() { refreshPreview(); });
             previewDebounce_.setSingleShot(true);
             previewDebounce_.setInterval(16);
@@ -1256,7 +1256,7 @@ void ArtifactSoftwareLayerTestWidget::Impl::schedulePreviewRefresh()
         return;
     }
     if (!previewDebounceConnected_) {
-        connect(&previewDebounce_, &QTimer::timeout, this,
+        connect(&previewDebounce_, &QTimer::timeout, owner_,
                 [this]() { refreshPreview(); });
         previewDebounce_.setSingleShot(true);
         previewDebounce_.setInterval(16);

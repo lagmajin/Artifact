@@ -18,6 +18,7 @@ module;
 
 module Artifact.Widgets.Gizmo3D;
 
+import Math.Vec;
 import Settings.Accessibility;
 
 namespace Artifact {
@@ -1292,6 +1293,7 @@ void Artifact3DGizmo::beginDrag(GizmoAxis axis, const WorldRay& worldRay,
 void Artifact3DGizmo::beginDrag(GizmoAxis axis, const WorldRay& ray,
                                 const QVector3D& scaleSigns) {
     beginDrag(axis, ray, 1.0f);
+    const Ray legacyRay = legacyRayFromWorldRay(ray);
     // The controller uses this overload for every 3D hit. Enter the legacy
     // bounding-box resize path only when hitTest() actually selected one of
     // its handles; dedicated Scale axes keep hoverScaleAxes_ empty and must
@@ -1345,13 +1347,15 @@ void Artifact3DGizmo::beginDrag(GizmoAxis axis, const WorldRay& ray,
     impl_->dragStartBoundingBoxHandlePoint = boundingBoxHandlePointFor(
         boundingBoxMin_, boundingBoxMax_, impl_->dragStartPosition,
         impl_->dragStartScale, basis, scaleAxes, scaleSigns);
-    impl_->dragPlaneNormal =
-        (ray.origin - impl_->dragStartBoundingBoxHandlePoint).normalized();
+    impl_->dragPlaneNormal = (legacyRay.origin -
+                              impl_->dragStartBoundingBoxHandlePoint)
+                                 .normalized();
     if (impl_->dragPlaneNormal.lengthSquared() < 0.01f) {
         impl_->dragPlaneNormal = QVector3D(0.0f, 0.0f, 1.0f);
     }
     QVector3D hit;
-    if (impl_->intersectRayPlane(ray, impl_->dragStartBoundingBoxHandlePoint,
+    if (impl_->intersectRayPlane(legacyRay,
+                                 impl_->dragStartBoundingBoxHandlePoint,
                                  impl_->dragPlaneNormal, hit)) {
         impl_->dragStartHitPoint = hit;
     } else {

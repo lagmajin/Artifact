@@ -26,6 +26,7 @@ import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
 import Core.Parallel;
 import Memory.SharedPtr;
+import Graphics.SurfaceColorContract;
 
 namespace Artifact {
 
@@ -223,7 +224,7 @@ private:
     struct ParamsCB {
         float vibrance = 0.0f;
         float saturation = 0.0f;
-        float2 pad = {0.0f, 0.0f};
+        float pad[2] = {};
     };
 
     static constexpr const char* kVibranceHlsl = R"(
@@ -300,7 +301,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
                                Diligent::ITexture* src,
                                Diligent::RefCntAutoPtr<Diligent::ITexture>& staging,
                                ImageF32x4RGBAWithCache& dst,
-                               const ArtifactCore::ImageColorDescriptor& colorDescriptor,
+                               const ArtifactCore::SurfaceColorDescriptor& colorDescriptor,
                                const char* name)
     {
         if (!device || !ctx || !src) return false;

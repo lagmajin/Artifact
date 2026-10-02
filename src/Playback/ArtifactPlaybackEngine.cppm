@@ -1391,10 +1391,10 @@ void ArtifactPlaybackEngine::setInOutPoints(ArtifactInOutPoints* inOutPoints) {
         hasIn ? inOutPoints->inPoint().value().framePosition() : 0;
     const int64_t outValue =
         hasOut ? inOutPoints->outPoint().value().framePosition() : 0;
-    inPointValue_.store(inValue, std::memory_order_relaxed);
-    hasInPoint_.store(hasIn, std::memory_order_release);
-    outPointValue_.store(outValue, std::memory_order_relaxed);
-    hasOutPoint_.store(hasOut, std::memory_order_release);
+    impl_->inPointValue_.store(inValue, std::memory_order_relaxed);
+    impl_->hasInPoint_.store(hasIn, std::memory_order_release);
+    impl_->outPointValue_.store(outValue, std::memory_order_relaxed);
+    impl_->hasOutPoint_.store(hasOut, std::memory_order_release);
     std::lock_guard<std::mutex> lock(impl_->inOutPointsMutex_);
     impl_->inOutPoints_ = inOutPoints;
 }

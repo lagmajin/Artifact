@@ -5,6 +5,7 @@ module;
 #include <iostream>
 #include <vector>
 #include <string>
+#include <string_view>
 #include <map>
 #include <unordered_map>
 #include <set>
@@ -44,6 +45,7 @@ module Artifact.VST.Effect;
 
 
 import Audio.Segment;
+import Audio.Effect;
 import Artifact.Audio.Effects.Base;
 import Artifact.VST.Host;
 import VST3.Interfaces;
@@ -58,6 +60,25 @@ QString vst3ParameterTitle(const Steinberg::Vst::ParameterInfo& info) {
     while (length < 128 && info.title[length] != u'\0') ++length;
     return QString::fromUtf16(
         reinterpret_cast<const ushort*>(info.title), length);
+}
+
+// EffectParameter の id と、UI 拡張 API（getUiParameters/setParameter）が
+// 使うキーは同じパラメータを指さなければならない。getParameters() は
+// EffectParameter::id を、setParameter は String キーを使うため、
+// どちらの形式でも同じパラメータへ解決できるようにする。
+constexpr std::string_view kParameterIdPrefix = "vst.param.";
+
+std::string toEffectParameterId(const std::string& key) {
+    return std::string(kParameterIdPrefix) + key;
+}
+
+// id 形式と素の名前の両方を受け取り、素の名前を返す。
+// 一致しない場合はそのまま返す（不正キンは後段で解決に失敗する）。
+std::string stripParameterIdPrefix(const std::string& key) {
+    if (key.rfind(kParameterIdPrefix, 0) == 0) {
+        return key.substr(kParameterIdPrefix.size());
+    }
+    return key;
 }
 
 } // namespace
@@ -75,9 +96,76 @@ public:
     std::unique_ptr<Steinberg::Vst::VST3EffectHost> vst3Host;
     std::array<std::vector<float>, 2> vst3InputScratch;
     std::array<std::vector<float>, 2> vst3OutputScratch;
-    
+
     // パラメータ管理
     std::map<std::string, float> parameters;
+
+    // VST3 パラメータの ID 解決キャッシュ。getParameterInfo() の
+    // 線形走査を setParameter/getParameter ごとに繰り返さないためのもの。
+    // key は表示名、value は (ParamID, 既定正規化値)。
+    struct Vst3ParamEntry {
+        Steinberg::ParamID id = 0;
+        float defaultValue = 0.0f;
+    };
+    std::map<std::string, Vst3ParamEntry> vst3ParamByName;
+    // key は std::to_string(ParamID)
+    std::map<std::string, Vst3ParamEntry> vst3ParamById;
+    bool vst3ParamCacheValid = false;
+
+    void invalidateParamCache() { vst3ParamCacheValid = false; }
+
+    void rebuildParamCache() {
+        vst3ParamByName.clear();
+        vst3ParamById.clear();
+        vst3ParamCacheValid = false;
+        if (!vst3Host) return;
+        const Steinberg::int32 count = vst3Host->parameterCount();
+        for (Steinberg::int32 index = 0; index < count; ++index) {
+            Steinberg::Vst::ParameterInfo info{};
+            if (!vst3Host->getParameterInfo(index, info)) continue;
+            QString base = vst3ParameterTitle(info);
+            if (base.isEmpty()) {
+                base = QStringLiteral("Parameter %1").arg(index + 1);
+            }
+            // 表示名が重複するプラグインでは ID を添えて一意化する。
+            // 重複判定はすでに登録済みの vst3ParamByName キーで行う。
+            const QString idKey = QString::number(static_cast<qulonglong>(info.id));
+            if (vst3ParamByName.count(base.toStdString()) > 0) {
+                const QString decorated = QStringLiteral("%1 [%2]").arg(base, idKey);
+                QString candidate = decorated;
+                int suffix = 2;
+                while (vst3ParamByName.count(candidate.toStdString()) > 0) {
+                    candidate = decorated + QStringLiteral(" (%1)").arg(suffix++);
+                }
+                base = candidate;
+            }
+            Vst3ParamEntry entry;
+            entry.id = info.id;
+            entry.defaultValue = std::isfinite(info.defaultNormalizedValue)
+                ? std::clamp(static_cast<float>(info.defaultNormalizedValue), 0.0f, 1.0f)
+                : 0.0f;
+            const std::string key = base.toStdString();
+            vst3ParamByName.emplace(key, entry);
+            vst3ParamById.emplace(idKey.toStdString(), entry);
+        }
+        vst3ParamCacheValid = true;
+    }
+
+    const Vst3ParamEntry* findParamByName(const std::string& key) const {
+        if (!vst3ParamCacheValid) {
+            const_cast<Impl*>(this)->rebuildParamCache();
+        }
+        const auto it = vst3ParamByName.find(key);
+        return it == vst3ParamByName.end() ? nullptr : &it->second;
+    }
+
+    const Vst3ParamEntry* findParamById(const std::string& idKey) const {
+        if (!vst3ParamCacheValid) {
+            const_cast<Impl*>(this)->rebuildParamCache();
+        }
+        const auto it = vst3ParamById.find(idKey);
+        return it == vst3ParamById.end() ? nullptr : &it->second;
+    }
 };
 
 // ファクトリー関数
@@ -125,6 +213,7 @@ bool VSTEffect::loadPlugin(const std::string& path) {
         impl_->pluginName = vst3->className();
         impl_->pluginId = -1;
         impl_->vst3Host = std::move(vst3);
+        impl_->invalidateParamCache();
     } else {
         if (!host.loadPlugin(path)) return false;
         impl_->pluginPath = path;
@@ -165,6 +254,7 @@ void VSTEffect::unloadPlugin() {
     impl_->pluginName.clear();
     impl_->isLoaded = false;
     impl_->isVST3 = false;
+    impl_->invalidateParamCache();
 }
 
 std::string VSTEffect::getPluginName() const {
@@ -260,17 +350,15 @@ std::vector<AudioEffectParameter> VSTEffect::getUiParameters() const {
     
     if (impl_->vst3Host) {
         params.reserve(static_cast<size_t>(impl_->vst3Host->parameterCount()));
-        for (Steinberg::int32 index = 0;
-             index < impl_->vst3Host->parameterCount(); ++index) {
-            Steinberg::Vst::ParameterInfo info{};
-            if (!impl_->vst3Host->getParameterInfo(index, info)) continue;
-            QString name = vst3ParameterTitle(info);
-            if (name.isEmpty()) name = QStringLiteral("Parameter %1").arg(index + 1);
+        if (!impl_->vst3ParamCacheValid) impl_->rebuildParamCache();
+        for (const auto& [name, entry] : impl_->vst3ParamByName) {
             AudioEffectParameter effectParam;
-            effectParam.name = ArtifactCore::String(name.toStdString());
+            effectParam.name = ArtifactCore::String(name);
+            effectParam.displayName = ArtifactCore::String(name);
+            effectParam.type = AudioEffectParameterType::Float;
             effectParam.minValue = 0.0f;
             effectParam.maxValue = 1.0f;
-            effectParam.defaultValue = static_cast<float>(info.defaultNormalizedValue);
+            effectParam.defaultValue = entry.defaultValue;
             params.push_back(std::move(effectParam));
         }
         return params;
@@ -282,6 +370,9 @@ std::vector<AudioEffectParameter> VSTEffect::getUiParameters() const {
     for (const auto& param : pluginParams) {
         AudioEffectParameter effectParam;
         effectParam.name = param.name;
+        effectParam.displayName = param.name;
+        effectParam.type = param.isDiscrete ? AudioEffectParameterType::Bool
+                                            : AudioEffectParameterType::Float;
         effectParam.minValue = param.minValue;
         effectParam.maxValue = param.maxValue;
         effectParam.defaultValue = param.defaultValue;
@@ -293,25 +384,21 @@ std::vector<AudioEffectParameter> VSTEffect::getUiParameters() const {
 }
 
 void VSTEffect::setParameter(const String& name, float value) {
-    const std::string key = ArtifactCore::toStdString(name);
+    const std::string rawKey = ArtifactCore::toStdString(name);
+    // getParameters() が返す id 形式と UI が使う素の名前の両方を受け取る。
+    const std::string key = stripParameterIdPrefix(rawKey);
     if (!impl_->isLoaded) {
         impl_->parameters[key] = value;
         return;
     }
     
     if (impl_->vst3Host) {
-        for (Steinberg::int32 index = 0;
-             index < impl_->vst3Host->parameterCount(); ++index) {
-            Steinberg::Vst::ParameterInfo info{};
-            if (!impl_->vst3Host->getParameterInfo(index, info)) continue;
-            const QString paramName = vst3ParameterTitle(info);
-            if (paramName.toStdString() != key) continue;
-            const double clamped = std::clamp(
-                static_cast<double>(value), 0.0, 1.0);
-            if (impl_->vst3Host->setParameterNormalized(info.id, clamped)) {
-                impl_->parameters[key] = static_cast<float>(clamped);
-            }
-            return;
+        const VSTEffect::Impl::Vst3ParamEntry* entry = impl_->findParamByName(key);
+        if (!entry) return;
+        const double clamped = std::clamp(
+            static_cast<double>(value), 0.0, 1.0);
+        if (impl_->vst3Host->setParameterNormalized(entry->id, clamped)) {
+            impl_->parameters[key] = static_cast<float>(clamped);
         }
         return;
     }
@@ -333,20 +420,16 @@ void VSTEffect::setParameter(const String& name, float value) {
 }
 
 float VSTEffect::getParameter(const String& name) const {
-    const std::string key = ArtifactCore::toStdString(name);
+    const std::string rawKey = ArtifactCore::toStdString(name);
+    const std::string key = stripParameterIdPrefix(rawKey);
     if (impl_->vst3Host) {
-        for (Steinberg::int32 index = 0;
-             index < impl_->vst3Host->parameterCount(); ++index) {
-            Steinberg::Vst::ParameterInfo info{};
-            if (!impl_->vst3Host->getParameterInfo(index, info)) continue;
-            if (vst3ParameterTitle(info).toStdString() == key) {
-                const double normalized =
-                    impl_->vst3Host->parameterNormalized(info.id);
-                return std::isfinite(normalized)
-                    ? static_cast<float>(std::clamp(normalized, 0.0, 1.0))
-                    : 0.0f;
-            }
-        }
+        const VSTEffect::Impl::Vst3ParamEntry* entry = impl_->findParamByName(key);
+        if (!entry) return 0.0f;
+        const double normalized =
+            impl_->vst3Host->parameterNormalized(entry->id);
+        return std::isfinite(normalized)
+            ? static_cast<float>(std::clamp(normalized, 0.0, 1.0))
+            : 0.0f;
     }
     if (impl_->isLoaded && impl_->pluginId >= 0) {
         auto& host = VSTHost::getInstance();
@@ -441,6 +524,73 @@ void VSTEffect::setSampleRate(int sampleRate) {
 
 int VSTEffect::getSampleRate() const {
     return impl_->sampleRate;
+}
+
+std::vector<ArtifactCore::EffectParameter> VSTEffect::getParameters() const {
+    std::vector<ArtifactCore::EffectParameter> params;
+    if (!impl_->isLoaded) return params;
+
+    if (impl_->vst3Host) {
+        if (!impl_->vst3ParamCacheValid) impl_->rebuildParamCache();
+        params.reserve(impl_->vst3ParamByName.size());
+        for (const auto& [name, entry] : impl_->vst3ParamByName) {
+            ArtifactCore::EffectParameter param;
+            param.id = ArtifactCore::String(toEffectParameterId(name));
+            param.displayName = ArtifactCore::String(name);
+            param.minValue = 0.0f;
+            param.maxValue = 1.0f;
+            param.defaultValue = entry.defaultValue;
+            const double normalized =
+                impl_->vst3Host->parameterNormalized(entry.id);
+            param.value = std::isfinite(normalized)
+                ? static_cast<float>(std::clamp(normalized, 0.0, 1.0))
+                : entry.defaultValue;
+            params.push_back(std::move(param));
+        }
+        return params;
+    }
+
+    auto& host = VSTHost::getInstance();
+    const auto pluginParams = host.getPluginParameters(impl_->pluginId);
+    params.reserve(pluginParams.size());
+    for (size_t index = 0; index < pluginParams.size(); ++index) {
+        const auto& info = pluginParams[index];
+        ArtifactCore::EffectParameter param;
+        param.id = ArtifactCore::String(toEffectParameterId(info.name));
+        param.displayName = ArtifactCore::String(info.name);
+        param.minValue = info.minValue;
+        param.maxValue = info.maxValue;
+        param.defaultValue = info.defaultValue;
+        param.value = host.getParameter(impl_->pluginId, static_cast<int>(index));
+        params.push_back(std::move(param));
+    }
+    return params;
+}
+
+void VSTEffect::setParameterValue(const ArtifactCore::String& id, float value) {
+    setParameter(id, value);
+}
+
+float VSTEffect::getParameterValue(const ArtifactCore::String& id) const {
+    return getParameter(id);
+}
+
+ArtifactCore::String VSTEffect::effectType() const {
+    return ArtifactCore::String(impl_->isVST3 ? "vst3" : "vst2");
+}
+
+qint64 VSTEffect::latencySamples() const {
+    if (impl_->vst3Host) {
+        return static_cast<qint64>(impl_->vst3Host->latencySamples());
+    }
+    return 0;
+}
+
+qint64 VSTEffect::tailSamples() const {
+    if (impl_->vst3Host) {
+        return static_cast<qint64>(impl_->vst3Host->tailSamples());
+    }
+    return 0;
 }
 
 }

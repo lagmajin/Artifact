@@ -4,6 +4,7 @@
 #include <wobjectdefs.h>
 #include <QString>
 #include <QJsonObject>
+#include <QVariant>
 export module Artifact.Layer.Light;
 
 
@@ -106,13 +107,29 @@ export namespace Artifact {
   QString excludedLayerIdsText() const;
   void setExcludedLayerIdsText(const QString& ids);
 
-  // Generic properties for Inspector
-  std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
-  bool setLayerPropertyValue(const QString& propertyPath, const QVariant& value) override;
+ // Generic properties for Inspector
+   std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
+   bool setLayerPropertyValue(const QString& propertyPath, const QVariant& value) override;
 
- private:
-  struct Impl;
-  Impl* lightImpl_;
+ // Property paths whose value is keyframable / expression-driven. Type and
+   // link-mode switches stay out: they restructure which paths exist at all.
+   static const std::vector<QString>& animatablePropertyPaths();
+
+  private:
+   // Animated read path. Returns `fallback` when the property is missing or
+   // unanimated, so a static light keeps the render path allocation free.
+   double animatedDouble(const QString& propertyPath, double fallback) const;
+   bool animatedBool(const QString& propertyPath, bool fallback) const;
+   ArtifactCore::FloatColor animatedColor(const QString& propertyPath,
+                                          const ArtifactCore::FloatColor& fallback) const;
+
+   // Current `Impl` value for `propertyPath`, or an invalid QVariant when the
+   // path is unknown.
+   QVariant lightPropertyCacheValue(const QString& propertyPath) const;
+   void syncLightPropertyCache(const QString& propertyPath);
+
+   struct Impl;
+   Impl* lightImpl_;
  };
 
  using ArtifactLightLayerPtr = SharedPtr<ArtifactLightLayer>;

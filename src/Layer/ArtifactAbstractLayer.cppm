@@ -886,7 +886,7 @@ std::uint64_t ArtifactAbstractLayer::effectRevision() const {
   return impl_ ? impl_->effectRevision_.load(std::memory_order_acquire) : 0;
 }
 
-bool ArtifactAbstractLayer::hasAnimatedEffectProperties() {
+bool ArtifactAbstractLayer::hasAnimatedEffectProperties() const {
   if (!impl_) return false;
   const std::uint64_t revision =
       impl_->effectRevision_.load(std::memory_order_acquire);

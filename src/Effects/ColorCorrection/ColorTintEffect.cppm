@@ -24,6 +24,7 @@ import Property.Abstract;
 import Utils.String.UniString;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
+import Graphics.SurfaceColorContract;
 import Artifact.Render.DiligentDeviceManager;
 import Core.Parallel;
 import Memory.SharedPtr;
@@ -194,18 +195,14 @@ public:
             return;
         }
         ParamsCB params{};
-        params.blackColor = {
-            static_cast<float>(mapBlackTo_.redF()),
-            static_cast<float>(mapBlackTo_.greenF()),
-            static_cast<float>(mapBlackTo_.blueF()),
-            0.0f
-        };
-        params.whiteColor = {
-            static_cast<float>(mapWhiteTo_.redF()),
-            static_cast<float>(mapWhiteTo_.greenF()),
-            static_cast<float>(mapWhiteTo_.blueF()),
-            0.0f
-        };
+        params.blackColor[0] = static_cast<float>(mapBlackTo_.redF());
+        params.blackColor[1] = static_cast<float>(mapBlackTo_.greenF());
+        params.blackColor[2] = static_cast<float>(mapBlackTo_.blueF());
+        params.blackColor[3] = 0.0f;
+        params.whiteColor[0] = static_cast<float>(mapWhiteTo_.redF());
+        params.whiteColor[1] = static_cast<float>(mapWhiteTo_.greenF());
+        params.whiteColor[2] = static_cast<float>(mapWhiteTo_.blueF());
+        params.whiteColor[3] = 0.0f;
         params.amount = amountToTint_;
         std::memcpy(mapped, &params, sizeof(params));
         context_->UnmapBuffer(paramsCB_, Diligent::MAP_WRITE);
@@ -228,10 +225,10 @@ public:
 
 private:
     struct ParamsCB {
-        float4 blackColor;
-        float4 whiteColor;
+        float blackColor[4];
+        float whiteColor[4];
         float amount;
-        float3 pad;
+        float pad[3];
     };
 
     static constexpr const char* kColorTintHlsl = R"(
@@ -302,7 +299,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
                                Diligent::ITexture* src,
                                Diligent::RefCntAutoPtr<Diligent::ITexture>& staging,
                                ImageF32x4RGBAWithCache& dst,
-                               const ArtifactCore::ImageColorDescriptor& colorDescriptor,
+                               const ArtifactCore::SurfaceColorDescriptor& colorDescriptor,
                                const char* name)
     {
         if (!device || !ctx || !src) return false;

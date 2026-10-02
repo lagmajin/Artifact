@@ -75,9 +75,9 @@ constexpr int kMaxFontPointSize = 32;
 // Renders the line number gutter and the current-line highlight. Implemented as
 // a QTextEdit subclass rather than a separate widget so the existing
 // ExtraSelection based error underline keeps working unchanged.
-class ExpressionTextEdit final : public QTextEdit {
+class ExpressionTextEdit final : public QPlainTextEdit {
 public:
-    explicit ExpressionTextEdit(QWidget* parent) : QTextEdit(parent) {}
+    explicit ExpressionTextEdit(QWidget* parent) : QPlainTextEdit(parent) {}
 
     void setLineNumbersVisible(bool visible) {
         if (showLineNumbers_ == visible) {
@@ -126,12 +126,12 @@ public:
 
 protected:
     void resizeEvent(QResizeEvent* event) override {
-        QTextEdit::resizeEvent(event);
+        QPlainTextEdit::resizeEvent(event);
         updateGutterWidth();
     }
 
     void paintEvent(QPaintEvent* event) override {
-        QTextEdit::paintEvent(event);
+        QPlainTextEdit::paintEvent(event);
         // The gutter is painted last so it sits above the text column. The
         // current-line band is not painted here: it is a FullWidthSelection
         // ExtraSelection so that it cannot be overwritten by the error
@@ -144,10 +144,6 @@ protected:
 private:
     void updateGutterWidth() {
         setViewportMargins(lineNumberAreaWidth(), 0, 0, 0);
-    }
-
-    void refreshCurrentLineHighlight() {
-        rebuildExtraSelections();
     }
 
     void rebuildExtraSelections() {
@@ -1063,9 +1059,9 @@ public:
         if (!expressionEdit) {
             return;
         }
-        const bool wrap = expressionEdit->lineWrapMode() == QTextEdit::NoWrap;
-        expressionEdit->setLineWrapMode(wrap ? QTextEdit::WidgetWidth
-                                             : QTextEdit::NoWrap);
+        const bool wrap = expressionEdit->lineWrapMode() == QPlainTextEdit::NoWrap;
+        expressionEdit->setLineWrapMode(wrap ? QPlainTextEdit::WidgetWidth
+                                             : QPlainTextEdit::NoWrap);
         setStatus(wrap ? QStringLiteral("Word wrap on") : QStringLiteral("Word wrap off"),
                   QColor(148, 163, 184));
     }
@@ -1134,8 +1130,14 @@ public:
             return 0;
         }
         const QString needle = findFindEdit->text();
-        if (expressionEdit->find(needle, wrap ? QTextDocument::FindBackward
-                                              : QTextDocument::FindForward)) {
+        bool found = expressionEdit->find(needle);
+        if (!found && wrap) {
+            QTextCursor cursor(expressionEdit->document());
+            cursor.movePosition(QTextCursor::Start);
+            expressionEdit->setTextCursor(cursor);
+            found = expressionEdit->find(needle);
+        }
+        if (found) {
             highlightAllMatches(needle, expressionEdit->textCursor().position());
         }
         return countMatches(needle);
@@ -1178,7 +1180,19 @@ public:
         if (!expressionEdit || needle.isEmpty()) {
             return 0;
         }
-        return expressionEdit->document()->find(needle).size();
+        int count = 0;
+        QTextCursor searchCursor(expressionEdit->document());
+        searchCursor.movePosition(QTextCursor::Start);
+        while (true) {
+            const QTextCursor match =
+                expressionEdit->document()->find(needle, searchCursor);
+            if (match.isNull()) {
+                break;
+            }
+            ++count;
+            searchCursor.setPosition(match.selectionEnd());
+        }
+        return count;
     }
 
     // 1-based ordinal of the match containing the given offset.
@@ -1187,14 +1201,21 @@ public:
         if (!expressionEdit || needle.isEmpty()) {
             return 0;
         }
-        const QList<QTextEdit::ExtraSelection> found = expressionEdit->document()->find(needle);
+        QTextCursor searchCursor(expressionEdit->document());
+        searchCursor.movePosition(QTextCursor::Start);
         int ordinal = 0;
-        for (const auto& selection : found) {
+        while (true) {
+            const QTextCursor match =
+                expressionEdit->document()->find(needle, searchCursor);
+            if (match.isNull()) {
+                break;
+            }
             ++ordinal;
-            if (position >= selection.cursor.selectionStart() &&
-                position <= selection.cursor.selectionEnd()) {
+            if (position >= match.selectionStart() &&
+                position <= match.selectionEnd()) {
                 return ordinal;
             }
+            searchCursor.setPosition(match.selectionEnd());
         }
         return ordinal > 0 ? ordinal : 1;
     }
@@ -1639,7 +1660,7 @@ public:
 
         expressionEdit = new ExpressionTextEdit(workspaceSplitter);
         expressionEdit->setPlaceholderText(QStringLiteral("Enter an expression here..."));
-        expressionEdit->setLineWrapMode(QTextEdit::NoWrap);
+        expressionEdit->setLineWrapMode(QPlainTextEdit::NoWrap);
         expressionEdit->setAcceptDrops(true);
         expressionEdit->setFrameShape(QFrame::NoFrame);
         // A faint band marks the caret line; the gutter column reuses the panel
@@ -2086,7 +2107,7 @@ ArtifactExpressionCopilotWidget::ArtifactExpressionCopilotWidget(QWidget* parent
         impl_->applyErrorSelection(-1, 0, QString());
     });
 
-    connect(impl_->expressionEdit, &QTextEdit::textChanged, this, [this]() {
+    connect(impl_->expressionEdit, &QPlainTextEdit::textChanged, this, [this]() {
         if (impl_->validateTimer) {
             impl_->validateTimer->start();
         }
@@ -2101,7 +2122,7 @@ ArtifactExpressionCopilotWidget::ArtifactExpressionCopilotWidget(QWidget* parent
 
     // Signature help follows the caret as it moves through a call's arguments,
     // and the current-line band has to be rebuilt whenever the block changes.
-    connect(impl_->expressionEdit, &QTextEdit::cursorPositionChanged, this, [this]() {
+    connect(impl_->expressionEdit, &QPlainTextEdit::cursorPositionChanged, this, [this]() {
         impl_->refreshCurrentLineHighlight();
         impl_->showSignatureHelpAt(impl_->expressionEdit->textCursor().position());
     });

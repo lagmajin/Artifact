@@ -1284,6 +1284,31 @@ size_t LayerComponentDescriptorSnapshotCommand::estimatedMemoryBytes() const {
         QJsonDocument(after_).toJson(QJsonDocument::Compact).size());
 }
 
+bool LayerComponentDescriptorSnapshotCommand::buildCollaborationOperation(
+    const QString& action, QString& operationType, QString& operationLayerId,
+    QJsonObject& payload) const {
+    if (!canSerialize()) {
+        return false;
+    }
+    const bool reverse = action == QStringLiteral("undo");
+    const bool forward = action == QStringLiteral("push") ||
+                         action == QStringLiteral("redo");
+    if (!reverse && !forward) {
+        return false;
+    }
+    constexpr qint64 kMaxSnapshotBytes = 262144;
+    if (QJsonDocument(before_).toJson(QJsonDocument::Compact).size() > kMaxSnapshotBytes ||
+        QJsonDocument(after_).toJson(QJsonDocument::Compact).size() > kMaxSnapshotBytes) {
+        return false;
+    }
+    operationType = QStringLiteral("layer.components");
+    operationLayerId = layerId_;
+    payload = QJsonObject{
+        {QStringLiteral("expected"), reverse ? after_ : before_},
+        {QStringLiteral("value"), reverse ? before_ : after_}};
+    return true;
+}
+
 QJsonObject LayerComponentDescriptorSnapshotCommand::serialize() const {
     return QJsonObject{{QStringLiteral("layerId"), layerId_},
                        {QStringLiteral("before"), before_},
@@ -1343,6 +1368,32 @@ size_t CloneEffectorStackSnapshotCommand::estimatedMemoryBytes() const {
     return sizeof(*this) + static_cast<size_t>(
         QJsonDocument(before_).toJson(QJsonDocument::Compact).size() +
         QJsonDocument(after_).toJson(QJsonDocument::Compact).size());
+}
+
+bool CloneEffectorStackSnapshotCommand::buildCollaborationOperation(
+    const QString& action, QString& operationType, QString& operationLayerId,
+    QJsonObject& payload) const {
+    if (!canSerialize()) {
+        return false;
+    }
+    const bool reverse = action == QStringLiteral("undo");
+    const bool forward = action == QStringLiteral("push") ||
+                         action == QStringLiteral("redo");
+    if (!reverse && !forward) {
+        return false;
+    }
+    constexpr qint64 kMaxSnapshotBytes = 262144;
+    if (QJsonDocument(before_).toJson(QJsonDocument::Compact).size() > kMaxSnapshotBytes ||
+        QJsonDocument(after_).toJson(QJsonDocument::Compact).size() > kMaxSnapshotBytes) {
+        return false;
+    }
+    operationType = QStringLiteral("layer.stack");
+    operationLayerId = layerId_;
+    payload = QJsonObject{
+        {QStringLiteral("stackKind"), QStringLiteral("cloneEffectors")},
+        {QStringLiteral("expected"), reverse ? after_ : before_},
+        {QStringLiteral("value"), reverse ? before_ : after_}};
+    return true;
 }
 
 QJsonObject CloneEffectorStackSnapshotCommand::serialize() const {
@@ -4123,6 +4174,32 @@ bool SetLayerPropertyValueCommand::canSerialize() const {
            !QJsonValue::fromVariant(afterValue_).isUndefined();
 }
 
+bool SetLayerPropertyValueCommand::buildCollaborationOperation(
+    const QString& action, QString& operationType, QString& operationLayerId,
+    QJsonObject& payload) const {
+    if (!canSerialize()) {
+        return false;
+    }
+    const bool reverse = action == QStringLiteral("undo");
+    const bool forward = action == QStringLiteral("push") ||
+                         action == QStringLiteral("redo");
+    if (!reverse && !forward) {
+        return false;
+    }
+    const QJsonValue before = QJsonValue::fromVariant(beforeValue_);
+    const QJsonValue after = QJsonValue::fromVariant(afterValue_);
+    if (before.isUndefined() || after.isUndefined()) {
+        return false;
+    }
+    operationType = QStringLiteral("property.set");
+    operationLayerId = layerId_;
+    payload = QJsonObject{
+        {QStringLiteral("propertyPath"), propertyPath_},
+        {QStringLiteral("expectedValue"), reverse ? after : before},
+        {QStringLiteral("value"), reverse ? before : after}};
+    return true;
+}
+
 QJsonObject SetLayerPropertyValueCommand::serialize() const {
     return QJsonObject{{QStringLiteral("layerId"), layerId_},
                        {QStringLiteral("propertyPath"), propertyPath_},
@@ -4326,6 +4403,34 @@ size_t SetLayerPropertyExpressionCommand::estimatedMemoryBytes() const {
                                label_.size()) * sizeof(QChar);
 }
 
+bool SetLayerPropertyExpressionCommand::buildCollaborationOperation(
+    const QString& action, QString& operationType, QString& operationLayerId,
+    QJsonObject& payload) const {
+    if (!canSerialize()) {
+        return false;
+    }
+    const bool reverse = action == QStringLiteral("undo");
+    const bool forward = action == QStringLiteral("push") ||
+                         action == QStringLiteral("redo");
+    if (!reverse && !forward) {
+        return false;
+    }
+    constexpr qint64 kMaxExpressionBytes = 262144;
+    if (beforeExpression_.toUtf8().size() > kMaxExpressionBytes ||
+        afterExpression_.toUtf8().size() > kMaxExpressionBytes) {
+        return false;
+    }
+    operationType = QStringLiteral("property.expression");
+    operationLayerId = layerId_;
+    payload = QJsonObject{
+        {QStringLiteral("propertyPath"), propertyPath_},
+        {QStringLiteral("expectedExpression"),
+         reverse ? afterExpression_ : beforeExpression_},
+        {QStringLiteral("expression"),
+         reverse ? beforeExpression_ : afterExpression_}};
+    return true;
+}
+
 QJsonObject SetLayerPropertyExpressionCommand::serialize() const {
     return QJsonObject{{QStringLiteral("layerId"), layerId_},
                        {QStringLiteral("propertyPath"), propertyPath_},
@@ -4359,6 +4464,77 @@ bool SetLayerPropertyKeyframesCommand::canSerialize() const {
 size_t SetPropertyCommand::estimatedMemoryBytes() const {
     return sizeof(*this) + static_cast<size_t>(effectId_.size() + name_.toQString().size()) * sizeof(QChar) +
            static_cast<size_t>(oldValue_.toString().size() + newValue_.toString().size()) * sizeof(QChar);
+}
+
+bool SetLayerPropertyKeyframesCommand::buildCollaborationOperation(
+    const QString& action, QString& operationType, QString& operationLayerId,
+    QJsonObject& payload) const {
+    if (!canSerialize()) {
+        return false;
+    }
+    const bool reverse = action == QStringLiteral("undo");
+    const bool forward = action == QStringLiteral("push") ||
+                         action == QStringLiteral("redo");
+    if (!reverse && !forward) {
+        return false;
+    }
+    // Keyframe payloads travel over the wire twice (expected and next), so the
+    // protocol bounds each array to 256 KiB. The encoding must stay identical
+    // to serialize() or a remote peer would receive lossy keyframes.
+    constexpr qint64 kMaxKeyframePayloadBytes = 262144;
+    const auto encode = [this](const std::vector<ArtifactCore::KeyFrame>& keyframes) {
+        QJsonArray result;
+        for (const auto& keyframe : keyframes) {
+            bool supported = false;
+            const auto value = encodeKeyframeValue(keyframe.value, supported);
+            if (!supported) continue;
+            result.append(QJsonObject{
+                {QStringLiteral("frame"),
+                 static_cast<qint64>(keyframe.time.rescaledTo(30))},
+                {QStringLiteral("timeValue"),
+                 static_cast<qint64>(keyframe.time.value())},
+                {QStringLiteral("timeScale"),
+                 static_cast<qint64>(std::max<int64_t>(1, keyframe.time.scale()))},
+                {QStringLiteral("value"), value},
+                {QStringLiteral("interpolation"),
+                 static_cast<int>(keyframe.interpolation)},
+                {QStringLiteral("cp1_x"), keyframe.cp1_x},
+                {QStringLiteral("cp1_y"), keyframe.cp1_y},
+                {QStringLiteral("cp2_x"), keyframe.cp2_x},
+                {QStringLiteral("cp2_y"), keyframe.cp2_y},
+                {QStringLiteral("roving"), keyframe.roving},
+                {QStringLiteral("anchor"), static_cast<int>(keyframe.anchor)},
+                {QStringLiteral("colorLabel"),
+                 static_cast<int>(keyframe.colorLabel)}});
+        }
+        return result;
+    };
+    const QJsonArray before = encode(beforeKeyframes_);
+    const QJsonArray after = encode(afterKeyframes_);
+    if (QJsonDocument(before).toJson(QJsonDocument::Compact).size() > kMaxKeyframePayloadBytes ||
+        QJsonDocument(after).toJson(QJsonDocument::Compact).size() > kMaxKeyframePayloadBytes) {
+        return false;
+    }
+    const bool hasBeforeAnimatable = beforeAnimatable_.has_value();
+    const bool hasAfterAnimatable = afterAnimatable_.has_value();
+    if (hasBeforeAnimatable != hasAfterAnimatable) {
+        return false;
+    }
+    operationType = QStringLiteral("property.keyframes");
+    operationLayerId = layerId_;
+    payload = QJsonObject{
+        {QStringLiteral("propertyPath"), propertyPath_},
+        {QStringLiteral("expectedKeyframes"), reverse ? after : before},
+        {QStringLiteral("keyframes"), reverse ? before : after}};
+    if (hasBeforeAnimatable) {
+        const bool beforeAnimatable = *beforeAnimatable_;
+        const bool afterAnimatable = *afterAnimatable_;
+        payload.insert(QStringLiteral("expectedAnimatable"),
+                       reverse ? afterAnimatable : beforeAnimatable);
+        payload.insert(QStringLiteral("animatable"),
+                       reverse ? beforeAnimatable : afterAnimatable);
+    }
+    return true;
 }
 
 QJsonObject SetLayerPropertyKeyframesCommand::serialize() const {
@@ -7826,23 +8002,27 @@ QStringList SetLayerMotionTrackerCommand::collaborationTargetLayerIds() const {
 }
 
 void SetLayerMotionTrackerCommand::undo() {
-    if (!layer_) {
+    const auto videoLayer =
+        ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer_);
+    if (!videoLayer) {
         lastOperationSucceeded_ = false;
         return;
     }
-    layer_->setMotionTrackerId(oldTrackerId_);
-    layer_->changed();
-    lastOperationSucceeded_ = layer_->motionTrackerId() == oldTrackerId_;
+    videoLayer->setMotionTrackerId(oldTrackerId_);
+    videoLayer->changed();
+    lastOperationSucceeded_ = videoLayer->motionTrackerId() == oldTrackerId_;
 }
 
 void SetLayerMotionTrackerCommand::redo() {
-    if (!layer_) {
+    const auto videoLayer =
+        ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer_);
+    if (!videoLayer) {
         lastOperationSucceeded_ = false;
         return;
     }
-    layer_->setMotionTrackerId(newTrackerId_);
-    layer_->changed();
-    lastOperationSucceeded_ = layer_->motionTrackerId() == newTrackerId_;
+    videoLayer->setMotionTrackerId(newTrackerId_);
+    videoLayer->changed();
+    lastOperationSucceeded_ = videoLayer->motionTrackerId() == newTrackerId_;
 }
 
 QString SetLayerMotionTrackerCommand::label() const {

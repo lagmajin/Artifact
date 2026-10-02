@@ -5204,8 +5204,25 @@ ArtifactCore::Light makeSceneLightFromLayer(const ArtifactLightLayer* layer,
 
   if (layer->lightType() == LightType::Area) {
 
-    light.setRange(layer->range());
-    light.setAreaSize(layer->areaWidth(), layer->areaHeight());
+    // Area falloff is owned entirely by the shader's areaScale/distance^2
+    // term (MeshRenderer PSMain, lightType == 4). Feeding setRange here as
+    // well applied a second inverse-square on top of it, so a far-away point
+    // went black twice as fast and the authored Range stopped meaning
+    // anything. Range now only bounds the gizmo; brightness is area-driven.
+    //
+    // The shader computes a Disk's luminous area from AreaSize.x alone, so a
+    // Disk must be authored square. Passing the same extent on both axes
+    // keeps the reported area correct for any width/height the user dialled
+    // in, instead of silently using the narrower side.
+    const ArtifactCore::Units::Pixels areaWidth = layer->areaWidth();
+    const ArtifactCore::Units::Pixels areaHeight = layer->areaHeight();
+    if (layer->areaShape() == AreaLightShape::Disk) {
+      const float diskExtent = std::max(areaWidth.value, areaHeight.value);
+      light.setAreaSize(ArtifactCore::Units::Pixels{diskExtent},
+                        ArtifactCore::Units::Pixels{diskExtent});
+    } else {
+      light.setAreaSize(areaWidth, areaHeight);
+    }
     light.setAreaShape(static_cast<int>(layer->areaShape()));
 
   }
@@ -5231,6 +5248,42 @@ struct SceneLightEntry {
   const ArtifactLightLayer* source = nullptr;
 
 };
+
+// Mirrors MeshRenderer::Impl::MaxSceneLights (ArtifactCore). Kept as a literal
+// because the constant is private to that class; the shader hardcodes the same
+// 8 in `min(SceneLightingMeta.x, 8u)`.
+constexpr size_t kMaxForwardSceneLights = 8;
+
+// Dedupes the overflow warning to one line per distinct dropped count so a
+// long timeline does not flood the log, while still surfacing the change when
+// the user adds or removes lights.
+void reportSceneLightOverflow(size_t lightCount, size_t maxLights) {
+
+  static thread_local size_t lastReported = 0;
+
+  if (lastReported == lightCount) {
+
+    return;
+
+  }
+
+  lastReported = lightCount;
+
+  qWarning().noquote() << QStringLiteral(
+
+      "[SceneLighting] %1 light layers are active but the forward path supports "
+
+      "%2. The extra %3 are ignored; the layers last in order are the ones "
+
+      "dropped.")
+
+                               .arg(lightCount)
+
+                               .arg(maxLights)
+
+                               .arg(lightCount - maxLights);
+
+}
 
 
 
@@ -12824,7 +12877,9 @@ public:
         }
       }
       if (anyTemporal && layerFloatSRV) {
+        const auto historyContext = renderer_->immediateContext();
         renderPipeline.recordLayerFrame(
+            historyContext.RawPtr(),
             RenderPipeline::temporalLayerKey(layer->id().toString()),
             effectFrame, layerFloatSRV);
       }
@@ -40117,6 +40172,14 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
   }
 
+  // MeshRenderer keeps a fixed SceneLightGpu[8] array and silently `continue`s
+  // past that limit, so a composition with more lights loses whichever ones
+  // happen to sit last in layer order. Report it once per frame instead of
+  // letting the drop stay invisible.
+  if (sceneLights.size() > kMaxForwardSceneLights) {
+    reportSceneLightOverflow(sceneLights.size(), kMaxForwardSceneLights);
+  }
+
   std::vector<ArtifactCore::Light> rendererSceneLights;
 
   rendererSceneLights.reserve(sceneLights.size());
@@ -40193,7 +40256,11 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       const auto positionValue = entry.light.position();
       const QVector3D position(positionValue.x, positionValue.y, positionValue.z);
       shadowView.lookAt(position, position + direction, up);
-      const float farPlane = std::max(1.0f, entry.source->range());
+      // Match the far plane to the light's own reach. It used to read the
+      // layer's Range while the shading attenuation is derived from Cone
+      // Length, so with the defaults (300 vs 500) the shadow frustum reached
+      // 200px into a region the light had already stopped illuminating.
+      const float farPlane = std::max(1.0f, entry.source->coneLength().value);
       shadowProjection.perspective(
           std::clamp(entry.light.spotOuterCutoff().value * 2.0f,
                      1.0f, 175.0f),
