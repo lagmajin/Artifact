@@ -212,18 +212,30 @@ private:
         !layerExistsInCurrentComposition(layerId)) return false;
     if (!materials_.contains(preset)) {
       QVariantMap presetProperties;
-      presetProperties["diffuseColor"] = QColor(200, 200, 200);
-      presetProperties["specularColor"] = QColor(255, 255, 255);
-      presetProperties["roughness"] = 0.5f;
-      presetProperties["metallic"] = 0.0f;
-      if (preset == QStringLiteral("Plastic")) {
-        presetProperties["roughness"] = 0.3f;
-      } else if (preset == QStringLiteral("Metal")) {
-        presetProperties["metallic"] = 1.0f;
-        presetProperties["roughness"] = 0.2f;
-      } else if (preset == QStringLiteral("Glass")) {
-        presetProperties["roughness"] = 0.05f;
-        presetProperties["specularColor"] = QColor(255, 255, 255, 220);
+      if (preset == QStringLiteral("Matte") ||
+          preset == QStringLiteral("Metal") ||
+          preset == QStringLiteral("Plastic") ||
+          preset == QStringLiteral("Glass")) {
+        const auto kind = preset == QStringLiteral("Matte")
+            ? ArtifactCore::MaterialPresetKind::Matte
+            : preset == QStringLiteral("Metal")
+                ? ArtifactCore::MaterialPresetKind::Metal
+                : preset == QStringLiteral("Plastic")
+                    ? ArtifactCore::MaterialPresetKind::Plastic
+                    : ArtifactCore::MaterialPresetKind::Glass;
+        const ArtifactCore::Material canonical =
+            ArtifactCore::Material::makeStudioPreset(kind);
+        presetProperties["diffuseColor"] = canonical.baseColor();
+        presetProperties["metallic"] = canonical.metallic();
+        presetProperties["roughness"] = canonical.roughness();
+        presetProperties["specular"] = canonical.specular();
+        presetProperties["transmission"] = canonical.transmission();
+        presetProperties["ior"] = canonical.ior();
+      } else {
+        presetProperties["diffuseColor"] = QColor(200, 200, 200);
+        presetProperties["specularColor"] = QColor(255, 255, 255);
+        presetProperties["roughness"] = 0.5f;
+        presetProperties["metallic"] = 0.0f;
       }
       materials_[preset] = presetProperties;
     }
@@ -235,7 +247,7 @@ private:
   QVariant listMaterialPresets(const QVariantList &args) {
     Q_UNUSED(args)
     QVariantList presets;
-    presets << "Default" << "Plastic" << "Metal" << "Glass";
+    presets << "Default" << "Matte" << "Plastic" << "Metal" << "Glass";
     return presets;
   }
 
@@ -264,12 +276,29 @@ private:
     bool changed = false;
     changed |= model->setLayerPropertyValue(
         QStringLiteral("material.base.color"), properties.value(QStringLiteral("diffuseColor")));
-    changed |= model->setLayerPropertyValue(
-        QStringLiteral("material.emission.color"), properties.value(QStringLiteral("specularColor")));
+    if (properties.contains(QStringLiteral("specularColor"))) {
+      changed |= model->setLayerPropertyValue(
+          QStringLiteral("material.emission.color"),
+          properties.value(QStringLiteral("specularColor")));
+    }
     changed |= model->setLayerPropertyValue(
         QStringLiteral("material.roughness"), properties.value(QStringLiteral("roughness")));
     changed |= model->setLayerPropertyValue(
         QStringLiteral("material.metallic"), properties.value(QStringLiteral("metallic")));
+    if (properties.contains(QStringLiteral("specular"))) {
+      changed |= model->setLayerPropertyValue(
+          QStringLiteral("material.specular"),
+          properties.value(QStringLiteral("specular")));
+    }
+    if (properties.contains(QStringLiteral("transmission"))) {
+      changed |= model->setLayerPropertyValue(
+          QStringLiteral("material.transmission"),
+          properties.value(QStringLiteral("transmission")));
+    }
+    if (properties.contains(QStringLiteral("ior"))) {
+      changed |= model->setLayerPropertyValue(
+          QStringLiteral("material.ior"), properties.value(QStringLiteral("ior")));
+    }
     if (changed) model->changed();
     return changed;
   }

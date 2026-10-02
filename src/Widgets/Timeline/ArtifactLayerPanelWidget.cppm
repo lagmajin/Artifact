@@ -111,6 +111,7 @@ import Artifact.Layer.Clone;
 import Artifact.Layer.Group;
 import Layer.Matte;
 import Layer.BlendModeInfo;
+import Material.Material;
 import Artifact.Widgets.LayerAlignmentPresets;
 import Artifact.Timeline.KeyframeModel;
 import Undo.UndoManager;
@@ -5493,20 +5494,16 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     }
     if (layer->is3D()) {
       QMenu* materialMenu = menu.addMenu(tt("layer_panel.menu_material", "3D Material"));
-      const auto applyMaterialPreset = [this, layer](const QColor& baseColor,
-                                                 double metallic,
-                                                 double roughness,
-                                                 double specular,
-                                                 double transmission,
-                                                 double ior) {
+      const auto applyMaterialPreset = [this, layer](
+          const ArtifactCore::Material& preset) {
         if (!applyLayerPropertyValues(
                 layer, QStringLiteral("Apply 3D Material Preset"),
-                {{QStringLiteral("material.base.color"), baseColor},
-                 {QStringLiteral("material.metallic"), metallic},
-                 {QStringLiteral("material.roughness"), roughness},
-                 {QStringLiteral("material.specular"), specular},
-                 {QStringLiteral("material.transmission"), transmission},
-                 {QStringLiteral("material.ior"), ior}})) {
+                {{QStringLiteral("material.base.color"), preset.baseColor()},
+                 {QStringLiteral("material.metallic"), preset.metallic()},
+                 {QStringLiteral("material.roughness"), preset.roughness()},
+                 {QStringLiteral("material.specular"), preset.specular()},
+                 {QStringLiteral("material.transmission"), preset.transmission()},
+                 {QStringLiteral("material.ior"), preset.ior()}})) {
           return;
         }
         if (auto current = safeCompositionLookup(impl_->compositionId)) {
@@ -5517,16 +5514,20 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         updateLayout();
       };
       materialMenu->addAction(tt("layer_panel.menu_mat_matte", "Matte"), [applyMaterialPreset]() {
-        applyMaterialPreset(QColor(180, 180, 180), 0.0, 0.82, 0.35, 0.0, 1.45);
+        applyMaterialPreset(ArtifactCore::Material::makeStudioPreset(
+            ArtifactCore::MaterialPresetKind::Matte));
       });
       materialMenu->addAction(tt("layer_panel.menu_mat_metal", "Metal"), [applyMaterialPreset]() {
-        applyMaterialPreset(QColor(170, 180, 195), 0.9, 0.24, 0.5, 0.0, 1.45);
+        applyMaterialPreset(ArtifactCore::Material::makeStudioPreset(
+            ArtifactCore::MaterialPresetKind::Metal));
       });
       materialMenu->addAction(tt("layer_panel.menu_mat_plastic", "Plastic"), [applyMaterialPreset]() {
-        applyMaterialPreset(QColor(210, 220, 235), 0.0, 0.3, 0.5, 0.0, 1.46);
+        applyMaterialPreset(ArtifactCore::Material::makeStudioPreset(
+            ArtifactCore::MaterialPresetKind::Plastic));
       });
       materialMenu->addAction(tt("layer_panel.menu_mat_glass", "Glass"), [applyMaterialPreset]() {
-        applyMaterialPreset(QColor(225, 240, 255), 0.0, 0.08, 0.5, 0.82, 1.5);
+        applyMaterialPreset(ArtifactCore::Material::makeStudioPreset(
+            ArtifactCore::MaterialPresetKind::Glass));
       });
     }
     if (layer->className().toQString() == QStringLiteral("ArtifactTextLayer")) {
