@@ -636,8 +636,9 @@ namespace Artifact
                             layer->id().toString()));
                     }
                 }
+                const QFileInfo sourceInfo(sourcePath);
                 if (!sourcePath.isEmpty() && !sourcePathIsSequenceFrame &&
-                    !QFileInfo::exists(sourcePath)) {
+                    (!sourceInfo.exists() || !sourceInfo.isFile())) {
                     auto diag = ArtifactCore::ProjectDiagnostic::createMissingFile(
                         sourcePath,
                         layer->id().toString());
