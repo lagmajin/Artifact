@@ -1269,9 +1269,11 @@ void ArtifactAssetBrowser::Impl::importAssetPaths(const QStringList& filePaths,
 
 bool ArtifactAssetBrowser::Impl::isUnusedAssetPath(const QString& filePath) const
 {
-  const QString canonicalPath = QFileInfo(filePath).canonicalFilePath().isEmpty()
-    ? QFileInfo(filePath).absoluteFilePath()
-    : QFileInfo(filePath).canonicalFilePath();
+  const QFileInfo fileInfo(filePath);
+  const QString resolvedPath = fileInfo.canonicalFilePath();
+  const QString canonicalPath = resolvedPath.isEmpty()
+    ? fileInfo.absoluteFilePath()
+    : resolvedPath;
   return unusedAssetPaths_.contains(QDir::cleanPath(canonicalPath))
     || unusedAssetPaths_.contains(QDir::cleanPath(filePath));
 }
