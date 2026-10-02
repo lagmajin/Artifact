@@ -74,6 +74,7 @@ module;
 #include <QDateTime>
 #include <QHBoxLayout>
 #include <QAbstractItemView>
+#include <QItemSelectionModel>
 #include <QComboBox>
 #include <QTabWidget>
 #include <QMouseEvent>
@@ -635,7 +636,10 @@ ArtifactAssetBrowserToolBar::Impl::Impl()
   impl_->listViewButton->setCheckable(true);
   impl_->searchWidget->setPlaceholderText(QStringLiteral("Search assets"));
   impl_->searchWidget->setAccessibleName(QStringLiteral("Asset search"));
-  impl_->searchWidget->setAccessibleDescription(QStringLiteral("Search assets in the current folder"));
+  impl_->searchWidget->setAccessibleDescription(QStringLiteral(
+      "Search asset names, or use tag:NAME to match an imported asset tag."));
+  impl_->searchWidget->setToolTip(QStringLiteral(
+      "Search asset names, or use tag:NAME to filter by an imported asset tag."));
   impl_->searchWidget->setClearButtonEnabled(true);
   impl_->searchWidget->setMinimumWidth(220);
   impl_->searchWidget->setMinimumHeight(30);
@@ -695,6 +699,7 @@ void ArtifactAssetBrowserToolBar::addWidget(QWidget* widget, int stretch)
   QIcon defaultFontIcon_;
   QSet<QString> unusedAssetPaths_;
   mutable QSet<QString> importedAssetPathsCache_;
+  mutable QHash<QString, QStringList> assetTagsByNormalizedPath_;
   mutable bool importedAssetPathsCacheValid_ = false;
   std::atomic<std::uint64_t> thumbnailGeneration_{0};
 
@@ -792,6 +797,7 @@ void ArtifactAssetBrowserToolBar::addWidget(QWidget* widget, int stretch)
    ArtifactCore::FileType fileType(const QString& fileName) const;
   bool isImportedAssetPath(const QString& filePath) const;
   void refreshImportedAssetPathCache() const;
+  bool matchesTagSearch(const QString& filePath) const;
   bool isFavoriteAssetPath(const QString& filePath) const;
   bool isUnusedAssetPath(const QString& filePath) const;
   int sourceUseCountForPath(const QString& filePath,
@@ -974,8 +980,9 @@ ArtifactAssetBrowser::Impl::~Impl()
 
  bool ArtifactAssetBrowser::Impl::matchesSearchFilter(const QString& fileName) const
  {
-  if (currentSearchFilter_.isEmpty()) return true;
-  return fileName.contains(currentSearchFilter_, Qt::CaseInsensitive);
+  const QString search = currentSearchFilter_.trimmed();
+  if (search.isEmpty() || search.startsWith(QStringLiteral("tag:"), Qt::CaseInsensitive)) return true;
+  return fileName.contains(search, Qt::CaseInsensitive);
  }
 
  FileType ArtifactAssetBrowser::Impl::fileType(const QString& fileName) const
@@ -1010,6 +1017,7 @@ ArtifactAssetBrowser::Impl::~Impl()
 void ArtifactAssetBrowser::Impl::refreshImportedAssetPathCache() const
 {
   importedAssetPathsCache_.clear();
+  assetTagsByNormalizedPath_.clear();
   auto* svc = ArtifactProjectService::instance();
   if (!svc) {
     importedAssetPathsCacheValid_ = true;
@@ -1020,19 +1028,43 @@ void ArtifactAssetBrowser::Impl::refreshImportedAssetPathCache() const
     if (path.trimmed().isEmpty()) return QString();
     const QFileInfo info(path);
     const QString canonical = info.canonicalFilePath();
-    return QDir::cleanPath(canonical.isEmpty() ? info.absoluteFilePath() : canonical);
+    QString normalized = QDir::cleanPath(
+        canonical.isEmpty() ? info.absoluteFilePath() : canonical);
+#ifdef Q_OS_WIN
+    normalized = normalized.toCaseFolded();
+#endif
+    return normalized;
+  };
+  const auto addFootagePath = [&](const QString& path,
+                                  const QStringList& tags) {
+    const QString normalizedPath = normalizePath(path);
+    if (normalizedPath.isEmpty()) {
+      return;
+    }
+    importedAssetPathsCache_.insert(normalizedPath);
+    for (const QString& tag : tags) {
+      const QString normalizedTag = tag.trimmed();
+      if (normalizedTag.isEmpty()) {
+        continue;
+      }
+      QStringList& cachedTags = assetTagsByNormalizedPath_[normalizedPath];
+      const bool alreadyPresent = std::any_of(
+          cachedTags.cbegin(), cachedTags.cend(),
+          [&normalizedTag](const QString& existing) {
+            return existing.compare(normalizedTag, Qt::CaseInsensitive) == 0;
+          });
+      if (!alreadyPresent) {
+        cachedTags.append(normalizedTag);
+      }
+    }
   };
   std::function<void(ProjectItem*)> collectPaths = [&](ProjectItem* item) {
     if (!item) return;
     if (item->type() == eProjectItemType::Footage) {
       const auto* footage = static_cast<const FootageItem*>(item);
-      const QString normalizedPath = normalizePath(footage->filePath);
-      if (!normalizedPath.isEmpty()) importedAssetPathsCache_.insert(normalizedPath);
+      addFootagePath(footage->filePath, footage->tags);
       for (const QString& sequencePath : footage->sequencePaths) {
-        const QString normalizedSequencePath = normalizePath(sequencePath);
-        if (!normalizedSequencePath.isEmpty()) {
-          importedAssetPathsCache_.insert(normalizedSequencePath);
-        }
+        addFootagePath(sequencePath, footage->tags);
       }
     }
     for (auto* child : item->children) collectPaths(child);
@@ -1047,8 +1079,41 @@ bool ArtifactAssetBrowser::Impl::isImportedAssetPath(const QString& filePath) co
   if (!importedAssetPathsCacheValid_) refreshImportedAssetPathCache();
   const QFileInfo info(filePath);
   const QString canonical = info.canonicalFilePath();
-  const QString normalizedPath = QDir::cleanPath(canonical.isEmpty() ? info.absoluteFilePath() : canonical);
+  QString normalizedPath = QDir::cleanPath(canonical.isEmpty() ? info.absoluteFilePath() : canonical);
+#ifdef Q_OS_WIN
+  normalizedPath = normalizedPath.toCaseFolded();
+#endif
   return importedAssetPathsCache_.contains(normalizedPath);
+}
+
+bool ArtifactAssetBrowser::Impl::matchesTagSearch(const QString& filePath) const
+{
+  const QString search = currentSearchFilter_.trimmed();
+  if (!search.startsWith(QStringLiteral("tag:"), Qt::CaseInsensitive)) {
+    return true;
+  }
+  if (filePath.trimmed().isEmpty()) {
+    return false;
+  }
+  const QFileInfo info(filePath);
+  const QString canonicalPath = info.canonicalFilePath();
+  QString normalizedPath = QDir::cleanPath(
+      canonicalPath.isEmpty() ? info.absoluteFilePath() : canonicalPath);
+#ifdef Q_OS_WIN
+  normalizedPath = normalizedPath.toCaseFolded();
+#endif
+  const auto tags = assetTagsByNormalizedPath_.constFind(normalizedPath);
+  if (tags == assetTagsByNormalizedPath_.cend()) {
+    return false;
+  }
+  const QString requestedTag = search.mid(4).trimmed();
+  if (requestedTag.isEmpty()) {
+    return !tags->isEmpty();
+  }
+  return std::any_of(tags->cbegin(), tags->cend(),
+                     [&requestedTag](const QString& tag) {
+    return tag.compare(requestedTag, Qt::CaseInsensitive) == 0;
+  });
 }
 
 bool ArtifactAssetBrowser::Impl::isFavoriteAssetPath(const QString& filePath) const
@@ -2124,6 +2189,7 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
     if (!fileInfo.isDir()) continue;
     if (currentFileTypeFilter_ != "all") continue;
     if (!matchesSearchFilter(entry)) continue;
+    if (!matchesTagSearch(fullPath)) continue;
     dirNames.append(entry);
    }
 
@@ -2242,6 +2308,7 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
     item.sequenceStartFrame = firstFrame;
     item.sequencePadding = pad;
     for (const auto& sf : seq) item.sequencePaths.append(sf.fullPath);
+    if (!matchesTagSearch(item.path.toQString())) continue;
 
     // Status markers (aggregated across all frames via the shared helper,
     // extended with frame-level diagnostics from the sequence scan)
@@ -2330,6 +2397,7 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
       if (fileInfo.isDir() || !matchesSearchFilter(entry) || !matchesFileTypeFilter(entry) || seqFiles.contains(entry)) {
        continue;
       }
+      if (!matchesTagSearch(fullPath)) continue;
 
       // Status markers via the shared helper (same rule and filter as sequences)
       const AssetStatusSummary status = assetStatusForPaths(fullPath);
@@ -2380,7 +2448,7 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
    }
 
    // Source use count is project state, so decorate the browser metadata only
-   // after the filesystem scan has completed. This keeps the parallel scan
+   // after the filesystem scan has completed. This keeps the file scan
    // focused on filesystem/project filtering and avoids adding row widgets.
    for (auto& item : items) {
     if (item.isFolder) {
@@ -4480,6 +4548,48 @@ if (!item.isFolder) {
     } else {
       referencePaths = {filePath};
     }
+    const auto normalizedReferencePath = [](const QString& path) {
+      if (path.trimmed().isEmpty()) {
+        return QString();
+      }
+      const QFileInfo info(path);
+      const QString canonicalPath = info.canonicalFilePath();
+      QString normalized = QDir::cleanPath(
+          canonicalPath.isEmpty() ? info.absoluteFilePath() : canonicalPath);
+#ifdef Q_OS_WIN
+      normalized = normalized.toCaseFolded();
+#endif
+      return normalized;
+    };
+    QSet<QString> referenceIdentities;
+    for (const QString& referencePath : referencePaths) {
+      const QString identity = normalizedReferencePath(referencePath);
+      if (!identity.isEmpty()) {
+        referenceIdentities.insert(identity);
+      }
+    }
+    std::function<bool(const QJsonValue&)> containsReferencePath =
+        [&](const QJsonValue& value) {
+          if (value.isString()) {
+            return referenceIdentities.contains(
+                normalizedReferencePath(value.toString()));
+          }
+          if (value.isArray()) {
+            for (const QJsonValue& child : value.toArray()) {
+              if (containsReferencePath(child)) {
+                return true;
+              }
+            }
+          } else if (value.isObject()) {
+            const QJsonObject object = value.toObject();
+            for (auto it = object.cbegin(); it != object.cend(); ++it) {
+              if (containsReferencePath(it.value())) {
+                return true;
+              }
+            }
+          }
+          return false;
+        };
     QStringList references;
     if (project) {
       std::function<void(ProjectItem*)> visit = [&](ProjectItem *item) {
@@ -4490,16 +4600,7 @@ if (!item.isFolder) {
           if (composition) {
             for (const auto &layer : composition->allLayerRef()) {
               if (!layer) continue;
-              const QByteArray serialized =
-                  QJsonDocument(layer->toJson()).toJson(QJsonDocument::Compact);
-              const QString serializedLayer = QString::fromUtf8(serialized);
-              const bool matchesReference = std::any_of(
-                  referencePaths.cbegin(), referencePaths.cend(),
-                  [&serializedLayer](const QString& referencePath) {
-                    return !referencePath.isEmpty() &&
-                           serializedLayer.contains(referencePath, Qt::CaseInsensitive);
-                  });
-              if (matchesReference) {
+              if (containsReferencePath(QJsonValue(layer->toJson()))) {
                 references.push_back(QStringLiteral("Composition %1 / %2 (%3)")
                                          .arg(composition->id().toString(),
                                               layer->layerName(), layer->id().toString()));
@@ -4518,6 +4619,18 @@ if (!item.isFolder) {
             : QStringLiteral("References in the current project:\n\n%1")
                   .arg(references.join(QStringLiteral("\n"))));
   });
+
+  QAction* editTagsAction = nullptr;
+  QAction* selectUnusedAction = frequentMenu->addAction(
+      QStringLiteral("Select Unused Visible Assets"));
+  if (!item.isFolder) {
+    auto* projectService = ArtifactProjectService::instance();
+    if (projectService && projectService->findFootageItemByPath(filePath)) {
+      // Handle this action from QMenu::exec()'s return value below so the
+      // tag editor does not introduce another signal/slot connection.
+      editTagsAction = frequentMenu->addAction(QStringLiteral("Edit Tags..."));
+    }
+  }
 
   if (filePath.toLower().endsWith(QStringLiteral(".mask.json"))) {
     addAction(frequentMenu, QStringLiteral("Apply Mask Preset to Selected Layer"), [this, filePath]() {
@@ -4703,6 +4816,71 @@ addAction(frequentMenu, QStringLiteral("Copy Asset IDs"),
   // Show menu at cursor position
   QAction *chosenAction = contextMenu.exec(accessibilityMenuPosition(
       contextMenu, impl_->fileView_->mapToGlobal(pos)));
+  if (chosenAction == selectUnusedAction) {
+    if (!impl_ || !impl_->assetModel_ || !impl_->fileView_ ||
+        !impl_->fileView_->selectionModel()) {
+      return;
+    }
+    auto* selectionModel = impl_->fileView_->selectionModel();
+    selectionModel->clearSelection();
+    QModelIndex firstUnusedIndex;
+    for (int row = 0; row < impl_->assetModel_->rowCount(); ++row) {
+      const AssetMenuItem candidate = impl_->assetModel_->itemAt(row);
+      if (candidate.isFolder || candidate.isSequenceFrame) {
+        continue;
+      }
+      const QString candidatePath = candidate.path.toQString();
+      if (!impl_->assetStatusForPaths(candidatePath, candidate.sequencePaths).unused) {
+        continue;
+      }
+      const QModelIndex candidateIndex = impl_->assetModel_->index(row, 0);
+      selectionModel->select(
+          candidateIndex,
+          QItemSelectionModel::Select | QItemSelectionModel::Rows);
+      if (!firstUnusedIndex.isValid()) {
+        firstUnusedIndex = candidateIndex;
+      }
+    }
+    if (firstUnusedIndex.isValid()) {
+      impl_->fileView_->setCurrentIndex(firstUnusedIndex);
+      updateFileInfo(impl_->assetModel_->itemAt(firstUnusedIndex.row())
+                         .path.toQString());
+    }
+    return;
+  }
+  if (editTagsAction && chosenAction == editTagsAction) {
+    auto* projectService = ArtifactProjectService::instance();
+    auto* footage = projectService
+        ? projectService->findFootageItemByPath(filePath)
+        : nullptr;
+    if (!footage) {
+      return;
+    }
+    bool accepted = false;
+    const QString tagText = QInputDialog::getText(
+        this, QStringLiteral("Edit Asset Tags"),
+        QStringLiteral("Comma-separated tags:"), QLineEdit::Normal,
+        footage->tags.join(QStringLiteral(", ")), &accepted);
+    if (accepted) {
+      QStringList tags = tagText.split(QLatin1Char(','), Qt::SkipEmptyParts);
+      for (QString& tag : tags) {
+        tag = tag.trimmed();
+      }
+      tags.removeAll(QString());
+      tags.removeDuplicates();
+      if (!projectService->setProjectItemTags(footage, tags)) {
+        QMessageBox::warning(
+            this, QStringLiteral("Edit Asset Tags"),
+            QStringLiteral("タグを保存できませんでした。"));
+      } else {
+        updateFileInfo(filePath);
+        if (impl_) {
+          impl_->applyFilters();
+        }
+      }
+    }
+    return;
+  }
   if (chosenAction && chosenAction->data().isValid()) {
     const QString framePath = chosenAction->data().toString();
     if (!framePath.isEmpty()) {

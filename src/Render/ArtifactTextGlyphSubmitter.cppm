@@ -11,6 +11,7 @@ module;
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
 module Artifact.Render.TextGlyphSubmitter;
 
 import Artifact.Render.TextGlyphSubmitter.Contract;
@@ -147,12 +148,30 @@ bool ArtifactTextGlyphSubmitter::submit(Diligent::IDeviceContext* context, Dilig
             return std::array<float, 2>{cx + dx * cs - dy * sn, cy + dx * sn + dy * cs};
         };
         const auto p0 = rotate(x0, y0), p1 = rotate(x1, y0), p2 = rotate(x0, y1), p3 = rotate(x1, y1);
-        vertices.push_back({{p0[0],p0[1]},{u0,v0},{color.r(),color.g(),color.b(),alpha}});
-        vertices.push_back({{p1[0],p1[1]},{u1,v0},{color.r(),color.g(),color.b(),alpha}});
-        vertices.push_back({{p2[0],p2[1]},{u0,v1},{color.r(),color.g(),color.b(),alpha}});
-        vertices.push_back({{p3[0],p3[1]},{u1,v1},{color.r(),color.g(),color.b(),alpha}});
+        const SubmitVertex vertex0{{p0[0],p0[1]},{u0,v0},{color.r(),color.g(),color.b(),alpha}};
+        const SubmitVertex vertex1{{p1[0],p1[1]},{u1,v0},{color.r(),color.g(),color.b(),alpha}};
+        const SubmitVertex vertex2{{p2[0],p2[1]},{u0,v1},{color.r(),color.g(),color.b(),alpha}};
+        const SubmitVertex vertex3{{p3[0],p3[1]},{u1,v1},{color.r(),color.g(),color.b(),alpha}};
+        if (!vertices.empty()) {
+            // Join independent quads in the existing triangle-strip pipeline.
+            // Degenerate triangles between quads preserve painter order while
+            // allowing the complete run to be submitted with one Draw call.
+            const SubmitVertex previousVertex = vertices.back();
+            vertices.push_back(previousVertex);
+            vertices.push_back(vertex0);
+            vertices.push_back(vertex0);
+            vertices.push_back(vertex1);
+            vertices.push_back(vertex2);
+            vertices.push_back(vertex3);
+        } else {
+            vertices.push_back(vertex0);
+            vertices.push_back(vertex1);
+            vertices.push_back(vertex2);
+            vertices.push_back(vertex3);
+        }
     }
     if (vertices.empty()) return false;
+    if (vertices.size() > std::numeric_limits<Diligent::Uint32>::max()) return false;
     const QImage& image = impl_->atlas.atlasImage();
     // ---- Atlas texture: rebuild only when the atlas is actually dirty -------
     // GlyphAtlas owns an isDirty() flag that flips on every rasterized glyph and
@@ -242,11 +261,9 @@ bool ArtifactTextGlyphSubmitter::submit(Diligent::IDeviceContext* context, Dilig
     Diligent::IBuffer* buffers[] = {vb}; Diligent::Uint64 offsets[] = {0};
     context->SetVertexBuffers(0, 1, buffers, offsets, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
                               Diligent::SET_VERTEX_BUFFERS_FLAG_RESET);
-    // One draw per quad is required because each glyph occupies four vertices of
-    // the shared buffer; VERIFY_ALL would revalidate every vertex index on each
-    // of those draws, which is pure debug overhead in a release frame.
-    for (Diligent::Uint32 i = 0; i < vertices.size() / 4; ++i)
-        context->Draw(Diligent::DrawAttribs{4, Diligent::DRAW_FLAG_NONE, 1, i * 4});
+    context->Draw(Diligent::DrawAttribs{
+        static_cast<Diligent::Uint32>(vertices.size()),
+        Diligent::DRAW_FLAG_NONE, 1, 0});
     return true;
 }
 void ArtifactTextGlyphSubmitter::flush(Diligent::IDeviceContext* context) { if (context) context->Flush(); }

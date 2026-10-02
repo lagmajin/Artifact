@@ -585,6 +585,51 @@ namespace Artifact
                     diag.setSourceCompId(compId);
                     result.addDiagnostic(diag);
                 }
+
+                const QJsonValue sequenceValue =
+                    json.value(QStringLiteral("image.sequencePaths"));
+                if (sequenceValue.isArray()) {
+                    QSet<QString> checkedPaths;
+                    if (!sourcePath.trimmed().isEmpty()) {
+                        QString sourceIdentity = QDir::cleanPath(
+                            QFileInfo(sourcePath).absoluteFilePath());
+#ifdef Q_OS_WIN
+                        sourceIdentity = sourceIdentity.toCaseFolded();
+#endif
+                        checkedPaths.insert(sourceIdentity);
+                    }
+                    for (const QJsonValue& frameValue : sequenceValue.toArray()) {
+                        if (!frameValue.isString()) {
+                            continue;
+                        }
+                        const QString framePath = frameValue.toString().trimmed();
+                        if (framePath.isEmpty()) {
+                            continue;
+                        }
+                        QString frameIdentity = QDir::cleanPath(
+                            QFileInfo(framePath).absoluteFilePath());
+#ifdef Q_OS_WIN
+                        frameIdentity = frameIdentity.toCaseFolded();
+#endif
+                        if (checkedPaths.contains(frameIdentity)) {
+                            continue;
+                        }
+                        checkedPaths.insert(frameIdentity);
+                        const QFileInfo frameInfo(framePath);
+                        if (frameInfo.exists() && frameInfo.isFile()) {
+                            continue;
+                        }
+                        result.addDiagnostic(makePreflightDiagnostic(
+                            ArtifactCore::DiagnosticSeverity::Error,
+                            ArtifactCore::DiagnosticCategory::File,
+                            QStringLiteral("Missing image sequence frame"),
+                            QStringLiteral("Layer '%1' references a missing sequence frame: %2")
+                                .arg(layer->layerName(), framePath),
+                            QStringLiteral("Restore the frame file or relink the sequence"),
+                            compId,
+                            layer->id().toString()));
+                    }
+                }
             }
         }
 

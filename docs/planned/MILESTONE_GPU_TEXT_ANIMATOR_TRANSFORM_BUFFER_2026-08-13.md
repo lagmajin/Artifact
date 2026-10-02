@@ -1,7 +1,17 @@
 # GPU Text Animator Transform Buffer / Instancing
 
-**最終更新:** 2026-08-13
-**ステータス:** Not Started
+**最終更新:** 2026-10-02
+**ステータス:** 部分実装（分離 Submitter の連続 Glyph quad を1 drawへバッチ化。Animator本線の Transform Buffer／Instancing は未実装）
+
+## 2026-10-02 現行コード再監査
+
+- `PrimitiveRenderer2D::drawGlyphsTransformed()` はCPUでGlyphごとの頂点・変換情報を構築し、既存Glyph atlas描画へ渡す。
+- `DiligentImmediateSubmitter::submitGlyphTextTransformed()` は描画対象Glyphをscratchへ集めるが、Fill／Stroke passでGlyphごとに頂点・transform constant bufferを更新して個別 `DrawIndexed` する。
+- 分離 `ArtifactTextGlyphSubmitter` は連続 Glyph quad を縮退三角形でtriangle stripへ接続し、run全体を1回の `Draw` で送る実装へ更新した。Glyph順とper-vertex color/UVを維持する設計である。静的コード確認のみで、driver上のstrip接続・alpha合成・画像 parity は未検証。
+- したがって既存 GPU glyph transform 経路と分離 Submitter のdraw-call削減試作は実装済みだが、製品 `DiligentImmediateSubmitter` への統合、計画対象のGPU instance POD、transform buffer、instanced drawは未実装。現在のCPU packet生成コストと性能値も未計測。
+- WP-1〜WP-5 と Software／GPU parity・性能受入は未完了のままとする。ビルド・実機確認は実施していない。
+
+判定: **既存 per-glyph GPU path はコード上実装済み。Transform Buffer／Instancing マイルストーンは部分実装。**
 
 ## 目的
 

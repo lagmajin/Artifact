@@ -9761,7 +9761,13 @@ void drawLayerForCompositionView(
 
   if (auto *imageLayer = dynamic_cast<ArtifactImageLayer *>(layer)) {
 
-    if (!layerHasRasterizerEffectsOrMasks(layer) &&
+    // A supported rasterizer stack is applied after this layer has been drawn
+    // into the reusable GPU layer target. Keep the non-destructive deformer in
+    // that path too; CPU-only effects and masks still use the surface fallback.
+    const bool canDeformOnGpu = !layer->hasMasks() &&
+        (!layerHasRasterizerEffectsOrMasks(layer) ||
+         deferRasterizerEffectsToGpu);
+    if (canDeformOnGpu &&
         imageLayer->hasCurrentFrameBuffer()) {
 
       const ArtifactCore::ImageF32x4_RGBA &buffer =

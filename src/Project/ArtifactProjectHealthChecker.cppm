@@ -616,14 +616,27 @@ void ArtifactProjectHealthChecker::checkMissingAssets(ArtifactProject* project, 
 
         if (item->type() == eProjectItemType::Footage) {
             auto* footage = static_cast<FootageItem*>(item);
-            QFileInfo fi(footage->filePath);
-            if (!fi.exists() || !fi.isFile()) {
+            const auto reportMissingPath = [&](const QString& path,
+                                               const bool sequenceFrame) {
+                const QFileInfo fileInfo(path);
+                if (fileInfo.exists() && fileInfo.isFile()) {
+                    return;
+                }
                 report.issues.push_back({
                     HealthIssueSeverity::Error,
-                    QString("Missing asset file: %1").arg(footage->filePath),
+                    sequenceFrame
+                        ? QStringLiteral("Missing image sequence frame: %1").arg(path)
+                        : QStringLiteral("Missing asset file: %1").arg(path),
                     footage->name.toQString(),
-                    "MissingAsset"
+                    QStringLiteral("MissingAsset")
                 });
+            };
+            if (!footage->sequencePaths.isEmpty()) {
+                for (const QString& framePath : footage->sequencePaths) {
+                    reportMissingPath(framePath, true);
+                }
+            } else {
+                reportMissingPath(footage->filePath, false);
             }
         }
 
