@@ -721,7 +721,7 @@ void ArtifactLayerEditorWidget::Impl::drawTransformHUD(const ArtifactAbstractLay
        composition->settings().compositionSize());
  }
  drawLayerEditorTransformHud(
-     renderer_.get(), layer, bounds, layerEditorPhysicalViewportSize(widget_), restoreCanvasSize);
+     renderer_.get(), layer, bounds, layerEditorPhysicalExtent(widget_), restoreCanvasSize);
 }
 void ArtifactLayerEditorWidget::Impl::drawSurfaceOverlay(
     const ArtifactAbstractLayerPtr& layer)

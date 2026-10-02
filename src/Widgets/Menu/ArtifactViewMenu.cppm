@@ -2823,7 +2823,7 @@ void ArtifactViewMenu::Impl::buildViewportExposureMenu(QMenu* exposureMenu,
           controller->setViewportExposureGain(static_cast<float>(value));
         }
         viewportExposureGainValueLabel_->setText(
-            QStringLiteral("%1").arg(value, 0, 'f', 1));
+            QStringLiteral("%1").arg(static_cast<double>(value), 0, 'f', 1));
       });
   QObject::connect(
       viewportExposureGammaSlider_, &QSlider::valueChanged, owner,

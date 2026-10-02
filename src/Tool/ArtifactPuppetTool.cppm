@@ -156,7 +156,7 @@ double ArtifactPuppetTool::evaluateControlCoordinate(const PinRecord& pin,
             result = value.toDouble();
         }
     }
-    if (const auto* stack = layer->animationLayerStack(propertyPath);
+    if (const auto* stack = std::as_const(*layer).animationLayerStack(propertyPath);
         stack && stack->layerCount() > 0) {
         result = stack->evaluateWithBase(
             ArtifactCore::FramePosition(evaluationFrame),
