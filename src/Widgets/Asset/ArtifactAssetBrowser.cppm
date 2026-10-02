@@ -4617,22 +4617,29 @@ if (!item.isFolder) {
         referenceIdentities.insert(identity);
       }
     }
-    std::function<bool(const QJsonValue&)> containsReferencePath =
-        [&](const QJsonValue& value) {
-          if (value.isString()) {
+    const auto isSourcePathKey = [](const QString& key) {
+      return key == QStringLiteral("sourcePath") ||
+             key.endsWith(QStringLiteral(".sourcePath")) ||
+             key == QStringLiteral("sequencePaths") ||
+             key.endsWith(QStringLiteral(".sequencePaths")) ||
+             key == QStringLiteral("filePath");
+    };
+    std::function<bool(const QJsonValue&, bool)> containsReferencePath =
+        [&](const QJsonValue& value, bool isSourcePathValue) {
+          if (isSourcePathValue && value.isString()) {
             return referenceIdentities.contains(
                 normalizedReferencePath(value.toString()));
           }
           if (value.isArray()) {
             for (const QJsonValue& child : value.toArray()) {
-              if (containsReferencePath(child)) {
+              if (containsReferencePath(child, isSourcePathValue)) {
                 return true;
               }
             }
           } else if (value.isObject()) {
             const QJsonObject object = value.toObject();
             for (auto it = object.cbegin(); it != object.cend(); ++it) {
-              if (containsReferencePath(it.value())) {
+              if (containsReferencePath(it.value(), isSourcePathKey(it.key()))) {
                 return true;
               }
             }
@@ -4649,7 +4656,7 @@ if (!item.isFolder) {
           if (composition) {
             for (const auto &layer : composition->allLayerRef()) {
               if (!layer) continue;
-              if (containsReferencePath(QJsonValue(layer->toJson()))) {
+              if (containsReferencePath(QJsonValue(layer->toJson()), false)) {
                 references.push_back(QStringLiteral("Composition %1 / %2 (%3)")
                                          .arg(composition->id().toString(),
                                               layer->layerName(), layer->id().toString()));
