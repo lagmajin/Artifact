@@ -2228,17 +2228,30 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
      entries.append(dir.relativeFilePath(absolutePath));
     }
    }
+   // applyFilters revisits entries while separating folders, detecting
+   // sequences and creating standalone rows. Cache each path and its directory
+   // classification so these passes do not repeat filesystem metadata probes.
+   struct ScannedEntryInfo {
+    QFileInfo fileInfo;
+    bool isDirectory = false;
+   };
+   QHash<QString, ScannedEntryInfo> entryInfoByName;
+   entryInfoByName.reserve(entries.size());
+   for (const QString& entry : entries) {
+    QFileInfo fileInfo(dir.absoluteFilePath(entry));
+    const bool isDirectory = fileInfo.isDir();
+    entryInfoByName.insert(entry, {std::move(fileInfo), isDirectory});
+   }
    QList<AssetMenuItem> items;
 
    // --- Phase 1: pre-filter directories ---
    QStringList dirNames;
    for (const QString& entry : entries) {
-    QString fullPath = dir.absoluteFilePath(entry);
-    QFileInfo fileInfo(fullPath);
-    if (!fileInfo.isDir()) continue;
+    const ScannedEntryInfo entryInfo = entryInfoByName.value(entry);
+    if (!entryInfo.isDirectory) continue;
     if (currentFileTypeFilter_ != "all") continue;
     if (!matchesSearchFilter(entry)) continue;
-    if (!matchesTagSearch(fullPath)) continue;
+    if (!matchesTagSearch(entryInfo.fileInfo.absoluteFilePath())) continue;
     dirNames.append(entry);
    }
 
@@ -2249,9 +2262,8 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
    QSet<QString> seqFiles;
 
    for (const QString& entry : entries) {
-    QString fullPath = dir.absoluteFilePath(entry);
-    QFileInfo fileInfo(fullPath);
-    if (fileInfo.isDir()) continue;
+    const ScannedEntryInfo entryInfo = entryInfoByName.value(entry);
+    if (entryInfo.isDirectory) continue;
     if (!matchesSearchFilter(entry) || !matchesFileTypeFilter(entry)) continue;
 
     QRegularExpressionMatch m = kSeqRx.match(entry);
@@ -2264,7 +2276,8 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
     // would produce an invalid display pattern and an ambiguous import.
     QString key = m.captured(1) + m.captured(2) + m.captured(4) +
                   QStringLiteral("|pad=") + QString::number(frameStr.length());
-    seqMap[key].append({entry, frameNum, static_cast<int>(frameStr.length()), fullPath});
+    seqMap[key].append({entry, frameNum, static_cast<int>(frameStr.length()),
+                        entryInfo.fileInfo.absoluteFilePath()});
    }
 
    for (auto it = seqMap.begin(); it != seqMap.end(); ++it) {
@@ -2441,11 +2454,12 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
     [&](int begin, int end) {
      for (int i = begin; i < end; ++i) {
       const QString& entry = entries.at(i);
-      const QString fullPath = dir.absoluteFilePath(entry);
-      const QFileInfo fileInfo(fullPath);
-      if (fileInfo.isDir() || !matchesSearchFilter(entry) || !matchesFileTypeFilter(entry) || seqFiles.contains(entry)) {
+      const ScannedEntryInfo entryInfo = entryInfoByName.value(entry);
+      if (entryInfo.isDirectory || !matchesSearchFilter(entry) || !matchesFileTypeFilter(entry) || seqFiles.contains(entry)) {
        continue;
       }
+      const QFileInfo& fileInfo = entryInfo.fileInfo;
+      const QString fullPath = fileInfo.absoluteFilePath();
       if (!matchesTagSearch(fullPath)) continue;
 
       // Status markers via the shared helper (same rule and filter as sequences)
