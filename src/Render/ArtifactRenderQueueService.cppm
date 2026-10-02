@@ -578,16 +578,9 @@ namespace Artifact
                     sourcePath = json.value(QStringLiteral("sourcePath")).toString();
                 }
 
-                if (!sourcePath.isEmpty() && !QFileInfo::exists(sourcePath)) {
-                    auto diag = ArtifactCore::ProjectDiagnostic::createMissingFile(
-                        sourcePath,
-                        layer->id().toString());
-                    diag.setSourceCompId(compId);
-                    result.addDiagnostic(diag);
-                }
-
                 const QJsonValue sequenceValue =
                     json.value(QStringLiteral("image.sequencePaths"));
+                bool sourcePathIsSequenceFrame = false;
                 if (sequenceValue.isArray()) {
                     QSet<QString> checkedPaths;
                     if (!sourcePath.trimmed().isEmpty()) {
@@ -596,7 +589,20 @@ namespace Artifact
 #ifdef Q_OS_WIN
                         sourceIdentity = sourceIdentity.toCaseFolded();
 #endif
-                        checkedPaths.insert(sourceIdentity);
+                        for (const QJsonValue& frameValue : sequenceValue.toArray()) {
+                            if (!frameValue.isString()) {
+                                continue;
+                            }
+                            QString frameIdentity = QDir::cleanPath(
+                                QFileInfo(frameValue.toString().trimmed()).absoluteFilePath());
+#ifdef Q_OS_WIN
+                            frameIdentity = frameIdentity.toCaseFolded();
+#endif
+                            if (frameIdentity == sourceIdentity) {
+                                sourcePathIsSequenceFrame = true;
+                                break;
+                            }
+                        }
                     }
                     for (const QJsonValue& frameValue : sequenceValue.toArray()) {
                         if (!frameValue.isString()) {
@@ -629,6 +635,14 @@ namespace Artifact
                             compId,
                             layer->id().toString()));
                     }
+                }
+                if (!sourcePath.isEmpty() && !sourcePathIsSequenceFrame &&
+                    !QFileInfo::exists(sourcePath)) {
+                    auto diag = ArtifactCore::ProjectDiagnostic::createMissingFile(
+                        sourcePath,
+                        layer->id().toString());
+                    diag.setSourceCompId(compId);
+                    result.addDiagnostic(diag);
                 }
             }
         }
