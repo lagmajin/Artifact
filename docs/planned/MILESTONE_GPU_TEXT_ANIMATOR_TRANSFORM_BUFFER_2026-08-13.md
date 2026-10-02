@@ -5,10 +5,11 @@
 
 ## 2026-10-02 現行コード再監査
 
+- 分離 `ArtifactTextGlyphSubmitter::submit()` でGPUパケット化前のglyph座標・offset・scale・rotation・opacityを検証し、非有限値、float範囲外座標、負scaleを持つglyphを除外する。全体opacity／色と、計算後の頂点座標・UV・alphaも有限値であることを要求する。これは実験submitterに限定したWP-1前段の入力衛生であり、製品Animator経路のTransform Buffer／Instance POD完成ではない。
 - `PrimitiveRenderer2D::drawGlyphsTransformed()` はCPUでGlyphごとの頂点・変換情報を構築し、既存Glyph atlas描画へ渡す。
 - `DiligentImmediateSubmitter::submitGlyphTextTransformed()` は描画対象Glyphをscratchへ集めるが、Fill／Stroke passでGlyphごとに頂点・transform constant bufferを更新して個別 `DrawIndexed` する。
 - 分離 `ArtifactTextGlyphSubmitter` は連続 Glyph quad を縮退三角形でtriangle stripへ接続し、run全体を1回の `Draw` で送る実装へ更新した。Glyph順とper-vertex color/UVを維持する設計である。静的コード確認のみで、driver上のstrip接続・alpha合成・画像 parity は未検証。
-- したがって既存 GPU glyph transform 経路と分離 Submitter のdraw-call削減試作は実装済みだが、製品 `DiligentImmediateSubmitter` への統合、計画対象のGPU instance POD、transform buffer、instanced drawは未実装。現在のCPU packet生成コストと性能値も未計測。
+- したがって既存 GPU glyph transform 経路と分離 Submitter のdraw-call削減／入力検証試作は実装済みだが、製品 `DiligentImmediateSubmitter` への統合、計画対象のGPU instance POD、transform buffer、instanced drawは未実装。現在のCPU packet生成コストと性能値も未計測。
 - WP-1〜WP-5 と Software／GPU parity・性能受入は未完了のままとする。ビルド・実機確認は実施していない。
 
 判定: **既存 per-glyph GPU path はコード上実装済み。Transform Buffer／Instancing マイルストーンは部分実装。**

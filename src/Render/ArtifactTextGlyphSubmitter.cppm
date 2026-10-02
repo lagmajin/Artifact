@@ -94,13 +94,31 @@ bool ArtifactTextGlyphSubmitter::submit(Diligent::IDeviceContext* context, Dilig
                                         const ArtifactCore::TextStyle& style,
                                         const ArtifactCore::FloatColor& color, float opacity) {
     if (!isInitialized() || !context || !target || glyphs.empty()) return false;
+    if (!std::isfinite(opacity) ||
+        !std::isfinite(color.r()) || !std::isfinite(color.g()) ||
+        !std::isfinite(color.b()) || !std::isfinite(color.a())) {
+        return false;
+    }
     impl_->atlas.clear();
     const auto targetDesc = target->GetTexture()->GetDesc();
     const float screenW = static_cast<float>(targetDesc.Width);
     const float screenH = static_cast<float>(targetDesc.Height);
     std::vector<SubmitVertex> vertices;
     bool requiresTransformedPipeline = false;
+    const auto isFiniteFloat = [](const double value) {
+        return std::isfinite(value) &&
+            std::abs(value) <= std::numeric_limits<float>::max();
+    };
     for (const auto& glyph : glyphs) {
+        if (!isFiniteFloat(glyph.basePosition.x()) ||
+            !isFiniteFloat(glyph.basePosition.y()) ||
+            !isFiniteFloat(glyph.offsetPosition.x()) ||
+            !isFiniteFloat(glyph.offsetPosition.y()) ||
+            !std::isfinite(glyph.offsetScale) || glyph.offsetScale < 0.0f ||
+            !std::isfinite(glyph.offsetRotation) ||
+            !std::isfinite(glyph.offsetOpacity)) {
+            continue;
+        }
         if (glyph.isEmojiSequence && glyph.shapedGlyphIndex == 0) {
             continue;
         }
@@ -136,6 +154,13 @@ bool ArtifactTextGlyphSubmitter::submit(Diligent::IDeviceContext* context, Dilig
         const float u1 = rect.u1(impl_->atlas.width()), v1 = rect.v1(impl_->atlas.height());
         const float alpha = rect.colorPreserved ? -std::clamp(opacity * glyph.offsetOpacity, 0.0f, 1.0f)
                                                 : std::clamp(opacity * glyph.offsetOpacity, 0.0f, 1.0f);
+        if (!std::isfinite(x0) || !std::isfinite(y0) ||
+            !std::isfinite(x1) || !std::isfinite(y1) ||
+            !std::isfinite(u0) || !std::isfinite(v0) ||
+            !std::isfinite(u1) || !std::isfinite(v1) ||
+            !std::isfinite(alpha)) {
+            continue;
+        }
         requiresTransformedPipeline = requiresTransformedPipeline ||
             std::abs(glyph.offsetRotation) > 0.0001f ||
             std::abs(glyph.offsetScale - 1.0f) > 0.0001f ||
