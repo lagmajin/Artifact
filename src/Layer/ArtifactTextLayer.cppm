@@ -1258,6 +1258,8 @@ bool sameTextAnimatorState(const TextAnimatorState &a,
          a.expression.seed == b.expression.seed &&
          fuzzyEqual(a.properties.position, b.properties.position) &&
          fuzzyEqual(a.properties.scale, b.properties.scale) &&
+         fuzzyEqual(a.properties.scaleX, b.properties.scaleX) &&
+         fuzzyEqual(a.properties.scaleY, b.properties.scaleY) &&
          fuzzyEqual(a.properties.rotation, b.properties.rotation) &&
          fuzzyEqual(a.properties.opacity, b.properties.opacity) &&
          fuzzyEqual(a.properties.skew, b.properties.skew) &&
@@ -1435,6 +1437,8 @@ QJsonObject textAnimatorToJson(const TextAnimatorState &animator) {
   propsObj["positionX"] = animator.properties.position.x();
   propsObj["positionY"] = animator.properties.position.y();
   propsObj["scale"] = animator.properties.scale;
+  propsObj["scaleX"] = animator.properties.scaleX;
+  propsObj["scaleY"] = animator.properties.scaleY;
   propsObj["rotation"] = animator.properties.rotation;
   propsObj["opacity"] = animator.properties.opacity;
   propsObj["skew"] = animator.properties.skew;
@@ -1543,6 +1547,8 @@ TextAnimatorState textAnimatorFromJson(const QJsonObject &obj, const int index) 
     animator.properties.position.setX(safeFloat(propsObj.value("positionX").toDouble(animator.properties.position.x()), animator.properties.position.x(), -100000.0f, 100000.0f));
     animator.properties.position.setY(safeFloat(propsObj.value("positionY").toDouble(animator.properties.position.y()), animator.properties.position.y(), -100000.0f, 100000.0f));
     animator.properties.scale = safeFloat(propsObj.value("scale").toDouble(animator.properties.scale), animator.properties.scale, 0.0f, 8.0f);
+    animator.properties.scaleX = safeFloat(propsObj.value("scaleX").toDouble(animator.properties.scaleX), animator.properties.scaleX, -1.0f, 8.0f);
+    animator.properties.scaleY = safeFloat(propsObj.value("scaleY").toDouble(animator.properties.scaleY), animator.properties.scaleY, -1.0f, 8.0f);
     animator.properties.rotation = safeFloat(propsObj.value("rotation").toDouble(animator.properties.rotation), animator.properties.rotation, -360000.0f, 360000.0f);
     animator.properties.opacity = safeFloat(propsObj.value("opacity").toDouble(animator.properties.opacity), animator.properties.opacity, 0.0f, 1.0f);
     animator.properties.skew = safeFloat(propsObj.value("skew").toDouble(animator.properties.skew), animator.properties.skew, -360000.0f, 360000.0f);
@@ -3594,6 +3600,8 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
           target.offsetPosition = evaluated.offsetPosition;
           target.offsetRotation = evaluated.offsetRotation;
           target.offsetScale = evaluated.offsetScale;
+          target.offsetScaleX = evaluated.offsetScaleX;
+          target.offsetScaleY = evaluated.offsetScaleY;
           target.offsetOpacity = evaluated.offsetOpacity;
           target.offsetSkew = evaluated.offsetSkew;
           target.offsetTracking = evaluated.offsetTracking;
@@ -4957,6 +4965,14 @@ bool ArtifactTextLayer::setLayerPropertyValue(const QString &propertyPath,
     } else if (field == QStringLiteral("scale")) {
       animator.properties.scale =
           std::clamp(numericValue, 0.0f, 8.0f);
+    } else if (field == QStringLiteral("scaleX")) {
+      // Negative means 「not authored」, so it is preserved rather than clamped
+      // up to 0; the engine reads it as the sentinel.
+      animator.properties.scaleX =
+          std::clamp(numericValue, -1.0f, 8.0f);
+    } else if (field == QStringLiteral("scaleY")) {
+      animator.properties.scaleY =
+          std::clamp(numericValue, -1.0f, 8.0f);
     } else if (field == QStringLiteral("rotation")) {
       animator.properties.rotation =
           std::clamp(numericValue, -360000.0f, 360000.0f);
