@@ -119,6 +119,12 @@ struct LayerPins {
     std::uint64_t shapeConstraintGeneration = 0;
     std::uint64_t shapeConstraintBuiltGeneration = 0;
     bool shapeConstraintValid = false;
+    // renderDeformedSurface の CPU ワープ用スクラッチ。サイズが
+    // 変わった時だけ再確保し、フレーム毎のアロケーションを避ける
+    // （docs/technical/HOT_PATH_RULES.md）。
+    cv::Mat cpuSurfaceSource;
+    cv::Mat cpuWarpScratch;
+    cv::Mat cpuWarpMask;
 };
 
 // needsDeform とシェイプ経路のキャッシュ世代を同時に進める。制御点が動いた
@@ -1395,11 +1401,10 @@ void ArtifactPuppetTool::deformLayer(const LayerID& layerId, ArtifactIRenderer* 
     markDeformDirty(*lp);
 }
 
-bool ArtifactPuppetTool::renderDeformedLayer(
-    ArtifactIRenderer* renderer, ArtifactImageLayer* imageLayer,
-    const QMatrix4x4& transform, float opacity)
+bool ArtifactPuppetTool::prepareDeformedImageMesh(
+    ArtifactImageLayer* imageLayer)
 {
-    if (!renderer || !imageLayer || !imageLayer->hasCurrentFrameBuffer()) {
+    if (!imageLayer || !imageLayer->hasCurrentFrameBuffer()) {
         return false;
     }
     imageLayer->refreshAnimatedSourceCrop();
@@ -1627,6 +1632,22 @@ bool ArtifactPuppetTool::renderDeformedLayer(
         }
         lp->needsDeform = false;
     }
+    return true;
+}
+
+bool ArtifactPuppetTool::renderDeformedLayer(
+    ArtifactIRenderer* renderer, ArtifactImageLayer* imageLayer,
+    const QMatrix4x4& transform, float opacity)
+{
+    if (!renderer || !prepareDeformedImageMesh(imageLayer)) {
+        return false;
+    }
+    auto* lp = impl_->getLayerPins(imageLayer->id());
+    if (!lp || !lp->engine) return false;
+    const auto& source = imageLayer->currentFrameBuffer();
+    const SourceCropDrawLayout cropLayout = imageLayer->sourceCropDrawLayout();
+    const QRect cropPixels = cropLayout.sourcePixelRect.intersected(
+        QRect(0, 0, source.width(), source.height()));
 
     const bool hasStableSourceIdentity =
         !imageLayer->hasTemporarySourceOverride();
@@ -1681,6 +1702,188 @@ bool ArtifactPuppetTool::renderDeformedLayer(
             croppedTransform, texture, safeOpacity);
     }
     return true;
+}
+
+QImage ArtifactPuppetTool::renderDeformedSurface(
+    ArtifactImageLayer* imageLayer)
+{
+    if (!prepareDeformedImageMesh(imageLayer)) {
+        return {};
+    }
+    auto* lp = impl_->getLayerPins(imageLayer->id());
+    if (!lp || !lp->engine) {
+        return {};
+    }
+    const ArtifactCore::PuppetMesh& mesh = lp->engine->deformedMeshView();
+    if (mesh.vertices.empty() || mesh.indices.size() < 3 ||
+        mesh.texCoords.size() != mesh.vertices.size() ||
+        lp->sourceWidth <= 0 || lp->sourceHeight <= 0) {
+        return {};
+    }
+    const auto& source = imageLayer->currentFrameBuffer();
+    if (source.rgba32fData() == nullptr ||
+        source.width() <= 0 || source.height() <= 0) {
+        return {};
+    }
+    const cv::Mat sourceView = source.toCVMat();
+    if (sourceView.empty() || sourceView.cols != source.width() ||
+        sourceView.rows != source.height() || sourceView.channels() != 4) {
+        return {};
+    }
+    const cv::Rect cropRoi(lp->sourceCropPixels.x(),
+                               lp->sourceCropPixels.y(),
+                               lp->sourceCropPixels.width(),
+                               lp->sourceCropPixels.height());
+    if (cropRoi.x < 0 || cropRoi.y < 0 ||
+        cropRoi.x + cropRoi.width > sourceView.cols ||
+        cropRoi.y + cropRoi.height > sourceView.rows ||
+        cropRoi.width <= 0 || cropRoi.height <= 0) {
+        return {};
+    }
+    // ImageF32x4_RGBA の toCVMat() は CV_32FC4（RGBA バイト順）。
+    // 8bit 化してもバイト順は変わらず、ArtifactImageLayer::toQImage()
+    // が出力する QImage::Format_RGBA8888 と一致するので、変形あり／
+    // なしのソフト表面は画素フォーマットまで一致する。
+    cv::Mat& sourceCrop = lp->cpuSurfaceSource;
+    sourceView(cropRoi).convertTo(sourceCrop, CV_8UC4, 255.0);
+    if (sourceCrop.empty() || sourceCrop.cols != cropRoi.width ||
+        sourceCrop.rows != cropRoi.height || sourceCrop.channels() != 4) {
+        return {};
+    }
+    QImage surface(cropRoi.width, cropRoi.height,
+                       QImage::Format_RGBA8888);
+    if (surface.isNull()) {
+        return {};
+    }
+    surface.fill(Qt::transparent);
+    cv::Mat surfaceView(cropRoi.height, cropRoi.width, CV_8UC4,
+                            surface.bits(),
+                            static_cast<size_t>(surface.bytesPerLine()));
+    // 三角形ごとに宛先バウンディングボックスへワープする。フル表面
+    // サイズで warpAffine すると三角形数 × 全画素になりフレーム毎
+    // コストが膨らむため。スクラッチはサイズ変化時だけ再確保する。
+    cv::Mat& warpScratch = lp->cpuWarpScratch;
+    cv::Mat& maskScratch = lp->cpuWarpMask;
+    for (const size_t triangle : lp->triangleOrder) {
+        const size_t offset = triangle * 3;
+        if (offset + 2 >= mesh.indices.size()) continue;
+        const int i0 = mesh.indices[offset];
+        const int i1 = mesh.indices[offset + 1];
+        const int i2 = mesh.indices[offset + 2];
+        if (i0 < 0 || i1 < 0 || i2 < 0 ||
+            i0 >= static_cast<int>(mesh.vertices.size()) ||
+            i1 >= static_cast<int>(mesh.vertices.size()) ||
+            i2 >= static_cast<int>(mesh.vertices.size())) continue;
+        const cv::Point2f sourceTriangle[3] = {
+            cv::Point2f(mesh.texCoords[static_cast<size_t>(i0)].x *
+                            cropRoi.width,
+                        mesh.texCoords[static_cast<size_t>(i0)].y *
+                            cropRoi.height),
+            cv::Point2f(mesh.texCoords[static_cast<size_t>(i1)].x *
+                            cropRoi.width,
+                        mesh.texCoords[static_cast<size_t>(i1)].y *
+                            cropRoi.height),
+            cv::Point2f(mesh.texCoords[static_cast<size_t>(i2)].x *
+                            cropRoi.width,
+                        mesh.texCoords[static_cast<size_t>(i2)].y *
+                            cropRoi.height)};
+        const cv::Point2f destinationTriangle[3] = {
+            mesh.vertices[static_cast<size_t>(i0)],
+            mesh.vertices[static_cast<size_t>(i1)],
+            mesh.vertices[static_cast<size_t>(i2)]};
+        const float area =
+            (destinationTriangle[1].x - destinationTriangle[0].x) *
+                (destinationTriangle[2].y - destinationTriangle[0].y) -
+            (destinationTriangle[2].x - destinationTriangle[0].x) *
+                (destinationTriangle[1].y - destinationTriangle[0].y);
+        if (!std::isfinite(area) || std::abs(area) < 1.0e-6f) continue;
+        float minX = destinationTriangle[0].x;
+        float maxX = minX;
+        float minY = destinationTriangle[0].y;
+        float maxY = minY;
+        for (int vertex = 1; vertex < 3; ++vertex) {
+            minX = std::min(minX, destinationTriangle[vertex].x);
+            maxX = std::max(maxX, destinationTriangle[vertex].x);
+            minY = std::min(minY, destinationTriangle[vertex].y);
+            maxY = std::max(maxY, destinationTriangle[vertex].y);
+        }
+        const cv::Rect destinationBox(
+            std::clamp(static_cast<int>(std::floor(minX)), 0,
+                           surfaceView.cols),
+            std::clamp(static_cast<int>(std::floor(minY)), 0,
+                           surfaceView.rows),
+            std::clamp(static_cast<int>(std::ceil(maxX)) + 1, 0,
+                           surfaceView.cols),
+            std::clamp(static_cast<int>(std::ceil(maxY)) + 1, 0,
+                           surfaceView.rows));
+        const cv::Rect warpBox = destinationBox &
+            cv::Rect(0, 0, surfaceView.cols, surfaceView.rows);
+        if (warpBox.empty()) continue;
+        const cv::Mat warpTransform = cv::getAffineTransform(
+            sourceTriangle, destinationTriangle);
+        if (warpTransform.empty()) continue;
+        // ワープ先をバウンディングボックス内へ平行移動する。
+        cv::Mat localTransform = warpTransform;
+        localTransform.at<double>(0, 2) -= warpBox.x;
+        localTransform.at<double>(1, 2) -= warpBox.y;
+        cv::warpAffine(sourceCrop, warpScratch, localTransform,
+                           warpBox.size(), cv::INTER_LINEAR,
+                           cv::BORDER_CONSTANT,
+                           cv::Scalar(0, 0, 0, 0));
+        maskScratch.create(warpBox.size(), CV_8UC1);
+        maskScratch.setTo(cv::Scalar(0));
+        const cv::Point maskTriangle[3] = {
+            cv::Point(destinationTriangle[0]) - warpBox.tl(),
+            cv::Point(destinationTriangle[1]) - warpBox.tl(),
+            cv::Point(destinationTriangle[2]) - warpBox.tl()};
+        cv::fillConvexPoly(maskScratch, maskTriangle, 3,
+                               cv::Scalar(255));
+        warpScratch.copyTo(surfaceView(warpBox), maskScratch);
+    }
+    return surface;
+}
+
+QString ArtifactPuppetTool::deformationSurfaceSignature(
+    ArtifactAbstractLayer* layer)
+{
+    const QJsonObject deformerState =
+        layer ? layer->deformation2DData() : QJsonObject{};
+    if (deformerState.isEmpty()) {
+        return {};
+    }
+    if (!deformerState.value(QStringLiteral("enabled")).toBool(true)) {
+        return {};
+    }
+    ensureLayerLoaded(layer->id(), layer);
+    auto* lp = impl_->getLayerPins(layer->id());
+    if (!lp) {
+        return {};
+    }
+    const bool gridComplete =
+        lp->mode == Deformation2DMode::Grid &&
+        lp->pins.size() == static_cast<size_t>(lp->gridColumns *
+                                               lp->gridRows);
+    if (!gridComplete &&
+        (lp->mode != Deformation2DMode::Pins || lp->pins.empty())) {
+        return {};
+    }
+    // shapeConstraintGeneration は制御点の追加／削除／属性編集／
+    // ドラッグ確定／Undo 適用のすべてで markDeformDirty 経由で進む。
+    // キーフレーム評価で進むことはないので、静止した制御点なら
+    // フレームをまたいでも同じ署名になる。
+    QString signature = QStringLiteral("|deform=%1|gen=%2|grid=%3x%4")
+        .arg(lp->mode == Deformation2DMode::Grid
+                 ? QStringLiteral("grid") : QStringLiteral("pins"))
+        .arg(lp->shapeConstraintGeneration)
+        .arg(lp->gridColumns)
+        .arg(lp->gridRows);
+    if (layer->hasCachedAnimatedPropertiesWithPrefix(
+            QStringLiteral("deformation2D."))) {
+        signature += QStringLiteral("|deformFrame=%1:%2")
+                         .arg(layerTimelineFrame(layer))
+                         .arg(layer->currentFrame());
+    }
+    return signature;
 }
 
 QPointF ArtifactPuppetTool::mapDeformationPoint(

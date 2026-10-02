@@ -13,6 +13,7 @@ module;
 #include <memory>
 #include <vector>
 #include <utility>
+#include <atomic>
 #include <cmath>
 #include <QString>
 #include <QStringList>
@@ -847,6 +848,23 @@ std::map<QString, CommandHandler> createCommandRegistry(const QStringList& proje
 
 } // namespace
 
+namespace {
+// 割り込み要求はハンドラスレッドから立てられ、CLI の読み取り
+// ループが要求の合間に取得する。ブロック中の読み取りは
+// 割り込まない（この制約はマイルストーン未完了項目）。
+std::atomic<bool> g_consoleInterrupt{false};
+} // namespace
+
+bool consoleInterruptRequested()
+{
+  return g_consoleInterrupt.load(std::memory_order_acquire);
+}
+
+void noteConsoleInterrupt()
+{
+  g_consoleInterrupt.store(true, std::memory_order_release);
+}
+
 InteractiveShellResult runInteractiveShell(const QStringList& projectPaths,
                                            const QString& scriptPath,
                                            const QString& singleCommand,
@@ -1024,6 +1042,9 @@ InteractiveShellResult runInteractiveShell(const QStringList& projectPaths,
       if (!consumedInput) {
         break;
       }
+      if (consoleInterruptRequested()) {
+        return {130, false};
+      }
       if (overLimit) {
         writeRequestError(QStringLiteral("request_too_large"),
                           QStringLiteral("JSON Lines request exceeds 1 MiB"), {});
@@ -1108,6 +1129,9 @@ InteractiveShellResult runInteractiveShell(const QStringList& projectPaths,
   }
 
   while (true) {
+    if (consoleInterruptRequested()) {
+      return {130, false};
+    }
     out << "artifact> " << Qt::flush;
     if (in.atEnd()) {
       out << "\n";

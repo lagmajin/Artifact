@@ -79,6 +79,16 @@ public:
     bool renderDeformedLayer(ArtifactIRenderer* renderer,
                              ArtifactImageLayer* imageLayer,
                              const QMatrix4x4& transform, float opacity);
+    // CPU surface variant of renderDeformedLayer for the rasterizer/mask
+    // software path. Evaluates the same mesh and warps the source crop
+    // through the deformed triangles into a straight-alpha RGBA8888 QImage
+    // matching ArtifactImageLayer::toQImage() output. Returns a null image
+    // when this layer should not be deformed on this frame.
+    QImage renderDeformedSurface(ArtifactImageLayer* imageLayer);
+    // Cache identity of the active deformation for a layer. Empty when the
+    // layer carries no active deformation, so the layer surface cache can
+    // key the deformed software surface separately from the static one.
+    QString deformationSurfaceSignature(ArtifactAbstractLayer* layer);
     QPointF mapDeformationPoint(ArtifactAbstractLayer* layer,
                                 const QPointF& localPoint);
     bool prepareLayerDeformation(ArtifactAbstractLayer* layer);
@@ -101,6 +111,11 @@ private:
                                      ArtifactAbstractLayer* layer,
                                      qint64 evaluationFrame);
     void rebaseLayerPins(const LayerID& layerId, ArtifactAbstractLayer* layer);
+    // Shared evaluation preamble of renderDeformedLayer and
+    // renderDeformedSurface: resolves the layer state, binds the mesh
+    // topology, evaluates the control points at the current frame and
+    // leaves a ready deformed mesh in the layer pin state.
+    bool prepareDeformedImageMesh(ArtifactImageLayer* imageLayer);
     class Impl;
     Impl* impl_;
 };

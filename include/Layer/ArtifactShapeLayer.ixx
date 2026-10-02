@@ -4,6 +4,7 @@ module;
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <vector>
 #include <QString>
@@ -431,6 +432,15 @@ public:
             ShapeDeformerPointMapper pointMapper,
             ShapeDeformerPrepare prepareDeformer);
   QImage toQImage() const;
+  // Software rasterization for the rasterizer/mask path with an
+  // active 2D deformer. prepareDeformer activates the deformer for
+  // this layer (same contract as draw()) and every rasterized
+  // geometry point is passed through pointMapper before painting,
+  // so the CPU surface matches the GPU vector draw's deformation.
+  // Returns a null image when the deformer is not active.
+  QImage toDeformedQImage(void* deformerContext,
+                            ShapeDeformerPointMapper pointMapper,
+                            ShapeDeformerPrepare prepareDeformer) const;
   QImage getThumbnail(int width = 128, int height = 128) const override;
   QJsonObject toJson() const override;
   static SharedPtr<ArtifactShapeLayer> fromJson(const QJsonObject &obj);
@@ -438,8 +448,12 @@ public:
  private:
   // Rebuilds the cached per-content visible paths (merge-resolved).
   void ensureContentVisPaths() const;
-  // Software rasterization for thumbnails/toQImage when contents exist.
-  QImage renderContentsToImage() const;
+  // Rebuilds the cached per-content visible paths (merge-resolved).
+  // A non-null pointMapper re-rasterizes the same contents with
+  // every path point mapped through the 2D deformer; the result is
+  // not written back to the shared cache.
+  QImage renderContentsToImage(
+      const std::function<QPointF(const QPointF&)>* pointMapper = nullptr) const;
 };
 
 } // namespace Artifact

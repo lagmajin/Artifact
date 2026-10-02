@@ -29,6 +29,7 @@ module;
 #include <cmath>
 #include <QPen>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <span>
 #include <vector>
@@ -2471,16 +2472,17 @@ public:
     shapeGeometryCacheDirty_ = false;
     return cachedShapeGeometry_;
    }
-  void rebuildCache(
+  QImage rebuildCache(
       const ShapeGeomDims* dims = nullptr,
       const std::vector<CustomPathVertex>* pathVertices = nullptr,
       const std::vector<Artifact::ShapeGradientStop>* evaluatedStops = nullptr,
       const QString* evaluatedStopsJson = nullptr,
-      bool forceGradientStopsRefresh = false) {
+      bool forceGradientStopsRefresh = false,
+      const std::function<QPointF(const QPointF&)>* pointMapper = nullptr) {
     const bool gradientStopsChanged = evaluatedStopsJson &&
         *evaluatedStopsJson != cachedImageGradientStopsJson_;
-    if (!cacheDirty_ && !dims && !pathVertices && !gradientStopsChanged &&
-        !forceGradientStopsRefresh) return;
+    if (!pointMapper && !cacheDirty_ && !dims && !pathVertices &&
+        !gradientStopsChanged && !forceGradientStopsRefresh) return {};
     const auto& activeGradientStops = evaluatedStops ? *evaluatedStops
                                                       : fillGradientStops_;
     const int effW = dims ? dims->width : width_;
@@ -2496,13 +2498,19 @@ public:
     painter.setRenderHint(QPainter::Antialiasing, true);
 
     const auto& effectivePathVertices = pathVertices ? *pathVertices
-                                                     : customPathVertices_;
-    const auto paths = buildProcessedPainterPaths(shapeType_, effW, effH,
-                                                  effCornerRadius, effStarPoints,
-                                                  effStarInnerRadius, effPolygonSides,
-                                                  customPolygonPoints_, customPolygonClosed_,
-                                                  effectivePathVertices, customPathClosed_,
-                                                  shapeOperators_);
+                                                      : customPathVertices_;
+    const auto builtPaths = buildProcessedPainterPaths(shapeType_, effW, effH,
+                                                   effCornerRadius, effStarPoints,
+                                                   effStarInnerRadius, effPolygonSides,
+                                                   customPolygonPoints_, customPolygonClosed_,
+                                                   effectivePathVertices, customPathClosed_,
+                                                   shapeOperators_);
+    std::vector<QPainterPath> paths;
+    paths.reserve(builtPaths.size());
+    for (const QPainterPath& builtPath : builtPaths) {
+      paths.push_back(pointMapper
+          ? mapPainterPathElements(builtPath, *pointMapper) : builtPath);
+    }
 
     if (!paths.empty()) {
      const bool isGradient = fillType_ != ArtifactSolidFillType::Solid;
@@ -2644,11 +2652,17 @@ public:
     }
 
    painter.end();
+   if (pointMapper) {
+     // デフォーマ付与の再ラスタライズは共有キャッシュへ書かない。
+     // 変形状態はレイヤー表面キャッシュの署名で無効化される。
+     return img;
+   }
    cachedImage_ = std::move(img);
    cacheDirty_ = false;
    if (evaluatedStopsJson) {
     cachedImageGradientStopsJson_ = *evaluatedStopsJson;
    }
+   return cachedImage_;
   }
 };
 
@@ -4396,7 +4410,41 @@ void ArtifactShapeLayer::ensureContentVisPaths() const {
 // toQImage (Software rendering)
 // ============================================================
 
-QImage ArtifactShapeLayer::renderContentsToImage() const {
+// 2D デフォーマ有効時のソフトラスタライズ用に QPainterPath の
+// 全要素を点写像経由で再構築する。MLS 写像は非線形なので三次
+// ベジェは写像後の制御点で再現する（GPU 経路は三角形／折れ線
+// 化してから写像するが、どちらも同じ制御点評価を経る）。
+QPainterPath mapPainterPathElements(
+    const QPainterPath& source,
+    const std::function<QPointF(const QPointF&)>& pointMapper)
+{
+  QPainterPath mapped;
+  mapped.setFillRule(source.fillRule());
+  const int elementCount = source.elementCount();
+  for (int index = 0; index < elementCount; ++index) {
+    const QPainterPath::Element element = source.elementAt(index);
+    if (element.type == QPainterPath::CurveToElement &&
+        index + 2 < elementCount) {
+      const QPainterPath::Element second = source.elementAt(index + 1);
+      const QPainterPath::Element third = source.elementAt(index + 2);
+      mapped.cubicTo(pointMapper(QPointF(element.x, element.y)),
+                       pointMapper(QPointF(second.x, second.y)),
+                       pointMapper(QPointF(third.x, third.y)));
+      index += 2;
+      continue;
+    }
+    const QPointF mappedPoint = pointMapper(QPointF(element.x, element.y));
+    if (element.type == QPainterPath::MoveToElement) {
+      mapped.moveTo(mappedPoint);
+    } else {
+      mapped.lineTo(mappedPoint);
+    }
+  }
+  return mapped;
+}
+
+QImage ArtifactShapeLayer::renderContentsToImage(
+    const std::function<QPointF(const QPointF&)>* pointMapper) const {
   const QRectF bounds = localBounds();
   if (!impl_ || bounds.isNull() || !bounds.isValid()) {
     return {};
@@ -4494,7 +4542,9 @@ QImage ArtifactShapeLayer::renderContentsToImage() const {
       pathClosed = content.geometry.polygonClosed;
     }
     for (const auto& shapePath : impl_->contentCache_.visPaths[ci]) {
-      const QPainterPath path = shapePath.toPainterPath();
+      const QPainterPath rawPath = shapePath.toPainterPath();
+      const QPainterPath path = pointMapper
+          ? mapPainterPathElements(rawPath, *pointMapper) : rawPath;
       if (path.isEmpty()) {
         continue;
       }
@@ -4601,7 +4651,48 @@ QImage ArtifactShapeLayer::toQImage() const {
   impl_->rebuildCache(nullptr, nullptr, &evaluatedStops,
                       evaluatedStopsJson, interpolatingGradientStops);
  }
- return impl_->cachedImage_;
+  return impl_->cachedImage_;
+}
+
+QImage ArtifactShapeLayer::toDeformedQImage(
+    void* deformerContext, ShapeDeformerPointMapper pointMapper,
+    ShapeDeformerPrepare prepareDeformer) const {
+  if (!deformerContext || !pointMapper || !prepareDeformer) {
+    return {};
+  }
+  if (!prepareDeformer(deformerContext,
+                       const_cast<ArtifactShapeLayer*>(this))) {
+    return {};
+  }
+  const std::function<QPointF(const QPointF&)> mappedPoint =
+      [deformerContext, pointMapper, this](const QPointF& point) {
+        return pointMapper(deformerContext,
+                           const_cast<ArtifactShapeLayer*>(this), point);
+      };
+  if (impl_ && !impl_->shapeContents_.empty()) {
+    return renderContentsToImage(&mappedPoint);
+  }
+  bool interpolatingGradientStops = false;
+  const QString* evaluatedStopsJson = nullptr;
+  const auto& evaluatedStops = impl_->evaluatedContentGradientStops(
+      this, -1, impl_->fillGradientStops_, &interpolatingGradientStops,
+      &evaluatedStopsJson);
+  const bool geomAnimated = hasAnimatedShapeGeometry(this);
+  const bool pathAnimated = hasPathKeyframes();
+  if (geomAnimated || pathAnimated) {
+    const ShapeGeomDims dims = resolveShapeGeomDims(
+        this, impl_->width_, impl_->height_, impl_->cornerRadius_,
+        impl_->starPoints_, impl_->starInnerRadius_, impl_->polygonSides_);
+    const std::vector<CustomPathVertex> evaluatedPathVertices =
+        pathAnimated ? evaluatePathAt(currentFrame())
+                     : impl_->customPathVertices_;
+    return impl_->rebuildCache(&dims, &evaluatedPathVertices,
+                               &evaluatedStops, evaluatedStopsJson,
+                               interpolatingGradientStops, &mappedPoint);
+  }
+  return impl_->rebuildCache(nullptr, nullptr, &evaluatedStops,
+                             evaluatedStopsJson,
+                             interpolatingGradientStops, &mappedPoint);
 }
 
 QImage ArtifactShapeLayer::getThumbnail(int width, int height) const

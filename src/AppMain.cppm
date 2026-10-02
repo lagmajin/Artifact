@@ -4219,6 +4219,8 @@ static void bindWindowsStandardHandleToCrt(DWORD standardHandleId,
                                            int fileDescriptor) {
   const HANDLE standardHandle = GetStdHandle(standardHandleId);
   if (standardHandle == nullptr || standardHandle == INVALID_HANDLE_VALUE) {
+    OutputDebugStringW(
+        L"ArtifactStudio: standard handle is not available\n");
     return;
   }
   const intptr_t existingHandle = _get_osfhandle(fileDescriptor);
@@ -4231,24 +4233,57 @@ static void bindWindowsStandardHandleToCrt(DWORD standardHandleId,
   if (!DuplicateHandle(GetCurrentProcess(), standardHandle,
                        GetCurrentProcess(), &duplicateHandle, 0, TRUE,
                        DUPLICATE_SAME_ACCESS)) {
+    OutputDebugStringW(
+        L"ArtifactStudio: DuplicateHandle failed for a standard handle\n");
     return;
   }
   const int duplicateDescriptor =
       _open_osfhandle(reinterpret_cast<intptr_t>(duplicateHandle), _O_BINARY);
   if (duplicateDescriptor < 0) {
     CloseHandle(duplicateHandle);
+    OutputDebugStringW(
+        L"ArtifactStudio: _open_osfhandle failed for a standard handle\n");
     return;
   }
   if (_dup2(duplicateDescriptor, fileDescriptor) != 0) {
     _close(duplicateDescriptor);
+    OutputDebugStringW(
+        L"ArtifactStudio: _dup2 failed for a standard handle\n");
     return;
   }
   _close(duplicateDescriptor);
 }
 
+// 親 console に接続した GUI サブシステムのプロセスは Ctrl+C を
+// 既定では処理しない。ハンドラは中断要求を記録するだけにし、
+// CLI の読み取りループが要求の合間にそれを 130 終了コードへ
+// 変換する（ブロック中の読み取りは割り込まない）。
+static BOOL WINAPI windowsConsoleCtrlHandler(DWORD controlType) {
+  if (controlType == CTRL_C_EVENT || controlType == CTRL_BREAK_EVENT) {
+    Artifact::noteConsoleInterrupt();
+    return TRUE;
+  }
+  return FALSE;
+}
+
+static bool installWindowsConsoleInterruptHandler() {
+  return SetConsoleCtrlHandler(windowsConsoleCtrlHandler, TRUE) != 0;
+}
+
 static void configureWindowsCliConsole() {
   if (GetConsoleWindow() == nullptr) {
-    AttachConsole(ATTACH_PARENT_PROCESS);
+    if (!AttachConsole(ATTACH_PARENT_PROCESS)) {
+      // 親 console がない（切り離し起動など）場合でも、継承され
+      // たパイプハンドルは下の再結合で使える。診断は stderr が
+      // 継承されている場合にだけ届く。
+      fprintf(stderr,
+              "ArtifactStudio: no parent console to attach; "
+              "standard handles are inherited as-is\n");
+    }
+  }
+  if (!installWindowsConsoleInterruptHandler()) {
+    fprintf(stderr,
+            "ArtifactStudio: console interrupt handler is not active\n");
   }
   bindWindowsStandardHandleToCrt(STD_INPUT_HANDLE, 0);
   bindWindowsStandardHandleToCrt(STD_OUTPUT_HANDLE, 1);
@@ -4520,6 +4555,10 @@ static int runPythonCli(int argc, char *argv[],
           python.resetConsole();
         }
         break;
+      }
+      if (Artifact::consoleInterruptRequested()) {
+        python.resetConsole();
+        return 130;
       }
       if (machineRepl) {
         capturedStdout.clear();
@@ -4833,6 +4872,10 @@ static int runCommandIRCli(int argc, char *argv[],
       if (!consumedInput) {
         break;
       }
+      if (Artifact::consoleInterruptRequested()) {
+        processExitCode = 130;
+        break;
+      }
       const ProcessedRequest processed = exceedsLimit
           ? makeOversizedRequest() : processRequest(line);
       writeResponse(processed.response);
@@ -4896,8 +4939,19 @@ int main(int argc, char *argv[]) {
                        : 1u);
   auto parallelismControl = std::make_unique<StartupParallelismControl>(1u);
 
+  // CRT の窄い argv はシステム ANSI コードページ経由で渡される
+  // ため、日本語パスなどの非 ANSI 文字は壊れる。ワイドな
+  // コマンドラインを直接分解して引用符・空白・非 ANSI 文字を
+  // 保持し、実行ファイル位置もモジュール名から求める。
+  wchar_t modulePath[4096];
+  const DWORD modulePathLength =
+      GetModuleFileNameW(nullptr, modulePath, 4096);
+  const QString applicationExecutable =
+      modulePathLength > 0 && modulePathLength < 4096
+          ? QString::fromWCharArray(modulePath)
+          : QString::fromLocal8Bit(argv[0]);
   const std::wstring applicationDirectory =
-      QFileInfo(QString::fromLocal8Bit(argv[0])).absolutePath().toStdWString();
+      QFileInfo(applicationExecutable).absolutePath().toStdWString();
   AddDllDirectory(applicationDirectory.c_str());
   SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_DEFAULT_DIRS |
                            LOAD_LIBRARY_SEARCH_USER_DIRS);
@@ -4906,9 +4960,24 @@ int main(int argc, char *argv[]) {
   // QTextCodec::setCodecForLocale(QTextCodec::codecForName("Shift-JIS"));
 
   QStringList appArgs;
+#if defined(_WIN32)
+  int wideArgc = 0;
+  wchar_t** wideArgv = CommandLineToArgvW(GetCommandLineW(), &wideArgc);
+  if (wideArgv != nullptr) {
+    for (int i = 0; i < wideArgc; ++i) {
+      appArgs << QString::fromWCharArray(wideArgv[i]);
+    }
+    LocalFree(wideArgv);
+  } else {
+    for (int i = 0; i < argc; ++i) {
+      appArgs << QString::fromLocal8Bit(argv[i]);
+    }
+  }
+#else
   for (int i = 0; i < argc; ++i) {
     appArgs << QString::fromLocal8Bit(argv[i]);
   }
+#endif
   const Artifact::CommandLine parsedCommandLine =
       Artifact::parseCommandLine(appArgs);
   if (parsedCommandLine.type != Artifact::CommandType::Gui) {

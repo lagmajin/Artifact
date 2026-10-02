@@ -5338,7 +5338,8 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer *layer,
 
                                   const QImage &surface, int64_t frameNumber,
 
-                                  quint64 surfaceGeneration) {
+                                  quint64 surfaceGeneration,
+                                  const QString &deformationSignature = QString()) {
 
   if (!layer) {
 
@@ -5374,6 +5375,12 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer *layer,
                .arg(compositionFrame);
   }
   key += QStringLiteral("|effectRevision=%1").arg(layer->effectRevision());
+  // 2D デフォーマ有効層のソフト表面は変形状態で無効化する。
+  // 制御点の編集はすべて markDeformDirty 経由で generation が
+  // 進み、キーフレーム評価は deformFrame 部で無効化される。
+  if (!deformationSignature.isEmpty()) {
+    key += deformationSignature;
+  }
   // Source-time-aware cache key: timeline frame alone collides when a remap
   // or stop-motion sample resolves to a different/held source frame.
   if (layer->hasSourceTimeMapping()) {
@@ -9182,7 +9189,8 @@ void drawLayerForCompositionView(
 
   auto applySurfaceAndDraw = [&](QImage surface, const QRectF &rect,
 
-                                 bool allowSurfaceCache) {
+                                 bool allowSurfaceCache,
+                                 const QString& deformationSignature = QString()) {
 
     if (surface.isNull()) {
 
@@ -9252,7 +9260,8 @@ void drawLayerForCompositionView(
     const QString ownerId = layer->id().toString();
 
     QString cacheSignature = buildLayerSurfaceCacheKey(
-        layer, surface, cacheFrameNumber, surfaceGeneration);
+        layer, surface, cacheFrameNumber, surfaceGeneration,
+        deformationSignature);
     if (!cacheSignature.isEmpty()) {
       cacheSignature += QStringLiteral("|interactiveDraft=%1")
                             .arg(interactiveDraft ? 1 : 0);
@@ -9277,7 +9286,8 @@ void drawLayerForCompositionView(
 
     QString gpuOwnerId = ownerId;
     QString gpuCacheSignature = cacheSignature;
-    if (!allowSurfaceCache && matteSourceSignature.isEmpty()) {
+    if (!allowSurfaceCache && matteSourceSignature.isEmpty() &&
+        deformationSignature.isEmpty()) {
       if (auto* imageLayer = dynamic_cast<ArtifactImageLayer*>(layer);
           imageLayer && imageLayer->canShareSourceGpuTexture()) {
         const auto version = imageLayer->sourceVersion();
@@ -9694,6 +9704,9 @@ void drawLayerForCompositionView(
 
   if (auto *imageLayer = dynamic_cast<ArtifactImageLayer *>(layer)) {
 
+    auto* application = ArtifactApplicationManager::instance();
+    auto* puppetTool = application ? application->puppetTool() : nullptr;
+
     if (!layerHasRasterizerEffectsOrMasks(layer) &&
         imageLayer->hasCurrentFrameBuffer()) {
 
@@ -9705,8 +9718,6 @@ void drawLayerForCompositionView(
 
           (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
 
-      auto* application = ArtifactApplicationManager::instance();
-      auto* puppetTool = application ? application->puppetTool() : nullptr;
       imageLayer->refreshAnimatedSourceCrop();
       const SourceCropDrawLayout cropLayout =
           imageLayer->sourceCropDrawLayout();
@@ -9770,13 +9781,31 @@ void drawLayerForCompositionView(
 
     // Rasterizer/mask processing consumes the cropped source surface. Resolve
     // crop keyframes before toQImage() so this path matches the direct draw
-    // path and its cache identity below.
+    // path and its cache identity below. An active 2D deformer warps the
+    // same cropped source through the deformed mesh first, so the mask and
+    // effect stack runs on the deformed surface like the GPU mesh draw.
     imageLayer->refreshAnimatedSourceCrop();
-    const QImage img = imageLayer->toQImage();
+    QImage img;
+    QString deformationSignature;
+    if (puppetTool && !imageLayer->deformation2DData().isEmpty()) {
+      const QString signature =
+          puppetTool->deformationSurfaceSignature(imageLayer);
+      if (!signature.isEmpty()) {
+        img = puppetTool->renderDeformedSurface(imageLayer);
+        if (!img.isNull()) {
+          deformationSignature = signature;
+        }
+      }
+    }
+    if (img.isNull()) {
+      img = imageLayer->toQImage();
+    }
 
     if (!img.isNull()) {
 
-      applySurfaceAndDraw(img, localRect, layerHasRasterizerEffectsOrMasks(layer));
+      applySurfaceAndDraw(img, localRect,
+                          layerHasRasterizerEffectsOrMasks(layer),
+                          deformationSignature);
       return;
 
     }
@@ -9808,9 +9837,28 @@ void drawLayerForCompositionView(
       return;
     }
     if (layerHasRasterizerEffectsOrMasks(layer)) {
-      const QImage shapeImg = shapeLayer->toQImage();
+      // Mask/effect surface: an active 2D deformer maps every
+      // rasterized geometry point before QPainter sees it, keeping
+      // the software surface consistent with the GPU vector draw.
+      QImage shapeImg;
+      QString deformationSignature;
+      if (puppetTool && !layer->deformation2DData().isEmpty()) {
+        const QString signature =
+            puppetTool->deformationSurfaceSignature(layer);
+        if (!signature.isEmpty()) {
+          shapeImg = shapeLayer->toDeformedQImage(puppetTool,
+                                                     mapDeformerPoint,
+                                                     prepareDeformer);
+          if (!shapeImg.isNull()) {
+            deformationSignature = signature;
+          }
+        }
+      }
+      if (shapeImg.isNull()) {
+        shapeImg = shapeLayer->toQImage();
+      }
       if (!shapeImg.isNull()) {
-        applySurfaceAndDraw(shapeImg, localRect, true);
+        applySurfaceAndDraw(shapeImg, localRect, true, deformationSignature);
         return;
       }
     } else {
