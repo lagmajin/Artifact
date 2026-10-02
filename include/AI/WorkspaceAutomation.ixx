@@ -7407,13 +7407,17 @@ private:
         return service->removeProjectItem(item);
     }
 
-    static QVariant relinkFootageByPath(const QString& oldFilePath, const QString& newFilePath)
+    static QVariant relinkFootageByPath(const QString& oldFilePath,
+                                        const QString& newFilePath,
+                                        bool allowMissingTarget = false)
     {
         auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
         if (!service) {
             return false;
         }
-        return service->relinkFootageByPath(oldFilePath.trimmed(), newFilePath.trimmed());
+        return service->relinkFootageByPath(oldFilePath.trimmed(),
+                                            newFilePath.trimmed(),
+                                            allowMissingTarget);
     }
 
     static QVariant batchRelinkFootageByPath(const QVariantList& items)
@@ -7440,7 +7444,7 @@ private:
         const auto rollbackApplied = [&]() {
             for (auto it = appliedRelinks.crbegin();
                  it != appliedRelinks.crend(); ++it) {
-                if (relinkFootageByPath(it->second, it->first).toBool()) {
+                if (relinkFootageByPath(it->second, it->first, true).toBool()) {
                     ++rolledBack;
                 } else {
                     rollbackSucceeded = false;

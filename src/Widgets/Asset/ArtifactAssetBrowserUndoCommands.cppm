@@ -135,7 +135,8 @@ public:
   void undo() override {
     lastOperationSucceeded_ = false;
     if (auto* service = ArtifactProjectService::instance()) {
-      lastOperationSucceeded_ = service->relinkFootageByPath(newPath_, oldPath_);
+      lastOperationSucceeded_ = service->relinkFootageByPath(
+          newPath_, oldPath_, true);
     }
   }
 
@@ -209,10 +210,11 @@ public:
     }
     QVector<QPair<QString, QString>> appliedChanges;
     for (auto it = changes_.crbegin(); it != changes_.crend(); ++it) {
-      if (!service->relinkFootageByPath(it->second, it->first)) {
+      if (!service->relinkFootageByPath(it->second, it->first, true)) {
         for (auto rollback = appliedChanges.crbegin();
              rollback != appliedChanges.crend(); ++rollback) {
-          service->relinkFootageByPath(rollback->first, rollback->second);
+          service->relinkFootageByPath(rollback->first, rollback->second,
+                                       true);
         }
         for (int rollback = 0; rollback < layers.size(); ++rollback) {
           layers[rollback]->setLayerPropertyValue(
@@ -247,7 +249,7 @@ public:
       if (!service->relinkFootageByPath(change.first, change.second)) {
         for (auto rollback = appliedChanges.crbegin();
              rollback != appliedChanges.crend(); ++rollback) {
-          service->relinkFootageByPath(rollback->second, rollback->first);
+          service->relinkFootageByPath(rollback->second, rollback->first, true);
         }
         return;
       }
@@ -264,7 +266,7 @@ public:
         }
         for (auto rollback = appliedChanges.crbegin();
              rollback != appliedChanges.crend(); ++rollback) {
-          service->relinkFootageByPath(rollback->second, rollback->first);
+          service->relinkFootageByPath(rollback->second, rollback->first, true);
         }
         return;
       }

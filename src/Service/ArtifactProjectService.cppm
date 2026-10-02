@@ -6081,7 +6081,8 @@ void ArtifactProjectService::removeAllAssets() {
 }
 
 bool ArtifactProjectService::relinkFootage(ProjectItem *footageItem,
-                                           const QString &newFilePath) {
+                                           const QString &newFilePath,
+                                           const bool allowMissingTarget) {
   if (!footageItem || footageItem->type() != eProjectItemType::Footage) {
     return false;
   }
@@ -6090,7 +6091,8 @@ bool ArtifactProjectService::relinkFootage(ProjectItem *footageItem,
     return false;
   }
   const QFileInfo requestedFileInfo(newFilePath.trimmed());
-  if (!requestedFileInfo.exists() || !requestedFileInfo.isFile()) {
+  if ((requestedFileInfo.exists() && !requestedFileInfo.isFile()) ||
+      (!requestedFileInfo.exists() && !allowMissingTarget)) {
     return false;
   }
   const QFileInfo newFileInfo(
@@ -6123,11 +6125,12 @@ bool ArtifactProjectService::relinkFootage(ProjectItem *footageItem,
           padding, QLatin1Char('0'));
       const QString candidate = newFileInfo.dir().absoluteFilePath(
           newPrefix + frameText + newSuffix);
-      if (!QFileInfo::exists(candidate)) {
-        return false;
-      }
-      QImageReader candidateReader(candidate);
-      if (!candidateReader.canRead()) {
+      const QFileInfo candidateInfo(candidate);
+      if (candidateInfo.exists()) {
+        if (!candidateInfo.isFile()) return false;
+        QImageReader candidateReader(candidate);
+        if (!candidateReader.canRead()) return false;
+      } else if (!allowMissingTarget) {
         return false;
       }
       resolvedSequencePaths.append(QFileInfo(candidate).absoluteFilePath());
@@ -6364,7 +6367,8 @@ QUuid ArtifactProjectService::resolveAssetIdForPath(
 }
 
 bool ArtifactProjectService::relinkFootageByPath(const QString &oldFilePath,
-                                                 const QString &newFilePath) {
+                                                 const QString &newFilePath,
+                                                 const bool allowMissingTarget) {
   if (oldFilePath.isEmpty() || newFilePath.isEmpty()) {
     return false;
   }
@@ -6383,7 +6387,7 @@ bool ArtifactProjectService::relinkFootageByPath(const QString &oldFilePath,
       newType != ArtifactCore::AssetType::Model) {
     return false;
   }
-  return relinkFootage(footage, newFilePath);
+  return relinkFootage(footage, newFilePath, allowMissingTarget);
 }
 
 QVector<RelinkCandidate> ArtifactProjectService::findRelinkCandidates(

@@ -4247,7 +4247,7 @@ if (!item.isFolder) {
       auto* undo = UndoManager::instance();
       if (undo && !undo->push(
               std::make_unique<RelinkAssetCommand>(filePath, newPath))) {
-        svc->relinkFootageByPath(newPath, filePath);
+        svc->relinkFootageByPath(newPath, filePath, true);
         QMessageBox::warning(
             this, QStringLiteral("Relink Not Recorded"),
             QStringLiteral("The relink could not be recorded in Undo history and was reverted."));
@@ -4304,7 +4304,7 @@ if (!item.isFolder) {
     auto* undo = UndoManager::instance();
     if (undo && !undo->push(
             std::make_unique<RelinkAssetCommand>(filePath, newPath))) {
-      svc->relinkFootageByPath(newPath, filePath);
+      svc->relinkFootageByPath(newPath, filePath, true);
       QMessageBox::warning(
           this, QStringLiteral("Relink Not Recorded"),
           QStringLiteral("The relink could not be recorded in Undo history and was reverted."));
@@ -4458,7 +4458,7 @@ if (!item.isFolder) {
       for (const auto& change : changes) {
         if (!svc->relinkFootageByPath(change.first, change.second)) {
           for (auto it = applied.crbegin(); it != applied.crend(); ++it) {
-            svc->relinkFootageByPath(it->second, it->first);
+            svc->relinkFootageByPath(it->second, it->first, true);
           }
           QMessageBox::warning(
               this, QStringLiteral("Batch Relink Failed"),
@@ -4480,7 +4480,7 @@ if (!item.isFolder) {
             }
           }
           for (auto it = applied.crbegin(); it != applied.crend(); ++it) {
-            svc->relinkFootageByPath(it->second, it->first);
+            svc->relinkFootageByPath(it->second, it->first, true);
           }
           QMessageBox::warning(
               this, QStringLiteral("Batch Relink Failed"),
@@ -4496,7 +4496,7 @@ if (!item.isFolder) {
           }
         }
         for (auto it = applied.crbegin(); it != applied.crend(); ++it) {
-          svc->relinkFootageByPath(it->second, it->first);
+          svc->relinkFootageByPath(it->second, it->first, true);
         }
       };
       auto command = std::make_unique<RelinkAssetBatchCommand>(

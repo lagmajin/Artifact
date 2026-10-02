@@ -248,9 +248,11 @@ export namespace Artifact {
    void splitLayerAtCurrentTime(const CompositionID& compositionId, const LayerID& layerId);
    ArtifactProjectPtr getCurrentProjectSharedPtr() const;
    // Relink functions
-   bool relinkFootage(ProjectItem* footageItem, const QString& newFilePath);
+   bool relinkFootage(ProjectItem* footageItem, const QString& newFilePath,
+                      bool allowMissingTarget = false);
    int relinkFootageItems(const QVector<FootageItem*>& footageItems, const QString& newFilePath);
-   bool relinkFootageByPath(const QString& oldFilePath, const QString& newFilePath);
+   bool relinkFootageByPath(const QString& oldFilePath, const QString& newFilePath,
+                            bool allowMissingTarget = false);
    QVector<RelinkCandidate> findRelinkCandidates(
        const QString& oldFilePath, const QString& searchRoot,
        int maxCandidates = 32) const;
