@@ -678,16 +678,21 @@ namespace Artifact
          if (!relativePaths.isEmpty()) {
           QJsonArray resolvedPaths;
           const QJsonArray originalPaths = value.toArray();
-          for (int i = 0; i < relativePaths.size(); ++i) {
+          const qsizetype resolvedCount = std::max(
+              originalPaths.size(), relativePaths.size());
+          for (qsizetype i = 0; i < resolvedCount; ++i) {
            const QString original = i < originalPaths.size()
                ? originalPaths.at(i).toString()
+               : QString();
+           const QString relative = i < relativePaths.size()
+               ? relativePaths.at(i).toString().trimmed()
                : QString();
            const ArtifactCore::SourceCandidateResolution resolution =
                ArtifactCore::resolveProjectRelativeSource(
                    layerSourceProjectDirectory,
                    ArtifactCore::SourceResolutionCandidateKind::ProjectRelativePath,
                    original,
-                   relativePaths.at(i).toString().trimmed(),
+                   relative,
                    false);
            sourceResolutionStats_.record(resolution);
            resolvedPaths.append(resolution.resolvedPath);
@@ -777,16 +782,21 @@ namespace Artifact
             item.value(QStringLiteral("sequencePathsRelative")).toArray();
         if (!relativeSequencePaths.isEmpty()) {
          QJsonArray resolvedSequencePaths;
-         for (int i = 0; i < relativeSequencePaths.size(); ++i) {
+         const qsizetype resolvedCount = std::max(
+             sequencePaths.size(), relativeSequencePaths.size());
+         for (qsizetype i = 0; i < resolvedCount; ++i) {
           const QString original = i < sequencePaths.size()
               ? sequencePaths.at(i).toString()
+              : QString();
+          const QString relative = i < relativeSequencePaths.size()
+              ? relativeSequencePaths.at(i).toString().trimmed()
               : QString();
           const ArtifactCore::SourceCandidateResolution entryResolution =
               ArtifactCore::resolveProjectRelativeSource(
                   projectDirectory,
                   ArtifactCore::SourceResolutionCandidateKind::ProjectRelativePath,
                   original,
-                  relativeSequencePaths.at(i).toString().trimmed(),
+                  relative,
                   false);
           sourceResolutionStats_.record(entryResolution);
           resolvedSequencePaths.append(entryResolution.resolvedPath);
