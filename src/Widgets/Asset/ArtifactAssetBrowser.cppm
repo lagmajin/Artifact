@@ -1311,7 +1311,7 @@ bool ArtifactAssetBrowser::Impl::isMissingAssetPath(const QString& filePath) con
   if (filePath.isEmpty()) {
    return false;
   }
- return !QFileInfo::exists(filePath);
+  return !QFileInfo(filePath).isFile();
 }
 
 ArtifactAssetBrowser::Impl::AssetStatusSummary
