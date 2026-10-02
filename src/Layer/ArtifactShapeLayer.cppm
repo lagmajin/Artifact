@@ -2,6 +2,7 @@ module;
 #include <cstddef>
 #include <map>
 #include <array>
+#include <limits>
 #include <numeric>
 #include <utility>
 #include <algorithm>
@@ -665,23 +666,32 @@ void applyGradientStopsToQGradient(QGradient* grad,
 
 // Current composition timeline time used to evaluate animatable
 // shape.* properties during playback/rendering.
-ArtifactCore::RationalTime effectiveShapeTimelineTime(const Artifact::ArtifactShapeLayer* layer) {
- int64_t frame = 0;
- int64_t fps = 30;
+int64_t effectiveShapeFrameRate(const Artifact::ArtifactShapeLayer* layer) {
  if (layer) {
   if (auto* composition = dynamic_cast<Artifact::ArtifactAbstractComposition*>(
           layer->compositionObject())) {
-   frame = composition->framePosition().framePosition();
    const double rawFps = composition->frameRate().framerate();
-   fps = std::isfinite(rawFps) && rawFps > 0.0
+   return std::isfinite(rawFps) && rawFps > 0.0
              ? std::max<int64_t>(
                    1, static_cast<int64_t>(std::llround(
                           std::clamp(rawFps, 1.0, 10000.0))))
              : 30;
+  }
+ }
+ return 30;
+}
+
+ArtifactCore::RationalTime effectiveShapeTimelineTime(const Artifact::ArtifactShapeLayer* layer) {
+ int64_t frame = 0;
+ if (layer) {
+  if (auto* composition = dynamic_cast<Artifact::ArtifactAbstractComposition*>(
+          layer->compositionObject())) {
+   frame = composition->framePosition().framePosition();
   } else {
    frame = layer->currentFrame();
   }
  }
+ const int64_t fps = effectiveShapeFrameRate(layer);
  return ArtifactCore::RationalTime(frame, fps);
 }
 
@@ -2380,10 +2390,32 @@ public:
       std::vector<ArtifactCore::PathTriangle> triangles;
       std::vector<std::vector<ArtifactCore::BezierSegment>> subpaths;
     };
+    struct AnimatedNativeGeometryEntry {
+      std::int64_t frame = std::numeric_limits<std::int64_t>::min();
+      std::int64_t frameRate = 0;
+      std::uint64_t revision = 0;
+      double tolerance = -1.0;
+      std::vector<NativePathGeometry> geometry;
+    };
     std::vector<NativePathGeometry> cachedNativeGeometry_;
+    // Animated playback/scrubbing can revisit the same frame through several
+    // render consumers. Keep a tiny fixed-size cache so those requests reuse
+    // triangulation without retaining an unbounded history of large paths.
+    std::array<AnimatedNativeGeometryEntry, 2> animatedNativeGeometry_{};
+    std::size_t nextAnimatedNativeGeometry_ = 0;
     double cachedNativeTolerance_ = -1.0;
     bool nativeGeometryCacheDirty_ = true;
     NativePathGeometry cachedShapeGeometry_;
+    struct AnimatedShapeGeometryEntry {
+      std::int64_t frame = std::numeric_limits<std::int64_t>::min();
+      std::int64_t frameRate = 0;
+      std::uint64_t revision = 0;
+      ShapeGeomDims dims{0, 0, 0.0f, 3, 0.0f, 3};
+      double tolerance = -1.0;
+      NativePathGeometry geometry;
+    };
+    std::array<AnimatedShapeGeometryEntry, 2> animatedShapeGeometry_{};
+    std::size_t nextAnimatedShapeGeometry_ = 0;
     ShapeGeomDims cachedShapeGeometryDims_{0, 0, 0.0f, 3, 0.0f, 3};
     bool cachedShapeGeometryDimsValid_ = false;
     double cachedShapeTolerance_ = -1.0;
@@ -2408,7 +2440,49 @@ public:
 
    const std::vector<NativePathGeometry>& nativeGeometry(
        const std::vector<ArtifactCore::ShapePath>& paths, double tolerance,
-       const bool cacheable = true) {
+       const bool cacheable = true, std::int64_t frame = -1,
+       std::int64_t frameRate = 0) {
+    if (!cacheable) {
+     for (const auto& entry : animatedNativeGeometry_) {
+      if (entry.frame == frame && entry.frameRate == frameRate &&
+          entry.revision == contentRevision_ &&
+          std::abs(entry.tolerance - tolerance) < 1.0e-9) {
+       return entry.geometry;
+      }
+     }
+     auto& entry = animatedNativeGeometry_[nextAnimatedNativeGeometry_];
+     nextAnimatedNativeGeometry_ =
+         (nextAnimatedNativeGeometry_ + 1) % animatedNativeGeometry_.size();
+     entry.geometry.clear();
+     entry.geometry.reserve(paths.size());
+     std::size_t elementCount = 0;
+     constexpr std::size_t kMaxCachedAnimatedGeometryElements = 131072;
+     for (const auto& path : paths) {
+      NativePathGeometry geometry;
+      geometry.triangles = path.triangulate(tolerance);
+      geometry.subpaths = path.flattenSubpaths(tolerance);
+      elementCount += geometry.triangles.size();
+      for (const auto& subpath : geometry.subpaths) {
+       elementCount += subpath.size();
+      }
+      entry.geometry.push_back(std::move(geometry));
+      if (elementCount > kMaxCachedAnimatedGeometryElements) {
+       // Very large paths still render, but are not retained in the frame
+       // cache. Reuse the existing single-frame scratch cache instead.
+       cachedNativeGeometry_ = std::move(entry.geometry);
+       entry.frame = std::numeric_limits<std::int64_t>::min();
+       entry.frameRate = 0;
+       entry.revision = 0;
+       entry.tolerance = -1.0;
+       return cachedNativeGeometry_;
+      }
+     }
+     entry.frame = frame;
+     entry.frameRate = frameRate;
+     entry.revision = contentRevision_;
+     entry.tolerance = tolerance;
+     return entry.geometry;
+    }
     if (!(cacheable && !nativeGeometryCacheDirty_ &&
           std::abs(cachedNativeTolerance_ - tolerance) < 1.0e-9)) {
      cachedNativeGeometry_.clear();
@@ -2427,7 +2501,56 @@ public:
 
    const NativePathGeometry& shapeGeometry(
        const ShapeGeomDims& dims, double tolerance,
-       const std::vector<CustomPathVertex>* pathVertices = nullptr) {
+       const std::vector<CustomPathVertex>* pathVertices = nullptr,
+       std::int64_t frame = std::numeric_limits<std::int64_t>::min(),
+       std::int64_t frameRate = 0) {
+    if (frame != std::numeric_limits<std::int64_t>::min()) {
+     for (const auto& entry : animatedShapeGeometry_) {
+      if (entry.frame == frame && entry.frameRate == frameRate &&
+          entry.revision == contentRevision_ &&
+          sameShapeGeomDims(entry.dims, dims) &&
+          std::abs(entry.tolerance - tolerance) < 1.0e-9) {
+       return entry.geometry;
+      }
+     }
+     auto& entry = animatedShapeGeometry_[nextAnimatedShapeGeometry_];
+     nextAnimatedShapeGeometry_ =
+         (nextAnimatedShapeGeometry_ + 1) % animatedShapeGeometry_.size();
+     entry.geometry.triangles.clear();
+     entry.geometry.subpaths.clear();
+     const auto& effectivePathVertices = pathVertices ? *pathVertices
+                                                      : customPathVertices_;
+     ShapePath path = buildLayerShapePath(
+         shapeType_, dims.width, dims.height, dims.cornerRadius,
+         dims.starPoints, dims.starInnerRadius, dims.polygonSides,
+         customPolygonPoints_, customPolygonClosed_,
+         effectivePathVertices, customPathClosed_);
+     if (effectivePathVertices.size() >= 3) {
+      path.setFillRule(customPathFillRule_);
+     }
+     entry.geometry.triangles = path.triangulate(tolerance);
+     entry.geometry.subpaths = path.flattenSubpaths(tolerance);
+     std::size_t elementCount = entry.geometry.triangles.size();
+     for (const auto& subpath : entry.geometry.subpaths) {
+      elementCount += subpath.size();
+     }
+     constexpr std::size_t kMaxCachedAnimatedShapeElements = 131072;
+     if (elementCount > kMaxCachedAnimatedShapeElements) {
+      cachedShapeGeometry_.triangles = std::move(entry.geometry.triangles);
+      cachedShapeGeometry_.subpaths = std::move(entry.geometry.subpaths);
+      entry.frame = std::numeric_limits<std::int64_t>::min();
+      entry.frameRate = 0;
+      entry.revision = 0;
+      entry.tolerance = -1.0;
+      return cachedShapeGeometry_;
+     }
+     entry.frame = frame;
+     entry.frameRate = frameRate;
+     entry.revision = contentRevision_;
+     entry.dims = dims;
+     entry.tolerance = tolerance;
+     return entry.geometry;
+    }
     if (!pathVertices && !shapeGeometryCacheDirty_ && cachedShapeGeometryDimsValid_ &&
         sameShapeGeomDims(cachedShapeGeometryDims_, dims) &&
         std::abs(cachedShapeTolerance_ - tolerance) < 1.0e-9) {
@@ -5293,7 +5416,10 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer,
         const double renderScale = std::max({1.0, scaleX, scaleY});
         const auto& geometry = impl->nativeGeometry(processedOperatorPaths,
                                                     0.25 / renderScale,
-                                                    !geomAnimated && !pathAnimated);
+                                                    !geomAnimated && !pathAnimated &&
+                                                        !operatorsAnimated,
+                                                    currentFrame(),
+                                                    effectiveShapeFrameRate(this));
         for (const auto& pathGeometry : geometry) {
          if (impl->fillEnabled_) {
           for (const auto& triangle : pathGeometry.triangles) {
@@ -5480,7 +5606,11 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer,
     const double renderScale = std::max({1.0, scaleX, scaleY});
     const auto& geometry = impl->shapeGeometry(
         geomDims, 0.25 / renderScale,
-        pathAnimated ? &evaluatedPathVertices : nullptr);
+        pathAnimated ? &evaluatedPathVertices : nullptr,
+        (geomAnimated || pathAnimated)
+            ? currentFrame()
+            : std::numeric_limits<std::int64_t>::min(),
+        (geomAnimated || pathAnimated) ? effectiveShapeFrameRate(this) : 0);
     if (geometry.subpaths.empty()) return;
 
     if (impl->fillEnabled_) {
