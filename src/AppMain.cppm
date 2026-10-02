@@ -2701,8 +2701,8 @@ QJsonObject buildDebugBridgeWorkspaceSnapshotJson() {
     warnings.append(QStringLiteral("Render queue is empty."));
     warningCodes.append(QStringLiteral("RENDER_QUEUE_EMPTY"));
   }
-  workspaceJson.insert(QStringLiteral("warnings"), warnings);
-  workspaceJson.insert(QStringLiteral("warningCodes"), warningCodes);
+  workspaceJson.insert(QStringLiteral("warnings"), QJsonArray::fromStringList(warnings));
+  workspaceJson.insert(QStringLiteral("warningCodes"), QJsonArray::fromStringList(warningCodes));
   return workspaceJson;
 }
 
@@ -5117,16 +5117,29 @@ int main(int argc, char *argv[]) {
     applicationFont.setPointSizeF(
         static_cast<qreal>(settings->uiFontPointSize()) *
         Artifact::Accessibility::fontScale());
-    a.setFont(applicationFont);
+    // QApplication::setFont synchronously sends FontChange to widgets. Avoid
+    // forcing every QComboBox/QAbstractScrollArea through layout again when an
+    // unrelated setting (for example preview quality) changes.
+    if (a.font() != applicationFont) {
+      a.setFont(applicationFont);
+    }
     ArtifactCore::applyDCCTheme(a, theme);
     if (auto *style = a.style()) {
       style->polish(&a);
-      const auto widgets = QApplication::allWidgets();
-      for (QWidget *widget : widgets) {
+      QList<QPointer<QWidget>> widgets;
+      for (QWidget *widget : QApplication::allWidgets()) {
+        widgets.append(widget);
+      }
+      for (const QPointer<QWidget>& widgetGuard : widgets) {
+        QWidget *widget = widgetGuard.data();
         if (!widget) {
           continue;
         }
         style->unpolish(widget);
+        widget = widgetGuard.data();
+        if (!widget) {
+          continue;
+        }
         style->polish(widget);
         widget->update();
 
@@ -5676,21 +5689,29 @@ int main(int argc, char *argv[]) {
             [mainWindowGuard, applyThemeFromSettings,
              applyPreviewPresetFromSettings](
                 const ArtifactCore::AppSettingsChangedEvent &) {
-              applyThemeFromSettings();
-              if (mainWindowGuard) {
-                mainWindowGuard->applyApplicationSettings();
-              }
-              if (auto *service = ArtifactProjectService::instance()) {
-                service->setPreviewQualityPreset(
-                    applyPreviewPresetFromSettings());
-              }
-              if (auto *currentSettings =
-                      ArtifactCore::ArtifactAppSettings::instance()) {
-                const int configuredRenderThreads =
-                    std::max(1, currentSettings->renderThreadCount());
-                QThreadPool::globalInstance()->setMaxThreadCount(
-                    configuredRenderThreads);
-              }
+              // EventBus::publish invokes subscribers on the publishing
+              // thread. Keep QWidget/QApplication mutations on the GUI thread.
+              QMetaObject::invokeMethod(
+                  qApp,
+                  [mainWindowGuard, applyThemeFromSettings,
+                   applyPreviewPresetFromSettings]() {
+                    applyThemeFromSettings();
+                    if (mainWindowGuard) {
+                      mainWindowGuard->applyApplicationSettings();
+                    }
+                    if (auto *service = ArtifactProjectService::instance()) {
+                      service->setPreviewQualityPreset(
+                          applyPreviewPresetFromSettings());
+                    }
+                    if (auto *currentSettings =
+                            ArtifactCore::ArtifactAppSettings::instance()) {
+                      const int configuredRenderThreads =
+                          std::max(1, currentSettings->renderThreadCount());
+                      QThreadPool::globalInstance()->setMaxThreadCount(
+                          configuredRenderThreads);
+                    }
+                  },
+                  Qt::QueuedConnection);
             }));
     if (playbackService && settings) {
       appEventSubscriptions.push_back(

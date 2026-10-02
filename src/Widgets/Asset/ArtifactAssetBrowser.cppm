@@ -4652,7 +4652,7 @@ if (!item.isFolder) {
             }
           } else if (value.isObject()) {
             const QJsonObject object = value.toObject();
-            for (auto it = object.cbegin(); it != object.cend(); ++it) {
+            for (auto it = object.constBegin(); it != object.constEnd(); ++it) {
               if (containsReferencePath(it.value(), isSourcePathKey(it.key()))) {
                 return true;
               }

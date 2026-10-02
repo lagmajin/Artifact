@@ -2300,7 +2300,7 @@ void ArtifactProjectService::Impl::addLayerToCurrentComposition(
         // near plane, so the whole 3D scene is clipped away.
         const float initialZ = effectiveParams->layerType() == LayerType::Camera
             ? 1000.0f
-            : current.z();
+            : current.z;
         result.layer->setPosition3D({compCenterX, compCenterY, initialZ});
         // LayerCreated is published by the project manager before this
         // post-create placement is applied. Notify the existing render path

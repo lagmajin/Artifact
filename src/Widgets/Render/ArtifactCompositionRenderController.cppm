@@ -18,6 +18,7 @@ module;
 #include <QByteArray>
 
 #include <QColor>
+#include <QRgb>
 
 #include <QDebug>
 
@@ -3898,16 +3899,16 @@ quint64 adjustmentMaskContentHash(ArtifactAbstractLayer *targetLayer,
       mix(path.isClosed() ? 1ull : 0ull);
       mix(path.isInverted() ? 1ull : 0ull);
       mix(static_cast<quint64>(path.mode()));
-      mix(qHash(static_cast<float>(path.expansion().value)));
-      mix(qHash(static_cast<float>(path.feather().value)));
+      mix(std::hash<float>{}(static_cast<float>(path.expansion().value)));
+      mix(std::hash<float>{}(static_cast<float>(path.feather().value)));
       for (int v = 0; v < path.vertexCount(); ++v) {
         const MaskVertex vertex = path.vertex(v);
-        mix(qHash(vertex.position.x()));
-        mix(qHash(vertex.position.y()));
-        mix(qHash(vertex.inTangent.x()));
-        mix(qHash(vertex.inTangent.y()));
-        mix(qHash(vertex.outTangent.x()));
-        mix(qHash(vertex.outTangent.y()));
+        mix(std::hash<float>{}(static_cast<float>(vertex.position.x())));
+        mix(std::hash<float>{}(static_cast<float>(vertex.position.y())));
+        mix(std::hash<float>{}(static_cast<float>(vertex.inTangent.x())));
+        mix(std::hash<float>{}(static_cast<float>(vertex.inTangent.y())));
+        mix(std::hash<float>{}(static_cast<float>(vertex.outTangent.x())));
+        mix(std::hash<float>{}(static_cast<float>(vertex.outTangent.y())));
       }
     }
   }
@@ -3982,7 +3983,7 @@ QImage renderAdjustmentMaskToImage(ArtifactAbstractLayer *targetLayer,
   cv::max(combined, 0.0f, combined);
 
   for (int y = 0; y < height; ++y) {
-    auto *out = reinterpret_cast<QRgba *>(result.scanLine(y));
+    auto *out = reinterpret_cast<QRgb *>(result.scanLine(y));
     const float *row = combined.ptr<float>(y);
     for (int x = 0; x < width; ++x) {
       const int coverage = static_cast<int>(
@@ -9318,17 +9319,16 @@ void drawLayerForCompositionView(
 
     const QString ownerId = layer->id().toString();
 
+    const float effectResolutionScale = interactiveDraft
+        ? 0.25f
+        : lod == DetailLevel::Low
+              ? 0.25f
+              : lod == DetailLevel::Medium ? 0.5f : 1.0f;
     QString cacheSignature = buildLayerSurfaceCacheKey(
         layer, surface, cacheFrameNumber, surfaceGeneration);
     if (!cacheSignature.isEmpty()) {
       cacheSignature += QStringLiteral("|interactiveDraft=%1")
                             .arg(interactiveDraft ? 1 : 0);
-
-      const float effectResolutionScale = interactiveDraft
-          ? 0.25f
-          : lod == DetailLevel::Low
-                ? 0.25f
-                : lod == DetailLevel::Medium ? 0.5f : 1.0f;
 
       cacheSignature += QStringLiteral("|effectScale=%1")
                             .arg(effectResolutionScale, 0, 'f', 2);
@@ -9907,7 +9907,7 @@ void drawLayerForCompositionView(
             svgLayer->currentFrameBuffer();
 
         Diligent::ITextureView* sourceTexture = renderer->textureForImage(
-            buffer, layer->id(), svgLayer->sourceVersion(), 0);
+            buffer, QUuid(layer->id().toString()), svgLayer->sourceVersion(), 0);
 
         const float baseOpacity =
 
@@ -10262,7 +10262,7 @@ void drawLayerForCompositionView(
               bool stableSource) {
             Diligent::ITextureView* sourceTexture = stableSource
                 ? renderer->textureForImage(
-                      buffer, layer->id(), textLayer->contentRevision(),
+                      buffer, QUuid(layer->id().toString()), textLayer->contentRevision(),
                       static_cast<qint64>(layer->currentFrame()))
                 : nullptr;
             drawWithClonerEffect(
@@ -12096,9 +12096,6 @@ public:
       // is the AE semantic: a mask restricts where the effect applies, it must
       // never scale or grade the result.  A transform still disqualifies the
       // path because the pointwise pass has no geometry stage.
-      ArtifactCore::PointwiseEffectStack pointwiseStack;
-      bool canApplyPointwise = true;
-      bool pointwiseApplied = false;
       const QMatrix4x4 adjustmentTransform = layer->getGlobalTransform4x4();
       bool hasNonIdentityTransform = false;
       for (int row = 0; row < 4 && !hasNonIdentityTransform; ++row) {
@@ -12120,7 +12117,7 @@ public:
       // a layer while it is being composited as an adjustment.
       Diligent::ITextureView* adjustmentMaskSRV = nullptr;
       if (layer->hasMasks() && canApplyPointwise && renderPipeline) {
-        auto* devCtx = renderer_->immediateContext();
+        auto devCtx = renderer_->immediateContext();
         // Sample animated mask paths at the frame being composited so a
         // mask-tracked or keyframed mask lines up with the adjustment.
         int64_t maskFrame = layer->currentFrame();
@@ -12136,28 +12133,28 @@ public:
           AdjustmentMaskCacheKey key;
           key.layerId = layer->id().toString();
           key.frame = maskFrame;
-          key.width = static_cast<int>(renderPipeline.width());
-          key.height = static_cast<int>(renderPipeline.height());
+          key.width = static_cast<int>(renderPipeline->width());
+          key.height = static_cast<int>(renderPipeline->height());
           key.contentHash = adjustmentMaskContentHash(layer, maskFrame);
-          if (impl_->adjustmentMaskCache_ &&
-              impl_->adjustmentMaskCacheKey_.matches(key)) {
-            return impl_->adjustmentMaskCache_.copy();
+          if (!adjustmentMaskCache_.isNull() &&
+              adjustmentMaskCacheKey_.matches(key)) {
+            return adjustmentMaskCache_.copy();
           }
           QImage rasterized = renderAdjustmentMaskToImage(
               layer, key.width, key.height, maskFrame);
           if (!rasterized.isNull()) {
-            impl_->adjustmentMaskCacheKey_ = key;
-            impl_->adjustmentMaskCache_ = rasterized;
+            adjustmentMaskCacheKey_ = key;
+            adjustmentMaskCache_ = rasterized;
           }
           return rasterized;
         }();
         if (devCtx && !maskImage.isNull() &&
-            renderPipeline.updateMatteSourceFromData(
+            renderPipeline->updateMatteSourceFromData(
                 devCtx.RawPtr(), 0, maskImage.constBits(),
                 static_cast<Diligent::Uint32>(maskImage.width()),
                 static_cast<Diligent::Uint32>(maskImage.height()),
                 static_cast<Diligent::Uint32>(maskImage.bytesPerLine()))) {
-          adjustmentMaskSRV = renderPipeline.matteSourceSRV(0);
+          adjustmentMaskSRV = renderPipeline->matteSourceSRV(0);
         } else {
           // A mask that cannot be rasterized or uploaded must not silently
           // widen the effect to the whole frame: drop the pointwise path.
@@ -12363,7 +12360,7 @@ public:
           // lerp then degenerates to a plain opacity fade.
           mixView = adjustmentMaskSRV
               ? adjustmentMaskSRV
-              : uploadOpaqueAdjustmentMask(renderPipeline,
+              : uploadOpaqueAdjustmentMask(*renderPipeline,
                                            context ? context.RawPtr() : nullptr);
         }
         if (renderPipeline && renderPipeline->applyPointwise(
@@ -12379,7 +12376,7 @@ public:
           if (adjustmentBlend != ArtifactCore::BlendMode::Normal) {
             renderPipeline->foldAdjustmentBlend(
                 context ? context.RawPtr() : nullptr,
-                impl_->blendPipeline_.get(), adjustmentBlend);
+                blendPipeline_.get(), adjustmentBlend);
           }
           renderer_->drawSprite(0.0f, 0.0f, rcw, rch,
                                 renderPipeline->accumSRV(), 1.0f);
@@ -15955,7 +15952,8 @@ public:
     const QPointF startVector =
         ArtifactCore::Coordinates::toQPointF(
             draggingMotionPathStartLocalPos_) -
-        draggingMotionPathGroupPivot_;
+        ArtifactCore::Coordinates::toQPointF(
+            draggingMotionPathGroupPivot_);
     draggingMotionPathGroupStartAngle_ =
         std::atan2(static_cast<float>(startVector.y()),
                    static_cast<float>(startVector.x()));
@@ -16193,8 +16191,8 @@ public:
     const auto time = gizmoTransformTime(layer, draggingPastPlaneFrame_);
     auto &transform = layer->transform3D();
     transform.setPositionKeyFrameValueAt(
-        time, draggingPastPlaneBefore_.x + delta.x(),
-        draggingPastPlaneBefore_.y + delta.y());
+        time, draggingPastPlaneBefore_.position.x + delta.x(),
+        draggingPastPlaneBefore_.position.y + delta.y());
     layer->setDirty(LayerDirtyFlag::Transform);
     layer->changed();
     publishLayerModified(layer, true);
@@ -18125,7 +18123,7 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
           std::int64_t temporalFrame = -1;
           bool temporalDiscontinuity = false;
           if (const auto* playback = ArtifactPlaybackService::instance()) {
-            temporalFrame = playback->currentFrame();
+            temporalFrame = playback->currentFrame().framePosition();
             temporalDiscontinuity =
                 temporalFrame >= 0 && impl_->lastEvaluatedTemporalFrame_ >= 0 &&
                 temporalFrame != impl_->lastEvaluatedTemporalFrame_ + 1;
@@ -18144,8 +18142,9 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
           // and not a range: a deeper lookback should be amortised by the
           // caller (RenderFarm / final render), not paid on every scrub.
           if (temporalDiscontinuity && temporalFrame > 0) {
-            if (auto* composition = impl_->previewPipeline_.composition()) {
-              const auto savedFrame = composition->framePosition();
+            if (auto composition = impl_->previewPipeline_.composition()) {
+              const auto savedFrame =
+                  composition->framePosition().framePosition();
               composition->goToFrame(temporalFrame - 1);
               impl_->renderOneFrameImpl(this);
               composition->goToFrame(savedFrame);
@@ -21655,8 +21654,8 @@ bool CompositionRenderController::placeWorkCursorAtViewportPos(
   }
 
   const auto canvasPos = impl_->renderer_->viewportToCanvas(
-      {static_cast<float>(viewportPos.x) * impl_->devicePixelRatio_,
-       static_cast<float>(viewportPos.y) * impl_->devicePixelRatio_});
+      {viewportPos.x * impl_->devicePixelRatio_,
+       viewportPos.y * impl_->devicePixelRatio_});
 
   // Preserve the existing placement on the z=0 world plane explicitly.
   setWorkCursorWorldPosition(
@@ -25344,7 +25343,8 @@ bool CompositionRenderController::resetProjectedFrameHandleAt(
   const auto time = gizmoTransformTime(layer, layer->currentFrame());
   GizmoTransformSnapshot before;
   before.position = layer->position3D();
-  before.rotation = layer->rotation3D();
+  before.rotation = ArtifactCore::Units::eulerDegreesFromQVector3D(
+      layer->rotation3D());
   const float scaleZ = transform.snapshotAt(time).scaleZ;
   before.scale = {transform.scaleXAt(time), transform.scaleYAt(time), scaleZ};
   before.is3D = true;
@@ -25421,7 +25421,8 @@ bool CompositionRenderController::applyProjectedFrameAnchorDelta(
   // an incremental read-modify-write would compound.
   const QTransform worldToLocal = layer->getGlobalTransform().inverted();
   const QPointF localDelta = worldToLocal.map(worldDelta.toPointF());
-  if (!localDelta.isFinite() || localDelta.isNull()) return true;
+  if (!std::isfinite(localDelta.x()) || !std::isfinite(localDelta.y()) ||
+      localDelta.isNull()) return true;
 
   auto &transform = layer->transform3D();
   const auto time = gizmoTransformTime(layer, layer->currentFrame());
@@ -25590,7 +25591,8 @@ bool CompositionRenderController::setSelected3DTransform(
   }
   GizmoTransformSnapshot before;
   before.position = layer->position3D();
-  before.rotation = layer->rotation3D();
+  before.rotation = ArtifactCore::Units::eulerDegreesFromQVector3D(
+      layer->rotation3D());
   before.scale = {layer->transform3D().scaleX(),
                   layer->transform3D().scaleY(),
                   layer->transform3D().scaleZ()};
@@ -25633,7 +25635,8 @@ bool CompositionRenderController::resetSelected3DTransform() {
   }
   GizmoTransformSnapshot before;
   before.position = layer->position3D();
-  before.rotation = layer->rotation3D();
+  before.rotation = ArtifactCore::Units::eulerDegreesFromQVector3D(
+      layer->rotation3D());
   before.scale = {layer->transform3D().scaleX(),
                   layer->transform3D().scaleY(),
                   layer->transform3D().scaleZ()};
@@ -25700,7 +25703,8 @@ bool CompositionRenderController::resetSelectedTransformComponent(
                        transform.positionYAt(time),
                        transform.positionZAt(time)};
     before.rotation = layer->is3D()
-        ? layer->rotation3D()
+        ? ArtifactCore::Units::eulerDegreesFromQVector3D(
+              layer->rotation3D())
         : ArtifactCore::Units::EulerDegrees3{
               {}, {}, {transform.rotationAt(time)}};
     before.scale = {transform.scaleXAt(time), transform.scaleYAt(time),
@@ -26185,12 +26189,14 @@ bool CompositionRenderController::beginModalGizmoInteraction(
       layerTransform.snapshotAt(layerTime).positionY,
       layerTransform.snapshotAt(layerTime).positionZ};
   impl_->gizmoLayerTransformBefore_.rotation = selectedLayer->is3D()
-      ? selectedLayer->rotation3D()
-      : QVector3D(0.0f, 0.0f, layerTransform.rotationAt(layerTime));
-  impl_->gizmoLayerTransformBefore_.scale = QVector3D(
+       ? ArtifactCore::Units::eulerDegreesFromQVector3D(
+             selectedLayer->rotation3D())
+       : ArtifactCore::Units::EulerDegrees3{
+             {}, {}, {layerTransform.rotationAt(layerTime)}};
+   impl_->gizmoLayerTransformBefore_.scale = {
       layerTransform.scaleXAt(layerTime), layerTransform.scaleYAt(layerTime),
       selectedLayer->is3D() ? layerTransform.snapshotAt(layerTime).scaleZ
-                            : 1.0f);
+                             : 1.0f};
   impl_->gizmoLayerTransformBefore_.is3D = selectedLayer->is3D();
   captureGizmoKeyState(selectedLayer, impl_->gizmoUndoFrame_,
                        impl_->gizmoLayerTransformBefore_);
@@ -26262,7 +26268,8 @@ bool CompositionRenderController::beginModalGizmoInteraction(
             candidateTransform.snapshotAt(candidateTime).positionY,
             candidateTransform.snapshotAt(candidateTime).positionZ};
         state.before.rotation = candidate->is3D()
-            ? candidate->rotation3D()
+            ? ArtifactCore::Units::eulerDegreesFromQVector3D(
+                  candidate->rotation3D())
             : ArtifactCore::Units::EulerDegrees3{
                   {}, {}, {candidateTransform.rotationAt(candidateTime)}};
         state.before.scale = {
@@ -27287,15 +27294,16 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
             layerTransform.snapshotAt(layerTime).positionY,
             layerTransform.snapshotAt(layerTime).positionZ};
         impl_->gizmoLayerTransformBefore_.rotation = selectedLayer->is3D()
-            ? selectedLayer->rotation3D()
-            : QVector3D(0.0f, 0.0f,
-                        layerTransform.rotationAt(layerTime));
+             ? ArtifactCore::Units::eulerDegreesFromQVector3D(
+                   selectedLayer->rotation3D())
+             : ArtifactCore::Units::EulerDegrees3{
+                   {}, {}, {layerTransform.rotationAt(layerTime)}};
         const float layerScaleZ = selectedLayer->is3D()
             ? layerTransform.snapshotAt(layerTime).scaleZ
             : 1.0f;
-        impl_->gizmoLayerTransformBefore_.scale = QVector3D(
+         impl_->gizmoLayerTransformBefore_.scale = {
             layerTransform.scaleXAt(layerTime),
-            layerTransform.scaleYAt(layerTime), layerScaleZ);
+             layerTransform.scaleYAt(layerTime), layerScaleZ};
         impl_->gizmoLayerTransformBefore_.is3D = selectedLayer->is3D();
         captureGizmoKeyState(selectedLayer, impl_->gizmoUndoFrame_,
                              impl_->gizmoLayerTransformBefore_);
@@ -27369,7 +27377,8 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
                   candidateTransform.snapshotAt(candidateTime).positionY,
                   candidateTransform.snapshotAt(candidateTime).positionZ};
               state.before.rotation = candidate->is3D()
-                  ? candidate->rotation3D()
+                  ? ArtifactCore::Units::eulerDegreesFromQVector3D(
+                        candidate->rotation3D())
                   : ArtifactCore::Units::EulerDegrees3{
                         {}, {},
                         {candidateTransform.rotationAt(candidateTime)}};
@@ -27415,8 +27424,8 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
       return;
     }
   const auto canvasPos = impl_->renderer_->viewportToCanvas(
-      {static_cast<float>(viewportPos.x) * impl_->devicePixelRatio_,
-       static_cast<float>(viewportPos.y) * impl_->devicePixelRatio_});
+      {static_cast<float>(viewportPos.x()) * impl_->devicePixelRatio_,
+       static_cast<float>(viewportPos.y()) * impl_->devicePixelRatio_});
     if (event->modifiers().testFlag(Qt::AltModifier) ||
         !impl_->cloneStampSourceSet_) {
       auto sourceLayer = selectedLayer;
@@ -31072,13 +31081,13 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
           const std::array<float, 3> yGuides{
               0.0f, impl_->lastCanvasHeight_ * 0.5f, impl_->lastCanvasHeight_};
           for (const float guide : xGuides) {
-            if (std::abs(snappedCanvasPos.x - guide) <= threshold) {
+            if (std::abs(snappedCanvasPos.x() - guide) <= threshold) {
               snappedCanvasPos.setX(guide);
               break;
             }
           }
           for (const float guide : yGuides) {
-            if (std::abs(snappedCanvasPos.y - guide) <= threshold) {
+            if (std::abs(snappedCanvasPos.y() - guide) <= threshold) {
               snappedCanvasPos.setY(guide);
               break;
             }
@@ -33856,7 +33865,8 @@ void CompositionRenderController::handleMouseRelease() {
         after.position = {evaluated.positionX, evaluated.positionY,
                           evaluated.positionZ};
         after.rotation = after.is3D
-            ? state.layer->rotation3D()
+             ? ArtifactCore::Units::eulerDegreesFromQVector3D(
+                   state.layer->rotation3D())
             : ArtifactCore::Units::EulerDegrees3{
                   {}, {}, {transform.rotationAt(time)}};
         after.scale = {transform.scaleXAt(time), transform.scaleYAt(time),
@@ -33922,7 +33932,8 @@ void CompositionRenderController::handleMouseRelease() {
         after.position = {evaluated.positionX, evaluated.positionY,
                           evaluated.positionZ};
         after.rotation = layer->is3D()
-            ? layer->rotation3D()
+             ? ArtifactCore::Units::eulerDegreesFromQVector3D(
+                   layer->rotation3D())
             : ArtifactCore::Units::EulerDegrees3{
                   {}, {}, {transform.rotationAt(time)}};
         after.scale = {transform.scaleXAt(time), transform.scaleYAt(time),
@@ -38831,8 +38842,8 @@ Qt::CursorShape CompositionRenderController::cursorShapeForViewportPos(
           : ArtifactAbstractLayerPtr{};
       if (layer) {
         const auto canvas = impl_->renderer_->viewportToCanvas(
-            {static_cast<float>(viewportPos.x()),
-             static_cast<float>(viewportPos.y())});
+            {viewportPos.x * impl_->devicePixelRatio_,
+             viewportPos.y * impl_->devicePixelRatio_});
         int maskIndex = -1;
         int pathIndex = -1;
         int segmentIndex = -1;
@@ -38889,7 +38900,9 @@ Qt::CursorShape CompositionRenderController::cursorShapeForViewportPos(
 
     if (impl_->renderer_ && impl_->trackerGizmo_) {
 
-      const QPointF physPos = viewportPos * impl_->devicePixelRatio_;
+      const QPointF physPos =
+          ArtifactCore::Coordinates::toQPointF(viewportPos) *
+          impl_->devicePixelRatio_;
 
       return impl_->trackerGizmo_->cursorShapeForViewportPos(
 
@@ -38909,7 +38922,9 @@ Qt::CursorShape CompositionRenderController::cursorShapeForViewportPos(
 
   }
 
-  const QPointF physicalPos = viewportPos * impl_->devicePixelRatio_;
+  const QPointF physicalPos =
+      ArtifactCore::Coordinates::toQPointF(viewportPos) *
+      impl_->devicePixelRatio_;
   if (!impl_->gizmoModalTransformActive_ &&
       impl_->projectedFrameSizeBadgesVisible_ &&
       (impl_->projectedFrameWidthBadgeRect_.contains(physicalPos) ||
@@ -38936,7 +38951,8 @@ Qt::CursorShape CompositionRenderController::cursorShapeForViewportPos(
       }
       if (!selectedLayerIds.isEmpty()) {
         const auto canvasPos = impl_->renderer_->viewportToCanvas(
-            {(float)viewportPos.x(), (float)viewportPos.y()});
+            {viewportPos.x * impl_->devicePixelRatio_,
+             viewportPos.y * impl_->devicePixelRatio_});
         QString fieldId;
         TransformFieldDragMode mode = TransformFieldDragMode::None;
         if (hitTestTransformFieldHandle(
@@ -38986,7 +39002,9 @@ Qt::CursorShape CompositionRenderController::cursorShapeForViewportPos(
 
   // viewportPos is in logical pixels; convert to physical for gizmo hit testing
 
-  const QPointF physPos = viewportPos * impl_->devicePixelRatio_;
+   const QPointF physPos =
+       ArtifactCore::Coordinates::toQPointF(viewportPos) *
+       impl_->devicePixelRatio_;
 
   bool selectedGroupUsesProjectedFrame =
       selectedLayer && layerUsesProjectedFrameGizmo(selectedLayer);
@@ -42799,7 +42817,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             shared3DSceneDepthOpen = false;
             if (partialGpuRecomposeActive) {
               partialGpuRecomposeFailed = true;
-              return false;
+              break;
             }
             continue;
           }
@@ -42954,7 +42972,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             shared3DSceneDepthOpen = false;
             if (partialGpuRecomposeActive) {
               partialGpuRecomposeFailed = true;
-              return false;
+              break;
             }
             continue;
           }
@@ -42977,7 +42995,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             shared3DSceneDepthOpen = false;
             if (partialGpuRecomposeActive) {
               partialGpuRecomposeFailed = true;
-              return false;
+              break;
             }
             continue;
           }
@@ -42989,7 +43007,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             shared3DSceneDepthOpen = false;
             if (partialGpuRecomposeActive) {
               partialGpuRecomposeFailed = true;
-              return false;
+              break;
             }
             continue;
           }
@@ -43017,7 +43035,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             shared3DSceneDepthOpen = false;
             if (partialGpuRecomposeActive) {
               partialGpuRecomposeFailed = true;
-              return false;
+              break;
             }
             continue;
           }
@@ -43028,7 +43046,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
             if (partialGpuRecomposeActive) {
               partialGpuRecomposeFailed = true;
-              return false;
+              break;
             }
 
             continue;

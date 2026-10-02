@@ -1862,7 +1862,8 @@ bool applyGroupContainerSwitchToChildren(
   targets.push_back(std::move(child));
  }
  if (targets.isEmpty()) return false;
- const auto makeCommand = [&](const ArtifactAbstractLayerPtr& layer) {
+ const auto makeCommand = [&](const ArtifactAbstractLayerPtr& layer)
+     -> std::unique_ptr<UndoCommand> {
   switch (which) {
   case GroupContainerSwitch::Visible:
    return std::make_unique<SetLayerVisibilityCommand>(layer, target);
@@ -8095,7 +8096,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
 
   // Hoisted out of the row loop: the container switch aggregate needs the
   // composition, and a lookup per visible row would repeat it for every layer.
-  auto *containerComp = safeCompositionLookup(impl_->compositionId);
+  auto containerComp = safeCompositionLookup(impl_->compositionId);
 
   for (int i = startRow; i <= endRow; ++i) {
     int y = i * rowH;

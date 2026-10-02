@@ -31,7 +31,7 @@ class InnerShadowCPUImpl : public ArtifactEffectImplBase {
 public:
     QColor shadowColor_ = QColor(0, 0, 0, 180);
     float  distance_    = 5.0f;
-    float  angle_       = 135.0f;
+    float  angle_       = 120.0f;
     float  softness_    = 8.0f;
     float  opacity_     = 75.0f;   // 0-100 (%)
 
@@ -48,10 +48,11 @@ public:
         const int W = srcImg.width();
         const int H = srcImg.height();
 
-        // angle を rad に変換し、オフセット計算
+        // Angle is the light source azimuth (0 = 3 o'clock, clockwise, math
+        // up); the shadow is cast opposite the light. See DropShadowEffect.
         const float rad   = angle_ * (3.14159265358979f / 180.0f);
-        const int   offX  = static_cast<int>(std::round( distance_ * std::cos(rad)));
-        const int   offY  = static_cast<int>(std::round(-distance_ * std::sin(rad)));
+        const int   offX  = static_cast<int>(std::round(-distance_ * std::cos(rad)));
+        const int   offY  = static_cast<int>(std::round( distance_ * std::sin(rad)));
 
         // ── 1. アルファチャンネル抽出 ──────────────────────────────────────
         cv::Mat srcAlpha(H, W, CV_32FC1);
@@ -188,7 +189,7 @@ void  InnerShadowEffect::setDistance(float d) {
 
 float InnerShadowEffect::angle() const { return angle_; }
 void  InnerShadowEffect::setAngle(float a) {
-    angle_ = std::isfinite(a) ? a : 135.0f;
+    angle_ = std::isfinite(a) ? a : 120.0f;
     syncImpls();
 }
 
@@ -224,6 +225,11 @@ std::vector<AbstractProperty> InnerShadowEffect::getProperties() const {
     angleProp.setName("Angle");
     angleProp.setType(PropertyType::Float);
     angleProp.setValue(angle_);
+    angleProp.setDefaultValue(120.0);
+    angleProp.setHardRange(0.0, 360.0);
+    angleProp.setSoftRange(0.0, 360.0);
+    angleProp.setStep(0.1);
+    angleProp.setUnit(QStringLiteral("deg"));
 
     auto& softProp = props.emplace_back();
     softProp.setName("Softness");

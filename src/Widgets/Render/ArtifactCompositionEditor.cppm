@@ -88,7 +88,6 @@ module;
 #include <QDockWidget>
 #include <QDoubleSpinBox>
 #include <QWidget>
-import Math.Vec;
 #include <QWidgetAction>
 #include <QtSVG/QSvgRenderer>
 #include <algorithm>
@@ -3801,7 +3800,7 @@ public:
           ArtifactCore::LayeredConfigStore::instance().setValue(
               QStringLiteral("Viewport/3DTransformClipboard"),
               QVariantList{
-                  position.x(), position.y(), position.z(), rotation.x(),
+                  position.x, position.y, position.z, rotation.x(),
                   rotation.y(), rotation.z(), scale.x(), scale.y(), scale.z()});
         });
         const QVariantList transformClipboard =

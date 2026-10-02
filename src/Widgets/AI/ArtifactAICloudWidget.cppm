@@ -1619,10 +1619,13 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
         mcpToolClassEdit_ ? mcpToolClassEdit_->text().trimmed() : QString();
     const QString methodName =
         mcpToolMethodEdit_ ? mcpToolMethodEdit_->text().trimmed() : QString();
-    const QString argsText = mcpToolArgsEdit_
-                                 ? mcpToolArgsEdit_->toPlainText().trimmed()
-                                 : QString();
-    QJsonArray argsArray;
+    const QString argsText =
+        mcpToolArgsEdit_ ? mcpToolArgsEdit_->toPlainText().trimmed() : QString();
+    // debug.* 系は McpBridge が params.arguments をオブジェクトとして読むのに対し、
+    // ToolBridge 系は配列を前提とするため、ツール名で受け側の期待形式を分ける。
+    const QString selectedToolName = selectedMcpToolName_.trimmed();
+    const bool isDebugTool = selectedToolName.startsWith(QStringLiteral("debug."));
+    QJsonValue argsValue;
     if (!argsText.isEmpty()) {
       constexpr qsizetype kMaxMcpArgumentsBytes = 4 * 1024 * 1024;
       const QByteArray argsBytes = argsText.toUtf8();
@@ -1637,18 +1640,30 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
         if (argsDoc.isArray()) {
           constexpr qsizetype kMaxMcpArgumentItems = 10000;
           qsizetype itemCount = 0;
+          QJsonArray bounded;
           for (const QJsonValue &value : argsDoc.array()) {
             if (itemCount++ >= kMaxMcpArgumentItems) break;
-            argsArray.append(value);
+            bounded.append(value);
           }
+          argsValue = isDebugTool && bounded.size() == 1 && bounded.first().isObject()
+                          ? QJsonValue(bounded.first().toObject())
+                          : QJsonValue(bounded);
         } else if (argsDoc.isObject()) {
-          argsArray = QJsonArray{argsDoc.object()};
+          argsValue = argsDoc.object();
         }
       }
     }
-    QJsonObject toolCall{{QStringLiteral("class"), className},
-                         {QStringLiteral("method"), methodName},
-                         {QStringLiteral("arguments"), argsArray}};
+    QJsonObject toolCall;
+    // tools/call は name でツール名を渡す。McpBridge もここだけを読むため、
+    // class.method だけを送ると必ず Invalid tool call payload になる。
+    if (!selectedToolName.isEmpty()) {
+      toolCall[QStringLiteral("name")] = selectedToolName;
+    }
+    toolCall[QStringLiteral("class")] = className;
+    toolCall[QStringLiteral("method")] = methodName;
+    if (!argsValue.isUndefined()) {
+      toolCall[QStringLiteral("arguments")] = argsValue;
+    }
     // Check if this is an external MCP tool call or internal execution
     const bool isExternalMcp = !mcpSession_.program().isEmpty();
     QVariant executionResult;
@@ -2162,8 +2177,10 @@ void Artifact::ArtifactAICloudWidget::applySelectedMcpTool(
     const QString &toolName) {
   const QString trimmed = toolName.trimmed();
   if (trimmed.isEmpty()) {
+    selectedMcpToolName_.clear();
     return;
   }
+  selectedMcpToolName_ = trimmed;
 
   const QByteArray schemaBytes =
       ArtifactCore::ToolBridge::toolSchemaJson().toUtf8();

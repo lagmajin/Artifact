@@ -66,6 +66,7 @@ module;
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QSettings>
+#include <QThread>
 #include <QPointer>
 #include <QSet>
 #include <QDialog>
@@ -2984,7 +2985,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                 addTrackedAction(QStringLiteral("set_input_source_role"),
                                  QStringLiteral("Set Input Source Role..."),
                                  [this, footageItem, svc]() {
-                    const QStringList choices{
+                    QStringList choices{
         QStringLiteral("Production Source"),
         projectRenderInputRoleLabel(ProjectRenderInputRole::Generic)};
     for (int role = static_cast<int>(ProjectRenderInputRole::AlphaMatte);
@@ -4170,36 +4171,30 @@ QSize ArtifactProjectView::sizeHint() const { return QSize(400, 400); }
 class ArtifactProjectManagerWidget::Impl {
 public:
     ~Impl() {
-        if (activeProxyWorker_) {
-            if (!activeProxyCancelPath_.isEmpty()) {
-                QFile cancelFile(activeProxyCancelPath_);
+        for (ProxyWorkerSlot& slot : proxyWorkerSlots_) {
+            if (!slot.cancelPath.isEmpty()) {
+                QFile cancelFile(slot.cancelPath);
                 if (cancelFile.open(QIODevice::WriteOnly)) {
                     cancelFile.write("shutdown\n");
                     cancelFile.close();
                 }
             }
-            if (activeProxyWorker_->state() != QProcess::NotRunning) {
-                activeProxyWorker_->terminate();
-                if (!activeProxyWorker_->waitForFinished(1000)) {
-                    activeProxyWorker_->kill();
-                    activeProxyWorker_->waitForFinished(1000);
+            if (slot.process && slot.process->state() != QProcess::NotRunning) {
+                slot.process->terminate();
+                if (!slot.process->waitForFinished(1000)) {
+                    slot.process->kill();
+                    slot.process->waitForFinished(1000);
                 }
             }
-            delete activeProxyWorker_;
-            activeProxyWorker_ = nullptr;
-        }
-        if (!activeProxyRequestPath_.isEmpty()) {
-            QFile::remove(activeProxyRequestPath_);
-        }
-        if (!activeProxyCancelPath_.isEmpty()) {
-            QFile::remove(activeProxyCancelPath_);
-        }
-        if (!activeProxyPreviousPath_.isEmpty()) {
-            QFile::remove(activeProxyJob_.outputPath);
-            QFile::rename(activeProxyPreviousPath_, activeProxyJob_.outputPath);
-        }
-        if (!activeProxyJob_.outputPath.isEmpty()) {
-            QFile::remove(activeProxyJob_.outputPath + QStringLiteral(".partial"));
+            delete slot.process;
+            slot.process = nullptr;
+            QFile::remove(slot.requestPath);
+            QFile::remove(slot.cancelPath);
+            QFile::remove(slot.job.outputPath + QStringLiteral(".partial"));
+            if (!slot.previousPath.isEmpty()) {
+                QFile::remove(slot.job.outputPath);
+                QFile::rename(slot.previousPath, slot.job.outputPath);
+            }
         }
     }
 
@@ -4272,18 +4267,26 @@ public:
         qint64 sourceSize = -1;
     };
     std::deque<ProxyJob> proxyJobs_;
+    int proxyCompletedCount_ = 0;
     QTimer* proxyQueueTimer_ = nullptr;
-    QProcess* activeProxyWorker_ = nullptr;
-    ProxyJob activeProxyJob_;
-    QString activeProxyRequestPath_;
-    QString activeProxyCancelPath_;
-    QString activeProxyPreviousPath_;
-    QByteArray activeProxyOutputBuffer_;
-    double activeProxyFraction_ = 0.0;
-    QString activeProxyFailureReason_;
-    QString activeProxyJobId_;
-    bool activeProxyCompleted_ = false;
-    qint64 activeProxyReportedOutputBytes_ = -1;
+
+    // One slot per concurrent proxy worker process. An entry with a null
+    // process is idle and available for the next queued job.
+    struct ProxyWorkerSlot {
+        QProcess* process = nullptr;
+        ProxyJob job;
+        QString requestPath;
+        QString cancelPath;
+        QString previousPath;
+        QByteArray outputBuffer;
+        double fraction = 0.0;
+        QString failureReason;
+        QString jobId;
+        bool completed = false;
+        qint64 reportedOutputBytes = -1;
+    };
+    std::deque<ProxyWorkerSlot> proxyWorkerSlots_;
+
     QMetaObject::Connection currentRowChangedConnection_;
     bool headerLayoutInitialized_ = false;
     bool syncingSelectionToComposition_ = false;
@@ -5384,10 +5387,10 @@ public:
                 project->projectChanged();
             }
         }
-        QVector<FootageItem*> footage;
+        QVector<FootageItem*> footageItems;
         auto* footageItem = static_cast<FootageItem*>(item);
-        footage.append(footageItem);
-        queueProxyGeneration(footage);
+        footageItems.append(footageItem);
+        queueProxyGeneration(footageItems);
         const QString proxyPath = proxyFilePathForFootage(
             footageItem->filePath, static_cast<ProxyQuality>(footageItem->proxyQuality));
         syncProxyPathToProject(footageItem->filePath, proxyPath,
@@ -5478,13 +5481,19 @@ public:
 
     void cancelProxyQueue() {
         proxyJobs_.clear();
-        if (!activeProxyCancelPath_.isEmpty()) {
-            QFile cancelFile(activeProxyCancelPath_);
-            if (cancelFile.open(QIODevice::WriteOnly)) {
-                cancelFile.close();
+        bool signalled = false;
+        for (ProxyWorkerSlot& slot : proxyWorkerSlots_) {
+            if (slot.process && !slot.cancelPath.isEmpty()) {
+                QFile cancelFile(slot.cancelPath);
+                if (cancelFile.open(QIODevice::WriteOnly)) {
+                    cancelFile.close();
+                    signalled = true;
+                }
             }
+        }
+        if (signalled) {
             if (proxyQueueProgress) {
-                proxyQueueProgress->setToolTip(QStringLiteral("Cancelling proxy worker..."));
+                proxyQueueProgress->setToolTip(QStringLiteral("Cancelling proxy workers..."));
             }
         } else if (proxyQueueProgress) {
             proxyQueueProgress->setVisible(false);
@@ -5567,7 +5576,7 @@ public:
 
     // Proxy 設定 (quality / enabled / label) は FootageItem がプロジェクトの権威。
     // プロセス内 static へ書き込むとリロードで消えるため、必ずこちらを使う。
-    FootageItem* footageItemForPath(const QString& sourceFilePath) {
+    FootageItem* footageItemForPath(const QString& sourceFilePath) const {
         const QString targetPath = QFileInfo(sourceFilePath).absoluteFilePath();
         if (targetPath.isEmpty()) {
             return nullptr;
@@ -5774,7 +5783,7 @@ public:
                     : scale <= 0.25 ? ProxyServiceQuality::Quarter
                                     : ProxyServiceQuality::Half)
                 : out;
-            if (!activeProxyWorker_) {
+            if (proxyWorkerSlots_.empty()) {
                 const QDir outputDirectory(QFileInfo(serviceOut).absolutePath());
                 const QStringList orphanBackups = outputDirectory.entryList(
                     {QStringLiteral(".*.proxy-job.json.previous"),
@@ -5785,10 +5794,14 @@ public:
                 }
             }
             const QString sourcePath = src.absoluteFilePath();
-            const bool alreadyActive = activeProxyWorker_ &&
-                activeProxyJob_.inputPath == sourcePath &&
-                activeProxyJob_.outputPath == serviceOut &&
-                qFuzzyCompare(activeProxyJob_.scaleFactor, scale);
+            const bool alreadyActive = std::any_of(
+                proxyWorkerSlots_.cbegin(), proxyWorkerSlots_.cend(),
+                [&sourcePath, &serviceOut, scale](const ProxyWorkerSlot& slot) {
+                    return slot.process &&
+                           slot.job.inputPath == sourcePath &&
+                           slot.job.outputPath == serviceOut &&
+                           qFuzzyCompare(slot.job.scaleFactor, scale);
+                });
             const bool alreadyQueued = std::any_of(proxyJobs_.cbegin(), proxyJobs_.cend(),
                 [&sourcePath, &serviceOut, scale](const ProxyJob& queued) {
                     return queued.inputPath == sourcePath && queued.outputPath == serviceOut &&
@@ -5818,102 +5831,138 @@ public:
         }
     }
 
+    // Aggregate progress across all busy slots: each running job contributes its
+    // own fraction, so the bar reflects total remaining work rather than
+    // whichever worker happens to report last.
+    void updateAggregateProxyProgress() {
+        if (!proxyQueueProgress) return;
+        int busy = 0;
+        double sum = 0.0;
+        for (const ProxyWorkerSlot& slot : proxyWorkerSlots_) {
+            if (!slot.process) continue;
+            ++busy;
+            sum += slot.fraction;
+        }
+        if (busy > 0) {
+            proxyQueueProgress->setFormat(QStringLiteral("Proxy queue %1/%2 (%3%)")
+                .arg(proxyCompletedCount_ + busy)
+                .arg(proxyCompletedCount_ + busy + static_cast<int>(proxyJobs_.size()))
+                .arg(qRound(sum / busy * 100.0)));
+        }
+    }
+
+    // Reads pending worker output and, once the process has exited, applies the
+    // result. Returns true when the slot was released and may take a new job.
+    bool pollProxyWorkerSlot(ProxyWorkerSlot& slot) {
+        slot.outputBuffer.append(slot.process->readAllStandardOutput());
+        int newline = -1;
+        while ((newline = slot.outputBuffer.indexOf('\n')) >= 0) {
+            const QByteArray line = slot.outputBuffer.left(newline).trimmed();
+            slot.outputBuffer.remove(0, newline + 1);
+            const QJsonDocument message = QJsonDocument::fromJson(line);
+            if (!message.isObject()) continue;
+            const QJsonObject object = message.object();
+            if (object.value(QStringLiteral("type")).toString() == QStringLiteral("progress") &&
+                object.value(QStringLiteral("jobId")).toString() == slot.jobId) {
+                slot.fraction = qBound(0.0, object.value(QStringLiteral("fraction")).toDouble(), 1.0);
+                updateAggregateProxyProgress();
+            } else if (object.value(QStringLiteral("type")).toString() == QStringLiteral("failed") &&
+                       object.value(QStringLiteral("jobId")).toString() == slot.jobId) {
+                slot.failureReason = object.value(QStringLiteral("reason")).toString();
+                if (proxyQueueProgress && !slot.failureReason.isEmpty()) {
+                    proxyQueueProgress->setToolTip(slot.failureReason);
+                }
+            } else if (object.value(QStringLiteral("type")).toString() == QStringLiteral("completed") &&
+                       object.value(QStringLiteral("jobId")).toString() == slot.jobId &&
+                       QFileInfo(object.value(QStringLiteral("outputPath")).toString()).absoluteFilePath() ==
+                           QFileInfo(slot.job.outputPath).absoluteFilePath()) {
+                const QString expectedQuality = slot.job.scaleFactor >= 0.9 ? QStringLiteral("full")
+                    : slot.job.scaleFactor <= 0.125 ? QStringLiteral("eighth")
+                    : slot.job.scaleFactor <= 0.25 ? QStringLiteral("quarter")
+                                                   : QStringLiteral("half");
+                if (object.value(QStringLiteral("qualityPreset")).toString() == expectedQuality) {
+                    slot.completed = true;
+                    slot.reportedOutputBytes = object.value(QStringLiteral("outputBytes"))
+                        .toVariant().toLongLong();
+                } else {
+                    slot.failureReason = QStringLiteral("Proxy worker reported mismatched quality preset");
+                    if (proxyQueueProgress) proxyQueueProgress->setToolTip(slot.failureReason);
+                }
+            }
+        }
+        if (slot.process->state() != QProcess::NotRunning) {
+            return false;
+        }
+        const QString workerStderr = QString::fromLocal8Bit(
+            slot.process->readAllStandardError()).trimmed();
+        if (proxyQueueProgress && slot.failureReason.isEmpty() && !workerStderr.isEmpty()) {
+            proxyQueueProgress->setToolTip(workerStderr);
+        }
+        const bool succeeded = slot.completed &&
+                               slot.process->exitStatus() == QProcess::NormalExit &&
+                               slot.process->exitCode() == 0 &&
+                               QFileInfo(slot.job.outputPath).isFile() &&
+                               QFileInfo(slot.job.outputPath).size() > 0 &&
+                               QFileInfo(slot.job.outputPath).size() == slot.reportedOutputBytes &&
+                               QFileInfo(slot.job.inputPath).lastModified() ==
+                                   slot.job.sourceLastModified &&
+                               QFileInfo(slot.job.inputPath).size() ==
+                                   slot.job.sourceSize;
+        if (succeeded) {
+            auto& metadata = proxyMetadata()[slot.job.inputPath];
+            metadata.sourceLastModified = slot.job.sourceLastModified;
+            FootageItem* footage = footageItemForPath(slot.job.inputPath);
+            const bool enabled = footage ? footage->proxyEnabled : true;
+            syncProxyPathToProject(slot.job.inputPath, slot.job.outputPath,
+                                   enabled, proxyGlobalEnabled_);
+            if (!slot.previousPath.isEmpty()) {
+                QFile::remove(slot.previousPath);
+            }
+        } else {
+            QFile::remove(slot.job.outputPath);
+            if (!slot.previousPath.isEmpty()) {
+                QFile::rename(slot.previousPath, slot.job.outputPath);
+            }
+        }
+        if (!slot.requestPath.isEmpty()) {
+            QFile::remove(slot.requestPath);
+        }
+        if (!slot.cancelPath.isEmpty()) {
+            QFile::remove(slot.cancelPath);
+        }
+        slot.process->deleteLater();
+        slot.process = nullptr;
+        slot.requestPath.clear();
+        slot.cancelPath.clear();
+        slot.previousPath.clear();
+        slot.outputBuffer.clear();
+        slot.fraction = 0.0;
+        slot.failureReason.clear();
+        slot.jobId.clear();
+        slot.completed = false;
+        slot.reportedOutputBytes = -1;
+        ++proxyCompletedCount_;
+        if (proxyQueueProgress) {
+            proxyQueueProgress->setValue(proxyCompletedCount_);
+        }
+        return true;
+    }
+
+    // Maximum number of concurrent worker processes. 0 or a negative value in
+    // settings means "derive from hardware", which is the default.
+    int proxyWorkerSlotLimit() const {
+        const int configured = QSettings().value(QStringLiteral("Proxy/ParallelJobs"), 0).toInt();
+        if (configured > 0) {
+            return configured;
+        }
+        const int suggested = QThread::idealThreadCount();
+        return suggested > 1 ? suggested : 1;
+    }
+
     void processNextProxyJob() {
-        if (activeProxyWorker_) {
-            activeProxyOutputBuffer_.append(activeProxyWorker_->readAllStandardOutput());
-            int newline = -1;
-            while ((newline = activeProxyOutputBuffer_.indexOf('\n')) >= 0) {
-                const QByteArray line = activeProxyOutputBuffer_.left(newline).trimmed();
-                activeProxyOutputBuffer_.remove(0, newline + 1);
-                const QJsonDocument message = QJsonDocument::fromJson(line);
-                if (!message.isObject()) continue;
-                const QJsonObject object = message.object();
-                if (object.value(QStringLiteral("type")).toString() == QStringLiteral("progress") &&
-                    object.value(QStringLiteral("jobId")).toString() == activeProxyJobId_) {
-                    activeProxyFraction_ = qBound(0.0, object.value(QStringLiteral("fraction")).toDouble(), 1.0);
-                    if (proxyQueueProgress) {
-                        proxyQueueProgress->setFormat(QStringLiteral("Proxy queue %v/%m (%1%)")
-                            .arg(qRound(activeProxyFraction_ * 100.0)));
-                    }
-                } else if (object.value(QStringLiteral("type")).toString() == QStringLiteral("failed") &&
-                           object.value(QStringLiteral("jobId")).toString() == activeProxyJobId_) {
-                    activeProxyFailureReason_ = object.value(QStringLiteral("reason")).toString();
-                    if (proxyQueueProgress && !activeProxyFailureReason_.isEmpty()) {
-                        proxyQueueProgress->setToolTip(activeProxyFailureReason_);
-                    }
-                } else if (object.value(QStringLiteral("type")).toString() == QStringLiteral("completed") &&
-                           object.value(QStringLiteral("jobId")).toString() == activeProxyJobId_ &&
-                           QFileInfo(object.value(QStringLiteral("outputPath")).toString()).absoluteFilePath() ==
-                               QFileInfo(activeProxyJob_.outputPath).absoluteFilePath()) {
-                    const QString expectedQuality = activeProxyJob_.scaleFactor >= 0.9 ? QStringLiteral("full")
-                        : activeProxyJob_.scaleFactor <= 0.125 ? QStringLiteral("eighth")
-                        : activeProxyJob_.scaleFactor <= 0.25 ? QStringLiteral("quarter")
-                                                              : QStringLiteral("half");
-                    if (object.value(QStringLiteral("qualityPreset")).toString() == expectedQuality) {
-                        activeProxyCompleted_ = true;
-                        activeProxyReportedOutputBytes_ = object.value(QStringLiteral("outputBytes"))
-                            .toVariant().toLongLong();
-                    } else {
-                        activeProxyFailureReason_ = QStringLiteral("Proxy worker reported mismatched quality preset");
-                        if (proxyQueueProgress) proxyQueueProgress->setToolTip(activeProxyFailureReason_);
-                    }
-                }
-            }
-            if (activeProxyWorker_->state() != QProcess::NotRunning) {
-                return;
-            }
-            const QString workerStderr = QString::fromLocal8Bit(
-                activeProxyWorker_->readAllStandardError()).trimmed();
-            if (proxyQueueProgress && activeProxyFailureReason_.isEmpty() && !workerStderr.isEmpty()) {
-                proxyQueueProgress->setToolTip(workerStderr);
-            }
-            const bool succeeded = activeProxyCompleted_ &&
-                                   activeProxyWorker_->exitStatus() == QProcess::NormalExit &&
-                                   activeProxyWorker_->exitCode() == 0 &&
-                                   QFileInfo(activeProxyJob_.outputPath).isFile() &&
-                                   QFileInfo(activeProxyJob_.outputPath).size() > 0 &&
-                                   QFileInfo(activeProxyJob_.outputPath).size() == activeProxyReportedOutputBytes_ &&
-                                   QFileInfo(activeProxyJob_.inputPath).lastModified() ==
-                                       activeProxyJob_.sourceLastModified &&
-                                   QFileInfo(activeProxyJob_.inputPath).size() ==
-                                       activeProxyJob_.sourceSize;
-            if (succeeded) {
-                auto& metadata = proxyMetadata()[activeProxyJob_.inputPath];
-                metadata.sourceLastModified = activeProxyJob_.sourceLastModified;
-                FootageItem* footage = footageItemForPath(activeProxyJob_.inputPath);
-                const bool enabled = footage ? footage->proxyEnabled : true;
-                syncProxyPathToProject(activeProxyJob_.inputPath, activeProxyJob_.outputPath,
-                                       enabled, proxyGlobalEnabled_);
-                if (!activeProxyPreviousPath_.isEmpty()) {
-                    QFile::remove(activeProxyPreviousPath_);
-                }
-            } else {
-                QFile::remove(activeProxyJob_.outputPath);
-                if (!activeProxyPreviousPath_.isEmpty()) {
-                    QFile::rename(activeProxyPreviousPath_, activeProxyJob_.outputPath);
-                }
-            }
-            if (!activeProxyRequestPath_.isEmpty()) {
-                QFile::remove(activeProxyRequestPath_);
-            }
-            if (!activeProxyCancelPath_.isEmpty()) {
-                QFile::remove(activeProxyCancelPath_);
-            }
-            activeProxyWorker_->deleteLater();
-            activeProxyWorker_ = nullptr;
-            activeProxyRequestPath_.clear();
-            activeProxyCancelPath_.clear();
-            activeProxyPreviousPath_.clear();
-            activeProxyOutputBuffer_.clear();
-            activeProxyFraction_ = 0.0;
-            activeProxyFailureReason_.clear();
-            activeProxyJobId_.clear();
-            activeProxyCompleted_ = false;
-            activeProxyReportedOutputBytes_ = -1;
-            if (proxyQueueProgress) {
-                const int done = proxyQueueProgress->maximum() - static_cast<int>(proxyJobs_.size());
-                proxyQueueProgress->setValue(done);
-            }
+        // Retire finished workers first so their slots free up for queued jobs.
+        for (ProxyWorkerSlot& slot : proxyWorkerSlots_) {
+            if (slot.process) pollProxyWorkerSlot(slot);
         }
         if (proxyJobs_.empty()) {
             if (proxyQueueTimer_) proxyQueueTimer_->stop();
@@ -5921,58 +5970,95 @@ public:
             return;
         }
 
-        const ProxyJob job = proxyJobs_.front();
-        proxyJobs_.pop_front();
-        if (!QFileInfo(job.inputPath).isFile()) {
-            if (proxyQueueProgress) {
-                proxyQueueProgress->setToolTip(QStringLiteral("Proxy source is missing: %1")
-                    .arg(job.inputPath));
+        const int limit = proxyWorkerSlotLimit();
+        while (!proxyJobs_.empty()) {
+            // Find an idle slot, growing the pool up to the configured limit.
+            int idleIndex = -1;
+            for (int index = 0; index < static_cast<int>(proxyWorkerSlots_.size()); ++index) {
+                if (!proxyWorkerSlots_[index].process) {
+                    idleIndex = index;
+                    break;
+                }
             }
-            if (proxyQueueProgress) {
-                const int done = proxyQueueProgress->maximum() - static_cast<int>(proxyJobs_.size());
-                proxyQueueProgress->setValue(done);
+            if (idleIndex < 0) {
+                if (static_cast<int>(proxyWorkerSlots_.size()) >= limit) {
+                    break; // all slots busy; wait for the next timer tick
+                }
+                proxyWorkerSlots_.push_back(ProxyWorkerSlot{});
+                idleIndex = static_cast<int>(proxyWorkerSlots_.size()) - 1;
             }
-            return;
-        }
-        const QString suffix = QFileInfo(job.inputPath).suffix().toLower();
-        const bool video = QStringList{QStringLiteral("mp4"), QStringLiteral("mov"),
-                                       QStringLiteral("mkv"), QStringLiteral("avi"),
-                                       QStringLiteral("webm"), QStringLiteral("m4v"),
-                                       QStringLiteral("flv"), QStringLiteral("m2ts"),
-                                       QStringLiteral("ts"), QStringLiteral("mpg"),
-                                       QStringLiteral("mpeg"), QStringLiteral("wmv"),
-                                       QStringLiteral("3gp"), QStringLiteral("3g2"),
-                                       QStringLiteral("ogv"), QStringLiteral("ogm"),
-                                       QStringLiteral("mts"), QStringLiteral("mxf"),
-                                       QStringLiteral("vob"), QStringLiteral("asf")}
-                              .contains(suffix);
-        if (video) {
+
+            const ProxyJob job = proxyJobs_.front();
+            proxyJobs_.pop_front();
+            if (!QFileInfo(job.inputPath).isFile()) {
+                if (proxyQueueProgress) {
+                    proxyQueueProgress->setToolTip(QStringLiteral("Proxy source is missing: %1")
+                        .arg(job.inputPath));
+                }
+                ++proxyCompletedCount_;
+                continue;
+            }
+            const QString suffix = QFileInfo(job.inputPath).suffix().toLower();
+            const bool video = QStringList{QStringLiteral("mp4"), QStringLiteral("mov"),
+                                           QStringLiteral("mkv"), QStringLiteral("avi"),
+                                           QStringLiteral("webm"), QStringLiteral("m4v"),
+                                           QStringLiteral("flv"), QStringLiteral("m2ts"),
+                                           QStringLiteral("ts"), QStringLiteral("mpg"),
+                                           QStringLiteral("mpeg"), QStringLiteral("wmv"),
+                                           QStringLiteral("3gp"), QStringLiteral("3g2"),
+                                           QStringLiteral("ogv"), QStringLiteral("ogm"),
+                                           QStringLiteral("mts"), QStringLiteral("mxf"),
+                                           QStringLiteral("vob"), QStringLiteral("asf")}
+                                  .contains(suffix);
+            if (!video) {
+                // Still images are produced in-process with QImage; they are
+                // cheap enough not to warrant a worker process.
+                QImage img(job.inputPath);
+                if (!img.isNull()) {
+                    const int targetW = qMax(64, static_cast<int>(img.width() * job.scaleFactor));
+                    const int targetH = qMax(64, static_cast<int>(img.height() * job.scaleFactor));
+                    const QImage scaled = img.scaled(targetW, targetH, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+                    const int jpegQuality = job.scaleFactor >= 0.9 ? 92 : 80;
+                    scaled.save(job.outputPath, "JPG", jpegQuality);
+                }
+                ++proxyCompletedCount_;
+                continue;
+            }
+
             const QString configuredWorkerPath = QSettings().value(
                 QStringLiteral("Proxy/WorkerPath")).toString().trimmed();
             const QString workerPath = configuredWorkerPath.isEmpty()
                 ? QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("ArtifactProxyWorker.exe"))
                 : QFileInfo(configuredWorkerPath).absoluteFilePath();
-            if (QFileInfo(workerPath).isFile()) {
-                const QString jobId = QUuid::createUuid().toString(QUuid::WithoutBraces);
-                const QString partialPath = job.outputPath + QStringLiteral(".partial");
-                QFile::remove(partialPath);
-                const QString requestPath = QDir(QFileInfo(job.outputPath).absolutePath())
-                    .filePath(QStringLiteral(".%1.proxy-job.json").arg(jobId));
-                const QString cancelPath = requestPath + QStringLiteral(".cancel");
-                const QString previousPath = requestPath + QStringLiteral(".previous");
-                if (QFileInfo(job.outputPath).isFile() &&
-                    !QFile::rename(job.outputPath, previousPath)) {
-                    if (proxyQueueProgress) {
-                        proxyQueueProgress->setToolTip(QStringLiteral("Cannot preserve existing proxy output"));
-                    }
-                    return;
+            if (!QFileInfo(workerPath).isFile()) {
+                if (proxyQueueProgress) {
+                    proxyQueueProgress->setToolTip(QStringLiteral("ArtifactProxyWorker.exe was not found"));
                 }
-                const QString backend = QSettings().value(
-                    QStringLiteral("Proxy/WorkerBackend"), QStringLiteral("ffmpeg")).toString();
-                const bool hardwareAccel = QSettings().value(
-                    QStringLiteral("Proxy/HardwareAccel"), false).toBool();
-                const bool audioReencode = QSettings().value(
-                    QStringLiteral("Proxy/AudioReencode"), false).toBool();
+                ++proxyCompletedCount_;
+                continue;
+            }
+
+            const QString jobId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+            const QString partialPath = job.outputPath + QStringLiteral(".partial");
+            QFile::remove(partialPath);
+            const QString requestPath = QDir(QFileInfo(job.outputPath).absolutePath())
+                .filePath(QStringLiteral(".%1.proxy-job.json").arg(jobId));
+            const QString cancelPath = requestPath + QStringLiteral(".cancel");
+            const QString previousPath = requestPath + QStringLiteral(".previous");
+            if (QFileInfo(job.outputPath).isFile() &&
+                !QFile::rename(job.outputPath, previousPath)) {
+                if (proxyQueueProgress) {
+                    proxyQueueProgress->setToolTip(QStringLiteral("Cannot preserve existing proxy output"));
+                }
+                ++proxyCompletedCount_;
+                continue;
+            }
+            const QString backend = QSettings().value(
+                QStringLiteral("Proxy/WorkerBackend"), QStringLiteral("ffmpeg")).toString();
+            const bool hardwareAccel = QSettings().value(
+                QStringLiteral("Proxy/HardwareAccel"), false).toBool();
+            const bool audioReencode = QSettings().value(
+                QStringLiteral("Proxy/AudioReencode"), false).toBool();
                 const QString qualityPreset = job.scaleFactor >= 0.9 ? QStringLiteral("full")
                     : job.scaleFactor <= 0.125 ? QStringLiteral("eighth")
                     : job.scaleFactor <= 0.25 ? QStringLiteral("quarter")
@@ -5991,41 +6077,33 @@ public:
                     {QStringLiteral("cancelPath"), cancelPath},
                     {QStringLiteral("temporaryOutputPath"), partialPath}
                 };
-                if (requestFile.open(QIODevice::WriteOnly) &&
-                    requestFile.write(QJsonDocument(request).toJson(QJsonDocument::Compact)) >= 0 &&
-                    requestFile.commit()) {
-                    activeProxyWorker_ = new QProcess(owner_);
-                    activeProxyWorker_->setProcessChannelMode(QProcess::SeparateChannels);
-                    activeProxyWorker_->start(workerPath, {QStringLiteral("--request"), requestPath});
-                    activeProxyJob_ = job;
-                    activeProxyJobId_ = jobId;
-                    activeProxyCompleted_ = false;
-                    activeProxyReportedOutputBytes_ = -1;
-                    activeProxyRequestPath_ = requestPath;
-                    activeProxyCancelPath_ = cancelPath;
-                    activeProxyPreviousPath_ = previousPath;
-                    return;
+                if (!requestFile.open(QIODevice::WriteOnly) ||
+                    requestFile.write(QJsonDocument(request).toJson(QJsonDocument::Compact)) < 0 ||
+                    !requestFile.commit()) {
+                    if (QFileInfo(previousPath).isFile()) {
+                        QFile::rename(previousPath, job.outputPath);
+                    }
+                    ++proxyCompletedCount_;
+                    continue;
                 }
-                if (QFileInfo(previousPath).isFile()) {
-                    QFile::rename(previousPath, job.outputPath);
-                }
-            } else if (proxyQueueProgress) {
-                proxyQueueProgress->setToolTip(QStringLiteral("ArtifactProxyWorker.exe was not found"));
-            }
-        } else {
-            QImage img(job.inputPath);
-            if (!img.isNull()) {
-            const int targetW = qMax(64, static_cast<int>(img.width() * job.scaleFactor));
-            const int targetH = qMax(64, static_cast<int>(img.height() * job.scaleFactor));
-            const QImage scaled = img.scaled(targetW, targetH, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-            const int jpegQuality = job.scaleFactor >= 0.9 ? 92 : 80;
-            scaled.save(job.outputPath, "JPG", jpegQuality);
-            }
-        }
 
+                ProxyWorkerSlot& slot = proxyWorkerSlots_[idleIndex];
+                slot.process = new QProcess(owner_);
+                slot.process->setProcessChannelMode(QProcess::SeparateChannels);
+                slot.process->start(workerPath, {QStringLiteral("--request"), requestPath});
+                slot.job = job;
+                slot.jobId = jobId;
+                slot.completed = false;
+                slot.reportedOutputBytes = -1;
+                slot.requestPath = requestPath;
+                slot.cancelPath = cancelPath;
+                slot.previousPath = previousPath;
+                slot.outputBuffer.clear();
+                slot.fraction = 0.0;
+                slot.failureReason.clear();
+        }
         if (proxyQueueProgress) {
-            const int done = proxyQueueProgress->maximum() - static_cast<int>(proxyJobs_.size());
-            proxyQueueProgress->setValue(done);
+            proxyQueueProgress->setValue(proxyCompletedCount_);
         }
     }
 

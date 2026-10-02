@@ -5405,7 +5405,8 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer,
    drawWithClonerEffect(
        this, lensPass.transform,
         [renderer, impl, this, activeDeformerContext, pointMapper, &processedOperatorPaths, fill, stroke,
-        contentFieldWeight, geomAnimated, pathAnimated, lensOpacity = lensPass.opacity](const QMatrix4x4& transform, float weight) {
+        contentFieldWeight, geomAnimated, pathAnimated, operatorsAnimated,
+        lensOpacity = lensPass.opacity](const QMatrix4x4& transform, float weight) {
         const float opacity = this->opacity() * weight * contentFieldWeight * lensOpacity;
         const FloatColor drawFill(fill.r(), fill.g(), fill.b(), fill.a() * opacity);
         const FloatColor drawStroke(stroke.r(), stroke.g(), stroke.b(), stroke.a() * opacity);
@@ -5573,7 +5574,8 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer,
   drawWithClonerEffect(this, lensPass.transform,
                        [renderer, impl, this, activeDeformerContext, pointMapper, contentFieldWeight, geomDims,
                         renderFillColor, renderStrokeColor,
-                        pathAnimated, &evaluatedPathVertices, lensOpacity = lensPass.opacity](const QMatrix4x4& transform, float weight) {
+                        geomAnimated, pathAnimated, &evaluatedPathVertices,
+                        lensOpacity = lensPass.opacity](const QMatrix4x4& transform, float weight) {
     const auto fill = FloatColor(
         renderFillColor.r(), renderFillColor.g(), renderFillColor.b(),
         renderFillColor.a() * this->opacity() * contentFieldWeight * weight * lensOpacity);

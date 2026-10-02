@@ -750,7 +750,7 @@ void ArtifactEffectPresetCollection::loadDefaultPresets()
     innerShadowPreset->setDescription("Adds a soft shadow inside the layer alpha");
     innerShadowPreset->addParameter("Shadow Color", QColor(0, 0, 0, 255));
     innerShadowPreset->addParameter("Distance", 5.0f);
-    innerShadowPreset->addParameter("Angle", 45.0f);
+    innerShadowPreset->addParameter("Angle", 120.0f);
     innerShadowPreset->addParameter("Softness", 5.0f);
     innerShadowPreset->addParameter("Opacity", 50.0f);
 

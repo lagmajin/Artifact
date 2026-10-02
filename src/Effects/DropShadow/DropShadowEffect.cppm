@@ -37,7 +37,7 @@ class DropShadowCPUImpl : public ArtifactEffectImplBase {
 public:
     QColor shadowColor_ = QColor(0, 0, 0, 180);
     float  distance_    = 5.0f;
-    float  angle_       = 135.0f;
+    float  angle_       = 120.0f;
     float  softness_    = 8.0f;
     float  opacity_     = 75.0f;   // 0-100 (%)
 
@@ -54,10 +54,13 @@ public:
         const int W = srcImg.width();
         const int H = srcImg.height();
 
-        // angle を rad に変換し、オフセット計算（AE 準拠: 135° = 右下）
+        // Angle is the light source azimuth (0 = 3 o'clock, clockwise, math
+        // up), so the shadow is cast on the opposite side: 90 (light directly
+        // above) drops the shadow below, 120 (light upper left) casts to the
+        // lower right. Image Y grows downward, hence +sin for the vertical.
         const float rad   = angle_ * (3.14159265358979f / 180.0f);
-        const int   offX  = static_cast<int>(std::round( distance_ * std::cos(rad)));
-        const int   offY  = static_cast<int>(std::round(-distance_ * std::sin(rad)));
+        const int   offX  = static_cast<int>(std::round(-distance_ * std::cos(rad)));
+        const int   offY  = static_cast<int>(std::round( distance_ * std::sin(rad)));
 
         // ── 1. アルファチャンネル抽出 ──────────────────────────────────────
         cv::Mat srcAlpha(H, W, CV_32FC1);
@@ -173,7 +176,7 @@ public:
         if(!data||image.width()<=0||image.height()<=0){cpuImpl_.applyCPU(src,dst);return;}
         Diligent::TextureDesc td{};td.Name="DropShadow/Input";td.Type=Diligent::RESOURCE_DIM_TEX_2D;td.Width=image.width();td.Height=image.height();td.Format=Diligent::TEX_FORMAT_RGBA32_FLOAT;td.MipLevels=1;td.ArraySize=1;td.SampleCount=1;td.Usage=Diligent::USAGE_IMMUTABLE;td.BindFlags=Diligent::BIND_SHADER_RESOURCE;Diligent::TextureSubResData sub{};sub.pData=data;sub.Stride=static_cast<Diligent::Uint64>(image.width())*sizeof(float)*4ull;Diligent::TextureData init{};init.pSubResources=&sub;init.NumSubresources=1;Diligent::RefCntAutoPtr<Diligent::ITexture> input;device->CreateTexture(td,&init,&input);if(!input){cpuImpl_.applyCPU(src,dst);return;}
         auto od=td;od.Name="DropShadow/Output";od.Usage=Diligent::USAGE_DEFAULT;od.BindFlags=Diligent::BIND_SHADER_RESOURCE|Diligent::BIND_UNORDERED_ACCESS;if(!outputTex_||outputTex_->GetDesc().Width!=od.Width||outputTex_->GetDesc().Height!=od.Height||outputTex_->GetDesc().Format!=od.Format||outputTex_->GetDesc().BindFlags!=od.BindFlags){outputTex_.Release();device->CreateTexture(od,nullptr,&outputTex_);}if(!outputTex_){cpuImpl_.applyCPU(src,dst);return;}
-        const float rad = cpuImpl_.angle_ * (3.14159265358979f / 180.0f);struct Params{float ox,oy,soft,opacity;float color[4];};Diligent::BufferDesc bd{};bd.Name="DropShadow/Params";bd.Size=sizeof(Params);bd.Usage=Diligent::USAGE_DYNAMIC;bd.BindFlags=Diligent::BIND_UNIFORM_BUFFER;bd.CPUAccessFlags=Diligent::CPU_ACCESS_WRITE;Diligent::RefCntAutoPtr<Diligent::IBuffer> params;device->CreateBuffer(bd,nullptr,&params);if(!params){cpuImpl_.applyCPU(src,dst);return;}void*m=nullptr;context->MapBuffer(params,Diligent::MAP_WRITE,Diligent::MAP_FLAG_DISCARD,m);if(!m){cpuImpl_.applyCPU(src,dst);return;}Params p{cpuImpl_.distance_*std::cos(rad),-cpuImpl_.distance_*std::sin(rad),cpuImpl_.softness_,std::clamp(cpuImpl_.opacity_/100.0f,0.0f,1.0f),{cpuImpl_.shadowColor_.redF(),cpuImpl_.shadowColor_.greenF(),cpuImpl_.shadowColor_.blueF(),cpuImpl_.shadowColor_.alphaF()}};std::memcpy(m,&p,sizeof(p));context->UnmapBuffer(params,Diligent::MAP_WRITE);
+        const float rad = cpuImpl_.angle_ * (3.14159265358979f / 180.0f);struct Params{float ox,oy,soft,opacity;float color[4];};Diligent::BufferDesc bd{};bd.Name="DropShadow/Params";bd.Size=sizeof(Params);bd.Usage=Diligent::USAGE_DYNAMIC;bd.BindFlags=Diligent::BIND_UNIFORM_BUFFER;bd.CPUAccessFlags=Diligent::CPU_ACCESS_WRITE;Diligent::RefCntAutoPtr<Diligent::IBuffer> params;device->CreateBuffer(bd,nullptr,&params);if(!params){cpuImpl_.applyCPU(src,dst);return;}void*m=nullptr;context->MapBuffer(params,Diligent::MAP_WRITE,Diligent::MAP_FLAG_DISCARD,m);if(!m){cpuImpl_.applyCPU(src,dst);return;}Params p{-cpuImpl_.distance_*std::cos(rad),cpuImpl_.distance_*std::sin(rad),cpuImpl_.softness_,std::clamp(cpuImpl_.opacity_/100.0f,0.0f,1.0f),{cpuImpl_.shadowColor_.redF(),cpuImpl_.shadowColor_.greenF(),cpuImpl_.shadowColor_.blueF(),cpuImpl_.shadowColor_.alphaF()}};std::memcpy(m,&p,sizeof(p));context->UnmapBuffer(params,Diligent::MAP_WRITE);
         static Diligent::ShaderResourceVariableDesc vars[]={{Diligent::SHADER_TYPE_COMPUTE,"DropShadowParams",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},{Diligent::SHADER_TYPE_COMPUTE,"g_InputTexture",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},{Diligent::SHADER_TYPE_COMPUTE,"g_OutputTexture",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC}};ArtifactCore::GpuContext gc{device,context};ArtifactCore::ComputeExecutor ex{gc};ArtifactCore::ComputePipelineDesc pd{};pd.name="DropShadow/PSO";pd.shaderSource=kDropShadowHlsl;pd.entryPoint="main";pd.sourceLanguage=Diligent::SHADER_SOURCE_LANGUAGE_HLSL;pd.variables=vars;pd.variableCount=3;pd.defaultVariableType=Diligent::SHADER_RESOURCE_VARIABLE_TYPE_STATIC;if(!ex.build(pd)||!ex.createShaderResourceBinding(true)||!ex.setBuffer("DropShadowParams",params)||!ex.setTextureView("g_InputTexture",input->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE))||!ex.setTextureView("g_OutputTexture",outputTex_->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))){cpuImpl_.applyCPU(src,dst);return;}ex.dispatch(context,ArtifactCore::ComputeExecutor::makeDispatchAttribs(od.Width,od.Height,1,8,8,1),Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
         auto sd=od;sd.Name="DropShadow/Readback";sd.Usage=Diligent::USAGE_STAGING;sd.BindFlags=Diligent::BIND_NONE;sd.CPUAccessFlags=Diligent::CPU_ACCESS_READ;Diligent::RefCntAutoPtr<Diligent::ITexture> staging;device->CreateTexture(sd,nullptr,&staging);if(!staging){cpuImpl_.applyCPU(src,dst);return;}context->CopyTexture(Diligent::CopyTextureAttribs(outputTex_,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,staging,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION));context->Flush();context->WaitForIdle();Diligent::MappedTextureSubresource read{};context->MapTextureSubresource(staging,0,0,Diligent::MAP_READ,Diligent::MAP_FLAG_NONE,nullptr,read);if(!read.pData||!read.Stride){cpuImpl_.applyCPU(src,dst);return;}cv::Mat result(image.height(),image.width(),CV_32FC4,read.pData,read.Stride);dst.image().setFromCVMat(result,image.colorDescriptor());context->UnmapTextureSubresource(staging,0,0);
     }
@@ -210,8 +213,8 @@ void  DropShadowEffect::setDistance(float d) {
 
 float DropShadowEffect::angle() const { return angle_; }
 void  DropShadowEffect::setAngle(float a) {
+    angle_ = std::isfinite(a) ? a : 120.0f;
     // 正規化は不要 (任意 degree)
-    angle_ = std::isfinite(a) ? a : 135.0f;
     syncImpls();
 }
 
@@ -256,9 +259,9 @@ std::vector<AbstractProperty> DropShadowEffect::getProperties() const {
     angleProp.setName("Angle");
     angleProp.setType(PropertyType::Float);
     angleProp.setValue(angle_);
-    angleProp.setDefaultValue(135.0);
-    angleProp.setHardRange(-3600.0, 3600.0);
-    angleProp.setSoftRange(-180.0, 180.0);
+    angleProp.setDefaultValue(120.0);
+    angleProp.setHardRange(0.0, 360.0);
+    angleProp.setSoftRange(0.0, 360.0);
     angleProp.setStep(0.1);
     angleProp.setUnit(QStringLiteral("deg"));
 

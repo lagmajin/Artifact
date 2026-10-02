@@ -2,26 +2,56 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QJsonValue>
+#include <QSet>
 #include <QString>
 #include <QVariant>
 
 import Artifact.Layer.Abstract;
 import Artifact.Effect.Abstract;
-import Artifact.Effect.Keying.ChromaKey;
-import Artifact.Effect.Keying.DifferenceKey;
-import Artifact.Effect.Keying.IBKKeyer;
-import Artifact.Effect.Keying.LumaKey;
-import Artifact.Effect.Rasterizer.DifferenceMatte;
-import Artifact.Effect.Rasterizer.PosterizeTime;
+import Artifact.Service.Effect;
 import Memory.SharedPtr;
 import Property.SerializationBridge;
 
 // Qt preprocessor macros are not carried by an imported IFC.
+#undef QStringLiteral
 #define QStringLiteral(text) QString::fromUtf8(text)
 
 namespace Artifact {
 
 using namespace ArtifactCore;
+
+namespace {
+
+// Effect IDs are uniquified per layer on insertion, so a second instance of a
+// layer style serializes as `drop_shadow-2` while the factory only knows
+// `drop_shadow`. Prefer the ID as written and only fall back to the base type
+// when the catalog has no match, so a real effect ID that happens to end in
+// digits is never rewritten.
+QString resolveEffectFactoryId(const QString &effectId,
+                               const QSet<QString> &knownEffectIds) {
+  if (knownEffectIds.contains(effectId)) {
+    return effectId;
+  }
+  const qsizetype dash = effectId.lastIndexOf(QLatin1Char('-'));
+  if (dash > 0 && dash + 1 < effectId.size()) {
+    bool numericSuffix = true;
+    for (qsizetype i = dash + 1; i < effectId.size(); ++i) {
+      if (!effectId.at(i).isDigit()) {
+        numericSuffix = false;
+        break;
+      }
+    }
+    if (numericSuffix) {
+      const QString base = effectId.left(dash);
+      if (knownEffectIds.contains(base)) {
+        return base;
+      }
+    }
+  }
+  return effectId;
+}
+
+} // namespace
 
 void ArtifactAbstractLayer::applyPropertiesFromJson(const QJsonObject &obj) {
   // Default implementation: apply effect properties if matching effects exist
@@ -33,6 +63,16 @@ void ArtifactAbstractLayer::applyPropertiesFromJson(const QJsonObject &obj) {
   }
 
   const auto arr = obj.value("effects").toArray();
+  // Ids the effect service factory can actually build. Used to tell a real
+  // effect type apart from a per-layer uniquified copy of one.
+  QSet<QString> knownEffectIds;
+  if (auto *factory = ArtifactEffectService::instance()) {
+    const auto catalog = factory->availableEffects();
+    knownEffectIds.reserve(static_cast<int>(catalog.size()));
+    for (const auto &info : catalog) {
+      knownEffectIds.insert(info.id.toString());
+    }
+  }
   for (const auto &ev : arr) {
     if (!ev.isObject())
       continue;
@@ -42,27 +82,22 @@ void ArtifactAbstractLayer::applyPropertiesFromJson(const QJsonObject &obj) {
     UniString eid(eobj["id"].toString().toStdString());
     auto eff = getEffect(eid);
     if (!eff) {
+      // Rebuild the concrete effect type from the effect service factory rather
+      // than an id list kept in sync by hand. Effects such as the layer styles
+      // (drop_shadow / stroke / satin / effect.layerstyle.*) were previously
+      // serialized but never recreated, so they were silently dropped on
+      // reload even though the values were written correctly.
       const QString effectId = eobj.value(QStringLiteral("id")).toString();
-      if (effectId == QStringLiteral("chroma_key") ||
-          effectId == QStringLiteral("Effect.Keying.ChromaKey")) {
-        eff = makeShared<ChromaKeyEffect>();
-      } else if (effectId == QStringLiteral("luma_key") ||
-                 effectId == QStringLiteral("Effect.Keying.LumaKey")) {
-        eff = makeShared<LumaKeyEffect>();
-      } else if (effectId == QStringLiteral("difference_key") ||
-                 effectId == QStringLiteral("Effect.Keying.DifferenceKey")) {
-        eff = makeShared<DifferenceKeyEffect>();
-      } else if (effectId == QStringLiteral("difference_matte") ||
-                 effectId == QStringLiteral("Effect.Rasterizer.DifferenceMatte")) {
-        eff = makeShared<DifferenceMatteEffect>();
-      } else if (effectId == QStringLiteral("posterize_time") ||
-                 effectId == QStringLiteral("Effect.Rasterizer.PosterizeTime")) {
-        eff = makeShared<PosterizeTimeEffect>();
-      } else if (effectId == QStringLiteral("ibk_keyer") ||
-                 effectId == QStringLiteral("Effect.Keying.IBKKeyer")) {
-        eff = makeShared<IBKKeyerEffect>();
+      auto* service = ArtifactEffectService::instance();
+      if (service) {
+        auto created = service->createEffect(
+            EffectID(resolveEffectFactoryId(effectId, knownEffectIds)));
+        if (created) {
+          eff = makeShared(created.release(), [](ArtifactAbstractEffect *p) { delete p; });
+        }
       }
       if (eff) {
+        // Restore the layer-unique id (factory created the base id).
         eff->setEffectID(eid);
         addEffect(eff);
       }

@@ -53,7 +53,7 @@ namespace Artifact {
 namespace Ofx {
 
 struct OfxPluginDescriptor;
-struct ImageEffectState;
+export struct ImageEffectState;
 class ArtifactOfxHost;
 
 using namespace ArtifactCore;
@@ -1982,25 +1982,7 @@ public:
     return nullptr;
   }
 
-  SharedPtr<ImageEffectState> createRenderInstance(const UniString &identifier) {
-    auto *desc = findDescriptor(identifier);
-    if (!desc || !desc->descriptorState) return nullptr;
-    auto state = ArtifactCore::makeShared<ImageEffectState>();
-    state->properties = desc->descriptorState->properties;
-    state->paramSet = cloneParamSetState(desc->descriptorState->paramSet);
-    state->clips.clear();
-    for (const auto &kv : desc->descriptorState->clips) {
-      auto cs = std::make_unique<ClipState>();
-      cs->properties = kv.second->properties;
-      cs->clipName = kv.second->clipName;
-      // Re-point the owner at the new instance. Without this the clip handles
-      // the plugin receives never resolve back to the instance they came from,
-      // so every clipGetImage failed during the render action.
-      cs->owner = state.get();
-      state->clips[kv.first] = std::move(cs);
-    }
-    return state;
-  }
+  SharedPtr<ImageEffectState> createRenderInstance(const UniString &identifier);
 
   // False once a rescan has invalidated the library handle this descriptor
   // captured. Callers must treat a stale descriptor as "cannot render" and
@@ -2231,6 +2213,27 @@ private:
   // their library handle was unloaded by a rescan.
   std::uint64_t generation_ = 0;
 };
+
+SharedPtr<ImageEffectState> ArtifactOfxHost::createRenderInstance(
+    const UniString& identifier) {
+  auto *desc = findDescriptor(identifier);
+  if (!desc || !desc->descriptorState) return nullptr;
+  auto state = ArtifactCore::makeShared<ImageEffectState>();
+  state->properties = desc->descriptorState->properties;
+  state->paramSet = cloneParamSetState(desc->descriptorState->paramSet);
+  state->clips.clear();
+  for (const auto &kv : desc->descriptorState->clips) {
+    auto cs = std::make_unique<ClipState>();
+    cs->properties = kv.second->properties;
+    cs->clipName = kv.second->clipName;
+    // Re-point the owner at the new instance. Without this the clip handles
+    // the plugin receives never resolve back to the instance they came from,
+    // so every clipGetImage failed during the render action.
+    cs->owner = state.get();
+    state->clips[kv.first] = std::move(cs);
+  }
+  return state;
+}
 
 ImageEffectState *imageEffectForClip(const ClipState *clip) {
   // The clip carries a direct owner pointer. Walking the loaded-plugin list

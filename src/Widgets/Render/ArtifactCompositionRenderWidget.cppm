@@ -463,7 +463,7 @@ class ArtifactCompositionRenderWidget::Impl {
    if (!renderer_ || !panMomentumActive_) return false;
    const auto logicalDelta = panVelocityPerMs_ * 16.0f;
    renderer_->panBy(logicalDelta.x, logicalDelta.y);
-   panVelocityPerMs_ *= 0.86;
+   panVelocityPerMs_ = panVelocityPerMs_ * 0.86f;
    if (std::hypot(panVelocityPerMs_.x, panVelocityPerMs_.y) < 0.015f) {
     panVelocityPerMs_ = {};
     panMomentumActive_ = false;
@@ -1939,6 +1939,8 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
   if (event && !event->isAutoRepeat() && renderController) {
    if (renderController->isModalGizmoInteractionActive()) {
     const QPointF pointer = mapFromGlobal(QCursor::pos());
+    const auto logicalPointer =
+        ArtifactCore::Coordinates::screenLogicalPointFromQPointF(pointer);
     const auto finishModal = [&](bool committed) {
      const bool finished = committed
          ? renderController->commitModalGizmoInteraction()
@@ -1969,22 +1971,22 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
         event->key() == Qt::Key_Z) {
      const int axis = event->key() == Qt::Key_X ? 0
                     : event->key() == Qt::Key_Y ? 1 : 2;
-     if (renderController->constrainModalGizmoInteraction(axis, pointer)) {
+     if (renderController->constrainModalGizmoInteraction(axis, logicalPointer)) {
       event->accept();
       return;
      }
     }
-    const auto applyTypedNumericInput = [renderController, &pointer](float value) {
+    const auto applyTypedNumericInput = [renderController, logicalPointer](float value) {
      switch (renderController->gizmoMode()) {
      case TransformGizmo::Mode::Move:
       return renderController->setModalGizmoNumericInput(
-          ArtifactCore::Units::WorldLength{value}, pointer);
+          ArtifactCore::Units::WorldLength{value}, logicalPointer);
      case TransformGizmo::Mode::Rotate:
       return renderController->setModalGizmoNumericInput(
-          ArtifactCore::Units::Degrees{value}, pointer);
+          ArtifactCore::Units::Degrees{value}, logicalPointer);
      case TransformGizmo::Mode::Scale:
       return renderController->setModalGizmoNumericInput(
-          ArtifactCore::Units::ScaleFactor{value}, pointer);
+          ArtifactCore::Units::ScaleFactor{value}, logicalPointer);
      default:
       return false;
      }

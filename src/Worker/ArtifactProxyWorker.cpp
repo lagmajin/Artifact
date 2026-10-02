@@ -20,10 +20,15 @@
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
+#include <libavutil/audio_fifo.h>
+#include <libavutil/channel_layout.h>
 #include <libavutil/error.h>
 #include <libavutil/imgutils.h>
 #include <libavutil/opt.h>
+#include <libavutil/samplefmt.h>
+#include <libavutil/samplefmt.h>
 #include <libswscale/swscale.h>
+#include <libswresample/swresample.h>
 }
 
 #ifdef _WIN32
@@ -200,7 +205,7 @@ bool generateWithFfmpegNative(const QString& sourcePath, const QString& temporar
                               double scale, const QString& cancelPath,
                               const std::function<void(double)>& reportProgress,
                               QString* encoderName, QStringList* encoderCandidates,
-                              QString* failureReason, bool preferHardware)
+                              QString* failureReason, bool preferHardware, bool reencodeAudio)
 {
     AVFormatContext* input = nullptr;
     AVFormatContext* output = nullptr;
@@ -210,6 +215,17 @@ bool generateWithFfmpegNative(const QString& sourcePath, const QString& temporar
     AVPacket* encodedPacket = nullptr;
     AVFrame* decodedFrame = nullptr;
     AVFrame* encodedFrame = nullptr;
+    AVCodecContext* audioDecoder = nullptr;
+    AVCodecContext* audioEncoder = nullptr;
+    AVFrame* audioDecodedFrame = nullptr;
+    AVFrame* audioEncodedFrame = nullptr;
+    AVPacket* audioPacket = nullptr;
+    SwrContext* audioSwr = nullptr;
+    AVAudioFifo* audioFifo = nullptr;
+    int audioFrameSize = 0;
+    int64_t audioPts = 0;
+    AVChannelLayout audioSwrInLayout = {};
+    AVChannelLayout audioSwrOutLayout = {};
     SwsContext* scaler = nullptr;
     int result = 0;
     bool succeeded = false;
@@ -222,7 +238,7 @@ bool generateWithFfmpegNative(const QString& sourcePath, const QString& temporar
         if (result < 0) break;
         const int videoInputIndex = av_find_best_stream(input, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
         if (videoInputIndex < 0) { result = videoInputIndex; break; }
-        const int audioInputIndex = av_find_best_stream(input, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
+        int audioInputIndex = av_find_best_stream(input, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
         AVStream* videoInput = input->streams[videoInputIndex];
         const AVCodec* decoderCodec = avcodec_find_decoder(videoInput->codecpar->codec_id);
         if (!decoderCodec) { result = AVERROR_DECODER_NOT_FOUND; break; }
@@ -270,18 +286,89 @@ bool generateWithFfmpegNative(const QString& sourcePath, const QString& temporar
         videoOutput->time_base = encoder->time_base;
 
         AVStream* audioOutput = nullptr;
-        if (audioInputIndex >= 0) {
-            const AVCodecID audioCodecId = input->streams[audioInputIndex]->codecpar->codec_id;
-            if (output->oformat->audio_codec != AV_CODEC_ID_NONE &&
-                avformat_query_codec(output->oformat, audioCodecId, FF_COMPLIANCE_NORMAL) <= 0) {
+        AVStream* audioInputStream = audioInputIndex >= 0 ? input->streams[audioInputIndex] : nullptr;
+        // Stream-copy the source audio when the container accepts its codec.
+        // Otherwise (or when re-encoding is explicitly requested) decode and
+        // encode to AAC so hardware video acceleration is not forfeited.
+        const AVCodecID sourceAudioCodecId = audioInputStream
+            ? audioInputStream->codecpar->codec_id : AV_CODEC_ID_NONE;
+        const bool sourceAudioMuxable = sourceAudioCodecId != AV_CODEC_ID_NONE &&
+            output->oformat->audio_codec != AV_CODEC_ID_NONE &&
+            avformat_query_codec(output->oformat, sourceAudioCodecId, FF_COMPLIANCE_NORMAL) > 0;
+        const bool transcodeAudio = audioInputStream && reencodeAudio;
+        if (audioInputStream && !transcodeAudio) {
+            if (!sourceAudioMuxable) {
                 result = AVERROR_MUXER_NOT_FOUND;
                 break;
             }
             audioOutput = avformat_new_stream(output, nullptr);
             if (!audioOutput) { result = AVERROR(ENOMEM); break; }
-            result = avcodec_parameters_copy(audioOutput->codecpar, input->streams[audioInputIndex]->codecpar);
+            result = avcodec_parameters_copy(audioOutput->codecpar, audioInputStream->codecpar);
             if (result < 0) break;
-            audioOutput->time_base = input->streams[audioInputIndex]->time_base;
+            audioOutput->time_base = audioInputStream->time_base;
+        } else if (audioInputStream && transcodeAudio) {
+            const AVCodec* audioDecoderCodec = avcodec_find_decoder(sourceAudioCodecId);
+            const AVCodec* aacEncoderCodec = avcodec_find_encoder(AV_CODEC_ID_AAC);
+            if (!audioDecoderCodec || !aacEncoderCodec) { result = AVERROR_ENCODER_NOT_FOUND; break; }
+            audioDecoder = avcodec_alloc_context3(audioDecoderCodec);
+            audioEncoder = avcodec_alloc_context3(aacEncoderCodec);
+            if (!audioDecoder || !audioEncoder) { result = AVERROR(ENOMEM); break; }
+            result = avcodec_parameters_to_context(audioDecoder, audioInputStream->codecpar);
+            if (result < 0) break;
+            result = avcodec_open2(audioDecoder, audioDecoderCodec, nullptr);
+            if (result < 0) break;
+            audioEncoder->codec_type = AVMEDIA_TYPE_AUDIO;
+            audioEncoder->codec_id = AV_CODEC_ID_AAC;
+            audioEncoder->sample_rate = audioDecoder->sample_rate > 0
+                ? audioDecoder->sample_rate : 48000;
+            audioEncoder->ch_layout = audioDecoder->ch_layout;
+            audioEncoder->bit_rate = 128'000;
+            if (output->oformat->flags & AVFMT_GLOBALHEADER) {
+                audioEncoder->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+            }
+            result = avcodec_open2(audioEncoder, aacEncoderCodec, nullptr);
+            if (result < 0) break;
+            audioOutput = avformat_new_stream(output, nullptr);
+            if (!audioOutput) { result = AVERROR(ENOMEM); break; }
+            result = avcodec_parameters_from_context(audioOutput->codecpar, audioEncoder);
+            if (result < 0) break;
+            audioOutput->time_base = audioEncoder->time_base;
+            audioDecodedFrame = av_frame_alloc();
+            audioEncodedFrame = av_frame_alloc();
+            audioPacket = av_packet_alloc();
+            if (!audioDecodedFrame || !audioEncodedFrame || !audioPacket) {
+                result = AVERROR(ENOMEM); break;
+            }
+            result = av_channel_layout_copy(&audioSwrInLayout, &audioDecoder->ch_layout);
+            if (result < 0) break;
+            result = av_channel_layout_copy(&audioSwrOutLayout, &audioEncoder->ch_layout);
+            if (result < 0) break;
+            // Configure through the option API rather than swr_alloc_set_opts2,
+            // whose signature differs between FFmpeg 6/7 and 8+.
+            audioSwr = swr_alloc();
+            if (!audioSwr) { result = AVERROR(ENOMEM); break; }
+            const int outRate = audioEncoder->sample_rate;
+            const int inRate = audioDecoder->sample_rate > 0
+                ? audioDecoder->sample_rate : outRate;
+            av_opt_set_chlayout(audioSwr, "in_chlayout", &audioSwrInLayout, 0);
+            av_opt_set_chlayout(audioSwr, "out_chlayout", &audioSwrOutLayout, 0);
+            av_opt_set_int(audioSwr, "in_sample_rate", inRate, 0);
+            av_opt_set_int(audioSwr, "out_sample_rate", outRate, 0);
+            av_opt_set_sample_fmt(audioSwr, "in_sample_fmt", audioDecoder->sample_fmt, 0);
+            av_opt_set_sample_fmt(audioSwr, "out_sample_fmt", audioEncoder->sample_fmt, 0);
+            result = swr_init(audioSwr);
+            if (result < 0) break;
+            audioFrameSize = audioEncoder->frame_size > 0 ? audioEncoder->frame_size : 1024;
+            audioFifo = av_audio_fifo_alloc(audioEncoder->sample_fmt,
+                                            audioEncoder->ch_layout.nb_channels,
+                                            audioFrameSize);
+            if (!audioFifo) { result = AVERROR(ENOMEM); break; }
+            audioEncodedFrame->format = audioEncoder->sample_fmt;
+            audioEncodedFrame->nb_samples = audioFrameSize;
+            audioEncodedFrame->ch_layout = audioEncoder->ch_layout;
+            audioEncodedFrame->sample_rate = audioEncoder->sample_rate;
+            result = av_frame_get_buffer(audioEncodedFrame, 0);
+            if (result < 0) break;
         }
         if (!(output->oformat->flags & AVFMT_NOFILE)) {
             result = avio_open(&output->pb, temporaryOutputPath.toUtf8().constData(), AVIO_FLAG_WRITE);
@@ -323,6 +410,85 @@ bool generateWithFfmpegNative(const QString& sourcePath, const QString& temporar
             if (sendResult < 0) return sendResult;
             return writeEncoded();
         };
+
+        // Moves every packet the audio encoder has ready into the muxer.
+        const auto drainAudioPackets = [&]() -> int {
+            while (true) {
+                const int receiveResult = avcodec_receive_packet(audioEncoder, audioPacket);
+                if (receiveResult == AVERROR(EAGAIN) || receiveResult == AVERROR_EOF) return 0;
+                if (receiveResult < 0) return receiveResult;
+                av_packet_rescale_ts(audioPacket, audioEncoder->time_base, audioOutput->time_base);
+                audioPacket->stream_index = audioOutput->index;
+                audioPacket->pos = -1;
+                const int writeResult = av_interleaved_write_frame(output, audioPacket);
+                av_packet_unref(audioPacket);
+                if (writeResult < 0) return writeResult;
+            }
+        };
+
+        // Pulls frames the audio decoder can produce, resamples them into the
+        // FIFO, and submits every whole encoder frame that becomes available.
+        // Buffering across decoded frames keeps A/V in sync when the source
+        // and output sample rates or channel layouts differ.
+        const auto drainAudioFrames = [&]() -> int {
+            while (true) {
+                const int receiveResult = avcodec_receive_frame(audioDecoder, audioDecodedFrame);
+                if (receiveResult == AVERROR(EAGAIN) || receiveResult == AVERROR_EOF) return 0;
+                if (receiveResult < 0) return receiveResult;
+                const int converted = swr_convert(audioSwr,
+                    audioEncodedFrame->extended_data, audioEncodedFrame->nb_samples,
+                    audioDecodedFrame->extended_data, audioDecodedFrame->nb_samples);
+                av_frame_unref(audioDecodedFrame);
+                if (converted < 0) return converted;
+                if (converted > 0 &&
+                    av_audio_fifo_write(audioFifo,
+                        reinterpret_cast<void* const*>(audioEncodedFrame->extended_data),
+                        converted) < 0) {
+                    return AVERROR(ENOMEM);
+                }
+                while (av_audio_fifo_size(audioFifo) >= audioFrameSize) {
+                    const int readResult = av_audio_fifo_read(audioFifo,
+                        reinterpret_cast<void* const*>(audioEncodedFrame->extended_data),
+                        audioFrameSize);
+                    if (readResult < audioFrameSize) return AVERROR_BUG;
+                    audioEncodedFrame->pts = audioPts;
+                    audioPts += audioFrameSize;
+                    const int sendResult = avcodec_send_frame(audioEncoder, audioEncodedFrame);
+                    if (sendResult < 0) return sendResult;
+                    const int drainResult = drainAudioPackets();
+                    if (drainResult < 0) return drainResult;
+                }
+            }
+        };
+
+        // Encodes whatever remains in the FIFO, padding the tail with silence
+        // so the fixed-size AAC encoder always receives a complete frame.
+        const auto flushAudioTail = [&]() -> int {
+            while (av_audio_fifo_size(audioFifo) > 0) {
+                const int available = av_audio_fifo_size(audioFifo);
+                const int readResult = av_audio_fifo_read(audioFifo,
+                    reinterpret_cast<void* const*>(audioEncodedFrame->extended_data),
+                    available);
+                if (readResult < 0) return readResult;
+                if (available < audioFrameSize) {
+                    const int pad = audioFrameSize - available;
+                    if (av_samples_set_silence(audioEncodedFrame->data, available, pad,
+                            audioEncodedFrame->ch_layout.nb_channels,
+                            static_cast<AVSampleFormat>(audioEncodedFrame->format)) < 0) {
+                        return AVERROR(EINVAL);
+                    }
+                }
+                audioEncodedFrame->nb_samples = audioFrameSize;
+                audioEncodedFrame->pts = audioPts;
+                audioPts += audioFrameSize;
+                const int sendResult = avcodec_send_frame(audioEncoder, audioEncodedFrame);
+                if (sendResult < 0) return sendResult;
+                const int drainResult = drainAudioPackets();
+                if (drainResult < 0) return drainResult;
+            }
+            return 0;
+        };
+
         while ((result = av_read_frame(input, packet)) >= 0) {
             if (!cancelPath.isEmpty() && QFileInfo(cancelPath).exists()) {
                 result = AVERROR_EXIT;
@@ -356,12 +522,20 @@ bool generateWithFfmpegNative(const QString& sourcePath, const QString& temporar
                 if (result == AVERROR(EAGAIN)) result = 0;
                 if (result < 0) break;
             } else if (packet->stream_index == audioInputIndex && audioOutput) {
-                av_packet_rescale_ts(packet, input->streams[audioInputIndex]->time_base, audioOutput->time_base);
-                packet->stream_index = audioOutput->index;
-                packet->pos = -1;
-                result = av_interleaved_write_frame(output, packet);
-                av_packet_unref(packet);
-                if (result < 0) break;
+                if (transcodeAudio) {
+                    result = avcodec_send_packet(audioDecoder, packet);
+                    av_packet_unref(packet);
+                    if (result < 0) break;
+                    result = drainAudioFrames();
+                    if (result < 0) break;
+                } else {
+                    av_packet_rescale_ts(packet, input->streams[audioInputIndex]->time_base, audioOutput->time_base);
+                    packet->stream_index = audioOutput->index;
+                    packet->pos = -1;
+                    result = av_interleaved_write_frame(output, packet);
+                    av_packet_unref(packet);
+                    if (result < 0) break;
+                }
             } else {
                 av_packet_unref(packet);
             }
@@ -384,6 +558,19 @@ bool generateWithFfmpegNative(const QString& sourcePath, const QString& temporar
         if (result < 0) break;
         result = encodeFrame(nullptr);
         if (result < 0) break;
+        if (transcodeAudio) {
+            // Drain the audio decoder, encode the tail, then flush the encoder.
+            result = avcodec_send_packet(audioDecoder, nullptr);
+            if (result < 0) break;
+            result = drainAudioFrames();
+            if (result < 0) break;
+            result = flushAudioTail();
+            if (result < 0) break;
+            result = avcodec_send_frame(audioEncoder, nullptr);
+            if (result < 0 && result != AVERROR_EOF && result != AVERROR(EAGAIN)) break;
+            result = drainAudioPackets();
+            if (result < 0) break;
+        }
         result = av_write_trailer(output);
         if (result < 0) break;
         succeeded = QFileInfo(temporaryOutputPath).isFile();
@@ -393,6 +580,18 @@ bool generateWithFfmpegNative(const QString& sourcePath, const QString& temporar
     av_packet_free(&encodedPacket);
     av_frame_free(&decodedFrame);
     av_frame_free(&encodedFrame);
+    av_packet_free(&audioPacket);
+    av_frame_free(&audioDecodedFrame);
+    av_frame_free(&audioEncodedFrame);
+    if (audioFifo) av_audio_fifo_free(audioFifo);
+    if (audioSwr) {
+        swr_close(audioSwr);
+        swr_free(&audioSwr);
+    }
+    av_channel_layout_uninit(&audioSwrInLayout);
+    av_channel_layout_uninit(&audioSwrOutLayout);
+    avcodec_free_context(&audioDecoder);
+    avcodec_free_context(&audioEncoder);
     sws_freeContext(scaler);
     avcodec_free_context(&decoder);
     avcodec_free_context(&encoder);
@@ -672,22 +871,19 @@ int main(int argc, char* argv[])
     QStringList encoderCandidates;
     QString failureReason;
     bool generated = false;
-    if (!audioReencode && (requestedBackend == QStringLiteral("native") || requestedBackend == QStringLiteral("auto"))) {
+    if (requestedBackend == QStringLiteral("native") || requestedBackend == QStringLiteral("auto")) {
         generated = generateWithFfmpegNative(sourcePath, temporaryOutputPath, scale, cancelPath,
             [&output, &jobId](double fraction) {
                 writeMessage(output, {{QStringLiteral("type"), QStringLiteral("progress")},
                                       {QStringLiteral("jobId"), jobId},
                                       {QStringLiteral("fraction"), fraction}});
-            }, &selectedEncoder, &encoderCandidates, &failureReason, preferHardware);
+            }, &selectedEncoder, &encoderCandidates, &failureReason, preferHardware,
+            audioReencode);
         selectedBackend = QStringLiteral("native");
         if (!generated && requestedBackend == QStringLiteral("native")) return fail(output, jobId, failureReason);
     }
-    if (audioReencode && requestedBackend == QStringLiteral("native")) {
-        generated = generateWithFfmpeg(sourcePath, temporaryOutputPath, scale, cancelPath, &failureReason);
-        selectedBackend = QStringLiteral("ffmpeg");
-    }
 #ifdef _WIN32
-    if (!audioReencode && !generated &&
+    if (!generated &&
         (requestedBackend == QStringLiteral("auto") || requestedBackend == QStringLiteral("mediafoundation"))) {
         generated = generateWithMediaFoundation(sourcePath, temporaryOutputPath, scale, cancelPath, &failureReason);
         if (generated) selectedBackend = QStringLiteral("mediaFoundation");

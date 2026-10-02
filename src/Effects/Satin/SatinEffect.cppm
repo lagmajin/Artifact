@@ -55,10 +55,11 @@ public:
         const int W = srcImg.width();
         const int H = srcImg.height();
 
-        // angle を rad に変換し、オフセット計算
+        // Angle is the light source azimuth (0 = 3 o'clock, clockwise, math
+        // up); the shadow is cast opposite the light. See DropShadowEffect.
         const float rad   = angle_ * (3.14159265358979f / 180.0f);
-        const int   offX  = static_cast<int>(std::round( distance_ * std::cos(rad)));
-        const int   offY  = static_cast<int>(std::round(-distance_ * std::sin(rad)));
+        const int   offX  = static_cast<int>(std::round(-distance_ * std::cos(rad)));
+        const int   offY  = static_cast<int>(std::round( distance_ * std::sin(rad)));
 
         // ── 1. アルファチャンネル抽出 ──────────────────────────────────────
         cv::Mat srcAlpha(H, W, CV_32FC1);

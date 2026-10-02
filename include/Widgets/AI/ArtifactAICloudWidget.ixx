@@ -115,6 +115,7 @@ private:
   QLineEdit *mcpToolMethodEdit_ = nullptr;
   QTextEdit *mcpToolArgsEdit_ = nullptr;
   QPushButton *mcpToolCallButton_ = nullptr;
+  QString selectedMcpToolName_;
   QTextEdit *promptEdit_ = nullptr;
   QPushButton *sendButton_ = nullptr;
   QLabel *requestStatusLabel_ = nullptr;
