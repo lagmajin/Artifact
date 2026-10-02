@@ -5529,6 +5529,11 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         applyMaterialPreset(ArtifactCore::Material::makeStudioPreset(
             ArtifactCore::MaterialPresetKind::Glass));
       });
+      materialMenu->addSeparator();
+      QAction* browseMaterialPresetsAction = materialMenu->addAction(
+          tt("layer_panel.menu_material_browse", "Browse Material Presets..."));
+      browseMaterialPresetsAction->setData(QVariantMap{
+          {QStringLiteral("kind"), QStringLiteral("material_preset_browser")}});
     }
     if (layer->className().toQString() == QStringLiteral("ArtifactTextLayer")) {
       QMenu* textAnimatorMenu = menu.addMenu(tt("layer_panel.menu_text_animator", "Text Animator"));
@@ -6685,6 +6690,56 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     if (chosenAction) {
       const QVariantMap data = chosenAction->data().toMap();
       const QString kind = data.value(QStringLiteral("kind")).toString();
+      if (kind == QStringLiteral("material_preset_browser")) {
+        const QStringList presetNames = {
+            QStringLiteral("Matte"), QStringLiteral("Metal"),
+            QStringLiteral("Plastic"), QStringLiteral("Glass")};
+        const QVector<ArtifactCore::MaterialPresetKind> presetKinds = {
+            ArtifactCore::MaterialPresetKind::Matte,
+            ArtifactCore::MaterialPresetKind::Metal,
+            ArtifactCore::MaterialPresetKind::Plastic,
+            ArtifactCore::MaterialPresetKind::Glass};
+        QStringList presetChoices;
+        for (int i = 0; i < presetKinds.size(); ++i) {
+          const auto preset =
+              ArtifactCore::Material::makeStudioPreset(presetKinds.at(i));
+          presetChoices.append(
+              QStringLiteral("%1 — Roughness %2%, Metallic %3%, Transmission %4%, IOR %5")
+                  .arg(presetNames.at(i))
+                  .arg(qRound(preset.roughness() * 100.0f))
+                  .arg(qRound(preset.metallic() * 100.0f))
+                  .arg(qRound(preset.transmission() * 100.0f))
+                  .arg(preset.ior(), 0, 'f', 2));
+        }
+        bool accepted = false;
+        const QString selectedPreset = QInputDialog::getItem(
+            this, tt("layer_panel.material_preset_browser_title", "3D Material Presets"),
+            tt("layer_panel.material_preset_browser_prompt",
+               "Choose a preset. Values come from the shared Studio preset definition."),
+            presetChoices, 0, false, &accepted);
+        if (!accepted) return;
+        const int presetIndex = presetChoices.indexOf(selectedPreset);
+        if (!layer || presetIndex < 0 || presetIndex >= presetKinds.size()) return;
+        const auto preset = ArtifactCore::Material::makeStudioPreset(
+            presetKinds.at(presetIndex));
+        if (!applyLayerPropertyValues(
+                layer, QStringLiteral("Apply 3D Material Preset"),
+                {{QStringLiteral("material.base.color"), preset.baseColor()},
+                 {QStringLiteral("material.metallic"), preset.metallic()},
+                 {QStringLiteral("material.roughness"), preset.roughness()},
+                 {QStringLiteral("material.specular"), preset.specular()},
+                 {QStringLiteral("material.transmission"), preset.transmission()},
+                 {QStringLiteral("material.ior"), preset.ior()}})) {
+          return;
+        }
+        if (auto current = safeCompositionLookup(impl_->compositionId)) {
+          ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+              LayerChangedEvent{current->id().toString(), layer->id().toString(),
+                                LayerChangedEvent::ChangeType::Modified});
+        }
+        updateLayout();
+        return;
+      }
       bool matteIndexOk = false;
       const int matteIndex = data.value(QStringLiteral("index")).toInt(&matteIndexOk);
       if (!matteIndexOk) {
