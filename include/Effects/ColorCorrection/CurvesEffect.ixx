@@ -1,5 +1,6 @@
 module;
 #include <utility>
+#include <cstdint>
 #include <vector>
 #include <QString>
 #include <QVariant>
@@ -31,6 +32,7 @@ private:
     float strength_ = 0.5f;
     int posterizeLevels_ = 4;
     std::vector<ArtifactCore::CurvePoint> customPoints_;
+    ArtifactCore::SharedPtr<const GpuEffectLookupTable> lookupTable_;
 
     void syncImpls();
     void applyPreset(ArtifactCore::ColorCurves& curves) const;
@@ -52,6 +54,11 @@ public:
     void setPropertyValue(const UniString& name, const QVariant& value) override;
 
     bool supportsGPU() const override { return true; }
+    std::uint32_t gpuGenericKey() const override;
+    GpuRasterEffectDomain gpuRasterEffectDomain() const override {
+        return GpuRasterEffectDomain::Spatial;
+    }
+    bool appendGpuSpatialNodes(GpuSpatialEffectStack& stack) const override;
 };
 
 } // namespace Artifact

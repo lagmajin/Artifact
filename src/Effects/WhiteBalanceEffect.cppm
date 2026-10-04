@@ -10,6 +10,8 @@ module;
 #include <cstring>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
+#include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
+#include <DiligentCore/Graphics/GraphicsEngine/interface/Buffer.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
 
 module Artifact.Effect.WhiteBalance;
@@ -17,6 +19,8 @@ module Artifact.Effect.WhiteBalance;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
+import Image.ImageSurfaceView;
+import Graphics.SurfaceColorContract;
 import Property.Abstract;
 import Utils.String.UniString;
 import Core.Parallel;
@@ -48,15 +52,18 @@ void main(uint3 dtid : SV_DispatchThreadID)
 {
     if (dtid.x >= g_Width || dtid.y >= g_Height) return;
     float4 pixel = g_InputTexture[dtid.xy];
+    if (pixel.a <= 0.0 || (g_P0 == 6500.0 && g_P1 == 0.0 && g_P2 == 0.0)) {
+        g_OutputTexture[dtid.xy] = pixel; return;
+    }
     const float3 reference = whiteBalanceKelvinToRgb(6500.0f);
     const float3 target = whiteBalanceKelvinToRgb(g_P0);
     const float3 correction = target / max(reference, 0.001f);
     const float tintGreen = 1.0f + g_P1 * 0.5f;
     const float tintMagenta = 1.0f - g_P1 * 0.5f;
     const float brightness = exp2(g_P2);
-    pixel.r = saturate(pixel.r * correction.r * tintMagenta * brightness);
-    pixel.g = saturate(pixel.g * correction.g * tintGreen * brightness);
-    pixel.b = saturate(pixel.b * correction.b * tintMagenta * brightness);
+    pixel.r = saturate(pixel.r / pixel.a * correction.r * tintMagenta * brightness) * pixel.a;
+    pixel.g = saturate(pixel.g / pixel.a * correction.g * tintGreen * brightness) * pixel.a;
+    pixel.b = saturate(pixel.b / pixel.a * correction.b * tintMagenta * brightness) * pixel.a;
     g_OutputTexture[dtid.xy] = pixel;
 }
 )";
@@ -86,6 +93,7 @@ public:
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
         dst = src;
+        if (temperature_ == 6500.0f && tint_ == 0.0f && brightness_ == 0.0f) return;
         float* pixels = dst.image().rgba32fData();
         if (!pixels) {
             return;
@@ -93,6 +101,8 @@ public:
 
         const int width = dst.image().width();
         const int height = dst.image().height();
+        const auto descriptor = src.image().colorDescriptor();
+        const bool premultiplied = descriptor.alphaMode == ArtifactCore::SurfaceAlphaMode::Premultiplied;
         float refR = 1.0f;
         float refG = 1.0f;
         float refB = 1.0f;
@@ -110,19 +120,29 @@ public:
         const float tintM = 1.0f - tint_ * 0.5f;
         const float brightMul = std::pow(2.0f, brightness_);
 
-        Parallel::For(0, height, width * height, [&](int y) {
-            for (int x = 0; x < width; ++x) {
-                float* p = pixels + (static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)) * 4u;
-                p[2] = std::clamp(p[2] * corrR * tintM * brightMul, 0.0f, 1.0f);
-                p[1] = std::clamp(p[1] * corrG * tintG * brightMul, 0.0f, 1.0f);
-                p[0] = std::clamp(p[0] * corrB * tintM * brightMul, 0.0f, 1.0f);
-            }
+        // Invalid/unknown layouts leave the copied input unchanged.
+        (void)ArtifactCore::withMutableColorFloat4View(dst.image().surfaceView(), pixels, [&](const auto& view) {
+            Parallel::For(0, height, width * height, [&](int y) {
+                const auto row = view.row(y);
+                for (int x = 0; x < width; ++x) {
+                    auto p = row[x];
+                    if (premultiplied && p.a <= 0.0f) continue;
+                    const float alpha = premultiplied ? p.a : 1.0f;
+                    p.r = std::clamp(p.r / alpha * corrR * tintM * brightMul, 0.0f, 1.0f) * alpha;
+                    p.g = std::clamp(p.g / alpha * corrG * tintG * brightMul, 0.0f, 1.0f) * alpha;
+                    p.b = std::clamp(p.b / alpha * corrB * tintM * brightMul, 0.0f, 1.0f) * alpha;
+                }
+            });
         });
     }
 };
 
 class WhiteBalanceGPUImpl : public ArtifactEffectImplBase {
 public:
+    // The cached textures belong to this leased device for their whole lifetime.
+    SharedRenderDeviceLease deviceLease_;
+    Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device_;
+    Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context_;
     Diligent::RefCntAutoPtr<Diligent::ITexture> outputTex_;
     Diligent::RefCntAutoPtr<Diligent::ITexture> stagingTex_;
     float temperature_ = 6500.0f;
@@ -130,14 +150,23 @@ public:
     float brightness_ = 0.0f;
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
+        cpuImpl_.temperature_ = temperature_;
+        cpuImpl_.tint_ = tint_;
+        cpuImpl_.brightness_ = brightness_;
         cpuImpl_.applyCPU(src, dst);
     }
 
     void applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
-        Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device;Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context;if(!acquireSharedRenderDeviceForCurrentBackend(device,context)){applyCPU(src,dst);return;}
+        if (temperature_ == 6500.0f && tint_ == 0.0f && brightness_ == 0.0f) {dst = src;return;}
+        if (!device_ && !deviceLease_.acquire(device_,context_)) {applyCPU(src,dst);return;}
+        const auto& device = device_;
+        const auto& context = context_;
         const auto& image=src.image();const float* pixels=image.rgba32fData();if(!pixels||image.width()<=0||image.height()<=0){applyCPU(src,dst);return;}
         float rr=1,rg=1,rb=1,tr=1,tg=1,tb=1;kelvinToRGB(6500,rr,rg,rb);kelvinToRGB(temperature_,tr,tg,tb);
         Params values{tr/std::max(rr,0.001f),tg/std::max(rg,0.001f),tb/std::max(rb,0.001f),1.0f+tint_*0.5f,1.0f-tint_*0.5f,std::pow(2.0f,brightness_)};
+        // This compatibility API uploads raw storage and returns the same order.
+        values.bgra = image.colorDescriptor().channelOrder == ArtifactCore::SurfaceChannelOrder::BGRA ? 1.0f : 0.0f;
+        values.premultiplied = image.colorDescriptor().alphaMode == ArtifactCore::SurfaceAlphaMode::Premultiplied ? 1.0f : 0.0f;
         Diligent::TextureDesc desc{};desc.Name="WhiteBalance/Input";desc.Type=Diligent::RESOURCE_DIM_TEX_2D;desc.Width=image.width();desc.Height=image.height();desc.Format=Diligent::TEX_FORMAT_RGBA32_FLOAT;desc.MipLevels=1;desc.ArraySize=1;desc.SampleCount=1;desc.Usage=Diligent::USAGE_IMMUTABLE;desc.BindFlags=Diligent::BIND_SHADER_RESOURCE;Diligent::TextureSubResData sub{};sub.pData=pixels;sub.Stride=static_cast<Diligent::Uint64>(image.width())*sizeof(float)*4ull;Diligent::TextureData init{};init.pSubResources=&sub;init.NumSubresources=1;Diligent::RefCntAutoPtr<Diligent::ITexture> input;device->CreateTexture(desc,&init,&input);if(!input){applyCPU(src,dst);return;}
         Diligent::TextureDesc outDesc=desc;outDesc.Name="WhiteBalance/Output";outDesc.Usage=Diligent::USAGE_DEFAULT;outDesc.BindFlags=Diligent::BIND_SHADER_RESOURCE|Diligent::BIND_UNORDERED_ACCESS;if(!outputTex_||outputTex_->GetDesc().Width!=outDesc.Width||outputTex_->GetDesc().Height!=outDesc.Height||outputTex_->GetDesc().Format!=outDesc.Format||outputTex_->GetDesc().BindFlags!=outDesc.BindFlags){outputTex_.Release();device->CreateTexture(outDesc,nullptr,&outputTex_);}if(!outputTex_){applyCPU(src,dst);return;}
         Diligent::BufferDesc cbDesc{};cbDesc.Name="WhiteBalance/Params";cbDesc.Size=sizeof(Params);cbDesc.Usage=Diligent::USAGE_DYNAMIC;cbDesc.BindFlags=Diligent::BIND_UNIFORM_BUFFER;cbDesc.CPUAccessFlags=Diligent::CPU_ACCESS_WRITE;Diligent::RefCntAutoPtr<Diligent::IBuffer> params;device->CreateBuffer(cbDesc,nullptr,&params);if(!params){applyCPU(src,dst);return;}void* mapped=nullptr;context->MapBuffer(params,Diligent::MAP_WRITE,Diligent::MAP_FLAG_DISCARD,mapped);if(!mapped){applyCPU(src,dst);return;}std::memcpy(mapped,&values,sizeof(values));context->UnmapBuffer(params,Diligent::MAP_WRITE);
@@ -146,10 +175,26 @@ public:
     }
 
 private:
-    struct Params{float corrR,corrG,corrB,tintG,tintM,brightMul;float pad0=0.0f,pad1=0.0f;};
+    struct Params{float corrR,corrG,corrB,tintG,tintM,brightMul;float bgra=0.0f,premultiplied=0.0f;};
+    static_assert(sizeof(Params) == 32);
     static constexpr const char* kHlsl=R"(
-Texture2D<float4> g_InputTexture:register(t0);RWTexture2D<float4> g_OutputTexture:register(u0);cbuffer WhiteBalanceParams:register(b0){float g_CorrR;float g_CorrG;float g_CorrB;float g_TintG;float g_TintM;float g_BrightMul;float2 g_Pad;}
-[numthreads(8,8,1)]void main(uint3 id:SV_DispatchThreadID){uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;float4 p=g_InputTexture[id.xy];p.r=saturate(p.r*g_CorrR*g_TintM*g_BrightMul);p.g=saturate(p.g*g_CorrG*g_TintG*g_BrightMul);p.b=saturate(p.b*g_CorrB*g_TintM*g_BrightMul);g_OutputTexture[id.xy]=p;}
+Texture2D<float4> g_InputTexture:register(t0);
+RWTexture2D<float4> g_OutputTexture:register(u0);
+cbuffer WhiteBalanceParams:register(b0) {
+    float g_CorrR; float g_CorrG; float g_CorrB; float g_TintG;
+    float g_TintM; float g_BrightMul; float g_Bgra; float g_Premultiplied;
+}
+[numthreads(8,8,1)] void main(uint3 id:SV_DispatchThreadID) {
+    uint w,h; g_OutputTexture.GetDimensions(w,h);
+    if(id.x>=w||id.y>=h) return;
+    float4 p=g_InputTexture[id.xy];
+    if(g_Premultiplied>0.5 && p.a<=0.0) {g_OutputTexture[id.xy]=p;return;}
+    float alpha=g_Premultiplied>0.5 ? p.a : 1.0;
+    float3 c=(g_Bgra>0.5 ? p.bgr : p.rgb)/alpha;
+    c=saturate(c*float3(g_CorrR*g_TintM,g_CorrG*g_TintG,g_CorrB*g_TintM)*g_BrightMul)*alpha;
+    p.rgb=g_Bgra>0.5 ? c.bgr : c;
+    g_OutputTexture[id.xy]=p;
+}
 )";
     WhiteBalanceCPUImpl cpuImpl_;
 };

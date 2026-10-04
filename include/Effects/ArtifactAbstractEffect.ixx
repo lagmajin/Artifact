@@ -81,16 +81,23 @@ enum class GpuRasterEffectDomain : std::uint8_t {
     Spatial,
 };
 
+// Immutable snapshot prepared on parameter changes, shared by render plans.
+// Keeping it outside the node avoids copying 4 KiB for every spatial effect.
+struct GpuEffectLookupTable {
+    std::array<float, 256 * 4> rgba{};
+    bool identity = false;
+};
+
 struct GpuSpatialEffectNode {
     GpuSpatialEffectKind kind = GpuSpatialEffectKind::SeparableGaussianBlur;
-    // Dedicated spatial effects may need more than the eight parameters
-    // exposed by the generic resident shader. Keep this fixed-size and
-    // allocation-free so the stack remains safe in the render hot path.
+    // Spatial and generic resident shaders share sixteen parameters. Keep
+    // this fixed-size and allocation-free in the render hot path.
     std::array<float, 16> parameters{};
     std::uint8_t resolutionScaledParameterMask = 0;
     // Key into the shared generic-resident shader registry. Only meaningful
     // when kind == GpuSpatialEffectKind::Generic; ignored otherwise.
     std::uint32_t genericKey = 0;
+    SharedPtr<const GpuEffectLookupTable> lookupTable;
     // Which retained frame, relative to the frame being rendered, this node
     // reads as its second texture input.  0 means "no history input" and the
     // shader keeps its single-input contract.  -1 is the previous frame.
@@ -121,6 +128,7 @@ struct GpuGenericShaderRecord {
     const char* shaderBody = nullptr;
     const char* entryPoint = "main";
     GpuGenericResourceKind resource = GpuGenericResourceKind::Filter;
+    bool usesLookupTable = false;
 };
 
 constexpr std::uint32_t gpuGenericKeyFromString(const char* text) {

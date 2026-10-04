@@ -1,5 +1,7 @@
 module;
 #include <algorithm>
+#include <cmath>
+#include <string>
 #include <memory>
 #include <vector>
 #include <QVariant>
@@ -7,6 +9,8 @@ module;
 #include <opencv2/opencv.hpp>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
+#include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
+#include <DiligentCore/Graphics/GraphicsEngine/interface/Buffer.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
 
 module ColorBalanceEffect;
@@ -15,6 +19,8 @@ import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import ImageProcessing.ColorTransform.ColorBalance;
 import Image.ImageF32x4RGBAWithCache;
+import Image.ImageSurfaceView;
+import Graphics.SurfaceColorContract;
 import Property.Abstract;
 import Utils.String.UniString;
 import Graphics.Compute;
@@ -25,30 +31,91 @@ import Core.Parallel;
 
 namespace Artifact {
 
+namespace {
+constexpr auto kColorBalanceKey = gpuGenericKeyFromString("color_balance");
+constexpr const char* kColorBalanceMath = R"(
+float3 balanceColor(float3 c, float3 shadow, float3 midtone, float3 highlight,
+                    float shadowRange, float highlightRange, float strength, float preserve) {
+    const float3 weights = float3(0.2126, 0.7152, 0.0722);
+    float lum = dot(c, weights);
+    float shadowW = 1.0 - smoothstep(shadowRange-0.1, shadowRange+0.1, lum);
+    float highlightW = smoothstep(highlightRange-0.1, highlightRange+0.1, lum);
+    float midtoneW = saturate(1.0-shadowW-highlightW);
+    strength = saturate(strength);
+    float3 mixed = c + (shadow*shadowW + midtone*midtoneW + highlight*highlightW)*strength;
+    float mixedLum = dot(mixed, weights);
+    if (preserve > 0.5 && strength > 0.0 && mixedLum > 0.000001)
+        mixed = lerp(mixed, saturate(mixed*(lum/mixedLum)), strength);
+    return saturate(mixed);
+}
+)";
+// Shader source concatenation is initialization work; parameters never rebuild it.
+const std::string kColorBalanceResidentHlsl = std::string(kColorBalanceMath) + R"(
+Texture2D<float4> g_InputTexture : register(t0);
+RWTexture2D<float4> g_OutputTexture : register(u0);
+[numthreads(8,8,1)] void main(uint3 id : SV_DispatchThreadID) {
+    if (id.x >= g_Width || id.y >= g_Height) return;
+    float4 pixel = g_InputTexture[id.xy];
+    float3 shadow = float3(g_P0,g_P1,g_P2);
+    float3 midtone = float3(g_P3,g_P4,g_P5);
+    float3 highlight = float3(g_P6,g_P7,g_P8);
+    if (pixel.a <= 0.0 || g_P11 <= 0.0 ||
+        (all(shadow == 0.0) && all(midtone == 0.0) && all(highlight == 0.0))) {
+        g_OutputTexture[id.xy] = pixel; return;
+    }
+    pixel.rgb = balanceColor(pixel.rgb/pixel.a,shadow,midtone,highlight,
+                            g_P9,g_P10,g_P11,g_P12)*pixel.a;
+    g_OutputTexture[id.xy] = pixel;
+}
+)";
+
+bool isNeutral(const ColorBalanceSettings& settings) {
+    return settings.masterStrength <= 0.0f ||
+        (settings.shadowR == 0.0f && settings.shadowG == 0.0f && settings.shadowB == 0.0f &&
+         settings.midtoneR == 0.0f && settings.midtoneG == 0.0f && settings.midtoneB == 0.0f &&
+         settings.highlightR == 0.0f && settings.highlightG == 0.0f && settings.highlightB == 0.0f);
+}
+
+void applyColorBalanceCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst,
+                          const ColorBalanceSettings& settings, const ColorBalanceProcessor& processor) {
+    dst = src;
+    if (isNeutral(settings)) return;
+    float* pixels = dst.image().rgba32fData();
+    if (!pixels) return;
+    const auto descriptor = src.image().colorDescriptor();
+    const bool premultiplied = descriptor.alphaMode == ArtifactCore::SurfaceAlphaMode::Premultiplied;
+    const int width = dst.width();
+    // Invalid/unknown layouts leave the copied input unchanged.
+    (void)ArtifactCore::withMutableColorFloat4View(dst.image().surfaceView(), pixels, [&](const auto& view) {
+        ArtifactCore::Parallel::For(0, dst.height(), width*dst.height(), [&](int y) {
+            const auto row = view.row(y);
+            for (int x = 0; x < width; ++x) {
+                auto p = row[x];
+                if (premultiplied && p.a <= 0.0f) continue;
+                const float alpha = premultiplied ? p.a : 1.0f;
+                float r = p.r/alpha, g = p.g/alpha, b = p.b/alpha;
+                processor.applyPixel(r,g,b);
+                p.r = r*alpha; p.g = g*alpha; p.b = b*alpha;
+            }
+        });
+    });
+}
+} // namespace
+
 class ColorBalanceEffectCPUImpl : public ArtifactEffectImplBase {
 public:
     ColorBalanceSettings settings_;
     ColorBalanceProcessor processor_;
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
-        dst = src;
-        float* pixels = dst.image().rgba32fData();
-        if (!pixels) {
-            return;
-        }
-        const int width = dst.image().width();
-        const int height = dst.image().height();
-        ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
-            for (int x = 0; x < width; ++x) {
-                float* pixel = pixels + (static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)) * 4u;
-                processor_.applyPixel(pixel[0], pixel[1], pixel[2]);
-            }
-        });
+        applyColorBalanceCPU(src, dst, settings_, processor_);
     }
 };
 
 class ColorBalanceEffectGPUImpl : public ArtifactEffectImplBase {
 public:
+    // Retain one lease for the cached pipeline/resources; release it last.
+    SharedRenderDeviceLease deviceLease_;
     ColorBalanceSettings settings_;
     ColorBalanceProcessor processor_;
     mutable Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device_;
@@ -60,24 +127,15 @@ public:
     Diligent::RefCntAutoPtr<Diligent::ITexture> outputTex_;
     Diligent::RefCntAutoPtr<Diligent::ITexture> stagingTex_;
 
+    ColorBalanceEffectGPUImpl() { (void)colorBalanceHlsl(); }
+
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
-        dst = src;
-        float* pixels = dst.image().rgba32fData();
-        if (!pixels) {
-            return;
-        }
-        const int width = dst.image().width();
-        const int height = dst.image().height();
-        ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
-            for (int x = 0; x < width; ++x) {
-                float* pixel = pixels + (static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)) * 4u;
-                processor_.applyPixel(pixel[0], pixel[1], pixel[2]);
-            }
-        });
+        applyColorBalanceCPU(src, dst, settings_, processor_);
     }
 
     void applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
-        if (!acquireSharedRenderDeviceForCurrentBackend(device_, context_)) {
+        if (isNeutral(settings_)) { dst = src; return; }
+        if (!device_ && !deviceLease_.acquire(device_, context_)) {
             applyCPU(src, dst);
             return;
         }
@@ -114,7 +172,7 @@ public:
         if (!pipelineReady_) {
             ArtifactCore::ComputePipelineDesc desc;
             desc.name = "ColorBalance/PSO";
-            desc.shaderSource = kColorBalanceHlsl;
+            desc.shaderSource = colorBalanceHlsl().c_str();
             desc.entryPoint = "main";
             desc.sourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
             desc.variables = vars;
@@ -170,6 +228,10 @@ public:
         params.highlightRange = settings_.highlightRange;
         params.masterStrength = settings_.masterStrength;
         params.preserveLuma = settings_.preserveLuma ? 1.0f : 0.0f;
+        params.premultiplied = src.image().colorDescriptor().alphaMode ==
+            ArtifactCore::SurfaceAlphaMode::Premultiplied ? 1.0f : 0.0f;
+        params.bgra = src.image().colorDescriptor().channelOrder ==
+            ArtifactCore::SurfaceChannelOrder::BGRA ? 1.0f : 0.0f;
         std::memcpy(mapped, &params, sizeof(params));
         context_->UnmapBuffer(paramsCB_, Diligent::MAP_WRITE);
 
@@ -190,73 +252,39 @@ public:
     }
 
 private:
-    struct ParamsCB {
-        float shadowR = 0.0f;
-        float shadowG = 0.0f;
-        float shadowB = 0.0f;
-        float midtoneR = 0.0f;
-        float midtoneG = 0.0f;
-        float midtoneB = 0.0f;
-        float highlightR = 0.0f;
-        float highlightG = 0.0f;
-        float highlightB = 0.0f;
-        float shadowRange = 0.33f;
-        float highlightRange = 0.66f;
-        float masterStrength = 1.0f;
-        float preserveLuma = 0.0f;
+    struct alignas(16) ParamsCB {
+        float shadowR, shadowG, shadowB, shadowRange;
+        float midtoneR, midtoneG, midtoneB, highlightRange;
+        float highlightR, highlightG, highlightB, masterStrength;
+        float preserveLuma, premultiplied, bgra, pad = 0.0f;
     };
+    static_assert(sizeof(ParamsCB) == 64);
 
-    static constexpr const char* kColorBalanceHlsl = R"(
+    static const std::string& colorBalanceHlsl() {
+        static const std::string source = std::string(kColorBalanceMath) + R"(
 Texture2D<float4> g_InputTexture : register(t0);
 RWTexture2D<float4> g_OutputTexture : register(u0);
-cbuffer ColorBalanceParams : register(b0)
-{
-    float3 g_Shadow;
-    float g_ShadowRange;
-    float3 g_Midtone;
-    float g_HighlightRange;
-    float3 g_Highlight;
-    float g_MasterStrength;
-    float g_PreserveLuma;
-    float3 g_Pad;
-};
-
-float luma(float3 c) {
-    return dot(c, float3(0.299f, 0.587f, 0.114f));
+cbuffer ColorBalanceParams : register(b0) {
+    float3 g_Shadow; float g_ShadowRange;
+    float3 g_Midtone; float g_HighlightRange;
+    float3 g_Highlight; float g_MasterStrength;
+    float g_PreserveLuma; float g_Premultiplied; float g_Bgra; float g_Pad;
 }
-
-float smoothstep01(float edge0, float edge1, float x) {
-    float t = saturate((x - edge0) / max(0.0001f, edge1 - edge0));
-    return t * t * (3.0f - 2.0f * t);
-}
-
-[numthreads(8, 8, 1)]
-void main(uint3 dtid : SV_DispatchThreadID)
-{
-    uint width, height;
-    g_OutputTexture.GetDimensions(width, height);
-    if (dtid.x >= width || dtid.y >= height) return;
-
-    float4 px = g_InputTexture[dtid.xy];
-    float3 c = px.rgb;
-    float lum = luma(c);
-
-    float shadowW = 1.0f - smoothstep01(g_ShadowRange * 0.5f, g_ShadowRange, lum);
-    float highlightW = smoothstep01(g_HighlightRange, lerp(g_HighlightRange, 1.0f, 0.5f), lum);
-    float midtoneW = saturate(1.0f - shadowW - highlightW);
-
-    float3 delta = g_Shadow * shadowW + g_Midtone * midtoneW + g_Highlight * highlightW;
-    float3 mixed = c + delta * g_MasterStrength;
-
-    if (g_PreserveLuma > 0.5f) {
-        float mixedLum = luma(mixed);
-        mixed += (lum - mixedLum).xxx;
-    }
-
-    px.rgb = saturate(mixed);
-    g_OutputTexture[dtid.xy] = px;
+[numthreads(8,8,1)] void main(uint3 id : SV_DispatchThreadID) {
+    uint width,height; g_OutputTexture.GetDimensions(width,height);
+    if (id.x >= width || id.y >= height) return;
+    float4 pixel = g_InputTexture[id.xy];
+    if (g_Premultiplied > 0.5 && pixel.a <= 0.0) {g_OutputTexture[id.xy]=pixel;return;}
+    float alpha = g_Premultiplied > 0.5 ? pixel.a : 1.0;
+    float3 color = (g_Bgra > 0.5 ? pixel.bgr : pixel.rgb)/alpha;
+    color = balanceColor(color,g_Shadow,g_Midtone,g_Highlight,
+                         g_ShadowRange,g_HighlightRange,g_MasterStrength,g_PreserveLuma)*alpha;
+    pixel.rgb = g_Bgra > 0.5 ? color.bgr : color;
+    g_OutputTexture[id.xy] = pixel;
 }
 )";
+        return source;
+    }
 
     static bool createTextureFromImage(const ImageF32x4RGBAWithCache& src,
                                        Diligent::IRenderDevice* device,
@@ -267,6 +295,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
             return false;
         }
         const auto& img = src.image();
+        // Preserve source storage order; the compatibility shader handles BGRA.
         const float* data = img.rgba32fData();
         if (!data || img.width() <= 0 || img.height() <= 0) {
             return false;
@@ -351,11 +380,29 @@ ColorBalanceEffect::ColorBalanceEffect() {
     setCPUImpl(ArtifactCore::makeShared<ColorBalanceEffectCPUImpl>());
     setGPUImpl(ArtifactCore::makeShared<ColorBalanceEffectGPUImpl>());
     setComputeMode(ComputeMode::AUTO);
+    registerGpuGenericShader(kColorBalanceKey,
+        GpuGenericShaderRecord{kColorBalanceResidentHlsl.c_str(), "main", GpuGenericResourceKind::Filter});
     applyPreset(preset_);
     syncImpls();
 }
 
 ColorBalanceEffect::~ColorBalanceEffect() = default;
+
+std::uint32_t ColorBalanceEffect::gpuGenericKey() const { return kColorBalanceKey; }
+
+bool ColorBalanceEffect::appendGpuSpatialNodes(GpuSpatialEffectStack& stack) const {
+    GpuSpatialEffectNode node;
+    node.kind = GpuSpatialEffectKind::Generic;
+    node.genericKey = kColorBalanceKey;
+    node.parameters[0] = settings_.shadowR; node.parameters[1] = settings_.shadowG;
+    node.parameters[2] = settings_.shadowB; node.parameters[3] = settings_.midtoneR;
+    node.parameters[4] = settings_.midtoneG; node.parameters[5] = settings_.midtoneB;
+    node.parameters[6] = settings_.highlightR; node.parameters[7] = settings_.highlightG;
+    node.parameters[8] = settings_.highlightB; node.parameters[9] = settings_.shadowRange;
+    node.parameters[10] = settings_.highlightRange; node.parameters[11] = settings_.masterStrength;
+    node.parameters[12] = settings_.preserveLuma ? 1.0f : 0.0f;
+    return stack.append(node);
+}
 
 void ColorBalanceEffect::applyPreset(Preset preset) {
     preset_ = preset;

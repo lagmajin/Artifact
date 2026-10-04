@@ -13,6 +13,7 @@ module;
 #include <opencv2/opencv.hpp>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
+#include <DiligentCore/Graphics/GraphicsEngine/interface/Buffer.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
 
@@ -22,6 +23,7 @@ import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import ColorCollection.ColorGrading;
 import Image.ImageF32x4RGBAWithCache;
+import Image.ImageSurfaceView;
 import Image.GpuImageUpload;
 import Graphics.SurfaceColorContract;
 import Property.Abstract;
@@ -34,54 +36,91 @@ import Core.Parallel;
 
 namespace Artifact {
 
+namespace {
+constexpr auto kCurvesKey = gpuGenericKeyFromString("curves");
+constexpr const char* kCurvesResidentHlsl = R"(
+Texture2D<float4> g_InputTexture : register(t0);
+Texture2D<float4> g_LookupTexture : register(t1);
+RWTexture2D<float4> g_OutputTexture : register(u0);
+float sampleCurve(float value, int channel) {
+    float x = saturate(value) * 255.0;
+    int lo = (int)floor(x);
+    return lerp(g_LookupTexture.Load(int3(lo,0,0))[channel],
+                g_LookupTexture.Load(int3(min(lo+1,255),0,0))[channel], x-lo);
+}
+[numthreads(8,8,1)] void main(uint3 id : SV_DispatchThreadID) {
+    if (id.x >= g_Width || id.y >= g_Height) return;
+    float4 pixel = g_InputTexture[id.xy];
+    if (g_P0 > 0.5 || pixel.a <= 0.0) {g_OutputTexture[id.xy]=pixel;return;}
+    float3 color = pixel.rgb / pixel.a;
+    color = float3(sampleCurve(color.r,0),sampleCurve(color.g,1),sampleCurve(color.b,2));
+    g_OutputTexture[id.xy] = float4(color * pixel.a, pixel.a);
+}
+)";
+
+void applyCurvesLookup(const ImageF32x4RGBAWithCache& src,
+                       ImageF32x4RGBAWithCache& dst,
+                       const SharedPtr<const GpuEffectLookupTable>& lookup) {
+    dst = src;
+    if (!lookup || lookup->identity) return;
+    float* pixels = dst.image().rgba32fData();
+    if (!pixels) return;
+    const auto descriptor = src.image().colorDescriptor();
+    const bool premultiplied = descriptor.alphaMode == SurfaceAlphaMode::Premultiplied;
+    const int width = dst.width();
+    const auto sample = [&lookup](float value, int channel) {
+        const float x = std::clamp(value, 0.0f, 1.0f) * 255.0f;
+        const int lo = static_cast<int>(x);
+        const int hi = std::min(lo + 1, 255);
+        const float a = lookup->rgba[lo * 4 + channel];
+        const float b = lookup->rgba[hi * 4 + channel];
+        return a + (b - a) * (x - static_cast<float>(lo));
+    };
+    // Invalid/unknown layouts leave the copied input unchanged.
+    (void)ArtifactCore::withMutableColorFloat4View(dst.image().surfaceView(), pixels, [&](const auto& view) {
+        Parallel::For(0, dst.height(), width * dst.height(), [&](int y) {
+            const auto row = view.row(y);
+            for (int x = 0; x < width; ++x) {
+                auto p = row[x];
+                if (premultiplied && p.a <= 0.0f) continue;
+                const float alphaScale = premultiplied ? p.a : 1.0f;
+                p.r = sample(p.r / alphaScale, 0) * alphaScale;
+                p.g = sample(p.g / alphaScale, 1) * alphaScale;
+                p.b = sample(p.b / alphaScale, 2) * alphaScale;
+            }
+        });
+    });
+}
+}
+
 class CurvesEffectCPUImpl : public ArtifactEffectImplBase {
 public:
-    ArtifactCore::ColorCurves curves_;
+    SharedPtr<const GpuEffectLookupTable> lookup_;
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
-        dst = src;
-        float* pixels = dst.image().rgba32fData();
-        if (!pixels) {
-            return;
-        }
-
-        const int width = dst.image().width();
-        const int height = dst.image().height();
-        Parallel::For(0, height, width * height, [&](int y) {
-            auto curves = curves_;
-            curves.process(pixels + static_cast<size_t>(y) * static_cast<size_t>(width) * 4u, width, 1);
-        });
+        applyCurvesLookup(src, dst, lookup_);
     }
 };
 
 class CurvesEffectGPUImpl : public ArtifactEffectImplBase {
 public:
-    ArtifactCore::ColorCurves curves_;
+    SharedPtr<const GpuEffectLookupTable> lookup_;
     Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device_;
     Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context_;
     Diligent::RefCntAutoPtr<Diligent::ITexture> lutTexture_;
     Diligent::RefCntAutoPtr<Diligent::ITexture> outputTex_;
+    Diligent::RefCntAutoPtr<Diligent::IBuffer> paramsCB_;
     std::unique_ptr<ArtifactCore::GpuContext> gpuContext_;
     std::unique_ptr<ArtifactCore::ComputeExecutor> executor_;
     bool pipelineReady_ = false;
     bool lutDirty_ = true;
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
-        dst = src;
-        float* pixels = dst.image().rgba32fData();
-        if (!pixels) {
-            return;
-        }
-
-        const int width = dst.image().width();
-        const int height = dst.image().height();
-        Parallel::For(0, height, width * height, [&](int y) {
-            auto curves = curves_;
-            curves.process(pixels + static_cast<size_t>(y) * static_cast<size_t>(width) * 4u, width, 1);
-        });
+        applyCurvesLookup(src, dst, lookup_);
     }
 
     void applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
+        if (!lookup_ || lookup_->identity) { dst = src; return; }
         if (!acquireSharedRenderDeviceForCurrentBackend(device_, context_)) {
             applyCPU(src, dst);
             return;
@@ -113,8 +152,19 @@ public:
             }
         }
 
+        if (!paramsCB_) {
+            Diligent::BufferDesc buffer;
+            buffer.Name = "Curves/Params";
+            buffer.Size = 16;
+            buffer.Usage = Diligent::USAGE_DYNAMIC;
+            buffer.BindFlags = Diligent::BIND_UNIFORM_BUFFER;
+            buffer.CPUAccessFlags = Diligent::CPU_ACCESS_WRITE;
+            device_->CreateBuffer(buffer, nullptr, &paramsCB_);
+            if (!paramsCB_) { applyCPU(src, dst); return; }
+        }
         if (!pipelineReady_) {
             static Diligent::ShaderResourceVariableDesc vars[] = {
+                {Diligent::SHADER_TYPE_COMPUTE, "CurvesParams", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
                 {Diligent::SHADER_TYPE_COMPUTE, "g_InputTexture", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
                 {Diligent::SHADER_TYPE_COMPUTE, "g_OutputTexture", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
                 {Diligent::SHADER_TYPE_COMPUTE, "g_LUTTexture", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
@@ -126,9 +176,10 @@ public:
             desc.entryPoint = "main";
             desc.sourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
             desc.variables = vars;
-            desc.variableCount = 3;
+            desc.variableCount = 4;
             desc.defaultVariableType = Diligent::SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
-            if (!executor_->build(desc) || !executor_->createShaderResourceBinding(true)) {
+            if (!executor_->build(desc) || !executor_->createShaderResourceBinding(true) ||
+                !executor_->setBuffer("CurvesParams", paramsCB_)) {
                 applyCPU(src, dst);
                 return;
             }
@@ -160,38 +211,32 @@ public:
             return;
         }
 
+        const std::array<float, 4> flags = {
+            src.image().colorDescriptor().alphaMode == ArtifactCore::SurfaceAlphaMode::Premultiplied ? 1.0f : 0.0f,
+            0.0f, 0.0f, 0.0f};
+        void* mapped = nullptr;
+        context_->MapBuffer(paramsCB_, Diligent::MAP_WRITE, Diligent::MAP_FLAG_DISCARD, mapped);
+        if (!mapped) { applyCPU(src, dst); return; }
+        std::memcpy(mapped, flags.data(), sizeof(flags));
+        context_->UnmapBuffer(paramsCB_, Diligent::MAP_WRITE);
         auto attribs = ArtifactCore::ComputeExecutor::makeDispatchAttribs(outDesc.Width, outDesc.Height, 1, 8, 8, 1);
         executor_->dispatch(context_, attribs, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
-        // The compute texture is canonical RGBA; keep that order instead of the
-        // source descriptor, which may be BGRA for QImage-sourced buffers.
-        ArtifactCore::SurfaceColorDescriptor rgbaDescriptor =
-            src.image().colorDescriptor();
-        rgbaDescriptor.channelOrder = ArtifactCore::SurfaceChannelOrder::RGBA;
-        if (!readbackTexture(device_, context_, outputTex_, dst, rgbaDescriptor, "Curves/StagingTexture")) {
+        if (!readbackTexture(device_, context_, outputTex_, dst,
+                             src.image().colorDescriptor(), "Curves/StagingTexture")) {
             applyCPU(src, dst);
             return;
         }
     }
 
-    void syncCurves(const ArtifactCore::ColorCurves& curves) {
-        curves_ = curves;
+    void syncLookup(const SharedPtr<const GpuEffectLookupTable>& lookup) {
+        lookup_ = lookup;
         lutDirty_ = true;
     }
 
 private:
     bool buildLUTTexture() {
-        std::array<float, 256 * 4> lut{};
-        if (!curves_.isDefault()) {
-            curves_.buildLUT();
-        }
-        for (int i = 0; i < 256; ++i) {
-            const float x = static_cast<float>(i) / 255.0f;
-            lut[i * 4 + 0] = curves_.evaluateRed(curves_.evaluateMaster(x));
-            lut[i * 4 + 1] = curves_.evaluateGreen(curves_.evaluateMaster(x));
-            lut[i * 4 + 2] = curves_.evaluateBlue(curves_.evaluateMaster(x));
-            lut[i * 4 + 3] = 1.0f;
-        }
+        if (!lookup_) return false;
         Diligent::TextureDesc desc;
         desc.Type = Diligent::RESOURCE_DIM_TEX_2D;
         desc.Width = 256;
@@ -199,16 +244,23 @@ private:
         desc.MipLevels = 1;
         desc.SampleCount = 1;
         desc.Format = Diligent::TEX_FORMAT_RGBA32_FLOAT;
-        desc.Usage = Diligent::USAGE_IMMUTABLE;
+        desc.Usage = Diligent::USAGE_DEFAULT;
         desc.BindFlags = Diligent::BIND_SHADER_RESOURCE;
         desc.Name = "Curves/LUTTexture";
         Diligent::TextureSubResData sub{};
-        sub.pData = lut.data();
+        sub.pData = lookup_->rgba.data();
         sub.Stride = sizeof(float) * 4ull * 256ull;
         Diligent::TextureData init{};
         init.pSubResources = &sub;
         init.NumSubresources = 1;
-        device_->CreateTexture(desc, &init, &lutTexture_);
+        if (!lutTexture_) {
+            device_->CreateTexture(desc, &init, &lutTexture_);
+            if (!lutTexture_) return false;
+        } else {
+            context_->UpdateTexture(lutTexture_, 0, 0, Diligent::Box(0, 256, 0, 1, 0, 1), sub,
+                Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
+                Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        }
         lutDirty_ = false;
         return lutTexture_ != nullptr;
     }
@@ -289,10 +341,19 @@ private:
         cv::Mat temp(static_cast<int>(desc.Height), static_cast<int>(desc.Width), CV_32FC4, mapped.pData, mapped.Stride);
         dst.image().setFromCVMat(temp, colorDescriptor);
         ctx->UnmapTextureSubresource(staging, 0, 0);
+        if (colorDescriptor.channelOrder == ArtifactCore::SurfaceChannelOrder::BGRA) {
+            float* pixels = dst.image().rgba32fData();
+            const int width = dst.width();
+            Parallel::For(0, dst.height(), width * dst.height(), [&](int y) {
+                float* row = pixels + static_cast<size_t>(y) * width * 4u;
+                for (int x = 0; x < width; ++x) std::swap(row[x * 4], row[x * 4 + 2]);
+            });
+        }
         return true;
     }
 
     static constexpr const char* kCurvesHlsl = R"(
+cbuffer CurvesParams : register(b0) { float premultiplied; float3 pad; }
 Texture2D<float4> g_InputTexture : register(t0);
 Texture2D<float4> g_LUTTexture : register(t1);
 RWTexture2D<float4> g_OutputTexture : register(u0);
@@ -317,9 +378,11 @@ void main(uint3 dtid : SV_DispatchThreadID)
     if (dtid.x >= width || dtid.y >= height) return;
 
     float4 px = g_InputTexture[dtid.xy];
-    px.r = sampleLUT(px.r, 0);
-    px.g = sampleLUT(px.g, 1);
-    px.b = sampleLUT(px.b, 2);
+    if (premultiplied > 0.5 && px.a <= 0.0) {g_OutputTexture[dtid.xy] = px;return;}
+    float alphaScale = premultiplied > 0.5 ? px.a : 1.0;
+    px.r = sampleLUT(px.r / alphaScale, 0) * alphaScale;
+    px.g = sampleLUT(px.g / alphaScale, 1) * alphaScale;
+    px.b = sampleLUT(px.b / alphaScale, 2) * alphaScale;
     g_OutputTexture[dtid.xy] = px;
 }
 )";
@@ -381,6 +444,8 @@ CurvesEffect::CurvesEffect() {
     setCPUImpl(ArtifactCore::makeShared<CurvesEffectCPUImpl>());
     setGPUImpl(ArtifactCore::makeShared<CurvesEffectGPUImpl>());
     setComputeMode(ComputeMode::AUTO);
+    registerGpuGenericShader(kCurvesKey,
+        GpuGenericShaderRecord{kCurvesResidentHlsl, "main", GpuGenericResourceKind::Filter, true});
     customPoints_ = makeSCurvePoints(strength_);
     syncImpls();
 }
@@ -389,17 +454,22 @@ CurvesEffect::~CurvesEffect() = default;
 
 void CurvesEffect::setPreset(int preset) {
     const int clamped = std::clamp(preset, 0, 6);
+    if (preset_ == static_cast<Preset>(clamped) && lookupTable_) return;
     preset_ = static_cast<Preset>(clamped);
     syncImpls();
 }
 
 void CurvesEffect::setStrength(float strength) {
-    strength_ = std::isfinite(strength) ? std::clamp(strength, 0.0f, 1.0f) : 0.0f;
+    const float normalized = std::isfinite(strength) ? std::clamp(strength, 0.0f, 1.0f) : 0.0f;
+    if (strength_ == normalized && lookupTable_) return;
+    strength_ = normalized;
     syncImpls();
 }
 
 void CurvesEffect::setPosterizeLevels(int levels) {
-    posterizeLevels_ = std::max(2, levels);
+    const int normalized = std::max(2, levels);
+    if (posterizeLevels_ == normalized && lookupTable_) return;
+    posterizeLevels_ = normalized;
     syncImpls();
 }
 
@@ -430,13 +500,41 @@ void CurvesEffect::applyPreset(ArtifactCore::ColorCurves& curves) const {
 }
 
 void CurvesEffect::syncImpls() {
+    ArtifactCore::ColorCurves prepared;
+    applyPreset(prepared);
+    GpuEffectLookupTable table;
+    table.identity = prepared.isDefault();
+    for (int i = 0; i < 256; ++i) {
+        const float x = static_cast<float>(i) / 255.0f;
+        const float master = prepared.evaluateMaster(x);
+        table.rgba[i * 4] = prepared.evaluateRed(master);
+        table.rgba[i * 4 + 1] = prepared.evaluateGreen(master);
+        table.rgba[i * 4 + 2] = prepared.evaluateBlue(master);
+        table.rgba[i * 4 + 3] = 1.0f;
+    }
+    // One bounded snapshot allocation per changed LUT, never per frame/row.
+    // Older render plans retain their immutable table until dispatch finishes.
+    if (lookupTable_ && lookupTable_->identity == table.identity &&
+        lookupTable_->rgba == table.rgba) return;
+    lookupTable_ = ArtifactCore::makeShared<GpuEffectLookupTable>(std::move(table));
     if (auto* cpu = dynamic_cast<CurvesEffectCPUImpl*>(cpuImpl().get())) {
-        applyPreset(cpu->curves_);
+        cpu->lookup_ = lookupTable_;
     }
     if (auto* gpu = dynamic_cast<CurvesEffectGPUImpl*>(gpuImpl().get())) {
-        applyPreset(gpu->curves_);
-        gpu->syncCurves(gpu->curves_);
+        gpu->syncLookup(lookupTable_);
     }
+}
+
+std::uint32_t CurvesEffect::gpuGenericKey() const { return kCurvesKey; }
+
+bool CurvesEffect::appendGpuSpatialNodes(GpuSpatialEffectStack& stack) const {
+    if (!lookupTable_) return false;
+    GpuSpatialEffectNode node;
+    node.kind = GpuSpatialEffectKind::Generic;
+    node.genericKey = kCurvesKey;
+    node.lookupTable = lookupTable_;
+    node.parameters[0] = lookupTable_->identity ? 1.0f : 0.0f;
+    return stack.append(node);
 }
 
 std::vector<AbstractProperty> CurvesEffect::getProperties() const {

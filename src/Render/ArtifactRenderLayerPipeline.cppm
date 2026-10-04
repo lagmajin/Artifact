@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -693,6 +693,14 @@ cbuffer ResidentGenericParams : register(b0)
     float g_P5;
     float g_P6;
     float g_P7;
+    float g_P8;
+    float g_P9;
+    float g_P10;
+    float g_P11;
+    float g_P12;
+    float g_P13;
+    float g_P14;
+    float g_P15;
     float g_Width;
     float g_Height;
     float g_Time;
@@ -986,12 +994,12 @@ void ChromaKeyCS(uint3 dispatchId : SV_DispatchThreadID)
    float pad = 0.0f;
   };
 
-  // Mirrors kResidentGenericPrelude: 8 effect parameters followed by the
+  // Mirrors kResidentGenericPrelude: 16 effect parameters followed by the
   // standard width/height/time/frame uniforms plus the history-valid flag.
-  // 52 bytes, 16-byte aligned.
-  struct ResidentGenericParams
+  // Sixteen effect parameters plus frame metadata; HLSL rounds b0 to 96 bytes.
+  struct alignas(16) ResidentGenericParams
   {
-   float p[8] = {};
+   float p[16] = {};
    float width = 0.0f;
    float height = 0.0f;
    float time = 0.0f;
@@ -1007,6 +1015,9 @@ void ChromaKeyCS(uint3 dispatchId : SV_DispatchThreadID)
    std::string fullSource;
    std::string entryPoint = "main";
    GpuGenericResourceKind resource = GpuGenericResourceKind::Filter;
+   bool usesLookupTable = false;
+   RefCntAutoPtr<ITexture> lookupTexture;
+   ArtifactCore::SharedPtr<const GpuEffectLookupTable> lookupSnapshot;
   };
 
   struct ChromaticAberrationParams
@@ -1855,10 +1866,11 @@ bool RenderPipeline::initialize(IRenderDevice* device,
    GpuGenericShaderRecord record{};
    if (!findGpuGenericShader(node.genericKey, &record)) return false;
    const bool needsInput = record.resource == GpuGenericResourceKind::Filter;
+   if (record.usesLookupTable && !node.lookupTable) return false;
    GenericResidentEntry& entry = impl_->genericEntries_[node.genericKey];
    if (!entry.executor || entry.source != record.shaderBody ||
        entry.entryPoint != (record.entryPoint ? record.entryPoint : "main") ||
-       entry.resource != record.resource) {
+       entry.resource != record.resource || entry.usesLookupTable != record.usesLookupTable) {
     entry = GenericResidentEntry{};
     impl_->screenSpaceGIContext_ = impl_->screenSpaceGIContext_
         ? impl_->screenSpaceGIContext_
@@ -1875,6 +1887,7 @@ bool RenderPipeline::initialize(IRenderDevice* device,
     entry.source = record.shaderBody ? record.shaderBody : "";
     entry.entryPoint = record.entryPoint ? record.entryPoint : "main";
     entry.resource = record.resource;
+    entry.usesLookupTable = record.usesLookupTable;
     entry.fullSource = kResidentGenericPrelude + entry.source;
     static const ShaderResourceVariableDesc filterVariables[] = {
         {SHADER_TYPE_COMPUTE, "ResidentGenericParams", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
@@ -1883,6 +1896,7 @@ bool RenderPipeline::initialize(IRenderDevice* device,
         // Optional second input for temporal effects.  A shader that does not
         // declare g_HistoryTexture simply leaves the binding unbound.
         {SHADER_TYPE_COMPUTE, "g_HistoryTexture", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+        {SHADER_TYPE_COMPUTE, "g_LookupTexture", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
     };
     static const ShaderResourceVariableDesc generatorVariables[] = {
         {SHADER_TYPE_COMPUTE, "ResidentGenericParams", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
@@ -1908,12 +1922,37 @@ bool RenderPipeline::initialize(IRenderDevice* device,
      return false;
     }
    }
+   if (record.usesLookupTable) {
+    if (!entry.lookupTexture) {
+     TextureDesc lutDesc;
+     lutDesc.Name = "Composition Generic Resident LUT";
+     lutDesc.Type = RESOURCE_DIM_TEX_2D;
+     lutDesc.Width = 256; lutDesc.Height = 1;
+     lutDesc.MipLevels = 1; lutDesc.ArraySize = 1; lutDesc.SampleCount = 1;
+     lutDesc.Format = TEX_FORMAT_RGBA32_FLOAT;
+     lutDesc.Usage = USAGE_DEFAULT;
+     lutDesc.BindFlags = BIND_SHADER_RESOURCE;
+     impl_->device_->CreateTexture(lutDesc, nullptr, &entry.lookupTexture);
+     if (!entry.lookupTexture) return false;
+    }
+    if (entry.lookupSnapshot.get() != node.lookupTable.get()) {
+     TextureSubResData lutData{};
+     lutData.pData = node.lookupTable->rgba.data();
+     lutData.Stride = 256u * 4u * sizeof(float);
+     ctx->UpdateTexture(entry.lookupTexture, 0, 0, Box(0, 256, 0, 1, 0, 1), lutData,
+                        RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
+                        RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+     entry.lookupSnapshot = node.lookupTable;
+    }
+    if (!entry.executor->setTextureView("g_LookupTexture",
+          entry.lookupTexture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE))) return false;
+   }
    void* mapped = nullptr;
    ctx->MapBuffer(entry.params, MAP_WRITE, MAP_FLAG_DISCARD, mapped);
    if (!mapped) return false;
    ResidentGenericParams params;
-   for (std::size_t i = 0; i < 8; ++i) params.p[i] = node.parameters[i];
-params.width = static_cast<float>(impl_->width_);
+   for (std::size_t i = 0; i < node.parameters.size(); ++i) params.p[i] = node.parameters[i];
+    params.width = static_cast<float>(impl_->width_);
     params.height = static_cast<float>(impl_->height_);
     params.time = 0.0f;
     params.frame = 0.0f;

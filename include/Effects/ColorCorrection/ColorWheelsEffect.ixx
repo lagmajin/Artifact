@@ -1,5 +1,6 @@
 module;
 #include <utility>
+#include <cstdint>
 #include <vector>
 #include <QString>
 #include <QVariant>
@@ -44,6 +45,11 @@ public:
     void setPropertyValue(const UniString& name, const QVariant& value) override;
 
     bool supportsGPU() const override { return true; }
+    std::uint32_t gpuGenericKey() const override;
+    GpuRasterEffectDomain gpuRasterEffectDomain() const override {
+        return GpuRasterEffectDomain::Spatial;
+    }
+    bool appendGpuSpatialNodes(GpuSpatialEffectStack& stack) const override;
 };
 
 } // namespace Artifact
