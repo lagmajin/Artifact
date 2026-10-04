@@ -189,6 +189,9 @@ export namespace Artifact
   LayerID selectedLayerId() const;
   QString currentPropertyPath() const;
   bool deleteSelectedMask();
+  // 選択中の構成要素だけを削除する。Mask / Text Animator に対応し、
+  // 選択が構成要素でないときだけ false を返してレイヤー削除へ委譲する。
+  bool deleteSelectedComponent();
   void propertyFocusChanged(const LayerID& layerId, const QString& propertyPath);
 
  private:
@@ -234,6 +237,9 @@ export namespace Artifact
   LayerID selectedLayerId() const;
   QString currentPropertyPath() const;
   bool deleteSelectedMask();
+  // 選択中の構成要素だけを削除する。Mask / Text Animator に対応し、
+  // 選択が構成要素でないときだけ false を返してレイヤー削除へ委譲する。
+  bool deleteSelectedComponent();
 
   };
 

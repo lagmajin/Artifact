@@ -38,6 +38,19 @@ public:
     void setShowBackground(bool enabled);
     bool showBackground() const;
 
+    // Pen tablet input
+    void setPressure(float pressure);
+    float pressure() const;
+    void setTilt(float tiltX, float tiltY);
+    float tiltX() const;
+    float tiltY() const;
+
+    // Pen pressure response. When enabled, the recorded pen pressure is
+    // converted into keyframes on the layer's "layer.opacity" property so a
+    // drawn motion can carry an authored opacity envelope.
+    void setPressureAffectsOpacity(bool enabled);
+    bool pressureAffectsOpacity() const;
+
     // Debug/preview access
     const std::vector<QPointF>& sampledPoints() const;
 

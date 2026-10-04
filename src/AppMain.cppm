@@ -603,6 +603,11 @@ public:
   }
 
   ~CollaborationDockController() override {
+    // QObjectPrivate::deleteChildren() nulls each sibling slot before deleting
+    // it, so a findChildren() walk from a child destructor re-enters
+    // qt_qFindChildren_helper() with a null parent and trips its Q_ASSERT.
+    // Skip every host-side UI refresh once teardown starts.
+    tearingDown_ = true;
     if (auto* undoManager = UndoManager::instance()) {
       undoManager->setLayerMutationGuard({});
       undoManager->setCollaborationEditCallback({});
@@ -1215,6 +1220,7 @@ private:
     delete session_;
     session_ = nullptr;
     pendingLockReleases_.clear();
+    if (tearingDown_) return;
     if (widget_) {
       widget_->setLayerLockControlState({}, false, false, false, false, {});
     }
@@ -1265,6 +1271,7 @@ private:
 
 public:
   void refreshTimelineLockIndicators() {
+    if (tearingDown_) return;
     QVector<LayerID> lockedLayerIds;
     if (session_) {
       const auto activeLocks = session_->activeLocks();
@@ -1778,6 +1785,7 @@ private:
   bool hasLastSentPresence_ = false;
   QSet<QString> pendingLockReleases_;
   QHash<QString, SelectedLayerNameCache> selectedLayerNameCache_;
+  bool tearingDown_ = false;
 };
 
 constexpr int kMainWindowLayoutVersion = 11;
@@ -5539,12 +5547,9 @@ int main(int argc, char *argv[]) {
     frameDebugTimer->start();
 
     // Update StatusBar console summary
-    auto updateStatusConsole = [mainWindowGuard]() {
-      if (!mainWindowGuard)
-        return;
-      auto *status = dynamic_cast<ArtifactStatusBar *>(
-          mainWindowGuard->findChild<QStatusBar *>());
-      if (!status) {
+    QPointer<ArtifactStatusBar> statusBarGuard(status);
+    auto updateStatusConsole = [statusBarGuard]() {
+      if (!statusBarGuard) {
         return;
       }
       auto logs = Logger::instance()->getLogs();
@@ -5556,10 +5561,8 @@ int main(int argc, char *argv[]) {
         else if (log.level == LogLevel::Error || log.level == LogLevel::Fatal)
           errors++;
       }
-      // status->setConsoleSummary(errors, warnings); // We can use this if the
-      // previous edit definitely worked If setConsoleSummary failed to compile,
-      // we can manually set text for now to avoid block
-      status->setProjectText(
+      // Keep the existing project-text summary until the console item is wired.
+      statusBarGuard->setProjectText(
           QString("Logs: %1E %2W").arg(errors).arg(warnings));
     };
     auto queueStatusConsoleUpdate = [mainWindowGuard,
@@ -6943,6 +6946,9 @@ int main(int argc, char *argv[]) {
               << "requested=" << !portableDockLayout.isEmpty()
               << "restored=" << portableRestored;
     }
+    // Keep the current-layer property editor ready in the right dock group on
+    // every launch, regardless of which tab was active in the saved session.
+    mw->activateDock(QStringLiteral("Properties"));
     mw->setDockVisible(QStringLiteral("App Debugger"), false);
     qInfo() << "[AppMain][Startup] layout finalize ms="
             << startupLayoutTimer.elapsed();

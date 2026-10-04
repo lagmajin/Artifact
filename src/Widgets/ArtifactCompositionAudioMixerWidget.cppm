@@ -406,8 +406,14 @@ void ArtifactCompositionAudioMixerWidget::refreshFromCurrentComposition() {
     if (strip->isSolo()) {
       ++soloCount;
     }
-    const auto effectChain = strip->effectChain();
-    fxCount += effectChain.size();
+    // AudioMixerChannelStrip::effectChain() は未使用の文字列リストで常に空の
+    // ため、実装机の FX 件数は AudioBus の FX チェーンから数える。
+    if (const auto mixer = composition ? composition->getAudioMixer()
+                                       : ArtifactCore::SharedPtr<ArtifactCore::AudioMixer>{}) {
+      if (const auto bus = mixer->ensureLayerBus(strip->layerId())) {
+        fxCount += bus->getEffectCount();
+      }
+    }
     if (composition) {
       const auto layer = composition->layerById(strip->layerId());
       if (const auto audioLayer = ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer)) {

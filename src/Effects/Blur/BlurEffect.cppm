@@ -143,6 +143,10 @@ static void convertBlurColorSpace(cv::Mat& image, const bool toLinear,
     });
 }
 
+// Reads a compute result back into CPU memory. The Flush + WaitForIdle pair
+// drains the whole device before the map, so it cannot overlap with other
+// work; this is the HOT_PATH_RULES violation called out on
+// BlurEffectGPUImpl below. Unreachable today — kept paired with that impl.
 static bool readbackTexture(Diligent::IDeviceContext* ctx, Diligent::ITexture* src,
                             Diligent::ITexture* staging,
                             ImageF32x4RGBAWithCache& dst,
@@ -304,6 +308,22 @@ public:
     }
 };
 
+// Legacy self-contained Diligent path for the Blur effect.
+//
+// NOT REACHABLE from the composition renderer: buildGpuRasterEffectPlan() in
+// ArtifactCompositionRenderController.cppm accepts this effect only when
+// gpuRasterEffectDomain() == Spatial, and in that case the plan carries
+// SeparableGaussianBlur nodes executed by the resident pipeline, which never
+// calls ArtifactEffectImplBase::applyGPU. Every configuration that returns
+// None (premultiplied off, strength < 1, sigma >= 3, more passes than
+// GpuSpatialEffectStack::kCapacity) also falls back to CPU inside applyGPU
+// below, so no configuration reaches the dispatch code either.
+//
+// It is kept only as a reference implementation for the premultiplied linear
+// Gaussian it performs. It uploads the source, dispatches, then blocks on
+// ctx->WaitForIdle() to read the result back into CPU memory, which
+// docs/technical/HOT_PATH_RULES.md forbids in the render hot path. Do not
+// widen its use: new work belongs in the resident spatial node path.
 class BlurEffectGPUImpl : public ArtifactEffectImplBase {
 public:
     mutable Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device_;
@@ -329,6 +349,8 @@ public:
     {
         if (context_) {
             context_->Flush();
+            // Draining the device here is safe only because nothing ever
+            // dispatches through this impl; see the class comment.
             context_->WaitForIdle();
         }
         executor_.reset();

@@ -35,6 +35,11 @@ static inline float dbToLinear(float db) {
 
 void CompressorEffect::process(ArtifactCore::AudioSegment& segment, const ArtifactCore::AudioSegment*) {
     if (!enabled_ || segment.channelData.isEmpty()) return;
+    // オフライン書き出しとリアルタイム再生で実レートが異なるため、
+    // バスから渡された segment のレートへ同期する。
+    // レートが変わると attack/release 係数も変わるため reinitOnSampleRate()
+    // が envelope をリセットする。
+    syncSampleRate(segment);
 
     float sr = static_cast<float>(sampleRate_);
     int numChannels = static_cast<int>(segment.channelData.size());
@@ -51,8 +56,11 @@ void CompressorEffect::process(ArtifactCore::AudioSegment& segment, const Artifa
 
     float effectiveMakeup = makeupGain_;
     if (autoMakeup_) {
-        float gainReductionAtThreshold = threshold_ - (threshold_ / ratio_);
-        effectiveMakeup = gainReductionAtThreshold * 0.5f;
+        // threshold を超えた分は 1/ratio まで圧縮される。その差分が失われる gain なので、
+        // 符号を反転して足し戻す。旧実装は符号が逆で、既定値
+        // (threshold=-20, ratio=4) で -7.5dB の減衰になっていた。
+        const float gainReductionAtThreshold = threshold_ - (threshold_ / ratio_);
+        effectiveMakeup = -gainReductionAtThreshold * 0.5f;
     }
     float makeupLinear = dbToLinear(effectiveMakeup);
     float halfKnee = kneeWidth_ * 0.5f;

@@ -374,10 +374,20 @@ std::vector<AbstractProperty> VibranceEffect::getProperties() const {
     props[0].setName("Vibrance");
     props[0].setType(ArtifactCore::PropertyType::Float);
     props[0].setValue(QVariant(static_cast<double>(vibrance_)));
+    props[0].setDefaultValue(0.0);
+    props[0].setHardRange(-1.0, 1.0);
+    props[0].setSoftRange(-1.0, 1.0);
+    props[0].setStep(0.01);
+    props[0].setTooltip(QStringLiteral("Boosts low-saturation pixels while holding back already-saturated ones. Negative values mute the least saturated areas."));
 
     props[1].setName("Saturation");
     props[1].setType(ArtifactCore::PropertyType::Float);
     props[1].setValue(QVariant(static_cast<double>(saturation_)));
+    props[1].setDefaultValue(0.0);
+    props[1].setHardRange(-1.0, 1.0);
+    props[1].setSoftRange(-1.0, 1.0);
+    props[1].setStep(0.01);
+    props[1].setTooltip(QStringLiteral("Uniform saturation shift applied on top of the vibrance adjustment."));
 
     return props;
 }
@@ -385,6 +395,7 @@ std::vector<AbstractProperty> VibranceEffect::getProperties() const {
 void VibranceEffect::setPropertyValue(const UniString& name, const QVariant& value) {
     if (name == "Vibrance") setVibrance(value.toFloat());
     else if (name == "Saturation") setSaturation(value.toFloat());
+    else setCommonPropertyValue(name, value);
 }
 
 } // namespace Artifact

@@ -1,6 +1,8 @@
 module;
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <dlfcn.h>
 #endif
 
 #include <cstring>
@@ -8,6 +10,7 @@ module;
 #include <cstdio>
 #include <cstdlib>
 #include <cstdint>
+#include <cmath>
 #include <algorithm>
 #include <memory>
 #include <string>
@@ -22,9 +25,14 @@ module;
 #include <QDirIterator>
 #include <QFileInfo>
 #include <QFileInfoList>
+#include <QFile>
+#include <QHash>
+#include <QSettings>
+#include <QSet>
 #include <QString>
 #include <QStringList>
 #include <QVariant>
+#include <QVector>
 
 #include <ofx/ofxCore.h>
 #include <ofx/ofxImageEffect.h>
@@ -33,6 +41,8 @@ module;
 #include <ofx/ofxMemory.h>
 #include <ofx/ofxTimeLine.h>
 #include <ofx/ofxMessage.h>
+#include <ofx/ofxProgress.h>
+#include <ofx/ofxInteract.h>
 
 // kOfxImageEffectPropStatusMessage is part of the OFX spec (an outArgs key the
 // render action may set) but is absent from the vendored 1.5 headers, which
@@ -45,6 +55,7 @@ module;
 export module Artifact.Effect.Ofx.Host;
 
 import Property.Abstract;
+import Time.Rational;
 import Utils.String.UniString;
 import Artifact.Effect.Context;
 import Memory.SharedPtr;
@@ -58,14 +69,54 @@ class ArtifactOfxHost;
 
 using namespace ArtifactCore;
 
-// Plugin libraries are loaded dynamically. Only Windows is wired up today;
-// on other platforms the scanner finds candidates but never opens them, so the
-// handle type must still exist for the descriptor to compile.
+// Opaque handle for a loaded plugin binary. The three helpers below abstract
+// the platform loader (LoadLibrary/FreeLibrary/GetProcAddress on Win32,
+// dlopen/dlclose/dlsym elsewhere) so the scanner and the effect bridge never
+// touch a platform API directly.
 #ifdef _WIN32
 using OfxLibraryHandle = HMODULE;
 #else
 using OfxLibraryHandle = void *;
 #endif
+
+// Opens a plugin binary. Returns nullptr when the file cannot be mapped.
+OfxLibraryHandle openPluginLibrary(const QString &binaryPath) {
+#ifdef _WIN32
+  const auto *widePath = reinterpret_cast<LPCWSTR>(binaryPath.utf16());
+  return LoadLibraryW(widePath);
+#else
+  // dlopen needs a NUL-terminated native path; QString::utf8 is not guaranteed
+  // to be NUL-terminated, so go through QByteArray.
+  const QByteArray nativePath = QFile::encodeName(binaryPath);
+  return dlopen(nativePath.constData(), RTLD_NOW | RTLD_LOCAL);
+#endif
+}
+
+void closePluginLibrary(OfxLibraryHandle handle) {
+  if (!handle) {
+    return;
+  }
+#ifdef _WIN32
+  FreeLibrary(handle);
+#else
+  dlclose(handle);
+#endif
+}
+
+// Resolves an exported symbol, or nullptr when it is absent.
+// Exported so the effect bridge re-resolves the OFX entry points through the
+// same portable path instead of calling GetProcAddress directly.
+export void *resolvePluginSymbol(OfxLibraryHandle handle,
+                                  const char *symbolName) {
+  if (!handle || !symbolName) {
+    return nullptr;
+  }
+#ifdef _WIN32
+  return reinterpret_cast<void *>(GetProcAddress(handle, symbolName));
+#else
+  return dlsym(handle, symbolName);
+#endif
+}
 
 export struct OfxPropertySetStruct {
   enum class Kind {
@@ -92,6 +143,17 @@ export struct ParamState {
   std::vector<QVariant> currentValues;
   QString currentStringValue;
   std::string currentUtf8Value;
+  // The editor-facing property this OFX parameter is bridged to. The OFX
+  // keyframe API is implemented on top of AbstractProperty's own keyframe
+  // track, so the suite functions operate on that property rather than
+  // maintaining a second set of keys.
+  //
+  // Stored by value: previewProperties is a vector whose elements move when it
+  // grows, so a pointer into it would dangle before the first render.
+  AbstractProperty property;
+  // Time base used to convert between OFX times (seconds) and the property's
+  // rational time. Defaults to the host's declared frame rate.
+  double frameRate = 30.0;
 };
 
 export struct ParamSetState {
@@ -176,6 +238,10 @@ std::unique_ptr<ParamState> cloneParamState(const ParamState &src) {
   dst->currentValues = src.currentValues;
   dst->currentStringValue = src.currentStringValue;
   dst->currentUtf8Value = src.currentUtf8Value;
+  // The bridged property is copied along with its keyframes so a render
+  // instance starts from the same authored state as the descriptor.
+  dst->property = src.property;
+  dst->frameRate = src.frameRate;
   return dst;
 }
 
@@ -204,6 +270,128 @@ export struct OfxPluginDescriptor {
   std::uint64_t generation = 0;
 };
 
+// Number of times a plugin may fault before it is blacklisted.
+inline constexpr int kOfxCrashLimit = 3;
+
+// Identifier of the plugin currently executing inside the crash guard, or null
+// when no plugin call is in flight. Read by the abort reporter below so a CRT
+// abort can name the plugin that triggered it, and so a plugin that aborts is
+// still attributed for blacklisting.
+inline const char *&activePluginIdentifier() {
+  static const char *value = nullptr;
+  return value;
+}
+
+// Installs a handler that records a CRT abort / fast-fail, which __try/__except
+// cannot catch because it is raised by abort() rather than as an exception. The
+// report names the plugin that was executing so a bad plugin can be blacklisted
+// instead of silently taking the process down.
+//
+// Heap corruption is NOT handled here: it is detected by the CRT long after the
+// offending write, during unrelated allocator activity, so in-process recovery
+// is not possible without a debug heap that is unavailable in release builds.
+// Only the plugin isolation path can contain it, which is not implemented.
+void installOfxAbortReporter();
+
+#ifdef _WIN32
+// Abort paths reach us through the vectored handler rather than __try/__except:
+// abort() raises no exception, so a fast-fail or CRT abort would otherwise end
+// the process with no record of which plugin caused it. Reporting from a vectored
+// handler is risky, so this only stamps a marker file and leaves termination to
+// the default handler.
+LONG CALLBACK ofxVectoredCrashReporter(EXCEPTION_POINTERS *exceptionInfo) {
+  if (!exceptionInfo) {
+    return EXCEPTION_CONTINUE_SEARCH;
+  }
+  const DWORD code = exceptionInfo->ExceptionRecord
+                         ? exceptionInfo->ExceptionRecord->ExceptionCode
+                         : 0;
+  const bool isAbortLike =
+      code == 0x40000015 /* STATUS_FATAL_APP_EXIT */ ||
+      code == 0xC0000409 /* STATUS_STACK_BUFFER_OVERRUN */ ||
+      code == 0xC0000374 /* STATUS_HEAP_CORRUPTION */;
+  if (!isAbortLike) {
+    return EXCEPTION_CONTINUE_SEARCH;
+  }
+  const char *identifier = activePluginIdentifier();
+  if (identifier) {
+    // Write only an identifier, no allocation: this runs with a corrupted heap
+    // and may be the last thing that executes.
+    OutputDebugStringA("[OFX] abort-like fault inside plugin: ");
+    OutputDebugStringA(identifier);
+    OutputDebugStringA("\n");
+  }
+  return EXCEPTION_CONTINUE_SEARCH;
+}
+#endif
+
+void installOfxAbortReporter() {
+#ifdef _WIN32
+  static bool installed = false;
+  if (installed) {
+    return;
+  }
+  installed = true;
+  // The core CrashHandler installs an unhandled filter; a vectored handler runs
+  // first and only observes, so both mechanisms stay in play.
+  AddVectoredExceptionHandler(1, &ofxVectoredCrashReporter);
+#endif
+}
+
+// Invokes a plugin entry point with a structured exception guard.
+//
+// A third-party plugin that faults inside its render action would otherwise take
+// the whole application down. __try/__except turns an access violation into a
+// failure status so the caller can disable the offending plugin and continue.
+//
+// SEH and C++ object unwinding cannot be combined in one function, so this
+// helper only touches POD state and defers all real work to the caller's
+// arguments; it deliberately owns no non-trivial locals.
+//
+// Returns true when the call completed (status is written to `outStatus`),
+// false when the plugin faulted.
+bool callPluginEntryPoint(OfxPluginEntryPoint *entryPoint, const char *action,
+                          const void *instance, OfxPropertySetHandle inArgs,
+                          OfxPropertySetHandle outArgs, OfxStatus *outStatus) {
+  if (!entryPoint || !outStatus) {
+    return false;
+  }
+#ifdef _WIN32
+  __try {
+    *outStatus = (*entryPoint)(action, instance, inArgs, outArgs);
+    return true;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    // Deliberately swallow: the caller records the failure against the plugin
+    // identifier and the plugin gets disabled once it exceeds the crash limit.
+    *outStatus = kOfxStatFailed;
+    return false;
+  }
+#else
+  // Non-Windows builds have no SEH; run unguarded so behaviour matches the
+  // platform's own crash reporting.
+  *outStatus = (*entryPoint)(action, instance, inArgs, outArgs);
+  return true;
+#endif
+}
+
+// Declared here, outside the anonymous namespace, and defined after the
+// ArtifactOfxHost class body. The action helpers between the anonymous
+// namespace and the class need them, and a declaration inside the anonymous
+// namespace would name a different entity from the out-of-class definition.
+// `identifier` may be null for actions issued before the plugin is fully
+// described, in which case a fault is counted but not attributed.
+OfxStatus dispatchOfxAction(OfxPlugin *plugin, const char *identifier,
+                            const char *action, const void *instance,
+                            OfxPropertySetHandle inArgs,
+                            OfxPropertySetHandle outArgs);
+
+bool ofxPluginIsBlacklisted(const char *identifier);
+
+OfxStatus pluginActionLoad(OfxPlugin *plugin);
+
+OfxStatus pluginActionDescribe(OfxPlugin *plugin,
+                               ImageEffectState &descriptorState);
+
 ImageEffectState *imageEffectForClip(const ClipState *clip);
 
 namespace {
@@ -218,6 +406,15 @@ using OfxGetPluginFn = OfxPlugin *(*)(int);
 std::vector<QVariant> defaultValuesForOfxParamType(const QString &paramType);
 OfxStatus paramGetValueImpl(OfxParamHandle paramHandle, va_list args);
 OfxStatus paramSetValueImpl(OfxParamHandle paramHandle, va_list args);
+int paramComponentCount(const QString &paramType);
+RationalTime toRationalTime(const ParamState &param, OfxTime time);
+OfxTime toOfxTime(const ParamState &param, const RationalTime &time);
+// Returns component `index` of a parameter's value: the evaluated value when
+// one was produced for this frame, otherwise the stored current value.
+QVariant resolveComponent(const ParamState &param, const QVariant &evaluated,
+                          bool haveEvaluated, int index);
+double sampleComponentAt(const ParamState &param, OfxTime time, int index);
+bool supportsNumericAnalysis(const QString &paramType);
 
 QString toQString(const char *value) {
   return value ? QString::fromUtf8(value) : QString();
@@ -924,6 +1121,90 @@ OfxStatus ofxMemoryFree(void *allocatedData) {
   return kOfxStatOK;
 }
 
+OfxStatus ofxProgressStart(void * /*effectInstance*/, const char *label) {
+  // The host renders on its own schedule and owns no progress UI for plugins,
+  // so the request is accepted and the caller's update/end cycle becomes a
+  // no-op. Returning Failed here makes many plugins treat progress as an
+  // error and abort their work.
+  if (label) {
+    qInfo("[OFX] progress: %s", label);
+  }
+  return kOfxStatOK;
+}
+
+OfxStatus ofxProgressUpdate(void * /*effectInstance*/, double progress) {
+  return progress < 0.0 || progress > 1.0 ? kOfxStatErrValue : kOfxStatOK;
+}
+
+OfxStatus ofxProgressEnd(void * /*effectInstance*/) {
+  return kOfxStatOK;
+}
+
+OfxProgressSuiteV1 makeProgressSuite() {
+  OfxProgressSuiteV1 suite{};
+  suite.progressStart = &ofxProgressStart;
+  suite.progressUpdate = &ofxProgressUpdate;
+  suite.progressEnd = &ofxProgressEnd;
+  return suite;
+}
+
+const OfxProgressSuiteV1 *progressSuite() {
+  static const OfxProgressSuiteV1 suite = makeProgressSuite();
+  return &suite;
+}
+
+OfxStatus ofxProgressStartV2(void *effectInstance, const char *message,
+                             const char *messageId) {
+  Q_UNUSED(messageId);
+  return ofxProgressStart(effectInstance, message);
+}
+
+OfxProgressSuiteV2 makeProgressSuiteV2() {
+  OfxProgressSuiteV2 suite{};
+  suite.progressStart = &ofxProgressStartV2;
+  suite.progressUpdate = &ofxProgressUpdate;
+  suite.progressEnd = &ofxProgressEnd;
+  return suite;
+}
+
+const OfxProgressSuiteV2 *progressSuiteV2() {
+  static const OfxProgressSuiteV2 suite = makeProgressSuiteV2();
+  return &suite;
+}
+
+OfxStatus ofxInteractSwapBuffers(OfxInteractHandle /*interactInstance*/) {
+  // Custom interact GUIs draw into an OpenGL context the host does not own;
+  // the host already declares SupportsCustomInteract = 0, so this is only
+  // reached by plugins that ignored that declaration.
+  return kOfxStatFailed;
+}
+
+OfxStatus ofxInteractRedraw(OfxInteractHandle /*interactInstance*/) {
+  return kOfxStatFailed;
+}
+
+OfxStatus ofxInteractGetPropertySet(OfxInteractHandle /*interactInstance*/,
+                                    OfxPropertySetHandle *property) {
+  if (!property) {
+    return kOfxStatErrBadHandle;
+  }
+  *property = nullptr;
+  return kOfxStatFailed;
+}
+
+OfxInteractSuiteV1 makeInteractSuite() {
+  OfxInteractSuiteV1 suite{};
+  suite.interactSwapBuffers = &ofxInteractSwapBuffers;
+  suite.interactRedraw = &ofxInteractRedraw;
+  suite.interactGetPropertySet = &ofxInteractGetPropertySet;
+  return suite;
+}
+
+const OfxInteractSuiteV1 *interactSuite() {
+  static const OfxInteractSuiteV1 suite = makeInteractSuite();
+  return &suite;
+}
+
 OfxMemorySuiteV1 makeMemorySuite() {
   OfxMemorySuiteV1 suite{};
   suite.memoryAlloc = &ofxMemoryAlloc;
@@ -1069,10 +1350,10 @@ OfxStatus paramDefine(OfxParamSetHandle paramSet, const char *paramType,
   setStringProperty(properties, kOfxPropName, name);
   setStringProperty(properties, kOfxPropLabel, name);
   setStringProperty(properties, kOfxParamPropType, paramType);
-  // Keyframes are unimplemented on this host, so parameters must advertise
-  // themselves as non-animatable; claiming otherwise makes plugins build
-  // animated controls the host silently discards.
-  setIntProperty(properties, kOfxParamPropAnimates, 0);
+  // The host now implements the keyframe suite on top of AbstractProperty's
+  // own track, so parameters advertise themselves as animatable and plugins
+  // may rely on it.
+  setIntProperty(properties, kOfxParamPropAnimates, 1);
   setIntProperty(properties, kOfxParamPropCanUndo, 1);
   setIntProperty(properties, kOfxParamPropPersistant, 1);
   setIntProperty(properties, kOfxParamPropEvaluateOnChange, 1);
@@ -1126,27 +1407,195 @@ OfxStatus paramGetValue(OfxParamHandle paramHandle, ...) {
   return status;
 }
 
-OfxStatus paramGetValueAtTime(OfxParamHandle paramHandle, OfxTime /*time*/,
+OfxStatus paramGetValueAtTime(OfxParamHandle paramHandle, OfxTime time,
                               ...) {
-  // Keyframes are not supported, so every time collapses onto the single
-  // current value. Time is still consumed positionally to keep the variadic
-  // argument list aligned with what the plugin passed.
+  auto *param = asParam(paramHandle);
+  if (!param) {
+    return kOfxStatErrBadHandle;
+  }
+
+  // With keys present, answer from the property's own interpolation at the
+  // requested time; otherwise fall through to the single current value.
+  QVariant evaluated;
+  bool haveEvaluated = false;
+  if (param->property.hasKeyFrames()) {
+    evaluated = param->property.interpolateValue(toRationalTime(*param, time));
+    haveEvaluated = true;
+  }
+
+  const QString paramType = param->paramType;
+  // The variadic list must be started before any va_arg and ended on every
+  // exit path; a single result holder keeps the lambda free of returns that
+  // could skip va_end.
+  OfxStatus result = kOfxStatErrUnsupported;
   va_list args;
   va_start(args, time);
-  const OfxStatus status = paramGetValueImpl(paramHandle, args);
+  if (paramType.compare(QStringLiteral("OfxParamTypeString"), Qt::CaseInsensitive) == 0 ||
+      paramType.compare(QStringLiteral("OfxParamTypeCustom"), Qt::CaseInsensitive) == 0 ||
+      paramType.compare(QStringLiteral("OfxParamTypeStrChoice"), Qt::CaseInsensitive) == 0) {
+    const char **out = va_arg(args, const char **);
+    if (!out) {
+      result = kOfxStatErrBadHandle;
+    } else {
+      if (haveEvaluated) {
+        // The plugin owns the returned buffer only until the next call, so
+        // hand back the parameter's stable storage after refreshing it.
+        param->currentStringValue = evaluated.toString();
+        param->currentUtf8Value = param->currentStringValue.toUtf8().toStdString();
+      }
+      *out = param->currentUtf8Value.c_str();
+      result = kOfxStatOK;
+    }
+  } else {
+    const bool asDouble =
+        paramType.compare(QStringLiteral("OfxParamTypeRGB"), Qt::CaseInsensitive) == 0 ||
+        paramType.compare(QStringLiteral("OfxParamTypeRGBA"), Qt::CaseInsensitive) == 0 ||
+        paramType.compare(QStringLiteral("OfxParamTypeDouble2D"), Qt::CaseInsensitive) == 0 ||
+        paramType.compare(QStringLiteral("OfxParamTypeDouble3D"), Qt::CaseInsensitive) == 0;
+    const bool asInt =
+        paramType.compare(QStringLiteral("OfxParamTypeBoolean"), Qt::CaseInsensitive) == 0 ||
+        paramType.compare(QStringLiteral("OfxParamTypeChoice"), Qt::CaseInsensitive) == 0 ||
+        paramType.compare(QStringLiteral("OfxParamTypeInteger"), Qt::CaseInsensitive) == 0 ||
+        paramType.compare(QStringLiteral("OfxParamTypeInteger2D"), Qt::CaseInsensitive) == 0 ||
+        paramType.compare(QStringLiteral("OfxParamTypeInteger3D"), Qt::CaseInsensitive) == 0;
+    if (asDouble || asInt) {
+      result = kOfxStatOK;
+      const int count = paramComponentCount(paramType);
+      for (int i = 0; i < count; ++i) {
+        if (asDouble) {
+          double *out = va_arg(args, double *);
+          if (!out) {
+            result = kOfxStatErrBadHandle;
+            break;
+          }
+          *out = resolveComponent(*param, evaluated, haveEvaluated, i).toDouble();
+        } else {
+          int *out = va_arg(args, int *);
+          if (!out) {
+            result = kOfxStatErrBadHandle;
+            break;
+          }
+          *out = resolveComponent(*param, evaluated, haveEvaluated, i).toInt();
+        }
+      }
+    }
+  }
   va_end(args);
-  return status;
+  return result;
 }
 
-OfxStatus paramGetDerivativeUnsupported(OfxParamHandle /*paramHandle*/,
-                                        OfxTime /*time*/, ...) {
-  return kOfxStatErrUnsupported;
+OfxStatus paramGetDerivative(OfxParamHandle paramHandle, OfxTime time, ...) {
+  auto *param = asParam(paramHandle);
+  if (!param) {
+    return kOfxStatErrBadHandle;
+  }
+  if (!supportsNumericAnalysis(param->paramType)) {
+    // The spec limits derivatives to double and colour params; other types have
+    // no defined derivative rather than a zero one.
+    return kOfxStatErrUnsupported;
+  }
+
+  const int count = paramComponentCount(param->paramType);
+  // Central difference over one frame. toRationalTime rounds to whole frames,
+  // so any smaller step would collapse onto the same frame and read zero.
+  const double rate = param->frameRate > 0.0 ? param->frameRate : 30.0;
+  const double h = 1.0 / rate;
+
+  // A parameter with no keys is constant, so its derivative is zero.
+  const bool constant = !param->property.hasKeyFrames();
+
+  OfxStatus result = kOfxStatOK;
+  va_list args;
+  va_start(args, time);
+  for (int i = 0; i < count; ++i) {
+    double *out = va_arg(args, double *);
+    if (!out) {
+      result = kOfxStatErrBadHandle;
+      break;
+    }
+    *out = constant ? 0.0
+                    : (sampleComponentAt(*param, time + h, i) -
+                       sampleComponentAt(*param, time - h, i)) /
+                          (2.0 * h);
+  }
+  va_end(args);
+  return result;
 }
 
-OfxStatus paramGetIntegralUnsupported(OfxParamHandle /*paramHandle*/,
-                                      OfxTime /*time1*/, OfxTime /*time2*/,
-                                      ...) {
-  return kOfxStatErrUnsupported;
+OfxStatus paramGetIntegral(OfxParamHandle paramHandle, OfxTime time1,
+                           OfxTime time2, ...) {
+  auto *param = asParam(paramHandle);
+  if (!param) {
+    return kOfxStatErrBadHandle;
+  }
+  if (!supportsNumericAnalysis(param->paramType)) {
+    return kOfxStatErrUnsupported;
+  }
+
+  const int count = paramComponentCount(param->paramType);
+  // Signed integral from time1 to time2, so a reversed range yields the negative
+  // of the forward one. The spec does not define the sign convention.
+  const double span = time2 - time1;
+
+  OfxStatus result = kOfxStatOK;
+  va_list args;
+  va_start(args, time2);
+  for (int i = 0; i < count; ++i) {
+    double *out = va_arg(args, double *);
+    if (!out) {
+      result = kOfxStatErrBadHandle;
+      break;
+    }
+    if (span == 0.0) {
+      *out = 0.0;
+      continue;
+    }
+    if (!param->property.hasKeyFrames()) {
+      // Constant curve: the exact integral is value * span.
+      *out = sampleComponentAt(*param, time1, i) * span;
+      continue;
+    }
+
+    // Composite Simpson over the interval, split at every keyframe boundary so
+    // that hold and step segments stay exact instead of being smoothed across.
+    const auto keys = param->property.getKeyFrames();
+    QVector<double> breaks;
+    breaks.reserve(static_cast<int>(keys.size()) + 2);
+    breaks.push_back(std::min(time1, time2));
+    for (const KeyFrame &key : keys) {
+      const double keyTime = toOfxTime(*param, key.time);
+      if (keyTime > std::min(time1, time2) && keyTime < std::max(time1, time2)) {
+        breaks.push_back(keyTime);
+      }
+    }
+    breaks.push_back(std::max(time1, time2));
+    std::sort(breaks.begin(), breaks.end());
+
+    double total = 0.0;
+    for (int s = 0; s + 1 < breaks.size(); ++s) {
+      const double a = breaks.at(s);
+      const double b = breaks.at(s + 1);
+      const double h = b - a;
+      if (h == 0.0) {
+        continue;
+      }
+      // Three-point Simpson is exact for cubics and cheap; a two-point
+      // trapezoid is used when the segment is too short to sample a midpoint.
+      if (h > 1e-9) {
+        const double mid = 0.5 * (a + b);
+        total += (h / 6.0) * (sampleComponentAt(*param, a, i) +
+                              4.0 * sampleComponentAt(*param, mid, i) +
+                              sampleComponentAt(*param, b, i));
+      } else {
+        total += h * 0.5 * (sampleComponentAt(*param, a, i) +
+                            sampleComponentAt(*param, b, i));
+      }
+    }
+    // The interval was normalised to ascending order above; restore the sign.
+    *out = span < 0.0 ? -total : total;
+  }
+  va_end(args);
+  return result;
 }
 
 OfxStatus paramSetValue(OfxParamHandle paramHandle, ...) {
@@ -1158,53 +1607,289 @@ OfxStatus paramSetValue(OfxParamHandle paramHandle, ...) {
 }
 
 OfxStatus paramSetValueAtTime(OfxParamHandle paramHandle, OfxTime time, ...) {
+  auto *param = asParam(paramHandle);
+  if (!param) {
+    return kOfxStatErrBadHandle;
+  }
+
+  // Read the incoming value positionally into the same currentValues layout
+  // the untimed setter uses, then commit it as a keyframe.
   va_list args;
   va_start(args, time);
-  const OfxStatus status = paramSetValueImpl(paramHandle, args);
+  const QString paramType = param->paramType;
+
+  QVariant commitValue;
+  if (paramType.compare(QStringLiteral("OfxParamTypeString"), Qt::CaseInsensitive) == 0 ||
+      paramType.compare(QStringLiteral("OfxParamTypeCustom"), Qt::CaseInsensitive) == 0 ||
+      paramType.compare(QStringLiteral("OfxParamTypeStrChoice"), Qt::CaseInsensitive) == 0) {
+    const char *value = va_arg(args, const char *);
+    commitValue = value ? QString::fromUtf8(value) : QString();
+  } else {
+    const int count = paramComponentCount(paramType);
+    const bool asDouble =
+        paramType.compare(QStringLiteral("OfxParamTypeRGB"), Qt::CaseInsensitive) == 0 ||
+        paramType.compare(QStringLiteral("OfxParamTypeRGBA"), Qt::CaseInsensitive) == 0 ||
+        paramType.compare(QStringLiteral("OfxParamTypeDouble2D"), Qt::CaseInsensitive) == 0 ||
+        paramType.compare(QStringLiteral("OfxParamTypeDouble3D"), Qt::CaseInsensitive) == 0;
+    QVariantList list;
+    for (int i = 0; i < count; ++i) {
+      if (asDouble) {
+        list.push_back(va_arg(args, double));
+      } else {
+        list.push_back(va_arg(args, int));
+      }
+    }
+    // Preserve the property's own component type (color vs. plain float) so
+    // the keyframe written below evaluates back into the right shape.
+    if (param->property.getType() == PropertyType::Color &&
+        count >= 3) {
+      commitValue = QColor::fromRgbF(
+          static_cast<float>(list.value(0).toDouble()),
+          static_cast<float>(list.value(1).toDouble()),
+          static_cast<float>(list.value(2).toDouble()),
+          count >= 4 ? static_cast<float>(list.value(3).toDouble()) : 1.0f);
+    } else {
+      commitValue = QVariant(list);
+    }
+  }
   va_end(args);
-  return status;
+
+  // Update the stored current value so an immediate paramGetValue still sees
+  // what the plugin just wrote.
+  const OfxStatus status = [&]() -> OfxStatus {
+    if (paramType.compare(QStringLiteral("OfxParamTypeString"), Qt::CaseInsensitive) == 0 ||
+        paramType.compare(QStringLiteral("OfxParamTypeCustom"), Qt::CaseInsensitive) == 0 ||
+        paramType.compare(QStringLiteral("OfxParamTypeStrChoice"), Qt::CaseInsensitive) == 0) {
+      param->currentStringValue = commitValue.toString();
+      param->currentUtf8Value = param->currentStringValue.toUtf8().toStdString();
+      param->currentValues = {param->currentStringValue};
+      return kOfxStatOK;
+    }
+    const QVariantList list = commitValue.toList();
+    param->currentValues.assign(list.cbegin(), list.cend());
+    if (param->currentValues.empty()) {
+      param->currentValues = {commitValue};
+    }
+    return kOfxStatOK;
+  }();
+  if (status != kOfxStatOK) {
+    return status;
+  }
+
+  // Write the keyframe only when the parameter is bridged to an animatable
+  // property; otherwise the value above is still recorded as the static value.
+  if (param->property.isAnimatable()) {
+    param->property.addKeyFrame(toRationalTime(*param, time), commitValue);
+  }
+  return kOfxStatOK;
 }
 
-OfxStatus paramGetNumKeysUnsupported(OfxParamHandle /*paramHandle*/,
-                                     unsigned int *numberOfKeys) {
-  if (numberOfKeys) {
+// --- OFX <-> AbstractProperty time conversion -------------------------
+//
+// OFX times are seconds; AbstractProperty keys are RationalTime at the
+// parameter's frame rate. Every keyframe entry point converts through here so
+// the two scales cannot drift apart.
+
+RationalTime toRationalTime(const ParamState &param, OfxTime time) {
+  const double rate = param.frameRate > 0.0 ? param.frameRate : 30.0;
+  const int64_t frames = static_cast<int64_t>(std::llround(time * rate));
+  return RationalTime::fromFrameCount(frames, static_cast<int64_t>(rate));
+}
+
+OfxTime toOfxTime(const ParamState &param, const RationalTime &time) {
+  const double rate = param.frameRate > 0.0 ? param.frameRate : 30.0;
+  const int64_t frames = time.rescaledTo(static_cast<int64_t>(rate));
+  return static_cast<OfxTime>(static_cast<double>(frames) / rate);
+}
+
+QVariant resolveComponent(const ParamState &param, const QVariant &evaluated,
+                          bool haveEvaluated, int index) {
+  if (haveEvaluated) {
+    // Multi-component parameters store their vector as a QVariantList; single
+    // component parameters carry the value directly.
+    const QVariantList list = evaluated.toList();
+    if (index < list.size()) {
+      return list.at(index);
+    }
+    if (list.isEmpty()) {
+      return evaluated;
+    }
+    return QVariant();
+  }
+  if (index < param.currentValues.size()) {
+    return param.currentValues[static_cast<size_t>(index)];
+  }
+  return QVariant();
+}
+
+// Samples one component of the parameter's curve at an arbitrary OFX time.
+// Unlike resolveComponent this ignores the stored static value and always reads
+// through interpolateValue, so a parameter with no keys correctly reports its
+// constant value at every time.
+double sampleComponentAt(const ParamState &param, OfxTime time, int index) {
+  const QVariant evaluated =
+      param.property.interpolateValue(toRationalTime(param, time));
+  const QVariantList list = evaluated.toList();
+  if (list.isEmpty()) {
+    return index == 0 ? evaluated.toDouble() : 0.0;
+  }
+  return index < list.size() ? list.at(index).toDouble() : 0.0;
+}
+
+// True for the parameter types the spec says can carry a derivative or an
+// integral (ofxParam.h: "Only double and colour params can have their
+// derivatives found" / "can be integrated").
+bool supportsNumericAnalysis(const QString &paramType) {
+  return paramType.compare(QStringLiteral("OfxParamTypeDouble"), Qt::CaseInsensitive) == 0 ||
+         paramType.compare(QStringLiteral("OfxParamTypeDouble2D"), Qt::CaseInsensitive) == 0 ||
+         paramType.compare(QStringLiteral("OfxParamTypeDouble3D"), Qt::CaseInsensitive) == 0 ||
+         paramType.compare(QStringLiteral("OfxParamTypeRGB"), Qt::CaseInsensitive) == 0 ||
+         paramType.compare(QStringLiteral("OfxParamTypeRGBA"), Qt::CaseInsensitive) == 0;
+}
+
+OfxStatus paramGetNumKeys(OfxParamHandle paramHandle,
+                          unsigned int *numberOfKeys) {
+  if (!numberOfKeys) {
+    return kOfxStatErrBadHandle;
+  }
+  auto *param = asParam(paramHandle);
+  if (!param) {
     *numberOfKeys = 0;
+    return kOfxStatErrUnsupported;
   }
-  return kOfxStatErrUnsupported;
+  *numberOfKeys =
+      static_cast<unsigned int>(param->property.keyFrameCount());
+  return kOfxStatOK;
 }
 
-OfxStatus paramGetKeyTimeUnsupported(OfxParamHandle /*paramHandle*/,
-                                     unsigned int /*nthKey*/,
-                                     OfxTime *time) {
-  if (time) {
-    *time = 0.0;
+OfxStatus paramGetKeyTime(OfxParamHandle paramHandle, unsigned int nthKey,
+                          OfxTime *time) {
+  if (!time) {
+    return kOfxStatErrBadHandle;
   }
-  return kOfxStatErrUnsupported;
+  auto *param = asParam(paramHandle);
+  if (!param) {
+    return kOfxStatErrUnsupported;
+  }
+  const auto keys = param->property.getKeyFrames();
+  if (nthKey >= keys.size()) {
+    return kOfxStatErrValue;
+  }
+  *time = toOfxTime(*param, keys[nthKey].time);
+  return kOfxStatOK;
 }
 
-OfxStatus paramGetKeyIndexUnsupported(OfxParamHandle /*paramHandle*/,
-                                      OfxTime /*time*/, int /*direction*/,
-                                      int *index) {
-  if (index) {
+OfxStatus paramGetKeyIndex(OfxParamHandle paramHandle, OfxTime time,
+                           int direction, int *index) {
+  if (!index) {
+    return kOfxStatErrBadHandle;
+  }
+  auto *param = asParam(paramHandle);
+  if (!param) {
     *index = -1;
+    return kOfxStatErrUnsupported;
   }
-  return kOfxStatErrUnsupported;
+  const auto keys = param->property.getKeyFrames();
+  const RationalTime target = toRationalTime(*param, time);
+
+  // direction follows the OFX convention: 0 searches backwards from the key
+  // exactly at `time`, 1 searches forwards.
+  int found = -1;
+  if (direction == 0) {
+    for (int i = static_cast<int>(keys.size()) - 1; i >= 0; --i) {
+      if (keys[static_cast<size_t>(i)].time <= target) {
+        found = i;
+        break;
+      }
+    }
+  } else {
+    for (size_t i = 0; i < keys.size(); ++i) {
+      if (keys[i].time >= target) {
+        found = static_cast<int>(i);
+        break;
+      }
+    }
+  }
+  *index = found;
+  return kOfxStatOK;
 }
 
-OfxStatus paramDeleteKeyUnsupported(OfxParamHandle /*paramHandle*/,
-                                    OfxTime /*time*/) {
-  return kOfxStatErrUnsupported;
+OfxStatus paramDeleteKey(OfxParamHandle paramHandle, OfxTime time) {
+  auto *param = asParam(paramHandle);
+  if (!param) {
+    return kOfxStatErrUnsupported;
+  }
+  param->property.removeKeyFrame(toRationalTime(*param, time));
+  return kOfxStatOK;
 }
 
-OfxStatus paramDeleteAllKeysUnsupported(OfxParamHandle /*paramHandle*/) {
-  return kOfxStatErrUnsupported;
+OfxStatus paramDeleteAllKeys(OfxParamHandle paramHandle) {
+  auto *param = asParam(paramHandle);
+  if (!param) {
+    return kOfxStatErrUnsupported;
+  }
+  param->property.clearKeyFrames();
+  return kOfxStatOK;
 }
 
-OfxStatus paramCopyUnsupported(OfxParamHandle /*paramTo*/,
-                               OfxParamHandle /*paramFrom*/,
-                               OfxTime /*dstOffset*/,
-                               const OfxRangeD * /*frameRange*/) {
-  return kOfxStatErrUnsupported;
+OfxStatus paramCopy(OfxParamHandle paramTo, OfxParamHandle paramFrom,
+                    OfxTime dstOffset, const OfxRangeD *frameRange) {
+  auto *to = asParam(paramTo);
+  auto *from = asParam(paramFrom);
+  if (!to || !from) {
+    return kOfxStatErrBadHandle;
+  }
+  // The spec requires both parameters to be the same type.
+  if (to->paramType.compare(from->paramType, Qt::CaseInsensitive) != 0) {
+    return kOfxStatErrBadHandle;
+  }
+
+  // "All the previous values in paramTo will be lost": drop the existing track
+  // before writing the copied one.
+  to->property.clearKeyFrames();
+
+  // frameRange selects a sub-range of keys; the spec uses [0,0] as the
+  // sentinel meaning "all animation", so a zero range is not a literal
+  // zero-length window.
+  const bool copyAllKeys = !frameRange || (frameRange->min == 0.0 && frameRange->max == 0.0);
+
+  const auto keys = from->property.getKeyFrames();
+  const double rate = from->frameRate > 0.0 ? from->frameRate : 30.0;
+  const double toRate = to->frameRate > 0.0 ? to->frameRate : 30.0;
+  // Offset is expressed in OFX seconds; convert it to whole frames so the
+  // destination lands on the same time grid the source used.
+  const auto offsetFrames = static_cast<int64_t>(std::llround(dstOffset * rate));
+
+  for (const KeyFrame &key : keys) {
+    const double keyTime = toOfxTime(*from, key.time);
+    if (!copyAllKeys && (keyTime < frameRange->min || keyTime > frameRange->max)) {
+      continue;
+    }
+    const int64_t frames = key.time.value() + offsetFrames;
+    // Preserve the curve shape, not just the value: the two-argument
+    // addKeyFrame would reset every key to linear.
+    to->property.addKeyFrame(
+        RationalTime::fromFrameCount(frames, static_cast<int64_t>(toRate)),
+        key.value, key.interpolation, key.cp1_x, key.cp1_y, key.cp2_x,
+        key.cp2_y, key.roving);
+    if (key.anchor != KeyFrame::Anchor::Absolute) {
+      to->property.setKeyFrameAnchorAt(
+          RationalTime::fromFrameCount(frames, static_cast<int64_t>(toRate)),
+          key.anchor);
+    }
+    if (key.colorLabel != KeyFrame::ColorLabel::None) {
+      to->property.setKeyFrameColorLabelAt(
+          RationalTime::fromFrameCount(frames, static_cast<int64_t>(toRate)),
+          key.colorLabel);
+    }
+  }
+
+  // Carry the static value across so a subsequent paramGetValue on the
+  // destination is consistent with the copied animation.
+  to->currentValues = from->currentValues;
+  to->currentStringValue = from->currentStringValue;
+  to->currentUtf8Value = from->currentUtf8Value;
+  return kOfxStatOK;
 }
 
 PropertyType toPropertyType(const QString &paramType) {
@@ -1486,6 +2171,85 @@ AbstractProperty toAbstractProperty(const ParamState &state, const QString &name
     }
   }
 
+  // The plugin's own default overrides the type-derived zero. Multi-component
+  // parameters store theirs as a bundle of components.
+  {
+    const auto it = state.properties.entries.find(std::string(kOfxParamPropDefault));
+    if (it != state.properties.entries.end() && !it->second.values.empty()) {
+      const int components = paramComponentCount(state.paramType);
+      QVariantList parts;
+      for (const QVariant &value : it->second.values) {
+        parts.push_back(value);
+      }
+      if (prop.getType() == PropertyType::Color && parts.size() >= 3) {
+        prop.setDefaultValue(QColor::fromRgbF(
+            static_cast<float>(parts.value(0).toDouble()),
+            static_cast<float>(parts.value(1).toDouble()),
+            static_cast<float>(parts.value(2).toDouble()),
+            parts.size() >= 4 ? static_cast<float>(parts.value(3).toDouble()) : 1.0f));
+        prop.setColorValue(prop.getDefaultValue().value<QColor>());
+      } else if (components > 1 && parts.size() >= components) {
+        prop.setDefaultValue(parts);
+        prop.setValue(parts);
+      } else if (!parts.isEmpty()) {
+        prop.setDefaultValue(parts.first());
+        prop.setValue(parts.first());
+      }
+    }
+  }
+
+  // Min / Max / DisplayMin / DisplayMax / Increment: the plugin defines the
+  // control's range and the editor was ignoring all of it, so every OFX
+  // slider ran with the generic fallback range.
+  {
+    const auto readDoubleEntry = [&](const char *key, int index, double fallback) {
+      const auto it = state.properties.entries.find(std::string(key));
+      if (it == state.properties.entries.end() || it->second.values.empty()) {
+        return fallback;
+      }
+      if (index < it->second.values.size()) {
+        return it->second.values[static_cast<size_t>(index)].toDouble();
+      }
+      return fallback;
+    };
+    const auto hasEntry = [&](const char *key) {
+      const auto it = state.properties.entries.find(std::string(key));
+      return it != state.properties.entries.end() && !it->second.values.empty();
+    };
+
+    double minValue = 0.0;
+    double maxValue = 0.0;
+    const bool hasMin = hasEntry(kOfxParamPropMin);
+    const bool hasMax = hasEntry(kOfxParamPropMax);
+    if (hasMin) {
+      minValue = readDoubleEntry(kOfxParamPropMin, 0, 0.0);
+    }
+    if (hasMax) {
+      maxValue = readDoubleEntry(kOfxParamPropMax, 0, 0.0);
+    }
+    if (hasMin && hasMax && maxValue > minValue) {
+      prop.setHardRange(minValue, maxValue);
+    } else if (hasMin) {
+      prop.setMinValue(minValue);
+    } else if (hasMax) {
+      prop.setMaxValue(maxValue);
+    }
+
+    if (hasEntry(kOfxParamPropDisplayMin) && hasEntry(kOfxParamPropDisplayMax)) {
+      const double displayMin = readDoubleEntry(kOfxParamPropDisplayMin, 0, minValue);
+      const double displayMax = readDoubleEntry(kOfxParamPropDisplayMax, 0, maxValue);
+      if (displayMax > displayMin) {
+        prop.setSoftRange(displayMin, displayMax);
+      }
+    }
+    if (hasEntry(kOfxParamPropIncrement)) {
+      const double increment = readDoubleEntry(kOfxParamPropIncrement, 0, 0.0);
+      if (increment > 0.0) {
+        prop.setStep(increment);
+      }
+    }
+  }
+
   return prop;
 }
 
@@ -1505,16 +2269,16 @@ OfxParameterSuiteV1 makeParameterSuite() {
   suite.paramGetPropertySet = &paramGetPropertySet;
   suite.paramGetValue = &paramGetValue;
   suite.paramGetValueAtTime = &paramGetValueAtTime;
-  suite.paramGetDerivative = &paramGetDerivativeUnsupported;
-  suite.paramGetIntegral = &paramGetIntegralUnsupported;
+  suite.paramGetDerivative = &paramGetDerivative;
+  suite.paramGetIntegral = &paramGetIntegral;
   suite.paramSetValue = &paramSetValue;
   suite.paramSetValueAtTime = &paramSetValueAtTime;
-  suite.paramGetNumKeys = &paramGetNumKeysUnsupported;
-  suite.paramGetKeyTime = &paramGetKeyTimeUnsupported;
-  suite.paramGetKeyIndex = &paramGetKeyIndexUnsupported;
-  suite.paramDeleteKey = &paramDeleteKeyUnsupported;
-  suite.paramDeleteAllKeys = &paramDeleteAllKeysUnsupported;
-  suite.paramCopy = &paramCopyUnsupported;
+  suite.paramGetNumKeys = &paramGetNumKeys;
+  suite.paramGetKeyTime = &paramGetKeyTime;
+  suite.paramGetKeyIndex = &paramGetKeyIndex;
+  suite.paramDeleteKey = &paramDeleteKey;
+  suite.paramDeleteAllKeys = &paramDeleteAllKeys;
+  suite.paramCopy = &paramCopy;
   suite.paramEditBegin = &paramEditBegin;
   suite.paramEditEnd = &paramEditEnd;
   return suite;
@@ -1532,22 +2296,6 @@ SharedPtr<ImageEffectState> makeDescriptorState(const OfxPlugin &plugin,
   setStringProperty(state->properties, kOfxPluginPropFilePath, bundlePath.toUtf8().constData());
   setPointerProperty(state->properties, kOfxImageEffectPropPluginHandle, state.get());
   return state;
-}
-
-OfxStatus pluginActionLoad(OfxPlugin *plugin) {
-  if (!plugin || !plugin->mainEntry) {
-    return kOfxStatErrBadHandle;
-  }
-  return plugin->mainEntry(kOfxActionLoad, nullptr, nullptr, nullptr);
-}
-
-OfxStatus pluginActionDescribe(OfxPlugin *plugin, ImageEffectState &descriptorState) {
-  if (!plugin || !plugin->mainEntry) {
-    return kOfxStatErrBadHandle;
-  }
-  return plugin->mainEntry(kOfxActionDescribe,
-                           reinterpret_cast<const void *>(&descriptorState),
-                           nullptr, nullptr);
 }
 
 QStringList readSupportedContexts(const ImageEffectState &descriptorState) {
@@ -1570,6 +2318,16 @@ QStringList readSupportedContexts(const ImageEffectState &descriptorState) {
 bool describePlugin(OfxPlugin *plugin, const QString &bundlePath,
                     OfxPluginDescriptor &descriptor) {
   if (!plugin || !plugin->mainEntry) {
+    return false;
+  }
+
+  // Skip a plugin that crashed enough times to be blacklisted. Doing it here
+  // means a known-bad plugin is never described, never instantiated, and never
+  // reaches the effect catalog that the UI reads.
+  if (plugin->pluginIdentifier &&
+      ofxPluginIsBlacklisted(plugin->pluginIdentifier)) {
+    qWarning("[OFX] skipping blacklisted plugin '%s'",
+             plugin->pluginIdentifier);
     return false;
   }
 
@@ -1598,9 +2356,10 @@ bool describePlugin(OfxPlugin *plugin, const QString &bundlePath,
     PropertySet contextArgs;
     setStringProperty(contextArgs, kOfxImageEffectPropContext,
                       context.toUtf8().constData());
-    const OfxStatus contextStatus = plugin->mainEntry(
+    const OfxStatus contextStatus = dispatchOfxAction(
+        plugin, plugin->pluginIdentifier,
         kOfxImageEffectActionDescribeInContext,
-        reinterpret_cast<const void *>(descriptor.descriptorState.get()),
+        descriptor.descriptorState.get(),
         reinterpret_cast<OfxPropertySetHandle>(&contextArgs), nullptr);
     if (contextStatus == kOfxStatOK || contextStatus == kOfxStatReplyDefault) {
       acceptedAnyContext = true;
@@ -1626,6 +2385,11 @@ bool describePlugin(OfxPlugin *plugin, const QString &bundlePath,
     }
     descriptor.previewProperties.push_back(
         toAbstractProperty(*it->second, QString::fromStdString(paramName)));
+    // The parameter keeps its own copy of the bridged property. A pointer into
+    // previewProperties would dangle as soon as the vector reallocates, and the
+    // keyframe suite needs a stable object; the bridge keeps the two in sync on
+    // every user edit (see ArtifactOfxEffect::setPropertyValue).
+    it->second->property = descriptor.previewProperties.back();
   }
   return true;
 }
@@ -1674,16 +2438,16 @@ QString stripBundleSuffix(QString name) {
 
 export OfxStatus pluginActionCreateInstance(OfxPlugin *plugin, ImageEffectState &instanceState) {
   if (!plugin || !plugin->mainEntry) return kOfxStatErrBadHandle;
-  return plugin->mainEntry(kOfxActionCreateInstance,
-                           reinterpret_cast<const void *>(&instanceState),
-                           nullptr, nullptr);
+  return dispatchOfxAction(
+      plugin, plugin->pluginIdentifier, kOfxActionCreateInstance,
+      &instanceState, nullptr, nullptr);
 }
 
 export OfxStatus pluginActionDestroyInstance(OfxPlugin *plugin, ImageEffectState &instanceState) {
   if (!plugin || !plugin->mainEntry) return kOfxStatErrBadHandle;
-  return plugin->mainEntry(kOfxActionDestroyInstance,
-                           reinterpret_cast<const void *>(&instanceState),
-                           nullptr, nullptr);
+  return dispatchOfxAction(
+      plugin, plugin->pluginIdentifier, kOfxActionDestroyInstance,
+      &instanceState, nullptr, nullptr);
 }
 
 export OfxStatus pluginActionBeginSequenceRender(OfxPlugin *plugin, ImageEffectState &instanceState,
@@ -1691,10 +2455,10 @@ export OfxStatus pluginActionBeginSequenceRender(OfxPlugin *plugin, ImageEffectS
   if (!plugin || !plugin->mainEntry) return kOfxStatErrBadHandle;
   PropertySet inArgs;
   setDoublePropertyN(inArgs, kOfxImageEffectPropRenderScale, 2, {renderScale.x, renderScale.y});
-  return plugin->mainEntry(kOfxImageEffectActionBeginSequenceRender,
-                           reinterpret_cast<const void *>(&instanceState),
-                           reinterpret_cast<OfxPropertySetHandle>(&inArgs),
-                           nullptr);
+  return dispatchOfxAction(
+      plugin, plugin->pluginIdentifier,
+      kOfxImageEffectActionBeginSequenceRender, &instanceState,
+      reinterpret_cast<OfxPropertySetHandle>(&inArgs), nullptr);
 }
 
 export OfxStatus pluginActionRender(OfxPlugin *plugin, ImageEffectState &instanceState,
@@ -1708,10 +2472,9 @@ export OfxStatus pluginActionRender(OfxPlugin *plugin, ImageEffectState &instanc
   // The render action may write a status message describing why it produced no
   // result; the spec requires the host to surface it rather than swallow it.
   PropertySet outArgs;
-  const OfxStatus status = plugin->mainEntry(
-      kOfxImageEffectActionRender,
-      reinterpret_cast<const void *>(&instanceState),
-      reinterpret_cast<OfxPropertySetHandle>(&inArgs),
+  const OfxStatus status = dispatchOfxAction(
+      plugin, plugin->pluginIdentifier, kOfxImageEffectActionRender,
+      &instanceState, reinterpret_cast<OfxPropertySetHandle>(&inArgs),
       reinterpret_cast<OfxPropertySetHandle>(&outArgs));
   if (failureMessage) {
     *failureMessage = readStringProperty(outArgs, kOfxImageEffectPropStatusMessage);
@@ -1724,10 +2487,10 @@ export OfxStatus pluginActionEndSequenceRender(OfxPlugin *plugin, ImageEffectSta
   if (!plugin || !plugin->mainEntry) return kOfxStatErrBadHandle;
   PropertySet inArgs;
   setDoublePropertyN(inArgs, kOfxImageEffectPropRenderScale, 2, {renderScale.x, renderScale.y});
-  return plugin->mainEntry(kOfxImageEffectActionEndSequenceRender,
-                           reinterpret_cast<const void *>(&instanceState),
-                           reinterpret_cast<OfxPropertySetHandle>(&inArgs),
-                           nullptr);
+  return dispatchOfxAction(
+      plugin, plugin->pluginIdentifier,
+      kOfxImageEffectActionEndSequenceRender, &instanceState,
+      reinterpret_cast<OfxPropertySetHandle>(&inArgs), nullptr);
 }
 
 // Depth/component negotiation. The host works in 32-bit float RGBA, so it
@@ -1739,9 +2502,9 @@ export OfxStatus pluginActionGetClipPreferences(OfxPlugin *plugin,
   if (!plugin || !plugin->mainEntry) return kOfxStatErrBadHandle;
   PropertySet inArgs;
   PropertySet outArgs;
-  const OfxStatus status = plugin->mainEntry(
-      kOfxImageEffectActionGetClipPreferences,
-      reinterpret_cast<const void *>(&instanceState),
+  const OfxStatus status = dispatchOfxAction(
+      plugin, plugin->pluginIdentifier,
+      kOfxImageEffectActionGetClipPreferences, &instanceState,
       reinterpret_cast<OfxPropertySetHandle>(&inArgs),
       reinterpret_cast<OfxPropertySetHandle>(&outArgs));
 
@@ -1784,10 +2547,9 @@ export bool pluginActionIsIdentity(OfxPlugin *plugin,
   setDoublePropertyN(inArgs, kOfxImageEffectPropRenderScale, 2, {renderScale.x, renderScale.y});
   setStringProperty(inArgs, kOfxImageEffectPropFieldToRender, kOfxImageFieldNone);
   PropertySet outArgs;
-  const OfxStatus status = plugin->mainEntry(
-      kOfxImageEffectActionIsIdentity,
-      reinterpret_cast<const void *>(&instanceState),
-      reinterpret_cast<OfxPropertySetHandle>(&inArgs),
+  const OfxStatus status = dispatchOfxAction(
+      plugin, plugin->pluginIdentifier, kOfxImageEffectActionIsIdentity,
+      &instanceState, reinterpret_cast<OfxPropertySetHandle>(&inArgs),
       reinterpret_cast<OfxPropertySetHandle>(&outArgs));
   if (status != kOfxStatOK) {
     return false;
@@ -1815,8 +2577,64 @@ public:
     return s_instance;
   }
 
+  // Dispatches an OFX action through the crash guard and records any fault
+  // against the plugin's identifier. Every plugin entry point call must go
+  // through here; calling mainEntry directly would let a faulty plugin take
+  // the whole application down.
+  //
+  // `identifier` may be null for actions issued before the plugin is fully
+  // described, in which case the fault is counted but not attributed.
+  //
+  // The body is in-class; the free `dispatchOfxAction` wrapper below exists for
+  // the action helpers that are declared before the class body is complete.
+  OfxStatus dispatchAction(OfxPlugin *plugin, const char *identifier,
+                           const char *action, const void *instance,
+                           OfxPropertySetHandle inArgs,
+                           OfxPropertySetHandle outArgs) {
+    OfxStatus status = kOfxStatFailed;
+    // Publish the caller for the duration of the call so an abort raised by the
+    // plugin can be attributed even though __try/__except will not see it.
+    const char *previous = activePluginIdentifier();
+    activePluginIdentifier() = identifier;
+    const bool completed = callPluginEntryPoint(
+        plugin ? plugin->mainEntry : nullptr, action, instance, inArgs, outArgs,
+        &status);
+    activePluginIdentifier() = previous;
+    if (!completed) {
+      recordPluginFault(identifier);
+    }
+    return status;
+  }
+
   inline const std::vector<OfxPluginDescriptor> &getLoadedPlugins() const {
     return plugins_;
+  }
+
+  // True when the plugin has faulted often enough to be taken out of service.
+  // Consulted before describing a plugin so a known-bad one is never loaded
+  // into the effect catalog.
+  bool isBlacklisted(const char *identifier) const {
+    if (!identifier) {
+      return false;
+    }
+    loadBlacklist();
+    return blacklistedIdentifiers_.contains(QString::fromLatin1(identifier));
+  }
+
+  // Identifiers removed from service by the crash counter. Not cleared by a
+  // rescan; use clearBlacklist() for an explicit user-driven reset.
+  QStringList blacklistedPlugins() const {
+    loadBlacklist();
+    QStringList result = blacklistedIdentifiers_.values();
+    result.sort();
+    return result;
+  }
+
+  void clearBlacklist() {
+    loadBlacklist();
+    blacklistedIdentifiers_.clear();
+    crashCounts_.clear();
+    persistBlacklist();
   }
 
   void initialize() {
@@ -1824,6 +2642,7 @@ public:
       return;
     }
     initialized_ = true;
+    installOfxAbortReporter();
 
     hostDescriptor_.entries.clear();
     hostDescriptor_.entries[kOfxPropType].kind = PropertyKind::String;
@@ -1892,27 +2711,26 @@ public:
     hostDescriptor_.entries[kOfxImageEffectPropSetableFielding].defaults =
         hostDescriptor_.entries[kOfxImageEffectPropSetableFielding].values;
 
-    // The bridge drives values directly, but the keyframe suite is not
-    // implemented: every key query below returns kOfxStatErrUnsupported. A
-    // plugin that trusts these flags builds animated controls the host silently
-    // ignores, so they must advertise the host's actual capability.
+    // The keyframe suite is now implemented on top of AbstractProperty's own
+    // track, so the host can advertise real animation support and plugins will
+    // build animated controls that actually evaluate.
     hostDescriptor_.entries[kOfxParamHostPropSupportsCustomAnimation].kind = PropertyKind::Int;
-    hostDescriptor_.entries[kOfxParamHostPropSupportsCustomAnimation].values = {0};
+    hostDescriptor_.entries[kOfxParamHostPropSupportsCustomAnimation].values = {1};
     hostDescriptor_.entries[kOfxParamHostPropSupportsCustomAnimation].defaults =
         hostDescriptor_.entries[kOfxParamHostPropSupportsCustomAnimation].values;
 
     hostDescriptor_.entries[kOfxParamHostPropSupportsStringAnimation].kind = PropertyKind::Int;
-    hostDescriptor_.entries[kOfxParamHostPropSupportsStringAnimation].values = {0};
+    hostDescriptor_.entries[kOfxParamHostPropSupportsStringAnimation].values = {1};
     hostDescriptor_.entries[kOfxParamHostPropSupportsStringAnimation].defaults =
         hostDescriptor_.entries[kOfxParamHostPropSupportsStringAnimation].values;
 
     hostDescriptor_.entries[kOfxParamHostPropSupportsBooleanAnimation].kind = PropertyKind::Int;
-    hostDescriptor_.entries[kOfxParamHostPropSupportsBooleanAnimation].values = {0};
+    hostDescriptor_.entries[kOfxParamHostPropSupportsBooleanAnimation].values = {1};
     hostDescriptor_.entries[kOfxParamHostPropSupportsBooleanAnimation].defaults =
         hostDescriptor_.entries[kOfxParamHostPropSupportsBooleanAnimation].values;
 
     hostDescriptor_.entries[kOfxParamHostPropSupportsChoiceAnimation].kind = PropertyKind::Int;
-    hostDescriptor_.entries[kOfxParamHostPropSupportsChoiceAnimation].values = {0};
+    hostDescriptor_.entries[kOfxParamHostPropSupportsChoiceAnimation].values = {1};
     hostDescriptor_.entries[kOfxParamHostPropSupportsChoiceAnimation].defaults =
         hostDescriptor_.entries[kOfxParamHostPropSupportsChoiceAnimation].values;
 
@@ -1995,24 +2813,81 @@ private:
   ArtifactOfxHost() = default;
   ~ArtifactOfxHost() { clearLoadedPlugins(); }
 
+  // --- Crash accounting and blacklist -----------------------------------
+  //
+  // A plugin that faults is counted against its identifier; once it reaches
+  // kOfxCrashLimit the identifier is blacklisted and persisted so the plugin
+  // stays disabled across restarts. This is the only crash response available:
+  // SEH cannot catch stack overflow, heap corruption detected later, or aborts
+  // raised from inside the plugin's own CRT checks.
+
+  void loadBlacklist() const {
+    if (blacklistLoaded_) {
+      return;
+    }
+    blacklistLoaded_ = true;
+    QSettings settings(QStringLiteral("ArtifactStudio"), QStringLiteral("Artifact"));
+    settings.beginGroup(QStringLiteral("OfxPlugins"));
+    const QStringList keys = settings.childKeys();
+    for (const QString &key : keys) {
+      blacklistedIdentifiers_.insert(key);
+    }
+    settings.endGroup();
+  }
+
+  void persistBlacklist() const {
+    QSettings settings(QStringLiteral("ArtifactStudio"), QStringLiteral("Artifact"));
+    settings.beginGroup(QStringLiteral("OfxPlugins"));
+    settings.remove(QString());
+    for (const QString &identifier : blacklistedIdentifiers_) {
+      settings.setValue(identifier, 1);
+    }
+    settings.endGroup();
+  }
+
+  void recordPluginFault(const char *identifier) {
+    const QString key = QString::fromLatin1(identifier ? identifier : "");
+    if (key.isEmpty()) {
+      return;
+    }
+    const int crashes = ++crashCounts_[key];
+    if (crashes < kOfxCrashLimit) {
+      qWarning("[OFX] plugin '%s' crashed (%d/%d); disabling it after %d faults",
+               key.toUtf8().constData(), crashes, kOfxCrashLimit,
+               kOfxCrashLimit);
+      return;
+    }
+    if (blacklistedIdentifiers_.contains(key)) {
+      return;
+    }
+    blacklistedIdentifiers_.insert(key);
+    persistBlacklist();
+    qWarning("[OFX] plugin '%s' crashed %d times and has been blacklisted",
+             key.toUtf8().constData(), crashes);
+  }
+
+  bool isPluginBlacklisted(const OfxPluginDescriptor &descriptor) const {
+    return isBlacklisted(descriptor.identifier.toUtf8().constData());
+  }
+
+  mutable QSet<QString> blacklistedIdentifiers_;
+  mutable QHash<QString, int> crashCounts_;
+  bool blacklistLoaded_ = false;
+
   void clearLoadedPlugins() {
     // Invalidate every descriptor that points at the libraries being released
     // before the handles actually go away.
     ++generation_;
-#ifdef _WIN32
-    for (const HMODULE handle : loadedLibraries_) {
-      if (handle != nullptr) {
-        FreeLibrary(handle);
-      }
+    for (const OfxLibraryHandle handle : loadedLibraries_) {
+      closePluginLibrary(handle);
     }
-#endif
     loadedLibraries_.clear();
     plugins_.clear();
   }
 
   static const void *fetchSuiteCallback(OfxPropertySetHandle /*host*/,
                                         const char *suiteName,
-                                        int /*suiteVersion*/) {
+                                        int suiteVersion) {
     if (!suiteName) {
       return nullptr;
     }
@@ -2037,6 +2912,15 @@ private:
     }
     if (std::strcmp(suiteName, kOfxTimeLineSuite) == 0) {
       return timelineSuite();
+    }
+    if (std::strcmp(suiteName, kOfxProgressSuite) == 0) {
+      // Both revisions are served: V2 takes a message id as well, and a plugin
+      // asks for the version it was compiled against.
+      return suiteVersion >= 2 ? progressSuiteV2()
+                               : static_cast<const void *>(progressSuite());
+    }
+    if (std::strcmp(suiteName, kOfxInteractSuite) == 0) {
+      return interactSuite();
     }
     return nullptr;
   }
@@ -2144,19 +3028,17 @@ private:
   }
 
   void scanBinary(const QString &bundlePath, const QString &binaryPath) {
-#ifdef _WIN32
-    const auto *widePath = reinterpret_cast<LPCWSTR>(binaryPath.utf16());
-    const HMODULE handle = LoadLibraryW(widePath);
+    const OfxLibraryHandle handle = openPluginLibrary(binaryPath);
     if (handle == nullptr) {
       return;
     }
 
     const auto getNumber = reinterpret_cast<OfxGetNumberOfPluginsFn>(
-        GetProcAddress(handle, "OfxGetNumberOfPlugins"));
+        resolvePluginSymbol(handle, "OfxGetNumberOfPlugins"));
     const auto getPlugin = reinterpret_cast<OfxGetPluginFn>(
-        GetProcAddress(handle, "OfxGetPlugin"));
+        resolvePluginSymbol(handle, "OfxGetPlugin"));
     if (!getPlugin || !getNumber) {
-      FreeLibrary(handle);
+      closePluginLibrary(handle);
       return;
     }
 
@@ -2196,12 +3078,8 @@ private:
     if (acceptedAnyPlugin) {
       loadedLibraries_.push_back(handle);
     } else {
-      FreeLibrary(handle);
+      closePluginLibrary(handle);
     }
-#else
-    Q_UNUSED(bundlePath);
-    Q_UNUSED(binaryPath);
-#endif
   }
 
   std::vector<OfxPluginDescriptor> plugins_;
@@ -2233,6 +3111,38 @@ SharedPtr<ImageEffectState> ArtifactOfxHost::createRenderInstance(
     state->clips[kv.first] = std::move(cs);
   }
   return state;
+}
+
+// Defined here rather than inside the class so the load/describe helpers
+// declared above the class body can call it without requiring the class to be
+// complete at that point in the translation unit.
+OfxStatus dispatchOfxAction(OfxPlugin *plugin, const char *identifier,
+                            const char *action, const void *instance,
+                            OfxPropertySetHandle inArgs,
+                            OfxPropertySetHandle outArgs) {
+  return ArtifactOfxHost::instance().dispatchAction(plugin, identifier, action,
+                                                    instance, inArgs, outArgs);
+}
+
+bool ofxPluginIsBlacklisted(const char *identifier) {
+  return ArtifactOfxHost::instance().isBlacklisted(identifier);
+}
+
+OfxStatus pluginActionLoad(OfxPlugin *plugin) {
+  if (!plugin || !plugin->mainEntry) {
+    return kOfxStatErrBadHandle;
+  }
+  return dispatchOfxAction(plugin, plugin->pluginIdentifier, kOfxActionLoad,
+                           nullptr, nullptr, nullptr);
+}
+
+OfxStatus pluginActionDescribe(OfxPlugin *plugin,
+                               ImageEffectState &descriptorState) {
+  if (!plugin || !plugin->mainEntry) {
+    return kOfxStatErrBadHandle;
+  }
+  return dispatchOfxAction(plugin, plugin->pluginIdentifier, kOfxActionDescribe,
+                           &descriptorState, nullptr, nullptr);
 }
 
 ImageEffectState *imageEffectForClip(const ClipState *clip) {

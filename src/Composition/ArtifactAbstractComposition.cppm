@@ -6,6 +6,9 @@ module;
 #include <utility>
 #include <QByteArray>
 #include <QChar>
+#include <QColor>
+#include <QMetaType>
+#include <QVariant>
 #include <QJsonDocument>
 #include <QList>
 #include <QMap>
@@ -22,6 +25,7 @@ module;
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFileInfo>
+#include <QFileSystemWatcher>
 #include <QUuid>
 #include <QPointF>
 #include <QRectF>
@@ -31,6 +35,10 @@ module;
 #include <QVector3D>
 #include <QVector4D>
 #include <cmath>
+#include <random>
+#include <sstream>
+#include <span>
+#include <string>
 #include <limits>
 #include <map>
 #include <optional>
@@ -66,6 +74,7 @@ import Event.Bus;
 import Audio.Mixer;
 import Audio.Bus;
 import Artifact.Audio.Limiter;
+import Artifact.Audio.Effects.Manager;
 import Artifact.Composition.InOutPoints;
 import Artifact.Composition.Nodes;
 import Artifact.Layer.Audio;
@@ -77,6 +86,8 @@ import Animation.Value;
 import Audio.Modulation.Router;
 import Physics.System;
 import Physics.Mpm2D;
+import Script.ArtifactScript;
+import Composition.Registry;
 
 //import Playback.Clock;
 
@@ -552,6 +563,771 @@ QString layerStringProperty(const ArtifactAbstractLayerPtr& layer,
   }
   const auto property = layer->getProperty(propertyPath);
   return property ? property->getValue().toString() : fallback;
+}
+
+// ─── ArtifactScript host API ───
+// Installs the composition-facing callbacks that ArtifactScript scripts call
+// through ArtifactScriptHost::global(). Scripts reach layers by name, which
+// keeps the script side free of engine ids.
+
+// Numerics shared by the installed helpers. Script ints and floats are both
+// accepted so `sin(0)` and `sin(0.0f)` behave the same.
+double scriptNumber(const ArtifactCore::ArtifactScriptValue& value) {
+  if (std::holds_alternative<double>(value)) {
+    return std::get<double>(value);
+  }
+  if (std::holds_alternative<std::int64_t>(value)) {
+    return static_cast<double>(std::get<std::int64_t>(value));
+  }
+  if (std::holds_alternative<bool>(value)) {
+    return std::get<bool>(value) ? 1.0 : 0.0;
+  }
+  return 0.0;
+}
+
+bool scriptNumberArg(const ArtifactCore::ArtifactScriptValue& value,
+                     double& out) {
+  if (std::holds_alternative<double>(value) ||
+      std::holds_alternative<std::int64_t>(value) ||
+      std::holds_alternative<bool>(value)) {
+    out = scriptNumber(value);
+    return true;
+  }
+  return false;
+}
+
+// Easing / interpolation helpers shared by the AE-style time functions.
+double scriptEaseCurve(double t) {
+  const double x = std::clamp(t, 0.0, 1.0);
+  // Cubic ease-in-out, matching the shape AE's default temporal ease uses.
+  return x < 0.5 ? 4.0 * x * x * x : 1.0 - std::pow(-2.0 * x + 2.0, 3.0) / 2.0;
+}
+
+// Registers the script-side math / vector / temporal / diagnostics library.
+// Declared up front because the composition callbacks call it on install.
+void installScriptLibraryFunctions();
+
+bool scriptValueToVariant(const ArtifactCore::ArtifactScriptValue& value,
+                          QVariant& out)
+{
+  using namespace ArtifactCore;
+  if (std::holds_alternative<std::monostate>(value)) {
+    return false;
+  }
+  if (std::holds_alternative<bool>(value)) {
+    out = std::get<bool>(value);
+    return true;
+  }
+  if (std::holds_alternative<std::int64_t>(value)) {
+    out = QVariant::fromValue(static_cast<qlonglong>(std::get<std::int64_t>(value)));
+    return true;
+  }
+  if (std::holds_alternative<double>(value)) {
+    out = std::get<double>(value);
+    return true;
+  }
+  if (std::holds_alternative<std::string>(value)) {
+    out = QString::fromStdString(std::get<std::string>(value));
+    return true;
+  }
+  if (std::holds_alternative<ArtifactScriptVec2>(value)) {
+    const auto& v = std::get<ArtifactScriptVec2>(value);
+    out = QVariant::fromValue(QPointF(v.x, v.y));
+    return true;
+  }
+  if (std::holds_alternative<ArtifactScriptVec3>(value)) {
+    const auto& v = std::get<ArtifactScriptVec3>(value);
+    out = QVariant::fromValue(QVector3D(v.x, v.y, v.z));
+    return true;
+  }
+  if (std::holds_alternative<ArtifactScriptVec4>(value)) {
+    const auto& v = std::get<ArtifactScriptVec4>(value);
+    out = QVariant::fromValue(QVector4D(v.x, v.y, v.z, v.w));
+    return true;
+  }
+  if (std::holds_alternative<ArtifactScriptColor>(value)) {
+    const auto& c = std::get<ArtifactScriptColor>(value);
+    out = QColor::fromRgbF(
+        std::clamp(c.r, 0.0f, 1.0f), std::clamp(c.g, 0.0f, 1.0f),
+        std::clamp(c.b, 0.0f, 1.0f), std::clamp(c.a, 0.0f, 1.0f));
+    return true;
+  }
+  if (std::holds_alternative<ArtifactScriptRef>(value)) {
+    out = QString::fromStdString(std::get<ArtifactScriptRef>(value).id);
+    return true;
+  }
+  return false;
+}
+
+ArtifactCore::ArtifactScriptValue variantToScriptValue(const QVariant& value)
+{
+  using namespace ArtifactCore;
+  switch (value.typeId()) {
+  case QMetaType::Bool:
+    return ArtifactScriptValue(value.toBool());
+  case QMetaType::Int:
+  case QMetaType::LongLong:
+    return ArtifactScriptValue(
+        static_cast<std::int64_t>(value.toLongLong()));
+  case QMetaType::UInt:
+  case QMetaType::ULongLong:
+    return ArtifactScriptValue(
+        static_cast<std::int64_t>(value.toULongLong()));
+  case QMetaType::Float:
+  case QMetaType::Double:
+    return ArtifactScriptValue(value.toDouble());
+  case QMetaType::QPointF: {
+    const QPointF point = value.toPointF();
+    return ArtifactScriptValue(
+        ArtifactScriptVec2{static_cast<float>(point.x()),
+                           static_cast<float>(point.y())});
+  }
+  case QMetaType::QVector3D: {
+    const QVector3D vec = value.toVector3D();
+    return ArtifactScriptValue(ArtifactScriptVec3{
+        vec.x(), vec.y(), vec.z()});
+  }
+  case QMetaType::QVector4D: {
+    const QVector4D vec = value.toVector4D();
+    return ArtifactScriptValue(ArtifactScriptVec4{
+        vec.x(), vec.y(), vec.z(), vec.w()});
+  }
+  case QMetaType::QColor: {
+    const QColor color = value.value<QColor>();
+    return ArtifactScriptValue(ArtifactScriptColor{
+        static_cast<float>(color.redF()),
+        static_cast<float>(color.greenF()),
+        static_cast<float>(color.blueF()),
+        static_cast<float>(color.alphaF())});
+  }
+  default:
+    break;
+  }
+  if (value.canConvert<QString>()) {
+    return ArtifactScriptValue(value.toString().toStdString());
+  }
+  return ArtifactScriptValue{};
+}
+
+// Extracts the script path from a layer binding. The binding schema accepts
+// four key spellings; the first non-empty one wins. Mirrors the layer-side
+// resolver so both sides agree on which file a layer is bound to.
+QString resolveScriptLayerScriptPath(const QJsonObject& binding)
+{
+  static const QStringList kKeys{
+      QStringLiteral("path"), QStringLiteral("file"),
+      QStringLiteral("scriptPath"), QStringLiteral("scriptFile")};
+  for (const QString& key : kKeys) {
+    const QString candidate = binding.value(key).toString().trimmed();
+    if (!candidate.isEmpty()) {
+      return candidate;
+    }
+  }
+  return {};
+}
+
+// The ArtifactScript host registry is process-wide, so concurrent layer
+// scripts cannot capture their own layer per installation. The running layer is
+// published through this thread-local for the duration of one hook call.
+ArtifactAbstractLayerPtr& scriptSelfLayerStorage()
+{
+  static thread_local ArtifactAbstractLayerPtr selfLayer;
+  return selfLayer;
+}
+
+class ScriptSelfLayerScope {
+public:
+  explicit ScriptSelfLayerScope(ArtifactAbstractLayerPtr layer)
+      : previous_(std::exchange(scriptSelfLayerStorage(), std::move(layer))) {}
+  ~ScriptSelfLayerScope() { scriptSelfLayerStorage() = std::move(previous_); }
+  ScriptSelfLayerScope(const ScriptSelfLayerScope&) = delete;
+  ScriptSelfLayerScope& operator=(const ScriptSelfLayerScope&) = delete;
+
+private:
+  ArtifactAbstractLayerPtr previous_;
+};
+
+ArtifactAbstractLayerPtr scriptSelfLayer()
+{
+  return scriptSelfLayerStorage();
+}
+
+// The running frame / time base, published alongside the self layer so the
+// library helpers can default their time argument to "now".
+std::int64_t& scriptSelfFrameStorage()
+{
+  static thread_local std::int64_t frame = 0;
+  return frame;
+}
+
+double& scriptSelfTimeStorage()
+{
+  static thread_local double seconds = 0.0;
+  return seconds;
+}
+
+std::int64_t scriptSelfFrame() { return scriptSelfFrameStorage(); }
+
+double scriptSelfTimeSeconds() { return scriptSelfTimeStorage(); }
+
+// Publishes the evaluation frame for the duration of one hook call, mirroring
+// ScriptSelfLayerScope.
+class ScriptSelfFrameScope {
+public:
+  ScriptSelfFrameScope(std::int64_t frame, double seconds)
+      : previousFrame_(std::exchange(scriptSelfFrameStorage(), frame)),
+        previousSeconds_(std::exchange(scriptSelfTimeStorage(), seconds)) {}
+  ~ScriptSelfFrameScope() {
+    scriptSelfFrameStorage() = previousFrame_;
+    scriptSelfTimeStorage() = previousSeconds_;
+  }
+  ScriptSelfFrameScope(const ScriptSelfFrameScope&) = delete;
+  ScriptSelfFrameScope& operator=(const ScriptSelfFrameScope&) = delete;
+
+private:
+  std::int64_t previousFrame_;
+  double previousSeconds_;
+};
+
+// Human-readable type tag used by typeof() and diagnostics.
+const char* artifactScriptTypeName(const ArtifactCore::ArtifactScriptValue& value)
+{
+  using namespace ArtifactCore;
+  switch (value.index()) {
+  case 1: return "bool";
+  case 2: return "int";
+  case 3: return "float";
+  case 4: return "string";
+  case 5: return "vec2";
+  case 6: return "vec3";
+  case 7: return "vec4";
+  case 8: return "color";
+  case 9: return "ref";
+  case 10: return "array";
+  case 11: return "object";
+  default: return "null";
+  }
+}
+
+// Recursive value printer backing dump(); depth-bounded so a self-referencing
+// object graph cannot hang the editor.
+std::string artifactScriptDescribe(const ArtifactCore::ArtifactScriptValue& value,
+                                   int depth)
+{
+  using namespace ArtifactCore;
+  constexpr int kMaxDepth = 3;
+  if (depth > kMaxDepth) {
+    return "...";
+  }
+  std::ostringstream out;
+  switch (value.index()) {
+  case 1: out << (std::get<bool>(value) ? "true" : "false"); break;
+  case 2: out << std::get<std::int64_t>(value); break;
+  case 3: out << std::get<double>(value); break;
+  case 4: out << '"' << std::get<std::string>(value) << '"'; break;
+  case 5: {
+    const auto& v = std::get<ArtifactScriptVec2>(value);
+    out << "vec2(" << v.x << ", " << v.y << ')'; break;
+  }
+  case 6: {
+    const auto& v = std::get<ArtifactScriptVec3>(value);
+    out << "vec3(" << v.x << ", " << v.y << ", " << v.z << ')'; break;
+  }
+  case 7: {
+    const auto& v = std::get<ArtifactScriptVec4>(value);
+    out << "vec4(" << v.x << ", " << v.y << ", " << v.z << ", " << v.w << ')';
+    break;
+  }
+  case 8: {
+    const auto& v = std::get<ArtifactScriptColor>(value);
+    out << "color(" << v.r << ", " << v.g << ", " << v.b << ", " << v.a << ')';
+    break;
+  }
+  case 9: out << "ref(" << std::get<ArtifactScriptRef>(value).id << ')'; break;
+  case 10: {
+    const auto& array = std::get<ArtifactScriptArrayPtr>(value);
+    out << "array[";
+    if (array) {
+      for (std::size_t i = 0; i < array->values.size(); ++i) {
+        if (i > 0) out << ", ";
+        out << artifactScriptDescribe(array->values[i], depth + 1);
+      }
+    }
+    out << ']';
+    break;
+  }
+  case 11: {
+    const auto& object = std::get<ArtifactScriptObjectInstancePtr>(value);
+    out << "object(" << (object ? object->className : std::string("null"));
+    if (object) {
+      for (const auto& [name, member] : object->fields) {
+        out << ' ' << name << '='
+            << artifactScriptDescribe(member, depth + 1);
+      }
+    }
+    out << ')';
+    break;
+  }
+  default: out << "null"; break;
+  }
+  return out.str();
+}
+
+// Resolves a script-side layer reference.
+//
+// Accepted forms:
+//   "" / "self" / "this"  -> the layer that owns the running script
+//   "LayerName"           -> a layer in the running composition
+//   "CompName/LayerName"  -> a layer in another composition
+//
+// Resolution walks the registry rather than importing the project layer, so a
+// composition can reach its siblings without a module cycle.
+ArtifactAbstractLayerPtr resolveScriptLayerTarget(
+    ArtifactAbstractComposition* composition,
+    std::string_view reference, const ArtifactAbstractLayerPtr& selfLayer)
+{
+  const std::string text(reference);
+  if (text.empty() || text == "self" || text == "this") {
+    return selfLayer;
+  }
+  const auto slash = text.find('/');
+  if (slash != std::string::npos) {
+    const QString compName = QString::fromStdString(text.substr(0, slash));
+    const QString layerName = QString::fromStdString(text.substr(slash + 1));
+    if (compName.isEmpty() || layerName.isEmpty()) {
+      return {};
+    }
+    auto* target = static_cast<ArtifactAbstractComposition*>(
+        CompositionRegistry::global().findComposition(compName));
+    if (!target) {
+      return {};
+    }
+    for (const auto& layer : target->allLayer()) {
+      if (layer && layer->name() == layerName) {
+        return layer;
+      }
+    }
+    return {};
+  }
+  if (!composition) {
+    return {};
+  }
+  const QString layerName = QString::fromStdString(text);
+  const QList<ArtifactAbstractLayerPtr> layers = composition->allLayer();
+  for (const auto& layer : layers) {
+    if (layer && layer->name() == layerName) {
+      return layer;
+    }
+  }
+  // Fall back to a layer id match so saved scripts keep working after a
+  // rename only when the id is still stable.
+  for (const auto& layer : layers) {
+    if (layer && layer->id().toString() == layerName) {
+      return layer;
+    }
+  }
+  return {};
+}
+
+void installCompositionScriptApi(ArtifactAbstractComposition* composition)
+{
+  using namespace ArtifactCore;
+  ArtifactScriptCompositionApi api;
+  api.getLayer = [composition](std::string_view reference) {
+    const ArtifactAbstractLayerPtr layer =
+        resolveScriptLayerTarget(composition, reference, {});
+    if (!layer) {
+      return ArtifactScriptValue{};
+    }
+    return ArtifactScriptValue(layer->name().toStdString());
+  };
+  api.getLayerCount = [composition]() -> std::int64_t {
+    return composition ? composition->layerCount() : 0;
+  };
+  api.getTime = [composition]() -> double {
+    return composition ? static_cast<double>(composition->currentFrame())
+                      : 0.0;
+  };
+  // "self" resolves to the layer that owns the running script. The registry is
+  // process-wide, so the owner is passed through a thread-local marker set by
+  // the evaluator call site rather than captured per installation.
+  api.getProperty = [composition](const ArtifactScriptValue& target,
+                                  std::string_view path) {
+    QVariant converted;
+    if (!scriptValueToVariant(target, converted)) {
+      return ArtifactScriptValue{};
+    }
+    const ArtifactAbstractLayerPtr layer = resolveScriptLayerTarget(
+        composition, converted.toString().toStdString(),
+        scriptSelfLayer());
+    if (!layer) {
+      return ArtifactScriptValue{};
+    }
+    const auto property = layer->getProperty(QString::fromStdString(
+        std::string(path)));
+    if (!property) {
+      return ArtifactScriptValue{};
+    }
+    return variantToScriptValue(property->getValue());
+  };
+  api.setProperty = [composition](const ArtifactScriptValue& target,
+                                  std::string_view path,
+                                  const ArtifactScriptValue& value) {
+    QVariant convertedTarget;
+    QVariant convertedValue;
+    if (!scriptValueToVariant(target, convertedTarget) ||
+        !scriptValueToVariant(value, convertedValue)) {
+      return false;
+    }
+    const ArtifactAbstractLayerPtr layer = resolveScriptLayerTarget(
+        composition, convertedTarget.toString().toStdString(),
+        scriptSelfLayer());
+    if (!layer) {
+      return false;
+    }
+    return layer->setLayerPropertyValue(
+        QString::fromStdString(std::string(path)), convertedValue);
+  };
+  ArtifactScriptHost::global().installCompositionApi(api);
+  // `this.<prop>` shorthand. Registered here (not in the library block) because
+  // resolving the target needs the composition scope and the self layer.
+  auto& host = ArtifactScriptHost::global();
+  host.registerFunction("getSelfProperty", [](
+                                           std::span<const ArtifactScriptValue> a) {
+    if (a.empty() || !std::holds_alternative<std::string>(a[0])) {
+      return ArtifactScriptValue{};
+    }
+    const ArtifactAbstractLayerPtr layer = scriptSelfLayer();
+    if (!layer) {
+      return ArtifactScriptValue{};
+    }
+    const auto property =
+        layer->getProperty(QString::fromStdString(std::get<std::string>(a[0])));
+    if (!property) {
+      return ArtifactScriptValue{};
+    }
+    return variantToScriptValue(property->getValue());
+  });
+  host.registerFunction("setSelfProperty", [](
+                                           std::span<const ArtifactScriptValue> a) {
+    if (a.size() < 2 || !std::holds_alternative<std::string>(a[0])) {
+      return ArtifactScriptValue(false);
+    }
+    const ArtifactAbstractLayerPtr layer = scriptSelfLayer();
+    if (!layer) {
+      return ArtifactScriptValue(false);
+    }
+    QVariant converted;
+    if (!scriptValueToVariant(a[1], converted)) {
+      return ArtifactScriptValue(false);
+    }
+    return ArtifactScriptValue(layer->setLayerPropertyValue(
+        QString::fromStdString(std::get<std::string>(a[0])), converted));
+  });
+  installScriptLibraryFunctions();
+}
+
+void installScriptLibraryFunctions()
+{
+  using namespace ArtifactCore;
+  ArtifactScriptHost& host = ArtifactScriptHost::global();
+  // Unwraps an optional-argument list: missing trailing arguments read as the
+  // supplied fallback so helpers can share one signature.
+  const auto numberAt = [](std::span<const ArtifactScriptValue> args,
+                           std::size_t index, double fallback) {
+    return index < args.size() ? scriptNumber(args[index]) : fallback;
+  };
+
+  // ─── Math ───
+  host.registerFunction("sqrt", [](std::span<const ArtifactScriptValue> a) {
+    return ArtifactScriptValue(std::sqrt(std::max(0.0, numberAt(a, 0, 0.0))));
+  });
+  host.registerFunction("pow", [](std::span<const ArtifactScriptValue> a) {
+    return ArtifactScriptValue(std::pow(numberAt(a, 0, 0.0), numberAt(a, 1, 1.0)));
+  });
+  host.registerFunction("exp", [](std::span<const ArtifactScriptValue> a) {
+    return ArtifactScriptValue(std::exp(numberAt(a, 0, 0.0)));
+  });
+  host.registerFunction("log", [](std::span<const ArtifactScriptValue> a) {
+    const double v = numberAt(a, 0, 1.0);
+    return ArtifactScriptValue(std::log(v > 0.0 ? v : 1e-12));
+  });
+  host.registerFunction("mod", [](std::span<const ArtifactScriptValue> a) {
+    const double d = numberAt(a, 1, 1.0);
+    if (d == 0.0) {
+      return ArtifactScriptValue(0.0);
+    }
+    const double r = std::fmod(numberAt(a, 0, 0.0), d);
+    // AE's mod() keeps the sign of the divisor, unlike fmod.
+    return ArtifactScriptValue(r != 0.0 && std::signbit(r) != std::signbit(d)
+                                   ? r + d
+                                   : r);
+  });
+  host.registerFunction("round", [](std::span<const ArtifactScriptValue> a) {
+    return ArtifactScriptValue(std::round(numberAt(a, 0, 0.0)));
+  });
+  host.registerFunction("floor", [](std::span<const ArtifactScriptValue> a) {
+    return ArtifactScriptValue(std::floor(numberAt(a, 0, 0.0)));
+  });
+  host.registerFunction("ceil", [](std::span<const ArtifactScriptValue> a) {
+    return ArtifactScriptValue(std::ceil(numberAt(a, 0, 0.0)));
+  });
+  host.registerFunction("tan", [](std::span<const ArtifactScriptValue> a) {
+    return ArtifactScriptValue(std::tan(numberAt(a, 0, 0.0)));
+  });
+  host.registerFunction("atan", [](std::span<const ArtifactScriptValue> a) {
+    return ArtifactScriptValue(std::atan(numberAt(a, 0, 0.0)));
+  });
+  host.registerFunction("atan2", [](std::span<const ArtifactScriptValue> a) {
+    return ArtifactScriptValue(
+        std::atan2(numberAt(a, 0, 0.0), numberAt(a, 1, 1.0)));
+  });
+  host.registerFunction("sign", [](std::span<const ArtifactScriptValue> a) {
+    const double v = numberAt(a, 0, 0.0);
+    return ArtifactScriptValue(v > 0.0 ? 1.0 : (v < 0.0 ? -1.0 : 0.0));
+  });
+  host.registerFunction("ramp", [](std::span<const ArtifactScriptValue> a) {
+    const double value = numberAt(a, 0, 0.0);
+    const double inMin = numberAt(a, 1, 0.0);
+    const double inMax = numberAt(a, 2, 1.0);
+    const double outMin = numberAt(a, 3, 0.0);
+    const double outMax = numberAt(a, 4, 1.0);
+    const double span = inMax - inMin;
+    const double t = std::abs(span) < 1e-12
+                         ? 0.0
+                         : std::clamp((value - inMin) / span, 0.0, 1.0);
+    return ArtifactScriptValue(outMin + (outMax - outMin) * t);
+  });
+
+  // ─── Deterministic randomness ───
+  host.registerFunction("random", [](std::span<const ArtifactScriptValue> a) {
+    const double lo = numberAt(a, 0, 0.0);
+    const double hi = numberAt(a, 1, 1.0);
+    // Seeded from the running composition time so playback is reproducible
+    // across re-evaluations of the same frame.
+    const auto seed = static_cast<std::uint64_t>(scriptSelfTimeSeconds() * 1000.0);
+    std::mt19937_64 rng(seed ^ 0x9E3779B97F4A7C15ULL);
+    std::uniform_real_distribution<double> dist(lo, hi);
+    return ArtifactScriptValue(dist(rng));
+  });
+
+  // ─── Vector ───
+  const auto vectorLength = [](const ArtifactScriptValue& value) -> double {
+    if (std::holds_alternative<ArtifactScriptVec2>(value)) {
+      const auto& v = std::get<ArtifactScriptVec2>(value);
+      return std::sqrt(v.x * v.x + v.y * v.y);
+    }
+    if (std::holds_alternative<ArtifactScriptVec3>(value)) {
+      const auto& v = std::get<ArtifactScriptVec3>(value);
+      return std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+    }
+    return 0.0;
+  };
+  host.registerFunction("length", [vectorLength](
+                                      std::span<const ArtifactScriptValue> a) {
+    return ArtifactScriptValue(a.empty() ? 0.0 : vectorLength(a[0]));
+  });
+  host.registerFunction("dot", [](std::span<const ArtifactScriptValue> a) {
+    if (a.size() < 2) {
+      return ArtifactScriptValue(0.0);
+    }
+    if (std::holds_alternative<ArtifactScriptVec3>(a[0]) &&
+        std::holds_alternative<ArtifactScriptVec3>(a[1])) {
+      const auto& u = std::get<ArtifactScriptVec3>(a[0]);
+      const auto& v = std::get<ArtifactScriptVec3>(a[1]);
+      return ArtifactScriptValue(u.x * v.x + u.y * v.y + u.z * v.z);
+    }
+    if (std::holds_alternative<ArtifactScriptVec2>(a[0]) &&
+        std::holds_alternative<ArtifactScriptVec2>(a[1])) {
+      const auto& u = std::get<ArtifactScriptVec2>(a[0]);
+      const auto& v = std::get<ArtifactScriptVec2>(a[1]);
+      return ArtifactScriptValue(u.x * v.x + u.y * v.y);
+    }
+    return ArtifactScriptValue(0.0);
+  });
+  host.registerFunction("normalize", [](std::span<const ArtifactScriptValue> a) {
+    if (a.empty()) {
+      return ArtifactScriptValue{};
+    }
+    const double len = std::sqrt(
+        std::holds_alternative<ArtifactScriptVec3>(a[0])
+            ? [&] {
+                const auto& v = std::get<ArtifactScriptVec3>(a[0]);
+                return v.x * v.x + v.y * v.y + v.z * v.z;
+              }()
+            : std::holds_alternative<ArtifactScriptVec2>(a[0])
+                  ? [&] {
+                      const auto& v = std::get<ArtifactScriptVec2>(a[0]);
+                      return v.x * v.x + v.y * v.y;
+                    }()
+                  : 0.0);
+    if (len < 1e-12) {
+      return a[0];
+    }
+    if (std::holds_alternative<ArtifactScriptVec3>(a[0])) {
+      const auto& v = std::get<ArtifactScriptVec3>(a[0]);
+      return ArtifactScriptValue(ArtifactScriptVec3{
+          v.x / len, v.y / len, v.z / len});
+    }
+    if (std::holds_alternative<ArtifactScriptVec2>(a[0])) {
+      const auto& v = std::get<ArtifactScriptVec2>(a[0]);
+      return ArtifactScriptValue(
+          ArtifactScriptVec2{v.x / len, v.y / len});
+    }
+    return a[0];
+  });
+  host.registerFunction("mix", [](std::span<const ArtifactScriptValue> a) {
+    if (a.size() < 3) {
+      return ArtifactScriptValue{};
+    }
+    const double t = std::clamp(scriptNumber(a[2]), 0.0, 1.0);
+    if (std::holds_alternative<ArtifactScriptVec3>(a[0]) &&
+        std::holds_alternative<ArtifactScriptVec3>(a[1])) {
+      const auto& u = std::get<ArtifactScriptVec3>(a[0]);
+      const auto& v = std::get<ArtifactScriptVec3>(a[1]);
+      return ArtifactScriptValue(ArtifactScriptVec3{
+          u.x + (v.x - u.x) * t, u.y + (v.y - u.y) * t,
+          u.z + (v.z - u.z) * t});
+    }
+    if (std::holds_alternative<ArtifactScriptVec2>(a[0]) &&
+        std::holds_alternative<ArtifactScriptVec2>(a[1])) {
+      const auto& u = std::get<ArtifactScriptVec2>(a[0]);
+      const auto& v = std::get<ArtifactScriptVec2>(a[1]);
+      return ArtifactScriptValue(
+          ArtifactScriptVec2{u.x + (v.x - u.x) * t, u.y + (v.y - u.y) * t});
+    }
+    return ArtifactScriptValue(scriptNumber(a[0]) +
+                               (scriptNumber(a[1]) - scriptNumber(a[0])) * t);
+  });
+
+  // ─── AE-style temporal helpers ───
+  // All of these take a time value in seconds and behave like the AE
+  // expressions of the same name.
+  host.registerFunction("wiggle", [numberAt](
+                                     std::span<const ArtifactScriptValue> a) {
+    const double frequency = numberAt(a, 0, 1.0);
+    const double amplitude = numberAt(a, 1, 10.0);
+    const double time = numberAt(a, 2, scriptSelfTimeSeconds());
+    if (frequency <= 0.0) {
+      return ArtifactScriptValue(0.0);
+    }
+    // Sum of two incommensurate sine waves: irregular but deterministic, and
+    // exactly zero at t=0 so a fresh playback never starts mid-jitter.
+    const double t = time * frequency;
+    const double noise =
+        std::sin(t * 1.6180339887) * 0.6 + std::sin(t * 2.4142135623) * 0.4;
+    return ArtifactScriptValue(noise * amplitude);
+  });
+  const auto loopValue = [numberAt](double time, std::string_view type,
+                                    double period, double startOffset,
+                                    double pingPongAmount) {
+    const double p = std::abs(period) < 1e-12 ? 1.0 : std::abs(period);
+    double local = time - startOffset;
+    if (type == "offset") {
+      return local - std::floor(local / p) * p;
+    }
+    if (type == "pingpong") {
+      const double cycle = p > 0.0 ? pingPongAmount : p;
+      if (cycle < 1e-12) {
+        return 0.0;
+      }
+      const double phase = std::fmod(local, cycle * 2.0);
+      if (phase < 0.0) {
+        phase += cycle * 2.0;
+      }
+      return phase <= cycle ? phase : cycle * 2.0 - phase;
+    }
+    if (type == "continue") {
+      return local;
+    }
+    // "cycle" (default) and "hold" both wrap; hold pins at the boundary.
+    double wrapped = std::fmod(local, p);
+    if (wrapped < 0.0) {
+      wrapped += p;
+    }
+    if (type == "hold") {
+      return std::min(wrapped, p);
+    }
+    return wrapped;
+  };
+  host.registerFunction("loopOut", [loopValue](
+                                    std::span<const ArtifactScriptValue> a) {
+    // AE signature: loopOut(type, t, period) with cycle as the default type.
+    std::string type = "cycle";
+    std::size_t index = 0;
+    if (!a.empty() && std::holds_alternative<std::string>(a[0])) {
+      type = std::get<std::string>(a[0]);
+      index = 1;
+    }
+    const double time = index < a.size()
+                            ? scriptNumber(a[index])
+                            : scriptSelfTimeSeconds();
+    const double period =
+        index + 1 < a.size() ? scriptNumber(a[index + 1]) : 1.0;
+    return ArtifactScriptValue(loopValue(time, type, period, 0.0, 1.0));
+  });
+  const auto sampleTemporal = [loopValue](
+                                  std::span<const ArtifactScriptValue> args,
+                                  double start, double end, double t,
+                                  bool eased) {
+    const double span = end - start;
+    if (std::abs(span) < 1e-12) {
+      return 0.0;
+    }
+    const double local = loopValue(t - start, "cycle", span, 0.0, 1.0);
+    return eased ? scriptEaseCurve(local / span) : local / span;
+  };
+  host.registerFunction("linear", [sampleTemporal](
+                                      std::span<const ArtifactScriptValue> a) {
+    return ArtifactScriptValue(sampleTemporal(a, numberAt(a, 0, 0.0),
+                                             numberAt(a, 1, 1.0),
+                                             numberAt(a, 3, scriptSelfTimeSeconds()),
+                                             false));
+  });
+  host.registerFunction("ease", [sampleTemporal](
+                                     std::span<const ArtifactScriptValue> a) {
+    return ArtifactScriptValue(sampleTemporal(a, numberAt(a, 0, 0.0),
+                                             numberAt(a, 1, 1.0),
+                                             numberAt(a, 3, scriptSelfTimeSeconds()),
+                                             true));
+  });
+  host.registerFunction("posterizeTime",
+                        [numberAt](std::span<const ArtifactScriptValue> a) {
+    const double fps = numberAt(a, 1, 12.0);
+    if (fps <= 0.0) {
+      return ArtifactScriptValue(numberAt(a, 0, 0.0));
+    }
+    return ArtifactScriptValue(std::floor(numberAt(a, 0, 0.0) * fps) / fps);
+  });
+
+  // ─── Diagnostics ───
+  host.registerFunction("typeof", [](std::span<const ArtifactScriptValue> a) {
+    if (a.empty()) {
+      return ArtifactScriptValue(std::string("null"));
+    }
+    return ArtifactScriptValue(std::string(artifactScriptTypeName(a[0])));
+  });
+  host.registerFunction("dump", [](std::span<const ArtifactScriptValue> a) {
+    for (const auto& value : a) {
+      ArtifactScriptHost::global().appendLog(
+          artifactScriptDescribe(value, 0));
+    }
+    return ArtifactScriptValue{};
+  });
+  host.registerFunction("trace", [](std::span<const ArtifactScriptValue> a) {
+    std::string label;
+    if (!a.empty()) {
+      if (std::holds_alternative<std::string>(a[0])) {
+        label = std::get<std::string>(a[0]);
+      } else {
+        label = artifactScriptDescribe(a[0], 0);
+      }
+    }
+    ArtifactScriptHost::global().appendLog(
+        "[trace] " + label + " @" +
+        std::to_string(static_cast<long long>(scriptSelfFrame())));
+    return ArtifactScriptValue{};
+  });
 }
 
 QJsonObject simulationEntityIdToJson(const SimulationEntityId& id)
@@ -1139,6 +1915,11 @@ class ArtifactAbstractComposition::Impl {
   ~Impl();
   ArtifactAbstractComposition* owner_;
   MultiIndexLayerContainer layerMultiIndex_;
+  // Watches every bound script file so edits reload without a per-frame mtime
+  // poll. Owned here because the composition outlives any single layer.
+  QFileSystemWatcher* scriptWatcher_ = nullptr;
+  void syncScriptWatcher();
+  void onScriptFileChanged(const QString& path);
   CompositionNodeStore nodeStore_;
   CompositionSettings settings_;
   CompositionContext context_;
@@ -1255,10 +2036,79 @@ class ArtifactAbstractComposition::Impl {
   void resetLayerComponentSimulation();
   };
 
- ArtifactAbstractComposition::Impl::Impl(ArtifactAbstractComposition* owner)
-     : owner_(owner), position_(0)
+ArtifactAbstractComposition::Impl::Impl(ArtifactAbstractComposition* owner)
+      : owner_(owner), position_(0)
+  {
+   inOutPoints_ = std::make_unique<ArtifactInOutPoints>(owner);
+   // Registers the composition-facing callbacks that layer scripts call
+   // (getLayer / getProperty / setProperty / getTime / getLayerCount).
+   installCompositionScriptApi(owner);
+   if (owner) {
+     scriptWatcher_ = new QFileSystemWatcher(owner);
+     QObject::connect(scriptWatcher_, &QFileSystemWatcher::fileChanged,
+                      owner, [this](const QString& path) {
+                        onScriptFileChanged(path);
+                      });
+   }
+  }
+
+ void ArtifactAbstractComposition::Impl::syncScriptWatcher()
  {
-  inOutPoints_ = std::make_unique<ArtifactInOutPoints>(owner);
+   if (!scriptWatcher_) {
+     return;
+   }
+   // Drop every previous path; the set is rebuilt from the current bindings so
+   // renamed or removed scripts stop raising notifications.
+   const QStringList watched = scriptWatcher_->files();
+   if (!watched.isEmpty()) {
+     scriptWatcher_->removePaths(watched);
+   }
+   QStringList desired;
+   for (const auto& layer : layerMultiIndex_) {
+     if (!layer || !layer->hasScriptBinding()) {
+       continue;
+     }
+     const QString path = resolveScriptLayerScriptPath(layer->scriptBinding());
+     if (path.isEmpty()) {
+       continue;
+     }
+     const QFileInfo info(path);
+     if (!info.exists()) {
+       continue;  // a missing file cannot be watched yet
+     }
+     desired.push_back(info.absoluteFilePath());
+   }
+   if (!desired.isEmpty()) {
+     scriptWatcher_->addPaths(desired);
+   }
+ }
+
+ void ArtifactAbstractComposition::Impl::onScriptFileChanged(
+     const QString& path)
+ {
+   const QFileInfo info(path);
+   const QString absolute = info.absoluteFilePath();
+   for (const auto& layer : layerMultiIndex_) {
+     if (!layer || !layer->hasScriptBinding()) {
+       continue;
+     }
+     if (resolveScriptLayerScriptPath(layer->scriptBinding()) != absolute) {
+       continue;
+     }
+     if (!layer->reloadScriptFromDisk()) {
+       qWarning().noquote()
+           << "[LayerScript] reload failed"
+           << absolute.toStdString().c_str()
+           << layer->scriptLastError().c_str();
+     }
+   }
+   // Editors commonly replace files rather than write in place, which drops
+   // the watch. Re-add the path so the next save is still observed.
+   if (!info.exists() && scriptWatcher_ &&
+       !scriptWatcher_->files().contains(absolute)) {
+     scriptWatcher_->addPath(absolute);
+   }
+   syncScriptWatcher();
  }
 
  ArtifactAbstractComposition::Impl::~Impl()
@@ -2233,8 +3083,39 @@ void ArtifactAbstractComposition::Impl::evaluateLayerComponentSimulation(
     if (!layer || !layer->isActiveAt(frame)) {
       if (layer) {
         layer->clearAuthoritativeComponentEvaluationState();
+        // An inactive layer stops running its script, so the lifecycle has to
+        // wind down here; otherwise OnDisable/OnDestroy would never fire.
+        const ScriptSelfLayerScope inactiveScope(layer);
+        layer->advanceScriptLifecycle(
+            ArtifactAbstractLayer::ScriptRunState::Unbound);
       }
       continue;
+    }
+    layer->goToFrame(frameNumber);
+    // Intent-phase script components run before the arrangement/dynamics
+    // simulation below. Scripts are independent of the cloner simulation, so
+    // they evaluate even when crowd/collision are both off.
+    {
+      // Publishes this layer so host callbacks can resolve "self".
+      const ScriptSelfLayerScope selfLayerScope(layer);
+      const bool scriptEnabled = layerBooleanProperty(
+          layer, QStringLiteral("component.script.enabled"), false);
+      const double timeSeconds = static_cast<double>(frameNumber) / fps;
+      // Publishes the frame so time-defaulting helpers (wiggle, random) read
+      // the same base the hook is running on.
+      const ScriptSelfFrameScope selfFrameScope(frameNumber, timeSeconds);
+      if (scriptEnabled) {
+        // Lifecycle first: OnCreate/OnStart/OnEnable must land before the first
+        // OnUpdate of the same frame.
+        layer->advanceScriptLifecycle(
+            ArtifactAbstractLayer::ScriptRunState::Enabled);
+        layer->evaluateScriptFrame(frameNumber, timeSeconds,
+                                   static_cast<double>(fixedDeltaSeconds));
+      } else {
+        // Disabled or unbound: fire OnDisable/OnDestroy exactly once.
+        layer->advanceScriptLifecycle(
+            ArtifactAbstractLayer::ScriptRunState::Unbound);
+      }
     }
     const bool crowdEnabled = layerBooleanProperty(
         layer, QStringLiteral("component.crowd.enabled"), false);
@@ -2245,7 +3126,6 @@ void ArtifactAbstractComposition::Impl::evaluateLayerComponentSimulation(
       continue;
     }
 
-    layer->goToFrame(frameNumber);
     SimulationLayerEntry entry;
     entry.layer = layer;
     entry.crowdEnabled = crowdEnabled;
@@ -3151,6 +4031,10 @@ bool CompositionStateVariant::hasOverride(const LayerID& layerId,
   impl_->id_ = id;
 
   impl_->settings_.setCompositionName(params.compositionName());
+   // Publish under the composition name so layer scripts can address layers in
+   // sibling compositions as "CompName/LayerName".
+   CompositionRegistry::global().registerComposition(
+       impl_->settings_.compositionName(), this);
   impl_->settings_.setCompositionSize(QSize(params.width(), params.height()));
   // Keep init params and live composition state consistent for viewers.
   impl_->backgroundColor_ = params.backgroundColor();
@@ -3173,10 +4057,14 @@ bool CompositionStateVariant::hasOverride(const LayerID& layerId,
 
  ArtifactAbstractComposition::~ArtifactAbstractComposition()
  {
-  ArtifactCore::PhysicsSystem::instance().unregisterCompositionRigidWorld(
-      impl_->id_);
-  delete impl_;
- }
+    // Drop the registry entry before the Impl dies so no later lookup can
+    // observe a dangling pointer.
+    CompositionRegistry::global().unregisterComposition(
+        impl_->settings_.compositionName(), this);
+   ArtifactCore::PhysicsSystem::instance().unregisterCompositionRigidWorld(
+       impl_->id_);
+   delete impl_;
+  }
 
  bool ArtifactAbstractComposition::containsLayerById(const LayerID& id)
  {
@@ -3187,6 +4075,13 @@ ArtifactAbstractLayerPtr ArtifactAbstractComposition::layerById(const LayerID& i
 {
   ArtifactAbstractLayerPtr layer = impl_->layerMultiIndex_.findById(id);
   return layer;
+}
+
+void ArtifactAbstractComposition::syncScriptWatcher()
+{
+  if (impl_) {
+    impl_->syncScriptWatcher();
+  }
 }
 
 
@@ -3924,6 +4819,21 @@ void ArtifactAbstractComposition::ensureAudioMixer()
 {
     if (!impl_->audioMixer_) {
         impl_->audioMixer_ = ArtifactCore::makeShared<AudioMixer>();
+        // AudioMixer lives in ArtifactCore and cannot instantiate effects
+        // itself, so the FX rack is rebuilt through the application manager
+        // that owns the factories. Without this hook a saved rack is restored
+        // as an empty bus.
+        impl_->audioMixer_->setEffectFactoryHook(
+            [](const QString& effectType, const QJsonObject& payload) {
+                auto effect = Artifact::ArtifactAudioEffectManager::instance()
+                                  .createEffect(ArtifactCore::String(
+                                      effectType.toUtf8().constData()));
+                if (!effect) {
+                    return ArtifactCore::SharedPtr<ArtifactCore::AudioEffect>{};
+                }
+                effect->fromJson(payload);
+                return ArtifactCore::SharedPtr<ArtifactCore::AudioEffect>(effect);
+            });
         qDebug() << "[Composition] AudioMixer enabled for" << settings().compositionName().toQString();
     }
 }
@@ -4416,7 +5326,12 @@ void ArtifactAbstractComposition::setCompositionName(const UniString& name)
     if (impl_->settings_.compositionName() == name) {
         return;
     }
+    // Keep the script registry entry pointing at this composition under the new
+    // name so cross-composition references survive a rename.
+    CompositionRegistry::global().unregisterComposition(
+        impl_->settings_.compositionName(), this);
     impl_->settings_.setCompositionName(name);
+    CompositionRegistry::global().registerComposition(name, this);
     Q_EMIT changed();
 }
 

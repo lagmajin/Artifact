@@ -91,7 +91,15 @@ struct ArtifactPluginSandbox::Impl {
             auto doc = QJsonDocument::fromJson(line, &err);
             if (err.error == QJsonParseError::NoError && doc.isObject()) {
                 const QJsonObject response = doc.object();
-                if (response.value(QStringLiteral("cmd")).toString() == QStringLiteral("pong") &&
+                // The runner tags its replies with "event"; only the
+                // supervisor's own outgoing commands carry "cmd". Matching on
+                // "cmd" here meant expectingPong was never cleared and every
+                // supervised plugin was declared crashed once the timeout
+                // elapsed, restarting in a loop.
+                const QString eventName = response.value(QStringLiteral("event")).toString();
+                const QString cmdName = response.value(QStringLiteral("cmd")).toString();
+                if ((eventName == QStringLiteral("pong") ||
+                     cmdName == QStringLiteral("pong")) &&
                     response.value(QStringLiteral("id")).toInt(-1) == heartbeatId) {
                     expectingPong = false;
                 }

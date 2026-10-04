@@ -1,6 +1,7 @@
 module;
 
 #include <QPointF>
+#include <QRectF>
 
 #include <vector>
 
@@ -26,6 +27,11 @@ struct LayerEditorMaskMoveState {
  const std::vector<MaskVertex>* proportionalBefore = nullptr;
  QPointF proportionalOrigin;
  float proportionalRadius = 96.0f;
+ // ==== bounds ギズモのドラッグ ====
+ // Press 開始時に決まったハンドル種別・元 bounds・不動点アンカーを保持。
+ MaskBoundsHandle boundsHandle = MaskBoundsHandle::None;
+ QRectF boundsBefore;
+ QPointF boundsAnchor;
 };
 
 enum class LayerEditorMaskMoveKind {

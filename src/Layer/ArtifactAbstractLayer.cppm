@@ -12,6 +12,8 @@ module;
 #include <utility>
 #include <vector>
 #include <QDebug>
+#include <QFile>
+#include <QFileInfo>
 #include <QImage>
 #include <QMatrix4x4>
 #include <QPointF>
@@ -104,6 +106,7 @@ import Artifact.Layer.RuntimeRenderSupport;
 import Artifact.Layer.FluidRuntimeState;
 import Artifact.Layer.Abstract.Utilities;
 import Artifact.Layer.PhysicsBridge;
+import Script.ArtifactScript;
 
 namespace Artifact {
 
@@ -453,6 +456,13 @@ void ArtifactAbstractLayerImpl::syncBuiltinComponentDescriptors() {
       static_cast<double>(pyroSourceVelocityZ_);
   componentHost_.upsert(std::move(pyro));
 
+  // script component: ArtifactAbstractLayerComponentRouting の
+  // component.script.enabled と、syncBuiltinBoolsFromHost() の
+  // artifact.component.script 読み出しが対になるように descriptor を作る。
+  // これが無いと boolFromHost が false を返し、保存/再読込のたびに
+  // scriptComponentEnabled_ が false へ落ちる（データ消失）。
+  componentHost_.upsert(makeScriptComponentDescriptor(scriptComponentEnabled_));
+
   const QString& sourceComponentType = builtinSourceComponentType_;
   if (!sourceComponentType.isEmpty()) {
     LayerComponentDescriptor sourceDescriptor;
@@ -500,6 +510,225 @@ void ArtifactAbstractLayerImpl::syncBuiltinBoolsFromHost() {
     physicsComponent_.setEnabled(false);
     collisionOwnsPhysicsEnable_ = false;
   }
+}
+
+void ArtifactAbstractLayerImpl::releaseScriptInstance()
+{
+  scriptInstance_.reset();
+  scriptSourcePath_.clear();
+  scriptLastError_.clear();
+  scriptLastFrame_ = std::numeric_limits<int64_t>::min();
+}
+
+namespace {
+// Resolves the bound script path. The binding schema accepts four key
+// spellings; the first non-empty one wins.
+QString resolveBoundScriptPath(const QJsonObject& binding)
+{
+  static const QStringList kKeys{
+      QStringLiteral("path"), QStringLiteral("file"),
+      QStringLiteral("scriptPath"), QStringLiteral("scriptFile")};
+  for (const QString& key : kKeys) {
+    const QString candidate = binding.value(key).toString().trimmed();
+    if (!candidate.isEmpty()) {
+      return candidate;
+    }
+  }
+  return {};
+}
+
+// Reads and parses a script file. Returns false and fills error on failure.
+bool loadScriptDefinition(const QString& absolutePath,
+                          ArtifactCore::ArtifactScriptDefinition& definition,
+                          std::string& error)
+{
+  QFile file(absolutePath);
+  if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+    error = QStringLiteral("script file cannot be opened: %1")
+                .arg(absolutePath)
+                .toStdString();
+    return false;
+  }
+  const QByteArray bytes = file.readAll();
+  const std::string source(bytes.constData(),
+                           static_cast<std::size_t>(bytes.size()));
+  definition = ArtifactCore::ArtifactScriptParser{}.parse(source);
+  if (!definition.diagnostics.empty()) {
+    const auto& diagnostic = definition.diagnostics.front();
+    error = QStringLiteral("line %1:%2 %3")
+                .arg(diagnostic.line)
+                .arg(diagnostic.column)
+                .arg(QString::fromStdString(diagnostic.message))
+                .toStdString();
+    return false;
+  }
+  return true;
+}
+
+// Migrates live field values onto a fresh definition, keeping only fields whose
+// name and type are unchanged. Mirrors ArtifactScriptHotReload::reload.
+ArtifactCore::ArtifactScriptSerializedFields migrateScriptFields(
+    const ArtifactCore::ArtifactScriptDefinition& previous,
+    const ArtifactCore::ArtifactScriptSerializedFields& previousFields,
+    const ArtifactCore::ArtifactScriptDefinition& next)
+{
+  ArtifactCore::ArtifactScriptSerializedFields out;
+  for (const auto& oldField : previous.rootClass.fields) {
+    if (!oldField.isPublic) {
+      continue;
+    }
+    const auto it = previousFields.constFind(oldField.name);
+    if (it == previousFields.cend()) {
+      continue;
+    }
+    for (const auto& newField : next.rootClass.fields) {
+      if (newField.name == oldField.name && newField.isPublic &&
+          newField.type == oldField.type) {
+        out[oldField.name] = it.value();
+        break;
+      }
+    }
+  }
+  ArtifactCore::ArtifactScriptComponent defaults;
+  defaults.setScriptClass(next.rootClass.name);
+  defaults.applyDefaults(next);
+  for (const auto& [name, value] : defaults.publicFields()) {
+    if (out.find(name) == out.cend()) {
+      out[name] = value;
+    }
+  }
+  return out;
+}
+}  // namespace
+
+void ArtifactAbstractLayerImpl::rebuildScriptInstance()
+{
+  const QString path = resolveBoundScriptPath(scriptBinding_);
+  if (path.isEmpty()) {
+    releaseScriptInstance();
+    return;
+  }
+  const QFileInfo info(path);
+  const QString absolute = info.absoluteFilePath();
+  if (scriptInstance_ && scriptSourcePath_ == absolute.toStdString()) {
+    return;  // already bound to this file
+  }
+  releaseScriptInstance();
+  if (!scriptComponentEnabled_) {
+    return;
+  }
+  ArtifactScriptDefinition definition;
+  if (!loadScriptDefinition(absolute, definition, scriptLastError_)) {
+    return;
+  }
+  scriptInstance_ = std::make_unique<ArtifactScriptInstance>(
+      std::move(definition));
+  // Seed the field table with the script's declared defaults.
+  // invokeHook() only applies defaults when fields() is empty, so seeding
+  // here keeps dt/time/frame from suppressing the public-field defaults.
+  ArtifactScriptComponent component;
+  component.setScriptClass(
+      scriptInstance_->definition().rootClass.name);
+  component.applyDefaults(scriptInstance_->definition());
+  scriptInstance_->fields() = component.publicFields();
+  scriptSourcePath_ = absolute.toStdString();
+}
+
+bool ArtifactAbstractLayerImpl::reloadScriptFromDisk()
+{
+  if (!scriptComponentEnabled_ || scriptSourcePath_.empty() ||
+      !scriptInstance_) {
+    return false;
+  }
+  const QString absolute = QString::fromStdString(scriptSourcePath_);
+  ArtifactScriptDefinition definition;
+  if (!loadScriptDefinition(absolute, definition, scriptLastError_)) {
+    return false;  // keep running the previous instance on a parse error
+  }
+  // ArtifactScriptDefinition is move-only, so the previous definition is still
+  // intact here and can be read for the field migration.
+  ArtifactScriptSerializedFields migrated =
+      migrateScriptFields(scriptInstance_->definition(),
+                          scriptInstance_->fields(), definition);
+  scriptInstance_ = std::make_unique<ArtifactScriptInstance>(
+      std::move(definition));
+  scriptInstance_->fields() = std::move(migrated);
+  return true;
+}
+
+bool ArtifactAbstractLayerImpl::advanceScriptLifecycle(
+    ArtifactAbstractLayer::ScriptRunState target)
+{
+  using State = ArtifactAbstractLayer::ScriptRunState;
+  // Normalise the requested stage against what actually exists: an unbound or
+  // disabled component can never be past Unbound.
+  if (target != State::Unbound &&
+      (!scriptComponentEnabled_ || !scriptInstance_)) {
+    target = State::Unbound;
+  }
+  if (scriptRunState_ == target) {
+    return false;
+  }
+  const auto invoke = [this](ArtifactCore::ArtifactScriptHook hook) {
+    if (scriptInstance_) {
+      scriptInstance_->invokeHook(hook);
+    }
+  };
+  const State previous = scriptRunState_;
+  scriptRunState_ = target;
+  switch (target) {
+  case State::Created:
+    invoke(ArtifactCore::ArtifactScriptHook::OnCreate);
+    invoke(ArtifactCore::ArtifactScriptHook::OnStart);
+    break;
+  case State::Enabled:
+    // A direct Unbound -> Enabled jump still has to create first so OnEnable
+    // never runs on an instance that skipped OnCreate/OnStart.
+    if (previous == State::Unbound) {
+      invoke(ArtifactCore::ArtifactScriptHook::OnCreate);
+      invoke(ArtifactCore::ArtifactScriptHook::OnStart);
+    }
+    invoke(ArtifactCore::ArtifactScriptHook::OnEnable);
+    break;
+  case State::Unbound:
+    if (previous == State::Enabled) {
+      invoke(ArtifactCore::ArtifactScriptHook::OnDisable);
+    }
+    if (previous != State::Unbound) {
+      invoke(ArtifactCore::ArtifactScriptHook::OnDestroy);
+    }
+    break;
+  }
+  return true;
+}
+
+bool ArtifactAbstractLayerImpl::evaluateScriptFrame(
+    int64_t frame, double timeSeconds, double deltaSeconds)
+{
+  if (!scriptComponentEnabled_ || !scriptInstance_) {
+    return false;
+  }
+  if (frame == scriptLastFrame_) {
+    return false;  // same-frame re-evaluation guard
+  }
+  scriptLastFrame_ = frame;
+  auto& fields = scriptInstance_->fields();
+  // ArtifactScript has no host API wired yet, so dt/time reach the script
+  // through the field table instead.
+  fields["dt"] = ArtifactScriptValue(deltaSeconds);
+  fields["time"] = ArtifactScriptValue(timeSeconds);
+  fields["frame"] = ArtifactScriptValue(static_cast<std::int64_t>(frame));
+  if (!scriptInstance_->invokeHook(ArtifactScriptHook::OnUpdate)) {
+    const std::string error = scriptInstance_->lastError();
+    if (!error.empty() && error != scriptLastError_) {
+      scriptLastError_ = error;
+      qWarning().noquote()
+          << "[LayerScript]" << scriptSourcePath_.c_str() << error.c_str();
+    }
+    return false;
+  }
+  scriptLastError_.clear();
+  return true;
 }
 
 void ArtifactAbstractLayerImpl::goToStartFrame()
@@ -2907,11 +3136,16 @@ QJsonObject ArtifactAbstractLayer::componentDescriptorSnapshot() const {
   for (const auto &descriptor : impl_->extraCloneModifierDescriptors_) {
     modifiers.append(toJsonObject(descriptor));
   }
+  // componentHost_ も対象にする。これが無いと builtin component descriptor
+  // （cloner / layout / crowd / collision / fluid / pyro / script / particle-emitter /
+  // joint / fracture）と *ComponentEnabled_ フラグが Undo されない。
   return QJsonObject{{QStringLiteral("generators"), generators},
                      {QStringLiteral("fields"), fields},
                      {QStringLiteral("cloneModifiers"), modifiers},
                      {QStringLiteral("clonerTransforms"),
-                      clonerTransformsSnapshot()}};
+                      clonerTransformsSnapshot()},
+                     {QStringLiteral("componentGraph"),
+                      impl_->componentHost_.toJson()}};
 }
 
 bool ArtifactAbstractLayer::restoreComponentDescriptorSnapshot(
@@ -2922,11 +3156,17 @@ bool ArtifactAbstractLayer::restoreComponentDescriptorSnapshot(
   const auto modifiersValue = snapshot.value(QStringLiteral("cloneModifiers"));
   const auto transformsValue =
       snapshot.value(QStringLiteral("clonerTransforms"));
+  // componentGraph は後方互換のため任意。旧スナップショット（Undo 履歴残る
+  // セッション）に含まれていなければ componentHost_ は触らない。
+  const auto componentsValue = snapshot.value(QStringLiteral("componentGraph"));
+  const bool hasComponentGraph = componentsValue.isArray();
   if (!generatorsValue.isArray() || !fieldsValue.isArray() ||
       !modifiersValue.isArray() || !transformsValue.isArray() ||
       generatorsValue.toArray().size() > kMaxDescriptors ||
       fieldsValue.toArray().size() > kMaxDescriptors ||
-      modifiersValue.toArray().size() > kMaxDescriptors) {
+      modifiersValue.toArray().size() > kMaxDescriptors ||
+      (hasComponentGraph &&
+       componentsValue.toArray().size() > kMaxDescriptors)) {
     return false;
   }
   NamedVector<LayerGeneratorDescriptor> generators{
@@ -2957,6 +3197,13 @@ bool ArtifactAbstractLayer::restoreComponentDescriptorSnapshot(
   if (!restoreClonerTransformsSnapshot(transforms)) {
     return false;
   }
+  // componentGraph も検証してからまとめて反映する。途中で失敗しても
+  // 既存 state を壊さないよう、componentHost_ への代入は最後にまとめる。
+  if (hasComponentGraph) {
+    for (const auto &value : componentsValue.toArray()) {
+      if (!value.isObject()) return false;
+    }
+  }
   impl_->extraGeneratorDescriptors_.clear();
   impl_->extraFieldDescriptors_.clear();
   impl_->extraCloneModifierDescriptors_.clear();
@@ -2968,6 +3215,18 @@ bool ArtifactAbstractLayer::restoreComponentDescriptorSnapshot(
   }
   for (auto &descriptor : modifiers) {
     impl_->extraCloneModifierDescriptors_.add(std::move(descriptor));
+  }
+  if (hasComponentGraph) {
+    impl_->componentHost_.fromJson(componentsValue.toArray());
+    // descriptor を復元したら、*ComponentEnabled_ 側の bool を
+    // host から読み戻す。逆向き（bool → descriptor）だと Undo 後に
+    // Inspector の toggle 表示と componentGraph がずれる。
+    impl_->syncBuiltinBoolsFromHost();
+    // bool 側の値を descriptor へ書き戻して両者を一致させる。
+    // script だけは boolFromHost 経由で読み戻されるため、この再同期が
+    // 必須。ここまでしないと最終の自己検証 componentDescriptorSnapshot()
+    // が false を返す。
+    impl_->syncBuiltinComponentDescriptors();
   }
   notifyLayerMutation(this, LayerDirtyFlag::Effect,
                       LayerDirtyReason::PropertyChanged);
@@ -3168,6 +3427,7 @@ QJsonObject ArtifactAbstractLayer::scriptBinding() const {
 
 void ArtifactAbstractLayer::setScriptBinding(const QJsonObject& binding) {
   impl_->scriptBinding_ = binding;
+  impl_->rebuildScriptInstance();
   notifyLayerMutation(this, LayerDirtyFlag::Property,
                       LayerDirtyReason::PropertyChanged);
 }
@@ -3177,12 +3437,34 @@ void ArtifactAbstractLayer::clearScriptBinding() {
     return;
   }
   impl_->scriptBinding_ = QJsonObject{};
+  impl_->releaseScriptInstance();
   notifyLayerMutation(this, LayerDirtyFlag::Property,
                       LayerDirtyReason::PropertyChanged);
 }
 
 bool ArtifactAbstractLayer::hasScriptBinding() const {
   return !impl_->scriptBinding_.isEmpty();
+}
+
+bool ArtifactAbstractLayer::evaluateScriptFrame(
+    std::int64_t frame, double timeSeconds, double deltaSeconds) {
+  return impl_->evaluateScriptFrame(frame, timeSeconds, deltaSeconds);
+}
+
+bool ArtifactAbstractLayer::advanceScriptLifecycle(ScriptRunState target) {
+  return impl_->advanceScriptLifecycle(target);
+}
+
+void ArtifactAbstractLayer::rebuildScriptInstance() {
+  impl_->rebuildScriptInstance();
+}
+
+bool ArtifactAbstractLayer::reloadScriptFromDisk() {
+  return impl_->reloadScriptFromDisk();
+}
+
+std::string ArtifactAbstractLayer::scriptLastError() const {
+  return impl_->scriptLastError_;
 }
 
 QImage ArtifactAbstractLayer::getThumbnail(int width, int height) const {

@@ -1682,6 +1682,7 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
     impl_->componentHost_.fromJson(
         obj.value(QStringLiteral("componentGraph")).toArray());
     impl_->syncBuiltinBoolsFromHost();
+    impl_->rebuildScriptInstance();
     // New component-only documents may not carry the legacy top-level
     // `fracture` object. In that case restore fracture settings from the
     // descriptor graph; legacy documents keep their top-level values.

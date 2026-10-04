@@ -4,6 +4,8 @@ module;
 #include <string>
 #include <memory>
 #include <array>
+#include <limits>
+#include <QtGlobal>
 export module Artifact.Audio.Effects.Reverb;
 
 
@@ -28,12 +30,42 @@ public:
 
     void process(ArtifactCore::AudioSegment& segment, const ArtifactCore::AudioSegment* sideChain = nullptr) override;
     String getName() const override { return "Reverb"; }
+    // 保存・復元の識別キー。登録済みの id と一致させる。
+    String effectType() const override { return "reverb"; }
     String getDescription() const override;
 
     std::vector<AudioEffectParameter> getUiParameters() const override;
     void setParameter(const String& name, float value) override;
     float getParameter(const String& name) const override;
     void setSampleRate(int sampleRate) override;
+    void reinitOnSampleRate() override;
+
+    // Reverb は入力遅延を持たない（pre-delay はWet 経路のみで、出力時刻は動かない）。
+    qint64 latencySamples() const override { return 0; }
+
+    // -60dB まで減衰するまでの時間。decay_ が大きいほど長い。
+    // decay_ は FDN の fbGain(0.70..0.85) を通した実効 feedback と
+    // Dattorro の tankAP 係数 (-decay_*0.7) の両方に効くため、
+    // ここでは worst-case の Dattorro 経路で見積もる。
+    qint64 tailSamples() const override {
+        if (decay_ <= 0.0f) return 0;
+        // tankAP のfeedback 係数 = decay_ * 0.7 が 1 に近いほど尾が長い。
+        const double feedback = static_cast<double>(decay_) * 0.7;
+        if (feedback >= 1.0) return std::numeric_limits<qint64>::max();
+        if (feedback <= 0.0) return 0;
+        // tank 最長 ≈ 908 samples * size_ @ refRate
+        const double loopSamples =
+            static_cast<double>(kTankDelay2) * size_ *
+            (static_cast<double>(sampleRate_) / kRefSampleRate);
+        if (!(loopSamples > 0.0)) return 0;
+        const double repeats = std::log(0.001) / std::log(feedback);
+        if (!(repeats > 0.0) || !std::isfinite(repeats)) return 0;
+        const double tail = loopSamples * repeats;
+        if (tail >= static_cast<double>(std::numeric_limits<qint64>::max())) {
+            return std::numeric_limits<qint64>::max();
+        }
+        return static_cast<qint64>(tail);
+    }
 
 private:
     void initEngine();

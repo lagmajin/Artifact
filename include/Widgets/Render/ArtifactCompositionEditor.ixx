@@ -28,6 +28,10 @@ public:
  void setClearColor(const FloatColor& color);
  CompositionRenderController* renderController() const;
  QWidget* trackerPanelWidget() const;
+ // Pushes the controller's live viewport orientation into the view cube.
+ // Needed by callers outside this module that restore a saved view
+ // (camera bookmarks, view templates) without routing through the widget.
+ void syncViewCubeOrientation();
 
  QSize sizeHint() const override;
   void resizeEvent(QResizeEvent* event) override;

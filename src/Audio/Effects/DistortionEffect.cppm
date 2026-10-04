@@ -61,6 +61,10 @@ float DistortionEffect::bitcrush(float x, float& /*holdState*/) {
 
 void DistortionEffect::process(ArtifactCore::AudioSegment& segment, const ArtifactCore::AudioSegment*) {
     if (!enabled_ || segment.channelData.isEmpty()) return;
+    // オフライン書き出しとリアルタイム再生で実レートが異なるため、
+    // バスから渡された segment のレートへ同期する。トーン LPF の係数が
+    // レートに依存するため、EQ と同じ契約に従う。
+    syncSampleRate(segment);
 
     int numChannels = static_cast<int>(segment.channelData.size());
     int numSamples = (numChannels > 0)

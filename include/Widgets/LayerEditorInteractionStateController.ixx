@@ -1,6 +1,7 @@
 module;
 
 #include <QPointF>
+#include <QRectF>
 
 #include <vector>
 
@@ -41,8 +42,14 @@ struct LayerEditorInteractionStateBindings {
  std::vector<QPointF>* selectedPolygonBefore = nullptr;
  std::vector<int>* selectedPathIndices = nullptr;
  std::vector<CustomPathVertex>* selectedPathBefore = nullptr;
- std::vector<MaskVertexAddress>* selectedMaskVertices = nullptr;
- LayerEditorMaskHoverController* maskHover = nullptr;
+  std::vector<MaskVertexAddress>* selectedMaskVertices = nullptr;
+  // ==== マスク bounding box ギズモ ====
+  // selectedMaskIndex は選択中のマスク番号。boundsMask* はドラッグ中のみ有効。
+  int* selectedMaskIndex = nullptr;
+  MaskBoundsHandle* boundsMaskHandle = nullptr;
+  QRectF* boundsMaskBefore = nullptr;
+  QPointF* boundsMaskAnchor = nullptr;
+  LayerEditorMaskHoverController* maskHover = nullptr;
  LayerEditorShapeHoverController* shapeHover = nullptr;
  LayerEditorShapeParameterController* shapeParameter = nullptr;
 };

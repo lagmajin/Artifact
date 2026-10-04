@@ -117,7 +117,12 @@ LayerEditorInteractionStateController::maskPressState(
      .proportionalPolygonBefore = bindings_.proportionalPolygonBefore,
      .proportionalPathBefore = bindings_.proportionalPathBefore,
      .selectedVertices = bindings_.selectedMaskVertices,
-     .additiveSelection = additiveSelection};
+     .additiveSelection = additiveSelection,
+     .boundsMaskIndex = bindings_.selectedMaskIndex
+         ? *bindings_.selectedMaskIndex : -1,
+     .boundsHandle = bindings_.boundsMaskHandle,
+     .boundsBefore = bindings_.boundsMaskBefore,
+     .boundsAnchor = bindings_.boundsMaskAnchor};
 }
 
 LayerEditorShapeMoveState LayerEditorInteractionStateController::shapeMoveState(
@@ -169,7 +174,13 @@ LayerEditorMaskMoveState LayerEditorInteractionStateController::maskMoveState(
      .proportionalBefore = bindings_.proportionalMaskBefore,
      .proportionalOrigin = bindings_.proportionalDragOrigin
          ? *bindings_.proportionalDragOrigin : QPointF{},
-     .proportionalRadius = proportionalEditRadius};
+     .proportionalRadius = proportionalEditRadius,
+     .boundsHandle = bindings_.boundsMaskHandle
+         ? *bindings_.boundsMaskHandle : MaskBoundsHandle::None,
+     .boundsBefore = bindings_.boundsMaskBefore
+         ? *bindings_.boundsMaskBefore : QRectF{},
+     .boundsAnchor = bindings_.boundsMaskAnchor
+         ? *bindings_.boundsMaskAnchor : QPointF{}};
 }
 
 LayerEditorReleaseState LayerEditorInteractionStateController::releaseState(

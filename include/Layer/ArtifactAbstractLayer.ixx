@@ -753,10 +753,34 @@ public:
   /*Components*/
 
   /*Script*/
+  // Lifecycle stage of the bound script. The composition advances the stage
+  // from the evaluated frame loop, which is what triggers the hooks.
+  enum class ScriptRunState {
+    Unbound,    // no script bound, or the component is disabled
+    Created,    // instance exists; OnCreate/OnStart already ran
+    Enabled,    // OnEnable ran; OnUpdate runs each evaluated frame
+  };
   QJsonObject scriptBinding() const;
   void setScriptBinding(const QJsonObject& binding);
   void clearScriptBinding();
   bool hasScriptBinding() const;
+  // Runs the bound script's OnUpdate hook for the given frame. The caller owns
+  // the time base; the layer only guards against same-frame re-evaluation.
+  bool evaluateScriptFrame(std::int64_t frame, double timeSeconds,
+                           double deltaSeconds);
+  // Moves the script to the requested stage, firing the lifecycle hooks that
+  // the transition implies (OnCreate/OnStart/OnEnable on entry,
+  // OnDisable/OnDestroy on exit). Safe to call every frame; it is a no-op when
+  // the stage already matches.
+  bool advanceScriptLifecycle(ScriptRunState target);
+  // Rebinds the script instance from the current binding. Called automatically
+  // on binding change and on document load; exposed for explicit refreshes.
+  void rebuildScriptInstance();
+  // Re-reads the bound script file from disk and swaps in a fresh instance,
+  // preserving existing field values for fields whose name and type are
+  // unchanged. Returns false when the file is missing or fails to parse.
+  bool reloadScriptFromDisk();
+  std::string scriptLastError() const;
   /*Script*/
 
   /*Thumbnail*/

@@ -4172,14 +4172,17 @@ class ArtifactProjectManagerWidget::Impl {
 public:
     ~Impl() {
         for (ProxyWorkerSlot& slot : proxyWorkerSlots_) {
-            if (!slot.cancelPath.isEmpty()) {
-                QFile cancelFile(slot.cancelPath);
-                if (cancelFile.open(QIODevice::WriteOnly)) {
-                    cancelFile.write("shutdown\n");
-                    cancelFile.close();
+            if (!slot.process) continue;
+            for (const ProxyWorkerSlot::Entry& entry : slot.entries) {
+                if (!entry.cancelPath.isEmpty()) {
+                    QFile cancelFile(entry.cancelPath);
+                    if (cancelFile.open(QIODevice::WriteOnly)) {
+                        cancelFile.write("shutdown\n");
+                        cancelFile.close();
+                    }
                 }
             }
-            if (slot.process && slot.process->state() != QProcess::NotRunning) {
+            if (slot.process->state() != QProcess::NotRunning) {
                 slot.process->terminate();
                 if (!slot.process->waitForFinished(1000)) {
                     slot.process->kill();
@@ -4188,13 +4191,17 @@ public:
             }
             delete slot.process;
             slot.process = nullptr;
-            QFile::remove(slot.requestPath);
-            QFile::remove(slot.cancelPath);
-            QFile::remove(slot.job.outputPath + QStringLiteral(".partial"));
-            if (!slot.previousPath.isEmpty()) {
-                QFile::remove(slot.job.outputPath);
-                QFile::rename(slot.previousPath, slot.job.outputPath);
+            QFile::remove(slot.batchRequestPath);
+            for (const ProxyWorkerSlot::Entry& entry : slot.entries) {
+                QFile::remove(entry.job.outputPath + QStringLiteral(".partial"));
+                QFile::remove(entry.requestPath);
+                QFile::remove(entry.cancelPath);
+                if (!entry.previousPath.isEmpty()) {
+                    QFile::remove(entry.job.outputPath);
+                    QFile::rename(entry.previousPath, entry.job.outputPath);
+                }
             }
+            slot.entries.clear();
         }
     }
 
@@ -4270,20 +4277,26 @@ public:
     int proxyCompletedCount_ = 0;
     QTimer* proxyQueueTimer_ = nullptr;
 
-    // One slot per concurrent proxy worker process. An entry with a null
-    // process is idle and available for the next queued job.
+    // One slot per concurrent proxy worker process. A slot carries a batch of
+    // jobs (protocolVersion 2) that the worker runs sequentially; a null
+    // process means the slot is idle and available for the next batch.
     struct ProxyWorkerSlot {
+        struct Entry {
+            ProxyJob job;
+            QString jobId;
+            QString requestPath;
+            QString cancelPath;
+            QString previousPath;
+            double fraction = 0.0;
+            QString failureReason;
+            bool completed = false;
+            qint64 reportedOutputBytes = -1;
+        };
         QProcess* process = nullptr;
-        ProxyJob job;
-        QString requestPath;
-        QString cancelPath;
-        QString previousPath;
+        std::vector<Entry> entries;
         QByteArray outputBuffer;
-        double fraction = 0.0;
-        QString failureReason;
-        QString jobId;
-        bool completed = false;
-        qint64 reportedOutputBytes = -1;
+        int currentIndex = 0;
+        QString batchRequestPath;
     };
     std::deque<ProxyWorkerSlot> proxyWorkerSlots_;
 
@@ -5483,8 +5496,10 @@ public:
         proxyJobs_.clear();
         bool signalled = false;
         for (ProxyWorkerSlot& slot : proxyWorkerSlots_) {
-            if (slot.process && !slot.cancelPath.isEmpty()) {
-                QFile cancelFile(slot.cancelPath);
+            if (!slot.process) continue;
+            for (const ProxyWorkerSlot::Entry& entry : slot.entries) {
+                if (entry.cancelPath.isEmpty()) continue;
+                QFile cancelFile(entry.cancelPath);
                 if (cancelFile.open(QIODevice::WriteOnly)) {
                     cancelFile.close();
                     signalled = true;
@@ -5788,6 +5803,7 @@ public:
                 const QStringList orphanBackups = outputDirectory.entryList(
                     {QStringLiteral(".*.proxy-job.json.previous"),
                      QStringLiteral(".*.proxy-job.json.cancel"),
+                     QStringLiteral(".proxy-batch-*.json"),
                      QStringLiteral("*.partial")}, QDir::Files);
                 for (const QString& orphanFile : orphanBackups) {
                     QFile::remove(outputDirectory.filePath(orphanFile));
@@ -5797,10 +5813,13 @@ public:
             const bool alreadyActive = std::any_of(
                 proxyWorkerSlots_.cbegin(), proxyWorkerSlots_.cend(),
                 [&sourcePath, &serviceOut, scale](const ProxyWorkerSlot& slot) {
-                    return slot.process &&
-                           slot.job.inputPath == sourcePath &&
-                           slot.job.outputPath == serviceOut &&
-                           qFuzzyCompare(slot.job.scaleFactor, scale);
+                    if (!slot.process) return false;
+                    return std::any_of(slot.entries.cbegin(), slot.entries.cend(),
+                        [&sourcePath, &serviceOut, scale](const ProxyWorkerSlot::Entry& entry) {
+                            return entry.job.inputPath == sourcePath &&
+                                   entry.job.outputPath == serviceOut &&
+                                   qFuzzyCompare(entry.job.scaleFactor, scale);
+                        });
                 });
             const bool alreadyQueued = std::any_of(proxyJobs_.cbegin(), proxyJobs_.cend(),
                 [&sourcePath, &serviceOut, scale](const ProxyJob& queued) {
@@ -5831,28 +5850,77 @@ public:
         }
     }
 
-    // Aggregate progress across all busy slots: each running job contributes its
-    // own fraction, so the bar reflects total remaining work rather than
-    // whichever worker happens to report last.
+    // Aggregate progress across every job assigned to a running worker. The batch
+    // denominator is the number of jobs those workers hold plus whatever is
+    // still queued, so the bar reflects total remaining work.
     void updateAggregateProxyProgress() {
         if (!proxyQueueProgress) return;
-        int busy = 0;
+        int assigned = 0;
         double sum = 0.0;
         for (const ProxyWorkerSlot& slot : proxyWorkerSlots_) {
             if (!slot.process) continue;
-            ++busy;
-            sum += slot.fraction;
+            assigned += static_cast<int>(slot.entries.size());
+            for (const ProxyWorkerSlot::Entry& entry : slot.entries) {
+                sum += entry.fraction;
+            }
         }
-        if (busy > 0) {
+        if (assigned > 0) {
+            const int total = proxyCompletedCount_ + assigned +
+                              static_cast<int>(proxyJobs_.size());
             proxyQueueProgress->setFormat(QStringLiteral("Proxy queue %1/%2 (%3%)")
-                .arg(proxyCompletedCount_ + busy)
-                .arg(proxyCompletedCount_ + busy + static_cast<int>(proxyJobs_.size()))
-                .arg(qRound(sum / busy * 100.0)));
+                .arg(proxyCompletedCount_ + (assigned > 0 ? 1 : 0))
+                .arg(total)
+                .arg(qRound(sum / assigned * 100.0)));
         }
     }
 
-    // Reads pending worker output and, once the process has exited, applies the
-    // result. Returns true when the slot was released and may take a new job.
+    // Finds the slot entry a worker message refers to, by jobId.
+    static ProxyWorkerSlot::Entry* findProxyEntry(ProxyWorkerSlot& slot, const QString& jobId)
+    {
+        for (ProxyWorkerSlot::Entry& entry : slot.entries) {
+            if (entry.jobId == jobId) {
+                return &entry;
+            }
+        }
+        return nullptr;
+    }
+
+    // Applies the finished job's result: sync proxy metadata on success, or
+    // roll back to the preserved previous output on failure.
+    void finalizeProxyEntry(ProxyWorkerSlot::Entry& entry)
+    {
+        if (entry.failureReason.isEmpty() && entry.completed &&
+            QFileInfo(entry.job.outputPath).isFile() &&
+            QFileInfo(entry.job.outputPath).size() > 0 &&
+            QFileInfo(entry.job.outputPath).size() == entry.reportedOutputBytes &&
+            QFileInfo(entry.job.inputPath).lastModified() == entry.job.sourceLastModified &&
+            QFileInfo(entry.job.inputPath).size() == entry.job.sourceSize) {
+            auto& metadata = proxyMetadata()[entry.job.inputPath];
+            metadata.sourceLastModified = entry.job.sourceLastModified;
+            FootageItem* footage = footageItemForPath(entry.job.inputPath);
+            const bool enabled = footage ? footage->proxyEnabled : true;
+            syncProxyPathToProject(entry.job.inputPath, entry.job.outputPath,
+                                   enabled, proxyGlobalEnabled_);
+            if (!entry.previousPath.isEmpty()) {
+                QFile::remove(entry.previousPath);
+            }
+        } else {
+            QFile::remove(entry.job.outputPath);
+            if (!entry.previousPath.isEmpty()) {
+                QFile::rename(entry.previousPath, entry.job.outputPath);
+            }
+        }
+        if (!entry.requestPath.isEmpty()) {
+            QFile::remove(entry.requestPath);
+        }
+        if (!entry.cancelPath.isEmpty()) {
+            QFile::remove(entry.cancelPath);
+        }
+        ++proxyCompletedCount_;
+    }
+
+    // Reads pending worker output and, once the process has exited, finalizes
+    // every job the batch held. Returns true when the slot was released.
     bool pollProxyWorkerSlot(ProxyWorkerSlot& slot) {
         slot.outputBuffer.append(slot.process->readAllStandardOutput());
         int newline = -1;
@@ -5862,31 +5930,37 @@ public:
             const QJsonDocument message = QJsonDocument::fromJson(line);
             if (!message.isObject()) continue;
             const QJsonObject object = message.object();
-            if (object.value(QStringLiteral("type")).toString() == QStringLiteral("progress") &&
-                object.value(QStringLiteral("jobId")).toString() == slot.jobId) {
-                slot.fraction = qBound(0.0, object.value(QStringLiteral("fraction")).toDouble(), 1.0);
+            const QString type = object.value(QStringLiteral("type")).toString();
+            if (type == QStringLiteral("batchCompleted")) {
+                continue;
+            }
+            const QString messageJobId = object.value(QStringLiteral("jobId")).toString();
+            ProxyWorkerSlot::Entry* entry = findProxyEntry(slot, messageJobId);
+            if (!entry) {
+                continue;
+            }
+            if (type == QStringLiteral("progress")) {
+                entry->fraction = qBound(0.0, object.value(QStringLiteral("fraction")).toDouble(), 1.0);
                 updateAggregateProxyProgress();
-            } else if (object.value(QStringLiteral("type")).toString() == QStringLiteral("failed") &&
-                       object.value(QStringLiteral("jobId")).toString() == slot.jobId) {
-                slot.failureReason = object.value(QStringLiteral("reason")).toString();
-                if (proxyQueueProgress && !slot.failureReason.isEmpty()) {
-                    proxyQueueProgress->setToolTip(slot.failureReason);
+            } else if (type == QStringLiteral("failed")) {
+                entry->failureReason = object.value(QStringLiteral("reason")).toString();
+                if (proxyQueueProgress && !entry->failureReason.isEmpty()) {
+                    proxyQueueProgress->setToolTip(entry->failureReason);
                 }
-            } else if (object.value(QStringLiteral("type")).toString() == QStringLiteral("completed") &&
-                       object.value(QStringLiteral("jobId")).toString() == slot.jobId &&
+            } else if (type == QStringLiteral("completed") &&
                        QFileInfo(object.value(QStringLiteral("outputPath")).toString()).absoluteFilePath() ==
-                           QFileInfo(slot.job.outputPath).absoluteFilePath()) {
-                const QString expectedQuality = slot.job.scaleFactor >= 0.9 ? QStringLiteral("full")
-                    : slot.job.scaleFactor <= 0.125 ? QStringLiteral("eighth")
-                    : slot.job.scaleFactor <= 0.25 ? QStringLiteral("quarter")
-                                                   : QStringLiteral("half");
+                           QFileInfo(entry->job.outputPath).absoluteFilePath()) {
+                const QString expectedQuality = entry->job.scaleFactor >= 0.9 ? QStringLiteral("full")
+                    : entry->job.scaleFactor <= 0.125 ? QStringLiteral("eighth")
+                    : entry->job.scaleFactor <= 0.25 ? QStringLiteral("quarter")
+                                                    : QStringLiteral("half");
                 if (object.value(QStringLiteral("qualityPreset")).toString() == expectedQuality) {
-                    slot.completed = true;
-                    slot.reportedOutputBytes = object.value(QStringLiteral("outputBytes"))
+                    entry->completed = true;
+                    entry->reportedOutputBytes = object.value(QStringLiteral("outputBytes"))
                         .toVariant().toLongLong();
                 } else {
-                    slot.failureReason = QStringLiteral("Proxy worker reported mismatched quality preset");
-                    if (proxyQueueProgress) proxyQueueProgress->setToolTip(slot.failureReason);
+                    entry->failureReason = QStringLiteral("Proxy worker reported mismatched quality preset");
+                    if (proxyQueueProgress) proxyQueueProgress->setToolTip(entry->failureReason);
                 }
             }
         }
@@ -5895,53 +5969,37 @@ public:
         }
         const QString workerStderr = QString::fromLocal8Bit(
             slot.process->readAllStandardError()).trimmed();
-        if (proxyQueueProgress && slot.failureReason.isEmpty() && !workerStderr.isEmpty()) {
-            proxyQueueProgress->setToolTip(workerStderr);
-        }
-        const bool succeeded = slot.completed &&
-                               slot.process->exitStatus() == QProcess::NormalExit &&
-                               slot.process->exitCode() == 0 &&
-                               QFileInfo(slot.job.outputPath).isFile() &&
-                               QFileInfo(slot.job.outputPath).size() > 0 &&
-                               QFileInfo(slot.job.outputPath).size() == slot.reportedOutputBytes &&
-                               QFileInfo(slot.job.inputPath).lastModified() ==
-                                   slot.job.sourceLastModified &&
-                               QFileInfo(slot.job.inputPath).size() ==
-                                   slot.job.sourceSize;
-        if (succeeded) {
-            auto& metadata = proxyMetadata()[slot.job.inputPath];
-            metadata.sourceLastModified = slot.job.sourceLastModified;
-            FootageItem* footage = footageItemForPath(slot.job.inputPath);
-            const bool enabled = footage ? footage->proxyEnabled : true;
-            syncProxyPathToProject(slot.job.inputPath, slot.job.outputPath,
-                                   enabled, proxyGlobalEnabled_);
-            if (!slot.previousPath.isEmpty()) {
-                QFile::remove(slot.previousPath);
+        if (proxyQueueProgress && !workerStderr.isEmpty()) {
+            bool anyFailure = false;
+            for (const ProxyWorkerSlot::Entry& entry : slot.entries) {
+                if (!entry.failureReason.isEmpty()) {
+                    anyFailure = true;
+                    break;
+                }
             }
-        } else {
-            QFile::remove(slot.job.outputPath);
-            if (!slot.previousPath.isEmpty()) {
-                QFile::rename(slot.previousPath, slot.job.outputPath);
+            if (!anyFailure) {
+                proxyQueueProgress->setToolTip(workerStderr);
             }
         }
-        if (!slot.requestPath.isEmpty()) {
-            QFile::remove(slot.requestPath);
-        }
-        if (!slot.cancelPath.isEmpty()) {
-            QFile::remove(slot.cancelPath);
+        // Every entry the batch held must have reported before the process ends.
+        // Anything without a verdict counts as failed so output is rolled back.
+        const bool batchCleanExit = slot.process->exitStatus() == QProcess::NormalExit &&
+                                    slot.process->exitCode() == 0;
+        for (ProxyWorkerSlot::Entry& entry : slot.entries) {
+            if (!entry.completed && entry.failureReason.isEmpty()) {
+                entry.failureReason = batchCleanExit
+                    ? QStringLiteral("Proxy worker ended without reporting this job")
+                    : workerStderr;
+            }
+            finalizeProxyEntry(entry);
         }
         slot.process->deleteLater();
         slot.process = nullptr;
-        slot.requestPath.clear();
-        slot.cancelPath.clear();
-        slot.previousPath.clear();
+        QFile::remove(slot.batchRequestPath);
+        slot.batchRequestPath.clear();
+        slot.entries.clear();
         slot.outputBuffer.clear();
-        slot.fraction = 0.0;
-        slot.failureReason.clear();
-        slot.jobId.clear();
-        slot.completed = false;
-        slot.reportedOutputBytes = -1;
-        ++proxyCompletedCount_;
+        slot.currentIndex = 0;
         if (proxyQueueProgress) {
             proxyQueueProgress->setValue(proxyCompletedCount_);
         }
@@ -5971,8 +6029,15 @@ public:
         }
 
         const int limit = proxyWorkerSlotLimit();
+        const QString backend = QSettings().value(
+            QStringLiteral("Proxy/WorkerBackend"), QStringLiteral("ffmpeg")).toString();
+        const bool hardwareAccel = QSettings().value(
+            QStringLiteral("Proxy/HardwareAccel"), false).toBool();
+        const bool audioReencode = QSettings().value(
+            QStringLiteral("Proxy/AudioReencode"), false).toBool();
+
+        // Process queued jobs until every slot is busy or the queue is empty.
         while (!proxyJobs_.empty()) {
-            // Find an idle slot, growing the pool up to the configured limit.
             int idleIndex = -1;
             for (int index = 0; index < static_cast<int>(proxyWorkerSlots_.size()); ++index) {
                 if (!proxyWorkerSlots_[index].process) {
@@ -5988,40 +6053,95 @@ public:
                 idleIndex = static_cast<int>(proxyWorkerSlots_.size()) - 1;
             }
 
-            const ProxyJob job = proxyJobs_.front();
-            proxyJobs_.pop_front();
-            if (!QFileInfo(job.inputPath).isFile()) {
-                if (proxyQueueProgress) {
-                    proxyQueueProgress->setToolTip(QStringLiteral("Proxy source is missing: %1")
-                        .arg(job.inputPath));
+            // Fill one batch for this slot. Everything the worker can handle
+            // goes into a single process, which removes the per-job startup
+            // cost; the worker still runs them one after another.
+            std::vector<ProxyWorkerSlot::Entry> batch;
+            QJsonArray jobRequests;
+            QString batchRequestPath;
+            bool batchUnwritable = false;
+            while (!proxyJobs_.empty()) {
+                const ProxyJob job = proxyJobs_.front();
+                proxyJobs_.pop_front();
+                if (!QFileInfo(job.inputPath).isFile()) {
+                    if (proxyQueueProgress) {
+                        proxyQueueProgress->setToolTip(QStringLiteral("Proxy source is missing: %1")
+                            .arg(job.inputPath));
+                    }
+                    ++proxyCompletedCount_;
+                    continue;
                 }
-                ++proxyCompletedCount_;
-                continue;
+                const QString suffix = QFileInfo(job.inputPath).suffix().toLower();
+                const bool video = QStringList{QStringLiteral("mp4"), QStringLiteral("mov"),
+                                               QStringLiteral("mkv"), QStringLiteral("avi"),
+                                               QStringLiteral("webm"), QStringLiteral("m4v"),
+                                               QStringLiteral("flv"), QStringLiteral("m2ts"),
+                                               QStringLiteral("ts"), QStringLiteral("mpg"),
+                                               QStringLiteral("mpeg"), QStringLiteral("wmv"),
+                                               QStringLiteral("3gp"), QStringLiteral("3g2"),
+                                               QStringLiteral("ogv"), QStringLiteral("ogm"),
+                                               QStringLiteral("mts"), QStringLiteral("mxf"),
+                                               QStringLiteral("vob"), QStringLiteral("asf")}
+                                      .contains(suffix);
+                if (!video) {
+                    // Still images are produced in-process with QImage; they are
+                    // cheap enough not to warrant a worker process.
+                    QImage img(job.inputPath);
+                    if (!img.isNull()) {
+                        const int targetW = qMax(64, static_cast<int>(img.width() * job.scaleFactor));
+                        const int targetH = qMax(64, static_cast<int>(img.height() * job.scaleFactor));
+                        const QImage scaled = img.scaled(targetW, targetH, Qt::KeepAspectRatio,
+                                                          Qt::SmoothTransformation);
+                        const int jpegQuality = job.scaleFactor >= 0.9 ? 92 : 80;
+                        scaled.save(job.outputPath, "JPG", jpegQuality);
+                    }
+                    ++proxyCompletedCount_;
+                    continue;
+                }
+
+                ProxyWorkerSlot::Entry entry;
+                entry.job = job;
+                entry.jobId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+                entry.reportedOutputBytes = -1;
+                const QString partialPath = job.outputPath + QStringLiteral(".partial");
+                QFile::remove(partialPath);
+                entry.requestPath = QDir(QFileInfo(job.outputPath).absolutePath())
+                    .filePath(QStringLiteral(".%1.proxy-job.json").arg(entry.jobId));
+                entry.cancelPath = entry.requestPath + QStringLiteral(".cancel");
+                entry.previousPath = entry.requestPath + QStringLiteral(".previous");
+                if (QFileInfo(job.outputPath).isFile() &&
+                    !QFile::rename(job.outputPath, entry.previousPath)) {
+                    if (proxyQueueProgress) {
+                        proxyQueueProgress->setToolTip(
+                            QStringLiteral("Cannot preserve existing proxy output"));
+                    }
+                    ++proxyCompletedCount_;
+                    continue;
+                }
+                const QString qualityPreset = job.scaleFactor >= 0.9 ? QStringLiteral("full")
+                    : job.scaleFactor <= 0.125 ? QStringLiteral("eighth")
+                    : job.scaleFactor <= 0.25 ? QStringLiteral("quarter")
+                                              : QStringLiteral("half");
+                jobRequests.append(QJsonObject{
+                    {QStringLiteral("jobId"), entry.jobId},
+                    {QStringLiteral("sourcePath"), job.inputPath},
+                    {QStringLiteral("outputPath"), job.outputPath},
+                    {QStringLiteral("scale"), job.scaleFactor},
+                    {QStringLiteral("qualityPreset"), qualityPreset},
+                    {QStringLiteral("backend"), backend},
+                    {QStringLiteral("hardwareAccel"), hardwareAccel},
+                    {QStringLiteral("audioReencode"), audioReencode},
+                    {QStringLiteral("cancelPath"), entry.cancelPath},
+                    {QStringLiteral("temporaryOutputPath"), partialPath}
+                });
+                batch.push_back(entry);
             }
-            const QString suffix = QFileInfo(job.inputPath).suffix().toLower();
-            const bool video = QStringList{QStringLiteral("mp4"), QStringLiteral("mov"),
-                                           QStringLiteral("mkv"), QStringLiteral("avi"),
-                                           QStringLiteral("webm"), QStringLiteral("m4v"),
-                                           QStringLiteral("flv"), QStringLiteral("m2ts"),
-                                           QStringLiteral("ts"), QStringLiteral("mpg"),
-                                           QStringLiteral("mpeg"), QStringLiteral("wmv"),
-                                           QStringLiteral("3gp"), QStringLiteral("3g2"),
-                                           QStringLiteral("ogv"), QStringLiteral("ogm"),
-                                           QStringLiteral("mts"), QStringLiteral("mxf"),
-                                           QStringLiteral("vob"), QStringLiteral("asf")}
-                                  .contains(suffix);
-            if (!video) {
-                // Still images are produced in-process with QImage; they are
-                // cheap enough not to warrant a worker process.
-                QImage img(job.inputPath);
-                if (!img.isNull()) {
-                    const int targetW = qMax(64, static_cast<int>(img.width() * job.scaleFactor));
-                    const int targetH = qMax(64, static_cast<int>(img.height() * job.scaleFactor));
-                    const QImage scaled = img.scaled(targetW, targetH, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-                    const int jpegQuality = job.scaleFactor >= 0.9 ? 92 : 80;
-                    scaled.save(job.outputPath, "JPG", jpegQuality);
+
+            if (batch.isEmpty()) {
+                // Everything drained in this pass was handled without a worker.
+                if (proxyWorkerSlots_.size() >= static_cast<size_t>(limit)) {
+                    break;
                 }
-                ++proxyCompletedCount_;
                 continue;
             }
 
@@ -6034,73 +6154,56 @@ public:
                 if (proxyQueueProgress) {
                     proxyQueueProgress->setToolTip(QStringLiteral("ArtifactProxyWorker.exe was not found"));
                 }
-                ++proxyCompletedCount_;
-                continue;
-            }
-
-            const QString jobId = QUuid::createUuid().toString(QUuid::WithoutBraces);
-            const QString partialPath = job.outputPath + QStringLiteral(".partial");
-            QFile::remove(partialPath);
-            const QString requestPath = QDir(QFileInfo(job.outputPath).absolutePath())
-                .filePath(QStringLiteral(".%1.proxy-job.json").arg(jobId));
-            const QString cancelPath = requestPath + QStringLiteral(".cancel");
-            const QString previousPath = requestPath + QStringLiteral(".previous");
-            if (QFileInfo(job.outputPath).isFile() &&
-                !QFile::rename(job.outputPath, previousPath)) {
-                if (proxyQueueProgress) {
-                    proxyQueueProgress->setToolTip(QStringLiteral("Cannot preserve existing proxy output"));
-                }
-                ++proxyCompletedCount_;
-                continue;
-            }
-            const QString backend = QSettings().value(
-                QStringLiteral("Proxy/WorkerBackend"), QStringLiteral("ffmpeg")).toString();
-            const bool hardwareAccel = QSettings().value(
-                QStringLiteral("Proxy/HardwareAccel"), false).toBool();
-            const bool audioReencode = QSettings().value(
-                QStringLiteral("Proxy/AudioReencode"), false).toBool();
-                const QString qualityPreset = job.scaleFactor >= 0.9 ? QStringLiteral("full")
-                    : job.scaleFactor <= 0.125 ? QStringLiteral("eighth")
-                    : job.scaleFactor <= 0.25 ? QStringLiteral("quarter")
-                                              : QStringLiteral("half");
-                QSaveFile requestFile(requestPath);
-                const QJsonObject request{
-                    {QStringLiteral("protocolVersion"), 1},
-                    {QStringLiteral("jobId"), jobId},
-                    {QStringLiteral("sourcePath"), job.inputPath},
-                    {QStringLiteral("outputPath"), job.outputPath},
-                    {QStringLiteral("scale"), job.scaleFactor},
-                    {QStringLiteral("qualityPreset"), qualityPreset},
-                    {QStringLiteral("backend"), backend},
-                    {QStringLiteral("hardwareAccel"), hardwareAccel},
-                    {QStringLiteral("audioReencode"), audioReencode},
-                    {QStringLiteral("cancelPath"), cancelPath},
-                    {QStringLiteral("temporaryOutputPath"), partialPath}
-                };
-                if (!requestFile.open(QIODevice::WriteOnly) ||
-                    requestFile.write(QJsonDocument(request).toJson(QJsonDocument::Compact)) < 0 ||
-                    !requestFile.commit()) {
-                    if (QFileInfo(previousPath).isFile()) {
-                        QFile::rename(previousPath, job.outputPath);
+                for (const ProxyWorkerSlot::Entry& entry : batch) {
+                    QFile::remove(entry.job.outputPath);
+                    if (!entry.previousPath.isEmpty()) {
+                        QFile::rename(entry.previousPath, entry.job.outputPath);
                     }
+                    QFile::remove(entry.requestPath);
+                    QFile::remove(entry.cancelPath);
                     ++proxyCompletedCount_;
-                    continue;
                 }
+                continue;
+            }
 
-                ProxyWorkerSlot& slot = proxyWorkerSlots_[idleIndex];
-                slot.process = new QProcess(owner_);
-                slot.process->setProcessChannelMode(QProcess::SeparateChannels);
-                slot.process->start(workerPath, {QStringLiteral("--request"), requestPath});
-                slot.job = job;
-                slot.jobId = jobId;
-                slot.completed = false;
-                slot.reportedOutputBytes = -1;
-                slot.requestPath = requestPath;
-                slot.cancelPath = cancelPath;
-                slot.previousPath = previousPath;
-                slot.outputBuffer.clear();
-                slot.fraction = 0.0;
-                slot.failureReason.clear();
+            batchRequestPath = QDir(QFileInfo(batch.front().job.outputPath).absolutePath())
+                .filePath(QStringLiteral(".proxy-batch-%1.json")
+                    .arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
+            QSaveFile batchFile(batchRequestPath);
+            const QJsonObject batchRequest{
+                {QStringLiteral("protocolVersion"), 2},
+                {QStringLiteral("jobs"), jobRequests}
+            };
+            if (!batchFile.open(QIODevice::WriteOnly) ||
+                batchFile.write(QJsonDocument(batchRequest).toJson(QJsonDocument::Compact)) < 0 ||
+                !batchFile.commit()) {
+                batchUnwritable = true;
+            }
+            if (batchUnwritable) {
+                for (const ProxyWorkerSlot::Entry& entry : batch) {
+                    QFile::remove(entry.job.outputPath);
+                    if (!entry.previousPath.isEmpty()) {
+                        QFile::rename(entry.previousPath, entry.job.outputPath);
+                    }
+                    QFile::remove(entry.requestPath);
+                    QFile::remove(entry.cancelPath);
+                    ++proxyCompletedCount_;
+                }
+                if (proxyQueueProgress) {
+                    proxyQueueProgress->setToolTip(QStringLiteral("Cannot write proxy batch request"));
+                }
+                continue;
+            }
+
+            ProxyWorkerSlot& slot = proxyWorkerSlots_[idleIndex];
+            slot.process = new QProcess(owner_);
+            slot.process->setProcessChannelMode(QProcess::SeparateChannels);
+            slot.process->start(workerPath, {QStringLiteral("--request"), batchRequestPath});
+            slot.entries = std::move(batch);
+            slot.outputBuffer.clear();
+            slot.currentIndex = 0;
+            // The batch request file is not tied to any single entry.
+            slot.batchRequestPath = batchRequestPath;
         }
         if (proxyQueueProgress) {
             proxyQueueProgress->setValue(proxyCompletedCount_);

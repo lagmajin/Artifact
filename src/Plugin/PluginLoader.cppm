@@ -6,9 +6,11 @@
 #include <memory>
 #include <algorithm>
 #include <unordered_set>
+#include <functional>
 
 #include <QDir>
 #include <QDirIterator>
+#include <QDebug>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -39,6 +41,9 @@ struct ArtifactPluginLoader::Impl {
     std::vector<LoadResult> results;
     std::vector<std::unique_ptr<QLibrary>> loadedLibs;
     std::vector<std::unique_ptr<ArtifactPluginSandbox>> sandboxes;
+    // Plugins the supervisor gave up on, so a later scan can skip them instead
+    // of respawning a process that is known to be unstable.
+    QSet<QString> failedPluginIds;
     std::vector<std::string> loadedPluginIds;
     std::function<PluginLoadedCallback> onPluginLoaded;
 
@@ -156,7 +161,20 @@ struct ArtifactPluginLoader::Impl {
         return result;
     }
 
-    LoadResult loadSubprocessPlugin(const QString& path) {
+    // The runner is built with OUTPUT_NAME "ArtifactPluginRunner"; the suffix
+// differs per platform, so derive it instead of hardcoding ".exe" (which also
+// made the loader fail outright on non-Windows hosts).
+QString runnerExecutableName() {
+#ifdef _WIN32
+    return QStringLiteral("ArtifactPluginRunner.exe");
+#elif defined(__APPLE__)
+    return QStringLiteral("ArtifactPluginRunner");
+#else
+    return QStringLiteral("ArtifactPluginRunner");
+#endif
+}
+
+LoadResult loadSubprocessPlugin(const QString& path) {
         LoadResult result;
         result.pluginPath = path.toStdString();
         result.loadedMode = PluginLoadMode::Subprocess;
@@ -167,8 +185,8 @@ struct ArtifactPluginLoader::Impl {
         }
 
         const QStringList runnerCandidates = {
-            QDir(QCoreApplication::applicationDirPath()).filePath("ArtifactPluginRunner.exe"),
-            QDir(QCoreApplication::applicationDirPath()).filePath("plugins/ArtifactPluginRunner.exe")
+            QDir(QCoreApplication::applicationDirPath()).filePath(runnerExecutableName()),
+            QDir(QCoreApplication::applicationDirPath()).filePath("plugins/" + runnerExecutableName())
         };
         QString runnerPath;
         for (const auto& candidate : runnerCandidates) {
@@ -184,6 +202,28 @@ struct ArtifactPluginLoader::Impl {
 
         const std::string sandboxId = QFileInfo(path).completeBaseName().toStdString();
         auto sandbox = std::make_unique<ArtifactPluginSandbox>(sandboxId, runnerPath, path);
+        // Wire the supervisor callbacks. Without them the heartbeat watchdog
+        // still terminates and restarts a wedged process, but silently, so a
+        // plugin that hangs looks like an ordinary load.
+        sandbox->setCrashCallback([this](const std::string& id, int crashCount) {
+            qWarning("[PluginSandbox] '%s' missed heartbeats (%d); terminating",
+                     id.c_str(), crashCount);
+        });
+        sandbox->setRestartCallback([this](const std::string& id) {
+            qWarning("[PluginSandbox] '%s' restarted", id.c_str());
+        });
+        sandbox->setFailCallback([this](const std::string& id, const std::string& reason) {
+            qWarning("[PluginSandbox] '%s' disabled after repeated failures: %s",
+                     id.c_str(), reason.c_str());
+            failedPluginIds.insert(QString::fromStdString(id));
+        });
+        sandbox->setResponseCallback([this](const std::string& id,
+                                            const QJsonObject& response) {
+            const QString event = response.value(QStringLiteral("event")).toString();
+            if (event == QStringLiteral("loadFailed")) {
+                failedPluginIds.insert(QString::fromStdString(id));
+            }
+        });
         if (!sandbox->start()) {
             result.errorMessage = sandbox->lastError();
             return result;

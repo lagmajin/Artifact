@@ -22,12 +22,26 @@ LayerEditorMaskPressInteractionController::handle(
 {
  if (!layer || !layer->isVisible() || layer->isLocked()) return {};
 
- LayerEditorMaskPressController pressController;
- auto result = pressController.handle(
-     layer, canvasPosition, zoom, state.proportionalEditingEnabled, editSession);
- if (result.kind == LayerEditorMaskPressKind::Empty) return {};
+LayerEditorMaskPressController pressController;
+  auto result = pressController.handle(
+      layer, canvasPosition, zoom, state.proportionalEditingEnabled,
+      state.boundsMaskIndex, editSession);
+  if (result.kind == LayerEditorMaskPressKind::Empty) return {};
 
- if (state.selectedVertices && result.vertexIndex >= 0) {
+  if (result.kind == LayerEditorMaskPressKind::DragBounds) {
+   // bounds ドラッグは頂点選択の操作ではなく、選択中のマスク全体を変形する。
+   if (state.draggingVertex) *state.draggingVertex = false;
+   if (state.draggingHandle) *state.draggingHandle = false;
+   if (state.draggingMaskIndex) *state.draggingMaskIndex = result.maskIndex;
+   if (state.draggingPathIndex) *state.draggingPathIndex = -1;
+   if (state.draggingVertexIndex) *state.draggingVertexIndex = -1;
+   if (state.boundsHandle) *state.boundsHandle = result.boundsHandle;
+   if (state.boundsBefore) *state.boundsBefore = result.boundsBefore;
+   if (state.boundsAnchor) *state.boundsAnchor = result.boundsAnchor;
+   return {true, false, true};
+  }
+
+  if (state.selectedVertices && result.vertexIndex >= 0) {
   const auto address = ArtifactCore::artifactMakeTuple(
       result.maskIndex, result.pathIndex, result.vertexIndex);
   const auto found = std::find(state.selectedVertices->begin(),

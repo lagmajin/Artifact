@@ -40,6 +40,7 @@ public:
     float  angle_       = 120.0f;
     float  softness_    = 8.0f;
     float  opacity_     = 75.0f;   // 0-100 (%)
+    bool   shadowOnly_  = false;
 
     void applyCPU(const ImageF32x4RGBAWithCache& src,
                   ImageF32x4RGBAWithCache&       dst) override
@@ -131,9 +132,9 @@ public:
             const cv::Vec4f* fg  = srcMat.ptr<cv::Vec4f>(y);
             cv::Vec4f*       out = dstMat.ptr<cv::Vec4f>(y);
             for (int x = 0; x < W; ++x) {
-                // Porter-Duff "src over shadow"
-                // 前景 (src) が上、影が下
-                const float fa = fg[x][3];
+                // Shadow Only matches AE's Drop Shadow: the source image is
+                // dropped and only the shadow term survives.
+                const float fa = shadowOnly_ ? 0.0f : fg[x][3];
                 const float sa = sh[x][3];
                 const float oa = fa + sa * (1.0f - fa);
                 if (oa < 1e-6f) {
@@ -156,6 +157,75 @@ float alphaAt(int2 p,uint w,uint h){if(p.x<0||p.y<0||p.x>=(int)w||p.y>=(int)h)re
 [numthreads(8,8,1)] void main(uint3 id:SV_DispatchThreadID){uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;int2 q=int2(id.xy);float radius=clamp(g_Softness,0,32),sum=0,weight=0;int sampleRadius=min(32,max(0,(int)ceil(radius*2.5)));for(int oy=-32;oy<=32;++oy){for(int ox=-32;ox<=32;++ox){if(abs(ox)>sampleRadius||abs(oy)>sampleRadius)continue;float2 d=float2(ox,oy),ww=exp(-dot(d,d)/max(2*radius*radius,1));sum+=alphaAt(q-int2(round(float2(g_OffX,g_OffY)))+int2(ox,oy),w,h)*ww;weight+=ww;}}float sa=(sum/max(weight,0.0001))*g_Opacity* g_Color.a;float4 fg=g_InputTexture[q],sh=float4(g_Color.rgb,clamp(sa,0,1));float oa=fg.a+sh.a*(1-fg.a);float4 outp=oa>0?float4((fg.rgb*fg.a+sh.rgb*sh.a*(1-fg.a))/oa,oa):0;g_OutputTexture[q]=outp;}
 )";
 
+// ─── Resident generic shader ─────────────────────────────────────────────────
+//
+// Mirrors DropShadowCPUImpl above. The shared ResidentGenericParams buffer
+// exposes g_P0..g_P7 only, so the shadow tint packs into three slots and its
+// alpha rides on the same opacity term the CPU path folds color alpha into:
+//   P0 offX (px), P1 offY (px), P2 softness (px), P3 opacity (0..1),
+//   P4 red, P5 green, P6 blue
+// Offsets and softness are marked resolution-scaled in appendGpuSpatialNodes so
+// the interactive downscale shrinks the shadow with the image.
+//
+// The CPU path builds the kernel with cv::GaussianBlur (BORDER_REPLICATE), while
+// the shader rejects out-of-frame taps, so the two differ only in a one-pixel
+// band at the frame edge; interior pixels match to float precision.
+static constexpr const char* kDropShadowResidentHlsl = R"(
+Texture2D<float4> g_InputTexture : register(t0);
+RWTexture2D<float4> g_OutputTexture : register(u0);
+
+float dropShadowAlphaAt(int2 p, uint width, uint height)
+{
+    if (p.x < 0 || p.y < 0 || p.x >= (int)width || p.y >= (int)height) return 0.0f;
+    return g_InputTexture[uint2(p)].a;
+}
+
+[numthreads(8, 8, 1)]
+void main(uint3 dispatchId : SV_DispatchThreadID)
+{
+    uint width, height;
+    g_OutputTexture.GetDimensions(width, height);
+    if (dispatchId.x >= width || dispatchId.y >= height) return;
+
+    const float2 offset = float2(g_P0, g_P1);
+    const float sigma = max(g_P2, 0.0);
+    const int sampleRadius = min(32, (int)ceil(sigma * 2.5));
+
+    // The shadow alpha is the source alpha sampled at -offset, so a pixel of
+    // the shadow at q was authored at q - offset.
+    const int2 center = int2(dispatchId.xy) - int2(round(offset));
+
+    float sum = 0.0f;
+    float weightSum = 0.0f;
+    for (int oy = -32; oy <= 32; ++oy) {
+        if (oy < -sampleRadius || oy > sampleRadius) continue;
+        for (int ox = -32; ox <= 32; ++ox) {
+            if (ox < -sampleRadius || ox > sampleRadius) continue;
+            const float2 d = float2(ox, oy);
+            const float w = exp(-dot(d, d) / max(2.0 * sigma * sigma, 1.0));
+            sum += dropShadowAlphaAt(center + int2(ox, oy), width, height) * w;
+            weightSum += w;
+        }
+    }
+
+    const float shadowAlpha = clamp((sum / max(weightSum, 1.0e-4)) * g_P3, 0.0f, 1.0f);
+    const float4 shadow = float4(g_P4, g_P5, g_P6, shadowAlpha);
+    const float4 foreground = g_InputTexture[dispatchId.xy];
+
+    // g_P7 is the Shadow Only toggle, matching the CPU path's zeroed source
+    // alpha: the Porter-Duff term below then reduces to the shadow itself.
+    const float4 src = (g_P7 > 0.5f) ? float4(0.0f, 0.0f, 0.0f, 0.0f) : foreground;
+    const float outAlpha = src.a + shadow.a * (1.0f - src.a);
+    float4 result = 0.0f;
+    if (outAlpha > 0.0f) {
+        result = float4(
+            (src.rgb * src.a + shadow.rgb * shadow.a * (1.0f - src.a)) / outAlpha,
+            outAlpha);
+    }
+    g_OutputTexture[dispatchId.xy] = result;
+}
+)";
+
 // ─── GPU Impl ───────────────────────────────────────────────────────────────
 
 class DropShadowGPUImpl : public ArtifactEffectImplBase {
@@ -169,6 +239,11 @@ public:
     }
     void applyGPU(const ImageF32x4RGBAWithCache& src,
                   ImageF32x4RGBAWithCache&       dst) override {
+        // Runs only when the layer cannot use a GPU plan (mix, mask, region,
+        // or softness beyond the resident shader's 32-pixel gather box). It
+        // uploads, dispatches, then blocks on WaitForIdle to read back, which
+        // docs/technical/HOT_PATH_RULES.md forbids; prefer widening the
+        // resident path over adding callers here.
         Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device;
         Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context;
         if (!acquireSharedRenderDeviceForCurrentBackend(device, context)) { cpuImpl_.applyCPU(src, dst); return; }
@@ -193,6 +268,10 @@ DropShadowEffect::DropShadowEffect()
     auto gpu = ArtifactCore::makeShared<DropShadowGPUImpl>();
     setCPUImpl(cpu);
     setGPUImpl(gpu);
+    registerGpuGenericShader(
+        DropShadowEffect::kGpuGenericKey,
+        GpuGenericShaderRecord{
+            kDropShadowResidentHlsl, "main", GpuGenericResourceKind::Filter});
 }
 
 DropShadowEffect::~DropShadowEffect() = default;
@@ -230,11 +309,17 @@ void  DropShadowEffect::setOpacity(float o) {
     syncImpls();
 }
 
+bool DropShadowEffect::shadowOnly() const { return shadowOnly_; }
+void DropShadowEffect::setShadowOnly(bool v) {
+    shadowOnly_ = v;
+    syncImpls();
+}
+
 // ── Properties API ────────────────────────────────────────────────────────────
 
 std::vector<AbstractProperty> DropShadowEffect::getProperties() const {
     std::vector<AbstractProperty> props;
-    props.reserve(5);
+    props.reserve(6);
 
     auto& colorProp = props.emplace_back();
     colorProp.setName("Shadow Color");
@@ -285,6 +370,14 @@ std::vector<AbstractProperty> DropShadowEffect::getProperties() const {
     opacProp.setSoftRange(0.0, 100.0);
     opacProp.setStep(0.1);
     opacProp.setUnit(QStringLiteral("%"));
+    opacProp.setTooltip(QStringLiteral("Opacity of the generated shadow."));
+
+    auto& onlyProp = props.emplace_back();
+    onlyProp.setName("Shadow Only");
+    onlyProp.setType(PropertyType::Boolean);
+    onlyProp.setValue(shadowOnly_);
+    onlyProp.setDefaultValue(false);
+    onlyProp.setTooltip(QStringLiteral("Render only the shadow, without the source image."));
 
     return props;
 }
@@ -296,6 +389,7 @@ void DropShadowEffect::setPropertyValue(const UniString& name, const QVariant& v
     else if (k == "Angle")        setAngle(value.toFloat());
     else if (k == "Softness")     setSoftness(value.toFloat());
     else if (k == "Opacity")      setOpacity(value.toFloat());
+    else if (k == "Shadow Only")  setShadowOnly(value.toBool());
     else setCommonPropertyValue(k, value);
 }
 
@@ -308,6 +402,7 @@ void DropShadowEffect::syncImpls() {
         c->angle_       = angle_;
         c->softness_    = softness_;
         c->opacity_     = opacity_;
+        c->shadowOnly_  = shadowOnly_;
     }
     if (auto* g = dynamic_cast<DropShadowGPUImpl*>(gpuImpl().get())) {
         g->cpuImpl_.shadowColor_ = shadowColor_;
@@ -315,6 +410,7 @@ void DropShadowEffect::syncImpls() {
         g->cpuImpl_.angle_       = angle_;
         g->cpuImpl_.softness_    = softness_;
         g->cpuImpl_.opacity_     = opacity_;
+        g->cpuImpl_.shadowOnly_  = shadowOnly_;
     }
 }
 

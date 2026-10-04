@@ -8,6 +8,7 @@ export module Artifact.Widgets.LayerEditor.MaskOverlay;
 import Artifact.Layer.Abstract;
 import Artifact.Mask.Path;
 import Artifact.Render.IRenderer;
+import Artifact.Widgets.LayerEditor.Geometry;
 
 export namespace Artifact {
 
@@ -26,6 +27,12 @@ struct LayerEditorMaskOverlayState {
  bool rubberBandSelecting = false;
  QPointF rubberBandStart;
  QPointF rubberBandCurrent;
+ // ==== マスク全体 (bounding box) ギズモ ====
+ // boundsIndex < 0 は bounds ギズモ非表示（既存の頂点編集のみ）。
+ int boundsMaskIndex = -1;
+ // 選択中マスクの bounding box 上で掴んだハンドル種別。None は未操作。
+ MaskBoundsHandle boundsHandle = MaskBoundsHandle::None;
+ int hoveredBoundsHandle = -1;
 };
 
 void drawLayerEditorMaskOverlay(

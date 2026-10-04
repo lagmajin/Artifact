@@ -141,6 +141,69 @@ public:
     }
 };
 
+// ─── Resident generic shader ─────────────────────────────────────────────────
+//
+// Mirrors InnerShadowCPUImpl above. Parameter slots match DropShadow's
+// (P0 offX, P1 offY, P2 softness, P3 opacity folded with the color alpha,
+// P4..P6 tint), and the offsets/softness are resolution-scaled.
+//
+// The composite differs from DropShadow: the shadow is masked by the source
+// alpha and replaces the foreground inside the silhouette rather than sitting
+// behind it, and the output alpha stays exactly the source alpha.
+static constexpr const char* kInnerShadowResidentHlsl = R"(
+Texture2D<float4> g_InputTexture : register(t0);
+RWTexture2D<float4> g_OutputTexture : register(u0);
+
+float innerShadowAlphaAt(int2 p, uint width, uint height)
+{
+    if (p.x < 0 || p.y < 0 || p.x >= (int)width || p.y >= (int)height) return 0.0f;
+    return g_InputTexture[uint2(p)].a;
+}
+
+[numthreads(8, 8, 1)]
+void main(uint3 dispatchId : SV_DispatchThreadID)
+{
+    uint width, height;
+    g_OutputTexture.GetDimensions(width, height);
+    if (dispatchId.x >= width || dispatchId.y >= height) return;
+
+    const float2 offset = float2(g_P0, g_P1);
+    const float sigma = max(g_P2, 0.0);
+    const int sampleRadius = min(32, (int)ceil(sigma * 2.5));
+
+    const int2 center = int2(dispatchId.xy) - int2(round(offset));
+
+    float sum = 0.0f;
+    float weightSum = 0.0f;
+    for (int oy = -32; oy <= 32; ++oy) {
+        if (oy < -sampleRadius || oy > sampleRadius) continue;
+        for (int ox = -32; ox <= 32; ++ox) {
+            if (ox < -sampleRadius || ox > sampleRadius) continue;
+            const float2 d = float2(ox, oy);
+            const float w = exp(-dot(d, d) / max(2.0 * sigma * sigma, 1.0));
+            sum += innerShadowAlphaAt(center + int2(ox, oy), width, height) * w;
+            weightSum += w;
+        }
+    }
+
+    const float4 foreground = g_InputTexture[dispatchId.xy];
+    const float shadowAlpha = clamp((sum / max(weightSum, 1.0e-4)) * g_P3, 0.0f, 1.0f);
+    const float4 shadow = float4(g_P4, g_P5, g_P6, shadowAlpha);
+    // The shadow only shows where the silhouette is opaque, and it replaces
+    // the foreground there instead of compositing behind it.
+    const float factor = clamp(shadow.a * foreground.a, 0.0f, 1.0f);
+
+    float4 result = float4(0.0f, 0.0f, 0.0f, 0.0f);
+    if (foreground.a >= 1.0e-6) {
+        result = float4(
+            (foreground.rgb * foreground.a * (1.0f - factor) + shadow.rgb * factor)
+                / foreground.a,
+            foreground.a);
+    }
+    g_OutputTexture[dispatchId.xy] = result;
+}
+)";
+
 // ─── GPU Impl (CPU fallback) ──────────────────────────────────────────────────
 
 class InnerShadowGPUImpl : public ArtifactEffectImplBase {
@@ -153,7 +216,10 @@ public:
     }
     void applyGPU(const ImageF32x4RGBAWithCache& src,
                   ImageF32x4RGBAWithCache&       dst) override {
-        // GPU 実装は将来のフェーズで追加予定。現状は CPU フォールバック。
+        // The resident shader (kInnerShadowResidentHlsl) covers the common
+        // case; this per-effect path still runs when the layer cannot use a
+        // GPU plan (mix, mask, region, or a shadow wider than the shader's
+        // 32-pixel gather box), so it must stay a correct CPU fallback.
         cpuImpl_.applyCPU(src, dst);
     }
 };
@@ -169,6 +235,10 @@ InnerShadowEffect::InnerShadowEffect()
     auto gpu = ArtifactCore::makeShared<InnerShadowGPUImpl>();
     setCPUImpl(cpu);
     setGPUImpl(gpu);
+    registerGpuGenericShader(
+        InnerShadowEffect::kGpuGenericKey,
+        GpuGenericShaderRecord{
+            kInnerShadowResidentHlsl, "main", GpuGenericResourceKind::Filter});
 }
 
 InnerShadowEffect::~InnerShadowEffect() = default;

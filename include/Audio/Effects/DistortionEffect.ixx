@@ -18,6 +18,8 @@ public:
 
     void process(ArtifactCore::AudioSegment& segment, const ArtifactCore::AudioSegment* sideChain = nullptr) override;
     String getName() const override { return "Distortion"; }
+    // 保存・復元の識別キー。登録済みの id と一致させる。
+    String effectType() const override { return "distortion"; }
     String getDescription() const override {
         return "Multi-mode distortion with soft clip, tube, foldback, and bitcrush";
     }

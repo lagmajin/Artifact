@@ -1334,6 +1334,41 @@ namespace {
    return QStringLiteral("mask.%1.enabled").arg(maskIndex);
   }
 
+  // Text Animator グループ行の identity。表示名ではなくプロパティパス
+  // ("text.animators.<index>") で識別する。AGENTS.md の例外条件に合わせ、
+  // Property 行と同じ名前空間を使うことで選択・削除の両方を解決できる。
+  QString textAnimatorGroupPath(const int animatorIndex)
+  {
+   if (animatorIndex < 0) {
+    return QString();
+   }
+   return QStringLiteral("text.animators.%1").arg(animatorIndex);
+  }
+
+  // グループ行が Text Animator なのか、どのアニメーターなのかを返す。
+  bool textAnimatorGroupPathParts(const QString& path, int* animatorIndex)
+  {
+   if (!animatorIndex) {
+    return false;
+   }
+   const QString trimmed = path.trimmed();
+   if (!trimmed.startsWith(QStringLiteral("text.animators."), Qt::CaseInsensitive)) {
+    return false;
+   }
+   const QString indexPart =
+       trimmed.mid(QStringLiteral("text.animators.").size());
+   if (indexPart.isEmpty() || indexPart.contains(QLatin1Char('.'))) {
+    return false;
+   }
+   bool isNumeric = false;
+   const int index = indexPart.toInt(&isNumeric);
+   if (!isNumeric || index < 0) {
+    return false;
+   }
+   *animatorIndex = index;
+   return true;
+  }
+
   QRect propertyKeyframeMarkerRect(const int widgetWidth, const int rowY, const int rowH)
   {
    const int markerX = layerContentRight(widgetWidth) - 20;
@@ -3261,6 +3296,20 @@ public:
             return property && property->getName().startsWith(
                 QStringLiteral("text.animators."), Qt::CaseInsensitive);
           });
+      // Text Animator グループ行は、その行が指すアニメーターを
+      // propertyPath に持たせる。空だと行の identity が失われ、
+      // 選択・削除がどちらも親レイヤーにフォールバックしてしまう。
+      QString textAnimatorIndex;
+      if (textAnimatorGroup) {
+        for (const auto& property : groupProperties) {
+          int animatorIndex = -1;
+          if (property &&
+              textAnimatorGroupPathParts(property->getName(), &animatorIndex)) {
+            textAnimatorIndex = textAnimatorGroupPath(animatorIndex);
+            break;
+          }
+        }
+      }
       visibleRows.push_back(VisibleRow{
        node,
        depth + 1,
@@ -3268,7 +3317,7 @@ public:
        groupExpanded,
        RowKind::Group,
        groupName,
-       QString(),
+       textAnimatorIndex,
        groupKey,
        textAnimatorGroup ? QStringLiteral("Anim") : QStringLiteral("Grp"),
        textAnimatorGroup ? LayerPresentationBadgeTone::Motion
@@ -4248,6 +4297,20 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     if (!row.groupKey.trimmed().isEmpty()) {
       impl_->expandedByGroupKey[row.groupKey] = !row.expanded;
       updateLayout();
+    }
+    // グループ行は展開トグルであると同時に選択対象でもある。
+    // Text Animator グループは propertyPath がアニメーター identity を
+    // 持つため、ここを空にしておくと選択が失われる。
+    // 他のグループ（Transform 等）は構成要素ではないため選択を触らない。
+    int animatorIndex = -1;
+    if (textAnimatorGroupPathParts(row.propertyPath, &animatorIndex)) {
+     if (auto* service = ArtifactProjectService::instance()) {
+      service->selectLayer(layer->id());
+     }
+     impl_->selectedLayerId = layer->id();
+     impl_->currentPropertyPath = row.propertyPath.trimmed();
+     propertyFocusChanged(impl_->selectedLayerId, impl_->currentPropertyPath);
+     update();
     }
    }
    event->accept();
@@ -7364,6 +7427,57 @@ bool ArtifactLayerPanelWidget::deleteSelectedMask()
   propertyFocusChanged(impl_->selectedLayerId, impl_->currentPropertyPath);
   updateLayout();
   return true;
+ }
+
+// 選択中の構成要素（Mask / Text Animator など）を、選択行そのものだけ削除する。
+// レイヤー本体の削除とは別の操作として扱い、選択行が構成要素である限り
+// 親レイヤーへのフォールバックを禁止する。返り値は「このキーが構成要素の
+// 削除として処理されたか」で、false のときだけ呼び出し元がレイヤー削除へ進む。
+bool ArtifactLayerPanelWidget::deleteSelectedComponent()
+{
+  if (deleteSelectedMask()) {
+    return true;
+  }
+
+  int animatorIndex = -1;
+  if (!textAnimatorGroupPathParts(impl_->currentPropertyPath, &animatorIndex)) {
+    return false;
+  }
+  // ここから先は「Text Animator グループ行が選択されている」ことが確定。
+  // レイヤー解決や Push に失敗しても、このキーの所有者はアニメーター行であり、
+  // 親レイヤーの削除へフォールバックさせてはならない。
+  auto comp = safeCompositionLookup(impl_->compositionId);
+  auto layer = comp ? comp->layerById(impl_->selectedLayerId)
+                    : ArtifactAbstractLayerPtr{};
+  const auto textLayer = ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer);
+  if (!textLayer) {
+    return true;
+  }
+  if (!applyTextAnimatorStackMutationWithUndo(
+          layer,
+          QStringLiteral("Delete Text Animator %1").arg(animatorIndex + 1),
+          [animatorIndex](ArtifactTextLayer& target) {
+            if (animatorIndex < 0 ||
+                animatorIndex >= target.animatorCount()) {
+              return false;
+            }
+            target.removeAnimator(animatorIndex);
+            return true;
+          })) {
+    // 取り消し出来なかった場合も、このキーはアニメーター行が所有している。
+    // 親レイヤーの削除へフォールバックさせない。
+    return true;
+  }
+
+  // 削除によりスタックが詰まるため、同じ index が次のアニメーターを指す。
+  // 末尾を消してアニメーターが無くなったら選択を落とす。
+  impl_->currentPropertyPath =
+      animatorIndex < textLayer->animatorCount()
+          ? textAnimatorGroupPath(animatorIndex)
+          : QString();
+  propertyFocusChanged(impl_->selectedLayerId, impl_->currentPropertyPath);
+  updateLayout();
+  return true;
 }
 
 void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
@@ -7640,7 +7754,9 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
   if (ArtifactCore::ShortcutBindings::instance().matches(
           event, ArtifactCore::ShortcutId::LayerDeleteSelected) ||
       event->key() == Qt::Key_Backspace) {
-    if (deleteSelectedMask()) {
+    // 構成要素（Mask / Text Animator）が選択されているときは、その要素だけを
+    // 削除する。レイヤー行のときだけ親レイヤーの削除へ進む。
+    if (deleteSelectedComponent()) {
       event->accept();
       return;
     }
@@ -8298,6 +8414,13 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
     const bool propertyFocused =
         isPropertyRow && l->id() == impl_->selectedLayerId &&
         propertyPath.compare(impl_->currentPropertyPath, Qt::CaseInsensitive) == 0;
+    // Text Animator グループ行は構成要素そのものなので、レイヤー行と
+    // プロパティ行の中間として同じ選択色でハイライトする。
+    const bool textAnimatorGroupSelected =
+        row.kind == RowKind::Group && l->id() == impl_->selectedLayerId &&
+        !row.propertyPath.trimmed().isEmpty() &&
+        row.propertyPath.trimmed().compare(impl_->currentPropertyPath,
+                                          Qt::CaseInsensitive) == 0;
     const auto property = isPropertyRow ? l->getProperty(row.propertyPath) : nullptr;
     const bool propertyAnimatable = property && property->isAnimatable();
     const bool propertyKeyframed = propertyAnimatable && property->hasKeyFrameAt(currentTime);
@@ -8308,7 +8431,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
     // selected layer from the warmer work-area/range colors without turning
     // the compact property table into a bright accent block.
     const QColor rowSelected(35, 62, 85);
-    if (propertyFocused) {
+    if (propertyFocused || textAnimatorGroupSelected) {
       p.fillRect(0, y, width(), rowH, mixColor(background, selection, 0.32));
     } else if (maskSelected) {
       p.fillRect(0, y, width(), rowH, mixColor(background, accent, 0.30));
@@ -9399,6 +9522,11 @@ void ArtifactLayerTimelinePanelWrapper::setPropertyChannelFilter(
   bool ArtifactLayerTimelinePanelWrapper::deleteSelectedMask()
   {
    return impl_ && impl_->panel && impl_->panel->deleteSelectedMask();
+  }
+
+  bool ArtifactLayerTimelinePanelWrapper::deleteSelectedComponent()
+  {
+   return impl_ && impl_->panel && impl_->panel->deleteSelectedComponent();
   }
 
 } // namespace Artifact

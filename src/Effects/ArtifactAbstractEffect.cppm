@@ -55,6 +55,8 @@ import Time.Rational;
 import Core.Parallel;
 import Core.Diagnostics.FallbackPolicy;
 import Audio.Modulation.Router;
+import Script.Expression.Evaluator;
+import Utils.Optional;
 
 namespace Artifact {
 
@@ -406,12 +408,26 @@ void ArtifactAbstractEffect::applyConfigured(const ImageF32x4RGBAWithCache& src,
     const float* sourcePixels = srcCopy.rgba32fData();
     float* effectPixels = dstImage.rgba32fData();
 
-    const bool hasValidPrimaryMask = hasPrimaryMask &&
-        impl_->maskImage->width() == width &&
-        impl_->maskImage->height() == height;
-    const float* primaryMaskPixels = hasValidPrimaryMask
-        ? impl_->maskImage->rgba32fData()
-        : nullptr;
+    // A mask image authored at a different size than the surface is stretched over
+    // it rather than discarded: the normalized coordinate of the destination
+    // pixel selects the mask texel, so a smaller or larger mask still covers
+    // the whole frame. A mask that matches 1:1 keeps the exact texel lookup.
+    // Invalid (null or empty) masks contribute nothing, matching the previous
+    // behaviour.
+    const ImageF32x4_RGBA* primaryMaskImage =
+        hasPrimaryMask ? impl_->maskImage.get() : nullptr;
+    const bool primaryMaskUsable =
+        primaryMaskImage && primaryMaskImage->rgba32fData() &&
+        primaryMaskImage->width() > 0 && primaryMaskImage->height() > 0;
+    const int primaryMaskWidth =
+        primaryMaskUsable ? primaryMaskImage->width() : 0;
+    const int primaryMaskHeight =
+        primaryMaskUsable ? primaryMaskImage->height() : 0;
+    const bool primaryMaskMatches =
+        primaryMaskUsable && primaryMaskWidth == width &&
+        primaryMaskHeight == height;
+    const float* primaryMaskPixels =
+        primaryMaskUsable ? primaryMaskImage->rgba32fData() : nullptr;
     std::vector<const float*> secondaryMaskPixels;
     secondaryMaskPixels.reserve(impl_->effectMaskImages.size());
     for (const auto& extraMask : impl_->effectMaskImages) {
@@ -441,8 +457,28 @@ void ArtifactAbstractEffect::applyConfigured(const ImageF32x4RGBAWithCache& src,
 
             const size_t pixelOffset = static_cast<size_t>(x) * 4u;
 
-            if (hasValidPrimaryMask) {
-                float maskAlpha = primaryMaskPixels[rowOffset + pixelOffset + 3];
+            if (primaryMaskUsable) {
+                float maskAlpha = 0.0f;
+                if (primaryMaskMatches) {
+                    maskAlpha = primaryMaskPixels[rowOffset + pixelOffset + 3];
+                } else {
+                    // Stretch: pick the mask texel the normalized destination
+                    // coordinate lands on, clamped so out-of-range edges stay
+                    // inside the mask.
+                    const int mx = std::min(
+                        static_cast<int>((static_cast<float>(x) + 0.5f) *
+                                         static_cast<float>(primaryMaskWidth) /
+                                         static_cast<float>(width)),
+                        primaryMaskWidth - 1);
+                    const int my = std::min(
+                        static_cast<int>((static_cast<float>(y) + 0.5f) *
+                                         static_cast<float>(primaryMaskHeight) /
+                                         static_cast<float>(height)),
+                        primaryMaskHeight - 1);
+                    maskAlpha = primaryMaskPixels[
+                        (static_cast<size_t>(my) * static_cast<size_t>(primaryMaskWidth) +
+                         static_cast<size_t>(mx)) * 4u + 3u];
+                }
                 if (impl_->maskInverted) {
                     maskAlpha = 1.0f - maskAlpha;
                 }
@@ -498,6 +534,11 @@ void ArtifactAbstractEffect::setContext(const EffectContext& context) {
     if (impl_->editableProperties_.empty()) {
         editableProperties();
     }
+    // One evaluator serves every property this frame. Constructing it is
+    // deferred until a property actually carries an expression so the common
+    // all-static frame never pays for it, and declaring it outside the loop
+    // keeps its allocations off the per-property path.
+    ArtifactCore::Optional<ExpressionEvaluator> evaluator;
     for (const auto& property : impl_->editableProperties_) {
         if (!property) {
             continue;
@@ -510,8 +551,15 @@ void ArtifactAbstractEffect::setContext(const EffectContext& context) {
             !property->hasEnvelopes() && !hasModulation) {
             continue;
         }
+        // An expression needs a real evaluator; without one
+        // AbstractProperty::evaluateValue silently skips the expression, so an
+        // effect expression would animate in the inspector preview while doing
+        // nothing in the render.
+        if (property->hasExpression() && !evaluator.has_value()) {
+            evaluator.emplace();
+        }
         const QVariant value = property->evaluateValue(
-            time, nullptr, std::nullopt,
+            time, evaluator.has_value() ? &*evaluator : nullptr, std::nullopt,
             &impl_->modulationRouter_,
             modulationPath.toStdString());
         if (value.isValid()) {

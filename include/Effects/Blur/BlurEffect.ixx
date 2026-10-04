@@ -156,6 +156,13 @@ public:
     // CPU half-resolution optimization as a legacy boundary: it deliberately
     // changes the sampling grid for wide blurs. Below that threshold, each
     // CPU pass maps one-for-one to the resident separable Gaussian node.
+    //
+    // Returning None here is what routes the effect to ArtifactEffectImplBase,
+    // and BlurEffectGPUImpl::applyGPU independently refuses every one of these
+    // configurations as well (it needs premultiplied Gaussian and a single
+    // strength-1 pass). The two conditions deliberately coincide: if either
+    // widens, the effect silently starts running the legacy Diligent path
+    // with its blocking readback. Widen both together, or neither.
     GpuRasterEffectDomain gpuRasterEffectDomain() const override {
         const int passesPerIteration =
             mode_ == BlurMode::EdgePreserving ? 2 : 1;

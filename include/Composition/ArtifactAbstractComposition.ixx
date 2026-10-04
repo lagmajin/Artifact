@@ -260,6 +260,9 @@ export namespace Artifact {
 
   ArtifactAbstractLayerPtr layerById(const LayerID& id) const;
   bool containsLayerById(const LayerID& id);
+  // Rebuilds the script file watch list from the current layer bindings.
+  // Called after a layer script is assigned, cleared, or reloaded.
+  void syncScriptWatcher();
 
   ArtifactAbstractLayerPtr frontMostLayer() const;
   ArtifactAbstractLayerPtr backMostLayer() const;

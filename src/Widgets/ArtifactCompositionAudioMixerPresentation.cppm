@@ -43,8 +43,12 @@ module;
 module Artifact.Widgets.CompositionAudioMixer;
 
 import Artifact.Audio.Mixer;
+import Artifact.Audio.Effects.Manager;
+import Artifact.Audio.Effects.Base;
 import Artifact.Widgets.AudioMixer;
 import Audio.Mixer;
+import Audio.Bus;
+import Audio.Effect;
 import Memory.SharedPtr;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Audio;
@@ -242,36 +246,75 @@ QColor mixerAccentForName(const QString &name, const bool master = false) {
   return color;
 }
 
+// FX ラックは映像 fx ではなく、オーディオ FX レジストリのエフェクトを
+// そのレイヤーの AudioBus FX チェーンへ挿入する。 Chip の id は
+// ファクトリ id (effectType) で、チェーン上の位置は配列インデックスで決まる。
 std::vector<AudioFxChipInfo> effectChipInfosForLayer(const AudioMixerChannelStrip::LayerID &layerId) {
   std::vector<AudioFxChipInfo> chips;
-  auto *projectService = ArtifactProjectService::instance();
-  if (!projectService || layerId.isNil()) {
+  if (layerId.isNil()) {
     return chips;
   }
 
-  auto composition = projectService->currentComposition().lock();
-  if (!composition) {
+  const auto mixer = currentCoreAudioMixer();
+  if (!mixer) {
+    return chips;
+  }
+  const auto bus = mixer->ensureLayerBus(layerId);
+  if (!bus) {
     return chips;
   }
 
-  auto layer = composition->layerById(layerId);
-  if (!layer) {
-    return chips;
-  }
-
-  for (const auto &effect : layer->getEffects()) {
+  for (int i = 0; i < bus->getEffectCount(); ++i) {
+    const auto effect = bus->getEffect(i);
     if (!effect) {
       continue;
     }
     chips.push_back(AudioFxChipInfo{
-        effect->effectID().toQString(),
-        effect->displayName().toQString().trimmed().isEmpty()
-            ? effect->effectID().toQString()
-            : effect->displayName().toQString(),
-        effect->isEnabled(),
+        QString::fromUtf8(ArtifactCore::toStdString(effect->effectType()).data()),
+        QString::fromStdString(ArtifactCore::toStdString(effect->getName()).data()),
+        effect->isBypassed(),
     });
   }
   return chips;
+}
+
+// ラッカーの編集操作は全て AudioBus の FX チェーンを対象にし、Undo は
+// mixer スナップショット（AudioMixer::serialize の JSON）を単位とする。
+// recordMixerSnapshotChange は成功時にスナップショットをUndo 履歴へ積む。
+bool applyBusEffectChange(
+    const AudioMixerChannelStrip::LayerID &layerId,
+    const std::function<void(ArtifactCore::SharedPtr<ArtifactCore::AudioBus> &)> &mutate,
+    const QString &label) {
+  const auto mixer = currentCoreAudioMixer();
+  if (!mixer || layerId.isNil()) {
+    return false;
+  }
+  auto bus = mixer->ensureLayerBus(layerId);
+  if (!bus) {
+    return false;
+  }
+
+  const QJsonObject before = mixer->serialize();
+  mutate(bus);
+  const QJsonObject after = mixer->serialize();
+  if (before == after) {
+    return false;
+  }
+  return recordMixerSnapshotChange(mixer, before, after, label);
+}
+
+// チェーンは effectType をキーにしないので、インデックスでエフェクトを特定する。
+ArtifactCore::SharedPtr<ArtifactCore::AudioEffect> busEffectAt(
+    const AudioMixerChannelStrip::LayerID &layerId, const int index) {
+  const auto mixer = currentCoreAudioMixer();
+  if (!mixer || layerId.isNil()) {
+    return {};
+  }
+  const auto bus = mixer->ensureLayerBus(layerId);
+  if (!bus || index < 0 || index >= bus->getEffectCount()) {
+    return {};
+  }
+  return bus->getEffect(index);
 }
 
 class AudioFxRackWidget final : public QWidget {
@@ -321,24 +364,26 @@ public:
   }
 
   void setAllEffectsEnabled(const bool enabled) {
-    auto *effectService = ArtifactEffectService::instance();
-    if (!effectService || layerId_.isNil() || effects_.empty()) {
+    if (layerId_.isNil() || effects_.empty()) {
       return;
     }
-
-    bool changed = false;
-    for (const auto &chip : effects_) {
-      const auto result = effectService->setEffectEnabled(layerId_, chip.id, enabled);
-      changed = changed || result.success;
-    }
-    if (changed) {
+    if (applyBusEffectChange(
+            layerId_,
+            [enabled](ArtifactCore::SharedPtr<ArtifactCore::AudioBus> &bus) {
+              for (int i = 0; i < bus->getEffectCount(); ++i) {
+                if (const auto effect = bus->getEffect(i)) {
+                  effect->setBypass(!enabled);
+                }
+              }
+            },
+            enabled ? QStringLiteral("Enable Audio Effects")
+                    : QStringLiteral("Disable Audio Effects"))) {
       requestRefresh();
     }
   }
 
   void clearAllEffects() {
-    auto *effectService = ArtifactEffectService::instance();
-    if (!effectService || layerId_.isNil() || effects_.empty()) {
+    if (layerId_.isNil() || effects_.empty()) {
       return;
     }
 
@@ -356,13 +401,14 @@ public:
       return;
     }
 
-    bool changed = false;
-    const auto chips = effects_;
-    for (const auto &chip : chips) {
-      const auto result = effectService->removeEffectFromLayer(layerId_, chip.id);
-      changed = changed || result.success;
-    }
-    if (changed) {
+    if (applyBusEffectChange(
+            layerId_,
+            [](ArtifactCore::SharedPtr<ArtifactCore::AudioBus> &bus) {
+              while (bus->getEffectCount() > 0) {
+                bus->removeEffect(0);
+              }
+            },
+            QStringLiteral("Remove All Audio Effects"))) {
       requestRefresh();
     }
   }
@@ -609,61 +655,40 @@ private:
   }
 
   void showAddEffectMenu(const QPoint &globalPos) {
-    auto *effectService = ArtifactEffectService::instance();
-    if (!effectService || layerId_.isNil()) {
+    auto &effectManager = Artifact::ArtifactAudioEffectManager::instance();
+    if (layerId_.isNil()) {
       return;
     }
 
-    const auto available = effectService->availableEffects();
+    // 映像 fx ではなくオーディオ FX レジストリを列挙する。
+    const auto available = effectManager.getAvailableEffects();
     if (available.empty()) {
       QMenu menu(this);
-      menu.addAction(QStringLiteral("No effects available"))->setEnabled(false);
+      menu.addAction(QStringLiteral("No audio effects available"))->setEnabled(false);
       menu.exec(accessibilityMenuPosition(menu, globalPos));
       return;
     }
 
-    auto sortedAvailable = available;
-    std::sort(sortedAvailable.begin(), sortedAvailable.end(),
+    std::vector<std::pair<QString, QString>> entries;
+    entries.reserve(available.size());
+    for (const auto &id : available) {
+      auto effect = effectManager.createEffect(id);
+      const QString displayName =
+          effect ? QString::fromUtf8(
+                        ArtifactCore::toStdString(effect->getName()).data())
+                  : QString::fromUtf8(ArtifactCore::toStdString(id).data());
+      entries.emplace_back(displayName,
+                           QString::fromUtf8(ArtifactCore::toStdString(id).data()));
+    }
+    std::sort(entries.begin(), entries.end(),
               [](const auto &lhs, const auto &rhs) {
-                return lhs.displayName.toCaseFolded() < rhs.displayName.toCaseFolded();
+                return lhs.first.toCaseFolded() < rhs.first.toCaseFolded();
               });
 
     QMenu menu(this);
-    std::map<QString, std::vector<EffectInfo>> grouped;
-    for (const auto &effect : sortedAvailable) {
-      grouped[effectCategoryForId(effect.id.toString())].push_back(effect);
-    }
-
-    const QStringList categoryOrder = {
-        QStringLiteral("Color Correction"),
-        QStringLiteral("Basic Color"),
-        QStringLiteral("Image"),
-        QStringLiteral("Distort"),
-        QStringLiteral("Material"),
-        QStringLiteral("OFX"),
-        QStringLiteral("Other"),
-    };
-
-    for (const auto &category : categoryOrder) {
-      const auto it = grouped.find(category);
-      if (it == grouped.end()) {
-        continue;
-      }
-      QMenu *submenu = menu.addMenu(category);
-      for (const auto &effect : it->second) {
-        QAction *action = submenu->addAction(effect.displayName);
-        action->setData(effect.id.toString());
-      }
-    }
-    for (const auto &[category, effects] : grouped) {
-      if (categoryOrder.contains(category)) {
-        continue;
-      }
-      QMenu *submenu = menu.addMenu(category);
-      for (const auto &effect : effects) {
-        QAction *action = submenu->addAction(effect.displayName);
-        action->setData(effect.id.toString());
-      }
+    for (const auto &[displayName, effectId] : entries) {
+      QAction *action = menu.addAction(displayName);
+      action->setData(effectId);
     }
 
     if (QAction *selected =
@@ -672,22 +697,36 @@ private:
       if (effectId.isEmpty()) {
         return;
       }
-      const auto result =
-          effectService->addEffectToLayer(layerId_, EffectID(effectId));
-      if (result.success) {
+      auto effect = effectManager.createEffect(ArtifactCore::String(
+          effectId.toUtf8().constData()));
+      if (!effect) {
+        return;
+      }
+      auto shared = ArtifactCore::SharedPtr<ArtifactCore::AudioEffect>(effect);
+      if (applyBusEffectChange(
+              layerId_,
+              [shared](ArtifactCore::SharedPtr<ArtifactCore::AudioBus> &bus) {
+                bus->addEffect(shared);
+              },
+              QStringLiteral("Add Audio Effect"))) {
         requestRefresh();
       }
     }
   }
 
   void showEffectMenu(const int index, const QPoint &globalPos) {
-    auto *effectService = ArtifactEffectService::instance();
-    if (!effectService || layerId_.isNil() || index < 0 || index >= static_cast<int>(effects_.size())) {
+    if (layerId_.isNil() || index < 0 || index >= static_cast<int>(effects_.size())) {
+      return;
+    }
+
+    const auto effect = busEffectAt(layerId_, index);
+    if (!effect) {
       return;
     }
 
     QMenu menu(this);
     const auto &chip = effects_.at(index);
+    QAction *editParametersAction = menu.addAction(QStringLiteral("Edit Parameters..."));
     QAction *removeAction = menu.addAction(QStringLiteral("Remove"));
     QAction *duplicateAction = menu.addAction(QStringLiteral("Duplicate"));
     menu.addSeparator();
@@ -704,39 +743,96 @@ private:
       return;
     }
 
-    const QString effectId = chip.id;
+    if (selected == editParametersAction) {
+      auto *dlg = Artifact::createParameterEditor(effect->getName(), effect.get(), this);
+      dlg->setAttribute(Qt::WA_DeleteOnClose);
+      dlg->show();
+      // パラメータ調整はmixer スナップショットに載るようダイアログを閉じた
+      // 時点で差分を Undo へ積む。
+      connect(dlg, &QDialog::finished, this, [this, title](int) {
+        if (applyBusEffectChange(
+                layerId_,
+                [](ArtifactCore::SharedPtr<ArtifactCore::AudioBus> &) {},
+                QStringLiteral("Edit Audio Effect"))) {
+          requestRefresh();
+        }
+      });
+      return;
+    }
+
     if (selected == removeAction) {
-      const auto result = effectService->removeEffectFromLayer(layerId_, effectId);
-      if (result.success) {
+      if (applyBusEffectChange(
+              layerId_,
+              [index](ArtifactCore::SharedPtr<ArtifactCore::AudioBus> &bus) {
+                bus->removeEffect(index);
+              },
+              QStringLiteral("Remove Audio Effect"))) {
         requestRefresh();
       }
       return;
     }
     if (selected == duplicateAction) {
-      const auto result = effectService->duplicateEffect(layerId_, effectId);
-      if (result.success) {
+      auto copy = Artifact::ArtifactAudioEffectManager::instance().createEffect(
+          ArtifactCore::String(chip.id.toUtf8().constData()));
+      if (!copy) {
+        return;
+      }
+      // 複製は同一 type の既定値から作り、元のスナップショット値は fromJson で引き継ぐ。
+      auto shared = ArtifactCore::SharedPtr<ArtifactCore::AudioEffect>(copy);
+      if (applyBusEffectChange(
+              layerId_,
+              [index, shared](ArtifactCore::SharedPtr<ArtifactCore::AudioBus> &bus) {
+                const auto source = bus->getEffect(index);
+                if (source) {
+                  shared->fromJson(source->toJson());
+                }
+                bus->addEffect(shared);
+              },
+              QStringLiteral("Duplicate Audio Effect"))) {
         requestRefresh();
       }
       return;
     }
+    // 並べ替えは remove + insertEffect で 1 つ分だけずらす。addEffect は末尾
+    // 追加なので、そのまま使うと常に末尾へ移るだけで並び替わらない。
+    // delta は -1 で上へ、+1 で下へ。
+    const auto moveEffect = [this](const int index, const int delta) {
+      return applyBusEffectChange(
+          layerId_,
+          [index, delta](ArtifactCore::SharedPtr<ArtifactCore::AudioBus> &bus) {
+            const int count = bus->getEffectCount();
+            const int target = index + delta;
+            if (index < 0 || index >= count || target < 0 || target >= count) {
+              return;
+            }
+            auto moved = bus->getEffect(index);
+            bus->removeEffect(index);
+            bus->insertEffect(target, std::move(moved));
+          },
+          QStringLiteral("Reorder Audio Effects"));
+    };
+
     if (selected == moveUpAction) {
-      const auto result = effectService->moveEffect(layerId_, effectId, -1);
-      if (result.success) {
+      if (moveEffect(index, -1)) {
         requestRefresh();
       }
       return;
     }
     if (selected == moveDownAction) {
-      const auto result = effectService->moveEffect(layerId_, effectId, +1);
-      if (result.success) {
+      if (moveEffect(index, +1)) {
         requestRefresh();
       }
       return;
     }
     if (selected == toggleAction) {
-      const auto result =
-          effectService->setEffectEnabled(layerId_, effectId, !chip.enabled);
-      if (result.success) {
+      if (applyBusEffectChange(
+              layerId_,
+              [index](ArtifactCore::SharedPtr<ArtifactCore::AudioBus> &bus) {
+                if (const auto target = bus->getEffect(index)) {
+                  target->setBypass(!target->isBypassed());
+                }
+              },
+              QStringLiteral("Toggle Audio Effect"))) {
         requestRefresh();
       }
       return;
@@ -744,8 +840,7 @@ private:
   }
 
   void showAllEffectsMenu(const QPoint &globalPos) {
-    auto *effectService = ArtifactEffectService::instance();
-    if (!effectService || layerId_.isNil() || effects_.empty()) {
+    if (layerId_.isNil() || effects_.empty()) {
       return;
     }
 
@@ -758,40 +853,33 @@ private:
     QAction *disableAllAction = menu.addAction(QStringLiteral("Disable All"));
     QAction *removeAllAction = menu.addAction(QStringLiteral("Remove All"));
     menu.addSeparator();
-    for (const auto &chip : effects_) {
+    for (int i = 0; i < static_cast<int>(effects_.size()); ++i) {
+      const auto &chip = effects_.at(i);
       const QString suffix = chip.enabled ? QString() : QStringLiteral(" [off]");
       QAction *action = menu.addAction(chip.displayName + suffix);
-      action->setData(chip.id);
+      // id は factory id であり同一 type が重複しうるので、位置で対象を特定する。
+      action->setData(i);
     }
 
     if (QAction *selected =
             menu.exec(accessibilityMenuPosition(menu, globalPos))) {
-      if (selected == enableAllAction || selected == disableAllAction) {
-        const bool enabled = selected == enableAllAction;
-        bool changed = false;
-        for (const auto &chip : effects_) {
-          const auto result = effectService->setEffectEnabled(layerId_, chip.id, enabled);
-          changed = changed || result.success;
-        }
-        if (changed) {
-          requestRefresh();
-        }
+      if (selected == enableAllAction) {
+        setAllEffectsEnabled(true);
+        return;
+      }
+      if (selected == disableAllAction) {
+        setAllEffectsEnabled(false);
         return;
       }
       if (selected == removeAllAction) {
         clearAllEffects();
         return;
       }
-      const QString effectId = selected->data().toString().trimmed();
-      if (effectId.isEmpty()) {
+      const int index = selected->data().toInt(-1);
+      if (index < 0 || index >= static_cast<int>(effects_.size())) {
         return;
       }
-      for (int i = 0; i < static_cast<int>(effects_.size()); ++i) {
-        if (effects_.at(i).id == effectId) {
-          showEffectMenu(i, globalPos);
-          break;
-        }
-      }
+      showEffectMenu(index, globalPos);
     }
   }
 
@@ -887,103 +975,9 @@ private:
     queueMixerRefresh(owner_);
   }
 
-  static QColor chipColorForName(const QString &name) {
-    const uint hash = qHash(name);
-    QColor color = QColor::fromHsv(static_cast<int>(hash % 360), 116, 156);
-    if (color.hsvHue() > 35 && color.hsvHue() < 72) {
-      color = QColor::fromHsv(198, 106, 158);
-    }
-    return color;
-  }
-
-  static QString effectCategoryForId(const QString &effectId) {
-    if (effectId.startsWith(QStringLiteral("ofx."))) {
-      return QStringLiteral("OFX");
-    }
-    if (effectId.startsWith(QStringLiteral("effect.colorcorrection."))) {
-      return QStringLiteral("Color Correction");
-    }
-    if (effectId == QStringLiteral("brightness") ||
-        effectId == QStringLiteral("hue_saturation") ||
-        effectId == QStringLiteral("exposure")) {
-      return QStringLiteral("Basic Color");
-    }
-    if (effectId == QStringLiteral("chroma_key") ||
-        effectId == QStringLiteral("luma_key") ||
-        effectId == QStringLiteral("difference_key") ||
-        effectId == QStringLiteral("drop_shadow") ||
-        effectId == QStringLiteral("glow") ||
-        effectId == QStringLiteral("edge_bloom") ||
-        effectId == QStringLiteral("chromatic_glow") ||
-        effectId == QStringLiteral("reactive_glow") ||
-        effectId == QStringLiteral("liquid_glow") ||
-        effectId == QStringLiteral("residual_glow") ||
-        effectId == QStringLiteral("effect.blur.gaussian") ||
-        effectId == QStringLiteral("blur") ||
-        effectId == QStringLiteral("directional_glow")) {
-      return QStringLiteral("Image");
-    }
-    if (effectId == QStringLiteral("lift_gamma_gain")) {
-      return QStringLiteral("Basic Color");
-    }
-    if (effectId == QStringLiteral("pbr_material")) {
-      return QStringLiteral("Material");
-    }
-    if (effectId == QStringLiteral("wave") ||
-        effectId == QStringLiteral("spherize") ||
-        effectId == QStringLiteral("lens_distortion") ||
-        effectId == QStringLiteral("twist") ||
-        effectId == QStringLiteral("bend")) {
-      return QStringLiteral("Distort");
-    }
-    return QStringLiteral("Other");
-  }
-
-  static QString typeHintForEffectId(const QString &effectId) {
-    if (effectId.startsWith(QStringLiteral("effect.colorcorrection."))) {
-      return QStringLiteral("C");
-    }
-    if (effectId == QStringLiteral("effect.blur.gaussian")) {
-      return QStringLiteral("G");
-    }
-    if (effectId == QStringLiteral("blur")) {
-      return QStringLiteral("B");
-    }
-    if (effectId == QStringLiteral("edge_bloom")) {
-      return QStringLiteral("E");
-    }
-    if (effectId == QStringLiteral("chromatic_glow")) {
-      return QStringLiteral("C");
-    }
-    if (effectId == QStringLiteral("reactive_glow")) {
-      return QStringLiteral("R");
-    }
-    if (effectId == QStringLiteral("liquid_glow")) {
-      return QStringLiteral("L");
-    }
-    if (effectId == QStringLiteral("residual_glow")) {
-      return QStringLiteral("A");
-    }
-    if (effectId == QStringLiteral("chroma_key") ||
-        effectId == QStringLiteral("luma_key") ||
-        effectId == QStringLiteral("difference_key")) {
-      return QStringLiteral("K");
-    }
-    if (effectId.startsWith(QStringLiteral("ofx."))) {
-      return QStringLiteral("O");
-    }
-    if (effectId == QStringLiteral("twist") ||
-        effectId == QStringLiteral("bend") ||
-        effectId == QStringLiteral("wave") ||
-        effectId == QStringLiteral("spherize") ||
-        effectId == QStringLiteral("lens_distortion")) {
-      return QStringLiteral("D");
-    }
-    if (effectId == QStringLiteral("pbr_material")) {
-      return QStringLiteral("M");
-    }
-    return QString();
-  }
+  // 映像 fx 用のカテゴリマッピング / 色分け / 型アイコンは、オーディオ FX
+  // ラックが ArtifactEffectService ではなくオーディオ FX レジストリを列挙する
+  // ようになったため未使用。
 
   std::vector<AudioFxChipInfo> effects_;
   AudioMixerChannelStrip::LayerID layerId_;

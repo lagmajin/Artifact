@@ -1399,6 +1399,8 @@ public:
   QWidget *clonerStructureWidget = nullptr;
   QLabel *componentUtilitiesLabel = nullptr;
   InspectorActionButton *openScriptButton = nullptr;
+  InspectorActionButton *assignScriptButton = nullptr;
+  InspectorActionButton *clearScriptButton = nullptr;
   InspectorActionButton *applyLipSyncButton = nullptr;
   InspectorActionButton *addEffectorButton = nullptr;
   InspectorActionButton *removeEffectorButton = nullptr;
@@ -2845,6 +2847,32 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
         canOpen ? QStringLiteral("Open the script file linked to this layer.")
                 : (hasLayer ? QStringLiteral("No script file is linked to this layer yet.")
                             : QStringLiteral("Select a layer inside a composition to open its script.")));
+  }
+
+  if (assignScriptButton) {
+    const bool canAssign = hasLayer &&
+                           activeName == QStringLiteral("Script");
+    assignScriptButton->setEnabled(canAssign);
+    assignScriptButton->setVisible(canAssign);
+    assignScriptButton->setToolTip(
+        canAssign
+            ? QStringLiteral("Link a script file to this layer. The linked "
+                             "script's OnUpdate hook runs on the Intent phase "
+                             "while the composition evaluates.")
+            : QStringLiteral("Select a layer inside a composition to assign a "
+                             "script."));
+  }
+
+  if (clearScriptButton) {
+    const bool canClear = hasLayer &&
+                          layer->hasScriptBinding() &&
+                          activeName == QStringLiteral("Script");
+    clearScriptButton->setEnabled(canClear);
+    clearScriptButton->setVisible(canClear);
+    clearScriptButton->setToolTip(
+        canClear
+            ? QStringLiteral("Unlink the script file from this layer.")
+            : QStringLiteral("This layer has no linked script file."));
   }
 
   if (applyLipSyncButton) {
@@ -5405,6 +5433,8 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   impl_->cloneModifierMoveUpButton = new InspectorActionButton("Mod Up");
   impl_->cloneModifierMoveDownButton = new InspectorActionButton("Mod Down");
   impl_->openScriptButton = new InspectorActionButton("Open Script");
+  impl_->assignScriptButton = new InspectorActionButton("Assign Script...");
+  impl_->clearScriptButton = new InspectorActionButton("Clear Script");
   impl_->applyLipSyncButton = new InspectorActionButton("Lip Sync");
   impl_->addEffectorButton = new InspectorActionButton("+ Effector");
   impl_->removeEffectorButton = new InspectorActionButton("- Effector");
@@ -5702,6 +5732,8 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   impl_->componentUtilitiesLabel->setVisible(false);
   componentBodyLayout->addWidget(impl_->componentUtilitiesLabel);
   componentBodyLayout->addWidget(impl_->openScriptButton);
+  componentBodyLayout->addWidget(impl_->assignScriptButton);
+  componentBodyLayout->addWidget(impl_->clearScriptButton);
   componentBodyLayout->addWidget(impl_->applyLipSyncButton);
   componentBodyLayout->addWidget(impl_->addEffectorButton);
   componentBodyLayout->addWidget(impl_->removeEffectorButton);
@@ -6948,9 +6980,79 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                      const QString openPath =
                          info.isDir() ? info.absoluteFilePath()
                                       : info.absoluteFilePath();
-                     QDesktopServices::openUrl(
-                         QUrl::fromLocalFile(openPath));
-                   });
+QDesktopServices::openUrl(
+                          QUrl::fromLocalFile(openPath));
+                    });
+  impl_->assignScriptButton->setAction([this]() {
+    if (impl_->currentCompositionId_.isNil() ||
+        impl_->currentLayerId_.isNil()) {
+      return;
+    }
+    auto projectService = ArtifactProjectService::instance();
+    if (!projectService) {
+      return;
+    }
+    auto findResult =
+        projectService->findComposition(impl_->currentCompositionId_);
+    if (!findResult.success) {
+      return;
+    }
+    auto comp = findResult.ptr.lock();
+    if (!comp) {
+      return;
+    }
+    auto layer = comp->layerById(impl_->currentLayerId_);
+    if (!layer) {
+      return;
+    }
+    const QString startDir = [&]{
+      const QString existing = resolveScriptBindingPath(layer);
+      if (existing.isEmpty()) {
+        return QString{};
+      }
+      const QFileInfo info(existing);
+      return info.absolutePath();
+    }();
+    const QString filePath = QFileDialog::getOpenFileName(
+        impl_->containerWidget, QStringLiteral("Assign Script"), startDir,
+        QStringLiteral("ArtifactScript (*.artifactscript *.txt *.as);;"
+                       "All Files (*)"));
+    if (filePath.trimmed().isEmpty()) {
+      return;
+    }
+    QJsonObject binding = layer->scriptBinding();
+    binding.insert(QStringLiteral("path"),
+                   QFileInfo(filePath).absoluteFilePath());
+    layer->setScriptBinding(binding);
+    comp->syncScriptWatcher();
+    impl_->updateComponentControls(layer);
+  });
+  impl_->clearScriptButton->setAction([this]() {
+    if (impl_->currentCompositionId_.isNil() ||
+        impl_->currentLayerId_.isNil()) {
+      return;
+    }
+    auto projectService = ArtifactProjectService::instance();
+    if (!projectService) {
+      return;
+    }
+    auto findResult =
+        projectService->findComposition(impl_->currentCompositionId_);
+    if (!findResult.success) {
+      return;
+    }
+    auto comp = findResult.ptr.lock();
+    if (!comp) {
+      return;
+    }
+    auto layer = comp->layerById(impl_->currentLayerId_);
+    if (!layer || !layer->hasScriptBinding()) {
+      return;
+    }
+    layer->clearScriptBinding();
+    comp->syncScriptWatcher();
+    impl_->updateComponentControls(layer);
+  });
   impl_->applyLipSyncButton->setAction([this]() {
     impl_->handleApplyLipSyncToSwitchLayer();
   });

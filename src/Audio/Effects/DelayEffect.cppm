@@ -39,6 +39,9 @@ void DelayEffect::initializeDelays() {
 
 void DelayEffect::process(ArtifactCore::AudioSegment& segment, const ArtifactCore::AudioSegment*) {
     if (!enabled_ || segment.channelData.isEmpty()) return;
+    // オフライン書き出しとリアルタイム再生で実レートが異なるため、
+    // バスから渡された segment のレートへ同期する。
+    syncSampleRate(segment);
 
     float sr = static_cast<float>(sampleRate_);
     int numChannels = static_cast<int>(segment.channelData.size());
@@ -125,7 +128,11 @@ float DelayEffect::getParameter(const String& name) const {
 }
 
 void DelayEffect::setSampleRate(int sampleRate) {
-    sampleRate_ = sampleRate > 0 ? sampleRate : 44100;
+    ArtifactAbstractAudioEffect::setSampleRate(sampleRate);
+    initializeDelays();
+}
+
+void DelayEffect::reinitOnSampleRate() {
     initializeDelays();
 }
 

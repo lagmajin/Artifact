@@ -93,8 +93,92 @@ void RevealCS(uint3 id : SV_DispatchThreadID) {
  float4 color = g_InputTexture[id.xy] * coverage;
  // Export sprite PSO uses SRC_ALPHA, so its boundary explicitly requests
  // linear straight RGBA; viewport compositing keeps premultiplied RGBA.
- if (RowY.w > 0.5) color.rgb = color.a > 1e-6 ? color.rgb / color.a : float3(0,0,0);
- g_OutputTexture[id.xy] = color;
+if (RowY.w > 0.5) color.rgb = color.a > 1e-6 ? color.rgb / color.a : float3(0,0,0);
+  g_OutputTexture[id.xy] = color;
+}
+)";
+
+  // Post-composite for a per-effect mask. This mirrors what
+  // ArtifactAbstractEffect::applyConfigured does on the CPU: the effect result
+  // already sits in g_InputTexture and the unprocessed source is bound as
+  // g_SourceTexture, and the two are blended by a coverage term the CPU path
+  // accumulates in exactly this order:
+  //
+  //   coverage  = mix
+  //   coverage  = 0 when an effect region is set and excludes the pixel
+  //   coverage *= (primary inverted ? 1 - primaryAlpha : primaryAlpha) * opacity
+  //   coverage *= product of each additional mask image's alpha
+  //   result    = lerp(source, effect, coverage)
+  //
+  // The primary mask is bound separately from the additional mask product
+  // because the inversion applies to the primary only. Folding them together on
+  // the CPU would make an inverted primary also invert the additional masks,
+  // which is not what the CPU path computes.
+  inline constexpr const char* kEffectMaskCompositeShader = R"(
+cbuffer EffectMaskParams : register(b0)
+{
+    float g_MaskOpacity;
+    float g_MaskInverted;
+    float g_Mix;
+    float g_RegionEnabled;
+    float g_HasAdditionalMask;
+    float g_Pad0;
+    float g_Pad1;
+    float4 g_Region;      // x, y, width, height in surface pixels
+};
+Texture2D<float4> g_InputTexture : register(t0);
+Texture2D<float4> g_SourceTexture : register(t1);
+Texture2D<float4> g_MaskTexture : register(t2);
+Texture2D<float4> g_AdditionalMaskTexture : register(t3);
+RWTexture2D<float4> g_OutputTexture : register(u0);
+[numthreads(8,8,1)]
+void EffectMaskCompositeCS(uint3 id : SV_DispatchThreadID) {
+    uint width, height;
+    g_OutputTexture.GetDimensions(width, height);
+    if (id.x >= width || id.y >= height) return;
+
+    float coverage = g_Mix;
+
+    // The CPU path tests region.contains(QPointF(x + 0.5, y + 0.5)), which is
+    // a half-open test: the right and bottom edges are excluded.
+    if (g_RegionEnabled > 0.5) {
+        const float2 pixel = float2(id.xy) + 0.5;
+        const bool inside = pixel.x >= g_Region.x && pixel.y >= g_Region.y &&
+                            pixel.x < g_Region.x + g_Region.z &&
+                            pixel.y < g_Region.y + g_Region.w;
+        if (!inside) coverage = 0.0;
+    }
+
+    uint maskWidth, maskHeight;
+    g_MaskTexture.GetDimensions(maskWidth, maskHeight);
+    if (maskWidth > 0 && maskHeight > 0 && coverage > 0.0) {
+        // The mask is stretched over the surface rather than rejected when the
+        // sizes differ, matching the CPU path: the normalized destination
+        // coordinate picks the mask texel. A 1:1 mask reduces to the same texel
+        // the direct lookup would have used, so the two paths agree there too.
+        const float2 uv = (float2(id.xy) + 0.5) / float2(width, height);
+        const float2 maskPixel = uv * float2(maskWidth, maskHeight);
+        const uint2 maskCoord = min(uint2(maskPixel),
+                                    uint2(maskWidth - 1, maskHeight - 1));
+        float maskAlpha = g_MaskTexture.Load(int3(maskCoord, 0)).a;
+        if (g_MaskInverted > 0.5) maskAlpha = 1.0 - maskAlpha;
+        coverage *= saturate(maskAlpha * g_MaskOpacity);
+    }
+
+    // The additional masks arrive already multiplied together at the surface
+    // resolution, so this is a 1:1 lookup. They are never inverted: the CPU
+    // path only inverts the primary. The host still binds a texture into this
+    // slot when there are none, so the flag rather than the binding decides
+    // whether the term applies.
+    if (g_HasAdditionalMask > 0.5 && coverage > 0.0) {
+        const float additional =
+            g_AdditionalMaskTexture.Load(int3(int2(id.xy), 0)).a;
+        coverage *= saturate(additional);
+    }
+
+    const float4 effect = g_InputTexture[id.xy];
+    const float4 source = g_SourceTexture[id.xy];
+    g_OutputTexture[id.xy] = lerp(source, effect, coverage);
 }
 )";
 
@@ -1160,6 +1244,12 @@ void ScreenSpaceGIResolveCS(uint3 dispatchId : SV_DispatchThreadID)
  // distinct destination because blendLayers reads SrcTex and DstTex while
  // writing OutTex, and accum_/temp_ are both live at that point.
  TextureBundle adjustmentBlend_;
+  // Snapshot of the layer taken before any rasterizer effect runs. A per-effect
+  // mask blends the finished result against this, so the untouched pixels have
+  // to survive the effect passes. It is a dedicated bundle rather than a reuse
+  // of temp_, because temp_ is the scratch target every spatial node writes
+  // through and is therefore live at the moment the snapshot would be taken.
+  TextureBundle effectMaskSource_;
  TextureBundle layer_;
  TextureBundle layerFloat_;
   std::array<TextureBundle, 3> matteSources_;
@@ -1209,6 +1299,19 @@ void ScreenSpaceGIResolveCS(uint3 dispatchId : SV_DispatchThreadID)
   std::uint64_t revealMapPreparedEpoch_ = 0;
   const void* revealLayersData_ = nullptr;
   std::size_t revealLayerCount_ = 0;
+  // Per-effect mask composite.  The mask image is CPU-resident (an
+  // ImageF32x4_RGBA owned by the effect), so it is uploaded into effectMask_
+  // before the spatial pass and blended afterwards.  Unlike matteSources_,
+  // which serves spine and adjustment masks, this slot is exclusive to effect
+  // masks and is therefore a single bundle rather than an array.
+  TextureBundle effectMask_;
+  // Product of the additional effect mask images (addEffectMaskImage), kept at
+  // the surface resolution because those masks are authored 1:1 against it.
+  // Separate from effectMask_ so an inverted primary does not invert the
+  // additional masks, matching the CPU blend order.
+  TextureBundle effectAdditionalMask_;
+  std::unique_ptr<ArtifactCore::ComputeExecutor> effectMaskExecutor_;
+  RefCntAutoPtr<IBuffer> effectMaskParams_;
   std::unique_ptr<ArtifactCore::ComputeExecutor> vignetteExecutor_;
   RefCntAutoPtr<IBuffer> vignetteParams_;
   std::unique_ptr<ArtifactCore::ComputeExecutor> chromaticAberrationExecutor_;
@@ -1418,6 +1521,9 @@ bool RenderPipeline::initialize(IRenderDevice* device,
   impl_->temp_ = {};
   impl_->adjustmentOriginal_ = {};
   impl_->adjustmentBlend_ = {};
+  impl_->effectMaskSource_ = {};
+  impl_->effectMask_ = {};
+  impl_->effectAdditionalMask_ = {};
   impl_->layer_ = {};
   impl_->layerFloat_ = {};
   for (auto& matteSource : impl_->matteSources_) {
@@ -1840,8 +1946,8 @@ params.width = static_cast<float>(impl_->width_);
    copy.SrcTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
    copy.pDstTexture = outputUAV->GetTexture();
    copy.DstTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
-   ctx->CopyTexture(copy);
-   return true;
+    ctx->CopyTexture(copy);
+    return true;
   }
   if (node.kind == GpuSpatialEffectKind::Stripes) {
    if (!impl_->stripesExecutor_) {
@@ -2435,13 +2541,246 @@ params.width = static_cast<float>(impl_->width_);
     applied = true;
   }
   return applied;
- }
+}
 
- bool RenderPipeline::foldAdjustmentBlend(
+bool RenderPipeline::applyEffectMaskComposite(
+    IDeviceContext* ctx,
+    ITextureView* effectSRV, ITextureView* sourceSRV,
+    ITextureView* scratchUAV, ITextureView* outputUAV,
+    const EffectMaskCompositeParams& params)
+  {
+   if (!ctx || !impl_->device_ || !effectSRV || !sourceSRV || !scratchUAV ||
+       !outputUAV || scratchUAV == outputUAV ||
+       impl_->width_ == 0 || impl_->height_ == 0) {
+    return false;
+   }
+
+   // Nothing to blend through when the effect is fully mixed and unregioned:
+   // the caller can keep the effect result as-is without a dispatch.
+   const bool hasPrimaryMask =
+       params.primaryMaskData != nullptr && params.primaryMaskWidth > 0 &&
+       params.primaryMaskHeight > 0;
+   const bool hasAdditionalMasks = params.additionalMaskCount > 0;
+   if (!hasPrimaryMask && !hasAdditionalMasks && !params.regionEnabled &&
+       params.mix >= 1.0f) {
+    CopyTextureAttribs identity;
+    identity.pSrcTexture = effectSRV->GetTexture();
+    identity.SrcTextureTransitionMode =
+        RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+    identity.pDstTexture = outputUAV->GetTexture();
+    identity.DstTextureTransitionMode =
+        RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+    ctx->CopyTexture(identity);
+    return true;
+   }
+
+   // The primary mask is uploaded untouched at its own authored resolution,
+   // because the shader stretches it. With no primary mask a 1x1 opaque white
+   // texel stands in to keep the sample in bounds; the cbuffer then zeroes the
+   // opacity so that sample cannot affect the result.
+   Uint32 primaryWidth = hasPrimaryMask ? params.primaryMaskWidth : 1u;
+   Uint32 primaryHeight = hasPrimaryMask ? params.primaryMaskHeight : 1u;
+   if (primaryWidth == 0 || primaryHeight == 0) {
+    return false;
+   }
+
+   // The additional masks are a SEPARATE upload: their product lives at the
+   // surface resolution (they are authored 1:1 against it) and must never be
+   // inverted along with an inverted primary. Allocated only when the effect
+   // actually stacks several masks.
+   std::vector<float> additionalCoverage;
+   if (hasAdditionalMasks) {
+    const std::size_t texelCount =
+        static_cast<std::size_t>(impl_->width_) * impl_->height_;
+    additionalCoverage.assign(texelCount * 4u, 0.0f);
+    for (std::size_t texel = 0; texel < texelCount; ++texel) {
+     additionalCoverage[texel * 4u + 3u] = 1.0f;
+    }
+    for (Uint32 index = 0; index < params.additionalMaskCount; ++index) {
+     const float* data = params.additionalMaskData[index];
+     if (!data) {
+      continue;
+     }
+     for (std::size_t texel = 0; texel < texelCount; ++texel) {
+      additionalCoverage[texel * 4u + 3u] *= data[texel * 4u + 3u];
+     }
+    }
+   }
+
+   // The mask slot is allocated at the primary mask's own resolution rather
+   // than at the surface size, because a mask may legitimately be a different
+   // resolution and the shader stretches it. Reallocating on every dispatch
+   // would be a per-frame cost, so only a real size change reallocates.
+   if (impl_->effectMask_.texture) {
+    const Diligent::TextureDesc maskDesc = impl_->effectMask_.texture->GetDesc();
+    if (maskDesc.Width != primaryWidth || maskDesc.Height != primaryHeight) {
+     impl_->effectMask_ = {};
+    }
+   }
+   if (!impl_->effectMask_.texture) {
+    if (!createTextureBundle(impl_->device_, primaryWidth, primaryHeight,
+                                    TEX_FORMAT_RGBA32_FLOAT,
+                                    BIND_SHADER_RESOURCE,
+                                    "RenderPipeline.EffectMask",
+                                    impl_->effectMask_)) {
+     return false;
+    }
+   }
+   if (!impl_->effectMask_.texture || !impl_->effectMask_.srv) {
+    return false;
+   }
+   // The additional-mask product always matches the surface, so its slot is a
+   // fixed bundle created once rather than a per-dispatch decision.
+   if (hasAdditionalMasks && !impl_->effectAdditionalMask_.texture) {
+    if (!createTextureBundle(impl_->device_, impl_->width_,
+                                    impl_->height_, TEX_FORMAT_RGBA32_FLOAT,
+                                    BIND_SHADER_RESOURCE,
+                                    "RenderPipeline.EffectAdditionalMask",
+                                    impl_->effectAdditionalMask_)) {
+     return false;
+    }
+   }
+   if (hasAdditionalMasks &&
+       (!impl_->effectAdditionalMask_.texture ||
+        !impl_->effectAdditionalMask_.srv)) {
+    return false;
+   }
+   if (!impl_->effectMaskExecutor_) {
+    impl_->screenSpaceGIContext_ = impl_->screenSpaceGIContext_
+        ? impl_->screenSpaceGIContext_
+        : ArtifactCore::makeShared<GpuContext>(impl_->device_, ctx);
+    impl_->effectMaskExecutor_ =
+        std::make_unique<ArtifactCore::ComputeExecutor>(*impl_->screenSpaceGIContext_);
+    BufferDesc bufferDesc;
+    bufferDesc.Name = "Composition Effect Mask Params";
+    bufferDesc.Usage = USAGE_DYNAMIC;
+    bufferDesc.Size = 48;
+    bufferDesc.BindFlags = BIND_UNIFORM_BUFFER;
+    bufferDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
+    impl_->device_->CreateBuffer(bufferDesc, nullptr, &impl_->effectMaskParams_);
+    static const ShaderResourceVariableDesc variables[] = {
+        {SHADER_TYPE_COMPUTE, "EffectMaskParams", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+        {SHADER_TYPE_COMPUTE, "g_InputTexture", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+        {SHADER_TYPE_COMPUTE, "g_SourceTexture", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+        {SHADER_TYPE_COMPUTE, "g_MaskTexture", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+        {SHADER_TYPE_COMPUTE, "g_AdditionalMaskTexture", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+        {SHADER_TYPE_COMPUTE, "g_OutputTexture", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC}};
+    ComputePipelineDesc desc;
+    desc.name = "Composition Effect Mask Composite PSO";
+    desc.shaderSource = kEffectMaskCompositeShader;
+    desc.entryPoint = "EffectMaskCompositeCS";
+    desc.sourceLanguage = SHADER_SOURCE_LANGUAGE_HLSL;
+    desc.variables = variables;
+    desc.variableCount = static_cast<Uint32>(sizeof(variables) / sizeof(variables[0]));
+    desc.defaultVariableType = SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
+    if (!impl_->effectMaskExecutor_->build(desc) ||
+        !impl_->effectMaskExecutor_->createShaderResourceBinding(true) ||
+        !impl_->effectMaskExecutor_->setBuffer("EffectMaskParams",
+                                               impl_->effectMaskParams_)) {
+     qWarning() << "[EffectMask] GPU shader/resource preparation failed";
+     impl_->effectMaskExecutor_.reset();
+     impl_->effectMaskParams_.Release();
+     return false;
+    }
+   }
+   // Upload the primary mask. The effect owns an ImageF32x4_RGBA whose data is
+   // tightly packed RGBA32F, so the row stride is four floats. When there is no
+   // primary mask (region or mix only) a 1x1 opaque white texel stands in, so
+   // the shader's `alpha * opacity` term evaluates to 1 and leaves the coverage
+   // governed by mix and region alone.
+   static constexpr float kOpaqueWhite[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+   TextureSubResData subData{};
+   subData.pData = hasPrimaryMask ? params.primaryMaskData : kOpaqueWhite;
+   subData.Stride = static_cast<Uint64>(primaryWidth) * sizeof(float) * 4ull;
+   const Box box(0, primaryWidth, 0, primaryHeight, 0, 1);
+   ctx->UpdateTexture(impl_->effectMask_.texture, 0, 0, box, subData,
+                      RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
+                      RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+   if (hasAdditionalMasks) {
+    TextureSubResData additionalData{};
+    additionalData.pData = additionalCoverage.data();
+    additionalData.Stride =
+        static_cast<Uint64>(impl_->width_) * sizeof(float) * 4ull;
+    const Box additionalBox(0, impl_->width_, 0, impl_->height_, 0, 1);
+    ctx->UpdateTexture(impl_->effectAdditionalMask_.texture, 0, 0,
+                       additionalBox, additionalData,
+                       RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
+                       RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+   }
+   struct alignas(16) EffectMaskParams
+   {
+    float maskOpacity;
+    float maskInverted;
+    float mix;
+    float regionEnabled;
+    float hasAdditionalMask;
+    float pad0;
+    float pad1;
+    float region[4];
+   };
+   void* mapped = nullptr;
+   ctx->MapBuffer(impl_->effectMaskParams_, MAP_WRITE, MAP_FLAG_DISCARD, mapped);
+   if (!mapped) return false;
+   EffectMaskParams effectMask{};
+   effectMask.maskOpacity =
+       hasPrimaryMask ? std::clamp(params.maskOpacity, 0.0f, 1.0f) : 1.0f;
+   effectMask.maskInverted = (hasPrimaryMask && params.maskInverted) ? 1.0f : 0.0f;
+   effectMask.mix = std::clamp(params.mix, 0.0f, 1.0f);
+   effectMask.regionEnabled = params.regionEnabled ? 1.0f : 0.0f;
+   effectMask.hasAdditionalMask = hasAdditionalMasks ? 1.0f : 0.0f;
+   effectMask.region[0] = params.regionX;
+   effectMask.region[1] = params.regionY;
+   effectMask.region[2] = params.regionWidth;
+   effectMask.region[3] = params.regionHeight;
+   std::memcpy(mapped, &effectMask, sizeof(effectMask));
+   ctx->UnmapBuffer(impl_->effectMaskParams_, MAP_WRITE);
+   if (!impl_->effectMaskExecutor_->setTextureView("g_InputTexture", effectSRV) ||
+       !impl_->effectMaskExecutor_->setTextureView("g_SourceTexture", sourceSRV) ||
+       !impl_->effectMaskExecutor_->setTextureView("g_MaskTexture",
+                                                  impl_->effectMask_.srv) ||
+       // With no additional masks the primary view is bound here as a neutral
+       // placeholder; g_HasAdditionalMask keeps the shader from reading it.
+       !impl_->effectMaskExecutor_->setTextureView(
+           "g_AdditionalMaskTexture",
+           hasAdditionalMasks ? impl_->effectAdditionalMask_.srv
+                              : impl_->effectMask_.srv) ||
+       !impl_->effectMaskExecutor_->setTextureView("g_OutputTexture", scratchUAV)) {
+    return false;
+   }
+   impl_->effectMaskExecutor_->dispatch(
+       ctx, ArtifactCore::ComputeExecutor::makeDispatchAttribs(
+                impl_->width_, impl_->height_, 1, 8, 8, 1),
+       RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+   CopyTextureAttribs copy;
+   copy.pSrcTexture = scratchUAV->GetTexture();
+   copy.SrcTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+   copy.pDstTexture = outputUAV->GetTexture();
+   copy.DstTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+   ctx->CopyTexture(copy);
+   return true;
+  }
+
+  ITextureView* RenderPipeline::snapshotForEffectMask(
+    IDeviceContext* ctx, ITextureView* sourceSRV)
+  {
+   if (!ctx || !sourceSRV || !impl_->effectMaskSource_.texture ||
+       !impl_->effectMaskSource_.uav || !impl_->effectMaskSource_.srv) {
+    return nullptr;
+   }
+   CopyTextureAttribs copy;
+   copy.pSrcTexture = sourceSRV->GetTexture();
+   copy.SrcTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+   copy.pDstTexture = impl_->effectMaskSource_.texture;
+   copy.DstTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+   ctx->CopyTexture(copy);
+   return impl_->effectMaskSource_.srv;
+  }
+
+  bool RenderPipeline::foldAdjustmentBlend(
     IDeviceContext* ctx,
     ArtifactCore::LayerBlendPipeline* blendPipeline,
     ArtifactCore::BlendMode mode)
- {
+  {
   if (!ctx || !blendPipeline || mode == ArtifactCore::BlendMode::Normal) {
    // Nothing to fold: a Normal adjustment is already fully represented by the
    // pointwise result.
@@ -3174,6 +3513,12 @@ bool RenderPipeline::createTextures(IRenderDevice* device,
   if (!createTextureBundle(device, width, height, format,
                            BIND_RENDER_TARGET | BIND_SHADER_RESOURCE | BIND_UNORDERED_ACCESS,
                            "RenderPipeline.AdjustmentBlend", impl_->adjustmentBlend_))
+  {
+   return false;
+  }
+  if (!createTextureBundle(device, width, height, format,
+                           BIND_RENDER_TARGET | BIND_SHADER_RESOURCE | BIND_UNORDERED_ACCESS,
+                           "RenderPipeline.EffectMaskSource", impl_->effectMaskSource_))
   {
    return false;
   }

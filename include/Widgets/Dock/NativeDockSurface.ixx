@@ -68,6 +68,12 @@ class NativeDockSurface final : public QWidget {
           : QTabBar(tabs), tabs_(tabs) {
       }
 
+      QSize tabSizeHint(int index) const override {
+        QSize size = QTabBar::tabSizeHint(index);
+        size.setHeight((size.height() * 6 + 4) / 5);
+        return size;
+      }
+
     protected:
       void paintEvent(QPaintEvent *event) override {
         QTabBar::paintEvent(event);
@@ -1984,6 +1990,13 @@ private:
     auto *tabs = new DockTabSurface(parent);
     tabs->setDocumentMode(true);
     tabs->setMovable(true);
+    QFont tabFont = tabs->tabBar()->font();
+    if (tabFont.pointSizeF() > 0.0) {
+      tabFont.setPointSizeF(tabFont.pointSizeF() * 1.2);
+    } else if (tabFont.pixelSize() > 0) {
+      tabFont.setPixelSize((tabFont.pixelSize() * 6 + 4) / 5);
+    }
+    tabs->tabBar()->setFont(tabFont);
     tabs->tabBar()->setExpanding(false);
     tabs->tabBar()->setUsesScrollButtons(true);
     tabs->tabBar()->setElideMode(Qt::ElideRight);

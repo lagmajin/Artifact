@@ -1,7 +1,7 @@
 module;
-#include <QList>
 #include <cmath>
 #include <limits>
+#include <memory>
 #include <vector>
 #include <algorithm>
 module Artifact.Audio.Effects.Limiter;
@@ -24,11 +24,6 @@ float sanitizeLimiterSample(float value)
 }
 }
 
-static inline float linearToDb(float linear) {
-    if (linear <= 0.0f) return -96.0f;
-    return 20.0f * std::log10(linear);
-}
-
 static inline float dbToLinear(float db) {
     return std::pow(10.0f, db / 20.0f);
 }
@@ -38,18 +33,61 @@ LimiterEffect::LimiterEffect() {
 }
 
 void LimiterEffect::initializeEngine() {
-    float sr = static_cast<float>(sampleRate_);
-    lookaheadSamples_ = static_cast<int>(0.005f * sr);
-    if (lookaheadSamples_ < 1) lookaheadSamples_ = 1;
-    if (lookaheadSamples_ > kMaxLookahead) lookaheadSamples_ = kMaxLookahead;
-    lookaheadWritePos_ = 0;
+    const float sr = static_cast<float>(sampleRate_);
+    int lookahead = static_cast<int>(0.005f * sr);
+    if (lookahead < 1) lookahead = 1;
+    if (lookahead > kMaxLookahead) lookahead = kMaxLookahead;
+    lookaheadSamples_ = lookahead;
+
+    // 入力 n を書きながら n-L を読むため、n と n-L が同じスロットを共有しない
+    // ことが必要。つまり ringSize_ > L。
+    ringSize_ = lookaheadSamples_ + 1;
+    delayRing_.assign(static_cast<size_t>(ringSize_) * kMaxChannels, 0.0f);
+    writePos_ = 0;
+    queueFront_ = 0;
+    queueBack_  = 0;
     currentGain_ = 1.0f;
 }
 
-void LimiterEffect::process(ArtifactCore::AudioSegment& segment, const ArtifactCore::AudioSegment*) {
-    if (!enabled_ || segment.channelData.isEmpty()) return;
+void LimiterEffect::reinitOnSampleRate() {
+    initializeEngine();
+}
 
-    float sr = static_cast<float>(sampleRate_);
+void LimiterEffect::setSampleRate(int sampleRate) {
+    ArtifactAbstractAudioEffect::setSampleRate(sampleRate);
+    initializeEngine();
+}
+
+// 末尾に追加する。末尾の peak が新しい peak 以下なら pop してから追加する。
+// これにより deque は常に単調減少を保ち、先頭が最大値になる。
+void LimiterEffect::pushPeak(qint64 index, float peak) {
+    int backPrev = (queueBack_ - 1 + kQueueCapacity) % kQueueCapacity;
+    while (queueFront_ != queueBack_ && queuePeak_[backPrev] <= peak) {
+        queueBack_ = backPrev;
+        backPrev = (queueBack_ - 1 + kQueueCapacity) % kQueueCapacity;
+    }
+    queueIndex_[queueBack_] = index;
+    queuePeak_[queueBack_] = peak;
+    queueBack_ = (queueBack_ + 1) % kQueueCapacity;
+}
+
+// [windowStart, +inf) に含まれる peak の最大値。呼び出し側で先に
+// windowStart 未満のエントリを pop しておく。
+float LimiterEffect::windowPeak(qint64 windowStart) {
+    while (queueFront_ != queueBack_ && queueIndex_[queueFront_] < windowStart) {
+        queueFront_ = (queueFront_ + 1) % kQueueCapacity;
+    }
+    return (queueFront_ != queueBack_) ? queuePeak_[queueFront_] : 0.0f;
+}
+
+void LimiterEffect::process(ArtifactCore::AudioSegment& segment,
+                            const ArtifactCore::AudioSegment*) {
+    if (!enabled_ || segment.channelData.isEmpty()) return;
+    // オフライン書き出しとリアルタイム再生で実レートが異なるため、
+    // バスから渡された segment のレートへ同期する。
+    syncSampleRate(segment);
+
+    const float sr = static_cast<float>(sampleRate_);
     int numChannels = static_cast<int>(segment.channelData.size());
     int numSamples = (numChannels > 0)
         ? static_cast<int>(segment.channelData[0].size()) : 0;
@@ -57,54 +95,55 @@ void LimiterEffect::process(ArtifactCore::AudioSegment& segment, const ArtifactC
         numSamples = std::min(numSamples,
                               static_cast<int>(segment.channelData[ch].size()));
     }
-    if (numSamples == 0 || sr <= 0.0f) return;
+    if (numSamples == 0 || sr <= 0.0f || ringSize_ <= 0) return;
 
-    float ceilingLinear = dbToLinear(ceiling_);
-    float inputGainLinear = dbToLinear(inputGain_);
-    float releaseCoeff = std::exp(-1.0f / (releaseMs_ * 0.001f * sr));
+    const int channels = std::min(numChannels, kMaxChannels);
+    const int ring = ringSize_;
+    const qint64 windowLen = static_cast<qint64>(lookaheadSamples_);
 
-    std::vector<float> peakLevels(numSamples, 0.0f);
-    for (int i = 0; i < numSamples; ++i) {
-        float peak = 0.0f;
-        for (int ch = 0; ch < numChannels; ++ch) {
-            const float sample = finiteOr(segment.channelData[ch][i], 0.0f);
-            segment.channelData[ch][i] = sample;
-            float val = std::fabs(sample * inputGainLinear);
-            if (val > peak) peak = val;
-        }
-        peakLevels[i] = peak;
-    }
-
-    std::vector<float> lookaheadPeak(numSamples, 0.0f);
-    {
-        float runningMax = 0.0f;
-        for (int i = numSamples - 1; i >= 0; --i) {
-            runningMax = peakLevels[i];
-            int endLookahead = std::min(i + lookaheadSamples_, numSamples);
-            for (int j = i; j < endLookahead; ++j) {
-                if (peakLevels[j] > runningMax) runningMax = peakLevels[j];
-            }
-            lookaheadPeak[i] = runningMax;
-        }
-    }
+    const float ceilingLinear = dbToLinear(ceiling_);
+    const float inputGainLinear = dbToLinear(inputGain_);
+    const float releaseCoeff = std::exp(-1.0f / (releaseMs_ * 0.001f * sr));
 
     for (int i = 0; i < numSamples; ++i) {
+        // 出力時刻は writePos_ - L。ここから L サンプル前にさかのぼる。
+        const qint64 readIndex = writePos_ - windowLen;
+        const int readPos = static_cast<int>(((readIndex % ring) + ring) % ring);
+
+        // ゲインは [readIndex-L+1, readIndex] の最大 peak から決める。
+        // ここまでに push 済みの peak しか参照しないので causal になる。
+        const float peakNow = windowPeak(readIndex - windowLen + 1);
         float targetGain = 1.0f;
-        if (lookaheadPeak[i] > ceilingLinear) {
-            targetGain = ceilingLinear / lookaheadPeak[i];
+        if (peakNow > ceilingLinear) {
+            targetGain = ceilingLinear / peakNow;
         }
-
         if (targetGain < currentGain_) {
             currentGain_ = targetGain;
         } else {
-            currentGain_ = releaseCoeff * currentGain_ + (1.0f - releaseCoeff) * targetGain;
+            currentGain_ = releaseCoeff * currentGain_ +
+                          (1.0f - releaseCoeff) * targetGain;
+        }
+        const float gain = inputGainLinear * currentGain_;
+
+        // 入力サンプルは先にリングへ退避してから出力を書き戻す。
+        // 逆順にすると元の入力が上書きされて失われる。
+        const int writeIdx = static_cast<int>(((writePos_ % ring) + ring) % ring);
+        float peak = 0.0f;
+        for (int ch = 0; ch < channels; ++ch) {
+            const float sample = finiteOr(segment.channelData[ch][i], 0.0f);
+            delayRing_[static_cast<size_t>(ch) * ring + writeIdx] = sample;
+            const float val = std::fabs(sample * inputGainLinear);
+            if (val > peak) peak = val;
         }
 
-        float totalGain = inputGainLinear * currentGain_;
-        for (int ch = 0; ch < numChannels; ++ch) {
-            segment.channelData[ch][i] = sanitizeLimiterSample(
-                segment.channelData[ch][i] * totalGain);
+        for (int ch = 0; ch < channels; ++ch) {
+            const float delayed =
+                delayRing_[static_cast<size_t>(ch) * ring + readPos];
+            segment.channelData[ch][i] = sanitizeLimiterSample(delayed * gain);
         }
+
+        pushPeak(writePos_, peak);
+        writePos_ += 1;
     }
 }
 
@@ -127,11 +166,6 @@ float LimiterEffect::getParameter(const String& name) const {
     else if (name == "release")    return releaseMs_;
     else if (name == "input_gain") return inputGain_;
     return 0.0f;
-}
-
-void LimiterEffect::setSampleRate(int sampleRate) {
-    sampleRate_ = sampleRate > 0 ? sampleRate : 44100;
-    initializeEngine();
 }
 
 std::unique_ptr<ArtifactAbstractAudioEffect> createLimiterEffect() {

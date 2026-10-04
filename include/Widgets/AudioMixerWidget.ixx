@@ -13,6 +13,8 @@ export module Artifact.Widgets.AudioMixer;
 
 
 import Audio.Mixer;
+import Core.ArtifactString;
+import Audio.Effect;
 import Audio.Bus;
 import Audio.Analyze;
 import Audio.Effect.Spectrum;
@@ -20,8 +22,13 @@ import Memory.SharedPtr;
 import Artifact.Widgets.SpectrumAnalyzer;
 
 class QLabel;
+class QDialog;
 
 export namespace Artifact {
+
+QDialog* createParameterEditor(const ArtifactCore::String& effectName,
+                               ArtifactCore::AudioEffect* effect,
+                               QWidget* parent);
 
 /**
  * @brief エフェクトスロットのウィジェット

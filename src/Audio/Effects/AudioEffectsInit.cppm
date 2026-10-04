@@ -12,6 +12,8 @@ import Artifact.Audio.Effects.Delay;
 import Artifact.Audio.Effects.Chorus;
 import Artifact.Audio.Effects.Limiter;
 import Artifact.Audio.Effects.Distortion;
+import Artifact.Audio.Effects.NoiseGate;
+import Artifact.Audio.Effects.HighLowPass;
 
 namespace Artifact {
 
@@ -25,6 +27,8 @@ struct AudioEffectsInitializer {
         manager.registerEffectFactory("chorus",  &createChorusEffect);
         manager.registerEffectFactory("equalizer",  &createEqualizerEffect);
         manager.registerEffectFactory("distortion", &createDistortionEffect);
+        manager.registerEffectFactory("noise_gate", &createNoiseGateEffect);
+        manager.registerEffectFactory("high_low_pass", &createHighLowPassEffect);
     }
 };
 

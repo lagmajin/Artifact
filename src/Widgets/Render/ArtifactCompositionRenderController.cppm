@@ -3750,19 +3750,23 @@ QRectF effectExpandedLayerBounds(const ArtifactAbstractLayer *layer) {
   return true;
 }
 
-[[maybe_unused]] bool buildGpuSpatialEffectStack(
+// Legacy standalone stack builder.  Superseded by buildGpuRasterEffectPlan,
+  // which also carries the per-effect mask onto the pass; no caller remains.
+  // Kept in step with that function so a future resurrection does not
+  // reintroduce the stale "mask forces the CPU" rule.
+  [[maybe_unused]] bool buildGpuSpatialEffectStack(
     ArtifactAbstractLayer* layer, GpuSpatialEffectStack* outStack) {
   if (!layer || !outStack || layer->isAdjustmentLayer()) return false;
   GpuSpatialEffectStack stack;
   for (const auto& effect : layer->getEffects()) {
-    if (!effect || !effect->isEnabled()) continue;
-    if (effect->pipelineStage() != EffectPipelineStage::Rasterizer ||
-        effect->computeMode() == ComputeMode::CPU || effect->hasEffectRegion() ||
-        effect->hasMask() || effect->effectMaskImageCount() > 0 ||
-        std::abs(effect->mix() - 1.0f) > 1.0e-6f ||
-        !effect->appendGpuSpatialNodes(stack)) {
-      return false;
-    }
+   if (!effect || !effect->isEnabled()) continue;
+   if (effect->pipelineStage() != EffectPipelineStage::Rasterizer ||
+       effect->computeMode() == ComputeMode::CPU || effect->hasEffectRegion() ||
+       effect->effectMaskImageCount() > 0 ||
+       std::abs(effect->mix() - 1.0f) > 1.0e-6f ||
+       !effect->appendGpuSpatialNodes(stack)) {
+     return false;
+   }
   }
   *outStack = stack;
   return stack.count > 0;
@@ -3773,11 +3777,78 @@ enum class GpuRasterPassKind : std::uint8_t {
   Spatial,
 };
 
+// Per-effect mask carried alongside a spatial node.  The mask images are
+  // CPU-resident ImageF32x4_RGBA owned by the effect, so the plan only records
+  // enough to upload and configure them; RenderPipeline::applyEffectMaskComposite
+  // performs the blend after the node runs.
+  //
+  // This mirrors the CPU blend in ArtifactAbstractEffect::applyConfigured:
+  // coverage starts at mix, is zeroed outside the region, is scaled by the
+  // primary mask (with inversion and opacity), and is multiplied by each
+  // additional mask image's alpha.
+  //
+  // Everything here is a fixed-capacity value: the plan is rebuilt every frame
+  // on the render hot path, so a std::vector for the additional masks would be
+  // a per-frame heap allocation. ArtifactAbstractEffect has no hard cap on
+  // addEffectMaskImage, so an overflowing list rejects the plan (CPU path)
+  // rather than silently truncating the blend.
+  struct EffectMaskDescriptor {
+    static constexpr std::size_t kMaxAdditionalMasks = 4;
+
+    const float* primaryData = nullptr;
+    int primaryWidth = 0;
+    int primaryHeight = 0;
+    float opacity = 1.0f;
+    bool inverted = false;
+    float mix = 1.0f;
+    bool regionEnabled = false;
+    float regionX = 0.0f;
+    float regionY = 0.0f;
+    float regionWidth = 0.0f;
+    float regionHeight = 0.0f;
+    std::array<const float*, kMaxAdditionalMasks> additionalData{};
+    std::size_t additionalCount = 0;
+
+    // A pass needs the composite only when at least one of the terms the CPU
+    // blend uses is active. A fully-mixed, unregioned, unmasked effect needs
+    // no blend at all.
+    bool isActive() const {
+      return primaryData != nullptr || additionalCount > 0 || regionEnabled ||
+             mix < 1.0f;
+    }
+
+    bool isValid() const { return isActive(); }
+  };
+
 struct GpuRasterPass {
   GpuRasterPassKind kind = GpuRasterPassKind::Pointwise;
   ArtifactCore::PointwiseEffectStack pointwise;
   GpuSpatialEffectNode spatial;
+  // Set only on a Spatial pass whose effect declared a usable mask.  The
+  // controller applies it immediately after the node's dispatch.
+  EffectMaskDescriptor mask;
 };
+
+// Builds the composite parameters a pass carries. Kept next to the descriptor
+// so the plan and the dispatch cannot drift apart.
+RenderPipeline::EffectMaskCompositeParams
+toCompositeParams(const EffectMaskDescriptor& mask) {
+  RenderPipeline::EffectMaskCompositeParams params;
+  params.primaryMaskData = mask.primaryData;
+  params.primaryMaskWidth = static_cast<Diligent::Uint32>(mask.primaryWidth);
+  params.primaryMaskHeight = static_cast<Diligent::Uint32>(mask.primaryHeight);
+  params.maskOpacity = mask.opacity;
+  params.maskInverted = mask.inverted;
+  params.mix = mask.mix;
+  params.regionEnabled = mask.regionEnabled;
+  params.regionX = mask.regionX;
+  params.regionY = mask.regionY;
+  params.regionWidth = mask.regionWidth;
+  params.regionHeight = mask.regionHeight;
+  params.additionalMaskData = mask.additionalData.data();
+  params.additionalMaskCount = static_cast<Diligent::Uint32>(mask.additionalCount);
+  return params;
+}
 
 struct GpuRasterEffectPlan {
   static constexpr std::size_t kCapacity = GpuSpatialEffectStack::kCapacity;
@@ -3785,19 +3856,21 @@ struct GpuRasterEffectPlan {
   std::size_t count = 0;
 
   bool appendPointwise(ArtifactCore::PointwiseEffectStack&& stack) {
-    if (count >= passes.size()) return false;
-    passes[count].kind = GpuRasterPassKind::Pointwise;
-    passes[count].pointwise = std::move(stack);
-    ++count;
-    return true;
+   if (count >= passes.size()) return false;
+   passes[count].kind = GpuRasterPassKind::Pointwise;
+   passes[count].pointwise = std::move(stack);
+   ++count;
+   return true;
   }
 
-  bool appendSpatial(const GpuSpatialEffectNode& node) {
-    if (count >= passes.size()) return false;
-    passes[count].kind = GpuRasterPassKind::Spatial;
-    passes[count].spatial = node;
-    ++count;
-    return true;
+bool appendSpatial(const GpuSpatialEffectNode& node,
+                     const EffectMaskDescriptor& mask = EffectMaskDescriptor{}) {
+   if (count >= passes.size()) return false;
+   passes[count].kind = GpuRasterPassKind::Spatial;
+   passes[count].spatial = node;
+   passes[count].mask = mask;
+   ++count;
+   return true;
   }
 };
 
@@ -3813,13 +3886,65 @@ bool buildGpuRasterEffectPlan(
   for (const auto& effect : layer->getEffects()) {
     if (!effect || !effect->isEnabled()) continue;
     if (effect->pipelineStage() != EffectPipelineStage::Rasterizer ||
-        effect->computeMode() == ComputeMode::CPU || effect->hasEffectRegion() ||
-        effect->hasMask() || effect->effectMaskImageCount() > 0 ||
-        std::abs(effect->mix() - 1.0f) > 1.0e-6f) {
+        effect->computeMode() == ComputeMode::CPU) {
       return false;
     }
 
+    // Mix, the effect region, the primary mask and the additional mask images
+    // are all carried to the GPU composite, which reproduces the CPU blend in
+    // applyConfigured. Nothing here forces the layer back to the CPU.
+    EffectMaskDescriptor mask;
+    mask.mix = effect->mix();
+    mask.opacity = effect->maskOpacity();
+    mask.inverted = effect->maskInverted();
+    if (effect->hasEffectRegion()) {
+      const QRectF region = effect->effectRegion();
+      mask.regionEnabled = true;
+      mask.regionX = static_cast<float>(region.x());
+      mask.regionY = static_cast<float>(region.y());
+      mask.regionWidth = static_cast<float>(region.width());
+      mask.regionHeight = static_cast<float>(region.height());
+    }
+    if (effect->maskEnabled()) {
+      const auto primary = effect->maskImage();
+      // A mask of a different resolution than the surface is stretched by the
+      // composite shader, matching the CPU path, so only a missing or empty
+      // image disqualifies the layer.
+      if (primary && primary->rgba32fData() && primary->width() > 0 &&
+          primary->height() > 0) {
+        mask.primaryData = primary->rgba32fData();
+        mask.primaryWidth = primary->width();
+        mask.primaryHeight = primary->height();
+      }
+    }
+    // The additional masks are authored at the surface resolution and the CPU
+    // path matches them 1:1, so one whose resolution differs is skipped here
+    // too rather than stretched. The surface size is not known to this
+    // builder, so the check is deferred to the composite, which compares
+    // against the real surface; here only the capacity limit is enforced.
+    if (effect->effectMaskImageCount() >
+        static_cast<int>(EffectMaskDescriptor::kMaxAdditionalMasks)) {
+      return false;
+    }
+    for (int index = 0; index < effect->effectMaskImageCount(); ++index) {
+      const auto extra = effect->effectMaskImage(index);
+      if (!extra || !extra->rgba32fData() || extra->width() <= 0 ||
+          extra->height() <= 0) {
+        continue;
+      }
+      mask.additionalData[mask.additionalCount++] = extra->rgba32fData();
+    }
+
     if (effect->gpuRasterEffectDomain() == GpuRasterEffectDomain::Pointwise) {
+      // Pointwise runs through LayerBlendPipeline, whose mask-mix contract is a
+      // separate one: a single-layer mask carried in the reserved
+      // kMaskMixParameterSlot, not this per-effect blend. Applying this
+      // effect's mask on top would double-apply a layer mask and ignore the
+      // effect's own, so a pointwise effect that needs the per-effect blend
+      // stays on the CPU.
+      if (mask.isActive()) {
+        return false;
+      }
       if (!effect->appendGpuPointwiseNodes(pointwise, parameterSlot) ||
           parameterSlot >= ArtifactCore::PointwiseEffectStack::kParameterSlotCount) {
         return false;
@@ -3839,8 +3964,15 @@ bool buildGpuRasterEffectPlan(
     if (!effect->appendGpuSpatialNodes(spatial) || spatial.count == 0) {
       return false;
     }
+    // One effect can contribute several nodes (Blur emits one separable node
+    // per iteration). Its mask must blend the FINAL result against the
+    // original source, so it rides on the last node only; attaching it to
+    // every node would composite an intermediate.
     for (std::size_t index = 0; index < spatial.count; ++index) {
-      if (!plan.appendSpatial(spatial.nodes[index])) return false;
+      const bool isLast = (index + 1 == spatial.count);
+      if (!plan.appendSpatial(spatial.nodes[index], isLast ? mask : EffectMaskDescriptor{})) {
+        return false;
+      }
     }
   }
   if (!pointwise.nodes().empty() && !plan.appendPointwise(std::move(pointwise))) {
@@ -12829,6 +12961,27 @@ public:
     if (rasterEffectPlan && rasterEffectPlan->count > 0) {
       const auto context = renderer_->immediateContext();
       if (!context) return nullptr;
+      // The mask composite blends the finished effect against the UNPROCESSED
+      // layer, so the original is snapshotted into accumulationTexture before
+      // any pass overwrites layerFloat_. The snapshot is a GPU-to-GPU copy and
+      // is only taken when a pass actually carries a mask.
+      ITextureView* effectMaskSourceSRV = nullptr;
+      bool anyPassMasked = false;
+      for (std::size_t index = 0; index < rasterEffectPlan->count; ++index) {
+        if (rasterEffectPlan->passes[index].mask.isValid()) {
+          anyPassMasked = true;
+          break;
+        }
+      }
+      if (anyPassMasked) {
+        effectMaskSourceSRV = renderPipeline.snapshotForEffectMask(
+            context.RawPtr(), layerFloatSRV);
+        if (!effectMaskSourceSRV) {
+          qWarning() << "[CompositionView] effect mask source snapshot failed"
+                     << "layer=" << layer->id().toString();
+          return nullptr;
+        }
+      }
       for (std::size_t index = 0; index < rasterEffectPlan->count; ++index) {
         const auto& pass = rasterEffectPlan->passes[index];
         if (pass.kind == GpuRasterPassKind::Pointwise) {
@@ -12858,6 +13011,36 @@ public:
                        << "layer=" << layer->id().toString()
                        << "node=" << static_cast<int>(pass.spatial.kind);
             return nullptr;
+          }
+          if (pass.mask.isValid()) {
+            // temp_ holds the snapshot taken above and is free again now that
+            // the node has consumed it as its scratch target, so it doubles as
+            // this composite's output before being copied back.
+            RenderPipeline::EffectMaskCompositeParams compositeParams;
+            compositeParams.primaryMaskData = pass.mask.primaryData;
+            compositeParams.primaryMaskWidth =
+                static_cast<Diligent::Uint32>(pass.mask.primaryWidth);
+            compositeParams.primaryMaskHeight =
+                static_cast<Diligent::Uint32>(pass.mask.primaryHeight);
+            compositeParams.maskOpacity = pass.mask.opacity;
+            compositeParams.maskInverted = pass.mask.inverted;
+            compositeParams.mix = pass.mask.mix;
+            compositeParams.regionEnabled = pass.mask.regionEnabled;
+            compositeParams.regionX = pass.mask.regionX;
+            compositeParams.regionY = pass.mask.regionY;
+            compositeParams.regionWidth = pass.mask.regionWidth;
+            compositeParams.regionHeight = pass.mask.regionHeight;
+            compositeParams.additionalMaskData = pass.mask.additionalData.data();
+            compositeParams.additionalMaskCount =
+                static_cast<Diligent::Uint32>(pass.mask.additionalCount);
+            if (!renderPipeline.applyEffectMaskComposite(
+                    context.RawPtr(), layerFloatSRV, effectMaskSourceSRV,
+                    tempUAV, layerFloatUAV, compositeParams)) {
+              qWarning() << "[CompositionView] effect mask composite failed; "
+                            "rejecting the layer rather than dropping the mask"
+                         << "layer=" << layer->id().toString();
+              return nullptr;
+            }
           }
         }
       }
@@ -35763,18 +35946,24 @@ bool CompositionRenderController::isEditingShapePathVertices() const {
 }
 
 void CompositionRenderController::setPointerPressure(float pressure) {
-  if (auto *brushTool = ArtifactApplicationManager::instance()
-                            ? ArtifactApplicationManager::instance()->brushTool()
-                            : nullptr) {
+  auto *app = ArtifactApplicationManager::instance();
+  if (!app) return;
+  if (auto *brushTool = app->brushTool()) {
     brushTool->setPressure(pressure);
+  }
+  if (auto *motionSketchTool = app->motionSketchTool()) {
+    motionSketchTool->setPressure(pressure);
   }
 }
 
 void CompositionRenderController::setPointerTilt(float tiltX, float tiltY) {
-  if (auto *brushTool = ArtifactApplicationManager::instance()
-                            ? ArtifactApplicationManager::instance()->brushTool()
-                            : nullptr) {
+  auto *app = ArtifactApplicationManager::instance();
+  if (!app) return;
+  if (auto *brushTool = app->brushTool()) {
     brushTool->setTilt(tiltX, tiltY);
+  }
+  if (auto *motionSketchTool = app->motionSketchTool()) {
+    motionSketchTool->setTilt(tiltX, tiltY);
   }
 }
 
@@ -49116,16 +49305,21 @@ void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
           acceleration = velocity - previousVelocity;
         }
         const QFont sketchFont(QStringLiteral("sans-serif"), 9);
-        renderer_->drawSolidRect(8.0f, 8.0f, 326.0f, 18.0f,
+        renderer_->drawSolidRect(8.0f, 8.0f, 404.0f, 18.0f,
                                  {0.0f, 0.0f, 0.0f, 0.68f}, 0.85f);
+        const QString pressureLabel =
+            motionSketch->pressureAffectsOpacity()
+                ? QString::number(motionSketch->pressure(), 'f', 2)
+                : QStringLiteral("OFF");
         renderer_->drawText(
-            QRectF(12.0f, 8.0f, 318.0f, 18.0f),
-            QStringLiteral("Sketch %1  v %2  a %3  smooth %4  %5fps  WF:%6  BG:%7")
+            QRectF(12.0f, 8.0f, 396.0f, 18.0f),
+            QStringLiteral("Sketch %1  v %2  a %3  smooth %4  %5fps  P:%6  WF:%7  BG:%8")
                 .arg(QString::number(samples.size()))
                 .arg(QString::number(velocity, 'f', 1))
                 .arg(QString::number(acceleration, 'f', 1))
                 .arg(QString::number(motionSketch->smoothing(), 'f', 2))
                 .arg(QString::number(motionSketch->sampleRate(), 'f', 0))
+                .arg(pressureLabel)
                 .arg(motionSketch->showWireframe() ? QStringLiteral("ON")
                                                     : QStringLiteral("OFF"))
                 .arg(motionSketch->showBackground() ? QStringLiteral("ON")

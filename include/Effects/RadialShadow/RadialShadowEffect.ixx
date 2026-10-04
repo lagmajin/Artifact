@@ -21,6 +21,10 @@ private:
     float opacity_ = 0.75f;
     float centerX_ = 0.5f;
     float centerY_ = 0.5f;
+    // AE's Color Influence: how much of the layer's own color bleeds into a
+    // semitransparent part of the shadow.
+    float colorInfluence_ = 0.0f;
+    bool shadowOnly_ = false;
     void syncImpls();
 
 public:
@@ -39,6 +43,10 @@ public:
     void setCenterX(float v);
     float centerY() const;
     void setCenterY(float v);
+    float colorInfluence() const;
+    void setColorInfluence(float v);
+    bool shadowOnly() const;
+    void setShadowOnly(bool v);
 
     std::vector<ArtifactCore::AbstractProperty> getProperties() const override;
     void setPropertyValue(const UniString& name, const QVariant& value) override;

@@ -38,6 +38,8 @@ public:
     float opacity_ = 0.75f;
     float centerX_ = 0.5f;
     float centerY_ = 0.5f;
+    float colorInfluence_ = 0.0f;
+    bool shadowOnly_ = false;
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
         auto& srcImage = src.image();
@@ -58,6 +60,10 @@ public:
         const float shadowG = color_.greenF();
         const float shadowB = color_.blueF();
         const float opacity = std::clamp(opacity_, 0.0f, 1.0f);
+        // Color Influence blends the source pixel's own color into the shadow
+        // as AE's Glass Edge mode does. 0 keeps the pure Shadow Color, which is
+        // the current behaviour and therefore the default.
+        const float influence = std::clamp(colorInfluence_, 0.0f, 1.0f);
         ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
             cv::Vec4f* row = mat.ptr<cv::Vec4f>(y);
             for (int x = 0; x < w; ++x) {
@@ -67,9 +73,20 @@ public:
                 float shadow = dist / std::max(1.0f, distance_ + softness_);
                 float alpha = 1.0f - std::clamp(shadow, 0.0f, 1.0f);
                 alpha *= opacity;
-                row[x][0] = std::clamp(row[x][0] + shadowR * alpha, 0.0f, 1.0f);
-                row[x][1] = std::clamp(row[x][1] + shadowG * alpha, 0.0f, 1.0f);
-                row[x][2] = std::clamp(row[x][2] + shadowB * alpha, 0.0f, 1.0f);
+                const cv::Vec4f original = row[x];
+                const float srcR = influence * original[0];
+                const float srcG = influence * original[1];
+                const float srcB = influence * original[2];
+                const float tintR = srcR + (1.0f - influence) * shadowR;
+                const float tintG = srcG + (1.0f - influence) * shadowG;
+                const float tintB = srcB + (1.0f - influence) * shadowB;
+                if (shadowOnly_) {
+                    row[x] = cv::Vec4f(tintR * alpha, tintG * alpha, tintB * alpha, alpha);
+                    continue;
+                }
+                row[x][0] = std::clamp(row[x][0] + tintR * alpha, 0.0f, 1.0f);
+                row[x][1] = std::clamp(row[x][1] + tintG * alpha, 0.0f, 1.0f);
+                row[x][2] = std::clamp(row[x][2] + tintB * alpha, 0.0f, 1.0f);
                 row[x][3] = std::clamp(row[x][3] + alpha, 0.0f, 1.0f);
             }
         });
@@ -98,11 +115,11 @@ public:
         static Diligent::ShaderResourceVariableDesc vars[]={{Diligent::SHADER_TYPE_COMPUTE,"RadialShadowParams",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},{Diligent::SHADER_TYPE_COMPUTE,"g_InputTexture",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},{Diligent::SHADER_TYPE_COMPUTE,"g_OutputTexture",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC}};
         if(!pipelineReady_){ArtifactCore::ComputePipelineDesc d;d.name="RadialShadow/PSO";d.shaderSource=kHlsl;d.entryPoint="main";d.sourceLanguage=Diligent::SHADER_SOURCE_LANGUAGE_HLSL;d.variables=vars;d.variableCount=3;d.defaultVariableType=Diligent::SHADER_RESOURCE_VARIABLE_TYPE_STATIC;if(!executor_->build(d)||!executor_->createShaderResourceBinding(true)||!executor_->setBuffer("RadialShadowParams",paramsCB_)){applyCPU(src,dst);return;}pipelineReady_=true;}
         Diligent::RefCntAutoPtr<Diligent::ITexture> input;if(!createTexture(src,&input,"RadialShadow/Input")){applyCPU(src,dst);return;}auto od=input->GetDesc();od.Usage=Diligent::USAGE_DEFAULT;od.BindFlags=Diligent::BIND_UNORDERED_ACCESS|Diligent::BIND_SHADER_RESOURCE;od.Name="RadialShadow/Output";if(!outputTex_||outputTex_->GetDesc().Width!=od.Width||outputTex_->GetDesc().Height!=od.Height||outputTex_->GetDesc().Format!=od.Format||outputTex_->GetDesc().BindFlags!=od.BindFlags){outputTex_.Release();device_->CreateTexture(od,nullptr,&outputTex_);}if(!outputTex_){applyCPU(src,dst);return;}
-        const auto& c=cpuImpl_;ParamsCB p{c.color_.redF(),c.color_.greenF(),c.color_.blueF(),c.centerX_,c.centerY_,c.distance_,c.softness_,c.opacity_};void*mapped=nullptr;context_->MapBuffer(paramsCB_,Diligent::MAP_WRITE,Diligent::MAP_FLAG_DISCARD,mapped);if(!mapped){applyCPU(src,dst);return;}std::memcpy(mapped,&p,sizeof(p));context_->UnmapBuffer(paramsCB_,Diligent::MAP_WRITE);if(!executor_->setTextureView("g_InputTexture",input->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE))||!executor_->setTextureView("g_OutputTexture",outputTex_->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))){applyCPU(src,dst);return;}executor_->dispatch(context_,ArtifactCore::ComputeExecutor::makeDispatchAttribs(od.Width,od.Height,1,8,8,1),Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);if(!readback(device_,context_,outputTex_,dst,src.image().colorDescriptor(),"RadialShadow/Readback")){applyCPU(src,dst);}
+        const auto& c=cpuImpl_;ParamsCB p{c.color_.redF(),c.color_.greenF(),c.color_.blueF(),c.centerX_,c.centerY_,c.distance_,c.softness_,c.opacity_,c.colorInfluence_,c.shadowOnly_?1.0f:0.0f};void*mapped=nullptr;context_->MapBuffer(paramsCB_,Diligent::MAP_WRITE,Diligent::MAP_FLAG_DISCARD,mapped);if(!mapped){applyCPU(src,dst);return;}std::memcpy(mapped,&p,sizeof(p));context_->UnmapBuffer(paramsCB_,Diligent::MAP_WRITE);if(!executor_->setTextureView("g_InputTexture",input->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE))||!executor_->setTextureView("g_OutputTexture",outputTex_->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))){applyCPU(src,dst);return;}executor_->dispatch(context_,ArtifactCore::ComputeExecutor::makeDispatchAttribs(od.Width,od.Height,1,8,8,1),Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);if(!readback(device_,context_,outputTex_,dst,src.image().colorDescriptor(),"RadialShadow/Readback")){applyCPU(src,dst);}
     }
 private:
-    struct ParamsCB{float r,g,b,cx,cy,distance,softness,opacity;};
-    static constexpr const char* kHlsl=R"(Texture2D<float4> g_InputTexture:register(t0);RWTexture2D<float4> g_OutputTexture:register(u0);cbuffer RadialShadowParams:register(b0){float3 g_Color;float g_CenterX;float g_CenterY;float g_Distance;float g_Softness;float g_Opacity;}[numthreads(8,8,1)]void main(uint3 id:SV_DispatchThreadID){uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;float4 px=g_InputTexture[id.xy];float2 center=float2(g_CenterX*w,g_CenterY*h);float2 d=float2(id.xy)-center;float dist=length(d);float shadow=dist/max(1.0,g_Distance+g_Softness);float a=(1.0-saturate(shadow))*g_Opacity;px.rgb=saturate(px.rgb+g_Color*a);px.a=saturate(px.a+a);g_OutputTexture[id.xy]=px;})";
+    struct ParamsCB{float r,g,b,cx,cy,distance,softness,opacity,colorInfluence,shadowOnly;};
+    static constexpr const char* kHlsl=R"(Texture2D<float4> g_InputTexture:register(t0);RWTexture2D<float4> g_OutputTexture:register(u0);cbuffer RadialShadowParams:register(b0){float3 g_Color;float g_CenterX;float g_CenterY;float g_Distance;float g_Softness;float g_Opacity;float g_ColorInfluence;float g_ShadowOnly;}[numthreads(8,8,1)]void main(uint3 id:SV_DispatchThreadID){uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;float4 px=g_InputTexture[id.xy];float2 center=float2(g_CenterX*w,g_CenterY*h);float2 d=float2(id.xy)-center;float dist=length(d);float shadow=dist/max(1.0,g_Distance+g_Softness);float a=(1.0-saturate(shadow))*g_Opacity;float inf=saturate(g_ColorInfluence);float3 tint=px.rgb*inf+g_Color.rgb*(1.0-inf);if(g_ShadowOnly>0.5){g_OutputTexture[id.xy]=float4(tint*a,a);return;}px.rgb=saturate(px.rgb+tint*a);px.a=saturate(px.a+a);g_OutputTexture[id.xy]=px;})";
     bool createTexture(const ImageF32x4RGBAWithCache&src,Diligent::ITexture**out,const char*name){const auto&i=src.image();const float*data=i.rgba32fData();if(!out||!data||i.width()<=0||i.height()<=0)return false;Diligent::TextureDesc d;d.Type=Diligent::RESOURCE_DIM_TEX_2D;d.Width=i.width();d.Height=i.height();d.Format=Diligent::TEX_FORMAT_RGBA32_FLOAT;d.ArraySize=1;d.MipLevels=1;d.SampleCount=1;d.Usage=Diligent::USAGE_IMMUTABLE;d.BindFlags=Diligent::BIND_SHADER_RESOURCE;d.Name=name;Diligent::TextureSubResData sub{};sub.pData=data;sub.Stride=static_cast<Diligent::Uint64>(i.width())*sizeof(float)*4ull;Diligent::TextureData init{};init.pSubResources=&sub;init.NumSubresources=1;device_->CreateTexture(d,&init,out);return *out!=nullptr;}
     static bool readback(Diligent::IRenderDevice*dev,Diligent::IDeviceContext*ctx,Diligent::ITexture*src,ImageF32x4RGBAWithCache&dst,const ArtifactCore::SurfaceColorDescriptor& colorDescriptor,const char*name){if(!dev||!ctx||!src)return false;auto d=src->GetDesc();Diligent::TextureDesc s;s.Type=Diligent::RESOURCE_DIM_TEX_2D;s.Width=d.Width;s.Height=d.Height;s.Format=d.Format;s.ArraySize=1;s.MipLevels=1;s.SampleCount=1;s.Usage=Diligent::USAGE_STAGING;s.CPUAccessFlags=Diligent::CPU_ACCESS_READ;s.Name=name;Diligent::RefCntAutoPtr<Diligent::ITexture>staging;dev->CreateTexture(s,nullptr,&staging);if(!staging)return false;ctx->CopyTexture(Diligent::CopyTextureAttribs(src,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,staging,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION));ctx->Flush();ctx->WaitForIdle();Diligent::MappedTextureSubresource m{};ctx->MapTextureSubresource(staging,0,0,Diligent::MAP_READ,Diligent::MAP_FLAG_NONE,nullptr,m);if(!m.pData||!m.Stride)return false;cv::Mat temp((int)d.Height,(int)d.Width,CV_32FC4,m.pData,m.Stride);dst.image().setFromCVMat(temp,colorDescriptor);ctx->UnmapTextureSubresource(staging,0,0);return true;}
 };
@@ -127,6 +144,10 @@ float RadialShadowEffect::centerX() const { return centerX_; }
 void RadialShadowEffect::setCenterX(float v) { centerX_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.5f; syncImpls(); }
 float RadialShadowEffect::centerY() const { return centerY_; }
 void RadialShadowEffect::setCenterY(float v) { centerY_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.5f; syncImpls(); }
+float RadialShadowEffect::colorInfluence() const { return colorInfluence_; }
+void RadialShadowEffect::setColorInfluence(float v) { colorInfluence_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.0f; syncImpls(); }
+bool RadialShadowEffect::shadowOnly() const { return shadowOnly_; }
+void RadialShadowEffect::setShadowOnly(bool v) { shadowOnly_ = v; syncImpls(); }
 
 void RadialShadowEffect::syncImpls() {
     if (auto* c = dynamic_cast<RadialShadowEffectCPUImpl*>(cpuImpl().get())) {
@@ -136,6 +157,8 @@ void RadialShadowEffect::syncImpls() {
         c->opacity_ = opacity_;
         c->centerX_ = centerX_;
         c->centerY_ = centerY_;
+        c->colorInfluence_ = colorInfluence_;
+        c->shadowOnly_ = shadowOnly_;
     }
     if (auto* g = dynamic_cast<RadialShadowEffectGPUImpl*>(gpuImpl().get())) {
         g->cpuImpl_.color_ = color_;
@@ -144,17 +167,67 @@ void RadialShadowEffect::syncImpls() {
         g->cpuImpl_.opacity_ = opacity_;
         g->cpuImpl_.centerX_ = centerX_;
         g->cpuImpl_.centerY_ = centerY_;
+        g->cpuImpl_.colorInfluence_ = colorInfluence_;
+        g->cpuImpl_.shadowOnly_ = shadowOnly_;
     }
 }
 
 std::vector<AbstractProperty> RadialShadowEffect::getProperties() const {
     std::vector<AbstractProperty> props;
-    auto& c = props.emplace_back(); c.setName("Color"); c.setType(PropertyType::Color); c.setValue(color_);
-    auto& d = props.emplace_back(); d.setName("Distance"); d.setType(PropertyType::Float); d.setValue(distance_);
-    auto& s = props.emplace_back(); s.setName("Softness"); s.setType(PropertyType::Float); s.setValue(softness_);
-    auto& o = props.emplace_back(); o.setName("Opacity"); o.setType(PropertyType::Float); o.setValue(opacity_);
-    auto& cx = props.emplace_back(); cx.setName("Center X"); cx.setType(PropertyType::Float); cx.setValue(centerX_);
-    auto& cy = props.emplace_back(); cy.setName("Center Y"); cy.setType(PropertyType::Float); cy.setValue(centerY_);
+    props.reserve(8);
+
+    auto& c = props.emplace_back();
+    c.setName("Color"); c.setDisplayLabel(QStringLiteral("Shadow Color"));
+    c.setType(PropertyType::Color); c.setValue(color_);
+    c.setDefaultValue(QColor(0, 0, 0, 180));
+    c.setTooltip(QStringLiteral("Tint of the shadow cast from the point light."));
+
+    auto& o = props.emplace_back();
+    o.setName("Opacity"); o.setType(PropertyType::Float); o.setValue(opacity_);
+    o.setDefaultValue(0.75);
+    o.setHardRange(0.0, 1.0); o.setSoftRange(0.0, 1.0); o.setStep(0.01);
+    o.setTooltip(QStringLiteral("Opacity of the generated shadow."));
+
+    auto& cx = props.emplace_back();
+    cx.setName("Center X"); cx.setDisplayLabel(QStringLiteral("Light Source X"));
+    cx.setType(PropertyType::Float); cx.setValue(centerX_);
+    cx.setDefaultValue(0.5);
+    cx.setHardRange(0.0, 1.0); cx.setSoftRange(0.0, 1.0); cx.setStep(0.01);
+    cx.setTooltip(QStringLiteral("Horizontal position of the point light, in layer coordinates."));
+
+    auto& cy = props.emplace_back();
+    cy.setName("Center Y"); cy.setDisplayLabel(QStringLiteral("Light Source Y"));
+    cy.setType(PropertyType::Float); cy.setValue(centerY_);
+    cy.setDefaultValue(0.5);
+    cy.setHardRange(0.0, 1.0); cy.setSoftRange(0.0, 1.0); cy.setStep(0.01);
+    cy.setTooltip(QStringLiteral("Vertical position of the point light, in layer coordinates."));
+
+    auto& d = props.emplace_back();
+    d.setName("Distance"); d.setDisplayLabel(QStringLiteral("Projection Distance"));
+    d.setType(PropertyType::Float); d.setValue(distance_);
+    d.setDefaultValue(10.0);
+    d.setHardRange(0.0, 4096.0); d.setSoftRange(0.0, 256.0); d.setStep(0.1);
+    d.setUnit(QStringLiteral("px"));
+    d.setTooltip(QStringLiteral("Distance from the layer to the receiving surface; the shadow grows with it."));
+
+    auto& s = props.emplace_back();
+    s.setName("Softness"); s.setType(PropertyType::Float); s.setValue(softness_);
+    s.setDefaultValue(8.0);
+    s.setHardRange(0.0, 2048.0); s.setSoftRange(0.0, 128.0); s.setStep(0.1);
+    s.setUnit(QStringLiteral("px"));
+    s.setTooltip(QStringLiteral("Softness of the shadow edge."));
+
+    auto& ci = props.emplace_back();
+    ci.setName("Color Influence"); ci.setType(PropertyType::Float); ci.setValue(colorInfluence_);
+    ci.setDefaultValue(0.0);
+    ci.setHardRange(0.0, 1.0); ci.setSoftRange(0.0, 1.0); ci.setStep(0.01);
+    ci.setTooltip(QStringLiteral("Fraction of the layer's own color that shows through the shadow. 0 uses Shadow Color alone; this is AE's Glass Edge behaviour."));
+
+    auto& only = props.emplace_back();
+    only.setName("Shadow Only"); only.setType(PropertyType::Boolean); only.setValue(shadowOnly_);
+    only.setDefaultValue(false);
+    only.setTooltip(QStringLiteral("Render only the shadow, without the source image."));
+
     return props;
 }
 
@@ -166,6 +239,9 @@ void RadialShadowEffect::setPropertyValue(const UniString& n, const QVariant& v)
     else if (k == "Opacity") setOpacity(v.toFloat());
     else if (k == "Center X") setCenterX(v.toFloat());
     else if (k == "Center Y") setCenterY(v.toFloat());
+    else if (k == "Color Influence") setColorInfluence(v.toFloat());
+    else if (k == "Shadow Only") setShadowOnly(v.toBool());
+    else setCommonPropertyValue(k, v);
 }
 
 } // namespace Artifact

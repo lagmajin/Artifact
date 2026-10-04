@@ -202,10 +202,11 @@ public:
         static Diligent::ShaderResourceVariableDesc v[]={
             {Diligent::SHADER_TYPE_COMPUTE,"OFB",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
             {Diligent::SHADER_TYPE_COMPUTE,"InTex",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+            {Diligent::SHADER_TYPE_COMPUTE,"PrevTex",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
             {Diligent::SHADER_TYPE_COMPUTE,"OutTex",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC}};
 
         if(!ok_){ArtifactCore::ComputePipelineDesc pd;pd.name="OFB";pd.shaderSource=kHLSL;pd.entryPoint="main";
-            pd.sourceLanguage=Diligent::SHADER_SOURCE_LANGUAGE_HLSL;pd.variables=v;pd.variableCount=3;
+            pd.sourceLanguage=Diligent::SHADER_SOURCE_LANGUAGE_HLSL;pd.variables=v;pd.variableCount=4;
             pd.defaultVariableType=Diligent::SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
             if(!ex_->build(pd)||!ex_->createShaderResourceBinding(true)||!ex_->setBuffer("OFB",cb_)){cpu.applyCPU(src,dst);return;}
             ok_=true;}
@@ -214,12 +215,25 @@ public:
         auto od=in->GetDesc();od.Usage=Diligent::USAGE_DEFAULT;od.BindFlags=Diligent::BIND_UNORDERED_ACCESS|Diligent::BIND_SHADER_RESOURCE;
         Diligent::RefCntAutoPtr<Diligent::ITexture> ot;d->CreateTexture(od,nullptr,&ot);if(!ot){cpu.applyCPU(src,dst);return;}
 
+        // The Lucas-Kanade temporal derivative needs the previous frame, so the
+        // kernel reads two textures instead of subtracting a pixel from itself.
+        // Size mismatch with the current frame is tolerated the same way the CPU
+        // path tolerates it: sample the previous frame clamped to its own extent.
+        ImageF32x4RGBAWithCache prev;
+        bool havePrev=context_.sampler
+            &&context_.sampler->sampleCurrentLayerFrameRelative(-1,prev)
+            &&prev.width()>0&&prev.image().rgba32fData();
+        Diligent::RefCntAutoPtr<Diligent::ITexture> pt;
+        if(havePrev&&!createTexFromImage(prev,d,c,&pt))havePrev=false;
+
         void* m=nullptr;c->MapBuffer(cb_,Diligent::MAP_WRITE,Diligent::MAP_FLAG_DISCARD,m);
-        if(m){float fp[8]={cpu.blurAmount_,cpu.flowSmoothness_,cpu.velocityScale_,(float)cpu.sampleCount_,(float)od.Width,(float)od.Height,0,0};
+        if(m){float fp[8]={cpu.blurAmount_,cpu.flowSmoothness_,cpu.velocityScale_,(float)cpu.sampleCount_,(float)od.Width,(float)od.Height,
+                (float)(havePrev?prev.width():0),(float)(havePrev?prev.height():0)};
             std::memcpy(m,fp,sizeof(fp));c->UnmapBuffer(cb_,Diligent::MAP_WRITE);}
 
         if(!ex_->setTextureView("InTex",in->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE))||
-           !ex_->setTextureView("OutTex",ot->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))){cpu.applyCPU(src,dst);return;}
+           !ex_->setTextureView("OutTex",ot->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))||
+           (havePrev&&!ex_->setTextureView("PrevTex",pt->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)))){cpu.applyCPU(src,dst);return;}
 
         auto at=ArtifactCore::ComputeExecutor::makeDispatchAttribs(od.Width,od.Height,1,8,8,1);
         ex_->dispatch(c,at,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
@@ -229,21 +243,27 @@ public:
 
 private:
     static constexpr const char* kHLSL=R"(
-cbuffer OFB:register(b0){float blurAmount,flowSmoothness,velocityScale,sampleCount,imageWidth,imageHeight,pad0,pad1;}
+cbuffer OFB:register(b0){float blurAmount,flowSmoothness,velocityScale,sampleCount,imageWidth,imageHeight,prevWidth,prevHeight;}
 Texture2D<float4> InTex:register(t0);
+Texture2D<float4> PrevTex:register(t1);
 RWTexture2D<float4> OutTex:register(u0);
+
+float luma(float4 c){return c.r*0.299+c.g*0.587+c.b*0.114;}
 
 [numthreads(8,8,1)]void main(uint3 id:SV_DispatchThreadID){
     if(id.x>=(uint)imageWidth||id.y>=(uint)imageHeight)return;
     float4 cur=InTex[id.xy];OutTex[id.xy]=cur;
-    if(blurAmount<=0.001||sampleCount<1)return;
+    if(blurAmount<=0.001||sampleCount<1||prevWidth<=0||prevHeight<=0)return;
     int2 sz=int2((int)imageWidth,(int)imageHeight);
+    int2 psz=int2((int)prevWidth,(int)prevHeight);
     float fx=0,fxx=0,fxy=0,fyy=0,fxt=0,fyt=0;
     for(int dy=-2;dy<=2;++dy)for(int dx=-2;dx<=2;++dx){
         int2 cp=clamp(int2(id.xy)+int2(dx,dy),int2(0,0),sz-1);
-        float lx=InTex[int2(min(cp.x+1,sz.x-1),cp.y)].r-InTex[int2(max(cp.x-1,0),cp.y)].r;
-        float ly=InTex[int2(cp.x,min(cp.y+1,sz.y-1))].r-InTex[int2(cp.x,max(cp.y-1,0))].r;
-        float lt=(InTex[cp].r*0.299+InTex[cp].g*0.587+InTex[cp].b*0.114-(InTex[cp].r*0.299+InTex[cp].g*0.587+InTex[cp].b*0.114));
+        float4 cc=InTex[cp];
+        float4 pc=PrevTex[clamp(cp,int2(0,0),psz-1)];
+        float lx=(luma(InTex[int2(min(cp.x+1,sz.x-1),cp.y)])-luma(InTex[int2(max(cp.x-1,0),cp.y)]))*0.5;
+        float ly=(luma(InTex[int2(cp.x,min(cp.y+1,sz.y-1))])-luma(InTex[int2(cp.x,max(cp.y-1,0))]))*0.5;
+        float lt=luma(cc)-luma(pc);
         fxx+=lx*lx;fyy+=ly*ly;fxy+=lx*ly;fxt+=lx*lt;fyt+=ly*lt;
     }
     float d=fxx*fyy-fxy*fxy;float vx=0,vy=0;

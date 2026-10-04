@@ -252,13 +252,34 @@ QTransform ArtifactAbstractLayer::getLocalTransform() const {
     return animatedValue.isValid() ? animatedValue.toDouble() : fallback;
   };
 
+  // Spatial auto-Bezier is the base; expressions, envelopes and animation
+  // stacks layer on top of it. See getLocalTransformAt() for the rationale.
   const bool useSpatialPosition = !hasTransVar && t.hasPositionSpatialTangents();
-  double positionX = useSpatialPosition
-      ? t.snapshotAt(time).positionX
-      : evaluateDouble(QStringLiteral("transform.position.x"), t.positionX());
-  double positionY = useSpatialPosition
-      ? t.snapshotAt(time).positionY
-      : evaluateDouble(QStringLiteral("transform.position.y"), t.positionY());
+  double positionX = t.snapshotAt(time).positionX;
+  double positionY = t.snapshotAt(time).positionY;
+  if (useSpatialPosition) {
+    auto applySpatialPositionOverlay = [this, &time, frame](const char *channel, double &value) {
+      const QString path = QString::fromLatin1(channel);
+      if (const auto handle = getProperty(path)) {
+        const auto &property = *handle;
+        if (property.hasExpression() || property.hasEnvelopes() ||
+            property.hasExternalOverride()) {
+          const QVariant animatedValue = evaluateAnimatedPropertyValue(property, time);
+          if (animatedValue.isValid()) value = animatedValue.toDouble();
+        }
+      }
+      if (const auto *stack = animationLayerStack(path);
+          stack && stack->layerCount() > 0) {
+        value = stack->evaluateWithBase(FramePosition(frame),
+                                        static_cast<float>(value));
+      }
+    };
+    applySpatialPositionOverlay("transform.position.x", positionX);
+    applySpatialPositionOverlay("transform.position.y", positionY);
+  } else {
+    positionX = evaluateDouble(QStringLiteral("transform.position.x"), positionX);
+    positionY = evaluateDouble(QStringLiteral("transform.position.y"), positionY);
+  }
   double rotation =
       evaluateDouble(QStringLiteral("transform.rotation"), t.rotation());
   double scaleX =
@@ -580,24 +601,35 @@ QTransform ArtifactAbstractLayer::getLocalTransformAt(int64_t frameNumber) const
     return evaluated;
   };
 
+  // Spatial auto-Bezier is the base value here; expressions, envelopes and
+  // animation stacks are layered on top of it below. They must not be read as
+  // an override that replaces the base, otherwise the position the viewport
+  // draws (which uses the spatial arc) and the position that renders diverge.
   const bool useSpatialPosition = !hasTransVar && t.hasPositionSpatialTangents();
-  double positionX = useSpatialPosition
-      ? t.snapshotAt(time).positionX
-      : evaluateDouble(QStringLiteral("transform.position.x"), t.positionXAt(time));
-  double positionY = useSpatialPosition
-      ? t.snapshotAt(time).positionY
-      : evaluateDouble(QStringLiteral("transform.position.y"), t.positionYAt(time));
+  double positionX = t.snapshotAt(time).positionX;
+  double positionY = t.snapshotAt(time).positionY;
+  auto applySpatialPositionOverlay = [&](const char *channel, double &value) {
+    const QString path = QString::fromLatin1(channel);
+    if (const auto handle = getProperty(path)) {
+      const auto &property = *handle;
+      if (property.hasExpression() || property.hasEnvelopes() ||
+          property.hasExternalOverride()) {
+        const QVariant animatedValue = evaluateAnimatedPropertyValue(property, time);
+        if (animatedValue.isValid()) value = animatedValue.toDouble();
+      }
+    }
+    if (const auto *stack = animationLayerStack(path);
+        stack && stack->layerCount() > 0) {
+      value = stack->evaluateWithBase(FramePosition(frameNumber),
+                                      static_cast<float>(value));
+    }
+  };
   if (useSpatialPosition) {
-    if (const auto *stack = animationLayerStack(QStringLiteral("transform.position.x"));
-        stack && stack->layerCount() > 0) {
-      positionX = stack->evaluateWithBase(FramePosition(frameNumber),
-                                           static_cast<float>(positionX));
-    }
-    if (const auto *stack = animationLayerStack(QStringLiteral("transform.position.y"));
-        stack && stack->layerCount() > 0) {
-      positionY = stack->evaluateWithBase(FramePosition(frameNumber),
-                                           static_cast<float>(positionY));
-    }
+    applySpatialPositionOverlay("transform.position.x", positionX);
+    applySpatialPositionOverlay("transform.position.y", positionY);
+  } else {
+    positionX = evaluateDouble(QStringLiteral("transform.position.x"), positionX);
+    positionY = evaluateDouble(QStringLiteral("transform.position.y"), positionY);
   }
   double rotation = evaluateDouble(QStringLiteral("transform.rotation"), t.rotationAt(time));
   double scaleX = evaluateDouble(QStringLiteral("transform.scale.x"), t.scaleXAt(time));
@@ -701,13 +733,34 @@ QMatrix4x4 ArtifactAbstractLayer::getLocalTransform4x4() const {
     const QVariant animatedValue = evaluateAnimatedPropertyValue(property, time);
     return animatedValue.isValid() ? animatedValue.toDouble() : fallback;
   };
+  // Spatial auto-Bezier is the base; expressions, envelopes and animation
+  // stacks layer on top of it. See getLocalTransformAt() for the rationale.
   const bool useSpatialPosition = t.hasPositionSpatialTangents();
-  double positionX = useSpatialPosition
-      ? t.snapshotAt(time).positionX
-      : evaluateDouble(QStringLiteral("transform.position.x"), t.positionX());
-  double positionY = useSpatialPosition
-      ? t.snapshotAt(time).positionY
-      : evaluateDouble(QStringLiteral("transform.position.y"), t.positionY());
+  double positionX = t.snapshotAt(time).positionX;
+  double positionY = t.snapshotAt(time).positionY;
+  if (useSpatialPosition) {
+    auto applySpatialPositionOverlay = [this, &time, frame](const char *channel, double &value) {
+      const QString path = QString::fromLatin1(channel);
+      if (const auto handle = getProperty(path)) {
+        const auto &property = *handle;
+        if (property.hasExpression() || property.hasEnvelopes() ||
+            property.hasExternalOverride()) {
+          const QVariant animatedValue = evaluateAnimatedPropertyValue(property, time);
+          if (animatedValue.isValid()) value = animatedValue.toDouble();
+        }
+      }
+      if (const auto *stack = animationLayerStack(path);
+          stack && stack->layerCount() > 0) {
+        value = stack->evaluateWithBase(FramePosition(frame),
+                                        static_cast<float>(value));
+      }
+    };
+    applySpatialPositionOverlay("transform.position.x", positionX);
+    applySpatialPositionOverlay("transform.position.y", positionY);
+  } else {
+    positionX = evaluateDouble(QStringLiteral("transform.position.x"), positionX);
+    positionY = evaluateDouble(QStringLiteral("transform.position.y"), positionY);
+  }
   const double positionZ = t.positionZAt(time);
   double rotation =
       evaluateDouble(QStringLiteral("transform.rotation"), t.rotation());

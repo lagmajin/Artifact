@@ -27,7 +27,7 @@ float sanitizeEqualizerSample(float value)
 }
 }
 
-EqualizerEffect::EqualizerEffect() : sampleRate_(44100.0f) {
+EqualizerEffect::EqualizerEffect() {
     bands_ = {
         {60.0f, 0.0f, 1.0f},
         {250.0f, 0.0f, 1.0f},
@@ -39,12 +39,17 @@ EqualizerEffect::EqualizerEffect() : sampleRate_(44100.0f) {
 
 void EqualizerEffect::process(ArtifactCore::AudioSegment& segment, const ArtifactCore::AudioSegment*) {
     if (!enabled_) return;
+    // オフライン書き出しとリアルタイム再生で実レートが異なるため、
+    // バスから渡された segment のレートへ同期する。
+    syncSampleRate(segment);
 
     int channels = segment.channelCount();
     int frames = segment.frameCount();
     if (frames <= 0 || channels <= 0) return;
 
-    const float safeSampleRate = std::max(1.0f, finiteOr(sampleRate_, 44100.0f));
+    // サンプルレートは基底クラスの sampleRate_（int）から作る。
+    const float safeSampleRate =
+        std::max(1.0f, static_cast<float>(sampleRate_));
     const int stateSampleRate = static_cast<int>(safeSampleRate);
     const size_t stateCount = static_cast<size_t>(channels) * bands_.size() * 4;
     if (stateSampleRate_ != stateSampleRate || filterStates_.size() != stateCount) {
@@ -121,7 +126,7 @@ void EqualizerEffect::calculateBiquadCoefficients(float frequency, float gain, f
                                                   float& a0, float& a1, float& a2,
                                                   float& b0, float& b1, float& b2)
 {
-    const float sr = std::max(1.0f, finiteOr(sampleRate_, 44100.0f));
+    const float sr = std::max(1.0f, static_cast<float>(sampleRate_));
     const float safeFrequency = finiteOr(frequency, 1000.0f);
     const float safeGain = finiteOr(gain, 0.0f);
     const float safeQ = std::max(0.001f, finiteOr(q, 1.0f));

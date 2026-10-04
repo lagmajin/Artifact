@@ -1,5 +1,7 @@
 module;
 #include <algorithm>
+#include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <memory>
 #include <vector>
@@ -21,6 +23,7 @@ import Artifact.Effect.ImplBase;
 import Artifact.Effect.Abstract;
 import Property.Abstract;
 import Utils.String.UniString;
+import Time.Rational;
 import Artifact.Effect.Ofx.Host;
 import Memory.SharedPtr;
 
@@ -183,6 +186,11 @@ public:
       }
       property.setValue(value);
       syncBridgeState(property);
+      // Mirror the edit into the bridged parameter so the plugin reads it and
+      // so the keyframe track (if any) evaluates from a consistent base.
+      if (ParamState *param = findPluginParam(key)) {
+        param->property.setValue(value);
+      }
       break;
     }
   }
@@ -282,8 +290,22 @@ private:
       if (!param) {
         continue;
       }
-      const QVariant val = prop.getValue();
       const QString ptype = param->paramType;
+
+      // A keyframed parameter animates: evaluate its own track at the frame
+      // being rendered instead of reading the static preview value. Without
+      // this the editor's keyframes never reach the plugin.
+      const bool hasKeys = param->property.hasKeyFrames();
+      QVariant val = prop.getValue();
+      if (hasKeys) {
+        const double rate = param->frameRate > 0.0 ? param->frameRate : 30.0;
+        const auto frames = static_cast<int64_t>(std::llround(renderTime_ * rate));
+        const QVariant evaluated = param->property.interpolateValue(
+            RationalTime::fromFrameCount(frames, static_cast<int64_t>(rate)));
+        if (evaluated.isValid()) {
+          val = evaluated;
+        }
+      }
 
       // Order matters: "RGBA" contains "RGB", so an RGB-first test swallowed
       // every RGBA parameter and dropped the alpha channel.
@@ -386,14 +408,13 @@ blendWithSource(const ImageF32x4RGBAWithCache &src,
   }
 
   OfxPlugin *findPlugin() {
-    // Plugin loading is Windows-only; on other platforms no library is ever
-    // opened, so there is nothing to resolve.
-#ifdef _WIN32
+    // Resolving the entry points goes through the host's portable loader so
+    // this works on every platform the host was built for, not just Win32.
     if (!descriptor_.libraryHandle) return nullptr;
     auto fn = reinterpret_cast<OfxGetPluginFn>(
-        GetProcAddress(descriptor_.libraryHandle, "OfxGetPlugin"));
+        resolvePluginSymbol(descriptor_.libraryHandle, "OfxGetPlugin"));
     auto countFn = reinterpret_cast<int(*)()>(
-        GetProcAddress(descriptor_.libraryHandle, "OfxGetNumberOfPlugins"));
+        resolvePluginSymbol(descriptor_.libraryHandle, "OfxGetNumberOfPlugins"));
     if (!fn || !countFn) return nullptr;
     int count = countFn();
     for (int i = 0; i < count; ++i) {
@@ -405,9 +426,6 @@ blendWithSource(const ImageF32x4RGBAWithCache &src,
       }
     }
     return nullptr;
-#else
-    return nullptr;
-#endif
   }
 
   std::vector<AbstractProperty> properties_;

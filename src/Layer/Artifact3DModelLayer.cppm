@@ -1940,12 +1940,14 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
                 .arg(solidShadingMode));
         if (impl_->wireOverlay_) {
           drawEdges(FloatColor{0.04f, 0.05f, 0.06f, opacity() * 0.72f}, 1.0f);
-          if (impl_->faceNormals_) {
-            drawFaceNormals();
-          }
-          if (impl_->vertexNormals_) {
-            drawVertexNormals();
-          }
+        }
+        // Normals are an independent overlay: they must stay visible even when
+        // the wire overlay is off, otherwise "Face Normal" alone renders nothing.
+        if (impl_->faceNormals_) {
+          drawFaceNormals();
+        }
+        if (impl_->vertexNormals_) {
+          drawVertexNormals();
         }
         return;
       }
@@ -1963,12 +1965,14 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
             .arg(solidShadingMode));
     if (impl_->wireOverlay_) {
       drawEdges(FloatColor{0.04f, 0.05f, 0.06f, opacity() * 0.72f}, 1.0f);
-      if (impl_->faceNormals_) {
-        drawFaceNormals();
-      }
-      if (impl_->vertexNormals_) {
-        drawVertexNormals();
-      }
+    }
+    // Normals are an independent overlay: they must stay visible even when
+    // the wire overlay is off, otherwise "Face Normal" alone renders nothing.
+    if (impl_->faceNormals_) {
+      drawFaceNormals();
+    }
+    if (impl_->vertexNormals_) {
+      drawVertexNormals();
     }
     }
   } else {

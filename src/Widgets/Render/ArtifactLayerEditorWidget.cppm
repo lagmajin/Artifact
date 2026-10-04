@@ -238,6 +238,14 @@ ArtifactCore::Coordinates::CompositionExtent2 compositionExtentFromQSize(
   std::vector<QPointF> proportionalShapePointsBefore_;
   std::vector<CustomPathVertex> proportionalPathVerticesBefore_;
   bool isDraggingMaskHandle_ = false;
+  // ==== マスク bounding box ギズモ ====
+  // selectedMaskIndex_ >= 0 のときだけ bounds ギズモを描画・操作する。
+  // -1 は「bounds ギズモ無効」。実際の値は選択頂点から導出して設定する。
+  int selectedMaskIndex_ = -1;
+  MaskBoundsHandle maskBoundsHandle_ = MaskBoundsHandle::None;
+  MaskBoundsHandle hoveredMaskBoundsHandle_ = MaskBoundsHandle::None;
+  QRectF maskBoundsBefore_;
+  QPointF maskBoundsAnchor_;
   std::vector<MaskVertexAddress> selectedMaskVertices_;
   std::vector<std::pair<MaskVertexAddress, MaskVertex>> selectedMaskVerticesBefore_;
   QPointF selectedMaskDragOrigin_;
@@ -349,6 +357,10 @@ ArtifactLayerEditorWidget::Impl::Impl()
      .selectedPathIndices = &selectedPathVertexIndices_,
      .selectedPathBefore = &selectedPathDragBefore_,
      .selectedMaskVertices = &selectedMaskVertices_,
+     .selectedMaskIndex = &selectedMaskIndex_,
+     .boundsMaskHandle = &maskBoundsHandle_,
+     .boundsMaskBefore = &maskBoundsBefore_,
+     .boundsMaskAnchor = &maskBoundsAnchor_,
      .maskHover = &maskHoverController_,
      .shapeHover = &shapeHoverController_,
      .shapeParameter = &shapeParameterController_});
@@ -915,6 +927,18 @@ void ArtifactLayerEditorWidget::Impl::drawMaskOverlay(
     const ArtifactAbstractLayerPtr& layer)
 {
  const auto& hover = maskHoverController_.state();
+ // bounds ギズモの対象は、選択頂点が属するマスク。複数マスクにまたがる
+ // 選択や選択なしではギズモを出さない（bounds の対象が一意に決まらない）。
+ selectedMaskIndex_ = -1;
+ if (!selectedMaskVertices_.empty()) {
+  const int first = ArtifactCore::artifactGet<0>(selectedMaskVertices_.front());
+  const bool singleMask = std::all_of(
+   selectedMaskVertices_.begin(), selectedMaskVertices_.end(),
+   [first](const MaskVertexAddress& address) {
+    return ArtifactCore::artifactGet<0>(address) == first;
+   });
+  if (singleMask) selectedMaskIndex_ = first;
+ }
  LayerEditorMaskOverlayState state;
  state.draggingVertex = isDraggingMaskVertex_;
  state.draggingHandle = isDraggingMaskHandle_;
@@ -930,6 +954,9 @@ void ArtifactLayerEditorWidget::Impl::drawMaskOverlay(
  state.rubberBandSelecting = isMaskRubberBandSelecting_;
  state.rubberBandStart = maskRubberBandStartCanvas_;
  state.rubberBandCurrent = maskRubberBandCurrentCanvas_;
+ state.boundsMaskIndex = selectedMaskIndex_;
+ state.boundsHandle = maskBoundsHandle_;
+ state.hoveredBoundsHandle = static_cast<int>(hoveredMaskBoundsHandle_);
  drawLayerEditorMaskOverlay(renderer_.get(), layer, state);
 }
 
@@ -1699,9 +1726,18 @@ void ArtifactLayerEditorWidget::mouseReleaseEvent(QMouseEvent* event)
       .commitParameterEdit = [this]() { impl_->shapeParameterController_.commit(); },
       .releaseGizmo = [this]() { impl_->transformGizmo_->handleMouseRelease(); }};
   const auto result = impl_->releaseController_.handle(state, callbacks);
+  // bounds ドラッグの終了時はギズモ状態を明示的に戻す。releaseController は
+  // 頂点/ハンドルドラッグしか知らないため、ここ側で後始末する。
+  const bool releasedBounds =
+   impl_->maskBoundsHandle_ != MaskBoundsHandle::None;
+  if (releasedBounds) {
+   impl_->maskBoundsHandle_ = MaskBoundsHandle::None;
+   impl_->maskBoundsBefore_ = QRectF{};
+   impl_->maskBoundsAnchor_ = QPointF{};
+  }
   if (result.consumed) {
    impl_->selectedMaskVerticesBefore_.clear();
-   if (result.requestRender) impl_->requestRender();
+   if (result.requestRender || releasedBounds) impl_->requestRender();
    if (result.unsetCursor) unsetCursor();
    event->accept();
    return;
@@ -1842,14 +1878,31 @@ void ArtifactLayerEditorWidget::mouseMoveEvent(QMouseEvent* event)
     event->accept();
     return;
    }
-   if (result.kind == LayerEditorMaskMoveKind::HoverChanged) {
-    impl_->requestRender();
+if (result.kind == LayerEditorMaskMoveKind::HoverChanged) {
+     impl_->requestRender();
+    }
+    if (result.cursorRelevant && !state.draggingVertex) {
+     if (result.vertexHovered) setCursor(Qt::CrossCursor);
+     else unsetCursor();
+    }
+    // bounds ギズモのホバー更新。頂点ホバーと併用するため、
+    // ギズモ上にいるときだけ更新し、外では直前の頂点ホバーを優先する。
+    if (state.boundsHandle == MaskBoundsHandle::None &&
+        impl_->selectedMaskIndex_ >= 0 && layer) {
+     QRectF localBounds;
+     if (maskBounds(layer, impl_->selectedMaskIndex_, localBounds) &&
+         !localBounds.isEmpty()) {
+      const MaskBoundsHandle hovered = hitTestMaskBoundsHandle(
+          localBounds, layer->getGlobalTransform(),
+          ArtifactCore::Coordinates::toQPointF(canvasPos),
+          10.0f / ArtifactCore::artifactMax(0.1f, impl_->renderer_->getZoom()));
+      if (hovered != impl_->hoveredMaskBoundsHandle_) {
+       impl_->hoveredMaskBoundsHandle_ = hovered;
+       impl_->requestRender();
+      }
+     }
+    }
    }
-   if (result.cursorRelevant && !state.draggingVertex) {
-    if (result.vertexHovered) setCursor(Qt::CrossCursor);
-    else unsetCursor();
-   }
-  }
   if (impl_->displayMode_ != DisplayMode::Mask &&
       isShapeEditingMode(impl_->editMode_) && impl_->renderer_) {
    auto layer = impl_->targetLayer();

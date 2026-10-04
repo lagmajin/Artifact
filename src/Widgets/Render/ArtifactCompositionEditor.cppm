@@ -9293,6 +9293,24 @@ public:
     return controller && controller->hasPendingMaskEdit();
   }
 
+  // Pushes the controller's live orientation into the view cube. Call this
+  // after any path that writes the orientation without routing through the
+  // widget (view undo/redo, bookmark restore, template restore), otherwise
+  // the cube keeps showing the previous direction.
+  void syncViewCubeOrientation() {
+    auto *controller = activeRenderController();
+    if (!controller) {
+      return;
+    }
+    if (viewOrientationWidget_) {
+      viewOrientationWidget_->setOrientationQuaternion(
+          controller->viewportOrientationQuaternion());
+    }
+    if (overlayView_) {
+      overlayView_->update();
+    }
+  }
+
   void forceFrontForPlanarEditingTool(ToolType toolType) {
     if (toolType != ToolType::Pen && toolType != ToolType::Shape) {
       return;
@@ -12569,6 +12587,10 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   QAction *densityHeatmapAct = displayMenu->addAction("Density Heatmap");
   QAction *layerChromeAct = displayMenu->addAction("Layer Controls");
   QAction *lockViewAct = displayMenu->addAction("Lock View to Selected");
+  auto *motionSketchMenu = displayMenu->addMenu("Motion Sketch");
+  polishEditorMenu(motionSketchMenu, this);
+  QAction *sketchPressureOpacityAct =
+      motionSketchMenu->addAction("Pen Pressure to Opacity");
   auto *onionMenu = displayMenu->addMenu("Onion Skin");
   polishEditorMenu(onionMenu, this);
   QAction *onionEnableAct = onionMenu->addAction("Enable");
@@ -12631,6 +12653,10 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
       QStringLiteral("Keep the viewport centered on the selected layer"));
   onionEnableAct->setToolTip(
       QStringLiteral("Overlay captured previous frames over the current viewport"));
+  sketchPressureOpacityAct->setCheckable(true);
+  sketchPressureOpacityAct->setToolTip(
+      QStringLiteral("Convert pen pressure recorded by the Motion Sketch tool into "
+                     "keyframes on the layer's Opacity property"));
   showReferenceImageAct->setToolTip(
       QStringLiteral("Show the loaded reference image over the viewport"));
   clearReferenceImageAct->setToolTip(
@@ -12890,6 +12916,20 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
         });
                        this->refreshEnabledState();
   });
+  QObject::connect(sketchPressureOpacityAct, &QAction::toggled, this,
+                   [this](bool checked) {
+                     if (auto *motionSketch =
+                             ArtifactApplicationManager::instance()
+                                 ? ArtifactApplicationManager::instance()
+                                       ->motionSketchTool()
+                                 : nullptr) {
+                       motionSketch->setPressureAffectsOpacity(checked);
+                     }
+                     ArtifactCore::LayeredConfigStore::instance().setValue(
+                         QStringLiteral(
+                             "Viewport/MotionSketch/PressureAffectsOpacity"),
+                         checked);
+                   });
   for (QAction *action : onionFrameMenu->actions()) {
     QObject::connect(action, &QAction::triggered, this, [this, action]() {
       if (!impl_) {
@@ -13124,6 +13164,10 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
       addChannelAction(QStringLiteral("Normal Y"), ViewportChannelDisplayMode::NormalY, false);
   QAction *channelNormalZAct =
       addChannelAction(QStringLiteral("Normal Z"), ViewportChannelDisplayMode::NormalZ, false);
+  // View-space normals (remapped to 0..1) as RGB; the per-axis variants stay
+  // menu-only so the numeric key run keeps reading as a single sequence.
+  channelNormalAct->setShortcut(QKeySequence(Qt::ALT | Qt::Key_8));
+  channelNormalAct->setShortcutContext(Qt::WidgetWithChildrenShortcut);
   QAction *channelVelocityAct =
       addChannelAction(QStringLiteral("Velocity"), ViewportChannelDisplayMode::Velocity, false);
   QAction *channelVelocityXAct =
@@ -14136,6 +14180,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     QObject::connect(viewUndoShortcut, &QShortcut::activated, this, [this]() {
       if (auto *controller = impl_ ? impl_->activeRenderController() : nullptr) {
         controller->undoView();
+        impl_->syncViewCubeOrientation();
         controller->setInfoOverlayText(QStringLiteral("View Undo"),
                                        impl_->activePaneViewLabel());
       }
@@ -14150,6 +14195,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     QObject::connect(viewRedoShortcut, &QShortcut::activated, this, [this]() {
       if (auto *controller = impl_ ? impl_->activeRenderController() : nullptr) {
         controller->redoView();
+        impl_->syncViewCubeOrientation();
         controller->setInfoOverlayText(QStringLiteral("View Redo"),
                                        impl_->activePaneViewLabel());
       }
@@ -14460,6 +14506,12 @@ void ArtifactCompositionEditor::zoom100() {
   if (auto *controller = impl_ ? impl_->activeRenderController() : nullptr) {
     controller->zoom100();
     impl_->refreshViewportStateLabels();
+  }
+}
+
+void ArtifactCompositionEditor::syncViewCubeOrientation() {
+  if (impl_) {
+    impl_->syncViewCubeOrientation();
   }
 }
 

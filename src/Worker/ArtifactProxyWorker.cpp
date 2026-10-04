@@ -90,8 +90,27 @@ int fail(QTextStream& stream, const QString& jobId, const QString& reason)
     return 1;
 }
 
+// Reads the source duration via the C API so encoded position can be turned
+// into a 0..1 fraction. Returns false when the duration is unknown.
+bool querySourceDurationSeconds(const QString& sourcePath, double* durationSeconds)
+{
+    AVFormatContext* input = nullptr;
+    if (avformat_open_input(&input, sourcePath.toUtf8().constData(), nullptr, nullptr) < 0) {
+        return false;
+    }
+    bool known = false;
+    if (avformat_find_stream_info(input, nullptr) >= 0 && input->duration > 0) {
+        *durationSeconds = static_cast<double>(input->duration) / AV_TIME_BASE;
+        known = *durationSeconds > 0.0;
+    }
+    avformat_close_input(&input);
+    return known;
+}
+
 bool generateWithFfmpeg(const QString& sourcePath, const QString& temporaryOutputPath,
-                        double scale, const QString& cancelPath, QString* failureReason)
+                        double scale, const QString& cancelPath,
+                        const std::function<void(double)>& reportProgress,
+                        QString* failureReason)
 {
     const QString scaleExpression = QStringLiteral("scale=trunc(iw*%1/2)*2:trunc(ih*%1/2)*2")
                                         .arg(scale, 0, 'f', 3);
@@ -103,11 +122,21 @@ bool generateWithFfmpeg(const QString& sourcePath, const QString& temporaryOutpu
                   QStringLiteral("-c:v"), QStringLiteral("libx264"),
                   QStringLiteral("-preset"), QStringLiteral("fast"),
                   QStringLiteral("-crf"), QStringLiteral("23"),
+                  QStringLiteral("-progress"), QStringLiteral("pipe:1"),
+                  QStringLiteral("-nostats"),
                   QStringLiteral("-c:a"), QStringLiteral("aac"), temporaryOutputPath});
     if (!ffmpeg.waitForStarted(5000)) {
         if (failureReason) *failureReason = QStringLiteral("Unable to start ffmpeg");
         return false;
     }
+
+    // -progress pipe:1 emits "out_time_us=<microseconds>" lines. The source
+    // duration is needed to turn that into a 0..1 fraction; when it is unknown
+    // progress stays silent rather than reporting a misleading value.
+    double durationSeconds = 0.0;
+    const bool durationKnown = querySourceDurationSeconds(sourcePath, &durationSeconds);
+    QByteArray pendingLine;
+    double lastReported = -1.0;
     bool cancelled = false;
     while (!ffmpeg.waitForFinished(100)) {
         if (!cancelPath.isEmpty() && QFileInfo(cancelPath).exists()) {
@@ -116,7 +145,27 @@ bool generateWithFfmpeg(const QString& sourcePath, const QString& temporaryOutpu
             if (!ffmpeg.waitForFinished(500)) ffmpeg.kill();
             break;
         }
+        pendingLine.append(ffmpeg.readAllStandardOutput());
+        int newline = -1;
+        while ((newline = pendingLine.indexOf('\n')) >= 0) {
+            const QByteArray rawLine = pendingLine.left(newline).trimmed();
+            pendingLine.remove(0, newline + 1);
+            if (!rawLine.startsWith("out_time_us=")) {
+                continue;
+            }
+            bool ok = false;
+            const double microseconds = QString::fromLatin1(rawLine.mid(13)).toDouble(&ok);
+            if (!ok || microseconds < 0.0 || !durationKnown || !reportProgress) {
+                continue;
+            }
+            const double fraction = std::clamp(microseconds / (durationSeconds * 1000000.0), 0.0, 0.99);
+            if (fraction - lastReported >= 0.05) {
+                reportProgress(fraction);
+                lastReported = fraction;
+            }
+        }
     }
+    pendingLine.append(ffmpeg.readAllStandardOutput());
     if (cancelled || ffmpeg.exitStatus() != QProcess::NormalExit ||
         ffmpeg.exitCode() != 0 || !QFileInfo(temporaryOutputPath).isFile()) {
         const QByteArray diagnostics = ffmpeg.readAllStandardError().trimmed();
@@ -774,6 +823,164 @@ bool generateWithMediaFoundation(const QString& sourcePath, const QString& tempo
 
 #endif
 
+// Runs one proxy job described by a single request object. Returns true when
+// the job succeeded. Messages are written to `output` tagged with the job's
+// own jobId, so several jobs can share one process stream in batch mode.
+bool runProxyJob(const QJsonObject& request, QTextStream& output)
+{
+    const QString jobId = request.value(QStringLiteral("jobId")).toString();
+    const QString sourcePath = request.value(QStringLiteral("sourcePath")).toString();
+    const QString outputPath = request.value(QStringLiteral("outputPath")).toString();
+    const QString temporaryOutputPath = request.value(QStringLiteral("temporaryOutputPath")).toString();
+    double scale = request.value(QStringLiteral("scale")).toDouble();
+    const QString qualityPreset = request.value(QStringLiteral("qualityPreset")).toString().trimmed().toLower();
+    if (qualityPreset == QStringLiteral("half")) scale = 0.5;
+    else if (qualityPreset == QStringLiteral("quarter")) scale = 0.25;
+    else if (qualityPreset == QStringLiteral("eighth")) scale = 0.125;
+    const QString appliedQualityPreset = qualityPreset.isEmpty() ? QStringLiteral("custom") : qualityPreset;
+    const QString requestedBackend = request.value(QStringLiteral("backend")).toString(QStringLiteral("ffmpeg")).trimmed().toLower();
+    const bool preferHardware = request.value(QStringLiteral("hardwareAccel")).toBool(false);
+    const bool audioReencode = request.value(QStringLiteral("audioReencode")).toBool(false);
+    if (jobId.isEmpty() ||
+        sourcePath.isEmpty() || outputPath.isEmpty() || temporaryOutputPath.isEmpty() ||
+        scale <= 0.0 || scale > 1.0 || !QFileInfo(sourcePath).isFile() ||
+        (!qualityPreset.isEmpty() && qualityPreset != QStringLiteral("full") &&
+         qualityPreset != QStringLiteral("half") && qualityPreset != QStringLiteral("quarter") &&
+         qualityPreset != QStringLiteral("eighth")) ||
+        (requestedBackend != QStringLiteral("auto") && requestedBackend != QStringLiteral("ffmpeg") &&
+         requestedBackend != QStringLiteral("native") &&
+         requestedBackend != QStringLiteral("mediafoundation"))) {
+        fail(output, jobId, QStringLiteral("Invalid proxy job request"));
+        return false;
+    }
+    if (audioReencode && requestedBackend == QStringLiteral("mediafoundation")) {
+        fail(output, jobId,
+             QStringLiteral("Media Foundation backend does not support audio re-encoding"));
+        return false;
+    }
+#ifndef _WIN32
+    if (requestedBackend == QStringLiteral("mediafoundation")) {
+        fail(output, jobId,
+             QStringLiteral("Media Foundation backend is only available on Windows"));
+        return false;
+    }
+#endif
+    if (!QDir().mkpath(QFileInfo(temporaryOutputPath).absolutePath())) {
+        fail(output, jobId, QStringLiteral("Cannot create proxy output directory"));
+        return false;
+    }
+    const QString cancelPath = request.value(QStringLiteral("cancelPath")).toString();
+    if (!cancelPath.isEmpty() && QFileInfo(cancelPath).exists()) {
+        fail(output, jobId, QStringLiteral("Proxy job was cancelled before start"));
+        return false;
+    }
+
+    QFile::remove(temporaryOutputPath);
+    writeMessage(output, {{QStringLiteral("type"), QStringLiteral("started")},
+                          {QStringLiteral("jobId"), jobId}});
+    writeMessage(output, {{QStringLiteral("type"), QStringLiteral("progress")},
+                          {QStringLiteral("jobId"), jobId},
+                          {QStringLiteral("fraction"), 0.0}});
+
+    QString selectedBackend = requestedBackend;
+    QString selectedEncoder;
+    QStringList encoderCandidates;
+    QString failureReason;
+    bool generated = false;
+    if (requestedBackend == QStringLiteral("native") || requestedBackend == QStringLiteral("auto")) {
+        generated = generateWithFfmpegNative(sourcePath, temporaryOutputPath, scale, cancelPath,
+            [&output, &jobId](double fraction) {
+                writeMessage(output, {{QStringLiteral("type"), QStringLiteral("progress")},
+                                      {QStringLiteral("jobId"), jobId},
+                                      {QStringLiteral("fraction"), fraction}});
+            }, &selectedEncoder, &encoderCandidates, &failureReason, preferHardware,
+            audioReencode);
+        selectedBackend = QStringLiteral("native");
+        if (!generated && requestedBackend == QStringLiteral("native")) {
+            fail(output, jobId, failureReason);
+            return false;
+        }
+    }
+#ifdef _WIN32
+    if (!generated &&
+        (requestedBackend == QStringLiteral("auto") || requestedBackend == QStringLiteral("mediafoundation"))) {
+        generated = generateWithMediaFoundation(sourcePath, temporaryOutputPath, scale, cancelPath, &failureReason);
+        if (generated) selectedBackend = QStringLiteral("mediaFoundation");
+        if (!generated && requestedBackend == QStringLiteral("mediafoundation")) {
+            fail(output, jobId, failureReason);
+            return false;
+        }
+    }
+#endif
+    if (!generated) {
+        generated = generateWithFfmpeg(sourcePath, temporaryOutputPath, scale, cancelPath,
+            [&output, &jobId](double fraction) {
+                writeMessage(output, {{QStringLiteral("type"), QStringLiteral("progress")},
+                                      {QStringLiteral("jobId"), jobId},
+                                      {QStringLiteral("fraction"), fraction}});
+            }, &failureReason);
+        selectedBackend = QStringLiteral("ffmpeg");
+    }
+    if (!generated) {
+        fail(output, jobId, failureReason);
+        return false;
+    }
+
+    if (!cancelPath.isEmpty() && QFileInfo(cancelPath).exists()) {
+        QFile::remove(temporaryOutputPath);
+        fail(output, jobId, QStringLiteral("Proxy job was cancelled"));
+        return false;
+    }
+    if (!validateGeneratedProxy(temporaryOutputPath, &failureReason)) {
+        QFile::remove(temporaryOutputPath);
+        fail(output, jobId, failureReason);
+        return false;
+    }
+    writeMessage(output, {{QStringLiteral("type"), QStringLiteral("progress")},
+                          {QStringLiteral("jobId"), jobId},
+                          {QStringLiteral("fraction"), 1.0}});
+
+    const QString backupOutputPath = outputPath + QStringLiteral(".") + jobId + QStringLiteral(".previous");
+    QFile::remove(backupOutputPath);
+    const bool hadPreviousOutput = QFileInfo(outputPath).isFile();
+    if (hadPreviousOutput && !QFile::rename(outputPath, backupOutputPath)) {
+        QFile::remove(temporaryOutputPath);
+        fail(output, jobId, QStringLiteral("Cannot preserve existing proxy output"));
+        return false;
+    }
+    if (!QFile::rename(temporaryOutputPath, outputPath)) {
+        QFile::remove(temporaryOutputPath);
+        if (hadPreviousOutput) {
+            QFile::rename(backupOutputPath, outputPath);
+        }
+        fail(output, jobId, QStringLiteral("Cannot finalize proxy output"));
+        return false;
+    }
+    QFile::remove(backupOutputPath);
+    const QFileInfo outputInfo(outputPath);
+    if (outputInfo.size() <= 0) {
+        QFile::remove(outputPath);
+        fail(output, jobId, QStringLiteral("Generated proxy is empty"));
+        return false;
+    }
+    QJsonObject completedMessage{{QStringLiteral("type"), QStringLiteral("completed")},
+                          {QStringLiteral("jobId"), jobId},
+                          {QStringLiteral("outputPath"), outputPath},
+                          {QStringLiteral("qualityPreset"), appliedQualityPreset},
+                          {QStringLiteral("backendRequested"), requestedBackend},
+                          {QStringLiteral("backend"), selectedBackend},
+                          {QStringLiteral("encoder"), selectedEncoder},
+                          {QStringLiteral("hardwareAccelRequested"), preferHardware},
+                          {QStringLiteral("hardwareEncoderUsed"), isHardwareH264Encoder(selectedEncoder)},
+                          {QStringLiteral("audioReencodeRequested"), audioReencode},
+                          {QStringLiteral("outputBytes"), outputInfo.size()}};
+    if (!encoderCandidates.isEmpty()) {
+        completedMessage.insert(QStringLiteral("encoderCandidates"), QJsonArray::fromStringList(encoderCandidates));
+    }
+    writeMessage(output, completedMessage);
+    return true;
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
@@ -813,137 +1020,42 @@ int main(int argc, char* argv[])
     }
     QJsonParseError parseError;
     const QJsonDocument document = QJsonDocument::fromJson(requestFile.readAll(), &parseError);
-    if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+    if (parseError.error != QJsonParseError::NoError) {
         return fail(output, {}, QStringLiteral("Invalid request JSON"));
     }
-    const QJsonObject request = document.object();
-    const QString jobId = request.value(QStringLiteral("jobId")).toString();
-    const QString sourcePath = request.value(QStringLiteral("sourcePath")).toString();
-    const QString outputPath = request.value(QStringLiteral("outputPath")).toString();
-    const QString temporaryOutputPath = request.value(QStringLiteral("temporaryOutputPath")).toString();
-    double scale = request.value(QStringLiteral("scale")).toDouble();
-    const QString qualityPreset = request.value(QStringLiteral("qualityPreset")).toString().trimmed().toLower();
-    if (qualityPreset == QStringLiteral("half")) scale = 0.5;
-    else if (qualityPreset == QStringLiteral("quarter")) scale = 0.25;
-    else if (qualityPreset == QStringLiteral("eighth")) scale = 0.125;
-    const QString appliedQualityPreset = qualityPreset.isEmpty() ? QStringLiteral("custom") : qualityPreset;
-    const QString requestedBackend = request.value(QStringLiteral("backend")).toString(QStringLiteral("ffmpeg")).trimmed().toLower();
-    const bool preferHardware = request.value(QStringLiteral("hardwareAccel")).toBool(false);
-    const bool audioReencode = request.value(QStringLiteral("audioReencode")).toBool(false);
-    if (request.value(QStringLiteral("protocolVersion")).toInt() != 1 || jobId.isEmpty() ||
-        sourcePath.isEmpty() || outputPath.isEmpty() || temporaryOutputPath.isEmpty() ||
-        scale <= 0.0 || scale > 1.0 || !QFileInfo(sourcePath).isFile() ||
-        (!qualityPreset.isEmpty() && qualityPreset != QStringLiteral("full") &&
-         qualityPreset != QStringLiteral("half") && qualityPreset != QStringLiteral("quarter") &&
-         qualityPreset != QStringLiteral("eighth")) ||
-        (requestedBackend != QStringLiteral("auto") && requestedBackend != QStringLiteral("ffmpeg") &&
-         requestedBackend != QStringLiteral("native") &&
-         requestedBackend != QStringLiteral("mediafoundation"))) {
-        return fail(output, jobId, QStringLiteral("Invalid proxy job request"));
-    }
-    if (audioReencode && requestedBackend == QStringLiteral("mediafoundation")) {
-        return fail(output, jobId,
-                    QStringLiteral("Media Foundation backend does not support audio re-encoding"));
-    }
-#ifndef _WIN32
-    if (requestedBackend == QStringLiteral("mediafoundation")) {
-        return fail(output, jobId,
-                    QStringLiteral("Media Foundation backend is only available on Windows"));
-    }
-#endif
-    if (!QDir().mkpath(QFileInfo(temporaryOutputPath).absolutePath())) {
-        return fail(output, jobId, QStringLiteral("Cannot create proxy output directory"));
-    }
-    const QString cancelPath = request.value(QStringLiteral("cancelPath")).toString();
-    if (!cancelPath.isEmpty() && QFileInfo(cancelPath).exists()) {
-        return fail(output, jobId, QStringLiteral("Proxy job was cancelled before start"));
-    }
 
-    QFile::remove(temporaryOutputPath);
-    writeMessage(output, {{QStringLiteral("type"), QStringLiteral("started")},
-                          {QStringLiteral("jobId"), jobId}});
-    writeMessage(output, {{QStringLiteral("type"), QStringLiteral("progress")},
-                          {QStringLiteral("jobId"), jobId},
-                          {QStringLiteral("fraction"), 0.0}});
+    const int protocolVersion = document.isObject()
+        ? document.object().value(QStringLiteral("protocolVersion")).toInt()
+        : 0;
 
-    QString selectedBackend = requestedBackend;
-    QString selectedEncoder;
-    QStringList encoderCandidates;
-    QString failureReason;
-    bool generated = false;
-    if (requestedBackend == QStringLiteral("native") || requestedBackend == QStringLiteral("auto")) {
-        generated = generateWithFfmpegNative(sourcePath, temporaryOutputPath, scale, cancelPath,
-            [&output, &jobId](double fraction) {
-                writeMessage(output, {{QStringLiteral("type"), QStringLiteral("progress")},
-                                      {QStringLiteral("jobId"), jobId},
-                                      {QStringLiteral("fraction"), fraction}});
-            }, &selectedEncoder, &encoderCandidates, &failureReason, preferHardware,
-            audioReencode);
-        selectedBackend = QStringLiteral("native");
-        if (!generated && requestedBackend == QStringLiteral("native")) return fail(output, jobId, failureReason);
-    }
-#ifdef _WIN32
-    if (!generated &&
-        (requestedBackend == QStringLiteral("auto") || requestedBackend == QStringLiteral("mediafoundation"))) {
-        generated = generateWithMediaFoundation(sourcePath, temporaryOutputPath, scale, cancelPath, &failureReason);
-        if (generated) selectedBackend = QStringLiteral("mediaFoundation");
-        if (!generated && requestedBackend == QStringLiteral("mediafoundation")) {
-            return fail(output, jobId, failureReason);
+    // Batch form: {"protocolVersion":2,"jobs":[...]}. One process handles every
+    // job in turn, which removes the per-job process startup cost.
+    if (protocolVersion >= 2 && document.isObject() &&
+        document.object().contains(QStringLiteral("jobs"))) {
+        const QJsonValue jobsValue = document.object().value(QStringLiteral("jobs"));
+        if (!jobsValue.isArray()) {
+            return fail(output, {}, QStringLiteral("Invalid batch jobs array"));
         }
-    }
-#endif
-    if (!generated) {
-        generated = generateWithFfmpeg(sourcePath, temporaryOutputPath, scale, cancelPath, &failureReason);
-        selectedBackend = QStringLiteral("ffmpeg");
-    }
-    if (!generated) return fail(output, jobId, failureReason);
-
-    if (!cancelPath.isEmpty() && QFileInfo(cancelPath).exists()) {
-        QFile::remove(temporaryOutputPath);
-        return fail(output, jobId, QStringLiteral("Proxy job was cancelled"));
-    }
-    if (!validateGeneratedProxy(temporaryOutputPath, &failureReason)) {
-        QFile::remove(temporaryOutputPath);
-        return fail(output, jobId, failureReason);
-    }
-    writeMessage(output, {{QStringLiteral("type"), QStringLiteral("progress")},
-                          {QStringLiteral("jobId"), jobId},
-                          {QStringLiteral("fraction"), 1.0}});
-
-    const QString backupOutputPath = outputPath + QStringLiteral(".") + jobId + QStringLiteral(".previous");
-    QFile::remove(backupOutputPath);
-    const bool hadPreviousOutput = QFileInfo(outputPath).isFile();
-    if (hadPreviousOutput && !QFile::rename(outputPath, backupOutputPath)) {
-        QFile::remove(temporaryOutputPath);
-        return fail(output, jobId, QStringLiteral("Cannot preserve existing proxy output"));
-    }
-    if (!QFile::rename(temporaryOutputPath, outputPath)) {
-        QFile::remove(temporaryOutputPath);
-        if (hadPreviousOutput) {
-            QFile::rename(backupOutputPath, outputPath);
+        int succeeded = 0;
+        const QJsonArray jobs = jobsValue.toArray();
+        for (const QJsonValue& entry : jobs) {
+            if (!entry.isObject()) {
+                fail(output, {}, QStringLiteral("Invalid batch job entry"));
+                continue;
+            }
+            if (runProxyJob(entry.toObject(), output)) {
+                ++succeeded;
+            }
         }
-        return fail(output, jobId, QStringLiteral("Cannot finalize proxy output"));
+        writeMessage(output, {{QStringLiteral("type"), QStringLiteral("batchCompleted")},
+                              {QStringLiteral("succeeded"), succeeded},
+                              {QStringLiteral("total"), static_cast<int>(jobs.size())}});
+        return 0;
     }
-    QFile::remove(backupOutputPath);
-    const QFileInfo outputInfo(outputPath);
-    if (outputInfo.size() <= 0) {
-        QFile::remove(outputPath);
-        return fail(output, jobId, QStringLiteral("Generated proxy is empty"));
+
+    // Legacy single-job form (protocolVersion 1).
+    if (document.isObject() && protocolVersion == 1) {
+        return runProxyJob(document.object(), output) ? 0 : 1;
     }
-    QJsonObject completedMessage{{QStringLiteral("type"), QStringLiteral("completed")},
-                          {QStringLiteral("jobId"), jobId},
-                          {QStringLiteral("outputPath"), outputPath},
-                          {QStringLiteral("qualityPreset"), appliedQualityPreset},
-                          {QStringLiteral("backendRequested"), requestedBackend},
-                          {QStringLiteral("backend"), selectedBackend},
-                          {QStringLiteral("encoder"), selectedEncoder},
-                          {QStringLiteral("hardwareAccelRequested"), preferHardware},
-                          {QStringLiteral("hardwareEncoderUsed"), isHardwareH264Encoder(selectedEncoder)},
-                          {QStringLiteral("audioReencodeRequested"), audioReencode},
-                          {QStringLiteral("outputBytes"), outputInfo.size()}};
-    if (!encoderCandidates.isEmpty()) {
-        completedMessage.insert(QStringLiteral("encoderCandidates"), QJsonArray::fromStringList(encoderCandidates));
-    }
-    writeMessage(output, completedMessage);
-    return 0;
+    return fail(output, {}, QStringLiteral("Unsupported proxy request format"));
 }

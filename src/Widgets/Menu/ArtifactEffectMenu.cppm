@@ -296,6 +296,23 @@ ArtifactEffectMenu::Impl::Impl(ArtifactEffectMenu* menu) : menu_(menu)
       contentLayout->addWidget(pages);
       layout->addWidget(contentFrame, 1);
 
+      // Crash-disabled plug-ins. Hidden until something is actually blocked so
+      // the dialog does not carry an empty warning row by default.
+      auto* blockedRow = new QWidget(&dialog);
+      auto* blockedLayout = new QHBoxLayout(blockedRow);
+      blockedLayout->setContentsMargins(0, 0, 0, 0);
+      blockedLayout->setSpacing(10);
+      auto* blockedLabel = new QLabel(blockedRow);
+      blockedLabel->setWordWrap(true);
+      blockedLabel->setForegroundRole(QPalette::PlaceholderText);
+      blockedLabel->setAccessibleName(QStringLiteral("Disabled OFX plug-ins"));
+      auto* clearBlocked = new QPushButton(QStringLiteral("Re-enable"), blockedRow);
+      clearBlocked->setAccessibleName(QStringLiteral("Re-enable disabled OFX plug-ins"));
+      blockedLayout->addWidget(blockedLabel, 1);
+      blockedLayout->addWidget(clearBlocked, 0, Qt::AlignTop);
+      blockedRow->setVisible(false);
+      layout->addWidget(blockedRow);
+
       const auto populate = [&]() {
           list->clear();
           for (const auto& plugin : host.getLoadedPlugins()) {
@@ -312,6 +329,20 @@ ArtifactEffectMenu::Impl::Impl(ArtifactEffectMenu* menu) : menu_(menu)
           }
           loadedCount->setText(QStringLiteral("%1 loaded").arg(list->count()));
           pages->setCurrentWidget(list->count() == 0 ? emptyPage : list);
+
+          // Plugins that faulted repeatedly are taken out of service; surface
+          // them so the user can see why a plug-in they installed is missing
+          // and can put it back.
+          const QStringList blocked = host.blacklistedPlugins();
+          blockedRow->setVisible(!blocked.isEmpty());
+          if (!blocked.isEmpty()) {
+              blockedLabel->setText(
+                  QStringLiteral("Disabled after repeated crashes: %1")
+                      .arg(blocked.join(QStringLiteral(", "))));
+              clearBlocked->setEnabled(true);
+          } else {
+              clearBlocked->setEnabled(false);
+          }
       };
       populate();
 
@@ -334,6 +365,14 @@ ArtifactEffectMenu::Impl::Impl(ArtifactEffectMenu* menu) : menu_(menu)
       buttons->addWidget(close);
       layout->addLayout(buttons);
       QObject::connect(rescan, &QPushButton::clicked, &dialog, [&]() {
+          host.rescan();
+          populate();
+      });
+      // Re-enabling is only meaningful together with a rescan: the blacklist is
+      // consulted while describing, so a cleared list has no effect until the
+      // plug-ins are loaded again.
+      QObject::connect(clearBlocked, &QPushButton::clicked, &dialog, [&]() {
+          host.clearBlacklist();
           host.rescan();
           populate();
       });

@@ -909,4 +909,22 @@ inline LayerComponentDescriptor makePyroComponentDescriptor(bool enabled) {
     };
 }
 
+// Script attaches an ArtifactScript behaviour tree to the layer. It is a
+// Layer-scope component: the script instance is owned by the layer itself, not
+// by a composition-wide simulation like fluid / pyro. It runs in the Intent
+// phase, after arrangement and before dynamics.
+inline LayerComponentDescriptor makeScriptComponentDescriptor(bool enabled) {
+    return {
+        QStringLiteral("builtin.script"),
+        QStringLiteral("artifact.component.script"),
+        1,
+        enabled,
+        LayerComponentPhase::Intent,
+        LayerComponentScope::Layer,
+        800,
+        {},
+        {},
+    };
+}
+
 } // namespace Artifact

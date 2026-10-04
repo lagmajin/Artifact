@@ -153,6 +153,12 @@ bool ArtifactAbstractLayer::setComponentDescriptorPropertyValue(
     notifyLayerMutation(this, LayerDirtyFlag::Effect,
                         LayerDirtyReason::PropertyChanged);
     syncRoutedPropertyCache(QStringLiteral("component.script.enabled"));
+    // Bind on enable, drop the instance on disable.
+    if (enabled) {
+      impl_->rebuildScriptInstance();
+    } else {
+      impl_->releaseScriptInstance();
+    }
     return true;
   }
     if (propertyPath == QStringLiteral("component.generators.add")) {

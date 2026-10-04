@@ -53,7 +53,11 @@ ReverbEffect::ReverbEffect() {
 }
 
 void ReverbEffect::setSampleRate(int sampleRate) {
-    sampleRate_ = sampleRate > 0 ? sampleRate : 44100;
+    ArtifactAbstractAudioEffect::setSampleRate(sampleRate);
+    initEngine();
+}
+
+void ReverbEffect::reinitOnSampleRate() {
     initEngine();
 }
 
@@ -134,6 +138,10 @@ void ReverbEffect::initFDN() {
 // ── Main process ───────────────────────────────────────────────────
 void ReverbEffect::process(ArtifactCore::AudioSegment& segment, const ArtifactCore::AudioSegment*) {
     if (!enabled_) return;
+    // オフライン書き出しとリアルタイム再生で実レートが異なるため、
+    // バスから渡された segment のレートへ同期する。レートが変わると
+    // 遅延長と係数がすべて変わるため、reinitOnSampleRate() が作り直す。
+    syncSampleRate(segment);
 
     int channels = segment.channelCount();
     int frames = segment.frameCount();

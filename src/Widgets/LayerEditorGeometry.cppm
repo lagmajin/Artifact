@@ -2,10 +2,12 @@ module;
 
 #include <QPointF>
 #include <QLineF>
+#include <QRectF>
 #include <QTransform>
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <numbers>
 #include <vector>
 
@@ -243,6 +245,211 @@ std::vector<MaskVertex> proportionalMaskVertices(
   result[index].position = source[index].position + delta * weight;
  }
  return result;
+}
+
+std::vector<MaskVertex> transformMaskVertices(
+    const std::vector<MaskVertex>& source, const MaskAffineTransform& transform)
+{
+ auto result = source;
+ for (size_t index = 0; index < result.size(); ++index) {
+  result[index].position = transform.map(result[index].position);
+  result[index].inTangent = transform.mapVector(result[index].inTangent);
+  result[index].outTangent = transform.mapVector(result[index].outTangent);
+ }
+ return result;
+}
+
+MaskAffineTransform MaskAffineTransform::identity()
+{
+ return MaskAffineTransform{};
+}
+
+MaskAffineTransform MaskAffineTransform::scaling(const QPointF& center,
+                                                  const QPointF& factors)
+{
+ MaskAffineTransform transform;
+ transform.center = center;
+ transform.scaleX = static_cast<float>(factors.x());
+ transform.scaleY = static_cast<float>(factors.y());
+ return transform;
+}
+
+MaskAffineTransform MaskAffineTransform::rotating(const QPointF& center,
+                                                  const double radians)
+{
+ MaskAffineTransform transform;
+ transform.center = center;
+ transform.rotation = static_cast<float>(radians);
+ return transform;
+}
+
+MaskAffineTransform MaskAffineTransform::translating(const QPointF& delta)
+{
+ MaskAffineTransform transform;
+ transform.center = QPointF(0.0, 0.0);
+ transform.translate = delta;
+ return transform;
+}
+
+QPointF MaskAffineTransform::map(const QPointF& point) const
+{
+ QPointF result = point - center;
+ if (rotation != 0.0f) {
+  const double c = std::cos(static_cast<double>(rotation));
+  const double s = std::sin(static_cast<double>(rotation));
+  result = QPointF(result.x() * c - result.y() * s,
+                   result.x() * s + result.y() * c);
+ }
+ result.setX(result.x() * scaleX);
+ result.setY(result.y() * scaleY);
+ return result + center + translate;
+}
+
+QPointF MaskAffineTransform::mapVector(const QPointF& vector) const
+{
+ QPointF result = vector;
+ if (rotation != 0.0f) {
+  const double c = std::cos(static_cast<double>(rotation));
+  const double s = std::sin(static_cast<double>(rotation));
+  result = QPointF(result.x() * c - result.y() * s,
+                   result.x() * s + result.y() * c);
+ }
+ result.setX(result.x() * scaleX);
+ result.setY(result.y() * scaleY);
+ return result;
+}
+
+float MaskAffineTransform::lengthScale() const
+{
+ return static_cast<float>(std::sqrt(static_cast<double>(scaleX) *
+                                      static_cast<double>(scaleY)));
+}
+
+bool MaskAffineTransform::isIdentity() const
+{
+ return center == QPointF(0.0, 0.0) && translate == QPointF(0.0, 0.0) &&
+        std::abs(scaleX - 1.0f) < 1e-6f && std::abs(scaleY - 1.0f) < 1e-6f &&
+        std::abs(rotation) < 1e-6f;
+}
+
+bool maskVerticesBounds(const std::vector<MaskVertex>& vertices,
+                        QRectF& outBounds)
+{
+ if (vertices.empty()) return false;
+ double minX = std::numeric_limits<double>::max();
+ double minY = std::numeric_limits<double>::max();
+ double maxX = std::numeric_limits<double>::lowest();
+ double maxY = std::numeric_limits<double>::lowest();
+ for (const MaskVertex& vertex : vertices) {
+  const QPointF& p = vertex.position;
+  minX = std::min(minX, p.x());
+  minY = std::min(minY, p.y());
+  maxX = std::max(maxX, p.x());
+  maxY = std::max(maxY, p.y());
+ }
+ outBounds = QRectF(QPointF(minX, minY), QPointF(maxX, maxY));
+ return true;
+}
+
+bool maskBounds(const ArtifactAbstractLayerPtr& layer, const int maskIndex,
+                QRectF& outBounds)
+{
+ if (!layer) return false;
+ bool any = false;
+ QRectF accumulated;
+ for (int m = 0; m < layer->maskCount(); ++m) {
+  if (maskIndex >= 0 && m != maskIndex) continue;
+  const LayerMask mask = layer->mask(m);
+  for (int p = 0; p < mask.maskPathCount(); ++p) {
+   const MaskPath path = mask.maskPath(p);
+   std::vector<MaskVertex> vertices;
+   vertices.reserve(static_cast<size_t>(path.vertexCount()));
+   for (int v = 0; v < path.vertexCount(); ++v)
+    vertices.push_back(path.vertex(v));
+   QRectF pathBounds;
+   if (!maskVerticesBounds(vertices, pathBounds)) continue;
+   if (!any) {
+    accumulated = pathBounds;
+    any = true;
+   } else {
+    accumulated = accumulated.united(pathBounds);
+   }
+  }
+ }
+ if (any) outBounds = accumulated;
+ return any;
+}
+
+ArtifactCore::Units::LayerLocalLength scaleMaskLength(
+    const ArtifactCore::Units::LayerLocalLength value, const float factor)
+{
+ if (std::abs(factor - 1.0f) < 1e-6f) return value;
+ return ArtifactCore::Units::LayerLocalLength{value.value * factor};
+}
+
+QPointF maskBoundsHandleScale(const MaskBoundsHandle handle)
+{
+ switch (handle) {
+ case MaskBoundsHandle::TopLeft: return QPointF(-1.0, -1.0);
+ case MaskBoundsHandle::TopRight: return QPointF(1.0, -1.0);
+ case MaskBoundsHandle::BottomLeft: return QPointF(-1.0, 1.0);
+ case MaskBoundsHandle::BottomRight: return QPointF(1.0, 1.0);
+ case MaskBoundsHandle::Top: return QPointF(0.0, -1.0);
+ case MaskBoundsHandle::Bottom: return QPointF(0.0, 1.0);
+ case MaskBoundsHandle::Left: return QPointF(-1.0, 0.0);
+ case MaskBoundsHandle::Right: return QPointF(1.0, 0.0);
+ case MaskBoundsHandle::Center:
+ case MaskBoundsHandle::None:
+  break;
+ }
+ return QPointF(0.0, 0.0);
+}
+
+QPointF maskBoundsHandlePosition(const QRectF& bounds,
+                                 const MaskBoundsHandle handle)
+{
+ switch (handle) {
+ case MaskBoundsHandle::TopLeft: return bounds.topLeft();
+ case MaskBoundsHandle::TopRight: return bounds.topRight();
+ case MaskBoundsHandle::BottomLeft: return bounds.bottomLeft();
+ case MaskBoundsHandle::BottomRight: return bounds.bottomRight();
+ case MaskBoundsHandle::Top: return QPointF(bounds.center().x(), bounds.top());
+ case MaskBoundsHandle::Bottom: return QPointF(bounds.center().x(), bounds.bottom());
+ case MaskBoundsHandle::Left: return QPointF(bounds.left(), bounds.center().y());
+ case MaskBoundsHandle::Right: return QPointF(bounds.right(), bounds.center().y());
+ case MaskBoundsHandle::Center: return bounds.center();
+ case MaskBoundsHandle::None:
+  break;
+ }
+ return bounds.center();
+}
+
+MaskBoundsHandle hitTestMaskBoundsHandle(
+    const QRectF& localBounds, const QTransform& layerToCanvas,
+    const QPointF& canvasPosition, const float threshold)
+{
+ if (localBounds.isEmpty()) return MaskBoundsHandle::None;
+ // Corner を先に判定する。辺ハンドルより優先度が高く、隣接する角で
+ // grab が奪い合わないようにする。
+ constexpr MaskBoundsHandle kCorners[] = {
+     MaskBoundsHandle::TopLeft, MaskBoundsHandle::TopRight,
+     MaskBoundsHandle::BottomRight, MaskBoundsHandle::BottomLeft};
+ for (const MaskBoundsHandle handle : kCorners) {
+  const QPointF canvas = layerToCanvas.map(
+      maskBoundsHandlePosition(localBounds, handle));
+  if (QLineF(canvas, canvasPosition).length() <= threshold)
+   return handle;
+ }
+ constexpr MaskBoundsHandle kEdges[] = {
+     MaskBoundsHandle::Top, MaskBoundsHandle::Right,
+     MaskBoundsHandle::Bottom, MaskBoundsHandle::Left};
+ for (const MaskBoundsHandle handle : kEdges) {
+  const QPointF canvas = layerToCanvas.map(
+      maskBoundsHandlePosition(localBounds, handle));
+  if (QLineF(canvas, canvasPosition).length() <= threshold)
+   return handle;
+ }
+ return MaskBoundsHandle::None;
 }
 
 std::vector<QPointF> proportionalShapePoints(

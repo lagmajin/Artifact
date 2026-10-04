@@ -146,9 +146,27 @@ void SharpenEffect::syncImpls() {
 
 std::vector<AbstractProperty> SharpenEffect::getProperties() const {
     std::vector<AbstractProperty> props;
-    auto& a = props.emplace_back(); a.setName("Amount"); a.setType(PropertyType::Float); a.setValue(amount_);
-    auto& s = props.emplace_back(); s.setName("Sigma"); s.setType(PropertyType::Float); s.setValue(sigma_);
-    auto& t = props.emplace_back(); t.setName("Threshold"); t.setType(PropertyType::Float); t.setValue(threshold_);
+    props.reserve(3);
+
+    auto& a = props.emplace_back();
+    a.setName("Amount"); a.setType(PropertyType::Float); a.setValue(amount_);
+    a.setDefaultValue(1.0);
+    a.setHardRange(0.0, 10.0); a.setSoftRange(0.0, 5.0); a.setStep(0.01);
+    a.setTooltip(QStringLiteral("Strength of the detail enhancement applied to each pixel."));
+
+    auto& s = props.emplace_back();
+    s.setName("Sigma"); s.setType(PropertyType::Float); s.setValue(sigma_);
+    s.setDefaultValue(1.0);
+    s.setHardRange(0.0, 10.0); s.setSoftRange(0.0, 5.0); s.setStep(0.01);
+    s.setUnit(QStringLiteral("px"));
+    s.setTooltip(QStringLiteral("Radius of the surrounding area sampled to compute the detail term."));
+
+    auto& t = props.emplace_back();
+    t.setName("Threshold"); t.setType(PropertyType::Float); t.setValue(threshold_);
+    t.setDefaultValue(0.0);
+    t.setHardRange(0.0, 1.0); t.setSoftRange(0.0, 1.0); t.setStep(0.01);
+    t.setTooltip(QStringLiteral("Largest local contrast left unsharpened. 0 sharpens every pixel."));
+
     return props;
 }
 
@@ -157,6 +175,7 @@ void SharpenEffect::setPropertyValue(const UniString& n, const QVariant& v) {
     if (k == "Amount") setAmount(v.toFloat());
     else if (k == "Sigma") setSigma(v.toFloat());
     else if (k == "Threshold") setThreshold(v.toFloat());
+    else setCommonPropertyValue(k, v);
 }
 
 class MagicSharpEffect::Impl {

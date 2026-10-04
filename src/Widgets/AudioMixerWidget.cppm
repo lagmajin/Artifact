@@ -380,7 +380,9 @@ void AudioEffectSlotWidget::paintEvent(QPaintEvent* event) {
 }
 
 // Helper: build parameter editor dialog
-static QDialog* createParameterEditor(const ArtifactCore::String& effectName,
+// The mixer FX rack in ArtifactCompositionAudioMixerPresentation reuses this
+// dialog so an audio effect has one parameter editor, not two.
+QDialog* createParameterEditor(const ArtifactCore::String& effectName,
     ArtifactCore::AudioEffect* effect, QWidget* parent) {
 
     auto* dlg = new QDialog(parent);

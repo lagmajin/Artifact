@@ -130,6 +130,59 @@ export namespace Artifact
    bool historyValid = false,
    ITextureView* revealMap = nullptr);
 
+  // Per-effect mask post-composite.  Reproduces the CPU blend in
+  // ArtifactAbstractEffect::applyConfigured: coverage starts at `mix`, is zeroed
+  // outside `region` when `regionEnabled`, is scaled by the primary mask's
+  // alpha (honouring `maskInverted` and `maskOpacity`), and is multiplied by
+  // every additional mask image's alpha before lerping the processed result
+  // against the unprocessed source.
+  //
+  // The primary mask and the additional masks are uploaded as TWO separate
+  // textures rather than folded together on the CPU.  Folding would be wrong
+  // when maskInverted is set: the CPU specification is
+  // (1 - alpha) * opacity * product(additional), so inverting after the fold
+  // would invert the additional masks as well.  Keeping them apart lets the
+  // shader apply the inversion and opacity to the primary only, exactly as the
+  // CPU path does.  It also avoids a CPU pass over the mask texels every frame.
+  //
+  // A mask whose resolution differs from the surface is stretched, matching the
+  // CPU path.  `additionalMaskData` entries are each required to match the
+  // surface resolution; a null entry is skipped, mirroring the CPU path.
+  //
+  // Returns false when the composite cannot run; the caller then rejects the
+  // layer so the CPU path stays authoritative.
+  struct EffectMaskCompositeParams
+  {
+   const float* primaryMaskData = nullptr;
+   Uint32 primaryMaskWidth = 0;
+   Uint32 primaryMaskHeight = 0;
+   float maskOpacity = 1.0f;
+   bool maskInverted = false;
+   float mix = 1.0f;
+   bool regionEnabled = false;
+   float regionX = 0.0f;
+   float regionY = 0.0f;
+   float regionWidth = 0.0f;
+   float regionHeight = 0.0f;
+   // Additional mask images, each authored at the surface resolution.  A null
+   // entry is skipped.
+   const float* const* additionalMaskData = nullptr;
+   Uint32 additionalMaskCount = 0;
+  };
+
+  bool applyEffectMaskComposite(
+   IDeviceContext* ctx,
+   ITextureView* effectSRV, ITextureView* sourceSRV,
+   ITextureView* scratchUAV, ITextureView* outputUAV,
+   const EffectMaskCompositeParams& params);
+
+  // Snapshots a texture into the pipeline's effect-mask source slot and returns
+  // its SRV for applyEffectMaskComposite, or nullptr when the slot is not
+  // available.  The slot is a dedicated bundle because every spatial node uses
+  // the caller-supplied scratch as its working target, so the untouched layer
+  // has nowhere else to live while the effects run.
+  ITextureView* snapshotForEffectMask(IDeviceContext* ctx, ITextureView* sourceSRV);
+
   ITextureView* accumSRV() const;
   ITextureView* accumUAV() const;
   ITextureView* accumRTV() const;

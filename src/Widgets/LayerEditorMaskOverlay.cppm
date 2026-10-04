@@ -1,6 +1,7 @@
 module;
 
 #include <QPointF>
+#include <QRectF>
 #include <QTransform>
 
 #include <algorithm>
@@ -119,6 +120,50 @@ void drawBezierSegment(ArtifactIRenderer* renderer, const QTransform& transform,
 
 }
 
+void drawMaskBoundsGizmo(ArtifactIRenderer* renderer, const QTransform& transform,
+                         const QRectF& localBounds, const LayerEditorMaskOverlayState& state)
+{
+ const FloatColor lineColor{0.98f, 0.80f, 0.34f, 0.92f};
+ const FloatColor boxShadow{0.0f, 0.0f, 0.0f, 0.34f};
+
+ // ローカル空間の bounds をキャンバスへ写像し、矩形アウトラインを描く。
+ // 対象は単一マスクの bounding box なので、描画はキャンバス上の
+ // 平行四辺形になる。
+ const QPointF tl = transform.map(localBounds.topLeft());
+ const QPointF tr = transform.map(localBounds.topRight());
+ const QPointF br = transform.map(localBounds.bottomRight());
+ const QPointF bl = transform.map(localBounds.bottomLeft());
+ const Detail::float2 tlP{static_cast<float>(tl.x()), static_cast<float>(tl.y())};
+ const Detail::float2 trP{static_cast<float>(tr.x()), static_cast<float>(tr.y())};
+ const Detail::float2 brP{static_cast<float>(br.x()), static_cast<float>(br.y())};
+ const Detail::float2 blP{static_cast<float>(bl.x()), static_cast<float>(bl.y())};
+ renderer->drawThickLineLocal(tlP, trP, 5.0f, boxShadow);
+ renderer->drawThickLineLocal(trP, brP, 5.0f, boxShadow);
+ renderer->drawThickLineLocal(brP, blP, 5.0f, boxShadow);
+ renderer->drawThickLineLocal(blP, tlP, 5.0f, boxShadow);
+ renderer->drawThickLineLocal(tlP, trP, 2.0f, lineColor);
+ renderer->drawThickLineLocal(trP, brP, 2.0f, lineColor);
+ renderer->drawThickLineLocal(brP, blP, 2.0f, lineColor);
+ renderer->drawThickLineLocal(blP, tlP, 2.0f, lineColor);
+
+ constexpr MaskBoundsHandle kHandles[] = {
+     MaskBoundsHandle::TopLeft, MaskBoundsHandle::Top,
+     MaskBoundsHandle::TopRight, MaskBoundsHandle::Right,
+     MaskBoundsHandle::BottomRight, MaskBoundsHandle::Bottom,
+     MaskBoundsHandle::BottomLeft, MaskBoundsHandle::Left,
+     MaskBoundsHandle::Center};
+ for (const MaskBoundsHandle handle : kHandles) {
+  const QPointF point = transform.map(
+      maskBoundsHandlePosition(localBounds, handle));
+  const Detail::float2 center{static_cast<float>(point.x()),
+                              static_cast<float>(point.y())};
+  const bool dragging = state.boundsHandle == handle;
+  const bool hovering = static_cast<int>(handle) == state.hoveredBoundsHandle;
+  drawSolidHandle(renderer, center, dragging || hovering ? 11.0f : 8.4f,
+                  lineColor, dragging || hovering);
+ }
+}
+
 void drawLayerEditorMaskOverlay(
     ArtifactIRenderer* renderer, const ArtifactAbstractLayerPtr& layer,
     const LayerEditorMaskOverlayState& state)
@@ -220,6 +265,14 @@ void drawLayerEditorMaskOverlay(
     drawSolidHandle(renderer, current, size, color, dragging || hovering || isSelected);
    }
   }
+ }
+
+ // ==== マスク bounding box ギズモ ====
+ // 選択中マスク（boundsMaskIndex >= 0）のみ表示する。
+ if (state.boundsMaskIndex >= 0) {
+  QRectF localBounds;
+  if (maskBounds(layer, state.boundsMaskIndex, localBounds) && !localBounds.isEmpty())
+   drawMaskBoundsGizmo(renderer, transform, localBounds, state);
  }
 
  if (state.rubberBandSelecting) {

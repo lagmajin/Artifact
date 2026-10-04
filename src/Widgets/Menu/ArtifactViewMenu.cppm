@@ -804,6 +804,7 @@ namespace Artifact {
    renderer->setPan(static_cast<float>(entry.panX), static_cast<float>(entry.panY));
    renderer->setRotation(static_cast<float>(entry.rotation));
     controller->setViewportOrientationQuaternion(entry.orientation);
+    editor->syncViewCubeOrientation();
     if (auto* svc = ArtifactProjectService::instance()) {
      const auto preset = static_cast<::PreviewQualityPreset>(
          std::clamp(entry.previewQualityPreset,

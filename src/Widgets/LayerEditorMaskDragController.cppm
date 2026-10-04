@@ -82,9 +82,58 @@ bool LayerEditorMaskDragController::dragVertex(
   vertex.position = local;
   path.setVertex(vertexIndex, vertex);
  }
- mask.setMaskPath(pathIndex, path);
- layer->setMask(maskIndex, mask);
- return true;
+mask.setMaskPath(pathIndex, path);
+  layer->setMask(maskIndex, mask);
+  return true;
+}
+
+bool LayerEditorMaskDragController::transformMasks(
+    const ArtifactAbstractLayerPtr& layer, const MaskAffineTransform& transform,
+    const int maskIndex) const
+{
+ if (!layer || transform.isIdentity()) return false;
+
+ // rotation が混ざると feather の軸方向が回ってしまうため、長さ系
+ // (feather / expansion) は平均スケールで一段だけスケールし、頂点だけを
+ // 完全アフィン変換する。
+ const float lengthFactor = transform.lengthScale();
+
+ bool changed = false;
+ for (int m = 0; m < layer->maskCount(); ++m) {
+  if (maskIndex >= 0 && m != maskIndex) continue;
+  LayerMask mask = layer->mask(m);
+  bool maskChanged = false;
+  for (int p = 0; p < mask.maskPathCount(); ++p) {
+   MaskPath path = mask.maskPath(p);
+   std::vector<MaskVertex> vertices;
+   vertices.reserve(static_cast<size_t>(path.vertexCount()));
+   for (int v = 0; v < path.vertexCount(); ++v)
+    vertices.push_back(path.vertex(v));
+   if (vertices.empty()) continue;
+   for (MaskVertex& vertex : vertices) {
+    vertex.position = transform.map(vertex.position);
+    vertex.inTangent = transform.mapVector(vertex.inTangent);
+    vertex.outTangent = transform.mapVector(vertex.outTangent);
+   }
+   for (int v = 0; v < path.vertexCount(); ++v)
+    path.setVertex(v, vertices[static_cast<size_t>(v)]);
+   path.setFeather(scaleMaskLength(path.feather(), lengthFactor));
+   path.setFeatherHorizontal(
+       scaleMaskLength(path.featherHorizontal(), lengthFactor));
+   path.setFeatherVertical(
+       scaleMaskLength(path.featherVertical(), lengthFactor));
+   path.setFeatherInner(scaleMaskLength(path.featherInner(), lengthFactor));
+   path.setFeatherOuter(scaleMaskLength(path.featherOuter(), lengthFactor));
+   path.setExpansion(scaleMaskLength(path.expansion(), lengthFactor));
+   mask.setMaskPath(p, path);
+   maskChanged = true;
+  }
+  if (maskChanged) {
+   layer->setMask(m, mask);
+   changed = true;
+  }
+ }
+ return changed;
 }
 
 }

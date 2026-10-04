@@ -1,6 +1,7 @@
 module;
 
 #include <QPointF>
+#include <QRectF>
 
 #include <vector>
 
@@ -14,26 +15,32 @@ import Artifact.Widgets.LayerEditor.Geometry;
 export namespace Artifact {
 
 enum class LayerEditorMaskPressKind {
- Empty, DragHandle, DragVertex, GeometryChanged
+    Empty, DragHandle, DragVertex, GeometryChanged, DragBounds
 };
 
 struct LayerEditorMaskPressResult {
- LayerEditorMaskPressKind kind = LayerEditorMaskPressKind::Empty;
- int maskIndex = -1;
- int pathIndex = -1;
- int vertexIndex = -1;
- MaskHandleType handleType = MaskHandleType::None;
- std::vector<MaskVertex> proportionalBefore;
- QPointF proportionalOrigin;
+    LayerEditorMaskPressKind kind = LayerEditorMaskPressKind::Empty;
+    int maskIndex = -1;
+    int pathIndex = -1;
+    int vertexIndex = -1;
+    MaskHandleType handleType = MaskHandleType::None;
+    std::vector<MaskVertex> proportionalBefore;
+    QPointF proportionalOrigin;
+    // ==== bounds ギズモ ====
+    MaskBoundsHandle boundsHandle = MaskBoundsHandle::None;
+    // ドラッグ開始時の bounds（レイヤーローカル空間）と原点。
+    QRectF boundsBefore;
+    QPointF boundsAnchor;
 };
 
 class LayerEditorMaskPressController {
 public:
- LayerEditorMaskPressResult handle(
-     const ArtifactAbstractLayerPtr& layer,
-     const QPointF& canvasPosition, float zoom,
-     bool proportionalEditingEnabled,
-     LayerEditorMaskEditSession& editSession) const;
+  LayerEditorMaskPressResult handle(
+    const ArtifactAbstractLayerPtr& layer,
+    const QPointF& canvasPosition, float zoom,
+    bool proportionalEditingEnabled,
+    int boundsMaskIndex,
+    LayerEditorMaskEditSession& editSession) const;
  bool closeOpenPathOnDoubleClick(
      const ArtifactAbstractLayerPtr& layer,
      const QPointF& canvasPosition, float zoom,

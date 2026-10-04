@@ -13,6 +13,7 @@ module;
 #include <utility>
 #include <vector>
 #include <QDebug>
+#include <QFile>
 #include <QImage>
 #include <QPointF>
 #include <QSet>
@@ -108,6 +109,7 @@ import Artifact.Layer.RuntimeRenderSupport;
 import Artifact.Layer.FluidRuntimeState;
 import Artifact.Layer.Abstract.Utilities;
 import Artifact.Layer.PhysicsBridge;
+import Script.ArtifactScript;
 
 using namespace Artifact;
 using namespace ArtifactCore;
@@ -400,6 +402,16 @@ public:
     NamedVector<LayerModifierDescriptor> extraCloneModifierDescriptors_{
         ContainerName{"Layer.ExtraCloneModifiers"}};
     QJsonObject scriptBinding_;
+    // Script component runtime state. The definition is move-only, so the
+    // layer owns its instance directly instead of borrowing one from the
+    // Core hot-reload registry.
+    std::unique_ptr<ArtifactCore::ArtifactScriptInstance> scriptInstance_;
+    std::string scriptSourcePath_;
+    mutable int64_t scriptLastFrame_ = std::numeric_limits<int64_t>::min();
+    std::string scriptLastError_;
+    // Lifecycle stage of the bound script; advanced by the composition loop.
+    ArtifactAbstractLayer::ScriptRunState scriptRunState_ =
+        ArtifactAbstractLayer::ScriptRunState::Unbound;
 
   // Mask and matte ownership is isolated to keep container instantiations out
   // of this already large implementation unit.
@@ -452,6 +464,19 @@ public:
   ~ArtifactAbstractLayerImpl();
   void syncBuiltinComponentDescriptors();
   void syncBuiltinBoolsFromHost();
+  // Resolves scriptBinding_ into a live ArtifactScriptInstance. Safe to call
+  // on every binding change; a no-op when the resolved path is unchanged.
+  void rebuildScriptInstance();
+  // Releases the script instance and resets the per-frame guard.
+  void releaseScriptInstance();
+  // Re-reads the bound script file and swaps in a fresh instance, migrating
+  // field values whose name and type are unchanged.
+  bool reloadScriptFromDisk();
+  // Runs OnUpdate once for the given frame. Returns true when the hook ran.
+  bool evaluateScriptFrame(int64_t frame, double timeSeconds,
+                           double deltaSeconds);
+  // Advances the script lifecycle stage, firing the implied hooks.
+  bool advanceScriptLifecycle(ArtifactAbstractLayer::ScriptRunState target);
   std::type_index type_index_ = typeid(void);
   void goToStartFrame();
   void goToEndFrame();

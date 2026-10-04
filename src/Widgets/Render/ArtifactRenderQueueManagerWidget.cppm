@@ -606,11 +606,9 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
         palette.setColor(QPalette::Window,
             row == jobListWidget->currentRow()
                 ? QColor(theme.selectionColor).darker(125)
-                : QColor(24, 29, 33));
+                : QColor(30, 34, 39));
         card->setPalette(palette);
-        card->setFrameStyle(row == jobListWidget->currentRow()
-            ? QFrame::StyledPanel | QFrame::Sunken
-            : QFrame::StyledPanel | QFrame::Plain);
+        card->setFrameShape(QFrame::NoFrame);
       }
     }
     updateSummary();
@@ -994,11 +992,13 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
   layout->setSpacing(0);
 
   const auto& theme = ArtifactCore::currentDCCTheme();
+  const QColor managerSurface(25, 29, 34);
+  const QColor queueSurface(30, 34, 39);
   setAutoFillBackground(true);
   {
     QPalette palette = this->palette();
-    palette.setColor(QPalette::Window, QColor(20, 24, 28));
-    palette.setColor(QPalette::Base, QColor(24, 29, 33));
+    palette.setColor(QPalette::Window, managerSurface);
+    palette.setColor(QPalette::Base, queueSurface);
     palette.setColor(QPalette::WindowText, QColor(theme.textColor));
     setPalette(palette);
   }
@@ -1081,12 +1081,12 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
   splitter->setChildrenCollapsible(false);
 
   auto* filterSide = new QFrame();
-  filterSide->setFrameShape(QFrame::StyledPanel);
+  filterSide->setFrameShape(QFrame::NoFrame);
   filterSide->setAutoFillBackground(true);
   {
     QPalette palette = filterSide->palette();
-    palette.setColor(QPalette::Window, QColor(25, 30, 34));
-    palette.setColor(QPalette::Base, QColor(25, 30, 34));
+    palette.setColor(QPalette::Window, managerSurface);
+    palette.setColor(QPalette::Base, managerSurface);
     palette.setColor(QPalette::WindowText, QColor(theme.textColor));
     filterSide->setPalette(palette);
   }
@@ -1181,12 +1181,12 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
                                     impl_->visibleToSource[visibleTo]);
     impl_->syncJobsFromService();
   };
-  impl_->jobListWidget->setAlternatingRowColors(true);
+  impl_->jobListWidget->setAlternatingRowColors(false);
   impl_->jobListWidget->setSpacing(1);
   {
     QPalette palette = impl_->jobListWidget->palette();
-    palette.setColor(QPalette::Base, QColor(24, 29, 33));
-    palette.setColor(QPalette::AlternateBase, QColor(22, 27, 31));
+    palette.setColor(QPalette::Base, queueSurface);
+    palette.setColor(QPalette::AlternateBase, queueSurface);
     palette.setColor(QPalette::Highlight, QColor(42, 55, 69));
     palette.setColor(QPalette::HighlightedText, QColor(theme.textColor));
     impl_->jobListWidget->setPalette(palette);
@@ -1198,8 +1198,8 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
   leftSide->setAutoFillBackground(true);
   {
     QPalette palette = leftSide->palette();
-    palette.setColor(QPalette::Window, QColor(22, 27, 31));
-    palette.setColor(QPalette::Base, QColor(22, 27, 31));
+    palette.setColor(QPalette::Window, queueSurface);
+    palette.setColor(QPalette::Base, queueSurface);
     palette.setColor(QPalette::WindowText, QColor(theme.textColor));
     leftSide->setPalette(palette);
   }
@@ -1318,13 +1318,19 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
   detailScroll->setMinimumWidth(346);
   detailScroll->setWidgetResizable(true);
   detailScroll->setObjectName("renderQueueDetailScroll");
+  {
+    QPalette palette = detailScroll->palette();
+    palette.setColor(QPalette::Window, managerSurface);
+    palette.setColor(QPalette::Base, managerSurface);
+    detailScroll->setPalette(palette);
+  }
   auto* detailWidget = new QWidget();
   detailWidget->setMinimumWidth(346);
   detailWidget->setAutoFillBackground(true);
   {
     QPalette palette = detailWidget->palette();
-    palette.setColor(QPalette::Window, QColor(24, 29, 33));
-    palette.setColor(QPalette::Base, QColor(24, 29, 33));
+    palette.setColor(QPalette::Window, managerSurface);
+    palette.setColor(QPalette::Base, managerSurface);
     palette.setColor(QPalette::WindowText, QColor(theme.textColor));
     detailWidget->setPalette(palette);
   }
@@ -1352,7 +1358,7 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
   impl_->previewLabel->setMaximumSize(220, 132);
   {
     QPalette pal = impl_->previewLabel->palette();
-    pal.setColor(QPalette::Window, QColor(theme.secondaryBackgroundColor));
+    pal.setColor(QPalette::Window, queueSurface);
     pal.setColor(QPalette::WindowText, QColor(theme.textColor).darker(120));
     impl_->previewLabel->setAutoFillBackground(true);
     impl_->previewLabel->setPalette(pal);
@@ -1367,7 +1373,7 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
     impl_->previewSummaryLabel->setPalette(summaryPalette);
   }
   auto* previewCard = new QFrame();
-  previewCard->setFrameShape(QFrame::StyledPanel);
+  previewCard->setFrameShape(QFrame::NoFrame);
   auto* previewCardLayout = new QHBoxLayout(previewCard);
   previewCardLayout->setContentsMargins(8, 8, 8, 8);
   previewCardLayout->setSpacing(12);
@@ -2051,14 +2057,20 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
   historyGroup->setAutoFillBackground(true);
   {
     QPalette palette = historyGroup->palette();
-    palette.setColor(QPalette::Window, QColor(24, 29, 33));
-    palette.setColor(QPalette::Base, QColor(24, 29, 33));
+    palette.setColor(QPalette::Window, managerSurface);
+    palette.setColor(QPalette::Base, managerSurface);
     palette.setColor(QPalette::WindowText, QColor(theme.textColor));
     historyGroup->setPalette(palette);
   }
   auto* historyLayout = new QVBoxLayout(historyGroup);
   impl_->historyListWidget = new QListWidget();
   impl_->historyListWidget->setObjectName("renderQueueHistory");
+  {
+    QPalette palette = impl_->historyListWidget->palette();
+    palette.setColor(QPalette::Base, managerSurface);
+    palette.setColor(QPalette::AlternateBase, managerSurface);
+    impl_->historyListWidget->setPalette(palette);
+  }
   impl_->historyListWidget->setAccessibleName(QStringLiteral("Render history"));
   impl_->historyListWidget->setAccessibleDescription(
       QStringLiteral("Review completed and failed render job history."));
@@ -2144,12 +2156,12 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
   }
   
   auto* activityFrame = new QFrame();
-  activityFrame->setFrameShape(QFrame::StyledPanel);
+  activityFrame->setFrameShape(QFrame::NoFrame);
   activityFrame->setAutoFillBackground(true);
   {
     QPalette palette = activityFrame->palette();
-    palette.setColor(QPalette::Window, QColor(24, 29, 33));
-    palette.setColor(QPalette::Base, QColor(24, 29, 33));
+    palette.setColor(QPalette::Window, managerSurface);
+    palette.setColor(QPalette::Base, managerSurface);
     palette.setColor(QPalette::WindowText, QColor(theme.textColor));
     activityFrame->setPalette(palette);
   }

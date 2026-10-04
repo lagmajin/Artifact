@@ -37,12 +37,22 @@ void ChorusEffect::initializeEngine() {
         float maxDelay = 0.05f;
         delayL_[v].initialize(maxDelay, sr);
         delayR_[v].initialize(maxDelay, sr);
-
-        float voiceRate = rate_ * (1.0f + 0.15f * static_cast<float>(v));
-        lfoL_[v].initialize(voiceRate, sr);
-
-        float rRate = voiceRate * 1.03f;
-        lfoR_[v].initialize(rRate, sr);
+    }
+    // 初回構築時のみ LFO の位相を 0 から始める。パラメータ変更時は
+    // 位相を維持したまま周波数だけ更新し、調整による位相の飛びを防ぐ。
+    if (!initialized_) {
+        for (int v = 0; v < kNumVoices; ++v) {
+            const float voiceRate = rate_ * (1.0f + 0.15f * static_cast<float>(v));
+            lfoL_[v].initialize(voiceRate, sr);
+            lfoR_[v].initialize(voiceRate * 1.03f, sr);
+        }
+        initialized_ = true;
+        return;
+    }
+    for (int v = 0; v < kNumVoices; ++v) {
+        const float voiceRate = rate_ * (1.0f + 0.15f * static_cast<float>(v));
+        lfoL_[v].setFrequency(voiceRate);
+        lfoR_[v].setFrequency(voiceRate * 1.03f);
     }
 }
 
@@ -125,8 +135,11 @@ void ChorusEffect::setParameter(const String& name, float value) {
     else if (name == "feedback")  feedback_ = std::clamp(finiteOr(value, 0.1f), 0.0f, 0.7f);
     else if (name == "wet_level") wetLevel_ = std::clamp(finiteOr(value, 0.5f), 0.0f, 1.0f);
     else if (name == "dry_level") dryLevel_ = std::clamp(finiteOr(value, 0.5f), 0.0f, 1.0f);
-
-    initializeEngine();
+    // ここでは DSP を再初期化しない。遅延長は process() 内で毎回計算され、
+    // 周波数も LFO::setFrequency で位相を保ったまま更新できる。
+    // 旧実装は if-else の外側で無条件に initializeEngine() を呼び、遅延バッファ
+    // 6 本を再確保して LFO 位相をリセットしていた。そのためスライダを動かした
+    // だけで余韻が切れ、クリックノイズが生じた。
 }
 
 float ChorusEffect::getParameter(const String& name) const {
@@ -140,7 +153,11 @@ float ChorusEffect::getParameter(const String& name) const {
 }
 
 void ChorusEffect::setSampleRate(int sampleRate) {
-    sampleRate_ = sampleRate > 0 ? sampleRate : 44100;
+    ArtifactAbstractAudioEffect::setSampleRate(sampleRate);
+    initializeEngine();
+}
+
+void ChorusEffect::reinitOnSampleRate() {
     initializeEngine();
 }
 
