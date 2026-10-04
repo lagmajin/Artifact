@@ -933,6 +933,7 @@ void installCompositionScriptApi(ArtifactAbstractComposition* composition)
 {
   using namespace ArtifactCore;
   ArtifactScriptCompositionApi api;
+  auto& host = ArtifactScriptHost::global();
   api.getLayer = [composition](std::string_view reference) {
     const ArtifactAbstractLayerPtr layer =
         resolveScriptLayerTarget(composition, reference, {});
@@ -948,6 +949,41 @@ void installCompositionScriptApi(ArtifactAbstractComposition* composition)
     return composition ? static_cast<double>(composition->currentFrame())
                       : 0.0;
   };
+  // Frame-base companions to getTime(): animation code usually reasons in
+  // frames, and fps() is needed to convert between the two.
+  host.registerFunction("getFrame", [composition]() -> std::int64_t {
+    if (!composition) {
+      return 0;
+    }
+    return static_cast<std::int64_t>(
+        composition->framePosition().rescaledTo(1));
+  });
+  host.registerFunction("fps", [composition]() -> double {
+    return composition ? static_cast<double>(
+                             composition->frameRate().framerate())
+                      : 0.0;
+  });
+  host.registerFunction("timeToFrame", [composition](
+                                           std::span<const ArtifactScriptValue> a) {
+    if (a.empty() || !composition) {
+      return ArtifactScriptValue(static_cast<std::int64_t>(0));
+    }
+    const double rate = std::max(
+        1.0, static_cast<double>(composition->frameRate().framerate()));
+    return ArtifactScriptValue(
+        static_cast<std::int64_t>(std::llround(scriptNumber(a[0]) * rate)));
+  });
+  host.registerFunction("frameToTime", [composition](
+                                           std::span<const ArtifactScriptValue> a) {
+    if (a.empty() || !composition) {
+      return ArtifactScriptValue(0.0);
+    }
+    const double rate = std::max(
+        1.0, static_cast<double>(composition->frameRate().framerate()));
+    return ArtifactScriptValue(
+        static_cast<double>(static_cast<std::int64_t>(scriptNumber(a[0]))) /
+        rate);
+  });
   // "self" resolves to the layer that owns the running script. The registry is
   // process-wide, so the owner is passed through a thread-local marker set by
   // the evaluator call site rather than captured per installation.
@@ -991,7 +1027,6 @@ void installCompositionScriptApi(ArtifactAbstractComposition* composition)
   ArtifactScriptHost::global().installCompositionApi(api);
   // `this.<prop>` shorthand. Registered here (not in the library block) because
   // resolving the target needs the composition scope and the self layer.
-  auto& host = ArtifactScriptHost::global();
   host.registerFunction("getSelfProperty", [](
                                            std::span<const ArtifactScriptValue> a) {
     if (a.empty() || !std::holds_alternative<std::string>(a[0])) {
