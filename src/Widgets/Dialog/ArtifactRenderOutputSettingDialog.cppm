@@ -1,6 +1,7 @@
 module;
 #include <utility>
 #include <algorithm>
+#include <cmath>
 #include <functional>
 #include <wobjectimpl.h>
 #include <QDialog>
@@ -22,6 +23,8 @@ module;
 #include <QSpinBox>
 #include <QStandardPaths>
 #include <QStringList>
+#include <QTime>
+#include <QTimeEdit>
 #include <QVector>
 #include <QCoreApplication>
 #include <QProcess>
@@ -43,6 +46,7 @@ import Artifact.Render.Queue.Service;
 import Artifact.Service.Project;
 import Artifact.Widgets.RelativeSpinBox;
 import Translation.Manager;
+import Time.Code;
 
 
 namespace Artifact
@@ -495,6 +499,14 @@ namespace Artifact
   QLabel* advancedAlphaLabel = nullptr;
   QLabel* advancedFilenameLabel = nullptr;
   QLabel* advancedTimecodeLabel = nullptr;
+  // Timecode editor. The label above only echoes the source fps; these two carry
+  // the actual start Timecode and the drop-frame flag into the render job.
+  QTimeEdit* advancedTimecodeEdit = nullptr;
+  QCheckBox* advancedDropFrameCheck = nullptr;
+  // Bit depth written to image-sequence outputs (8 / 16 / 32).
+  QComboBox* bitDepthCombo = nullptr;
+  // EXR compression method (none / zip / zips / piz / pxr24).
+  QComboBox* exrCompressionCombo = nullptr;
   QLabel* advancedColorLabel = nullptr;
   QLabel* advancedEncodeLabel = nullptr;
   QLabel* preflightSummaryLabel = nullptr;
@@ -1721,6 +1733,31 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
     impl_->framePaddingSpin->setAccessibleDescription(QStringLiteral("Set the number of digits for image sequence frame numbers"));
     formLayout->addRow("Frame Padding:", impl_->framePaddingSpin);
 
+    impl_->bitDepthCombo = new QComboBox();
+    impl_->bitDepthCombo->addItem(QStringLiteral("8-bit"), 8);
+    impl_->bitDepthCombo->addItem(QStringLiteral("16-bit"), 16);
+    impl_->bitDepthCombo->addItem(QStringLiteral("32-bit float"), 32);
+    impl_->bitDepthCombo->setCurrentIndex(0);
+    impl_->bitDepthCombo->setToolTip(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.bit_depth"), QStringLiteral("出力のビット深度。EXR/TIFF で 16bit（half）と 32bit float を選べます")));
+    impl_->bitDepthCombo->setAccessibleName(QStringLiteral("Bit depth"));
+    impl_->bitDepthCombo->setAccessibleDescription(QStringLiteral("Choose the bit depth written to image sequence outputs"));
+    formLayout->addRow(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.bit_depth"), QStringLiteral("ビット深度:")), impl_->bitDepthCombo);
+
+    impl_->exrCompressionCombo = new QComboBox();
+    impl_->exrCompressionCombo->addItem(QStringLiteral("None"), QStringLiteral("none"));
+    impl_->exrCompressionCombo->addItem(QStringLiteral("ZIP (16)"), QStringLiteral("zip"));
+    impl_->exrCompressionCombo->addItem(QStringLiteral("ZIPS (16)"), QStringLiteral("zips"));
+    impl_->exrCompressionCombo->addItem(QStringLiteral("PIZ (16)"), QStringLiteral("piz"));
+    impl_->exrCompressionCombo->addItem(QStringLiteral("PXR24 (32)"), QStringLiteral("pxr24"));
+    impl_->exrCompressionCombo->setCurrentIndex(1);
+    impl_->exrCompressionCombo->setToolTip(TranslationManager::instance().tr(
+        QStringLiteral("dialog.render_output.exr_compression"),
+        QStringLiteral("EXR の圧縮方式。PIZ は階層データに、ZIP は読み取りに対応します")));
+    impl_->exrCompressionCombo->setAccessibleName(QStringLiteral("EXR compression"));
+    impl_->exrCompressionCombo->setAccessibleDescription(QStringLiteral("Compression applied to EXR image sequence output"));
+    formLayout->addRow(TranslationManager::instance().tr(
+        QStringLiteral("dialog.render_output.exr_compression"), QStringLiteral("EXR 圧縮:")), impl_->exrCompressionCombo);
+
     impl_->advancedGroup = new QGroupBox(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.other_settings"), QStringLiteral("その他の設定")), this);
     impl_->advancedGroup->setCheckable(true);
     impl_->advancedGroup->setChecked(false);
@@ -1728,12 +1765,22 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
     impl_->advancedAlphaLabel = new QLabel(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.alpha_yes"), QStringLiteral("Alpha: あり")), impl_->advancedGroup);
     impl_->advancedFilenameLabel = new QLabel(QStringLiteral("ProjectName_[Preset]_[Date]"), impl_->advancedGroup);
     impl_->advancedTimecodeLabel = new QLabel(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.source_compliant"), QStringLiteral("ソース準拠")), impl_->advancedGroup);
+    impl_->advancedTimecodeEdit = new QTimeEdit(QTime(0, 0, 0, 0), impl_->advancedGroup);
+    // HH:mm:ss.ff — QTimeEdit's only sub-second unit is milliseconds, so the frames
+    // field is expressed as ff/100 (e.g. 12 frames at 25fps = .12).
+    impl_->advancedTimecodeEdit->setDisplayFormat(QStringLiteral("HH:mm:ss.ff"));
+    // Restrict the millisecond section so the arrow keys / typing cannot move it into
+    // a value that is not a whole frame at common rates.
+    impl_->advancedTimecodeEdit->setToolTip(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.timecode_start"), QStringLiteral("出力に書き込む開始タイムコード（tmcd トラック）")));
+    impl_->advancedDropFrameCheck = new QCheckBox(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.drop_frame"), QStringLiteral("ドロップフレーム (29.97 / 59.94)")), impl_->advancedGroup);
     impl_->advancedColorLabel = new QLabel(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.auto_rec709"), QStringLiteral("自動 / Rec.709")), impl_->advancedGroup);
     impl_->advancedEncodeLabel = new QLabel(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.encode_help"), QStringLiteral("2-pass / HW 支援 / 連続書き出し")), impl_->advancedGroup);
     advancedLayout->addRow(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.alpha_mode"), QStringLiteral("Alpha モード:")), alphaRow);
     advancedLayout->addRow(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.alpha_state"), QStringLiteral("Alpha 状態:")), impl_->advancedAlphaLabel);
     advancedLayout->addRow(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.filename_pattern"), QStringLiteral("ファイル名規則:")), impl_->advancedFilenameLabel);
     advancedLayout->addRow(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.timecode"), QStringLiteral("タイムコード:")), impl_->advancedTimecodeLabel);
+    advancedLayout->addRow(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.timecode_start"), QStringLiteral("開始タイムコード:")), impl_->advancedTimecodeEdit);
+    advancedLayout->addRow(QString(), impl_->advancedDropFrameCheck);
     advancedLayout->addRow(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.color_metadata"), QStringLiteral("カラーメタデータ:")), impl_->advancedColorLabel);
     advancedLayout->addRow(TranslationManager::instance().tr(QStringLiteral("dialog.render_output.encode_assist"), QStringLiteral("エンコード補助:")), impl_->advancedEncodeLabel);
 
@@ -2084,9 +2131,93 @@ void ArtifactRenderOutputSettingDialog::setFramePadding(int digits)
   }
 }
 
+void ArtifactRenderOutputSettingDialog::setBitDepth(int bits)
+{
+  if (!impl_->bitDepthCombo) {
+    return;
+  }
+  const int index = impl_->bitDepthCombo->findData(std::clamp(bits, 8, 32));
+  impl_->bitDepthCombo->setCurrentIndex(index >= 0 ? index : 0);
+}
+
+int ArtifactRenderOutputSettingDialog::bitDepth() const
+{
+  return impl_->bitDepthCombo ? impl_->bitDepthCombo->currentData().toInt() : 8;
+}
+
+void ArtifactRenderOutputSettingDialog::setExrCompression(const QString& compression)
+{
+  if (!impl_->exrCompressionCombo) {
+    return;
+  }
+  const QString normalized = compression.trimmed().toLower();
+  const int index = normalized.isEmpty()
+      ? impl_->exrCompressionCombo->findData(QStringLiteral("zip"))
+      : impl_->exrCompressionCombo->findData(normalized);
+  impl_->exrCompressionCombo->setCurrentIndex(index >= 0 ? index : 1);
+}
+
+QString ArtifactRenderOutputSettingDialog::exrCompression() const
+{
+  return impl_->exrCompressionCombo
+      ? impl_->exrCompressionCombo->currentData().toString()
+      : QStringLiteral("zip");
+}
+
 int ArtifactRenderOutputSettingDialog::framePadding() const
 {
   return impl_->framePaddingSpin ? impl_->framePaddingSpin->value() : 4;
+}
+
+void ArtifactRenderOutputSettingDialog::setStartTimeCodeFrame(long long frame, double fps)
+{
+  if (!impl_->advancedTimecodeEdit) {
+    return;
+  }
+  // Use the shared TimeCode so 29.97 / 59.94 get the correct nominal rate instead of
+  // assuming 24. A negative input means "no timecode"; 00:00:00.00 already is that.
+  const int clamped = static_cast<int>(std::max<long long>(0, frame));
+  const double rate = fps > 0.0 ? fps : 30.0;
+  ArtifactCore::TimeCode timeCode(clamped, rate);
+  int h = 0;
+  int m = 0;
+  int s = 0;
+  int f = 0;
+  timeCode.toHMSF(h, m, s, f);
+  // QTimeEdit has no frames unit, so the frame field is carried as ff/100 ms.
+  const int frameHundredths = static_cast<int>(std::lround(
+      static_cast<double>(f) * 100.0 / std::max(1, static_cast<int>(std::lround(rate)))));
+  impl_->advancedTimecodeEdit->setTime(QTime(h, m, s, frameHundredths));
+}
+
+long long ArtifactRenderOutputSettingDialog::startTimeCodeFrame(double fps) const
+{
+  if (!impl_->advancedTimecodeEdit) {
+    return 0;
+  }
+  const QTime time = impl_->advancedTimecodeEdit->time();
+  const double rate = fps > 0.0 ? fps : 30.0;
+  // Rebuild an absolute frame number so 01:00:00.00 round-trips as 86400, not 0.
+  const long long wholeSeconds =
+      static_cast<long long>(time.hour()) * 3600 +
+      static_cast<long long>(time.minute()) * 60 +
+      static_cast<long long>(time.second());
+  const double nominal = std::max(1.0, std::round(rate));
+  const long long framesWithinSecond =
+      std::llround(static_cast<double>(time.msec()) / 100.0 * nominal);
+  return wholeSeconds * static_cast<long long>(std::llround(nominal)) + framesWithinSecond;
+}
+
+void ArtifactRenderOutputSettingDialog::setDropFrameEnabled(bool enabled)
+{
+  if (impl_->advancedDropFrameCheck) {
+    impl_->advancedDropFrameCheck->setChecked(enabled);
+  }
+}
+
+bool ArtifactRenderOutputSettingDialog::dropFrameEnabled() const
+{
+  return impl_->advancedDropFrameCheck && impl_->advancedDropFrameCheck->isChecked();
 }
  void ArtifactRenderOutputSettingDialog::setResolution(int width, int height)
  {

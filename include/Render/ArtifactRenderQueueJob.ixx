@@ -83,6 +83,21 @@ public:
     int resolutionWidth;
     int resolutionHeight;
     double frameRate;
+    // Timecode written into the container's tmcd track. -1 means "do not embed".
+    // Composition already owns a TimeCode (ArtifactAbstractComposition::startTimeCode);
+    // this field carries that value into the encoder.
+    long long startTimeCodeFrame = -1;
+    // Drop-frame (29.97 / 59.94) timecode numbering. Valid only for 30 / 60 fps.
+    bool dropFrame = false;
+    // Bit depth written to image-sequence outputs. 8 = 8-bit integer,
+    // 16 = 16-bit half (EXR/TIFF), 32 = 32-bit float.
+    int bitDepth = 8;
+    // EXR compression: none / zip / zips / piz / pxr24. Ignored by other formats.
+    // "zip" is the default because it is the only one every EXR reader supports.
+    QString exrCompression = QStringLiteral("zip");
+    // Append _vNNN to the output path when a file already exists there. The
+    // RenderMatrixDialog UI offers this, so the job has to honour it.
+    bool autoVersionOutput = true;
     int bitrate;
     int startFrame;
     int endFrame;

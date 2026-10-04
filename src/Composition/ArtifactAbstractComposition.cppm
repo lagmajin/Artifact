@@ -683,12 +683,12 @@ ArtifactCore::ArtifactScriptValue variantToScriptValue(const QVariant& value)
                            static_cast<float>(point.y())});
   }
   case QMetaType::QVector3D: {
-    const QVector3D vec = value.toVector3D();
+    const QVector3D vec = value.value<QVector3D>();
     return ArtifactScriptValue(ArtifactScriptVec3{
         vec.x(), vec.y(), vec.z()});
   }
   case QMetaType::QVector4D: {
-    const QVector4D vec = value.toVector4D();
+    const QVector4D vec = value.value<QVector4D>();
     return ArtifactScriptValue(ArtifactScriptVec4{
         vec.x(), vec.y(), vec.z(), vec.w()});
   }
@@ -903,7 +903,7 @@ ArtifactAbstractLayerPtr resolveScriptLayerTarget(
       return {};
     }
     for (const auto& layer : target->allLayer()) {
-      if (layer && layer->name() == layerName) {
+      if (layer && layer->layerName() == layerName) {
         return layer;
       }
     }
@@ -915,7 +915,7 @@ ArtifactAbstractLayerPtr resolveScriptLayerTarget(
   const QString layerName = QString::fromStdString(text);
   const QList<ArtifactAbstractLayerPtr> layers = composition->allLayer();
   for (const auto& layer : layers) {
-    if (layer && layer->name() == layerName) {
+    if (layer && layer->layerName() == layerName) {
       return layer;
     }
   }
@@ -940,7 +940,7 @@ void installCompositionScriptApi(ArtifactAbstractComposition* composition)
     if (!layer) {
       return ArtifactScriptValue{};
     }
-    return ArtifactScriptValue(layer->name().toStdString());
+    return ArtifactScriptValue(layer->layerName().toStdString());
   };
   api.getLayerCount = [composition]() -> std::int64_t {
     return composition ? composition->layerCount() : 0;
@@ -952,8 +952,7 @@ void installCompositionScriptApi(ArtifactAbstractComposition* composition)
     const double rate = std::max(
         1.0, static_cast<double>(composition->frameRate().framerate()));
     return static_cast<double>(
-               static_cast<std::int64_t>(
-                   composition->framePosition().rescaledTo(1))) /
+               composition->framePosition().framePosition()) /
            rate;
   };
   // Frame-base companions to getTime(): animation code usually reasons in
@@ -962,8 +961,7 @@ void installCompositionScriptApi(ArtifactAbstractComposition* composition)
     if (!composition) {
       return 0;
     }
-    return static_cast<std::int64_t>(
-        composition->framePosition().rescaledTo(1));
+    return composition->framePosition().framePosition();
   });
   host.registerFunction("fps", [composition]() -> double {
     return composition ? static_cast<double>(

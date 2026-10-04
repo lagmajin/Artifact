@@ -7,6 +7,7 @@ module;
 #include <cmath>
 #include <QAction>
 #include <QColor>
+#include <QDialog>
 #include <QFont>
 #include <QFontMetrics>
 #include <QIcon>
@@ -749,7 +750,7 @@ private:
       dlg->show();
       // パラメータ調整はmixer スナップショットに載るようダイアログを閉じた
       // 時点で差分を Undo へ積む。
-      connect(dlg, &QDialog::finished, this, [this, title](int) {
+      connect(dlg, &QDialog::finished, this, [this](int) {
         if (applyBusEffectChange(
                 layerId_,
                 [](ArtifactCore::SharedPtr<ArtifactCore::AudioBus> &) {},
@@ -875,7 +876,11 @@ private:
         clearAllEffects();
         return;
       }
-      const int index = selected->data().toInt(-1);
+      bool indexOk = false;
+      const int index = selected->data().toInt(&indexOk);
+      if (!indexOk) {
+        return;
+      }
       if (index < 0 || index >= static_cast<int>(effects_.size())) {
         return;
       }

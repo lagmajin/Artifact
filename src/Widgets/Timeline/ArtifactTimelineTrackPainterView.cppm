@@ -3282,8 +3282,43 @@ QColor keyframeColorLabelColor(const ArtifactCore::KeyFrame::ColorLabel label) {
 
 QColor keyframeInterpolationColor(const ArtifactCore::InterpolationType type,
                                   const bool selectedLayer) {
-  Q_UNUSED(type);
-  return selectedLayer ? QColor(225, 195, 108) : QColor(198, 163, 75);
+  // 補間種別ごとに gold を変化させ、1 画面内で「どのキーが hold でどのキーが
+  // bezier か」を判別できるようにする。labelColor は別系統のため干渉しない。
+  // base は従来値を保ったまま、種別ごとに輝度差だけを付ける。
+  const QColor base = selectedLayer ? QColor(225, 195, 108) : QColor(198, 163, 75);
+  int delta = 0;
+  switch (type) {
+  case ArtifactCore::InterpolationType::Constant:
+    delta = -46;
+    break;
+  case ArtifactCore::InterpolationType::Bezier:
+    delta = 24;
+    break;
+  case ArtifactCore::InterpolationType::EaseIn:
+  case ArtifactCore::InterpolationType::EaseOut:
+  case ArtifactCore::InterpolationType::EaseInOut:
+    delta = -18;
+    break;
+  case ArtifactCore::InterpolationType::CatmullRom:
+  case ArtifactCore::InterpolationType::Hermite:
+    delta = 12;
+    break;
+  case ArtifactCore::InterpolationType::BounceIn:
+  case ArtifactCore::InterpolationType::BounceOut:
+  case ArtifactCore::InterpolationType::BounceInOut:
+  case ArtifactCore::InterpolationType::ElasticIn:
+  case ArtifactCore::InterpolationType::ElasticOut:
+  case ArtifactCore::InterpolationType::ElasticInOut:
+  case ArtifactCore::InterpolationType::BackIn:
+  case ArtifactCore::InterpolationType::BackOut:
+  case ArtifactCore::InterpolationType::BackInOut:
+    delta = -32;
+    break;
+  default:
+    delta = 0;
+    break;
+  }
+  return base.lighter(100 + delta);
 }
 
 QString keyframeAnchorLabel(const ArtifactCore::KeyFrame::Anchor anchor) {
@@ -3474,6 +3509,7 @@ double snapTimelineFrameToEditTargets(
     const double currentFrame, const Qt::KeyboardModifiers modifiers,
     QString *outSnapLabel = nullptr, const int ignoreClipIndex = -1) {
   double targetFrame = rawFrame;
+  bool snappedToExplicitTarget = false;
   if (outSnapLabel) {
     outSnapLabel->clear();
   }
@@ -3488,6 +3524,7 @@ double snapTimelineFrameToEditTargets(
   auto trySnap = [&](const double candidate, const QString &label) {
     if (std::abs(targetFrame - candidate) <= kKeyframeSnapToPlayheadThresholdFrames) {
       targetFrame = candidate;
+      snappedToExplicitTarget = true;
       if (outSnapLabel) {
         *outSnapLabel = label;
       }
@@ -3534,7 +3571,40 @@ double snapTimelineFrameToEditTargets(
     }
   }
 
+  // Grid snap last, so an explicit target (playhead, work area, another clip's
+  // in/out, a keyframe) always wins over the background grid. The step matches the
+  // ruler's 1/2/5 major marks, so what the user sees is what the edit lands on.
+  if (!snappedToExplicitTarget) {
+    const double gridTarget = snappedGridFrame(rawFrame, impl_->pixelsPerFrame_);
+    if (std::abs(gridTarget - targetFrame) > 1e-9) {
+      targetFrame = gridTarget;
+      if (outSnapLabel) {
+        *outSnapLabel = QStringLiteral("grid");
+      }
+    }
+  }
+
   return targetFrame;
+}
+
+// Rounds to the ruler's major grid step, so snapping lands on the line the user can
+// actually see. Falls back to the unmodified frame when the zoom is degenerate.
+double snappedGridFrame(const double frame, const double pixelsPerFrame) {
+  if (!(pixelsPerFrame > 0.0)) {
+    return frame;
+  }
+  const double minMajorLabelPx = 120.0;
+  int gridStep = 1;
+  while (static_cast<double>(gridStep) * pixelsPerFrame < minMajorLabelPx) {
+    if (gridStep == 1) {
+      gridStep = 2;
+    } else if (gridStep == 2) {
+      gridStep = 5;
+    } else {
+      gridStep *= 2;
+    }
+  }
+  return std::round(frame / gridStep) * gridStep;
 }
 
 int keyframeDragCollisionCount(
@@ -11041,12 +11111,12 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
               ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer)) {
         sourcePath = audioLayer->sourcePath().trimmed();
         sourceFilter = tt("timeline.audio_files",
-                          "Audio Files (*.wav *.mp3 *.aac *.m4a *.flac *.ogg);;All Files (*.*)");
+                          "Audio Files (*.wav *.mp3 *.aac *.m4a *.flac *.ogg *.opus *.aiff *.wma);;All Files (*.*)");
       } else if (const auto imageLayer =
                      ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(layer)) {
         sourcePath = imageLayer->sourcePath().trimmed();
         sourceFilter = tt("timeline.image_files",
-                          "Image Files (*.png *.jpg *.jpeg *.bmp *.gif *.tga *.tif *.tiff *.webp *.hdr *.exr *.ico *.dds *.ktx *.psd *.psb);;All Files (*.*)");
+                          "Image Files (*.png *.jpg *.jpeg *.bmp *.gif *.tga *.tif *.tiff *.dpx *.webp *.hdr *.exr *.ico *.dds *.ktx *.psd *.psb);;All Files (*.*)");
       } else if (const auto videoLayer =
                      ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) {
         sourcePath = videoLayer->sourcePath().trimmed();

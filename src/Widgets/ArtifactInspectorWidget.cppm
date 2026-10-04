@@ -151,6 +151,7 @@ import Artifact.Project.PresetManager;
 import Artifact.Project.Items;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
+import Script.ArtifactScript;
 import Artifact.Layer.Composition;
 import Artifact.Layer.Component.System;
 import Container.NamedVector;
@@ -1401,6 +1402,9 @@ public:
   InspectorActionButton *openScriptButton = nullptr;
   InspectorActionButton *assignScriptButton = nullptr;
   InspectorActionButton *clearScriptButton = nullptr;
+  InspectorActionButton *clearScriptLogButton = nullptr;
+  QPlainTextEdit *scriptLogView = nullptr;
+  QLabel *scriptLogHeader = nullptr;
   InspectorActionButton *applyLipSyncButton = nullptr;
   InspectorActionButton *addEffectorButton = nullptr;
   InspectorActionButton *removeEffectorButton = nullptr;
@@ -2873,6 +2877,35 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
         canClear
             ? QStringLiteral("Unlink the script file from this layer.")
             : QStringLiteral("This layer has no linked script file."));
+  }
+
+  // The console reads the shared ArtifactScriptHost log, so it stays visible
+  // for every layer that has a script rather than only the selected one.
+  const bool showScriptLog = hasLayer &&
+                             activeName == QStringLiteral("Script") &&
+                             layer->hasScriptBinding();
+  if (scriptLogHeader) {
+    scriptLogHeader->setVisible(showScriptLog);
+  }
+  if (scriptLogView) {
+    scriptLogView->setVisible(showScriptLog);
+  }
+  if (clearScriptLogButton) {
+    clearScriptLogButton->setVisible(showScriptLog);
+  }
+
+  if (showScriptLog && scriptLogView) {
+    // The host log is process-wide and drained here on refresh, so the
+    // console shows whatever the last inspector update picked up.
+    const auto lines = ArtifactCore::ArtifactScriptHost::global().drainLog();
+    if (!lines.empty()) {
+      QStringList stamped;
+      stamped.reserve(lines.size());
+      for (const auto& line : lines) {
+        stamped.push_back(QString::fromStdString(line));
+      }
+      scriptLogView->appendPlainText(stamped.join(QLatin1Char('\n')));
+    }
   }
 
   if (applyLipSyncButton) {
@@ -5435,6 +5468,16 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   impl_->openScriptButton = new InspectorActionButton("Open Script");
   impl_->assignScriptButton = new InspectorActionButton("Assign Script...");
   impl_->clearScriptButton = new InspectorActionButton("Clear Script");
+  impl_->clearScriptLogButton = new InspectorActionButton("Clear Log");
+  impl_->scriptLogView = new QPlainTextEdit();
+  impl_->scriptLogView->setReadOnly(true);
+  impl_->scriptLogView->setLineWrapMode(QPlainTextEdit::NoWrap);
+  impl_->scriptLogView->setMaximumBlockCount(500);
+  impl_->scriptLogView->setMinimumHeight(90);
+  impl_->scriptLogView->setMaximumHeight(200);
+  impl_->scriptLogHeader = createInspectorChromeLabel(
+      QStringLiteral("Script Console"), InspectorChromeLabelRole::Section,
+      impl_->componentsGroup);
   impl_->applyLipSyncButton = new InspectorActionButton("Lip Sync");
   impl_->addEffectorButton = new InspectorActionButton("+ Effector");
   impl_->removeEffectorButton = new InspectorActionButton("- Effector");
@@ -5734,6 +5777,9 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   componentBodyLayout->addWidget(impl_->openScriptButton);
   componentBodyLayout->addWidget(impl_->assignScriptButton);
   componentBodyLayout->addWidget(impl_->clearScriptButton);
+  componentBodyLayout->addWidget(impl_->scriptLogHeader);
+  componentBodyLayout->addWidget(impl_->clearScriptLogButton);
+  componentBodyLayout->addWidget(impl_->scriptLogView);
   componentBodyLayout->addWidget(impl_->applyLipSyncButton);
   componentBodyLayout->addWidget(impl_->addEffectorButton);
   componentBodyLayout->addWidget(impl_->removeEffectorButton);
@@ -7052,6 +7098,11 @@ QDesktopServices::openUrl(
     layer->clearScriptBinding();
     comp->syncScriptWatcher();
     impl_->updateComponentControls(layer);
+  });
+  impl_->clearScriptLogButton->setAction([this]() {
+    if (impl_->scriptLogView) {
+      impl_->scriptLogView->clear();
+    }
   });
   impl_->applyLipSyncButton->setAction([this]() {
     impl_->handleApplyLipSyncToSwitchLayer();

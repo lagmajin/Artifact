@@ -23,6 +23,7 @@ import Color.ColorSpace;
 import Color.GamutConversion;
 import Color.TransferFunction;
 import Core.Parallel;
+import Core.Diagnostics.FallbackPolicy;
 import Image.ImageF32x4_RGBA;
 import Graphics.SurfaceColorContract;
 import Artifact.Event.Types;
@@ -147,7 +148,10 @@ ArtifactOCIOManager::~ArtifactOCIOManager()
 
 bool ArtifactOCIOManager::setActivePreset(const QString& presetName)
 {
-    impl_->ocioConfig_.reset();
+    // NOTE: an already-loaded .ocio config is deliberately kept. Resetting it here
+    // used to force every preset selection back to the internal matrix path, so the
+    // real OCIO processors only ran for projects that had loaded a config file and
+    // never after the user picked a preset.
     const QString normalizedPresetName = presetName.trimmed().left(256);
     const QString lower = normalizedPresetName.toLower();
     if (lower == QLatin1String("aces")) {
@@ -458,6 +462,20 @@ void ArtifactOCIOManager::syncToColorScienceManager(ArtifactColorScienceManager*
     mgr->setSettings(settings);
 }
 
+// CPU working-space -> display transform. There is deliberately no call site yet.
+//
+// The viewport's view transform is the GPU LUT path: ViewportColorPipeline bakes a
+// 33-cube LUT via bakeViewTransformLUT and applies it as a post-process, and
+// ArtifactFinalPostProcess states that the baked LUT *is* the view transform in that
+// path. Calling this function on frames that already went through that LUT would
+// apply the view transform twice.
+//
+// Use it only for a CPU surface that never passes through the viewport pipeline. The
+// render queue deliberately does NOT call it: its EXR/AOV output is scene-linear and
+// tagged "Linear" (ArtifactRenderQueueService sets imgOpts.colorSpace there), which is
+// what downstream compositing expects. Wiring this in without first removing the LUT
+// path would double-apply; wiring it into the AOV branch would tag linear data as if it
+// had been display-transformed.
 void ArtifactOCIOManager::applyViewTransformToImage(ArtifactCore::ImageF32x4_RGBA& image) const
 {
     if (!impl_->config_.isValid() || !image.rgba32fData()) return;
@@ -930,7 +948,9 @@ void ArtifactOCIOManager::applyInputTransformToWorkingImage(
             return TransferFunction::SonySLog3;
         }
         if (transfer == QLatin1String("cineon") ||
-            transfer == QLatin1String("dpx")) {
+            transfer == QLatin1String("dpx") ||
+            transfer == QLatin1String("kodaklog") ||
+            transfer == QLatin1String("cineonlog")) {
             return TransferFunction::Cineon;
         }
         if (transfer == QLatin1String("canonlog2") ||
@@ -1108,8 +1128,23 @@ bool ArtifactOCIOManager::fromJson(const QJsonObject& obj)
         try {
             impl_->ocioConfig_ = OCIO::Config::CreateFromFile(
                 impl_->config_.configFilePath().toUtf8().constData());
-        } catch (const OCIO::Exception&) {
+        } catch (const OCIO::Exception& exception) {
+            // Record the failure instead of silently dropping to the matrix path:
+            // a project that loses its OCIO config keeps rendering, but with the
+            // wrong look, and nothing told the user why.
             impl_->ocioConfig_.reset();
+            const QString path = impl_->config_.configFilePath();
+            const QString reason = QString::fromUtf8(exception.what());
+            qWarning() << "[OCIO] Failed to load config" << path << "-" << reason;
+            ArtifactCore::FallbackTracker::instance()->record(
+                ArtifactCore::FallbackCategory::Color,
+                ArtifactCore::FallbackAction::Warning,
+                path,
+                QStringLiteral("ocio-config-load-failed"),
+                QStringLiteral("Could not load the OCIO config (%1); "
+                               "falling back to the internal matrix transform, "
+                               "which does not apply the configured look")
+                    .arg(reason));
         }
     }
 

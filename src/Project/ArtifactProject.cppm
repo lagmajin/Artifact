@@ -1697,7 +1697,7 @@ void ArtifactProject::setExtensionData(const QJsonObject& data)
       nullptr,
       QStringLiteral("Add Asset"),
       QString(),
-      QStringLiteral("Media Files (*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.exr *.svg *.mp4 *.mov *.wav *.mp3);;All Files (*.*)"));
+      QStringLiteral("Media Files (*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.dpx *.exr *.svg *.mp4 *.mov *.wav *.mp3);;All Files (*.*)"));
   if (filePath.isEmpty()) {
    return;
   }

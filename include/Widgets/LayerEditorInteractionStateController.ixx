@@ -9,6 +9,7 @@ export module Artifact.Widgets.LayerEditor.InteractionStateController;
 
 import Artifact.Layer.Shape;
 import Artifact.Mask.Path;
+import Artifact.Widgets.LayerEditor.Geometry;
 import Artifact.Widgets.LayerEditor.MaskHoverController;
 import Artifact.Widgets.LayerEditor.MaskMoveController;
 import Artifact.Widgets.LayerEditor.MaskPressInteractionController;

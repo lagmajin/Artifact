@@ -143,6 +143,13 @@ public:
   void setJobDeepExportEnabledAt(int index, bool enabled);
   int jobFramePaddingAt(int index) const;
   void setJobFramePaddingAt(int index, int padding);
+  long long jobStartTimeCodeFrameAt(int index) const;
+  bool jobDropFrameAt(int index) const;
+  void setJobTimeCodeAt(int index, long long startTimeCodeFrame, bool dropFrame);
+  int jobBitDepthAt(int index) const;
+  void setJobBitDepthAt(int index, int bitDepth);
+  QString jobExrCompressionAt(int index) const;
+  void setJobExrCompressionAt(int index, const QString& compression);
   QString jobAudioSourcePathAt(int index) const;
   void setJobAudioSourcePathAt(int index, const QString &path);
   QString jobAudioCodecAt(int index) const;

@@ -1442,6 +1442,45 @@ namespace Artifact
             }
         }
     }
+    // Maps the job's bitDepth (8 / 16 / 32) onto the OIIO write type. 16 is HALF so
+    // a 16-bit EXR / TIFF request stays 16-bit instead of silently becoming float.
+    static OIIO::TypeDesc bitDepthToTypeDesc(int bitDepth)
+    {
+        switch (bitDepth) {
+        case 16:
+            return OIIO::TypeDesc::HALF;
+        case 32:
+            return OIIO::TypeDesc::FLOAT;
+        case 8:
+        default:
+            return OIIO::TypeDesc::UINT8;
+        }
+    }
+
+    // Appends _vNNN to the path until it does not collide. Mirrors the version walk in
+    // RenderMatrixDialog::outputPath, which the dialog shows in its preview but which
+    // never reached the job, so a second render silently overwrote the first.
+    static QString versionedOutputPath(const QString& outputPath)
+    {
+        const QString trimmed = outputPath.trimmed();
+        if (trimmed.isEmpty()) return trimmed;
+        const QFileInfo info(trimmed);
+        if (!info.exists()) return trimmed;
+        const QString base = info.completeBaseName();
+        const QString suffix = info.suffix();
+        const QDir dir = info.dir();
+        for (int version = 1; version < 10000; ++version) {
+            const QString candidateName = suffix.isEmpty()
+                ? QStringLiteral("%1_v%2").arg(base).arg(version, 3, 10, QLatin1Char('0'))
+                : QStringLiteral("%1_v%2.%3").arg(base).arg(version, 3, 10, QLatin1Char('0')).arg(suffix);
+            const QString candidate = dir.filePath(candidateName);
+            if (!QFileInfo::exists(candidate)) {
+                return candidate;
+            }
+        }
+        return trimmed;
+    }
+
     static void registerRenderQueueContextSnapshot(const ArtifactRenderJob& job,
                                                    const QString& compositionId,
                                                    const ArtifactCompositionPtr& composition,
@@ -1866,6 +1905,53 @@ namespace Artifact
         void setJobFramePadding(int index, int padding) {
             if (index < 0 || index >= jobs.size()) return;
             jobs[index].framePadding = std::clamp(padding, 1, 10);
+            if (jobUpdated) jobUpdated(index);
+        }
+
+        long long jobStartTimeCodeFrameAt(int index) const {
+            if (index < 0 || index >= jobs.size()) return -1;
+            return jobs[index].startTimeCodeFrame;
+        }
+
+        bool jobDropFrameAt(int index) const {
+            if (index < 0 || index >= jobs.size()) return false;
+            return jobs[index].dropFrame;
+        }
+
+        void setJobTimeCode(int index, long long startTimeCodeFrame, bool dropFrame) {
+            if (index < 0 || index >= jobs.size()) return;
+            jobs[index].startTimeCodeFrame = startTimeCodeFrame < 0 ? -1 : startTimeCodeFrame;
+            jobs[index].dropFrame = dropFrame;
+            if (jobUpdated) jobUpdated(index);
+        }
+
+        int jobBitDepthAt(int index) const {
+            if (index < 0 || index >= jobs.size()) return 8;
+            return jobs[index].bitDepth;
+        }
+
+        void setJobBitDepth(int index, int bitDepth) {
+            if (index < 0 || index >= jobs.size()) return;
+            // Only the three depths the writer can honour are accepted.
+            const int clamped = bitDepth == 16 ? 16 : (bitDepth == 32 ? 32 : 8);
+            jobs[index].bitDepth = clamped;
+            if (jobUpdated) jobUpdated(index);
+        }
+
+        QString jobExrCompressionAt(int index) const {
+            if (index < 0 || index >= jobs.size()) return QStringLiteral("zip");
+            return jobs[index].exrCompression;
+        }
+
+        void setJobExrCompression(int index, const QString& compression) {
+            if (index < 0 || index >= jobs.size()) return;
+            // Only the methods the EXR writer accepts; anything else falls back to zip.
+            static const QStringList kSupported = {
+                QStringLiteral("none"), QStringLiteral("zip"), QStringLiteral("zips"),
+                QStringLiteral("piz"), QStringLiteral("pxr24")};
+            const QString normalized = compression.trimmed().toLower();
+            jobs[index].exrCompression =
+                kSupported.contains(normalized) ? normalized : QStringLiteral("zip");
             if (jobUpdated) jobUpdated(index);
         }
 
@@ -3652,7 +3738,12 @@ namespace Artifact
 
             
             if (!isImageSequence) {
-                if (!encodeSequenceToVideo(job, tempSequenceDir, job.outputPath, failureReason)) {
+                // Video output writes straight to the final path, so the version walk
+                // has to happen here or a re-render truncates the previous deliverable.
+                const QString videoTarget = job.autoVersionOutput
+                    ? versionedOutputPath(job.outputPath)
+                    : job.outputPath.trimmed();
+                if (!encodeSequenceToVideo(job, tempSequenceDir, videoTarget, failureReason)) {
                     QDir(tempSequenceDir).removeRecursively();
                     return false;
                 }
@@ -4790,6 +4881,10 @@ namespace Artifact
                 job.startFrame = std::max(0, effectiveRange.startFrame);
                 job.endFrame = std::max(job.startFrame + 1, effectiveRange.endFrame);
                 job.frameRate = comp->frameRate().framerate();
+                // Carry the composition's TimeCode so the render output gets a tmcd
+                // track without the user re-entering it per job.
+                job.startTimeCodeFrame = comp->startTimeCode().frame();
+                job.dropFrame = comp->frameRate().hasDropframe();
                 const QSize size = comp->effectiveCompositionSize();
                 if (size.width() > 0 && size.height() > 0) {
                     job.resolutionWidth = size.width();
@@ -4857,6 +4952,10 @@ namespace Artifact
                 job.startFrame = std::max(0, effectiveRange.startFrame);
                 job.endFrame = std::max(job.startFrame + 1, effectiveRange.endFrame);
                 job.frameRate = comp->frameRate().framerate();
+                // Carry the composition's TimeCode so the render output gets a tmcd
+                // track without the user re-entering it per job.
+                job.startTimeCodeFrame = comp->startTimeCode().frame();
+                job.dropFrame = comp->frameRate().hasDropframe();
                 const QSize size = comp->effectiveCompositionSize();
                 if (size.width() > 0 && size.height() > 0) {
                     job.resolutionWidth = size.width();
@@ -5365,6 +5464,44 @@ namespace Artifact
     void ArtifactRenderQueueService::setJobFramePaddingAt(int index, int padding)
     {
         impl_->queueManager.setJobFramePadding(index, padding);
+        impl_->syncCoreQueueModel();
+    }
+
+    long long ArtifactRenderQueueService::jobStartTimeCodeFrameAt(int index) const
+    {
+        return impl_->queueManager.jobStartTimeCodeFrameAt(index);
+    }
+
+    bool ArtifactRenderQueueService::jobDropFrameAt(int index) const
+    {
+        return impl_->queueManager.jobDropFrameAt(index);
+    }
+
+    void ArtifactRenderQueueService::setJobTimeCodeAt(int index, long long startTimeCodeFrame, bool dropFrame)
+    {
+        impl_->queueManager.setJobTimeCode(index, startTimeCodeFrame, dropFrame);
+        impl_->syncCoreQueueModel();
+    }
+
+    int ArtifactRenderQueueService::jobBitDepthAt(int index) const
+    {
+        return impl_->queueManager.jobBitDepthAt(index);
+    }
+
+    void ArtifactRenderQueueService::setJobBitDepthAt(int index, int bitDepth)
+    {
+        impl_->queueManager.setJobBitDepth(index, bitDepth);
+        impl_->syncCoreQueueModel();
+    }
+
+    QString ArtifactRenderQueueService::jobExrCompressionAt(int index) const
+    {
+        return impl_->queueManager.jobExrCompressionAt(index);
+    }
+
+    void ArtifactRenderQueueService::setJobExrCompressionAt(int index, const QString& compression)
+    {
+        impl_->queueManager.setJobExrCompression(index, compression);
         impl_->syncCoreQueueModel();
     }
 
@@ -5944,6 +6081,25 @@ namespace Artifact
                     .arg(job.codec),
                 QStringLiteral("Choose PCM 16-bit or PCM 24-bit"),
                 compId));
+        }
+
+        // Warn when a depth that the chosen container cannot store was requested,
+        // so the user is not surprised by an 8-bit file after asking for 32-bit.
+        if (job.bitDepth != 8) {
+            const QString ext = QFileInfo(sequenceExtension(job.outputFormat, job.codec)).suffix().toLower();
+            const bool supportsDepth = ext == QStringLiteral("exr") ||
+                ext == QStringLiteral("tiff") || ext == QStringLiteral("tif");
+            if (!supportsDepth) {
+                result.addDiagnostic(makePreflightDiagnostic(
+                    ArtifactCore::DiagnosticSeverity::Warning,
+                    ArtifactCore::DiagnosticCategory::Configuration,
+                    QStringLiteral("Output format ignores the requested bit depth"),
+                    QStringLiteral("The '%1' format cannot store %2-bit samples; the file will be written at 8-bit.")
+                        .arg(ext.isEmpty() ? QStringLiteral("selected") : ext)
+                        .arg(job.bitDepth),
+                    QStringLiteral("Use EXR or TIFF for 16-bit / 32-bit output"),
+                    compId));
+            }
         }
 
         if (job.resolutionWidth <= 0 || job.resolutionHeight <= 0) {
@@ -7829,9 +7985,15 @@ namespace Artifact
                 ArtifactCore::ImageExporter exporter;
                 ArtifactCore::ImageExportOptions imgOpts;
                 imgOpts.format = frameExt;
+                // Honour the job's requested bit depth. EXR promotes 8-bit to float
+                // inside the writer; 16-bit stays half so a 16-bit EXR is a real
+                // 16-bit EXR rather than a 32-bit file with a 16-bit label.
+                imgOpts.dataType = bitDepthToTypeDesc(job.bitDepth);
                 if (job.multiChannelExportEnabled) {
                     imgOpts.colorSpace = QStringLiteral("Linear");
-                    imgOpts.compression = QStringLiteral("zip");
+                    imgOpts.compression = job.exrCompression.trimmed().isEmpty()
+                        ? QStringLiteral("zip")
+                        : job.exrCompression.trimmed().toLower();
                     imgOpts.creator = QStringLiteral("ArtifactStudio");
                     imgOpts.stringAttributes.insert(
                         QStringLiteral("artifact/aov/normal_space"),
@@ -8758,6 +8920,10 @@ namespace Artifact
             obj["resolutionWidth"] = job.resolutionWidth;
             obj["resolutionHeight"] = job.resolutionHeight;
             obj["frameRate"] = job.frameRate;
+            obj["startTimeCodeFrame"] = static_cast<qint64>(job.startTimeCodeFrame);
+            obj["dropFrame"] = job.dropFrame;
+            obj["bitDepth"] = job.bitDepth;
+            obj["exrCompression"] = job.exrCompression;
             obj["bitrate"] = job.bitrate;
             obj["startFrame"] = job.startFrame;
             obj["endFrame"] = job.endFrame;
@@ -8993,6 +9159,12 @@ namespace Artifact
             job.resolutionHeight = std::clamp(obj["resolutionHeight"].toInt(1080), 1, 16384);
             const double frameRate = obj["frameRate"].toDouble(30.0);
             job.frameRate = std::isfinite(frameRate) ? std::clamp(frameRate, 0.001, 240.0) : 30.0;
+            job.startTimeCodeFrame = obj.contains("startTimeCodeFrame")
+                ? static_cast<long long>(obj["startTimeCodeFrame"].toVariant().toLongLong())
+                : -1;
+            job.dropFrame = obj["dropFrame"].toBool(false);
+            job.bitDepth = obj["bitDepth"].toInt(8);
+            job.exrCompression = obj["exrCompression"].toString(QStringLiteral("zip"));
             job.bitrate = std::clamp(obj["bitrate"].toInt(8000), 0, 1000000);
             job.startFrame = std::max(0, obj["startFrame"].toInt(0));
             job.endFrame = std::max(job.startFrame, obj["endFrame"].toInt(100));

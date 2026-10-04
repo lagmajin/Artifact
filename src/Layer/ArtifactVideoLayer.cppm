@@ -66,6 +66,8 @@ module;
 #include <cstring>
 module Artifact.Layer.Video;
 
+import Artifact.Color.OCIOManager;
+import Core.Diagnostics.FallbackPolicy;
 import Artifact.Layer.CloneEffectSupport;
 
 
@@ -484,6 +486,43 @@ private:
     }
 };
 
+namespace {
+
+// Mirrors ArtifactImageLayer's premultiply helpers. Video frames arrive from the
+// decoder already clamped to [0,1] and associated-alpha, so the OCIO transform has
+// to be applied on straight-alpha values and re-associated afterwards.
+void unpremultiplyRgbaVideo(float* pixels, const size_t pixelCount)
+{
+    if (!pixels) return;
+    constexpr float kAlphaEpsilon = 1.0e-6f;
+    for (size_t index = 0; index < pixelCount; ++index) {
+        float* pixel = pixels + index * 4u;
+        const float alpha = pixel[3];
+        if (alpha > kAlphaEpsilon) {
+            pixel[0] /= alpha;
+            pixel[1] /= alpha;
+            pixel[2] /= alpha;
+        } else {
+            pixel[0] = 0.0f;
+            pixel[1] = 0.0f;
+            pixel[2] = 0.0f;
+        }
+    }
+}
+
+void premultiplyRgbaVideo(float* pixels, const size_t pixelCount)
+{
+    if (!pixels) return;
+    for (size_t index = 0; index < pixelCount; ++index) {
+        float* pixel = pixels + index * 4u;
+        pixel[0] *= pixel[3];
+        pixel[1] *= pixel[3];
+        pixel[2] *= pixel[3];
+    }
+}
+
+}  // namespace
+
 // ============================================================================
 // ArtifactVideoLayer::Impl
 // ============================================================================
@@ -563,6 +602,10 @@ public:
     QUuid sourceAssetId_;
     std::uint64_t cachedSourceVersion_ = 0;
     bool isLoaded_ = false;
+    // Input color interpretation applied to decoded frames before compositing.
+    // Empty means "no transform", which keeps existing sRGB footage unchanged.
+    QString inputColorSpace_;
+    QString inputTransferFunction_;
     
     double playbackSpeed_ = 1.0;
     bool loopEnabled_ = true;
@@ -773,6 +816,29 @@ public:
         case FrameStage::Idle:
         default: return QStringLiteral("idle");
         }
+    }
+
+    // Applies the layer's input color interpretation to a decoded frame. Called on
+    // every path that promotes a buffer into currentFrameBuffer_, so a Rec.709 clip
+    // is converted to the working space before it reaches the compositor. Does
+    // nothing when no interpretation is set, which is the default for existing
+    // projects and keeps their appearance unchanged.
+    void applyInputColorTransform(ArtifactCore::ImageF32x4_RGBA& frame) const
+    {
+        const QString colorSpace = inputColorSpace_.trimmed();
+        const QString transferFunction = inputTransferFunction_.trimmed();
+        if (frame.isEmpty() || (colorSpace.isEmpty() && transferFunction.isEmpty())) {
+            return;
+        }
+        const size_t pixelCount = static_cast<size_t>(frame.width()) *
+            static_cast<size_t>(frame.height());
+        if (pixelCount == 0) {
+            return;
+        }
+        unpremultiplyRgbaVideo(frame.rgba32fData(), pixelCount);
+        Artifact::ArtifactOCIOManager::instance()->applyInputTransformToWorkingImage(
+            frame, colorSpace, transferFunction);
+        premultiplyRgbaVideo(frame.rgba32fData(), pixelCount);
     }
 
     void beginFrameTicket(int64_t timelineFrame, int64_t sourceFrame,
@@ -1017,8 +1083,11 @@ public:
                 discardPendingRequestIfCurrent(requestId);
                 {
                     std::lock_guard<std::mutex> lock(frameStateMutex_);
+                    // The cache and the shared payload keep the source values; only the
+                    // presented buffer is converted, so switching the interpretation
+                    // back does not require a re-decode.
                     currentSharedFrame_ = sharedFrame;
-                    currentFrameBuffer_ = *sharedFrame;
+                    applyInputColorTransform(currentFrameBuffer_ = *sharedFrame);
                     hasCurrentFrameBuffer_ = true;
                     lastDecodedFrame_ = sourceFrame;
                 }
@@ -1039,6 +1108,7 @@ public:
             {
                 std::lock_guard<std::mutex> lock(frameStateMutex_);
                 currentFrameBuffer_ = cachedFrame;
+                applyInputColorTransform(currentFrameBuffer_);
                 hasCurrentFrameBuffer_ = true;
                 lastDecodedFrame_ = sourceFrame;
             }
@@ -1781,6 +1851,7 @@ void ArtifactVideoLayer::decodeCurrentFrame()
                         if (adoptForPresentation) {
                             impl_->currentSharedFrame_ = publishedFrame;
                             impl_->currentFrameBuffer_ = decoded;
+                            impl_->applyInputColorTransform(impl_->currentFrameBuffer_);
                             impl_->hasCurrentFrameBuffer_ = true;
                             impl_->lastDecodedFrame_ = activeRequest.sourceFrame;
                         }
@@ -2061,6 +2132,7 @@ ArtifactCore::ImageF32x4_RGBA ArtifactVideoLayer::decodeFrameToImageBuffer(int64
                 std::lock_guard<std::mutex> lock(impl_->frameStateMutex_);
                 impl_->currentSharedFrame_ = sharedFrame;
                 impl_->currentFrameBuffer_ = *sharedFrame;
+                impl_->applyInputColorTransform(impl_->currentFrameBuffer_);
                 impl_->hasCurrentFrameBuffer_ = true;
                 impl_->lastDecodedFrame_ = sourceFrame;
             }
@@ -2073,6 +2145,7 @@ ArtifactCore::ImageF32x4_RGBA ArtifactVideoLayer::decodeFrameToImageBuffer(int64
         if (sourceFrame == currentSourceFrame(this)) {
             std::lock_guard<std::mutex> lock(impl_->frameStateMutex_);
             impl_->currentFrameBuffer_ = frame;
+            impl_->applyInputColorTransform(impl_->currentFrameBuffer_);
             impl_->hasCurrentFrameBuffer_ = true;
             impl_->lastDecodedFrame_ = sourceFrame;
         }
@@ -2117,6 +2190,7 @@ ArtifactCore::ImageF32x4_RGBA ArtifactVideoLayer::decodeFrameToImageBuffer(int64
             std::lock_guard<std::mutex> lock(impl_->frameStateMutex_);
             impl_->currentSharedFrame_ = sharedFrame;
             impl_->currentFrameBuffer_ = decoded;
+            impl_->applyInputColorTransform(impl_->currentFrameBuffer_);
             impl_->hasCurrentFrameBuffer_ = true;
             impl_->lastDecodedFrame_ = sourceFrame;
         }
@@ -2286,6 +2360,7 @@ void ArtifactVideoLayer::setProxyQuality(ProxyQuality quality)
         candidate->setDecoderBackend(ArtifactCore::DecoderBackend::FFmpeg);
         if (candidate->openMediaFile(impl_->proxyPath_)) {
             impl_->proxyController_ = std::move(candidate);
+            verifyProxyColorConsistency();
         } else {
             qWarning() << "[VideoLayer] proxy open failed:" << impl_->proxyPath_;
             impl_->proxyQuality_ = ProxyQuality::None;
@@ -2306,9 +2381,96 @@ bool ArtifactVideoLayer::hasProxy() const
     return !impl_->proxyPath_.isEmpty() && QFile::exists(impl_->proxyPath_);
 }
 
+// Reads the color tags the proxy was actually written with, via ffprobe, and records
+// a warning when they disagree with the layer interpretation. Approving a shot on the
+// proxy and only seeing the colour shift on the full render is the failure this catches.
+// ffprobe is asked explicitly rather than trusting the generator arguments, because a
+// proxy made by an older build carries no tags at all.
+void ArtifactVideoLayer::verifyProxyColorConsistency() const
+{
+    if (!impl_ || impl_->proxyPath_.isEmpty() || !QFile::exists(impl_->proxyPath_)) {
+        return;
+    }
+    const QString layerSpace = impl_->inputColorSpace_.trimmed();
+    if (layerSpace.isEmpty()) {
+        return;
+    }
+    QProcess probe;
+    probe.start(QStringLiteral("ffprobe"),
+        {QStringLiteral("-v"), QStringLiteral("error"),
+         QStringLiteral("-select_streams"), QStringLiteral("v:0"),
+         QStringLiteral("-show_entries"),
+         QStringLiteral("stream=color_primaries,color_transfer,color_space"),
+         QStringLiteral("-of"), QStringLiteral("default=noprint_wrappers=1"),
+         impl_->proxyPath_});
+    if (!probe.waitForFinished(10000) || probe.exitCode() != 0) {
+        return;
+    }
+    const QString info = QString::fromUtf8(probe.readAllStandardOutput());
+    if (info.trimmed().isEmpty()) {
+        // No tags at all: the encoder assumed BT.709 limited range, which is right
+        // for most Rec.709 sources but silently wrong for BT.601 ones.
+        ArtifactCore::FallbackTracker::instance()->record(
+            ArtifactCore::FallbackCategory::Color,
+            ArtifactCore::FallbackAction::Warning,
+            impl_->proxyPath_,
+            layerSpace,
+            QStringLiteral("Proxy carries no colour tags; it was written with the "
+                           "encoder assumed BT.709 limited range while the layer is "
+                           "interpreted as %1").arg(layerSpace));
+        return;
+    }
+    if (!info.contains(QStringLiteral("bt601"), Qt::CaseInsensitive) &&
+        !info.contains(QStringLiteral("smpte170m"), Qt::CaseInsensitive)) {
+        return;
+    }
+    ArtifactCore::FallbackTracker::instance()->record(
+        ArtifactCore::FallbackCategory::Color,
+        ArtifactCore::FallbackAction::Warning,
+        impl_->proxyPath_,
+        layerSpace,
+        QStringLiteral("Proxy is tagged BT.601/SMPTE170M while the layer is "
+                       "interpreted as %1; preview colours will differ from the "
+                       "full-resolution render").arg(layerSpace));
+}
+
 QString ArtifactVideoLayer::proxyPath() const
 {
     return impl_->proxyPath_;
+}
+
+void ArtifactVideoLayer::setInputColorSpace(const QString& colorSpace,
+                                           const QString& transferFunction)
+{
+    if (!impl_) {
+        return;
+    }
+    const QString normalizedSpace = colorSpace.trimmed();
+    const QString normalizedTransfer = transferFunction.trimmed();
+    if (impl_->inputColorSpace_ == normalizedSpace &&
+        impl_->inputTransferFunction_ == normalizedTransfer) {
+        return;
+    }
+    impl_->inputColorSpace_ = normalizedSpace;
+    impl_->inputTransferFunction_ = normalizedTransfer;
+    // The decoded caches hold source values, so drop them and force a re-decode on
+    // the next request rather than leaving already-converted frames mixed in.
+    impl_->frameCache_.clear();
+    {
+        std::lock_guard<std::mutex> lock(impl_->frameStateMutex_);
+        impl_->lastDecodedFrame_ = -1;
+        impl_->hasCurrentFrameBuffer_ = false;
+    }
+}
+
+QString ArtifactVideoLayer::inputColorSpace() const
+{
+    return impl_ ? impl_->inputColorSpace_ : QString();
+}
+
+QString ArtifactVideoLayer::inputTransferFunction() const
+{
+    return impl_ ? impl_->inputTransferFunction_ : QString();
 }
 
 bool ArtifactVideoLayer::generateProxy(ProxyQuality quality)
@@ -2364,7 +2526,16 @@ QString ArtifactProxyManager::generateProxy(const QString& sourcePath,
     QStringList args{QStringLiteral("-y"), QStringLiteral("-i"), sourcePath,
         QStringLiteral("-vf"), QStringLiteral("scale=trunc(iw*%1/2)*2:trunc(ih*%1/2)*2").arg(scale, 0, 'f', 3),
         QStringLiteral("-c:v"), QStringLiteral("libx264"), QStringLiteral("-preset"), QStringLiteral("fast"),
-        QStringLiteral("-crf"), QStringLiteral("23"), QStringLiteral("-c:a"), QStringLiteral("aac"), output};
+        QStringLiteral("-crf"), QStringLiteral("23"),
+        // Tag the proxy so the player / decoder does not have to guess. Without
+        // these, libx264 assumes BT.709 limited range and a Rec.709 source ends up
+        // tagged (or read) as BT.601, which shifts saturation between proxy and full.
+        QStringLiteral("-color_primaries"), QStringLiteral("bt709"),
+        QStringLiteral("-color_trc"), QStringLiteral("bt709"),
+        QStringLiteral("-colorspace"), QStringLiteral("bt709"),
+        QStringLiteral("-color_range"), QStringLiteral("tv"),
+        QStringLiteral("-pix_fmt"), QStringLiteral("yuv420p"),
+        QStringLiteral("-c:a"), QStringLiteral("aac"), output};
     process.start(QStringLiteral("ffmpeg"), args);
     if (!process.waitForFinished(-1) || process.exitCode() != 0 || !QFileInfo::exists(output)) {
         if (QFileInfo::exists(output)) QFile::remove(output);
@@ -2533,6 +2704,8 @@ QJsonObject ArtifactVideoLayer::toJson() const
     obj["video.sourcePath"] = impl_->sourcePath_;
     obj["video.sourceAssetId"] = impl_->sourceAssetId_.toString(QUuid::WithoutBraces);
     obj["video.sourceLocalized"] = isSourceIdentityLocalized();
+    obj["video.inputColorSpace"] = impl_->inputColorSpace_;
+    obj["video.inputTransferFunction"] = impl_->inputTransferFunction_;
     obj["inPoint"] = static_cast<qint64>(inPoint());
     obj["outPoint"] = static_cast<qint64>(outPoint());
     obj["playbackSpeed"] = impl_->playbackSpeed_;
@@ -2590,6 +2763,12 @@ ArtifactCore::SharedPtr<ArtifactVideoLayer> ArtifactVideoLayer::fromJson(const Q
         : obj.value("sourcePath").toString();
     if (!sourcePath.isEmpty()) {
         layer->loadFromPath(sourcePath);
+    }
+    if (obj.contains(QStringLiteral("video.inputColorSpace")) ||
+        obj.contains(QStringLiteral("video.inputTransferFunction"))) {
+        layer->setInputColorSpace(
+            obj.value(QStringLiteral("video.inputColorSpace")).toString(),
+            obj.value(QStringLiteral("video.inputTransferFunction")).toString());
     }
     if (obj.value(QStringLiteral("video.sourceLocalized")).toBool(false)) {
         const QUuid savedId(obj.value(QStringLiteral("video.sourceAssetId")).toString());
@@ -2901,6 +3080,26 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactVideoLayer::getLayerPropertyGro
 
     videoGroup.addProperty(makeProp(QStringLiteral("video.sourcePath"),
                                     ArtifactCore::PropertyType::String, sourcePath(), -150));
+    auto inputColorSpaceProp = makeProp(
+        QStringLiteral("video.inputColorSpace"),
+        ArtifactCore::PropertyType::String, impl_->inputColorSpace_, -145);
+    inputColorSpaceProp->setDisplayLabel(QStringLiteral("Input Color Space"));
+    const QStringList workingSpaces =
+        Artifact::ArtifactOCIOManager::instance()->availableWorkingSpaces();
+    if (!workingSpaces.isEmpty()) {
+        inputColorSpaceProp->setTooltip(
+            QStringLiteral("OCIO working spaces: %1")
+                .arg(workingSpaces.join(QStringLiteral(", "))));
+    }
+    videoGroup.addProperty(inputColorSpaceProp);
+    auto inputTransferFunctionProp = makeProp(
+        QStringLiteral("video.inputTransferFunction"),
+        ArtifactCore::PropertyType::String, impl_->inputTransferFunction_, -144);
+    inputTransferFunctionProp->setDisplayLabel(QStringLiteral("Input Transfer"));
+    inputTransferFunctionProp->setTooltip(
+        QStringLiteral("Supported: linear, sRGB, gamma22, gamma24, gamma26, "
+                       "Rec709, PQ/ST2084, HLG, ACEScc, ACEScct, SLog3"));
+    videoGroup.addProperty(inputTransferFunctionProp);
     auto localizedProp = makeProp(QStringLiteral("source.localized"),
                                   ArtifactCore::PropertyType::Boolean,
                                   isSourceIdentityLocalized(), -149);
@@ -3080,6 +3279,16 @@ bool ArtifactVideoLayer::setLayerPropertyValue(const QString& propertyPath, cons
         if (!path.isEmpty()) {
             setSourceFile(path);
         }
+        return true;
+    }
+    if (propertyPath == QStringLiteral("video.inputColorSpace")) {
+        setInputColorSpace(value.toString(), impl_->inputTransferFunction_);
+        setDirty(LayerDirtyFlag::Property);
+        return true;
+    }
+    if (propertyPath == QStringLiteral("video.inputTransferFunction")) {
+        setInputColorSpace(impl_->inputColorSpace_, value.toString());
+        setDirty(LayerDirtyFlag::Property);
         return true;
     }
     if (propertyPath == QStringLiteral("video.playbackSpeed")) {

@@ -674,7 +674,7 @@ bool ArtifactMediaImportPickerDialog::eventFilter(QObject* watched, QEvent* even
   } else if (name == QStringLiteral("mediaPickerSystem") && activate) {
     const QStringList files = QFileDialog::getOpenFileNames(
         this, QStringLiteral("Select media"), pathEdit ? pathEdit->text() : QString(),
-        QStringLiteral("Supported media (*.png *.jpg *.jpeg *.bmp *.gif *.tga *.tif *.tiff *.webp *.hdr *.exr *.ico *.dds *.ktx *.psd *.psb *.svg *.mp4 *.mov *.mkv *.avi *.webm *.mp3 *.wav *.flac *.ogg *.aac *.m4a *.obj *.fbx *.gltf *.glb *.pmd *.abc *.usd *.usda *.usdc)"));
+        QStringLiteral("Supported media (*.png *.jpg *.jpeg *.bmp *.gif *.tga *.tif *.tiff *.dpx *.webp *.hdr *.exr *.ico *.dds *.ktx *.psd *.psb *.svg *.mp4 *.mov *.mkv *.avi *.webm *.m4v *.mpg *.mpeg *.mxf *.wmv *.flv *.3gp *.ts *.mp3 *.wav *.flac *.ogg *.opus *.aac *.aiff *.wma *.m4a *.obj *.fbx *.gltf *.glb *.pmd *.usd *.usda *.usdc *.usdz)"));
     if (!files.isEmpty()) { setProperty("systemPickerPaths", files); accept(); }
     return true;
   } else if (name == QStringLiteral("mediaPickerCancel") && activate) {

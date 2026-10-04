@@ -206,6 +206,15 @@ public:
     
     /// Get proxy file path
     QString proxyPath() const;
+
+    /// Input color interpretation applied to decoded frames before compositing.
+    /// Empty means no transform, which keeps existing footage looking unchanged.
+    void setInputColorSpace(const QString& colorSpace, const QString& transferFunction);
+    QString inputColorSpace() const;
+    QString inputTransferFunction() const;
+    /// Compare the proxy's actual colour tags against the layer interpretation and
+    /// record a diagnostic when they disagree.
+    void verifyProxyColorConsistency() const;
     
     /// Generate proxy files (deprecated — use ArtifactProxyManager instead)
     bool generateProxy(ProxyQuality quality);

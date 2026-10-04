@@ -438,7 +438,7 @@ QString fileDialogFilterForProperty(const QString &propertyName) {
   if (propertyName.contains(QStringLiteral("image"), Qt::CaseInsensitive) ||
       propertyName.endsWith(QStringLiteral("sourcePath"),
                             Qt::CaseInsensitive)) {
-    return QStringLiteral("Image Files (*.png *.jpg *.jpeg *.bmp *.gif *.tga *.tif *.tiff "
+    return QStringLiteral("Image Files (*.png *.jpg *.jpeg *.bmp *.gif *.tga *.tif *.tiff *.dpx "
                           "*.webp *.hdr *.exr *.ico *.dds *.ktx *.psd *.psb);;All Files (*.*)");
   }
   return QStringLiteral("All Files (*.*)");

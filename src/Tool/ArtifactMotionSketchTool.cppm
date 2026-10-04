@@ -84,7 +84,7 @@ class MotionSketchUndoCommand final : public UndoCommand {
   void applyOpacity(const ArtifactAbstractLayerPtr& layer,
                     const OpacitySnapshot& opacitySnap) {
     if (!layer) return;
-    auto* prop = layer->getProperty(QStringLiteral("layer.opacity"));
+    auto prop = layer->getProperty(QStringLiteral("layer.opacity"));
     if (!prop) return;
     prop->clearKeyFrames();
     for (const auto& [frame, value] : opacitySnap) {
@@ -201,7 +201,7 @@ bool ArtifactMotionSketchTool::beginSketch(const QPointF& canvasPos, ArtifactAbs
     }
 
     impl_->beforeOpacities.clear();
-    if (auto* opacityProp = layer->getProperty(QStringLiteral("layer.opacity"))) {
+    if (auto opacityProp = layer->getProperty(QStringLiteral("layer.opacity"))) {
         for (const auto& key : opacityProp->getKeyFrames()) {
             const int64_t frame = key.time.rescaledTo(snapshotFrameRate);
             impl_->beforeOpacities[frame] = key.value.toFloat();
@@ -309,7 +309,7 @@ bool ArtifactMotionSketchTool::finishSketch()
     // the existing opacity untouched in meaning, so this stays a no-op when the
     // response is disabled or the property is unavailable.
     bool wroteOpacity = false;
-    auto* opacityProp = layer->getProperty(QStringLiteral("layer.opacity"));
+    auto opacityProp = layer->getProperty(QStringLiteral("layer.opacity"));
     if (impl_->pressureAffectsOpacity && opacityProp &&
         impl_->sampledPressures.size() == n) {
         const bool pressureLooksActive =

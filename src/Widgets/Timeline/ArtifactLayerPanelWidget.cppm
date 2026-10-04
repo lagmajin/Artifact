@@ -5174,7 +5174,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         return;
       }
       const auto sourceFilter = QStringLiteral(
-          "Image Files (*.png *.jpg *.jpeg *.bmp *.gif *.tga *.tif *.tiff *.webp *.hdr *.exr *.ico *.dds *.ktx *.psd *.psb);;"
+          "Image Files (*.png *.jpg *.jpeg *.bmp *.gif *.tga *.tif *.tiff *.dpx *.webp *.hdr *.exr *.ico *.dds *.ktx *.psd *.psb);;"
           "All Files (*.*)");
       const QString currentPath = [&]() -> QString {
         if (auto imageLayer = ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(layer)) {
@@ -5211,7 +5211,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       const QString selectedPath = QFileDialog::getOpenFileName(
           this, QStringLiteral("Replace Video Source"),
           currentPath.isEmpty() ? QString() : QFileInfo(currentPath).absolutePath(),
-          QStringLiteral("Video Files (*.mp4 *.mov *.mkv *.avi *.webm *.m4v *.mpg *.mpeg *.mxf *.gif);;All Files (*.*)"));
+          QStringLiteral("Video Files (*.mp4 *.mov *.mkv *.avi *.webm *.m4v *.mpg *.mpeg *.mxf *.wmv *.flv *.3gp *.ts *.gif);;All Files (*.*)"));
       if (selectedPath.isEmpty()) {
         return;
       }

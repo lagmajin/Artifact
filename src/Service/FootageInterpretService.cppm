@@ -2,6 +2,8 @@ module;
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
+#include <vector>
 #include <QVector>
 
 module Artifact.Service.FootageInterpret;
@@ -15,6 +17,7 @@ import Artifact.Layer.Abstract;
 import Artifact.Layer.Video;
 import Artifact.Layer.Image;
 import Artifact.Layer.Audio;
+import Undo.UndoManager;
 import Frame.Position;
 import Time.Rational;
 import Time.TimeRemap;
@@ -206,8 +209,76 @@ bool FootageInterpretService::applyColorInterpretation(
         if (errorOut) *errorOut = QStringLiteral("Invalid footage");
         return false;
     }
+    const QString previousColorSpace = footage->inputColorSpace;
+    const QString previousTransfer = footage->inputTransferFunction;
     footage->inputColorSpace = inputColorSpace.trimmed();
     footage->inputTransferFunction = inputTransferFunction.trimmed();
+
+    // Push the new interpretation onto the layers that already reference this footage.
+    // Writing only to the FootageItem left every existing layer on its old value, so a
+    // user who interpreted a clip before adding it to a composition saw no change.
+    if (!impl_) impl_ = std::make_unique<Impl>();
+    QVector<ArtifactAbstractLayerPtr> layers;
+    std::vector<ArtifactAbstractComposition*> comps;
+    impl_->collectAffectedLayers(footage, layers, comps);
+    if (layers.isEmpty()) {
+        return true;
+    }
+
+    auto* undoManager = UndoManager::instance();
+    std::unique_ptr<MacroUndoCommand> macro;
+    if (undoManager) {
+        macro = std::make_unique<MacroUndoCommand>(
+            QStringLiteral("Set Footage Input Color Space"));
+    }
+    bool anyChanged = false;
+    for (const auto& layer : layers) {
+        if (!layer) continue;
+        QString colorPath;
+        QString transferPath;
+        QString currentColor;
+        QString currentTransfer;
+        if (auto imageLayer = ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(layer)) {
+            colorPath = QStringLiteral("image.inputColorSpace");
+            transferPath = QStringLiteral("image.inputTransferFunction");
+            currentColor = imageLayer->inputColorSpace();
+            currentTransfer = imageLayer->inputTransferFunction();
+        } else if (auto videoLayer = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) {
+            colorPath = QStringLiteral("video.inputColorSpace");
+            transferPath = QStringLiteral("video.inputTransferFunction");
+            currentColor = videoLayer->inputColorSpace();
+            currentTransfer = videoLayer->inputTransferFunction();
+        } else {
+            continue;
+        }
+        if (currentColor == footage->inputColorSpace &&
+            currentTransfer == footage->inputTransferFunction) {
+            continue;
+        }
+        anyChanged = true;
+        // The property setters clear the decoded caches and raise the dirty flag, so
+        // routing through them keeps the existing invalidation behaviour intact.
+        // MacroUndoCommand::push runs redo, so nothing is written here: without an
+        // undo manager the two setters are applied directly instead.
+        if (macro) {
+            macro->addChild(std::make_unique<SetLayerPropertyValueCommand>(
+                layer, colorPath, currentColor, footage->inputColorSpace,
+                QStringLiteral("Set Input Color Space")));
+            macro->addChild(std::make_unique<SetLayerPropertyValueCommand>(
+                layer, transferPath, currentTransfer, footage->inputTransferFunction,
+                QStringLiteral("Set Input Transfer")));
+        } else {
+            layer->setLayerPropertyValue(colorPath, footage->inputColorSpace);
+            layer->setLayerPropertyValue(transferPath, footage->inputTransferFunction);
+        }
+    }
+    if (anyChanged && macro) {
+        undoManager->push(std::move(macro));
+    }
+    // The FootageItem edit itself has no undo command of its own; restoring the layer
+    // values is what the user sees, and the item is re-derived from the layers on save.
+    Q_UNUSED(previousColorSpace);
+    Q_UNUSED(previousTransfer);
     return true;
 }
 

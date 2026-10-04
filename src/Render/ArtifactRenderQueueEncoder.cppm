@@ -13,6 +13,7 @@ module;
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <utility>
 
@@ -24,6 +25,7 @@ import Encoder.FFmpegEncoder;
 import Core.Diagnostics.Recorder;
 import Core.Diagnostics.Snapshot;
 import Core.Diagnostics.Trace;
+import Time.Code;
 
 namespace Artifact {
 
@@ -377,6 +379,15 @@ namespace Artifact {
         if (value == QStringLiteral("mjpeg") || value == QStringLiteral("motion_jpeg")) {
             return QStringLiteral("mjpeg");
         }
+        if (value == QStringLiteral("dnxhd")) {
+            return QStringLiteral("dnxhd");
+        }
+        if (value == QStringLiteral("wmv") || value == QStringLiteral("wmv2")) {
+            return QStringLiteral("wmv2");
+        }
+        if (value == QStringLiteral("rawvideo")) {
+            return QStringLiteral("rawvideo");
+        }
         if (value == QStringLiteral("png")) {
             return QStringLiteral("png");
         }
@@ -405,6 +416,9 @@ namespace Artifact {
         if (value == QStringLiteral("h264")) return QStringLiteral("libx264");
         if (value == QStringLiteral("h265")) return QStringLiteral("libx265");
         if (value == QStringLiteral("prores")) return QStringLiteral("prores_ks");
+        if (value == QStringLiteral("dnxhd")) return QStringLiteral("dnxhd");
+        if (value == QStringLiteral("wmv2")) return QStringLiteral("wmv2");
+        if (value == QStringLiteral("rawvideo")) return QStringLiteral("rawvideo");
         if (value == QStringLiteral("mjpeg")) return QStringLiteral("mjpeg");
         if (value == QStringLiteral("png")) return QStringLiteral("png");
         if (value == QStringLiteral("gif")) return QStringLiteral("gif");
@@ -556,6 +570,10 @@ namespace Artifact {
         settings.width = std::max(1, job.resolutionWidth);
         settings.height = std::max(1, job.resolutionHeight);
         settings.fps = job.frameRate > 0.0 ? job.frameRate : 30.0;
+        // Carry the composition's TimeCode into the encoder so the container gets a
+        // tmcd track. -1 keeps the previous "no timecode" behaviour.
+        settings.startTimeCodeFrame = job.startTimeCodeFrame;
+        settings.dropFrame = job.dropFrame;
         settings.bitrateKbps = std::max(1, job.bitrate);
         const QString codec = normalizeCodecName(job.codec);
         if (codec == QStringLiteral("h264")) {
@@ -725,7 +743,24 @@ namespace Artifact {
                  << QStringLiteral("-framerate") << QString::number(fps, 'f', 6)
                  << QStringLiteral("-i") << QStringLiteral("-")
                  << QStringLiteral("-c:v") << (preferVulkan_ ? ffmpegPipeVulkanEncoderName(codec)
-                                                             : ffmpegPipeEncoderName(codec, preferHardware_));
+                                                              : ffmpegPipeEncoderName(codec, preferHardware_));
+
+            // Embed a tmcd track so the output carries a real Timecode. ffmpeg needs
+            // -timecode as an output option, i.e. after the input and alongside -c:v.
+            // Only ProRes is wired for now; other containers ignore the option.
+            if (job.startTimeCodeFrame >= 0 && codec == QStringLiteral("prores")) {
+                ArtifactCore::TimeCode startTimeCode(
+                    static_cast<int>(std::min<long long>(
+                        job.startTimeCodeFrame,
+                        static_cast<long long>(std::numeric_limits<int>::max()))),
+                    fps);
+                startTimeCode.setDropFrame(job.dropFrame);
+                QString timecode = startTimeCode.toString();
+                if (job.dropFrame && timecode.size() > 8) {
+                    timecode[8] = QChar(';');
+                }
+                args << QStringLiteral("-timecode") << timecode;
+            }
 
             const QStringList qualityArgs = ffmpegPipeQualityArgs(job, preferHardware_);
             for (const QString& arg : qualityArgs) {

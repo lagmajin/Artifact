@@ -39,6 +39,16 @@ export namespace Artifact
   [[nodiscard]] bool deepExportEnabled() const;
   void setFramePadding(int digits);
   [[nodiscard]] int framePadding() const;
+  void setBitDepth(int bits);
+  [[nodiscard]] int bitDepth() const;
+  void setExrCompression(const QString& compression);
+  [[nodiscard]] QString exrCompression() const;
+  // Start Timecode written into the container's tmcd track. A negative frame means
+  // "do not embed a Timecode". fps is used for the 29.97 / 59.94 nominal rate.
+  void setStartTimeCodeFrame(long long frame, double fps);
+  [[nodiscard]] long long startTimeCodeFrame(double fps) const;
+  void setDropFrameEnabled(bool enabled);
+  [[nodiscard]] bool dropFrameEnabled() const;
   void setResolution(int width, int height);
   [[nodiscard]] int outputWidth() const;
   [[nodiscard]] int outputHeight() const;

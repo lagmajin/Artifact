@@ -2867,12 +2867,12 @@ private:
   }
 
   bool isPluginBlacklisted(const OfxPluginDescriptor &descriptor) const {
-    return isBlacklisted(descriptor.identifier.toUtf8().constData());
+    return isBlacklisted(descriptor.identifier.toQString().toUtf8().constData());
   }
 
   mutable QSet<QString> blacklistedIdentifiers_;
   mutable QHash<QString, int> crashCounts_;
-  bool blacklistLoaded_ = false;
+  mutable bool blacklistLoaded_ = false;
 
   void clearLoadedPlugins() {
     // Invalidate every descriptor that points at the libraries being released

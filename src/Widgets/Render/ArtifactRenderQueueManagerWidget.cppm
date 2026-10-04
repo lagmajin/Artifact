@@ -2267,6 +2267,10 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
     dialog.setMultiChannelChannels(impl_->service->jobMultiChannelChannelsAt(index));
     dialog.setDeepExportEnabled(impl_->service->jobDeepExportEnabledAt(index));
     dialog.setFramePadding(impl_->service->jobFramePaddingAt(index));
+    dialog.setStartTimeCodeFrame(impl_->service->jobStartTimeCodeFrameAt(index), dialog.frameRate());
+    dialog.setDropFrameEnabled(impl_->service->jobDropFrameAt(index));
+    dialog.setBitDepth(impl_->service->jobBitDepthAt(index));
+    dialog.setExrCompression(impl_->service->jobExrCompressionAt(index));
     dialog.setAudioCodec(impl_->service->jobAudioCodecAt(index));
     dialog.setAudioBitrateKbps(impl_->service->jobAudioBitrateKbpsAt(index));
     dialog.setAudioChannelMode(impl_->service->jobAudioChannelModeAt(index));
@@ -2293,6 +2297,10 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
       impl_->service->setJobMultiChannelChannelsAt(index, dialog.multiChannelChannels());
       impl_->service->setJobDeepExportEnabledAt(index, dialog.deepExportEnabled());
       impl_->service->setJobFramePaddingAt(index, dialog.framePadding());
+      impl_->service->setJobTimeCodeAt(index, dialog.startTimeCodeFrame(dialog.frameRate()),
+                                       dialog.dropFrameEnabled());
+      impl_->service->setJobBitDepthAt(index, dialog.bitDepth());
+      impl_->service->setJobExrCompressionAt(index, dialog.exrCompression());
       impl_->service->setJobAudioCodecAt(index, dialog.audioCodec());
       impl_->service->setJobAudioBitrateKbpsAt(index, dialog.audioBitrateKbps());
       impl_->service->setJobAudioChannelModeAt(index, dialog.audioChannelMode());

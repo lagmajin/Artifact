@@ -577,14 +577,14 @@ ArtifactCore::ArtifactScriptSerializedFields migrateScriptFields(
     if (!oldField.isPublic) {
       continue;
     }
-    const auto it = previousFields.constFind(oldField.name);
-    if (it == previousFields.cend()) {
+    const auto it = previousFields.find(oldField.name);
+    if (it == previousFields.end()) {
       continue;
     }
     for (const auto& newField : next.rootClass.fields) {
       if (newField.name == oldField.name && newField.isPublic &&
           newField.type == oldField.type) {
-        out[oldField.name] = it.value();
+        out[oldField.name] = it->second;
         break;
       }
     }

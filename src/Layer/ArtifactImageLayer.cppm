@@ -1133,6 +1133,15 @@ public:
         if (colorSpace.contains(QStringLiteral("acescc"))) {
             return QStringLiteral("acescc");
         }
+        // OIIO's DPX reader maps the DPX logarithmic transfer characteristic
+        // to the KodakLog colorspace name, which no bundled OCIO config
+        // defines. Name the Cineon curve explicitly so the legacy
+        // transfer-function path linearizes it instead of treating the
+        // encoded Log values as already-linear scene data.
+        if (colorSpace.contains(QStringLiteral("kodaklog")) ||
+            colorSpace.contains(QStringLiteral("cineon"))) {
+            return QStringLiteral("cineon");
+        }
         return {};
     }
 
