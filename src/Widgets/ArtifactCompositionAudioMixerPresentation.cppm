@@ -7,7 +7,7 @@ module;
 #include <cmath>
 #include <QAction>
 #include <QColor>
-#include <QDialog>
+#include <QtWidgets/qdialog.h>
 #include <QFont>
 #include <QFontMetrics>
 #include <QIcon>

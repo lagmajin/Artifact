@@ -3503,10 +3503,13 @@ double snappedKeyframeDragTargetFrame(
   return targetFrame;
 }
 
+double snappedGridFrame(double frame, double pixelsPerFrame);
+
 double snapTimelineFrameToEditTargets(
     const double rawFrame, const QVector<ArtifactTimelineTrackPainterView::TrackClipVisual> &clips,
     const QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> &markers,
-    const double currentFrame, const Qt::KeyboardModifiers modifiers,
+    const double currentFrame, const double pixelsPerFrame,
+    const Qt::KeyboardModifiers modifiers,
     QString *outSnapLabel = nullptr, const int ignoreClipIndex = -1) {
   double targetFrame = rawFrame;
   bool snappedToExplicitTarget = false;
@@ -3575,7 +3578,7 @@ double snapTimelineFrameToEditTargets(
   // in/out, a keyframe) always wins over the background grid. The step matches the
   // ruler's 1/2/5 major marks, so what the user sees is what the edit lands on.
   if (!snappedToExplicitTarget) {
-    const double gridTarget = snappedGridFrame(rawFrame, impl_->pixelsPerFrame_);
+    const double gridTarget = snappedGridFrame(rawFrame, pixelsPerFrame);
     if (std::abs(gridTarget - targetFrame) > 1e-9) {
       targetFrame = gridTarget;
       if (outSnapLabel) {
@@ -8440,7 +8443,7 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent *event) {
     case DragMode::MoveBody: {
       clip.startFrame = snapTimelineFrameToEditTargets(
           impl_->dragOrigStartFrame_ + deltaFrames, impl_->clips_,
-          impl_->keyframeMarkers_, impl_->currentFrame_, event->modifiers(),
+          impl_->keyframeMarkers_, impl_->currentFrame_, ppf, event->modifiers(),
           &clipSnapLabel, impl_->dragClipIndex_);
       if (clip.hasTrimSourceRange) {
         const double rangeDelta = clip.startFrame - impl_->dragOrigStartFrame_;
@@ -8456,7 +8459,7 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent *event) {
                                   : 0.0;
       const double snappedStart = snapTimelineFrameToEditTargets(
           impl_->dragOrigStartFrame_ + deltaFrames, impl_->clips_,
-          impl_->keyframeMarkers_, impl_->currentFrame_, event->modifiers(),
+          impl_->keyframeMarkers_, impl_->currentFrame_, ppf, event->modifiers(),
           &clipSnapLabel, impl_->dragClipIndex_);
       clip.startFrame = std::clamp(snappedStart, minStart, end - 1.0);
       clip.durationFrame = end - clip.startFrame;
@@ -8469,7 +8472,7 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent *event) {
       const double snappedEnd = snapTimelineFrameToEditTargets(
           impl_->dragOrigStartFrame_ + impl_->dragOrigDuration_ + deltaFrames,
           impl_->clips_, impl_->keyframeMarkers_, impl_->currentFrame_,
-          event->modifiers(), &clipSnapLabel, impl_->dragClipIndex_);
+          ppf, event->modifiers(), &clipSnapLabel, impl_->dragClipIndex_);
       const double newEnd = std::clamp(snappedEnd, clip.startFrame + 1.0, maxEnd);
       clip.durationFrame = std::max(1.0, newEnd - clip.startFrame);
       break;
@@ -8477,7 +8480,7 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent *event) {
     case DragMode::SlideBody: {
       const double snappedStart = snapTimelineFrameToEditTargets(
           impl_->dragOrigStartFrame_ + deltaFrames, impl_->clips_,
-          impl_->keyframeMarkers_, impl_->currentFrame_, event->modifiers(),
+          impl_->keyframeMarkers_, impl_->currentFrame_, ppf, event->modifiers(),
           &clipSnapLabel, impl_->dragClipIndex_);
       double minBound = 0.0;
       double maxBound = std::numeric_limits<double>::max();

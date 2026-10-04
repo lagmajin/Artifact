@@ -35,6 +35,7 @@ module;
 #include <QCoreApplication>
 #include <QTextStream>
 #include <opencv2/opencv.hpp>
+#include <OpenImageIO/typedesc.h>
 #include <wobjectimpl.h>
 #include <mutex>
 #include <map>

@@ -957,16 +957,21 @@ void installCompositionScriptApi(ArtifactAbstractComposition* composition)
   };
   // Frame-base companions to getTime(): animation code usually reasons in
   // frames, and fps() is needed to convert between the two.
-  host.registerFunction("getFrame", [composition]() -> std::int64_t {
+  host.registerFunction("getFrame", [composition](
+                                         std::span<const ArtifactScriptValue>)
+                                         -> ArtifactScriptValue {
     if (!composition) {
-      return 0;
+      return ArtifactScriptValue(static_cast<std::int64_t>(0));
     }
-    return composition->framePosition().framePosition();
+    return ArtifactScriptValue(static_cast<std::int64_t>(
+        composition->framePosition().framePosition()));
   });
-  host.registerFunction("fps", [composition]() -> double {
-    return composition ? static_cast<double>(
-                             composition->frameRate().framerate())
-                      : 0.0;
+  host.registerFunction("fps", [composition](
+                                    std::span<const ArtifactScriptValue>)
+                                    -> ArtifactScriptValue {
+    return ArtifactScriptValue(composition ? static_cast<double>(
+                                                 composition->frameRate().framerate())
+                                           : 0.0);
   });
   host.registerFunction("timeToFrame", [composition](
                                            std::span<const ArtifactScriptValue> a) {
@@ -1079,20 +1084,20 @@ void installScriptLibraryFunctions()
   };
 
   // ─── Math ───
-  host.registerFunction("sqrt", [](std::span<const ArtifactScriptValue> a) {
+  host.registerFunction("sqrt", [numberAt](std::span<const ArtifactScriptValue> a) {
     return ArtifactScriptValue(std::sqrt(std::max(0.0, numberAt(a, 0, 0.0))));
   });
-  host.registerFunction("pow", [](std::span<const ArtifactScriptValue> a) {
+  host.registerFunction("pow", [numberAt](std::span<const ArtifactScriptValue> a) {
     return ArtifactScriptValue(std::pow(numberAt(a, 0, 0.0), numberAt(a, 1, 1.0)));
   });
-  host.registerFunction("exp", [](std::span<const ArtifactScriptValue> a) {
+  host.registerFunction("exp", [numberAt](std::span<const ArtifactScriptValue> a) {
     return ArtifactScriptValue(std::exp(numberAt(a, 0, 0.0)));
   });
-  host.registerFunction("log", [](std::span<const ArtifactScriptValue> a) {
+  host.registerFunction("log", [numberAt](std::span<const ArtifactScriptValue> a) {
     const double v = numberAt(a, 0, 1.0);
     return ArtifactScriptValue(std::log(v > 0.0 ? v : 1e-12));
   });
-  host.registerFunction("mod", [](std::span<const ArtifactScriptValue> a) {
+  host.registerFunction("mod", [numberAt](std::span<const ArtifactScriptValue> a) {
     const double d = numberAt(a, 1, 1.0);
     if (d == 0.0) {
       return ArtifactScriptValue(0.0);
@@ -1103,30 +1108,30 @@ void installScriptLibraryFunctions()
                                    ? r + d
                                    : r);
   });
-  host.registerFunction("round", [](std::span<const ArtifactScriptValue> a) {
+  host.registerFunction("round", [numberAt](std::span<const ArtifactScriptValue> a) {
     return ArtifactScriptValue(std::round(numberAt(a, 0, 0.0)));
   });
-  host.registerFunction("floor", [](std::span<const ArtifactScriptValue> a) {
+  host.registerFunction("floor", [numberAt](std::span<const ArtifactScriptValue> a) {
     return ArtifactScriptValue(std::floor(numberAt(a, 0, 0.0)));
   });
-  host.registerFunction("ceil", [](std::span<const ArtifactScriptValue> a) {
+  host.registerFunction("ceil", [numberAt](std::span<const ArtifactScriptValue> a) {
     return ArtifactScriptValue(std::ceil(numberAt(a, 0, 0.0)));
   });
-  host.registerFunction("tan", [](std::span<const ArtifactScriptValue> a) {
+  host.registerFunction("tan", [numberAt](std::span<const ArtifactScriptValue> a) {
     return ArtifactScriptValue(std::tan(numberAt(a, 0, 0.0)));
   });
-  host.registerFunction("atan", [](std::span<const ArtifactScriptValue> a) {
+  host.registerFunction("atan", [numberAt](std::span<const ArtifactScriptValue> a) {
     return ArtifactScriptValue(std::atan(numberAt(a, 0, 0.0)));
   });
-  host.registerFunction("atan2", [](std::span<const ArtifactScriptValue> a) {
+  host.registerFunction("atan2", [numberAt](std::span<const ArtifactScriptValue> a) {
     return ArtifactScriptValue(
         std::atan2(numberAt(a, 0, 0.0), numberAt(a, 1, 1.0)));
   });
-  host.registerFunction("sign", [](std::span<const ArtifactScriptValue> a) {
+  host.registerFunction("sign", [numberAt](std::span<const ArtifactScriptValue> a) {
     const double v = numberAt(a, 0, 0.0);
     return ArtifactScriptValue(v > 0.0 ? 1.0 : (v < 0.0 ? -1.0 : 0.0));
   });
-  host.registerFunction("ramp", [](std::span<const ArtifactScriptValue> a) {
+  host.registerFunction("ramp", [numberAt](std::span<const ArtifactScriptValue> a) {
     const double value = numberAt(a, 0, 0.0);
     const double inMin = numberAt(a, 1, 0.0);
     const double inMax = numberAt(a, 2, 1.0);
@@ -1140,7 +1145,7 @@ void installScriptLibraryFunctions()
   });
 
   // ─── Deterministic randomness ───
-  host.registerFunction("random", [](std::span<const ArtifactScriptValue> a) {
+  host.registerFunction("random", [numberAt](std::span<const ArtifactScriptValue> a) {
     const double lo = numberAt(a, 0, 0.0);
     const double hi = numberAt(a, 1, 1.0);
     // Seeded from the running composition time so playback is reproducible
@@ -1207,12 +1212,14 @@ void installScriptLibraryFunctions()
     if (std::holds_alternative<ArtifactScriptVec3>(a[0])) {
       const auto& v = std::get<ArtifactScriptVec3>(a[0]);
       return ArtifactScriptValue(ArtifactScriptVec3{
-          v.x / len, v.y / len, v.z / len});
+          static_cast<float>(v.x / len), static_cast<float>(v.y / len),
+          static_cast<float>(v.z / len)});
     }
     if (std::holds_alternative<ArtifactScriptVec2>(a[0])) {
       const auto& v = std::get<ArtifactScriptVec2>(a[0]);
       return ArtifactScriptValue(
-          ArtifactScriptVec2{v.x / len, v.y / len});
+          ArtifactScriptVec2{static_cast<float>(v.x / len),
+                             static_cast<float>(v.y / len)});
     }
     return a[0];
   });
@@ -1226,15 +1233,18 @@ void installScriptLibraryFunctions()
       const auto& u = std::get<ArtifactScriptVec3>(a[0]);
       const auto& v = std::get<ArtifactScriptVec3>(a[1]);
       return ArtifactScriptValue(ArtifactScriptVec3{
-          u.x + (v.x - u.x) * t, u.y + (v.y - u.y) * t,
-          u.z + (v.z - u.z) * t});
+          static_cast<float>(u.x + (v.x - u.x) * t),
+          static_cast<float>(u.y + (v.y - u.y) * t),
+          static_cast<float>(u.z + (v.z - u.z) * t)});
     }
     if (std::holds_alternative<ArtifactScriptVec2>(a[0]) &&
         std::holds_alternative<ArtifactScriptVec2>(a[1])) {
       const auto& u = std::get<ArtifactScriptVec2>(a[0]);
       const auto& v = std::get<ArtifactScriptVec2>(a[1]);
       return ArtifactScriptValue(
-          ArtifactScriptVec2{u.x + (v.x - u.x) * t, u.y + (v.y - u.y) * t});
+          ArtifactScriptVec2{
+              static_cast<float>(u.x + (v.x - u.x) * t),
+              static_cast<float>(u.y + (v.y - u.y) * t)});
     }
     return ArtifactScriptValue(scriptNumber(a[0]) +
                                (scriptNumber(a[1]) - scriptNumber(a[0])) * t);
@@ -1271,7 +1281,7 @@ void installScriptLibraryFunctions()
       if (cycle < 1e-12) {
         return 0.0;
       }
-      const double phase = std::fmod(local, cycle * 2.0);
+      double phase = std::fmod(local, cycle * 2.0);
       if (phase < 0.0) {
         phase += cycle * 2.0;
       }
@@ -1317,14 +1327,14 @@ void installScriptLibraryFunctions()
     const double local = loopValue(t - start, "cycle", span, 0.0, 1.0);
     return eased ? scriptEaseCurve(local / span) : local / span;
   };
-  host.registerFunction("linear", [sampleTemporal](
+  host.registerFunction("linear", [sampleTemporal, numberAt](
                                       std::span<const ArtifactScriptValue> a) {
     return ArtifactScriptValue(sampleTemporal(a, numberAt(a, 0, 0.0),
                                              numberAt(a, 1, 1.0),
                                              numberAt(a, 3, scriptSelfTimeSeconds()),
                                              false));
   });
-  host.registerFunction("ease", [sampleTemporal](
+  host.registerFunction("ease", [sampleTemporal, numberAt](
                                      std::span<const ArtifactScriptValue> a) {
     return ArtifactScriptValue(sampleTemporal(a, numberAt(a, 0, 0.0),
                                              numberAt(a, 1, 1.0),

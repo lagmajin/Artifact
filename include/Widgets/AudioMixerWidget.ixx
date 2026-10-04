@@ -9,6 +9,10 @@ module;
 #include <QElapsedTimer>
 #include <QComboBox>
 #include <QJsonObject>
+
+class QLabel;
+class QDialog;
+
 export module Artifact.Widgets.AudioMixer;
 
 
@@ -20,9 +24,6 @@ import Audio.Analyze;
 import Audio.Effect.Spectrum;
 import Memory.SharedPtr;
 import Artifact.Widgets.SpectrumAnalyzer;
-
-class QLabel;
-class QDialog;
 
 export namespace Artifact {
 

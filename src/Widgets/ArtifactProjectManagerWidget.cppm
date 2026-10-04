@@ -6137,7 +6137,7 @@ public:
                 batch.push_back(entry);
             }
 
-            if (batch.isEmpty()) {
+            if (batch.empty()) {
                 // Everything drained in this pass was handled without a worker.
                 if (proxyWorkerSlots_.size() >= static_cast<size_t>(limit)) {
                     break;

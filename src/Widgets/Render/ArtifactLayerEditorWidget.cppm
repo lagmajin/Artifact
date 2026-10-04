@@ -1895,7 +1895,7 @@ if (result.kind == LayerEditorMaskMoveKind::HoverChanged) {
       const MaskBoundsHandle hovered = hitTestMaskBoundsHandle(
           localBounds, layer->getGlobalTransform(),
           ArtifactCore::Coordinates::toQPointF(canvasPos),
-          10.0f / ArtifactCore::artifactMax(0.1f, impl_->renderer_->getZoom()));
+          10.0f / std::max(0.1f, impl_->renderer_->getZoom()));
       if (hovered != impl_->hoveredMaskBoundsHandle_) {
        impl_->hoveredMaskBoundsHandle_ = hovered;
        impl_->requestRender();
