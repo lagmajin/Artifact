@@ -946,8 +946,15 @@ void installCompositionScriptApi(ArtifactAbstractComposition* composition)
     return composition ? composition->layerCount() : 0;
   };
   api.getTime = [composition]() -> double {
-    return composition ? static_cast<double>(composition->currentFrame())
-                      : 0.0;
+    if (!composition) {
+      return 0.0;
+    }
+    const double rate = std::max(
+        1.0, static_cast<double>(composition->frameRate().framerate()));
+    return static_cast<double>(
+               static_cast<std::int64_t>(
+                   composition->framePosition().rescaledTo(1))) /
+           rate;
   };
   // Frame-base companions to getTime(): animation code usually reasons in
   // frames, and fps() is needed to convert between the two.
