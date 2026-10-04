@@ -19,18 +19,12 @@ module;
 #include <QProcess>
 #include <QCoreApplication>
 #include <QTimer>
-#include <QProgressDialog>
 #include <QPointer>
 #include <QRegularExpression>
-#include <QPainter>
-#include <QImage>
 #include <QVector>
 #include <QSettings>
-#include <QtConcurrent>
-#include <QFutureWatcher>
 #include <wobjectimpl.h>
 #include <algorithm>
-#include <atomic>
 
 module Artifact.Menu.File;
 
@@ -42,14 +36,12 @@ import Artifact.Project.Statistics;
 import Artifact.Composition.InitParams;
 import Artifact.Service.Project;
 import Artifact.Widgets.ImportAssetsDialog;
+import Artifact.Widgets.ImportPsdDialog;
 import Artifact.Export.Dialog;
 import Application.AppSettings;
 import Utils.Path;
 import Artifact.Widgets.AppDialogs;
 import Undo.UndoManager;
-import Artifact.Layer.Image;
-import Artifact.Layer.Svg;
-import Artifact.Layers.SolidImage;
 import Artifact.Layer.NLETransitionBridge;
 import NLE.Core;
 import NLE.OTIO;
@@ -57,6 +49,8 @@ import Artifact.Composition.Abstract;
 import Artifact.Composition.InitParams;
 import Artifact.Layer.Factory;
 import Artifact.Layer.InitParams;
+import Artifact.Render.Queue.Service;
+import Artifact.Render.Queue.Presets;
 import Translation.Manager;
 
 namespace Artifact {
@@ -75,6 +69,21 @@ QString normalizedProjectPath(const QString& path)
 QString menuText(const QString& key, const QString& fallback)
 {
     return TranslationManager::instance().tr(key, fallback);
+}
+
+// Qt の保存ダイアログは拡張子を補わないことがあるため、書き出し形式に合わせて付与する。
+QString pathWithExportSuffix(const QString& path, const QString& format)
+{
+    const QString suffix = format == QStringLiteral("mp4") ? QStringLiteral("mp4")
+        : format == QStringLiteral("jpg") ? QStringLiteral("jpg")
+        : format == QStringLiteral("exr") ? QStringLiteral("exr")
+        : QStringLiteral("png");
+    const QFileInfo info(path);
+    if (info.suffix().compare(suffix, Qt::CaseInsensitive) == 0) {
+        return path;
+    }
+    return info.absolutePath() + QLatin1Char('/') + info.completeBaseName() +
+           QLatin1Char('.') + suffix;
 }
 
 void addRecentProject(const QString& path)
@@ -203,6 +212,7 @@ public:
     QAction* newCompositionAction = nullptr;
     QAction* importAssetsAction = nullptr;
     QAction* importOtioAction = nullptr;
+    QAction* importPsdAction = nullptr;
     QAction* revealProjectFolderAction = nullptr;
     QAction* exportFontUsageAction = nullptr;
     QAction* restartAction = nullptr;
@@ -228,6 +238,7 @@ public:
     void handleNewComposition();
     void handleImportAssets();
     void handleImportOtio();
+    void handleImportPsd();
     void handleRevealProjectFolder();
     void handleExportCurrentFrame();
     void handleExportWorkArea();
@@ -273,6 +284,7 @@ ArtifactFileMenu::Impl::Impl(ArtifactFileMenu* menu)
     importAssetsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_I));
     importAssetsAction->setIcon(QIcon(resolveIconPath("Studio/filemenu_import_assets.svg")));
     importOtioAction = new QAction(menuText(QStringLiteral("menu.file.import_otio"), QStringLiteral("OpenTimelineIOを読み込む...")), menu);
+    importPsdAction = new QAction(menuText(QStringLiteral("menu.file.import_psd"), QStringLiteral("PSD レイヤーを読み込む...")), menu);
 
     revealProjectFolderAction = new QAction(menuText(QStringLiteral("menu.file.reveal_folder"), QStringLiteral("プロジェクトフォルダを開く")));
     revealProjectFolderAction->setIcon(QIcon(resolveIconPath("Studio/filemenu_reveal_folder.svg")));
@@ -304,6 +316,7 @@ ArtifactFileMenu::Impl::Impl(ArtifactFileMenu* menu)
     menu->addAction(newCompositionAction);
     menu->addAction(importAssetsAction);
     menu->addAction(importOtioAction);
+    menu->addAction(importPsdAction);
     menu->addSeparator();
     menu->addAction(closeProjectAction);
     menu->addAction(revealProjectFolderAction);
@@ -332,6 +345,7 @@ ArtifactFileMenu::Impl::Impl(ArtifactFileMenu* menu)
     QObject::connect(newCompositionAction, &QAction::triggered, menu, [this]() { handleNewComposition(); });
     QObject::connect(importAssetsAction, &QAction::triggered, menu, [this]() { handleImportAssets(); });
     QObject::connect(importOtioAction, &QAction::triggered, menu, [this]() { handleImportOtio(); });
+    QObject::connect(importPsdAction, &QAction::triggered, menu, [this]() { handleImportPsd(); });
     QObject::connect(revealProjectFolderAction, &QAction::triggered, menu, [this]() { handleRevealProjectFolder(); });
     QObject::connect(exportFontUsageAction, &QAction::triggered, menu,
                      [this]() { handleExportFontUsage(); });
@@ -627,6 +641,60 @@ void ArtifactFileMenu::Impl::handleRevealProjectFolder()
     QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(path).absolutePath()));
 }
 
+void ArtifactFileMenu::Impl::handleImportPsd()
+{
+    if (!menu_) return;
+    auto* svc = ArtifactProjectService::instance();
+    if (!svc || !svc->hasProject()) {
+        QMessageBox::warning(menu_, menuText(QStringLiteral("menu.file.import_psd"), QStringLiteral("PSD レイヤーを読み込む")),
+                             menuText(QStringLiteral("dialog.import.no_project"), QStringLiteral("先にプロジェクトを開いてください。")));
+        return;
+    }
+    const QString filePath = QFileDialog::getOpenFileName(
+        menu_, menuText(QStringLiteral("menu.file.import_psd"), QStringLiteral("PSD レイヤーを読み込む")), QString(),
+        QStringLiteral("Photoshop (*.psd *.psb);;All Files (*.*)"));
+    if (filePath.isEmpty()) return;
+
+    ArtifactImportPsdDialog dialog(filePath, menu_);
+    if (!dialog.documentOpened()) {
+        QMessageBox::warning(menu_, menuText(QStringLiteral("menu.file.import_psd"), QStringLiteral("PSD レイヤーを読み込む")),
+                             menuText(QStringLiteral("dialog.import_psd.open_failed"),
+                                      QStringLiteral("PSD を解析できませんでした。")));
+        return;
+    }
+    if (dialog.exec() != QDialog::Accepted) return;
+    const auto selections = dialog.selectedLayers();
+    if (selections.isEmpty()) return;
+
+    // The PSD file itself becomes the project asset once; every selected layer
+    // then references that single asset through its own subimage index.
+    const QPointer<ArtifactFileMenu> menuGuard(menu_);
+    svc->importAssetsFromPathsAsync(
+        QStringList{filePath},
+        [menuGuard, svc, selections](const QStringList& imported) {
+            if (!menuGuard || !svc) return;
+            if (imported.isEmpty()) {
+                QMessageBox::warning(menuGuard,
+                                     menuText(QStringLiteral("menu.file.import_psd"), QStringLiteral("PSD レイヤーを読み込む")),
+                                     menuText(QStringLiteral("dialog.import.no_assets"),
+                                              QStringLiteral("PSD をアセットとして登録できませんでした。")));
+                return;
+            }
+            const QString assetPath = imported.first();
+            for (const auto& selection : selections) {
+                ArtifactImageInitParams params(selection.name.trimmed().isEmpty()
+                                                  ? QStringLiteral("PSD Layer")
+                                                  : selection.name.trimmed());
+                params.setImagePath(assetPath);
+                // OIIO exposes the flattened PSD as subimage 0, so layer 0 of the
+                // parsed list is subimage 1. PsdLayerInfo::subimageIndex already
+                // stores that +1 value; the dialog keeps the parsed list index.
+                params.setPsdSubimageIndex(selection.layerIndex + 1);
+                svc->addLayerToCurrentComposition(params);
+            }
+        });
+}
+
 void ArtifactFileMenu::Impl::handleImportOtio()
 {
     if (!menu_) return;
@@ -853,60 +921,52 @@ void ArtifactFileMenu::Impl::handleExportCurrentFrame()
         return;
     }
 
-    const QString filePath = QFileDialog::getSaveFileName(menu_, menuText(QStringLiteral("menu.file.export_current_frame_title"), QStringLiteral("現在のフレームを書き出し")),
-        QString(), "PNG Image (*.png);;JPEG Image (*.jpg);;All Files (*.*)");
+const QString filePath = QFileDialog::getSaveFileName(menu_, menuText(QStringLiteral("menu.file.export_current_frame_title"), QStringLiteral("現在のフレームを書き出し")),
+        QString(), "PNG Image (*.png);;JPEG Image (*.jpg *.jpeg);;OpenEXR Image (*.exr);;All Files (*.*)");
     if (filePath.isEmpty()) return;
 
-    // 現在のフレームをレンダリング
-    const QSize compSize = comp->effectiveCompositionSize();
-    QImage canvas(compSize, QImage::Format_ARGB32_Premultiplied);
-    canvas.fill(QColor(18, 20, 24));
-    
-    QPainter painter(&canvas);
-    painter.setRenderHint(QPainter::Antialiasing, true);
-    painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
-    
-    // 全レイヤーを描画
-    const auto layers = comp->allLayer();
-    for (const auto& layer : layers) {
-        if (!layer || !layer->isVisible()) continue;
-        
-        // レイヤーを現在のフレーム位置にシーク
-        layer->goToFrame(static_cast<int64_t>(comp->framePosition().framePosition()));
+    // 現在フレームの書き出しはスクショ経路（GPU readback + ImageExporter）に統一する。
+    // QPainter による CPU 再合成は GPU レンダリング・エフェクト・カラーグレードを
+    // 全てバイパスし 8bit に落としていたため使用しない。
+    const QString suffix = QFileInfo(filePath).suffix().toLower();
+    QString format = QStringLiteral("png");
+    QString presetId = QStringLiteral("png_sequence");
+    if (suffix == QStringLiteral("jpg") || suffix == QStringLiteral("jpeg")) {
+        format = QStringLiteral("jpg");
+        presetId = QStringLiteral("jpeg_sequence");
+    } else if (suffix == QStringLiteral("exr")) {
+        format = QStringLiteral("exr");
+        presetId = QStringLiteral("exr_sequence");
+    }
 
-        // レイヤーサーフェスを取得して描画
-        if (auto imageLayer = ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(layer)) {
-            QImage img = imageLayer->toQImage();
-            if (!img.isNull()) {
-                const auto size = layer->sourceSize();
-                painter.drawImage(QRectF(0, 0, size.width, size.height), img);
-            }
-        } else if (auto svgLayer = ArtifactCore::dynamicPointerCast<ArtifactSvgLayer>(layer)) {
-            QImage img = svgLayer->toQImage();
-            if (!img.isNull()) {
-                const auto size = layer->sourceSize();
-                painter.drawImage(QRectF(0, 0, size.width, size.height), img);
-            }
-        } else if (auto solidLayer = ArtifactCore::dynamicPointerCast<ArtifactSolidImageLayer>(layer)) {
-            QImage img(compSize, QImage::Format_ARGB32_Premultiplied);
-            const FloatColor solidColor = solidLayer->color();
-            img.fill(QColor(
-                static_cast<int>(solidColor.r() * 255),
-                static_cast<int>(solidColor.g() * 255),
-                static_cast<int>(solidColor.b() * 255)));
-            painter.drawImage(0, 0, img);
-        }
+    // Composition の最終フレームをレンダーキューに 1 フレームだけ投入して書き出す。
+    // これによりワークエリア書き出しと同一の GPU 経路・AOV・final effects が通る。
+    auto* queue = ArtifactRenderQueueService::instance();
+    if (!queue) {
+        QMessageBox::warning(menu_, menuText(QStringLiteral("menu.file.export_title"), QStringLiteral("エクスポート")),
+            QStringLiteral("レンダリングキューを取得できませんでした。"));
+        return;
     }
-    
-    // 画像を保存
-    if (filePath.endsWith(".jpg", Qt::CaseInsensitive)) {
-        canvas.save(filePath, "JPG", 95);
-    } else {
-        canvas.save(filePath, "PNG");
+
+    const int beforeCount = queue->jobCount();
+    queue->addRenderQueueWithPreset(comp->id(),
+        comp->settings().compositionName().toQString(), presetId);
+    if (queue->jobCount() <= beforeCount) {
+        QMessageBox::warning(menu_, menuText(QStringLiteral("menu.file.export_title"), QStringLiteral("エクスポート")),
+            QStringLiteral("レンダリングジョブを作成できませんでした。"));
+        return;
     }
-    
-    QMessageBox::information(menu_, menuText(QStringLiteral("menu.file.export_title"), QStringLiteral("エクスポート")), 
-        QString(menuText(QStringLiteral("dialog.export_frame.success"), QStringLiteral("現在のフレームを保存しました:\n%1"))).arg(filePath));
+    const int jobIndex = queue->jobCount() - 1;
+
+    const int64_t currentFrame = static_cast<int64_t>(comp->framePosition().framePosition());
+    const QString outPath = pathWithExportSuffix(filePath, format);
+    queue->setJobOutputPathAt(jobIndex, outPath);
+    queue->setJobFrameRangeAt(jobIndex, static_cast<int>(currentFrame), static_cast<int>(currentFrame));
+    queue->startRenderQueueAt(jobIndex);
+
+    QMessageBox::information(menu_, menuText(QStringLiteral("menu.file.export_title"), QStringLiteral("エクスポート")),
+        QString(menuText(QStringLiteral("dialog.export_frame.started"),
+                         QStringLiteral("現在のフレームをレンダリングキューに追加しました:\n%1"))).arg(outPath));
 }
 
 void ArtifactFileMenu::Impl::handleExportWorkArea()
@@ -924,109 +984,59 @@ void ArtifactFileMenu::Impl::handleExportWorkArea()
         return;
     }
 
-    const QString filePath = QFileDialog::getSaveFileName(menu_, menuText(QStringLiteral("dialog.render.work_area"), QStringLiteral("ワークエリアをレンダリング")),
-        QString(), "PNG Sequence (*.png);;MP4 Video (*.mp4);;All Files (*.*)");
-    if (filePath.isEmpty()) return;
+    // 書き出し形式を先に確定させる（プリセット選択に使うため拡張子ベースで選ぶ）。
+    const QString proposed = QFileDialog::getSaveFileName(menu_, menuText(QStringLiteral("dialog.render.work_area"), QStringLiteral("ワークエリアをレンダリング")),
+        QString(), "H.264 MP4 (*.mp4);;PNG Sequence (*.png);;JPEG Sequence (*.jpg);;OpenEXR Sequence (*.exr);;All Files (*.*)");
+    if (proposed.isEmpty()) return;
 
-    // ワークエリア範囲を取得
+    const QString proposedSuffix = QFileInfo(proposed).suffix().toLower();
+    const QString workAreaFormat = proposedSuffix == QStringLiteral("mp4") ? QStringLiteral("mp4")
+        : proposedSuffix == QStringLiteral("jpg") || proposedSuffix == QStringLiteral("jpeg") ? QStringLiteral("jpg")
+        : proposedSuffix == QStringLiteral("exr") ? QStringLiteral("exr")
+        : QStringLiteral("png");
+
+    const QString filePath = pathWithExportSuffix(proposed,
+        workAreaFormat == QStringLiteral("mp4") ? QStringLiteral("mp4") : workAreaFormat);
+
+    // ワークエリア書き出しはレンダーキューに委譲する。FFmpegEncoder / ImageExporter が
+    // 既に正しく実装されており、CPU 再合成すると GPU パスと AOV を失うため。
+    auto* queue = ArtifactRenderQueueService::instance();
+    if (!queue) {
+        QMessageBox::warning(menu_, menuText(QStringLiteral("menu.file.export_title"), QStringLiteral("エクスポート")),
+            QStringLiteral("レンダリングキューを取得できませんでした。"));
+        return;
+    }
+
+    const QString presetId = workAreaFormat == QStringLiteral("mp4")
+        ? QStringLiteral("h264_mp4_standard")
+        : workAreaFormat == QStringLiteral("jpg")
+            ? QStringLiteral("jpeg_sequence")
+            : workAreaFormat == QStringLiteral("exr")
+                ? QStringLiteral("exr_sequence")
+                : QStringLiteral("png_sequence");
+
+    const int beforeCount = queue->jobCount();
+    queue->addRenderQueueWithPreset(comp->id(),
+        comp->settings().compositionName().toQString(), presetId);
+    if (queue->jobCount() <= beforeCount) {
+        QMessageBox::warning(menu_, menuText(QStringLiteral("menu.file.export_title"), QStringLiteral("エクスポート")),
+            QStringLiteral("レンダリングジョブを作成できませんでした。"));
+        return;
+    }
+    const int jobIndex = queue->jobCount() - 1;
+
+    // ワークエリア範囲を job に設定し、指定パスへ書き出す。
     const FrameRange workArea = comp->workAreaRange();
-    const int64_t startFrame = workArea.start();
-    const int64_t endFrame = workArea.end();
-    const int64_t totalFrames = std::max<int64_t>(1, endFrame - startFrame);
-    const QSize compSize = comp->effectiveCompositionSize();
-    const auto layers = comp->allLayer();
+    queue->setJobFrameRangeAt(jobIndex, static_cast<int>(workArea.start()), static_cast<int>(workArea.end()));
+    queue->setJobOutputPathAt(jobIndex, filePath);
+    if (workAreaFormat == QStringLiteral("exr")) {
+        queue->setJobBitDepthAt(jobIndex, 16);
+    }
+    queue->startRenderQueueAt(jobIndex);
 
-    // 進捗ダイアログを表示
-    QProgressDialog* progress = new QProgressDialog(menu_);
-    progress->setWindowTitle(menuText(QStringLiteral("dialog.render.title"), QStringLiteral("レンダリング中")));
-    progress->setLabelText(menuText(QStringLiteral("dialog.render.frame"), QStringLiteral("フレームをレンダリング中...")));
-    progress->setRange(0, static_cast<int>(totalFrames));
-    progress->setCancelButtonText(menuText(QStringLiteral("dialog.button.cancel"), QStringLiteral("キャンセル")));
-    progress->setWindowModality(Qt::WindowModal);
-    progress->setAttribute(Qt::WA_DeleteOnClose, false);
-    progress->show();
-
-    // バックグラウンドでレンダリング実行
-    auto cancelFlag = ArtifactCore::makeShared<std::atomic<bool>>(false);
-    QObject::connect(progress, &QProgressDialog::canceled, [cancelFlag]() {
-        *cancelFlag = true;
-    });
-
-    auto* watcher = new QFutureWatcher<int>(menu_);
-    QObject::connect(watcher, &QFutureWatcher<int>::progressValueChanged, progress, [progress](int value) {
-        progress->setValue(value);
-    });
-    QObject::connect(watcher, &QFutureWatcher<int>::finished, menu_, [this, progress, watcher, filePath]() {
-        progress->close();
-        const int renderedCount = watcher->result();
-        watcher->deleteLater();
-
-        if (renderedCount > 0) {
-            QMessageBox::information(menu_, menuText(QStringLiteral("dialog.export.done"), QStringLiteral("エクスポート完了")),
-                QString(menuText(QStringLiteral("dialog.export_frames.success"), QStringLiteral("%1 フレームを保存しました:\n%2"))).arg(renderedCount).arg(filePath));
-        }
-    });
-
-    // Run rendering in background thread with progress reporting
-    watcher->setFuture(QtConcurrent::run([startFrame, endFrame, compSize, layers, filePath, cancelFlag, totalFrames]() -> int {
-        int renderedCount = 0;
-
-        for (int64_t frame = startFrame; frame < endFrame; ++frame) {
-            if (*cancelFlag) break;
-
-            // キャンバスをクリア
-            QImage canvas(compSize, QImage::Format_ARGB32_Premultiplied);
-            canvas.fill(QColor(18, 20, 24));
-
-            QPainter painter(&canvas);
-            painter.setRenderHint(QPainter::Antialiasing, true);
-            painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
-
-            // 全レイヤーを描画
-            for (const auto& layer : layers) {
-                if (!layer || !layer->isVisible()) continue;
-
-                if (auto imageLayer = ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(layer)) {
-                    QImage img = imageLayer->toQImage();
-                    if (!img.isNull()) {
-                        const auto size = layer->sourceSize();
-                        painter.drawImage(QRectF(0, 0, size.width, size.height), img);
-                    }
-                } else if (auto svgLayer = ArtifactCore::dynamicPointerCast<ArtifactSvgLayer>(layer)) {
-                    QImage img = svgLayer->toQImage();
-                    if (!img.isNull()) {
-                        const auto size = layer->sourceSize();
-                        painter.drawImage(QRectF(0, 0, size.width, size.height), img);
-                    }
-                } else if (auto solidLayer = ArtifactCore::dynamicPointerCast<ArtifactSolidImageLayer>(layer)) {
-                    QImage img(compSize, QImage::Format_ARGB32_Premultiplied);
-                    const FloatColor solidColor = solidLayer->color();
-                    img.fill(QColor(
-                        static_cast<int>(solidColor.r() * 255),
-                        static_cast<int>(solidColor.g() * 255),
-                        static_cast<int>(solidColor.b() * 255)));
-                    painter.drawImage(0, 0, img);
-                }
-            }
-
-            painter.end();
-
-            // ファイル名を生成（連番）
-            QString frameFilePath;
-            if (filePath.endsWith(".png", Qt::CaseInsensitive)) {
-                QFileInfo fi(filePath);
-                frameFilePath = fi.absolutePath() + "/" + fi.completeBaseName() +
-                               QString("_%1").arg(static_cast<int>(frame), 4, 10, QChar('0')) + ".png";
-            } else {
-                frameFilePath = filePath + QString("_%1.png").arg(static_cast<int>(frame), 4, 10, QChar('0'));
-            }
-
-            canvas.save(frameFilePath, "PNG");
-            renderedCount++;
-        }
-
-        return renderedCount;
-    }));
+    QMessageBox::information(menu_, menuText(QStringLiteral("menu.file.export_title"), QStringLiteral("エクスポート")),
+        QString(menuText(QStringLiteral("dialog.export_frames.queued"),
+                         QStringLiteral("ワークエリアをレンダリングキューに追加しました:\n%1\n(%2 フレーム)"))).arg(filePath).arg(workArea.end() - workArea.start()));
 }
 
 void ArtifactFileMenu::Impl::handleExportProjectPackage()

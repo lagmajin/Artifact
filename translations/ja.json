@@ -71,6 +71,7 @@
       "import_accel": "アセットを読み込み(&I)...",
       "import_title": "アセットを読み込み",
       "import_otio": "OpenTimelineIOを読み込む...",
+      "import_psd": "PSD レイヤーを読み込む...",
       "import_otio_title": "OpenTimelineIOを読み込む",
       "export_title": "エクスポート",
       "export_game_ui": "CompositionをゲームUI形式で書き出す...",
@@ -1206,6 +1207,20 @@
     "import": {
       "no_project": "先にプロジェクトを開いてください。",
       "no_assets": "読み込めるアセットがありませんでした。"
+    },
+    "import_psd": {
+      "title": "PSD レイヤーを読み込み",
+      "header": "%1 から取り込むレイヤーを選んでください。",
+      "summary": "選択中: %1 / %2 層",
+      "select_visible": "可視層を選ぶ",
+      "deselect": "すべて解除",
+      "accept": "選択した層を読み込み",
+      "cancel": "キャンセル",
+      "hidden_hint": "非表示のため既定で除外されます",
+      "empty_hint": "空のレイヤーです",
+      "no_layers": "%1 は PSD レイヤー情報を解析できませんでした。",
+      "flattened_only": "合成済み画像としてのみ読み込めます。",
+      "open_failed": "PSD を解析できませんでした。"
     },
     "import_otio": {
       "success": "OTIOを読み込みました。\\n\\nシーケンス: %1\\nトラック: %2\\nクリップ: %3",

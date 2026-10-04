@@ -71,6 +71,7 @@
       "import_accel": "Import(&I)...",
       "import_title": "Import",
       "import_otio": "Import OpenTimelineIO...",
+      "import_psd": "Import PSD Layers...",
       "import_otio_title": "Import OpenTimelineIO",
       "export_title": "Export",
       "export_game_ui": "Export Composition as Game UI...",
@@ -1206,6 +1207,20 @@
     "import": {
       "no_project": "Please open a project first.",
       "no_assets": "No importable assets found."
+    },
+    "import_psd": {
+      "title": "Import PSD Layers",
+      "header": "Choose the layers to import from %1.",
+      "summary": "Selected: %1 / %2 layers",
+      "select_visible": "Select Visible",
+      "deselect": "Deselect All",
+      "accept": "Import Selected Layers",
+      "cancel": "Cancel",
+      "hidden_hint": "Excluded by default because it is hidden",
+      "empty_hint": "This layer is empty",
+      "no_layers": "%1 has no readable PSD layer information.",
+      "flattened_only": "Only the flattened image can be imported.",
+      "open_failed": "Failed to parse the PSD."
     },
     "import_otio": {
       "success": "Imported OTIO:\\n\\nSequences: %1\\nTracks: %2\\nClips: %3",

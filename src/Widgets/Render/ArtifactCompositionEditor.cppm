@@ -2423,7 +2423,7 @@ public:
                 this, QStringLiteral("Quick Replace Selected Sources"),
                 currentPath.isEmpty() ? QString()
                                       : QFileInfo(currentPath).absolutePath(),
-                QStringLiteral("Media Files (*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.webp *.exr *.svg *.mp4 *.mov *.mkv *.avi *.webm *.m4v *.mpg *.mpeg *.mxf *.gif *.wav *.mp3 *.aac *.flac *.ogg);;All Files (*.*)"));
+                QStringLiteral("Media Files (*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.dpx *.webp *.exr *.svg *.mp4 *.mov *.mkv *.avi *.webm *.m4v *.mpg *.mpeg *.mxf *.gif *.wav *.mp3 *.aac *.flac *.ogg);;All Files (*.*)"));
             if (paths.isEmpty()) return;
             QString mappingMode = QStringLiteral("One Source for All");
             if (paths.size() > 1) {

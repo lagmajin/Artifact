@@ -422,6 +422,16 @@ list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Dialog/ArtifactCompo
 if(_composition_dialog_shell_impl_idx EQUAL -1)
     list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Dialog/ArtifactCompositionDialogShell.cppm")
 endif()
+# PSD layer import dialog. Only reachable from File > Import PSD Layers, so it is
+# pinned explicitly rather than left to the glob scan / module detection order.
+list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/ArtifactImportPsdDialog.ixx" _import_psd_dialog_module_idx)
+if(_import_psd_dialog_module_idx EQUAL -1)
+    list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/ArtifactImportPsdDialog.ixx")
+endif()
+list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Dialog/ArtifactImportPsdDialog.cppm" _import_psd_dialog_impl_idx)
+if(_import_psd_dialog_impl_idx EQUAL -1)
+    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Dialog/ArtifactImportPsdDialog.cppm")
+endif()
 list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/Inspector/ArtifactEffectTabSurface.ixx" _effect_tab_surface_module_idx)
 if(_effect_tab_surface_module_idx EQUAL -1)
     list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/Inspector/ArtifactEffectTabSurface.ixx")
