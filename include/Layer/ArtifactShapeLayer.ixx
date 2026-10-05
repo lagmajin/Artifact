@@ -5,6 +5,7 @@ module;
 #include <cmath>
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <vector>
 #include <QString>
 #include <QPointF>
@@ -285,6 +286,7 @@ public:
   void setCustomPathVertices(const std::vector<CustomPathVertex>& vertices, bool closed = true);
   void clearCustomPath();
   std::vector<CustomPathVertex> customPathVertices() const;
+  std::span<const CustomPathVertex> customPathVerticesView() const;
   bool customPathClosed() const;
   QJsonObject customPathSnapshot() const;
   bool restoreCustomPathSnapshot(const QJsonObject& snapshot);

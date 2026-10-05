@@ -449,6 +449,11 @@ export namespace Artifact {
   QList<ArtifactAbstractLayerPtr> allLayer() const;
   const CompositionNodeStore& nodeStore() const;
   CompositionNodeStore& nodeStore();
+  // Changes a layer's owning parent in the composition node hierarchy. The
+  // target may be another layer, a standalone Group Container, or empty for
+  // the composition root. Validation and hierarchy notifications stay here
+  // so panels do not mutate the node store directly.
+  bool setLayerNodeParent(const LayerID& layerId, const QString& parentNodeId);
   QString createGroupContainer(const QString& displayName,
                                const QVector<LayerID>& childLayerIds,
                                const QString& preferredId = {});

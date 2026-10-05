@@ -158,6 +158,7 @@ public:
     // Presets
     void loadPreset(const QString& presetName);
     QStringList availablePresets() const;
+    QString presetName() const;
     
     // Serialization
     void applyPropertiesFromJson(const QJsonObject& obj);

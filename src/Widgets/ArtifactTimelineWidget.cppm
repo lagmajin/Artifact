@@ -9,6 +9,9 @@ module;
 #include <QFocusEvent>
 #include <QFont>
 #include <QFileInfo>
+#include <QFuture>
+#include <QImage>
+#include <QImageReader>
 #include <QEvent>
 #include <QFrame>
 #include <QHash>
@@ -29,14 +32,16 @@ module;
 #include <QPalette>
 #include <QResizeEvent>
 #include <QSignalBlocker>
+#include <QSize>
+#include <QSizeF>
 #include <QShowEvent>
 #include <QSplitter>
 #include <QListWidget>
 #include <QKeySequence>
+#include <QLineF>
 #include <QDebug>
 #include <QSet>
 #include <QShortcut>
-#include <QSize>
 #include <QStandardItem>
 #include <QStringList>
 #include <QToolButton>
@@ -44,12 +49,14 @@ module;
 #include <QWheelEvent>
 #include <QWidget>
 #include <QWidgetAction>
+#include <QtConcurrent>
 #include <QPaintEvent>
 #include <QPointer>
 #include <QPolygonF>
 #include <QStackedWidget>
 #include <algorithm>
 #include <atomic>
+#include <array>
 #include <chrono>
 #include <limits>
 #include <cmath>
@@ -107,12 +114,14 @@ import Artifact.Layers.Model3D;
 import Artifact.Layer.Image;
 import Artifact.Layer.Light;
 import Artifact.Layer.Particle;
+import Artifact.Generator.Particle;
 import Artifact.Layer.FormParticle;
 import Artifact.Layer.Shape;
 import Artifact.Layer.Solid2D;
 import Artifact.Layer.Svg;
 import Artifact.Layer.Text;
 import Artifact.Layer.Video;
+import Codec.Thumbnail.FFmpeg;
 import Property.Abstract;
 import Animation.Value;
 import Artifact.Effect.Abstract;
@@ -4779,6 +4788,10 @@ public:
   QString audioWaveformSummary_;
   QHash<QString, CachedAudioWaveform> audioWaveformCache_;
   QSet<QString> pendingAudioWaveformBuilds_;
+  QHash<QString, QVector<QImage>> sourceThumbnailCache_;
+  QFuture<QVector<QImage>> sourceThumbnailFuture_;
+  QString sourceThumbnailActiveKey_;
+  bool sourceThumbnailPollQueued_ = false;
   QHash<QString, QJsonArray> keyframeSnippets_;
 };
 
@@ -7480,6 +7493,49 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                 FrameRange(FramePosition(start), FramePosition(start + duration)));
             return;
           }
+          if (comp->isGroupContainerNode(event.clipId)) {
+            const auto childIds =
+                comp->groupContainerChildLayerIds(event.clipId);
+            if (childIds.isEmpty()) {
+              return;
+            }
+            qint64 groupStart = std::numeric_limits<qint64>::max();
+            QVector<ArtifactAbstractLayerPtr> children;
+            children.reserve(childIds.size());
+            for (const LayerID& childId : childIds) {
+              const auto child = comp->layerById(childId);
+              if (!child || child->isTimingLocked()) {
+                return;
+              }
+              groupStart = std::min(
+                  groupStart, child->inPoint().framePosition());
+              children.push_back(child);
+            }
+            if (groupStart == std::numeric_limits<qint64>::max()) {
+              return;
+            }
+            const qint64 targetStart =
+                std::max<qint64>(
+                    0, static_cast<qint64>(std::llround(event.startFrame)));
+            const qint64 frameDelta = targetStart - groupStart;
+            if (frameDelta == 0) {
+              return;
+            }
+            auto macro = std::make_unique<MacroUndoCommand>(
+                QStringLiteral("Move Group Container"));
+            for (const auto& child : children) {
+              macro->addChild(std::make_unique<MoveLayerToFrameCommand>(
+                  impl_->compositionId_, child->id(),
+                  child->inPoint().framePosition() + frameDelta,
+                  captureTimelineLayerStateSnapshots(comp, {child})));
+            }
+            if (auto *mgr = UndoManager::instance()) {
+              mgr->push(std::move(macro));
+            } else {
+              macro->redo();
+            }
+            return;
+          }
           const auto layer = comp->layerById(LayerID(event.clipId));
           if (!layer || layer->isTimingLocked()) return;
           const QVector<ArtifactAbstractLayerPtr> layers{layer};
@@ -8845,6 +8901,32 @@ void ArtifactTimelineWidget::refreshTracks() {
   if (!impl_->painterTrackView_)
     return;
 
+  if (impl_->sourceThumbnailFuture_.isValid()) {
+    if (impl_->sourceThumbnailFuture_.isFinished()) {
+      const QString completedKey = impl_->sourceThumbnailActiveKey_;
+      QVector<QImage> thumbnails = impl_->sourceThumbnailFuture_.result();
+      impl_->sourceThumbnailFuture_ = QFuture<QVector<QImage>>();
+      impl_->sourceThumbnailActiveKey_.clear();
+      if (!completedKey.isEmpty()) {
+        if (impl_->sourceThumbnailCache_.size() >= 48) {
+          impl_->sourceThumbnailCache_.erase(
+              impl_->sourceThumbnailCache_.begin());
+        }
+        impl_->sourceThumbnailCache_.insert(completedKey,
+                                            std::move(thumbnails));
+      }
+    } else if (!impl_->sourceThumbnailPollQueued_) {
+      impl_->sourceThumbnailPollQueued_ = true;
+      QTimer::singleShot(80, this, [this]() {
+        if (!impl_) {
+          return;
+        }
+        impl_->sourceThumbnailPollQueued_ = false;
+        refreshTracks();
+      });
+    }
+  }
+
   if (impl_->inputSurfaceStatusLabel_) {
     const auto state = ArtifactCore::InputSurfaceManager::instance()->state();
     QString status = QStringLiteral("Input: %1")
@@ -8867,6 +8949,23 @@ void ArtifactTimelineWidget::refreshTracks() {
 
   const auto composition = safeCompositionLookup(impl_->compositionId_);
   const double compositionFps = timelineFrameRateFallback(composition);
+  QSet<LayerID> selectedLayerIds;
+  if (auto* app = ArtifactApplicationManager::instance()) {
+    if (auto* selectionManager = app->layerSelectionManager()) {
+      const auto selectedLayers = selectionManager->selectedLayers();
+      selectedLayerIds.reserve(selectedLayers.size());
+      for (const auto& selectedLayer : selectedLayers) {
+        if (selectedLayer) {
+          selectedLayerIds.insert(selectedLayer->id());
+        }
+      }
+      if (selectedLayerIds.isEmpty()) {
+        if (const auto currentLayer = selectionManager->currentLayer()) {
+          selectedLayerIds.insert(currentLayer->id());
+        }
+      }
+    }
+  }
 
   QVector<TimelineRowDescriptor> visibleRows;
   if (impl_->layerTimelinePanel_) {
@@ -8959,7 +9058,9 @@ void ArtifactTimelineWidget::refreshTracks() {
         visual.durationFrame = static_cast<double>(end - start);
         visual.trimMinStartFrame = visual.startFrame;
         visual.trimMaxEndFrame = visual.startFrame + visual.durationFrame;
-        visual.title = row.label;
+        visual.title = QStringLiteral("%1 · %2 layers")
+                           .arg(row.label)
+                           .arg(childIds.size());
         visual.fillColor = QColor(74, 85, 96);
         visual.kind = ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::GroupContainer;
         painterClips.push_back(std::move(visual));
@@ -9015,6 +9116,7 @@ void ArtifactTimelineWidget::refreshTracks() {
       visual.durationFrame = clipDuration;
       visual.trimMinStartFrame = clipStart;
       visual.trimMaxEndFrame = clipStart + clipDuration;
+      visual.selected = selectedLayerIds.contains(row.layerId);
       visual.title = layer->layerName();
       visual.fillColor = layerTimelineColor(layer);
       if (audioLayer) {
@@ -9088,6 +9190,8 @@ void ArtifactTimelineWidget::refreshTracks() {
         }
       } else if (const auto textLayer =
                      ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer)) {
+        visual.textFontFamily = textLayer->fontFamily().toQString();
+        visual.textFontSize = textLayer->fontSize();
         const QString textPreview = textLayer->sourceTextAtFrame(
             static_cast<qint64>(std::llround(std::max(0.0, impl_->currentFrame_))))
             .simplified();
@@ -9121,19 +9225,87 @@ void ArtifactTimelineWidget::refreshTracks() {
                                 shapeLayer->hasCustomPath()
                                     ? QStringLiteral(" · Path")
                                     : QString());
+        const auto pathVertices = shapeLayer->customPathVerticesView();
+        if (pathVertices.size() >= 3) {
+          constexpr qsizetype kMaxPreviewVertices = 48;
+          const qsizetype stride = std::max<qsizetype>(
+              1, (static_cast<qsizetype>(pathVertices.size()) +
+                  kMaxPreviewVertices - 1) / kMaxPreviewVertices);
+          QVector<ArtifactTimelineTrackPainterView::TrackClipVisual::ShapePathVertexPreview>
+              sampledVertices;
+          sampledVertices.reserve(static_cast<qsizetype>(kMaxPreviewVertices));
+          double minX = std::numeric_limits<double>::infinity();
+          double minY = std::numeric_limits<double>::infinity();
+          double maxX = -std::numeric_limits<double>::infinity();
+          double maxY = -std::numeric_limits<double>::infinity();
+          const auto includePoint = [&](const QPointF& point) {
+            if (!std::isfinite(point.x()) || !std::isfinite(point.y())) {
+              return;
+            }
+            minX = std::min(minX, point.x());
+            minY = std::min(minY, point.y());
+            maxX = std::max(maxX, point.x());
+            maxY = std::max(maxY, point.y());
+          };
+          for (qsizetype index = 0;
+               index < static_cast<qsizetype>(pathVertices.size()) &&
+               sampledVertices.size() < kMaxPreviewVertices;
+               index += stride) {
+            const auto& vertex = pathVertices[static_cast<size_t>(index)];
+            const QPointF inHandle = vertex.pos + vertex.inTangent;
+            const QPointF outHandle = vertex.pos + vertex.outTangent;
+            sampledVertices.push_back({vertex.pos, inHandle, outHandle});
+            includePoint(vertex.pos);
+            includePoint(inHandle);
+            includePoint(outHandle);
+          }
+          if (sampledVertices.size() >= 3 && std::isfinite(minX) &&
+              std::isfinite(minY) && std::isfinite(maxX) &&
+              std::isfinite(maxY)) {
+            const double rangeX = std::max(1.0e-6, maxX - minX);
+            const double rangeY = std::max(1.0e-6, maxY - minY);
+            constexpr double kPreviewWidth = 0.78;
+            constexpr double kPreviewHeight = 0.58;
+            const double scale = std::min(kPreviewWidth / rangeX,
+                                          kPreviewHeight / rangeY);
+            const double offsetX = (1.0 - rangeX * scale) * 0.5;
+            const double offsetY = (1.0 - rangeY * scale) * 0.5;
+            const auto normalize = [&](const QPointF& point) {
+              return QPointF(
+                  offsetX + (point.x() - minX) * scale,
+                  offsetY + (maxY - point.y()) * scale);
+            };
+            for (auto& vertex : sampledVertices) {
+              vertex.anchor = normalize(vertex.anchor);
+              vertex.inHandle = normalize(vertex.inHandle);
+              vertex.outHandle = normalize(vertex.outHandle);
+            }
+            visual.shapePathVertices = std::move(sampledVertices);
+            visual.shapePathClosed = shapeLayer->customPathClosed();
+          }
+        }
       } else if (const auto imageLayer =
                      ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(layer)) {
-        const QString kind = imageLayer->isImageSequence()
+        const bool imageSequence = imageLayer->isImageSequence();
+        const QString kind = imageSequence
             ? QStringLiteral("Image Sequence")
             : QStringLiteral("Still Image");
         const QString sourcePath = imageLayer->sourcePath().trimmed();
+        QString thumbnailPath = sourcePath;
+        qint64 sequenceFrameIndex = -1;
         const QString sourceState = sourcePath.isEmpty()
             ? QStringLiteral("Embedded")
             : QStringLiteral("Linked");
         visual.title = QStringLiteral("%1 · %2 · %3")
                            .arg(layer->layerName(), kind, sourceState);
-        if (imageLayer->isImageSequence()) {
+        if (imageSequence) {
           const QStringList framePaths = imageLayer->sequenceFramePaths();
+          sequenceFrameIndex = imageLayer->sequenceCachedFrameIndex();
+          if (sequenceFrameIndex >= 0 && sequenceFrameIndex < framePaths.size()) {
+            thumbnailPath = framePaths.at(static_cast<qsizetype>(sequenceFrameIndex));
+          } else {
+            thumbnailPath.clear();
+          }
           const bool hasMissingFrame = std::any_of(
               framePaths.cbegin(), framePaths.cend(),
               [](const QString& framePath) { return !QFileInfo::exists(framePath); });
@@ -9145,14 +9317,151 @@ void ArtifactTimelineWidget::refreshTracks() {
           visual.sourceState =
               ArtifactTimelineTrackPainterView::TrackClipVisual::SourceState::Missing;
         }
+        if (!thumbnailPath.isEmpty()) {
+          const QString canonicalPath = QFileInfo(thumbnailPath).canonicalFilePath();
+          const QString thumbnailKey =
+              QStringLiteral("image|%1|%2|%3")
+                  .arg(canonicalPath)
+                  .arg(static_cast<qulonglong>(imageLayer->sourceVersion()))
+                  .arg(sequenceFrameIndex);
+          const auto cachedThumbnails =
+              impl_->sourceThumbnailCache_.constFind(thumbnailKey);
+          if (cachedThumbnails != impl_->sourceThumbnailCache_.cend()) {
+            if (!cachedThumbnails->isEmpty()) {
+              visual.imageThumbnail = cachedThumbnails->front();
+            }
+          } else if (!impl_->sourceThumbnailFuture_.isValid() &&
+                     QFileInfo::exists(thumbnailPath)) {
+            const auto& tops = impl_->painterTrackView_->trackTopsView();
+            const double verticalOffset =
+                impl_->painterTrackView_->verticalOffset();
+            const int viewportHeight = impl_->painterTrackView_->height();
+            const int trackTop = tops.value(row.trackIndex, -1);
+            const int trackHeight =
+                impl_->painterTrackView_->trackHeight(row.trackIndex);
+            const double ppf =
+                std::max(0.001, impl_->painterTrackView_->pixelsPerFrame());
+            const double clipLeft = visual.startFrame * ppf -
+                impl_->painterTrackView_->horizontalOffset();
+            const double clipRight = clipLeft + visual.durationFrame * ppf;
+            const bool rowVisible = trackTop >= 0 &&
+                trackTop + trackHeight - verticalOffset >= 0.0 &&
+                trackTop - verticalOffset <= viewportHeight;
+            if (rowVisible && clipRight >= 0.0 &&
+                clipLeft <= impl_->painterTrackView_->width()) {
+              const QString jobSourcePath = thumbnailPath;
+              impl_->sourceThumbnailActiveKey_ = thumbnailKey;
+              impl_->sourceThumbnailFuture_ = QtConcurrent::run(
+                  [jobSourcePath]() {
+                    QImageReader reader(jobSourcePath);
+                    reader.setAutoTransform(true);
+                    const QSize sourceSize = reader.size();
+                    if (sourceSize.isValid()) {
+                      reader.setScaledSize(sourceSize.scaled(
+                          QSize(160, 90), Qt::KeepAspectRatio));
+                    }
+                    QImage image = reader.read();
+                    if (!image.isNull() &&
+                        (image.width() > 160 || image.height() > 90)) {
+                      image = image.scaled(QSize(160, 90),
+                                           Qt::KeepAspectRatio,
+                                           Qt::SmoothTransformation);
+                    }
+                    QVector<QImage> images;
+                    images.push_back(std::move(image));
+                    return images;
+                  });
+              if (!impl_->sourceThumbnailPollQueued_) {
+                impl_->sourceThumbnailPollQueued_ = true;
+                QTimer::singleShot(80, this, [this]() {
+                  if (!impl_) {
+                    return;
+                  }
+                  impl_->sourceThumbnailPollQueued_ = false;
+                  refreshTracks();
+                });
+              }
+            }
+          }
+        } else if (!imageSequence && sourcePath.isEmpty() &&
+                   imageLayer->hasCurrentFrameBuffer()) {
+          const QString thumbnailKey =
+              QStringLiteral("image|embedded|%1|%2")
+                  .arg(row.layerId.toString())
+                  .arg(static_cast<qulonglong>(imageLayer->sourceVersion()));
+          const auto cachedThumbnails =
+              impl_->sourceThumbnailCache_.constFind(thumbnailKey);
+          if (cachedThumbnails != impl_->sourceThumbnailCache_.cend()) {
+            if (!cachedThumbnails->isEmpty()) {
+              visual.imageThumbnail = cachedThumbnails->front();
+            }
+          } else if (!impl_->sourceThumbnailFuture_.isValid()) {
+            const auto& tops = impl_->painterTrackView_->trackTopsView();
+            const double verticalOffset =
+                impl_->painterTrackView_->verticalOffset();
+            const int viewportHeight = impl_->painterTrackView_->height();
+            const int trackTop = tops.value(row.trackIndex, -1);
+            const int trackHeight =
+                impl_->painterTrackView_->trackHeight(row.trackIndex);
+            const double ppf =
+                std::max(0.001, impl_->painterTrackView_->pixelsPerFrame());
+            const double clipLeft = visual.startFrame * ppf -
+                impl_->painterTrackView_->horizontalOffset();
+            const double clipRight = clipLeft + visual.durationFrame * ppf;
+            const bool rowVisible = trackTop >= 0 &&
+                trackTop + trackHeight - verticalOffset >= 0.0 &&
+                trackTop - verticalOffset <= viewportHeight;
+            if (rowVisible && clipRight >= 0.0 &&
+                clipLeft <= impl_->painterTrackView_->width()) {
+              impl_->sourceThumbnailActiveKey_ = thumbnailKey;
+              impl_->sourceThumbnailFuture_ = QtConcurrent::run(
+                  [imageLayer]() {
+                    QVector<QImage> images;
+                    images.push_back(imageLayer->getThumbnail(160, 90));
+                    return images;
+                  });
+              if (!impl_->sourceThumbnailPollQueued_) {
+                impl_->sourceThumbnailPollQueued_ = true;
+                QTimer::singleShot(80, this, [this]() {
+                  if (!impl_) {
+                    return;
+                  }
+                  impl_->sourceThumbnailPollQueued_ = false;
+                  refreshTracks();
+                });
+              }
+            }
+          }
+        }
       } else if (const auto particleLayer =
                      ArtifactCore::dynamicPointerCast<ArtifactParticleLayer>(layer)) {
-        visual.title = QStringLiteral("%1 · Particle · %2 · emitters:%3")
-                           .arg(layer->layerName(),
-                                particleLayer->isPlaying()
+        QString billboardLabel;
+        switch (particleLayer->renderSettings().billboardMode) {
+        case ParticleRenderSettings::BillboardMode::None:
+          billboardLabel = QStringLiteral("No Billboard");
+          break;
+        case ParticleRenderSettings::BillboardMode::ScreenAligned:
+          billboardLabel = QStringLiteral("Screen Billboard");
+          break;
+        case ParticleRenderSettings::BillboardMode::ViewPlane:
+          billboardLabel = QStringLiteral("View Billboard");
+          break;
+        case ParticleRenderSettings::BillboardMode::VelocityAligned:
+          billboardLabel = QStringLiteral("Velocity Billboard");
+          break;
+        }
+        const QString presetName = particleLayer->presetName();
+        const QString presetLabel = presetName.compare(
+                QStringLiteral("Custom"), Qt::CaseInsensitive) == 0
+            ? QString()
+            : QStringLiteral(" · %1").arg(presetName);
+        visual.title = QStringLiteral("%1 · Particle · %2 · emitters:%3 · %4%5")
+                           .arg(layer->layerName())
+                           .arg(particleLayer->isPlaying()
                                     ? QStringLiteral("Playing")
                                     : QStringLiteral("Paused"))
-                           .arg(particleLayer->emitterCount());
+                           .arg(particleLayer->emitterCount())
+                           .arg(billboardLabel, presetLabel);
       } else if (ArtifactCore::dynamicPointerCast<ArtifactFormParticleLayer>(layer)) {
         visual.title = QStringLiteral("%1 · Form Particle")
                            .arg(layer->layerName());
@@ -9190,6 +9499,7 @@ void ArtifactTimelineWidget::refreshTracks() {
         visual.title = QStringLiteral("%1 · %2%3")
                            .arg(layer->layerName(), sourceState, dimensions);
         visual.audioMuted = videoLayer->isAudioMuted();
+        visual.videoHasAudio = videoLayer->hasAudio();
         if (!sourcePath.isEmpty()) {
           if (!QFileInfo::exists(sourcePath)) {
             visual.sourceState =
@@ -9205,6 +9515,35 @@ void ArtifactTimelineWidget::refreshTracks() {
       }
       const qint64 inPointFrame = layer->inPoint().framePosition();
       const qint64 startTimeFrame = layer->startTime().framePosition();
+      if (visual.kind ==
+          ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Video) {
+        if (const auto videoLayer =
+                ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) {
+          const double mappedSourceStart = videoLayer->hasSourceTimeMapping()
+              ? videoLayer->getSourceFrameAtCompFrame(inPointFrame)
+              : static_cast<double>(startTimeFrame);
+          visual.videoSourceStartFrame = static_cast<qint64>(std::llround(
+              std::max(0.0, std::isfinite(mappedSourceStart)
+                                ? mappedSourceStart
+                                : static_cast<double>(startTimeFrame))));
+          if (!videoLayer->sourceAssetId().isNull()) {
+            visual.videoSourceIdentity = videoLayer->isSourceIdentityLocalized()
+                ? ArtifactTimelineTrackPainterView::TrackClipVisual::VideoSourceIdentity::Localized
+                : ArtifactTimelineTrackPainterView::TrackClipVisual::VideoSourceIdentity::Shared;
+          }
+          const QString identityLabel =
+              visual.videoSourceIdentity ==
+                      ArtifactTimelineTrackPainterView::TrackClipVisual::VideoSourceIdentity::Localized
+                  ? QStringLiteral("Localized")
+                  : (visual.videoSourceIdentity ==
+                             ArtifactTimelineTrackPainterView::TrackClipVisual::VideoSourceIdentity::Shared
+                         ? QStringLiteral("Shared Source")
+                         : QStringLiteral("Unlinked"));
+          visual.title += QStringLiteral(" · Src F%1 · %2")
+                              .arg(visual.videoSourceStartFrame)
+                              .arg(identityLabel);
+        }
+      }
       std::optional<double> sourceDurationFrames;
       if (audioLayer && audioLayer->duration() > 0.0) {
         sourceDurationFrames =
@@ -9229,6 +9568,98 @@ void ArtifactTimelineWidget::refreshTracks() {
             visual.trimMinStartFrame < visual.startFrame - 0.0001 ||
             visual.trimMaxEndFrame >
                 (visual.startFrame + visual.durationFrame + 0.0001);
+      }
+      if (visual.kind ==
+          ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Video) {
+        const auto videoLayer =
+            ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer);
+        if (videoLayer) {
+          const QString sourcePath = videoLayer->sourcePath().trimmed();
+          const double sourceRate = videoLayer->streamInfo().frameRate > 0.0
+              ? videoLayer->streamInfo().frameRate
+              : compositionFps;
+          std::array<qint64, 5> timestampsMs{};
+          for (int sample = 0; sample < 5; ++sample) {
+            const double fraction = static_cast<double>(sample) / 4.0;
+            const qint64 compositionFrame = static_cast<qint64>(std::llround(
+                visual.startFrame + fraction *
+                    std::max(0.0, visual.durationFrame - 1.0)));
+            const double sourceFrame = videoLayer->hasSourceTimeMapping()
+                ? videoLayer->getSourceFrameAtCompFrame(compositionFrame)
+                : static_cast<double>(compositionFrame - videoLayer->inPoint() +
+                                      startTimeFrame);
+            const double nonNegativeSourceFrame =
+                std::max(0.0, std::isfinite(sourceFrame)
+                                  ? sourceFrame
+                                  : static_cast<double>(compositionFrame -
+                                      videoLayer->inPoint() + startTimeFrame));
+            timestampsMs[static_cast<size_t>(sample)] = static_cast<qint64>(
+                std::llround(nonNegativeSourceFrame / sourceRate * 1000.0));
+          }
+          QString thumbnailKey =
+              QStringLiteral("%1|%2")
+                  .arg(QFileInfo(sourcePath).canonicalFilePath())
+                  .arg(static_cast<qulonglong>(videoLayer->sourceVersion()));
+          for (const qint64 timestampMs : timestampsMs) {
+            thumbnailKey += QLatin1Char('|');
+            thumbnailKey += QString::number(timestampMs);
+          }
+          const auto cachedThumbnails =
+              impl_->sourceThumbnailCache_.constFind(thumbnailKey);
+          if (cachedThumbnails != impl_->sourceThumbnailCache_.cend()) {
+            visual.videoThumbnails = *cachedThumbnails;
+          } else if (!impl_->sourceThumbnailFuture_.isValid() &&
+                     !sourcePath.isEmpty() && videoLayer->isLoaded() &&
+                     QFileInfo::exists(sourcePath) && compositionFps > 0.0) {
+            const auto& tops = impl_->painterTrackView_->trackTopsView();
+            const double verticalOffset =
+                impl_->painterTrackView_->verticalOffset();
+            const int viewportHeight = impl_->painterTrackView_->height();
+            const int trackTop = tops.value(row.trackIndex, -1);
+            const int trackHeight =
+                impl_->painterTrackView_->trackHeight(row.trackIndex);
+            const double ppf =
+                std::max(0.001, impl_->painterTrackView_->pixelsPerFrame());
+            const double clipLeft = visual.startFrame * ppf -
+                impl_->painterTrackView_->horizontalOffset();
+            const double clipRight = clipLeft + visual.durationFrame * ppf;
+            const bool rowVisible = trackTop >= 0 &&
+                trackTop + trackHeight - verticalOffset >= 0.0 &&
+                trackTop - verticalOffset <= viewportHeight;
+            if (rowVisible && clipRight >= 0.0 &&
+                clipLeft <= impl_->painterTrackView_->width()) {
+              const QString jobSourcePath = sourcePath;
+              impl_->sourceThumbnailActiveKey_ = thumbnailKey;
+              impl_->sourceThumbnailFuture_ = QtConcurrent::run(
+                  [jobSourcePath, timestampsMs]() {
+                    ArtifactCore::FFmpegThumbnailExtractor extractor;
+                    QVector<QImage> images;
+                    images.reserve(static_cast<qsizetype>(timestampsMs.size()));
+                    for (const qint64 timestampMs : timestampsMs) {
+                      QImage image = extractor.extractThumbnailAtTimestamp(
+                          jobSourcePath, timestampMs);
+                      if (!image.isNull()) {
+                        image = image.scaled(QSize(160, 90),
+                                             Qt::KeepAspectRatio,
+                                             Qt::SmoothTransformation);
+                      }
+                      images.push_back(std::move(image));
+                    }
+                    return images;
+                  });
+              if (!impl_->sourceThumbnailPollQueued_) {
+                impl_->sourceThumbnailPollQueued_ = true;
+                QTimer::singleShot(80, this, [this]() {
+                  if (!impl_) {
+                    return;
+                  }
+                  impl_->sourceThumbnailPollQueued_ = false;
+                  refreshTracks();
+                });
+              }
+            }
+          }
+        }
       }
       painterClips.push_back(std::move(visual));
     }
@@ -10917,6 +11348,7 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
   snapshot.triangles.reserve(keyframeMarkers.size() * 2 + compositionMarkers.size() * 2 + 2);
   snapshot.texts.reserve(clips.size() + compositionMarkers.size());
   snapshot.waveforms.reserve(clips.size());
+  snapshot.images.reserve(clips.size() * 5);
 
   // Match the charcoal layer table across the split.
   const QColor rowBase(35, 39, 43);
@@ -11014,11 +11446,142 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
     }
     const QColor fill = clip.selected ? selectedClip : clip.fillColor;
     snapshot.rects.push_back({QRectF(x, top, width, height), fill});
+    if (clip.kind == ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Video &&
+        !clip.videoThumbnails.isEmpty() && width > 36.0 && height > 18.0) {
+      const double tileWidth = width /
+          static_cast<double>(clip.videoThumbnails.size());
+      for (int thumbnailIndex = 0;
+           thumbnailIndex < clip.videoThumbnails.size(); ++thumbnailIndex) {
+        const QImage& thumbnail = clip.videoThumbnails[thumbnailIndex];
+        if (thumbnail.isNull()) {
+          continue;
+        }
+        const QRectF tileRect(
+            x + tileWidth * thumbnailIndex, top, tileWidth + 0.5, height);
+        const QSizeF fittedSize = QSizeF(thumbnail.size()).scaled(
+            tileRect.size(), Qt::KeepAspectRatio);
+        const QRectF imageRect(tileRect.center().x() - fittedSize.width() * 0.5,
+                               tileRect.center().y() - fittedSize.height() * 0.5,
+                               fittedSize.width(), fittedSize.height());
+        snapshot.images.push_back({imageRect, thumbnail});
+      }
+    }
+    if (clip.kind == ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Generic &&
+        !clip.imageThumbnail.isNull() && width > 36.0 && height > 18.0) {
+      const QSizeF fittedSize = QSizeF(clip.imageThumbnail.size()).scaled(
+          QSizeF(width, height), Qt::KeepAspectRatio);
+      const QRectF imageRect(x + (width - fittedSize.width()) * 0.5,
+                             top + (height - fittedSize.height()) * 0.5,
+                             fittedSize.width(), fittedSize.height());
+      snapshot.images.push_back({imageRect, clip.imageThumbnail});
+    }
+    if (clip.selected && !clip.shapePathVertices.isEmpty() &&
+        width >= 54.0 && height >= 20.0) {
+      const int vertexCount = std::min(
+          static_cast<int>(clip.shapePathVertices.size()), 48);
+      QPointF anchors[48];
+      const auto mapPathPoint = [&](const QPointF& point) {
+        return QPointF(x + point.x() * width, top + point.y() * height);
+      };
+      const QColor pathColor(242, 247, 252, 220);
+      const QColor inHandleColor(112, 196, 235, 190);
+      const QColor outHandleColor(242, 190, 102, 190);
+      for (int index = 0; index < vertexCount; ++index) {
+        const auto& vertex = clip.shapePathVertices[index];
+        anchors[index] = mapPathPoint(vertex.anchor);
+        const QPointF inHandle = mapPathPoint(vertex.inHandle);
+        const QPointF outHandle = mapPathPoint(vertex.outHandle);
+        if (QLineF(anchors[index], inHandle).length() > 1.0) {
+          snapshot.lines.push_back({anchors[index], inHandle,
+                                    inHandleColor, 0.8f});
+          snapshot.rects.push_back(
+              {QRectF(inHandle.x() - 1.4, inHandle.y() - 1.4, 2.8, 2.8),
+               inHandleColor});
+        }
+        if (QLineF(anchors[index], outHandle).length() > 1.0) {
+          snapshot.lines.push_back({anchors[index], outHandle,
+                                    outHandleColor, 0.8f});
+          snapshot.rects.push_back(
+              {QRectF(outHandle.x() - 1.4, outHandle.y() - 1.4, 2.8, 2.8),
+               outHandleColor});
+        }
+        snapshot.rects.push_back(
+            {QRectF(anchors[index].x() - 2.0, anchors[index].y() - 2.0,
+                    4.0, 4.0), pathColor});
+      }
+      for (int index = 1; index < vertexCount; ++index) {
+        snapshot.lines.push_back({anchors[index - 1], anchors[index],
+                                  pathColor, 1.25f});
+      }
+      if (clip.shapePathClosed && vertexCount > 2) {
+        snapshot.lines.push_back({anchors[vertexCount - 1], anchors[0],
+                                  pathColor, 1.25f});
+      }
+    }
     if (!clip.title.isEmpty() && width >= 30.0 && height >= 14.0) {
       QColor labelColor(242, 246, 250, clip.selected ? 242 : 205);
       snapshot.texts.push_back(
           {QPointF(x + 9.0, top + height * 0.69),
-           ArtifactCore::UniString(clip.title), labelColor, 10.5f});
+           ArtifactCore::UniString(clip.title), labelColor,
+           clip.textFontFamily.isEmpty()
+               ? 10.5f
+               : static_cast<float>(std::clamp(
+                     qRound(clip.textFontSize * 0.22f), 9, 15)),
+           clip.textFontFamily});
+    }
+    if (clip.kind == ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Video &&
+        clip.sourceState != ArtifactTimelineTrackPainterView::TrackClipVisual::SourceState::Ready &&
+        width >= 28.0) {
+      const bool proxy = clip.sourceState ==
+          ArtifactTimelineTrackPainterView::TrackClipVisual::SourceState::Proxy;
+      const QRectF badge(x + width - 14.0, top + 3.0, 11.0, 11.0);
+      snapshot.rects.push_back(
+          {badge, proxy ? QColor(240, 181, 63) : QColor(222, 86, 76)});
+      snapshot.texts.push_back(
+          {QPointF(badge.x() + 3.0, badge.y() + 8.8),
+           ArtifactCore::UniString(proxy ? QStringLiteral("P")
+                                         : QStringLiteral("!")),
+           QColor(35, 39, 43), 8.0f});
+    }
+    if (clip.kind == ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Video &&
+        clip.videoHasAudio && width >= 48.0) {
+      const double badgeRightInset = (clip.audioMuted ? 28.0 : 14.0) +
+          (clip.sourceState == ArtifactTimelineTrackPainterView::TrackClipVisual::SourceState::Ready
+               ? 0.0 : 14.0);
+      const QRectF badge(x + width - badgeRightInset, top + 3.0, 11.0, 11.0);
+      snapshot.rects.push_back({badge, QColor(35, 39, 43, 205)});
+      snapshot.texts.push_back(
+          {QPointF(badge.x() + 3.0, badge.y() + 8.8),
+           ArtifactCore::UniString(QStringLiteral("A")),
+           QColor(242, 246, 250, 225), 8.0f});
+    }
+    if (clip.kind == ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Video &&
+        clip.audioMuted && width >= 48.0) {
+      const double badgeRightInset = (clip.videoHasAudio ? 28.0 : 14.0) +
+          (clip.sourceState == ArtifactTimelineTrackPainterView::TrackClipVisual::SourceState::Ready
+               ? 0.0 : 14.0);
+      const QRectF badge(x + width - badgeRightInset, top + 3.0, 11.0, 11.0);
+      snapshot.rects.push_back({badge, QColor(35, 39, 43, 205)});
+      snapshot.texts.push_back(
+          {QPointF(badge.x() + 3.0, badge.y() + 8.8),
+           ArtifactCore::UniString(QStringLiteral("M")),
+           QColor(242, 246, 250, 225), 8.0f});
+    }
+    if (clip.kind == ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Video &&
+        clip.videoSourceIdentity != ArtifactTimelineTrackPainterView::TrackClipVisual::VideoSourceIdentity::Unlinked &&
+        width >= 62.0) {
+      const double rightInset = 14.0 +
+          (clip.sourceState == ArtifactTimelineTrackPainterView::TrackClipVisual::SourceState::Ready ? 0.0 : 14.0) +
+          (clip.audioMuted ? 14.0 : 0.0) +
+          (clip.videoHasAudio ? 14.0 : 0.0);
+      const QRectF badge(x + width - rightInset, top + 3.0, 11.0, 11.0);
+      snapshot.rects.push_back({badge, QColor(35, 39, 43, 205)});
+      snapshot.texts.push_back(
+          {QPointF(badge.x() + 3.0, badge.y() + 8.8),
+           ArtifactCore::UniString(
+               clip.videoSourceIdentity == ArtifactTimelineTrackPainterView::TrackClipVisual::VideoSourceIdentity::Localized
+                   ? QStringLiteral("L") : QStringLiteral("S")),
+           QColor(242, 246, 250, 225), 8.0f});
     }
     QColor edge = clip.selected ? selectionEdge : fill.lighter(132);
     edge.setAlpha(clip.selected ? 235 : 180);

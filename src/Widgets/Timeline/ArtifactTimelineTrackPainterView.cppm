@@ -8,15 +8,18 @@ module;
 #include <QDragLeaveEvent>
 #include <QDragMoveEvent>
 #include <QDesktopServices>
+#include <QFont>
 #include <QDropEvent>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFontMetrics>
 #include <QFocusEvent>
 #include <QHash>
+#include <QImage>
 #include <QIcon>
 #include <QKeyEvent>
 #include <QInputDialog>
+#include <QLineF>
 #include <QLineEdit>
 #include <QMimeData>
 #include <QMessageBox>
@@ -32,8 +35,10 @@ module;
 #include <QPainterPath>
 #include <QPen>
 #include <QPolygonF>
+#include <QPair>
 #include <QRect>
 #include <QRectF>
+#include <QSizeF>
 #include <QPointer>
 #include <QBrush>
 #include <QSet>
@@ -1930,6 +1935,20 @@ bool reconcileMarkerSelection(
 bool sameTrackClipVisual(
     const ArtifactTimelineTrackPainterView::TrackClipVisual &lhs,
     const ArtifactTimelineTrackPainterView::TrackClipVisual &rhs) {
+  const auto sameImages = [](const QVector<QImage>& left,
+                             const QVector<QImage>& right) {
+    if (left.size() != right.size()) {
+      return false;
+    }
+    for (int i = 0; i < left.size(); ++i) {
+      if (left[i].cacheKey() != right[i].cacheKey()) {
+        return false;
+      }
+    }
+    return true;
+  };
+  const bool sameImageThumbnail =
+      lhs.imageThumbnail.cacheKey() == rhs.imageThumbnail.cacheKey();
   return lhs.clipId == rhs.clipId && lhs.layerId == rhs.layerId &&
          lhs.trackIndex == rhs.trackIndex &&
          std::abs(lhs.startFrame - rhs.startFrame) < 0.0001 &&
@@ -1947,6 +1966,15 @@ bool sameTrackClipVisual(
          lhs.audioPlaybackRate == rhs.audioPlaybackRate &&
          lhs.audioReversed == rhs.audioReversed &&
          lhs.audioMuted == rhs.audioMuted &&
+         lhs.videoHasAudio == rhs.videoHasAudio &&
+         lhs.videoSourceStartFrame == rhs.videoSourceStartFrame &&
+         lhs.videoSourceIdentity == rhs.videoSourceIdentity &&
+         lhs.textFontFamily == rhs.textFontFamily &&
+         lhs.textFontSize == rhs.textFontSize &&
+         lhs.shapePathVertices == rhs.shapePathVertices &&
+         lhs.shapePathClosed == rhs.shapePathClosed &&
+         sameImages(lhs.videoThumbnails, rhs.videoThumbnails) &&
+         sameImageThumbnail &&
          lhs.selected == rhs.selected &&
          lhs.waveformPeaks == rhs.waveformPeaks &&
          lhs.waveformRms == rhs.waveformRms;
@@ -3751,8 +3779,32 @@ QPointF markerCenterFor(
   const int laneIndex = std::clamp(marker.laneIndex, 0, laneCount - 1);
   const double laneOffset =
       (laneIndex - (laneCount - 1) * 0.5) * kMarkerLaneStep;
+  const QString propertyPath = marker.propertyPath.trimmed();
+  double minValue = 0.0;
+  double maxValue = 0.0;
+  bool hasAudioValueAxis = false;
+  if (propertyPath == QStringLiteral("audio.volume")) {
+    minValue = 0.0;
+    maxValue = 2.0;
+    hasAudioValueAxis = true;
+  } else if (propertyPath == QStringLiteral("audio.pan")) {
+    minValue = -1.0;
+    maxValue = 1.0;
+    hasAudioValueAxis = true;
+  } else if (propertyPath == QStringLiteral("audio.clipGainDb")) {
+    minValue = -60.0;
+    maxValue = 12.0;
+    hasAudioValueAxis = true;
+  }
+  double centerY = trackTop + trackH * 0.5;
+  if (hasAudioValueAxis && marker.value.canConvert<double>()) {
+    const double value = marker.value.toDouble();
+    const double normalized = std::clamp(
+        (value - minValue) / (maxValue - minValue), 0.0, 1.0);
+    centerY = trackTop + trackH - 6.0 - normalized * (trackH - 12.0);
+  }
   return QPointF(marker.frame * ppf - xOffset,
-                 trackTop + trackH * 0.5 - yOffset + laneOffset);
+                 centerY - yOffset + laneOffset);
 }
 
 QPointF markerHandlePositionFor(
@@ -4163,7 +4215,9 @@ collectKeyframeMarkers(const ArtifactCompositionPtr &composition,
     }
     const QString lowerPath = propertyPath.toLower();
     const bool isTransform = lowerPath.startsWith(QStringLiteral("transform."));
-    const bool isAudio = lowerPath.startsWith(QStringLiteral("audio.")) || lowerPath.contains(QStringLiteral("volume")) || lowerPath.contains(QStringLiteral("pan"));
+    const bool isAudio = lowerPath == QStringLiteral("audio.volume") ||
+                         lowerPath == QStringLiteral("audio.pan") ||
+                         lowerPath == QStringLiteral("audio.clipgaindb");
     const bool isEffect = lowerPath.startsWith(QStringLiteral("effect.")) || lowerPath.startsWith(QStringLiteral("effects."));
     if ((filter == ArtifactTimelineTrackPainterView::PropertyChannelFilter::Transform && !isTransform) || (filter == ArtifactTimelineTrackPainterView::PropertyChannelFilter::Audio && !isAudio) || (filter == ArtifactTimelineTrackPainterView::PropertyChannelFilter::Effect && !isEffect)) continue;
     if (!selectedPropertyPaths.isEmpty() && !selectedPropertyPaths.contains(propertyPath)) continue;
@@ -4737,6 +4791,11 @@ public:
   double dragHandleOrigFrameOffset_ = 0.0;
   double dragHandleOrigValueOffset_ = 0.0;
   bool draggingHandle_ = false;
+  int audioFadeDragClipIndex_ = -1;
+  bool audioFadeDragIn_ = false;
+  bool audioFadeDragging_ = false;
+  QPoint audioFadeDragStartPoint_;
+  double audioFadeDragOrigFrames_ = 0.0;
   int dragAreaIndex_ = -1;
   KeyframeAreaHitPart dragAreaPart_ = KeyframeAreaHitPart::None;
   QPoint dragMarkerStartPoint_;
@@ -4792,6 +4851,7 @@ public:
   QSet<int> selectedMarkerTracks_;
   QSet<int> selectedKeyframeTracks_;
   QVector<KeyframeAreaVisual> keyframeAreaCache_;
+  QVector<QPair<int, int>> audioAutomationPairs_;
   double keyframeAreaCachePpf_ = -1.0;
   double keyframeAreaCacheXOffset_ = 0.0;
   double keyframeAreaCacheYOffset_ = 0.0;
@@ -4968,6 +5028,45 @@ void ArtifactTimelineTrackPainterView::Impl::rebuildMarkerCaches() {
   sortByFrame(selectedMarkerFrameSortedIndices_);
   sortByFrame(selectedLayerMarkerFrameSortedIndices_);
   sortByFrame(normalMarkerFrameSortedIndices_);
+
+  QVector<int> audioAutomationMarkerIndices;
+  audioAutomationMarkerIndices.reserve(keyframeMarkers_.size());
+  for (int i = 0; i < keyframeMarkers_.size(); ++i) {
+    const QString &path = keyframeMarkers_[i].propertyPath;
+    if (path == QStringLiteral("audio.volume") ||
+        path == QStringLiteral("audio.pan") ||
+        path == QStringLiteral("audio.clipGainDb")) {
+      audioAutomationMarkerIndices.push_back(i);
+    }
+  }
+  std::sort(audioAutomationMarkerIndices.begin(),
+            audioAutomationMarkerIndices.end(), [this](const int lhs,
+                                                       const int rhs) {
+    const auto &left = keyframeMarkers_[lhs];
+    const auto &right = keyframeMarkers_[rhs];
+    if (left.trackIndex != right.trackIndex) {
+      return left.trackIndex < right.trackIndex;
+    }
+    if (left.layerId != right.layerId) {
+      return left.layerId.toString() < right.layerId.toString();
+    }
+    if (left.propertyPath != right.propertyPath) {
+      return left.propertyPath < right.propertyPath;
+    }
+    return left.frame < right.frame;
+  });
+  audioAutomationPairs_.clear();
+  audioAutomationPairs_.reserve(audioAutomationMarkerIndices.size());
+  for (int i = 1; i < audioAutomationMarkerIndices.size(); ++i) {
+    const int fromIndex = audioAutomationMarkerIndices[i - 1];
+    const int toIndex = audioAutomationMarkerIndices[i];
+    const auto &from = keyframeMarkers_[fromIndex];
+    const auto &to = keyframeMarkers_[toIndex];
+    if (from.trackIndex == to.trackIndex && from.layerId == to.layerId &&
+        from.propertyPath == to.propertyPath && from.frame < to.frame) {
+      audioAutomationPairs_.push_back(qMakePair(fromIndex, toIndex));
+    }
+  }
 }
 
 int ArtifactTimelineTrackPainterView::Impl::nearestMarkerIndexForFrame(
@@ -7017,6 +7116,42 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
                 isSelected ? selectedFill : fill,
                 QPen(border, isSelected ? 2 : 1));
 
+    if (clip.kind == TrackClipVisual::Kind::Video &&
+        !clip.videoThumbnails.isEmpty() && clipRect.width() > 36.0 &&
+        clipRect.height() > 18.0) {
+      const double tileWidth = clipRect.width() /
+          static_cast<double>(clip.videoThumbnails.size());
+      for (int thumbnailIndex = 0;
+           thumbnailIndex < clip.videoThumbnails.size(); ++thumbnailIndex) {
+        const QImage& thumbnail = clip.videoThumbnails[thumbnailIndex];
+        if (thumbnail.isNull()) {
+          continue;
+        }
+        const QRectF tileRect(
+            clipRect.left() + tileWidth * thumbnailIndex, clipRect.top(),
+            tileWidth + 0.5, clipRect.height());
+        const QSizeF fittedSize = QSizeF(thumbnail.size()).scaled(
+            tileRect.size(), Qt::KeepAspectRatio);
+        const QRectF imageRect(tileRect.center().x() - fittedSize.width() * 0.5,
+                               tileRect.center().y() - fittedSize.height() * 0.5,
+                               fittedSize.width(), fittedSize.height());
+        p.drawImage(imageRect, thumbnail);
+        p.fillRect(tileRect, QColor(0, 0, 0, 42));
+      }
+    }
+    if (clip.kind == TrackClipVisual::Kind::Generic &&
+        !clip.imageThumbnail.isNull() && clipRect.width() > 36.0 &&
+        clipRect.height() > 18.0) {
+      const QSizeF fittedSize = QSizeF(clip.imageThumbnail.size()).scaled(
+          clipRect.size(), Qt::KeepAspectRatio);
+      const QRectF imageRect(
+          clipRect.center().x() - fittedSize.width() * 0.5,
+          clipRect.center().y() - fittedSize.height() * 0.5,
+          fittedSize.width(), fittedSize.height());
+      p.drawImage(imageRect, clip.imageThumbnail);
+      p.fillRect(clipRect, QColor(0, 0, 0, 42));
+    }
+
     if (clip.sourceState != TrackClipVisual::SourceState::Ready && clipRect.width() > 18.0) {
       const bool warning = clip.sourceState == TrackClipVisual::SourceState::Proxy;
       const QColor stateColor = warning ? QColor(240, 181, 63) : QColor(222, 86, 76);
@@ -7040,6 +7175,36 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
       p.setPen(theme.text);
       p.drawText(badge, Qt::AlignCenter, QStringLiteral("M"));
     }
+    if (clip.kind == TrackClipVisual::Kind::Video && clip.videoHasAudio &&
+        clipRect.width() > 44.0) {
+      const qreal rightInset = (clip.audioMuted ? 28.0 : 14.0) +
+          (clip.sourceState == TrackClipVisual::SourceState::Ready ? 0.0
+                                                                   : 14.0);
+      const QRectF badge(clipRect.right() - rightInset, clipRect.top() + 3.0,
+                        11.0, 11.0);
+      p.setBrush(theme.background.lighter(125));
+      p.setPen(Qt::NoPen);
+      p.drawRoundedRect(badge, 2.0, 2.0);
+      p.setPen(theme.text);
+      p.drawText(badge, Qt::AlignCenter, QStringLiteral("A"));
+    }
+    if (clip.kind == TrackClipVisual::Kind::Video &&
+        clip.videoSourceIdentity != TrackClipVisual::VideoSourceIdentity::Unlinked &&
+        clipRect.width() > 62.0) {
+      const qreal rightInset = 14.0 +
+          (clip.sourceState == TrackClipVisual::SourceState::Ready ? 0.0 : 14.0) +
+          (clip.audioMuted ? 14.0 : 0.0) +
+          (clip.videoHasAudio ? 14.0 : 0.0);
+      const QRectF badge(clipRect.right() - rightInset, clipRect.top() + 3.0,
+                        11.0, 11.0);
+      p.setBrush(theme.background.lighter(125));
+      p.setPen(Qt::NoPen);
+      p.drawRoundedRect(badge, 2.0, 2.0);
+      p.setPen(theme.text);
+      p.drawText(badge, Qt::AlignCenter,
+                 clip.videoSourceIdentity == TrackClipVisual::VideoSourceIdentity::Localized
+                     ? QStringLiteral("L") : QStringLiteral("S"));
+    }
 
     if (isSelected || isHovered) {
       const QColor rim = isSelected ? QColor(theme.accent.lighter(135))
@@ -7049,13 +7214,70 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
                   QPen(rim, isSelected ? 2.0 : 1.0), false);
     }
 
+    if (clip.kind == TrackClipVisual::Kind::Generic && isSelected &&
+        !clip.shapePathVertices.isEmpty() && clipRect.width() >= 54.0 &&
+        clipRect.height() >= 20.0) {
+      const int vertexCount = std::min(
+          static_cast<int>(clip.shapePathVertices.size()), 48);
+      QPointF anchors[49];
+      const auto mapPathPoint = [&clipRect](const QPointF& point) {
+        return QPointF(clipRect.left() + point.x() * clipRect.width(),
+                      clipRect.top() + point.y() * clipRect.height());
+      };
+      for (int index = 0; index < vertexCount; ++index) {
+        anchors[index] = mapPathPoint(clip.shapePathVertices[index].anchor);
+      }
+      p.save();
+      p.setClipRect(clipRect.adjusted(1.0, 1.0, -1.0, -1.0));
+      p.setRenderHint(QPainter::Antialiasing, true);
+      p.setPen(QPen(QColor(242, 247, 252, 220), 1.25,
+                    Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+      p.setBrush(Qt::NoBrush);
+      p.drawPolyline(anchors, vertexCount);
+      if (clip.shapePathClosed && vertexCount > 2) {
+        p.drawLine(anchors[vertexCount - 1], anchors[0]);
+      }
+      for (int index = 0; index < vertexCount; ++index) {
+        const auto& vertex = clip.shapePathVertices[index];
+        const QPointF inHandle = mapPathPoint(vertex.inHandle);
+        const QPointF outHandle = mapPathPoint(vertex.outHandle);
+        if (QLineF(anchors[index], inHandle).length() > 1.0) {
+          p.setPen(QPen(QColor(112, 196, 235, 190), 0.8));
+          p.drawLine(anchors[index], inHandle);
+          p.setBrush(QColor(112, 196, 235, 225));
+          p.drawEllipse(inHandle, 1.4, 1.4);
+        }
+        if (QLineF(anchors[index], outHandle).length() > 1.0) {
+          p.setPen(QPen(QColor(242, 190, 102, 190), 0.8));
+          p.drawLine(anchors[index], outHandle);
+          p.setBrush(QColor(242, 190, 102, 225));
+          p.drawEllipse(outHandle, 1.4, 1.4);
+        }
+        p.setPen(QPen(QColor(28, 34, 40, 220), 0.7));
+        p.setBrush(QColor(250, 252, 255, 235));
+        p.drawEllipse(anchors[index], 2.0, 2.0);
+      }
+      p.restore();
+    }
+
     if (!clip.title.isEmpty() && clipRect.width() > 28.0) {
       p.setPen(theme.text);
-      const QString text = metrics.elidedText(
+      p.save();
+      if (!clip.textFontFamily.isEmpty()) {
+        QFont previewFont = p.font();
+        previewFont.setFamily(clip.textFontFamily);
+        const int previewPixelSize = std::clamp(
+            qRound(clip.textFontSize * 0.22f), 9, 15);
+        previewFont.setPixelSize(previewPixelSize);
+        p.setFont(previewFont);
+      }
+      const QFontMetrics clipMetrics(p.font());
+      const QString text = clipMetrics.elidedText(
           clip.title, Qt::ElideRight,
           static_cast<int>(clipRect.width()) - (kClipPadding * 2));
       p.drawText(clipRect.adjusted(kClipPadding, 0, -kClipPadding, 0),
                  Qt::AlignVCenter | Qt::AlignLeft, text);
+      p.restore();
     }
 
     // リサイズグリップ (ホバー時 or 選択時にエッジに縦線を描画)
@@ -7138,7 +7360,8 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
     }
 
     if (clip.kind == TrackClipVisual::Kind::Audio && clipRect.width() > 20.0 &&
-        (clip.audioFadeInFrames > 0.0 || clip.audioFadeOutFrames > 0.0)) {
+        (clip.audioFadeInFrames > 0.0 || clip.audioFadeOutFrames > 0.0 ||
+         isSelected || isHovered)) {
       const qreal usableWidth = std::max<qreal>(1.0, clipRect.width() - 8.0);
       const qreal fadeInWidth = std::clamp(
           static_cast<qreal>(clip.audioFadeInFrames / std::max(1.0, clip.durationFrame)) * usableWidth,
@@ -7158,6 +7381,12 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
       }
       if (fadeOutWidth > 0.0) {
         p.drawLine(QPointF(right - fadeOutWidth, high), QPointF(right, low));
+      }
+      if (isSelected || isHovered) {
+        p.setBrush(theme.accent);
+        p.setPen(QPen(theme.background, 1.0));
+        p.drawEllipse(QPointF(left + fadeInWidth, high), 4.0, 4.0);
+        p.drawEllipse(QPointF(right - fadeOutWidth, high), 4.0, 4.0);
       }
     }
   }
@@ -7280,6 +7509,94 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
     p.setPen(QPen(segment.color, lineWidth, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
     p.setBrush(Qt::NoBrush);
     p.strokePath(curvePath, p.pen());
+  }
+
+  if (!impl_->audioAutomationPairs_.isEmpty()) {
+    ArtifactCompositionPtr automationComposition;
+    if (auto *projectService = ArtifactProjectService::instance()) {
+      automationComposition = projectService->currentComposition().lock();
+    }
+    const int64_t frameScale = timelineFrameRateScale(automationComposition);
+    if (automationComposition && frameScale > 0) {
+      LayerID cachedLayerId;
+      QString cachedPropertyPath;
+      ArtifactAbstractLayerPtr cachedLayer;
+      ArtifactCore::AbstractPropertyPtr cachedProperty;
+      for (const auto &pair : impl_->audioAutomationPairs_) {
+        if (pair.first < 0 || pair.second < 0 ||
+            pair.first >= impl_->keyframeMarkers_.size() ||
+            pair.second >= impl_->keyframeMarkers_.size()) {
+          continue;
+        }
+        const auto &fromMarker = impl_->keyframeMarkers_[pair.first];
+        const auto &toMarker = impl_->keyframeMarkers_[pair.second];
+        const QString &path = fromMarker.propertyPath;
+        double minValue = 0.0;
+        double maxValue = 0.0;
+        if (path == QStringLiteral("audio.volume")) {
+          minValue = 0.0;
+          maxValue = 2.0;
+        } else if (path == QStringLiteral("audio.pan")) {
+          minValue = -1.0;
+          maxValue = 1.0;
+        } else if (path == QStringLiteral("audio.clipGainDb")) {
+          minValue = -60.0;
+          maxValue = 12.0;
+        } else {
+          continue;
+        }
+        const qreal fromX = fromMarker.frame * ppf - xOffset;
+        const qreal toX = toMarker.frame * ppf - xOffset;
+        if (std::max(fromX, toX) < dirtyRect.left() - 2.0 ||
+            std::min(fromX, toX) > dirtyRect.right() + 2.0) {
+          continue;
+        }
+        if (cachedLayerId != fromMarker.layerId ||
+            cachedPropertyPath != path) {
+          cachedLayerId = fromMarker.layerId;
+          cachedPropertyPath = path;
+          cachedLayer = automationComposition->layerById(cachedLayerId);
+          cachedProperty = cachedLayer ? cachedLayer->getProperty(path)
+                                       : ArtifactCore::AbstractPropertyPtr{};
+        }
+        if (!cachedProperty || !cachedProperty->isAnimatable()) {
+          continue;
+        }
+        const int trackHeight =
+            impl_->trackHeights_.value(fromMarker.trackIndex, kDefaultTrackHeight);
+        const int trackTop = trackTopAt(
+            impl_->trackTops_, impl_->trackHeights_, fromMarker.trackIndex);
+        const int sampleCount = std::clamp(
+            static_cast<int>(std::ceil(std::abs(to.x() - from.x()) / 16.0)),
+            2, 24);
+        QPointF points[25];
+        for (int sample = 0; sample <= sampleCount; ++sample) {
+          const double t = static_cast<double>(sample) / sampleCount;
+          const double frame = fromMarker.frame +
+              (toMarker.frame - fromMarker.frame) * t;
+          double value = sample == 0 ? fromMarker.value.toDouble()
+              : sample == sampleCount ? toMarker.value.toDouble()
+              : cachedProperty->interpolateValue(RationalTime(
+                    static_cast<qint64>(std::llround(frame)), frameScale))
+                    .toDouble();
+          if (!std::isfinite(value)) {
+            value = fromMarker.value.toDouble();
+          }
+          const double normalized = std::clamp(
+              (value - minValue) / (maxValue - minValue), 0.0, 1.0);
+          const double mappedY = trackTop - yOffset + trackHeight - 6.0 -
+                                 normalized * (trackHeight - 12.0);
+          points[sample] = QPointF(frame * ppf - xOffset, mappedY);
+        }
+        QColor curveColor = path == QStringLiteral("audio.pan")
+            ? QColor(245, 183, 88) : theme.accent.lighter(125);
+        curveColor.setAlpha(fromMarker.selectedLayer ? 220 : 175);
+        p.setPen(QPen(curveColor, fromMarker.selectedLayer ? 2.0 : 1.5,
+                      Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        p.setBrush(Qt::NoBrush);
+        p.drawPolyline(points, sampleCount + 1);
+      }
+    }
   }
 
   const auto *timelineSettings = ArtifactCore::ArtifactAppSettings::instance();
@@ -7757,6 +8074,63 @@ void ArtifactTimelineTrackPainterView::mousePressEvent(QMouseEvent *event) {
       return;
     }
 
+    // Audio fade endpoints are editable directly on the existing fade ramp.
+    // Resolve them before generic clip/keyframe hits so the ramp is a clear target.
+    for (int clipIndex = 0; clipIndex < impl_->clips_.size(); ++clipIndex) {
+      const auto &clip = impl_->clips_[clipIndex];
+      if (clip.kind != TrackClipVisual::Kind::Audio ||
+          clip.trackIndex < 0 || clip.trackIndex >= impl_->trackHeights_.size()) {
+        continue;
+      }
+      const double clipLeft = clip.startFrame * impl_->pixelsPerFrame_ -
+                              impl_->horizontalOffset_;
+      const double clipRight = clipLeft +
+          std::max(2.0, clip.durationFrame * impl_->pixelsPerFrame_);
+      const double rowTop = trackTopAt(impl_->trackTops_, impl_->trackHeights_,
+                                       clip.trackIndex);
+      const double rowHeight = impl_->trackHeights_[clip.trackIndex];
+      const double barHeight = std::max(8.0, rowHeight - 4.0);
+      const QRectF clipRect(clipLeft,
+                            rowTop + (rowHeight - barHeight) * 0.5 -
+                                impl_->verticalOffset_,
+                            clipRight - clipLeft, barHeight);
+      if (clipRect.width() <= 20.0 || !clipRect.contains(mouseX, mouseY)) {
+        continue;
+      }
+      const double usableWidth = std::max(1.0, clipRect.width() - 8.0);
+      const double left = clipRect.left() + 4.0;
+      const double right = clipRect.right() - 4.0;
+      const double peakY = clipRect.top() + 3.0;
+      const double fadeInWidth = std::clamp(
+          clip.audioFadeInFrames / std::max(1.0, clip.durationFrame) * usableWidth,
+          0.0, usableWidth);
+      const double fadeOutWidth = std::clamp(
+          clip.audioFadeOutFrames / std::max(1.0, clip.durationFrame) * usableWidth,
+          0.0, usableWidth);
+      const QPointF fadeInHandle(left + fadeInWidth, peakY);
+      const QPointF fadeOutHandle(right - fadeOutWidth, peakY);
+      const auto withinHandle = [&](const QPointF &handle) {
+        const double dx = mouseX - handle.x();
+        const double dy = mouseY - handle.y();
+        return dx * dx + dy * dy <= 64.0;
+      };
+      const bool hitFadeIn = withinHandle(fadeInHandle);
+      const bool hitFadeOut = withinHandle(fadeOutHandle);
+      if (!hitFadeIn && !hitFadeOut) {
+        continue;
+      }
+      impl_->audioFadeDragClipIndex_ = clipIndex;
+      impl_->audioFadeDragIn_ = hitFadeIn &&
+          (!hitFadeOut || mouseX <= (fadeInHandle.x() + fadeOutHandle.x()) * 0.5);
+      impl_->audioFadeDragging_ = false;
+      impl_->audioFadeDragStartPoint_ = event->position().toPoint();
+      impl_->audioFadeDragOrigFrames_ = impl_->audioFadeDragIn_
+          ? clip.audioFadeInFrames : clip.audioFadeOutFrames;
+      setCursor(Qt::SizeHorCursor);
+      event->accept();
+      return;
+    }
+
     const auto markerHit =
         hitTestMarkers(impl_->keyframeMarkers_, impl_->trackHeights_,
                        impl_->trackTops_, mouseX, mouseY,
@@ -8091,14 +8465,20 @@ void ArtifactTimelineTrackPainterView::mousePressEvent(QMouseEvent *event) {
           impl_->clips_[hit.clipIndex].trimMaxEndFrame;
       const auto &clip = impl_->clips_[hit.clipIndex];
       if (clip.kind == TrackClipVisual::Kind::GroupContainer) {
-        impl_->dragMode_ = DragMode::None;
-        impl_->dragClipIndex_ = -1;
+        if (hit.mode != DragMode::MoveBody) {
+          impl_->dragMode_ = DragMode::None;
+          impl_->dragClipIndex_ = -1;
+          updateHoverToolTip(this, event->globalPosition().toPoint(),
+                             formatClipTooltip(clip),
+                             impl_->hoverToolTipText_);
+          event->accept();
+          return;
+        }
         updateHoverToolTip(this, event->globalPosition().toPoint(),
                            formatClipTooltip(clip), impl_->hoverToolTipText_);
-        event->accept();
-        return;
+        setCursor(Qt::ClosedHandCursor);
       }
-      if (clip.kind == TrackClipVisual::Kind::Transition) {
+      else if (clip.kind == TrackClipVisual::Kind::Transition) {
         // Transition editing is composition-owned. Keep the existing clip
         // drag state, but skip layer selection; release reuses the existing
         // timeline move/resize event with the transition ID.
@@ -8127,6 +8507,41 @@ void ArtifactTimelineTrackPainterView::mousePressEvent(QMouseEvent *event) {
 void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent *event) {
   const double mouseX = event->position().x();
   const double mouseY = event->position().y();
+
+  if (impl_->audioFadeDragClipIndex_ >= 0 &&
+      impl_->audioFadeDragClipIndex_ < impl_->clips_.size() &&
+      (event->buttons() & Qt::LeftButton)) {
+    const QPoint currentPos = event->position().toPoint();
+    const int dragDistance =
+        (currentPos - impl_->audioFadeDragStartPoint_).manhattanLength();
+    if (!impl_->audioFadeDragging_ &&
+        dragDistance >= QApplication::startDragDistance()) {
+      impl_->audioFadeDragging_ = true;
+    }
+    if (impl_->audioFadeDragging_) {
+      auto &clip = impl_->clips_[impl_->audioFadeDragClipIndex_];
+      const double clipWidth = std::max(2.0, clip.durationFrame *
+                                               impl_->pixelsPerFrame_);
+      const double innerWidth = std::max(1.0, clipWidth - 8.0);
+      const double clipLeft = clip.startFrame * impl_->pixelsPerFrame_ -
+                              impl_->horizontalOffset_ + 4.0;
+      const double clipRight = clipLeft + innerWidth;
+      const double normalized = impl_->audioFadeDragIn_
+          ? (mouseX - clipLeft) / innerWidth
+          : (clipRight - mouseX) / innerWidth;
+      const double fadeFrames = std::clamp(normalized, 0.0, 1.0) *
+                                std::max(0.0, clip.durationFrame);
+      if (impl_->audioFadeDragIn_) {
+        clip.audioFadeInFrames = fadeFrames;
+      } else {
+        clip.audioFadeOutFrames = fadeFrames;
+      }
+      touchTimelineVisuals();
+      update();
+    }
+    event->accept();
+    return;
+  }
 
   if (impl_->scrubDragging_ && (event->buttons() & Qt::LeftButton)) {
     const double ppf = std::max(0.001, impl_->pixelsPerFrame_);
@@ -8274,10 +8689,26 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent *event) {
            dragMarker.trackIndex < impl_->trackHeights_.size())
               ? impl_->trackHeights_[dragMarker.trackIndex]
               : kDefaultTrackHeight;
-      const double valueScalePerPixel = (freeMoveDrag || valueOnlyDrag)
-          ? std::max(0.0001, 1.0 / std::max(4.0, static_cast<double>(markerTrackHeight)))
-          : 0.0;
-      const double rawDeltaValue = rawDeltaYPixels * valueScalePerPixel;
+      const QString dragPropertyPath = dragMarker.propertyPath.trimmed();
+      double valueScalePerPixel = 0.0;
+      if (freeMoveDrag || valueOnlyDrag) {
+        if (dragPropertyPath == QStringLiteral("audio.volume") ||
+            dragPropertyPath == QStringLiteral("audio.pan")) {
+          valueScalePerPixel = 2.0 /
+              std::max(4.0, static_cast<double>(markerTrackHeight - 12));
+        } else if (dragPropertyPath == QStringLiteral("audio.clipGainDb")) {
+          valueScalePerPixel = 72.0 /
+              std::max(4.0, static_cast<double>(markerTrackHeight - 12));
+        } else {
+          valueScalePerPixel = 1.0 /
+              std::max(4.0, static_cast<double>(markerTrackHeight));
+        }
+      }
+      const double rawDeltaValue = rawDeltaYPixels * valueScalePerPixel *
+          ((dragPropertyPath == QStringLiteral("audio.volume") ||
+            dragPropertyPath == QStringLiteral("audio.pan") ||
+            dragPropertyPath == QStringLiteral("audio.clipGainDb"))
+               ? -1.0 : 1.0);
       QString snapLabel;
       double targetFrame = impl_->dragMarkerOrigFrame_;
       if (applyTimeChange) {
@@ -8792,6 +9223,67 @@ void ArtifactTimelineTrackPainterView::mouseReleaseEvent(QMouseEvent *event) {
   if (event->button() == Qt::MiddleButton && impl_->panning_) {
     handleNavigationPan(event->button(), event->position(), event->buttons(),
                         event->modifiers());
+    event->accept();
+    return;
+  }
+
+  if (event->button() == Qt::LeftButton &&
+      impl_->audioFadeDragClipIndex_ >= 0) {
+    const int clipIndex = impl_->audioFadeDragClipIndex_;
+    const bool fadeIn = impl_->audioFadeDragIn_;
+    const bool wasDragged = impl_->audioFadeDragging_;
+    const double beforeFrames = impl_->audioFadeDragOrigFrames_;
+    impl_->audioFadeDragClipIndex_ = -1;
+    impl_->audioFadeDragging_ = false;
+    impl_->audioFadeDragStartPoint_ = QPoint();
+    setCursor(Qt::ArrowCursor);
+    if (wasDragged && clipIndex >= 0 && clipIndex < impl_->clips_.size()) {
+      auto &clip = impl_->clips_[clipIndex];
+      bool commitSucceeded = false;
+      if (auto *projectService = ArtifactProjectService::instance()) {
+        if (const auto composition = projectService->currentComposition().lock()) {
+          const auto layer = composition->layerById(clip.layerId);
+          const auto audioLayer =
+              ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer);
+          const double fps = safeTimelineFrameRate(composition);
+          if (audioLayer && fps > 0.0) {
+            const QString propertyPath = fadeIn
+                ? QStringLiteral("audio.fadeInSeconds")
+                : QStringLiteral("audio.fadeOutSeconds");
+            const double currentSeconds = fadeIn
+                ? audioLayer->fadeInSeconds() : audioLayer->fadeOutSeconds();
+            const double nextFrames = fadeIn
+                ? clip.audioFadeInFrames : clip.audioFadeOutFrames;
+            const double nextSeconds = std::max(0.0, nextFrames / fps);
+            if (std::abs(nextSeconds - currentSeconds) <= 1e-6) {
+              commitSucceeded = true;
+            } else {
+              auto command = std::make_unique<SetLayerPropertyValueCommand>(
+                  layer, propertyPath, currentSeconds, nextSeconds,
+                  fadeIn ? tt("timeline.set_audio_fade_in", "Set Audio Fade In")
+                         : tt("timeline.set_audio_fade_out", "Set Audio Fade Out"));
+              bool applied = false;
+              if (auto *undoManager = UndoManager::instance()) {
+                applied = undoManager->push(std::move(command));
+              } else {
+                command->redo();
+                applied = command->lastOperationSucceeded();
+              }
+              commitSucceeded = applied;
+            }
+          }
+        }
+      }
+      if (!commitSucceeded) {
+        if (fadeIn) {
+          clip.audioFadeInFrames = beforeFrames;
+        } else {
+          clip.audioFadeOutFrames = beforeFrames;
+        }
+      }
+    }
+    touchTimelineVisuals();
+    update();
     event->accept();
     return;
   }

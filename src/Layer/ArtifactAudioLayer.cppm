@@ -645,6 +645,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactAudioLayer::getLayerPropertyGro
   useCountProp->setDisplayLabel(QStringLiteral("Source Uses"));
   audioGroup.addProperty(useCountProp);
   auto volumeProp = makeProp(QStringLiteral("audio.volume"), ArtifactCore::PropertyType::Float, impl_->volume_, -120);
+  volumeProp->setAnimatable(true);
   volumeProp->setHardRange(0.0, 2.0);
   volumeProp->setSoftRange(0.0, 2.0);
   volumeProp->setStep(0.01);
@@ -653,6 +654,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactAudioLayer::getLayerPropertyGro
   audioGroup.addProperty(volumeProp);
   auto clipGainProp = makeProp(QStringLiteral("audio.clipGainDb"), ArtifactCore::PropertyType::Float,
                                impl_->clipGainDb_, -119);
+  clipGainProp->setAnimatable(true);
   clipGainProp->setDisplayLabel(QStringLiteral("Clip Gain"));
   clipGainProp->setHardRange(-60.0, 12.0);
   clipGainProp->setSoftRange(-12.0, 6.0);
@@ -750,6 +752,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactAudioLayer::getLayerPropertyGro
   deClickWidthProp->setTooltip(QStringLiteral("Maximum isolated click width to repair"));
   audioGroup.addProperty(deClickWidthProp);
   auto panProp = makeProp(QStringLiteral("audio.pan"), ArtifactCore::PropertyType::Float, impl_->pan_, -115);
+  panProp->setAnimatable(true);
   panProp->setHardRange(-1.0, 1.0);
   panProp->setSoftRange(-1.0, 1.0);
   panProp->setStep(0.01);

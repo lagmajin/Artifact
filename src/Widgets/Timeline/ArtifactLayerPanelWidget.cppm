@@ -1289,7 +1289,9 @@ namespace {
    return labels;
   }
 
-  std::vector<ArtifactCore::PropertyGroup> layerPanelPropertyGroups(const ArtifactAbstractLayerPtr& layer)
+  std::vector<ArtifactCore::PropertyGroup> layerPanelPropertyGroups(
+      const ArtifactAbstractLayerPtr& layer,
+      const bool includeAudioAutomation)
   {
    if (!layer) {
     return {};
@@ -1305,6 +1307,27 @@ namespace {
      continue;
     }
     result.push_back(group);
+   }
+   if (includeAudioAutomation &&
+       ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer)) {
+    ArtifactCore::PropertyGroup automationGroup(
+        QStringLiteral("Audio Automation"));
+    for (const auto& group : groups) {
+     for (const auto& property : group.sortedProperties()) {
+      if (!property || !property->isAnimatable()) {
+       continue;
+      }
+      const QString path = property->getName();
+      if (path == QStringLiteral("audio.volume") ||
+          path == QStringLiteral("audio.pan") ||
+          path == QStringLiteral("audio.clipGainDb")) {
+       automationGroup.addProperty(property);
+      }
+     }
+    }
+    if (automationGroup.propertyCount() > 0) {
+     result.push_back(std::move(automationGroup));
+    }
    }
    return result;
   }
@@ -1830,6 +1853,36 @@ private:
  bool lastOperationSucceeded_ = true;
 };
 
+class SetLayerNodeParentCommand final : public UndoCommand {
+public:
+ SetLayerNodeParentCommand(ArtifactCompositionPtr composition, LayerID layerId,
+                           QString beforeParentId, QString afterParentId)
+     : composition_(std::move(composition)), layerId_(std::move(layerId)),
+       beforeParentId_(std::move(beforeParentId)),
+       afterParentId_(std::move(afterParentId)) {}
+
+ void redo() override { lastOperationSucceeded_ = apply(afterParentId_); }
+ void undo() override { lastOperationSucceeded_ = apply(beforeParentId_); }
+ QString label() const override { return QStringLiteral("Move Layer to Group Container"); }
+ bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+
+private:
+ bool apply(const QString& parentId) {
+  if (!composition_) return false;
+  const bool changed = composition_->setLayerNodeParent(layerId_, parentId);
+  if (changed) {
+   if (auto* manager = UndoManager::instance()) manager->notifyAnythingChanged();
+  }
+  return changed;
+ }
+
+ ArtifactCompositionPtr composition_;
+ LayerID layerId_;
+ QString beforeParentId_;
+ QString afterParentId_;
+ bool lastOperationSucceeded_ = true;
+};
+
 class RemoveGroupContainerCommand final : public UndoCommand {
 public:
  RemoveGroupContainerCommand(ArtifactCompositionPtr composition, QString containerId,
@@ -2116,10 +2169,13 @@ bool propertyMatchesChannelFilter(const ArtifactCore::AbstractPropertyPtr& prope
  if (!property || filter == ArtifactLayerPanelWidget::PropertyChannelFilter::All) return true;
  const QString path = property->getName().toLower();
  const bool transform = path.startsWith(QStringLiteral("transform."));
- const bool audio = path.startsWith(QStringLiteral("audio.")) || path.contains(QStringLiteral("volume")) || path.contains(QStringLiteral("pan"));
+ const bool audioAutomation =
+     path == QStringLiteral("audio.volume") ||
+     path == QStringLiteral("audio.pan") ||
+     path == QStringLiteral("audio.clipgaindb");
  const bool effect = path.startsWith(QStringLiteral("effect.")) || path.startsWith(QStringLiteral("effects."));
  if (filter == ArtifactLayerPanelWidget::PropertyChannelFilter::Transform) return transform;
- if (filter == ArtifactLayerPanelWidget::PropertyChannelFilter::Audio) return audio;
+ if (filter == ArtifactLayerPanelWidget::PropertyChannelFilter::Audio) return audioAutomation;
  return filter == ArtifactLayerPanelWidget::PropertyChannelFilter::Effect ? effect : true;
 }
 
@@ -2907,6 +2963,7 @@ public:
   LayerID dragCandidateLayerId;
   LayerID draggedLayerId;
   int dragInsertVisibleRow = -1;
+  int dragContainerHoverVisibleRow = -1;
   int dragMatteHoverVisibleRow = -1;
   bool dragMatteLinkMode = false;
   LayerID pickWhipSourceLayerId_;
@@ -3080,6 +3137,7 @@ public:
    dragCandidateLayerId = LayerID();
    draggedLayerId = LayerID();
    dragInsertVisibleRow = -1;
+   dragContainerHoverVisibleRow = -1;
    dragMatteHoverVisibleRow = -1;
    dragMatteLinkMode = false;
    dragStarted_ = false;
@@ -3215,7 +3273,9 @@ public:
      if (stack.contains(nodeId)) return; // cycle guard
      if (emitted.contains(nodeId)) return;
 
-   const auto panelGroups = layerPanelPropertyGroups(node);
+   const auto panelGroups = layerPanelPropertyGroups(
+       node, propertyChannelFilter ==
+                 ArtifactLayerPanelWidget::PropertyChannelFilter::Audio);
    const auto matteRefs = node->matteReferences();
    const bool hasMaskStack = node->hasMasks();
    const bool hasMatteStack = !matteRefs.empty();
@@ -3283,8 +3343,9 @@ public:
                                    ? QStringLiteral("Layer")
                                    : groupDef.name().trimmed();
      const QString groupKey = nodeId + QStringLiteral("::") + groupName.toLower();
-     const bool groupExpanded =
-         expandedByGroupKey.value(groupKey, timelineGroupExpandedByDefault(groupName));
+      const bool groupExpanded = expandedByGroupKey.value(
+          groupKey, groupName == QStringLiteral("Audio Automation") ||
+                        timelineGroupExpandedByDefault(groupName));
       const bool hasVisibleProperties = groupHasVisibleProperties(groupDef, displayMode, propertyChannelFilter);
       if (!hasVisibleProperties) {
        continue;
@@ -7083,7 +7144,16 @@ void ArtifactLayerPanelWidget::mouseMoveEvent(QMouseEvent* event)
                                        sourceLayer ? sourceLayer->id() : LayerID());
         setCursor(validDropTarget ? Qt::CrossCursor : Qt::ForbiddenCursor);
       } else {
-        impl_->dragInsertVisibleRow = impl_->insertionVisibleRowForY(static_cast<int>(event->pos().y() + impl_->verticalOffset));
+        const int hoverRow = impl_->rowIndexFromViewportY(event->pos().y());
+        if (hoverRow >= 0 && hoverRow < impl_->visibleRows.size() &&
+            impl_->visibleRows[hoverRow].kind == RowKind::Container) {
+          impl_->dragContainerHoverVisibleRow = hoverRow;
+          impl_->dragInsertVisibleRow = -1;
+        } else {
+          impl_->dragContainerHoverVisibleRow = -1;
+          impl_->dragInsertVisibleRow = impl_->insertionVisibleRowForY(
+              static_cast<int>(event->pos().y() + impl_->verticalOffset));
+        }
         impl_->dragMatteHoverVisibleRow = -1;
         setCursor(Qt::DragMoveCursor);
       }
@@ -7305,51 +7375,71 @@ void ArtifactLayerPanelWidget::mouseMoveEvent(QMouseEvent* event)
             }
           }
         } else {
-          QVector<LayerID> visibleLayerIds;
-          visibleLayerIds.reserve(impl_->visibleRows.size());
-          for (const auto& row : impl_->visibleRows) {
-            if (row.kind == RowKind::Layer && row.layer) {
-              visibleLayerIds.push_back(row.layer->id());
+          const int containerTargetRow =
+              impl_->dragContainerHoverVisibleRow;
+          if (containerTargetRow >= 0 &&
+              containerTargetRow < impl_->visibleRows.size() &&
+              impl_->visibleRows[containerTargetRow].kind == RowKind::Container) {
+            const auto* sourceNode =
+                comp->nodeStore().node(dragLayerId.toString());
+            const QString previousParentId =
+                sourceNode ? sourceNode->parentId : QString{};
+            const QString targetParentId =
+                impl_->visibleRows[containerTargetRow].nodeId;
+            if (sourceNode && previousParentId != targetParentId &&
+                applyLayerPanelCommand(
+                    std::make_unique<SetLayerNodeParentCommand>(
+                        comp, dragLayerId, previousParentId, targetParentId))) {
+              updateLayout();
+            }
+          } else {
+            QVector<LayerID> visibleLayerIds;
+            visibleLayerIds.reserve(impl_->visibleRows.size());
+            for (const auto& row : impl_->visibleRows) {
+              if (row.kind == RowKind::Layer && row.layer) {
+                visibleLayerIds.push_back(row.layer->id());
+              }
+            }
+            const auto allLayers = comp->allLayer();
+            int oldIndex = -1;
+            for (int i = 0; i < allLayers.size(); ++i) {
+              if (allLayers[i] && allLayers[i]->id() == dragLayerId) {
+                oldIndex = i;
+                break;
+              }
+            }
+            if (oldIndex >= 0 && !visibleLayerIds.isEmpty()) {
+              QVector<LayerID> remainingVisibleLayerIds;
+              remainingVisibleLayerIds.reserve(visibleLayerIds.size());
+              for (const auto& layerId : visibleLayerIds) {
+                if (layerId != dragLayerId) {
+                  remainingVisibleLayerIds.push_back(layerId);
+                }
+              }
+              const int targetVisibleIndex = std::clamp(
+                impl_->layerCountBeforeVisibleRowExcluding(impl_->dragInsertVisibleRow, dragLayerId),
+                0,
+                static_cast<int>(remainingVisibleLayerIds.size()));
+              int newIndex = static_cast<int>(remainingVisibleLayerIds.size()) -
+                             targetVisibleIndex;
+              newIndex = std::clamp(newIndex, 0, std::max(0, static_cast<int>(allLayers.size()) - 1));
+              if (newIndex != oldIndex) {
+                auto layer = comp->layerById(dragLayerId);
+                auto cmd = std::make_unique<MoveLayerIndexCommand>(
+                    comp, layer, oldIndex, newIndex);
+                bool applied = false;
+                if (auto *undo = UndoManager::instance()) {
+                  applied = undo->push(std::move(cmd));
+                } else {
+                  cmd->redo();
+                  applied = cmd->lastOperationSucceeded();
+                }
+                if (applied) {
+                  updateLayout();
+                }
+              }
             }
           }
-          const auto allLayers = comp->allLayer();
-          int oldIndex = -1;
-          for (int i = 0; i < allLayers.size(); ++i) {
-            if (allLayers[i] && allLayers[i]->id() == dragLayerId) {
-              oldIndex = i;
-              break;
-            }
-          }
-          if (oldIndex >= 0 && !visibleLayerIds.isEmpty()) {
-            QVector<LayerID> remainingVisibleLayerIds;
-            remainingVisibleLayerIds.reserve(visibleLayerIds.size());
-            for (const auto& layerId : visibleLayerIds) {
-              if (layerId != dragLayerId) {
-                remainingVisibleLayerIds.push_back(layerId);
-              }
-            }
-            const int targetVisibleIndex = std::clamp(
-              impl_->layerCountBeforeVisibleRowExcluding(impl_->dragInsertVisibleRow, dragLayerId),
-              0,
-              static_cast<int>(remainingVisibleLayerIds.size()));
-            int newIndex = static_cast<int>(remainingVisibleLayerIds.size()) -
-                           targetVisibleIndex;
-            newIndex = std::clamp(newIndex, 0, std::max(0, static_cast<int>(allLayers.size()) - 1));
-            if (newIndex != oldIndex) {
-              auto layer = comp->layerById(dragLayerId);
-              auto cmd = std::make_unique<MoveLayerIndexCommand>(
-                  comp, layer, oldIndex, newIndex);
-              bool applied = false;
-              if (auto *undo = UndoManager::instance()) {
-                applied = undo->push(std::move(cmd));
-              } else {
-                cmd->redo();
-                applied = cmd->lastOperationSucceeded();
-              }
-              if (applied) {
-                updateLayout();
-              }
-            }
           }
         }
       }
@@ -8298,10 +8388,19 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
       const int toggleX = nameStartX + row.depth * indent + 2;
       const int toggleY = y + (rowH - toggleSize) / 2;
       const bool selectedContainer = row.nodeId == impl_->selectedContainerId;
+      const bool containerDropTarget =
+          i == impl_->dragContainerHoverVisibleRow;
       p.fillRect(0, y, width(), rowH, selectedContainer
           ? mixColor(background, selection, 0.44)
           : mixColor(background, surface, 0.55));
-      p.fillRect(0, y, 4, rowH, mixColor(background, accent, 0.85));
+      p.fillRect(0, y, 4, rowH,
+                 mixColor(background, accent,
+                          containerDropTarget ? 1.0 : 0.85));
+      if (containerDropTarget) {
+        p.setPen(QPen(mixColor(background, accent, 0.82), 1));
+        p.setBrush(Qt::NoBrush);
+        p.drawRect(QRect(4, y, std::max(0, width() - 5), rowH - 1));
+      }
       if (row.hasChildren) {
         QPolygonF tri;
         if (row.expanded) {
@@ -8991,7 +9090,17 @@ void ArtifactLayerPanelWidget::dragEnterEvent(QDragEnterEvent* e)
  {
  const QMimeData* mime = e->mimeData();
   if (mime && mime->hasFormat(kLayerReorderMimeType)) {
-    impl_->dragInsertVisibleRow = impl_->insertionVisibleRowForY(static_cast<int>(e->position().y() + impl_->verticalOffset));
+    const int hoverRow = impl_->rowIndexFromViewportY(
+        static_cast<int>(e->position().y()));
+    if (hoverRow >= 0 && hoverRow < impl_->visibleRows.size() &&
+        impl_->visibleRows[hoverRow].kind == RowKind::Container) {
+      impl_->dragContainerHoverVisibleRow = hoverRow;
+      impl_->dragInsertVisibleRow = -1;
+    } else {
+      impl_->dragContainerHoverVisibleRow = -1;
+      impl_->dragInsertVisibleRow = impl_->insertionVisibleRowForY(
+          static_cast<int>(e->position().y() + impl_->verticalOffset));
+    }
     e->acceptProposedAction();
     update();
     return;
@@ -9023,6 +9132,7 @@ void ArtifactLayerPanelWidget::dragEnterEvent(QDragEnterEvent* e)
  {
   e->accept();
   impl_->dragInsertVisibleRow = -1;
+  impl_->dragContainerHoverVisibleRow = -1;
   impl_->dragMatteHoverVisibleRow = -1;
   impl_->pickWhipHoverRow_ = -1;
   setToolTip(QString());
@@ -9043,6 +9153,26 @@ void ArtifactLayerPanelWidget::dragEnterEvent(QDragEnterEvent* e)
 
     // MIME からドラッグ中のレイヤーIDを取得（impl_->draggedLayerId は別インスタンスでは無効）
     const LayerID dragLayerId = LayerID(QString::fromUtf8(mime->data(kLayerReorderMimeType)));
+    const int dropRow = impl_->rowIndexFromViewportY(
+        static_cast<int>(event->position().y()));
+    if (comp && !dragLayerId.isNil() && dropRow >= 0 &&
+        dropRow < impl_->visibleRows.size() &&
+        impl_->visibleRows[dropRow].kind == RowKind::Container) {
+      const auto* sourceNode =
+          comp->nodeStore().node(dragLayerId.toString());
+      const QString previousParentId = sourceNode ? sourceNode->parentId : QString{};
+      const QString targetParentId = impl_->visibleRows[dropRow].nodeId;
+      if (sourceNode && previousParentId != targetParentId &&
+          applyLayerPanelCommand(std::make_unique<SetLayerNodeParentCommand>(
+              comp, dragLayerId, previousParentId, targetParentId))) {
+        updateLayout();
+      }
+      impl_->clearDragState();
+      event->acceptProposedAction();
+      update();
+      return;
+    }
+
     if (svc && comp && !dragLayerId.isNil()) {
       QVector<LayerID> visibleLayerIds;
       visibleLayerIds.reserve(impl_->visibleRows.size());

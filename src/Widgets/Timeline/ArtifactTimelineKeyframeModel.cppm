@@ -76,6 +76,19 @@ QString editablePathDisplayLabel(const QString &propertyPath) {
         .arg(fieldLabel);
   }
 
+  if (parts.size() == 2 &&
+      parts[0].compare(QStringLiteral("audio"), Qt::CaseInsensitive) == 0) {
+    if (parts[1].compare(QStringLiteral("volume"), Qt::CaseInsensitive) == 0) {
+      return QStringLiteral("Volume");
+    }
+    if (parts[1].compare(QStringLiteral("pan"), Qt::CaseInsensitive) == 0) {
+      return QStringLiteral("Pan");
+    }
+    if (parts[1].compare(QStringLiteral("clipGainDb"), Qt::CaseInsensitive) == 0) {
+      return QStringLiteral("Clip Gain");
+    }
+  }
+
   const bool isMaskPath =
       parts.front().compare(QStringLiteral("mask"), Qt::CaseInsensitive) == 0;
   const bool isRotoPath =

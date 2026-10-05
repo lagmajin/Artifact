@@ -13,6 +13,7 @@ module;
 #include <QPointF>
 #include <QDropEvent>
 #include <QFocusEvent>
+#include <QImage>
 #include <QMenu>
 #include <QWheelEvent>
 #include <QSet>
@@ -95,6 +96,13 @@ export namespace Artifact
    Transition
    };
    enum class SourceState { Ready, Missing, Proxy, Unreadable, SequenceGap };
+   enum class VideoSourceIdentity { Unlinked, Shared, Localized };
+   struct ShapePathVertexPreview {
+    QPointF anchor;
+    QPointF inHandle;
+    QPointF outHandle;
+    bool operator==(const ShapePathVertexPreview&) const = default;
+   };
 
    QString clipId;
    LayerID layerId;
@@ -115,7 +123,16 @@ export namespace Artifact
    double audioPlaybackRate = 1.0;
    bool audioReversed = false;
    bool audioMuted = false;
+   bool videoHasAudio = false;
+   qint64 videoSourceStartFrame = 0;
+   VideoSourceIdentity videoSourceIdentity = VideoSourceIdentity::Unlinked;
+   QString textFontFamily;
+   float textFontSize = 0.0f;
    bool selected = false;
+   QVector<QImage> videoThumbnails;
+   QImage imageThumbnail;
+   QVector<ShapePathVertexPreview> shapePathVertices;
+   bool shapePathClosed = false;
    QVector<float> waveformPeaks;
    QVector<float> waveformRms;
   };

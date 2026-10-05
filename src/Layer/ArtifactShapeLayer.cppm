@@ -3271,6 +3271,7 @@ void ArtifactShapeLayer::clearCustomPath() {
   Q_EMIT changed();
 }
 std::vector<CustomPathVertex> ArtifactShapeLayer::customPathVertices() const { return impl_->customPathVertices_; }
+std::span<const CustomPathVertex> ArtifactShapeLayer::customPathVerticesView() const { return impl_->customPathVertices_; }
 bool ArtifactShapeLayer::customPathClosed() const { return impl_->customPathClosed_; }
 QJsonObject ArtifactShapeLayer::customPathSnapshot() const {
   QJsonArray vertices;

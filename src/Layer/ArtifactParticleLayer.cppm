@@ -425,6 +425,7 @@ public:
     QImage cachedFrame;
     int64_t cachedFrameNumber = -1;
     bool playing = true;
+    QString presetName = QStringLiteral("Custom");
     float lastTime = 0.0f;
     int width = 1920;
     int height = 1080;
@@ -673,6 +674,7 @@ QJsonObject ArtifactParticleLayer::toJson() const
 {
     QJsonObject json = ArtifactAbstractLayer::toJson();
     json["type"] = static_cast<int>(LayerType::Particle);
+    json["presetName"] = impl_->presetName;
     
     // Save render settings
     const auto& rs = renderSettings();
@@ -1008,6 +1010,11 @@ void ArtifactParticleLayer::fromJsonProperties(const QJsonObject& obj)
 
 void ArtifactParticleLayer::applyPropertiesFromJson(const QJsonObject& obj)
 {
+    impl_->presetName = obj.value(QStringLiteral("presetName"))
+                            .toString(QStringLiteral("Custom"));
+    if (impl_->presetName.trimmed().isEmpty()) {
+        impl_->presetName = QStringLiteral("Custom");
+    }
     if (obj.contains("name")) {
         setLayerName(obj["name"].toString());
     }
@@ -2203,6 +2210,10 @@ void ArtifactParticleLayer::loadPreset(const QString& presetName)
     params.position =
         defaultEmitterPositionForPreset(presetName, impl_->width, impl_->height);
     addEmitter(params);
+    const QStringList presets = availablePresets();
+    impl_->presetName = presets.contains(presetName)
+        ? presetName
+        : QStringLiteral("fire");
     impl_->rebuildSavedEmitterParamsFromSystem();
     emit particleSystemChanged();
 }
@@ -2231,6 +2242,11 @@ QStringList ArtifactParticleLayer::availablePresets() const
         "confetti",
         "bubbles"
     };
+}
+
+QString ArtifactParticleLayer::presetName() const
+{
+    return impl_ ? impl_->presetName : QStringLiteral("Custom");
 }
 
 std::vector<ArtifactCore::PropertyGroup> ArtifactParticleLayer::getLayerPropertyGroups() const

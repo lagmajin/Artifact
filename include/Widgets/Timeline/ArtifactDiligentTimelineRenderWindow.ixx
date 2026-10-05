@@ -4,6 +4,7 @@ module;
 #include <QPoint>
 #include <QPointF>
 #include <QEvent>
+#include <QImage>
 #include <QPointF>
 #include <QRectF>
 #include <QString>
@@ -44,12 +45,18 @@ struct DiligentTimelineTextVisual {
   ArtifactCore::UniString text;
   QColor color;
   float pixelSize = 11.0f;
+  QString fontFamily;
 };
 
 struct DiligentTimelineWaveformVisual {
   QRectF rect;
   QVector<float> peaks;
   QColor color;
+};
+
+struct DiligentTimelineImageVisual {
+  QRectF rect;
+  QImage image;
 };
 
 struct DiligentTimelineVisualSnapshot {
@@ -59,6 +66,7 @@ struct DiligentTimelineVisualSnapshot {
   QVector<DiligentTimelineTriangleVisual> triangles;
   QVector<DiligentTimelineTextVisual> texts;
   QVector<DiligentTimelineWaveformVisual> waveforms;
+  QVector<DiligentTimelineImageVisual> images;
   quint64 generation = 0;
 };
 

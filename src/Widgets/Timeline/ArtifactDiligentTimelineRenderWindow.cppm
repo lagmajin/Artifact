@@ -27,6 +27,7 @@ module;
 #include <chrono>
 #include <cmath>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <utility>
@@ -92,6 +93,10 @@ public:
       std::make_shared<const DiligentTimelineVisualSnapshot>();
   std::shared_ptr<const DiligentTimelineVisualSnapshot> staticSnapshot_;
   std::shared_ptr<const DiligentTimelineVisualSnapshot> dynamicSnapshot_;
+  QVector<RefCntAutoPtr<ITextureView>> staticImageViews_;
+  quint64 staticImageViewsGeneration_ = std::numeric_limits<quint64>::max();
+  QVector<ArtifactCore::TextStyle> staticTextStyles_;
+  quint64 staticTextStylesGeneration_ = std::numeric_limits<quint64>::max();
   bool layeredSnapshots_ = false;
   Diligent::RefCntAutoPtr<IRenderDevice> device_;
   Diligent::RefCntAutoPtr<IDeviceContext> immediateContext_;
@@ -137,6 +142,10 @@ public:
 
   void releaseGpuResources()
   {
+    staticImageViews_.clear();
+    staticImageViewsGeneration_ = std::numeric_limits<quint64>::max();
+    staticTextStyles_.clear();
+    staticTextStylesGeneration_ = std::numeric_limits<quint64>::max();
     if (immediateContext_) {
       immediateContext_->Flush();
       immediateContext_->WaitForIdle();
@@ -268,6 +277,12 @@ public:
       dynamicSnapshot = dynamicSnapshot_;
       layeredSnapshots = layeredSnapshots_;
     }
+    if (!layeredSnapshots) {
+      staticImageViews_.clear();
+      staticImageViewsGeneration_ = std::numeric_limits<quint64>::max();
+      staticTextStyles_.clear();
+      staticTextStylesGeneration_ = std::numeric_limits<quint64>::max();
+    }
 
     Diligent::ITextureView* rtv = swapChain_->GetCurrentBackBufferRTV();
     immediateContext_->SetRenderTargets(
@@ -314,7 +329,10 @@ public:
       entry.valid = true;
       return entry.value;
     };
-    const auto drawSnapshot = [this, &cachedColor](const DiligentTimelineVisualSnapshot& source) {
+    const auto drawSnapshot = [this, &cachedColor](
+        const DiligentTimelineVisualSnapshot& source,
+        const QVector<RefCntAutoPtr<ITextureView>>* imageViews = nullptr,
+        const QVector<ArtifactCore::TextStyle>* textStyles = nullptr) {
     // TextStyle carries several value fields (including UniString). Reuse one
     // across the snapshot's labels so a static lane does not construct a new
     // style object for every clip and marker on each present.
@@ -326,6 +344,19 @@ public:
           static_cast<float>(visual.rect.width()),
           static_cast<float>(visual.rect.height()),
           cachedColor(visual.color));
+    }
+    for (int imageIndex = 0;
+         imageViews && imageIndex < source.images.size() &&
+         imageIndex < imageViews->size(); ++imageIndex) {
+      const auto& visual = source.images[imageIndex];
+      if ((*imageViews)[imageIndex]) {
+        primitiveRenderer_.drawTextureLocal(
+            static_cast<float>(visual.rect.x()),
+            static_cast<float>(visual.rect.y()),
+            static_cast<float>(visual.rect.width()),
+            static_cast<float>(visual.rect.height()),
+            (*imageViews)[imageIndex], 0.835f);
+      }
     }
     for (const auto& visual : source.lines) {
       primitiveRenderer_.drawThickLineLocal(
@@ -375,19 +406,46 @@ public:
            static_cast<float>(visual.p2.y())},
           cachedColor(visual.color));
     }
-    for (const auto& visual : source.texts) {
-      textStyle.fontSize = visual.pixelSize;
-      textStyle.pixelSize = visual.pixelSize;
+    for (int textIndex = 0; textIndex < source.texts.size(); ++textIndex) {
+      const auto& visual = source.texts[textIndex];
+      const ArtifactCore::TextStyle& style =
+          textStyles && textIndex < textStyles->size()
+              ? (*textStyles)[textIndex]
+              : textStyle;
       primitiveRenderer_.drawGlyphText(
           static_cast<float>(visual.baseline.x()),
           static_cast<float>(visual.baseline.y()),
-          visual.text, textStyle,
+          visual.text, style,
           cachedColor(visual.color));
     }
     };
     if (layeredSnapshots) {
       if (staticSnapshot) {
-        drawSnapshot(*staticSnapshot);
+        if (staticImageViewsGeneration_ != staticSnapshot->generation) {
+          staticImageViews_.clear();
+          staticImageViews_.reserve(staticSnapshot->images.size());
+          for (const auto& visual : staticSnapshot->images) {
+            staticImageViews_.push_back(RefCntAutoPtr<ITextureView>(
+                primitiveRenderer_.textureForImage(visual.image)));
+          }
+          staticImageViewsGeneration_ = staticSnapshot->generation;
+        }
+        if (staticTextStylesGeneration_ != staticSnapshot->generation) {
+          staticTextStyles_.clear();
+          staticTextStyles_.reserve(staticSnapshot->texts.size());
+          for (const auto& visual : staticSnapshot->texts) {
+            ArtifactCore::TextStyle style;
+            style.fontSize = visual.pixelSize;
+            style.pixelSize = visual.pixelSize;
+            if (!visual.fontFamily.isEmpty()) {
+              style.fontFamily = ArtifactCore::UniString(visual.fontFamily);
+            }
+            staticTextStyles_.push_back(std::move(style));
+          }
+          staticTextStylesGeneration_ = staticSnapshot->generation;
+        }
+        drawSnapshot(*staticSnapshot, &staticImageViews_,
+                     &staticTextStyles_);
       }
       if (dynamicSnapshot) {
         drawSnapshot(*dynamicSnapshot);

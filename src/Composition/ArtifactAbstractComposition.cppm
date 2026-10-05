@@ -4920,6 +4920,67 @@ CompositionNodeStore& ArtifactAbstractComposition::nodeStore()
   return impl_->nodeStore_;
 }
 
+bool ArtifactAbstractComposition::setLayerNodeParent(
+    const LayerID& layerId, const QString& parentNodeId)
+{
+  const QString childId = layerId.toString().trimmed();
+  const QString targetId = parentNodeId.trimmed();
+  const auto* childNode = impl_->nodeStore_.node(childId);
+  const auto layer = layerById(layerId);
+  if (childId.isEmpty() || !childNode ||
+      childNode->kind != CompositionNodeKind::Layer || !layer ||
+      childNode->parentId == targetId || childId == targetId) {
+    return false;
+  }
+
+  ArtifactAbstractLayerPtr targetLayer;
+  if (!targetId.isEmpty()) {
+    const auto* targetNode = impl_->nodeStore_.node(targetId);
+    if (!targetNode) return false;
+    targetLayer = layerById(LayerID(targetId));
+    if (!targetLayer && targetNode->kind != CompositionNodeKind::GroupContainer) {
+      return false;
+    }
+
+    // Validate against the complete node hierarchy. Layer::setParentById
+    // only sees layer parents and cannot detect a cycle crossing a standalone
+    // Group Container.
+    QString cursor = targetId;
+    int guard = 0;
+    while (!cursor.isEmpty() && guard++ < 1024) {
+      if (cursor == childId) return false;
+      const auto* cursorNode = impl_->nodeStore_.node(cursor);
+      if (!cursorNode) return false;
+      cursor = cursorNode->parentId;
+    }
+    if (guard >= 1024) return false;
+  }
+
+  const QString previousNodeParent = childNode->parentId;
+  const LayerID previousLayerParent = layer->parentLayerId();
+  if (targetLayer) {
+    layer->setParentById(targetLayer->id());
+  } else {
+    if (!previousLayerParent.isNil()) layer->clearParent();
+    if (!impl_->nodeStore_.setParent(childId, targetId)) {
+      if (!previousLayerParent.isNil()) {
+        layer->setParentById(previousLayerParent);
+      } else if (previousNodeParent != targetId) {
+        impl_->nodeStore_.setParent(childId, previousNodeParent);
+      }
+      return false;
+    }
+  }
+
+  const auto* updatedNode = impl_->nodeStore_.node(childId);
+  if (!updatedNode || updatedNode->parentId != targetId) return false;
+  impl_->invalidateThumbnailCache();
+  Q_EMIT changed();
+  ArtifactCore::globalEventBus().publish(LayerChangedEvent{
+      id().toString(), childId, LayerChangedEvent::ChangeType::Modified});
+  return true;
+}
+
 QString ArtifactAbstractComposition::createGroupContainer(
     const QString& displayName, const QVector<LayerID>& childLayerIds,
     const QString& preferredId)
