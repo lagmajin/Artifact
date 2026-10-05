@@ -3912,9 +3912,9 @@ void ArtifactGlitchEffect::apply(const ImageF32x4RGBAWithCache& src, ImageF32x4R
     }
     int w = src.width();
     int h = src.height();
-    // The shallow source snapshot keeps its backing pixels alive even when
-    // src and dst are the same wrapper. SetCpuImage makes the sole deep copy
-    // and marks the final destination CPU-dirty before row-parallel writes.
+    // The source snapshot is an independent deep copy, including when src
+    // and dst are the same wrapper. SetCpuImage makes the destination copy
+    // and marks it CPU-dirty before row-parallel writes (two copies total).
     auto srcImage = src.image();
     dst.SetCpuImage(srcImage);
     const float* srcPixels = srcImage.rgba32fData();
@@ -3967,9 +3967,9 @@ void ArtifactHalftoneEffect::apply(const ImageF32x4RGBAWithCache& src, ImageF32x
     }
     int w = src.width();
     int h = src.height();
-    // The shallow source snapshot keeps its backing pixels alive even when
-    // src and dst are the same wrapper. SetCpuImage makes the sole deep copy
-    // and marks the final destination CPU-dirty before row-parallel writes.
+    // The source snapshot is an independent deep copy, including when src
+    // and dst are the same wrapper. SetCpuImage makes the destination copy
+    // and marks it CPU-dirty before row-parallel writes (two copies total).
     auto srcImage = src.image();
     dst.SetCpuImage(srcImage);
     const float* srcPixels = srcImage.rgba32fData();
@@ -4030,9 +4030,9 @@ void ArtifactOldTVEffect::apply(const ImageF32x4RGBAWithCache& src, ImageF32x4RG
     }
     int w = src.width();
     int h = src.height();
-    // The shallow source snapshot keeps its backing pixels alive even when
-    // src and dst are the same wrapper. SetCpuImage makes the sole deep copy
-    // and marks the final destination CPU-dirty before row-parallel writes.
+    // The source snapshot is an independent deep copy, including when src
+    // and dst are the same wrapper. SetCpuImage makes the destination copy
+    // and marks it CPU-dirty before row-parallel writes (two copies total).
     auto srcImage = src.image();
     dst.SetCpuImage(srcImage);
     const float* srcPixels = srcImage.rgba32fData();
