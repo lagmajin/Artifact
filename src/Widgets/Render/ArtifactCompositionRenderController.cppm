@@ -4380,7 +4380,7 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer *targetLayer,
         effect->applyConfigured(current, next);
       }
 
-      current = next;
+      current.swap(next);
 
     }
 

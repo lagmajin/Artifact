@@ -827,7 +827,7 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer* targetLayer,
           QRectF(0.0, 0.0, static_cast<qreal>(current.width()),
                  static_cast<qreal>(current.height()))));
       effect->applyConfigured(current, next);
-      current = next;
+      current.swap(next);
     }
 
     mat = current.image().toCVMat();
@@ -1345,7 +1345,7 @@ static bool applyCompositionFinalEffectsToBufferWithEffects(
         QRectF(0.0, 0.0, static_cast<qreal>(current.width()),
                static_cast<qreal>(current.height()))));
     effect->applyConfigured(current, next);
-    current = next;
+    current.swap(next);
   }
 
   buffer = current.image();
