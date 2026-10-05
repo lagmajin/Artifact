@@ -4386,11 +4386,15 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer *targetLayer,
     // an intermediate effect stage from the frame currently being evaluated.
     // The revision stamps the entry so a later parameter or content change can
     // invalidate exactly these frames instead of leaking stale pixels.
-    frameSampler.storeLayerFrame(targetLayer->id().toString(),
-        makeControllerEffectContext(targetLayer).compositionFrame, current,
+    // Publish an independent output before handing the completed CPU buffer
+    // to history. This preserves named-input/lookback retention without an
+    // additional full-frame clone, and retains no intermediate GPU resources.
+    outBuffer->setFromCVMat(current.image().toCVMat());
+    frameSampler.storeLayerFrameOwned(targetLayer->id().toString(),
+        makeControllerEffectContext(targetLayer).compositionFrame,
+        std::move(current.image()),
         targetLayer->effectRevision());
-
-    mat = current.image().toCVMat();
+    return true;
 
   }
 
@@ -12879,6 +12883,16 @@ public:
     if (!blendPipeline_ || !inputSRV || !outputUAV || !scratchUAV) {
       return false;
     }
+    auto* outputTexture = outputUAV->GetTexture();
+    auto* scratchTexture = scratchUAV->GetTexture();
+    if (!outputTexture || !scratchTexture || outputTexture == scratchTexture) {
+      return false;
+    }
+    auto* outputSRV = outputTexture->GetDefaultView(
+        Diligent::TEXTURE_VIEW_SHADER_RESOURCE);
+    auto* scratchSRV = scratchTexture->GetDefaultView(
+        Diligent::TEXTURE_VIEW_SHADER_RESOURCE);
+    if (!outputSRV || !scratchSRV) return false;
     const auto validation = stack.validate();
     const auto segments = stack.segments();
     auto context = renderer_->immediateContext();
@@ -12900,20 +12914,27 @@ public:
       const auto plan = ArtifactCore::PointwiseEffectFusion::makeComputePlan(
           "diligent", "rgba16f", stack.nodes(), segment,
           renderPipeline.width(), renderPipeline.height());
+      // Every segment needs distinct read/write textures. Alternate the two
+      // existing targets instead of copying scratch back after every dispatch.
+      const bool writeScratch = sourceSRV->GetTexture() == outputTexture;
+      auto* destinationUAV = writeScratch ? scratchUAV : outputUAV;
       if (!plan.valid() || !blendPipeline_->applyPointwise(
-              context.RawPtr(), sourceSRV, scratchUAV, parameterBuffer, plan)) {
+              context.RawPtr(), sourceSRV, destinationUAV, parameterBuffer, plan)) {
         return false;
       }
-
+      sourceSRV = writeScratch ? scratchSRV : outputSRV;
+    }
+    // Keep the caller's fixed output contract. Only an odd number of passes
+    // starting on output leaves the final result in scratch and needs a copy.
+    if (sourceSRV->GetTexture() != outputTexture) {
       Diligent::CopyTextureAttribs copyAttrs = {};
-      copyAttrs.pSrcTexture = scratchUAV->GetTexture();
+      copyAttrs.pSrcTexture = sourceSRV->GetTexture();
       copyAttrs.SrcTextureTransitionMode =
           Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
-      copyAttrs.pDstTexture = outputUAV->GetTexture();
+      copyAttrs.pDstTexture = outputTexture;
       copyAttrs.DstTextureTransitionMode =
           Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
       context->CopyTexture(copyAttrs);
-      sourceSRV = renderPipeline.layerFloatSRV();
     }
     return true;
   }

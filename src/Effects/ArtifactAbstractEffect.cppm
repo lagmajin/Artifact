@@ -132,7 +132,8 @@ bool effectProfilingEnabled() {
         return settings.value(QStringLiteral("Diagnostics/EffectProfiling")).toBool();
     }
     const char* value = std::getenv("ARTIFACT_EFFECT_PROFILE");
-    return value && value[0] != '\0' && std::string(value) != "0";
+    return value && value[0] != '\0' &&
+           !(value[0] == '0' && value[1] == '\0');
 }
 
 bool supportsEffectPropertyAnimation(const AbstractProperty& property) {
@@ -351,7 +352,12 @@ void ArtifactAbstractEffect::applyCPUOnly(const ImageF32x4RGBAWithCache& src,
 
 void ArtifactAbstractEffect::applyConfigured(const ImageF32x4RGBAWithCache& src,
                                              ImageF32x4RGBAWithCache& dst) {
-    const auto profileStart = std::chrono::steady_clock::now();
+    // Read once per invocation so live UI toggles still work, while disabled
+    // profiling does not query the clock or format a diagnostic.
+    const bool profilingEnabled = effectProfilingEnabled();
+    const auto profileStart = profilingEnabled
+        ? std::chrono::steady_clock::now()
+        : std::chrono::steady_clock::time_point{};
     const int sourceWidth = src.width();
     const int sourceHeight = src.height();
     apply(src, dst);
@@ -382,7 +388,7 @@ void ArtifactAbstractEffect::applyConfigured(const ImageF32x4RGBAWithCache& src,
         impl_->mode = previousMode;
     }
 
-    if (effectProfilingEnabled()) {
+    if (profilingEnabled) {
         const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - profileStart);
         std::clog << "[EffectProfile] id=" << impl_->id.toQString().toStdString()
@@ -418,11 +424,23 @@ void ArtifactAbstractEffect::applyConfigured(const ImageF32x4RGBAWithCache& src,
     }
 
     ImageF32x4_RGBA& dstImage = dst.image();
-    const ImageF32x4_RGBA srcCopy = src.image().DeepCopy();
+    const ImageF32x4_RGBA& sourceImage = src.image();
     const int width = dstImage.width();
     const int height = dstImage.height();
-    const float* sourcePixels = srcCopy.rgba32fData();
+    const float* sourcePixels = sourceImage.rgba32fData();
     float* effectPixels = dstImage.rgba32fData();
+    // The normal host path uses distinct source/destination buffers. Mask mix
+    // reads the source synchronously and needs no snapshot in that case.
+    // Preserve the old snapshot semantics for in-place/overlapping buffers;
+    // std::less provides a total pointer ordering across separate allocations.
+    std::optional<ImageF32x4_RGBA> sourceSnapshot;
+    const std::less<const float*> before;
+    if (sourcePixels && effectPixels &&
+        before(sourcePixels, effectPixels + dstImage.totalPixels() * 4u) &&
+        before(effectPixels, sourcePixels + sourceImage.totalPixels() * 4u)) {
+        sourceSnapshot.emplace(sourceImage);
+        sourcePixels = sourceSnapshot->rgba32fData();
+    }
 
     // A mask image authored at a different size than the surface is stretched over
     // it rather than discarded: the normalized coordinate of the destination

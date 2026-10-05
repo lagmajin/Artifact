@@ -33,6 +33,7 @@ import Graphics.Compute;
 
 import Artifact.Render.Config;
 import Memory.SharedPtr;
+import Core.ArtifactArray;
 
 namespace Artifact
 {
@@ -1321,6 +1322,10 @@ void ScreenSpaceGIResolveCS(uint3 dispatchId : SV_DispatchThreadID)
   // Separate from effectMask_ so an inverted primary does not invert the
   // additional masks, matching the CPU blend order.
   TextureBundle effectAdditionalMask_;
+  // Owner-lane CPU workspace, bounded by the current pipeline dimensions.
+  // Build once when the additional-mask cache is first used; retain capacity
+  // for later passes and release it with the pipeline on resize/destruction.
+  ArtifactCore::Array<float> effectAdditionalMaskCoverage_;
   std::unique_ptr<ArtifactCore::ComputeExecutor> effectMaskExecutor_;
   RefCntAutoPtr<IBuffer> effectMaskParams_;
   std::unique_ptr<ArtifactCore::ComputeExecutor> vignetteExecutor_;
@@ -1535,6 +1540,7 @@ bool RenderPipeline::initialize(IRenderDevice* device,
   impl_->effectMaskSource_ = {};
   impl_->effectMask_ = {};
   impl_->effectAdditionalMask_ = {};
+  impl_->effectAdditionalMaskCoverage_ = {};
   impl_->layer_ = {};
   impl_->layerFloat_ = {};
   for (auto& matteSource : impl_->matteSources_) {
@@ -1665,19 +1671,15 @@ bool RenderPipeline::initialize(IRenderDevice* device,
    params.angle = std::isfinite(node.parameters[2]) ? node.parameters[2] : 0.0f;
    std::memcpy(mapped, &params, sizeof(params));
    ctx->UnmapBuffer(impl_->hexGridParams_, MAP_WRITE);
-   if (!impl_->hexGridExecutor_->setTextureView("g_OutputTexture", scratchUAV)) {
+   // Generators read no source pixels, so the final UAV is safe even when
+   // inputSRV aliases it. Avoid a scratch dispatch plus full-surface copy.
+   if (!impl_->hexGridExecutor_->setTextureView("g_OutputTexture", outputUAV)) {
     return false;
    }
    impl_->hexGridExecutor_->dispatch(
        ctx, ArtifactCore::ComputeExecutor::makeDispatchAttribs(
                 impl_->width_, impl_->height_, 1, 8, 8, 1),
        RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-   CopyTextureAttribs copy;
-   copy.pSrcTexture = scratchUAV->GetTexture();
-   copy.SrcTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
-   copy.pDstTexture = outputUAV->GetTexture();
-   copy.DstTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
-   ctx->CopyTexture(copy);
    return true;
   }
   if (node.kind == GpuSpatialEffectKind::Voronoi) {
@@ -1724,19 +1726,13 @@ bool RenderPipeline::initialize(IRenderDevice* device,
    params.seed = std::isfinite(node.parameters[3]) ? node.parameters[3] : 0.0f;
    std::memcpy(mapped, &params, sizeof(params));
    ctx->UnmapBuffer(impl_->voronoiParams_, MAP_WRITE);
-   if (!impl_->voronoiExecutor_->setTextureView("g_OutputTexture", scratchUAV)) {
+   if (!impl_->voronoiExecutor_->setTextureView("g_OutputTexture", outputUAV)) {
     return false;
    }
    impl_->voronoiExecutor_->dispatch(
        ctx, ArtifactCore::ComputeExecutor::makeDispatchAttribs(
                 impl_->width_, impl_->height_, 1, 8, 8, 1),
        RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-   CopyTextureAttribs copy;
-   copy.pSrcTexture = scratchUAV->GetTexture();
-   copy.SrcTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
-   copy.pDstTexture = outputUAV->GetTexture();
-   copy.DstTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
-   ctx->CopyTexture(copy);
    return true;
   }
   if (node.kind == GpuSpatialEffectKind::Bricks) {
@@ -1783,19 +1779,13 @@ bool RenderPipeline::initialize(IRenderDevice* device,
    params.offset = std::clamp(node.parameters[3], 0.0f, 1.0f);
    std::memcpy(mapped, &params, sizeof(params));
    ctx->UnmapBuffer(impl_->bricksParams_, MAP_WRITE);
-   if (!impl_->bricksExecutor_->setTextureView("g_OutputTexture", scratchUAV)) {
+   if (!impl_->bricksExecutor_->setTextureView("g_OutputTexture", outputUAV)) {
     return false;
    }
    impl_->bricksExecutor_->dispatch(
        ctx, ArtifactCore::ComputeExecutor::makeDispatchAttribs(
                 impl_->width_, impl_->height_, 1, 8, 8, 1),
        RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-   CopyTextureAttribs copy;
-   copy.pSrcTexture = scratchUAV->GetTexture();
-   copy.SrcTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
-   copy.pDstTexture = outputUAV->GetTexture();
-   copy.DstTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
-   ctx->CopyTexture(copy);
    return true;
   }
   if (node.kind == GpuSpatialEffectKind::Kaleidoscope) {
@@ -1973,19 +1963,24 @@ bool RenderPipeline::initialize(IRenderDevice* device,
       return false;
      }
     }
-    if (!entry.executor->setTextureView("g_OutputTexture", scratchUAV)) {
+    // Filters still need separate input/output surfaces. Registered generators
+    // have no input/history binding and can write directly to the final UAV.
+    auto* dispatchUAV = needsInput ? scratchUAV : outputUAV;
+    if (!entry.executor->setTextureView("g_OutputTexture", dispatchUAV)) {
      return false;
     }
    entry.executor->dispatch(
        ctx, ArtifactCore::ComputeExecutor::makeDispatchAttribs(
                 impl_->width_, impl_->height_, 1, 8, 8, 1),
        RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-   CopyTextureAttribs copy;
-   copy.pSrcTexture = scratchUAV->GetTexture();
-   copy.SrcTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
-   copy.pDstTexture = outputUAV->GetTexture();
-   copy.DstTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
-    ctx->CopyTexture(copy);
+    if (needsInput) {
+     CopyTextureAttribs copy;
+     copy.pSrcTexture = scratchUAV->GetTexture();
+     copy.SrcTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+     copy.pDstTexture = outputUAV->GetTexture();
+     copy.DstTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+     ctx->CopyTexture(copy);
+    }
     return true;
   }
   if (node.kind == GpuSpatialEffectKind::Stripes) {
@@ -2032,19 +2027,13 @@ bool RenderPipeline::initialize(IRenderDevice* device,
    params.offset = std::isfinite(node.parameters[3]) ? node.parameters[3] : 0.0f;
    std::memcpy(mapped, &params, sizeof(params));
    ctx->UnmapBuffer(impl_->stripesParams_, MAP_WRITE);
-   if (!impl_->stripesExecutor_->setTextureView("g_OutputTexture", scratchUAV)) {
+   if (!impl_->stripesExecutor_->setTextureView("g_OutputTexture", outputUAV)) {
     return false;
    }
    impl_->stripesExecutor_->dispatch(
        ctx, ArtifactCore::ComputeExecutor::makeDispatchAttribs(
                 impl_->width_, impl_->height_, 1, 8, 8, 1),
        RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-   CopyTextureAttribs copy;
-   copy.pSrcTexture = scratchUAV->GetTexture();
-   copy.SrcTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
-   copy.pDstTexture = outputUAV->GetTexture();
-   copy.DstTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
-   ctx->CopyTexture(copy);
    return true;
   }
   if (node.kind == GpuSpatialEffectKind::Sharpen) {
@@ -2533,14 +2522,6 @@ bool RenderPipeline::initialize(IRenderDevice* device,
   // lerp degenerates to a pure opacity fade, which is still the correct
   // semantic, so both cases take this path.
   const bool wantsMaskMix = maskSRV != nullptr;
-  std::vector<ArtifactCore::PointwiseFusionSegment> segments;
-  segments.reserve(baseSegments.size());
-  for (const auto& segment : baseSegments) {
-   auto marked = segment;
-   marked.requiresMaskMix = wantsMaskMix;
-   segments.push_back(std::move(marked));
-  }
-
   if (wantsMaskMix) {
    if (!impl_->adjustmentOriginal_.texture) {
     return false;
@@ -2561,7 +2542,9 @@ bool RenderPipeline::initialize(IRenderDevice* device,
   }
 
   bool applied = false;
-  for (const auto& segment : segments) {
+  for (const auto& baseSegment : baseSegments) {
+   auto segment = baseSegment;
+   segment.requiresMaskMix = wantsMaskMix;
    if (segment.nodeCount == 0) {
     continue;
    }
@@ -2627,11 +2610,12 @@ bool RenderPipeline::applyEffectMaskComposite(
    // surface resolution (they are authored 1:1 against it) and must never be
    // inverted along with an inverted primary. Allocated only when the effect
    // actually stacks several masks.
-   std::vector<float> additionalCoverage;
+   auto& additionalCoverage = impl_->effectAdditionalMaskCoverage_;
    if (hasAdditionalMasks) {
     const std::size_t texelCount =
         static_cast<std::size_t>(impl_->width_) * impl_->height_;
-    additionalCoverage.assign(texelCount * 4u, 0.0f);
+    additionalCoverage.resize(texelCount * 4u);
+    additionalCoverage.fill(0.0f);
     for (std::size_t texel = 0; texel < texelCount; ++texel) {
      additionalCoverage[texel * 4u + 3u] = 1.0f;
     }

@@ -43,6 +43,14 @@ public:
                          const ImageF32x4RGBAWithCache& image,
                          std::uint64_t revision = 0);
 
+    /// Transfer a completed CPU image into history after publishing the
+    /// caller's output. No pixel copy; the caller must relinquish writable
+    /// aliases. GPU resources are not retained by the CPU history.
+    void storeLayerFrameOwned(const QString& layerId,
+                              std::int64_t compositionFrame,
+                              ImageF32x4_RGBA&& image,
+                              std::uint64_t revision = 0);
+
     /// Maximum number of past frames to retain per layer.
     void setMaxHistoryFrames(int count) { maxHistoryFrames_ = count; }
     int  maxHistoryFrames() const { return maxHistoryFrames_; }
@@ -111,7 +119,7 @@ private:
 
     struct LayerFrameHistory
     {
-        std::unordered_map<std::int64_t, ImageF32x4RGBAWithCache> frames;
+        std::unordered_map<std::int64_t, ImageF32x4_RGBA> frames;
         // Insertion order, used for O(1) eviction.  Frames are appended in
         // render order and popped from the front, so the front is always the
         // oldest retained frame.  Unlike the previous smallest-key scan this
@@ -123,9 +131,9 @@ private:
         std::unordered_map<std::int64_t, std::uint64_t> revisions;
         std::size_t retainedBytes = 0;
 
-        std::size_t frameBytes(const ImageF32x4RGBAWithCache& image) const;
+        std::size_t frameBytes(const ImageF32x4_RGBA& image) const;
         void insertFrame(std::int64_t frame,
-                         const ImageF32x4RGBAWithCache& image,
+                         ImageF32x4_RGBA&& image,
                          std::uint64_t revision);
         void eraseFrame(std::int64_t frame);
         // Limits are passed in because a nested class cannot reach the

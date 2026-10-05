@@ -5,7 +5,6 @@
 #include <list>
 #include <unordered_map>
 #include <utility>
-#include <vector>
 
 #include <QString>
 #include <QDebug>
@@ -28,7 +27,7 @@ using namespace ArtifactCore;
 // than a per-pixel stride query so the budget tracks the real footprint of
 // what is retained.
 std::size_t ArtifactEffectFrameSampler::LayerFrameHistory::frameBytes(
-    const ImageF32x4RGBAWithCache& image) const
+    const ImageF32x4_RGBA& image) const
 {
     const int width  = image.width();
     const int height = image.height();
@@ -41,7 +40,7 @@ std::size_t ArtifactEffectFrameSampler::LayerFrameHistory::frameBytes(
 
 void ArtifactEffectFrameSampler::LayerFrameHistory::insertFrame(
     std::int64_t                     frame,
-    const ImageF32x4RGBAWithCache&    image,
+    ImageF32x4_RGBA&&                image,
     std::uint64_t                    revision)
 {
     // Re-storing an existing frame must not double count bytes or duplicate
@@ -50,7 +49,7 @@ void ArtifactEffectFrameSampler::LayerFrameHistory::insertFrame(
         eraseFrame(frame);
 
     const std::size_t bytes = frameBytes(image);
-    frames[frame]  = image;
+    frames[frame] = std::move(image);
     revisions[frame] = revision;
     order.push_back(frame);
     retainedBytes += bytes;
@@ -86,8 +85,7 @@ void ArtifactEffectFrameSampler::LayerFrameHistory::trim(int maxFrames,
     // Bounded by frame count, then by bytes.  The front of `order` is the
     // oldest retained frame, so both loops are bounded by how far over the
     // limit we are and each eraseFrame is O(history) at worst.  This runs
-    // only on store, which already copies the frame, so it adds no new
-    // allocation of its own beyond the order node.
+    // only on store, and adds no allocation of its own.
     while (!order.empty() && static_cast<int>(frames.size()) > maxFrames)
     {
         eraseFrame(order.front());
@@ -125,8 +123,21 @@ void ArtifactEffectFrameSampler::storeLayerFrame(
     if (layerId.isEmpty() || maxHistoryFrames_ <= 0)
         return;
 
+    // Preserve independent ownership for callers that keep their image.
+    storeLayerFrameOwned(layerId, compositionFrame, image.image().DeepCopy(), revision);
+}
+
+void ArtifactEffectFrameSampler::storeLayerFrameOwned(
+    const QString&                layerId,
+    const std::int64_t            compositionFrame,
+    ImageF32x4_RGBA&&             image,
+    std::uint64_t                 revision)
+{
+    if (layerId.isEmpty() || maxHistoryFrames_ <= 0)
+        return;
+
     auto& layerHistory = history_[layerId];
-    layerHistory.insertFrame(compositionFrame, image, revision);
+    layerHistory.insertFrame(compositionFrame, std::move(image), revision);
     layerHistory.trim(maxHistoryFrames_, historyByteBudget_);
 }
 
@@ -139,19 +150,23 @@ std::size_t ArtifactEffectFrameSampler::invalidateIfRevisionChanged(
 
     auto& layerHistory = histIt->second;
 
-    // Collect first, then erase.  Erasing while iterating `revisions` would
-    // invalidate the iterator, and eraseFrame also touches that map.
-    std::vector<std::int64_t> stale;
-    for (const auto& [frame, frameRevision] : layerHistory.revisions)
+    // Erasing one unordered_map element preserves all other iterators. Advance
+    // before eraseFrame removes the current revision, avoiding a temporary
+    // collection (and its allocations) on every parameter invalidation.
+    std::size_t dropped = 0;
+    for (auto it = layerHistory.revisions.begin();
+         it != layerHistory.revisions.end();)
     {
-        if (frameRevision != revision)
-            stale.push_back(frame);
+        const auto frame = it->first;
+        const bool stale = it->second != revision;
+        ++it;
+        if (stale) {
+            layerHistory.eraseFrame(frame);
+            ++dropped;
+        }
     }
 
-    for (const std::int64_t frame : stale)
-        layerHistory.eraseFrame(frame);
-
-    return stale.size();
+    return dropped;
 }
 
 std::size_t ArtifactEffectFrameSampler::invalidateLayer(const QString& layerId)
@@ -217,9 +232,9 @@ bool ArtifactEffectFrameSampler::copyFrame(
     if (frameIt == frames.end())
         return false;
 
-    // A stored frame is immutable once recorded, so handing out a const reference
-    // is safe; the caller copies only if it needs to mutate.
-    out = frameIt->second;
+    // Samples remain independent writable images, exactly as with the old
+    // cache-wrapper copy. Upload dirtiness is set explicitly at this boundary.
+    out.SetCpuImage(frameIt->second);
     return true;
 }
 

@@ -1791,6 +1791,20 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
       return false;
     }
 
+    const bool useStaticCache =
+        layerUsesStaticLayerGpuCacheForCompositionView(layer);
+    const bool useGpuTextureCache = layerCacheEnabled && gpuTextureCacheManager &&
+        layerUsesGpuTextureCacheForCompositionView(layer);
+    const bool useSurfaceCache = surfaceCache &&
+        (hasRasterizerEffectsOrMasks(layer) || useGpuTextureCache ||
+         useStaticCache);
+    // This lookup cannot succeed without an entry-owning cache. Avoid the
+    // signature's formatting/property queries when there is nothing to query.
+    // Image source/crop refresh has already run in the caller's image branch.
+    if (!useStaticCache && !useSurfaceCache) {
+      return false;
+    }
+
     QSize surfaceSize = sourceSize;
     if (downsampleForPreview && lod != DetailLevel::High) {
       const float scale = lodScale(lod);
@@ -1814,13 +1828,6 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
                             .arg(sceneLightLift, 0, 'f', 6);
     }
 
-    const bool useStaticCache =
-        layerUsesStaticLayerGpuCacheForCompositionView(layer);
-    const bool useGpuTextureCache = layerCacheEnabled && gpuTextureCacheManager &&
-        layerUsesGpuTextureCacheForCompositionView(layer);
-    const bool useSurfaceCache = surfaceCache &&
-        (hasRasterizerEffectsOrMasks(layer) || useGpuTextureCache ||
-         useStaticCache);
     const QString ownerId = layer->id().toString();
     StaticLayerGpuCacheEntry* staticEntry = nullptr;
     LayerSurfaceCacheEntry* surfaceEntry = nullptr;
