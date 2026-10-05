@@ -4372,13 +4372,10 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer *targetLayer,
       // intermediate, synchronously WaitForIdle for readback, and then upload
       // the result again. Keep this CPU boundary explicit; effects that can
       // remain GPU-resident are handled by the render-pipeline fast paths.
-      if (effect->cpuImpl()) {
-        effect->applyCPUOnly(current, next);
-      } else {
-        // Preserve GPU-only effect semantics until those effects gain a
-        // texture-native render-pipeline contract.
-        effect->applyConfigured(current, next);
-      }
+      // Include override-based CPU references such as Glitch/Halftone/Old TV,
+      // which do not install a cpuImpl adapter. GPU-only effects retain their
+      // configured backend until they gain a texture-native contract.
+      effect->applyToCpuSurface(current, next);
 
       current.swap(next);
 

@@ -22,6 +22,7 @@ public:
 
     ArtifactGlitchEffect();
     void apply(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override;
+    bool supportsCPU() const override { return true; }
     bool supportsGPU() const override { return true; }
     std::uint32_t gpuGenericKey() const override { return kGpuGenericKey; }
 
@@ -46,6 +47,7 @@ public:
 
     ArtifactHalftoneEffect();
     void apply(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override;
+    bool supportsCPU() const override { return true; }
     bool supportsGPU() const override { return true; }
     std::uint32_t gpuGenericKey() const override { return kGpuGenericKey; }
 
@@ -70,6 +72,7 @@ public:
 
     ArtifactOldTVEffect();
     void apply(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override;
+    bool supportsCPU() const override { return true; }
     bool supportsGPU() const override { return true; }
     std::uint32_t gpuGenericKey() const override { return kGpuGenericKey; }
 

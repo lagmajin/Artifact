@@ -200,6 +200,10 @@ ComputeMode ArtifactAbstractEffect::computeMode() const { return impl_->mode; }
 
 void ArtifactAbstractEffect::setComputeMode(ComputeMode mode) { impl_->mode = mode; }
 
+bool ArtifactAbstractEffect::supportsCPU() const {
+    return static_cast<bool>(impl_->cpuImpl_);
+}
+
 void ArtifactAbstractEffect::setAllowOverscan(bool enabled) {
     impl_->allowOverscan = enabled;
 }
@@ -325,12 +329,24 @@ SharedPtr<ImageF32x4_RGBA> ArtifactAbstractEffect::effectMaskImage(int index) co
     return impl_->effectMaskImages[static_cast<std::size_t>(index)];
 }
 
+void ArtifactAbstractEffect::applyToCpuSurface(const ImageF32x4RGBAWithCache& src,
+                                               ImageF32x4RGBAWithCache& dst) {
+    if (supportsCPU()) {
+        applyCPUOnly(src, dst);
+    } else {
+        applyConfigured(src, dst);
+    }
+}
+
 void ArtifactAbstractEffect::applyCPUOnly(const ImageF32x4RGBAWithCache& src,
                                           ImageF32x4RGBAWithCache& dst) {
-    const ComputeMode previousMode = impl_->mode;
+    struct RestoreMode {
+        ComputeMode& mode;
+        ComputeMode previous;
+        ~RestoreMode() { mode = previous; }
+    } restore{impl_->mode, impl_->mode};
     impl_->mode = ComputeMode::CPU;
     applyConfigured(src, dst);
-    impl_->mode = previousMode;
 }
 
 void ArtifactAbstractEffect::applyConfigured(const ImageF32x4RGBAWithCache& src,

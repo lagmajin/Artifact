@@ -3912,10 +3912,13 @@ void ArtifactGlitchEffect::apply(const ImageF32x4RGBAWithCache& src, ImageF32x4R
     }
     int w = src.width();
     int h = src.height();
+    // The shallow source snapshot keeps its backing pixels alive even when
+    // src and dst are the same wrapper. SetCpuImage makes the sole deep copy
+    // and marks the final destination CPU-dirty before row-parallel writes.
     auto srcImage = src.image();
-    auto dstImage = srcImage.DeepCopy();
+    dst.SetCpuImage(srcImage);
     const float* srcPixels = srcImage.rgba32fData();
-    float* dstPixels = dstImage.rgba32fData();
+    float* dstPixels = dst.image().rgba32fData();
 
     ArtifactCore::RandomStream rng(0x474C49544348ull);
     
@@ -3946,7 +3949,6 @@ void ArtifactGlitchEffect::apply(const ImageF32x4RGBAWithCache& src, ImageF32x4R
             dst[3] = c[3];
         }
     });
-    dst = ImageF32x4RGBAWithCache(dstImage);
 }
 
 ArtifactHalftoneEffect::ArtifactHalftoneEffect() {
@@ -3965,15 +3967,18 @@ void ArtifactHalftoneEffect::apply(const ImageF32x4RGBAWithCache& src, ImageF32x
     }
     int w = src.width();
     int h = src.height();
+    // The shallow source snapshot keeps its backing pixels alive even when
+    // src and dst are the same wrapper. SetCpuImage makes the sole deep copy
+    // and marks the final destination CPU-dirty before row-parallel writes.
     auto srcImage = src.image();
-    auto dstImage = srcImage.DeepCopy();
+    dst.SetCpuImage(srcImage);
     const float* srcPixels = srcImage.rgba32fData();
-    float* dstPixels = dstImage.rgba32fData();
+    float* dstPixels = dst.image().rgba32fData();
     
     int dotSize = 8;
     
     const int tileRows = (h + dotSize - 1) / dotSize;
-    // A tile row never overlaps another tile row in dstImage.
+    // A tile row never overlaps another tile row in the destination.
     ArtifactCore::Parallel::For(0, tileRows, w * h, [&](int tileRow) {
         const int y = tileRow * dotSize;
         for (int x = 0; x < w; x += dotSize) {
@@ -4007,7 +4012,6 @@ void ArtifactHalftoneEffect::apply(const ImageF32x4RGBAWithCache& src, ImageF32x
             }
         }
     });
-    dst = ImageF32x4RGBAWithCache(dstImage);
 }
 
 ArtifactOldTVEffect::ArtifactOldTVEffect() {
@@ -4026,10 +4030,13 @@ void ArtifactOldTVEffect::apply(const ImageF32x4RGBAWithCache& src, ImageF32x4RG
     }
     int w = src.width();
     int h = src.height();
+    // The shallow source snapshot keeps its backing pixels alive even when
+    // src and dst are the same wrapper. SetCpuImage makes the sole deep copy
+    // and marks the final destination CPU-dirty before row-parallel writes.
     auto srcImage = src.image();
-    auto dstImage = srcImage.DeepCopy();
+    dst.SetCpuImage(srcImage);
     const float* srcPixels = srcImage.rgba32fData();
-    float* dstPixels = dstImage.rgba32fData();
+    float* dstPixels = dst.image().rgba32fData();
     
     ArtifactCore::RandomStream rng(42);
     
@@ -4050,7 +4057,6 @@ void ArtifactOldTVEffect::apply(const ImageF32x4RGBAWithCache& src, ImageF32x4RG
             dst[3] = c[3];
         }
     });
-    dst = ImageF32x4RGBAWithCache(dstImage);
 }
 
 } // namespace Artifact

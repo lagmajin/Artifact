@@ -221,6 +221,8 @@ public:
     // compute mode
     ComputeMode computeMode() const;
     void setComputeMode(ComputeMode mode);
+    // Override when the CPU reference lives in apply() rather than cpuImpl().
+    virtual bool supportsCPU() const;
     virtual bool supportsGPU() const { return false; }
 
     // Generic-resident key for GpuSpatialEffectKind::Generic nodes. Effects
@@ -301,6 +303,9 @@ public:
         const std::vector<ArtifactAbstractEffectPtr>& effects);
 
     // effect execution
+    // CPU consumers use a known CPU reference without intermediate GPU readback.
+    // Effects with no CPU reference retain their configured backend.
+    void applyToCpuSurface(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst);
     void applyCPUOnly(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst);
     void applyConfigured(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst);
 
