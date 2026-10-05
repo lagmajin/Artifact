@@ -941,7 +941,8 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
               {QStringLiteral("roving"), key.roving},
               {QStringLiteral("anchor"), static_cast<int>(key.anchor)},
               {QStringLiteral("colorLabel"),
-               static_cast<int>(key.colorLabel)}});
+               static_cast<int>(key.colorLabel)},
+              {QStringLiteral("soft"), key.soft}});
         }
         control[deformationParts[2] + QStringLiteral("Keys")] = keys;
         control[deformationParts[2]] = clampedValue;

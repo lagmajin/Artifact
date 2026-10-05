@@ -1361,6 +1361,7 @@ bool applyKeyframePropertySnapshots(const ArtifactCompositionPtr& composition,
       const RationalTime restoredTime(keyframe.time.rescaledTo(scale), scale);
       property->setKeyFrameAnchorAt(restoredTime, keyframe.anchor);
       property->setKeyFrameColorLabelAt(restoredTime, keyframe.colorLabel);
+      property->setKeyFrameSoftAt(restoredTime, keyframe.soft);
     }
     property->setAnimatable(snapshot.animatable);
     layer->setDirty(LayerDirtyFlag::Property);
@@ -1415,6 +1416,7 @@ void shiftAnimatableLayerKeyframes(const ArtifactCompositionPtr& composition,
             keyframe.cp2_x, keyframe.cp2_y, keyframe.roving);
         property->setKeyFrameAnchorAt(shiftedTime, keyframe.anchor);
         property->setKeyFrameColorLabelAt(shiftedTime, keyframe.colorLabel);
+        property->setKeyFrameSoftAt(shiftedTime, keyframe.soft);
       }
     }
   }
@@ -2073,6 +2075,7 @@ bool applyTimelineLayerSlide(const CompositionID& compositionId,
               keyframe.cp2_x, keyframe.cp2_y, keyframe.roving);
           property->setKeyFrameAnchorAt(shiftedTime, keyframe.anchor);
           property->setKeyFrameColorLabelAt(shiftedTime, keyframe.colorLabel);
+          property->setKeyFrameSoftAt(shiftedTime, keyframe.soft);
         }
       }
     }
@@ -2672,6 +2675,7 @@ bool pasteKeyframesToLayers(
                             roving);
       property->setKeyFrameAnchorAt(time, anchorValue);
       property->setKeyFrameColorLabelAt(time, colorLabelValue);
+      property->setKeyFrameSoftAt(time, record.value(QStringLiteral("soft")).toBool(false));
       if (outSelectionKeys) {
         outSelectionKeys->insert(keyframeSelectionKey(
             layer->id(), propertyPath, newFrame));
@@ -2861,6 +2865,7 @@ bool applyInterpolationChangeRecords(
                           keyframe.roving);
     property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
     property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
+    property->setKeyFrameSoftAt(keyframe.time, keyframe.soft);
     layer->setDirty(LayerDirtyFlag::Property);
     layer->changed();
     changedLayerIds.insert(layer->id().toString());
@@ -3710,6 +3715,7 @@ bool applyCurveEditorMove(
                         preservedKeyframe.cp2_y, preservedKeyframe.roving);
   property->setKeyFrameAnchorAt(newTime, preservedKeyframe.anchor);
   property->setKeyFrameColorLabelAt(newTime, preservedKeyframe.colorLabel);
+  property->setKeyFrameSoftAt(newTime, preservedKeyframe.soft);
   layer->setDirty(LayerDirtyFlag::Property);
   layer->changed();
   return true;
@@ -3797,6 +3803,7 @@ bool applyCurveEditorTrackToProperty(
                           keyframe.cp2_y, keyframe.roving);
     property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
     property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
+    property->setKeyFrameSoftAt(keyframe.time, keyframe.soft);
   }
   layer->setDirty(LayerDirtyFlag::Property);
   layer->changed();

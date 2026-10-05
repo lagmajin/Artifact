@@ -6,7 +6,7 @@
     "translators": [
       "Artifact Team"
     ],
-    "lastUpdated": "2026-09-18"
+    "lastUpdated": "2026-10-05"
   },
   "app": {
     "name": "Artifact",
@@ -601,6 +601,13 @@
     }
   },
   "timeline": {
+    "add_soft_keyframe": "ソフトキーをここに追加",
+    "soft_keys": "ソフトキー",
+    "mark_soft_keys": "選択キーをソフト化",
+    "confirm_soft_keys": "選択ソフトキーを確定",
+    "discard_soft_keys": "選択ソフトキーを破棄",
+    "soft_key_state": "ソフトキー：未確定",
+
     "marker": "キーフレーム",
     "kind_audio": "種別: 音声",
     "kind_video": "種別: 映像",

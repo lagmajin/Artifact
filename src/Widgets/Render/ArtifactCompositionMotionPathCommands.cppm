@@ -80,6 +80,7 @@ bool applyMotionPathScale(const ArtifactAbstractLayerPtr &layer,
                             key.roving);
       property->setKeyFrameAnchorAt(time, key.anchor);
       property->setKeyFrameColorLabelAt(time, key.colorLabel);
+      property->setKeyFrameSoftAt(time, key.soft);
     } else {
       property->removeKeyFrame(time);
     }

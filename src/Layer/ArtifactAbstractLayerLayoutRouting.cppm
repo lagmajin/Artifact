@@ -630,6 +630,7 @@ bool ArtifactAbstractLayer::setTransformTimeSourcePropertyValue(
             key.cp1_x, key.cp1_y, key.cp2_x, key.cp2_y, key.roving);
         property->setKeyFrameAnchorAt(currentTime, key.anchor);
         property->setKeyFrameColorLabelAt(currentTime, key.colorLabel);
+        property->setKeyFrameSoftAt(currentTime, key.soft);
       } else {
         property->addKeyFrame(currentTime, number);
       }

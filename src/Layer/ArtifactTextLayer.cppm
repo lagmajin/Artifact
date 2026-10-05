@@ -2644,6 +2644,7 @@ QJsonObject ArtifactTextLayer::toJson() const {
         keyframeObj["roving"] = keyframe.roving;
         keyframeObj["anchor"] = static_cast<int>(keyframe.anchor);
         keyframeObj["colorLabel"] = static_cast<int>(keyframe.colorLabel);
+        keyframeObj[QStringLiteral("soft")] = keyframe.soft;
         keyframeArray.append(keyframeObj);
       }
       obj["text.sourceTextKeyframes"] = keyframeArray;
@@ -2813,6 +2814,7 @@ void ArtifactTextLayer::fromJsonProperties(const QJsonObject &obj) {
         textProp->addKeyFrame(time, textValue, interpolation, cp1_x, cp1_y, cp2_x, cp2_y, roving);
         textProp->setKeyFrameAnchorAt(time, anchor);
         textProp->setKeyFrameColorLabelAt(time, colorLabel);
+        textProp->setKeyFrameSoftAt(time, keyframeObj.value("soft").toBool(false));
       }
     }
   }

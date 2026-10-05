@@ -153,6 +153,7 @@ void restorePropertyKeyframesWidget(
         keyframe.roving);
     property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
     property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
+    property->setKeyFrameSoftAt(keyframe.time, keyframe.soft);
   }
   property->setAnimatable(animatable);
 }

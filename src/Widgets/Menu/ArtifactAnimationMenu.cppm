@@ -129,6 +129,7 @@ private:
        keyframe.roving);
    property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
    property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
+   property->setKeyFrameSoftAt(keyframe.time, keyframe.soft);
   }
   property->setValue(value);
   const bool applied = property->keyFrameCount() == keyframes.size() &&
@@ -142,6 +143,7 @@ private:
         keyframe.roving);
     property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
     property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
+    property->setKeyFrameSoftAt(keyframe.time, keyframe.soft);
    }
    property->setValue(compensationValue);
    return false;
@@ -200,6 +202,7 @@ private:
         keyframe.roving);
     property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
     property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
+    property->setKeyFrameSoftAt(keyframe.time, keyframe.soft);
    }
    property->setValue(before ? change.beforeValue : change.afterValue);
    if (property->keyFrameCount() != keyframes.size() ||

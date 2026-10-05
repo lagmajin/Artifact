@@ -316,6 +316,7 @@ LayerPropertyLookup resolveLayerProperty(
                     static_cast<ArtifactCore::KeyFrame::ColorLabel>(
                         std::clamp(key.value(
                             QStringLiteral("colorLabel")).toInt(), 0, 6)));
+                result.prop->setKeyFrameSoftAt(RationalTime(frame, result.layer->keyframeTimeScale()), key.value(QStringLiteral("soft")).toBool(false));
             }
             break;
         }
@@ -419,6 +420,7 @@ void restorePropertyKeyframes(const ArtifactCore::AbstractPropertyPtr& property,
                               keyframe.cp2_y, keyframe.roving);
         property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
         property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
+        property->setKeyFrameSoftAt(keyframe.time, keyframe.soft);
     }
 }
 
@@ -705,6 +707,7 @@ bool ArtifactTimelineKeyframeModel::moveKeyframe(const CompositionID& compId,
                                  moved.cp2_y, moved.roving);
         lookup.prop->setKeyFrameAnchorAt(toTime, moved.anchor);
         lookup.prop->setKeyFrameColorLabelAt(toTime, moved.colorLabel);
+        lookup.prop->setKeyFrameSoftAt(toTime, moved.soft);
         const auto afterKeyframes = lookup.prop->getKeyFrames();
         if (!commitKeyframeChange(lookup.layer, propertyPath, keyframes,
                                   afterKeyframes, beforeAnimatable,

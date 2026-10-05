@@ -6,7 +6,7 @@
     "translators": [
       "Artifact Team"
     ],
-    "lastUpdated": "2026-09-18"
+    "lastUpdated": "2026-10-05"
   },
   "app": {
     "name": "Artifact",
@@ -601,6 +601,13 @@
     }
   },
   "timeline": {
+    "add_soft_keyframe": "Add Soft Keyframe Here",
+    "soft_keys": "Soft Keys",
+    "mark_soft_keys": "Mark Selected as Soft",
+    "confirm_soft_keys": "Confirm Selected Soft Keys",
+    "discard_soft_keys": "Discard Selected Soft Keys",
+    "soft_key_state": "Soft key: Pending confirmation",
+
     "marker": "Keyframe",
     "kind_audio": "Kind: Audio",
     "kind_video": "Kind: Video",

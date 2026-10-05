@@ -292,6 +292,7 @@ void restoreDeformerControlProperties(ArtifactAbstractLayer* layer,
                 time, static_cast<ArtifactCore::KeyFrame::ColorLabel>(
                     std::clamp(key.value(QStringLiteral("colorLabel")).toInt(),
                                0, 6)));
+            property->setKeyFrameSoftAt(time, key.value(QStringLiteral("soft")).toBool(false));
         }
     }
 }
@@ -515,7 +516,8 @@ void ArtifactPuppetTool::persistLayerData(const LayerID& layerId)
                     {QStringLiteral("roving"), key.roving},
                     {QStringLiteral("anchor"), static_cast<int>(key.anchor)},
                     {QStringLiteral("colorLabel"),
-                     static_cast<int>(key.colorLabel)}});
+                     static_cast<int>(key.colorLabel)},
+                    {QStringLiteral("soft"), key.soft}});
             }
             object[axis + QStringLiteral("Keys")] = keys;
             if (property->hasKeyFrames()) {
@@ -1021,6 +1023,8 @@ bool ArtifactPuppetTool::restorePinPositionAnimation(
                 static_cast<ArtifactCore::KeyFrame::ColorLabel>(
                     std::clamp(frame.value(QStringLiteral("colorLabel"))
                                    .toInt(), 0, 6)));
+            property->setKeyFrameSoftAt(ArtifactCore::RationalTime(value,
+                                           imageLayer->keyframeTimeScale()), frame.value(QStringLiteral("soft")).toBool(false));
         }
         property->setAnimatable(containsAxis && !frames.isEmpty());
         imageLayer->syncDeformation2DControlProperty(path);
@@ -1146,6 +1150,7 @@ void ArtifactPuppetTool::evaluatePinPositionsAtCurrentFrame(
                         static_cast<ArtifactCore::KeyFrame::ColorLabel>(
                             std::clamp(key.value(QStringLiteral("colorLabel"))
                                            .toInt(), 0, 6)));
+                    restored->setKeyFrameSoftAt(keyTime, key.value(QStringLiteral("soft")).toBool(false));
                 }
                 const double evaluated =
                     restored->interpolateValue(time).toDouble();
@@ -1210,6 +1215,7 @@ QJsonObject ArtifactPuppetTool::pinPositionAnimationSnapshot(
                     static_cast<int>(key.anchor);
                 savedKey[QStringLiteral("colorLabel")]
                     = static_cast<int>(key.colorLabel);
+                savedKey[QStringLiteral("soft")] = key.soft;
                 frames.replace(frames.size() - 1, savedKey);
             }
             snapshot[axis] = frames;

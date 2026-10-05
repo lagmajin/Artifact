@@ -1882,6 +1882,8 @@ OfxStatus paramCopy(OfxParamHandle paramTo, OfxParamHandle paramFrom,
           RationalTime::fromFrameCount(frames, static_cast<int64_t>(toRate)),
           key.colorLabel);
     }
+    to->property.setKeyFrameSoftAt(
+        RationalTime::fromFrameCount(frames, static_cast<int64_t>(toRate)), key.soft);
   }
 
   // Carry the static value across so a subsequent paramGetValue on the

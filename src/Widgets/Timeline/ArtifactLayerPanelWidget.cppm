@@ -3428,6 +3428,7 @@ public:
                     time, static_cast<ArtifactCore::KeyFrame::ColorLabel>(
                         std::clamp(key.value(QStringLiteral("colorLabel"))
                                        .toInt(), 0, 6)));
+                property->setKeyFrameSoftAt(time, key.value(QStringLiteral("soft")).toBool(false));
               }
             }
             const bool hasKeys = !savedKeys.isEmpty();

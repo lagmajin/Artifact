@@ -114,6 +114,7 @@ void restoreGizmoPropertyKeys(const ArtifactAbstractLayerPtr &layer,
                             key.roving);
       property->setKeyFrameAnchorAt(key.time, key.anchor);
       property->setKeyFrameColorLabelAt(key.time, key.colorLabel);
+      property->setKeyFrameSoftAt(key.time, key.soft);
     } else {
       property->removeKeyFrame(time);
     }

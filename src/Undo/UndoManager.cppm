@@ -3206,6 +3206,7 @@ bool applyLayerPropertyKeyframeSnapshot(
             property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
             property->setKeyFrameColorLabelAt(keyframe.time,
                                               keyframe.colorLabel);
+            property->setKeyFrameSoftAt(keyframe.time, keyframe.soft);
         }
     }
     if (animatable.has_value()) {
@@ -3246,6 +3247,7 @@ bool applyLayerPropertyKeyframeSnapshot(
             property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
             property->setKeyFrameColorLabelAt(keyframe.time,
                                               keyframe.colorLabel);
+            property->setKeyFrameSoftAt(keyframe.time, keyframe.soft);
         }
         property->setAnimatable(previousAnimatable);
         return false;
@@ -3436,6 +3438,7 @@ bool applyEffectPropertyKeyframeSnapshot(
                               keyframe.roving);
         property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
         property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
+        property->setKeyFrameSoftAt(keyframe.time, keyframe.soft);
     }
     const auto appliedKeyframes = property->getKeyFrames();
     bool applied = appliedKeyframes.size() == keyframes.size();
@@ -3468,6 +3471,7 @@ bool applyEffectPropertyKeyframeSnapshot(
             property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
             property->setKeyFrameColorLabelAt(keyframe.time,
                                               keyframe.colorLabel);
+            property->setKeyFrameSoftAt(keyframe.time, keyframe.soft);
         }
         return false;
     }
@@ -3901,6 +3905,10 @@ bool decodeKeyframes(const QJsonArray& encoded, std::vector<ArtifactCore::KeyFra
                 colorLabel > static_cast<int>(ArtifactCore::KeyFrame::ColorLabel::Gray)) return false;
             keyframe.colorLabel = static_cast<ArtifactCore::KeyFrame::ColorLabel>(colorLabel);
         }
+        if (object.contains(QStringLiteral("soft"))) {
+            if (!object.value(QStringLiteral("soft")).isBool()) return false;
+            keyframe.soft = object.value(QStringLiteral("soft")).toBool();
+        }
         target.push_back(std::move(keyframe));
     }
     return true;
@@ -3992,7 +4000,8 @@ QJsonObject SetEffectPropertyKeyframesCommand::serialize() const {
                 {QStringLiteral("roving"), keyframe.roving},
                 {QStringLiteral("anchor"), static_cast<int>(keyframe.anchor)},
                 {QStringLiteral("colorLabel"),
-                 static_cast<int>(keyframe.colorLabel)}});
+                 static_cast<int>(keyframe.colorLabel)},
+                {QStringLiteral("soft"), keyframe.soft}});
         }
         return values;
     };
@@ -4520,7 +4529,8 @@ bool SetLayerPropertyKeyframesCommand::buildCollaborationOperation(
                 {QStringLiteral("roving"), keyframe.roving},
                 {QStringLiteral("anchor"), static_cast<int>(keyframe.anchor)},
                 {QStringLiteral("colorLabel"),
-                 static_cast<int>(keyframe.colorLabel)}});
+                 static_cast<int>(keyframe.colorLabel)},
+                {QStringLiteral("soft"), keyframe.soft}});
         }
         return result;
     };
@@ -4577,7 +4587,8 @@ QJsonObject SetLayerPropertyKeyframesCommand::serialize() const {
                 {QStringLiteral("roving"), keyframe.roving},
                 {QStringLiteral("anchor"), static_cast<int>(keyframe.anchor)},
                 {QStringLiteral("colorLabel"),
-                 static_cast<int>(keyframe.colorLabel)}});
+                 static_cast<int>(keyframe.colorLabel)},
+                {QStringLiteral("soft"), keyframe.soft}});
         }
         return result;
     };
@@ -8762,6 +8773,7 @@ bool restoreLayerSnapshotForResolutionRemap(
                                   k.cp1_x, k.cp1_y, k.cp2_x, k.cp2_y, k.roving);
                 prop->setKeyFrameAnchorAt(k.time, k.anchor);
                 prop->setKeyFrameColorLabelAt(k.time, k.colorLabel);
+                prop->setKeyFrameSoftAt(k.time, k.soft);
             }
         }
     }
@@ -8941,7 +8953,8 @@ QJsonObject ChangeCompositionResolutionCommand::serialize() const {
                 {QStringLiteral("roving"), keyframe.roving},
                 {QStringLiteral("anchor"), static_cast<int>(keyframe.anchor)},
                 {QStringLiteral("colorLabel"),
-                 static_cast<int>(keyframe.colorLabel)}});
+                 static_cast<int>(keyframe.colorLabel)},
+                {QStringLiteral("soft"), keyframe.soft}});
         }
         return values;
     };

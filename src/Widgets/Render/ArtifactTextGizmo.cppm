@@ -1067,6 +1067,7 @@ bool TextGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRenderer* r
                 property->setKeyFrameAnchorAt(editTime, existing->anchor);
                 property->setKeyFrameColorLabelAt(editTime,
                                                    existing->colorLabel);
+                property->setKeyFrameSoftAt(editTime, existing->soft);
             } else {
                 property->addKeyFrame(editTime, nextValue,
                                       InterpolationType::Linear);
@@ -1460,6 +1461,7 @@ void TextGizmo::handleMouseRelease() {
                             keyframe.time, keyframe.anchor);
                         property->setKeyFrameColorLabelAt(
                             keyframe.time, keyframe.colorLabel);
+                        property->setKeyFrameSoftAt(keyframe.time, keyframe.soft);
                     }
                 } else {
                     property->setValue(dragStartValue_);
@@ -1545,6 +1547,7 @@ bool TextGizmo::cancelInteraction() {
                                               keyframe.anchor);
                 property->setKeyFrameColorLabelAt(keyframe.time,
                                                   keyframe.colorLabel);
+                property->setKeyFrameSoftAt(keyframe.time, keyframe.soft);
             }
         } else {
             property->setValue(before.staticValue);
@@ -1574,6 +1577,7 @@ bool TextGizmo::cancelInteraction() {
                                                       keyframe.anchor);
                         property->setKeyFrameColorLabelAt(
                             keyframe.time, keyframe.colorLabel);
+                        property->setKeyFrameSoftAt(keyframe.time, keyframe.soft);
                     }
                 } else {
                     property->setValue(dragStartValue_);
@@ -1658,6 +1662,7 @@ void TextGizmo::pushTransformUndoIfNeeded() {
                                                   keyframe.anchor);
                     property->setKeyFrameColorLabelAt(keyframe.time,
                                                       keyframe.colorLabel);
+                    property->setKeyFrameSoftAt(keyframe.time, keyframe.soft);
                 }
             } else {
                 property->setValue(before.staticValue);

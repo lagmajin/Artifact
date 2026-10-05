@@ -103,6 +103,7 @@ private:
           keyframe.cp2_x, keyframe.cp2_y, keyframe.roving);
       property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
       property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
+      property->setKeyFrameSoftAt(keyframe.time, keyframe.soft);
       if (record.propertyPath.startsWith(QStringLiteral("deformation2D."))) {
         layer->syncDeformation2DControlProperty(record.propertyPath);
       }
@@ -170,6 +171,7 @@ private:
           keyframe.cp2_x, keyframe.cp2_y, keyframe.roving);
       property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
       property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
+      property->setKeyFrameSoftAt(keyframe.time, keyframe.soft);
       if (record.propertyPath.startsWith(QStringLiteral("deformation2D."))) {
         layer->syncDeformation2DControlProperty(record.propertyPath);
       }

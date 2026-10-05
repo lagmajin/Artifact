@@ -784,6 +784,7 @@ void restorePropertyKeyframes(
                           keyframe.cp2_y, keyframe.roving);
     property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
     property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
+    property->setKeyFrameSoftAt(keyframe.time, keyframe.soft);
   }
 }
 
@@ -1211,6 +1212,7 @@ bool applyKeyframePropertySnapshots(
       const RationalTime restoredTime(keyframe.time.rescaledTo(scale), scale);
       property->setKeyFrameAnchorAt(restoredTime, keyframe.anchor);
       property->setKeyFrameColorLabelAt(restoredTime, keyframe.colorLabel);
+      property->setKeyFrameSoftAt(restoredTime, keyframe.soft);
     }
     property->setAnimatable(snapshot.animatable);
     if (snapshot.propertyPath.startsWith(QStringLiteral("deformation2D."))) {
@@ -1271,6 +1273,7 @@ void shiftAnimatableLayerKeyframes(const ArtifactCompositionPtr &composition,
         const RationalTime newTime(newFrame, scale);
         property->setKeyFrameAnchorAt(newTime, keyframe.anchor);
         property->setKeyFrameColorLabelAt(newTime, keyframe.colorLabel);
+        property->setKeyFrameSoftAt(newTime, keyframe.soft);
       }
     }
   }
@@ -1302,6 +1305,7 @@ void shiftAnimatableLayerKeyframes(const ArtifactCompositionPtr &composition,
                 keyframe.cp2_y, keyframe.roving);
             property->setKeyFrameAnchorAt(newTime, keyframe.anchor);
             property->setKeyFrameColorLabelAt(newTime, keyframe.colorLabel);
+            property->setKeyFrameSoftAt(newTime, keyframe.soft);
           }
           layer->syncDeformation2DControlProperty(path);
         }
@@ -1962,7 +1966,7 @@ bool sameKeyframeMarkerVisual(
          lhs.incomingBezier == rhs.incomingBezier &&
          lhs.outgoingBezier == rhs.outgoingBezier &&
          lhs.bezier == rhs.bezier &&
-         lhs.roving == rhs.roving &&
+         lhs.roving == rhs.roving && lhs.soft == rhs.soft &&
          lhs.interpolation == rhs.interpolation &&
          lhs.anchor == rhs.anchor &&
          lhs.color == rhs.color && lhs.label == rhs.label &&
@@ -2027,6 +2031,7 @@ struct SelectedKeyframeRecord {
   float cp2_x = 0.58f;
   float cp2_y = 1.0f;
   bool roving = false;
+  bool soft = false;
 };
 
 QString selectedKeyframeRecordGroupKey(const SelectedKeyframeRecord &record) {
@@ -2087,6 +2092,7 @@ QVector<SelectedKeyframeRecord> collectSelectedKeyframeRecords(
         it->cp2_x,
         it->cp2_y,
         it->roving,
+        it->soft,
     });
   }
 
@@ -2233,6 +2239,7 @@ bool cleanNearDuplicateKeyframesForProperty(
                           keyframe.roving);
     property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
     property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
+    property->setKeyFrameSoftAt(keyframe.time, keyframe.soft);
   }
 
   if (outRemovedCount) {
@@ -2400,6 +2407,7 @@ bool applyEvenKeyframeDistribution(
       keyframe.value = record.value.isValid() ? record.value : property->getValue();
       keyframe.interpolation = record.interpolation;
       keyframe.colorLabel = record.colorLabel;
+      keyframe.soft = record.soft;
       keyframe.anchor = record.anchor;
       keyframe.cp1_x = record.cp1_x;
       keyframe.cp1_y = record.cp1_y;
@@ -2431,9 +2439,9 @@ bool applyEvenKeyframeDistribution(
           keyframe.value.isValid() ? keyframe.value : property->getValue(),
           keyframe.interpolation, keyframe.cp1_x, keyframe.cp1_y,
           keyframe.cp2_x, keyframe.cp2_y, keyframe.roving);
-      property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
       property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
       property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
+      property->setKeyFrameSoftAt(keyframe.time, keyframe.soft);
     }
 
     layer->changed();
@@ -2520,6 +2528,7 @@ bool repeatSelectedKeyframeRecords(
         keyframe.value = record.value.isValid() ? record.value : property->getValue();
         keyframe.interpolation = record.interpolation;
         keyframe.colorLabel = record.colorLabel;
+        keyframe.soft = record.soft;
         keyframe.anchor = record.anchor;
         keyframe.cp1_x = record.cp1_x;
         keyframe.cp1_y = record.cp1_y;
@@ -2535,6 +2544,7 @@ bool repeatSelectedKeyframeRecords(
                               keyframe.cp1_x, keyframe.cp1_y, keyframe.cp2_x,
                               keyframe.cp2_y, keyframe.roving);
         property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
+        property->setKeyFrameSoftAt(keyframe.time, keyframe.soft);
         property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
         if (outSelectionKeys) {
           outSelectionKeys->insert(keyframeSelectionKey(
@@ -2716,6 +2726,7 @@ bool applySelectedKeyframeRangeTransform(
           options);
       keyframe.interpolation = record.interpolation;
       keyframe.colorLabel = record.colorLabel;
+      keyframe.soft = record.soft;
       keyframe.anchor = record.anchor;
       keyframe.cp1_x = record.cp1_x;
       keyframe.cp1_y = record.cp1_y;
@@ -2735,6 +2746,7 @@ bool applySelectedKeyframeRangeTransform(
                             keyframe.roving);
       property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
       property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
+      property->setKeyFrameSoftAt(keyframe.time, keyframe.soft);
       if (outSelectionKeys) {
         outSelectionKeys->insert(keyframeSelectionKey(
             groupRecords.front().layerId, groupRecords.front().propertyPath,
@@ -3065,6 +3077,9 @@ QString formatMarkerTooltip(
          selectionText +
          QStringLiteral("\n") + relationText + QStringLiteral("\n") +
          hoverText;
+  if (marker.soft) {
+    tooltip += QStringLiteral("\n") + tt("timeline.soft_key_state", "Soft key: Pending confirmation");
+  }
   if (marker.selected) {
     tooltip += QStringLiteral("\n") +
         tt("timeline.shortcuts_keyframe",
@@ -4191,6 +4206,7 @@ collectKeyframeMarkers(const ArtifactCompositionPtr &composition,
           keyframeColorLabelColor(keyframe.colorLabel);
       ArtifactTimelineTrackPainterView::KeyframeMarkerVisual marker;
       marker.layerId = layer->id();
+      marker.soft = keyframe.soft;
       marker.propertyPath = propertyPath;
       marker.trackIndex = trackIndex;
       marker.frame = static_cast<double>(frame);
@@ -4404,6 +4420,7 @@ QJsonArray serializeSelectedKeyframeMarkers(
                   static_cast<int>(it->interpolation));
     record.insert(QStringLiteral("anchor"), static_cast<int>(it->anchor));
     record.insert(QStringLiteral("colorLabel"), static_cast<int>(it->colorLabel));
+    record.insert(QStringLiteral("soft"), it->soft);
     record.insert(QStringLiteral("roving"), it->roving);
     record.insert(QStringLiteral("cp1_x"), it->cp1_x);
     record.insert(QStringLiteral("cp1_y"), it->cp1_y);
@@ -4534,6 +4551,7 @@ bool pasteKeyframesToLayers(
                             roving);
       property->setKeyFrameAnchorAt(time, anchorValue);
       property->setKeyFrameColorLabelAt(time, colorLabelValue);
+      property->setKeyFrameSoftAt(time, record.value(QStringLiteral("soft")).toBool(false));
       if (outSelectionKeys) {
         outSelectionKeys->insert(
             keyframeSelectionKey(layer->id(), propertyPath, newFrame));
@@ -5473,6 +5491,7 @@ collectAllKeyframeMarkersForLayers(
         for (const auto &keyframe : keyframes) {
           ArtifactTimelineTrackPainterView::KeyframeMarkerVisual marker;
           marker.layerId = layer->id();
+          marker.soft = keyframe.soft;
           marker.propertyPath = property->getName();
           marker.frame = static_cast<double>(
               keyframe.time.rescaledTo(keyframe.time.scale()));
@@ -5500,6 +5519,7 @@ collectAllKeyframeMarkersForLayers(
         for (const auto& keyframe : property->getKeyFrames()) {
           ArtifactTimelineTrackPainterView::KeyframeMarkerVisual marker;
           marker.layerId = layer->id();
+          marker.soft = keyframe.soft;
           marker.propertyPath = path;
           marker.frame = static_cast<double>(
               keyframe.time.rescaledTo(keyframe.time.scale()));
@@ -5915,6 +5935,101 @@ bool ArtifactTimelineTrackPainterView::deleteSelectedKeyframeMarkers() {
           .arg(removedCount)
           .arg(formatKeyframeNoun(removedCount)));
   update();
+  return true;
+}
+
+bool ArtifactTimelineTrackPainterView::editSoftKeyframes(
+    const QVector<KeyframeMarkerVisual>& targets,
+    bool soft, bool discard, bool addMissing) {
+  if (!impl_ || targets.isEmpty()) return false;
+  ArtifactCompositionPtr composition;
+  if (auto* service = ArtifactProjectService::instance()) {
+    composition = service->currentComposition().lock();
+  }
+  if (!composition) return false;
+  auto refs = collectPropertyRefsFromMarkers(targets);
+  refs.erase(std::remove_if(refs.begin(), refs.end(), [&composition](const auto& ref) {
+    const auto layer = composition->layerById(ref.layerId);
+    return !layer || layer->isLocked();
+  }), refs.end());
+  const auto before = captureKeyframePropertySnapshots(composition, refs);
+  auto after = before;
+  const QSet<QString> beforeSelection = impl_->selectedMarkerKeys_;
+  QSet<QString> afterSelection = beforeSelection;
+  bool changed = false;
+  for (const auto& marker : targets) {
+    const auto layer = composition->layerById(marker.layerId);
+    if (!layer || layer->isLocked()) continue;
+    const auto property = findLayerPropertyByPath(layer, marker.propertyPath);
+    if (!property || !property->isAnimatable()) continue;
+    const RationalTime time(static_cast<qint64>(std::llround(marker.frame)),
+                            timelineFrameRateScale(composition));
+    for (auto& snapshot : after) {
+      if (snapshot.layerId != marker.layerId ||
+          snapshot.propertyPath != marker.propertyPath) continue;
+      auto key = std::find_if(snapshot.keyframes.begin(), snapshot.keyframes.end(),
+          [&time](const auto& value) { return value.time == time; });
+      if (addMissing) {
+        // Adding a provisional key must never replace an existing final key.
+        if (key != snapshot.keyframes.end()) continue;
+        ArtifactCore::KeyFrame added;
+        added.time = time;
+        added.value = property->interpolateValue(time);
+        if (!added.value.isValid()) added.value = property->getValue();
+        added.soft = true;
+        snapshot.keyframes.push_back(added);
+        changed = true;
+      } else if (key != snapshot.keyframes.end()) {
+        if (discard) {
+          if (!key->soft) continue;
+          snapshot.keyframes.erase(key);
+          afterSelection.remove(keyframeSelectionKey(marker.layerId, marker.propertyPath,
+              static_cast<qint64>(std::llround(marker.frame))));
+          changed = true;
+        } else if (key->soft != soft) {
+          key->soft = soft;
+          changed = true;
+        }
+      }
+    }
+  }
+  if (!changed) return false;
+  QPointer<ArtifactTimelineTrackPainterView> self(this);
+  const auto refresh = [self, composition](const QSet<QString>& selection) {
+    if (self) {
+      ArtifactLayerSelectionManager* selectionManager = nullptr;
+      if (auto* app = ArtifactApplicationManager::instance()) {
+        selectionManager = app->layerSelectionManager();
+      }
+      self->syncSelectionState(composition, selectionManager,
+                               self->impl_->trackRows_, true);
+      self->setSelectedKeyframeKeys(selection);
+    }
+  };
+  const auto restore = [composition, refresh](const auto& snapshots,
+                                              const QSet<QString>& selection) {
+    const bool applied = applyKeyframePropertySnapshots(composition, snapshots);
+    refresh(selection);
+    return applied;
+  };
+  if (auto* manager = UndoManager::instance()) {
+    const QString label = addMissing ? QStringLiteral("Add Soft Keyframe")
+        : discard ? QStringLiteral("Discard Soft Keyframes")
+        : soft ? QStringLiteral("Mark Soft Keyframes")
+               : QStringLiteral("Confirm Soft Keyframes");
+    if (!pushTimelineKeyframeSnapshotWithRollback(
+            manager, std::make_unique<TimelineKeyframeSnapshotCommand>(label,
+                [restore, after, afterSelection]() { return restore(after, afterSelection); },
+                [restore, before, beforeSelection]() { return restore(before, beforeSelection); }),
+            composition, before)) {
+      restore(before, beforeSelection);
+      return false;
+    }
+  } else if (!restore(after, afterSelection)) {
+    restore(before, beforeSelection);
+    return false;
+  }
+  refresh(afterSelection);
   return true;
 }
 
@@ -7468,6 +7583,13 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
       p.setPen(QPen(outline, marker.selected ? 1.1 : 0.9));
       p.setBrush(Qt::NoBrush);
       p.drawRoundedRect(tagRect.adjusted(0.4, 0.4, -0.4, -0.4), 1.8, 1.8);
+    }
+    if (marker.soft) {
+      // A hollow, dashed inset keeps provisional state visible even selected.
+      p.setPen(QPen(theme.text, 1.0, Qt::DashLine));
+      p.setBrush(theme.background);
+      p.drawPolygon(keyframeShapePolygon(
+          diamondRect.adjusted(2.0, 2.0, -2.0, -2.0), marker.interpolation));
     }
     if (marker.anchor != ArtifactCore::KeyFrame::Anchor::Absolute) {
       QColor anchorColor = marker.selected ? QColor(240, 213, 138)
@@ -9345,6 +9467,7 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
      setActionIcon(jumpToMarkerAct, QStringLiteral("timeline_keyframe_select"));
    }
   QAction *addKeyframeAct = nullptr;
+  QAction *addSoftKeyframeAct = nullptr;
   QAction *removeKeyframeAct = nullptr;
   QAction *editSourceTextAct = nullptr;
   const bool isSourceTextProperty =
@@ -9370,6 +9493,9 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
                            : tt("timeline.remove_keyframe_at_playhead",
                                 "Remove Keyframe at Playhead"));
     setActionIcon(addKeyframeAct, QStringLiteral("timeline_keyframe_add"));
+    addSoftKeyframeAct = menu.addAction(
+        tt("timeline.add_soft_keyframe", "Add Soft Keyframe Here"));
+    setActionIcon(addSoftKeyframeAct, QStringLiteral("timeline_keyframe_add"));
     setActionIcon(removeKeyframeAct, QStringLiteral("timeline_keyframe_remove"));
   }
 
@@ -9590,6 +9716,26 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
     setActionIcon(unifyTangentsAct, QStringLiteral("timeline_keyframe_interpolation"));
   }
   QAction *rovingOnAct = nullptr;
+  QAction *markSoftAct = nullptr;
+  QAction *confirmSoftAct = nullptr;
+  QAction *discardSoftAct = nullptr;
+  if (!selectedMarkers.isEmpty()) {
+    QMenu* softMenu = menu.addMenu(tt("timeline.soft_keys", "Soft Keys"));
+    setMenuIcon(softMenu, QStringLiteral("timeline_keyframe_select"));
+    markSoftAct = softMenu->addAction(tt("timeline.mark_soft_keys", "Mark Selected as Soft"));
+    confirmSoftAct = softMenu->addAction(tt("timeline.confirm_soft_keys", "Confirm Selected Soft Keys"));
+    discardSoftAct = softMenu->addAction(tt("timeline.discard_soft_keys", "Discard Selected Soft Keys"));
+    const bool anySoft = std::any_of(selectedMarkers.cbegin(), selectedMarkers.cend(),
+        [](const auto& marker) { return marker.soft; });
+    const bool anyFinal = std::any_of(selectedMarkers.cbegin(), selectedMarkers.cend(),
+        [](const auto& marker) { return !marker.soft; });
+    markSoftAct->setEnabled(anyFinal);
+    confirmSoftAct->setEnabled(anySoft);
+    discardSoftAct->setEnabled(anySoft);
+    setActionIcon(markSoftAct, QStringLiteral("timeline_keyframe_select"));
+    setActionIcon(confirmSoftAct, QStringLiteral("timeline_keyframe_add"));
+    setActionIcon(discardSoftAct, QStringLiteral("timeline_keyframe_remove"));
+  }
   QAction *rovingOffAct = nullptr;
   QMenu *rovingMenu = nullptr;
   if (!interpolationTargets.isEmpty()) {
@@ -10031,6 +10177,25 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
                     : QStringLiteral("Unified tangents on selected keyframes"));
       update();
     }
+    event->accept();
+    return;
+  }
+
+  if (markSoftAct && (chosen == markSoftAct || chosen == confirmSoftAct ||
+                     chosen == discardSoftAct)) {
+    editSoftKeyframes(selectedMarkers, chosen == markSoftAct,
+                      chosen == discardSoftAct);
+    event->accept();
+    return;
+  }
+  if (addSoftKeyframeAct && chosen == addSoftKeyframeAct) {
+    KeyframeMarkerVisual target;
+    target.layerId = targetLayerId;
+    target.propertyPath = targetPropertyPath;
+    target.frame = static_cast<double>(contextFrame);
+    QVector<KeyframeMarkerVisual> targets;
+    targets.push_back(target);
+    editSoftKeyframes(targets, true, false, true);
     event->accept();
     return;
   }

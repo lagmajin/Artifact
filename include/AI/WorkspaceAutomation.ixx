@@ -2118,6 +2118,7 @@ private:
             item.insert(QStringLiteral("roving"), kf.roving);
             item.insert(QStringLiteral("anchor"), static_cast<int>(kf.anchor));
             item.insert(QStringLiteral("colorLabel"), static_cast<int>(kf.colorLabel));
+            item.insert(QStringLiteral("soft"), kf.soft);
             frames.append(item);
         }
         return frames;
@@ -2187,6 +2188,7 @@ private:
             keyframe.cp2_x = entry.value(QStringLiteral("cp2_x"), 0.58).toFloat();
             keyframe.cp2_y = entry.value(QStringLiteral("cp2_y"), 1.0).toFloat();
             keyframe.roving = entry.value(QStringLiteral("roving"), false).toBool();
+            keyframe.soft = entry.value(QStringLiteral("soft"), false).toBool();
             keyframe.anchor = static_cast<ArtifactCore::KeyFrame::Anchor>(
                 entry.value(QStringLiteral("anchor"),
                             static_cast<int>(ArtifactCore::KeyFrame::Anchor::Absolute)).toInt());

@@ -2546,7 +2546,8 @@ bool ArtifactAbstractLayer::syncDeformation2DControlProperty(
           {QStringLiteral("roving"), key.roving},
           {QStringLiteral("anchor"), static_cast<int>(key.anchor)},
           {QStringLiteral("colorLabel"),
-           static_cast<int>(key.colorLabel)}});
+           static_cast<int>(key.colorLabel)},
+          {QStringLiteral("soft"), key.soft}});
     }
     control[parts[2] + QStringLiteral("Keys")] = keys;
     if (property->hasKeyFrames()) {

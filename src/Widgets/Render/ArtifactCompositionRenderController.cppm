@@ -602,6 +602,7 @@ void applyLiveGizmoTransform(const ArtifactAbstractLayerPtr &layer,
                                 key.roving);
           property->setKeyFrameAnchorAt(time, key.anchor);
           property->setKeyFrameColorLabelAt(time, key.colorLabel);
+          property->setKeyFrameSoftAt(time, key.soft);
           return;
         }
       }
@@ -12242,6 +12243,7 @@ public:
       ArtifactCore::PointwiseEffectStack pointwiseStack;
       bool canApplyPointwise = true;
       bool pointwiseApplied = false;
+      bool spatialAdjustmentApplied = false;
       // Pointwise processing operates on the full accumulated surface, so the
       // adjustment's mask and opacity are applied *inside* the shader as a lerp
       // against the untouched accumulation (mask*opacity as the factor).  This
@@ -12290,7 +12292,9 @@ public:
           key.contentHash = adjustmentMaskContentHash(layer, maskFrame);
           if (!adjustmentMaskCache_.isNull() &&
               adjustmentMaskCacheKey_.matches(key)) {
-            return adjustmentMaskCache_.copy();
+            // Upload only reads constBits; retain the implicitly shared cache
+            // instead of cloning the full mask on every unchanged redraw.
+            return adjustmentMaskCache_;
           }
           QImage rasterized = renderAdjustmentMaskToImage(
               layer, key.width, key.height, maskFrame);
@@ -12343,11 +12347,29 @@ public:
         if (!effect || !effect->isEnabled()) {
           continue;
         }
-        if (effect->pipelineStage() != EffectPipelineStage::Rasterizer ||
-            (!exposure && !hueAndSaturation && !levels && !brightness &&
-             !whiteBalance && !invert && !grayscale)) {
+        if (effect->pipelineStage() != EffectPipelineStage::Rasterizer) {
           canApplyPointwise = false;
           break;
+        }
+        if (!exposure && !hueAndSaturation && !levels && !brightness &&
+            !whiteBalance && !invert && !grayscale) {
+          // Reuse the effect-owned pointwise contract (currently ChannelMixer)
+          // rather than duplicating its matrix and unsupported-mode checks.
+          // Per-effect scope is distinct from the adjustment layer's mask, so
+          // keep those variants on the established path. New contributors are
+          // limited to Normal blend until the adjustment fold is generalized.
+          if (msaaColorRTV || effect->computeMode() == ComputeMode::CPU ||
+              effect->gpuRasterEffectDomain() != GpuRasterEffectDomain::Pointwise ||
+              effect->hasEffectRegion() || effect->maskEnabled() ||
+              effect->effectMaskImageCount() > 0 || effect->mix() < 1.0f ||
+              ArtifactCore::toBlendMode(layer->layerBlendType()) !=
+                  ArtifactCore::BlendMode::Normal ||
+              !effect->appendGpuPointwiseNodes(pointwiseStack, parameterSlot) ||
+              parameterSlot > ArtifactCore::PointwiseEffectStack::kMaxNodeParameterSlot) {
+            canApplyPointwise = false;
+            break;
+          }
+          continue;
         }
         if (exposure) {
           pointwiseStack.addNode(
@@ -12536,18 +12558,106 @@ public:
         }
       }
       if (!pointwiseApplied) {
-        if (!pointwiseStack.nodes().empty()) {
-          ++adjustmentFallbackCount_;
+        // Start with full-quality, unscoped Blur stacks. Spatial
+        // processing must preserve the accumulated backdrop across failure;
+        // preflight the complete stack before touching it, then keep a GPU-only
+        // snapshot for rollback. Draft scaling, layer/effect masks, temporal
+        // nodes and non-Normal blend retain the existing fallback semantics.
+        const auto trySpatialAdjustment = [&]() {
+          if (!renderPipeline || msaaColorRTV || hasNonIdentityTransform || layer->hasMasks() ||
+              std::abs(layer->opacity() - 1.0f) > 1.0e-6f ||
+              lod != DetailLevel::High || viewportInteracting_ ||
+              previewDownsample_ >= interactivePreviewDownsampleFloor_ ||
+              std::abs(static_cast<float>(renderPipeline->width()) - cw) > 0.5f ||
+              std::abs(static_cast<float>(renderPipeline->height()) - ch) > 0.5f ||
+              ArtifactCore::toBlendMode(layer->layerBlendType()) !=
+                  ArtifactCore::BlendMode::Normal) {
+            return false;
+          }
+          GpuSpatialEffectStack spatial;
+          for (const auto& effect : layer->getEffects()) {
+            if (!effect || !effect->isEnabled()) continue;
+            const std::size_t firstNode = spatial.count;
+            if (effect->pipelineStage() != EffectPipelineStage::Rasterizer ||
+                effect->computeMode() == ComputeMode::CPU ||
+                effect->gpuRasterEffectDomain() != GpuRasterEffectDomain::Spatial ||
+                effect->hasEffectRegion() || effect->maskEnabled() ||
+                effect->effectMaskImageCount() > 0 || effect->mix() < 1.0f ||
+                effect->allowOverscan() || !effect->appendGpuSpatialNodes(spatial)) {
+              return false;
+            }
+            if (spatial.count == firstNode) return false;
+            // The CPU Blur uses the primary kernel size for every iteration,
+            // including its secondary EdgePreserving pass. Do not widen the
+            // path when the resident ceil(3*sigma) support would differ.
+            const float primarySigma = spatial.nodes[firstNode].parameters[0];
+            if (!std::isfinite(primarySigma) || primarySigma <= 0.0f ||
+                primarySigma >= 3.0f) return false;
+            const int cpuRadius =
+                (std::max(3, static_cast<int>(primarySigma * 6.0f) | 1) - 1) / 2;
+            for (std::size_t index = firstNode; index < spatial.count; ++index) {
+              const float sigma = spatial.nodes[index].parameters[0];
+              if (!std::isfinite(sigma) || sigma <= 0.0f || sigma >= 3.0f ||
+                  static_cast<int>(std::ceil(std::max(0.1f, sigma) * 3.0f)) !=
+                      cpuRadius) return false;
+            }
+          }
+          if (spatial.count == 0) return false;
+          for (std::size_t index = 0; index < spatial.count; ++index) {
+            const auto& node = spatial.nodes[index];
+            // Sharpen's straight-alpha/threshold contract differs from the
+            // resident shader; retain its established fallback here.
+            if (node.historyFrameOffset != 0 ||
+                node.kind != GpuSpatialEffectKind::SeparableGaussianBlur) {
+              return false;
+            }
+          }
+          const auto context = renderer_->immediateContext();
+          if (!context || !renderPipeline->accumSRV() ||
+              !renderPipeline->accumUAV() || !renderPipeline->tempUAV()) {
+            return false;
+          }
+          renderer_->flush();
+          renderer_->unbindColorTargetsForCompute();
+          auto* original = renderPipeline->snapshotForEffectMask(
+              context.RawPtr(), renderPipeline->accumSRV());
+          if (!original) return false;
+          for (std::size_t index = 0; index < spatial.count; ++index) {
+            if (!renderPipeline->applySpatialEffect(
+                    context.RawPtr(), renderPipeline->accumSRV(),
+                    renderPipeline->tempUAV(), renderPipeline->accumUAV(),
+                    spatial.nodes[index])) {
+              Diligent::CopyTextureAttribs rollback{};
+              rollback.pSrcTexture = original->GetTexture();
+              rollback.SrcTextureTransitionMode =
+                  Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+              rollback.pDstTexture = renderPipeline->accumUAV()->GetTexture();
+              rollback.DstTextureTransitionMode =
+                  Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+              context->CopyTexture(rollback);
+              return false;
+            }
+          }
+          return true;
+        };
+        spatialAdjustmentApplied = trySpatialAdjustment();
+        if (spatialAdjustmentApplied) {
+          renderer_->drawSprite(0.0f, 0.0f, rcw, rch,
+                                renderPipeline->accumSRV(), 1.0f);
+        } else {
+          if (!pointwiseStack.nodes().empty()) {
+            ++adjustmentFallbackCount_;
+          }
+          renderer_->drawSprite(0.0f, 0.0f, rcw, rch, accumSRV, 1.0f);
         }
-        renderer_->drawSprite(0.0f, 0.0f, rcw, rch, accumSRV, 1.0f);
       }
 
       renderer_->setCanvasSize(cw, ch);
       renderer_->setZoom(savedZoom);
       renderer_->setPan(savedPanX, savedPanY);
 
-      if (pointwiseApplied) {
-        ++pointwiseAppliedCount_;
+      if (pointwiseApplied || spatialAdjustmentApplied) {
+        if (pointwiseApplied) ++pointwiseAppliedCount_;
         renderer_->flush();
         renderer_->setOverrideDSV(nullptr);
         renderer_->setOverrideRTV(nullptr);

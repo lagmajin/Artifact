@@ -63,6 +63,7 @@ export namespace Artifact
     bool bezier = false;
     bool brokenTangents = false;
     bool roving = false;
+    bool soft = false;
     double inHandleFrameOffset = 0.0;
     double inHandleValueOffset = 0.0;
     double outHandleFrameOffset = 0.0;
@@ -211,6 +212,8 @@ export namespace Artifact
   void setSelectedKeyframeKeys(const QSet<QString>& selectedKeys);
   bool setSelectedKeyframeAnchor(ArtifactCore::KeyFrame::Anchor anchor);
   bool setSelectedKeyframeColorLabel(ArtifactCore::KeyFrame::ColorLabel label);
+  bool editSoftKeyframes(const QVector<KeyframeMarkerVisual>& targets,
+                         bool soft, bool discard, bool addMissing = false);
   bool hasNumericSelectedKeyframes() const;
   bool promptSetSelectedKeyframeValue();
   bool deleteSelectedKeyframeMarkers();
