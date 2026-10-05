@@ -77,6 +77,8 @@ module;
 #include <QTimer>
 
 #include <QTransform>
+#include <QWidget>
+#include <QtGlobal>
 
 #include <QVector3D>
 #include <QVector2D>
@@ -4922,6 +4924,23 @@ bool layerUsesProjectedFrameGizmo(const ArtifactAbstractLayerPtr &layer) {
     return model->fixedGeometry() == FixedGeometry3D::Plane;
   }
   return false;
+}
+
+enum class GizmoOwner { None, Text, Content, Transform2D, Transform3D };
+
+// One surface decision for binding, drawing and picking. Camera availability
+// selects the transform representation, never the owner of text/content edits.
+GizmoOwner resolveGizmoOwner(const ArtifactAbstractLayerPtr &layer,
+                            bool contentEditMode, bool cameraAvailable) {
+  if (!layer) return GizmoOwner::None;
+  if (layerUsesTextGizmo(layer)) return GizmoOwner::Text;
+  if (contentEditMode && layerUsesContentGizmo(layer)) return GizmoOwner::Content;
+  return cameraAvailable || layer->is3D() || layerUsesProjectedFrameGizmo(layer)
+      ? GizmoOwner::Transform3D : GizmoOwner::Transform2D;
+}
+
+bool isTransformGizmoOwner(GizmoOwner owner) {
+  return owner == GizmoOwner::Transform2D || owner == GizmoOwner::Transform3D;
 }
 
 void setMaskVertexHandle(MaskVertex &vertex, MaskEditHandleType handleType,
@@ -13867,6 +13886,136 @@ public:
   bool isDraggingLayer_ = false;
 
   bool gizmoDragActive_ = false;
+  struct GizmoInteractionSession {
+    GizmoOwner owner = GizmoOwner::None;
+    ArtifactAbstractLayerWeak layer;
+    ArtifactCompositionWeakPtr composition;
+    LayerID layerId;
+    int64_t frame = 0;
+    ToolType tool = ToolType::Selection;
+    bool contentEditMode = false;
+    TransformGizmo::Mode mode = TransformGizmo::Mode::All;
+    float devicePixelRatio = 1.0f;
+    QTransform viewportToCanvas;
+  } gizmoSession_;
+  bool gizmoSessionEnding_ = false;
+
+  struct GizmoSessionEndGuard {
+    Impl &impl;
+    bool active;
+    explicit GizmoSessionEndGuard(Impl &state)
+        : impl(state), active(state.gizmoSession_.owner != GizmoOwner::None) {
+      if (active) impl.gizmoSessionEnding_ = true;
+    }
+    ~GizmoSessionEndGuard() {
+      if (!active) return;
+      impl.gizmoSession_ = {};
+      impl.gizmoSessionEnding_ = false;
+      impl.gizmoDragActive_ = false;
+      // Cancellation may originate in selection/tool/frame changes, without
+      // a mouse release event. Release only this viewport's mouse capture.
+      if (auto *host = impl.hostWidget_.data()) {
+        auto *grabber = QWidget::mouseGrabber();
+        if (grabber && (grabber == host || host->isAncestorOf(grabber)))
+          grabber->releaseMouse();
+      }
+    }
+    GizmoSessionEndGuard(const GizmoSessionEndGuard &) = delete;
+    GizmoSessionEndGuard &operator=(const GizmoSessionEndGuard &) = delete;
+  };
+
+  GizmoOwner gizmoOwnerForLayer(const ArtifactAbstractLayerPtr &layer) const {
+    if (gizmoSession_.owner != GizmoOwner::None) return gizmoSession_.owner;
+    return resolveGizmoOwner(layer, contentEditMode_,
+                             viewportOrientationMatricesValid_ ||
+                                 gizmo3DCameraMatricesValid_);
+  }
+
+  void assertGizmoSession() const {
+#ifndef QT_NO_DEBUG
+    if (gizmoSessionEnding_) return;
+    const bool text = textGizmo_ && textGizmo_->isDragging();
+    const bool content = contentGizmo_ && contentGizmo_->isDragging();
+    const bool planar = gizmo_ && gizmo_->isDragging();
+    const bool spatial = gizmo3D_ && gizmo3D_->isDragging();
+    Q_ASSERT(int(text) + int(content) + int(planar) + int(spatial) <= 1);
+    Q_ASSERT((gizmoSession_.owner == GizmoOwner::Text) == text);
+    Q_ASSERT((gizmoSession_.owner == GizmoOwner::Content) == content);
+    Q_ASSERT((gizmoSession_.owner == GizmoOwner::Transform2D) == planar);
+    Q_ASSERT((gizmoSession_.owner == GizmoOwner::Transform3D) == spatial);
+#endif
+  }
+
+  void beginGizmoSession(GizmoOwner owner,
+                         const ArtifactAbstractLayerPtr &layer) {
+    Q_ASSERT(gizmoSession_.owner == GizmoOwner::None);
+    const auto composition = previewPipeline_.composition();
+    gizmoSession_.owner = owner;
+    gizmoSession_.layer = layer;
+    gizmoSession_.composition = ArtifactCompositionWeakPtr(composition);
+    gizmoSession_.layerId = layer->id();
+    gizmoSession_.frame = composition->framePosition().framePosition();
+    auto *app = ArtifactApplicationManager::instance();
+    auto *tools = app ? app->toolManager() : nullptr;
+    gizmoSession_.tool = tools ? tools->activeTool() : ToolType::Selection;
+    gizmoSession_.contentEditMode = contentEditMode_;
+    gizmoSession_.mode = gizmoMode_;
+    gizmoSession_.devicePixelRatio = devicePixelRatio_;
+    const float sampleWidth = std::max(1.0f, hostWidth_);
+    const float sampleHeight = std::max(1.0f, hostHeight_);
+    const auto origin = renderer_->viewportToCanvas({0.0f, 0.0f});
+    const auto x = renderer_->viewportToCanvas({sampleWidth, 0.0f});
+    const auto y = renderer_->viewportToCanvas({0.0f, sampleHeight});
+    gizmoSession_.viewportToCanvas = QTransform(
+        (x.x - origin.x) / sampleWidth, (x.y - origin.y) / sampleWidth,
+        (y.x - origin.x) / sampleHeight, (y.y - origin.y) / sampleHeight,
+        origin.x, origin.y);
+    assertGizmoSession();
+  }
+
+  bool gizmoSessionValid() const {
+    if (gizmoSession_.owner == GizmoOwner::None) return true;
+    const auto comp = previewPipeline_.composition();
+    const auto layer = gizmoSession_.layer.lock();
+    auto *app = ArtifactApplicationManager::instance();
+    auto *tools = app ? app->toolManager() : nullptr;
+    const bool primaryValid = comp && comp == gizmoSession_.composition.lock() && layer &&
+        comp->layerById(gizmoSession_.layerId) == layer &&
+        selectedLayerId_ == gizmoSession_.layerId &&
+        comp->framePosition().framePosition() == gizmoSession_.frame &&
+        !layer->isLocked() && !layer->isSelectionLocked() &&
+        isLayerEffectivelyVisible(layer) &&
+        (!tools || tools->activeTool() == gizmoSession_.tool) &&
+        contentEditMode_ == gizmoSession_.contentEditMode &&
+        devicePixelRatio_ == gizmoSession_.devicePixelRatio &&
+        gizmoMode_ == gizmoSession_.mode;
+    if (!primaryValid) return false;
+    // Reuse the target snapshots already owned by the active gizmo; a removed
+    // or newly locked secondary target must not keep receiving group edits.
+    const auto targetValid = [&comp](const ArtifactAbstractLayerPtr &target) {
+      return target && comp->layerById(target->id()) == target &&
+          !target->isLocked() && !target->isSelectionLocked() &&
+          isLayerEffectivelyVisible(target);
+    };
+    if (gizmoSession_.owner == GizmoOwner::Transform3D &&
+        gizmoGroupTransformActive_) {
+      for (const auto &state : gizmoGroupLayers_)
+        if (!targetValid(state.layer)) return false;
+    } else if (gizmoSession_.owner == GizmoOwner::Transform2D && gizmo_) {
+      for (const auto &target : gizmo_->targetLayers())
+        if (!targetValid(target)) return false;
+    }
+    return true;
+  }
+
+  // Keep planar drags on the canvas mapping captured at press. The gizmo's
+  // existing API converts viewport input, so remap into the current viewport.
+  QPointF planarGizmoPointer(const QPointF &physicalPointer) const {
+    const QPointF canvas = gizmoSession_.viewportToCanvas.map(physicalPointer);
+    const auto viewport = renderer_->canvasToViewport(
+        {static_cast<float>(canvas.x()), static_cast<float>(canvas.y())});
+    return QPointF(viewport.x, viewport.y);
+  }
   ArtifactAbstractLayerWeak physicsDragLayer_;
   bool gizmoModalTransformActive_ = false;
   GizmoSpace gizmoModalPreviousSpace_ = GizmoSpace::World;
@@ -13986,10 +14135,6 @@ public:
   LayerID designReorderParentId_;
 
   int designReorderTargetIndex_ = -1;
-
-  bool textGizmoDragActive_ = false;
-
-  bool contentGizmoDragActive_ = false;
 
   bool trackerGizmoDragActive_ = false;
 
@@ -15559,8 +15704,7 @@ public:
     return viewportInteracting_ || isRubberBandSelecting_ ||
            isShapeVertexMarqueeSelecting_ || dropGhostVisible_ ||
            isBoxZooming_ || interactiveRenderRegionHandleDrag_ != 0 ||
-           (gizmo_ && gizmo_->isDragging()) ||
-           (textGizmo_ && textGizmo_->isDragging());
+           gizmoSession_.owner != GizmoOwner::None;
   }
 
   bool viewportInteracting_ = false;
@@ -16527,6 +16671,8 @@ public:
 
 
   void sync2DGizmosForLayer(const ArtifactAbstractLayerPtr &layer) {
+    // Redraws must not rebind the owner of an active gesture.
+    if (gizmoSession_.owner != GizmoOwner::None) return;
 
     std::vector<ArtifactAbstractLayerPtr> selectedTargets;
 
@@ -16555,7 +16701,9 @@ public:
 
     }
 
-    const bool useTextGizmo = layerUsesTextGizmo(layer);
+    const auto owner = gizmoOwnerForLayer(layer);
+    const bool useTextGizmo = owner == GizmoOwner::Text;
+    const bool useContentGizmo = owner == GizmoOwner::Content;
     // A fixed 3D Plane is manipulated by Artifact3DGizmo even in the
     // default composition view.  Do not leave the legacy 2D gizmo bound as a
     // second owner for the same selection.
@@ -16570,15 +16718,13 @@ public:
 
     if (contentGizmo_) {
 
-      const bool useContentGizmo =
-          contentEditMode_ && layerUsesContentGizmo(layer);
       contentGizmo_->setLayer(useContentGizmo ? layer : nullptr);
 
     }
 
     if (gizmo_) {
 
-      if (useTextGizmo || use3DGizmoOnly) {
+      if (useTextGizmo || useContentGizmo || use3DGizmoOnly) {
 
         gizmo_->setLayer(nullptr);
 
@@ -17687,6 +17833,11 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
 
               }
 
+              if (!impl_->gizmoSessionEnding_ &&
+                  impl_->gizmoSession_.owner != GizmoOwner::None) {
+                cancelGizmoInteraction();
+              }
+
               if (impl_->selectedLayerId_ != incomingId) {
 
                 impl_->clearPendingMaskCreation();
@@ -17783,6 +17934,8 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
                     LayerChangedEvent::ChangeType::Removed) {
 
                   if (layerId == impl_->selectedLayerId_) {
+                    if (impl_->gizmoSession_.owner != GizmoOwner::None)
+                      cancelGizmoInteraction();
 
                     impl_->selectedLayerId_ = LayerID();
 
@@ -18927,6 +19080,10 @@ void CompositionRenderController::setGizmoMode(
 
   }
 
+  if (!impl_->gizmoSessionEnding_ && impl_->gizmoMode_ != mode &&
+      impl_->gizmoSession_.owner != GizmoOwner::None) {
+    cancelGizmoInteraction();
+  }
   impl_->gizmoMode_ = mode;
 
   if (impl_->gizmo_) {
@@ -19097,6 +19254,11 @@ void CompositionRenderController::finishViewportInteraction() {
 void CompositionRenderController::setComposition(
 
     ArtifactCompositionPtr composition) {
+
+  if (impl_->gizmoSession_.owner != GizmoOwner::None &&
+      composition != impl_->previewPipeline_.composition()) {
+    cancelGizmoInteraction();
+  }
 
   if (trackerJobRunning()) {
     trackerStop();
@@ -19506,6 +19668,10 @@ int CompositionRenderController::referenceFrame() const {
 
 
 void CompositionRenderController::setSelectedLayerId(const LayerID &id) {
+  if (impl_->selectedLayerId_ != id &&
+      impl_->gizmoSession_.owner != GizmoOwner::None) {
+    cancelGizmoInteraction();
+  }
 
   // A newly selected spatial layer must always enter the viewport in the
   // complete transform mode.  Otherwise a mode left by the previous tool can
@@ -21988,12 +22154,9 @@ namespace {
 // must not be offered to it, otherwise a click on empty space inside the
 // projected frame (or on the axis arrows) is claimed by a gizmo the user
 // cannot see and is committed through a different transform/undo path.
-bool legacy2DGizmoShouldOwnPress(const QObject *controller,
-                                  const ArtifactAbstractLayerPtr &layer) {
-  if (!layerUsesProjectedFrameGizmo(layer)) {
-    return true;
-  }
-  return isDesignWorkspace(controller);
+bool legacy2DGizmoShouldOwnPress(const QObject *controller, GizmoOwner owner) {
+  return owner == GizmoOwner::Transform2D ||
+      (owner == GizmoOwner::Transform3D && isDesignWorkspace(controller));
 }
 
 } // namespace
@@ -26205,6 +26368,10 @@ void CompositionRenderController::setContentEditMode(bool enabled) {
   if (!impl_) {
     return;
   }
+  if (impl_->contentEditMode_ != enabled &&
+      impl_->gizmoSession_.owner != GizmoOwner::None) {
+    cancelGizmoInteraction();
+  }
   impl_->contentEditMode_ = enabled;
   markRenderDirty();
 }
@@ -26347,6 +26514,7 @@ bool CompositionRenderController::beginModalGizmoInteraction(
     TransformGizmo::Mode mode,
     ArtifactCore::Coordinates::ScreenLogicalPoint2 viewportPos) {
   if (!impl_ || !impl_->renderer_ || !impl_->gizmo3D_ ||
+      impl_->gizmoSession_.owner != GizmoOwner::None ||
       impl_->gizmo3D_->isDragging() || impl_->constructionDragLayer_) {
     return false;
   }
@@ -26541,6 +26709,7 @@ bool CompositionRenderController::beginModalGizmoInteraction(
     impl_->gizmo3D_->beginDrag(startAxis, modalRay);
   }
   impl_->gizmoModalTransformActive_ = true;
+  impl_->beginGizmoSession(GizmoOwner::Transform3D, selectedLayer);
   impl_->gizmoDragActive_ = true;
   impl_->projectedFrameHandle_ = TransformGizmo::HandleType::None;
   impl_->projectedFrameMove_ = mode == TransformGizmo::Mode::Move;
@@ -27258,6 +27427,11 @@ bool selectedCameraPoiHoverable(const ArtifactAbstractLayerPtr &layer);
 
 void CompositionRenderController::handleMousePress(QMouseEvent *event) {
   impl_->projectedFrameSnapCache_.invalidate();
+  if (event && impl_->gizmoSession_.owner != GizmoOwner::None) {
+    if (event->button() == Qt::RightButton) cancelGizmoInteraction();
+    event->accept();
+    return;
+  }
   if (event && impl_->historicalScaleDragging_) {
     if (event->button() == Qt::RightButton) cancelGizmoInteraction();
     event->accept();
@@ -27777,16 +27951,25 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
     // so the handles stay interactive while the Text tool is active; only a
     // press off the gizmo starts the new-text candidate below.
     if (impl_->textGizmo_ && selectedLayer &&
-        layerUsesTextGizmo(selectedLayer)) {
+        impl_->gizmoOwnerForLayer(selectedLayer) == GizmoOwner::Text &&
+        !selectedLayer->isLocked() && !selectedLayer->isSelectionLocked()) {
       impl_->textGizmo_->setLayer(selectedLayer);
+      const bool textHandleHit = impl_->textGizmo_->hitTest(
+          viewportPos, impl_->renderer_.get()) != TextGizmo::HandleType::None;
       impl_->textGizmo_->handleMousePress(viewportPos,
                                           impl_->renderer_.get());
       if (impl_->textGizmo_->isDragging()) {
-        impl_->textGizmoDragActive_ = true;
+        impl_->beginGizmoSession(GizmoOwner::Text, selectedLayer);
         notifyViewportInteractionActivity();
         impl_->invalidateOverlayComposite();
         markRenderDirty();
         impl_->gizmoDragRenderTimer_.restart();
+        return;
+      }
+      // An expression-owned handle is disabled, not empty canvas on which
+      // the Text tool should create a new layer.
+      if (textHandleHit) {
+        event->accept();
         return;
       }
     }
@@ -29222,6 +29405,8 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
     }
   }
   if (event->button() == Qt::LeftButton && selectedLayer &&
+      impl_->gizmoOwnerForLayer(selectedLayer) == GizmoOwner::Transform3D &&
+      !selectedLayer->isLocked() && !selectedLayer->isSelectionLocked() &&
       (selectedGroupUsesProjectedFrame ||
        impl_->viewportOrientationMatricesValid_) &&
       impl_->gizmo3D_ &&
@@ -29387,6 +29572,7 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
       impl_->projectedFrameLastPointer_ =
           screenPhysicalPoint(physicalViewportPos);
       impl_->projectedFrameLastPointerValid_ = true;
+      impl_->beginGizmoSession(GizmoOwner::Transform3D, selectedLayer);
       impl_->gizmoDragActive_ = true;
       notifyViewportInteractionActivity();
       impl_->gizmoDragRenderTimer_.restart();
@@ -29538,6 +29724,7 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
       impl_->projectedFrameMove_ = false;
       impl_->projectedFrameLastPointer_ = screenPhysicalPoint(viewportPos);
       impl_->projectedFrameLastPointerValid_ = true;
+      impl_->beginGizmoSession(GizmoOwner::Transform3D, selectedLayer);
       impl_->gizmoDragActive_ = true;
       notifyViewportInteractionActivity();
       impl_->gizmoDragRenderTimer_.restart();
@@ -29571,6 +29758,7 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
       impl_->projectedFrameScalePointerBasisValid_ = false;
       impl_->projectedFrameLastPointer_ = screenPhysicalPoint(viewportPos);
       impl_->projectedFrameLastPointerValid_ = true;
+      impl_->beginGizmoSession(GizmoOwner::Transform3D, selectedLayer);
       impl_->gizmoDragActive_ = true;
       notifyViewportInteractionActivity();
       impl_->gizmoDragRenderTimer_.restart();
@@ -29584,8 +29772,9 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
 
   // Unified frame gizmo hit test (GIZ-2) — also used for 2D layers.
 
-  if (selectedLayer && impl_->gizmo3D_ &&
-      !layerUsesTextGizmo(selectedLayer) &&
+  if (event->button() == Qt::LeftButton && selectedLayer && impl_->gizmo3D_ &&
+      impl_->gizmoOwnerForLayer(selectedLayer) == GizmoOwner::Transform3D &&
+      !selectedLayer->isLocked() && !selectedLayer->isSelectionLocked() &&
       activeTool != ToolType::Pen) {
 
     impl_->gizmo3D_->setDepthEnabled(selectedLayer->is3D());
@@ -29628,6 +29817,7 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
           axis, ray,
           impl_->gizmo3D_->hoverScaleSigns());
 
+      impl_->beginGizmoSession(GizmoOwner::Transform3D, selectedLayer);
       impl_->gizmoDragActive_ = true;
 
       notifyViewportInteractionActivity();
@@ -29646,7 +29836,7 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
 
   // Gizmo hit test first (2D)
 
-  if (activeTool != ToolType::Pen) {
+  if (event->button() == Qt::LeftButton && activeTool != ToolType::Pen) {
 
     ArtifactAbstractLayerPtr gizmoLayer;
 
@@ -29656,8 +29846,9 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
 
     }
 
-    if (impl_->contentEditMode_ && impl_->contentGizmo_ &&
-        layerUsesContentGizmo(gizmoLayer)) {
+    if (impl_->contentGizmo_ &&
+        impl_->gizmoOwnerForLayer(gizmoLayer) == GizmoOwner::Content &&
+        !gizmoLayer->isLocked() && !gizmoLayer->isSelectionLocked()) {
 
       impl_->contentGizmo_->setLayer(gizmoLayer);
 
@@ -29666,7 +29857,7 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
 
       if (impl_->contentGizmo_->isDragging()) {
 
-        impl_->contentGizmoDragActive_ = true;
+        impl_->beginGizmoSession(GizmoOwner::Content, gizmoLayer);
 
         notifyViewportInteractionActivity();
 
@@ -29676,7 +29867,9 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
 
       }
 
-    } else if (impl_->textGizmo_ && layerUsesTextGizmo(gizmoLayer)) {
+    } else if (impl_->textGizmo_ &&
+               impl_->gizmoOwnerForLayer(gizmoLayer) == GizmoOwner::Text &&
+               !gizmoLayer->isLocked() && !gizmoLayer->isSelectionLocked()) {
 
       impl_->textGizmo_->setLayer(gizmoLayer);
 
@@ -29684,7 +29877,7 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
 
       if (impl_->textGizmo_->isDragging()) {
 
-        impl_->textGizmoDragActive_ = true;
+        impl_->beginGizmoSession(GizmoOwner::Text, gizmoLayer);
 
         notifyViewportInteractionActivity();
 
@@ -29695,7 +29888,10 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
       }
 
     } else if (impl_->gizmo_ &&
-               legacy2DGizmoShouldOwnPress(this, gizmoLayer)) {
+               isTransformGizmoOwner(impl_->gizmoOwnerForLayer(gizmoLayer)) &&
+               !gizmoLayer->isLocked() && !gizmoLayer->isSelectionLocked() &&
+               legacy2DGizmoShouldOwnPress(
+                   this, impl_->gizmoOwnerForLayer(gizmoLayer))) {
 
       impl_->gizmo_->handleMousePress(viewportPos, impl_->renderer_.get());
 
@@ -29738,6 +29934,7 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
 
         }
 
+        impl_->beginGizmoSession(GizmoOwner::Transform2D, gizmoLayer);
         impl_->gizmoDragActive_ = true;
 
         notifyViewportInteractionActivity();
@@ -30302,6 +30499,12 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
 
 void CompositionRenderController::handleMouseMove(
     ArtifactCore::Coordinates::ScreenLogicalPoint2 viewportPosLogical) {
+
+  if (!impl_->gizmoSessionValid()) {
+    cancelGizmoInteraction();
+    return;
+  }
+  impl_->assertGizmoSession();
 
   // P0-1 Box zoom owns the move event while the marquee is active.
   // updateBoxZoomInteraction handles the logical->physical conversion.
@@ -31819,7 +32022,8 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
 
                           : ArtifactAbstractLayerPtr{};
 
-    if (sel3DLayer && !layerUsesTextGizmo(sel3DLayer)) {
+    if (sel3DLayer &&
+        impl_->gizmoOwnerForLayer(sel3DLayer) == GizmoOwner::Transform3D) {
 
       QPointF dragViewportPos = viewportPos;
       const auto dragModifiers = QGuiApplication::keyboardModifiers();
@@ -32489,25 +32693,10 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
 
 
 
-  if (impl_->contentGizmo_ && impl_->contentGizmo_->isDragging()) {
+  if (impl_->gizmoSession_.owner == GizmoOwner::Content) {
 
-    impl_->contentGizmo_->handleMouseMove(viewportPos, impl_->renderer_.get());
-
-    notifyViewportInteractionActivity();
-
-    impl_->invalidateBaseComposite();
-
-    markRenderDirty();
-
-    return;
-
-  }
-
-
-
-  if (impl_->textGizmo_ && impl_->textGizmo_->isDragging()) {
-
-    impl_->textGizmo_->handleMouseMove(viewportPos, impl_->renderer_.get());
+    impl_->contentGizmo_->handleMouseMove(
+        impl_->planarGizmoPointer(viewportPos), impl_->renderer_.get());
 
     notifyViewportInteractionActivity();
 
@@ -32521,9 +32710,31 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
 
 
 
-  if (impl_->gizmo_) {
+  if (impl_->gizmoSession_.owner == GizmoOwner::Text) {
 
-    impl_->gizmo_->handleMouseMove(viewportPos, impl_->renderer_.get());
+    impl_->textGizmo_->handleMouseMove(
+        impl_->planarGizmoPointer(viewportPos), impl_->renderer_.get());
+
+    notifyViewportInteractionActivity();
+
+    impl_->invalidateBaseComposite();
+
+    markRenderDirty();
+
+    return;
+
+  }
+
+
+
+  if (impl_->gizmo_ &&
+      (impl_->gizmoSession_.owner == GizmoOwner::None ||
+       impl_->gizmoSession_.owner == GizmoOwner::Transform2D)) {
+
+    impl_->gizmo_->handleMouseMove(
+        impl_->gizmoSession_.owner == GizmoOwner::Transform2D
+            ? impl_->planarGizmoPointer(viewportPos) : viewportPos,
+        impl_->renderer_.get());
 
     if (impl_->gizmo_->isDragging()) {
 
@@ -32578,6 +32789,8 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
 
 
 bool CompositionRenderController::cancelGizmoInteraction() {
+  if (impl_->gizmoSessionEnding_) return false;
+  Impl::GizmoSessionEndGuard endSession(*impl_);
   if (impl_->historicalScaleDragging_) {
     if (auto layer = impl_->historicalScaleLayer_.lock(); layer && impl_->historicalScaleChanged_) {
       applyMotionPathScale(layer, impl_->historicalScaleTime_,
@@ -32601,7 +32814,7 @@ bool CompositionRenderController::cancelGizmoInteraction() {
     impl_->invalidateBaseComposite(); impl_->invalidateOverlayComposite(); markRenderDirty();
     return true;
   }
-  if (impl_->contentGizmo_ && impl_->contentGizmo_->isDragging()) {
+  if (impl_->gizmoSession_.owner == GizmoOwner::Content) {
     if (impl_->contentGizmo_->cancelInteraction()) {
       impl_->invalidateBaseComposite();
       impl_->invalidateOverlayComposite();
@@ -32610,7 +32823,7 @@ bool CompositionRenderController::cancelGizmoInteraction() {
       return true;
     }
   }
-  if (impl_->textGizmo_ && impl_->textGizmo_->isDragging()) {
+  if (impl_->gizmoSession_.owner == GizmoOwner::Text) {
     if (impl_->textGizmo_->cancelInteraction()) {
       impl_->invalidateBaseComposite();
       impl_->invalidateOverlayComposite();
@@ -32639,14 +32852,16 @@ bool CompositionRenderController::cancelGizmoInteraction() {
     return true;
   }
 
-  if (impl_->gizmo_ && impl_->gizmo_->cancelInteraction()) {
+  if (impl_->gizmoSession_.owner == GizmoOwner::Transform2D &&
+      impl_->gizmo_->cancelInteraction()) {
     impl_->invalidateBaseComposite();
     impl_->invalidateOverlayComposite();
     finishViewportInteraction();
     markRenderDirty();
     return true;
   }
-  if (!impl_->gizmo3D_ || !impl_->gizmo3D_->isDragging()) {
+  if (impl_->gizmoSession_.owner != GizmoOwner::Transform3D ||
+      !impl_->gizmo3D_ || !impl_->gizmo3D_->isDragging()) {
     return false;
   }
 
@@ -32769,6 +32984,13 @@ bool CompositionRenderController::cancelGizmoInteraction() {
 }
 
 void CompositionRenderController::handleMouseRelease() {
+  if (!impl_->gizmoSessionValid()) {
+    cancelGizmoInteraction();
+    return;
+  }
+  if (impl_->gizmoSessionEnding_) return;
+  Impl::GizmoSessionEndGuard endSession(*impl_);
+  const auto releasingOwner = impl_->gizmoSession_.owner;
   // P0-3a IRR handle drag finalization (mouse-up path).
   if (impl_ && impl_->interactiveRenderRegionHandleDrag_ != 0) {
     endInteractiveRenderRegionDrag();
@@ -34017,7 +34239,7 @@ void CompositionRenderController::handleMouseRelease() {
 
 
 
-  if (impl_->gizmo3D_) {
+  if (impl_->gizmo3D_ && releasingOwner == GizmoOwner::Transform3D) {
 
     const bool wasDragging = impl_->gizmoDragActive_;
 
@@ -34204,21 +34426,13 @@ void CompositionRenderController::handleMouseRelease() {
 
 
 
-  if (impl_->contentGizmo_) {
-
-    const bool wasContentDragging = impl_->contentGizmoDragActive_;
-
-    impl_->contentGizmoDragActive_ = false;
+  if (impl_->contentGizmo_ && releasingOwner == GizmoOwner::Content) {
 
     impl_->contentGizmo_->handleMouseRelease();
 
     impl_->invalidateOverlayComposite();
 
-    if (wasContentDragging) {
-
-      finishViewportInteraction();
-
-    }
+    finishViewportInteraction();
 
     markRenderDirty();
 
@@ -34226,21 +34440,13 @@ void CompositionRenderController::handleMouseRelease() {
 
 
 
-  if (impl_->textGizmo_) {
-
-    const bool wasTextDragging = impl_->textGizmoDragActive_;
-
-    impl_->textGizmoDragActive_ = false;
+  if (impl_->textGizmo_ && releasingOwner == GizmoOwner::Text) {
 
     impl_->textGizmo_->handleMouseRelease();
 
     impl_->invalidateOverlayComposite();
 
-    if (wasTextDragging) {
-
-      finishViewportInteraction();
-
-    }
+    finishViewportInteraction();
 
     markRenderDirty();
 
@@ -34248,7 +34454,7 @@ void CompositionRenderController::handleMouseRelease() {
 
 
 
-  if (impl_->gizmo_) {
+  if (impl_->gizmo_ && releasingOwner == GizmoOwner::Transform2D) {
 
     const bool wasDragging = impl_->gizmoDragActive_;
 
@@ -37327,17 +37533,8 @@ bool CompositionRenderController::isGizmoDragActive() const {
 
   }
 
-  // Every gizmo that can own a viewport drag has to be listed here: the text
-  // and content gizmos are bound instead of gizmo_ while their layer type is
-  // selected, so a check limited to gizmo()/gizmo3D() would miss them and the
-  // viewport would never take mouse capture for their drags.
-  return (impl_->gizmo_ && impl_->gizmo_->isDragging()) ||
-
-         (impl_->gizmo3D_ && impl_->gizmo3D_->isDragging()) ||
-
-         (impl_->textGizmo_ && impl_->textGizmo_->isDragging()) ||
-
-         (impl_->contentGizmo_ && impl_->contentGizmo_->isDragging());
+  impl_->assertGizmoSession();
+  return impl_->gizmoSession_.owner != GizmoOwner::None;
 
 }
 
@@ -37365,27 +37562,30 @@ bool CompositionRenderController::isTransformGizmoHovered(
           QLineF(physical, QPointF(p.x(), p.y())).length() <= 10 * impl_->devicePixelRatio_) return true;
     }
   }
-  if (impl_->projectedFrameHoverHandle_ != TransformGizmo::HandleType::None) {
+  const auto selected = comp ? comp->layerById(impl_->selectedLayerId_)
+                             : ArtifactAbstractLayerPtr{};
+  const auto owner = impl_->gizmoOwnerForLayer(selected);
+  const QPointF physical = logical * impl_->devicePixelRatio_;
+  if (owner == GizmoOwner::Text) {
+    return impl_->textGizmo_ && impl_->renderer_ &&
+        impl_->textGizmo_->hitTest(physical, impl_->renderer_.get()) !=
+            TextGizmo::HandleType::None;
+  }
+  if (owner == GizmoOwner::Content) {
+    return impl_->contentGizmo_ && impl_->renderer_ &&
+        impl_->contentGizmo_->hitTest(physical, impl_->renderer_.get()) !=
+            ContentGizmo::HandleType::None;
+  }
+  if (owner == GizmoOwner::Transform3D &&
+      (impl_->projectedFrameHoverHandle_ != TransformGizmo::HandleType::None ||
+       (impl_->gizmo3D_ && impl_->gizmo3D_->hoverAxis() != GizmoAxis::None))) {
     return true;
   }
-  if (impl_->gizmo3D_ &&
-      impl_->gizmo3D_->hoverAxis() != GizmoAxis::None) {
-    return true;
-  }
-  if (impl_->textGizmo_ && impl_->renderer_) {
-    const auto textLayer = comp
-        ? comp->layerById(impl_->selectedLayerId_) : ArtifactAbstractLayerPtr{};
-    if (layerUsesTextGizmo(textLayer) &&
-        impl_->textGizmo_->hitTest(logical * impl_->devicePixelRatio_,
-                                 impl_->renderer_.get()) !=
-            TextGizmo::HandleType::None) {
-      return true;
-    }
-  }
-  return impl_->gizmo_ && impl_->renderer_ &&
-         impl_->gizmo_->handleAtViewportPos(logical,
-                                             impl_->renderer_.get()) !=
-             TransformGizmo::HandleType::None;
+  return isTransformGizmoOwner(owner) && impl_->gizmo_ && impl_->renderer_ &&
+      legacy2DGizmoShouldOwnPress(this, owner) &&
+      impl_->gizmo_->handleAtViewportPos(physical, impl_->renderer_.get()) !=
+          TransformGizmo::HandleType::None;
+
 }
 
 
@@ -39257,7 +39457,7 @@ Qt::CursorShape CompositionRenderController::cursorShapeForViewportPos(
       (selectedGroupUsesProjectedFrame ||
        impl_->viewportOrientationMatricesValid_) &&
       impl_->gizmo3D_ &&
-      !layerUsesTextGizmo(selectedLayer) &&
+      impl_->gizmoOwnerForLayer(selectedLayer) == GizmoOwner::Transform3D &&
       activeTool != ToolType::AnchorPoint &&
       (impl_->gizmoMode_ == TransformGizmo::Mode::All ||
        impl_->gizmoMode_ == TransformGizmo::Mode::Move ||
@@ -39338,8 +39538,8 @@ Qt::CursorShape CompositionRenderController::cursorShapeForViewportPos(
 
   }
 
-  if (impl_->contentEditMode_ && impl_->contentGizmo_ &&
-      selectedLayer && layerUsesContentGizmo(selectedLayer)) {
+  if (impl_->contentGizmo_ &&
+      impl_->gizmoOwnerForLayer(selectedLayer) == GizmoOwner::Content) {
 
     return impl_->contentGizmo_->cursorShapeForViewportPos(physPos,
 
@@ -39347,7 +39547,8 @@ Qt::CursorShape CompositionRenderController::cursorShapeForViewportPos(
 
   }
 
-  if (impl_->textGizmo_ && layerUsesTextGizmo(selectedLayer)) {
+  if (impl_->textGizmo_ &&
+      impl_->gizmoOwnerForLayer(selectedLayer) == GizmoOwner::Text) {
 
     return impl_->textGizmo_->cursorShapeForViewportPos(physPos,
 
@@ -39355,7 +39556,8 @@ Qt::CursorShape CompositionRenderController::cursorShapeForViewportPos(
 
   }
 
-  if (!impl_->gizmo_) {
+  if (!impl_->gizmo_ || !legacy2DGizmoShouldOwnPress(
+          this, impl_->gizmoOwnerForLayer(selectedLayer))) {
 
     return Qt::ArrowCursor;
 
@@ -39732,6 +39934,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
     return;
 
+  }
+
+  if (!gizmoSessionEnding_ && !gizmoSessionValid()) {
+    owner->cancelGizmoInteraction();
   }
 
   // Swapchain may not exist yet (deferred from 0×0 init).
@@ -50363,7 +50569,10 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
       // 2D TextGizmo regardless of viewport orientation. Artifact3DGizmo's
       // unified frame gizmo is reserved for non-text layers (its hit test
       // already excludes text layers).
-      const bool use2DTransformGizmo = layerUsesTextGizmo(selectedLayer);
+      const auto overlayOwner = gizmoOwnerForLayer(selectedLayer);
+      const bool use2DTransformGizmo =
+          overlayOwner == GizmoOwner::Text || overlayOwner == GizmoOwner::Content ||
+          overlayOwner == GizmoOwner::Transform2D;
       if (use2DTransformGizmo) {
 
         ArtifactCore::ProfileScope _profG2D(
@@ -50372,8 +50581,7 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
 
         sync2DGizmosForLayer(selectedLayer);
 
-        if (contentEditMode_ && layerUsesContentGizmo(selectedLayer) &&
-            contentGizmo_) {
+        if (overlayOwner == GizmoOwner::Content && contentGizmo_) {
 
           ArtifactCore::ProfileScope _profG2DDrawCall(
 
@@ -50381,7 +50589,7 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
 
           contentGizmo_->draw(renderer_.get());
 
-        } else if (layerUsesTextGizmo(selectedLayer) && textGizmo_) {
+        } else if (overlayOwner == GizmoOwner::Text && textGizmo_) {
 
           ArtifactCore::ProfileScope _profG2DDrawCall(
 
@@ -50443,7 +50651,8 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
       // Non-text layers use the 3D manipulator as their unified frame gizmo.
       // Text layers are handled by the 2D TextGizmo above, so skip the 3D
       // gizmo to avoid a second, non-interactive frame overlapping it.
-      const bool showProjected3DGizmo = !layerUsesTextGizmo(selectedLayer);
+      const bool showProjected3DGizmo =
+          overlayOwner == GizmoOwner::Transform3D;
       if (gizmo3D_ && showProjected3DGizmo) {
 
         ArtifactCore::ProfileScope _profG3D(

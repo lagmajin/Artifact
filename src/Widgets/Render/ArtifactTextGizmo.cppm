@@ -234,13 +234,34 @@ void textSyncAnimatedProperty(const ArtifactAbstractLayerPtr& layer,
     }
     const auto property = layer->getProperty(propertyPath);
     if (property) {
-        // Global transforms prefer the cached property even without keys.
-        // Keep static drags visible and give Undo the actual edited value.
+        // Transform paths resolve to the transform's owned channel property.
+        // Keep its absolute value and the Undo snapshot in agreement.
         property->setValue(value);
         if (property->isAnimatable() && property->hasKeyFrames()) {
             property->addKeyFrame(time, value);
         }
     }
+}
+
+// Every text gesture authors absolute parent-local Position. The transform
+// track stores deltas from its initial Position; cached properties store the
+// absolute value. Keep those representations in sync in one place.
+void textSetAbsolutePosition(const ArtifactAbstractLayerPtr &layer,
+                             const ArtifactCore::RationalTime &time,
+                             float x, float y) {
+    auto &transform = layer->transform3D();
+    if (transform.hasPositionKeyFrameAt(time) ||
+        transform.getPositionKeyFrameCount() > 0) {
+        const auto evaluated = transform.snapshotAt(time);
+        const float initialX = evaluated.positionX - transform.positionXAt(time);
+        const float initialY = evaluated.positionY - transform.positionYAt(time);
+        transform.setPosition(time, x - initialX, y - initialY);
+    } else {
+        transform.removePositionKeyFrameAt(time);
+        transform.setInitialPosition(time, x, y);
+    }
+    textSyncAnimatedProperty(layer, QStringLiteral("transform.position.x"), time, x);
+    textSyncAnimatedProperty(layer, QStringLiteral("transform.position.y"), time, y);
 }
 
 struct TextRotateRingGeometry {
@@ -361,6 +382,11 @@ void TextGizmo::setLayer(ArtifactAbstractLayerPtr layer) {
         cancelInteraction();
     }
     layer_ = layer;
+    // Build the existing text property surface at the selection boundary,
+    // before a box gesture needs expression checks and complete Undo state.
+    if (layer_ && !layer_->getProperty(QStringLiteral("text.maxWidth"))) {
+        (void)layer_->getLayerPropertyGroups();
+    }
     isDragging_ = false;
     activeHandle_ = HandleType::None;
     dragStartCanvasPos_ = QPointF();
@@ -835,13 +861,37 @@ Qt::CursorShape TextGizmo::cursorShapeForViewportPos(const QPointF& viewportPos,
 bool TextGizmo::handleMousePress(const QPointF& viewportPos, ArtifactIRenderer* renderer) {
     activeHandle_ = hitTest(viewportPos, renderer);
     if (activeHandle_ != HandleType::None) {
+        const auto expressionDriven = [this](const QString &path) {
+            const auto property = layer_->getProperty(path);
+            return property && property->hasExpression();
+        };
+        const bool rangeHandle = activeHandle_ == HandleType::RangeStart ||
+            activeHandle_ == HandleType::RangeEnd ||
+            activeHandle_ == HandleType::RangeOffset;
+        const bool boxHandle = activeHandle_ >= HandleType::BoxLeft;
+        const bool blocked = !rangeHandle && (
+            expressionDriven(QStringLiteral("transform.position.x")) ||
+            expressionDriven(QStringLiteral("transform.position.y")) ||
+            (activeHandle_ == HandleType::Rotate &&
+             expressionDriven(QStringLiteral("transform.rotation"))) ||
+            (activeHandle_ == HandleType::AnchorPoint && (
+             expressionDriven(QStringLiteral("transform.anchor.x")) ||
+             expressionDriven(QStringLiteral("transform.anchor.y")))) ||
+            (boxHandle && (
+             expressionDriven(QStringLiteral("text.maxWidth")) ||
+             expressionDriven(QStringLiteral("text.boxHeight")))));
+        if (blocked) {
+            activeHandle_ = HandleType::None;
+            return false;
+        }
         isDragging_ = true;
         dragStartFrame_ = textAuthoringFrame(layer_.get());
         dragStartTimeScale_ = textAuthoringTimeScale(layer_.get());
         auto canvasMouse = renderer->viewportToCanvas({(float)viewportPos.x(), (float)viewportPos.y()});
         dragStartCanvasPos_ = QPointF(canvasMouse.x, canvasMouse.y);
-        dragStartLayerPosition_ = QPointF(layer_->transform3D().positionX(),
-                                          layer_->transform3D().positionY());
+        const ArtifactCore::RationalTime startTime(dragStartFrame_, dragStartTimeScale_);
+        const auto startState = layer_->transform3D().snapshotAt(startTime);
+        dragStartLayerPosition_ = QPointF(startState.positionX, startState.positionY);
         // hitTest() already rejected empty boxes, so the bounding box captured
         // here is the same one the handle was hit against.
         dragStartBounds_ = layer_->transformedBoundingBox();
@@ -868,11 +918,11 @@ bool TextGizmo::handleMousePress(const QPointF& viewportPos, ArtifactIRenderer* 
             dragStartGlobalTransform_ = layer_->getGlobalTransform();
             dragStartLocalBounds_ = layer_->localBounds();
             const auto &startTransform = layer_->transform3D();
-            dragStartAnchor_ = QPointF(startTransform.anchorX(),
-                                       startTransform.anchorY());
-            dragStartScaleX_ = startTransform.scaleX();
-            dragStartScaleY_ = startTransform.scaleY();
-            dragStartRotation_ = startTransform.rotation();
+            dragStartAnchor_ = QPointF(startTransform.anchorXAt(startTime),
+                                       startTransform.anchorYAt(startTime));
+            dragStartScaleX_ = startState.scaleX;
+            dragStartScaleY_ = startState.scaleY;
+            dragStartRotation_ = startState.rotation;
             dragAccumulatedRotationDelta_ = 0.0f;
             transformDragChanged_ = false;
             dragLastCanvasPos_ = dragStartCanvasPos_;
@@ -1087,7 +1137,8 @@ bool TextGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRenderer* r
             const RationalTime editTime(dragStartFrame_, dragStartTimeScale_);
             if (dragTransform.hasRotationKeyFrameAt(editTime) ||
                 dragTransform.getRotationKeyFrameCount() > 0) {
-                dragTransform.setRotation(editTime, newRotation);
+                dragTransform.setRotation(
+                    editTime, newRotation - dragTransform.initialRotation());
             } else {
                 dragTransform.removeRotationKeyFrameAt(editTime);
                 dragTransform.setInitialRotation(editTime, newRotation);
@@ -1107,19 +1158,7 @@ bool TextGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRenderer* r
             const float newPosY = static_cast<float>(
                 dragStartLayerPosition_.y() +
                 (startOffset.y() - newOffset.y()));
-            if (dragTransform.hasPositionKeyFrameAt(editTime) ||
-                dragTransform.getPositionKeyFrameCount() > 0) {
-                dragTransform.setPosition(editTime, newPosX, newPosY);
-            } else {
-                dragTransform.removePositionKeyFrameAt(editTime);
-                dragTransform.setInitialPosition(editTime, newPosX, newPosY);
-            }
-            textSyncAnimatedProperty(
-                layer_, QStringLiteral("transform.position.x"), editTime,
-                newPosX);
-            textSyncAnimatedProperty(
-                layer_, QStringLiteral("transform.position.y"), editTime,
-                newPosY);
+            textSetAbsolutePosition(layer_, editTime, newPosX, newPosY);
             textLayer->setDirty(LayerDirtyFlag::Transform);
             textLayer->changed();
             dragLastCanvasPos_ = QPointF(canvasMouse.x, canvasMouse.y);
@@ -1181,8 +1220,10 @@ bool TextGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRenderer* r
                 dragStartRotation_);
             const RationalTime editTime(dragStartFrame_, dragStartTimeScale_);
             auto &anchorTransform = textLayer->transform3D();
-            anchorTransform.setAnchor(
-                editTime, static_cast<float>(targetLocalAnchor.x()),
+            // Static anchor drags must stay static; the shared property
+            // authoring helper inserts keys only on already-animated channels.
+            anchorTransform.setCurrentAnchor(
+                static_cast<float>(targetLocalAnchor.x()),
                 static_cast<float>(targetLocalAnchor.y()),
                 anchorTransform.anchorZ());
             textSyncAnimatedProperty(
@@ -1195,19 +1236,7 @@ bool TextGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRenderer* r
                 dragStartLayerPosition_.x() + compensation.x());
             const float newPosY = static_cast<float>(
                 dragStartLayerPosition_.y() + compensation.y());
-            if (anchorTransform.hasPositionKeyFrameAt(editTime) ||
-                anchorTransform.getPositionKeyFrameCount() > 0) {
-                anchorTransform.setPosition(editTime, newPosX, newPosY);
-            } else {
-                anchorTransform.removePositionKeyFrameAt(editTime);
-                anchorTransform.setInitialPosition(editTime, newPosX, newPosY);
-            }
-            textSyncAnimatedProperty(
-                layer_, QStringLiteral("transform.position.x"), editTime,
-                newPosX);
-            textSyncAnimatedProperty(
-                layer_, QStringLiteral("transform.position.y"), editTime,
-                newPosY);
+            textSetAbsolutePosition(layer_, editTime, newPosX, newPosY);
             textLayer->setDirty(LayerDirtyFlag::Transform);
             textLayer->changed();
             transformDragChanged_ = true;
@@ -1250,31 +1279,7 @@ bool TextGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRenderer* r
                 : newWorldAnchor;
             const float newPosX = static_cast<float>(newLocalPosition.x());
             const float newPosY = static_cast<float>(newLocalPosition.y());
-            // AnimatableTransform3D::setPosition() accepts track-relative
-            // values and always creates keyframes.  Sending the absolute
-            // layer position here made a static text layer jump by its
-            // existing position and subsequently appear immovable.  Match
-            // the regular transform gizmo: preserve static transforms until
-            // position animation exists, otherwise convert absolute canvas
-            // coordinates to the track-relative values it expects.
-            if (start.hasPositionKeyFrameAt(frame) ||
-                start.getPositionKeyFrameCount() > 0) {
-                const float initialX = start.positionX() -
-                    start.positionXAt(frame);
-                const float initialY = start.positionY() -
-                    start.positionYAt(frame);
-                start.setPosition(frame, newPosX - initialX,
-                                  newPosY - initialY);
-            } else {
-                start.removePositionKeyFrameAt(frame);
-                start.setInitialPosition(frame, newPosX, newPosY);
-            }
-            textSyncAnimatedProperty(
-                layer_, QStringLiteral("transform.position.x"), frame,
-                newPosX);
-            textSyncAnimatedProperty(
-                layer_, QStringLiteral("transform.position.y"), frame,
-                newPosY);
+            textSetAbsolutePosition(layer_, frame, newPosX, newPosY);
             textLayer->setDirty(LayerDirtyFlag::Transform);
             textLayer->changed();
             transformDragChanged_ = true;
@@ -1421,19 +1426,7 @@ bool TextGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRenderer* r
     const RationalTime editTime(dragStartFrame_, dragStartTimeScale_);
     const float positionX = static_cast<float>(position.x());
     const float positionY = static_cast<float>(position.y());
-    if (transform.hasPositionKeyFrameAt(editTime) ||
-        transform.getPositionKeyFrameCount() > 0) {
-        const float initialX = transform.positionX() - transform.positionXAt(editTime);
-        const float initialY = transform.positionY() - transform.positionYAt(editTime);
-        transform.setPosition(editTime, positionX - initialX, positionY - initialY);
-    } else {
-        transform.removePositionKeyFrameAt(editTime);
-        transform.setInitialPosition(editTime, positionX, positionY);
-    }
-    textSyncAnimatedProperty(layer_, QStringLiteral("transform.position.x"),
-                             editTime, positionX);
-    textSyncAnimatedProperty(layer_, QStringLiteral("transform.position.y"),
-                             editTime, positionY);
+    textSetAbsolutePosition(layer_, editTime, positionX, positionY);
 
     textLayer->setDirty();
     textLayer->updateImage();
