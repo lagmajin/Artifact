@@ -1,17 +1,30 @@
 module;
 #include <QApplication>
+#include <QAbstractButton>
+#include <QColor>
+#include <QDialog>
 #include <QElapsedTimer>
+#include <QKeyEvent>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMouseEvent>
+#include <QPainter>
+#include <QPaintEvent>
+#include <QPalette>
+#include <QPen>
+#include <QPointF>
+#include <QPushButton>
 #include <QRegularExpression>
 #include <QSignalBlocker>
+#include <QSizePolicy>
+#include <QVBoxLayout>
 #include <QVariant>
 #include <QWidget>
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -138,6 +151,181 @@ int decimalsForNumericProperty(const ArtifactCore::PropertyMetadata &meta,
   }
   return 2;
 }
+
+class GradingWheelCanvas final : public QWidget {
+ public:
+  explicit GradingWheelCanvas(QWidget* parent = nullptr) : QWidget(parent) {
+    setMinimumSize(200, 200);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    setFocusPolicy(Qt::StrongFocus);
+    setAccessibleName(QStringLiteral("Color balance wheel"));
+    setAccessibleDescription(QStringLiteral(
+        "Drag from the center toward a hue to add color balance. The center is neutral."));
+  }
+
+  QPointF point() const { return point_; }
+
+  void setPoint(QPointF point) {
+    const double radius = std::hypot(point.x(), point.y());
+    if (radius > 1.0) {
+      point /= radius;
+    }
+    point_ = point;
+    update();
+  }
+
+ protected:
+  void paintEvent(QPaintEvent*) override {
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    const double radius = std::max(1.0, std::min(width(), height()) * 0.43);
+    const QPointF center = rect().center();
+    const double innerRadius = radius * 0.82;
+    for (int segment = 0; segment < 144; ++segment) {
+      const double a0 = (segment / 144.0) * 6.283185307179586;
+      const double a1 = ((segment + 1) / 144.0) * 6.283185307179586;
+      const QColor hue = QColor::fromHsvF(1.0 - segment / 144.0, 0.9, 0.95);
+      painter.setPen(QPen(hue, std::max(4.0, radius * 0.12), Qt::SolidLine,
+                          Qt::FlatCap));
+      const QPointF p0(center.x() + std::cos(a0) * (innerRadius + radius * 0.025),
+                       center.y() - std::sin(a0) * (innerRadius + radius * 0.025));
+      const QPointF p1(center.x() + std::cos(a1) * (innerRadius + radius * 0.025),
+                       center.y() - std::sin(a1) * (innerRadius + radius * 0.025));
+      painter.drawLine(p0, p1);
+    }
+
+    painter.setPen(QPen(palette().color(QPalette::Mid), 1.0));
+    painter.setBrush(palette().color(QPalette::Base));
+    painter.drawEllipse(center, innerRadius, innerRadius);
+    painter.setPen(QPen(palette().color(QPalette::Mid), 1.0, Qt::DashLine));
+    painter.drawLine(QPointF(center.x() - innerRadius, center.y()),
+                     QPointF(center.x() + innerRadius, center.y()));
+    painter.drawLine(QPointF(center.x(), center.y() - innerRadius),
+                     QPointF(center.x(), center.y() + innerRadius));
+
+    const QPointF puck(center.x() + point_.x() * innerRadius,
+                       center.y() - point_.y() * innerRadius);
+    painter.setPen(QPen(palette().color(QPalette::Text), 2.0));
+    painter.setBrush(QColor(245, 247, 250, 225));
+    painter.drawEllipse(puck, 6.0, 6.0);
+  }
+
+  void mousePressEvent(QMouseEvent* event) override {
+    if (event->button() == Qt::LeftButton) {
+      updateFromPosition(event->position());
+      event->accept();
+      return;
+    }
+    QWidget::mousePressEvent(event);
+  }
+
+  void mouseMoveEvent(QMouseEvent* event) override {
+    if (event->buttons().testFlag(Qt::LeftButton)) {
+      updateFromPosition(event->position());
+      event->accept();
+      return;
+    }
+    QWidget::mouseMoveEvent(event);
+  }
+
+  void keyPressEvent(QKeyEvent* event) override {
+    QPointF next = point_;
+    const double step = event->modifiers().testFlag(Qt::ShiftModifier) ? 0.01 : 0.05;
+    switch (event->key()) {
+    case Qt::Key_Left: next.rx() -= step; break;
+    case Qt::Key_Right: next.rx() += step; break;
+    case Qt::Key_Up: next.ry() += step; break;
+    case Qt::Key_Down: next.ry() -= step; break;
+    case Qt::Key_Home: next = QPointF(); break;
+    default:
+      QWidget::keyPressEvent(event);
+      return;
+    }
+    setPoint(next);
+    event->accept();
+  }
+
+ private:
+  void updateFromPosition(const QPointF& position) {
+    const double radius = std::max(1.0, std::min(width(), height()) * 0.43 * 0.82);
+    const QPointF center = rect().center();
+    const QPointF delta(position.x() - center.x(), center.y() - position.y());
+    const double length = std::hypot(delta.x(), delta.y());
+    const double scale = length > radius ? radius / length : 1.0;
+    setPoint(QPointF(delta.x() * scale / radius, delta.y() * scale / radius));
+  }
+
+  QPointF point_;
+};
+
+class GradingWheelDialog final : public QDialog {
+ public:
+  explicit GradingWheelDialog(const QString& title, const QPointF& point,
+                              QWidget* parent)
+      : QDialog(parent) {
+    setWindowTitle(title);
+    setModal(true);
+    resize(300, 350);
+    auto* layout = new QVBoxLayout(this);
+    layout->setContentsMargins(12, 12, 12, 12);
+    layout->setSpacing(8);
+    auto* canvas = new GradingWheelCanvas(this);
+    canvas->setPoint(point);
+    layout->addWidget(canvas, 1);
+    auto* hint = new QLabel(QStringLiteral(
+        "Center is neutral; drag toward a hue to shift the balance."), this);
+    hint->setWordWrap(true);
+    layout->addWidget(hint);
+    auto* actions = new QHBoxLayout();
+    actions->addStretch(1);
+    auto* cancel = new GradingWheelActionButton(QStringLiteral("Cancel"), this);
+    auto* apply = new GradingWheelActionButton(QStringLiteral("Apply"), this);
+    cancel->setAccessibleName(QStringLiteral("Cancel color balance edit"));
+    apply->setAccessibleName(QStringLiteral("Apply color balance edit"));
+    cancel->setAction([this]() { reject(); });
+    apply->setAction([this]() { accept(); });
+    actions->addWidget(cancel);
+    actions->addWidget(apply);
+    layout->addLayout(actions);
+    canvas_ = canvas;
+  }
+
+  QPointF point() const { return canvas_ ? canvas_->point() : QPointF(); }
+
+ private:
+  class GradingWheelActionButton : public QPushButton {
+   public:
+    using QPushButton::QPushButton;
+    void setAction(std::function<void()> action) {
+      action_ = std::move(action);
+      setFocusPolicy(Qt::StrongFocus);
+    }
+
+   protected:
+    void nextCheckState() override {
+      if (action_) action_();
+    }
+
+   private:
+    std::function<void()> action_;
+  };
+
+  GradingWheelCanvas* canvas_ = nullptr;
+};
+
+class GradingWheelOpenButton final : public QPushButton {
+ public:
+  using QPushButton::QPushButton;
+  void setAction(std::function<void()> action) { action_ = std::move(action); }
+
+ protected:
+  void nextCheckState() override {
+    if (action_) action_();
+  }
+
+ private:
+  std::function<void()> action_;
+};
 
 } // namespace
 
@@ -417,9 +605,30 @@ bool ArtifactFloatPropertyEditor::supportsScrub() const { return true; }
 ArtifactPoint2DPropertyEditor::ArtifactPoint2DPropertyEditor(
     const ArtifactCore::AbstractProperty& property, QWidget* parent)
     : ArtifactAbstractPropertyEditor(parent) {
+  usesColorWheel_ = property.getName().endsWith(QStringLiteral(" Wheel"));
   auto* layout = new QHBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
   layout->setSpacing(4);
+  if (usesColorWheel_) {
+    colorWheelButton_ = new GradingWheelOpenButton(this);
+    colorWheelButton_->setText(QStringLiteral("Open color wheel…"));
+    colorWheelButton_->setAccessibleName(property.getName());
+    colorWheelButton_->setToolTip(QStringLiteral(
+        "Open a color-balance wheel. The center is neutral."));
+    colorWheelButton_->setMinimumHeight(26);
+    applyPropertyFieldPalette(colorWheelButton_, false);
+    layout->addWidget(colorWheelButton_, 1);
+    setValueFromVariant(property.getValue());
+    colorWheelButton_->setAction([this, title = property.getName()]() {
+      GradingWheelDialog dialog(title, value().toPointF(), this);
+      if (dialog.exec() != QDialog::Accepted) {
+        return;
+      }
+      setValueFromVariant(QVariant::fromValue(dialog.point()));
+      commitCurrentValue();
+    });
+    return;
+  }
   xSpinBox_ = new QDoubleSpinBox(this);
   ySpinBox_ = new QDoubleSpinBox(this);
   for (auto* spinBox : {xSpinBox_, ySpinBox_}) {
@@ -445,11 +654,19 @@ ArtifactPoint2DPropertyEditor::ArtifactPoint2DPropertyEditor(
 }
 
 QVariant ArtifactPoint2DPropertyEditor::value() const {
+  if (usesColorWheel_) {
+    return QVariant::fromValue(QPointF(colorWheelX_, colorWheelY_));
+  }
   return QVariant::fromValue(QPointF(xSpinBox_->value(), ySpinBox_->value()));
 }
 
 void ArtifactPoint2DPropertyEditor::setValueFromVariant(const QVariant& value) {
   const QPointF point = value.canConvert<QPointF>() ? value.toPointF() : QPointF();
+  if (usesColorWheel_) {
+    colorWheelX_ = std::round(std::clamp(point.x(), -1.0, 1.0) * 1000.0) / 1000.0;
+    colorWheelY_ = std::round(std::clamp(point.y(), -1.0, 1.0) * 1000.0) / 1000.0;
+    return;
+  }
   QSignalBlocker xBlocker(xSpinBox_);
   QSignalBlocker yBlocker(ySpinBox_);
   xSpinBox_->setValue(point.x());

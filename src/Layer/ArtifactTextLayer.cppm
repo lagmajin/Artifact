@@ -648,12 +648,6 @@ QVector<float> selectorBoundaryPreviewForGlyphs(
   return preview;
 }
 
-QString animatorPresetTooltip() {
-  return QStringLiteral(
-      "-1=Custom, 0=None, 1=Typewriter, 2=Slide Up, 3=Scale In, 4=Rotation In, "
-      "5=Tracking Fade, 6=Wiggly Position, 7=Blur Reveal");
-}
-
 float radialFieldInfluenceAtPoint(const LayerFieldDescriptor &field,
                                   const QPointF &point) {
   if (field.typeId != QStringLiteral("artifact.field.radial")) {
@@ -1217,62 +1211,6 @@ TextAnimatorState makePresetAnimator(const QString &name) {
   return state;
 }
 
-bool fuzzyEqual(const float a, const float b, const float epsilon = 0.0001f) {
-  return std::abs(a - b) <= epsilon;
-}
-
-bool fuzzyEqual(const QPointF &a, const QPointF &b,
-                const float epsilon = 0.0001f) {
-  return fuzzyEqual(static_cast<float>(a.x()), static_cast<float>(b.x()),
-                    epsilon) &&
-         fuzzyEqual(static_cast<float>(a.y()), static_cast<float>(b.y()),
-                    epsilon);
-}
-
-bool fuzzyEqual(const FloatRGBA &a, const FloatRGBA &b,
-                const float epsilon = 0.0001f) {
-  return fuzzyEqual(a.r(), b.r(), epsilon) && fuzzyEqual(a.g(), b.g(), epsilon) &&
-         fuzzyEqual(a.b(), b.b(), epsilon) && fuzzyEqual(a.a(), b.a(), epsilon);
-}
-
-bool sameTextAnimatorState(const TextAnimatorState &a,
-                           const TextAnimatorState &b) {
-  return a.name == b.name && a.enabled == b.enabled &&
-         fuzzyEqual(a.range.start, b.range.start) &&
-         fuzzyEqual(a.range.end, b.range.end) &&
-         fuzzyEqual(a.range.offset, b.range.offset) &&
-         a.range.units == b.range.units && a.range.shape == b.range.shape &&
-         a.range.order == b.range.order &&
-         a.range.anchorGrouping == b.range.anchorGrouping &&
-         a.range.regexEnabled == b.range.regexEnabled &&
-         a.range.selectorPattern == b.range.selectorPattern &&
-         fuzzyEqual(a.range.easeHigh, b.range.easeHigh) &&
-         fuzzyEqual(a.range.easeLow, b.range.easeLow) &&
-         a.wiggly.enabled == b.wiggly.enabled &&
-         fuzzyEqual(a.wiggly.wigglesPerSecond, b.wiggly.wigglesPerSecond) &&
-         fuzzyEqual(a.wiggly.correlation, b.wiggly.correlation) &&
-         fuzzyEqual(a.wiggly.phase, b.wiggly.phase) &&
-         a.wiggly.seed == b.wiggly.seed &&
-         a.expression.enabled == b.expression.enabled &&
-         a.expression.expression == b.expression.expression &&
-         a.expression.seed == b.expression.seed &&
-         fuzzyEqual(a.properties.position, b.properties.position) &&
-         fuzzyEqual(a.properties.scale, b.properties.scale) &&
-         fuzzyEqual(a.properties.scaleX, b.properties.scaleX) &&
-         fuzzyEqual(a.properties.scaleY, b.properties.scaleY) &&
-         fuzzyEqual(a.properties.rotation, b.properties.rotation) &&
-         fuzzyEqual(a.properties.opacity, b.properties.opacity) &&
-         fuzzyEqual(a.properties.skew, b.properties.skew) &&
-         fuzzyEqual(a.properties.tracking, b.properties.tracking) &&
-         fuzzyEqual(a.properties.z, b.properties.z) &&
-         a.properties.colorEnabled == b.properties.colorEnabled &&
-         fuzzyEqual(a.properties.fillColor, b.properties.fillColor) &&
-         a.properties.strokeEnabled == b.properties.strokeEnabled &&
-         fuzzyEqual(a.properties.strokeColor, b.properties.strokeColor) &&
-         fuzzyEqual(a.properties.strokeWidth, b.properties.strokeWidth) &&
-         fuzzyEqual(a.properties.blur, b.properties.blur);
-}
-
 std::vector<TextAnimatorState> buildTextAnimatorPreset(const int presetId) {
   std::vector<TextAnimatorState> animators;
   switch (presetId) {
@@ -1341,27 +1279,6 @@ std::vector<TextAnimatorState> buildTextAnimatorPreset(const int presetId) {
     break;
   }
   return animators;
-}
-
-int inferTextAnimatorPresetId(const std::vector<TextAnimatorState> &animators) {
-  if (animators.empty()) return 0;
-  for (int presetId = 1; presetId <= 7; ++presetId) {
-    const auto presetAnimators = buildTextAnimatorPreset(presetId);
-    if (presetAnimators.size() != animators.size()) {
-      continue;
-    }
-    bool match = true;
-    for (size_t i = 0; i < animators.size(); ++i) {
-      if (!sameTextAnimatorState(animators[i], presetAnimators[i])) {
-        match = false;
-        break;
-      }
-    }
-    if (match) {
-      return presetId;
-    }
-  }
-  return -1;
 }
 
 QJsonObject colorToJson(const FloatRGBA &color) {
@@ -2367,34 +2284,34 @@ bool ArtifactTextLayer::addAnimatorProperty(const QString& propertyId) {
   TextAnimatorState animator = defaultTextAnimatorState(animatorCount());
   if (id == QStringLiteral("position")) {
     animator.name = QStringLiteral("Position");
-    animator.properties.position = QPointF(0.0, 72.0);
+    animator.properties.position = QPointF(0.0, 0.0);
   } else if (id == QStringLiteral("scale")) {
     animator.name = QStringLiteral("Scale");
-    animator.properties.scale = 0.0f;
+    animator.properties.scale = 1.0f;
   } else if (id == QStringLiteral("rotation")) {
     animator.name = QStringLiteral("Rotation");
-    animator.properties.rotation = 35.0f;
+    animator.properties.rotation = 0.0f;
   } else if (id == QStringLiteral("opacity")) {
     animator.name = QStringLiteral("Opacity");
-    animator.properties.opacity = 0.0f;
+    animator.properties.opacity = 1.0f;
   } else if (id == QStringLiteral("fillColor")) {
     animator.name = QStringLiteral("Fill Color");
     animator.properties.colorEnabled = true;
-    animator.properties.fillColor = FloatRGBA(1.0f, 0.0f, 0.0f, 1.0f);
+    animator.properties.fillColor = impl_->textStyle_.fillColor;
   } else if (id == QStringLiteral("strokeColor")) {
     animator.name = QStringLiteral("Stroke Color");
     animator.properties.strokeEnabled = true;
-    animator.properties.strokeColor = FloatRGBA(1.0f, 0.0f, 0.0f, 1.0f);
-    animator.properties.strokeWidth = 2.0f;
+    animator.properties.strokeColor = impl_->textStyle_.strokeColor;
+    animator.properties.strokeWidth = 0.0f;
   } else if (id == QStringLiteral("tracking")) {
     animator.name = QStringLiteral("Tracking");
-    animator.properties.tracking = 24.0f;
+    animator.properties.tracking = 0.0f;
   } else if (id == QStringLiteral("skew")) {
     animator.name = QStringLiteral("Skew");
-    animator.properties.skew = 20.0f;
+    animator.properties.skew = 0.0f;
   } else if (id == QStringLiteral("blur")) {
     animator.name = QStringLiteral("Blur");
-    animator.properties.blur = 10.0f;
+    animator.properties.blur = 0.0f;
   } else {
     return false;
   }
@@ -4151,16 +4068,6 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
   animatorCountProp->setTooltip(
       QStringLiteral("Increase to add text animators. Decrease to remove from the end."));
   textGroup.addProperty(animatorCountProp);
-
-  auto animatorPresetProp =
-      makeProp(QStringLiteral("text.animatorPreset"),
-               ArtifactCore::PropertyType::Integer, 0, -62);
-  animatorPresetProp->setHardRange(-1, 7);
-  animatorPresetProp->setSoftRange(-1, 7);
-  animatorPresetProp->setDisplayLabel(QStringLiteral("Preset"));
-  animatorPresetProp->setTooltip(animatorPresetTooltip());
-  animatorPresetProp->setValue(inferTextAnimatorPresetId(impl_->animators_));
-  textGroup.addProperty(animatorPresetProp);
 
   groups.push_back(textGroup);
 

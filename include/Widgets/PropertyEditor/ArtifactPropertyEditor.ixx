@@ -429,6 +429,10 @@ public:
 private:
     QDoubleSpinBox* xSpinBox_ = nullptr;
     QDoubleSpinBox* ySpinBox_ = nullptr;
+    QPushButton* colorWheelButton_ = nullptr;
+    bool usesColorWheel_ = false;
+    double colorWheelX_ = 0.0;
+    double colorWheelY_ = 0.0;
 };
 
 class ArtifactCurvesPropertyEditor final : public ArtifactAbstractPropertyEditor {

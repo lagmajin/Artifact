@@ -1766,6 +1766,7 @@
     "animator": {
       "default": "標準アニメーター",
       "animate": "アニメート",
+      "presets": "プリセット",
       "position": "位置",
       "scale": "スケール",
       "rotation": "回転",

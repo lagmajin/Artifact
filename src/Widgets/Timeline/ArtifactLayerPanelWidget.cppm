@@ -5696,6 +5696,18 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     }
     if (dynamic_cast<ArtifactTextLayer*>(layer.get())) {
       QMenu* textAnimatorMenu = menu.addMenu(tt("layer_panel.menu_text_animator", "Text Animator"));
+      textAnimatorMenu->addAction(
+          tt("property.animator.default", "Default Animator"),
+          [this, layer]() {
+            if (applyTextAnimatorStackMutationWithUndo(
+                    layer, QStringLiteral("Add Text Animator"),
+                    [](ArtifactTextLayer& textLayer) {
+                      textLayer.addAnimator();
+                      return true;
+                    })) {
+              updateLayout();
+            }
+          });
       QMenu* animateMenu = textAnimatorMenu->addMenu(
           tt("property.animator.animate", "Animate"));
       struct AnimatorPropertyMenuEntry {
@@ -5732,6 +5744,8 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
             });
       }
       textAnimatorMenu->addSeparator();
+      QMenu* presetsMenu = textAnimatorMenu->addMenu(
+          tt("property.animator.presets", "Presets"));
       struct AnimatorPresetMenuEntry {
         const char* label;
         int presetId;
@@ -5741,14 +5755,13 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
           {"Rotation In", 4}, {"Tracking Fade", 5},
           {"Wiggly Position", 6}, {"Blur Reveal", 7}};
       for (const auto& preset : presets) {
-        textAnimatorMenu->addAction(
+        presetsMenu->addAction(
             QString::fromLatin1(preset.label),
             [this, layer, presetId = preset.presetId]() {
               if (!applyTextAnimatorStackMutationWithUndo(
-                      layer, QStringLiteral("Set Text Animator Preset"),
+                      layer, QStringLiteral("Add Text Animator Preset"),
                       [presetId](ArtifactTextLayer& textLayer) {
-                        return textLayer.setLayerPropertyValue(
-                            QStringLiteral("text.animatorPreset"), presetId);
+                        return textLayer.addAnimatorPreset(presetId);
                       })) {
                 return;
               }

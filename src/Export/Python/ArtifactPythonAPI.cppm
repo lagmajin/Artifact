@@ -5,6 +5,7 @@ module;
 #include <sstream>
 #include <algorithm>
 #include <limits>
+#include <QProcessEnvironment>
 #include <QString>
 #include <QVector>
 #include <QChar>
@@ -868,8 +869,35 @@ artifact.set_current_frame = _set_current_frame
 void ArtifactPythonAPI::registerUtilityAPI() {
     auto& py = ArtifactCore::PythonEngine::instance();
 
+    py.registerFunction("_native_environment_get", [](const std::vector<std::string>& args) -> std::string {
+        QJsonObject result;
+        if (args.empty() || args.front().empty()) {
+            result.insert(QStringLiteral("present"), false);
+        } else {
+            const QString name = QString::fromStdString(args.front());
+            const bool present = qEnvironmentVariableIsSet(name.toUtf8().constData());
+            result.insert(QStringLiteral("present"), present);
+            if (present) {
+                result.insert(QStringLiteral("value"), qEnvironmentVariable(name.toUtf8().constData()));
+            }
+        }
+        return QJsonDocument(result).toJson(QJsonDocument::Compact).toStdString();
+    });
+
+    py.registerFunction("_native_environment_names", [](const std::vector<std::string>&) -> std::string {
+        QJsonArray names;
+        const QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
+        for (const QString& name : environment.keys()) {
+            if (name.startsWith(QStringLiteral("ARTIFACT_"), Qt::CaseSensitive)) {
+                names.append(name);
+            }
+        }
+        return QJsonDocument(names).toJson(QJsonDocument::Compact).toStdString();
+    });
+
     std::string code = R"(
 import artifact
+import json
 import time
 
 # Utility API
@@ -883,6 +911,24 @@ def _for_each_frame(start, end, callback):
             return False
         callback(frame)
     return True
+
+class _Environment:
+    """Read-only access to ARTIFACT_* variables inherited by the application."""
+    def get(self, name, default=None):
+        if not isinstance(name, str) or not name.startswith("ARTIFACT_"):
+            return default
+        result = json.loads(artifact._native_environment_get(name))
+        return result.get("value", default) if result.get("present") else default
+
+    def has(self, name):
+        if not isinstance(name, str) or not name.startswith("ARTIFACT_"):
+            return False
+        return bool(json.loads(artifact._native_environment_get(name)).get("present"))
+
+    def names(self):
+        return json.loads(artifact._native_environment_names())
+
+artifact.environment = _Environment()
 
 artifact.log = _log
 artifact.for_each_frame = _for_each_frame

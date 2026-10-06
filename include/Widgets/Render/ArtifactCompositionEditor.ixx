@@ -27,6 +27,8 @@ public:
  void setComposition(ArtifactCompositionPtr composition);
  void setClearColor(const FloatColor& color);
  CompositionRenderController* renderController() const;
+ // Read-only host access for consumers that map viewport coordinates.
+ QWidget* viewportHostWidget() const;
  QWidget* trackerPanelWidget() const;
  // Pushes the controller's live viewport orientation into the view cube.
  // Needed by callers outside this module that restore a saved view

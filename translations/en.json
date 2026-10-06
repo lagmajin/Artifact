@@ -1766,6 +1766,7 @@
     "animator": {
       "default": "Default Animator",
       "animate": "Animate",
+      "presets": "Presets",
       "position": "Position",
       "scale": "Scale",
       "rotation": "Rotation",

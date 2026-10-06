@@ -14411,6 +14411,10 @@ CompositionRenderController* ArtifactCompositionEditor::renderController() const
   return impl_ ? impl_->renderController_ : nullptr;
 }
 
+QWidget* ArtifactCompositionEditor::viewportHostWidget() const {
+  return impl_ ? impl_->viewportHost_ : nullptr;
+}
+
 QWidget* ArtifactCompositionEditor::trackerPanelWidget() const {
   return impl_ ? impl_->trackerPanel_ : nullptr;
 }

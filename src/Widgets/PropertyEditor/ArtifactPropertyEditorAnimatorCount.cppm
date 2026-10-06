@@ -29,8 +29,8 @@ ArtifactAnimatorCountPropertyEditor::ArtifactAnimatorCountPropertyEditor(
   setObjectName(QStringLiteral("propertyAnimatorCountEditor"));
   setAccessibleName(QStringLiteral("Animator count property editor"));
   setAccessibleDescription(QStringLiteral(
-      "Adjust the number of text animators, add an animator property, or "
-      "choose an animator preset"));
+      "Adjust the number of text animators, add a neutral animator or "
+      "property, or choose an animator preset"));
 
   const auto meta = property.metadata();
   minCount_ = meta.hardMin.isValid() ? meta.hardMin.toInt() : 0;
@@ -65,9 +65,9 @@ ArtifactAnimatorCountPropertyEditor::ArtifactAnimatorCountPropertyEditor(
   addButton_ = new PropertyCallbackButton(QStringLiteral("+"), this);
   addButton_->setAccessibleName(QStringLiteral("Add animator"));
   addButton_->setAccessibleDescription(QStringLiteral(
-      "Add an animator property or choose an animator preset"));
+      "Add an empty animator, an animator property, or choose a preset"));
   addButton_->setToolTip(
-      QStringLiteral("Add animator (click to select a property or preset)"));
+      QStringLiteral("Add animator (click to add an animator, property, or preset)"));
   addButton_->setFixedHeight(24);
   addButton_->setMinimumWidth(28);
   applyPropertyButtonPalette(addButton_, true);
@@ -108,13 +108,16 @@ ArtifactAnimatorCountPropertyEditor::ArtifactAnimatorCountPropertyEditor(
             text(QStringLiteral("property.animator.blur"),
                  QStringLiteral("Blur")));
         menu.addSeparator();
-        QAction *typewriterAct = menu.addAction(text(QStringLiteral("property.animator.typewriter"), QStringLiteral("Typewriter Preset")));
-        QAction *slideUpAct = menu.addAction(text(QStringLiteral("property.animator.slide_up"), QStringLiteral("Slide Up Preset")));
-        QAction *scaleInAct = menu.addAction(text(QStringLiteral("property.animator.scale_in"), QStringLiteral("Scale In Preset")));
-        QAction *rotationInAct = menu.addAction(text(QStringLiteral("property.animator.rotation_in"), QStringLiteral("Rotation In Preset")));
-        QAction *trackingFadeAct = menu.addAction(text(QStringLiteral("property.animator.tracking_fade"), QStringLiteral("Tracking Fade Preset")));
-        QAction *wigglyPositionAct = menu.addAction(text(QStringLiteral("property.animator.wiggly_position"), QStringLiteral("Wiggly Position Preset")));
-        QAction *blurRevealAct = menu.addAction(text(QStringLiteral("property.animator.blur_reveal"), QStringLiteral("Blur Reveal Preset")));
+        QMenu *presetsMenu = menu.addMenu(
+            text(QStringLiteral("property.animator.presets"),
+                 QStringLiteral("Presets")));
+        QAction *typewriterAct = presetsMenu->addAction(text(QStringLiteral("property.animator.typewriter"), QStringLiteral("Typewriter Preset")));
+        QAction *slideUpAct = presetsMenu->addAction(text(QStringLiteral("property.animator.slide_up"), QStringLiteral("Slide Up Preset")));
+        QAction *scaleInAct = presetsMenu->addAction(text(QStringLiteral("property.animator.scale_in"), QStringLiteral("Scale In Preset")));
+        QAction *rotationInAct = presetsMenu->addAction(text(QStringLiteral("property.animator.rotation_in"), QStringLiteral("Rotation In Preset")));
+        QAction *trackingFadeAct = presetsMenu->addAction(text(QStringLiteral("property.animator.tracking_fade"), QStringLiteral("Tracking Fade Preset")));
+        QAction *wigglyPositionAct = presetsMenu->addAction(text(QStringLiteral("property.animator.wiggly_position"), QStringLiteral("Wiggly Position Preset")));
+        QAction *blurRevealAct = presetsMenu->addAction(text(QStringLiteral("property.animator.blur_reveal"), QStringLiteral("Blur Reveal Preset")));
 
         defaultAct->setToolTip(QStringLiteral("Standard animator with blank settings"));
         typewriterAct->setToolTip(QStringLiteral("Typewriter animation: scale, opacity, tracking, blur"));

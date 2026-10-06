@@ -1,6 +1,10 @@
 module;
 #include <utility>
 #include <array>
+#include <cstddef>
+#include <cstdint>
+#include <exception>
+#include <functional>
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -15,6 +19,7 @@ module;
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QContextMenuEvent>
+#include <QColor>
 #include <QEvent>
 #include <QGridLayout>
 #include <QHBoxLayout>
@@ -23,6 +28,8 @@ module;
 #include <QListWidget>
 #include <QListView>
 #include <QMouseEvent>
+#include <QCursor>
+#include <QImage>
 #include <QMenu>
 #include <QHeaderView>
 #include <QKeyEvent>
@@ -33,6 +40,9 @@ module;
 #include <QThread>
 #include <QApplication>
 #include <QPainter>
+#include <QPaintEvent>
+#include <QPoint>
+#include <QRect>
 #include <QPixmap>
 #include <QPushButton>
 #include <QPointer>
@@ -42,6 +52,7 @@ module;
 #include <QSlider>
 #include <QSizePolicy>
 #include <QUrl>
+#include <QWidget>
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -52,6 +63,9 @@ module;
 
 
 module Artifact.Widgets.ColorSciencePanel;
+import Analyze.Histogram;
+import Core.ArtifactArray;
+import Image.ImageSurfaceView;
 import Memory.SharedPtr;
 import Color.Float;
 import Color.ScienceManager;
@@ -62,8 +76,10 @@ import Event.Bus;
 import Artifact.Event.Types;
 import Artifact.Widgets.CompositionEditor;
 import Artifact.Widgets.CompositionRenderController;
+import Artifact.Render.IRenderer;
 import Render.HDRMonitor;
 import Color.LUTWriter;
+import Graphics.SurfaceColorContract;
 import HistgramWidget;
 import VectorScopeWidget;
 import WaveformScopeWidget;
@@ -336,6 +352,65 @@ bool ArtifactLutColorReferencePickerDialog::eventFilter(QObject* watched, QEvent
 
 namespace {
 
+class SpatialSpectrumCanvas final : public QWidget {
+public:
+  SpatialSpectrumCanvas(ArtifactCore::ArtifactArray<float> magnitudes,
+                        int sourceWidth, int sourceHeight, QWidget *parent)
+      : QWidget(parent), magnitudes_(std::move(magnitudes)),
+        sourceWidth_(sourceWidth), sourceHeight_(sourceHeight) {
+    setMinimumSize(320, 240);
+    setAccessibleName(QStringLiteral("2D spatial frequency magnitude map"));
+    setAccessibleDescription(QStringLiteral(
+        "Grayscale logarithmic magnitude map, centered at DC frequency."));
+    for (std::size_t i = 0; i < magnitudes_.size(); ++i) {
+      if (std::isfinite(magnitudes_[i]))
+        maximumMagnitude_ = std::max(maximumMagnitude_, magnitudes_[i]);
+    }
+  }
+
+protected:
+  void paintEvent(QPaintEvent *event) override {
+    Q_UNUSED(event);
+    QPainter painter(this);
+    painter.fillRect(rect(), QColor(18, 18, 18));
+    if (sourceWidth_ <= 0 || sourceHeight_ <= 0 || magnitudes_.isEmpty() ||
+        maximumMagnitude_ <= 0.0f)
+      return;
+
+    const float logMaximum = std::log1p(maximumMagnitude_);
+    const int plotWidth = std::min(384, std::max(1, width()));
+    const int plotHeight = std::min(384, std::max(1, height()));
+    for (int py = 0; py < plotHeight; ++py) {
+      const int shiftedY = static_cast<int>(
+          static_cast<std::int64_t>(py) * sourceHeight_ / plotHeight);
+      const int sourceY = (shiftedY + (sourceHeight_ + 1) / 2) % sourceHeight_;
+      const int y0 = py * height() / plotHeight;
+      const int y1 = (py + 1) * height() / plotHeight;
+      for (int px = 0; px < plotWidth; ++px) {
+        const int shiftedX = static_cast<int>(
+            static_cast<std::int64_t>(px) * sourceWidth_ / plotWidth);
+        const int sourceX = (shiftedX + (sourceWidth_ + 1) / 2) % sourceWidth_;
+        const float magnitude = magnitudes_[
+            static_cast<std::size_t>(sourceY) * sourceWidth_ + sourceX];
+        const float normalized = std::isfinite(magnitude)
+            ? std::clamp(std::log1p(std::max(0.0f, magnitude)) / logMaximum, 0.0f, 1.0f)
+            : 0.0f;
+        const int level = static_cast<int>(normalized * 255.0f + 0.5f);
+        const int x0 = px * width() / plotWidth;
+        const int x1 = (px + 1) * width() / plotWidth;
+        painter.fillRect(QRect(x0, y0, std::max(1, x1 - x0),
+                               std::max(1, y1 - y0)), QColor(level, level, level));
+      }
+    }
+  }
+
+private:
+  ArtifactCore::ArtifactArray<float> magnitudes_;
+  int sourceWidth_ = 0;
+  int sourceHeight_ = 0;
+  float maximumMagnitude_ = 0.0f;
+};
+
 class ScopeDashboard final : public QWidget {
 public:
   enum class ViewMode {
@@ -376,6 +451,9 @@ public:
   }
 
   void setRefreshTimer(QTimer *timer) { refreshTimer_ = timer; }
+  void setSpectrumAnalysisCallback(std::function<void()> callback) {
+    spectrumAnalysisCallback_ = std::move(callback);
+  }
   bool frozen() const { return frozen_; }
   int refreshIntervalMs() const { return refreshIntervalMs_; }
   ScopeSignalRange qcSignalRange() const {
@@ -508,12 +586,17 @@ protected:
     qcLegal->setChecked(videoLegalQc_);
 
     menu.addSeparator();
+    QAction *spectrumAction = menu.addAction(
+        QStringLiteral("Analyze 2D Spatial Spectrum…"));
+    spectrumAction->setEnabled(static_cast<bool>(spectrumAnalysisCallback_));
     QAction *freezeAction = menu.addAction(QStringLiteral("Freeze Scopes"));
     freezeAction->setCheckable(true);
     freezeAction->setChecked(frozen_);
 
     QAction *selected = menu.exec(event->globalPos());
-    if (selected == gridAction) {
+    if (selected == spectrumAction && spectrumAnalysisCallback_) {
+      spectrumAnalysisCallback_();
+    } else if (selected == gridAction) {
       applyViewMode(ViewMode::Grid);
     } else if (selected == dualAction) {
       applyViewMode(ViewMode::Dual);
@@ -576,8 +659,8 @@ protected:
     } else if (selected == freezeAction) {
       frozen_ = freezeAction->isChecked();
     }
-    if (selected) ++preferenceRevision_;
-    savePreferences();
+    if (selected && selected != spectrumAction) ++preferenceRevision_;
+    if (selected != spectrumAction) savePreferences();
   }
 
   bool eventFilter(QObject *watched, QEvent *event) override {
@@ -785,6 +868,7 @@ private:
   ArtifactWidgets::WaveformScopeWidget *waveform_ = nullptr;
   ArtifactWidgets::HistogramWidget *histogram_ = nullptr;
   QTimer *refreshTimer_ = nullptr;
+  std::function<void()> spectrumAnalysisCallback_;
   ViewMode viewMode_ = ViewMode::Grid;
   bool frozen_ = false;
   int refreshIntervalMs_ = 200;
@@ -849,6 +933,8 @@ public:
   ScopeDashboard *scopeDashboard_ = nullptr;
   QLabel *scopeStatusLabel_ = nullptr;
   QLabel *scopeQcLabel_ = nullptr;
+  QLabel *scopePixelLabel_ = nullptr;
+  QLabel *scopeSpectrumLabel_ = nullptr;
   ArtifactWidgets::HistogramWidget *histogramWidget_ = nullptr;
   ArtifactWidgets::VectorScopeWidget *vectorScopeWidget_ = nullptr;
   ArtifactWidgets::WaveformScopeWidget *waveformScopeWidget_ = nullptr;
@@ -863,6 +949,7 @@ public:
   quint64 scopeDeferredRequests_ = 0;
   bool scopeReadbackPending_ = false;
   QElapsedTimer scopeReadbackElapsed_;
+  QImage lastScopeFrame_;
 
   std::vector<LutEntry> lutEntries_;
   std::vector<ColorRuleRow> colorRules_;
@@ -885,6 +972,8 @@ public:
   QString lutDescriptionForSource(const QString &source) const;
   QString defaultLUTDirectory() const;
   void refreshScopesFromViewport(QWidget *parent);
+  void updateScopePixelReadout(ArtifactCompositionEditor *editor);
+  void analyzeSpatialSpectrum();
   void applyScopeFrame(const QImage &frame, quint64 frameSerial,
                        quint64 requestGeneration,
                        ArtifactCompositionEditor *sourceEditor);
@@ -1143,6 +1232,8 @@ void ArtifactColorSciencePanel::Impl::setupScopesSection(QWidget *parent, QVBoxL
 
   scopeDashboard_->setScopes(paradeScopeWidget_, vectorScopeWidget_,
                              waveformScopeWidget_, histogramWidget_);
+  scopeDashboard_->setSpectrumAnalysisCallback(
+      [this]() { analyzeSpatialSpectrum(); });
   scopeLayout->addWidget(scopeDashboard_, 1);
 
   scopeStatusLabel_ = new QLabel(QStringLiteral("Waiting for Composition Editor preview"), scopeGroup);
@@ -1154,6 +1245,19 @@ void ArtifactColorSciencePanel::Impl::setupScopesSection(QWidget *parent, QVBoxL
   scopeQcLabel_->setWordWrap(true);
   scopeQcLabel_->setAccessibleName(QStringLiteral("Scope quality control summary"));
   scopeLayout->addWidget(scopeQcLabel_);
+
+  scopePixelLabel_ = new QLabel(
+      QStringLiteral("Pixel · move the cursor over the Composition View"), scopeGroup);
+  scopePixelLabel_->setWordWrap(true);
+  scopePixelLabel_->setAccessibleName(QStringLiteral("Composition pixel sample"));
+  scopeLayout->addWidget(scopePixelLabel_);
+
+  scopeSpectrumLabel_ = new QLabel(
+      QStringLiteral("Spatial spectrum · right-click Scopes to analyze the current frame"),
+      scopeGroup);
+  scopeSpectrumLabel_->setWordWrap(true);
+  scopeSpectrumLabel_->setAccessibleName(QStringLiteral("Spatial spectrum analysis status"));
+  scopeLayout->addWidget(scopeSpectrumLabel_);
 
   layout->addWidget(scopeGroup);
 
@@ -1591,6 +1695,7 @@ void ArtifactColorSciencePanel::Impl::refreshScopesFromViewport(QWidget *parent)
   }
 
   if (scopeDashboard_ && scopeDashboard_->frozen()) {
+    updateScopePixelReadout(lastScopeEditor_.data());
     if (scopeStatusLabel_) {
       scopeStatusLabel_->setText(QStringLiteral("Frozen · right-click to resume live scopes"));
     }
@@ -1601,6 +1706,12 @@ void ArtifactColorSciencePanel::Impl::refreshScopesFromViewport(QWidget *parent)
   if (!editor) {
     lastScopeEditor_.clear();
     lastScopeFrameSerial_ = 0;
+    lastScopeFrame_ = QImage();
+    updateScopePixelReadout(nullptr);
+    if (scopeSpectrumLabel_) {
+      scopeSpectrumLabel_->setText(
+          QStringLiteral("Spatial spectrum · no active Composition Editor"));
+    }
     if (scopeStatusLabel_) {
       scopeStatusLabel_->setText(QStringLiteral("No visible Composition Editor"));
     }
@@ -1614,6 +1725,8 @@ void ArtifactColorSciencePanel::Impl::refreshScopesFromViewport(QWidget *parent)
     }
     return;
   }
+
+  updateScopePixelReadout(editor);
 
   const quint64 frameSerial = controller->currentFrameSerial();
   const quint64 preferenceRevision =
@@ -1713,7 +1826,13 @@ void ArtifactColorSciencePanel::Impl::applyScopeFrame(
   lastScopePreferenceRevision_ =
       scopeDashboard_ ? scopeDashboard_->revision() : 0;
   lastScopeEditor_ = sourceEditor;
+  lastScopeFrame_ = frame;
   ++scopeAcceptedRequests_;
+  if (scopeSpectrumLabel_) {
+    scopeSpectrumLabel_->setText(
+        QStringLiteral("Spatial spectrum · frame %1 ready; right-click Scopes to analyze")
+            .arg(static_cast<qulonglong>(frameSerial)));
+  }
 
   if (histogramWidget_ &&
       (!scopeDashboard_ || scopeDashboard_->showsHistogram())) {
@@ -1733,6 +1852,7 @@ void ArtifactColorSciencePanel::Impl::applyScopeFrame(
   }
 
   updateScopeQcSummary(frame);
+  updateScopePixelReadout(sourceEditor);
 
   if (scopeStatusLabel_) {
     scopeStatusLabel_->setText(
@@ -1743,6 +1863,141 @@ void ArtifactColorSciencePanel::Impl::applyScopeFrame(
             .arg(scopeAcceptedRequests_)
             .arg(scopeDeferredRequests_));
   }
+}
+
+void ArtifactColorSciencePanel::Impl::updateScopePixelReadout(
+    ArtifactCompositionEditor *editor) {
+  if (!scopePixelLabel_) return;
+  if (!editor || editor != lastScopeEditor_ || lastScopeFrame_.isNull()) {
+    scopePixelLabel_->setText(
+        QStringLiteral("Pixel · waiting for the current Composition View frame"));
+    return;
+  }
+
+  QWidget *viewport = editor->viewportHostWidget();
+  CompositionRenderController *controller = editor->renderController();
+  ArtifactIRenderer *renderer = controller ? controller->renderer() : nullptr;
+  if (!viewport || !renderer ||
+      lastScopeFrame_.format() != QImage::Format_RGBA8888) {
+    scopePixelLabel_->setText(
+        QStringLiteral("Pixel · waiting for a supported RGBA preview"));
+    return;
+  }
+
+  const QPoint viewportPos = viewport->mapFromGlobal(QCursor::pos());
+  if (!viewport->rect().contains(viewportPos)) {
+    scopePixelLabel_->setText(
+        QStringLiteral("Pixel · move the cursor over the Composition View"));
+    return;
+  }
+
+  const auto canvasPos = renderer->viewportToCanvas(
+      {static_cast<float>(viewportPos.x()), static_cast<float>(viewportPos.y())});
+  if (!std::isfinite(canvasPos.x) || !std::isfinite(canvasPos.y)) return;
+  if (canvasPos.x < 0.0f || canvasPos.y < 0.0f ||
+      canvasPos.x >= static_cast<float>(lastScopeFrame_.width()) ||
+      canvasPos.y >= static_cast<float>(lastScopeFrame_.height())) {
+    scopePixelLabel_->setText(QStringLiteral("Pixel · outside the image"));
+    return;
+  }
+  const int x = static_cast<int>(std::floor(canvasPos.x));
+  const int y = static_cast<int>(std::floor(canvasPos.y));
+
+  ArtifactCore::ImageByteSurfaceView view;
+  view.data = lastScopeFrame_.constBits();
+  view.width = lastScopeFrame_.width();
+  view.height = lastScopeFrame_.height();
+  view.rowStride = static_cast<std::size_t>(lastScopeFrame_.bytesPerLine());
+  view.descriptor = ArtifactCore::SurfaceColorDescriptor::unknown();
+  view.descriptor.storage = ArtifactCore::SurfacePixelStorage::RGBA8UNormSrgb;
+  view.descriptor.channelOrder = ArtifactCore::SurfaceChannelOrder::RGBA;
+  view.descriptor.primaries = ArtifactCore::SurfaceColorPrimaries::SRGB_Rec709_D65;
+  view.descriptor.transfer = ArtifactCore::TransferFunction::sRGB;
+  view.descriptor.range = ArtifactCore::SurfaceColorRange::DisplayReferred;
+  view.descriptor.transferKnown = true;
+
+  ArtifactCore::ImagePixelSample sample;
+  if (!ArtifactCore::ImageAnalyzer::samplePixel(view, x, y, sample)) {
+    scopePixelLabel_->setText(QStringLiteral("Pixel · unsupported preview layout"));
+    return;
+  }
+  const QString text = QStringLiteral("Frame %1 · Pixel (%2, %3) · R %4 · G %5 · B %6 · A %7 · sRGB 8-bit")
+      .arg(static_cast<qulonglong>(lastScopeFrameSerial_)).arg(x).arg(y)
+      .arg(sample.rgba[0], 0, 'f', 3)
+      .arg(sample.rgba[1], 0, 'f', 3)
+      .arg(sample.rgba[2], 0, 'f', 3)
+      .arg(sample.rgba[3], 0, 'f', 3);
+  if (scopePixelLabel_->text() != text)
+    scopePixelLabel_->setText(text);
+}
+
+void ArtifactColorSciencePanel::Impl::analyzeSpatialSpectrum() {
+  if (!scopeSpectrumLabel_ || !lastScopeEditor_ || lastScopeFrame_.isNull() ||
+      lastScopeFrame_.format() != QImage::Format_RGBA8888) {
+    if (scopeSpectrumLabel_)
+      scopeSpectrumLabel_->setText(
+          QStringLiteral("Spatial spectrum · no supported preview frame is available"));
+    return;
+  }
+
+  ArtifactCore::ImageByteSurfaceView view;
+  view.data = lastScopeFrame_.constBits();
+  view.width = lastScopeFrame_.width();
+  view.height = lastScopeFrame_.height();
+  view.rowStride = static_cast<std::size_t>(lastScopeFrame_.bytesPerLine());
+  view.descriptor = ArtifactCore::SurfaceColorDescriptor::unknown();
+  view.descriptor.storage = ArtifactCore::SurfacePixelStorage::RGBA8UNormSrgb;
+  view.descriptor.channelOrder = ArtifactCore::SurfaceChannelOrder::RGBA;
+  view.descriptor.primaries = ArtifactCore::SurfaceColorPrimaries::SRGB_Rec709_D65;
+  view.descriptor.transfer = ArtifactCore::TransferFunction::sRGB;
+  view.descriptor.range = ArtifactCore::SurfaceColorRange::DisplayReferred;
+  view.descriptor.transferKnown = true;
+
+  const std::size_t width = static_cast<std::size_t>(view.width);
+  const std::size_t height = static_cast<std::size_t>(view.height);
+  constexpr std::size_t maxSize = (std::numeric_limits<std::size_t>::max)();
+  if (width == 0 || height == 0 || width > maxSize / height) {
+    scopeSpectrumLabel_->setText(QStringLiteral("Spatial spectrum · image dimensions are invalid"));
+    return;
+  }
+
+  ArtifactCore::ArtifactArray<float> magnitudes;
+  std::size_t magnitudeCount = 0;
+  try {
+    magnitudes.resize(width * height);
+    if (!ArtifactCore::ImageAnalyzer::analyzeSpatialFrequency(
+            view, ArtifactCore::ImageSpectrumChannel::Rec709WeightedRgb,
+            magnitudes.data(), magnitudes.size(), magnitudeCount)) {
+      scopeSpectrumLabel_->setText(
+          QStringLiteral("Spatial spectrum · analysis rejected the preview buffer"));
+      return;
+    }
+  } catch (const std::exception &error) {
+    scopeSpectrumLabel_->setText(
+        QStringLiteral("Spatial spectrum · analysis failed: %1")
+            .arg(QString::fromUtf8(error.what())));
+    return;
+  }
+
+  QDialog dialog(owner_);
+  dialog.setWindowTitle(QStringLiteral("2D Spatial Frequency Spectrum"));
+  dialog.setAccessibleName(QStringLiteral("2D spatial frequency spectrum"));
+  auto *layout = new QVBoxLayout(&dialog);
+  auto *summary = new QLabel(
+      QStringLiteral("Frame %1 · %2 × %3 · Rec.709-weighted encoded RGB · log magnitude · center = DC · axes = cycles per image")
+          .arg(static_cast<qulonglong>(lastScopeFrameSerial_))
+          .arg(view.width).arg(view.height), &dialog);
+  summary->setWordWrap(true);
+  layout->addWidget(summary);
+  auto *spectrum = new SpatialSpectrumCanvas(
+      std::move(magnitudes), view.width, view.height, &dialog);
+  layout->addWidget(spectrum, 1);
+  dialog.resize(720, 520);
+  scopeSpectrumLabel_->setText(
+      QStringLiteral("Spatial spectrum · analyzed %1 × %2 (%3 bins)")
+          .arg(view.width).arg(view.height)
+          .arg(static_cast<qulonglong>(magnitudeCount)));
+  dialog.exec();
 }
 
 void ArtifactColorSciencePanel::Impl::updateScopeQcSummary(const QImage &frame) {

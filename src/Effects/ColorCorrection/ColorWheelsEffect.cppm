@@ -6,6 +6,7 @@ module;
 #include <memory>
 #include <vector>
 #include <QVariant>
+#include <QPointF>
 #include <opencv2/opencv.hpp>
 #include <cstring>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
@@ -354,6 +355,34 @@ bool ColorWheelsEffect::appendGpuSpatialNodes(GpuSpatialEffectStack& stack) cons
 std::vector<AbstractProperty> ColorWheelsEffect::getProperties() const {
     std::vector<AbstractProperty> props;
 
+    const auto wheelPoint = [](float r, float g, float b) {
+        const float mean = (r + g + b) / 3.0f;
+        constexpr double scale = 0.75;
+        double x = std::clamp(static_cast<double>(r - mean) / scale, -1.0, 1.0);
+        double y = std::clamp(static_cast<double>(b - g) /
+                                  (1.7320508075688772 * scale),
+                              -1.0, 1.0);
+        const double radius = std::hypot(x, y);
+        if (radius > 1.0) {
+            x /= radius;
+            y /= radius;
+        }
+        return QPointF(std::round(x * 1000.0) / 1000.0,
+                       std::round(y * 1000.0) / 1000.0);
+    };
+    const auto addWheel = [&props](const char* name, const QString& label,
+                                   const QPointF& point) {
+        AbstractProperty prop;
+        prop.setName(name);
+        prop.setDisplayLabel(label);
+        prop.setType(PropertyType::Point2D);
+        prop.setValue(QVariant::fromValue(point));
+        prop.setAnimatable(false);
+        prop.setTooltip(QStringLiteral(
+            "Drag the puck around the wheel to adjust color balance. The center is neutral."));
+        props.push_back(prop);
+    };
+
     auto addFloat = [&props](const char* name, float value) {
         AbstractProperty prop;
         prop.setName(name);
@@ -390,18 +419,39 @@ std::vector<AbstractProperty> ColorWheelsEffect::getProperties() const {
         "0=RGB, 1=Lift/Gamma/Gain, 2=Offset/Gamma/Gain, 3=Shadows/Midtones/Highlights."));
     props.push_back(modeProp);
 
+    // These wheel controls are derived views of the RGB channels below. Keeping
+    // the channel properties preserves existing projects and precise numeric
+    // editing while offering a direct color-balance gesture.
+    const bool threeWay =
+        wheelType_ == ColorWheelType::ShadowsMidtonesHighlights;
+    addWheel("Lift Wheel",
+             threeWay ? QStringLiteral("Shadows Wheel")
+                      : QStringLiteral("Lift Wheel"),
+             wheelPoint(wheels_.liftR, wheels_.liftG, wheels_.liftB));
     addFloat("Lift Master", wheels_.liftMaster);
     addFloat("Lift R", wheels_.liftR);
     addFloat("Lift G", wheels_.liftG);
     addFloat("Lift B", wheels_.liftB);
+    addWheel("Gamma Wheel",
+             threeWay ? QStringLiteral("Midtones Wheel")
+                      : QStringLiteral("Gamma Wheel"),
+             wheelPoint(wheels_.gammaR, wheels_.gammaG, wheels_.gammaB));
     addFloat("Gamma Master", wheels_.gammaMaster);
     addFloat("Gamma R", wheels_.gammaR);
     addFloat("Gamma G", wheels_.gammaG);
     addFloat("Gamma B", wheels_.gammaB);
+    addWheel("Gain Wheel",
+             threeWay ? QStringLiteral("Highlights Wheel")
+                      : QStringLiteral("Gain Wheel"),
+             wheelPoint(wheels_.gainR, wheels_.gainG, wheels_.gainB));
     addFloat("Gain Master", wheels_.gainMaster);
     addFloat("Gain R", wheels_.gainR);
     addFloat("Gain G", wheels_.gainG);
     addFloat("Gain B", wheels_.gainB);
+    if (wheelType_ == ColorWheelType::OffsetGammaGain) {
+        addWheel("Offset Wheel", QStringLiteral("Offset Wheel"),
+                 wheelPoint(wheels_.offsetR, wheels_.offsetG, wheels_.offsetB));
+    }
     addFloat("Offset Master", wheels_.offsetMaster);
     addFloat("Offset R", wheels_.offsetR);
     addFloat("Offset G", wheels_.offsetG);
@@ -414,6 +464,37 @@ void ColorWheelsEffect::setPropertyValue(const UniString& name, const QVariant& 
     const QString key = name.toQString();
     if (key == QStringLiteral("Wheel Type")) {
         setWheelType(static_cast<ColorWheelType>(value.toInt()));
+    } else if ((key == QStringLiteral("Lift Wheel") ||
+                key == QStringLiteral("Gamma Wheel") ||
+                key == QStringLiteral("Gain Wheel") ||
+                key == QStringLiteral("Offset Wheel")) &&
+               value.canConvert<QPointF>()) {
+        const QPointF point = value.toPointF();
+        const double radius = std::hypot(point.x(), point.y());
+        const double scale = radius > 1.0 ? 1.0 / radius : 1.0;
+        const float x = static_cast<float>(point.x() * scale);
+        const float y = static_cast<float>(point.y() * scale);
+        constexpr float channelScale = 0.75f;
+        const float redDelta = channelScale * x;
+        const float greenDelta = channelScale * (-0.5f * x - 0.8660254037844386f * y);
+        const float blueDelta = channelScale * (-0.5f * x + 0.8660254037844386f * y);
+        const auto applyWheel = [&](float r, float g, float b, auto setter) {
+            const float mean = (r + g + b) / 3.0f;
+            setter(mean + redDelta, mean + greenDelta, mean + blueDelta);
+        };
+        if (key == QStringLiteral("Lift Wheel")) {
+            applyWheel(wheels_.liftR, wheels_.liftG, wheels_.liftB,
+                       [this](float r, float g, float b) { setLift(r, g, b); });
+        } else if (key == QStringLiteral("Gamma Wheel")) {
+            applyWheel(wheels_.gammaR, wheels_.gammaG, wheels_.gammaB,
+                       [this](float r, float g, float b) { setGamma(r, g, b); });
+        } else if (key == QStringLiteral("Gain Wheel")) {
+            applyWheel(wheels_.gainR, wheels_.gainG, wheels_.gainB,
+                       [this](float r, float g, float b) { setGain(r, g, b); });
+        } else {
+            applyWheel(wheels_.offsetR, wheels_.offsetG, wheels_.offsetB,
+                       [this](float r, float g, float b) { setOffset(r, g, b); });
+        }
     } else if (key == QStringLiteral("Lift Master")) {
         setLiftMaster(value.toFloat());
     } else if (key == QStringLiteral("Lift R")) {
