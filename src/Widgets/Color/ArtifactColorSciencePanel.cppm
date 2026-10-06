@@ -380,16 +380,20 @@ protected:
     const float logMaximum = std::log1p(maximumMagnitude_);
     const int plotWidth = std::min(384, std::max(1, width()));
     const int plotHeight = std::min(384, std::max(1, height()));
+    const int centerX = sourceWidth_ / 2 + sourceWidth_ % 2;
+    const int centerY = sourceHeight_ / 2 + sourceHeight_ % 2;
     for (int py = 0; py < plotHeight; ++py) {
       const int shiftedY = static_cast<int>(
           static_cast<std::int64_t>(py) * sourceHeight_ / plotHeight);
-      const int sourceY = (shiftedY + (sourceHeight_ + 1) / 2) % sourceHeight_;
+      const int sourceY = static_cast<int>(
+          (static_cast<std::int64_t>(shiftedY) + centerY) % sourceHeight_);
       const int y0 = py * height() / plotHeight;
       const int y1 = (py + 1) * height() / plotHeight;
       for (int px = 0; px < plotWidth; ++px) {
         const int shiftedX = static_cast<int>(
             static_cast<std::int64_t>(px) * sourceWidth_ / plotWidth);
-        const int sourceX = (shiftedX + (sourceWidth_ + 1) / 2) % sourceWidth_;
+        const int sourceX = static_cast<int>(
+            (static_cast<std::int64_t>(shiftedX) + centerX) % sourceWidth_);
         const float magnitude = magnitudes_[
             static_cast<std::size_t>(sourceY) * sourceWidth_ + sourceX];
         const float normalized = std::isfinite(magnitude)
@@ -949,6 +953,7 @@ public:
   quint64 scopeDeferredRequests_ = 0;
   bool scopeReadbackPending_ = false;
   QElapsedTimer scopeReadbackElapsed_;
+  // Retain the existing RGBA readback by implicit share; do not convert/copy it.
   QImage lastScopeFrame_;
 
   std::vector<LutEntry> lutEntries_;
