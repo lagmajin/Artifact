@@ -514,10 +514,9 @@ void ArtifactAbstractLayerImpl::syncBuiltinBoolsFromHost() {
 
 void ArtifactAbstractLayerImpl::releaseScriptInstance()
 {
-  scriptInstance_.reset();
+  scriptRuntime_.release();
   scriptSourcePath_.clear();
-  scriptLastError_.clear();
-  scriptLastFrame_ = std::numeric_limits<int64_t>::min();
+  scriptLastReportedError_.clear();
 }
 
 namespace {
@@ -610,7 +609,8 @@ void ArtifactAbstractLayerImpl::rebuildScriptInstance()
   }
   const QFileInfo info(path);
   const QString absolute = info.absoluteFilePath();
-  if (scriptInstance_ && scriptSourcePath_ == absolute.toStdString()) {
+  if (scriptRuntime_.hasInstance() &&
+      scriptSourcePath_ == absolute.toStdString()) {
     return;  // already bound to this file
   }
   releaseScriptInstance();
@@ -618,116 +618,76 @@ void ArtifactAbstractLayerImpl::rebuildScriptInstance()
     return;
   }
   ArtifactScriptDefinition definition;
-  if (!loadScriptDefinition(absolute, definition, scriptLastError_)) {
+  std::string loadError;
+  if (!loadScriptDefinition(absolute, definition, loadError)) {
+    scriptRuntime_.setLastError(std::move(loadError));
     return;
   }
-  scriptInstance_ = std::make_unique<ArtifactScriptInstance>(
-      std::move(definition));
-  // Seed the field table with the script's declared defaults.
-  // invokeHook() only applies defaults when fields() is empty, so seeding
-  // here keeps dt/time/frame from suppressing the public-field defaults.
-  ArtifactScriptComponent component;
-  component.setScriptClass(
-      scriptInstance_->definition().rootClass.name);
-  component.applyDefaults(scriptInstance_->definition());
-  scriptInstance_->fields() = component.publicFields();
+  scriptRuntime_.bind(std::move(definition));
+  scriptLastReportedError_.clear();
   scriptSourcePath_ = absolute.toStdString();
 }
 
 bool ArtifactAbstractLayerImpl::reloadScriptFromDisk()
 {
   if (!scriptComponentEnabled_ || scriptSourcePath_.empty() ||
-      !scriptInstance_) {
+      !scriptRuntime_.hasInstance()) {
     return false;
   }
   const QString absolute = QString::fromStdString(scriptSourcePath_);
   ArtifactScriptDefinition definition;
-  if (!loadScriptDefinition(absolute, definition, scriptLastError_)) {
+  std::string loadError;
+  if (!loadScriptDefinition(absolute, definition, loadError)) {
+    scriptRuntime_.setLastError(std::move(loadError));
     return false;  // keep running the previous instance on a parse error
   }
   // ArtifactScriptDefinition is move-only, so the previous definition is still
   // intact here and can be read for the field migration.
   ArtifactScriptSerializedFields migrated =
-      migrateScriptFields(scriptInstance_->definition(),
-                          scriptInstance_->fields(), definition);
-  scriptInstance_ = std::make_unique<ArtifactScriptInstance>(
-      std::move(definition));
-  scriptInstance_->fields() = std::move(migrated);
+      migrateScriptFields(scriptRuntime_.instance()->definition(),
+                          scriptRuntime_.instance()->fields(), definition);
+  scriptRuntime_.replaceDefinition(std::move(definition), std::move(migrated));
+  scriptRuntime_.setLastError({});
+  scriptLastReportedError_.clear();
   return true;
 }
 
 bool ArtifactAbstractLayerImpl::advanceScriptLifecycle(
     ArtifactAbstractLayer::ScriptRunState target)
 {
-  using State = ArtifactAbstractLayer::ScriptRunState;
-  // Normalise the requested stage against what actually exists: an unbound or
-  // disabled component can never be past Unbound.
-  if (target != State::Unbound &&
-      (!scriptComponentEnabled_ || !scriptInstance_)) {
-    target = State::Unbound;
+  using LayerState = ArtifactAbstractLayer::ScriptRunState;
+  using RuntimeState = ArtifactCore::ArtifactScriptLayerRunState;
+  const RuntimeState runtimeTarget = target == LayerState::Created
+      ? RuntimeState::Created
+      : target == LayerState::Enabled ? RuntimeState::Enabled
+                                      : RuntimeState::Unbound;
+  const bool changed = scriptRuntime_.advanceLifecycle(
+      runtimeTarget, scriptComponentEnabled_);
+  const std::string& error = scriptRuntime_.lastError();
+  if (!error.empty() && error != scriptLastReportedError_) {
+    scriptLastReportedError_ = error;
+    qWarning().noquote()
+        << "[LayerScript]" << scriptSourcePath_.c_str() << error.c_str();
   }
-  if (scriptRunState_ == target) {
-    return false;
-  }
-  const auto invoke = [this](ArtifactCore::ArtifactScriptHook hook) {
-    if (scriptInstance_) {
-      scriptInstance_->invokeHook(hook);
-    }
-  };
-  const State previous = scriptRunState_;
-  scriptRunState_ = target;
-  switch (target) {
-  case State::Created:
-    invoke(ArtifactCore::ArtifactScriptHook::OnCreate);
-    invoke(ArtifactCore::ArtifactScriptHook::OnStart);
-    break;
-  case State::Enabled:
-    // A direct Unbound -> Enabled jump still has to create first so OnEnable
-    // never runs on an instance that skipped OnCreate/OnStart.
-    if (previous == State::Unbound) {
-      invoke(ArtifactCore::ArtifactScriptHook::OnCreate);
-      invoke(ArtifactCore::ArtifactScriptHook::OnStart);
-    }
-    invoke(ArtifactCore::ArtifactScriptHook::OnEnable);
-    break;
-  case State::Unbound:
-    if (previous == State::Enabled) {
-      invoke(ArtifactCore::ArtifactScriptHook::OnDisable);
-    }
-    if (previous != State::Unbound) {
-      invoke(ArtifactCore::ArtifactScriptHook::OnDestroy);
-    }
-    break;
-  }
-  return true;
+  return changed;
 }
 
 bool ArtifactAbstractLayerImpl::evaluateScriptFrame(
     int64_t frame, double timeSeconds, double deltaSeconds)
 {
-  if (!scriptComponentEnabled_ || !scriptInstance_) {
+  if (!scriptComponentEnabled_ || !scriptRuntime_.hasInstance()) {
     return false;
   }
-  if (frame == scriptLastFrame_) {
-    return false;  // same-frame re-evaluation guard
-  }
-  scriptLastFrame_ = frame;
-  auto& fields = scriptInstance_->fields();
-  // ArtifactScript has no host API wired yet, so dt/time reach the script
-  // through the field table instead.
-  fields["dt"] = ArtifactScriptValue(deltaSeconds);
-  fields["time"] = ArtifactScriptValue(timeSeconds);
-  fields["frame"] = ArtifactScriptValue(static_cast<std::int64_t>(frame));
-  if (!scriptInstance_->invokeHook(ArtifactScriptHook::OnUpdate)) {
-    const std::string error = scriptInstance_->lastError();
-    if (!error.empty() && error != scriptLastError_) {
-      scriptLastError_ = error;
+  if (!scriptRuntime_.evaluateFrame(frame, timeSeconds, deltaSeconds)) {
+    const std::string& error = scriptRuntime_.lastError();
+    if (!error.empty() && error != scriptLastReportedError_) {
+      scriptLastReportedError_ = error;
       qWarning().noquote()
           << "[LayerScript]" << scriptSourcePath_.c_str() << error.c_str();
     }
     return false;
   }
-  scriptLastError_.clear();
+  scriptLastReportedError_.clear();
   return true;
 }
 
@@ -3465,7 +3425,7 @@ bool ArtifactAbstractLayer::reloadScriptFromDisk() {
 }
 
 std::string ArtifactAbstractLayer::scriptLastError() const {
-  return impl_->scriptLastError_;
+  return impl_->scriptRuntime_.lastError();
 }
 
 QImage ArtifactAbstractLayer::getThumbnail(int width, int height) const {
