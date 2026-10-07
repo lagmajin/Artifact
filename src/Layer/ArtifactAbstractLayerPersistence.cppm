@@ -92,6 +92,7 @@ import Property.Abstract;
 import Property.Group;
 import Property.SerializationBridge;
 import Script.Expression.Evaluator;
+import Script.ArtifactScript;
 import Audio.Modulation.Router;
 import Artifact.Event.Types;
 import Event.Bus;
@@ -644,6 +645,48 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   if (!impl_->scriptBinding_.isEmpty()) {
     componentsObj["scriptBinding"] = impl_->scriptBinding_;
   }
+  ArtifactCore::ArtifactScriptSerializedComponent scriptState;
+  if (impl_->scriptRuntime_.hasInstance()) {
+    const auto* instance = impl_->scriptRuntime_.instance();
+    const auto& definition = instance->definition();
+    const auto& fields = instance->fields();
+    scriptState.className = definition.rootClass.name;
+    for (const auto& field : definition.rootClass.fields) {
+      if (!field.serialized) continue;
+      const auto value = fields.find(field.name);
+      scriptState.values.emplace(
+          field.name, value == fields.end() ? field.defaultValue : value->second);
+    }
+    if (impl_->pendingScriptStateBinding_ == impl_->scriptBinding_ &&
+        !impl_->pendingScriptStatePayload_.empty()) {
+      ArtifactCore::ArtifactScriptSerializedComponent previousState;
+      std::string stateError;
+      if (ArtifactCore::deserializeScriptComponent(
+              impl_->pendingScriptStatePayload_, previousState, stateError) &&
+          previousState.className == definition.rootClass.name) {
+        for (const auto& [name, value] : previousState.unknown) {
+          const auto declared = std::find_if(
+              definition.rootClass.fields.begin(), definition.rootClass.fields.end(),
+              [&name](const auto& field) { return field.name == name; });
+          if (declared == definition.rootClass.fields.end()) {
+            scriptState.unknown.emplace(name, value);
+          }
+        }
+      }
+    }
+    const std::string payload =
+        ArtifactCore::serializeScriptComponent(scriptState);
+    if (!payload.empty()) {
+      componentsObj["scriptState"] = QJsonObject{
+          {"binding", impl_->scriptBinding_},
+          {"payload", QString::fromStdString(payload)}};
+    }
+  } else if (!impl_->pendingScriptStatePayload_.empty()) {
+    componentsObj["scriptState"] = QJsonObject{
+        {"binding", impl_->pendingScriptStateBinding_},
+        {"payload", QString::fromStdString(
+                        impl_->pendingScriptStatePayload_)}};
+  }
   obj["components"] = componentsObj;
   impl_->syncBuiltinComponentDescriptors();
   obj["componentGraph"] = impl_->componentHost_.toJson();
@@ -1091,6 +1134,8 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
       impl_->pyroComponentEnabled_ = false;
       impl_->extraCloneModifierDescriptors_.clear();
       impl_->scriptBinding_ = {};
+      impl_->pendingScriptStateBinding_ = {};
+      impl_->pendingScriptStatePayload_.clear();
   }
   if (obj.contains("components") && obj["components"].isObject()) {
       const QJsonObject componentsObj = obj["components"].toObject();
@@ -1674,6 +1719,12 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
           }
         }
         impl_->scriptBinding_ = componentsObj.value(QStringLiteral("scriptBinding")).toObject();
+        const QJsonObject scriptStateObj =
+            componentsObj.value(QStringLiteral("scriptState")).toObject();
+        impl_->pendingScriptStateBinding_ =
+            scriptStateObj.value(QStringLiteral("binding")).toObject();
+        impl_->pendingScriptStatePayload_ =
+            scriptStateObj.value(QStringLiteral("payload")).toString().toStdString();
     }
   const bool hasComponentGraph =
       obj.contains(QStringLiteral("componentGraph")) &&

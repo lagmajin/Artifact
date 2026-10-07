@@ -402,6 +402,10 @@ public:
     NamedVector<LayerModifierDescriptor> extraCloneModifierDescriptors_{
         ContainerName{"Layer.ExtraCloneModifiers"}};
     QJsonObject scriptBinding_;
+    // Project persistence keeps serialized script field values pending until
+    // the bound source has been loaded and its definition is available.
+    QJsonObject pendingScriptStateBinding_;
+    std::string pendingScriptStatePayload_;
     // Script binding resolves and owns the source path here; the shared Core
     // runtime owns hook state, frame values, and the live instance.
     ArtifactCore::ArtifactScriptLayerRuntime scriptRuntime_;
@@ -462,6 +466,7 @@ public:
   // Resolves scriptBinding_ into a live ArtifactScriptInstance. Safe to call
   // on every binding change; a no-op when the resolved path is unchanged.
   void rebuildScriptInstance();
+  void restorePendingScriptState();
   // Releases the script instance and resets the per-frame guard.
   void releaseScriptInstance();
   // Re-reads the bound script file and swaps in a fresh instance, migrating

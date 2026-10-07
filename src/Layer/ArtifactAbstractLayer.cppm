@@ -623,6 +623,53 @@ void ArtifactAbstractLayerImpl::rebuildScriptInstance()
   scriptRuntime_.bind(std::move(definition));
   scriptLastReportedError_.clear();
   scriptSourcePath_ = absolute.toStdString();
+  restorePendingScriptState();
+}
+
+void ArtifactAbstractLayerImpl::restorePendingScriptState()
+{
+  if (!scriptRuntime_.hasInstance() || pendingScriptStatePayload_.empty()) {
+    return;
+  }
+  if (pendingScriptStateBinding_ != scriptBinding_) {
+    pendingScriptStateBinding_ = {};
+    pendingScriptStatePayload_.clear();
+    return;
+  }
+
+  ArtifactCore::ArtifactScriptSerializedComponent serialized;
+  std::string error;
+  if (!ArtifactCore::deserializeScriptComponent(
+          pendingScriptStatePayload_, serialized, error)) {
+    scriptRuntime_.setLastError(std::move(error));
+    return;
+  }
+
+  auto* instance = scriptRuntime_.instance();
+  const auto& definition = instance->definition();
+  if (serialized.className != definition.rootClass.name) {
+    pendingScriptStateBinding_ = {};
+    pendingScriptStatePayload_.clear();
+    return;
+  }
+  auto& fields = instance->fields();
+  for (const auto& field : definition.rootClass.fields) {
+    if (!field.serialized) continue;
+    const ArtifactCore::ArtifactScriptValue* savedValue = nullptr;
+    if (const auto saved = serialized.values.find(field.name);
+        saved != serialized.values.end()) {
+      savedValue = &saved->second;
+    } else if (const auto unknown = serialized.unknown.find(field.name);
+               unknown != serialized.unknown.end()) {
+      savedValue = &unknown->second;
+    }
+    if (savedValue && savedValue->index() == field.defaultValue.index()) {
+      fields[field.name] = *savedValue;
+    }
+  }
+  // Keep the source payload as an unknown-field sidecar so a newer field
+  // unknown to this definition survives another save from the live runtime.
+  scriptRuntime_.setLastError({});
 }
 
 bool ArtifactAbstractLayerImpl::reloadScriptFromDisk()
