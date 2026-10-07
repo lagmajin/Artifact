@@ -573,7 +573,7 @@ ArtifactCore::ArtifactScriptSerializedFields migrateScriptFields(
 {
   ArtifactCore::ArtifactScriptSerializedFields out;
   for (const auto& oldField : previous.rootClass.fields) {
-    if (!oldField.isPublic) {
+    if (!oldField.serialized) {
       continue;
     }
     const auto it = previousFields.find(oldField.name);
@@ -581,19 +581,16 @@ ArtifactCore::ArtifactScriptSerializedFields migrateScriptFields(
       continue;
     }
     for (const auto& newField : next.rootClass.fields) {
-      if (newField.name == oldField.name && newField.isPublic &&
+      if (newField.name == oldField.name && newField.serialized &&
           newField.type == oldField.type) {
         out[oldField.name] = it->second;
         break;
       }
     }
   }
-  ArtifactCore::ArtifactScriptComponent defaults;
-  defaults.setScriptClass(next.rootClass.name);
-  defaults.applyDefaults(next);
-  for (const auto& [name, value] : defaults.publicFields()) {
-    if (out.find(name) == out.cend()) {
-      out[name] = value;
+  for (const auto& field : next.rootClass.fields) {
+    if (field.serialized && out.find(field.name) == out.cend()) {
+      out[field.name] = field.defaultValue;
     }
   }
   return out;
