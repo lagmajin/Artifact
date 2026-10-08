@@ -93,7 +93,7 @@ namespace Artifact
  using namespace ArtifactCore;
  using float2 = Diligent::float2;
 
- Q_LOGGING_CATEGORY(particleRendererLog, "artifact.render.particles")
+ Q_LOGGING_CATEGORY(particleRendererLog, "artifact.render.particles", QtInfoMsg)
 
 namespace {
   QImage extractRgbaChannelToGray(const QImage& image, int channelOffset)
@@ -488,6 +488,8 @@ namespace {
   QString lastParticleDebug_;
   bool lastParticleDrawQueued_ = false;
   std::size_t lastParticleDrawCount_ = 0;
+  ArtifactCore::ParticleVertex lastParticleSample_{};
+  Diligent::TEXTURE_FORMAT lastParticleTargetFormat_ = Diligent::TEX_FORMAT_UNKNOWN;
   QString lastParticleCameraMode_;
   float lastParticleZoom_ = 1.0f;
   float lastParticlePanX_ = 0.0f;
@@ -1871,6 +1873,9 @@ namespace {
     }
 
     lastParticleDrawCount_ = data.particles.size();
+    lastParticleTargetFormat_ = pRTV->GetDesc().Format;
+    // Fixed-size snapshot only; format it when a diagnostic report is requested.
+    lastParticleSample_ = data.particles.front();
     lastParticleCameraMode_ = cameraMode;
     lastParticleZoom_ = zoom;
     lastParticlePanX_ = panX;
@@ -4777,6 +4782,16 @@ QString ArtifactIRenderer::particleDebugState() const {
                       : impl_->lastParticleDebug_.isEmpty()
                       ? QStringLiteral("<none>")
                       : impl_->lastParticleDebug_;
+  if (impl_->lastParticleDrawQueued_) {
+    const auto& sample = impl_->lastParticleSample_;
+    state.append(QStringLiteral(" sampleRGBA=%1,%2,%3,%4 sampleSize=%5 sampleAge=%6/%7")
+                     .arg(sample.r).arg(sample.g).arg(sample.b).arg(sample.a)
+                     .arg(sample.size).arg(sample.age).arg(sample.lifetime));
+    state.append(QStringLiteral(" targetFormat=%1 particlePsoFormat=%2 formatMatch=%3")
+                     .arg(static_cast<int>(impl_->lastParticleTargetFormat_))
+                     .arg(static_cast<int>(ArtifactCore::DefaultParticleRTVFormat))
+                     .arg(impl_->lastParticleTargetFormat_ == ArtifactCore::DefaultParticleRTVFormat ? 1 : 0));
+  }
   if (impl_->particleRenderer_) {
     const QString rendererState = impl_->particleRenderer_->debugStateText();
     if (!rendererState.isEmpty()) {
@@ -4890,6 +4905,12 @@ QString ArtifactIRenderer::gpuAdapterDebugState() const
       .arg(QStringLiteral("%1 %2")
                .arg(impl_->gpuAdapterRecoveryDebugState())
                .arg(impl_->deviceManager_.d3d12AgilityDebugState()));
+}
+
+QString ArtifactIRenderer::gpuValidationDebugState() const
+{
+  return impl_ ? impl_->deviceManager_.validationDebugState()
+               : QStringLiteral("validation=<no renderer>");
 }
 
 QString ArtifactIRenderer::gpuAdapterRegistryDebugState() const

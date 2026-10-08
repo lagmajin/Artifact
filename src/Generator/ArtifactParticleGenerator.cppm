@@ -1422,8 +1422,21 @@ void ParticleEmitter::preWarm(float duration, float stepSize)
 
 class ParticleSystem::Impl {
 public:
+    int64_t simulatedFrame = -1;
+    double simulatedFps = 0.0;
+    double simulatedTime = 0.0;
     QVector3D cameraPosition;
     std::map<QString, QImage> flipbookAtlases;
+    // Software raster sprite cache: pre-rendered gradient sprites keyed by
+    // (shape, integer size, exact 8-bit RGBA). Content-addressed, so no
+    // invalidation is ever needed; bounded by pixels and entry count.
+    struct SpriteCacheEntry {
+        QImage image;
+        quint64 lastUsed = 0;
+    };
+    std::unordered_map<quint64, SpriteCacheEntry> spriteCache;
+    quint64 spriteCacheTick = 0;
+    size_t spriteCachePixels = 0;
 };
 
 // ==================== ParticleSystem ====================
@@ -1493,6 +1506,7 @@ int ParticleSystem::totalParticleCount() const
 
 void ParticleSystem::update(float deltaTime)
 {
+    impl_->simulatedFrame = -1;
     if (paused_ || !std::isfinite(deltaTime) || deltaTime <= 0.0f) return;
     
     const float scaledDelta = deltaTime * timeScale_;
@@ -1512,16 +1526,26 @@ void ParticleSystem::update(float deltaTime)
 
 void ParticleSystem::reset()
 {
+    impl_->simulatedFrame = -1;
     time_ = 0.0f;
     for (auto& emitter : emitters_) {
         if (emitter) emitter->clear();
     }
 }
 
-void ParticleSystem::goToFrame(int64_t frame, double fps)
+void ParticleSystem::goToFrame(int64_t frame, double fps, bool reuseSimulation)
 {
-    reset();
     if (frame < 0 || !std::isfinite(fps) || fps <= 0.0) return;
+    const bool sameRate = impl_->simulatedFps == fps;
+    if (reuseSimulation && sameRate && impl_->simulatedFrame == frame) return;
+    // Continue only from a full 120-Hz step boundary; a partial seek step
+    // must be replayed to preserve the existing deterministic integration.
+    const double stepCount = impl_->simulatedTime / static_cast<double>(1.0f / 120.0f);
+    const bool resume = reuseSimulation && sameRate && impl_->simulatedFrame > 1 &&
+        frame > impl_->simulatedFrame &&
+        std::abs(stepCount - std::round(stepCount)) < 0.0001;
+    const double resumeTime = resume ? impl_->simulatedTime : 0.0;
+    if (!resume) reset();
 
     // 冒頭フレーム（frame <= 1）で preWarm を要求するエミッタがある場合だけ、
     // 本来のシミュレーションに先立って短時間のプリウォームを行う。
@@ -1573,7 +1597,7 @@ void ParticleSystem::goToFrame(int64_t frame, double fps)
     const double targetTime = std::min(rawTargetTime, kMaxSimulationTime);
     const float stepSize = 1.0f / 120.0f; // 決定論的な基本刻み
 
-    double currentTime = preWarmedTime;
+    double currentTime = resume ? resumeTime : preWarmedTime;
     while (currentTime < targetTime) {
         const float dt = static_cast<float>(std::min(
             static_cast<double>(stepSize), targetTime - currentTime));
@@ -1586,6 +1610,9 @@ void ParticleSystem::goToFrame(int64_t frame, double fps)
         }
         currentTime += dt;
     }
+    impl_->simulatedFrame = frame;
+    impl_->simulatedFps = fps;
+    impl_->simulatedTime = currentTime;
     time_ = std::isfinite(currentTime)
         ? static_cast<float>(std::min(
             currentTime,
@@ -1609,7 +1636,8 @@ ParticleRenderData ParticleSystem::captureRenderData() const
                            std::isfinite(value.y()) &&
                            std::isfinite(value.z());
                 };
-                if (!finiteVector(p.position) || !finiteVector(p.velocity)) continue;
+                if (!finiteVector(p.position) || !finiteVector(p.velocity) ||
+                    !finiteVector(p.prevPosition)) continue;
                 const auto safeNonNegative = [](float value, float fallback = 0.0f) {
                     return std::isfinite(value)
                         ? std::clamp(value, 0.0f, 1000000.0f)
@@ -1619,6 +1647,9 @@ ParticleRenderData ParticleSystem::captureRenderData() const
                 v.px = p.position.x();
                 v.py = p.position.y();
                 v.pz = p.position.z();
+                v.ppx = p.prevPosition.x();
+                v.ppy = p.prevPosition.y();
+                v.ppz = p.prevPosition.z();
                 v.vx = p.velocity.x();
                 v.vy = p.velocity.y();
                 v.vz = p.velocity.z();
@@ -1937,6 +1968,7 @@ QVector3D ParticleSystem::cameraPosition() const
 
 void ParticleSystem::clear()
 {
+    impl_->simulatedFrame = -1;
     for (auto& emitter : emitters_) {
         if (emitter) emitter->clear();
     }
@@ -1945,6 +1977,7 @@ void ParticleSystem::clear()
 
 void ParticleSystem::preWarm(float duration)
 {
+    impl_->simulatedFrame = -1;
     if (!std::isfinite(duration) || duration <= 0.0f) return;
     for (auto& emitter : emitters_) {
         if (emitter) emitter->preWarm(duration);
@@ -1962,9 +1995,41 @@ void ParticleSystem::render(QPainter& painter, const QTransform& transform)
         finite(transform.m31()) && finite(transform.m32()) &&
         finite(transform.m33()) && finite(transform.dx()) && finite(transform.dy());
     painter.setTransform(transformFinite ? transform : QTransform(), true);
+
+    // Viewport culling setup: a particle fully outside the paint device
+    // rasterizes nothing, so skip its gradient work entirely. Trails draw a
+    // segment that can cross the viewport from outside, so culling stays off
+    // while trails are enabled.
+    int cullDeviceWidth = 0;
+    int cullDeviceHeight = 0;
+    float cullWorldScale = 1.0f;
+    QTransform cullWorldTx;
+    if (!renderSettings_.trailEnabled) {
+        if (const QPaintDevice* paintDevice = painter.device()) {
+            cullDeviceWidth = paintDevice->width();
+            cullDeviceHeight = paintDevice->height();
+        }
+        if (cullDeviceWidth > 0 && cullDeviceHeight > 0) {
+            cullWorldTx = painter.transform();
+            const auto axisScale = [](double a, double b) {
+                const double v = std::hypot(a, b);
+                return std::isfinite(v)
+                    ? static_cast<float>(v) : 1.0f;
+            };
+            cullWorldScale = std::max(axisScale(cullWorldTx.m11(), cullWorldTx.m21()),
+                                       axisScale(cullWorldTx.m12(), cullWorldTx.m22()));
+            if (!std::isfinite(cullWorldScale) || cullWorldScale <= 0.0f) {
+                cullDeviceWidth = 0; // Degenerate transform: do not cull
+            }
+        }
+    }
+    const bool cullEnabled =
+        cullDeviceWidth > 0 && cullDeviceHeight > 0;
     
     // Collect all particles from all emitters
     std::vector<const Particle*> allParticles;
+    allParticles.reserve(static_cast<std::size_t>(std::max(
+        0, std::min(totalParticleCount(), 1000000))));
     const auto finiteVector = [](const QVector3D& value) {
         return std::isfinite(value.x()) &&
                std::isfinite(value.y()) &&
@@ -2025,12 +2090,97 @@ void ParticleSystem::render(QPainter& painter, const QTransform& transform)
             painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
             break;
     }
+
+    // Software sprite cache: an identical gradient sprite is rasterized once
+    // per (shape, integer size, exact 8-bit RGBA) and reused across particles
+    // and frames. Integer size rounding (<=0.5px, plus resampling when the
+    // view transform is not 1:1) is the only intentional visual delta versus
+    // the direct path; stretched-sprite rotation is preserved.
+    constexpr size_t kSpriteCacheMaxPixels = 2048u * 2048u;
+    constexpr size_t kSpriteCacheMaxEntries = 1024;
+    constexpr int kSpriteCacheMaxDimension = 512;
+    auto spriteCacheLookup = [&](quint64 key) -> const QImage* {
+        const auto it = impl_->spriteCache.find(key);
+        if (it == impl_->spriteCache.end()) {
+            return nullptr;
+        }
+        it->second.lastUsed = ++impl_->spriteCacheTick;
+        return &it->second.image;
+    };
+    auto spriteCacheInsert = [&](quint64 key, QImage image) {
+        const auto pixels = static_cast<size_t>(image.width()) *
+            static_cast<size_t>(image.height());
+        while (!impl_->spriteCache.empty() &&
+               (impl_->spriteCachePixels + pixels > kSpriteCacheMaxPixels ||
+                impl_->spriteCache.size() >= kSpriteCacheMaxEntries)) {
+            auto oldest = impl_->spriteCache.begin();
+            for (auto it = impl_->spriteCache.begin();
+                 it != impl_->spriteCache.end(); ++it) {
+                if (it->second.lastUsed < oldest->second.lastUsed) {
+                    oldest = it;
+                }
+            }
+            impl_->spriteCachePixels -=
+                static_cast<size_t>(oldest->second.image.width()) *
+                static_cast<size_t>(oldest->second.image.height());
+            impl_->spriteCache.erase(oldest);
+        }
+        impl_->spriteCachePixels += pixels;
+        Impl::SpriteCacheEntry entry;
+        entry.image = std::move(image);
+        entry.lastUsed = ++impl_->spriteCacheTick;
+        impl_->spriteCache.emplace(key, std::move(entry));
+    };
+    auto buildCircleSprite = [](int diameter, const QColor& spriteColor) {
+        QImage sprite(diameter, diameter, QImage::Format_ARGB32_Premultiplied);
+        sprite.fill(Qt::transparent);
+        QPainter spritePainter(&sprite);
+        const float radius = static_cast<float>(diameter) * 0.5f;
+        QRadialGradient gradient(QPointF(radius, radius), radius);
+        gradient.setColorAt(0, spriteColor);
+        gradient.setColorAt(1, QColor(spriteColor.red(), spriteColor.green(),
+                                      spriteColor.blue(), 0));
+        spritePainter.setBrush(gradient);
+        spritePainter.setPen(Qt::NoPen);
+        spritePainter.drawEllipse(QPointF(radius, radius), radius, radius);
+        return sprite;
+    };
+    auto buildStretchedSprite = [](int spriteWidth, int spriteHeight,
+                                   const QColor& spriteColor) {
+        QImage sprite(spriteWidth, spriteHeight,
+                      QImage::Format_ARGB32_Premultiplied);
+        sprite.fill(Qt::transparent);
+        QPainter spritePainter(&sprite);
+        const float fw = static_cast<float>(spriteWidth);
+        const float fh = static_cast<float>(spriteHeight);
+        QLinearGradient gradient(QPointF(fw * 0.5f, 0.0f),
+                                 QPointF(fw * 0.5f, fh));
+        gradient.setColorAt(0.0, QColor(spriteColor.red(), spriteColor.green(),
+                                        spriteColor.blue(), 0));
+        gradient.setColorAt(0.15, spriteColor);
+        gradient.setColorAt(0.85, spriteColor);
+        gradient.setColorAt(1.0, QColor(spriteColor.red(), spriteColor.green(),
+                                        spriteColor.blue(), 0));
+        spritePainter.setBrush(gradient);
+        spritePainter.setPen(Qt::NoPen);
+        spritePainter.drawRoundedRect(QRectF(0.0f, 0.0f, fw, fh),
+                                      fw * 0.5f, fw * 0.5f);
+        return sprite;
+    };
     
     // Render particles
     for (const Particle* p : allParticles) {
         QColor color = p->color;
         const float safeOpacity = std::clamp(p->opacity, 0.0f, 1.0f);
         color.setAlphaF(color.alphaF() * safeOpacity);
+        // Fully transparent particles rasterize nothing; skip before any
+        // painter state changes or gradient construction. Zero-size skips
+        // apply only without trails: a trail segment has its own width and
+        // stays visible even when the sprite radius reaches zero.
+        if (color.alphaF() <= 0.0f ||
+            (!renderSettings_.trailEnabled && p->scale <= 0.0f)) {
+            continue;
+        }
 
         if (renderSettings_.trailEnabled) {
             const float trailFade = std::isfinite(renderSettings_.trailFade)
@@ -2053,7 +2203,7 @@ void ParticleSystem::render(QPainter& painter, const QTransform& transform)
         }
         
         QPointF pos(p->position.x(), p->position.y());
-        const float size = std::clamp(p->scale, 0.0f, 100000.0f) * 10.0f;  // Base size
+        const float size = std::clamp(p->scale, 0.0f, 100000.0f); // Radius in composition units
         const float safeStretchFactor = std::isfinite(renderSettings_.stretchFactor)
             ? std::clamp(renderSettings_.stretchFactor, 0.0f, 1000000.0f)
             : 0.0f;
@@ -2062,34 +2212,104 @@ void ParticleSystem::render(QPainter& painter, const QTransform& transform)
                 std::max(1.0f, particleStretchFactor(p->velocity) * safeStretchFactor),
                 1.0f, 1000000.0f)
             : 1.0f;
-        
+
+        // Bounding-circle cull in device pixels. The circle covers both the
+        // plain ellipse (radius size) and the rotated stretched quad
+        // (half-diagonal <= size*stretch), plus 1px for antialiasing.
+        if (cullEnabled) {
+            const float boundRadius =
+                std::max(size * stretch, 0.75f) * cullWorldScale + 1.0f;
+            const QPointF devCenter = cullWorldTx.map(QPointF(pos.x(), pos.y()));
+            if (devCenter.x() + boundRadius < 0.0 ||
+                devCenter.x() - boundRadius > cullDeviceWidth ||
+                devCenter.y() + boundRadius < 0.0 ||
+                devCenter.y() - boundRadius > cullDeviceHeight) {
+                continue;
+            }
+        }
+
         painter.save();
         painter.translate(pos);
-        painter.rotate(p->rotation);
 
         if (stretch > 1.05f) {
+            painter.rotate(p->rotation);
             const float width = std::max(0.75f, size * 0.18f);
             const float height = std::max(width, size * stretch);
+            const int spriteW = width <= static_cast<float>(kSpriteCacheMaxDimension)
+                ? std::clamp(static_cast<int>(std::ceil(width)), 1,
+                             kSpriteCacheMaxDimension)
+                : 0;
+            const int spriteH = height <= static_cast<float>(kSpriteCacheMaxDimension)
+                ? std::clamp(static_cast<int>(std::ceil(height)), 1,
+                             kSpriteCacheMaxDimension)
+                : 0;
+            const QImage* cachedSprite = nullptr;
+            if (spriteW > 0 && spriteH > 0) {
+                const quint64 key = (quint64(2) << 62) |
+                    (static_cast<quint64>(spriteW) << 48) |
+                    (static_cast<quint64>(spriteH) << 32) |
+                    static_cast<quint64>(qRgba(color.red(), color.green(),
+                                               color.blue(), color.alpha()));
+                cachedSprite = spriteCacheLookup(key);
+                if (!cachedSprite) {
+                    spriteCacheInsert(
+                        key, buildStretchedSprite(spriteW, spriteH, color));
+                    cachedSprite = spriteCacheLookup(key);
+                }
+            }
+            if (cachedSprite && !cachedSprite->isNull()) {
+                painter.drawImage(
+                    QRectF(-static_cast<float>(spriteW) * 0.5f,
+                           -static_cast<float>(spriteH) * 0.5f,
+                           static_cast<float>(spriteW),
+                           static_cast<float>(spriteH)),
+                    *cachedSprite);
+            } else {
+                QLinearGradient gradient(QPointF(0, -height * 0.5f), QPointF(0, height * 0.5f));
+                gradient.setColorAt(0.0, QColor(color.red(), color.green(), color.blue(), 0));
+                gradient.setColorAt(0.15, color);
+                gradient.setColorAt(0.85, color);
+                gradient.setColorAt(1.0, QColor(color.red(), color.green(), color.blue(), 0));
 
-            QLinearGradient gradient(QPointF(0, -height * 0.5f), QPointF(0, height * 0.5f));
-            gradient.setColorAt(0.0, QColor(color.red(), color.green(), color.blue(), 0));
-            gradient.setColorAt(0.15, color);
-            gradient.setColorAt(0.85, color);
-            gradient.setColorAt(1.0, QColor(color.red(), color.green(), color.blue(), 0));
-
-            painter.setBrush(gradient);
-            painter.setPen(Qt::NoPen);
-            painter.drawRoundedRect(QRectF(-width * 0.5f, -height * 0.5f, width, height),
-                                    width * 0.5f,
-                                    width * 0.5f);
+                painter.setBrush(gradient);
+                painter.setPen(Qt::NoPen);
+                painter.drawRoundedRect(QRectF(-width * 0.5f, -height * 0.5f, width, height),
+                                        width * 0.5f,
+                                        width * 0.5f);
+            }
         } else {
-            QRadialGradient gradient(QPointF(0, 0), size);
-            gradient.setColorAt(0, color);
-            gradient.setColorAt(1, QColor(color.red(), color.green(), color.blue(), 0));
+            const float diameter = size * 2.0f;
+            const int spriteD = diameter <= static_cast<float>(kSpriteCacheMaxDimension)
+                ? std::clamp(static_cast<int>(std::ceil(diameter)), 1,
+                             kSpriteCacheMaxDimension)
+                : 0;
+            const QImage* cachedSprite = nullptr;
+            if (spriteD > 0) {
+                const quint64 key = (quint64(1) << 62) |
+                    (static_cast<quint64>(spriteD) << 32) |
+                    static_cast<quint64>(qRgba(color.red(), color.green(),
+                                               color.blue(), color.alpha()));
+                cachedSprite = spriteCacheLookup(key);
+                if (!cachedSprite) {
+                    spriteCacheInsert(
+                        key, buildCircleSprite(spriteD, color));
+                    cachedSprite = spriteCacheLookup(key);
+                }
+            }
+            if (cachedSprite && !cachedSprite->isNull()) {
+                const float halfD = static_cast<float>(spriteD) * 0.5f;
+                // Radially symmetric: rotation is a no-op (already skipped).
+                painter.drawImage(QRectF(-halfD, -halfD, spriteD, spriteD),
+                                  *cachedSprite);
+            } else {
+                QRadialGradient gradient(QPointF(0, 0), size);
+                gradient.setColorAt(0, color);
+                gradient.setColorAt(1, QColor(color.red(), color.green(), color.blue(), 0));
 
-            painter.setBrush(gradient);
-            painter.setPen(Qt::NoPen);
-            painter.drawEllipse(QPointF(0, 0), size, size);
+                painter.setBrush(gradient);
+                painter.setPen(Qt::NoPen);
+                painter.drawEllipse(QPointF(0, 0), size, size);
+            }
         }
         
         painter.restore();

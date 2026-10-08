@@ -1962,6 +1962,11 @@ class PlaybackDebugAutoReporter final {
     bool decodePending = false;
     for (const auto& resource : snapshot.resources) {
       const QString note = resource.note;
+      // Visual corruption may occur without a slow frame or render failure.
+      if (resource.label == QStringLiteral("Particle Draw") &&
+          note.contains(QStringLiteral("state=queued"))) {
+        addReason(QStringLiteral("particle-render-capture"));
+      }
       if (resource.label == QStringLiteral("Render Path")) {
         const double cpuRasterLayers =
             debugFieldNumber(note, QStringLiteral("cpuRasterLayers"));
@@ -2079,6 +2084,59 @@ class PlaybackDebugAutoReporter final {
     }
     qWarning() << "[PlaybackDebugReport] wrote" << reportPath
                << "reasons=" << reasons_;
+    saveCapture(reportDir, QFileInfo(fileName).completeBaseName(), terminalSnapshot);
+  }
+
+  void saveCapture(QDir reportDir, const QString& captureName,
+                   const ArtifactCore::FrameDebugSnapshot& snapshot) const {
+    // Stop/pause boundary only: at most three existing readback images per
+    // session. No image copies, readbacks or file writes on playback ticks.
+    if (!reportDir.mkpath(captureName) || !reportDir.cd(captureName)) {
+      qWarning() << "[PlaybackDebugReport] failed to create capture directory";
+      return;
+    }
+    QJsonArray imageFiles;
+    for (const auto& preview : snapshot.previews) {
+      QString imageName;
+      if (preview.label == QStringLiteral("Layer RT")) {
+        imageName = QStringLiteral("layer-rt.png");
+      } else if (preview.label == QStringLiteral("Accum RT")) {
+        imageName = QStringLiteral("accum-rt.png");
+      } else if (preview.label == QStringLiteral("Viewport Final")) {
+        imageName = QStringLiteral("viewport-final.png");
+      } else {
+        continue;
+      }
+      QJsonObject imageRecord;
+      imageRecord.insert(QStringLiteral("label"), preview.label);
+      imageRecord.insert(QStringLiteral("file"), imageName);
+      const bool saved = !preview.afterImage.isNull() &&
+          preview.afterImage.save(reportDir.filePath(imageName), "PNG");
+      imageRecord.insert(QStringLiteral("saved"), saved);
+      imageFiles.append(imageRecord);
+      if (!saved) {
+        qWarning() << "[PlaybackDebugReport] preview unavailable or save failed"
+                   << preview.label;
+      }
+    }
+    ArtifactCore::FrameDebugBundle bundle;
+    bundle.bundleId = captureName;
+    bundle.label = snapshot.compositionName;
+    bundle.createdAtMs = snapshot.timestampMs;
+    bundle.capture.captureId = captureName;
+    bundle.capture.snapshot = snapshot;
+    QJsonObject json = bundle.toJson();
+    json.insert(QStringLiteral("imageFiles"), imageFiles);
+    json.insert(QStringLiteral("captureBoundary"), QStringLiteral("playback-ended"));
+    const QString bundlePath = reportDir.filePath(QStringLiteral("frame-debug-bundle.json"));
+    QSaveFile bundleFile(bundlePath);
+    const QByteArray payload = QJsonDocument(json).toJson(QJsonDocument::Indented);
+    if (!bundleFile.open(QIODevice::WriteOnly) ||
+        bundleFile.write(payload) != payload.size() || !bundleFile.commit()) {
+      qWarning() << "[PlaybackDebugReport] failed to write capture" << bundlePath;
+      return;
+    }
+    qInfo() << "[PlaybackDebugReport] capture saved" << bundlePath;
   }
 
   bool playing_ = false;
@@ -5554,7 +5612,7 @@ int main(int argc, char *argv[]) {
           !playbackDebugReporter->isCapturing()) {
         return;
       }
-      const auto snapshot = controller->frameDebugSnapshot();
+      const auto snapshot = controller->frameDebugSnapshot(!playbackActive);
       playbackDebugReporter->observe(playbackActive, snapshot);
       if (!debugSurfaceVisible) {
         return;
@@ -7150,6 +7208,18 @@ int main(int argc, char *argv[]) {
   appendShutdownDiagnostic(
       QStringLiteral("COMPLETE top-level UI teardown elapsedMs=%1")
           .arg(uiTeardownTimer.elapsed()));
+  // Release service-held compositions before function-local registries are
+  // destroyed. UI teardown can change the active context, so clear it last.
+  if (auto* appManager = ArtifactApplicationManager::instance()) {
+    if (auto* activeContext = appManager->activeContextService()) {
+      activeContext->setHandler(nullptr);
+      activeContext->setActiveComposition({});
+    }
+  }
+  if (playbackService) {
+    playbackService->setCurrentComposition({});
+  }
+  appendShutdownDiagnostic(QStringLiteral("active composition references released"));
   shutdownDiagnosticFile.close();
   return exitCode;
 }

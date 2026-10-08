@@ -5,6 +5,8 @@ module;
 #include <Texture.h>
 #include <RefCntAutoPtr.hpp>
 #include <QImage>
+#include <QSize>
+#include <QTransform>
 #include <QDebug>
 #include <QFileInfo>
 #include <cstdint>
@@ -15,6 +17,7 @@ export module Artifact.Render.OffscreenComposition;
 import Artifact.Render.IRenderer;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Particle;
 import Color.Float;
 import Core.Point2D;
 import Image.ImageF32x4_RGBA;
@@ -60,6 +63,15 @@ namespace Artifact
         // 指定レイヤーだけを透明背景へ描画してQImageとして取得
         QImage renderLayerToQImage(const FramePosition& position,
                                    ArtifactAbstractLayer* layer);
+
+        // 2Dパーティクル層だけをGPUでレイヤーローカル面へ描画してQImage取得。
+        // surfaceMap は layer-local -> surface pixel の写像。レイヤー不透明度は
+        // 含めない（サーフェス合成側が適用する）。GPU不可時は null を返し、
+        // 呼び出し側はCPUラスタへフォールバックする。
+        QImage renderParticleSurfaceToQImage(const FramePosition& position,
+                                             ArtifactParticleLayer* layer,
+                                             const QSize& surfaceSize,
+                                             const QTransform& surfaceMap);
 
     private:
         RefCntAutoPtr<IRenderDevice> pDevice_;
@@ -178,6 +190,56 @@ namespace Artifact
             layer->goToFrame(previousFrame);
         }
         return image;
+    }
+
+    QImage OffscreenCompositionRenderer::renderParticleSurfaceToQImage(
+        const FramePosition& position, ArtifactParticleLayer* layer,
+        const QSize& surfaceSize, const QTransform& surfaceMap)
+    {
+        if (!layer || !renderer_ || surfaceSize.width() <= 0 ||
+            surfaceSize.height() <= 0) {
+            return {};
+        }
+        // GPU readback stalls dominate below this; larger surfaces stay on CPU.
+        static constexpr int kMaxSurfaceDimension = 4096;
+        if (surfaceSize.width() > kMaxSurfaceDimension ||
+            surfaceSize.height() > kMaxSurfaceDimension) {
+            return {};
+        }
+        if (static_cast<Uint32>(surfaceSize.width()) != width_ ||
+            static_cast<Uint32>(surfaceSize.height()) != height_) {
+            width_ = static_cast<Uint32>(surfaceSize.width());
+            height_ = static_cast<Uint32>(surfaceSize.height());
+            pRenderTarget_ = nullptr;
+            initializeResources();
+            renderer_->setCanvasSize((float)width_, (float)height_);
+            renderer_->setViewportSize((float)width_, (float)height_);
+        }
+        // Identity view: surface pixels map straight to NDC regardless of any
+        // viewport state this shared helper may have carried over.
+        renderer_->resetView();
+        ITextureView* pRTV = pRenderTarget_
+            ? pRenderTarget_->GetDefaultView(TEXTURE_VIEW_RENDER_TARGET)
+            : nullptr;
+        if (!pRTV) {
+            return {};
+        }
+        renderer_->setOverrideRTV(pRTV);
+        pContext_->SetRenderTargets(1, &pRTV, nullptr,
+                                    RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        const float clearColor[] = {0.0f, 0.0f, 0.0f, 0.0f};
+        pContext_->ClearRenderTarget(pRTV, clearColor,
+                                     RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        layer->goToFrame(position.framePosition());
+        const bool queued =
+            layer->drawSurfaceGPU(renderer_.get(), surfaceMap,
+                                  position.framePosition());
+        pContext_->Flush();
+        if (!queued) {
+            return {};
+        }
+        // readbackToImage() submits queued draws itself before copying.
+        return renderer_->readbackToImage();
     }
 
     bool OffscreenCompositionRenderer::saveFrame(const QString& path)

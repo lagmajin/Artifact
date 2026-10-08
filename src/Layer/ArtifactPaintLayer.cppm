@@ -64,9 +64,13 @@ bool frameBufferFromJson(const QJsonObject& obj, ArtifactCore::ImageF32x4RGBAWit
     if (pixelsB64.isEmpty()) {
         return true;
     }
+    const std::size_t maxEncodedBytes = ((requiredBytes + 2u) / 3u) * 4u;
+    if (pixelsB64.size() > static_cast<qsizetype>(maxEncodedBytes)) {
+        return false;
+    }
 
     const QByteArray bytes = QByteArray::fromBase64(pixelsB64.toLatin1());
-    if (bytes.size() < static_cast<qsizetype>(requiredBytes)) {
+    if (bytes.size() != static_cast<qsizetype>(requiredBytes)) {
         return false;
     }
 
@@ -623,8 +627,8 @@ void ArtifactPaintLayer::fromJsonProperties(const QJsonObject& obj) {
     }
     impl_->frames_.clear();
     impl_->undoStacks_.clear();
-    impl_->defaultSize_.setWidth(std::clamp(obj.value("defaultWidth").toInt(100), 1, 100000));
-    impl_->defaultSize_.setHeight(std::clamp(obj.value("defaultHeight").toInt(100), 1, 100000));
+    impl_->defaultSize_.setWidth(std::clamp(obj.value("defaultWidth").toInt(100), 1, 16384));
+    impl_->defaultSize_.setHeight(std::clamp(obj.value("defaultHeight").toInt(100), 1, 16384));
 
     const QJsonArray framesArr = obj.value("frames").toArray();
     const int frameCount = std::min(static_cast<int>(framesArr.size()), 10000);

@@ -34,6 +34,7 @@
 #include <random>
 #include <QObject>
 #include <QImage>
+#include <QTransform>
 #include <QString>
 #include <QJsonObject>
 #include <QVariant>
@@ -150,10 +151,20 @@ public:
     QImage renderFrame(int width, int height, float time);
     void renderToImage(QImage& target, float time);
     void renderToImage(QImage& target, int64_t frameNumber);
-    
+    // GPU surface raster for effect/mask pipelines: submits the current
+    // simulation state mapped by surfaceMap (layer-local -> surface pixels)
+    // without baking layer opacity (the surface compositor applies it).
+    // The caller owns frame sync via goToFrame(); frameNumber drives the
+    // deterministic simulation exactly like draw(). Returns true when the
+    // draw was queued (or there was nothing to draw); false requests the
+    // CPU fallback.
+    bool drawSurfaceGPU(ArtifactIRenderer* renderer, const QTransform& surfaceMap,
+                        int64_t frameNumber);
+
     // Cached rendering
     bool getCachedFrame(int64_t frame, QImage& out);
     void clearFrameCache();
+    void setCachedSurface(const QImage& image, int64_t frame);
     
     // Presets
     void loadPreset(const QString& presetName);

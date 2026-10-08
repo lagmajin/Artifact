@@ -689,6 +689,9 @@ void ArtifactLightLayer::draw(ArtifactIRenderer* renderer) {
       glowVertex.px = pos.x();
       glowVertex.py = pos.y();
       glowVertex.pz = pos.z();
+      glowVertex.ppx = glowVertex.px;
+      glowVertex.ppy = glowVertex.py;
+      glowVertex.ppz = glowVertex.pz;
       glowVertex.vx = 0.0f;
       glowVertex.vy = 0.0f;
       glowVertex.vz = 0.0f;

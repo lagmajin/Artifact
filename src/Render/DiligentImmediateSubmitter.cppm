@@ -48,7 +48,7 @@ namespace Artifact {
 using namespace Diligent;
 using namespace ArtifactCore;
 
-Q_LOGGING_CATEGORY(particleSubmitterLog, "artifact.render.particles")
+Q_LOGGING_CATEGORY(particleSubmitterLog, "artifact.render.particles", QtInfoMsg)
 
 static void mapWriteDiscard(IDeviceContext* ctx, IBuffer* buf, const void* data, size_t size,
                             ArtifactCore::RenderCostStats* stats = nullptr)
@@ -1399,6 +1399,8 @@ void DiligentImmediateSubmitter::submitBillboard(const BillboardPkt& p, IDeviceC
         return;
     }
     FloatRGBA tint{p.tint.x, p.tint.y, p.tint.z, p.tint.w};
+    // The 3D renderer binds its own PSO outside the 2D submitter cache.
+    m_currentPSO_ = nullptr;
     m_primitiveRenderer3D_->setOverrideRTV(pRTV);
     m_primitiveRenderer3D_->drawBillboardQuadImmediate(p.center, p.size, p.pSRV, tint, p.opacity, p.rollDegrees);
     m_primitiveRenderer3D_->setOverrideRTV(nullptr);
@@ -1410,6 +1412,8 @@ void DiligentImmediateSubmitter::submitBillboardImage(const BillboardImagePkt& p
         return;
     }
     FloatRGBA tint{p.tint.x, p.tint.y, p.tint.z, p.tint.w};
+    // The 3D renderer binds its own PSO outside the 2D submitter cache.
+    m_currentPSO_ = nullptr;
     m_primitiveRenderer3D_->setOverrideRTV(pRTV);
     m_primitiveRenderer3D_->drawBillboardQuadImmediate(p.center, p.size, p.image, tint, p.opacity, p.rollDegrees);
     m_primitiveRenderer3D_->setOverrideRTV(nullptr);
@@ -1441,6 +1445,10 @@ void DiligentImmediateSubmitter::submitParticles(const ParticlePkt& p, IDeviceCo
         m_particleRenderer_->setFrameCostStats(nullptr);
         return;
     }
+    // prepare() binds compute/graphics PSOs outside this submitter's cache.
+    // Invalidate before it runs, including its failure paths, so subsequent
+    // packets rebind their PSO instead of drawing with the particle shader.
+    m_currentPSO_ = nullptr;
     m_particleRenderer_->prepare(ctx);
     if (!m_particleRenderer_->isPrepared()) {
         qWarning() << "[ParticleRenderer] submitParticles skipped: prepare failed"

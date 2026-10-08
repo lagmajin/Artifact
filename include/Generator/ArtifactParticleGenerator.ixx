@@ -109,6 +109,7 @@ struct Particle {
 struct ParticleRenderData {
     struct Vertex {
         float px, py, pz; // Position
+        float ppx, ppy, ppz; // Previous position (trail segment head)
         float vx, vy, vz; // Velocity
         float r, g, b, a; // Color (RGBA)
         float size = 1.0f;
@@ -744,7 +745,7 @@ public:
     
     // Simulation / Snapshot
     void update(float deltaTime);
-    void goToFrame(int64_t frame, double fps);
+    void goToFrame(int64_t frame, double fps, bool reuseSimulation = false);
     void reset();
     ParticleRenderData captureRenderData() const;
 

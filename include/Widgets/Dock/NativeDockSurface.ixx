@@ -24,6 +24,7 @@ module;
 #include <QIcon>
 #include <QToolButton>
 #include <QStyle>
+#include <QCommonStyle>
 #include <QProxyStyle>
 #include <QStyleOptionTab>
 #include <QPainter>
@@ -149,7 +150,19 @@ class NativeDockSurface final : public QWidget {
     class DockSurfaceStyle final : public QProxyStyle {
     public:
       explicit DockSurfaceStyle(DockTabSurface *tabs)
-          : QProxyStyle(tabs ? tabs->style() : nullptr), tabs_(tabs) {
+          : QProxyStyle(new QCommonStyle()), tabs_(tabs) {
+        // QProxyStyle owns its base; never transfer the shared application style.
+      }
+
+      int pixelMetric(PixelMetric metric, const QStyleOption *option = nullptr,
+                      const QWidget *widget = nullptr) const override {
+        // Preserve the shared tab spacing without depending on app modules.
+        switch (metric) {
+        case PM_TabBarTabHSpace: return 12;
+        case PM_TabBarTabVSpace: return 8;
+        case PM_DefaultFrameWidth: return 1;
+        default: return QProxyStyle::pixelMetric(metric, option, widget);
+        }
       }
 
       void drawPrimitive(QStyle::PrimitiveElement element, const QStyleOption *option,

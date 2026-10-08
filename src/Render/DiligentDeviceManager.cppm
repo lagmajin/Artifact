@@ -7,6 +7,7 @@ module;
 #include <QDebug>
 #include <QSize>
 #include <QString>
+#include <QChar>
 #include <QStringList>
 #include <atomic>
 #include <mutex>
@@ -1791,6 +1792,81 @@ SelectedGpuAdapterInfo DiligentDeviceManager::selectedAdapterInfo() const
     info.requestedAdapter =
         qEnvironmentVariable("ARTIFACT_GPU_ADAPTER").trimmed();
     return info;
+}
+
+QString DiligentDeviceManager::validationDebugState() const
+{
+    const bool validationRequested = RenderConfig::diligentValidationEnabled();
+    if (!impl_ || !impl_->device_) {
+        return QStringLiteral("state=no-device validationRequested=%1")
+            .arg(validationRequested);
+    }
+#if D3D12_SUPPORTED
+    RefCntAutoPtr<IRenderDeviceD3D12> deviceD3D12{
+        impl_->device_.RawPtr(), IID_RenderDeviceD3D12};
+    if (deviceD3D12) {
+        ID3D12Device* nativeDevice = deviceD3D12->GetD3D12Device();
+        if (!nativeDevice) {
+            return QStringLiteral("backend=D3D12 state=no-native-device");
+        }
+        QString state = QStringLiteral(
+            "backend=D3D12 scope=shared-device validationRequested=%1 deviceRemovedReason=0x%2")
+            .arg(validationRequested)
+            .arg(static_cast<quint32>(nativeDevice->GetDeviceRemovedReason()),
+                 8, 16, QLatin1Char('0'));
+        ComPtr<ID3D12InfoQueue> infoQueue;
+        if (FAILED(nativeDevice->QueryInterface(IID_PPV_ARGS(&infoQueue))) || !infoQueue) {
+            return state + QStringLiteral(" infoQueue=unavailable");
+        }
+
+        // Stop/pause diagnostics only. Bound both work and temporary storage;
+        // retain the queue for debuggers and other viewers of the shared device.
+        constexpr UINT64 maxMessages = 32;
+        const UINT64 count = infoQueue->GetNumStoredMessagesAllowedByRetrievalFilter();
+        const UINT64 begin = count > maxMessages ? count - maxMessages : 0;
+        state.append(QStringLiteral(" infoQueue=available stored=%1 scanned=%2 discarded=%3")
+            .arg(static_cast<qulonglong>(count))
+            .arg(static_cast<qulonglong>(count - begin))
+            .arg(static_cast<qulonglong>(infoQueue->GetNumMessagesDiscardedByMessageCountLimit())));
+        alignas(D3D12_MESSAGE) unsigned char storage[8192];
+        unsigned int warnings = 0;
+        unsigned int unreadable = 0;
+        for (UINT64 index = begin; index < count; ++index) {
+            SIZE_T bytes = 0;
+            if (FAILED(infoQueue->GetMessage(index, nullptr, &bytes)) ||
+                bytes > sizeof(storage) || bytes < sizeof(D3D12_MESSAGE)) {
+                ++unreadable;
+                continue;
+            }
+            auto* message = reinterpret_cast<D3D12_MESSAGE*>(storage);
+            if (FAILED(infoQueue->GetMessage(index, message, &bytes))) {
+                ++unreadable;
+                continue;
+            }
+            if (message->Severity > D3D12_MESSAGE_SEVERITY_WARNING) {
+                continue;
+            }
+            ++warnings;
+            const int descriptionLength = static_cast<int>(
+                std::min<SIZE_T>(message->DescriptionByteLength, 1024));
+            QString description = message->pDescription
+                ? QString::fromUtf8(message->pDescription, descriptionLength)
+                : QStringLiteral("<no description>");
+            description.remove(QChar(0));
+            state.append(QStringLiteral("\nmessage index=%1 severity=%2 id=%3: %4")
+                .arg(static_cast<qulonglong>(index))
+                .arg(static_cast<int>(message->Severity))
+                .arg(static_cast<int>(message->ID))
+                .arg(description));
+        }
+        state.append(QStringLiteral("\nrecentWarningsOrErrors=%1 unreadable=%2")
+            .arg(warnings).arg(unreadable));
+        return state;
+    }
+#endif
+    return QStringLiteral("backend=%1 validationRequested=%2 infoQueue=unsupported")
+        .arg(static_cast<int>(impl_->device_->GetDeviceInfo().Type))
+        .arg(validationRequested);
 }
 
 QString DiligentDeviceManager::selectedAdapterDebugState() const

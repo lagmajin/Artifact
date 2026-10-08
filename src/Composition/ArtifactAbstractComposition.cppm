@@ -2611,8 +2611,8 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
             const QPointF impactPosition = impactBounds.center();
             acousticSystem_.UpdateLayerSpatial(
                 acousticLayerId,
-                {impactPosition.x() / kPixelsPerMeter,
-                 impactPosition.y() / kPixelsPerMeter, 0.0f},
+                {static_cast<float>(impactPosition.x() / kPixelsPerMeter),
+                 static_cast<float>(impactPosition.y() / kPixelsPerMeter), 0.0f},
                 {});
             const char* acousticMaterial = "Steel";
             if (layerBooleanProperty(layer, QStringLiteral("physics.material.enabled"), false)) {
@@ -2988,7 +2988,8 @@ void ArtifactAbstractComposition::Impl::evaluateRigidBodyContacts()
         constexpr float kPixelsPerMeter = 100.0f;
         acousticSystem_.UpdateLayerSpatial(
             acousticLayerId,
-            {point.x() / kPixelsPerMeter, point.y() / kPixelsPerMeter, 0.0f},
+            {static_cast<float>(point.x() / kPixelsPerMeter),
+             static_cast<float>(point.y() / kPixelsPerMeter), 0.0f},
             {});
 
         const char* material = "Steel";

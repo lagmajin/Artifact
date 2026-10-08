@@ -164,6 +164,8 @@ public:
     bool isRayTracingSupported() const;
     SelectedGpuAdapterInfo selectedAdapterInfo() const;
     QString selectedAdapterDebugState() const;
+    // Cold diagnostic snapshot; does not flush, read back, or clear GPU messages.
+    QString validationDebugState() const;
     D3D12AgilityCapabilitySnapshot d3d12AgilityCapabilities() const;
     QString d3d12AgilityDebugState() const;
     std::vector<GpuAdapterCandidate> availableAdapters() const;

@@ -25,6 +25,14 @@ struct PropertyPresentationProfile {
 
 PropertyPresentationProfile
 propertyPresentationProfile(const ArtifactAbstractLayerPtr &layer) {
+  if (layer && layer->isParticleLayer()) {
+    return {QStringLiteral("particle"),
+            {QStringLiteral("Initial"), QStringLiteral("Transform"),
+             QStringLiteral("Quick Setup"), QStringLiteral("Emitter"),
+             QStringLiteral("Particle Life & Appearance"),
+             QStringLiteral("Simulation"), QStringLiteral("Particle System"),
+             QStringLiteral("Effectors"), QStringLiteral("Aux")}};
+  }
   if (ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer)) {
     return {QStringLiteral("text"),
             {QStringLiteral("Initial"), QStringLiteral("Transform"),

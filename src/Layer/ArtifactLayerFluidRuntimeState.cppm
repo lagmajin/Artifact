@@ -109,6 +109,9 @@ void renderLayerSmokeRuntime(LayerFluidRuntimeState& state,
         particle.px = static_cast<float>(bounds.left() + u * bounds.width());
         particle.py = static_cast<float>(bounds.top() + v * bounds.height());
         particle.pz = 0.0f;
+        particle.ppx = particle.px;
+        particle.ppy = particle.py;
+        particle.ppz = particle.pz;
         float vx = 0.0f;
         float vy = 0.0f;
         state.fluidSolver_->getVelocity(gx, gy, vx, vy);
@@ -144,6 +147,11 @@ void renderLayerSmokeRuntime(LayerFluidRuntimeState& state,
     particle.px = mapped.x();
     particle.py = mapped.y();
     particle.pz = mapped.z();
+    const QVector3D mappedPrev = baseTransform.map(
+        QVector3D(particle.ppx, particle.ppy, particle.ppz));
+    particle.ppx = mappedPrev.x();
+    particle.ppy = mappedPrev.y();
+    particle.ppz = mappedPrev.z();
     particle.a *= std::clamp(opacityScale, 0.0f, 1.0f);
     renderData.particles.push_back(particle);
   }

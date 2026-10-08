@@ -141,9 +141,15 @@ namespace Artifact {
     static ArtifactWidgets::KeyboardOverlayDialog* overlay = nullptr;
     if (!overlay) {
       overlay = new ArtifactWidgets::KeyboardOverlayDialog(this->window());
+      // Keep the same QAction active while its reference dialog owns focus.
+      overlay->addAction(impl_->keyboardOverlayAction_);
     }
-    overlay->setCompactMode(true);
-    overlay->showCentered();
+    if (overlay->isVisible()) {
+      overlay->hide();
+    } else {
+      overlay->setCompactMode(true);
+      overlay->showCentered();
+    }
   });
 
   connect(impl_->exportDiagnosticsAction_, &QAction::triggered, this, [this]() {

@@ -3353,6 +3353,9 @@ void ArtifactAbstractLayer::setAuthoritativeComponentEvaluationState(
         particle.px = sourcePosition.x();
         particle.py = sourcePosition.y();
         particle.pz = sourcePosition.z();
+        particle.ppx = particle.px;
+        particle.ppy = particle.py;
+        particle.ppz = particle.pz;
         particle.vx = std::cos(angle) * speed;
         particle.vy = std::sin(angle) * speed;
         particle.vz = sourceVelocity.z();

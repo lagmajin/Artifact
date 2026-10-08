@@ -78,6 +78,7 @@ module;
 
 #include <QTransform>
 #include <QWidget>
+#include <QScreen>
 #include <QtGlobal>
 
 #include <QVector3D>
@@ -23903,7 +23904,14 @@ QImage CompositionRenderController::captureCurrentFrameImage() const {
 
   if (auto *host = impl_->hostWidget_.data()) {
 
-    const QImage grabbed = host->grab().toImage();
+    // QWidget::grab() repaints Qt backing stores and misses the native
+    // Diligent child surface (a non-null, entirely black image). Capture the
+    // visible viewport rectangle at this explicit screenshot boundary.
+    const QPoint origin = host->mapToGlobal(QPoint(0, 0));
+    const QImage grabbed = host->isVisible() && host->screen()
+        ? host->screen()->grabWindow(0, origin.x(), origin.y(),
+                                     host->width(), host->height()).toImage()
+        : QImage();
 
     if (!grabbed.isNull()) {
 
@@ -23968,7 +23976,7 @@ CompositionRenderController::frameDebugCounters() const {
 }
 
 ArtifactCore::FrameDebugSnapshot
-CompositionRenderController::frameDebugSnapshot() const {
+CompositionRenderController::frameDebugSnapshot(bool includePreviews) const {
 
   ArtifactCore::TraceScopeRecord traceScope;
 
@@ -23996,7 +24004,7 @@ CompositionRenderController::frameDebugSnapshot() const {
 
 
 
-  if (impl_->renderer_) {
+  if (includePreviews && impl_->renderer_) {
 
     const int slotIndex = std::clamp(
 
@@ -24559,6 +24567,17 @@ CompositionRenderController::frameDebugSnapshot() const {
 
   if (impl_->renderer_) {
 
+    // Native validation inspection is cold work: never poll it while the
+    // playback reporter requests metadata-only snapshots.
+    if (includePreviews) {
+      ArtifactCore::FrameDebugResourceRecord validationResource;
+      validationResource.label = QStringLiteral("GPU Validation");
+      validationResource.type = QStringLiteral("gpuValidation");
+      validationResource.relation = QStringLiteral("shared-device");
+      validationResource.note = impl_->renderer_->gpuValidationDebugState();
+      snapshot.resources.push_back(validationResource);
+    }
+
     const QString particleDebug = impl_->renderer_->particleDebugState();
 
     if (!particleDebug.isEmpty() && particleDebug != QStringLiteral("<none>")) {
@@ -25072,7 +25091,8 @@ CompositionRenderController::frameDebugSnapshot() const {
 
       layerTargetResource.cacheHit = true;
 
-      layerTargetResource.texture.valid = true;
+      layerTargetResource.texture.valid = diagnosticPipeline.ready() &&
+          diagnosticPipeline.layerRTV() != nullptr;
 
       layerTargetResource.texture.name = QStringLiteral("Layer RT");
 
@@ -25094,7 +25114,9 @@ CompositionRenderController::frameDebugSnapshot() const {
 
       layerTargetResource.texture.srgb = false;
 
-      layerTargetResource.note = QStringLiteral("previewSource=layer-render-target");
+      layerTargetResource.note = layerTargetResource.texture.valid
+          ? QStringLiteral("previewSource=layer-render-target")
+          : QStringLiteral("unavailable=no-intermediate-pipeline");
 
       snapshot.resources.push_back(layerTargetResource);
 
@@ -25110,7 +25132,8 @@ CompositionRenderController::frameDebugSnapshot() const {
 
       accumResource.cacheHit = true;
 
-      accumResource.texture.valid = true;
+      accumResource.texture.valid = diagnosticPipeline.ready() &&
+          diagnosticPipeline.accumRTV() != nullptr;
 
       accumResource.texture.name = QStringLiteral("Accum RT");
 
@@ -25132,7 +25155,9 @@ CompositionRenderController::frameDebugSnapshot() const {
 
       accumResource.texture.srgb = false;
 
-      accumResource.note = QStringLiteral("previewSource=accum-render-target");
+      accumResource.note = accumResource.texture.valid
+          ? QStringLiteral("previewSource=accum-render-target")
+          : QStringLiteral("unavailable=no-intermediate-pipeline");
 
       snapshot.resources.push_back(accumResource);
 
@@ -25140,7 +25165,7 @@ CompositionRenderController::frameDebugSnapshot() const {
 
 
 
-    if (impl_->renderer_) {
+    if (includePreviews && impl_->renderer_) {
 
       QImage viewportAfter = captureCurrentFrameImage();
 
@@ -25356,7 +25381,7 @@ CompositionRenderController::frameDebugSnapshot() const {
 
       }
 
-      if (impl_->renderer_) {
+      if (includePreviews && impl_->renderer_) {
 
         QImage viewportAfter = captureCurrentFrameImage();
 
@@ -26242,6 +26267,26 @@ bool CompositionRenderController::resetSelectedTransformComponent(
 }
 
 namespace {
+bool compositionToPaintPosition(const ArtifactPaintLayer* layer,
+                                const QPointF& compositionPosition,
+                                QPointF* paintPosition) {
+  if (!layer || !paintPosition || !std::isfinite(compositionPosition.x()) ||
+      !std::isfinite(compositionPosition.y())) {
+    return false;
+  }
+  bool invertible = false;
+  const QTransform inverse = layer->getGlobalTransform().inverted(&invertible);
+  if (!invertible) {
+    return false;
+  }
+  const QPointF mapped = inverse.map(compositionPosition);
+  if (!std::isfinite(mapped.x()) || !std::isfinite(mapped.y())) {
+    return false;
+  }
+  *paintPosition = mapped;
+  return true;
+}
+
 QRectF arrangeSelectionUnion(
     const std::vector<ArtifactAbstractLayerPtr> &targets) {
   QRectF out;
@@ -27943,26 +27988,44 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
     }
     impl_->cloneStampStartCanvas_ = {canvasPos.x, canvasPos.y};
     impl_->cloneStampLastCanvas_ = impl_->cloneStampStartCanvas_;
-    impl_->cloneStampDragging_ = true;
-    impl_->brushCursorCanvasPos_ = impl_->cloneStampStartCanvas_;
-    impl_->brushLastViewportPos_ = screenPhysicalPoint(viewportPos);
-    impl_->brushCursorVisible_ = true;
     auto *brushTool = ArtifactApplicationManager::instance()->brushTool();
     const float radius = brushTool ? brushTool->radius() : 20.0f;
     if (auto sourceLayer = impl_->cloneStampSourceLayer_.lock()) {
       auto *sourcePaintLayer = dynamic_cast<ArtifactPaintLayer *>(sourceLayer.get());
+      QPointF sourcePaintPosition;
+      QPointF destinationPaintPosition;
+      if (!compositionToPaintPosition(
+              sourcePaintLayer,
+              ArtifactCore::Coordinates::toQPointF(
+                  impl_->cloneStampSourceCanvas_),
+              &sourcePaintPosition) ||
+          !compositionToPaintPosition(
+              paintLayer,
+              ArtifactCore::Coordinates::toQPointF(
+                  impl_->cloneStampStartCanvas_),
+              &destinationPaintPosition)) {
+        setInfoOverlayText(QStringLiteral("Clone Stamp"),
+                           QStringLiteral("Paint layer transform is not invertible"));
+        event->accept();
+        return;
+      }
       const FramePosition sourceFrame(
           (sourcePaintLayer ? sourcePaintLayer->currentFrame() : 0) +
           (brushTool ? brushTool->cloneTimeOffset() : 0));
       paintLayer->applyCloneStampFromLayerAtFrame(
-          sourcePaintLayer,
-          ArtifactCore::Coordinates::toQPointF(
-              impl_->cloneStampSourceCanvas_),
-          ArtifactCore::Coordinates::toQPointF(
-              impl_->cloneStampStartCanvas_), radius,
+          sourcePaintLayer, sourcePaintPosition, destinationPaintPosition, radius,
           brushTool ? brushTool->opacity() : 1.0f,
           brushTool ? brushTool->hardness() : 1.0f, true, sourceFrame);
+    } else {
+      setInfoOverlayText(QStringLiteral("Clone Stamp"),
+                         QStringLiteral("Alt-click a Paint layer"));
+      event->accept();
+      return;
     }
+    impl_->cloneStampDragging_ = true;
+    impl_->brushCursorCanvasPos_ = impl_->cloneStampStartCanvas_;
+    impl_->brushLastViewportPos_ = screenPhysicalPoint(viewportPos);
+    impl_->brushCursorVisible_ = true;
     impl_->invalidateBaseComposite();
     impl_->invalidateOverlayComposite();
     markRenderDirty();
@@ -30945,14 +31008,22 @@ void CompositionRenderController::handleMouseMove(
         if (auto sourceLayer = impl_->cloneStampSourceLayer_.lock()) {
           auto *sourcePaintLayer =
               dynamic_cast<ArtifactPaintLayer *>(sourceLayer.get());
-          const FramePosition sourceFrame(
-              (sourcePaintLayer ? sourcePaintLayer->currentFrame() : 0) +
-              (brushTool ? brushTool->cloneTimeOffset() : 0));
-          paintLayer->applyCloneStampFromLayerAtFrame(
-              sourcePaintLayer, source, destinationQt,
-              brushTool ? brushTool->radius() : 20.0f,
-              brushTool ? brushTool->opacity() : 1.0f,
-              brushTool ? brushTool->hardness() : 1.0f, false, sourceFrame);
+          QPointF sourcePaintPosition;
+          QPointF destinationPaintPosition;
+          if (compositionToPaintPosition(sourcePaintLayer, source,
+                                         &sourcePaintPosition) &&
+              compositionToPaintPosition(paintLayer, destinationQt,
+                                         &destinationPaintPosition)) {
+            const FramePosition sourceFrame(
+                (sourcePaintLayer ? sourcePaintLayer->currentFrame() : 0) +
+                (brushTool ? brushTool->cloneTimeOffset() : 0));
+            paintLayer->applyCloneStampFromLayerAtFrame(
+                sourcePaintLayer, sourcePaintPosition,
+                destinationPaintPosition,
+                brushTool ? brushTool->radius() : 20.0f,
+                brushTool ? brushTool->opacity() : 1.0f,
+                brushTool ? brushTool->hardness() : 1.0f, false, sourceFrame);
+          }
         }
         impl_->cloneStampLastCanvas_ = destination;
         impl_->invalidateBaseComposite();
@@ -49914,20 +49985,21 @@ void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
     if (!gridPolarMode_ && !gridIsometricMode_ &&
         gridSettings_.showAxis) {
 
-      const auto origin = renderer_->canvasToViewport({0.0f, 0.0f});
-
       const float axisThickness =
 
-          std::max(1.0f, gridSettings_.axisStyle.thickness);
+          std::max(1.0f, gridSettings_.axisStyle.thickness) / zoom;
+
+      // Local lines receive canvas coordinates; viewport pan/zoom is applied
+      // by the renderer. Match the grid extent without transforming twice.
 
       renderer_->drawThickLineLocal(
 
-          {origin.x, 0.0f}, {origin.x, std::max(1.0f, hostHeight_)},
+          {0.0f, gridOriginY}, {0.0f, gridOriginY + gridExtentH},
           axisThickness, fadedAxisColor);
 
       renderer_->drawThickLineLocal(
 
-          {0.0f, origin.y}, {std::max(1.0f, hostWidth_), origin.y},
+          {gridOriginX, 0.0f}, {gridOriginX + gridExtentW, 0.0f},
           axisThickness, fadedAxisColor);
 
     }

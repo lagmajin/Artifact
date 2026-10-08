@@ -14,6 +14,7 @@ module;
 #include <QString>
 #include <QStringList>
 #include <QSet>
+#include <QTransform>
 #include <QUuid>
 
 
@@ -46,6 +47,7 @@ import Artifact.Layer.Solid2D;
 import Artifact.Layers.SolidImage;
 import Artifact.Layer.Particle;
 import Artifact.Layer.FormParticle;
+import Artifact.Render.OffscreenComposition;
 import Artifact.Layer.Composition;
 import Artifact.Layer.ParametricComposition;
 import Artifact.Layer.AdjustableLayer;
@@ -1407,6 +1409,52 @@ bool applyCompositionFinalEffectsToImage(ArtifactAbstractComposition* compositio
   return true;
 }
 
+// GPU particle surfaces for effect/mask pipelines: one persistent offscreen
+// renderer per layer. Entries are only ever touched under the mutex below,
+// so concurrent viewport/offline draw threads serialize on the (fast) GPU
+// surface pass instead of racing on device resources.
+struct ParticleGpuSurfaceHelper {
+  const void* device = nullptr;
+  std::shared_ptr<OffscreenCompositionRenderer> renderer;
+};
+
+QImage renderParticleSurfaceGPU(ArtifactIRenderer* renderer,
+                                ArtifactParticleLayer* layer,
+                                int64_t targetFrame,
+                                const QSize& surfaceSize,
+                                const QTransform& surfaceMap)
+{
+  if (!renderer || !layer || surfaceSize.width() <= 0 ||
+      surfaceSize.height() <= 0) {
+    return {};
+  }
+  const auto deviceHolder = renderer->device();
+  const void* deviceKey = deviceHolder.RawPtr();
+  if (!deviceKey) {
+    return {};
+  }
+  static QMutex mutex;
+  static QHash<QString, ParticleGpuSurfaceHelper> helpers;
+  QMutexLocker lock(&mutex);
+  if (helpers.size() > 16) {
+    helpers.clear();
+  }
+  const QString ownerKey = layer->id().toString();
+  auto it = helpers.find(ownerKey);
+  if (it == helpers.end() || it->device != deviceKey || !it->renderer) {
+    // Construction compiles device resources once; reuse amortizes it.
+    // Stale-device entries release their device reference here.
+    ParticleGpuSurfaceHelper entry;
+    entry.device = deviceKey;
+    entry.renderer = std::make_shared<OffscreenCompositionRenderer>(
+        deviceHolder, static_cast<Diligent::Uint32>(surfaceSize.width()),
+        static_cast<Diligent::Uint32>(surfaceSize.height()));
+    it = helpers.insert(ownerKey, std::move(entry));
+  }
+  return it->renderer->renderParticleSurfaceToQImage(
+      FramePosition(targetFrame), layer, surfaceSize, surfaceMap);
+}
+
 void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
                                  ArtifactIRenderer *renderer,
                                  float opacityOverride,
@@ -2684,15 +2732,37 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
             ? cacheFrameNumber
             : layer->currentFrame();
     const bool hasRasterizer = hasRasterizerEffectsOrMasks(layer);
-    if (renderer && renderer->isInitialized() && !hasRasterizer) {
-      particleLayer->goToFrame(targetFrame);
-      particleLayer->draw(renderer);
-      return;
-    }
-
     const QSize surfaceSize(
         std::max(1, static_cast<int>(std::ceil(localRect.width()))),
         std::max(1, static_cast<int>(std::ceil(localRect.height()))));
+    if (renderer && renderer->isInitialized()) {
+      particleLayer->goToFrame(targetFrame);
+      if (!hasRasterizer) {
+        particleLayer->draw(renderer);
+        return;
+      }
+      // Rasterizer effects or masks: rasterize the particle surface on the
+      // GPU into a layer-local image, then run the unchanged CPU effect/mask
+      // pipeline below. Falls through to the CPU raster on GPU failure.
+      const QTransform surfaceMap =
+          QTransform::fromTranslate(-localRect.x(), -localRect.y());
+      QImage gpuSurface = renderParticleSurfaceGPU(
+          renderer, particleLayer, targetFrame, surfaceSize, surfaceMap);
+      if (!gpuSurface.isNull() && gpuSurface.size() == surfaceSize) {
+        particleLayer->setCachedSurface(gpuSurface, targetFrame);
+        gpuSurface = downsampleForLOD(gpuSurface, lod);
+        if (!gpuSurface.isNull() &&
+            gpuSurface.format() != QImage::Format_ARGB32_Premultiplied) {
+          gpuSurface =
+              gpuSurface.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+        }
+        if (!gpuSurface.isNull()) {
+          applySurfaceAndDraw(gpuSurface, localRect, true, nullptr, true);
+          return;
+        }
+      }
+    }
+
     particleLayer->goToFrame(targetFrame);
     QImage particleSurface;
     const bool cacheHit =

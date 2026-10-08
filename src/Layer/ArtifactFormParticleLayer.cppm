@@ -690,6 +690,9 @@ static ArtifactCore::ParticleRenderData buildRenderData(const FormParticleSettin
                 vertex.px = static_cast<float>(mapped.x());
                 vertex.py = static_cast<float>(mapped.y());
                 vertex.pz = displaced.z();
+                vertex.ppx = vertex.px;
+                vertex.ppy = vertex.py;
+                vertex.ppz = vertex.pz;
                 vertex.vx = displaced.x() - base.x();
                 vertex.vy = displaced.y() - base.y();
                 vertex.vz = displaced.z() - base.z();

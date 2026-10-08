@@ -27,6 +27,7 @@ module Widgets.Dock.StyleManager;
 
 import Application.AppSettings;
 #if defined(ARTIFACT_QADS_COMPAT)
+import Widgets.CommonStyle;
 import Widgets.Dock.GlowStyle;
 #endif
 import Widgets.Utils.CSS;
@@ -222,7 +223,9 @@ DockStyleManager::DockStyleManager(QWidget* dockSurface, QObject* parent)
         return;
     }
 
-    impl_->glowStyle_ = new DockGlowStyle(QApplication::style());
+    // QProxyStyle owns its base; keep QApplication's shared style independent.
+    impl_->glowStyle_ = new DockGlowStyle(new ArtifactCommonStyle());
+    impl_->glowStyle_->setParent(impl_->dockManager_);
     impl_->glowStyle_->setGlowColor(impl_->glowColor_);
     impl_->glowStyle_->setGlowWidth(2);
     impl_->glowStyle_->setGlowIntensity(0.92f);

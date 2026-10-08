@@ -94,6 +94,9 @@ ArtifactCore::ParticleRenderData makeLiquid2DRenderData(
     particle.py = static_cast<float>(bounds.top() +
                                       source.y * bounds.height());
     particle.pz = 0.0f;
+    particle.ppx = particle.px;
+    particle.ppy = particle.py;
+    particle.ppz = particle.pz;
     particle.vx = source.vx * velocityScale;
     particle.vy = source.vy * velocityScale;
     particle.vz = 0.0f;

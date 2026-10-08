@@ -536,6 +536,11 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
         particle.px = mapped.x();
         particle.py = mapped.y();
         particle.pz = mapped.z();
+        const QVector3D mappedPrev = baseTransform.map(
+            QVector3D(particle.ppx, particle.ppy, particle.ppz));
+        particle.ppx = mappedPrev.x();
+        particle.ppy = mappedPrev.y();
+        particle.ppz = mappedPrev.z();
         const QVector3D mappedVelocity = baseTransform.map(
             QVector3D(particle.vx, particle.vy, particle.vz)) -
             mappedVelocityOrigin;
@@ -556,6 +561,9 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
         particle.px = spill.x;
         particle.py = spill.y;
         particle.pz = 0.0f;
+        particle.ppx = particle.px;
+        particle.ppy = particle.py;
+        particle.ppz = particle.pz;
         particle.vx = spill.vx;
         particle.vy = spill.vy;
         particle.vz = 0.0f;
@@ -670,6 +678,9 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
           particle.px = foam.position.x;
           particle.py = foam.position.y;
           particle.pz = 0.0f;
+          particle.ppx = particle.px;
+          particle.ppy = particle.py;
+          particle.ppz = particle.pz;
           particle.r = impl_->liquidFoamColor_.r();
           particle.g = impl_->liquidFoamColor_.g();
           particle.b = impl_->liquidFoamColor_.b();
@@ -758,6 +769,9 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
                        static_cast<float>(fps);
       for (auto& particle : impl_->componentParticles_) {
         particle.age += dt;
+        particle.ppx = particle.px;
+        particle.ppy = particle.py;
+        particle.ppz = particle.pz;
         particle.px += particle.vx * dt;
         particle.py += particle.vy * dt;
         particle.pz += particle.vz * dt;
@@ -784,6 +798,11 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
       particle.px = mapped.x();
       particle.py = mapped.y();
       particle.pz = mapped.z();
+      const QVector3D mappedPrev = baseTransform.map(
+          QVector3D(particle.ppx, particle.ppy, particle.ppz));
+      particle.ppx = mappedPrev.x();
+      particle.ppy = mappedPrev.y();
+      particle.ppz = mappedPrev.z();
       particle.a *= std::clamp(opacityScale, 0.0f, 1.0f);
       renderData.particles.push_back(particle);
     }
@@ -1092,6 +1111,9 @@ void ArtifactAbstractLayer::applyFractureImpact(const FractureImpact& impact) {
       particle.px = sourcePosition.x();
       particle.py = sourcePosition.y();
       particle.pz = sourcePosition.z();
+      particle.ppx = particle.px;
+      particle.ppy = particle.py;
+      particle.ppz = particle.pz;
       particle.vx = sourceVelocity.x() + std::cos(angle) * speed;
       particle.vy = sourceVelocity.y() + std::sin(angle) * speed;
       particle.vz = sourceVelocity.z();

@@ -6636,6 +6636,8 @@ private:
             ? ArtifactCore::ProceduralTextureGenerator::makePreset(
                   params.preset(), params.seed())
             : noiseLayer->settings();
+        settings.width = params.width();
+        settings.height = params.height();
         settings.primary.seed = params.seed();
         if (!params.hasPreset()) {
             settings.primary.kind = params.kind();

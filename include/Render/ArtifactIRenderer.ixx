@@ -177,6 +177,7 @@ public:
   bool particleDrawQueued() const;
   QString glyphAtlasDebugState() const;
   QString gpuAdapterDebugState() const;
+  QString gpuValidationDebugState() const;
   QString gpuAdapterRegistryDebugState() const;
   QString rayTracingDebugState() const;
   void setGlobalIlluminationSettings(const GlobalIlluminationSettings &settings);

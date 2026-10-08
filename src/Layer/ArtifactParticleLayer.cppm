@@ -38,6 +38,7 @@ module;
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
+#include <cstddef>
 #include <queue>
 #include <deque>
 #include <list>
@@ -71,6 +72,20 @@ import Color.Float;
 namespace Artifact {
 
 namespace {
+
+// StructuredBuffer<ParticleData> in Core's vertex/cull shaders is a
+// tightly packed 96-byte record (position/velocity/prevPosition are xyz +
+// padding so the stride agrees on DXIL and Vulkan std430). Fail compilation
+// instead of accepting an ABI/layout change that turns color or size into
+// unrelated fields.
+static_assert(std::is_standard_layout_v<ArtifactCore::ParticleVertex>);
+static_assert(sizeof(ArtifactCore::ParticleVertex) == 96);
+static_assert(offsetof(ArtifactCore::ParticleVertex, vx) == 16);
+static_assert(offsetof(ArtifactCore::ParticleVertex, r) == 32);
+static_assert(offsetof(ArtifactCore::ParticleVertex, size) == 48);
+static_assert(offsetof(ArtifactCore::ParticleVertex, lifetime) == 64);
+static_assert(offsetof(ArtifactCore::ParticleVertex, spriteFrame) == 68);
+static_assert(offsetof(ArtifactCore::ParticleVertex, ppx) == 80);
 
 ParticleEmitter* firstEmitterOrCreate(ParticleSystem* system)
 {
@@ -172,6 +187,9 @@ ArtifactCore::ParticleRenderData transformParticleRenderData(
         v.px = src.px;
         v.py = src.py;
         v.pz = src.pz;
+        v.ppx = src.ppx;
+        v.ppy = src.ppy;
+        v.ppz = src.ppz;
         v.vx = src.vx;
         v.vy = src.vy;
         v.vz = src.vz;
@@ -188,6 +206,7 @@ ArtifactCore::ParticleRenderData transformParticleRenderData(
         v.spriteRows = src.spriteRows;
         v.spriteCols = src.spriteCols;
         const QPointF mapped = safeTransform.map(QPointF(src.px, src.py));
+        const QPointF mappedPrev = safeTransform.map(QPointF(src.ppx, src.ppy));
         const QPointF mappedVelocityPoint =
             safeTransform.map(QPointF(src.vx, src.vy));
         const QPointF mappedVelocity = mappedVelocityPoint - mappedOrigin;
@@ -195,6 +214,8 @@ ArtifactCore::ParticleRenderData transformParticleRenderData(
         const float safeSourceY = std::isfinite(src.py) ? src.py : 0.0f;
         v.px = safeCoordinate(mapped.x(), safeSourceX);
         v.py = safeCoordinate(mapped.y(), safeSourceY);
+        v.ppx = safeCoordinate(mappedPrev.x(), safeSourceX);
+        v.ppy = safeCoordinate(mappedPrev.y(), safeSourceY);
         v.vx = safeCoordinate(mappedVelocity.x(), 0.0f);
         v.vy = safeCoordinate(mappedVelocity.y(), 0.0f);
         v.rotation = std::isfinite(src.rotation)
@@ -244,6 +265,9 @@ ArtifactCore::ParticleRenderData toCoreParticleRenderData(
         vertex.px = finiteClamped(particle.px, 0.0f, -10000000.0f, 10000000.0f);
         vertex.py = finiteClamped(particle.py, 0.0f, -10000000.0f, 10000000.0f);
         vertex.pz = finiteClamped(particle.pz, 0.0f, -10000000.0f, 10000000.0f);
+        vertex.ppx = finiteClamped(particle.ppx, 0.0f, -10000000.0f, 10000000.0f);
+        vertex.ppy = finiteClamped(particle.ppy, 0.0f, -10000000.0f, 10000000.0f);
+        vertex.ppz = finiteClamped(particle.ppz, 0.0f, -10000000.0f, 10000000.0f);
         vertex.vx = finiteClamped(particle.vx, 0.0f, -1000000.0f, 1000000.0f);
         vertex.vy = finiteClamped(particle.vy, 0.0f, -1000000.0f, 1000000.0f);
         vertex.vz = finiteClamped(particle.vz, 0.0f, -1000000.0f, 1000000.0f);
@@ -259,7 +283,10 @@ ArtifactCore::ParticleRenderData toCoreParticleRenderData(
         vertex.g = renderColor.g();
         vertex.b = renderColor.b();
         vertex.a = renderColor.a();
-        vertex.size = finiteClamped(particle.size, 0.0f, 0.0f, 1000000.0f);
+        // App scale is the particle radius in composition units. Core's
+        // legacy billboard shader multiplies size by ten; compensate here
+        // so saved presets do not produce 200-400px fire particles.
+        vertex.size = finiteClamped(particle.size, 0.0f, 0.0f, 1000000.0f) * 0.1f;
         vertex.stretch = finiteClamped(particle.stretch, 1.0f, 1.0f, 1000000.0f);
         vertex.rotation = finiteClamped(particle.rotation, 0.0f, -1000000.0f, 1000000.0f);
         vertex.age = finiteClamped(particle.age, 0.0f, 0.0f, 1000000.0f);
@@ -370,6 +397,55 @@ void sortCoreParticleRenderData(
     }
 }
 
+// Emits trail segments for the GPU path through line packets (batched and
+// rasterized downstream). Without this the GPU path silently drops
+// ParticleRenderSettings::trailEnabled, which the software path honors.
+// Lines batch separately from the particle indirect draw, so in the GPU path
+// trails composite on top; with additive blending (the common trail setup)
+// the result matches the software order exactly.
+void emitParticleTrails(ArtifactIRenderer* renderer,
+                        const ArtifactCore::ParticleRenderData& data,
+                        const ParticleRenderSettings& settings,
+                        float widthScale)
+{
+    if (!renderer || !settings.trailEnabled || data.particles.empty()) {
+        return;
+    }
+    const float trailWidth = std::isfinite(settings.trailWidth)
+        ? std::clamp(settings.trailWidth, 0.1f, 1000000.0f)
+        : 0.1f;
+    const float trailFade = std::isfinite(settings.trailFade)
+        ? std::clamp(settings.trailFade, 0.0f, 1.0f)
+        : 0.0f;
+    const float scaledWidth = std::isfinite(widthScale) && widthScale > 0.0f
+        ? trailWidth * widthScale
+        : trailWidth;
+    if (scaledWidth <= 0.0f || trailFade <= 0.0f) {
+        return;
+    }
+    const auto finiteColor = [](float value) {
+        return std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 0.0f;
+    };
+    for (const auto& particle : data.particles) {
+        const float dx = particle.px - particle.ppx;
+        const float dy = particle.py - particle.ppy;
+        if (!std::isfinite(dx) || !std::isfinite(dy) ||
+            dx * dx + dy * dy < 1e-10f) {
+            continue;
+        }
+        const float alpha = finiteColor(particle.a) * trailFade;
+        if (alpha <= 0.0f) {
+            continue;
+        }
+        renderer->drawSolidLine(
+            Detail::float2{particle.ppx, particle.ppy},
+            Detail::float2{particle.px, particle.py},
+            FloatColor(finiteColor(particle.r), finiteColor(particle.g),
+                       finiteColor(particle.b), alpha),
+            scaledWidth);
+    }
+}
+
 void boostDebugParticleRenderData(ArtifactCore::ParticleRenderData& data)
 {
     const auto safeColor = [](float value) {
@@ -427,6 +503,7 @@ public:
     bool playing = true;
     QString presetName = QStringLiteral("Custom");
     float lastTime = 0.0f;
+    bool simulationReusable = false;
     int width = 1920;
     int height = 1080;
     int selectedEffectorIndex = -1;
@@ -533,7 +610,9 @@ void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
     // フレーム0でも最低1フレーム分のシミュレーションを走らせて初期パーティクルを生成する
     const float simulatedFrameTime = safeParticleFrameTime(
         std::max(int64_t{1}, frameNumber), fps);
-    impl_->particleSystem->goToFrame(std::max(int64_t{1}, frameNumber), fps);
+    impl_->particleSystem->goToFrame(std::max(int64_t{1}, frameNumber), fps,
+                                   impl_->simulationReusable);
+    impl_->simulationReusable = true;
     // goToFrame() above fully re-simulates without touching lastTime. Sync it
     // so the software path (renderToImage) does not apply a second update
     // from a stale base time when the GPU entry is skipped.
@@ -584,6 +663,14 @@ void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
                 const ArtifactCore::ParticleRenderData renderData =
                     transformParticleRenderData(lodData, globalTransform, opacity());
                 renderer->drawParticles(renderData);
+                // Trails only after an accepted draw: rejected draws leave
+                // nothing queued, and stray line packets would ghost onto a
+                // later frame (the software fallback redraws trails itself).
+                if (renderer->particleDrawQueued()) {
+                    emitParticleTrails(renderer, renderData,
+                                       impl_->particleSystem->renderSettings(),
+                                       screenScale);
+                }
             }
             gpuParticleDrawAccepted =
                 renderer->particleDrawQueued();
@@ -630,6 +717,69 @@ void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
 
     const auto size = sourceSize();
     drawFractureOverlay(renderer, getGlobalTransform4x4(), QSizeF(size.width, size.height), opacity());
+}
+
+bool ArtifactParticleLayer::drawSurfaceGPU(ArtifactIRenderer* renderer,
+                                           const QTransform& surfaceMap,
+                                           int64_t frameNumber)
+{
+    if (!renderer || !impl_->particleSystem) {
+        return false;
+    }
+    if (is3D()) {
+        // The 3D camera path bakes view/proj matrices from the composition;
+        // a layer-local surface has no meaning there. Use draw() instead.
+        return false;
+    }
+    if (!renderer->isInitialized()) {
+        return false;
+    }
+
+    // Deterministic simulation state, mirroring draw().
+    float fps = 30.0f;
+    if (auto comp = static_cast<ArtifactAbstractComposition*>(composition())) {
+        fps = safeParticleFps(comp->frameRate().framerate());
+    }
+    const float simulatedFrameTime = safeParticleFrameTime(
+        std::max(int64_t{1}, frameNumber), fps);
+    impl_->particleSystem->goToFrame(std::max(int64_t{1}, frameNumber), fps,
+                                     impl_->simulationReusable);
+    impl_->simulationReusable = true;
+    impl_->lastTime = simulatedFrameTime;
+
+    const auto sourceData = impl_->particleSystem->captureRenderData();
+    auto coreData = toCoreParticleRenderData(sourceData);
+    coreData.options = coreRenderOptionsFromSettings(
+        impl_->particleSystem->renderSettings());
+    const float surfaceScale = std::max(std::hypot(surfaceMap.m11(), surfaceMap.m21()),
+                                        std::hypot(surfaceMap.m12(), surfaceMap.m22()));
+    auto lodData = applyParticleRenderLOD(std::move(coreData), surfaceScale);
+    sortCoreParticleRenderData(
+        lodData,
+        impl_->particleSystem->renderSettings().sortMode,
+        impl_->particleSystem->cameraPosition());
+    if (lodData.particles.empty()) {
+        // Keep the renderer's empty-state diagnostic consistent with draw().
+        renderer->drawParticles(lodData);
+        return true;
+    }
+    // Surface compositing applies layer opacity afterwards: keep vertex
+    // alpha at full layer strength here.
+    const ArtifactCore::ParticleRenderData renderData =
+        transformParticleRenderData(lodData, surfaceMap, 1.0f);
+    renderer->drawParticles(renderData);
+    if (!renderer->particleDrawQueued()) {
+        return false;
+    }
+    emitParticleTrails(renderer, renderData,
+                       impl_->particleSystem->renderSettings(), surfaceScale);
+    return true;
+}
+
+void ArtifactParticleLayer::setCachedSurface(const QImage& image, int64_t frame)
+{
+    impl_->cachedFrame = image;
+    impl_->cachedFrameNumber = frame;
 }
 
 QRectF ArtifactParticleLayer::localBounds() const
@@ -2045,30 +2195,15 @@ void ArtifactParticleLayer::preWarm(float duration)
 
 void ArtifactParticleLayer::goToFrame(int64_t frameNumber)
 {
-    // Calculate time from frame
-    float fps = 30.0f;
-    if (auto comp = static_cast<ArtifactAbstractComposition*>(composition())) {
-        fps = safeParticleFps(comp->frameRate().framerate());
-    }
-    float time = safeParticleFrameTime(frameNumber, fps);
-    
+    ArtifactAbstractLayer::goToFrame(frameNumber);
+    frameNumber = currentFrame();
     // Check cache
     if (frameNumber == impl_->cachedFrameNumber) {
         return;
     }
     
-    // Update particle system
-    if (impl_->playing) {
-        float deltaTime = time - impl_->lastTime;
-        if (deltaTime < 0) {
-            // Time went backwards, reset
-            reset();
-            impl_->lastTime = 0;
-            deltaTime = time;
-        }
-        impl_->particleSystem->update(deltaTime);
-        impl_->lastTime = time;
-    }
+    // draw() owns deterministic GPU simulation. Software rendering updates
+    // through renderToImage(); do not simulate a second time on frame sync.
 
     // The simulation state moved to a new frame, so any previously rasterized
     // image is stale even if the frame number cache is about to be updated.
@@ -2083,10 +2218,17 @@ QImage ArtifactParticleLayer::renderFrame(int width, int height, float time)
     const float safeTime = std::isfinite(time)
         ? std::clamp(time, -1000000.0f, 1000000.0f)
         : 0.0f;
-    QImage image(safeWidth, safeHeight, QImage::Format_ARGB32);
+    // Reuse the cached backing store when the size matches: a full-HD ARGB32
+    // frame is ~8MB, and reallocating + faulting it in on every frame change
+    // dominated the software fallback cost.
+    if (impl_->cachedFrame.width() != safeWidth ||
+        impl_->cachedFrame.height() != safeHeight ||
+        impl_->cachedFrame.format() != QImage::Format_ARGB32) {
+        impl_->cachedFrame = QImage(safeWidth, safeHeight, QImage::Format_ARGB32);
+    }
+    QImage& image = impl_->cachedFrame;
     image.fill(Qt::transparent);
     renderToImage(image, safeTime);
-    impl_->cachedFrame = image;
 
     float fps = 30.0f;
     if (auto comp = static_cast<ArtifactAbstractComposition*>(composition())) {
@@ -2152,6 +2294,7 @@ bool ArtifactParticleLayer::getCachedFrame(int64_t frame, QImage& out)
 
 void ArtifactParticleLayer::clearFrameCache()
 {
+    impl_->simulationReusable = false;
     impl_->cachedFrame = QImage();
     impl_->cachedFrameNumber = -1;
 }
