@@ -2406,25 +2406,14 @@ namespace Artifact
     public:
         Impl() {
             // ArtifactCoreのレンダリングキューマネージャにコールバックを登録
+            // （FFmpegEncoder disabled: エンコーダへの供給は processFramesForJob
+            //  の消費者ループが担うため、このコールバックは空が正。旧 frameBuffer
+            //  直列化バッファは参照ゼロのため撤去。instance 寿命に縛らない
+            //  captureless lambda で登録）
             auto& coreQueueManager = ArtifactCore::RendererQueueManager::instance();
-            coreQueueManager.setRenderFrameFunc([this](const ArtifactCore::Id& compId, int frame, const QString& path) {
-                // 順序制御を行いつつエンコーダに送る
-                {
-                    std::lock_guard<std::mutex> lock(encoderMutex);
-                    // 本来はここでレンダリングされたImageを取得し、バッファに格納する
-                    // frameBuffer[frame] = renderedImage; 
-
-                    while (frameBuffer.count(nextFrameToEncode)) {
-                        /* FFmpegEncoder disabled
-                        if (ffmpegEncoder) {
-                            ffmpegEncoder->addImage(frameBuffer[nextFrameToEncode]);
-                        }
-                        */
-                        frameBuffer.erase(nextFrameToEncode);
-                        nextFrameToEncode++;
-                    }
-                }
-            });
+            coreQueueManager.setRenderFrameFunc(
+                [](const ArtifactCore::Id&, int, const QString&) {
+                });
 
             queueManager.jobAdded = [this](int index) {
                 handleJobAdded(index);
@@ -2479,10 +2468,6 @@ namespace Artifact
         QList<ArtifactRenderJob> completedHistory;
         void expandEnabledRenderPasses();
         void expandSelectedFrameRanges();
-        void* ffmpegEncoder = nullptr; // Temporarily void* to bypass build error
-        std::unordered_map<int, ArtifactCore::ImageF32x4_RGBA> frameBuffer;
-        int nextFrameToEncode = 0;
-        std::mutex encoderMutex;
         std::mutex queueMutex;
         std::atomic<bool> isRendering_{false};
         std::atomic<bool> shutdownRequested_{false};
@@ -3055,21 +3040,24 @@ namespace Artifact
         }
 
         // XPU P3: 連番書込の非同期化（出力不変・順序不問・bounded）。
-        // 既定 off（従来の同期書込）。ARTIFACT_XPU_ASYNC_SEQUENCE=on または
-        // ARTIFACT_XPU=asyncseq=on で opt-in。manager=on で AsyncImageWriterManager 経由。
+        // 既定 on（消費者ループの bounded drain と最後の join で失敗を伝播）。
+        // 同期書込に戻すには ARTIFACT_XPU_ASYNC_SEQUENCE=off（0/false/no も可）
+        // または ARTIFACT_XPU=asyncseq=off。manager=on で AsyncImageWriterManager 経由。
         static bool xpuAsyncSequenceEnabled()
         {
             const QString direct = qEnvironmentVariable(
                 "ARTIFACT_XPU_ASYNC_SEQUENCE").trimmed().toLower();
+            if (direct == QLatin1String("off") || direct == QLatin1String("0") ||
+                direct == QLatin1String("false") || direct == QLatin1String("no")) {
+                return false;
+            }
             if (direct == QLatin1String("1") || direct == QLatin1String("on") ||
                 direct == QLatin1String("true") || direct == QLatin1String("yes") ||
                 direct == QLatin1String("manager")) {
                 return true;
             }
-            return xpuSpecString().toLower().contains(
-                QStringLiteral("asyncseq=on")) ||
-                xpuSpecString().toLower().contains(
-                    QStringLiteral("asyncseq=manager"));
+            const QString spec = xpuSpecString().toLower();
+            return !spec.contains(QStringLiteral("asyncseq=off"));
         }
 
         static bool xpuAsyncSequenceUseManager()
@@ -6640,6 +6628,13 @@ namespace Artifact
                         << " tileSize=" << tileSz;
             }
             configureRendererChannelsForRenderQueueJob(*renderer, snap.job);
+            if (snap.gpuTextureCacheManager) {
+                // ライブビューと同じフレーム契約に合わせる。beginFrame が来ないと
+                // one-shot の upload 消化がジョブ初回しか回らず、以降のキャッシュ
+                // ミスが直接 upload フォールバックに偏向する。
+                snap.gpuTextureCacheManager->beginFrame(
+                    static_cast<quint64>(snap.frameNumber));
+            }
             renderer->setClearColor(snap.composition->backgroundColor());
             renderer->clear();
             const bool reuseComponentFrame =
@@ -7648,7 +7643,7 @@ namespace Artifact
             }
         }
 
-        // XPU P3: bounded async for image-sequence writes (opt-in, output-invariant).
+        // XPU P3: bounded async for image-sequence writes (既定 on, output-invariant).
         // asyncseq=manager で AsyncImageWriterManager 経由（RawImage 変換）。
         const bool xpuAsyncSequence = xpuAsyncSequenceEnabled() && !isVideo &&
             !isHtmlPlayer && ext != QStringLiteral("svg");

@@ -4819,6 +4819,8 @@ int main(int argc, char *argv[]) {
     printf("  --plugin-info <id>  Show details for a specific plugin and exit\n");
     printf("\nEnvironment:\n");
     printf("  ARTIFACT_RUN_BUILTIN_TESTS  Run built-in tests and exit\n");
+    printf("  ARTIFACT_RUN_EDIT_SEQUENCE_FUZZ  Run edit-sequence fuzz tests and exit\n");
+    printf("  ARTIFACT_RUN_TEXT_LAYER_ANIMATOR_TESTS  Run text-layer animator tests and exit\n");
     printf("  ARTIFACT_RUN_GPU_BLEND_TESTS  Run headless GPU blend tests and exit\n");
     return 0;
   }
@@ -5042,11 +5044,17 @@ int main(int argc, char *argv[]) {
     }
   }
 
+  if (qEnvironmentVariableIsSet("ARTIFACT_RUN_TEXT_LAYER_ANIMATOR_TESTS")) {
+    return Artifact::runTextLayerAnimatorTests();
+  }
+
+  if (qEnvironmentVariableIsSet("ARTIFACT_RUN_EDIT_SEQUENCE_FUZZ")) {
+    return Artifact::runEditSequenceFuzzOnly();
+  }
+
   if (qEnvironmentVariableIsSet("ARTIFACT_RUN_BUILTIN_TESTS")) {
     const int builtinTestFailures = Artifact::runAllTests();
-    if (builtinTestFailures != 0) {
-      return builtinTestFailures;
-    }
+    return builtinTestFailures;
   }
 
   if (qEnvironmentVariableIsSet("ARTIFACT_RUN_GPU_BLEND_TESTS")) {

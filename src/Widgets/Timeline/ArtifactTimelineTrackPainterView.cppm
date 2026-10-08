@@ -7567,7 +7567,7 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
         const int trackTop = trackTopAt(
             impl_->trackTops_, impl_->trackHeights_, fromMarker.trackIndex);
         const int sampleCount = std::clamp(
-            static_cast<int>(std::ceil(std::abs(to.x() - from.x()) / 16.0)),
+            static_cast<int>(std::ceil(std::abs(toX - fromX) / 16.0)),
             2, 24);
         QPointF points[25];
         for (int sample = 0; sample <= sampleCount; ++sample) {

@@ -23,6 +23,7 @@ import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentDeviceManager;
 import Memory.SharedPtr;
+import Core.Parallel;
 
 namespace Artifact {
 
@@ -216,7 +217,10 @@ void MagicSharpEffect::apply(const ImageF32x4RGBAWithCache& src,
     cv::GaussianBlur(luma, blurMedium, cv::Size(), 2.8, 2.8, cv::BORDER_REFLECT_101);
     cv::GaussianBlur(luma, blurCoarse, cv::Size(), 5.8, 5.8, cv::BORDER_REFLECT_101);
     auto result = image.DeepCopy(); float* output = result.rgba32fData();
-    for (int y = 0; y < height; ++y) {
+    // Row-independent neighborhood math: parallelize per row with the shared
+    // Parallel::For pattern (same row/w*h form as SoftwareRender::blendSurface,
+    // so small workloads stay serial via the threshold).
+    ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
         const float* lumaRow = luma.ptr<float>(y);
         const float* fineRow = blurFine.ptr<float>(y);
         const float* smallRow = blurSmall.ptr<float>(y);
@@ -246,7 +250,7 @@ void MagicSharpEffect::apply(const ImageF32x4RGBAWithCache& src,
             output[offset + 2] = std::max(0.0f, source[offset + 2] + delta);
             output[offset + 3] = source[offset + 3];
         }
-    }
+    });
     result.setColorDescriptor(image.colorDescriptor()); dst = ImageF32x4RGBAWithCache(result);
 }
 

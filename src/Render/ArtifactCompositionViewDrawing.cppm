@@ -84,7 +84,12 @@ export struct StaticLayerGpuCacheEntry
   QString cacheSignature;
   QImage processedSurface;
   ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA> processedBuffer;
-  GPUTextureCacheHandle gpuTextureHandle;
+  // No manager-bound texture handle is stored here. This cache is
+  // process-global and shared by concurrent draw threads (live viewport +
+  // offline queue) and different GPUTextureCacheManager instances; a handle
+  // can only be interpreted by the instance that issued it, so binding is
+  // redone per frame via acquireOrCreate (the manager's own texture cache
+  // turns that into a cheap hit).
   int64_t lastFrameNumber = std::numeric_limits<int64_t>::min();
   size_t byteSize = 0;
 };
@@ -327,8 +332,15 @@ StaticLayerGpuCacheCounters& staticLayerGpuCacheCounters()
   return counters;
 }
 
+QMutex& staticLayerGpuCacheMutex()
+{
+  static QMutex mutex;
+  return mutex;
+}
+
 void trimStaticLayerGpuCache()
 {
+  QMutexLocker lock(&staticLayerGpuCacheMutex());
   constexpr int kMaxEntries = 128;
   constexpr size_t kMaxBytes = 512ull * 1024ull * 1024ull;
   auto& cache = staticLayerGpuCache();
@@ -1214,6 +1226,7 @@ export QImage applyLayerMatteReferencesToSurface(
 
 StaticLayerGpuCacheDiagnostics staticLayerGpuCacheDiagnostics()
 {
+  QMutexLocker lock(&staticLayerGpuCacheMutex());
   StaticLayerGpuCacheDiagnostics diagnostics;
   const auto& cache = staticLayerGpuCache();
   const auto& counters = staticLayerGpuCacheCounters();
@@ -1229,17 +1242,12 @@ void clearStaticLayerGpuCache()
   clearStaticLayerGpuCache(nullptr);
 }
 
-void clearStaticLayerGpuCache(GPUTextureCacheManager* gpuTextureCacheManager)
+void clearStaticLayerGpuCache(GPUTextureCacheManager* /*gpuTextureCacheManager*/)
 {
-  if (gpuTextureCacheManager) {
-    for (const auto& entry : staticLayerGpuCache()) {
-      if (entry.gpuTextureHandle.isValid()) {
-        gpuTextureCacheManager->invalidate(
-            entry.gpuTextureHandle,
-            GPUTextureCacheInvalidationReason::ClearAll);
-      }
-    }
-  }
+  // Static entries no longer hold manager-bound textures (see the struct
+  // definition), so clearing the content is the whole job. The parameter is
+  // kept for the exported signature.
+  QMutexLocker lock(&staticLayerGpuCacheMutex());
   staticLayerGpuCache().clear();
   staticLayerGpuCacheCounters() = {};
 }
@@ -1518,7 +1526,10 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
       }
     }
     LayerSurfaceCacheEntry* cacheEntry = nullptr;
-    StaticLayerGpuCacheEntry* staticCacheEntry = nullptr;
+    // The process-global static cache is shared by concurrent draw threads
+    // (live viewport + offline queue): nothing from it outlives the locked
+    // window — content is copied out, and no manager-bound handle is stored.
+    bool staticCacheHitOrInserted = false;
     ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA> directProcessedBuffer;
 
     // Bake the scene-light lift into the content that is stored in the caches.
@@ -1574,19 +1585,21 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
 
     if (usesStaticGpuCache &&
         !cacheSignature.isEmpty()) {
+      QMutexLocker staticCacheLock(&staticLayerGpuCacheMutex());
       auto &staticCache = staticLayerGpuCache();
       auto it = staticCache.find(ownerId);
       if (it != staticCache.end() && it->ownerId == ownerId &&
           it->cacheSignature == cacheSignature) {
+        auto &entry = *it;
         ++staticLayerGpuCacheCounters().hitCount;
-        staticCacheEntry = &(*it);
-        staticCacheEntry->lastFrameNumber = cacheFrameNumber;
-        directProcessedBuffer = staticCacheEntry->processedBuffer;
+        entry.lastFrameNumber = cacheFrameNumber;
+        directProcessedBuffer = entry.processedBuffer;
         // Cached content already carries the lift for this cache identity.
         sceneLightLiftBaked = true;
-        if (!staticCacheEntry->processedSurface.isNull()) {
-          surface = staticCacheEntry->processedSurface;
+        if (!entry.processedSurface.isNull()) {
+          surface = entry.processedSurface;
         }
+        staticCacheHitOrInserted = true;
       } else {
         ++staticLayerGpuCacheCounters().missCount;
       }
@@ -1656,51 +1669,48 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
     // No cache supplied this frame's content, so apply the lift once here.
     bakeSceneLightLift();
 
-    if (usesStaticGpuCache &&
+    if (usesStaticGpuCache && !staticCacheHitOrInserted &&
         !cacheSignature.isEmpty()) {
-      auto &staticCache = staticLayerGpuCache();
-      if (!staticCacheEntry) {
-        StaticLayerGpuCacheEntry entry;
-        entry.ownerId = ownerId;
-        entry.cacheSignature = cacheSignature;
-        entry.lastFrameNumber = cacheFrameNumber;
-        entry.processedBuffer = directProcessedBuffer;
-        if (!entry.processedBuffer && allowSurfaceCache) {
-          ArtifactCore::ImageF32x4_RGBA processed;
-          if (buildRasterizedSurfaceBuffer(layer, surface, &processed)) {
-            entry.processedBuffer = ArtifactCore::makeShared<ArtifactCore::ImageF32x4_RGBA>(
-                std::move(processed));
-          }
+      // Build content outside the lock; the map touch is one window.
+      ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA> staticInsertBuffer =
+          directProcessedBuffer;
+      if (!staticInsertBuffer && allowSurfaceCache) {
+        ArtifactCore::ImageF32x4_RGBA processed;
+        if (buildRasterizedSurfaceBuffer(layer, surface, &processed)) {
+          staticInsertBuffer = ArtifactCore::makeShared<ArtifactCore::ImageF32x4_RGBA>(
+              std::move(processed));
         }
-        entry.processedSurface = entry.processedBuffer ? QImage{} : surface;
-        entry.byteSize = entry.processedBuffer
-                             ? entry.processedBuffer->totalPixels() * 4 * sizeof(float)
-                             : static_cast<size_t>(surface.bytesPerLine()) *
-                                   static_cast<size_t>(std::max(0, surface.height()));
-        if (usesGpuTextureCache) {
-          if (entry.processedBuffer) {
-            entry.gpuTextureHandle = gpuTextureCacheManager->acquireOrCreate(
-               gpuOwnerId, gpuCacheSignature, *entry.processedBuffer);
-          } else {
-            entry.gpuTextureHandle =
-                gpuTextureCacheManager->acquireOrCreate(gpuOwnerId, gpuCacheSignature, surface);
-          }
-        }
-        auto existing = staticCache.find(ownerId);
+      }
+      const QImage staticInsertSurface =
+          staticInsertBuffer ? QImage{} : surface;
+      const size_t staticInsertBytes =
+          staticInsertBuffer
+              ? staticInsertBuffer->totalPixels() * 4 * sizeof(float)
+              : static_cast<size_t>(surface.bytesPerLine()) *
+                    static_cast<size_t>(std::max(0, surface.height()));
+      {
+        QMutexLocker staticCacheLock(&staticLayerGpuCacheMutex());
+        auto &staticCache = staticLayerGpuCache();
+        const auto existing = staticCache.find(ownerId);
         if (existing != staticCache.end()) {
           auto& totalBytes = staticLayerGpuCacheCounters().totalByteSize;
           totalBytes = totalBytes > existing->byteSize
               ? totalBytes - existing->byteSize
               : 0;
         }
-        staticCache[ownerId] = entry;
-        staticLayerGpuCacheCounters().totalByteSize += entry.byteSize;
-        staticCacheEntry = &staticCache[ownerId];
-        directProcessedBuffer = staticCacheEntry->processedBuffer;
-        staticCacheInserted = true;
-      } else {
-        staticCacheEntry->lastFrameNumber = cacheFrameNumber;
+        StaticLayerGpuCacheEntry entry;
+        entry.ownerId = ownerId;
+        entry.cacheSignature = cacheSignature;
+        entry.lastFrameNumber = cacheFrameNumber;
+        entry.processedBuffer = staticInsertBuffer;
+        entry.processedSurface = staticInsertSurface;
+        entry.byteSize = staticInsertBytes;
+        staticCache[ownerId] = std::move(entry);
+        staticLayerGpuCacheCounters().totalByteSize += staticInsertBytes;
       }
+      directProcessedBuffer = staticInsertBuffer;
+      staticCacheHitOrInserted = true;
+      staticCacheInserted = true;
     }
 
     // The scene-light lift is baked where this frame's content is
@@ -1712,36 +1722,39 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
         const float finalOpacity = baseOpacity * instanceWeight;
 
         if (usesGpuTextureCache) {
-          GPUTextureCacheHandle* textureHandle = nullptr;
-          const ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA>* processedBuffer = nullptr;
-          const QImage* processedSurface = nullptr;
-          if (staticCacheEntry) {
-            textureHandle = &staticCacheEntry->gpuTextureHandle;
-            processedBuffer = &staticCacheEntry->processedBuffer;
-            processedSurface = &staticCacheEntry->processedSurface;
+          // The static cache is process-global and shared across manager
+          // lifetimes, so it stores no handle: bind fresh for this manager
+          // every frame (the manager's texture cache keeps that cheap). The
+          // context-owned surface cache keeps its handle (unchanged).
+          GPUTextureCacheHandle textureHandle{};
+          if (staticCacheHitOrInserted) {
+            if (directProcessedBuffer && !directProcessedBuffer->isEmpty()) {
+              textureHandle = gpuTextureCacheManager->acquireOrCreate(
+                  gpuOwnerId, gpuCacheSignature, *directProcessedBuffer);
+            } else if (!surface.isNull()) {
+              textureHandle = gpuTextureCacheManager->acquireOrCreate(
+                  gpuOwnerId, gpuCacheSignature, surface);
+            }
           } else if (cacheEntry) {
-            textureHandle = &cacheEntry->gpuTextureHandle;
-            processedBuffer = &cacheEntry->processedBuffer;
-            processedSurface = &cacheEntry->processedSurface;
-          }
-          if (textureHandle &&
-              !gpuTextureCacheManager->isValid(*textureHandle)) {
-            if (processedBuffer && *processedBuffer) {
-              *textureHandle = gpuTextureCacheManager->acquireOrCreate(
-                  gpuOwnerId, gpuCacheSignature, **processedBuffer);
-            } else {
-              const QImage& uploadSurface =
-                  processedSurface && !processedSurface->isNull()
-                      ? *processedSurface
-                      : surface;
-              if (!uploadSurface.isNull()) {
-                *textureHandle = gpuTextureCacheManager->acquireOrCreate(
-                    gpuOwnerId, gpuCacheSignature, uploadSurface);
+            textureHandle = cacheEntry->gpuTextureHandle;
+            if (!gpuTextureCacheManager->isValid(textureHandle)) {
+              if (cacheEntry->processedBuffer) {
+                textureHandle = gpuTextureCacheManager->acquireOrCreate(
+                    gpuOwnerId, gpuCacheSignature, *cacheEntry->processedBuffer);
+              } else {
+                const QImage& uploadSurface =
+                    !cacheEntry->processedSurface.isNull()
+                        ? cacheEntry->processedSurface
+                        : surface;
+                if (!uploadSurface.isNull()) {
+                  textureHandle = gpuTextureCacheManager->acquireOrCreate(
+                      gpuOwnerId, gpuCacheSignature, uploadSurface);
+                }
               }
+              cacheEntry->gpuTextureHandle = textureHandle;
             }
           }
-          const auto binding = gpuTextureCacheManager->bindingRecord(
-              textureHandle ? *textureHandle : GPUTextureCacheHandle{});
+          const auto binding = gpuTextureCacheManager->bindingRecord(textureHandle);
           if (binding.isValid()) {
             renderer->drawSpriteTransformed(static_cast<float>(rect.x()),
                                  static_cast<float>(rect.y()),
@@ -1829,14 +1842,26 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
     }
 
     const QString ownerId = layer->id().toString();
-    StaticLayerGpuCacheEntry* staticEntry = nullptr;
+    // Same contract as the main draw path: content is copied out inside the
+    // locked window, and no manager-bound handle comes from the static cache.
+    bool staticContentAvailable = false;
+    ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA> staticBufferLocal;
+    QImage staticSurfaceLocal;
     LayerSurfaceCacheEntry* surfaceEntry = nullptr;
     if (useStaticCache) {
+      QMutexLocker staticCacheLock(&staticLayerGpuCacheMutex());
       auto& cache = staticLayerGpuCache();
       const auto it = cache.find(ownerId);
       if (it != cache.end() && it->ownerId == ownerId &&
           it->cacheSignature == cacheSignature) {
-        staticEntry = &(*it);
+        it->lastFrameNumber = cacheFrameNumber;
+        ++staticLayerGpuCacheCounters().hitCount;
+        staticBufferLocal = it->processedBuffer;
+        staticSurfaceLocal = it->processedSurface;
+        staticContentAvailable =
+            staticBufferLocal || !staticSurfaceLocal.isNull();
+      } else {
+        ++staticLayerGpuCacheCounters().missCount;
       }
     }
     if (useSurfaceCache) {
@@ -1847,50 +1872,56 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
       }
     }
 
+    const bool staticSelected = staticContentAvailable;
     ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA>* processedBuffer =
-        staticEntry ? &staticEntry->processedBuffer
-                    : surfaceEntry ? &surfaceEntry->processedBuffer : nullptr;
-    QImage* processedSurface = staticEntry ? &staticEntry->processedSurface
-                                           : surfaceEntry ? &surfaceEntry->processedSurface
-                                                          : nullptr;
-    GPUTextureCacheHandle* textureHandle =
-        staticEntry ? &staticEntry->gpuTextureHandle
-                    : surfaceEntry ? &surfaceEntry->gpuTextureHandle : nullptr;
+        staticSelected ? nullptr
+                       : (surfaceEntry ? &surfaceEntry->processedBuffer
+                                       : nullptr);
+    QImage* processedSurface =
+        staticSelected ? nullptr
+                       : (surfaceEntry ? &surfaceEntry->processedSurface
+                                       : nullptr);
     const bool hasCpuContent =
+        staticSelected ||
         (processedBuffer && *processedBuffer &&
          !(*processedBuffer)->isEmpty()) ||
         (processedSurface && !processedSurface->isNull());
-    if ((!staticEntry && !surfaceEntry) ||
-        (!hasCpuContent &&
-         (!useGpuTextureCache || !textureHandle ||
-          !gpuTextureCacheManager->isValid(*textureHandle)))) {
+    if (!staticSelected && !surfaceEntry) {
       return false;
     }
 
     GPUTextureBindingRecord binding;
-    if (useGpuTextureCache && textureHandle) {
-      if (!gpuTextureCacheManager->isValid(*textureHandle) && hasCpuContent) {
-        if (processedBuffer && *processedBuffer &&
-            !(*processedBuffer)->isEmpty()) {
-          *textureHandle = gpuTextureCacheManager->acquireOrCreate(
-              ownerId, cacheSignature, **processedBuffer);
-        } else if (processedSurface && !processedSurface->isNull()) {
-          *textureHandle = gpuTextureCacheManager->acquireOrCreate(
-              ownerId, cacheSignature, *processedSurface);
+    if (useGpuTextureCache) {
+      GPUTextureCacheHandle textureHandle =
+          surfaceEntry && !staticSelected ? surfaceEntry->gpuTextureHandle
+                                          : GPUTextureCacheHandle{};
+      if (!gpuTextureCacheManager->isValid(textureHandle) && hasCpuContent) {
+        if (staticSelected) {
+          if (staticBufferLocal && !staticBufferLocal->isEmpty()) {
+            textureHandle = gpuTextureCacheManager->acquireOrCreate(
+                ownerId, cacheSignature, *staticBufferLocal);
+          } else if (!staticSurfaceLocal.isNull()) {
+            textureHandle = gpuTextureCacheManager->acquireOrCreate(
+                ownerId, cacheSignature, staticSurfaceLocal);
+          }
+        } else {
+          if (processedBuffer && *processedBuffer &&
+              !(*processedBuffer)->isEmpty()) {
+            textureHandle = gpuTextureCacheManager->acquireOrCreate(
+                ownerId, cacheSignature, **processedBuffer);
+          } else if (processedSurface && !processedSurface->isNull()) {
+            textureHandle = gpuTextureCacheManager->acquireOrCreate(
+                ownerId, cacheSignature, *processedSurface);
+          }
+          if (surfaceEntry) {
+            surfaceEntry->gpuTextureHandle = textureHandle;
+          }
         }
       }
-      binding = gpuTextureCacheManager->bindingRecord(*textureHandle);
+      binding = gpuTextureCacheManager->bindingRecord(textureHandle);
     }
     if (!hasCpuContent && !binding.isValid()) {
       return false;
-    }
-    if (useStaticCache) {
-      if (staticEntry) {
-        staticEntry->lastFrameNumber = cacheFrameNumber;
-        ++staticLayerGpuCacheCounters().hitCount;
-      } else {
-        ++staticLayerGpuCacheCounters().missCount;
-      }
     }
 
     const float baseOpacity =
@@ -1905,6 +1936,22 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
                 static_cast<float>(localRect.width()),
                 static_cast<float>(localRect.height()), instanceTransform,
                 binding.srv, opacity);
+          } else if (staticSelected) {
+            if (staticBufferLocal && !staticBufferLocal->isEmpty()) {
+              renderer->drawSpriteTransformed(
+                  static_cast<float>(localRect.x()),
+                  static_cast<float>(localRect.y()),
+                  static_cast<float>(localRect.width()),
+                  static_cast<float>(localRect.height()), instanceTransform,
+                  *staticBufferLocal, opacity);
+            } else {
+              renderer->drawSpriteTransformed(
+                  static_cast<float>(localRect.x()),
+                  static_cast<float>(localRect.y()),
+                  static_cast<float>(localRect.width()),
+                  static_cast<float>(localRect.height()), instanceTransform,
+                  staticSurfaceLocal, opacity);
+            }
           } else if (processedBuffer && *processedBuffer &&
                      !(*processedBuffer)->isEmpty()) {
             renderer->drawSpriteTransformed(
@@ -2527,17 +2574,21 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
           staticEntry.lastFrameNumber = cacheFrameNumber;
           staticEntry.byteSize = processedBuffer->totalPixels() * 4u *
                                  sizeof(float);
-          auto& staticCache = staticLayerGpuCache();
-          auto existing = staticCache.find(ownerId);
-          if (existing != staticCache.end()) {
-            auto& totalBytes = staticLayerGpuCacheCounters().totalByteSize;
-            totalBytes = totalBytes > existing->byteSize
-                ? totalBytes - existing->byteSize
-                : 0;
+          {
+            QMutexLocker staticCacheLock(&staticLayerGpuCacheMutex());
+            auto& staticCache = staticLayerGpuCache();
+            const auto existing = staticCache.find(ownerId);
+            if (existing != staticCache.end()) {
+              auto& totalBytes = staticLayerGpuCacheCounters().totalByteSize;
+              totalBytes = totalBytes > existing->byteSize
+                  ? totalBytes - existing->byteSize
+                  : 0;
+            }
+            staticLayerGpuCacheCounters().totalByteSize +=
+                staticEntry.byteSize;
+            ++staticLayerGpuCacheCounters().missCount;
+            staticCache[ownerId] = staticEntry;
           }
-          staticCache[ownerId] = staticEntry;
-          staticLayerGpuCacheCounters().totalByteSize += staticEntry.byteSize;
-          ++staticLayerGpuCacheCounters().missCount;
           trimStaticLayerGpuCache();
         }
         drawBuffer = processedBuffer.get();

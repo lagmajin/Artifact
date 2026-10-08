@@ -7461,7 +7461,6 @@ void ArtifactLayerPanelWidget::mouseMoveEvent(QMouseEvent* event)
       update();
       event->accept();
       return;
-    }
   }
 
   impl_->clearDragState();

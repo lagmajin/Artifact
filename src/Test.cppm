@@ -8,8 +8,12 @@ module;
 
 #include <QDebug>
 #include <QColor>
+#include <QFile>
 #include <QImage>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QSize>
+#include <QVariant>
 
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
@@ -31,6 +35,8 @@ import Artifact.Test.ShapePath;
 import Artifact.Test.SolidLayer;
 import Artifact.Test.TimingEventView;
 import Artifact.Test.CommandLine;
+import Artifact.Layer.Text;
+import Utils.String.UniString;
 import Artifact.Service.Playback;
 import Artifact.Composition.Abstract;
 import Artifact.Composition.InitParams;
@@ -46,6 +52,127 @@ import Image.ImageF32x4_RGBA;
 import Utils.Id;
 
 namespace {
+
+struct TextLayerAlphaSummary {
+    double alpha = 0.0;
+    double weightedX = 0.0;
+};
+
+TextLayerAlphaSummary summarizeTextLayerAlpha(
+    const Artifact::ArtifactTextLayer& layer)
+{
+    const auto& image = layer.currentFrameBuffer();
+    TextLayerAlphaSummary summary;
+    for (int y = 0; y < image.height(); ++y) {
+        for (int x = 0; x < image.width(); ++x) {
+            const double alpha = std::clamp(
+                static_cast<double>(image.getPixel(x, y).a()), 0.0, 1.0);
+            summary.alpha += alpha;
+            summary.weightedX += alpha * x;
+        }
+    }
+    return summary;
+}
+
+bool textLayerAlphaMatches(const Artifact::ArtifactTextLayer& lhs,
+                           const Artifact::ArtifactTextLayer& rhs,
+                           const double tolerance)
+{
+    const auto& left = lhs.currentFrameBuffer();
+    const auto& right = rhs.currentFrameBuffer();
+    if (left.width() != right.width() || left.height() != right.height()) {
+        return false;
+    }
+    for (int y = 0; y < left.height(); ++y) {
+        for (int x = 0; x < left.width(); ++x) {
+            if (std::abs(static_cast<double>(left.getPixel(x, y).a()) -
+                         right.getPixel(x, y).a()) > tolerance) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+int runTextLayerAnimatorTestsImpl()
+{
+    int failures = 0;
+    const auto expect = [&failures](bool condition, const char* message) {
+        if (!condition) {
+            ++failures;
+            qWarning().noquote() << "[Test][TextLayerAnimator]" << message;
+        }
+    };
+
+    Artifact::ArtifactTextLayer layer;
+    layer.setText(ArtifactCore::UniString(QStringLiteral("Animator")));
+    layer.setFontSize(48.0f);
+    layer.updateImage();
+    const auto neutral = summarizeTextLayerAlpha(layer);
+    expect(neutral.alpha > 0.0, "text layer rasterizes glyphs into its frame buffer");
+
+    expect(layer.addAnimatorProperty(QStringLiteral("position")),
+           "position animator can be added through the layer API");
+    // SelectorUnits::Index is 1; use an explicit one-glyph range instead of
+    // relying on the default percentage domain and this fixture's text length.
+    expect(layer.setLayerPropertyValue(QStringLiteral("text.animators.0.units"),
+                                       QVariant(1)),
+           "position animator can select by glyph index");
+    expect(layer.setLayerPropertyValue(QStringLiteral("text.animators.0.end"),
+                                       QVariant(0.0)),
+           "animator selector can be restricted to the first character");
+    expect(layer.setLayerPropertyValue(QStringLiteral("text.animators.0.positionX"),
+                                       QVariant(24.0)),
+           "position animator property path is accepted");
+    layer.updateImage();
+    const auto moved = summarizeTextLayerAlpha(layer);
+    expect(neutral.alpha > 0.0 && moved.alpha > 0.0 &&
+               moved.weightedX / moved.alpha > neutral.weightedX / neutral.alpha + 0.5,
+           "position animator moves the selected glyph relative to its neighbors");
+
+    expect(layer.addAnimatorProperty(QStringLiteral("opacity")),
+           "opacity animator can be added through the layer API");
+    expect(layer.setLayerPropertyValue(QStringLiteral("text.animators.1.units"),
+                                       QVariant(1)),
+           "opacity animator can select by glyph index");
+    expect(layer.setLayerPropertyValue(QStringLiteral("text.animators.1.end"),
+                                       QVariant(0.0)),
+           "opacity animator can use the same first-character selector");
+    expect(layer.setLayerPropertyValue(QStringLiteral("text.animators.1.opacity"),
+                                       QVariant(0.25)),
+           "opacity animator property path is accepted");
+    layer.updateImage();
+    const auto faded = summarizeTextLayerAlpha(layer);
+    expect(moved.alpha > 0.0 && faded.alpha > 0.0 &&
+               faded.alpha < moved.alpha - 0.1,
+           "opacity animator changes alpha in the rendered text layer");
+
+    const QJsonArray snapshot = layer.textAnimatorStackSnapshot();
+    Artifact::ArtifactTextLayer restored;
+    restored.setText(ArtifactCore::UniString(QStringLiteral("Animator")));
+    restored.setFontSize(48.0f);
+    restored.restoreTextAnimatorStack(snapshot);
+    restored.updateImage();
+    const auto restoredSummary = summarizeTextLayerAlpha(restored);
+    expect(restored.animatorCount() == 2 &&
+               std::abs(restoredSummary.alpha - faded.alpha) < 0.01 &&
+               std::abs(restoredSummary.weightedX - faded.weightedX) < 0.5 &&
+               textLayerAlphaMatches(layer, restored, 0.01),
+           "animator snapshot restores the stacked rendered layer result");
+
+    Artifact::ArtifactTextLayer projectRestored;
+    projectRestored.fromJsonProperties(layer.toJson());
+    projectRestored.updateImage();
+    const auto projectSummary = summarizeTextLayerAlpha(projectRestored);
+    expect(projectRestored.animatorCount() == 2 &&
+               std::abs(projectSummary.alpha - faded.alpha) < 0.01 &&
+               std::abs(projectSummary.weightedX - faded.weightedX) < 0.5 &&
+               textLayerAlphaMatches(layer, projectRestored, 0.01),
+           "project JSON round-trip preserves stacked animator rendering");
+
+    qInfo().noquote() << "[Test][TextLayerAnimator] failures:" << failures;
+    return failures;
+}
 
 constexpr Diligent::Uint32 kBlendTestSize = 8;
 constexpr float kBlendTestSentinel = -99.0f;
@@ -340,6 +467,27 @@ bool ramPreviewCacheContractTest()
 
 export namespace Artifact {
 
+int runTextLayerAnimatorTests()
+{
+    return runTextLayerAnimatorTestsImpl();
+}
+
+int runEditSequenceFuzzOnly()
+{
+    qInfo().noquote() << "[EditSequenceFuzz] Running isolated edit-sequence fuzz tests";
+    const int failures = runEditSequenceFuzzTests();
+    const QString traceFilePath = qEnvironmentVariable(
+        "ARTIFACT_EDIT_SEQUENCE_FUZZ_TRACE_FILE").trimmed();
+    if (!traceFilePath.isEmpty()) {
+        QFile traceFile(traceFilePath);
+        if (traceFile.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) {
+            traceFile.write("runner-test-wrapper-returned\n");
+            traceFile.flush();
+        }
+    }
+    return failures;
+}
+
 int runAllTests()
 {
     int failures = 0;
@@ -354,6 +502,7 @@ int runAllTests()
     failures += runShapePathTests();
     failures += runSolidLayerTests();
     failures += runCommandLineTests();
+    failures += runTextLayerAnimatorTests();
     if (!versionedGradientCpuContractTest()) {
         qWarning().noquote() << "[Test] Versioned gradient CPU contract failed";
         ++failures;

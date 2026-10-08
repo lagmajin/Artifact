@@ -3262,12 +3262,16 @@ void ArtifactPlaybackService::setCurrentComposition(
     }
 
     // エンジンにコンポジションの設定を反映
-    if (impl_->engine_ && composition) {
-      impl_->applyCurrentPlaybackFrameRangeToEngine();
-      impl_->engine_->setFrameRate(composition->frameRate());
-      impl_->engine_->setCurrentFrame(composition->framePosition());
+    if (impl_->engine_) {
+      if (composition) {
+        impl_->applyCurrentPlaybackFrameRangeToEngine();
+        impl_->engine_->setFrameRate(composition->frameRate());
+        impl_->engine_->setCurrentFrame(composition->framePosition());
+      }
       impl_->engine_->setComposition(composition);
-      impl_->engine_->setInOutPoints(composition->inOutPoints());
+      if (composition) {
+        impl_->engine_->setInOutPoints(composition->inOutPoints());
+      }
     }
 
     // コントローラーにも設定を反映

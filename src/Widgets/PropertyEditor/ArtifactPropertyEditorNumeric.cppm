@@ -619,7 +619,9 @@ ArtifactPoint2DPropertyEditor::ArtifactPoint2DPropertyEditor(
     applyPropertyFieldPalette(colorWheelButton_, false);
     layout->addWidget(colorWheelButton_, 1);
     setValueFromVariant(property.getValue());
-    colorWheelButton_->setAction([this, title = property.getName()]() {
+    auto* const openColorWheelButton =
+        static_cast<GradingWheelOpenButton*>(colorWheelButton_);
+    openColorWheelButton->setAction([this, title = property.getName()]() {
       GradingWheelDialog dialog(title, value().toPointF(), this);
       if (dialog.exec() != QDialog::Accepted) {
         return;

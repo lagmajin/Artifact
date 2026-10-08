@@ -86,12 +86,30 @@ import Animation.Value;
 import Audio.Modulation.Router;
 import Physics.System;
 import Physics.Mpm2D;
+import Artifact.Acoustic.System;
 import Script.ArtifactScript;
 import Composition.Registry;
 
 //import Playback.Clock;
 
 namespace {
+
+void renderAcousticMasterInput(void* context, ArtifactCore::AudioSegment& segment)
+{
+  auto* acousticSystem = static_cast<Artifact::Acoustic::AcousticSystem*>(context);
+  if (!acousticSystem || segment.sampleRate <= 0 || segment.channelCount() < 2) {
+    return;
+  }
+
+  auto& left = segment.channelData[0];
+  auto& right = segment.channelData[1];
+  const qsizetype frameCount = std::min(left.size(), right.size());
+  acousticSystem->RenderAudioBlock(
+      std::span<float>(left.data(), static_cast<std::size_t>(frameCount)),
+      std::span<float>(right.data(), static_cast<std::size_t>(frameCount)),
+      segment.sampleRate);
+}
+
 const bool kCompositionSerializationRegistered = [] {
     ArtifactCore::Serialization::registerJsonSerializableType<Artifact::ResponsiveLayoutVariant>(
         QStringLiteral("ResponsiveLayoutVariant"), 1);
@@ -2007,6 +2025,7 @@ class ArtifactAbstractComposition::Impl {
   float playbackSpeed_ = 1.0f;
   AudioLimiter limiter_;
   ArtifactCore::SharedPtr<AudioMixer> audioMixer_;
+  Artifact::Acoustic::AcousticSystem acousticSystem_;
   std::unique_ptr<ArtifactInOutPoints> inOutPoints_;
   CompositionID id_;
   QString compositionNote_;
@@ -2058,6 +2077,7 @@ class ArtifactAbstractComposition::Impl {
    ArtifactAbstractLayerPtr backMostLayer() const;
    bool hasVideo() const;
    bool hasAudio() const;
+  bool hasPhysicalAudioSources() const;
    void moveLayerToIndex(const LayerID& id, int newIndex);
    void bringToFront(const LayerID& id);
    void sendToBack(const LayerID& id);
@@ -2559,6 +2579,7 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
         evaluateJointConstraints();
         physics.updateCompositionRigidWorld(id_, fixedDeltaSeconds);
         evaluateRigidBodyContacts();
+        acousticSystem_.Update(fixedDeltaSeconds);
         evaluateJointBreaks();
         position_ = FramePosition(previousFrame + step + 1);
         // goToFrame restores the other solver families without integrating
@@ -2582,6 +2603,30 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
             impact.stress = static_cast<float>(event.fracturedParticleCount);
             impact.speed = ratio * 120.0f;
             impact.area = std::max(1.0f, ratio * 100.0f);
+
+            const std::uint32_t acousticLayerId =
+                static_cast<std::uint32_t>(ArtifactCore::qHash(event.layerId));
+            const QRectF impactBounds = compositionCollisionBounds(layer);
+            constexpr float kPixelsPerMeter = 100.0f;
+            const QPointF impactPosition = impactBounds.center();
+            acousticSystem_.UpdateLayerSpatial(
+                acousticLayerId,
+                {impactPosition.x() / kPixelsPerMeter,
+                 impactPosition.y() / kPixelsPerMeter, 0.0f},
+                {});
+            const char* acousticMaterial = "Steel";
+            if (layerBooleanProperty(layer, QStringLiteral("physics.material.enabled"), false)) {
+                switch (layerIntProperty(layer, QStringLiteral("physics.material.preset"), 0)) {
+                    case 0: acousticMaterial = "Flesh"; break;
+                    case 1: acousticMaterial = "Foam"; break;
+                    case 2: acousticMaterial = "Rubber"; break;
+                    case 3: acousticMaterial = "Wood"; break;
+                    default: break;
+                }
+            }
+            acousticSystem_.OnCollision(acousticLayerId, acousticMaterial,
+                                        impact.impulse,
+                                        impactPosition.x() / kPixelsPerMeter);
             layer->applyFractureImpact(impact);
         }
         physics.captureSoftBodySnapshots(previousFrame + step + 1);
@@ -2931,6 +2976,38 @@ void ArtifactAbstractComposition::Impl::evaluateRigidBodyContacts()
             : LayerRigidBodyContactPhase::Hit;
     const QPointF point(event.point.x(), event.point.y());
     const QPointF normal(event.normal.x(), event.normal.y());
+    if (event.phase == ArtifactCore::PhysicsContactPhase::Hit &&
+        std::isfinite(event.approachSpeed) && event.approachSpeed > 0.02f) {
+      const auto triggerAcousticImpact = [&](const LayerID& layerId) {
+        if (layerId.isNil()) return;
+        const auto layer = layerMultiIndex_.findById(layerId);
+        if (!layer) return;
+
+        const std::uint32_t acousticLayerId =
+            static_cast<std::uint32_t>(ArtifactCore::qHash(layerId));
+        constexpr float kPixelsPerMeter = 100.0f;
+        acousticSystem_.UpdateLayerSpatial(
+            acousticLayerId,
+            {point.x() / kPixelsPerMeter, point.y() / kPixelsPerMeter, 0.0f},
+            {});
+
+        const char* material = "Steel";
+        if (layerBooleanProperty(layer, QStringLiteral("physics.material.enabled"), false)) {
+          switch (layerIntProperty(layer, QStringLiteral("physics.material.preset"), 0)) {
+            case 0: material = "Flesh"; break;
+            case 1: material = "Foam"; break;
+            case 2: material = "Rubber"; break;
+            case 3: material = "Wood"; break;
+            default: break;
+          }
+        }
+        acousticSystem_.OnCollision(acousticLayerId, material,
+                                    event.approachSpeed,
+                                    point.x() / kPixelsPerMeter);
+      };
+      triggerAcousticImpact(event.firstLayerId);
+      triggerAcousticImpact(event.secondLayerId);
+    }
     if (!event.firstLayerId.isNil()) {
       if (const auto first = layerMultiIndex_.findById(event.firstLayerId)) {
         first->recordRigidBodyContact(phase, event.secondLayerId, point, normal,
@@ -2977,6 +3054,7 @@ void ArtifactAbstractComposition::Impl::resetRigidBodySimulation()
   if (auto world = ArtifactCore::PhysicsSystem::instance().getCompositionRigidWorld(id_)) {
     world->clear();
   }
+  acousticSystem_.ResetTransientState();
   jointSignatures_.clear();
   for (const auto& layer : layerMultiIndex_.all()) {
     if (layer) {
@@ -3637,8 +3715,22 @@ void ArtifactAbstractComposition::Impl::evaluateLayerComponentSimulation(
   return false;
  }
 
+ bool ArtifactAbstractComposition::Impl::hasPhysicalAudioSources() const
+ {
+  for (const auto& layer : layerMultiIndex_) {
+   if (layer && (layer->hasRigidBodyPhysics() ||
+       layerBooleanProperty(layer, QStringLiteral("physics.enabled"), false) ||
+       layerBooleanProperty(layer, QStringLiteral("component.collision.enabled"), false) ||
+       layerBooleanProperty(layer, QStringLiteral("physics.material.enabled"), false))) {
+    return true;
+   }
+  }
+  return false;
+ }
+
  bool ArtifactAbstractComposition::Impl::hasAudio() const
  {
+  if (hasPhysicalAudioSources()) return true;
   for (const auto& layer : layerMultiIndex_) {
    if (layer->hasAudio())
    {
@@ -4701,6 +4793,7 @@ bool ArtifactAbstractComposition::getAudio(AudioSegment &outSegment, const Frame
     }
 
     bool hasAnyAudio = false;
+    const bool hasAcousticAudio = impl_->hasPhysicalAudioSources();
     int activeAudioLayerCount = 0;
     int producedAudioLayerCount = 0;
     const auto evaluationGainForLayer = [this](const LayerID& layerId) {
@@ -4793,8 +4886,14 @@ bool ArtifactAbstractComposition::getAudio(AudioSegment &outSegment, const Frame
             pending.bus->clearInput(frameCount, sampleRate);
             pending.bus->addInput(pending.segment, pending.gain);
         }
-        if (hasAnyAudio || mixer.graphTailSamples() > 0) {
-            mixer.process(mixOutput);
+        if (hasAnyAudio || mixer.graphTailSamples() > 0 || hasAcousticAudio) {
+            if (hasAcousticAudio) {
+                mixer.process(mixOutput, renderAcousticMasterInput,
+                              &impl_->acousticSystem_);
+                hasAnyAudio = true;
+            } else {
+                mixer.process(mixOutput);
+            }
             outSegment = std::move(mixOutput);
             impl_->limiter_.process(outSegment, sampleRate);
             softClipAudioSegment(outSegment);

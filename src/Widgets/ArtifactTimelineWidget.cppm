@@ -9336,9 +9336,9 @@ void ArtifactTimelineWidget::refreshTracks() {
             const double verticalOffset =
                 impl_->painterTrackView_->verticalOffset();
             const int viewportHeight = impl_->painterTrackView_->height();
-            const int trackTop = tops.value(row.trackIndex, -1);
+            const int trackTop = tops.value(rowIndex, -1);
             const int trackHeight =
-                impl_->painterTrackView_->trackHeight(row.trackIndex);
+                impl_->painterTrackView_->trackHeight(rowIndex);
             const double ppf =
                 std::max(0.001, impl_->painterTrackView_->pixelsPerFrame());
             const double clipLeft = visual.startFrame * ppf -
@@ -9400,9 +9400,9 @@ void ArtifactTimelineWidget::refreshTracks() {
             const double verticalOffset =
                 impl_->painterTrackView_->verticalOffset();
             const int viewportHeight = impl_->painterTrackView_->height();
-            const int trackTop = tops.value(row.trackIndex, -1);
+            const int trackTop = tops.value(rowIndex, -1);
             const int trackHeight =
-                impl_->painterTrackView_->trackHeight(row.trackIndex);
+                impl_->painterTrackView_->trackHeight(rowIndex);
             const double ppf =
                 std::max(0.001, impl_->painterTrackView_->pixelsPerFrame());
             const double clipLeft = visual.startFrame * ppf -
@@ -9615,9 +9615,9 @@ void ArtifactTimelineWidget::refreshTracks() {
             const double verticalOffset =
                 impl_->painterTrackView_->verticalOffset();
             const int viewportHeight = impl_->painterTrackView_->height();
-            const int trackTop = tops.value(row.trackIndex, -1);
+            const int trackTop = tops.value(rowIndex, -1);
             const int trackHeight =
-                impl_->painterTrackView_->trackHeight(row.trackIndex);
+                impl_->painterTrackView_->trackHeight(rowIndex);
             const double ppf =
                 std::max(0.001, impl_->painterTrackView_->pixelsPerFrame());
             const double clipLeft = visual.startFrame * ppf -

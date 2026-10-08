@@ -147,6 +147,7 @@ bool ArtifactSpatialAudioLayer::getAudio(ArtifactCore::AudioSegment& outSegment,
     params.coneOuterAngle = number("spatial.coneOuter", params.coneOuterAngle);
     params.coneOuterGain = number("spatial.coneOuterGain", params.coneOuterGain);
     params.airAbsorption = number("spatial.airAbsorption", params.airAbsorption);
+    params.roomSend = number("spatial.roomSend", params.roomSend);
     params.lfeSend = number("spatial.lfeSend", params.lfeSend);
     params.lfeCutoffHz = number("spatial.lfeCutoffHz", params.lfeCutoffHz);
     const float objectGain = std::clamp(number("spatial.gain", impl_->gain_), 0.0f, 4.0f);
@@ -216,6 +217,8 @@ QJsonObject ArtifactSpatialAudioLayer::toJson() const {
     obj[QStringLiteral("spatial.coneOuter")] = impl_->spatial_.coneOuterAngle;
     obj[QStringLiteral("spatial.coneOuterGain")] = impl_->spatial_.coneOuterGain;
     obj[QStringLiteral("spatial.airAbsorption")] = impl_->spatial_.airAbsorption;
+    obj[QStringLiteral("spatial.roomSend")] = impl_->spatial_.roomSend;
+    obj[QStringLiteral("spatial.roomTailSeconds")] = impl_->spatial_.roomTailSeconds;
     obj[QStringLiteral("spatial.lfeSend")] = impl_->spatial_.lfeSend;
     obj[QStringLiteral("spatial.lfeCutoffHz")] = impl_->spatial_.lfeCutoffHz;
     obj[QStringLiteral("spatial.outputLayout")] = static_cast<int>(impl_->spatial_.outputLayout);
@@ -248,6 +251,8 @@ void ArtifactSpatialAudioLayer::fromJsonProperties(const QJsonObject& obj) {
     if (obj.contains(QStringLiteral("spatial.coneOuter"))) impl_->spatial_.coneOuterAngle = (float)obj.value(QStringLiteral("spatial.coneOuter")).toDouble(360.0);
     if (obj.contains(QStringLiteral("spatial.coneOuterGain"))) impl_->spatial_.coneOuterGain = (float)obj.value(QStringLiteral("spatial.coneOuterGain")).toDouble(0.0);
     if (obj.contains(QStringLiteral("spatial.airAbsorption"))) impl_->spatial_.airAbsorption = (float)obj.value(QStringLiteral("spatial.airAbsorption")).toDouble(0.0);
+    if (obj.contains(QStringLiteral("spatial.roomSend"))) impl_->spatial_.roomSend = (float)obj.value(QStringLiteral("spatial.roomSend")).toDouble(0.0);
+    if (obj.contains(QStringLiteral("spatial.roomTailSeconds"))) impl_->spatial_.roomTailSeconds = (float)obj.value(QStringLiteral("spatial.roomTailSeconds")).toDouble(0.4);
     if (obj.contains(QStringLiteral("spatial.lfeSend"))) impl_->spatial_.lfeSend = (float)obj.value(QStringLiteral("spatial.lfeSend")).toDouble(0.0);
     if (obj.contains(QStringLiteral("spatial.lfeCutoffHz"))) impl_->spatial_.lfeCutoffHz = (float)obj.value(QStringLiteral("spatial.lfeCutoffHz")).toDouble(120.0);
     if (obj.contains(QStringLiteral("spatial.outputLayout"))) impl_->spatial_.outputLayout =
@@ -280,6 +285,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactSpatialAudioLayer::getLayerProp
         else if (path == QStringLiteral("spatial.coneOuter")) prop->setDisplayLabel(QStringLiteral("Cone Outer Angle"));
         else if (path == QStringLiteral("spatial.coneOuterGain")) prop->setDisplayLabel(QStringLiteral("Cone Outer Gain"));
         else if (path == QStringLiteral("spatial.airAbsorption")) prop->setDisplayLabel(QStringLiteral("Air Absorption"));
+        else if (path == QStringLiteral("spatial.roomSend")) prop->setDisplayLabel(QStringLiteral("Room Send"));
         else if (path == QStringLiteral("spatial.lfeSend")) prop->setDisplayLabel(QStringLiteral("LFE Send"));
         else if (path == QStringLiteral("spatial.lfeCutoffHz")) prop->setDisplayLabel(QStringLiteral("LFE Cutoff"));
         else if (path == QStringLiteral("spatial.outputLayout")) prop->setDisplayLabel(QStringLiteral("Speaker Layout"));
@@ -302,6 +308,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactSpatialAudioLayer::getLayerProp
         } else if (path == QStringLiteral("spatial.spread") ||
                    path == QStringLiteral("spatial.coneOuterGain") ||
                    path == QStringLiteral("spatial.airAbsorption") ||
+                   path == QStringLiteral("spatial.roomSend") ||
                    path == QStringLiteral("spatial.lfeSend")) {
             prop->setHardRange(0.0, 1.0);
             prop->setStep(0.01);
@@ -328,6 +335,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactSpatialAudioLayer::getLayerProp
     g.addProperty(p(QStringLiteral("spatial.coneOuter"), ArtifactCore::PropertyType::Float, impl_->spatial_.coneOuterAngle, -114));
     g.addProperty(p(QStringLiteral("spatial.coneOuterGain"), ArtifactCore::PropertyType::Float, impl_->spatial_.coneOuterGain, -113));
     g.addProperty(p(QStringLiteral("spatial.airAbsorption"), ArtifactCore::PropertyType::Float, impl_->spatial_.airAbsorption, -112));
+    g.addProperty(p(QStringLiteral("spatial.roomSend"), ArtifactCore::PropertyType::Float, impl_->spatial_.roomSend, -112));
     g.addProperty(p(QStringLiteral("spatial.lfeSend"), ArtifactCore::PropertyType::Float, impl_->spatial_.lfeSend, -111));
     g.addProperty(p(QStringLiteral("spatial.lfeCutoffHz"), ArtifactCore::PropertyType::Float, impl_->spatial_.lfeCutoffHz, -110));
     g.addProperty(p(QStringLiteral("spatial.outputLayout"), ArtifactCore::PropertyType::Integer,
@@ -358,6 +366,7 @@ bool ArtifactSpatialAudioLayer::setLayerPropertyValue(const QString& propertyPat
     else if (propertyPath == QStringLiteral("spatial.coneOuter")) sp.coneOuterAngle = value.toFloat();
     else if (propertyPath == QStringLiteral("spatial.coneOuterGain")) sp.coneOuterGain = value.toFloat();
     else if (propertyPath == QStringLiteral("spatial.airAbsorption")) sp.airAbsorption = value.toFloat();
+    else if (propertyPath == QStringLiteral("spatial.roomSend")) sp.roomSend = value.toFloat();
     else if (propertyPath == QStringLiteral("spatial.lfeSend")) sp.lfeSend = value.toFloat();
     else if (propertyPath == QStringLiteral("spatial.lfeCutoffHz")) sp.lfeCutoffHz = value.toFloat();
     else if (propertyPath == QStringLiteral("spatial.outputLayout")) sp.outputLayout =
