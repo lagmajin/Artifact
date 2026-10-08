@@ -1664,7 +1664,8 @@ void drawSelectionFrameOverlay(ArtifactIRenderer *renderer,
                                const QMatrix4x4 *cameraProj,
                                bool showScaleHandles,
                                bool showRotationHandle,
-                               float projectedHandleSize)
+                               float projectedHandleSize,
+                               SelectionFrameHandleFeedback feedback)
 {
   if (!renderer || !layer) {
     return;
@@ -1814,7 +1815,7 @@ void drawSelectionFrameOverlay(ArtifactIRenderer *renderer,
                          0.035,
                      20.0, 48.0);
     const qreal handleHalf = handleSize * 0.5;
-    const qreal shadowHalf = handleHalf + std::max<qreal>(2.0, handleSize * 0.12);
+    const qreal edgeHandleHalf = handleHalf * 0.85;
     const auto worldPoint = [&world](qreal x, qreal y) {
       return world.map(QVector3D(static_cast<float>(x), static_cast<float>(y),
                                  0.0f));
@@ -1834,60 +1835,51 @@ void drawSelectionFrameOverlay(ArtifactIRenderer *renderer,
           {p0.x(), p0.y(), p0.z()}, {p1.x(), p1.y(), p1.z()},
           {p2.x(), p2.y(), p2.z()}, {p3.x(), p3.y(), p3.z()}, fill);
     };
-    const auto handle = [&](qreal x, qreal y) {
+    const auto handle = [&](qreal x, qreal y,
+                            SelectionFrameHandle handleType,
+                            bool edgeHandle) {
       if (!isVisibleInCamera(x, y)) {
         return;
       }
+      const bool active = feedback.dragging &&
+                          feedback.active == handleType;
+      const bool hovered = !feedback.dragging &&
+                           feedback.hovered == handleType;
+      const FloatColor fill = active
+          ? FloatColor{1.0f, 0.46f, 0.14f, 1.0f}
+          : hovered ? FloatColor{0.40f, 0.80f, 1.0f, 1.0f}
+                    : clippedFrameColor;
+      const qreal highlightScale = active ? 1.24 : hovered ? 1.16 : 1.0;
+      const qreal half = (edgeHandle ? edgeHandleHalf : handleHalf) *
+                         highlightScale;
+      const qreal shadowHalf = half + (edgeHandle ? 2.0 :
+          std::max<qreal>(2.0, handleSize * 0.12));
       if (billboardValid) {
         const QVector3D center = worldPoint(x, y);
         drawBillboard(center, shadowHalf, shadow);
-        drawBillboard(center, handleHalf, clippedFrameColor);
+        drawBillboard(center, half, fill);
       } else {
-        const auto quad = [&](qreal half, const FloatColor &fill) {
+        const auto quad = [&](qreal sizeHalf, const FloatColor &quadFill) {
           renderer->draw3DQuad(
-              point(static_cast<float>(x - half), static_cast<float>(y - half)),
-              point(static_cast<float>(x + half), static_cast<float>(y - half)),
-              point(static_cast<float>(x + half), static_cast<float>(y + half)),
-              point(static_cast<float>(x - half), static_cast<float>(y + half)),
-              fill);
+              point(static_cast<float>(x - sizeHalf), static_cast<float>(y - sizeHalf)),
+              point(static_cast<float>(x + sizeHalf), static_cast<float>(y - sizeHalf)),
+              point(static_cast<float>(x + sizeHalf), static_cast<float>(y + sizeHalf)),
+              point(static_cast<float>(x - sizeHalf), static_cast<float>(y + sizeHalf)),
+              quadFill);
         };
         quad(shadowHalf, shadow);
-        quad(handleHalf, clippedFrameColor);
+        quad(half, fill);
       }
     };
     if (showScaleHandles) {
-      handle(bounds.left(), bounds.top());
-      handle(bounds.right(), bounds.top());
-      handle(bounds.right(), bounds.bottom());
-      handle(bounds.left(), bounds.bottom());
-    }
-    const qreal edgeHandleHalf = handleHalf * 0.85;
-    const auto edgeHandle = [&](qreal x, qreal y) {
-      if (!isVisibleInCamera(x, y)) {
-        return;
-      }
-      if (billboardValid) {
-        const QVector3D center = worldPoint(x, y);
-        drawBillboard(center, edgeHandleHalf + 2.0, shadow);
-        drawBillboard(center, edgeHandleHalf, clippedFrameColor);
-      } else {
-        const auto quad = [&](qreal half, const FloatColor &fill) {
-          renderer->draw3DQuad(
-              point(static_cast<float>(x - half), static_cast<float>(y - half)),
-              point(static_cast<float>(x + half), static_cast<float>(y - half)),
-              point(static_cast<float>(x + half), static_cast<float>(y + half)),
-              point(static_cast<float>(x - half), static_cast<float>(y + half)),
-              fill);
-        };
-        quad(edgeHandleHalf + 2.0, shadow);
-        quad(edgeHandleHalf, clippedFrameColor);
-      }
-    };
-    if (showScaleHandles) {
-      edgeHandle(bounds.center().x(), bounds.top());
-      edgeHandle(bounds.center().x(), bounds.bottom());
-      edgeHandle(bounds.left(), bounds.center().y());
-      edgeHandle(bounds.right(), bounds.center().y());
+      handle(bounds.left(), bounds.top(), SelectionFrameHandle::TopLeft, false);
+      handle(bounds.right(), bounds.top(), SelectionFrameHandle::TopRight, false);
+      handle(bounds.right(), bounds.bottom(), SelectionFrameHandle::BottomRight, false);
+      handle(bounds.left(), bounds.bottom(), SelectionFrameHandle::BottomLeft, false);
+      handle(bounds.center().x(), bounds.top(), SelectionFrameHandle::Top, true);
+      handle(bounds.center().x(), bounds.bottom(), SelectionFrameHandle::Bottom, true);
+      handle(bounds.left(), bounds.center().y(), SelectionFrameHandle::Left, true);
+      handle(bounds.right(), bounds.center().y(), SelectionFrameHandle::Right, true);
     }
 
     // Rotation handle: keep it above the top edge with a stable local-space

@@ -63,6 +63,24 @@ void drawShapeVertexOverlay(ArtifactIRenderer *renderer,
                             const ArtifactAbstractLayerPtr &layer,
                             const ShapeVertexOverlayState &state);
 
+enum class SelectionFrameHandle : int {
+  None,
+  TopLeft,
+  TopRight,
+  BottomLeft,
+  BottomRight,
+  Top,
+  Bottom,
+  Left,
+  Right
+};
+
+struct SelectionFrameHandleFeedback {
+  SelectionFrameHandle hovered = SelectionFrameHandle::None;
+  SelectionFrameHandle active = SelectionFrameHandle::None;
+  bool dragging = false;
+};
+
 void drawSelectionFrameOverlay(ArtifactIRenderer *renderer,
                                const ArtifactAbstractLayerPtr &layer,
                                const FloatColor &color,
@@ -71,7 +89,8 @@ void drawSelectionFrameOverlay(ArtifactIRenderer *renderer,
                                const QMatrix4x4 *cameraProj = nullptr,
                                bool showScaleHandles = true,
                                bool showRotationHandle = true,
-                               float projectedHandleSize = 0.0f);
+                               float projectedHandleSize = 0.0f,
+                               SelectionFrameHandleFeedback feedback = {});
 
 void draw3DSelectionWireframeOverlay(ArtifactIRenderer *renderer,
                                      const ArtifactAbstractLayerPtr &layer,

@@ -96,6 +96,7 @@ export namespace Artifact {
   bool beginHandleDrag(HandleType handle, const QPointF& viewportPos,
                        ArtifactIRenderer* renderer);
   bool handleMouseMove(const QPointF& viewportPos, ArtifactIRenderer* renderer);
+  bool setHoverHandle(HandleType handle);
   void handleMouseRelease();
   bool cancelInteraction();
 
@@ -144,6 +145,7 @@ private:
   std::vector<ArtifactAbstractLayerPtr> targetLayers_;
   Mode mode_ = Mode::All;
   HandleType activeHandle_ = HandleType::None;
+  HandleType hoverHandle_ = HandleType::None;
   bool isDragging_ = false;
   std::vector<SnapLine> activeSnapLines_;
   std::vector<SnapLabel> activeSnapLabels_;

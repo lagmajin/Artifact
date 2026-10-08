@@ -29849,6 +29849,8 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
                                  frameAxisDirectionSign);
 
       impl_->projectedFrameHandle_ = frameHandle;
+      impl_->projectedFrameHoverHandle_ =
+          TransformGizmo::HandleType::None;
       impl_->projectedFrameMove_ = false;
       impl_->projectedFrameLastPointer_ = screenPhysicalPoint(viewportPos);
       impl_->projectedFrameLastPointerValid_ = true;
@@ -32859,10 +32861,10 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
       (impl_->gizmoSession_.owner == GizmoOwner::None ||
        impl_->gizmoSession_.owner == GizmoOwner::Transform2D)) {
 
-    impl_->gizmo_->handleMouseMove(
+    const QPointF gizmoPointer =
         impl_->gizmoSession_.owner == GizmoOwner::Transform2D
-            ? impl_->planarGizmoPointer(viewportPos) : viewportPos,
-        impl_->renderer_.get());
+            ? impl_->planarGizmoPointer(viewportPos) : viewportPos;
+    impl_->gizmo_->handleMouseMove(gizmoPointer, impl_->renderer_.get());
 
     if (impl_->gizmo_->isDragging()) {
 
@@ -32874,6 +32876,23 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
 
       return;
 
+    }
+
+    const auto hovered = impl_->gizmo_->handleAtViewportPos(
+        gizmoPointer, impl_->renderer_.get());
+    const bool scaleHandle =
+        hovered == TransformGizmo::HandleType::Scale_TL ||
+        hovered == TransformGizmo::HandleType::Scale_TR ||
+        hovered == TransformGizmo::HandleType::Scale_BL ||
+        hovered == TransformGizmo::HandleType::Scale_BR ||
+        hovered == TransformGizmo::HandleType::Scale_T ||
+        hovered == TransformGizmo::HandleType::Scale_B ||
+        hovered == TransformGizmo::HandleType::Scale_L ||
+        hovered == TransformGizmo::HandleType::Scale_R;
+    if (impl_->gizmo_->setHoverHandle(
+            scaleHandle ? hovered : TransformGizmo::HandleType::None)) {
+      impl_->invalidateOverlayComposite();
+      needsRender = true;
     }
 
   }
@@ -49097,6 +49116,30 @@ void CompositionRenderController::Impl::drawViewportGuideOverlay(
 namespace Artifact {
 namespace {
 
+SelectionFrameHandle selectionFrameHandleFor(
+    TransformGizmo::HandleType handle) {
+  switch (handle) {
+  case TransformGizmo::HandleType::Scale_TL:
+    return SelectionFrameHandle::TopLeft;
+  case TransformGizmo::HandleType::Scale_TR:
+    return SelectionFrameHandle::TopRight;
+  case TransformGizmo::HandleType::Scale_BL:
+    return SelectionFrameHandle::BottomLeft;
+  case TransformGizmo::HandleType::Scale_BR:
+    return SelectionFrameHandle::BottomRight;
+  case TransformGizmo::HandleType::Scale_T:
+    return SelectionFrameHandle::Top;
+  case TransformGizmo::HandleType::Scale_B:
+    return SelectionFrameHandle::Bottom;
+  case TransformGizmo::HandleType::Scale_L:
+    return SelectionFrameHandle::Left;
+  case TransformGizmo::HandleType::Scale_R:
+    return SelectionFrameHandle::Right;
+  default:
+    return SelectionFrameHandle::None;
+  }
+}
+
 ArtifactCore::Id hitTestRigBone(ArtifactCore::Bone2D *bone, const QPointF &localPoint,
                                 float threshold) {
     if (!bone) return {};
@@ -51189,15 +51232,10 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
                             : fallbackFrameProjection;
           const bool projectedFrame = layerUsesProjectedFrameGizmo(layer) ||
               viewportOrientationMatricesValid_;
-          const bool projectedFrameHovered =
-              primary && projectedFrame &&
-              projectedFrameHoverHandle_ != TransformGizmo::HandleType::None;
-          const FloatColor frameColor = projectedFrameHovered
-              ? FloatColor{1.0f, 0.72f, 0.12f, 1.0f}
-              : primary ? FloatColor{0.24f, 0.68f, 1.0f, 0.98f}
-                        : secondaryColor;
-          const float frameThickness = projectedFrameHovered
-              ? 2.8f : primary ? 2.2f : 1.6f;
+          const FloatColor frameColor = primary
+              ? FloatColor{0.24f, 0.68f, 1.0f, 0.98f}
+              : secondaryColor;
+          const float frameThickness = primary ? 2.2f : 1.6f;
           const bool showProjectedScaleHandles = !projectedFrame ||
               gizmoMode_ == TransformGizmo::Mode::All ||
               gizmoMode_ == TransformGizmo::Mode::Scale;
@@ -51236,10 +51274,22 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
               projectedHandleSize = 18.0f / pixelsPerUnit;
             }
           }
+          SelectionFrameHandleFeedback handleFeedback;
+          if (primary && projectedFrame && !drawCombinedProjectedFrame) {
+            handleFeedback.hovered = selectionFrameHandleFor(
+                projectedFrameHoverHandle_);
+            if (gizmoDragActive_) {
+              handleFeedback.active = selectionFrameHandleFor(
+                  projectedFrameHandle_);
+              handleFeedback.dragging =
+                  handleFeedback.active != SelectionFrameHandle::None;
+            }
+          }
           ::Artifact::drawSelectionFrameOverlay(
               renderer_.get(), layer, frameColor, frameThickness, &frameView,
               &frameProjection, showProjectedScaleHandles,
-              showProjectedRotationHandle, projectedHandleSize);
+              showProjectedRotationHandle, projectedHandleSize,
+              handleFeedback);
 
         }
 
@@ -51305,10 +51355,7 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
                     frameColor, 1.15f);
               }
             }
-            const FloatColor combinedColor =
-                projectedFrameHoverHandle_ != TransformGizmo::HandleType::None
-                    ? FloatColor{1.0f, 0.72f, 0.12f, 1.0f}
-                    : FloatColor{0.20f, 0.72f, 1.0f, 1.0f};
+            const FloatColor combinedColor{0.20f, 0.72f, 1.0f, 1.0f};
             const std::array<QPointF, 4> combinedCorners{
                 combinedBounds.topLeft(), combinedBounds.topRight(),
                 combinedBounds.bottomRight(), combinedBounds.bottomLeft()};
@@ -51329,23 +51376,45 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
                 gizmoMode_ == TransformGizmo::Mode::All ||
                 gizmoMode_ == TransformGizmo::Mode::Scale;
             if (showScaleHandles) {
-              const std::array<QPointF, 8> handles{
-                  combinedBounds.topLeft(), combinedBounds.topRight(),
-                  combinedBounds.bottomLeft(), combinedBounds.bottomRight(),
-                  QPointF(combinedBounds.center().x(), combinedBounds.top()),
-                  QPointF(combinedBounds.center().x(), combinedBounds.bottom()),
-                  QPointF(combinedBounds.left(), combinedBounds.center().y()),
-                  QPointF(combinedBounds.right(), combinedBounds.center().y())};
-              for (const QPointF &handle : handles) {
+              const std::array<std::pair<QPointF, SelectionFrameHandle>, 8>
+                  handles{{
+                      {combinedBounds.topLeft(), SelectionFrameHandle::TopLeft},
+                      {combinedBounds.topRight(), SelectionFrameHandle::TopRight},
+                      {combinedBounds.bottomLeft(), SelectionFrameHandle::BottomLeft},
+                      {combinedBounds.bottomRight(), SelectionFrameHandle::BottomRight},
+                      {QPointF(combinedBounds.center().x(), combinedBounds.top()),
+                       SelectionFrameHandle::Top},
+                      {QPointF(combinedBounds.center().x(), combinedBounds.bottom()),
+                       SelectionFrameHandle::Bottom},
+                      {QPointF(combinedBounds.left(), combinedBounds.center().y()),
+                       SelectionFrameHandle::Left},
+                      {QPointF(combinedBounds.right(), combinedBounds.center().y()),
+                       SelectionFrameHandle::Right}}};
+              const SelectionFrameHandle hovered =
+                  selectionFrameHandleFor(projectedFrameHoverHandle_);
+              const SelectionFrameHandle active = gizmoDragActive_
+                  ? selectionFrameHandleFor(projectedFrameHandle_)
+                  : SelectionFrameHandle::None;
+              for (const auto &[handle, handleType] : handles) {
                 if (!visibleFrameArea.contains(handle)) continue;
+                const bool isActive = active == handleType;
+                const bool isHovered = !gizmoDragActive_ &&
+                                       hovered == handleType;
+                const float outerSize = isActive ? 14.0f
+                    : isHovered ? 12.0f : 10.0f;
+                const FloatColor fill = isActive
+                    ? FloatColor{1.0f, 0.46f, 0.14f, 1.0f}
+                    : isHovered ? FloatColor{0.40f, 0.80f, 1.0f, 1.0f}
+                                : combinedColor;
                 renderer_->drawSolidRect(
-                    static_cast<float>(handle.x() - 5.0),
-                    static_cast<float>(handle.y() - 5.0), 10.0f, 10.0f,
+                    static_cast<float>(handle.x() - outerSize * 0.5f),
+                    static_cast<float>(handle.y() - outerSize * 0.5f),
+                    outerSize, outerSize,
                     FloatColor{0.04f, 0.08f, 0.12f, 1.0f}, 1.0f);
                 renderer_->drawSolidRect(
                     static_cast<float>(handle.x() - 3.0),
                     static_cast<float>(handle.y() - 3.0), 6.0f, 6.0f,
-                    combinedColor, 1.0f);
+                    fill, 1.0f);
               }
             }
             renderer_->setZoom(previousZoom);

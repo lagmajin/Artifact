@@ -1697,6 +1697,7 @@ void TransformGizmo::setLayer(ArtifactAbstractLayerPtr layer) {
   }
   layer_ = std::move(layer);
   targetLayers_.clear();
+  hoverHandle_ = HandleType::None;
   if (layer_) {
     targetLayers_.push_back(layer_);
   }
@@ -1727,6 +1728,7 @@ void TransformGizmo::setTargetLayers(std::vector<ArtifactAbstractLayerPtr> layer
     }
   }
   targetLayers_ = std::move(normalizedLayers);
+  hoverHandle_ = HandleType::None;
   layer_ = targetLayers_.empty() ? ArtifactAbstractLayerPtr{} : targetLayers_.front();
   geometryCacheValid_ = false;
   if (!isDragging_) {
@@ -1773,6 +1775,7 @@ void TransformGizmo::setMode(Mode mode) {
  }
  qDebug() << "[TransformGizmo] setMode:" << static_cast<int>(mode_) << "->" << static_cast<int>(mode);
  mode_ = mode;
+ hoverHandle_ = HandleType::None;
  if (!allowsHandle(activeHandle_)) {
   activeHandle_ = HandleType::None;
   isDragging_ = false;
@@ -1993,22 +1996,22 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
         std::clamp(handleSize * GizmoVisualStyle::scaleHandleSize * 1.16f *
                        GizmoVisualStyle::scaleOverlayBoost,
                    14.0f, 34.0f);
-    const bool cornerActive = activeHandle_ == HandleType::Scale_TL ||
-                              activeHandle_ == HandleType::Scale_TR ||
-                              activeHandle_ == HandleType::Scale_BL ||
-                              activeHandle_ == HandleType::Scale_BR;
-    const bool edgeActive = activeHandle_ == HandleType::Scale_T ||
-                            activeHandle_ == HandleType::Scale_B ||
-                            activeHandle_ == HandleType::Scale_L ||
-                            activeHandle_ == HandleType::Scale_R;
-    const FloatColor cornerFill = cornerActive
-        ? FloatColor{1.0f, 0.95f, 0.72f, 1.0f}
-        : (isTextLayer ? FloatColor{0.80f, 0.94f, 1.0f, 0.98f}
-                       : FloatColor{0.94f, 0.96f, 0.98f, 0.96f});
-    const FloatColor axisFill = edgeActive
-        ? FloatColor{0.68f, 0.96f, 0.82f, 1.0f}
-        : (isTextLayer ? FloatColor{0.72f, 0.90f, 1.0f, 0.97f}
-                       : FloatColor{0.90f, 0.94f, 0.96f, 0.95f});
+    const FloatColor cornerFill = isTextLayer
+        ? FloatColor{0.80f, 0.94f, 1.0f, 0.98f}
+        : FloatColor{0.94f, 0.96f, 0.98f, 0.96f};
+    const FloatColor axisFill = isTextLayer
+        ? FloatColor{0.72f, 0.90f, 1.0f, 0.97f}
+        : FloatColor{0.90f, 0.94f, 0.96f, 0.95f};
+    const auto handleFill = [&](const HandleType handle,
+                                const FloatColor& normal) {
+      if (isDragging_ && activeHandle_ == handle) {
+        return FloatColor{1.0f, 0.48f, 0.16f, 1.0f};
+      }
+      if (!isDragging_ && hoverHandle_ == handle) {
+        return FloatColor{0.40f, 0.78f, 1.0f, 1.0f};
+      }
+      return normal;
+    };
    const FloatColor boxOutline = activeHandle_ != HandleType::None
         ? FloatColor{1.0f, 1.0f, 1.0f, 1.0f}
         : FloatColor{0.12f, 0.12f, 0.12f, 1.0f};
@@ -2016,14 +2019,14 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
    const float cornerOutward = handleSizeScale * 0.5f;
    const float edgeHandleSize = handleSizeScale * 0.96f;
    const float edgeOutward = edgeHandleSize * 0.5f;
-   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, tl_c, cornerOutward), handleSizeScale, cornerFill, boxOutline, invZoom, activeHandle_ == HandleType::Scale_TL);
-   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, tr_c, cornerOutward), handleSizeScale, cornerFill, boxOutline, invZoom, activeHandle_ == HandleType::Scale_TR);
-   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, bl_c, cornerOutward), handleSizeScale, cornerFill, boxOutline, invZoom, activeHandle_ == HandleType::Scale_BL);
-   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, br_c, cornerOutward), handleSizeScale, cornerFill, boxOutline, invZoom, activeHandle_ == HandleType::Scale_BR);
-   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, topPoint, edgeOutward), edgeHandleSize, axisFill, boxOutline, invZoom, activeHandle_ == HandleType::Scale_T);
-   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, bottomPoint, edgeOutward), edgeHandleSize, axisFill, boxOutline, invZoom, activeHandle_ == HandleType::Scale_B);
-   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, leftPoint, edgeOutward), edgeHandleSize, axisFill, boxOutline, invZoom, activeHandle_ == HandleType::Scale_L);
-   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, rightPoint, edgeOutward), edgeHandleSize, axisFill, boxOutline, invZoom, activeHandle_ == HandleType::Scale_R);
+   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, tl_c, cornerOutward), handleSizeScale, handleFill(HandleType::Scale_TL, cornerFill), boxOutline, invZoom, activeHandle_ == HandleType::Scale_TL);
+   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, tr_c, cornerOutward), handleSizeScale, handleFill(HandleType::Scale_TR, cornerFill), boxOutline, invZoom, activeHandle_ == HandleType::Scale_TR);
+   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, bl_c, cornerOutward), handleSizeScale, handleFill(HandleType::Scale_BL, cornerFill), boxOutline, invZoom, activeHandle_ == HandleType::Scale_BL);
+   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, br_c, cornerOutward), handleSizeScale, handleFill(HandleType::Scale_BR, cornerFill), boxOutline, invZoom, activeHandle_ == HandleType::Scale_BR);
+   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, topPoint, edgeOutward), edgeHandleSize, handleFill(HandleType::Scale_T, axisFill), boxOutline, invZoom, activeHandle_ == HandleType::Scale_T);
+   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, bottomPoint, edgeOutward), edgeHandleSize, handleFill(HandleType::Scale_B, axisFill), boxOutline, invZoom, activeHandle_ == HandleType::Scale_B);
+   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, leftPoint, edgeOutward), edgeHandleSize, handleFill(HandleType::Scale_L, axisFill), boxOutline, invZoom, activeHandle_ == HandleType::Scale_L);
+   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, rightPoint, edgeOutward), edgeHandleSize, handleFill(HandleType::Scale_R, axisFill), boxOutline, invZoom, activeHandle_ == HandleType::Scale_R);
 
   if (mode_ == Mode::Scale) {
    const QPointF mapOrigin = globalTransform.map(QPointF(0.0, 0.0));
@@ -2702,6 +2705,17 @@ TransformGizmo::HandleType TransformGizmo::handleAtViewportPos(const QPointF& vi
  return hitTest(viewportPos, renderer);
 }
 
+bool TransformGizmo::setHoverHandle(const HandleType handle) {
+ if (isDragging_) {
+  return false;
+ }
+ if (hoverHandle_ == handle) {
+  return false;
+ }
+ hoverHandle_ = handle;
+ return true;
+}
+
 bool TransformGizmo::handleMousePress(const QPointF& viewportPos, ArtifactIRenderer* renderer) {
  if (!layer_ || !renderer) return false;
 
@@ -2725,6 +2739,7 @@ bool TransformGizmo::beginHandleDrag(HandleType handle,
  }();
 
  activeHandle_ = handle;
+ hoverHandle_ = HandleType::None;
  if (activeHandle_ != HandleType::None) {
   isDragging_ = true;
   auto canvasMouse = renderer->viewportToCanvas({(float)viewportPos.x(), (float)viewportPos.y()});
