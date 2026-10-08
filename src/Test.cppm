@@ -24,6 +24,7 @@ export module Artifact.TestRunner;
 import Memory.SharedPtr;
 
 import Artifact.Render.DiligentDeviceManager;
+import Artifact.Render.OffscreenComposition;
 import Artifact.Render.CompositionViewDrawing;
 import Artifact.Effect.Abstract;
 import Artifact.Test.AIToolBridge;
@@ -40,6 +41,9 @@ import Utils.String.UniString;
 import Artifact.Service.Playback;
 import Artifact.Composition.Abstract;
 import Artifact.Composition.InitParams;
+import Artifact.Layer.Factory;
+import Artifact.Layer.InitParams;
+import Artifact.Layers.SolidImage;
 import Graphics.GPUcomputeContext;
 import Graphics.LayerBlendPipeline;
 import Layer.Blend;
@@ -470,6 +474,96 @@ export namespace Artifact {
 int runTextLayerAnimatorTests()
 {
     return runTextLayerAnimatorTestsImpl();
+}
+
+int runAdjustmentLayerIntegrationTest()
+{
+    return runAdjustmentLayerTests();
+}
+
+int runLayerGroupIntegrationTest()
+{
+    return runLayerGroupTests();
+}
+
+int runShapeLayerIntegrationTest()
+{
+    return runShapePathTests();
+}
+
+int runSolidLayerIntegrationTest()
+{
+    return runSolidLayerTests();
+}
+
+int runOfflineRenderTests()
+{
+    qInfo().noquote() << "[OfflineRenderTest] Starting headless composition render";
+    DiligentDeviceManager deviceManager;
+    deviceManager.initializeHeadless();
+    auto device = deviceManager.device();
+    if (!device) {
+        qCritical().noquote() << "[OfflineRenderTest] Headless GPU initialization failed";
+        return 1;
+    }
+
+    constexpr int width = 16;
+    constexpr int height = 16;
+    ArtifactCompositionInitParams compositionParams(
+        ArtifactCore::UniString(QStringLiteral("Offline render test")),
+        FloatColor(0.0f, 0.0f, 0.0f, 0.0f));
+    compositionParams.setResolution(width, height);
+    compositionParams.setDurationFrames(2);
+    ArtifactAbstractComposition composition(
+        CompositionID(QStringLiteral("offline-render-contract")), compositionParams);
+
+    ArtifactLayerFactory layerFactory;
+    ArtifactSolidLayerInitParams solidParams(QStringLiteral("Render target solid"));
+    solidParams.setWidth(width);
+    solidParams.setHeight(height);
+    solidParams.setColor(FloatColor(1.0f, 0.0f, 0.0f, 1.0f));
+    const auto layerResult = layerFactory.createLayer(solidParams);
+    if (!layerResult.success || !layerResult.layer) {
+        qCritical().noquote() << "[OfflineRenderTest] Solid layer creation failed";
+        return 1;
+    }
+    const auto appendResult = composition.appendLayerTop(layerResult.layer);
+    if (!appendResult.success || composition.layerCount() != 1) {
+        qCritical().noquote() << "[OfflineRenderTest] Solid layer insertion failed";
+        return 1;
+    }
+
+    OffscreenCompositionRenderer renderer(device, width, height);
+    renderer.renderFrame(FramePosition(0), &composition);
+    const auto image = renderer.captureImage();
+    if (image.width() != width || image.height() != height) {
+        qCritical().noquote() << "[OfflineRenderTest] Unexpected output dimensions"
+                              << image.width() << "x" << image.height();
+        return 1;
+    }
+
+    bool foundSolidPixel = false;
+    for (int y = 0; y < height && !foundSolidPixel; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const auto pixel = image.getPixel(x, y);
+            if (std::isfinite(pixel.r()) && std::isfinite(pixel.g()) &&
+                std::isfinite(pixel.b()) && std::isfinite(pixel.a()) &&
+                pixel.r() > 0.8f && pixel.g() < 0.2f && pixel.b() < 0.2f &&
+                pixel.a() > 0.8f) {
+                foundSolidPixel = true;
+                break;
+            }
+        }
+    }
+    if (!foundSolidPixel) {
+        qCritical().noquote()
+            << "[OfflineRenderTest] Render output did not contain the solid layer color";
+        return 1;
+    }
+
+    qInfo().noquote() << "[OfflineRenderTest] Passed: rendered layer into"
+                      << width << "x" << height << "offscreen output";
+    return 0;
 }
 
 int runEditSequenceFuzzOnly()

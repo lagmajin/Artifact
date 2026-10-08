@@ -4821,6 +4821,11 @@ int main(int argc, char *argv[]) {
     printf("  ARTIFACT_RUN_BUILTIN_TESTS  Run built-in tests and exit\n");
     printf("  ARTIFACT_RUN_EDIT_SEQUENCE_FUZZ  Run edit-sequence fuzz tests and exit\n");
     printf("  ARTIFACT_RUN_TEXT_LAYER_ANIMATOR_TESTS  Run text-layer animator tests and exit\n");
+    printf("  ARTIFACT_RUN_ADJUSTMENT_LAYER_TESTS  Run adjustment layer tests and exit\n");
+    printf("  ARTIFACT_RUN_LAYER_GROUP_TESTS  Run layer group tests and exit\n");
+    printf("  ARTIFACT_RUN_SHAPE_LAYER_TESTS  Run shape layer tests and exit\n");
+    printf("  ARTIFACT_RUN_SOLID_LAYER_TESTS  Run solid layer tests and exit\n");
+    printf("  ARTIFACT_RUN_OFFLINE_RENDER_TESTS  Run headless offline rendering tests and exit\n");
     printf("  ARTIFACT_RUN_GPU_BLEND_TESTS  Run headless GPU blend tests and exit\n");
     return 0;
   }
@@ -5046,6 +5051,26 @@ int main(int argc, char *argv[]) {
 
   if (qEnvironmentVariableIsSet("ARTIFACT_RUN_TEXT_LAYER_ANIMATOR_TESTS")) {
     return Artifact::runTextLayerAnimatorTests();
+  }
+
+  if (qEnvironmentVariableIsSet("ARTIFACT_RUN_ADJUSTMENT_LAYER_TESTS")) {
+    return Artifact::runAdjustmentLayerIntegrationTest();
+  }
+
+  if (qEnvironmentVariableIsSet("ARTIFACT_RUN_LAYER_GROUP_TESTS")) {
+    return Artifact::runLayerGroupIntegrationTest();
+  }
+
+  if (qEnvironmentVariableIsSet("ARTIFACT_RUN_SHAPE_LAYER_TESTS")) {
+    return Artifact::runShapeLayerIntegrationTest();
+  }
+
+  if (qEnvironmentVariableIsSet("ARTIFACT_RUN_SOLID_LAYER_TESTS")) {
+    return Artifact::runSolidLayerIntegrationTest();
+  }
+
+  if (qEnvironmentVariableIsSet("ARTIFACT_RUN_OFFLINE_RENDER_TESTS")) {
+    return Artifact::runOfflineRenderTests();
   }
 
   if (qEnvironmentVariableIsSet("ARTIFACT_RUN_EDIT_SEQUENCE_FUZZ")) {
