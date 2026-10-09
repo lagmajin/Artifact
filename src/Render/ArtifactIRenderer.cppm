@@ -1779,6 +1779,17 @@ namespace {
       qCInfo(particleRendererLog) << "[ParticleRenderer] Initialized (max 100k particles)";
     }
 
+    // Offline/headless export must know whether the PSO is usable before the
+    // layer decides between GPU draw and its software fallback. In an
+    // interactive viewport PSO compilation stays asynchronous.
+    if (m_offlineWidth > 0 &&
+        !particleRenderer_->ensureGraphicsPipeline(data.options)) {
+      lastParticleDebug_ = QStringLiteral(
+          "state=pso-unavailable skipped=pso-unavailable count=%1 path=particle")
+                               .arg(data.particles.size());
+      return;
+    }
+
     if (m_viewportWidth <= 0.0f || m_viewportHeight <= 0.0f) {
       lastParticleDebug_ = QStringLiteral(
                                "state=invalid-viewport skipped=invalid-viewport count=%1 viewport=%2x%3 path=particle")
