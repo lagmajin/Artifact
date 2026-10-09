@@ -3097,6 +3097,20 @@ void ArtifactIRenderer::Impl::setRenderTargetOverrides(ITextureView* colorRTV,
    submitter_.setDeferredContext(deviceManager_.deferredContext());
    primitiveRenderer_.setCommandBuffer(&cmdBuf_);
    m_initialized = true;
+
+   // Eager particle renderer + async prewarm: without this the first
+   // particle draw pays synchronous dxc compiles on the GUI thread (the
+   // layer-addition freeze). Enqueuing here only schedules background work;
+   // layers arriving later find the common pipelines already built.
+   if (!particleRenderer_ && gpuContext_) {
+     particleRenderer_ = std::make_unique<ArtifactCore::ParticleRenderer>(*gpuContext_);
+     particleRenderer_->setFrameCostStats(nullptr);
+     particleRenderer_->initialize(100000); // Support up to 100k particles
+     submitter_.setParticleRenderer(particleRenderer_.get());
+   }
+   if (particleRenderer_) {
+     particleRenderer_->prewarmCommonPipelines();
+   }
   }
 
   primitiveRenderer_.setContext(deviceManager_.immediateContext(),
