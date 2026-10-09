@@ -41277,6 +41277,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
        (effectiveEndFrame > 0 && framePos >= effectiveEndFrame));
 
   ArtifactCore::ImageF32x4_RGBA ramPreviewFrameImage;
+  // A retained video frame is valid for live presentation, but must not be
+  // published as the completed composite for a different timeline frame.
+  bool videoFramesReadyForRamPreview = true;
 
   bool useRamPreviewFallback = false;
 
@@ -42883,7 +42886,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       const bool damageLayersAreSupported = tgfxPartialRecomposeEnabled_ &&
           std::all_of(layers.cbegin(), layers.cend(),
                       [&](const ArtifactAbstractLayerPtr& layer) {
-                        if (!layer || !isPartialRecomposeLayer(layer) ||
+                        if (!layer ||
+                            dynamic_cast<const ArtifactParticleLayer*>(layer.get()) ||
+                            !isPartialRecomposeLayer(layer) ||
                             !effectExpandedLayerBounds(layer.get()).isValid()) {
                           return false;
                         }
@@ -43222,8 +43227,13 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           }
 
           const QRectF layerBounds = effectExpandedLayerBounds(layer.get());
+          // Particle positions and trails can extend beyond localBounds().
+          // Culling by the layer rectangle makes them pop in at its edge.
+          const bool particle2D =
+              dynamic_cast<const ArtifactParticleLayer*>(layer.get()) != nullptr &&
+              !layer->is3D();
 
-          if (layerBounds.isValid() &&
+          if (!particle2D && layerBounds.isValid() &&
 
               layerBounds.intersected(roiRect).isEmpty()) {
 
@@ -43233,7 +43243,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           }
 
-          if (partialGpuRecomposeActive && gpuDamageCanvasRect.isValid() &&
+          if (!particle2D && partialGpuRecomposeActive && gpuDamageCanvasRect.isValid() &&
               layerBounds.isValid() &&
               layerBounds.intersected(gpuDamageCanvasRect).isEmpty()) {
             ++skipRoiCount;
@@ -43252,7 +43262,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           // sprite/GPU-buffer draw path can run.
           const bool preserveTextAtAnyZoom =
               dynamic_cast<const ArtifactTextLayer *>(layer.get()) != nullptr;
-          if (layerBounds.isValid() && !preserveTextAtAnyZoom) {
+          if (layerBounds.isValid() && !preserveTextAtAnyZoom && !particle2D) {
 
             float screenW =
 
@@ -43324,6 +43334,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
 
           ++drawnLayerCount;
+          if (const auto* video = dynamic_cast<const ArtifactVideoLayer*>(layer.get())) {
+            videoFramesReadyForRamPreview = videoFramesReadyForRamPreview &&
+                !video->cachedFrameImageBuffer(framePos).isEmpty();
+          }
 
           if (layerUsesSurfaceUploadForCompositionView(layer.get())) {
 
@@ -44218,6 +44232,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           // === 段階 2: ROI 計算 ===
 
           const QRectF layerBounds = effectExpandedLayerBounds(layer.get());
+          const bool particle2D =
+              dynamic_cast<const ArtifactParticleLayer*>(layer.get()) != nullptr &&
+              !layer->is3D();
 
           const QRectF intersected = layerBounds.intersected(renderRoi);
 
@@ -44231,7 +44248,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           // its small on-screen footprint is still meaningful to the editor.
           const bool preserveTextAtAnyZoom =
               dynamic_cast<const ArtifactTextLayer *>(layer.get()) != nullptr;
-          if (layerBounds.isValid() && !preserveTextAtAnyZoom) {
+          if (layerBounds.isValid() && !preserveTextAtAnyZoom && !particle2D) {
 
             const auto tl = renderer_->canvasToViewport(
 
@@ -44277,7 +44294,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           // === 段階 3: 空 ROI スキップ ===
 
-          if (intersected.isEmpty()) {
+          if (!particle2D && intersected.isEmpty()) {
 
             ++skipRoiCount;
 
@@ -44288,6 +44305,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
 
           ++drawnLayerCount;
+          if (const auto* video = dynamic_cast<const ArtifactVideoLayer*>(layer.get())) {
+            videoFramesReadyForRamPreview = videoFramesReadyForRamPreview &&
+                !video->cachedFrameImageBuffer(framePos).isEmpty();
+          }
 
           if (layerUsesSurfaceUploadForCompositionView(layer.get())) {
 
@@ -46305,7 +46326,11 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           !playbackPreviewState.ready && playbackPreviewPendingBuild;
 
-      if (shouldCaptureRamPreview) {
+      if (shouldCaptureRamPreview && !videoFramesReadyForRamPreview) {
+        playback->deferRamPreviewBuildFrame(
+            framePos, QStringLiteral("video-frame-pending"));
+      }
+      if (shouldCaptureRamPreview && videoFramesReadyForRamPreview) {
 
         renderCrashTrace("render-async-readback-begin", renderFrameCounter_);
 

@@ -1451,10 +1451,23 @@ void DiligentImmediateSubmitter::submitParticles(const ParticlePkt& p, IDeviceCo
     m_currentPSO_ = nullptr;
     m_particleRenderer_->prepare(ctx);
     if (!m_particleRenderer_->isPrepared()) {
-        qWarning() << "[ParticleRenderer] submitParticles skipped: prepare failed"
-                   << "requested=" << p.data.particles.size()
-                   << "uploaded=" << uploadedCount
-                   << "state=" << m_particleRenderer_->debugStateText();
+        // An async pipeline build in flight is a normal transient (covered
+        // by the layer CPU fallback), not a per-frame warning.
+        const bool waitingForPipeline =
+            m_particleRenderer_->debugState() ==
+            ArtifactCore::ParticleRenderer::DebugState::PrepareWaitingPipeline;
+        if (waitingForPipeline) {
+            qCDebug(particleSubmitterLog)
+                << "[ParticleRenderer] submitParticles waiting for async build"
+                << "requested=" << p.data.particles.size()
+                << "uploaded=" << uploadedCount
+                << "state=" << m_particleRenderer_->debugStateText();
+        } else {
+            qWarning() << "[ParticleRenderer] submitParticles skipped: prepare failed"
+                       << "requested=" << p.data.particles.size()
+                       << "uploaded=" << uploadedCount
+                       << "state=" << m_particleRenderer_->debugStateText();
+        }
         m_particleRenderer_->setFrameCostStats(nullptr);
         return;
     }

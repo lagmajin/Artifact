@@ -54,6 +54,11 @@ module;
 #include <QPointer>
 #include <QPolygonF>
 #include <QStackedWidget>
+#include <QStyledItemDelegate>
+#include <QStyleOptionViewItem>
+#include <QFontMetrics>
+#include <QModelIndex>
+#include <QStyle>
 #include <algorithm>
 #include <atomic>
 #include <array>
@@ -493,6 +498,60 @@ struct CachedAudioWaveform {
   QString signature;
   QVector<float> peaks;
   QVector<float> rms;
+};
+
+class CurveChannelDelegate final : public QStyledItemDelegate {
+public:
+  explicit CurveChannelDelegate(QObject* parent) : QStyledItemDelegate(parent) {}
+
+  void paint(QPainter* painter, const QStyleOptionViewItem& option,
+             const QModelIndex& index) const override {
+    painter->save();
+    painter->setFont(option.font);
+    const QRect row = option.rect;
+    const bool selected = option.state & QStyle::State_Selected;
+    painter->fillRect(row, selected ? QColor(30, 51, 73) : QColor(27, 29, 31));
+    painter->setPen(QColor(47, 49, 52));
+    painter->drawLine(row.bottomLeft(), row.bottomRight());
+    const QString fullName = index.data(Qt::UserRole + 1).toString();
+    if (fullName.isEmpty()) {
+      painter->setPen(QColor(149, 155, 162));
+      painter->drawText(row.adjusted(16, 0, -16, 0),
+                        Qt::AlignLeft | Qt::AlignVCenter,
+                        index.data(Qt::DisplayRole).toString());
+      painter->restore();
+      return;
+    }
+    const QColor color = index.data(Qt::ForegroundRole).value<QBrush>().color();
+    if (selected) painter->fillRect(QRect(row.left(), row.top(), 2, row.height()),
+                                     QColor(70, 184, 237));
+    const int swatchSize = Accessibility::scaledSize(12);
+    painter->fillRect(QRect(row.left() + 18, row.center().y() - swatchSize / 2,
+                           swatchSize, swatchSize), color);
+    const int separator = fullName.indexOf(QStringLiteral(" / "));
+    const QString channel = separator >= 0 ? fullName.mid(separator + 3) : fullName;
+    const QString layer = separator >= 0 ? fullName.left(separator) : QString();
+    const QRect textRect = row.adjusted(42, 0, -12, 0);
+    painter->setPen(QColor(226, 229, 233));
+    painter->drawText(textRect.adjusted(0, 4, 0, -row.height() / 2),
+                      Qt::AlignVCenter | Qt::AlignLeft,
+                      option.fontMetrics.elidedText(channel, Qt::ElideRight,
+                                                    textRect.width()));
+    QFont detailFont = option.font;
+    detailFont.setPointSizeF(std::max(8.0, detailFont.pointSizeF() - 1.0));
+    painter->setFont(detailFont);
+    painter->setPen(QColor(137, 145, 154));
+    painter->drawText(textRect.adjusted(0, row.height() / 2, 0, -3),
+                      Qt::AlignVCenter | Qt::AlignLeft,
+                      QFontMetrics(detailFont).elidedText(layer, Qt::ElideRight,
+                                                         textRect.width()));
+    if (option.state & QStyle::State_HasFocus) {
+      painter->setPen(QPen(QColor(143, 184, 210), 1, Qt::DotLine));
+      painter->setBrush(Qt::NoBrush);
+      painter->drawRect(row.adjusted(3, 3, -4, -4));
+    }
+    painter->restore();
+  }
 };
 
 class TimelineToolCallbackButton final : public QToolButton {
@@ -4694,6 +4753,13 @@ public:
   bool gpuCurveSnapshotPending_ = false;
   quint64 gpuCurveSnapshotGeneration_ = 0;
   QWidget *curveEditorPage_ = nullptr;
+  QWidget *curveToolbar_ = nullptr;
+  QWidget *timelineLeftPanel_ = nullptr;
+  QWidget *leftNavigatorSpacer_ = nullptr;
+  QSplitter *mainSplitter_ = nullptr;
+  QVBoxLayout *timelineLayout_ = nullptr;
+  int timelineLeftWidth_ = 0;
+  int curveLeftWidth_ = 0;
   QStackedWidget *timelineModeStack_ = nullptr;
   TimelineToolCallbackButton *timelineModeButton_ = nullptr;
   TimelineToolCallbackButton *curveModeButton_ = nullptr;
@@ -4709,6 +4775,7 @@ public:
   QToolButton *curveEditorFitButton_ = nullptr;
   QToolButton *curveEditorValueButton_ = nullptr;
   QToolButton *curveEditorFrameButton_ = nullptr;
+  QLabel *curveKeyEditHint_ = nullptr;
   QToolButton *curveEditorHandleButton_ = nullptr;
   QToolButton *curveEditorAutoTangentButton_ = nullptr;
   QToolButton *curveEditorFlatTangentButton_ = nullptr;
@@ -4962,6 +5029,20 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
     const auto selectedMarkers =
         impl_->painterTrackView_ ? impl_->painterTrackView_->selectedKeyframeMarkers()
                                  : QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>();
+    const bool singleKey = selectedMarkers.size() == 1;
+    if (impl_->curveEditorFrameButton_) {
+      impl_->curveEditorFrameButton_->setText(singleKey
+          ? QStringLiteral("Frame  %1...").arg(selectedMarkers.front().frame, 0, 'f', 0)
+          : QStringLiteral("Frame..."));
+    }
+    if (impl_->curveEditorValueButton_) {
+      impl_->curveEditorValueButton_->setText(singleKey
+          ? QStringLiteral("Value  %1...").arg(selectedMarkers.front().value.toDouble(), 0, 'g', 6)
+          : QStringLiteral("Value..."));
+    }
+    if (impl_->curveKeyEditHint_) {
+      impl_->curveKeyEditHint_->setVisible(selectedMarkers.isEmpty());
+    }
     impl_->curveEditorSummaryLabel_->setText(
         impl_->curveEditorGraphMode_ == CurveEditorGraphMode::Speed
             ? QStringLiteral("Speed Graph")
@@ -4981,8 +5062,8 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
     const QSignalBlocker blocker(impl_->curveEditorModeButton_);
     impl_->curveEditorModeButton_->setText(
         impl_->curveEditorGraphMode_ == CurveEditorGraphMode::Speed
-            ? QStringLiteral("Speed")
-            : QStringLiteral("Value"));
+            ? QStringLiteral("Speed Graph")
+            : QStringLiteral("Value Graph"));
     impl_->curveEditorModeButton_->setToolTip(
         impl_->curveEditorGraphMode_ == CurveEditorGraphMode::Speed
             ? QStringLiteral("Speed graph mode (click to switch to Value)")
@@ -5027,13 +5108,13 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
             : (hasSelection
                    ? QStringLiteral("Set the numeric value of selected keyframes")
                    : QStringLiteral("Select one or more keyframes to set their value")));
-    impl_->curveEditorValueButton_->setVisible(hasSelection);
+    impl_->curveEditorValueButton_->setVisible(true);
   }
   if (impl_->curveEditorFrameButton_) {
     const bool hasSelection =
         impl_->painterTrackView_ && impl_->painterTrackView_->hasNumericSelectedKeyframes();
     impl_->curveEditorFrameButton_->setEnabled(editableValueGraph && hasSelection);
-    impl_->curveEditorFrameButton_->setVisible(hasSelection);
+    impl_->curveEditorFrameButton_->setVisible(true);
   }
   for (auto *button : {impl_->curveEditorAutoTangentButton_,
                        impl_->curveEditorFlatTangentButton_,
@@ -5602,7 +5683,6 @@ void ArtifactTimelineWidget::updateCurvePropertyList()
 
    const QSignalBlocker blocker(impl_->curvePropertyList_);
   impl_->curvePropertyList_->clear();
-  int visibleCount = 0;
   int propertyCount = 0;
   for (int i = 0; i < static_cast<int>(impl_->curveTracks_.size()); ++i) {
     const auto &track = impl_->curveTracks_[i];
@@ -5615,8 +5695,9 @@ void ArtifactTimelineWidget::updateCurvePropertyList()
     }
     auto *item = new QListWidgetItem(label);
     item->setData(Qt::UserRole, i);
+    item->setData(Qt::UserRole + 1, track.name);
     item->setToolTip(track.name);
-    item->setSizeHint(QSize(0, Accessibility::scaledSize(28)));
+    item->setSizeHint(QSize(0, Accessibility::scaledSize(46)));
     item->setTextAlignment(Qt::AlignVCenter | Qt::AlignLeft);
     item->setForeground(track.color);
     impl_->curvePropertyList_->addItem(item);
@@ -5627,15 +5708,17 @@ void ArtifactTimelineWidget::updateCurvePropertyList()
     const bool visible = impl_->focusedCurveTrackIndex_ < 0 ||
                          impl_->focusedCurveTrackIndex_ == i;
     item->setHidden(false);
-    ++visibleCount;
     if (!visible) {
       item->setForeground(track.color.darker(145));
     }
     ++propertyCount;
   }
   if (propertyCount == 0) {
-    impl_->curvePropertyList_->addItem(QStringLiteral("No visible curve tracks"));
-    impl_->curvePropertySummaryLabel_->setText(QStringLiteral("Curve Targets: 0"));
+    auto* empty = new QListWidgetItem(QStringLiteral("Select an animated layer to show channels"));
+    empty->setFlags(Qt::NoItemFlags);
+    empty->setSizeHint(QSize(0, Accessibility::scaledSize(56)));
+    impl_->curvePropertyList_->addItem(empty);
+    impl_->curvePropertySummaryLabel_->setText(QStringLiteral("Animated Channels"));
     return;
   }
 
@@ -5652,9 +5735,7 @@ void ArtifactTimelineWidget::updateCurvePropertyList()
     impl_->curvePropertyList_->setCurrentRow(-1);
   }
   impl_->curvePropertySummaryLabel_->setText(
-      QStringLiteral("Curve Channels: %1 shown / %2 total")
-          .arg(visibleCount)
-          .arg(propertyCount));
+      QStringLiteral("Animated Channels (%1)").arg(propertyCount));
 }
 
 ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
@@ -6236,6 +6317,35 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
             const auto applyMode = [this, active = event.enabled]() {
                   if (!impl_ || !impl_->curveEditor_) {
                     return;
+                  }
+                  const bool modeChanged = impl_->graphEditorVisible_ != active;
+                  if (modeChanged && impl_->mainSplitter_) {
+                    const auto sizes = impl_->mainSplitter_->sizes();
+                    if (!sizes.isEmpty()) {
+                      (active ? impl_->timelineLeftWidth_ : impl_->curveLeftWidth_) = sizes.front();
+                    }
+                    impl_->timelineLeftPanel_->setMinimumWidth(active ? 240 : 360);
+                    const int total = impl_->mainSplitter_->width();
+                    const int remembered = active ? impl_->curveLeftWidth_ : impl_->timelineLeftWidth_;
+                    const int leftWidth = remembered > 0 ? remembered : total * (active ? 26 : 44) / 100;
+                    impl_->mainSplitter_->setStretchFactor(0, active ? 26 : 44);
+                    impl_->mainSplitter_->setStretchFactor(1, active ? 74 : 56);
+                    impl_->mainSplitter_->setSizes({leftWidth, std::max(480, total - leftWidth)});
+                    // Curve mode owns the full-width toolbar and overview.
+                    // Preserve the normal timeline's ruler/work-area layout.
+                    impl_->curveToolbar_->setVisible(active);
+                    impl_->scrubBar_->setVisible(!active);
+                    impl_->workArea_->setVisible(!active);
+                    impl_->leftNavigatorSpacer_->setVisible(!active);
+                    impl_->navigator_->setFixedHeight(Accessibility::scaledSize(
+                        active ? 40 : kTimelineTopRowHeight));
+                    if (active) {
+                      impl_->timelineLayout_->insertWidget(
+                          impl_->timelineLayout_->count() - 1, impl_->navigator_);
+                    } else if (auto* rightLayout = qobject_cast<QVBoxLayout*>(impl_->rightPanel_->layout())) {
+                      rightLayout->addWidget(impl_->navigator_);
+                    }
+                    impl_->navigator_->show();
                   }
                   impl_->graphEditorVisible_ = active;
                   if (impl_->timelineModeButton_) {
@@ -6836,7 +6946,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   curvePropertyLayout->setContentsMargins(8, 8, 8, 8);
   curvePropertyLayout->setSpacing(6);
   auto *curvePropertySummary = impl_->curvePropertySummaryLabel_ =
-      new QLabel(QStringLiteral("Curve Targets: 0"));
+      new QLabel(QStringLiteral("Animated Channels"));
   auto *curvePropertyList = impl_->curvePropertyList_ = new QListWidget();
   curvePropertySummary->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
   {
@@ -6848,6 +6958,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
     curvePropertySummary->setPalette(pal);
   }
   curvePropertyList->setSelectionMode(QAbstractItemView::SingleSelection);
+  curvePropertyList->setItemDelegate(new CurveChannelDelegate(curvePropertyList));
   curvePropertyList->setFocusPolicy(Qt::StrongFocus);
   curvePropertyList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
   curvePropertyList->setMinimumHeight(108);
@@ -6859,7 +6970,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   curvePropertyList->setSpacing(0);
   {
     QPalette pal = curvePropertyList->palette();
-    pal.setColor(QPalette::Base, QColor(25, 28, 31));
+    pal.setColor(QPalette::Base, QColor(27, 29, 31));
     pal.setColor(QPalette::AlternateBase, QColor(25, 28, 31));
     pal.setColor(QPalette::Highlight, QColor(29, 67, 103));
     pal.setColor(QPalette::HighlightedText, QColor(242, 246, 250));
@@ -6913,12 +7024,12 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   }
   leftLayout->addWidget(leftSplitter, 1);
   leftLayout->addWidget(curvePropertyPanel, 1);
-  auto *leftNavigatorSpacer = new QWidget();
+  auto *leftNavigatorSpacer = impl_->leftNavigatorSpacer_ = new QWidget();
   leftNavigatorSpacer->setObjectName(QStringLiteral("timelineLeftNavigatorSpacer"));
   leftNavigatorSpacer->setFixedHeight(Accessibility::scaledSize(kTimelineTopRowHeight));
   leftLayout->addWidget(leftNavigatorSpacer);
 
-  auto leftPanel = new QWidget();
+  auto leftPanel = impl_->timelineLeftPanel_ = new QWidget();
   leftPanel->setObjectName(QStringLiteral("timelineLeftPanel"));
   leftPanel->setLayout(leftLayout);
   {
@@ -6952,14 +7063,14 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   painterTrackView->setDurationFrames(kDefaultTimelineFrames);
   painterTrackView->setTrackCount(1);
   painterTrackView->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-  curveEditor->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+  curveEditor->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
   curveEditor->setMinimumHeight(180);
   curveEditor->setHandleEditingEnabled(true);
   impl_->curveHandleEditingEnabled_ = true;
   curveEditor->setVisible(true);
   impl_->curveEditorGraphMode_ = curveEditorGraphModeFromSettings();
 
-  auto *curveHeader = new QWidget();
+  auto *curveHeader = impl_->curveToolbar_ = new QWidget();
   curveHeader->setObjectName(QStringLiteral("timelineCurveHeader"));
   curveHeader->setFixedHeight(Accessibility::scaledSize(42));
   curveHeader->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
@@ -6987,6 +7098,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   impl_->curveEditorSummaryLabel_->setTextInteractionFlags(Qt::NoTextInteraction);
   impl_->curveEditorSummaryLabel_->setToolTip(QStringLiteral("選択したキーフレームのカーブ編集ビュー"));
   curveHeaderLayout->addWidget(impl_->curveEditorSummaryLabel_);
+  impl_->curveEditorSummaryLabel_->hide();
   curveHeaderLayout->addSpacing(8);
   impl_->curveEditorModeButton_ = new QToolButton(curveHeader);
   impl_->curveEditorModeButton_->setObjectName(QStringLiteral("timelineCurveEditorModeButton"));
@@ -7299,7 +7411,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   curveFooterLayout->addWidget(impl_->curveEditorFrameButton_);
   curveFooterLayout->addWidget(impl_->curveEditorValueButton_);
   curveFooterLayout->addSpacing(12);
-  auto *curveEditHint = new QLabel(
+  auto *curveEditHint = impl_->curveKeyEditHint_ = new QLabel(
       QStringLiteral("Select a key to edit frame and value"), curveFooter);
   QPalette hintPalette = curveEditHint->palette();
   hintPalette.setColor(QPalette::WindowText, QColor(132, 142, 151));
@@ -8133,7 +8245,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
 
   auto *rightPanel = createTimelineRightPanel(
       timeNavigatorWidget, scrubBar, workAreaWidget, painterTrackView,
-      impl_->gpuTimelineContainer_, impl_->gpuCurveContainer_, curveHeader,
+      impl_->gpuTimelineContainer_, impl_->gpuCurveContainer_, nullptr,
       curveFooter, curveEditor, this);
   impl_->rightPanel_ = rightPanel;
   impl_->timelinePainterPage_ = timelineRightPanelPainterPage(rightPanel);
@@ -8407,7 +8519,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   QTimer::singleShot(0, this, [updateZoom]() { updateZoom(); });
 
   // Ŝ̃^CCXvb^[
-  auto mainSplitter = new QSplitter(Qt::Horizontal);
+  auto mainSplitter = impl_->mainSplitter_ = new QSplitter(Qt::Horizontal);
   mainSplitter->setObjectName(QStringLiteral("timelineMainSplitter"));
   mainSplitter->setHandleWidth(4);
   mainSplitter->addWidget(leftPanel);
@@ -8426,8 +8538,10 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   auto label = new ArtifactTimelineBottomLabel();
   impl_->timelineLabel_ = label;
 
-  auto layout = new QVBoxLayout();
+  auto layout = impl_->timelineLayout_ = new QVBoxLayout();
   layout->addWidget(headerWidget);
+  layout->addWidget(curveHeader);
+  curveHeader->hide();
   layout->addWidget(mainSplitter);
   layout->addWidget(label);
   layout->setSpacing(0);
