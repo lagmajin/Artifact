@@ -99,6 +99,19 @@ ParticleEmitter* firstEmitterOrCreate(ParticleSystem* system)
     return system->createEmitter();
 }
 
+bool hasParticleImageSource(const ParticleSystem* system)
+{
+    if (!system) {
+        return false;
+    }
+    for (const auto& emitter : system->emitters()) {
+        if (emitter && !emitter->params().texturePath.isEmpty()) {
+            return true;
+        }
+    }
+    return false;
+}
+
 float safeParticleFps(float value)
 {
     return std::isfinite(value)
@@ -601,6 +614,11 @@ void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
 
     const int64_t frameNumber = currentFrame();
     const bool rendererReady = renderer->isInitialized();
+    // The GPU particle shader has no image SRV/flipbook binding yet. Keep
+    // textured 2D emitters on the existing cached image path so sequence and
+    // atlas sources remain visible in the regular composition viewport.
+    const bool useImageFlipbookPath = !is3D() &&
+        hasParticleImageSource(impl_->particleSystem.get());
     // 1. 決定論的なシミュレーション状態の更新
     // ※ goToFrame は内部で reset() と forward simulation を行う
     float fps = 30.0f;
@@ -620,7 +638,7 @@ void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
 
     // 2. GPU レンダリングパス
     // Diligent 経路が使える場合は billboard 描画を優先し、ここではソフト描画へ落とさない
-    if (rendererReady) {
+    if (rendererReady && !useImageFlipbookPath) {
         const auto sourceData = impl_->particleSystem->captureRenderData();
         auto coreData = toCoreParticleRenderData(sourceData);
         coreData.options = coreRenderOptionsFromSettings(
@@ -732,6 +750,11 @@ bool ArtifactParticleLayer::drawSurfaceGPU(ArtifactIRenderer* renderer,
         return false;
     }
     if (!renderer->isInitialized()) {
+        return false;
+    }
+    if (hasParticleImageSource(impl_->particleSystem.get())) {
+        // The offscreen GPU particle shader cannot sample emitter images;
+        // callers already fall back to renderFrame() when this returns false.
         return false;
     }
 
