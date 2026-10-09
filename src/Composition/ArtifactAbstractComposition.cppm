@@ -83,6 +83,7 @@ import ArtifactCore.Control.External;
 import Memory.SharedPtr;
 import Property.SerializationBridge;
 import Animation.Value;
+import Math.Interpolate;
 import Audio.Modulation.Router;
 import Physics.System;
 import Physics.Mpm2D;
@@ -1051,6 +1052,176 @@ void installCompositionScriptApi(ArtifactAbstractComposition* composition)
     }
     return layer->setLayerPropertyValue(
         QString::fromStdString(std::string(path)), convertedValue);
+  };
+  // ─── Slices 1-3: property reference / keyframe read-write / enumeration ───
+  // Resolves a (target, path) pair into the owning layer and its property.
+  // The target follows the same rules as getProperty (""/"self"/"this",
+  // layer name, "Comp/Layer", or an id reference).
+  const auto resolveScriptTargetProperty =
+      [composition](const ArtifactScriptValue& target, std::string_view path)
+      -> std::pair<ArtifactAbstractLayerPtr, ArtifactCore::AbstractPropertyPtr> {
+    QVariant converted;
+    if (!scriptValueToVariant(target, converted)) return {};
+    const ArtifactAbstractLayerPtr layer = resolveScriptLayerTarget(
+        composition, converted.toString().toStdString(), scriptSelfLayer());
+    if (!layer) return {};
+    return {layer, layer->getProperty(QString::fromStdString(std::string(path)))};
+  };
+  api.hasProperty = [resolveScriptTargetProperty](const ArtifactScriptValue& target,
+                                                  std::string_view path) {
+    return static_cast<bool>(resolveScriptTargetProperty(target, path).second);
+  };
+  api.propertyNames = [composition](const ArtifactScriptValue& target) {
+    std::vector<std::string> names;
+    QVariant converted;
+    if (!scriptValueToVariant(target, converted)) return names;
+    const ArtifactAbstractLayerPtr layer = resolveScriptLayerTarget(
+        composition, converted.toString().toStdString(), scriptSelfLayer());
+    if (!layer) return names;
+    for (const auto& group : layer->getLayerPropertyGroups()) {
+      for (const auto& property : group.allProperties()) {
+        if (property) names.push_back(property->getName().toStdString());
+      }
+    }
+    return names;
+  };
+  api.isAnimatable = [resolveScriptTargetProperty](const ArtifactScriptValue& target,
+                                                   std::string_view path) {
+    const auto property = resolveScriptTargetProperty(target, path).second;
+    return property && property->isAnimatable();
+  };
+  api.hasKeyframes = [resolveScriptTargetProperty](const ArtifactScriptValue& target,
+                                                   std::string_view path) {
+    const auto property = resolveScriptTargetProperty(target, path).second;
+    return property && property->hasKeyFrames();
+  };
+  api.keyframeCount = [resolveScriptTargetProperty](const ArtifactScriptValue& target,
+                                                    std::string_view path) -> std::int64_t {
+    const auto property = resolveScriptTargetProperty(target, path).second;
+    return property ? static_cast<std::int64_t>(property->keyFrameCount()) : 0;
+  };
+  api.hasKeyframeAt = [resolveScriptTargetProperty](
+                          const ArtifactScriptValue& target, std::string_view path,
+                          std::int64_t frame) {
+    const auto resolved = resolveScriptTargetProperty(target, path);
+    if (!resolved.first || !resolved.second) return false;
+    return resolved.second->hasKeyFrameAt(resolved.first->keyframeTimeAtFrame(frame));
+  };
+  api.valueAtFrame = [resolveScriptTargetProperty](const ArtifactScriptValue& target,
+                                                   std::string_view path,
+                                                   std::int64_t frame) {
+    const auto resolved = resolveScriptTargetProperty(target, path);
+    if (!resolved.first || !resolved.second) return ArtifactScriptValue{};
+    return variantToScriptValue(
+        resolved.second->interpolateValue(resolved.first->keyframeTimeAtFrame(frame)));
+  };
+  // Interp names accepted by addKeyframe. Mirrors the WorkspaceAutomation
+  // setKeyframe aliases so both automation paths agree; unknown names fall
+  // back to Linear instead of failing the write.
+  const auto scriptInterpolationFromName = [](std::string_view name) {
+    const QString key =
+        QString::fromLatin1(name.data(), static_cast<qsizetype>(name.size()))
+            .trimmed()
+            .toLower();
+    using ArtifactCore::InterpolationType;
+    if (key == QStringLiteral("constant") || key == QStringLiteral("step"))
+      return InterpolationType::Constant;
+    if (key == QStringLiteral("smooth")) return InterpolationType::Smooth;
+    if (key == QStringLiteral("easein")) return InterpolationType::EaseIn;
+    if (key == QStringLiteral("easeout")) return InterpolationType::EaseOut;
+    if (key == QStringLiteral("easeinout") || key == QStringLiteral("ease-in-out") ||
+        key == QStringLiteral("easy ease"))
+      return InterpolationType::EaseInOut;
+    if (key == QStringLiteral("bezier") || key == QStringLiteral("beziercurve"))
+      return InterpolationType::Bezier;
+    return InterpolationType::Linear;
+  };
+  // Readback counterpart so getKeyframes rows round-trip through addKeyframe.
+  const auto scriptInterpolationName = [](ArtifactCore::InterpolationType type) {
+    using ArtifactCore::InterpolationType;
+    switch (type) {
+    case InterpolationType::Constant: return std::string("constant");
+    case InterpolationType::Smooth: return std::string("smooth");
+    case InterpolationType::EaseIn: return std::string("easein");
+    case InterpolationType::EaseOut: return std::string("easeout");
+    case InterpolationType::EaseInOut: return std::string("easeinout");
+    case InterpolationType::Bezier: return std::string("bezier");
+    case InterpolationType::Quadratic: return std::string("quadratic");
+    case InterpolationType::Cubic: return std::string("cubic");
+    case InterpolationType::Quartic: return std::string("quartic");
+    case InterpolationType::Quintic: return std::string("quintic");
+    case InterpolationType::Sine: return std::string("sine");
+    case InterpolationType::Exponential: return std::string("exponential");
+    case InterpolationType::Circular: return std::string("circular");
+    case InterpolationType::BounceIn: return std::string("bouncein");
+    case InterpolationType::BounceOut: return std::string("bounceout");
+    case InterpolationType::ElasticIn: return std::string("elasticin");
+    case InterpolationType::ElasticOut: return std::string("elasticout");
+    case InterpolationType::BackIn: return std::string("backin");
+    case InterpolationType::BackOut: return std::string("backout");
+    default: return std::string("linear");
+    }
+  };
+  api.addKeyframe = [resolveScriptTargetProperty, scriptInterpolationFromName](
+                        const ArtifactScriptValue& target, std::string_view path,
+                        std::int64_t frame, const ArtifactScriptValue& value,
+                        std::string_view interp) {
+    const auto resolved = resolveScriptTargetProperty(target, path);
+    if (!resolved.first || !resolved.second) return false;
+    QVariant converted;
+    if (std::holds_alternative<std::monostate>(value)) {
+      converted = resolved.second->getValue();
+    } else if (!scriptValueToVariant(value, converted)) {
+      return false;
+    }
+    // The timeline path promotes the property when it keys it; match that so
+    // scripts can key properties that default to non-animatable.
+    if (!resolved.second->isAnimatable()) resolved.second->setAnimatable(true);
+    resolved.second->addKeyFrame(resolved.first->keyframeTimeAtFrame(frame), converted,
+                                 scriptInterpolationFromName(interp));
+    const bool rejected = !resolved.second->lastError().isEmpty();
+    if (!rejected) resolved.first->changed();
+    return !rejected;
+  };
+  api.removeKeyframe = [resolveScriptTargetProperty](const ArtifactScriptValue& target,
+                                                     std::string_view path,
+                                                     std::int64_t frame) {
+    const auto resolved = resolveScriptTargetProperty(target, path);
+    if (!resolved.first || !resolved.second) return false;
+    // Missing keys are a no-op success so cleanup loops stay simple; false
+    // means the layer or path itself did not resolve.
+    if (resolved.second->hasKeyFrames()) {
+      resolved.second->removeKeyFrame(resolved.first->keyframeTimeAtFrame(frame));
+      resolved.first->changed();
+    }
+    return true;
+  };
+  api.clearKeyframes = [resolveScriptTargetProperty](const ArtifactScriptValue& target,
+                                                     std::string_view path) {
+    const auto resolved = resolveScriptTargetProperty(target, path);
+    if (!resolved.first || !resolved.second) return false;
+    if (resolved.second->hasKeyFrames()) {
+      resolved.second->clearKeyFrames();
+      resolved.first->changed();
+    }
+    return true;
+  };
+  api.keyframes = [resolveScriptTargetProperty, scriptInterpolationName](
+                      const ArtifactScriptValue& target, std::string_view path) {
+    std::vector<ArtifactScriptCompositionApi::KeyframeRow> rows;
+    const auto resolved = resolveScriptTargetProperty(target, path);
+    if (!resolved.first || !resolved.second) return rows;
+    const auto scale = resolved.first->keyframeTimeScale();
+    const auto keys = resolved.second->getKeyFrames();
+    rows.reserve(keys.size());
+    for (const auto& key : keys) {
+      ArtifactScriptCompositionApi::KeyframeRow row;
+      row.frame = key.time.toFrameCount(scale);
+      row.value = variantToScriptValue(key.value);
+      row.interp = scriptInterpolationName(key.interpolation);
+      rows.push_back(std::move(row));
+    }
+    return rows;
   };
   ArtifactScriptHost::global().installCompositionApi(api);
   // `this.<prop>` shorthand. Registered here (not in the library block) because
