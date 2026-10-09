@@ -1077,14 +1077,14 @@ void ParticleEmitter::updateParticle(Particle& p, float deltaTime)
     }
     p.velocity += p.acceleration * deltaTime;
     
-    // Apply drag
-    // Exponential decay form: v *= (1 - drag)^dt stays stable for any drag
-    // magnitude. The previous linear form (1 - drag*dt) produced negative
-    // factors (velocity reversal + divergence) once drag > 1/dt.
-    if (params_.drag > 0.0f) {
-        const float decay = std::pow(std::max(0.0f, 1.0f - std::min(params_.drag, 1.0f)),
-                                     deltaTime);
-        p.velocity *= decay;
+    // Apply exponential drag. A linear factor such as (1 - drag * dt) can
+    // reverse velocity at larger drag values; exp(-drag * dt) stays bounded
+    // and preserves gradual damping for drag values above 1.
+    const float safeDrag = std::isfinite(params_.drag)
+        ? std::max(0.0f, params_.drag)
+        : 0.0f;
+    if (safeDrag > 0.0f) {
+        p.velocity *= std::exp(-safeDrag * deltaTime);
     }
     
     p.prevPosition = p.position;
