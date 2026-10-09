@@ -4,6 +4,12 @@
 #include <QVector3D>
 #include <QColor>
 #include <QImage>
+#include <QDir>
+#include <QFileInfo>
+#include <QImageReader>
+#include <QCollator>
+#include <QSize>
+#include <QStringList>
 #include <QLinearGradient>
 #include <QPainter>
 #include <QRandomGenerator>
@@ -167,6 +173,72 @@ QImage loadFlipbookAtlasImage(const QString& path)
         return {};
     }
     return image.convertToFormat(QImage::Format_ARGB32);
+}
+
+struct FlipbookSource {
+    QImage atlas;
+    std::vector<QImage> sequence;
+
+    bool isSequence() const noexcept { return !sequence.empty(); }
+};
+
+FlipbookSource loadFlipbookSource(const QString& path)
+{
+    FlipbookSource source;
+    if (path.isEmpty()) {
+        return source;
+    }
+
+    const QFileInfo pathInfo(path);
+    if (!pathInfo.isDir()) {
+        source.atlas = loadFlipbookAtlasImage(path);
+        return source;
+    }
+
+    const QDir directory(path);
+    QStringList frameFiles = directory.entryList(
+        {QStringLiteral("*.png"), QStringLiteral("*.PNG")},
+        QDir::Files | QDir::Readable, QDir::NoSort);
+    QCollator filenameCollator;
+    filenameCollator.setNumericMode(true);
+    std::sort(frameFiles.begin(), frameFiles.end(),
+        [&filenameCollator](const QString& left, const QString& right) {
+            return filenameCollator.compare(left, right) < 0;
+        });
+    // Decode once on first use, then retain a bounded source for later frames.
+    constexpr qsizetype MaxSequenceFrames = 256;
+    constexpr qint64 MaxSequencePixels = 4 * 1024 * 1024;
+    if (frameFiles.isEmpty() || frameFiles.size() > MaxSequenceFrames) {
+        return source;
+    }
+
+    qint64 totalPixels = 0;
+    source.sequence.reserve(static_cast<size_t>(frameFiles.size()));
+    for (const QString& frameFile : frameFiles) {
+        const QString framePath = directory.filePath(frameFile);
+        QImageReader reader(framePath);
+        const QSize frameSize = reader.size();
+        if (!frameSize.isValid() || frameSize.width() > 8192 ||
+            frameSize.height() > 8192) {
+            source.sequence.clear();
+            return source;
+        }
+        const qint64 framePixels = static_cast<qint64>(frameSize.width()) *
+            static_cast<qint64>(frameSize.height());
+        if (framePixels <= 0 || framePixels > MaxSequencePixels - totalPixels) {
+            source.sequence.clear();
+            return source;
+        }
+
+        QImage frame = reader.read();
+        if (frame.isNull() || frame.size() != frameSize) {
+            source.sequence.clear();
+            return source;
+        }
+        totalPixels += framePixels;
+        source.sequence.push_back(std::move(frame));
+    }
+    return source;
 }
 
 } // namespace
@@ -1426,7 +1498,7 @@ public:
     double simulatedFps = 0.0;
     double simulatedTime = 0.0;
     QVector3D cameraPosition;
-    std::map<QString, QImage> flipbookAtlases;
+    std::map<QString, FlipbookSource> flipbookSources;
     // Software raster sprite cache: pre-rendered gradient sprites keyed by
     // (shape, integer size, exact 8-bit RGBA). Content-addressed, so no
     // invalidation is ever needed; bounded by pixels and entry count.
@@ -1823,27 +1895,53 @@ QImage ParticleSystem::updateAndRenderSoftwareFrame(float deltaTime, int width, 
         const float radiusX2 = radiusX * radiusX;
         const float radiusY2 = radiusY * radiusY;
 
-        const QImage* atlas = nullptr;
-        QRect atlasFrame;
+        const QImage* spriteImage = nullptr;
+        QRect spriteFrame;
         if (emitterParams && !emitterParams->texturePath.isEmpty()) {
-            auto [it, inserted] = impl_->flipbookAtlases.try_emplace(emitterParams->texturePath);
-            if (inserted) {
-                it->second = loadFlipbookAtlasImage(emitterParams->texturePath);
+            auto it = impl_->flipbookSources.find(emitterParams->texturePath);
+            if (it == impl_->flipbookSources.end() &&
+                impl_->flipbookSources.size() < 8) {
+                it = impl_->flipbookSources.emplace(
+                    emitterParams->texturePath,
+                    loadFlipbookSource(emitterParams->texturePath)).first;
             }
 
-            if (!it->second.isNull()) {
+            if (it != impl_->flipbookSources.end() && it->second.isSequence()) {
+                const int sequenceSize = static_cast<int>(it->second.sequence.size());
+                const int start = std::clamp(
+                    emitterParams->startFrame, 0, sequenceSize - 1);
+                const int available = std::max(1, std::min(
+                    emitterParams->frameCount, sequenceSize - start));
+                int frameOffset = 0;
+                if (emitterParams->randomFrame) {
+                    frameOffset = std::max(0, p->id) % available;
+                } else {
+                    const float frameRate = std::isfinite(emitterParams->frameRate)
+                        ? std::clamp(emitterParams->frameRate, 0.0f, 1000.0f)
+                        : 0.0f;
+                    const double frameProgress = std::floor(
+                        static_cast<double>(p->age) * static_cast<double>(frameRate));
+                    frameOffset = static_cast<int>(std::fmod(
+                        std::max(0.0, frameProgress), static_cast<double>(available)));
+                }
+                const QImage& frame = it->second.sequence[
+                    static_cast<size_t>(start + frameOffset)];
+                spriteImage = &frame;
+                spriteFrame = frame.rect();
+            } else if (it != impl_->flipbookSources.end() &&
+                       !it->second.atlas.isNull()) {
                 const int rows = std::clamp(p->spriteRows, 1, 1024);
                 const int cols = std::clamp(p->spriteCols, 1, 1024);
-                const int frameWidth = it->second.width() / cols;
-                const int frameHeight = it->second.height() / rows;
+                const int frameWidth = it->second.atlas.width() / cols;
+                const int frameHeight = it->second.atlas.height() / rows;
                 if (frameWidth > 0 && frameHeight > 0) {
                     const int frame = std::clamp(p->spriteFrame, 0, rows * cols - 1);
-                    atlasFrame = QRect(
+                    spriteFrame = QRect(
                         (frame % cols) * frameWidth,
                         (frame / cols) * frameHeight,
                         frameWidth,
                         frameHeight);
-                    atlas = &it->second;
+                    spriteImage = &it->second.atlas;
                 }
             }
         }
@@ -1877,7 +1975,7 @@ QImage ParticleSystem::updateAndRenderSoftwareFrame(float deltaTime, int width, 
                     const float t = std::clamp((dist2 - edge) / std::max(0.0001f, 1.0f - edge), 0.0f, 1.0f);
                     falloff = 1.0f - (t * t * (3.0f - 2.0f * t));
                 }
-                if (atlas) {
+                if (spriteImage) {
                     const float u = std::clamp(
                         (static_cast<float>(dx) / radiusX + 1.0f) * 0.5f,
                         0.0f,
@@ -1886,13 +1984,13 @@ QImage ParticleSystem::updateAndRenderSoftwareFrame(float deltaTime, int width, 
                         (static_cast<float>(dy) / radiusY + 1.0f) * 0.5f,
                         0.0f,
                         1.0f);
-                    const int sourceX = atlasFrame.left() + std::min(
-                        atlasFrame.width() - 1,
-                        static_cast<int>(u * static_cast<float>(atlasFrame.width())));
-                    const int sourceY = atlasFrame.top() + std::min(
-                        atlasFrame.height() - 1,
-                        static_cast<int>(v * static_cast<float>(atlasFrame.height())));
-                    const QRgb source = atlas->pixel(sourceX, sourceY);
+                    const int sourceX = spriteFrame.left() + std::min(
+                        spriteFrame.width() - 1,
+                        static_cast<int>(u * static_cast<float>(spriteFrame.width())));
+                    const int sourceY = spriteFrame.top() + std::min(
+                        spriteFrame.height() - 1,
+                        static_cast<int>(v * static_cast<float>(spriteFrame.height())));
+                    const QRgb source = spriteImage->pixel(sourceX, sourceY);
                     sourceR = qRed(source);
                     sourceG = qGreen(source);
                     sourceB = qBlue(source);
@@ -2026,8 +2124,12 @@ void ParticleSystem::render(QPainter& painter, const QTransform& transform)
     const bool cullEnabled =
         cullDeviceWidth > 0 && cullDeviceHeight > 0;
     
-    // Collect all particles from all emitters
-    std::vector<const Particle*> allParticles;
+    // Keep each particle paired with its emitter's sprite source.
+    struct RenderParticle {
+        const Particle* particle = nullptr;
+        const EmitterParams* emitterParams = nullptr;
+    };
+    std::vector<RenderParticle> allParticles;
     allParticles.reserve(static_cast<std::size_t>(std::max(
         0, std::min(totalParticleCount(), 1000000))));
     const auto finiteVector = [](const QVector3D& value) {
@@ -2049,7 +2151,7 @@ void ParticleSystem::render(QPainter& painter, const QTransform& transform)
         if (!emitter) continue;
         for (const auto& p : emitter->particles()) {
             if (finiteParticle(p)) {
-                allParticles.push_back(&p);
+                allParticles.push_back({&p, &emitter->params()});
             }
         }
     }
@@ -2058,20 +2160,22 @@ void ParticleSystem::render(QPainter& painter, const QTransform& transform)
     if (renderSettings_.sortMode == ParticleRenderSettings::SortMode::Distance) {
         // Sort by distance from camera (back to front for proper blending)
         std::sort(allParticles.begin(), allParticles.end(),
-            [this](const Particle* a, const Particle* b) {
+            [this](const RenderParticle& left, const RenderParticle& right) {
+                const Particle* a = left.particle;
+                const Particle* b = right.particle;
                 float distA = (a->position - impl_->cameraPosition).lengthSquared();
                 float distB = (b->position - impl_->cameraPosition).lengthSquared();
                 return distA > distB;  // Far to near
             });
     } else if (renderSettings_.sortMode == ParticleRenderSettings::SortMode::OldestFirst) {
         std::sort(allParticles.begin(), allParticles.end(),
-            [](const Particle* a, const Particle* b) {
-                return a->age > b->age;
+            [](const RenderParticle& a, const RenderParticle& b) {
+                return a.particle->age > b.particle->age;
             });
     } else if (renderSettings_.sortMode == ParticleRenderSettings::SortMode::YoungestFirst) {
         std::sort(allParticles.begin(), allParticles.end(),
-            [](const Particle* a, const Particle* b) {
-                return a->age < b->age;
+            [](const RenderParticle& a, const RenderParticle& b) {
+                return a.particle->age < b.particle->age;
             });
     }
     
@@ -2169,7 +2273,9 @@ void ParticleSystem::render(QPainter& painter, const QTransform& transform)
     };
     
     // Render particles
-    for (const Particle* p : allParticles) {
+    for (const RenderParticle& renderParticle : allParticles) {
+        const Particle* p = renderParticle.particle;
+        const EmitterParams* emitterParams = renderParticle.emitterParams;
         QColor color = p->color;
         const float safeOpacity = std::clamp(p->opacity, 0.0f, 1.0f);
         color.setAlphaF(color.alphaF() * safeOpacity);
@@ -2231,7 +2337,70 @@ void ParticleSystem::render(QPainter& painter, const QTransform& transform)
         painter.save();
         painter.translate(pos);
 
-        if (stretch > 1.05f) {
+        const QImage* particleSprite = nullptr;
+        QRect particleSpriteRect;
+        if (emitterParams && !emitterParams->texturePath.isEmpty()) {
+            auto sourceIt = impl_->flipbookSources.find(emitterParams->texturePath);
+            if (sourceIt == impl_->flipbookSources.end() &&
+                impl_->flipbookSources.size() < 8) {
+                sourceIt = impl_->flipbookSources.emplace(
+                    emitterParams->texturePath,
+                    loadFlipbookSource(emitterParams->texturePath)).first;
+            }
+            if (sourceIt != impl_->flipbookSources.end()) {
+                const FlipbookSource& source = sourceIt->second;
+                if (source.isSequence()) {
+                    const int sequenceSize = static_cast<int>(source.sequence.size());
+                    const int start = std::clamp(
+                        emitterParams->startFrame, 0, sequenceSize - 1);
+                    const int available = std::max(1, std::min(
+                        emitterParams->frameCount, sequenceSize - start));
+                    int frameOffset = 0;
+                    if (emitterParams->randomFrame) {
+                        frameOffset = std::max(0, p->id) % available;
+                    } else {
+                        const float frameRate = std::isfinite(emitterParams->frameRate)
+                            ? std::clamp(emitterParams->frameRate, 0.0f, 1000.0f)
+                            : 0.0f;
+                        const double frameProgress = std::floor(
+                            static_cast<double>(p->age) * static_cast<double>(frameRate));
+                        frameOffset = static_cast<int>(std::fmod(
+                            std::max(0.0, frameProgress),
+                            static_cast<double>(available)));
+                    }
+                    const QImage& frame = source.sequence[
+                        static_cast<size_t>(start + frameOffset)];
+                    particleSprite = &frame;
+                    particleSpriteRect = frame.rect();
+                } else if (!source.atlas.isNull()) {
+                    const int rows = std::clamp(p->spriteRows, 1, 1024);
+                    const int cols = std::clamp(p->spriteCols, 1, 1024);
+                    const int frameWidth = source.atlas.width() / cols;
+                    const int frameHeight = source.atlas.height() / rows;
+                    if (frameWidth > 0 && frameHeight > 0) {
+                        const int frame = std::clamp(
+                            p->spriteFrame, 0, rows * cols - 1);
+                        particleSprite = &source.atlas;
+                        particleSpriteRect = QRect(
+                            (frame % cols) * frameWidth,
+                            (frame / cols) * frameHeight,
+                            frameWidth,
+                            frameHeight);
+                    }
+                }
+            }
+        }
+
+        if (particleSprite) {
+            painter.rotate(p->rotation);
+            painter.setOpacity(color.alphaF());
+            const float spriteWidth = size * 2.0f;
+            const float spriteHeight = spriteWidth * stretch;
+            painter.drawImage(
+                QRectF(-spriteWidth * 0.5f, -spriteHeight * 0.5f,
+                       spriteWidth, spriteHeight),
+                *particleSprite, particleSpriteRect);
+        } else if (stretch > 1.05f) {
             painter.rotate(p->rotation);
             const float width = std::max(0.75f, size * 0.18f);
             const float height = std::max(width, size * stretch);
