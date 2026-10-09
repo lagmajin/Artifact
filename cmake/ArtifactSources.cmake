@@ -2,6 +2,10 @@
 # Add new .ixx/.cppm/.cpp files here; CMake does not discover them recursively.
 # Source-only public .cppm units belong in ARTIFACT_APP_MODULE_SOURCES.
 
+set(ARTIFACT_APP_ENTRY_SOURCES
+    "${CMAKE_CURRENT_LIST_DIR}/../src/AppMainEntry.cpp"
+)
+
 set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../include/AI/AIClient.ixx"
     "${CMAKE_CURRENT_LIST_DIR}/../include/AI/AgentApprovalPolicy.ixx"
@@ -447,6 +451,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../include/Widgets/ArtifactCrowdSettingsWidget.ixx"
     "${CMAKE_CURRENT_LIST_DIR}/../include/Widgets/ArtifactCurveEditorWidget.ixx"
     "${CMAKE_CURRENT_LIST_DIR}/../include/Widgets/ArtifactDopeSheetWidget.ixx"
+    "${CMAKE_CURRENT_LIST_DIR}/../include/Widgets/ArtifactFilmstripWidget.ixx"
     "${CMAKE_CURRENT_LIST_DIR}/../include/Widgets/ArtifactExpressionCopilotWidget.ixx"
     "${CMAKE_CURRENT_LIST_DIR}/../include/Widgets/ArtifactFontPickerWidget.ixx"
     "${CMAKE_CURRENT_LIST_DIR}/../include/Widgets/ArtifactImportAssetsDialog.ixx"
@@ -1104,6 +1109,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactCrowdSettingsWidget.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactCurveEditorWidget.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactDopeSheetWidget.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactFilmstripWidget.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactExpressionCopilotWidget.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactFontPickerWidget.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactInspectorWidget.cppm"

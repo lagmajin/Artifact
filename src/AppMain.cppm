@@ -192,6 +192,7 @@ import Artifact.Widgets.ProjectManagerWidget;
 import Artifact.Widgets.CompositionGraphWidget;
 import Artifact.Widgets.ShaderGraphWidget;
 import Artifact.Widgets.CompositionAudioMixer;
+import Artifact.Widgets.Filmstrip;
 import Artifact.Widgets.DopeSheetWidget;
 import Artifact.Widgets.Timeline;
 import Artifact.Widgets.PerformanceProfilerWidget;
@@ -3783,8 +3784,13 @@ void sanitizeLayoutStore(ArtifactCore::FastSettingsStore &layoutStore) {
 }
 
 QString buildWindowTitle() {
-  QString title = QStringLiteral("Artifact %1")
-                      .arg(QStringLiteral(ARTIFACT_VERSION_STRING));
+  const bool uiTestApplication =
+      QCoreApplication::applicationName() ==
+      QStringLiteral("ArtifactStudioUiTest");
+  QString title = QStringLiteral("%1 %2")
+                      .arg(uiTestApplication ? QStringLiteral("Artifact UI Test")
+                                             : QStringLiteral("Artifact"),
+                           QStringLiteral(ARTIFACT_VERSION_STRING));
 
   const QString buildHash = QStringLiteral(ARTIFACT_BUILD_GIT_HASH);
   const QString buildStamp = QStringLiteral(ARTIFACT_BUILD_TIMESTAMP);
@@ -4790,13 +4796,28 @@ static int runCommandIRCli(int argc, char *argv[],
   return processed.exitCode;
 }
 
-int main(int argc, char *argv[]) {
+int Artifact::runApplication(int argc, char *argv[]) {
+  const QString executableBaseName =
+      QFileInfo(QString::fromLocal8Bit(argv[0])).completeBaseName();
+  const bool uiTestExecutable =
+      executableBaseName.compare(QStringLiteral("ArtifactUiTest"),
+                                 Qt::CaseInsensitive) == 0;
+  if (uiTestExecutable) {
+    QCoreApplication::setApplicationName(
+        QStringLiteral("ArtifactStudioUiTest"));
+    QStandardPaths::setTestModeEnabled(true);
+  }
+
   // Registered before function-local services are constructed, so this runs
   // after their exit handlers. Its marker distinguishes a completed process
   // exit from a shutdown that stalled during late static destruction.
   std::atexit(recordFinalProcessExitReached);
   configureWindowsUtf8Console();
-  ArtifactCore::CrashHandler::install();
+  const QString uiTestCrashDirectory = uiTestExecutable
+      ? QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation))
+            .filePath(QStringLiteral("crash_reports"))
+      : QString();
+  ArtifactCore::CrashHandler::install(uiTestCrashDirectory);
   ArtifactCore::CrashHandler::setCrashCallback([](const QString& crashReportPath) {
     if (auto *rq = Artifact::ArtifactRenderQueueService::instance()) {
       rq->sessionLedger().recordCrash(
@@ -5057,6 +5078,10 @@ int main(int argc, char *argv[]) {
 
   QApplication::setAttribute(Qt::AA_DontShowIconsInMenus, false);
   QApplication a(argc, argv);
+  if (uiTestExecutable) {
+    QCoreApplication::setApplicationName(
+        QStringLiteral("ArtifactStudioUiTest"));
+  }
   DialogLatencyEventFilter dialogLatencyFilter;
   a.installEventFilter(&dialogLatencyFilter);
   configureQtPaths();
@@ -6208,6 +6233,12 @@ int main(int argc, char *argv[]) {
           return new ArtifactCompositionAudioMixerWidget(mw);
         },
         QStringLiteral("timeline::"));
+    mw->addLazyDockedWidgetTabbedWithId(
+        QStringLiteral("Filmstrip View"), QStringLiteral("Filmstrip View"),
+        DockArea::Bottom,
+        [mw]() -> QWidget * { return createFilmstripWidget(mw); },
+        QStringLiteral("timeline::"));
+    mw->setDockVisible(QStringLiteral("Filmstrip View"), false);
     mw->addLazyDockedWidgetTabbedWithId(
         QStringLiteral("AI Cloud"), QStringLiteral("AI Cloud"),
         DockArea::Right,

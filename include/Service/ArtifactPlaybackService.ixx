@@ -263,6 +263,10 @@ public:
   int64_t nextRamPreviewBuildFrame() const;
   bool tryGetRamPreviewFrameImage(int64_t frame,
                                   ArtifactCore::ImageF32x4_RGBA &outImage) const;
+  // UI thumbnail boundary: sample into caller-owned, pre-sized storage.
+  // Does not copy or resize the full-resolution cached frame.
+  bool sampleRamPreviewThumbnail(int64_t frame,
+                                ArtifactCore::ImageF32x4_RGBA &thumbnail) const;
   void markRamPreviewFrameRequested(int64_t frame, const QString &reason = {});
   void markRamPreviewFrameReady(int64_t frame);
   bool storeRamPreviewFrameImage(int64_t frame,

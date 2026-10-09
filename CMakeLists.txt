@@ -208,6 +208,7 @@ endif()
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/ArtifactSources.cmake")
 set(APP_MODULES ${ARTIFACT_APP_MODULE_SOURCES})
 set(APP_IMPL ${ARTIFACT_APP_IMPL_SOURCES})
+set(APP_ENTRY_SOURCES ${ARTIFACT_APP_ENTRY_SOURCES})
 
 # The generated manifest is rooted at cmake/ and therefore contains
 # "../" segments, while split target manifests use normalized absolute paths.
@@ -2636,10 +2637,15 @@ target_link_libraries(ArtifactEffectsResidual INTERFACE
 add_library(ArtifactEffects ALIAS ArtifactEffectsResidual)
 
 add_executable(Artifact WIN32)
+add_executable(ArtifactUiTest WIN32)
+add_library(ArtifactAppRuntime OBJECT)
 
-set_target_properties(Artifact PROPERTIES
+set_target_properties(Artifact ArtifactUiTest ArtifactAppRuntime PROPERTIES
     CXX_STANDARD 23
     CXX_STANDARD_REQUIRED ON
+)
+
+set_target_properties(Artifact ArtifactUiTest PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
@@ -2673,17 +2679,22 @@ if(ARTIFACT_FEATURE_COMMAND_PALETTE)
 endif()
 
 if(TARGET __CMAKE::CXX23)
-    set_property(TARGET Artifact PROPERTY CXX_MODULE_STD ON)
+    set_property(TARGET ArtifactAppRuntime PROPERTY CXX_MODULE_STD ON)
 else()
-    set_property(TARGET Artifact PROPERTY CXX_MODULE_STD OFF)
+    set_property(TARGET ArtifactAppRuntime PROPERTY CXX_MODULE_STD OFF)
 endif()
 
-target_sources(Artifact PRIVATE ${APP_IMPL})
+target_sources(ArtifactAppRuntime PRIVATE ${APP_IMPL})
 if(_artifact_module_partitions)
-    target_sources(Artifact PRIVATE FILE_SET artifact_module_partitions
+    target_sources(ArtifactAppRuntime PRIVATE FILE_SET artifact_module_partitions
         TYPE CXX_MODULES FILES ${_artifact_module_partitions})
 endif()
-target_sources(Artifact PUBLIC FILE_SET CXX_MODULES FILES ${APP_MODULES})
+target_sources(ArtifactAppRuntime PUBLIC FILE_SET CXX_MODULES FILES ${APP_MODULES})
+target_sources(Artifact PRIVATE ${APP_ENTRY_SOURCES})
+target_sources(ArtifactUiTest PRIVATE ${APP_ENTRY_SOURCES})
+target_link_libraries(Artifact PRIVATE ArtifactAppRuntime)
+target_link_libraries(ArtifactUiTest PRIVATE ArtifactAppRuntime)
+add_dependencies(ArtifactUiTest Artifact)
 
 # Strict MSVC-cl only flags
 if(ARTIFACT_COMPILER_MSVC_CL)
@@ -3092,7 +3103,7 @@ list(FILTER ARTIFACT_ICON_RESOURCE_FILES INCLUDE REGEX "\\.(svg|png|json)$")
 list(FILTER ARTIFACT_ICON_RESOURCE_FILES EXCLUDE REGEX "\\.crdownload$")
 list(FILTER ARTIFACT_ICON_RESOURCE_FILES EXCLUDE REGEX "desktop\\.ini$")
 if(ARTIFACT_ICON_RESOURCE_FILES)
-    qt_add_resources(Artifact "ArtifactIconResources"
+    qt_add_resources(ArtifactAppRuntime "ArtifactIconResources"
         PREFIX "/icons"
         BASE "${CMAKE_CURRENT_SOURCE_DIR}/App/Icon"
         FILES ${ARTIFACT_ICON_RESOURCE_FILES}
@@ -3288,6 +3299,42 @@ elseif(WIN32 AND ARTIFACT_ENABLE_DIRECTSTORAGE)
         "DirectStorage SDK unavailable; portable asynchronous file I/O will be used")
 elseif(WIN32)
     message(STATUS "DirectStorage explicitly disabled")
+endif()
+
+# Compile the shared application implementation once and reuse it from both
+# launch executables. Keep the established application dependency order intact
+# on the shared target; each executable then links that same runtime surface.
+foreach(_artifact_shared_compile_property IN ITEMS
+    COMPILE_DEFINITIONS
+    COMPILE_OPTIONS
+    INCLUDE_DIRECTORIES)
+    get_target_property(_artifact_shared_compile_values
+        Artifact ${_artifact_shared_compile_property})
+    if(_artifact_shared_compile_values)
+        set_property(TARGET ArtifactAppRuntime APPEND PROPERTY
+            ${_artifact_shared_compile_property}
+            ${_artifact_shared_compile_values})
+        set_property(TARGET ArtifactUiTest APPEND PROPERTY
+            ${_artifact_shared_compile_property}
+            ${_artifact_shared_compile_values})
+    endif()
+endforeach()
+
+get_target_property(_artifact_shared_link_libraries Artifact LINK_LIBRARIES)
+list(REMOVE_ITEM _artifact_shared_link_libraries ArtifactAppRuntime)
+target_link_libraries(ArtifactAppRuntime PUBLIC ${_artifact_shared_link_libraries})
+set_property(TARGET Artifact PROPERTY LINK_LIBRARIES ArtifactAppRuntime)
+
+get_target_property(_artifact_ui_test_link_options Artifact LINK_OPTIONS)
+if(_artifact_ui_test_link_options)
+    target_link_options(ArtifactUiTest PRIVATE ${_artifact_ui_test_link_options})
+endif()
+get_target_property(_artifact_shared_link_directories Artifact LINK_DIRECTORIES)
+if(_artifact_shared_link_directories)
+    target_link_directories(ArtifactAppRuntime PUBLIC
+        ${_artifact_shared_link_directories})
+    target_link_directories(ArtifactUiTest PRIVATE
+        ${_artifact_shared_link_directories})
 endif()
 
 # ---------------------------------------------------------------------------
@@ -3528,6 +3575,18 @@ if(ARTIFACT_DEPLOY_DIR)
         COMMAND_EXPAND_LISTS
         VERBATIM
     )
+    add_custom_command(TARGET ArtifactUiTest POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${ARTIFACT_DEPLOY_DIR}/$<CONFIG>"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "$<TARGET_FILE:ArtifactUiTest>"
+            "${ARTIFACT_DEPLOY_DIR}/$<CONFIG>/"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:ArtifactUiTest>
+            "${ARTIFACT_DEPLOY_DIR}/$<CONFIG>/"
+        COMMENT "Copying ArtifactUiTest executable and runtime DLLs to ARTIFACT_DEPLOY_DIR"
+        COMMAND_EXPAND_LISTS
+        VERBATIM
+    )
     if(TARGET ArtifactProxyWorker)
         add_custom_command(TARGET Artifact POST_BUILD
             COMMAND "${CMAKE_COMMAND}" -E copy_if_different
@@ -3601,3 +3660,5 @@ if(ARTIFACT_DOTNET_EXECUTABLE AND EXISTS "${ARTIFACT_SCRIPTING_PROJECT}")
 else()
     message(STATUS "ArtifactScriptingDotnet disabled: dotnet or Artifact.Scripting.csproj not found")
 endif()
+
+set_target_properties(ArtifactUiTest PROPERTIES FOLDER "Artifact/Testing")

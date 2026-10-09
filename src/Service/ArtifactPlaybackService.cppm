@@ -65,6 +65,8 @@ import Frame.Debug;
 import Core.Diagnostics.Trace;
 import Diagnostics.Logger;
 import Image.ImageF32x4RGBAWithCache;
+import FloatRGBA;
+import Graphics.SurfaceColorContract;
 import Artifact.Composition.PlaybackController;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
@@ -3785,6 +3787,41 @@ bool ArtifactPlaybackService::tryGetRamPreviewFrameImage(
     return false;
   }
   return impl_->tryGetRamPreviewFrameImage(frame, outImage);
+}
+
+bool ArtifactPlaybackService::sampleRamPreviewThumbnail(
+    const int64_t frame, ArtifactCore::ImageF32x4_RGBA &thumbnail) const {
+  if (!impl_ || !impl_->isValidFrameIndex(frame) || thumbnail.isEmpty() ||
+      thumbnail.width() > 256 || thumbnail.height() > 256) {
+    return false;
+  }
+  const auto &state = impl_->frameCacheStates_[static_cast<size_t>(frame)];
+  if (!state.ready || !state.inRam || state.failed) return false;
+  const auto cached = impl_->ramPreviewImageCache_.find(frame);
+  if (cached == impl_->ramPreviewImageCache_.end()) return false;
+  const auto &source = cached->second.image();
+  if (source.isEmpty()) return false;
+  // getPixel/setPixel retain backing channel order. Preserve its descriptor
+  // so the explicit Qt display conversion also handles BGRA and premultiplication.
+  thumbnail.setColorDescriptor(source.colorDescriptor());
+  // Letterbox inside fixed storage without a full-resolution copy.
+  thumbnail.fill(ArtifactCore::FloatRGBA(0.0f, 0.0f, 0.0f, 0.0f));
+  const double scale = std::min(double(thumbnail.width()) / source.width(),
+                                double(thumbnail.height()) / source.height());
+  const int width = std::max(1, int(source.width() * scale));
+  const int height = std::max(1, int(source.height() * scale));
+  const int left = (thumbnail.width() - width) / 2;
+  const int top = (thumbnail.height() - height) / 2;
+  for (int y = 0; y < height; ++y) {
+    const int sy = std::min(source.height() - 1,
+                           int((y + 0.5) * source.height() / height));
+    for (int x = 0; x < width; ++x) {
+      const int sx = std::min(source.width() - 1,
+                             int((x + 0.5) * source.width() / width));
+      thumbnail.setPixel(left + x, top + y, source.getPixel(sx, sy));
+    }
+  }
+  return true;
 }
 
 void ArtifactPlaybackService::markRamPreviewFrameRequested(

@@ -41283,6 +41283,13 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
   bool useRamPreviewFallback = false;
 
+  // RGB inspection must use the transparent composite before viewport
+  // backgrounds and overlays are drawn, never the presented swap-chain.
+  const bool viewportRgbChannelRequested =
+      viewportChannelDisplayMode_ == ViewportChannelDisplayMode::Red ||
+      viewportChannelDisplayMode_ == ViewportChannelDisplayMode::Green ||
+      viewportChannelDisplayMode_ == ViewportChannelDisplayMode::Blue;
+
   QString ramPreviewFallbackReason = QStringLiteral("no-playback-service");
 
   bool playbackSameComposition = false;
@@ -41414,6 +41421,11 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       std::abs(lastRenderKeyState_.panX - panX) > 0.5f ||
 
       std::abs(lastRenderKeyState_.panY - panY) > 0.5f;
+
+  if (useRamPreviewFallback && viewportRgbChannelRequested) {
+    useRamPreviewFallback = false;
+    ramPreviewFallbackReason = QStringLiteral("rgb-channel-requires-live-composite");
+  }
 
   if (useRamPreviewFallback && viewportTransformChangedSinceLastFrame) {
 
@@ -41694,7 +41706,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     if (gpuBlendEnabled_ &&
         (hasGpuBlendJustification || hasVisible3DLayer ||
          screenSpaceGlobalIlluminationRequested ||
-         viewportMultiChannelRequested) &&
+         viewportMultiChannelRequested || viewportRgbChannelRequested) &&
         !blendPipelineReady_) {
       scheduleBlendPipelineInitialization(
           owner, 0,
@@ -41712,7 +41724,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         gpuBlendRequested &&
         (hasGpuBlendJustification || hasVisible3DLayer ||
          screenSpaceGlobalIlluminationRequested ||
-         viewportMultiChannelRequested);
+         viewportMultiChannelRequested || viewportRgbChannelRequested);
 
 
 
@@ -48460,11 +48472,12 @@ QImage CompositionRenderController::Impl::composeViewportChannelOverlayImage() c
         renderer_->readbackToImage(),
         readChannel(ArtifactIRenderer::ChannelType::Alpha));
   case ViewportChannelDisplayMode::Red:
-    return readChannel(ArtifactIRenderer::ChannelType::Red);
   case ViewportChannelDisplayMode::Green:
-    return readChannel(ArtifactIRenderer::ChannelType::Green);
   case ViewportChannelDisplayMode::Blue:
-    return readChannel(ArtifactIRenderer::ChannelType::Blue);
+    // These modes are presented from the composite SRV in the GPU path.
+    // If that surface is unavailable, retain the beauty frame rather than
+    // extracting a channel from the viewport background and UI overlays.
+    return {};
   case ViewportChannelDisplayMode::Depth:
     return pseudoColorGray(
         readChannel(ArtifactIRenderer::ChannelType::Depth), true);

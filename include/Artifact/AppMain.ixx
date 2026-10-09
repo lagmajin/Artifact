@@ -11,6 +11,5 @@ export module Artifact.AppMain;
 
 
 export namespace Artifact {
-    // Intentionally empty. The implementation (.cppm) defines
-    // the application entry point (main) and test helpers.
+    int runApplication(int argc, char* argv[]);
 }
