@@ -62,8 +62,9 @@ void centerMeshPositions(Mesh &mesh) {
     return;
   }
   auto &positionData = positions->data();
-  ArtifactCore::Parallel::For(0, static_cast<int>(positionData.size()), static_cast<int>(positionData.size()), [&](int index) {
-    positionData[index] -= center;
+  ArtifactCore::Parallel::ForSize(
+      0, positionData.size(), positionData.size(), [&](size_t index) {
+    positionData[static_cast<qsizetype>(index)] -= center;
   });
   mesh.updateBounds();
   mesh.invalidateSkinningBase();
@@ -1740,14 +1741,18 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
   // scratch buffer on demand so the common solid-without-overlay case does no
   // per-vertex transform work or allocation at all.
   QVector<QVector3D> &transformedVertices = impl_->overlayVertices_;
-  const int vertexCount = static_cast<int>(positions->data().size());
+  const qsizetype vertexCount = positions->data().size();
   if (needsWireOverlay || isPointCloud) {
     if (impl_->overlayVertexCount_ != vertexCount) {
       transformedVertices.resize(vertexCount);
       impl_->overlayVertexCount_ = vertexCount;
     }
-    ArtifactCore::Parallel::For(0, vertexCount, vertexCount, [&](int index) {
-      transformedVertices[index] = modelMatrix.map(positions->data()[index]);
+    ArtifactCore::Parallel::ForSize(
+        0, static_cast<size_t>(vertexCount), static_cast<size_t>(vertexCount),
+        [&](size_t index) {
+      const qsizetype vertexIndex = static_cast<qsizetype>(index);
+      transformedVertices[vertexIndex] =
+          modelMatrix.map(positions->data()[vertexIndex]);
     });
   }
 
@@ -1855,7 +1860,7 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
     }
     const FloatColor normalColor{1.0f, 0.72f, 0.08f, opacity() * 0.82f};
     const auto normalMatrix = modelMatrix.normalMatrix();
-    for (int index = 0; index < positions->data().size(); ++index) {
+    for (qsizetype index = 0; index < positions->data().size(); ++index) {
       const QVector3D localNormal = normals->data()[index];
       if (localNormal.lengthSquared() <= 1.0e-10f) {
         continue;

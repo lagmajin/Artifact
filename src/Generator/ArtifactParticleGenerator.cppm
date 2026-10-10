@@ -577,6 +577,58 @@ ParticleEmitter::~ParticleEmitter()
 {
 }
 
+bool ParticleEmitter::setEmissionTriangles(
+    const QVector<QVector3D>& triangleVertices)
+{
+    constexpr qsizetype MaxTriangleVertices = 2 * 1024 * 1024;
+    if (triangleVertices.isEmpty() || triangleVertices.size() % 3 != 0 ||
+        triangleVertices.size() > MaxTriangleVertices) {
+        clearEmissionTriangles();
+        return false;
+    }
+
+    std::vector<QVector3D> vertices;
+    std::vector<float> cumulativeAreas;
+    vertices.reserve(static_cast<size_t>(triangleVertices.size()));
+    cumulativeAreas.reserve(static_cast<size_t>(triangleVertices.size() / 3));
+    float totalArea = 0.0f;
+    for (qsizetype i = 0; i < triangleVertices.size(); i += 3) {
+        const QVector3D a = triangleVertices[i];
+        const QVector3D b = triangleVertices[i + 1];
+        const QVector3D c = triangleVertices[i + 2];
+        if (!std::isfinite(a.x()) || !std::isfinite(a.y()) || !std::isfinite(a.z()) ||
+            !std::isfinite(b.x()) || !std::isfinite(b.y()) || !std::isfinite(b.z()) ||
+            !std::isfinite(c.x()) || !std::isfinite(c.y()) || !std::isfinite(c.z())) {
+            continue;
+        }
+        const float area = QVector3D::crossProduct(b - a, c - a).length() * 0.5f;
+        if (!std::isfinite(area) || area <= 1.0e-8f ||
+            totalArea > std::numeric_limits<float>::max() - area) {
+            continue;
+        }
+        totalArea += area;
+        vertices.push_back(a);
+        vertices.push_back(b);
+        vertices.push_back(c);
+        cumulativeAreas.push_back(totalArea);
+    }
+    if (vertices.empty() || totalArea <= 0.0f) {
+        clearEmissionTriangles();
+        return false;
+    }
+    emissionTriangleVertices_ = std::move(vertices);
+    emissionCumulativeAreas_ = std::move(cumulativeAreas);
+    emissionTotalArea_ = totalArea;
+    return true;
+}
+
+void ParticleEmitter::clearEmissionTriangles()
+{
+    emissionTriangleVertices_.clear();
+    emissionCumulativeAreas_.clear();
+    emissionTotalArea_ = 0.0f;
+}
+
 void ParticleEmitter::addEffector(std::unique_ptr<ParticleEffector> effector)
 {
     if (!effector) return;
@@ -723,11 +775,38 @@ QVector3D ParticleEmitter::getEmissionPosition() const
             );
             break;
         }
-            
+
+        case EmitterShape::Mesh:
+        case EmitterShape::Surface: {
+            if (emissionTotalArea_ > 0.0f &&
+                !emissionCumulativeAreas_.empty()) {
+                const float areaSample = impl_->rng.bounded(emissionTotalArea_);
+                const auto triangleIt = std::lower_bound(
+                    emissionCumulativeAreas_.begin(),
+                    emissionCumulativeAreas_.end(), areaSample);
+                const size_t triangleIndex = std::min(
+                    static_cast<size_t>(triangleIt - emissionCumulativeAreas_.begin()),
+                    emissionCumulativeAreas_.size() - 1);
+                const size_t vertexIndex = triangleIndex * 3;
+                const QVector3D& a = emissionTriangleVertices_[vertexIndex];
+                const QVector3D& b = emissionTriangleVertices_[vertexIndex + 1];
+                const QVector3D& c = emissionTriangleVertices_[vertexIndex + 2];
+                const float rootU = std::sqrt(impl_->rng.bounded(1.0f));
+                const float v = impl_->rng.bounded(1.0f);
+                const float weightA = 1.0f - rootU;
+                const float weightB = rootU * (1.0f - v);
+                const float weightC = rootU * v;
+                localOffset = a * weightA + b * weightB + c * weightC;
+                localOffset = QVector3D(
+                    localOffset.x() * params_.scale.x(),
+                    localOffset.y() * params_.scale.y(),
+                    localOffset.z() * params_.scale.z());
+            }
+            break;
+        }
+
         default:
-            // Mesh / Surface have no sampling source. The editor does not offer
-            // them and loading degrades them to Line, so reaching this branch
-            // emits from the emitter origin.
+            // Unknown values preserve the emitter-origin fallback.
             break;
     }
     

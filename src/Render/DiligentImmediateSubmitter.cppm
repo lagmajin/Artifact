@@ -970,7 +970,7 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
 {
     ArtifactCore::ScopedPerformanceTimer _profSubmit2D("Submit2D");
     if (!ctx || buf.empty()) { buf.reset(); return; }
-    auto* pRTV = buf.targetRTV;
+    auto* pRTV = buf.targetRTV();
     if (!pRTV) { buf.reset(); return; }
 
     // ParticleRenderer::updateBuffer() updates the context-owned particle
@@ -1373,7 +1373,7 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
                 else if constexpr (std::is_same_v<T, MaskedSpritePkt>)    { recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.Sprite"); submitMaskedSprite(p, recordCtx, pRTV); recordCtx->EndDebugGroup(); }
                 else if constexpr (std::is_same_v<T, BillboardPkt>)       submitBillboard(p, recordCtx, pRTV);
                 else if constexpr (std::is_same_v<T, BillboardImagePkt>)  submitBillboardImage(p, recordCtx, pRTV);
-                else if constexpr (std::is_same_v<T, ParticlePkt>)        submitParticles(p, recordCtx, pRTV);
+                else if constexpr (std::is_same_v<T, ParticlePkt>)        submitParticles(p, recordCtx, pRTV, p.depthDSV);
                 else if constexpr (std::is_same_v<T, GlyphTextPkt>)       { recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.GlyphText"); submitGlyphText(p, recordCtx, pRTV); recordCtx->EndDebugGroup(); }
                 else if constexpr (std::is_same_v<T, GlyphTextXformPkt>)  { recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.GlyphText"); submitGlyphTextTransformed(p, recordCtx, pRTV); recordCtx->EndDebugGroup(); }
             }
@@ -1419,7 +1419,7 @@ void DiligentImmediateSubmitter::submitBillboardImage(const BillboardImagePkt& p
     m_primitiveRenderer3D_->setOverrideRTV(nullptr);
 }
 
-void DiligentImmediateSubmitter::submitParticles(const ParticlePkt& p, IDeviceContext* ctx, ITextureView* pRTV)
+void DiligentImmediateSubmitter::submitParticles(const ParticlePkt& p, IDeviceContext* ctx, ITextureView* pRTV, ITextureView* pDSV)
 {
     if (!ctx || !pRTV || !m_particleRenderer_ || p.data.particles.empty()) {
         qWarning() << "[ParticleRenderer] submitParticles skipped"
@@ -1429,7 +1429,6 @@ void DiligentImmediateSubmitter::submitParticles(const ParticlePkt& p, IDeviceCo
                    << "count=" << p.data.particles.size();
         return;
     }
-    ctx->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     const QMatrix4x4 particleViewRows = p.viewMatrix.transposed();
     const QMatrix4x4 particleProjRows = p.projMatrix.transposed();
     m_particleRenderer_->setModelMatrix(p.data.modelMatrix.data());
@@ -1471,7 +1470,9 @@ void DiligentImmediateSubmitter::submitParticles(const ParticlePkt& p, IDeviceCo
         m_particleRenderer_->setFrameCostStats(nullptr);
         return;
     }
+    ctx->SetRenderTargets(1, &pRTV, pDSV, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     m_particleRenderer_->draw(ctx, uploadedCount);
+    ctx->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     qCDebug(particleSubmitterLog) << "[ParticleRenderer] submitParticles drawn"
              << "requested=" << p.data.particles.size()
              << "uploaded=" << uploadedCount

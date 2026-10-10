@@ -197,14 +197,14 @@ void DiligentBindlessSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext*
         return;
     }
     ++stats_.attempted;
-    if (!supported_ || !ctx || buf.empty() || !buf.targetRTV || !spritePso_ || !spriteSrb_) {
+    if (!supported_ || !ctx || buf.empty() || !buf.targetRTV() || !spritePso_ || !spriteSrb_) {
         ++stats_.rejected;
         ++stats_.fallback;
         fallback_.submit(buf, ctx);
         return;
     }
 
-    auto* rtv = buf.targetRTV;
+    auto* rtv = buf.targetRTV();
     const bool spriteOnly = std::all_of(
         buf.packets().begin(), buf.packets().end(), [](const DrawPacket& packet) {
             return std::holds_alternative<SpritePkt>(packet) ||

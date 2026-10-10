@@ -48,6 +48,9 @@ public:
     void setFrameDebugCaptureEnabled(bool enabled);
     std::vector<ArtifactCore::FrameDebugPassRecord> frameDebugPasses() const;
 
+    // This submitter owns mutable PSO, batch, glyph, and deferred-context
+    // state. Call submit() from one owner thread per instance; worker-local
+    // command buffers do not make a shared submitter safe for concurrent use.
     void submit(RenderCommandBuffer& buf, IDeviceContext* ctx) override;
 
 private:
@@ -233,7 +236,7 @@ private:
     void submitMaskedSprite  (const MaskedSpritePkt&,   IDeviceContext*, ITextureView*);
     void submitBillboard     (const BillboardPkt&,      IDeviceContext*, ITextureView*);
     void submitBillboardImage(const BillboardImagePkt&, IDeviceContext*, ITextureView*);
-    void submitParticles     (const ParticlePkt&,       IDeviceContext*, ITextureView*);
+    void submitParticles     (const ParticlePkt&,       IDeviceContext*, ITextureView*, ITextureView*);
     void submitGlyphText     (const GlyphTextPkt&,      IDeviceContext*, ITextureView*);
     void submitGlyphTextTransformed(const GlyphTextXformPkt&, IDeviceContext*, ITextureView*);
     void recordDebugPass(ArtifactCore::FrameDebugPassRecord&& pass);

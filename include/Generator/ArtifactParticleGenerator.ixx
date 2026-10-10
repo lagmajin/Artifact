@@ -137,8 +137,9 @@ struct ParticleRenderContext {
 /**
  * @brief Emitter shape types
  *
- * Mesh and Surface are declared but have no emission-position implementation.
- * The editor only offers 0..5 and loading degrades 6/7 to Line.
+ * Mesh and Surface sample cached triangle geometry supplied through
+ * ParticleEmitter. Mesh represents a mesh source; Surface represents a
+ * triangulated shape/path source.
  */
 enum class EmitterShape {
     Point,          // 点エミッター
@@ -459,6 +460,9 @@ private:
     EmitterParams params_;
     std::vector<Particle> particles_;
     std::vector<std::unique_ptr<ParticleEffector>> effectors_;
+    std::vector<QVector3D> emissionTriangleVertices_;
+    std::vector<float> emissionCumulativeAreas_;
+    float emissionTotalArea_ = 0.0f;
     
     int nextParticleId_ = 0;
     float emitAccumulator_ = 0.0f;
@@ -473,6 +477,13 @@ public:
     // Parameters
     EmitterParams& params() { return params_; }
     const EmitterParams& params() const { return params_; }
+    // Supply triangle vertices in emitter-local space (mesh or triangulated
+    // shape path). This cold-path source update caches an area distribution.
+    bool setEmissionTriangles(const QVector<QVector3D>& triangleVertices);
+    void clearEmissionTriangles();
+    bool hasEmissionTriangles() const noexcept {
+        return emissionTotalArea_ > 0.0f;
+    }
     void setParams(const EmitterParams& p) {
         params_ = p;
         params_.shape = static_cast<EmitterShape>(
@@ -663,8 +674,8 @@ public:
     SortMode sortMode = SortMode::Distance;
     
     // Rendering
-    // Particle submit binds a color RTV only (no DSV). depthTest=true with
-    // no depth attachment can discard draws, so keep the App default off.
+    // Depth is opt-in. A 3D particle packet uses the active scene DSV when one
+    // is available; 2D packets and targets without a DSV keep depth disabled.
     bool depthTest = false;
     bool depthWrite = false;
     bool softParticles = false;
