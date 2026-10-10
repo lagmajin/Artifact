@@ -461,7 +461,7 @@ void blendBgrInPlace(cv::Mat& dstBgr, const cv::Mat& srcBgr, const float opacity
  srcBgr.convertTo(srcF, CV_32FC3, 1.0 / 255.0);
 
  cv::Mat blended = dstF.clone();
- ArtifactCore::Parallel::For(0, dstF.rows, dstF.rows * dstF.cols, [&](int y) {
+ ArtifactCore::Parallel::ForPixels(0, dstF.rows, dstF.cols, dstF.rows, [&](int y) {
    const cv::Vec3f* dstRow = dstF.ptr<cv::Vec3f>(y);
    const cv::Vec3f* srcRow = srcF.ptr<cv::Vec3f>(y);
    cv::Vec3f* outRow = blended.ptr<cv::Vec3f>(y);
@@ -681,7 +681,7 @@ bool blendSurface(QImage& canvas,
                               ? static_cast<int>(std::round(srcAlpha * 1000.0f))
                               : 0;
 
- ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
+ ArtifactCore::Parallel::ForPixels(0, h, w, h, [&](int y) {
   auto* dstRow = canvas.bits() + static_cast<qsizetype>(y) * canvas.bytesPerLine();
   const uchar* srcRow = surface.constBits() + static_cast<qsizetype>(y) * surface.bytesPerLine();
   for (int x = 0; x < w; ++x) {

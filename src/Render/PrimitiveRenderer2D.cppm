@@ -603,7 +603,7 @@ void PrimitiveRenderer2D::setOverrideRTV(ITextureView* rtv)
 {
     impl_->m_overrideRTV = rtv;
     if (impl_->cmdBuf_) {
-        impl_->cmdBuf_->targetRTV = impl_->getCurrentRTV();
+        impl_->cmdBuf_->setTargetRTV(impl_->getCurrentRTV());
     }
 }
 
@@ -638,7 +638,7 @@ void PrimitiveRenderer2D::clear(IDeviceContext* ctx, const FloatColor& color)
 
     if (impl_->cmdBuf_) {
         impl_->cmdBuf_->reset();
-        impl_->cmdBuf_->targetRTV = pRTV;
+        impl_->cmdBuf_->setTargetRTV(pRTV);
     }
 }
 
@@ -653,7 +653,7 @@ void PrimitiveRenderer2D::drawRectLocal(float x, float y, float w, float h, cons
     pkt.xform.scale      = { w * zoom, h * zoom };
     pkt.xform.screenSize = viewportCB.screenSize;
     pkt.color            = { color.r(), color.g(), color.b(), color.a() * opacity };
-    impl_->cmdBuf_->append(pkt);
+    impl_->cmdBuf_->append(std::move(pkt));
 }
 
 void PrimitiveRenderer2D::drawSolidRectTransformed(float x, float y, float w, float h, const QTransform& transform, const FloatColor& color, float opacity)
@@ -677,7 +677,7 @@ void PrimitiveRenderer2D::drawSolidRectTransformed(float x, float y, float w, fl
     pkt.mat.row2 = { 0,0,0,0 };
     pkt.mat.row3 = { 0,0,0,1 };
     pkt.color    = { color.r(), color.g(), color.b(), color.a() * opacity };
-    impl_->cmdBuf_->append(pkt);
+    impl_->cmdBuf_->append(std::move(pkt));
 }
 
 void PrimitiveRenderer2D::drawSolidRectTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, const FloatColor& color, float opacity)
@@ -714,7 +714,7 @@ void PrimitiveRenderer2D::drawSolidRectTransformed(float x, float y, float w, fl
     pkt.mat.row2 = { finalMat.row(2).x(), finalMat.row(2).y(), finalMat.row(2).z(), finalMat.row(2).w() };
     pkt.mat.row3 = { finalMat.row(3).x(), finalMat.row(3).y(), finalMat.row(3).z(), finalMat.row(3).w() };
     pkt.color    = { color.r(), color.g(), color.b(), color.a() * opacity };
-    impl_->cmdBuf_->append(pkt);
+    impl_->cmdBuf_->append(std::move(pkt));
 }
 
 void PrimitiveRenderer2D::drawSolidRect(float x, float y, float w, float h, const FloatColor& color, float opacity)
@@ -772,7 +772,7 @@ void PrimitiveRenderer2D::drawGradientRectTransformed(float x, float y, float w,
     pkt.params.colorContract = {
         linearColorInterpolation ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f};
     pkt.opacity = opacity;
-    impl_->cmdBuf_->append(pkt);
+    impl_->cmdBuf_->append(std::move(pkt));
 }
 
 void PrimitiveRenderer2D::drawLineLocal(float2 p1, float2 p2, const FloatColor& c1, const FloatColor& c2)
@@ -788,7 +788,7 @@ void PrimitiveRenderer2D::drawLineLocal(float2 p1, float2 p2, const FloatColor& 
     pkt.p1 = p1; pkt.p2 = p2;
     pkt.c1 = { c1.r(), c1.g(), c1.b(), 1.0f };
     pkt.c2 = { c2.r(), c2.g(), c2.b(), 1.0f };
-    impl_->cmdBuf_->append(pkt);
+    impl_->cmdBuf_->append(std::move(pkt));
 }
 
 void PrimitiveRenderer2D::drawQuadLocal(float2 p0, float2 p1, float2 p2, float2 p3, const FloatColor& color)
@@ -803,7 +803,7 @@ void PrimitiveRenderer2D::drawQuadLocal(float2 p0, float2 p1, float2 p2, float2 
     pkt.xform.screenSize = viewportCB.screenSize;
     pkt.p0 = p0; pkt.p1 = p1; pkt.p2 = p2; pkt.p3 = p3;
     pkt.color = { color.r(), color.g(), color.b(), color.a() };
-    impl_->cmdBuf_->append(pkt);
+    impl_->cmdBuf_->append(std::move(pkt));
 }
 
 void PrimitiveRenderer2D::drawThickLineLocal(float2 p1, float2 p2, float thickness, const FloatColor& color)
@@ -883,7 +883,7 @@ void PrimitiveRenderer2D::drawDotLineLocal(float2 p1, float2 p2, float thickness
     pkt.verts[3] = { { p2.x - n.x, p2.y - n.y }, c, len,  0.0f };
     pkt.thickness = thickness;
     pkt.spacing   = spacing;
-    impl_->cmdBuf_->append(pkt);
+    impl_->cmdBuf_->append(std::move(pkt));
 }
 
 void PrimitiveRenderer2D::drawDashedLineLocal(float2 p1, float2 p2, float thickness, float dashLength, float gapLength, const FloatColor& color)
@@ -956,7 +956,7 @@ void PrimitiveRenderer2D::drawSolidTriangleLocal(float2 p0, float2 p1, float2 p2
     pkt.xform.screenSize = viewportCB.screenSize;
     pkt.p0 = p0; pkt.p1 = p1; pkt.p2 = p2;
     pkt.color = { color.r(), color.g(), color.b(), color.a() };
-    impl_->cmdBuf_->append(pkt);
+    impl_->cmdBuf_->append(std::move(pkt));
 }
 
 void PrimitiveRenderer2D::drawCircle(float x, float y, float radius, const FloatColor& color, float thickness, bool fill)
@@ -996,7 +996,7 @@ void PrimitiveRenderer2D::drawSolidCircle(float cx, float cy, float radius, cons
     pkt.xform.screenSize = viewportCB.screenSize;
     pkt.cx = cx; pkt.cy = cy; pkt.radius = radius;
     pkt.color = { color.r(), color.g(), color.b(), color.a() };
-    impl_->cmdBuf_->append(pkt);
+    impl_->cmdBuf_->append(std::move(pkt));
 }
 
 void PrimitiveRenderer2D::drawCrosshair(float x, float y, float size, const FloatColor& color)
@@ -1033,7 +1033,7 @@ void PrimitiveRenderer2D::drawCheckerboard(float x, float y, float w, float h, f
     pkt.helper.color1    = { c1.r(), c1.g(), c1.b(), c1.a() };
     pkt.helper.color2    = { c2.r(), c2.g(), c2.b(), c2.a() };
     pkt.baseColor        = { c1.r(), c1.g(), c1.b(), c1.a() };
-    impl_->cmdBuf_->append(pkt);
+    impl_->cmdBuf_->append(std::move(pkt));
 }
 
 void PrimitiveRenderer2D::drawGrid(float x, float y, float w, float h,
@@ -1057,7 +1057,7 @@ void PrimitiveRenderer2D::drawGrid(float x, float y, float w, float h,
     pkt.helper.color1    = { color.r(), color.g(), color.b(), color.a() };
     pkt.helper.color2    = { x, y, 0.0f, 0.0f };   // gridOrigin.xy (quad top-left in canvas coords)
     pkt.baseColor        = { color.r(), color.g(), color.b(), color.a() };
-    impl_->cmdBuf_->append(pkt);
+    impl_->cmdBuf_->append(std::move(pkt));
 }
 
 void PrimitiveRenderer2D::drawRectOutlineLocal(float x, float y, float w, float h, const FloatColor& color)
@@ -1070,7 +1070,7 @@ void PrimitiveRenderer2D::drawRectOutlineLocal(float x, float y, float w, float 
     pkt.xform.scale      = { w, h };
     pkt.xform.screenSize = viewportCB.screenSize;
     pkt.color            = { color.r(), color.g(), color.b(), color.a() };
-    impl_->cmdBuf_->append(pkt);
+    impl_->cmdBuf_->append(std::move(pkt));
 }
 
 void PrimitiveRenderer2D::drawSpriteLocal(float x, float y, float w, float h, const QImage& image, float opacity)
@@ -1159,7 +1159,7 @@ void PrimitiveRenderer2D::drawSpriteLocal(float x, float y, float w, float h, co
     pkt.xform.screenSize = viewportCB.screenSize;
     pkt.pSRV             = pSRV;
     pkt.opacity          = opacity;
-    impl_->cmdBuf_->append(pkt);
+    impl_->cmdBuf_->append(std::move(pkt));
 }
 
 void PrimitiveRenderer2D::drawText(const QRectF &rect, const QString &text,
@@ -1191,7 +1191,7 @@ void PrimitiveRenderer2D::drawText(const QRectF &rect, const QString &text,
     pkt.alignment        = static_cast<int>(alignment);
     pkt.opacity          = opacity;
     pkt.outlineThickness = outlineThickness;
-    impl_->cmdBuf_->append(pkt);
+    impl_->cmdBuf_->append(std::move(pkt));
 }
 
 void PrimitiveRenderer2D::drawTextTransformed(const QRectF &rect, const QString &text,
@@ -1239,7 +1239,7 @@ void PrimitiveRenderer2D::drawTextTransformed(const QRectF &rect, const QString 
     pkt.opacity          = opacity;
     pkt.outlineThickness = outlineThickness;
     pkt.devicePixelRatio = impl_->devicePixelRatio_;
-    impl_->cmdBuf_->append(pkt);
+    impl_->cmdBuf_->append(std::move(pkt));
 }
 
 void PrimitiveRenderer2D::drawTextureLocal(float x, float y, float w, float h, ITextureView* pSRV, float opacity)
@@ -1254,7 +1254,7 @@ void PrimitiveRenderer2D::drawTextureLocal(float x, float y, float w, float h, I
     pkt.xform.screenSize = viewportCB.screenSize;
     pkt.pSRV             = pSRV;
     pkt.opacity          = opacity;
-    impl_->cmdBuf_->append(pkt);
+    impl_->cmdBuf_->append(std::move(pkt));
 }
 
 void PrimitiveRenderer2D::drawMaskedTextureLocal(float x, float y, float w, float h, ITextureView* sceneSRV, const QImage& maskImage, float opacity)
@@ -1313,7 +1313,7 @@ void PrimitiveRenderer2D::drawMaskedTextureLocal(float x, float y, float w, floa
     pkt.sceneSRV         = sceneSRV;
     pkt.maskSRV          = maskSRV;
     pkt.opacity          = opacity;
-    impl_->cmdBuf_->append(pkt);
+    impl_->cmdBuf_->append(std::move(pkt));
 }
 
 void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float h, const QTransform& transform, const QImage& image, float opacity)
@@ -1379,7 +1379,7 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
     pkt.mat.row3 = { 0.0f, 0.0f, 0.0f, 1.0f };
     pkt.pSRV     = pSRV;
     pkt.opacity  = opacity;
-    impl_->cmdBuf_->append(pkt);
+    impl_->cmdBuf_->append(std::move(pkt));
 }
 
 void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, ITextureView* pSRV, float opacity)
@@ -1418,7 +1418,7 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
     pkt.mat.row3 = { finalMat.row(3).x(), finalMat.row(3).y(), finalMat.row(3).z(), finalMat.row(3).w() };
     pkt.pSRV = pSRV;
     pkt.opacity = opacity;
-    impl_->cmdBuf_->append(pkt);
+    impl_->cmdBuf_->append(std::move(pkt));
 }
 
 void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, ITextureView* pSRV, float opacity, const QRectF& uvRect)
@@ -1465,7 +1465,7 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
                   static_cast<float>(clampedUv.right()),
                   static_cast<float>(clampedUv.bottom())};
     pkt.color = {1.0f, 1.0f, 1.0f, opacity};
-    impl_->cmdBuf_->append(pkt);
+    impl_->cmdBuf_->append(std::move(pkt));
 }
 
 void PrimitiveRenderer2D::drawTexturedTriangleTransformed(
@@ -1498,7 +1498,7 @@ void PrimitiveRenderer2D::drawTexturedTriangleTransformed(
     pkt.uv2 = uv2;
     pkt.pSRV = texture;
     pkt.color = {1.0f, 1.0f, 1.0f, opacity};
-    impl_->cmdBuf_->append(pkt);
+    impl_->cmdBuf_->append(std::move(pkt));
 }
 
 ITextureView* PrimitiveRenderer2D::textureForImage(
@@ -1696,7 +1696,7 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
                   static_cast<float>(clampedUv.right()),
                   static_cast<float>(clampedUv.bottom())};
     pkt.color = {1.0f, 1.0f, 1.0f, opacity};
-    impl_->cmdBuf_->append(pkt);
+    impl_->cmdBuf_->append(std::move(pkt));
 }
 
 void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, const ArtifactCore::ImageF32x4_RGBA& image, float opacity, const QRectF& uvRect)
@@ -1797,7 +1797,7 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
                   static_cast<float>(clampedUv.right()),
                   static_cast<float>(clampedUv.bottom())};
     pkt.color = {1.0f, 1.0f, 1.0f, opacity};
-    impl_->cmdBuf_->append(pkt);
+    impl_->cmdBuf_->append(std::move(pkt));
 }
 
 // WP-3: GPU GlyphAtlas based text rendering
@@ -1938,7 +1938,7 @@ void PrimitiveRenderer2D::drawGlyphText(float x, float y, const UniString& text,
             pkt.xform.screenSize = viewportCB.screenSize;
         }
         
-        impl_->cmdBuf_->append(pkt);
+        impl_->cmdBuf_->append(std::move(pkt));
         currentX += rect.advance;
     });
 }
@@ -2044,7 +2044,7 @@ void PrimitiveRenderer2D::drawGlyphs(std::span<const GlyphItem> glyphs,
             pkt.xform.screenSize = viewportCB.screenSize;
         }
 
-        impl_->cmdBuf_->append(pkt);
+        impl_->cmdBuf_->append(std::move(pkt));
     }
 }
 
@@ -2216,7 +2216,7 @@ void PrimitiveRenderer2D::drawGlyphsTransformed(
                 rect.v1(static_cast<int>(atlasHeight))};
             packet.color = {packetColor.r(), packetColor.g(), packetColor.b(),
                             alpha};
-            impl_->cmdBuf_->append(packet);
+            impl_->cmdBuf_->append(std::move(packet));
         };
 
     constexpr float diagonal = 0.7071067811865476f;

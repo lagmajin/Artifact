@@ -6,6 +6,7 @@ module;
 // Extend backends carefully while preserving the current Diligent/D3D12
 // architecture.
 #include <DeviceContext.h>
+#include <cstddef>
 #include <QFont>
 #include <QImage>
 #include <QMatrix4x4>
@@ -22,6 +23,7 @@ module;
 #include <memory>
 #include <span>
 #include <string>
+#include <type_traits>
 #include <vector>
 #include <Graphics/InstanceData.h>
 
@@ -56,6 +58,7 @@ import Graphics.RayTracingManager;
 import Graphics.LayerBlendPipeline;
 import Layer.Blend;
 import Graphics.ParticleData;
+export import Artifact.Render.RenderCommandBuffer;
 import Core.Light;
 import Artifact.LOD.Manager;
 
@@ -153,6 +156,36 @@ public:
   void clear();
   void flush();
   void flushAndWait();
+  // Reserve total packet capacity on the renderer owner thread before worker
+  // recording. Completed worker buffers merge in slot order without growth.
+  void reserveRenderCommandPackets(std::size_t totalCapacity);
+  // Call after every worker lease has been released. Failure leaves both the
+  // renderer queue and pool buffers unchanged (including target/capacity errors).
+  bool tryMergeCompletedWorkerBuffers(RenderCommandBufferPool &pool);
+  // Synchronously record fixed-capacity worker partitions, then merge them
+  // into the current 2D command stream in worker-index order. Before calling,
+  // reserve each pool slot with beginFrame/reserveAll/reset and reserve the
+  // renderer queue with reserveRenderCommandPackets. The recorder is shared
+  // across workers, so synchronize any shared callback state. It must only
+  // build CPU packets through its lease; it must not call back into the
+  // renderer or submit GPU work.
+  template <typename Recorder>
+  bool recordParallelCommands(RenderCommandBufferPool &pool,
+                              std::size_t workerCount,
+                              std::size_t packetCapacityPerWorker,
+                              std::size_t estimatedWorkItems,
+                              Recorder &&recorder) {
+    using RecorderType = std::remove_reference_t<Recorder>;
+    auto *context = const_cast<void *>(
+        static_cast<const void *>(std::addressof(recorder)));
+    return recordParallelCommandsErased(
+        pool, workerCount, packetCapacityPerWorker, estimatedWorkItems, context,
+        [](void *opaque, std::size_t workerIndex, std::size_t workers,
+           RenderCommandBufferPool::WorkerBufferLease &lease) {
+          return (*static_cast<RecorderType *>(opaque))(
+              workerIndex, workers, lease);
+        });
+  }
   quint64 flushCount() const;
   qint64 flushContextTimeUs() const;
   void destroy();
@@ -345,6 +378,8 @@ public:
                      const FloatColor &color, float opacity = 1.0f);
   void drawPoint(float x, float y, float size, const FloatColor &color);
   void drawParticles(const ArtifactCore::ParticleRenderData &data);
+  // Accepted rvalue packets take ownership; rejected draws leave data intact.
+  void drawParticles(ArtifactCore::ParticleRenderData &&data);
   void drawSprite(float x, float y, float w, float h);
   void drawSprite(Detail::float2 pos, Detail::float2 size);
   void drawSprite(float x, float y, float w, float h,
@@ -645,6 +680,15 @@ public:
   void renderShadowMapFrame();
 
 private:
+  using ParallelCommandRecorder = bool (*)(
+      void *, std::size_t, std::size_t,
+      RenderCommandBufferPool::WorkerBufferLease &);
+  bool recordParallelCommandsErased(RenderCommandBufferPool &pool,
+                                    std::size_t workerCount,
+                                    std::size_t packetCapacityPerWorker,
+                                    std::size_t estimatedWorkItems,
+                                    void *context,
+                                    ParallelCommandRecorder recorder);
   std::unique_ptr<Impl> impl_;
 };
 

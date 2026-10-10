@@ -13,6 +13,7 @@ module;
 #include <numbers>
 #include <algorithm>
 #include <atomic>
+#include <limits>
 #include <numeric>
 #include <memory>
 #include <optional>
@@ -20,6 +21,7 @@ module;
 #include <functional>
 #include <span>
 #include <QImage>
+#include <QThread>
 #include <QFont>
 #include <QColor>
 #include <QPainter>
@@ -110,7 +112,7 @@ namespace {
     const int sourceStride = rgba.bytesPerLine();
     auto* outputBits = channelImage.bits();
     const int outputStride = channelImage.bytesPerLine();
-    ArtifactCore::Parallel::For(0, rgba.height(), rgba.width() * rgba.height(), [&](int y) {
+    ArtifactCore::Parallel::ForPixels(0, rgba.height(), rgba.width(), rgba.height(), [&](int y) {
       const auto* sourceRow = sourceBits + y * sourceStride;
       auto* outputRow = outputBits + y * outputStride;
       for (int x = 0; x < rgba.width(); ++x) {
@@ -134,7 +136,7 @@ namespace {
     const int sourceStride = rgba.bytesPerLine();
     auto* outputBits = channelImage.bits();
     const int outputStride = channelImage.bytesPerLine();
-    ArtifactCore::Parallel::For(0, rgba.height(), rgba.width() * rgba.height(), [&](int y) {
+    ArtifactCore::Parallel::ForPixels(0, rgba.height(), rgba.width(), rgba.height(), [&](int y) {
       const auto* sourceRow = sourceBits + y * sourceStride;
       auto* outputRow = outputBits + y * outputStride;
       for (int x = 0; x < rgba.width(); ++x) {
@@ -463,6 +465,15 @@ namespace {
  class ArtifactIRenderer::Impl
  {
  public:
+  // Reusable fixed worker slots and owner-queue headroom for bounded parallel
+  // primitive geometry recording.
+  static constexpr std::size_t kParallelGeometryMaxWorkers = 16;
+  static constexpr std::size_t kParallelGeometryPacketsPerWorker = 512;
+  static constexpr std::size_t kParallelGeometryMaxPackets =
+      kParallelGeometryMaxWorkers * kParallelGeometryPacketsPerWorker;
+  static constexpr std::size_t kParallelGeometryQueueCapacity =
+      kParallelGeometryMaxPackets * 2;
+
   DiligentDeviceManager deviceManager_;
   ShaderManager shaderManager_;
   PrimitiveRenderer2D primitiveRenderer_;
@@ -499,6 +510,9 @@ namespace {
 
   mutable DiligentImmediateSubmitter submitter_;
   mutable RenderCommandBuffer cmdBuf_;
+  RenderCommandBufferPool parallelGeometryBuffers_;
+  bool parallelGeometryRecordingReady_ = false;
+  std::size_t parallelGeometryWorkerCount_ = 0;
   ArtifactCore::RenderCostStats m_lastFrameCostStats_;
   ArtifactCore::RenderCostStats m_currentFrameCostStats_;
 
@@ -690,7 +704,7 @@ namespace {
    // RenderCommandBuffer::reset() clears targetRTV. Mid-frame barriers (mesh
    // draws, render-target changes, overlays) must leave the shared 2D command
    // buffer armed for the target that is still active.
-   cmdBuf_.targetRTV = primitiveRenderer_.currentRTV();
+   cmdBuf_.setTargetRTV(primitiveRenderer_.currentRTV());
   }
 
   ArtifactCore::MeshRenderer* meshRendererFor(const QString& key)
@@ -1452,6 +1466,9 @@ namespace {
   void setMeshUvOnlyPass(bool enabled) { meshUvOnlyPass_ = enabled; }
   bool isMeshUvOnlyPass() const { return meshUvOnlyPass_; }
   FloatColor getClearColor() const { return clearColor_; }
+  void reserveRenderCommandPackets(std::size_t totalCapacity);
+  bool prepareParallelGeometryRecording();
+  bool tryMergeCompletedWorkerBuffers(RenderCommandBufferPool& pool);
   void flushAndWait();
   void flush();
   void destroy();
@@ -1730,17 +1747,6 @@ namespace {
   { primitiveRenderer_.drawBezierLocal(p0, p1, p2, p3, thickness, color); }
   void drawSolidTriangleLocal(float2 p0, float2 p1, float2 p2, const FloatColor& color)
   { primitiveRenderer_.drawSolidTriangleLocal(p0, p1, p2, color); }
-  void drawSolidPolygonLocal(const std::vector<Detail::float2>& points, const FloatColor& color)
-  {
-    const auto triangles = triangulatePolygon(points);
-    for (const auto& tri : triangles) {
-      primitiveRenderer_.drawSolidTriangleLocal(
-          toDiligentFloat2(points[static_cast<size_t>(tri[0])]),
-          toDiligentFloat2(points[static_cast<size_t>(tri[1])]),
-          toDiligentFloat2(points[static_cast<size_t>(tri[2])]),
-          color);
-    }
-  }
   void drawCircle(float x, float y, float radius, const FloatColor& color, float thickness, bool fill)
   { primitiveRenderer_.drawCircle(x, y, radius, color, thickness, fill); }
   void drawCheckerboard(float x, float y, float w, float h,
@@ -1750,7 +1756,8 @@ namespace {
                 float spacing, float thickness, const FloatColor& color)
   { primitiveRenderer_.drawGrid(x, y, w, h, spacing, thickness, color); }
 
-  void drawParticles(const ArtifactCore::ParticleRenderData& data) {
+  void drawParticles(const ArtifactCore::ParticleRenderData& data,
+                     ArtifactCore::ParticleRenderData* transferableData = nullptr) {
     lastParticleDrawQueued_ = false;
     if (data.particles.empty()) {
       lastParticleDebug_ = QStringLiteral(
@@ -1883,6 +1890,15 @@ namespace {
       return;
     }
 
+    // Rvalue draws are used by callers that fall back to software rendering
+    // when packet recording is rejected. Do not move their payload unless the
+    // command buffer can accept it without growing on this frame path.
+    if (transferableData && cmdBuf_.size() >= cmdBuf_.capacity()) {
+      lastParticleDebug_ = QStringLiteral(
+          "state=packet-capacity skipped=packet-capacity path=particle");
+      return;
+    }
+
     lastParticleDrawCount_ = data.particles.size();
     lastParticleTargetFormat_ = pRTV->GetDesc().Format;
     // Fixed-size snapshot only; format it when a diagnostic report is requested.
@@ -1894,14 +1910,23 @@ namespace {
     lastParticleViewportWidth_ = m_viewportWidth;
     lastParticleViewportHeight_ = m_viewportHeight;
     lastParticleDrawQueued_ = true;
-    cmdBuf_.targetRTV = pRTV;
+    cmdBuf_.setTargetRTV(pRTV);
     ParticlePkt pkt;
-    pkt.data = data;
-    // submitParticles() only binds a color RTV (SetRenderTargets depth=nullptr).
-    // A PSO with DepthEnable and no DSV is undefined and can make every
-    // billboard fail the depth test (layer appears completely invisible).
-    pkt.data.options.depthTest = false;
-    pkt.data.options.depthWrite = false;
+    if (transferableData) {
+      pkt.data = std::move(*transferableData);
+    } else {
+      pkt.data = data;
+    }
+    // 2D particle targets do not participate in scene depth. For 3D particles,
+    // capture the active DSV with the packet so deferred submission uses the
+    // matching attachment; only enable depth when that attachment exists.
+    if (cameraMode == QStringLiteral("3d")) {
+      pkt.depthDSV = activeDepthView();
+    }
+    if (!pkt.depthDSV) {
+      pkt.data.options.depthTest = false;
+      pkt.data.options.depthWrite = false;
+    }
     pkt.viewMatrix = view;
     pkt.projMatrix = proj;
     cmdBuf_.append(std::move(pkt));
@@ -2280,7 +2305,7 @@ ArtifactCore::ImageF32x4_RGBA ArtifactIRenderer::Impl::readbackToImageF32() cons
    const auto* sourceBits = static_cast<const uint8_t*>(mapped.pData);
    auto* resultBits = result.bits();
    const int resultStride = result.bytesPerLine();
-   ArtifactCore::Parallel::For(0, static_cast<int>(srcHeight), static_cast<int>(srcWidth * srcHeight), [&](int row) {
+   ArtifactCore::Parallel::ForPixels(0, result.height(), result.width(), result.height(), [&](int row) {
     std::memcpy(resultBits + row * resultStride,
                 sourceBits + static_cast<size_t>(row) * mapped.Stride,
                 copyRowBytes);
@@ -2297,7 +2322,7 @@ ArtifactCore::ImageF32x4_RGBA ArtifactIRenderer::Impl::readbackToImageF32() cons
     }
     return std::clamp(value, 0.0f, 1.0f);
    };
-   ArtifactCore::Parallel::For(0, static_cast<int>(srcHeight), static_cast<int>(srcWidth * srcHeight), [&](int row) {
+   ArtifactCore::Parallel::ForPixels(0, result.height(), result.width(), result.height(), [&](int row) {
     auto* dst = resultBits + row * resultStride;
     const auto* srcHalf = reinterpret_cast<const uint16_t*>(
         sourceBits + static_cast<size_t>(row) * mapped.Stride);
@@ -2330,7 +2355,7 @@ ArtifactCore::ImageF32x4_RGBA ArtifactIRenderer::Impl::readbackToImageF32() cons
     }
     return std::clamp(value, 0.0f, 1.0f);
    };
-   ArtifactCore::Parallel::For(0, static_cast<int>(srcHeight), static_cast<int>(srcWidth * srcHeight), [&](int row) {
+   ArtifactCore::Parallel::ForPixels(0, result.height(), result.width(), result.height(), [&](int row) {
     auto* dst = resultBits + row * resultStride;
     const auto* srcFloat = reinterpret_cast<const float*>(
         sourceBits + static_cast<size_t>(row) * mapped.Stride);
@@ -2368,7 +2393,7 @@ QImage ArtifactIRenderer::Impl::readbackDepthToImage() const
   QImage result(srcWidth, srcHeight, QImage::Format_Grayscale8);
   auto* resultBits = result.bits();
   const int resultStride = result.bytesPerLine();
-  ArtifactCore::Parallel::For(0, srcHeight, srcWidth * srcHeight, [&](int y) {
+  ArtifactCore::Parallel::ForPixels(0, srcHeight, srcWidth, srcHeight, [&](int y) {
    auto* dst = resultBits + y * resultStride;
    const auto* src = depthValues.data() +
                      static_cast<size_t>(y) * static_cast<size_t>(srcWidth);
@@ -2400,6 +2425,10 @@ bool ArtifactIRenderer::Impl::readbackTextureViewToFloatBuffer(
                                     m_offlineWidth, m_offlineHeight,
                                     deviceManager_.swapChain(),
                                     srcTex, srcWidth, srcHeight)) {
+    return false;
+  }
+  if (srcWidth > static_cast<Uint32>(std::numeric_limits<int>::max()) ||
+      srcHeight > static_cast<Uint32>(std::numeric_limits<int>::max())) {
     return false;
   }
 
@@ -2481,23 +2510,26 @@ bool ArtifactIRenderer::Impl::readbackTextureViewToFloatBuffer(
   }
 
   outRgba.resize(static_cast<size_t>(srcWidth) * srcHeight * 4u);
-   ArtifactCore::Parallel::For(0, static_cast<int>(srcHeight), static_cast<int>(srcWidth * srcHeight), [&](int y) {
+   ArtifactCore::Parallel::ForPixels(0, static_cast<int>(srcHeight),
+                                     static_cast<int>(srcWidth),
+                                     static_cast<int>(srcHeight), [&](int y) {
     const auto* row = static_cast<const uint8_t*>(mapped.pData) +
                       static_cast<size_t>(y) * mapped.Stride;
     float* dst = outRgba.data() + static_cast<size_t>(y) * srcWidth * 4u;
+    const size_t rowComponents = static_cast<size_t>(srcWidth) * 4u;
     if (isRgba8) {
-      for (Uint32 x = 0; x < srcWidth * 4u; ++x) {
+      for (size_t x = 0; x < rowComponents; ++x) {
         dst[x] = static_cast<float>(row[x]) / 255.0f;
       }
     } else if (isRgba16f) {
       const auto* src = reinterpret_cast<const uint16_t*>(row);
-      for (Uint32 x = 0; x < srcWidth * 4u; ++x) {
+      for (size_t x = 0; x < rowComponents; ++x) {
         const float value = Float16::HalfBitsToFloat(src[x]);
         dst[x] = std::isfinite(value) ? value : 0.0f;
       }
     } else {
       const auto* src = reinterpret_cast<const float*>(row);
-      for (Uint32 x = 0; x < srcWidth * 4u; ++x) {
+      for (size_t x = 0; x < rowComponents; ++x) {
         dst[x] = std::isfinite(src[x]) ? src[x] : 0.0f;
       }
     }
@@ -2551,6 +2583,10 @@ bool ArtifactIRenderer::Impl::readbackDepthToFloatBuffer(
   }
 
   if (!srcTex || srcWidth == 0 || srcHeight == 0) return false;
+  if (srcWidth > static_cast<Uint32>(std::numeric_limits<int>::max()) ||
+      srcHeight > static_cast<Uint32>(std::numeric_limits<int>::max())) {
+    return false;
+  }
 
   constexpr TEXTURE_FORMAT depthReadbackFormat = TEX_FORMAT_D32_FLOAT;
   if (!m_depthReadbackStaging ||
@@ -2614,7 +2650,9 @@ bool ArtifactIRenderer::Impl::readbackDepthToFloatBuffer(
   outDepth.resize(static_cast<size_t>(srcWidth) * static_cast<size_t>(srcHeight));
   const auto* sourceBits = static_cast<const uint8_t*>(mapped.pData);
   const size_t rowBytes = static_cast<size_t>(srcWidth) * sizeof(float);
-   ArtifactCore::Parallel::For(0, static_cast<int>(srcHeight), static_cast<int>(srcWidth * srcHeight), [&](int row) {
+   ArtifactCore::Parallel::ForPixels(0, static_cast<int>(srcHeight),
+                                     static_cast<int>(srcWidth),
+                                     static_cast<int>(srcHeight), [&](int row) {
    auto* dst = outDepth.data() +
                static_cast<size_t>(row) * static_cast<size_t>(srcWidth);
    std::memcpy(dst, sourceBits + static_cast<size_t>(row) * mapped.Stride,
@@ -2895,14 +2933,16 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
     }
 
     if (!float16Readback && !float32Readback) {
-      ArtifactCore::Parallel::For(0, static_cast<int>(h), static_cast<int>(w * h), [&](int row) {
+      ArtifactCore::Parallel::ForPixels(0, result.height(), result.width(),
+                                        result.height(), [&](int row) {
         const auto* source = static_cast<const uint8_t*>(mapped.pData) +
                              static_cast<size_t>(row) * mapped.Stride;
         std::memcpy(resultBits + static_cast<size_t>(row) * resultStride,
                     source, copyRowBytes);
       });
     } else if (float16Readback) {
-      ArtifactCore::Parallel::For(0, static_cast<int>(h), static_cast<int>(w * h), [&](int row) {
+      ArtifactCore::Parallel::ForPixels(0, result.height(), result.width(),
+                                        result.height(), [&](int row) {
         const auto* srcRow = reinterpret_cast<const uint16_t*>(
             static_cast<const uint8_t*>(mapped.pData) +
             static_cast<size_t>(row) * mapped.Stride);
@@ -2919,7 +2959,8 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
         }
       });
     } else {
-      ArtifactCore::Parallel::For(0, static_cast<int>(h), static_cast<int>(w * h), [&](int row) {
+      ArtifactCore::Parallel::ForPixels(0, result.height(), result.width(),
+                                        result.height(), [&](int row) {
         const auto* srcFloat = reinterpret_cast<const float*>(
             static_cast<const uint8_t*>(mapped.pData) +
             static_cast<size_t>(row) * mapped.Stride);
@@ -3343,6 +3384,44 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
   }
  }
 
+ void ArtifactIRenderer::Impl::reserveRenderCommandPackets(
+     const std::size_t totalCapacity)
+ {
+   cmdBuf_.reserve(totalCapacity);
+ }
+
+ bool ArtifactIRenderer::Impl::prepareParallelGeometryRecording()
+ {
+   if (parallelGeometryRecordingReady_) return true;
+   try {
+     // Reserve the owner queue even when parallel worker setup is unavailable;
+     // ordinary serial draw recording uses the same frame command stream.
+     cmdBuf_.reserve(kParallelGeometryQueueCapacity);
+     const int arenaConcurrency = ArtifactCore::Parallel::InitializeSharedArena(
+         std::max(1, QThread::idealThreadCount()));
+     const std::size_t workerCount = std::min<std::size_t>(
+         kParallelGeometryMaxWorkers,
+         static_cast<std::size_t>(std::max(0, arenaConcurrency)));
+     if (workerCount < 2) return false;
+     if (!parallelGeometryBuffers_.reserveForWorkerCount(
+             workerCount, kParallelGeometryPacketsPerWorker)) {
+       return false;
+     }
+     parallelGeometryWorkerCount_ = workerCount;
+     parallelGeometryRecordingReady_ = true;
+     return true;
+   } catch (...) {
+     (void)parallelGeometryBuffers_.reset();
+     return false;
+   }
+ }
+
+ bool ArtifactIRenderer::Impl::tryMergeCompletedWorkerBuffers(
+     RenderCommandBufferPool& pool)
+ {
+   return pool.tryMergeInto(cmdBuf_);
+ }
+
  quint64 ArtifactIRenderer::Impl::flushCount() const
  {
   return flushCount_;
@@ -3465,7 +3544,7 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
        ++transformedSpriteCount;
       }
      }
-     auto* const queuedTarget = cmdBuf_.targetRTV;
+     auto* const queuedTarget = cmdBuf_.targetRTV();
      auto* const backBufferTarget = sc->GetCurrentBackBufferRTV();
      auto* const activeTarget = activeColorView();
      // Compare the cheap integer tuple first: the diagnostic string is only
@@ -3609,16 +3688,101 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
 
  ArtifactIRenderer::~ArtifactIRenderer() = default;
 
- void ArtifactIRenderer::initialize(QWidget* widget)       { impl_->initialize(widget); }
- void ArtifactIRenderer::initializeHeadless(int w, int h)  { impl_->initializeHeadless(w, h); }
+ void ArtifactIRenderer::initialize(QWidget* widget)
+ {
+   impl_->initialize(widget);
+   if (impl_->isInitialized()) (void)impl_->prepareParallelGeometryRecording();
+ }
+ void ArtifactIRenderer::initializeHeadless(int w, int h)
+ {
+   impl_->initializeHeadless(w, h);
+   if (impl_->isInitialized()) (void)impl_->prepareParallelGeometryRecording();
+ }
  void ArtifactIRenderer::initializeHeadlessWithAdapter(int w, int h, int adapterId)
- { impl_->initializeHeadlessWithAdapter(w, h, adapterId); }
+ {
+   impl_->initializeHeadlessWithAdapter(w, h, adapterId);
+   if (impl_->isInitialized()) (void)impl_->prepareParallelGeometryRecording();
+ }
  void ArtifactIRenderer::createSwapChain(QWidget* widget)  { impl_->createSwapChain(widget); }
  void ArtifactIRenderer::recreateSwapChain(QWidget* widget){ impl_->recreateSwapChain(widget); }
 
   void ArtifactIRenderer::clear()        { impl_->clear(); }
   void ArtifactIRenderer::flush()        { impl_->flush(); }
   void ArtifactIRenderer::flushAndWait() { impl_->flushAndWait(); }
+  void ArtifactIRenderer::reserveRenderCommandPackets(std::size_t totalCapacity)
+  { impl_->reserveRenderCommandPackets(totalCapacity); }
+  bool ArtifactIRenderer::tryMergeCompletedWorkerBuffers(
+      RenderCommandBufferPool& pool)
+  { return impl_->tryMergeCompletedWorkerBuffers(pool); }
+  bool ArtifactIRenderer::recordParallelCommandsErased(
+      RenderCommandBufferPool& pool, const std::size_t workerCount,
+      const std::size_t packetCapacityPerWorker,
+      const std::size_t estimatedWorkItems, void* context,
+      const ParallelCommandRecorder recorder)
+  {
+    if (!recorder || workerCount == 0 ||
+        workerCount > RenderCommandBufferPool::kMaximumBuffers ||
+        workerCount > std::numeric_limits<std::size_t>::max() /
+                          std::max<std::size_t>(1, packetCapacityPerWorker)) {
+      return false;
+    }
+    const std::size_t packetCapacity = workerCount * packetCapacityPerWorker;
+    const std::size_t queuedPackets = impl_->cmdBuf_.size();
+    if (packetCapacity > std::numeric_limits<std::size_t>::max() - queuedPackets ||
+        queuedPackets + packetCapacity > impl_->cmdBuf_.capacity()) {
+      return false;
+    }
+    if (!pool.beginFrameWithReservedCapacity(workerCount,
+                                             packetCapacityPerWorker)) {
+      return false;
+    }
+
+    ITextureView* target = impl_->primitiveRenderer_.currentRTV();
+    if (!target) target = impl_->cmdBuf_.targetRTV();
+    if (!target) {
+      (void)pool.reset();
+      return false;
+    }
+
+    const std::size_t scheduledWorkItems = std::max(packetCapacity,
+                                                     estimatedWorkItems);
+    const int workItems = scheduledWorkItems >
+            static_cast<std::size_t>(std::numeric_limits<int>::max())
+        ? std::numeric_limits<int>::max()
+        : static_cast<int>(scheduledWorkItems);
+    std::atomic<bool> succeeded{true};
+    try {
+      ArtifactCore::Parallel::For(
+          0, static_cast<int>(workerCount), workItems,
+          [&](const int workerIndex) {
+            auto lease = pool.acquireWorkerBuffer(
+                static_cast<std::size_t>(workerIndex));
+            if (!lease) {
+              succeeded.store(false, std::memory_order_release);
+              return;
+            }
+            lease.setTargetRTV(target);
+            try {
+              if (!recorder(context, static_cast<std::size_t>(workerIndex),
+                            workerCount, lease)) {
+                succeeded.store(false, std::memory_order_release);
+              }
+            } catch (...) {
+              succeeded.store(false, std::memory_order_release);
+            }
+          });
+    } catch (...) {
+      succeeded.store(false, std::memory_order_release);
+    }
+
+    if (!succeeded.load(std::memory_order_acquire)) {
+      (void)pool.reset();
+      return false;
+    }
+    if (pool.tryMergeInto(impl_->cmdBuf_)) return true;
+    (void)pool.reset();
+    return false;
+  }
   quint64 ArtifactIRenderer::flushCount() const { return impl_->flushCount(); }
   qint64 ArtifactIRenderer::flushContextTimeUs() const { return impl_->flushContextTimeUs(); }
  void ArtifactIRenderer::destroy()      { impl_->destroy(); }
@@ -3792,11 +3956,14 @@ ArtifactCore::MultiChannelImage ArtifactIRenderer::readbackToMultiChannelImage()
     if (!destination) return;
     float* destinationData = destination->data();
     if (!destinationData) return;
-    const size_t pixels = static_cast<size_t>(width) * height;
-    ArtifactCore::Parallel::For(0, static_cast<int>(pixels), static_cast<int>(pixels), [&](int index) {
-      const size_t pixel = static_cast<size_t>(index);
-      destinationData[pixel] =
-          source.rgba[pixel * 4u + static_cast<size_t>(component)] * scale + bias;
+    ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
+      const size_t rowStart = static_cast<size_t>(y) *
+                              static_cast<size_t>(width);
+      for (int x = 0; x < width; ++x) {
+        const size_t pixel = rowStart + static_cast<size_t>(x);
+        destinationData[pixel] =
+            source.rgba[pixel * 4u + static_cast<size_t>(component)] * scale + bias;
+      }
     });
   };
 
@@ -3940,7 +4107,7 @@ ArtifactCore::MultiChannelImage ArtifactIRenderer::readbackToMultiChannelImage()
    const auto* sourceBits = rgba.constBits();
    const int sourceStride = rgba.bytesPerLine();
    float* destination = outChannel->data();
-   ArtifactCore::Parallel::For(0, rgba.height(), rgba.width() * rgba.height(), [&](int y) {
+   ArtifactCore::Parallel::ForPixels(0, rgba.height(), rgba.width(), rgba.height(), [&](int y) {
     const auto* src = sourceBits + y * sourceStride;
     auto* dst = destination + static_cast<size_t>(y) *
                               static_cast<size_t>(rgba.width());
@@ -3978,7 +4145,7 @@ ArtifactCore::MultiChannelImage ArtifactIRenderer::readbackToMultiChannelImage()
     const auto* sourceBits = emission.constBits();
     const int sourceStride = emission.bytesPerLine();
     float* destination = emissionChannel->data();
-    ArtifactCore::Parallel::For(0, emission.height(), emission.width() * emission.height(), [&](int y) {
+    ArtifactCore::Parallel::ForPixels(0, emission.height(), emission.width(), emission.height(), [&](int y) {
      const auto* src = sourceBits + y * sourceStride;
      auto* dst = destination +
                  static_cast<size_t>(y) * static_cast<size_t>(emission.width());
@@ -4009,7 +4176,7 @@ ArtifactCore::MultiChannelImage ArtifactIRenderer::readbackToMultiChannelImage()
     const auto* sourceBits = rgba.constBits();
     const int sourceStride = rgba.bytesPerLine();
     float* destination = outChannel->data();
-    ArtifactCore::Parallel::For(0, rgba.height(), rgba.width() * rgba.height(), [&](int y) {
+    ArtifactCore::Parallel::ForPixels(0, rgba.height(), rgba.width(), rgba.height(), [&](int y) {
       const auto* src = sourceBits + y * sourceStride;
       auto* dst = destination +
                   static_cast<size_t>(y) * static_cast<size_t>(rgba.width());
@@ -4043,7 +4210,7 @@ ArtifactCore::MultiChannelImage ArtifactIRenderer::readbackToMultiChannelImage()
     const auto* sourceBits = rgba.constBits();
     const int sourceStride = rgba.bytesPerLine();
     float* destination = outChannel->data();
-    ArtifactCore::Parallel::For(0, rgba.height(), rgba.width() * rgba.height(), [&](int y) {
+    ArtifactCore::Parallel::ForPixels(0, rgba.height(), rgba.width(), rgba.height(), [&](int y) {
       const auto* src = sourceBits + y * sourceStride;
       auto* dst = destination +
                   static_cast<size_t>(y) * static_cast<size_t>(rgba.width());
@@ -4079,7 +4246,7 @@ ArtifactCore::MultiChannelImage ArtifactIRenderer::readbackToMultiChannelImage()
     const auto* sourceBits = rgba.constBits();
     const int sourceStride = rgba.bytesPerLine();
     float* destination = outChannel->data();
-    ArtifactCore::Parallel::For(0, rgba.height(), rgba.width() * rgba.height(), [&](int y) {
+    ArtifactCore::Parallel::ForPixels(0, rgba.height(), rgba.width(), rgba.height(), [&](int y) {
       const auto* src = sourceBits + y * sourceStride;
       auto* dst = destination +
                   static_cast<size_t>(y) * static_cast<size_t>(rgba.width());
@@ -4110,7 +4277,7 @@ ArtifactCore::MultiChannelImage ArtifactIRenderer::readbackToMultiChannelImage()
    const auto* sourceBits = srcImage.constBits();
    const int sourceStride = srcImage.bytesPerLine();
    float* destination = dstChannel->data();
-   ArtifactCore::Parallel::For(0, srcImage.height(), srcImage.width() * srcImage.height(), [&](int y) {
+   ArtifactCore::Parallel::ForPixels(0, srcImage.height(), srcImage.width(), srcImage.height(), [&](int y) {
     const auto* src = sourceBits + y * sourceStride;
     auto* dst = destination +
                 static_cast<size_t>(y) * static_cast<size_t>(srcImage.width());
@@ -4383,7 +4550,83 @@ void ArtifactIRenderer::renderShadowMapFrame()
                                           thickness, color); }
  void ArtifactIRenderer::drawPolyline(const std::vector<Detail::float2>& points,
                                       const FloatColor& color, float thickness)
- { impl_->drawPolyline(points, color, thickness); }
+ {
+   if (points.size() < 257 || thickness <= 0.0f) {
+     impl_->drawPolyline(points, color, thickness);
+     return;
+   }
+   const std::size_t segmentCount = points.size() - 1;
+   if (!impl_->parallelGeometryRecordingReady_ ||
+       segmentCount > Impl::kParallelGeometryMaxPackets) {
+     impl_->drawPolyline(points, color, thickness);
+     return;
+   }
+   const std::size_t workerCount = std::min<std::size_t>(
+       impl_->parallelGeometryWorkerCount_, segmentCount);
+   if (workerCount < 2) {
+     impl_->drawPolyline(points, color, thickness);
+     return;
+   }
+   const std::size_t perWorkerCapacity =
+       segmentCount / workerCount + (segmentCount % workerCount != 0);
+   if (perWorkerCapacity > Impl::kParallelGeometryPacketsPerWorker) {
+     impl_->drawPolyline(points, color, thickness);
+     return;
+   }
+
+   const auto viewport = impl_->primitiveRenderer_.getZoom();
+   float panX = 0.0f;
+   float panY = 0.0f;
+   impl_->primitiveRenderer_.getPan(panX, panY);
+   const float zoom = std::max(viewport, 0.001f);
+   const float effectiveThickness = std::max(thickness, 1.0f / zoom);
+   const float screenWidth = impl_->m_viewportWidth;
+   const float screenHeight = impl_->m_viewportHeight;
+   const float4 packetColor{color.r(), color.g(), color.b(), color.a()};
+   const std::size_t workItems = segmentCount >
+           std::numeric_limits<std::size_t>::max() / 16u
+       ? std::numeric_limits<std::size_t>::max()
+       : segmentCount * 16u;
+   const bool recorded = recordParallelCommands(
+       impl_->parallelGeometryBuffers_, workerCount, perWorkerCapacity,
+       workItems,
+       [&](const std::size_t workerIndex, const std::size_t workerTotal,
+           RenderCommandBufferPool::WorkerBufferLease& lease) {
+         const std::size_t baseCount = segmentCount / workerTotal;
+         const std::size_t remainder = segmentCount % workerTotal;
+         const std::size_t first = workerIndex * baseCount +
+                                   std::min(workerIndex, remainder);
+         const std::size_t last = first + baseCount +
+                                  (workerIndex < remainder ? 1u : 0u);
+         for (std::size_t index = first; index < last; ++index) {
+           const auto p1 = points[index];
+           const auto p2 = points[index + 1];
+           const float dx = p2.x - p1.x;
+           const float dy = p2.y - p1.y;
+           const float length = std::sqrt(dx * dx + dy * dy);
+           if (length < 1.0e-5f) continue;
+           const float half = effectiveThickness * 0.5f;
+           const float nx = -dy / length * half;
+           const float ny = dx / length * half;
+
+           QuadPkt packet;
+           packet.xform.offset = {panX, panY};
+           packet.xform.scale = {zoom, zoom};
+           packet.xform.screenSize = {screenWidth, screenHeight};
+           packet.p0 = {p1.x + nx, p1.y + ny};
+           packet.p1 = {p1.x - nx, p1.y - ny};
+           packet.p2 = {p2.x + nx, p2.y + ny};
+           packet.p3 = {p2.x - nx, p2.y - ny};
+           packet.color = packetColor;
+           if (!lease.tryAppend(std::move(packet))) return false;
+         }
+         return true;
+       });
+   if (!recorded) {
+     (void)impl_->parallelGeometryBuffers_.reset();
+     impl_->drawPolyline(points, color, thickness);
+   }
+ }
   void ArtifactIRenderer::drawStyledPolyline(
       const std::vector<Detail::float2>& points, const PolylineStyle& style,
       const FloatColor& color)
@@ -4451,7 +4694,97 @@ void ArtifactIRenderer::renderShadowMapFrame()
         }
       }
     }
-   for (std::size_t i = 0; i < segmentCount; ++i) {
+    bool parallelSegmentsRecorded = false;
+    if (dashPattern.empty() && segmentCount >= 256) {
+      const std::size_t workerCount = std::min<std::size_t>(
+          impl_->parallelGeometryWorkerCount_, segmentCount);
+      if (workerCount > 1) {
+        const std::size_t perWorkerCapacity =
+            segmentCount / workerCount + (segmentCount % workerCount != 0);
+        if (impl_->parallelGeometryRecordingReady_ &&
+            segmentCount <= Impl::kParallelGeometryMaxPackets &&
+            perWorkerCapacity <= Impl::kParallelGeometryPacketsPerWorker) {
+            float panX = 0.0f;
+            float panY = 0.0f;
+            impl_->primitiveRenderer_.getPan(panX, panY);
+            const float zoom = std::max(
+                impl_->primitiveRenderer_.getZoom(), 0.001f);
+            const float effectiveThickness =
+                std::max(style.thickness, 1.0f / zoom);
+            const float screenWidth = impl_->m_viewportWidth;
+            const float screenHeight = impl_->m_viewportHeight;
+            const std::size_t estimatedWorkItems = segmentCount >
+                    std::numeric_limits<std::size_t>::max() / 16u
+                ? std::numeric_limits<std::size_t>::max()
+                : segmentCount * 16u;
+            parallelSegmentsRecorded = recordParallelCommands(
+                impl_->parallelGeometryBuffers_, workerCount,
+                perWorkerCapacity, estimatedWorkItems,
+                [&](const std::size_t workerIndex,
+                    const std::size_t workerTotal,
+                    RenderCommandBufferPool::WorkerBufferLease& lease) {
+                  const std::size_t baseCount = segmentCount / workerTotal;
+                  const std::size_t remainder = segmentCount % workerTotal;
+                  const std::size_t first = workerIndex * baseCount +
+                                            std::min(workerIndex, remainder);
+                  const std::size_t last = first + baseCount +
+                      (workerIndex < remainder ? 1u : 0u);
+                  for (std::size_t index = first; index < last; ++index) {
+                    Detail::float2 p0 = pointAt(index);
+                    Detail::float2 p1 = pointAt(index + 1);
+                    const float dx = p1.x - p0.x;
+                    const float dy = p1.y - p0.y;
+                    const float length = std::sqrt(dx * dx + dy * dy);
+                    if (length <= 0.001f) continue;
+                    const float nx = dx / length;
+                    const float ny = dy / length;
+                    if (!style.closed && style.cap == PolylineCap::Square &&
+                        (index == 0 || index + 1 == segmentCount)) {
+                      if (index == 0) {
+                        p0.x -= nx * style.thickness * 0.5f;
+                        p0.y -= ny * style.thickness * 0.5f;
+                      }
+                      if (index + 1 == segmentCount) {
+                        p1.x += nx * style.thickness * 0.5f;
+                        p1.y += ny * style.thickness * 0.5f;
+                      }
+                    }
+                    const float midT =
+                        style.gradientEnabled && totalLen > 0.0f
+                        ? (segStart[index] + segStart[index + 1]) *
+                              0.5f / totalLen
+                        : 0.0f;
+                    const FloatColor segmentColor = colorAt(midT);
+                    const float lineX = p1.x - p0.x;
+                    const float lineY = p1.y - p0.y;
+                    const float lineLength =
+                        std::sqrt(lineX * lineX + lineY * lineY);
+                    if (lineLength < 1.0e-5f) continue;
+                    const float half = effectiveThickness * 0.5f;
+                    const float normalX = -lineY / lineLength * half;
+                    const float normalY = lineX / lineLength * half;
+                    QuadPkt packet;
+                    packet.xform.offset = {panX, panY};
+                    packet.xform.scale = {zoom, zoom};
+                    packet.xform.screenSize = {screenWidth, screenHeight};
+                    packet.p0 = {p0.x + normalX, p0.y + normalY};
+                    packet.p1 = {p0.x - normalX, p0.y - normalY};
+                    packet.p2 = {p1.x + normalX, p1.y + normalY};
+                    packet.p3 = {p1.x - normalX, p1.y - normalY};
+                    packet.color = {segmentColor.r(), segmentColor.g(),
+                                    segmentColor.b(), segmentColor.a()};
+                    if (!lease.tryAppend(std::move(packet))) return false;
+                  }
+                  return true;
+                });
+        }
+      }
+    }
+    if (!parallelSegmentsRecorded && dashPattern.empty() &&
+        segmentCount >= 256) {
+      (void)impl_->parallelGeometryBuffers_.reset();
+    }
+   if (!parallelSegmentsRecorded) for (std::size_t i = 0; i < segmentCount; ++i) {
      Detail::float2 p0 = pointAt(i);
      Detail::float2 p1 = pointAt(i + 1);
      const float dx = p1.x - p0.x;
@@ -4750,7 +5083,67 @@ void ArtifactIRenderer::drawSolidTriangleLocal(Detail::float2 p0, Detail::float2
                                  toDiligentFloat2(p2), color); }
 void ArtifactIRenderer::drawSolidPolygonLocal(const std::vector<Detail::float2>& points,
                                               const FloatColor& color)
-{ impl_->drawSolidPolygonLocal(points, color); }
+{
+  const auto triangles = triangulatePolygon(points);
+  const std::size_t triangleCount = triangles.size();
+  if (triangleCount >= 256 && impl_->parallelGeometryRecordingReady_ &&
+      triangleCount <= Impl::kParallelGeometryMaxPackets) {
+    const std::size_t workerCount = std::min<std::size_t>(
+        impl_->parallelGeometryWorkerCount_, triangleCount);
+    if (workerCount > 1) {
+      const std::size_t perWorkerCapacity =
+          triangleCount / workerCount + (triangleCount % workerCount != 0);
+      float panX = 0.0f;
+      float panY = 0.0f;
+      impl_->primitiveRenderer_.getPan(panX, panY);
+      const float zoom = std::max(
+          impl_->primitiveRenderer_.getZoom(), 0.001f);
+      const float screenWidth = impl_->m_viewportWidth;
+      const float screenHeight = impl_->m_viewportHeight;
+      const float4 packetColor{
+          color.r(), color.g(), color.b(), color.a()};
+      const bool recorded = recordParallelCommands(
+          impl_->parallelGeometryBuffers_, workerCount, perWorkerCapacity,
+          triangleCount * 3,
+          [&](const std::size_t workerIndex,
+              const std::size_t workerTotal,
+              RenderCommandBufferPool::WorkerBufferLease& lease) {
+            const std::size_t baseCount = triangleCount / workerTotal;
+            const std::size_t remainder = triangleCount % workerTotal;
+            const std::size_t first = workerIndex * baseCount +
+                                      std::min(workerIndex, remainder);
+            const std::size_t last = first + baseCount +
+                                     (workerIndex < remainder ? 1u : 0u);
+            for (std::size_t index = first; index < last; ++index) {
+              const auto& triangle = triangles[index];
+              SolidTriPkt packet;
+              packet.xform.offset = {panX, panY};
+              packet.xform.scale = {zoom, zoom};
+              packet.xform.screenSize = {screenWidth, screenHeight};
+              packet.p0 = toDiligentFloat2(
+                  points[static_cast<std::size_t>(triangle[0])]);
+              packet.p1 = toDiligentFloat2(
+                  points[static_cast<std::size_t>(triangle[1])]);
+              packet.p2 = toDiligentFloat2(
+                  points[static_cast<std::size_t>(triangle[2])]);
+              packet.color = packetColor;
+              if (!lease.tryAppend(std::move(packet))) return false;
+            }
+            return true;
+          });
+      if (recorded) return;
+      (void)impl_->parallelGeometryBuffers_.reset();
+    }
+  }
+
+  for (const auto& triangle : triangles) {
+    impl_->drawSolidTriangleLocal(
+        toDiligentFloat2(points[static_cast<std::size_t>(triangle[0])]),
+        toDiligentFloat2(points[static_cast<std::size_t>(triangle[1])]),
+        toDiligentFloat2(points[static_cast<std::size_t>(triangle[2])]),
+        color);
+  }
+}
 void ArtifactIRenderer::drawTexturedTriangleTransformed(
     Detail::float2 p0, Detail::float2 p1, Detail::float2 p2, Detail::float2 uv0,
     Detail::float2 uv1, Detail::float2 uv2, const QMatrix4x4 &transform,
@@ -4788,7 +5181,12 @@ void ArtifactIRenderer::drawCheckerboard(float x, float y, float w, float h,
 void ArtifactIRenderer::drawGrid(float x, float y, float w, float h,
                                  float spacing, float thickness, const FloatColor& color)
 { impl_->drawGrid(x, y, w, h, spacing, thickness, color); }
-void ArtifactIRenderer::drawParticles(const ArtifactCore::ParticleRenderData& data) { impl_->drawParticles(data); }
+void ArtifactIRenderer::drawParticles(const ArtifactCore::ParticleRenderData& data) {
+  impl_->drawParticles(data);
+}
+void ArtifactIRenderer::drawParticles(ArtifactCore::ParticleRenderData&& data) {
+  impl_->drawParticles(data, &data);
+}
 
 QString ArtifactIRenderer::particleDebugState() const {
   if (!impl_) {
