@@ -798,10 +798,9 @@ std::vector<CloneData> ArtifactCloneLayer::generateCloneData() const {
         }
     }
 
-    ArtifactCore::Parallel::For(0, static_cast<int>(clones.size()),
-                                static_cast<int>(clones.size()),
-                                [&](int index) {
-        auto& clone = clones[static_cast<size_t>(index)];
+    ArtifactCore::Parallel::ForSize(
+        0, clones.size(), clones.size(), [&](size_t index) {
+        auto& clone = clones[index];
         QMatrix4x4 transform;
         transform.setToIdentity();
         const auto applyStage = [&transform](const ArtifactCloneLayerSettings::TransformStage& stage) {

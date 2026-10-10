@@ -35,36 +35,39 @@ public:
     float sharpness_ = 0.5f;
     bool anisotropic_ = false;
 
-    static cv::Vec4f quadrantMean(const cv::Mat& mat, int cx, int cy, int dx, int dy, int r) {
+    struct QuadrantStats {
+        cv::Vec4f mean{0, 0, 0, 0};
+        float variance = 0.0f;
+    };
+
+    static QuadrantStats quadrantStats(const cv::Mat& mat, int cx, int cy, int dx, int dy, int r) {
         int count = 0;
         cv::Vec4f sum(0, 0, 0, 0);
-        for (int y = cy + dy; y != cy + dy + r; dy > 0 ? ++y : --y) {
+        float squaredRgbSum = 0.0f;
+        const int xStart = cx + dx;
+        const int yStart = cy + dy;
+        const int xStep = 1;
+        const int yStep = dy < 0 ? -1 : 1;
+        for (int y = yStart; y != yStart + r * yStep; y += yStep) {
             if (y < 0 || y >= mat.rows) continue;
             const cv::Vec4f* row = mat.ptr<cv::Vec4f>(y);
-            for (int x = cx + dx; x != cx + dx + r; dx > 0 ? ++x : --x) {
+            for (int x = xStart; x != xStart + r * xStep; x += xStep) {
                 if (x < 0 || x >= mat.cols) continue;
-                sum += row[x];
+                const cv::Vec4f& pixel = row[x];
+                sum += pixel;
+                squaredRgbSum += pixel[0] * pixel[0] + pixel[1] * pixel[1] + pixel[2] * pixel[2];
                 ++count;
             }
         }
-        if (count > 0) sum /= static_cast<float>(count);
-        return sum;
-    }
-
-    static float quadrantVariance(const cv::Mat& mat, int cx, int cy, int dx, int dy, int r, const cv::Vec4f& mean) {
-        float var = 0.0f;
-        int count = 0;
-        for (int y = cy + dy; y != cy + dy + r; dy > 0 ? ++y : --y) {
-            if (y < 0 || y >= mat.rows) continue;
-            const cv::Vec4f* row = mat.ptr<cv::Vec4f>(y);
-            for (int x = cx + dx; x != cx + dx + r; dx > 0 ? ++x : --x) {
-                if (x < 0 || x >= mat.cols) continue;
-                cv::Vec4f diff = row[x] - mean;
-                var += diff[0] * diff[0] + diff[1] * diff[1] + diff[2] * diff[2];
-                ++count;
-            }
-        }
-        return count > 0 ? var / static_cast<float>(count) : 0.0f;
+        if (count == 0) return {};
+        const float inverseCount = 1.0f / static_cast<float>(count);
+        QuadrantStats stats;
+        stats.mean = sum * inverseCount;
+        const float meanSquaredRgb = stats.mean[0] * stats.mean[0] +
+                                     stats.mean[1] * stats.mean[1] +
+                                     stats.mean[2] * stats.mean[2];
+        stats.variance = std::max(0.0f, squaredRgbSum * inverseCount - meanSquaredRgb);
+        return stats;
     }
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
@@ -79,16 +82,20 @@ public:
         if (!dstPixels) return;
         cv::Mat mat(h, w, CV_32FC4, const_cast<float*>(pixels));
         int r = std::max(1, static_cast<int>(radius_));
-        ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
+        ArtifactCore::Parallel::ForPixels(0, h, w, h, [&](int y) {
             for (int x = 0; x < w; ++x) {
-                cv::Vec4f m0 = quadrantMean(mat, x, y, 0, -r, r);
-                cv::Vec4f m1 = quadrantMean(mat, x, y, 0, 0, r);
-                cv::Vec4f m2 = quadrantMean(mat, x, y, -r, -r, r);
-                cv::Vec4f m3 = quadrantMean(mat, x, y, -r, 0, r);
-                float v0 = quadrantVariance(mat, x, y, 0, -r, r, m0);
-                float v1 = quadrantVariance(mat, x, y, 0, 0, r, m1);
-                float v2 = quadrantVariance(mat, x, y, -r, -r, r, m2);
-                float v3 = quadrantVariance(mat, x, y, -r, 0, r, m3);
+                const QuadrantStats q0 = quadrantStats(mat, x, y, 0, -r, r);
+                const QuadrantStats q1 = quadrantStats(mat, x, y, 0, 0, r);
+                const QuadrantStats q2 = quadrantStats(mat, x, y, -r, -r, r);
+                const QuadrantStats q3 = quadrantStats(mat, x, y, -r, 0, r);
+                const cv::Vec4f& m0 = q0.mean;
+                const cv::Vec4f& m1 = q1.mean;
+                const cv::Vec4f& m2 = q2.mean;
+                const cv::Vec4f& m3 = q3.mean;
+                const float v0 = q0.variance;
+                const float v1 = q1.variance;
+                const float v2 = q2.variance;
+                const float v3 = q3.variance;
                 float sharp = sharpness_ * sharpness_;
                 float w0 = 1.0f / std::max(v0 + sharp, 0.0001f);
                 float w1 = 1.0f / std::max(v1 + sharp, 0.0001f);
@@ -197,38 +204,35 @@ RWTexture2D<float4> g_OutputTexture : register(u0);
 cbuffer KuwaharaParams : register(b0) {
     float g_Radius, g_Sharpness, g_Anisotropic, g_Pad;
 };
-float4 kuwaharaQuadrant(uint2 pos, int2 off, int r) {
-    uint w, h;
-    g_InputTexture.GetDimensions(w, h);
+struct KuwaharaStats { float4 mean; float variance; };
+KuwaharaStats kuwaharaQuadrant(uint2 pos, int2 off, int r, uint w, uint h) {
     float4 sum = 0;
+    float squaredRgbSum = 0;
     int count = 0;
     int step = (off.y >= 0) ? 1 : -1;
     for (int y = pos.y + off.y; y != pos.y + off.y + r * step; y += step) {
         if (y < 0 || y >= int(h)) continue;
         for (int x = pos.x + off.x; x != pos.x + off.x + r; ++x) {
             if (x < 0 || x >= int(w)) continue;
-            sum += g_InputTexture[uint2(x, y)];
+            float4 pixel = g_InputTexture[uint2(x, y)];
+            sum += pixel;
+            squaredRgbSum += dot(pixel.rgb, pixel.rgb);
             ++count;
         }
     }
-    return count > 0 ? sum / float(count) : float4(0, 0, 0, 0);
-}
-float kuwaharaVar(uint2 pos, int2 off, int r, float4 mean) {
-    uint w, h;
-    g_InputTexture.GetDimensions(w, h);
-    float var = 0;
-    int count = 0;
-    int step = (off.y >= 0) ? 1 : -1;
-    for (int y = pos.y + off.y; y != pos.y + off.y + r * step; y += step) {
-        if (y < 0 || y >= int(h)) continue;
-        for (int x = pos.x + off.x; x != pos.x + off.x + r; ++x) {
-            if (x < 0 || x >= int(w)) continue;
-            float4 d = g_InputTexture[uint2(x, y)] - mean;
-            var += d.x * d.x + d.y * d.y + d.z * d.z;
-            ++count;
-        }
+    if (count == 0) {
+        KuwaharaStats empty;
+        empty.mean = float4(0, 0, 0, 0);
+        empty.variance = 0;
+        return empty;
     }
-    return count > 0 ? var / float(count) : 0;
+    float inverseCount = 1.0 / float(count);
+    float4 mean = sum * inverseCount;
+    float meanSquaredRgb = dot(mean.rgb, mean.rgb);
+    KuwaharaStats result;
+    result.mean = mean;
+    result.variance = max(0.0, squaredRgbSum * inverseCount - meanSquaredRgb);
+    return result;
 }
 [numthreads(8, 8, 1)]
 void main(uint3 dtid : SV_DispatchThreadID) {
@@ -237,14 +241,12 @@ void main(uint3 dtid : SV_DispatchThreadID) {
     if (dtid.x >= w || dtid.y >= h) return;
     int r = max(1, int(g_Radius));
     uint2 p = dtid.xy;
-    float4 m0 = kuwaharaQuadrant(p, int2(0, -r), r);
-    float4 m1 = kuwaharaQuadrant(p, int2(0, 0), r);
-    float4 m2 = kuwaharaQuadrant(p, int2(-r, -r), r);
-    float4 m3 = kuwaharaQuadrant(p, int2(-r, 0), r);
-    float v0 = kuwaharaVar(p, int2(0, -r), r, m0);
-    float v1 = kuwaharaVar(p, int2(0, 0), r, m1);
-    float v2 = kuwaharaVar(p, int2(-r, -r), r, m2);
-    float v3 = kuwaharaVar(p, int2(-r, 0), r, m3);
+    KuwaharaStats q0 = kuwaharaQuadrant(p, int2(0, -r), r, w, h);
+    KuwaharaStats q1 = kuwaharaQuadrant(p, int2(0, 0), r, w, h);
+    KuwaharaStats q2 = kuwaharaQuadrant(p, int2(-r, -r), r, w, h);
+    KuwaharaStats q3 = kuwaharaQuadrant(p, int2(-r, 0), r, w, h);
+    float4 m0 = q0.mean, m1 = q1.mean, m2 = q2.mean, m3 = q3.mean;
+    float v0 = q0.variance, v1 = q1.variance, v2 = q2.variance, v3 = q3.variance;
     float s = g_Sharpness * g_Sharpness;
     float w0 = 1.0 / max(v0 + s, 0.0001);
     float w1 = 1.0 / max(v1 + s, 0.0001);
