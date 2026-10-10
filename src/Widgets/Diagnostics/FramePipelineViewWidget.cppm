@@ -311,11 +311,17 @@ public:
                 for (const auto handle : pass.descriptor.writes) writes << resourceLabel(handle);
                 const QString order = pass.state == ArtifactCore::RenderDiagnosticPassState::Scheduled
                     ? QString::number(pass.executionOrder) : QStringLiteral("-");
-                lines << QStringLiteral("  #%1 order=%2 [%3/%4] %5 -> %6")
+                const QString level = pass.state == ArtifactCore::RenderDiagnosticPassState::Scheduled
+                    ? QString::number(pass.executionLevel) : QStringLiteral("-");
+                const QString parallelMode = pass.descriptor.parallelSafe
+                    ? QStringLiteral("parallel-opt-in") : QStringLiteral("serial");
+                lines << QStringLiteral("  #%1 order=%2 level=%3 [%4/%5 %6] %7 -> %8")
                              .arg(pass.handle.id)
                              .arg(order)
+                             .arg(level)
                              .arg(ArtifactCore::toString(pass.descriptor.queue))
                              .arg(ArtifactCore::toString(pass.state))
+                             .arg(parallelMode)
                              .arg(reads.isEmpty() ? QStringLiteral("<none>") : reads.join(QStringLiteral(", ")))
                              .arg(writes.isEmpty() ? QStringLiteral("<none>") : writes.join(QStringLiteral(", ")));
                 if (!pass.stateReason.empty()) {

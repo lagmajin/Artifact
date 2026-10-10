@@ -1,6 +1,7 @@
 module;
 
 #include <QCoreApplication>
+#include <QByteArray>
 #include <QDebug>
 #include <QDir>
 #include <QFileInfo>
@@ -9,8 +10,11 @@ module;
 #include <QRegularExpression>
 #include <QStandardPaths>
 #include <QStringList>
+#include <QThread>
+#include <QVariant>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -26,8 +30,107 @@ import Core.Diagnostics.Recorder;
 import Core.Diagnostics.Snapshot;
 import Core.Diagnostics.Trace;
 import Time.Code;
+import Configuration.LayeredConfigStore;
 
 namespace Artifact {
+
+    static QVariant xpuEncoderStartupOverride(
+        const char* environmentName, const char* configKey,
+        const char* legacyEnvironmentName = nullptr,
+        bool reportConflict = true)
+    {
+        const QVariant configured = ArtifactCore::LayeredConfigStore::instance()
+            .value(QString::fromLatin1(configKey));
+        const QByteArray environmentValue = qgetenv(environmentName);
+        const QByteArray legacyEnvironmentValue = legacyEnvironmentName
+            ? qgetenv(legacyEnvironmentName) : QByteArray{};
+        if (configured.isValid()) {
+            if (reportConflict && (!environmentValue.isEmpty() ||
+                                   !legacyEnvironmentValue.isEmpty())) {
+                static std::atomic_flag reportedConflict = ATOMIC_FLAG_INIT;
+                if (!reportedConflict.test_and_set(
+                        std::memory_order_relaxed)) {
+                    qWarning().noquote()
+                        << "[StartupFlags]" << environmentName
+                        << "is set in the environment but" << configKey
+                        << "is set in ArtifactStartup.json; the JSON value wins.";
+                }
+            }
+            return configured;
+        }
+        if (!environmentValue.isEmpty()) {
+            return QString::fromLocal8Bit(environmentValue);
+        }
+        if (!legacyEnvironmentValue.isEmpty()) {
+            return QString::fromLocal8Bit(legacyEnvironmentValue);
+        }
+        return {};
+    }
+
+    static QString xpuEncoderSpec()
+    {
+        static const QVariant setting = xpuEncoderStartupOverride(
+            "ARTIFACT_XPU", "RenderQueue/XpuSpec", "ARTIFACT_HETERO", false);
+        return setting.toString().trimmed().toLower();
+    }
+
+    static int xpuMaxHardwareEncoderCount()
+    {
+        static const int limit = [] {
+            bool ok = false;
+            const QVariant setting = xpuEncoderStartupOverride(
+                "ARTIFACT_XPU_MAX_HW_ENCODERS",
+                "RenderQueue/XpuMaxHwEncoders");
+            const int configured = setting.toInt(&ok);
+            return ok ? std::clamp(configured, 1, 16) : 2;
+        }();
+        return limit;
+    }
+
+    class XpuHardwareEncoderSlot final {
+    public:
+        XpuHardwareEncoderSlot() = default;
+        XpuHardwareEncoderSlot(const XpuHardwareEncoderSlot&) = delete;
+        XpuHardwareEncoderSlot& operator=(const XpuHardwareEncoderSlot&) = delete;
+        ~XpuHardwareEncoderSlot() { release(); }
+
+        bool tryAcquire()
+        {
+            if (held_) {
+                return true;
+            }
+            auto& active = activeCount();
+            int observed = active.load(std::memory_order_relaxed);
+            const int limit = xpuMaxHardwareEncoderCount();
+            while (observed < limit) {
+                if (active.compare_exchange_weak(
+                        observed, observed + 1,
+                        std::memory_order_acq_rel,
+                        std::memory_order_relaxed)) {
+                    held_ = true;
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        void release()
+        {
+            if (held_) {
+                activeCount().fetch_sub(1, std::memory_order_acq_rel);
+                held_ = false;
+            }
+        }
+
+    private:
+        static std::atomic<int>& activeCount()
+        {
+            static std::atomic<int> active{0};
+            return active;
+        }
+
+        bool held_ = false;
+    };
 
     static QString resolveFfmpegExePath()
     {
@@ -531,12 +634,21 @@ namespace Artifact {
     static int xpuEncoderThreadCount()
     {
         bool ok = false;
-        const int value = qEnvironmentVariable(
-            "ARTIFACT_XPU_ENCODER_THREADS").trimmed().toInt(&ok);
-        if (!ok) {
-            return 0;
+        static const QVariant setting = xpuEncoderStartupOverride(
+            "ARTIFACT_XPU_ENCODER_THREADS",
+            "RenderQueue/XpuEncoderThreads");
+        const int configured = setting.toInt(&ok);
+        const int value = ok ? std::clamp(configured, 0, 64) : 0;
+        if (!xpuEncoderSpec().contains(QStringLiteral("mixed=on"))) {
+            return value;
         }
-        return std::clamp(value, 0, 64);
+        const int hardwareThreads = std::max(
+            1, QThread::idealThreadCount());
+        const int mixedBudget = std::max(1, hardwareThreads - 3);
+        // Zero means FFmpeg's automatic count outside mixed XPU jobs. Mixed
+        // rendering shares CPU capacity with the encoder, so make the default
+        // bounded and cap explicit requests to the host's usable threads.
+        return value > 0 ? std::min(value, mixedBudget) : 1;
     }
 
     // XPU P3: preset override for bench (output-varying, opt-in).
@@ -544,11 +656,13 @@ namespace Artifact {
     // 未設定時は従来の "slow"（GPU時は "p4"）を維持。
     static QString xpuPresetOverride()
     {
-        const QString direct = qEnvironmentVariable("ARTIFACT_XPU_PRESET").trimmed().toLower();
-        if (!direct.isEmpty()) {
+        static const QVariant directSetting = xpuEncoderStartupOverride(
+            "ARTIFACT_XPU_PRESET", "RenderQueue/XpuPreset");
+        const QString direct = directSetting.toString().trimmed().toLower();
+        if (directSetting.isValid()) {
             return direct;
         }
-        const QString spec = qEnvironmentVariable("ARTIFACT_XPU").trimmed().toLower();
+        const QString spec = xpuEncoderSpec();
         const QString key = QStringLiteral("preset=");
         const int idx = spec.indexOf(key);
         if (idx >= 0) {
@@ -656,21 +770,6 @@ namespace Artifact {
             return settings;
         }
 
-        // XPU P4: NVENC/QSV 同時実行上限の予約（出力不変）。
-        // ARTIFACT_XPU_MAX_HW_ENCODERS で上限をログ（既定 2）。実 backoff（同時実行
-        // 数に応じた CPU fallback）は encode セッションの多重化が顕在化した段階で
-        // NativeFFmpegBackend の close 時の decrement と合わせて実装する。現状は
-        // 上限値のログのみで挙動は変えない（既定では HW 優先を維持）。
-        {
-            bool ok = false;
-            const int maxHw = qEnvironmentVariable("ARTIFACT_XPU_MAX_HW_ENCODERS").trimmed().toInt(&ok);
-            const int effectiveMax = ok ? std::clamp(maxHw, 1, 16) : 2;
-            if (ok) {
-                qInfo() << "[Encode][GPU] HW encoder limit"
-                         << "maxHw=" << effectiveMax << "codec=" << job.codec;
-            }
-        }
-
         settings.videoCodec = encoderName;
         settings.encoderName = encoderName;
         settings.preferHardware = true;
@@ -772,7 +871,23 @@ namespace Artifact {
             } else {
                 args << QStringLiteral("-pix_fmt") << ffmpegPipePixelFormat(codec, job.codecProfile);
             }
+            const int threadCount = xpuEncoderThreadCount();
+            if (threadCount > 0) {
+                args << QStringLiteral("-threads") << QString::number(threadCount);
+            }
             args << job.outputPath;
+
+            if ((preferHardware_ || preferVulkan_) &&
+                !hardwareEncoderSlot_.tryAcquire()) {
+                lastError_ = QStringLiteral(
+                    "XPU hardware encoder limit reached (max=%1)")
+                    .arg(xpuMaxHardwareEncoderCount());
+                if (errorMessage) *errorMessage = lastError_;
+                qWarning() << "[Encode][Pipe] hardware encoder limit reached"
+                           << "max=" << xpuMaxHardwareEncoderCount()
+                           << "codec=" << codec;
+                return false;
+            }
 
             const QString ffmpegPath = resolveFfmpegExePath();
             if (preferHardware_ || preferVulkan_) {
@@ -882,6 +997,7 @@ namespace Artifact {
         bool close(QString* errorMessage) override
         {
             if (!process_) {
+                hardwareEncoderSlot_.release();
                 return lastError_.isEmpty();
             }
 
@@ -922,12 +1038,14 @@ namespace Artifact {
                         << "output=" << processOutput;
             }
             process_.reset();
+            hardwareEncoderSlot_.release();
             return success;
         }
 
         QString lastError() const { return lastError_; }
 
     private:
+        XpuHardwareEncoderSlot hardwareEncoderSlot_;
         std::unique_ptr<QProcess> process_;
         QString lastError_;
         bool preferHardware_ = false;
@@ -952,7 +1070,18 @@ namespace Artifact {
                 recordEncodeFailure("encode.open_failed", lastError_, job.outputPath);
                 return false;
             }
+            if (useGpuBackend_ && !hardwareEncoderSlot_.tryAcquire()) {
+                lastError_ = QStringLiteral(
+                    "XPU hardware encoder limit reached (max=%1)")
+                    .arg(xpuMaxHardwareEncoderCount());
+                if (errorMessage) *errorMessage = lastError_;
+                qWarning() << "[Encode][Native] hardware encoder limit reached"
+                           << "max=" << xpuMaxHardwareEncoderCount()
+                           << "codec=" << settings.videoCodec;
+                return false;
+            }
             if (!encoder_.open(job.outputPath, settings)) {
+                hardwareEncoderSlot_.release();
                 lastError_ = encoder_.lastError();
                 if (errorMessage) *errorMessage = lastError_;
                 qWarning() << "[Encode][Native] open failed"
@@ -998,6 +1127,7 @@ namespace Artifact {
         bool close(QString* errorMessage) override
         {
             encoder_.close();
+            hardwareEncoderSlot_.release();
             lastError_ = encoder_.lastError();
             if (!lastError_.isEmpty()) {
                 if (errorMessage) *errorMessage = lastError_;
@@ -1013,6 +1143,7 @@ namespace Artifact {
 
     private:
         bool useGpuBackend_ = false;
+        XpuHardwareEncoderSlot hardwareEncoderSlot_;
         ArtifactCore::FFmpegEncoder encoder_;
         QString lastError_;
     };

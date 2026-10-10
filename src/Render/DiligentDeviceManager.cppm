@@ -688,7 +688,7 @@ namespace {
                               int explicitAdapterIndex = -1)
     {
         auto* pFactory = resolveD3D12Factory();
-        if (!pFactory) {
+        if (!pFactory || !pFactory->LoadD3D12("d3d12.dll")) {
             return false;
         }
 
@@ -783,6 +783,178 @@ namespace {
                        << explicitAdapterIndex;
             return false;
         }
+
+        // Diligent's D3D12 factory enumeration can report an adapter that its
+        // implicit device-creation path later rejects (notably when the
+        // factory's DXGI adapter ordering differs from its public adapter
+        // list). XPU workers need the requested physical adapter exactly, so
+        // bind it through DXGI and attach Diligent to that native device.
+        if (hasExplicitAdapter) {
+            ComPtr<IDXGIFactory6> dxgiFactory;
+            ComPtr<IDXGIAdapter1> selectedAdapter;
+            if (SUCCEEDED(::CreateDXGIFactory1(IID_PPV_ARGS(&dxgiFactory)))) {
+                for (UINT index = 0;; ++index) {
+                    ComPtr<IDXGIAdapter1> adapter;
+                    if (dxgiFactory->EnumAdapters1(index, &adapter) ==
+                        DXGI_ERROR_NOT_FOUND) {
+                        break;
+                    }
+                    DXGI_ADAPTER_DESC1 desc{};
+                    if (FAILED(adapter->GetDesc1(&desc)) ||
+                        (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)) {
+                        continue;
+                    }
+                    const QString name = QString::fromWCharArray(
+                        desc.Description).trimmed();
+                    if (name.compare(adapterSelection.description,
+                                     Qt::CaseInsensitive) == 0) {
+                        selectedAdapter = adapter;
+                        break;
+                    }
+                }
+            }
+            if (!selectedAdapter) {
+                qWarning() << "[DiligentDeviceManager] explicit D3D12 adapter"
+                           << "could not be mapped to a DXGI hardware adapter"
+                           << "adapterId=" << explicitAdapterIndex
+                           << "name=" << adapterSelection.description;
+                return false;
+            }
+
+            ComPtr<ID3D12Device> nativeDevice;
+            HRESULT hr = ::D3D12CreateDevice(
+                selectedAdapter.Get(), D3D_FEATURE_LEVEL_11_0,
+                IID_PPV_ARGS(&nativeDevice));
+            if (SUCCEEDED(hr) && nativeDevice) {
+                D3D12_COMMAND_QUEUE_DESC queueDesc{};
+                queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+                ComPtr<ID3D12CommandQueue> nativeQueue;
+                hr = nativeDevice->CreateCommandQueue(
+                    &queueDesc, IID_PPV_ARGS(&nativeQueue));
+                if (SUCCEEDED(hr) && nativeQueue) {
+                    EngineD3D12CreateInfo attachInfo = {};
+                    attachInfo.EnableValidation =
+                        RenderConfig::diligentValidationEnabled();
+                    if (attachInfo.EnableValidation) {
+                        attachInfo.SetValidationLevel(
+                            Diligent::VALIDATION_LEVEL_2);
+                    }
+                    attachInfo.Features.MultithreadedResourceCreation =
+                        DEVICE_FEATURE_STATE_DISABLED;
+                    attachInfo.NumAsyncShaderCompilationThreads =
+                        kAsyncShaderCompileThreads;
+                    attachInfo.Features.RayTracing =
+                        rayTracingEnabledByConfig()
+                            ? DEVICE_FEATURE_STATE_ENABLED
+                            : DEVICE_FEATURE_STATE_DISABLED;
+                    ICommandQueueD3D12* diligentQueue = nullptr;
+                    pFactory->CreateCommandQueueD3D12(
+                        nativeDevice.Get(), nativeQueue.Get(), nullptr,
+                        &diligentQueue);
+                    if (diligentQueue) {
+                        ICommandQueueD3D12* queues[] = {diligentQueue};
+                        pFactory->AttachToD3D12Device(
+                            nativeDevice.Get(), 1, queues, attachInfo,
+                            &outDevice, &outImmediateContext);
+                        diligentQueue->Release();
+                    }
+                }
+            }
+            if (outDevice && outImmediateContext) {
+                qInfo() << "[DiligentDeviceManager] attached explicit D3D12"
+                        << "adapter=" << adapterSelection.description
+                        << "adapterId=" << explicitAdapterIndex;
+                return true;
+            }
+            qWarning() << "[DiligentDeviceManager] failed to attach explicit"
+                       << "D3D12 adapter" << adapterSelection.description
+                       << "adapterId=" << explicitAdapterIndex
+                       << "HRESULT=" << Qt::hex
+                       << static_cast<unsigned long>(hr);
+            return false;
+        }
+
+        // If Diligent could not enumerate any adapters, avoid its default
+        // adapter probe: it can reject a DXGI device that is directly
+        // creatable on this driver. Attach the first viable hardware adapter
+        // before entering that failing path.
+        if (!adapterSelection.resolved && !hasExplicitAdapter) {
+            ComPtr<IDXGIFactory6> dxgiFactory;
+            if (SUCCEEDED(::CreateDXGIFactory1(IID_PPV_ARGS(&dxgiFactory)))) {
+                for (UINT index = 0;; ++index) {
+                    ComPtr<IDXGIAdapter1> adapter;
+                    if (dxgiFactory->EnumAdapters1(index, &adapter) ==
+                        DXGI_ERROR_NOT_FOUND) {
+                        break;
+                    }
+                    DXGI_ADAPTER_DESC1 desc{};
+                    if (FAILED(adapter->GetDesc1(&desc)) ||
+                        (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)) {
+                        continue;
+                    }
+                    ComPtr<ID3D12Device> nativeDevice;
+                    const HRESULT deviceResult = ::D3D12CreateDevice(
+                        adapter.Get(), D3D_FEATURE_LEVEL_11_0,
+                        IID_PPV_ARGS(&nativeDevice));
+                    if (FAILED(deviceResult) || !nativeDevice) {
+                        qWarning() << "[DiligentDeviceManager] XPU DXGI device"
+                                   << "create failed" << "HRESULT=" << Qt::hex
+                                   << static_cast<unsigned long>(deviceResult);
+                        continue;
+                    }
+                    D3D12_COMMAND_QUEUE_DESC queueDesc{};
+                    queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+                    ComPtr<ID3D12CommandQueue> nativeQueue;
+                    const HRESULT queueResult = nativeDevice->CreateCommandQueue(
+                        &queueDesc, IID_PPV_ARGS(&nativeQueue));
+                    if (FAILED(queueResult) || !nativeQueue) {
+                        qWarning() << "[DiligentDeviceManager] XPU DXGI queue"
+                                   << "create failed" << "HRESULT=" << Qt::hex
+                                   << static_cast<unsigned long>(queueResult);
+                        continue;
+                    }
+                    EngineD3D12CreateInfo attachInfo = {};
+                    attachInfo.EnableValidation =
+                        RenderConfig::diligentValidationEnabled();
+                    if (attachInfo.EnableValidation) {
+                        attachInfo.SetValidationLevel(
+                            Diligent::VALIDATION_LEVEL_2);
+                    }
+                    attachInfo.Features.MultithreadedResourceCreation =
+                        DEVICE_FEATURE_STATE_DISABLED;
+                    attachInfo.NumAsyncShaderCompilationThreads =
+                        kAsyncShaderCompileThreads;
+                    attachInfo.Features.RayTracing =
+                        rayTracingEnabledByConfig()
+                            ? DEVICE_FEATURE_STATE_ENABLED
+                            : DEVICE_FEATURE_STATE_DISABLED;
+                    ICommandQueueD3D12* diligentQueue = nullptr;
+                    pFactory->CreateCommandQueueD3D12(
+                        nativeDevice.Get(), nativeQueue.Get(), nullptr,
+                        &diligentQueue);
+                    if (diligentQueue) {
+                        ICommandQueueD3D12* queues[] = {diligentQueue};
+                        pFactory->AttachToD3D12Device(
+                            nativeDevice.Get(), 1, queues, attachInfo,
+                            &outDevice, &outImmediateContext);
+                        diligentQueue->Release();
+                    }
+                    if (outDevice && outImmediateContext) {
+                        qInfo() << "[DiligentDeviceManager] attached first"
+                                << "DXGI D3D12 adapter="
+                                << QString::fromWCharArray(desc.Description)
+                                       .trimmed();
+                        return true;
+                    }
+                    qWarning() << "[DiligentDeviceManager] XPU DXGI attach"
+                               << "did not return a device and context";
+                }
+            } else {
+                qWarning() << "[DiligentDeviceManager] XPU DXGI factory"
+                           << "creation failed";
+            }
+        }
+
         creationAttribs.AdapterId = adapterSelection.adapterId;
         creationAttribs.EnableValidation = RenderConfig::diligentValidationEnabled();
         if (creationAttribs.EnableValidation) {
@@ -821,6 +993,87 @@ namespace {
             creationAttribs.Features.RayTracing = DEVICE_FEATURE_STATE_DISABLED;
             pFactory->CreateDeviceAndContextsD3D12(
                 creationAttribs, &outDevice, &outImmediateContext);
+        }
+
+        // Some drivers are creatable through DXGI even when this Diligent
+        // factory reports no default adapter (or its compatible-adapter
+        // enumeration is empty). Recover using the same hardware adapter
+        // chosen above when available, otherwise the first D3D12-capable DXGI
+        // hardware adapter, then attach Diligent to that native device.
+        if ((!outDevice || !outImmediateContext) && !hasExplicitAdapter) {
+            ComPtr<IDXGIFactory6> dxgiFactory;
+            if (SUCCEEDED(::CreateDXGIFactory1(IID_PPV_ARGS(&dxgiFactory)))) {
+                for (UINT index = 0;; ++index) {
+                    ComPtr<IDXGIAdapter1> adapter;
+                    if (dxgiFactory->EnumAdapters1(index, &adapter) ==
+                        DXGI_ERROR_NOT_FOUND) {
+                        break;
+                    }
+                    DXGI_ADAPTER_DESC1 desc{};
+                    if (FAILED(adapter->GetDesc1(&desc)) ||
+                        (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)) {
+                        continue;
+                    }
+                    const QString name = QString::fromWCharArray(
+                        desc.Description).trimmed();
+                    if (adapterSelection.resolved &&
+                        name.compare(adapterSelection.description,
+                                     Qt::CaseInsensitive) != 0) {
+                        continue;
+                    }
+
+                    ComPtr<ID3D12Device> nativeDevice;
+                    HRESULT hr = ::D3D12CreateDevice(
+                        adapter.Get(), D3D_FEATURE_LEVEL_11_0,
+                        IID_PPV_ARGS(&nativeDevice));
+                    if (FAILED(hr) || !nativeDevice) {
+                        continue;
+                    }
+                    D3D12_COMMAND_QUEUE_DESC queueDesc{};
+                    queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+                    ComPtr<ID3D12CommandQueue> nativeQueue;
+                    hr = nativeDevice->CreateCommandQueue(
+                        &queueDesc, IID_PPV_ARGS(&nativeQueue));
+                    if (FAILED(hr) || !nativeQueue) {
+                        continue;
+                    }
+
+                    EngineD3D12CreateInfo attachInfo = {};
+                    attachInfo.EnableValidation =
+                        RenderConfig::diligentValidationEnabled();
+                    if (attachInfo.EnableValidation) {
+                        attachInfo.SetValidationLevel(
+                            Diligent::VALIDATION_LEVEL_2);
+                    }
+                    attachInfo.Features.MultithreadedResourceCreation =
+                        DEVICE_FEATURE_STATE_DISABLED;
+                    attachInfo.NumAsyncShaderCompilationThreads =
+                        kAsyncShaderCompileThreads;
+                    attachInfo.Features.RayTracing =
+                        rayTracingEnabledByConfig()
+                            ? DEVICE_FEATURE_STATE_ENABLED
+                            : DEVICE_FEATURE_STATE_DISABLED;
+                    ICommandQueueD3D12* diligentQueue = nullptr;
+                    pFactory->CreateCommandQueueD3D12(
+                        nativeDevice.Get(), nativeQueue.Get(), nullptr,
+                        &diligentQueue);
+                    if (diligentQueue) {
+                        ICommandQueueD3D12* queues[] = {diligentQueue};
+                        pFactory->AttachToD3D12Device(
+                            nativeDevice.Get(), 1, queues, attachInfo,
+                            &outDevice, &outImmediateContext);
+                        diligentQueue->Release();
+                    }
+                    if (outDevice && outImmediateContext) {
+                        qInfo() << "[DiligentDeviceManager] attached DXGI"
+                                << "D3D12 fallback adapter=" << name;
+                        break;
+                    }
+                    if (adapterSelection.resolved) {
+                        break;
+                    }
+                }
+            }
         }
 
         return outDevice && outImmediateContext;
@@ -1948,12 +2201,27 @@ QString DiligentDeviceManager::d3d12AgilityDebugState() const
                                         : caps.runtimePath);
 }
 
-std::vector<GpuAdapterCandidate> DiligentDeviceManager::availableAdapters() const
+std::vector<GpuAdapterCandidate> DiligentDeviceManager::availableAdapters(
+    const QString& excludedBackend) const
 {
     std::vector<GpuAdapterCandidate> adapters;
-    appendFactoryAdapters(resolveD3D12Factory(), QStringLiteral("d3d12"),
-                          adapters);
-    if (hasUsableVulkanLoader()) {
+    if (excludedBackend.compare(QStringLiteral("d3d12"),
+                                Qt::CaseInsensitive) != 0) {
+        auto* factory = resolveD3D12Factory();
+        // Adapter enumeration requires the D3D12 entry points to be loaded;
+        // unlike device creation, EnumerateAdapters does not load them lazily.
+        if (factory && factory->LoadD3D12("d3d12.dll")) {
+            appendFactoryAdapters(factory, QStringLiteral("d3d12"), adapters);
+        }
+    }
+    // The Vulkan factory in this Diligent fork permits only one live Vulkan
+    // instance/device. When that device is active, do not call its adapter
+    // enumeration path; return the other backend's independently enumerable
+    // candidates so XPU can still discover D3D12 workers.
+    if (excludedBackend.compare(QStringLiteral("vulkan"),
+                                Qt::CaseInsensitive) != 0 &&
+        hasUsableVulkanLoader() &&
+        sharedRenderDeviceType() != RENDER_DEVICE_TYPE_VULKAN) {
         appendFactoryAdapters(resolveVkFactory(), QStringLiteral("vulkan"),
                               adapters);
     }

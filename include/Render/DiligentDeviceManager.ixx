@@ -168,7 +168,10 @@ public:
     QString validationDebugState() const;
     D3D12AgilityCapabilitySnapshot d3d12AgilityCapabilities() const;
     QString d3d12AgilityDebugState() const;
-    std::vector<GpuAdapterCandidate> availableAdapters() const;
+    // Excluding an active backend avoids factory probing when that backend
+    // cannot enumerate adapters while a device is live (currently Vulkan).
+    std::vector<GpuAdapterCandidate> availableAdapters(
+        const QString& excludedBackend = {}) const;
     QString availableAdaptersDebugState() const;
 
 private:

@@ -11432,19 +11432,17 @@ public:
         RenderPassContext& context, RenderPassResources& resources) {
       static const auto graphAndCompiled = [] {
         ArtifactCore::RenderGraph graph;
-        auto dependency = graph.addResource({
-            "RenderPass.Begin", ArtifactCore::RenderResourceKind::Buffer,
+        // These viewport passes blend or clear the same active target. Model
+        // that write hazard explicitly so graph diagnostics report the real
+        // shared output and the compiler preserves painter order.
+        const auto activeColorTarget = graph.addResource({
+            "Renderer.ActiveColorTarget",
+            ArtifactCore::RenderResourceKind::Texture,
             ArtifactCore::RenderResourceLifetime::External, 0, 0, 1, 0, 0});
         for (std::size_t index = 0; index < PassCount; ++index) {
-          auto output = graph.addResource({
-              "RenderPass." + std::to_string(index),
-              ArtifactCore::RenderResourceKind::Buffer,
-              ArtifactCore::RenderResourceLifetime::Transient, 0, 0, 1, 0,
-              0});
           graph.addPass({"RenderPass." + std::to_string(index),
                          ArtifactCore::RenderPassQueue::Graphics,
-                         {dependency}, {output}, true});
-          dependency = output;
+                         {}, {activeColorTarget}, true});
         }
         auto compiled = graph.compile();
         return std::pair<ArtifactCore::RenderGraph,
@@ -24103,19 +24101,48 @@ CompositionRenderController::frameDebugSnapshot(bool includePreviews) const {
           !layer->isActiveAt(graphFrame)) {
         continue;
       }
+      // Per-layer raster -> mask -> blend chain. Raster stages share the
+      // layer scratch (write-after-write edges serialize them, matching the
+      // serial layer loop); mask nodes exist only for layers with enabled
+      // track mattes so culled stages stay out of the plan; each blend
+      // consumes the layer surface into the shared accumulation token.
+      // Descriptors only: no RenderPass objects are allocated here, so this
+      // stays free of per-frame std::function state. Mask intermediates use
+      // the same full-size, eight-byte-per-pixel estimate as layer scratch.
+      const std::string layerTag = std::to_string(rasterPassCount);
       diagnosticGraph.addPass({
-          "Composition.LayerRaster", ArtifactCore::RenderPassQueue::Graphics,
-          {}, {layerResource}, true});
+          "Composition.LayerRaster." + layerTag,
+          ArtifactCore::RenderPassQueue::Graphics, {}, {layerResource}, true});
+      auto layerSurface = layerResource;
+      if (layerHasEnabledMatteReferences(layer.get())) {
+        auto maskedSurface = diagnosticGraph.addResource({
+            "Composition.LayerMasked." + layerTag,
+            ArtifactCore::RenderResourceKind::Texture,
+            ArtifactCore::RenderResourceLifetime::Transient, graphWidth,
+            graphHeight, 1, 0, graphBytes});
+        diagnosticGraph.addPass({
+            "Composition.LayerMask." + layerTag,
+            ArtifactCore::RenderPassQueue::Graphics,
+            {layerResource}, {maskedSurface}, true});
+        layerSurface = maskedSurface;
+      }
+      diagnosticGraph.addPass({
+          "Composition.LayerBlend." + layerTag,
+          ArtifactCore::RenderPassQueue::Compute,
+          {layerSurface}, {accumulationResource}, true});
       ++rasterPassCount;
     }
     if (rasterPassCount == 0) {
       diagnosticGraph.addPass({
           "Composition.LayerRaster.Empty",
           ArtifactCore::RenderPassQueue::Graphics, {}, {layerResource}, true});
+      // Keep the accumulation token written so downstream effect passes
+      // still see a valid producer when no layer exists.
+      diagnosticGraph.addPass({
+          "Composition.LayerBlend.Empty",
+          ArtifactCore::RenderPassQueue::Compute,
+          {layerResource}, {accumulationResource}, true});
     }
-    diagnosticGraph.addPass({
-        "Composition.LayerBlend", ArtifactCore::RenderPassQueue::Compute,
-        {layerResource}, {accumulationResource}, true});
     auto effectsInput = accumulationResource;
     if (impl_->pointwiseAppliedCount_ > 0) {
       diagnosticGraph.addPass({
@@ -42313,10 +42340,11 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
     }
 
-    // Keep the legacy pass executors as the resource-owning implementation,
-    // but let the shared RenderGraph validate and schedule the frame-level
-    // dependency chain. This makes ordering failures visible before the
-    // incremental executor migration replaces individual pass calls.
+    // The legacy executors still own this frame work. This frame-level graph
+    // compiles the phase chain for validation; it is separate from the
+    // executable RenderGraph wrapper used by smaller pass arrays below, which
+    // currently stays serial because those passes share renderer resources.
+    // Migrating this phase chain needs per-pass resource and context ownership.
     const int framePassPlanKey =
         (useRamPreviewFallback ? 0x1 : 0x0) |
         (pipelineEnabled ? 0x2 : 0x0) |
