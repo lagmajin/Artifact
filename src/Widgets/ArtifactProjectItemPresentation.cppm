@@ -43,6 +43,7 @@ import Artifact.Widgets.ProjectResponsiveLayout;
 import Artifact.Project.Items;
 import Artifact.Project.Cleanup;
 import Artifact.Project.Roles;
+import Translation.Manager;
 import Artifact.Service.Project;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Video;
@@ -691,13 +692,24 @@ public:
         if (!index.isValid()) {
             const auto* service = ArtifactProjectService::instance();
             const bool hasProject = service && service->hasProject();
-            titleLabel->setText(hasProject ? QStringLiteral("Project")
-                                           : QStringLiteral("No project open"));
+            titleLabel->setText(
+                TranslationManager::instance().tr(
+                    hasProject ? QStringLiteral("project_view.empty.project_title")
+                               : QStringLiteral("project_view.empty.project_open_title"),
+                    hasProject ? QStringLiteral("Project")
+                               : QStringLiteral("No project open")));
             detailsLabel->setText(
-                hasProject ? QStringLiteral("Select an item to inspect details")
-                           : QStringLiteral("Open a project to inspect details"));
-            thumbnail->setText(hasProject ? QStringLiteral("PREVIEW")
-                                          : QStringLiteral("NO PROJECT"));
+                TranslationManager::instance().tr(
+                    hasProject ? QStringLiteral("project_view.empty.select_details_hint")
+                               : QStringLiteral("project_view.empty.inspect_details_hint"),
+                    hasProject ? QStringLiteral("Select an item to inspect details")
+                               : QStringLiteral("Open a project to inspect details")));
+            thumbnail->setText(
+                TranslationManager::instance().tr(
+                    hasProject ? QStringLiteral("project_view.empty.thumbnail_preview")
+                               : QStringLiteral("project_view.empty.thumbnail_no_project"),
+                    hasProject ? QStringLiteral("PREVIEW")
+                               : QStringLiteral("NO PROJECT")));
             thumbnail->setPixmap(QPixmap());
             return;
         }

@@ -133,6 +133,7 @@ import Proxy.Service;
 import Artifact.Widgets.SoftwareRenderInspectors;
 import FloatColorPickerDialog;
 import Widgets.Utils.CSS;
+import Translation.Manager;
 
 
 import Utils.String.UniString;
@@ -447,8 +448,11 @@ void drawProjectViewEmptyState(QPainter& painter, const QRect& contentRect)
     painter.setPen(titleColor);
     const QRect titleRect(contentRect.left() + 28, y, contentRect.width() - 56, 24);
     painter.drawText(titleRect, Qt::AlignCenter,
-                     hasProject ? QStringLiteral("No project items to show")
-                                : QStringLiteral("No project open"));
+                     TranslationManager::instance().tr(
+                         hasProject ? QStringLiteral("project_view.empty.project_items_title")
+                                    : QStringLiteral("project_view.empty.project_open_title"),
+                         hasProject ? QStringLiteral("No project items to show")
+                                    : QStringLiteral("No project open")));
 
     QFont bodyFont = painter.font();
     bodyFont.setBold(false);
@@ -459,9 +463,12 @@ void drawProjectViewEmptyState(QPainter& painter, const QRect& contentRect)
     painter.setPen(bodyColor);
     const QRect bodyRect(contentRect.left() + 28, titleRect.bottom() + 4, contentRect.width() - 56, 22);
     painter.drawText(bodyRect, Qt::AlignCenter,
-                     hasProject
-                         ? QStringLiteral("Adjust the search or filters, or import assets and create a composition.")
-                         : QStringLiteral("Open a project to begin, or create a composition from the action bar."));
+                     TranslationManager::instance().tr(
+                         hasProject ? QStringLiteral("project_view.empty.project_items_hint")
+                                    : QStringLiteral("project_view.empty.project_open_hint"),
+                         hasProject
+                             ? QStringLiteral("Adjust the search or filters, or import assets and create a composition.")
+                             : QStringLiteral("Open a project to begin, or create a composition from the action bar.")));
 }
 
 constexpr int kHeaderResizeHitRadius = 7;
@@ -5221,14 +5228,20 @@ public:
         }
         if (detailEmptyTitle) {
             detailEmptyTitle->setText(
-                hasProject ? QStringLiteral("Nothing selected")
-                           : QStringLiteral("No project open"));
+                TranslationManager::instance().tr(
+                    hasProject ? QStringLiteral("project_view.empty.nothing_selected_title")
+                               : QStringLiteral("project_view.empty.project_open_title"),
+                    hasProject ? QStringLiteral("Nothing selected")
+                               : QStringLiteral("No project open")));
         }
         if (detailEmptyBody) {
             detailEmptyBody->setText(
-                hasProject
-                    ? QStringLiteral("Select a project item to inspect its details and actions.")
-                    : QStringLiteral("Open a project to inspect its items."));
+                TranslationManager::instance().tr(
+                    hasProject ? QStringLiteral("project_view.empty.select_item_hint")
+                               : QStringLiteral("project_view.empty.inspect_items_hint"),
+                    hasProject
+                        ? QStringLiteral("Select a project item to inspect its details and actions.")
+                        : QStringLiteral("Open a project to inspect its items.")));
         }
         if (infoPanel_) {
             infoPanel_->setVisible(hasItem);
@@ -7097,8 +7110,11 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     detailEmptyLayout->setContentsMargins(18, 18, 18, 18);
     detailEmptyLayout->setSpacing(8);
     detailEmptyLayout->addStretch(1);
-    impl_->detailEmptyTitle = new QLabel(QStringLiteral("No project open"),
-                                         impl_->detailEmptyState);
+    impl_->detailEmptyTitle = new QLabel(
+        TranslationManager::instance().tr(
+            QStringLiteral("project_view.empty.project_open_title"),
+            QStringLiteral("No project open")),
+        impl_->detailEmptyState);
     impl_->detailEmptyTitle->setAlignment(Qt::AlignCenter);
     {
         QFont font = impl_->detailEmptyTitle->font();
@@ -7111,7 +7127,9 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
         impl_->detailEmptyTitle->setPalette(pal);
     }
     impl_->detailEmptyBody = new QLabel(
-        QStringLiteral("Open a project to inspect its items."),
+        TranslationManager::instance().tr(
+            QStringLiteral("project_view.empty.inspect_items_hint"),
+            QStringLiteral("Open a project to inspect its items.")),
         impl_->detailEmptyState);
     impl_->detailEmptyBody->setAlignment(Qt::AlignCenter);
     impl_->detailEmptyBody->setWordWrap(true);

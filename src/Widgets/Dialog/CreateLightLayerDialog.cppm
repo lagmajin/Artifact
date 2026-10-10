@@ -184,7 +184,7 @@ public:
   QLabel* typeDescription = nullptr;
   QLabel* summary = nullptr;
   QDoubleSpinBox* range = nullptr;
-  QDoubleSpinBox* spotRange = nullptr;
+  QDoubleSpinBox* spotConeLength = nullptr;
   QDoubleSpinBox* coneAngle = nullptr;
   QDoubleSpinBox* coneFeather = nullptr;
   QComboBox* areaShape = nullptr;
@@ -306,7 +306,10 @@ CreateLightLayerDialog::CreateLightLayerDialog(QWidget* parent)
   impl_->range->setValue(500.0);
   impl_->range->setSuffix(QStringLiteral(" px"));
   impl_->pointShadows = new QCheckBox(QStringLiteral("Enabled"), pointPage);
-  impl_->pointShadows->setChecked(true);
+  // Point lights illuminate without casting: the render bridge only accepts
+  // Directional and Spot as shadow casters, so a checked default would ship a
+  // layer whose Shadows switch is on but has no effect.
+  impl_->pointShadows->setChecked(false);
   pageGrid->addWidget(fieldLabel(QStringLiteral("Range"), pointPage), 0, 0);
   pageGrid->addWidget(impl_->range, 0, 1);
   pageGrid->addWidget(fieldLabel(QStringLiteral("Cast Shadows"), pointPage), 1, 0);
@@ -315,10 +318,15 @@ CreateLightLayerDialog::CreateLightLayerDialog(QWidget* parent)
   impl_->typePages->addWidget(pointPage);
 
   auto* spotPage = makeFormPage(impl_->typePages, pageGrid);
-  impl_->spotRange = new QDoubleSpinBox(spotPage);
-  impl_->spotRange->setRange(1.0, 100000.0);
-  impl_->spotRange->setValue(500.0);
-  impl_->spotRange->setSuffix(QStringLiteral(" px"));
+  // Spot authors its reach through Cone Length, not Range. Range stays
+  // Point/Area only: the Inspector hides Light/Range for Spot and both the
+  // gizmo and the shadow frustum read coneLength, so a Range field here would
+  // write a value nothing consumes.
+  impl_->spotConeLength = new QDoubleSpinBox(spotPage);
+  impl_->spotConeLength->setRange(1.0, 100000.0);
+  impl_->spotConeLength->setValue(500.0);
+  impl_->spotConeLength->setSuffix(QStringLiteral(" px"));
+  impl_->spotConeLength->setAccessibleName(QStringLiteral("Spot cone length"));
   impl_->coneAngle = new QDoubleSpinBox(spotPage);
   impl_->coneAngle->setRange(0.1, 179.0);
   impl_->coneAngle->setValue(45.0);
@@ -329,8 +337,8 @@ CreateLightLayerDialog::CreateLightLayerDialog(QWidget* parent)
   impl_->coneFeather->setSuffix(QStringLiteral(" deg"));
   impl_->spotShadows = new QCheckBox(QStringLiteral("Enabled"), spotPage);
   impl_->spotShadows->setChecked(true);
-  pageGrid->addWidget(fieldLabel(QStringLiteral("Range"), spotPage), 0, 0);
-  pageGrid->addWidget(impl_->spotRange, 0, 1);
+  pageGrid->addWidget(fieldLabel(QStringLiteral("Cone Length"), spotPage), 0, 0);
+  pageGrid->addWidget(impl_->spotConeLength, 0, 1);
   pageGrid->addWidget(fieldLabel(QStringLiteral("Cone Angle"), spotPage), 1, 0);
   pageGrid->addWidget(impl_->coneAngle, 1, 1);
   pageGrid->addWidget(fieldLabel(QStringLiteral("Cone Feather"), spotPage), 2, 0);
@@ -417,7 +425,7 @@ CreateLightLayerDialog::CreateLightLayerDialog(QWidget* parent)
   auto* refreshFilter = new PresentationRefreshFilter(this, this);
   impl_->intensity->installEventFilter(refreshFilter);
   impl_->range->installEventFilter(refreshFilter);
-  impl_->spotRange->installEventFilter(refreshFilter);
+  impl_->spotConeLength->installEventFilter(refreshFilter);
   impl_->coneAngle->installEventFilter(refreshFilter);
   impl_->coneFeather->installEventFilter(refreshFilter);
   impl_->areaShape->installEventFilter(refreshFilter);
@@ -445,12 +453,14 @@ ArtifactCore::Units::Percent CreateLightLayerDialog::intensity() const {
 }
 ArtifactCore::Units::Pixels CreateLightLayerDialog::range() const
 {
-  return {static_cast<float>(impl_->selectedType == LightType::Spot
-                                 ? impl_->spotRange->value()
-                                 : impl_->range->value())};
+  return {static_cast<float>(impl_->range->value())};
 }
 ArtifactCore::Units::Degrees CreateLightLayerDialog::coneAngle() const {
   return {static_cast<float>(impl_->coneAngle->value())};
+}
+ArtifactCore::Units::Pixels CreateLightLayerDialog::coneLength() const
+{
+  return {static_cast<float>(impl_->spotConeLength->value())};
 }
 ArtifactCore::Units::Degrees CreateLightLayerDialog::coneFeather() const {
   return {static_cast<float>(impl_->coneFeather->value())};
@@ -530,10 +540,11 @@ void CreateLightLayerDialog::applyTo(ArtifactLightLayer& layer) const
   layer.setColor(color());
   layer.setIntensity(intensity());
   layer.setCastsShadows(castsShadows());
-  if (lightType() == LightType::Point || lightType() == LightType::Spot) {
+  if (lightType() == LightType::Point || lightType() == LightType::Area) {
     layer.setRange(range());
   }
   if (lightType() == LightType::Spot) {
+    layer.setConeLength(coneLength());
     layer.setConeAngle(coneAngle());
     layer.setConeFeather(ArtifactCore::Units::Degrees{
         ArtifactCore::artifactMin(coneFeather().value, coneAngle().value)});

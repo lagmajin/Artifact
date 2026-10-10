@@ -266,6 +266,19 @@ public:
     }
     lastPresent_ = now;
 
+    // Layout changes can resize both stacked pages several times during a mode
+    // switch. Resize GPU buffers only for the exposed page, at its next
+    // coalesced render, after Qt has settled the final geometry.
+    const auto targetWidth = static_cast<Uint32>(
+        std::max(1, qRound(window->width() * window->devicePixelRatio())));
+    const auto targetHeight = static_cast<Uint32>(
+        std::max(1, qRound(window->height() * window->devicePixelRatio())));
+    const auto& swapChainDesc = swapChain_->GetDesc();
+    if (swapChainDesc.Width != targetWidth ||
+        swapChainDesc.Height != targetHeight) {
+      swapChain_->Resize(targetWidth, targetHeight);
+    }
+
     std::shared_ptr<const DiligentTimelineVisualSnapshot> snapshot;
     std::shared_ptr<const DiligentTimelineVisualSnapshot> staticSnapshot;
     std::shared_ptr<const DiligentTimelineVisualSnapshot> dynamicSnapshot;
@@ -297,7 +310,7 @@ public:
         rtv, clearColor, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
     commandBuffer_.reset();
-    commandBuffer_.targetRTV = rtv;
+    commandBuffer_.setTargetRTV(rtv);
     primitiveRenderer_.setOverrideRTV(rtv);
     primitiveRenderer_.setViewportSize(
         static_cast<float>(window->width()),
@@ -696,13 +709,6 @@ void ArtifactDiligentTimelineRenderWindow::resizeEvent(QResizeEvent* event)
   QWindow::resizeEvent(event);
   if (impl_->inputTarget_) {
     impl_->inputTarget_->resize(event->size());
-  }
-  if (impl_->swapChain_) {
-    impl_->swapChain_->Resize(
-        static_cast<Uint32>(std::max(
-            1, qRound(width() * devicePixelRatio()))),
-        static_cast<Uint32>(std::max(
-            1, qRound(height() * devicePixelRatio()))));
   }
   // A window-container page can receive its final size after the Timeline has
   // already queued its first visual snapshot. Rebuild it after the Qt input

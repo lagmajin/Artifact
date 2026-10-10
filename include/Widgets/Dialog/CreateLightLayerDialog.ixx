@@ -21,8 +21,12 @@ public:
   [[nodiscard]] LightType lightType() const;
   [[nodiscard]] ArtifactCore::FloatColor color() const;
   [[nodiscard]] ArtifactCore::Units::Percent intensity() const;
+  // Point / Area reach. Spot authors its reach through coneLength().
   [[nodiscard]] ArtifactCore::Units::Pixels range() const;
   [[nodiscard]] ArtifactCore::Units::Degrees coneAngle() const;
+  // Spot-only reach. Spot has no Range: Cone Length is the single authored
+  // "how far" value, shared by the gizmo and the shadow frustum far plane.
+  [[nodiscard]] ArtifactCore::Units::Pixels coneLength() const;
   [[nodiscard]] ArtifactCore::Units::Degrees coneFeather() const;
   [[nodiscard]] ArtifactCore::Units::Pixels areaWidth() const;
   [[nodiscard]] ArtifactCore::Units::Pixels areaHeight() const;

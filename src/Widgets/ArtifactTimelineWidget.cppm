@@ -5078,7 +5078,7 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
     impl_->curveEditor_->focusTrack(impl_->focusedCurveTrackIndex_);
   }
   if (impl_->graphEditorVisible_ && impl_->graphEditorNeedsFit_) {
-    impl_->curveEditor_->fitToContent();
+    // focusTrack already fits the selected channel (or all channels).
     impl_->graphEditorNeedsFit_ = false;
   }
   if (impl_->curveEditorHandleButton_) {
@@ -6394,11 +6394,6 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                   }
                   if (active) {
                     refreshCurveEditorTracks();
-                    if (impl_->curveEditor_) {
-                      impl_->curveEditor_->focusTrack(
-                          impl_->focusedCurveTrackIndex_);
-                    }
-                    updateCurvePropertyList();
                   }
                 };
             if (QThread::currentThread() == thread()) {

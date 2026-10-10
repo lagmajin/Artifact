@@ -40,6 +40,7 @@ module;
 #include <QRectF>
 #include <QSizeF>
 #include <QPointer>
+#include <QPoint>
 #include <QBrush>
 #include <QSet>
 #include <QSize>
@@ -4785,6 +4786,10 @@ public:
   DragMode hoverEdge_ = DragMode::None;
   int hoverMarkerIndex_ = -1;
   int hoverAreaIndex_ = -1;
+  QPoint hoverReadoutPosition_;
+  qint64 hoverReadoutFrame_ = 0;
+  QString hoverReadoutText_ = QStringLiteral("F 0");
+  bool hoverReadoutVisible_ = false;
   int dragMarkerIndex_ = -1;
   int dragHandleMarkerIndex_ = -1;
   bool dragHandleIncoming_ = false;
@@ -8016,6 +8021,31 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
     p.drawRect(impl_->marqueeSelectionRect_);
   }
 
+  if (impl_->hoverReadoutVisible_) {
+    const int x = std::clamp(impl_->hoverReadoutPosition_.x(), 0,
+                             std::max(0, width() - 1));
+    QColor guideColor = theme.accent;
+    guideColor.setAlpha(115);
+    p.setPen(QPen(guideColor, 1.0, Qt::DashLine));
+    p.drawLine(x, 0, x, height());
+
+    const QFontMetrics readoutMetrics(p.font());
+    const int readoutWidth = readoutMetrics.horizontalAdvance(impl_->hoverReadoutText_) + 12;
+    const int readoutHeight = readoutMetrics.height() + 6;
+    const int readoutX = x + readoutWidth + 8 <= width()
+        ? x + 8
+        : std::max(0, x - readoutWidth - 8);
+    const QRect readoutRect(readoutX, 6, readoutWidth, readoutHeight);
+    QColor readoutBackground = theme.background.darker(145);
+    readoutBackground.setAlpha(235);
+    p.setPen(QPen(theme.border, 1.0));
+    p.setBrush(readoutBackground);
+    p.drawRoundedRect(readoutRect, 3.0, 3.0);
+    p.setPen(theme.text);
+    p.drawText(readoutRect.adjusted(6, 0, -6, 0),
+               Qt::AlignLeft | Qt::AlignVCenter, impl_->hoverReadoutText_);
+  }
+
   drawPlayhead(p);
 }
 
@@ -9081,10 +9111,24 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent *event) {
   const auto oldHoverEdge = impl_->hoverEdge_;
   const int oldHoverMarkerIndex = impl_->hoverMarkerIndex_;
   const int oldHoverAreaIndex = impl_->hoverAreaIndex_;
+  const QPoint oldReadoutPosition = impl_->hoverReadoutPosition_;
+  const bool oldReadoutVisible = impl_->hoverReadoutVisible_;
   impl_->hoverClipIndex_ = hit.clipIndex;
   impl_->hoverEdge_ = hit.mode;
   impl_->hoverMarkerIndex_ = markerHit.markerIndex;
   impl_->hoverAreaIndex_ = areaHit.areaIndex;
+  impl_->hoverReadoutVisible_ =
+      !impl_->panning_ && hit.clipIndex < 0 && markerHit.markerIndex < 0 &&
+      areaHit.areaIndex < 0;
+  if (impl_->hoverReadoutVisible_) {
+    impl_->hoverReadoutPosition_ = event->position().toPoint();
+    const qint64 hoverFrame = static_cast<qint64>(std::llround(
+        std::max(0.0, (mouseX + impl_->horizontalOffset_) / ppf)));
+    if (hoverFrame != impl_->hoverReadoutFrame_) {
+      impl_->hoverReadoutFrame_ = hoverFrame;
+      impl_->hoverReadoutText_ = QStringLiteral("F %1").arg(hoverFrame);
+    }
+  }
 
   if (impl_->hoverMarkerIndex_ >= 0) {
     setCursor(Qt::PointingHandCursor);
@@ -9189,6 +9233,24 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent *event) {
         impl_->hoverAreaIndex_ < keyframeAreas.size()) {
       dirtyRect = hasDirty ? dirtyRect.united(keyframeAreas[impl_->hoverAreaIndex_].bodyRect)
                            : keyframeAreas[impl_->hoverAreaIndex_].bodyRect;
+      hasDirty = true;
+    }
+  }
+  if (oldReadoutVisible != impl_->hoverReadoutVisible_ ||
+      (impl_->hoverReadoutVisible_ &&
+       oldReadoutPosition != impl_->hoverReadoutPosition_)) {
+    const auto readoutDamage = [this](const QPoint &position) {
+      return QRect(std::max(0, position.x() - 80), 0,
+                   std::min(width(), 160), height());
+    };
+    if (oldReadoutVisible) {
+      const QRect rect = readoutDamage(oldReadoutPosition);
+      dirtyRect = hasDirty ? dirtyRect.united(rect) : rect;
+      hasDirty = true;
+    }
+    if (impl_->hoverReadoutVisible_) {
+      const QRect rect = readoutDamage(impl_->hoverReadoutPosition_);
+      dirtyRect = hasDirty ? dirtyRect.united(rect) : rect;
       hasDirty = true;
     }
   }
@@ -12531,9 +12593,11 @@ void ArtifactTimelineTrackPainterView::leaveEvent(QEvent *event) {
   const bool hadHover =
       impl_->hoverClipIndex_ >= 0 || impl_->hoverEdge_ != DragMode::None;
   const bool hadMarkerHover = impl_->hoverMarkerIndex_ >= 0;
+  const bool hadHoverReadout = impl_->hoverReadoutVisible_;
   impl_->hoverClipIndex_ = -1;
   impl_->hoverEdge_ = DragMode::None;
   impl_->hoverMarkerIndex_ = -1;
+  impl_->hoverReadoutVisible_ = false;
   impl_->pendingBackgroundPress_ = false;
   impl_->marqueeSelecting_ = false;
   impl_->marqueeSelectionRect_ = QRect();
@@ -12565,7 +12629,7 @@ void ArtifactTimelineTrackPainterView::leaveEvent(QEvent *event) {
     setCursor(Qt::ArrowCursor);
   }
 
-  if (hadHover || hadMarkerHover) {
+  if (hadHover || hadMarkerHover || hadHoverReadout) {
     update();
   }
   Q_UNUSED(event);

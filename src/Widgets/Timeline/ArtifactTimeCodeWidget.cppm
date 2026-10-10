@@ -14,6 +14,7 @@ module;
 #include <QFontMetrics>
 #include <QPaintEvent>
 #include <QPalette>
+#include <QVariant>
 #include <QPen>
 #include <QPainter>
 #include <QMenu>
@@ -67,7 +68,7 @@ namespace Artifact
   impl_->fpsLabel_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
 
  setAttribute(Qt::WA_StyledBackground, false);
- setAutoFillBackground(false);
+ setAutoFillBackground(true);
   setAccessibleName(QStringLiteral("Timeline timecode"));
   setAccessibleDescription(QStringLiteral("Current timeline timecode and frame number"));
   impl_->timecodeLabel_->setAccessibleName(QStringLiteral("Timecode"));
@@ -78,8 +79,10 @@ namespace Artifact
    QPalette toolbarPalette = palette();
    toolbarPalette.setColor(QPalette::Window, toolbarBackground);
    setPalette(toolbarPalette);
-   const QColor textColor = QColor(ArtifactCore::currentDCCTheme().textColor);
-   const QColor mutedTextColor = textColor.darker(150);
+   // Match the approved Precision Blade current-time cyan. Frame/FPS stay
+   // secondary, so only the current time carries the timeline accent.
+   const QColor textColor(85, 214, 245);
+   const QColor mutedTextColor(192, 200, 207);
 
    QPalette timePal = impl_->timecodeLabel_->palette();
    timePal.setColor(QPalette::Window, toolbarBackground);
@@ -108,6 +111,7 @@ namespace Artifact
   secondDivider->setPalette(dividerPalette);
   for (auto* label : {impl_->timecodeLabel_, impl_->frameNumberLabel_,
                       impl_->fpsLabel_, firstDivider, secondDivider}) {
+   label->setProperty("artifactTimelineReadoutLabel", true);
    label->setAttribute(Qt::WA_StyledBackground, false);
    label->setAutoFillBackground(false);
   }
