@@ -2638,6 +2638,9 @@ add_library(ArtifactEffects ALIAS ArtifactEffectsResidual)
 
 add_executable(Artifact WIN32)
 add_executable(ArtifactUiTest WIN32)
+if(WIN32)
+    target_sources(Artifact PRIVATE App/ArtifactAppIcon.rc)
+endif()
 add_library(ArtifactAppRuntime OBJECT)
 
 set_target_properties(Artifact ArtifactUiTest ArtifactAppRuntime PROPERTIES

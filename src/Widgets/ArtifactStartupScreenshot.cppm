@@ -67,7 +67,18 @@ void captureStartupScreenshot(QWidget *window) {
     }
   }
 
-  const QPixmap screenshot = window->grab();
+  QWidget *captureTarget = window;
+  const QString widgetObjectName =
+      qEnvironmentVariable("ARTIFACT_STARTUP_SCREENSHOT_WIDGET").trimmed();
+  if (!widgetObjectName.isEmpty()) {
+    captureTarget = window->findChild<QWidget *>(widgetObjectName);
+    if (!captureTarget) {
+      qWarning() << "[StartupScreenshot] requested widget was not found"
+                 << widgetObjectName;
+      return;
+    }
+  }
+  const QPixmap screenshot = captureTarget->grab();
   if (screenshot.isNull()) {
     qWarning() << "[StartupScreenshot] window capture returned an empty pixmap";
     return;

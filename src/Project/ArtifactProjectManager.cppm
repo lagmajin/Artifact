@@ -209,6 +209,19 @@ namespace Artifact {
 
   QString projectsDirectoryRoot()
   {
+    const QString uiTestRoot =
+        qEnvironmentVariable("ARTIFACT_UI_TEST_PROJECT_ROOT").trimmed();
+    if (QCoreApplication::applicationName() ==
+            QStringLiteral("ArtifactStudioUiTest") &&
+        !uiTestRoot.isEmpty()) {
+      QDir isolatedRoot(uiTestRoot);
+      if (isolatedRoot.mkpath(QStringLiteral("."))) {
+        return isolatedRoot.absolutePath();
+      }
+      qWarning() << "[ArtifactProjectManager] failed to create UI test project root"
+                 << uiTestRoot;
+    }
+
     QString base = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
     if (base.isEmpty()) {
       base = QDir::homePath();

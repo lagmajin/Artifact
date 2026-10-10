@@ -1,10 +1,14 @@
 {
-  "_comment": "Startup switches, read from the folder next to Artifact.exe. Keys are seeded into the System config layer, so Project/User settings still win. Nested objects are flattened with '/'. Environment variables (ARTIFACT_SOLIDRECT_*) still work and override nothing that is absent here.",
+  "_comment": "Startup switches, read from the folder next to Artifact.exe. Keys are seeded into the System config layer, so Project/User settings still win. Nested objects are flattened with '/'. Environment variables remain fallback values when the matching JSON key is absent; JSON wins on conflict.",
 
   "Render": {
     "_comment": "Solid-rect batch diagnostics. The batched path had an unreproducible swap-chain 'clear-only' report, so it is still under investigation. 'SolidRectIndirect' stays false so the direct DrawIndexed path is tested first.",
     "SolidRectBatch": true,
     "SolidRectIndirect": false,
     "SolidRectVerbose": false
+  },
+
+  "RenderQueue": {
+    "_comment": "Optional XPU switches: XpuSpec (for example mixed=on,igpu=full), XpuMaxInFlight, XpuIncludeIntegrated, XpuPreviewMinIntervalMs, XpuAsyncSequence, XpuParityHash, XpuPipeline, XpuBench, XpuCloneCheck, XpuEncoderThreads, XpuPreset, and XpuMaxHwEncoders. JSON wins over the corresponding ARTIFACT_XPU* environment variable. Omit unset overrides to keep automatic/default behavior."
   }
 }

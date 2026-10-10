@@ -48,6 +48,7 @@ module;
 #include <QIcon>
 #include <QKeyEvent>
 #include <QList>
+#include <QListWidget>
 #include <QMouseEvent>
 #include <QImage>
 #include <QImageReader>
@@ -178,6 +179,10 @@ import Artifact.Layers.Selection.Manager;
 import Artifact.Service.Playback;
 import Artifact.Service.PlaybackShortcuts;
 import Artifact.Service.Project;
+import Artifact.Composition.InitParams;
+import Artifact.Layer.InitParams;
+import Color.Float;
+import Time.Rational;
 import Artifact.Application.ProjectBundleIpc;
 import Artifact.Project.Roles;
 import Artifact.Project.Exporter;
@@ -3806,24 +3811,8 @@ QString buildWindowTitle() {
   return title;
 }
 
-QIcon buildTemporaryAppIcon() {
-  QPixmap pix(256, 256);
-  pix.fill(QColor(28, 28, 32));
-
-  QPainter painter(&pix);
-  painter.setRenderHint(QPainter::Antialiasing, true);
-  painter.setPen(Qt::NoPen);
-  painter.setBrush(QColor(212, 125, 50));
-  painter.drawRoundedRect(QRectF(28.0, 28.0, 200.0, 200.0), 44.0, 44.0);
-
-  QFont font;
-  font.setBold(true);
-  font.setPointSize(120);
-  painter.setFont(font);
-  painter.setPen(Qt::white);
-  painter.drawText(pix.rect(), Qt::AlignCenter, QStringLiteral("A"));
-
-  return QIcon(pix);
+QIcon buildArtifactAppIcon() {
+  return QIcon(QStringLiteral(":/icons/Studio/artifact_app.png"));
 }
 
 bool markSessionStartAndDetectUncleanExit() {
@@ -4874,7 +4863,7 @@ int Artifact::runApplication(int argc, char *argv[]) {
     printf("Options:\n");
     printf("  -h, --help          Show this help message and exit\n");
     printf("  --version           Show version information and exit\n");
-    printf("  --lang <code>       Set UI language (ja/en/zh/zh-tw)\n");
+    printf("  --lang <code>       Set UI language (en/ja/zh/zh-tw/ko/fr/de/es/pt/ru/ar)\n");
     printf("  --renderer <api>    Select renderer (auto/dx12/vulkan)\n");
     printf("  -i, --interactive   Start the interactive command shell\n");
     printf("  --command <command> Execute one shell command and exit\n");
@@ -4999,14 +4988,53 @@ int Artifact::runApplication(int argc, char *argv[]) {
     }
   }
 
-  // ============================================================
-  // 起動言語の決定（--lang → システムロケール → en）
-  // ここで一度だけ確定し、以降で再判定しない。
-  // ============================================================
+  if (appArgs.contains(QStringLiteral("--renderer"))) {
+    qputenv("ARTIFACT_RENDER_BACKEND",
+            commandLine.global.rendererBackend.toUtf8());
+    qInfo() << "[AppMain] Renderer backend selected via --renderer:"
+            << commandLine.global.rendererBackend;
+  }
+  if (commandLine.global.safeMode) {
+    qputenv("ARTIFACT_SAFE_MODE", "1");
+  }
+  if (commandLine.global.verbose) {
+    qputenv("ARTIFACT_VERBOSE_LOG", "1");
+  }
+  if (!commandLine.global.logFile.isEmpty()) {
+    qputenv("ARTIFACT_LOG_FILE", commandLine.global.logFile.toUtf8());
+  }
+
+  QApplication::setAttribute(Qt::AA_DontShowIconsInMenus, false);
+  QApplication a(argc, argv);
+  if (uiTestExecutable) {
+    QCoreApplication::setApplicationName(
+        QStringLiteral("ArtifactStudioUiTest"));
+  }
+  DialogLatencyEventFilter dialogLatencyFilter;
+  a.installEventFilter(&dialogLatencyFilter);
+  configureQtPaths();
+
+  // Load boot switches (including RenderQueue/Xpu*) after QApplication exists
+  // and before the first ArtifactAppSettings access.
+  {
+    const QString startupConfigPath = QDir(QCoreApplication::applicationDirPath())
+                                          .filePath(QStringLiteral("ArtifactStartup.json"));
+    if (QFileInfo::exists(startupConfigPath)) {
+      const int applied = ArtifactCore::LayeredConfigStore::instance()
+                              .importSystemJson(startupConfigPath);
+      if (applied < 0) {
+        qWarning() << "[AppMain] Failed to parse startup config:" << startupConfigPath;
+      } else {
+        qInfo() << "[AppMain] Startup config applied keys=" << applied
+                << "path=" << startupConfigPath;
+      }
+    }
+  }
+
+  // Resolve the persisted language only after startup config is available.
   {
     QString localeCode;
     QString decidedBy;
-
     QString persistedLanguage;
     if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
       persistedLanguage = settings->appLanguageCode().trimmed();
@@ -5060,31 +5088,6 @@ int Artifact::runApplication(int argc, char *argv[]) {
     qInfo() << "[AppMain] Language decided:" << localeCode << "by" << decidedBy;
   }
 
-  if (appArgs.contains(QStringLiteral("--renderer"))) {
-    qputenv("ARTIFACT_RENDER_BACKEND",
-            commandLine.global.rendererBackend.toUtf8());
-    qInfo() << "[AppMain] Renderer backend selected via --renderer:"
-            << commandLine.global.rendererBackend;
-  }
-  if (commandLine.global.safeMode) {
-    qputenv("ARTIFACT_SAFE_MODE", "1");
-  }
-  if (commandLine.global.verbose) {
-    qputenv("ARTIFACT_VERBOSE_LOG", "1");
-  }
-  if (!commandLine.global.logFile.isEmpty()) {
-    qputenv("ARTIFACT_LOG_FILE", commandLine.global.logFile.toUtf8());
-  }
-
-  QApplication::setAttribute(Qt::AA_DontShowIconsInMenus, false);
-  QApplication a(argc, argv);
-  if (uiTestExecutable) {
-    QCoreApplication::setApplicationName(
-        QStringLiteral("ArtifactStudioUiTest"));
-  }
-  DialogLatencyEventFilter dialogLatencyFilter;
-  a.installEventFilter(&dialogLatencyFilter);
-  configureQtPaths();
   Artifact::WorkspaceAutomation::ensureRegistered();
   auto* launchOpenFilter = new LaunchOpenRequestFilter(&a);
   a.installEventFilter(launchOpenFilter);
@@ -5110,27 +5113,6 @@ int Artifact::runApplication(int argc, char *argv[]) {
   }
 
   qInfo() << "[AppMain] Validation diagnostics will be initialized on demand";
-
-  // ============================================================
-  // Startup config (ArtifactStartup.json): load the file that sits beside
-  // the executable into the System layer, giving boot-time switches (currently
-  // the solid-rect batch diagnostics) a weaker default than Project/User
-  // settings.  Keys use the same Group/Name spelling as the config schema.
-  // ============================================================
-  {
-    const QString startupConfigPath = QDir(QCoreApplication::applicationDirPath())
-                                          .filePath(QStringLiteral("ArtifactStartup.json"));
-    if (QFileInfo::exists(startupConfigPath)) {
-      const int applied = ArtifactCore::LayeredConfigStore::instance()
-                              .importSystemJson(startupConfigPath);
-      if (applied < 0) {
-        qWarning() << "[AppMain] Failed to parse startup config:" << startupConfigPath;
-      } else {
-        qInfo() << "[AppMain] Startup config applied keys=" << applied
-                << "path=" << startupConfigPath;
-      }
-    }
-  }
 
   if (qEnvironmentVariableIsSet("ARTIFACT_RUN_TEXT_LAYER_ANIMATOR_TESTS")) {
     return Artifact::runTextLayerAnimatorTests();
@@ -5394,10 +5376,17 @@ int Artifact::runApplication(int argc, char *argv[]) {
   bootstrapPythonScripts();
   ArtifactPythonHookManager::runHook(QStringLiteral("on_startup"));
   const bool hadUncleanExit = markSessionStartAndDetectUncleanExit();
-  const QIcon appIcon = buildTemporaryAppIcon();
+  const QIcon appIcon = buildArtifactAppIcon();
   QApplication::setWindowIcon(appIcon);
   using namespace Artifact;
   auto *mw = new ArtifactMainWindow();
+  if (uiTestExecutable &&
+      qEnvironmentVariableIsSet("ARTIFACT_UI_TEST_FORCE_SHUTDOWN")) {
+    // UI capture fixtures may dirty their temporary project while seeding
+    // widgets. Let the harness close through the normal shutdown path without
+    // opening the unsaved-changes prompt.
+    mw->setProperty("artifactUnsavedCloseGuardSatisfied", true);
+  }
   QPointer<ArtifactMainWindow> mainWindowGuard(mw);
   QPointer<CollaborationDockController> collaborationController;
   initializeProjectBundleIpc(mw);
@@ -7206,6 +7195,257 @@ int Artifact::runApplication(int argc, char *argv[]) {
     qDebug() << "[AppMain] startup parallelism restored to"
              << startupParallelism;
   });
+
+  if (uiTestExecutable &&
+      qEnvironmentVariableIsSet("ARTIFACT_UI_TEST_RENDER_MANAGER")) {
+    QTimer::singleShot(0, mw, [mw, projectService, &renderCenterWindow]() {
+      if (!mw || !projectService) {
+        qWarning() << "[RenderManagerUiFixture] application services unavailable";
+        return;
+      }
+
+      auto &projectManager = ArtifactProjectManager::getInstance();
+      if (projectManager.isProjectCreated()) {
+        qWarning() << "[RenderManagerUiFixture] refusing to replace an existing project";
+        return;
+      }
+      projectManager.createProject(
+          QStringLiteral("RenderManagerUiFixture_%1")
+              .arg(QCoreApplication::applicationPid()),
+          false);
+      if (!projectManager.isProjectCreated()) {
+        qWarning() << "[RenderManagerUiFixture] temporary project creation failed";
+        return;
+      }
+      auto compositionParams = ArtifactCompositionInitParams::hdPreset();
+      compositionParams.setDurationSeconds(8.0);
+      projectService->createComposition(compositionParams);
+      const auto composition = projectService->currentComposition().lock();
+      if (!composition) {
+        qWarning() << "[RenderManagerUiFixture] composition creation failed";
+        return;
+      }
+      ArtifactSolidLayerInitParams background(QStringLiteral("Fixture Background"));
+      background.setWidth(compositionParams.width());
+      background.setHeight(compositionParams.height());
+      background.setColor(ArtifactCore::FloatColor(0.12f, 0.18f, 0.26f, 1.0f));
+      projectService->addLayerToCurrentComposition(background);
+
+      auto *queueService = ArtifactRenderQueueService::instance();
+      if (!queueService) {
+        qWarning() << "[RenderManagerUiFixture] queue service unavailable";
+        return;
+      }
+
+      queueService->removeAllRenderQueues();
+      const auto addFixtureJob = [queueService, &composition](
+          const QString &name, const QString &outputFileName,
+          const QString &format, const QString &codec,
+          int width, int height, bool missingComposition = false) {
+        const auto compositionId = missingComposition
+            ? ArtifactCore::CompositionID::Nil()
+            : composition->id();
+        queueService->addRenderQueueForComposition(compositionId, name);
+        const int index = queueService->jobCount() - 1;
+        queueService->setJobNameAt(index, name);
+        queueService->setJobOutputPathAt(
+            index, QDir(QDir::tempPath()).filePath(outputFileName));
+        queueService->setJobFrameRangeAt(index, 0, 119);
+        queueService->setJobOutputSettingsAt(
+            index, format, codec, QStringLiteral("high"), width, height,
+            30.0, 8000);
+        queueService->setJobRenderBackendAt(index, QStringLiteral("gpu"));
+      };
+      addFixtureJob(QStringLiteral("Hero animation"),
+                    QStringLiteral("Hero_animation.mp4"),
+                    QStringLiteral("MP4"), QStringLiteral("H.264"),
+                    1920, 1080);
+      addFixtureJob(QStringLiteral("Product still"),
+                    QStringLiteral("Product_still.png"),
+                    QStringLiteral("PNG"), QStringLiteral("PNG"),
+                    1920, 1080);
+      addFixtureJob(QStringLiteral("Logo sequence"),
+                    QStringLiteral("Logo_sequence_%04d.png"),
+                    QStringLiteral("PNG Sequence"), QStringLiteral("PNG"),
+                    3840, 2160);
+      addFixtureJob(QStringLiteral("Title card"),
+                    QStringLiteral("Title_card.png"),
+                    QStringLiteral("PNG"), QStringLiteral("PNG"),
+                    1920, 1080);
+      addFixtureJob(QStringLiteral("Preview draft"),
+                    QStringLiteral("Preview_draft.mp4"),
+                    QStringLiteral("MP4"), QStringLiteral("H.264"),
+                    1280, 720);
+      addFixtureJob(QStringLiteral("Comp2"),
+                    QStringLiteral("Comp2.mp4"),
+                    QStringLiteral("MP4"), QStringLiteral("H.264"),
+                    1920, 1080, true);
+      addFixtureJob(QStringLiteral("Comp1"),
+                    QStringLiteral("Comp1.mp4"),
+                    QStringLiteral("MP4"), QStringLiteral("H.264"),
+                    1920, 1080, true);
+
+      renderCenterWindow = new ArtifactRenderCenterWindow(mw);
+      renderCenterWindow->setObjectName(
+          QStringLiteral("renderManagerUiFixtureWidget"));
+      renderCenterWindow->resize(1252, 804);
+      if (auto *jobList = renderCenterWindow->findChild<QListWidget *>(
+              QStringLiteral("renderQueueList"))) {
+        jobList->setCurrentRow(5);
+      }
+      renderCenterWindow->present();
+      qInfo() << "[RenderManagerUiFixture] showing fixed queue with"
+              << queueService->jobCount() << "jobs";
+    });
+  }
+
+  if (uiTestExecutable &&
+      qEnvironmentVariableIsSet("ARTIFACT_UI_TEST_TIMELINE")) {
+    QTimer::singleShot(0, mw, [mw, projectService]() {
+      if (!mw || !projectService) {
+        qWarning() << "[TimelineUiFixture] application services unavailable";
+        return;
+      }
+
+      auto &projectManager = ArtifactProjectManager::getInstance();
+      if (projectManager.isProjectCreated()) {
+        qWarning() << "[TimelineUiFixture] refusing to replace an existing project";
+        return;
+      }
+
+      const QString projectName = QStringLiteral("TimelineUiFixture_%1")
+                                      .arg(QCoreApplication::applicationPid());
+      projectManager.createProject(projectName, false);
+      if (!projectManager.isProjectCreated()) {
+        qWarning() << "[TimelineUiFixture] temporary project creation failed";
+        return;
+      }
+
+      auto compositionParams = ArtifactCompositionInitParams::hdPreset();
+      compositionParams.setDurationSeconds(10.0);
+      projectService->createComposition(compositionParams);
+
+      const QStringList layerNames = {
+          QStringLiteral("Background Plate"),
+          QStringLiteral("Title Card"),
+          QStringLiteral("Accent Shape"),
+          QStringLiteral("Secondary Element"),
+          QStringLiteral("Foreground Detail"),
+      };
+      const ArtifactCore::FloatColor layerColors[] = {
+          ArtifactCore::FloatColor(0.10f, 0.16f, 0.24f, 1.0f),
+          ArtifactCore::FloatColor(0.20f, 0.42f, 0.68f, 1.0f),
+          ArtifactCore::FloatColor(0.88f, 0.54f, 0.22f, 1.0f),
+          ArtifactCore::FloatColor(0.34f, 0.68f, 0.60f, 1.0f),
+          ArtifactCore::FloatColor(0.68f, 0.38f, 0.72f, 1.0f),
+      };
+      for (qsizetype index = 0; index < layerNames.size(); ++index) {
+        ArtifactSolidLayerInitParams layerParams(layerNames.at(index));
+        layerParams.setWidth(compositionParams.width());
+        layerParams.setHeight(compositionParams.height());
+        layerParams.setColor(layerColors[index]);
+        projectService->addLayerToCurrentComposition(
+            layerParams, qEnvironmentVariableIsSet("ARTIFACT_UI_TEST_CURVE_EDITOR") &&
+                             index == layerNames.size() - 1);
+      }
+
+      qInfo() << "[TimelineUiFixture] created composition with"
+              << layerNames.size() << "solid layers";
+      QTimer::singleShot(1200, mw, [mw, projectService]() {
+        if (!mw) {
+          return;
+        }
+        auto composition = projectService
+                               ? projectService->currentComposition().lock()
+                               : ArtifactCompositionPtr{};
+        if (!composition) {
+          qWarning() << "[TimelineUiFixture] current composition unavailable";
+          return;
+        }
+        const bool showCurveEditor =
+            qEnvironmentVariableIsSet("ARTIFACT_UI_TEST_CURVE_EDITOR");
+        if (showCurveEditor) {
+          const auto layer = composition->frontMostLayer();
+          const int frames[] = {0, 20, 40, 60, 80, 100, 120};
+          const double valuesX[] = {200.0, 560.0, 960.0, 670.0,
+                                    960.0, 660.0, 240.0};
+          const double valuesY[] = {80.0, 200.0, 540.0, 500.0,
+                                    540.0, 600.0, 380.0};
+          if (layer) {
+            const auto positionX = layer->getProperty(
+                QStringLiteral("transform.position.x"));
+            const auto positionY = layer->getProperty(
+                QStringLiteral("transform.position.y"));
+            for (int index = 0; index < 7; ++index) {
+              const RationalTime time(frames[index], 30);
+              if (positionX) {
+                positionX->addKeyFrame(time, QVariant(valuesX[index]),
+                                       InterpolationType::Bezier, 0.42f, 0.0f,
+                                       0.58f, 1.0f);
+              }
+              if (positionY) {
+                positionY->addKeyFrame(time, QVariant(valuesY[index]),
+                                       InterpolationType::Bezier, 0.42f, 0.0f,
+                                       0.58f, 1.0f);
+              }
+            }
+            if (!positionX || !positionY) {
+              qWarning() << "[TimelineUiFixture] transform properties unavailable";
+            }
+          } else {
+            qWarning() << "[TimelineUiFixture] transform properties unavailable"
+                       << "<no layer>";
+          }
+        }
+        const QString timelineDockId =
+            QStringLiteral("timeline::%1")
+                .arg(composition->id().toString());
+        const QStringList dockIds = mw->dockIds();
+        if (!mw->hasDock(timelineDockId)) {
+          auto *timeline = new ArtifactTimelineWidget(mw);
+          timeline->setObjectName(QStringLiteral("timelineUiFixtureWidget"));
+          timeline->setMinimumHeight(320);
+          timeline->setComposition(composition->id());
+          mw->addDockedWidgetTabbedWithId(
+              QStringLiteral("Timeline UI Fixture"), timelineDockId,
+              DockArea::Bottom, timeline, QStringLiteral("timeline::"));
+        }
+        if (!mw->hasDock(timelineDockId)) {
+          qWarning() << "[TimelineUiFixture] timeline dock registration failed";
+          return;
+        }
+
+        const int previousMutationDepth =
+            mw->property("artifactProgrammaticDockMutationDepth").toInt();
+        mw->setProperty("artifactProgrammaticDockMutationDepth",
+                        previousMutationDepth + 1);
+        for (const QString &dockId : dockIds) {
+          if (dockId != timelineDockId) {
+            mw->setDockVisible(dockId, false);
+          }
+        }
+        mw->setDockVisible(timelineDockId, true);
+        mw->activateDock(timelineDockId);
+        if (showCurveEditor) {
+          if (auto *timeline = mw->findChild<ArtifactTimelineWidget *>(
+                  QStringLiteral("timelineUiFixtureWidget"))) {
+            timeline->showValueGraph();
+          }
+        }
+        mw->showNormal();
+        mw->resize(1774, 950);
+        if (showCurveEditor) {
+          if (auto *timeline = mw->findChild<ArtifactTimelineWidget *>(
+                  QStringLiteral("timelineUiFixtureWidget"))) {
+            mw->setDockImmersive(timeline, true);
+          }
+        }
+        mw->setProperty("artifactProgrammaticDockMutationDepth",
+                        previousMutationDepth);
+        qInfo() << "[TimelineUiFixture] showing isolated dock" << timelineDockId;
+      });
+    });
+  }
 
   QTimer::singleShot(0, mw, [mw]() {
     mw->show();

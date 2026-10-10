@@ -302,7 +302,11 @@ CommandLineResult validateCommandLine(CommandLine commandLine)
     } else if (language == QStringLiteral("chinese-traditional")) {
       commandLine.global.languageCode = QStringLiteral("zh-tw");
     } else if (language == QStringLiteral("ja") || language == QStringLiteral("en") ||
-               language == QStringLiteral("zh") || language == QStringLiteral("zh-tw")) {
+               language == QStringLiteral("zh") || language == QStringLiteral("zh-tw") ||
+               language == QStringLiteral("ko") || language == QStringLiteral("fr") ||
+               language == QStringLiteral("de") || language == QStringLiteral("es") ||
+               language == QStringLiteral("pt") || language == QStringLiteral("ru") ||
+               language == QStringLiteral("ar")) {
       commandLine.global.languageCode = language;
     } else {
       return {std::move(commandLine),
