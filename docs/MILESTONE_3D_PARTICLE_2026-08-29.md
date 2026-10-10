@@ -1,6 +1,6 @@
-﻿# 3D Particle 完成度マイルストーン (2026-08-29)
+# 3D Particle 完成度マイルストーン (2026-08-29)
 
-**最終更新:** 2026-09-05
+**最終更新:** 2026-10-10
 
 > 2026-08-30 方針更新: 2D/3Dを単一Particle Layerの`is3D`切替として扱わず、
 > `LayerType::Particle`（2D）と`LayerType::Particle3D`（3D）へ分離する。
@@ -243,3 +243,10 @@ Done:
 - `ArtifactFormParticleLayer::draw()` は Grid3D 時だけ `getGlobalTransform4x4()` を row-major の `ParticleRenderData::modelMatrix` へ設定する。Grid2D は identity を明示し、従来の2D座標契約を保持する。
 - Form Particle は既存の Diligent particle submitter / shader を共有するため、GPU resource、PSO、同期経路は追加しない。
 - **未検証:** build、Grid3D のposition / rotation / scale、camera orbit、GPU cull有効時、Grid2D回帰、D3D12/Vulkan parity は未実行（ユーザー方針によりビルドは実施しない）。
+
+### 2026-10-10 — 独立3D画像テストと深度前後関係
+
+- `tests/Artifact/Particle3DRenderContractTest.cpp` に headless Diligent画像テストを追加し、3D camera/modelのXY移動、model Z移動による透視footprint変化、VelocityAligned粒子の速度方向、深度testの前後関係、depthWrite無効の粒子後方へカードを描く挙動、深度なし2D particle描画を確認する。共有rendererの2Dケースはcamera状態を明示resetし、GPU position/velocityを明示初期化する。
+- `ParticlePkt` は描画時点の DSV を参照保持し、`DiligentImmediateSubmitter` は粒子packetにそのDSVを結ぶ。3D camera経路でDSVがある場合のみ設定された depthTest/depthWrite を維持し、2DまたはDSVなしでは深度を無効化する。Particle PSOは既存D32深度ターゲット形式を宣言する。
+- `ArtifactParticle3DPlayground` はproduction `ArtifactParticle3DLayer` で深度有効／無効のペア画像を生成する。手前カード有効時は `depthTest=1` かつ差分391,980px・暖色粒子0px、深度無効controlはカード画像から1,046px変化し、粒子が再表示されることを確認した。直接seekに加えてframe 60→10→45再訪の画像も連続再生frame 45と比較し、中間の60/10でも生存粒子・queued state・3D camera modeを確認する。CTestの `ArtifactParticle3DLayerImageCaptureTest` に登録し、contractテストのビルド依存にも含める。
+- 変更前のVulkan headless構成では `ArtifactParticle3DRenderContractTest` 3件とproduction layer captureが成功し、深度なし2D GPU描画も確認済み。以降に追加したcamera reset、offscreen Qt、透視footprint、VelocityAligned billboard、明示position/velocity、frame revisit、depthWrite=false後のgeometry描画は未再実行。最新ソースのbuild/runtime検証は未完了。D3D12実行、アプリComposition controller上で他レイヤーを含む深度順序、AOV寄与、GPU cullingとの組合せ、既存2D設定・fallbackを含む回帰も未確認。
