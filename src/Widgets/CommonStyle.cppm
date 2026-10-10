@@ -1,6 +1,7 @@
 module;
 #include <utility>
 #include <QIcon>
+#include <QColor>
 #include <QAction>
 #include <QApplication>
 #include <QComboBox>
@@ -504,8 +505,18 @@ void ArtifactCommonStyle::polish(QWidget* widget)
   // labels must remain transparent, otherwise this global styled-background
   // policy paints each label with a separate palette surface.
   const bool transparentMessageLabel = isMessageBoxTextLabel(widget);
-  widget->setAttribute(Qt::WA_StyledBackground, !transparentMessageLabel);
-  if (transparentMessageLabel) {
+  // Timeline readouts own their text palettes and share the toolbar surface.
+  // QLabel is a QFrame: applying the generic frame palette would paint separate
+  // background blocks and replace the current-time cyan during every polish.
+  const bool transparentTimelineReadout = qobject_cast<QLabel*>(widget) &&
+      widget->property("artifactTimelineReadoutLabel").toBool();
+  const bool transparentSurfaceLabel = qobject_cast<QLabel*>(widget) &&
+      widget->property("artifactTransparentSurfaceLabel").toBool();
+  const bool transparentLabel =
+      transparentMessageLabel || transparentTimelineReadout ||
+      transparentSurfaceLabel;
+  widget->setAttribute(Qt::WA_StyledBackground, !transparentLabel);
+  if (transparentLabel) {
     widget->setAutoFillBackground(false);
   }
   // Avoid relaying out and repainting heavyweight viewport/timeline children
@@ -528,13 +539,14 @@ void ArtifactCommonStyle::polish(QWidget* widget)
     if (!w) return;
     // QLabel inherits QFrame, so the generic frame branch below must not
     // restore an opaque background after the message-label exemption above.
-    if (transparentMessageLabel) return;
+    if (transparentLabel) return;
     // Pr昇格: artifactSurfaceKind を本体でも解釈。PrProxyStyle と同義。
     // "timelineRuler"/"panelToolbar" -> secondary、"trackContent" -> track、
     // "mediaPlaceholder" -> placeholder。未知値は既定 surface。
     const QString surfaceKind = w->property("artifactSurfaceKind").toString();
     QColor windowBg = background;
     QColor baseBg = inputBg.isValid() ? inputBg : surface;
+    QColor buttonBg = surface;
     if (surfaceKind == QStringLiteral("timelineRuler") ||
         surfaceKind == QStringLiteral("panelToolbar")) {
       windowBg = surface;
@@ -544,6 +556,13 @@ void ArtifactCommonStyle::polish(QWidget* widget)
     } else if (surfaceKind == QStringLiteral("mediaPlaceholder")) {
       const QColor ph(theme.placeholderBackgroundColor);
       windowBg = ph.isValid() ? ph : background.darker(150);
+    }
+    const QColor explicitSurface =
+        w->property("artifactSurfaceColor").value<QColor>();
+    if (explicitSurface.isValid()) {
+      windowBg = explicitSurface;
+      baseBg = explicitSurface;
+      buttonBg = explicitSurface;
     }
     QColor windowText = text;
     if (surfaceKind == QStringLiteral("timelineRuler") ||
@@ -557,7 +576,7 @@ void ArtifactCommonStyle::polish(QWidget* widget)
     pal.setColor(QPalette::WindowText, windowText);
     pal.setColor(QPalette::Base, baseBg);
     pal.setColor(QPalette::Text, text);
-    pal.setColor(QPalette::Button, surface);
+    pal.setColor(QPalette::Button, buttonBg);
     pal.setColor(QPalette::ButtonText, text);
     pal.setColor(QPalette::Highlight, accent);
     pal.setColor(QPalette::HighlightedText, background);

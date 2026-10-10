@@ -6,7 +6,7 @@
     "translators": [
       "Artifact Team"
     ],
-    "lastUpdated": "2026-10-05"
+    "lastUpdated": "2026-10-09"
   },
   "app": {
     "name": "Artifact",
@@ -27,6 +27,22 @@
   },
   "clip_buffer": {
     "reapply_hint": "Double-click or select & Paste to re-apply clips."
+  },
+  "project_view": {
+    "empty": {
+      "project_open_title": "No project open",
+      "project_items_title": "No project items to show",
+      "project_open_hint": "Open a project to begin, or create a composition from the action bar.",
+      "project_items_hint": "Adjust the search or filters, or import assets and create a composition.",
+      "nothing_selected_title": "Nothing selected",
+      "select_item_hint": "Select a project item to inspect its details and actions.",
+      "inspect_items_hint": "Open a project to inspect its items.",
+      "select_details_hint": "Select an item to inspect details",
+      "inspect_details_hint": "Open a project to inspect details",
+      "project_title": "Project",
+      "thumbnail_preview": "PREVIEW",
+      "thumbnail_no_project": "NO PROJECT"
+    }
   },
   "script": {
     "hook_missing_create": "Hook script not found: %1\\nCreate a stub file and open it now?",
@@ -607,7 +623,6 @@
     "confirm_soft_keys": "Confirm Selected Soft Keys",
     "discard_soft_keys": "Discard Selected Soft Keys",
     "soft_key_state": "Soft key: Pending confirmation",
-
     "marker": "Keyframe",
     "kind_audio": "Kind: Audio",
     "kind_video": "Kind: Video",
@@ -1825,5 +1840,43 @@
     "transparent_4": "Transparent 4",
     "transparent_5": "Transparent 5",
     "transparent_6": "Transparent 6"
+  },
+  "render_queue": {
+    "accessible_name": "Render Queue",
+    "accessible_description": "Review, reorder, and monitor composition render jobs.",
+    "title": "Render Manager",
+    "search": "Search jobs...",
+    "add_composition": "Add Composition",
+    "all": "All",
+    "ready": "Ready",
+    "rendering": "Rendering",
+    "completed": "Completed",
+    "needs_attention": "Needs attention",
+    "queue_title": "Render queue",
+    "column_job": "Job",
+    "column_output": "Output",
+    "column_status": "Status",
+    "remove": "Remove",
+    "retry_failed": "Retry Failed",
+    "job_settings": "Job settings",
+    "no_job": "No job selected",
+    "preflight_select": "PREFLIGHT  •  SELECT A JOB",
+    "select_preview": "Select a job to preview",
+    "ranges_none": "Ranges: none",
+    "output_settings": "Output Settings",
+    "browse": "Browse",
+    "format": "Format...",
+    "frame_range": "Frame Range",
+    "selective_render": "Selective Render",
+    "wait": "WAIT",
+    "composition_missing": "Composition missing",
+    "latest_frame": "Latest rendered frame",
+    "presets": "Presets",
+    "history": "History",
+    "progress_rendering": "Rendering  •  %1%",
+    "progress": "Progress  •  %1%",
+    "queue_running": "Rendering %1 of %2 jobs",
+    "queue_empty": "Queue is empty",
+    "queue_ready": "Queue ready"
   }
 }

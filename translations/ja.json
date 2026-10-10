@@ -6,7 +6,7 @@
     "translators": [
       "Artifact Team"
     ],
-    "lastUpdated": "2026-10-05"
+    "lastUpdated": "2026-10-09"
   },
   "app": {
     "name": "Artifact",
@@ -27,6 +27,22 @@
   },
   "clip_buffer": {
     "reapply_hint": "ダブルクリック、または選択して貼り付けるとクリップを再適用します。"
+  },
+  "project_view": {
+    "empty": {
+      "project_open_title": "プロジェクトが開かれていません",
+      "project_items_title": "表示するプロジェクト項目はありません",
+      "project_open_hint": "プロジェクトを開くか、上部のアクションバーからコンポジションを作成してください。",
+      "project_items_hint": "検索条件やフィルターを調整するか、アセットを読み込んでコンポジションを作成してください。",
+      "nothing_selected_title": "何も選択されていません",
+      "select_item_hint": "詳細や操作を確認する項目を選択してください。",
+      "inspect_items_hint": "項目を確認するにはプロジェクトを開いてください。",
+      "select_details_hint": "詳細を確認する項目を選択してください。",
+      "inspect_details_hint": "詳細を確認するにはプロジェクトを開いてください。",
+      "project_title": "Project",
+      "thumbnail_preview": "プレビュー",
+      "thumbnail_no_project": "プロジェクトなし"
+    }
   },
   "script": {
     "hook_missing_create": "フックスクリプトが見つかりません: %1\\nスタブを作成して開きますか？",
@@ -607,7 +623,6 @@
     "confirm_soft_keys": "選択ソフトキーを確定",
     "discard_soft_keys": "選択ソフトキーを破棄",
     "soft_key_state": "ソフトキー：未確定",
-
     "marker": "キーフレーム",
     "kind_audio": "種別: 音声",
     "kind_video": "種別: 映像",
@@ -1825,5 +1840,43 @@
     "transparent_4": "透明4",
     "transparent_5": "透明5",
     "transparent_6": "透明6"
+  },
+  "render_queue": {
+    "accessible_name": "レンダーキュー",
+    "accessible_description": "コンポジションのレンダージョブを確認、並べ替え、監視します。",
+    "title": "レンダーマネージャー",
+    "search": "ジョブを検索...",
+    "add_composition": "コンポジションを追加",
+    "all": "すべて",
+    "ready": "待機中",
+    "rendering": "レンダリング中",
+    "completed": "完了",
+    "needs_attention": "要確認",
+    "queue_title": "レンダーキュー",
+    "column_job": "ジョブ",
+    "column_output": "出力",
+    "column_status": "状態",
+    "remove": "削除",
+    "retry_failed": "失敗を再試行",
+    "job_settings": "ジョブ設定",
+    "no_job": "ジョブが選択されていません",
+    "preflight_select": "事前チェック  •  ジョブを選択",
+    "select_preview": "プレビューするジョブを選択",
+    "ranges_none": "範囲: なし",
+    "output_settings": "出力設定",
+    "browse": "参照",
+    "format": "形式...",
+    "frame_range": "フレーム範囲",
+    "selective_render": "選択レンダー",
+    "wait": "待機",
+    "composition_missing": "コンポジションが見つかりません",
+    "latest_frame": "最新のレンダーフレーム",
+    "presets": "プリセット",
+    "history": "履歴",
+    "progress_rendering": "レンダリング中  •  %1%",
+    "progress": "進行状況  •  %1%",
+    "queue_running": "%2件中%1件をレンダリング中",
+    "queue_empty": "キューは空です",
+    "queue_ready": "キューの準備完了"
   }
 }

@@ -35,6 +35,7 @@ export module Artifact.Widgets.RenderQueuePresentation;
 
 import Utils.Path;
 import Widgets.Utils.CSS;
+import Translation.Manager;
 
 export namespace Artifact {
 
@@ -192,14 +193,21 @@ class RenderQueueJobCard final : public QFrame
     // around every job, matching the compact Render Manager reference.
     setFrameShape(QFrame::NoFrame);
     auto* root = new QHBoxLayout(this);
-    root->setContentsMargins(10, 4, 12, 4);
-    root->setSpacing(14);
+    root->setContentsMargins(35, 4, 24, 4);
+    root->setSpacing(12);
+    const auto markTransparentSurfaceLabel = [](QLabel* label) {
+      if (!label) return;
+      label->setProperty("artifactTransparentSurfaceLabel", true);
+      label->setAutoFillBackground(false);
+      label->setAttribute(Qt::WA_StyledBackground, false);
+    };
 
     thumbnailLabel = new QLabel(QStringLiteral("PREVIEW"));
-    thumbnailLabel->setFixedSize(102, 58);
+    thumbnailLabel->setFixedSize(98, 56);
     thumbnailLabel->setAlignment(Qt::AlignCenter);
     thumbnailLabel->setScaledContents(false);
     thumbnailLabel->setAutoFillBackground(true);
+    thumbnailLabel->setProperty("artifactSurfaceColor", QColor(18, 24, 29));
     QPalette thumbnailPalette = thumbnailLabel->palette();
     thumbnailPalette.setColor(QPalette::Window, QColor(18, 24, 29));
     thumbnailPalette.setColor(QPalette::WindowText, QColor(130, 145, 155));
@@ -210,17 +218,20 @@ class RenderQueueJobCard final : public QFrame
     nameColumn->setContentsMargins(0, 0, 0, 0);
     nameColumn->setSpacing(1);
     nameLabel = new QLabel();
+    markTransparentSurfaceLabel(nameLabel);
     QFont nameFont = nameLabel->font();
     nameFont.setPointSize(nameFont.pointSize() + 1);
     nameFont.setBold(true);
     nameLabel->setFont(nameFont);
-    nameLabel->setMinimumWidth(136);
+    nameLabel->setMinimumWidth(124);
     nameLabel->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
     outputLabel = new QLabel();
+    markTransparentSurfaceLabel(outputLabel);
     backendLabel = new QLabel();
+    markTransparentSurfaceLabel(backendLabel);
     outputLabel->setWordWrap(false);
     backendLabel->setWordWrap(false);
-    outputLabel->setMinimumWidth(172);
+    outputLabel->setMinimumWidth(166);
     outputLabel->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
     nameColumn->addStretch();
     nameColumn->addWidget(nameLabel);
@@ -234,9 +245,11 @@ class RenderQueueJobCard final : public QFrame
     auto* statusHeader = new QHBoxLayout();
     statusHeader->setContentsMargins(0, 0, 0, 0);
     statusIconLabel = new QLabel();
+    markTransparentSurfaceLabel(statusIconLabel);
     statusIconLabel->setFixedSize(18, 18);
     statusIconLabel->setAlignment(Qt::AlignCenter);
-    statusLabel = new QLabel("WAIT");
+    statusLabel = new QLabel(TranslationManager::instance().tr(QStringLiteral("render_queue.wait"), QStringLiteral("WAIT")));
+    markTransparentSurfaceLabel(statusLabel);
     statusLabel->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
     statusHeader->addWidget(statusIconLabel);
     statusHeader->addWidget(statusLabel);
@@ -268,9 +281,16 @@ class RenderQueueJobCard final : public QFrame
               int progress, const QColor& accent)
   {
     const bool needsAttention = !errorMessage.trimmed().isEmpty();
-    const QString visibleStatus = needsAttention
-        ? QStringLiteral("Needs attention")
-        : status;
+    QString visibleStatus = status;
+    if (needsAttention) {
+      visibleStatus = TranslationManager::instance().tr(QStringLiteral("render_queue.needs_attention"), QStringLiteral("Needs attention"));
+    } else if (status.compare(QStringLiteral("Rendering"), Qt::CaseInsensitive) == 0) {
+      visibleStatus = TranslationManager::instance().tr(QStringLiteral("render_queue.rendering"), QStringLiteral("Rendering"));
+    } else if (status.compare(QStringLiteral("Completed"), Qt::CaseInsensitive) == 0) {
+      visibleStatus = TranslationManager::instance().tr(QStringLiteral("render_queue.completed"), QStringLiteral("Completed"));
+    } else if (status.compare(QStringLiteral("Pending"), Qt::CaseInsensitive) == 0 || status.compare(QStringLiteral("Queued"), Qt::CaseInsensitive) == 0) {
+      visibleStatus = TranslationManager::instance().tr(QStringLiteral("render_queue.wait"), QStringLiteral("WAIT"));
+    }
     statusLabel->setText(visibleStatus);
     QString statusIcon = QStringLiteral("Studio/render_status_ready.svg");
     if (needsAttention) {
@@ -291,7 +311,8 @@ class RenderQueueJobCard final : public QFrame
       // Status column and inspector rather than repeating a long label here.
       thumbnailLabel->setText({});
       thumbnailLabel->setPixmap(
-          loadIconWithFallback(QStringLiteral("Studio/asset_missing_small.svg"))
+          loadIconWithFallback(
+              QStringLiteral("Studio/render_manager_missing_composition.png"))
               .pixmap(QSize(28, 28)));
     } else if (thumbnailLabel->pixmap().isNull()) {
       thumbnailLabel->setText(QStringLiteral("PREVIEW"));
@@ -305,7 +326,7 @@ class RenderQueueJobCard final : public QFrame
             : QColor(224, 174, 78));
     outputLabel->setPalette(outputPalette);
     backendLabel->setText(needsAttention
-        ? QStringLiteral("Composition missing")
+        ? TranslationManager::instance().tr(QStringLiteral("render_queue.composition_missing"), QStringLiteral("Composition missing"))
         : backend);
     backendLabel->setVisible(true);
     progressBar->setValue(std::clamp(progress, 0, 100));
@@ -318,6 +339,31 @@ class RenderQueueJobCard final : public QFrame
     QPalette barPalette = progressBar->palette();
     barPalette.setColor(QPalette::Highlight, accent);
     progressBar->setPalette(barPalette);
+    refreshTextPalettes();
+  }
+
+  void refreshTextPalettes()
+  {
+    if (nameLabel) {
+      QPalette palette = nameLabel->palette();
+      palette.setColor(QPalette::WindowText, QColor(229, 232, 235));
+      palette.setColor(QPalette::Text, QColor(229, 232, 235));
+      nameLabel->setPalette(palette);
+    }
+    if (backendLabel) {
+      QPalette palette = backendLabel->palette();
+      palette.setColor(QPalette::WindowText, QColor(155, 165, 175));
+      palette.setColor(QPalette::Text, QColor(155, 165, 175));
+      backendLabel->setPalette(palette);
+    }
+    if (thumbnailLabel) {
+      QPalette palette = thumbnailLabel->palette();
+      palette.setColor(QPalette::Window, QColor(18, 24, 29));
+      palette.setColor(QPalette::WindowText, QColor(130, 145, 155));
+      palette.setColor(QPalette::Text, QColor(130, 145, 155));
+      thumbnailLabel->setAutoFillBackground(true);
+      thumbnailLabel->setPalette(palette);
+    }
   }
 
   void setPreview(const QPixmap& pixmap)
@@ -325,7 +371,7 @@ class RenderQueueJobCard final : public QFrame
     if (!thumbnailLabel || pixmap.isNull()) return;
     thumbnailLabel->setPixmap(pixmap.scaled(
         thumbnailLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
-    thumbnailLabel->setToolTip(QStringLiteral("Latest rendered frame"));
+    thumbnailLabel->setToolTip(TranslationManager::instance().tr(QStringLiteral("render_queue.latest_frame"), QStringLiteral("Latest rendered frame")));
   }
 
  protected:
