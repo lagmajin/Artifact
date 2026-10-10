@@ -78,7 +78,7 @@ void applyCurvesLookup(const ImageF32x4RGBAWithCache& src,
     };
     // Invalid/unknown layouts leave the copied input unchanged.
     (void)ArtifactCore::withMutableColorFloat4View(dst.image().surfaceView(), pixels, [&](const auto& view) {
-        Parallel::For(0, dst.height(), width * dst.height(), [&](int y) {
+        Parallel::ForPixels(0, dst.height(), width, dst.height(), [&](int y) {
             const auto row = view.row(y);
             for (int x = 0; x < width; ++x) {
                 auto p = row[x];
@@ -344,7 +344,7 @@ private:
         if (colorDescriptor.channelOrder == ArtifactCore::SurfaceChannelOrder::BGRA) {
             float* pixels = dst.image().rgba32fData();
             const int width = dst.width();
-            Parallel::For(0, dst.height(), width * dst.height(), [&](int y) {
+            Parallel::ForPixels(0, dst.height(), width, dst.height(), [&](int y) {
                 float* row = pixels + static_cast<size_t>(y) * width * 4u;
                 for (int x = 0; x < width; ++x) std::swap(row[x * 4], row[x * 4 + 2]);
             });

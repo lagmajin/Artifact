@@ -159,7 +159,7 @@ public:
         cv::Mat mapY(h, w, CV_32FC1);
         const float scale = 1.0f / std::max(1.0f, size_);
 
-        ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
+        ArtifactCore::Parallel::ForPixels(0, h, w, h, [&](int y) {
             float* mapXRow = mapX.ptr<float>(y);
             float* mapYRow = mapY.ptr<float>(y);
             std::mt19937 rowRng(static_cast<std::uint32_t>(seed_) ^
@@ -190,7 +190,7 @@ public:
         // mapX/mapY are complete before this pass, so each destination row can
         // be sampled independently without relying on OpenCV's global remap
         // scheduler or sharing mutable interpolation state.
-        ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
+        ArtifactCore::Parallel::ForPixels(0, h, w, h, [&](int y) {
             const float* mx = mapX.ptr<float>(y);
             const float* my = mapY.ptr<float>(y);
             cv::Vec4f* out = dstMat.ptr<cv::Vec4f>(y);

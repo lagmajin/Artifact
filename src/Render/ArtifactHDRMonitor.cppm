@@ -388,7 +388,7 @@ ArtifactHDRMonitor::generateFalseColorOverlay(const HDRAnalysisResult &result,
     return overlay;
 
   // Create false color mapping
-ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
+ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
     for (int x = 0; x < width; ++x) {
       int index = y * width + x;
       if (index >= static_cast<int>(impl_->luminanceCache_.size()))

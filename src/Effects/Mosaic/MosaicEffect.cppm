@@ -72,7 +72,7 @@ public:
         // cache: key=cell origin, value=average color
         // lazy recompute each cell (cheap for small images)
         const int tileRows = (h + cell - 1) / cell;
-        ArtifactCore::Parallel::For(0, tileRows, w * h, [&](int tileRow) {
+        ArtifactCore::Parallel::ForPixels(0, tileRows, w, h, [&](int tileRow) {
             const int by = tileRow * cell;
             for (int bx = 0; bx < w; bx += cell) {
                 const int x1 = std::min(bx + cell, w);

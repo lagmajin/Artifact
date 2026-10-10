@@ -73,7 +73,7 @@ public:
         const float fac = static_cast<float>(gain);
         dst = src.DeepCopy();
         float* d = dst.image().rgba32fData();
-        ArtifactCore::Parallel::For(0, H, W * H, [&](int y) {
+        ArtifactCore::Parallel::ForPixels(0, H, W, H, [&](int y) {
             float* o = d + static_cast<size_t>(y) * W * 4;
             for (int x = 0; x < W; ++x) {
                 float* p = o + static_cast<size_t>(x) * 4;

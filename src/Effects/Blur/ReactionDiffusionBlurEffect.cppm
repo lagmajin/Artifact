@@ -57,7 +57,7 @@ public:
         cv::Mat v = (seed > 0.45f);
         v.convertTo(v, CV_32F, 0.8 / 255.0);
         const float phase = evolution * 0.0174532925f;
-        ArtifactCore::Parallel::For(0, gridHeight, gridWidth * gridHeight, [&](int y) {
+        ArtifactCore::Parallel::ForPixels(0, gridHeight, gridWidth, gridHeight, [&](int y) {
             float* row = v.ptr<float>(y);
             for (int x = 0; x < gridWidth; ++x) {
                 const float organicSeed = 0.08f *
@@ -84,7 +84,7 @@ public:
                    cv::INTER_CUBIC);
         cv::GaussianBlur(pattern, pattern, cv::Size(), 0.8, 0.8);
         cv::Mat output = blurred.clone();
-        ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
+        ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
             const auto* sourceRow = input.ptr<cv::Vec4f>(y);
             const auto* blurRow = blurred.ptr<cv::Vec4f>(y);
             const float* patternRow = pattern.ptr<float>(y);

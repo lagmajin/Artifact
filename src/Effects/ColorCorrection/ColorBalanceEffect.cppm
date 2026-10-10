@@ -87,7 +87,7 @@ void applyColorBalanceCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWith
     const int width = dst.width();
     // Invalid/unknown layouts leave the copied input unchanged.
     (void)ArtifactCore::withMutableColorFloat4View(dst.image().surfaceView(), pixels, [&](const auto& view) {
-        ArtifactCore::Parallel::For(0, dst.height(), width*dst.height(), [&](int y) {
+        ArtifactCore::Parallel::ForPixels(0, dst.height(), width, dst.height(), [&](int y) {
             const auto row = view.row(y);
             for (int x = 0; x < width; ++x) {
                 auto p = row[x];

@@ -78,7 +78,7 @@ public:
         const int lastWave = std::max(
             firstWave, static_cast<int>(std::ceil(currentTime_ * safeFrequency)));
 
-ArtifactCore::Parallel::For(0, H, W * H, [&](int y) {
+ArtifactCore::Parallel::ForPixels(0, H, W, H, [&](int y) {
             float* row = dstData + y * W * 4;
             const float dy = static_cast<float>(y) - cy;
             for (int x = 0; x < W; ++x) {

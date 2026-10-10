@@ -117,7 +117,7 @@ static void applyColorWheelsCore(const ImageF32x4RGBAWithCache& src,
                               ArtifactCore::SurfaceAlphaMode::Premultiplied;
     // Invalid/unknown layouts leave the copied input unchanged.
     (void)ArtifactCore::withMutableColorFloat4View(dst.image().surfaceView(), pixels, [&](const auto& view) {
-        Parallel::For(0, height, width * height, [&](int y) {
+        Parallel::ForPixels(0, height, width, height, [&](int y) {
             auto proc = processor;
             const auto row = view.row(y);
             for (int x = 0; x < width; ++x) {
@@ -248,7 +248,7 @@ float lum(float3 c) { return dot(c,float3(0.2126,0.7152,0.0722)); }
         ctx->UnmapTextureSubresource(staging, 0, 0);
         if (descriptor.channelOrder == ArtifactCore::SurfaceChannelOrder::BGRA) {
             float* pixels = dst.image().rgba32fData();
-            Parallel::For(0, dst.height(), dst.width() * dst.height(), [&](int y) {
+            Parallel::ForPixels(0, dst.height(), dst.width(), dst.height(), [&](int y) {
                 float* row = pixels + static_cast<size_t>(y) * dst.width() * 4u;
                 for (int x = 0; x < dst.width(); ++x) std::swap(row[x * 4], row[x * 4 + 2]);
             });

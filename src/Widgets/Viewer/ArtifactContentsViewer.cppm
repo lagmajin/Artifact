@@ -637,7 +637,7 @@ namespace Artifact
     }
 
     QImage diffImage(targetRect.size(), QImage::Format_RGBA8888);
-    ArtifactCore::Parallel::For(0, diffImage.height(), diffImage.width() * diffImage.height(), [&](int y) {
+    ArtifactCore::Parallel::ForPixels(0, diffImage.height(), diffImage.width(), diffImage.height(), [&](int y) {
      const QRgb* leftScan = reinterpret_cast<const QRgb*>(leftImage.constScanLine(y));
      const QRgb* rightScan = reinterpret_cast<const QRgb*>(rightImage.constScanLine(y));
      QRgb* diffScan = reinterpret_cast<QRgb*>(diffImage.scanLine(y));

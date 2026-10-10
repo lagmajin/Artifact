@@ -213,7 +213,7 @@ public:
         cv::Mat output = input.clone();
         const int yBegin = ArtifactCore::artifactMax(0, static_cast<int>(top));
         const int yEnd = ArtifactCore::artifactMin(height, static_cast<int>(bottom));
-        Parallel::For(yBegin, yEnd, (yEnd - yBegin) * width, [&](int y) {
+        Parallel::ForPixels(yBegin, yEnd, width, yEnd - yBegin, [&](int y) {
             const auto* sourceRow = input.ptr<cv::Vec4f>(y);
             const auto* overlayRow = overlay.ptr<cv::Vec4f>(y);
             const auto* dropletMaskRow = dropletMask.ptr<float>(y);

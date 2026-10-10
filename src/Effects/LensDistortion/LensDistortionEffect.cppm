@@ -73,7 +73,7 @@ void LensDistortionEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, I
     ImageF32x4_RGBA dstImage;
     dstImage.resize(width, height);
     float* destinationPixels = dstImage.rgba32fData();
-    ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
+    ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
         for (int x = 0; x < width; x++) {
             const float nx = (static_cast<float>(x) - cx) / maxR;
             const float ny = (static_cast<float>(y) - cy) / maxR;

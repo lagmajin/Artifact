@@ -45,7 +45,7 @@ public:
         dst=src.DeepCopy();float* d=dst.image().rgba32fData();
         int rfCount=(int)refs.size();
 
-        Parallel::For(0,H,W*H,[&](int y){
+        Parallel::ForPixels(0, H, W, H,[&](int y){
             for(int x=0;x<W;++x){
             const size_t px=(size_t)y*W+x;
             // Gather per-channel values

@@ -73,7 +73,7 @@ public:
         cv::Mat mapX(source.height(), source.width(), CV_32FC1);
         cv::Mat mapY(source.height(), source.width(), CV_32FC1);
         const float scale = std::max(4.0f, flowScale);
-        ArtifactCore::Parallel::For(0, source.height(), source.width() * source.height(), [&](int y) {
+        ArtifactCore::Parallel::ForPixels(0, source.height(), source.width(), source.height(), [&](int y) {
             float* xRow = mapX.ptr<float>(y);
             float* yRow = mapY.ptr<float>(y);
             for (int x = 0; x < source.width(); ++x) {
@@ -100,7 +100,7 @@ public:
             return v;
         };
         const cv::Vec3f* glowData = glow.ptr<cv::Vec3f>(0);
-        ArtifactCore::Parallel::For(0, glow.rows, glow.rows * glow.cols, [&](int y) {
+        ArtifactCore::Parallel::ForPixels(0, glow.rows, glow.rows, glow.cols, [&](int y) {
             const float* xRow = mapX.ptr<float>(y);
             const float* yRow = mapY.ptr<float>(y);
             cv::Vec3f* output = flowedGlow.ptr<cv::Vec3f>(y);

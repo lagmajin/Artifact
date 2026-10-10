@@ -112,7 +112,7 @@ public:
         const std::size_t offsetsPerPixel = frameBlend_ ? 2u : 1u;
         std::vector<std::int64_t> requiredOffsets(
             static_cast<std::size_t>(width) * height * offsetsPerPixel);
-        Parallel::For(0, height, width * height, [&](int y) {
+        Parallel::ForPixels(0, height, width, height, [&](int y) {
             const float* mapRow = mapMat.ptr<float>(y);
             for (int x = 0; x < width; ++x) {
                 const float normalizedOffset =
@@ -143,7 +143,7 @@ public:
             return it != sampledFrames.end() ? &it->second : nullptr;
         };
 
-        Parallel::For(0, height, width * height, [&](int y) {
+        Parallel::ForPixels(0, height, width, height, [&](int y) {
             const float* mapRow = mapMat.ptr<float>(y);
             cv::Vec4f* outRow = dstMat.ptr<cv::Vec4f>(y);
             for (int x = 0; x < width; ++x) {

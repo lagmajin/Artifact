@@ -79,7 +79,7 @@ void WaveEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4R
     int orient = orientation_;
     
     // ピクセルごとの処理 — 行単位で並列化
-    ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
+    ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
         cv::Vec4f* dstRow = dstMat.ptr<cv::Vec4f>(y);
         for (int x = 0; x < width; x++) {
             float offset = 0.0f;

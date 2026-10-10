@@ -41,7 +41,7 @@ public:
         dst=src.DeepCopy();float* d=dst.image().rgba32fData();
 
         std::vector<std::int64_t> frameOffsets(static_cast<size_t>(W) * H, 0);
-        Parallel::For(0, H, W * H, [&](int y) {
+        Parallel::ForPixels(0, H, W, H, [&](int y) {
             for(int x=0;x<W;++x){
                 // Blur the driving channel for smooth temporal mapping
                 float avg=0;int cnt=0;
@@ -74,7 +74,7 @@ public:
                 }
             }
 
-        Parallel::For(0, H, W * H, [&](int y) {
+        Parallel::ForPixels(0, H, W, H, [&](int y) {
             float* o=d+(size_t)y*W*4;
             for(int x=0;x<W;++x){
                 const auto it=sampledFrames.find(frameOffsets[static_cast<size_t>(y) * W + x]);

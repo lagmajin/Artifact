@@ -64,7 +64,7 @@ public:
         // as AE's Glass Edge mode does. 0 keeps the pure Shadow Color, which is
         // the current behaviour and therefore the default.
         const float influence = std::clamp(colorInfluence_, 0.0f, 1.0f);
-        ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
+        ArtifactCore::Parallel::ForPixels(0, h, w, h, [&](int y) {
             cv::Vec4f* row = mat.ptr<cv::Vec4f>(y);
             for (int x = 0; x < w; ++x) {
                 float dx = x - cx;

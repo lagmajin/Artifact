@@ -152,15 +152,10 @@ QVector3D safeEffectorVector(const QVector3D& value)
 }
 
 ArtifactCore::ParticleRenderData transformParticleRenderData(
-    const ArtifactCore::ParticleRenderData& source,
+    ArtifactCore::ParticleRenderData source,
     const QTransform& transform,
     float opacity)
 {
-    ArtifactCore::ParticleRenderData transformed;
-    transformed.frameNumber = source.frameNumber;
-    transformed.options = source.options;
-    transformed.particles.resize(source.particles.size());
-
     const auto finite = [](double value) { return std::isfinite(value); };
     const bool transformFinite =
         finite(transform.m11()) && finite(transform.m12()) &&
@@ -192,69 +187,85 @@ ArtifactCore::ParticleRenderData transformParticleRenderData(
             : fallback;
     };
 
-    ArtifactCore::Parallel::For(0, static_cast<int>(source.particles.size()),
-                                static_cast<int>(source.particles.size()),
-                                [&](int index) {
-        const auto& src = source.particles[static_cast<size_t>(index)];
-        auto& v = transformed.particles[static_cast<size_t>(index)];
-        v.px = src.px;
-        v.py = src.py;
-        v.pz = src.pz;
-        v.ppx = src.ppx;
-        v.ppy = src.ppy;
-        v.ppz = src.ppz;
-        v.vx = src.vx;
-        v.vy = src.vy;
-        v.vz = src.vz;
-        v.r = safeColor(src.r);
-        v.g = safeColor(src.g);
-        v.b = safeColor(src.b);
-        v.a = src.a;
-        v.size = src.size;
-        v.stretch = src.stretch;
-        v.rotation = src.rotation;
-        v.age = src.age;
-        v.lifetime = src.lifetime;
-        v.spriteFrame = src.spriteFrame;
-        v.spriteRows = src.spriteRows;
-        v.spriteCols = src.spriteCols;
-        const QPointF mapped = safeTransform.map(QPointF(src.px, src.py));
-        const QPointF mappedPrev = safeTransform.map(QPointF(src.ppx, src.ppy));
+    // The snapshot is consumed by this transform; mutate its pre-sized array
+    // in place so the GPU path does not allocate a second full particle vector.
+    ArtifactCore::Parallel::ForSize(
+        0, source.particles.size(), source.particles.size(),
+        [&](size_t index) {
+        auto& v = source.particles[index];
+        const float sourceX = v.px;
+        const float sourceY = v.py;
+        const float sourcePreviousX = v.ppx;
+        const float sourcePreviousY = v.ppy;
+        const float sourceVelocityX = v.vx;
+        const float sourceVelocityY = v.vy;
+        const float sourceAlpha = v.a;
+        const float sourceRotation = v.rotation;
+        const float sourceSizeValue = v.size;
+        const float sourceStretch = v.stretch;
+        const QPointF mapped = safeTransform.map(QPointF(sourceX, sourceY));
+        const QPointF mappedPrev =
+            safeTransform.map(QPointF(sourcePreviousX, sourcePreviousY));
         const QPointF mappedVelocityPoint =
-            safeTransform.map(QPointF(src.vx, src.vy));
+            safeTransform.map(QPointF(sourceVelocityX, sourceVelocityY));
         const QPointF mappedVelocity = mappedVelocityPoint - mappedOrigin;
-        const float safeSourceX = std::isfinite(src.px) ? src.px : 0.0f;
-        const float safeSourceY = std::isfinite(src.py) ? src.py : 0.0f;
-        v.px = safeCoordinate(mapped.x(), safeSourceX);
-        v.py = safeCoordinate(mapped.y(), safeSourceY);
-        v.ppx = safeCoordinate(mappedPrev.x(), safeSourceX);
-        v.ppy = safeCoordinate(mappedPrev.y(), safeSourceY);
-        v.vx = safeCoordinate(mappedVelocity.x(), 0.0f);
-        v.vy = safeCoordinate(mappedVelocity.y(), 0.0f);
-        v.rotation = std::isfinite(src.rotation)
-            ? std::clamp(src.rotation + rotationOffsetDegrees,
+        const float safeSourceX = std::isfinite(sourceX) ? sourceX : 0.0f;
+        const float safeSourceY = std::isfinite(sourceY) ? sourceY : 0.0f;
+        const float transformedX = safeCoordinate(mapped.x(), safeSourceX);
+        const float transformedY = safeCoordinate(mapped.y(), safeSourceY);
+        const float transformedPreviousX =
+            safeCoordinate(mappedPrev.x(), safeSourceX);
+        const float transformedPreviousY =
+            safeCoordinate(mappedPrev.y(), safeSourceY);
+        const float transformedVelocityX =
+            safeCoordinate(mappedVelocity.x(), 0.0f);
+        const float transformedVelocityY =
+            safeCoordinate(mappedVelocity.y(), 0.0f);
+        const float transformedRotation = std::isfinite(sourceRotation)
+            ? std::clamp(sourceRotation + rotationOffsetDegrees,
                          -1000000.0f, 1000000.0f)
             : rotationOffsetDegrees;
-        v.a = std::isfinite(v.a)
-            ? std::clamp(v.a * safeOpacity, 0.0f, 1.0f)
+        const float transformedAlpha = std::isfinite(sourceAlpha)
+            ? std::clamp(sourceAlpha * safeOpacity, 0.0f, 1.0f)
             : 0.0f;
-        const float sourceSize = std::isfinite(src.size)
-            ? std::clamp(src.size, 0.0f, 1000000.0f)
+        const float sourceSize = std::isfinite(sourceSizeValue)
+            ? std::clamp(sourceSizeValue, 0.0f, 1000000.0f)
             : 0.0f;
         // No minimum-size clamp: presets that shrink to zero (sparks, fire)
         // rely on size reaching 0 to make particles disappear at end of life.
-        v.size = std::clamp(sourceSize * scale, 0.0f, 1000000.0f);
-        if (!std::isfinite(v.stretch) || v.stretch <= 0.0f) {
-            const float speed = std::isfinite(std::hypot(v.vx, v.vy))
-                ? static_cast<float>(std::hypot(v.vx, v.vy))
-                : 0.0f;
-            v.stretch = std::clamp(1.0f + speed * 0.004f, 1.0f, 6.0f);
+        const float transformedSize =
+            std::clamp(sourceSize * scale, 0.0f, 1000000.0f);
+        float transformedStretch = 0.0f;
+        if (!std::isfinite(sourceStretch) || sourceStretch <= 0.0f) {
+            const float speed =
+                std::isfinite(std::hypot(transformedVelocityX,
+                                         transformedVelocityY))
+                    ? static_cast<float>(std::hypot(transformedVelocityX,
+                                                    transformedVelocityY))
+                    : 0.0f;
+            transformedStretch =
+                std::clamp(1.0f + speed * 0.004f, 1.0f, 6.0f);
         } else {
-            v.stretch = std::clamp(v.stretch, 1.0f, 1000000.0f);
+            transformedStretch =
+                std::clamp(sourceStretch, 1.0f, 1000000.0f);
         }
+
+        v.r = safeColor(v.r);
+        v.g = safeColor(v.g);
+        v.b = safeColor(v.b);
+        v.px = transformedX;
+        v.py = transformedY;
+        v.ppx = transformedPreviousX;
+        v.ppy = transformedPreviousY;
+        v.vx = transformedVelocityX;
+        v.vy = transformedVelocityY;
+        v.rotation = transformedRotation;
+        v.a = transformedAlpha;
+        v.size = transformedSize;
+        v.stretch = transformedStretch;
     });
 
-    return transformed;
+    return source;
 }
 
 ArtifactCore::ParticleRenderData toCoreParticleRenderData(
@@ -262,7 +273,6 @@ ArtifactCore::ParticleRenderData toCoreParticleRenderData(
 {
     ArtifactCore::ParticleRenderData converted;
     converted.frameNumber = source.frameNumber;
-    converted.particles.reserve(source.particles.size());
     const auto* colorManager = ArtifactOCIOManager::instance();
     const bool convertGeneratedColors =
         colorManager->generatedColorPolicy() ==
@@ -273,8 +283,12 @@ ArtifactCore::ParticleRenderData toCoreParticleRenderData(
             ? std::clamp(value, minimum, maximum)
             : fallback;
     };
-    for (const auto& particle : source.particles) {
-        ArtifactCore::ParticleVertex vertex;
+    converted.particles.resize(source.particles.size());
+    ArtifactCore::Parallel::ForSize(
+        0, source.particles.size(), source.particles.size(),
+        [&](size_t index) {
+        const auto& particle = source.particles[index];
+        auto& vertex = converted.particles[index];
         vertex.px = finiteClamped(particle.px, 0.0f, -10000000.0f, 10000000.0f);
         vertex.py = finiteClamped(particle.py, 0.0f, -10000000.0f, 10000000.0f);
         vertex.pz = finiteClamped(particle.pz, 0.0f, -10000000.0f, 10000000.0f);
@@ -284,18 +298,10 @@ ArtifactCore::ParticleRenderData toCoreParticleRenderData(
         vertex.vx = finiteClamped(particle.vx, 0.0f, -1000000.0f, 1000000.0f);
         vertex.vy = finiteClamped(particle.vy, 0.0f, -1000000.0f, 1000000.0f);
         vertex.vz = finiteClamped(particle.vz, 0.0f, -1000000.0f, 1000000.0f);
-        const FloatColor sourceColor(
-            finiteClamped(particle.r, 0.0f, 0.0f, 1.0f),
-            finiteClamped(particle.g, 0.0f, 0.0f, 1.0f),
-            finiteClamped(particle.b, 0.0f, 0.0f, 1.0f),
-            finiteClamped(particle.a, 0.0f, 0.0f, 1.0f));
-        const FloatColor renderColor = convertGeneratedColors
-            ? colorManager->generatedSrgbToWorkingColor(sourceColor)
-            : sourceColor;
-        vertex.r = renderColor.r();
-        vertex.g = renderColor.g();
-        vertex.b = renderColor.b();
-        vertex.a = renderColor.a();
+        vertex.r = finiteClamped(particle.r, 0.0f, 0.0f, 1.0f);
+        vertex.g = finiteClamped(particle.g, 0.0f, 0.0f, 1.0f);
+        vertex.b = finiteClamped(particle.b, 0.0f, 0.0f, 1.0f);
+        vertex.a = finiteClamped(particle.a, 0.0f, 0.0f, 1.0f);
         // App scale is the particle radius in composition units. Core's
         // legacy billboard shader multiplies size by ten; compensate here
         // so saved presets do not produce 200-400px fire particles.
@@ -308,7 +314,19 @@ ArtifactCore::ParticleRenderData toCoreParticleRenderData(
         vertex.spriteCols = std::clamp(particle.spriteCols, 1, 1024);
         vertex.spriteFrame = std::clamp(
             particle.spriteFrame, 0, vertex.spriteRows * vertex.spriteCols - 1);
-        converted.particles.push_back(vertex);
+    });
+    // The OCIO manager owns mutable working-space state without a snapshot
+    // API. Keep its conversion on the caller thread while the independent
+    // numeric field conversion above runs in parallel.
+    if (convertGeneratedColors) {
+        for (auto& vertex : converted.particles) {
+            const FloatColor renderColor = colorManager->generatedSrgbToWorkingColor(
+                FloatColor(vertex.r, vertex.g, vertex.b, vertex.a));
+            vertex.r = renderColor.r();
+            vertex.g = renderColor.g();
+            vertex.b = renderColor.b();
+            vertex.a = renderColor.a();
+        }
     }
     return converted;
 }
@@ -464,10 +482,10 @@ void boostDebugParticleRenderData(ArtifactCore::ParticleRenderData& data)
     const auto safeColor = [](float value) {
         return std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 0.0f;
     };
-    ArtifactCore::Parallel::For(0, static_cast<int>(data.particles.size()),
-                                static_cast<int>(data.particles.size()),
-                                [&](int index) {
-        auto& particle = data.particles[static_cast<size_t>(index)];
+    ArtifactCore::Parallel::ForSize(
+        0, data.particles.size(), data.particles.size(),
+        [&](size_t index) {
+        auto& particle = data.particles[index];
         const float safeSize = std::isfinite(particle.size)
             ? std::clamp(particle.size, 0.0f, 1000000.0f)
             : 0.0f;
@@ -502,7 +520,7 @@ QVector3D defaultEmitterPositionForPreset(const QString& presetName,
 } // namespace
 
 ArtifactCore::ParticleRenderData applyParticleRenderLOD(
-    const ArtifactCore::ParticleRenderData& source,
+    ArtifactCore::ParticleRenderData source,
     float screenScale);
 
 // ==================== ArtifactParticleLayer::Impl ====================
@@ -657,7 +675,8 @@ void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
             impl_->particleSystem->renderSettings().sortMode,
             impl_->particleSystem->cameraPosition());
         bool gpuParticleDrawAccepted = false;
-        if (!lodData.particles.empty()) {
+        const bool hasLodParticles = !lodData.particles.empty();
+        if (hasLodParticles) {
             // 3D particle layers must not collapse (px, py, vx, vy) through a
             // 2D QTransform — CompositionRenderController bundles the 3D
             // view/proj matrices through set3DCameraMatrices() and the
@@ -671,15 +690,19 @@ void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
                 const float safeOpacity = std::isfinite(opacity())
                     ? std::clamp(opacity(), 0.0f, 1.0f)
                     : 0.0f;
-                for (auto& particle : lodData.particles) {
+                ArtifactCore::Parallel::ForSize(
+                    0, lodData.particles.size(), lodData.particles.size(),
+                    [&](size_t index) {
+                    auto& particle = lodData.particles[index];
                     particle.a = std::isfinite(particle.a)
                         ? std::clamp(particle.a * safeOpacity, 0.0f, 1.0f)
                         : 0.0f;
-                }
-                renderer->drawParticles(lodData);
+                });
+                renderer->drawParticles(std::move(lodData));
             } else {
                 const ArtifactCore::ParticleRenderData renderData =
-                    transformParticleRenderData(lodData, globalTransform, opacity());
+                    transformParticleRenderData(std::move(lodData),
+                                                globalTransform, opacity());
                 renderer->drawParticles(renderData);
                 // Trails only after an accepted draw: rejected draws leave
                 // nothing queued, and stray line packets would ghost onto a
@@ -697,7 +720,7 @@ void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
             // snapshots, even though no GPU acceptance query is needed here.
             renderer->drawParticles(lodData);
         }
-        if (gpuParticleDrawAccepted || lodData.particles.empty()) {
+        if (gpuParticleDrawAccepted || !hasLodParticles) {
             const auto size = sourceSize();
             drawFractureOverlay(renderer, getGlobalTransform4x4(), QSizeF(size.width, size.height), opacity());
             return;
@@ -788,8 +811,8 @@ bool ArtifactParticleLayer::drawSurfaceGPU(ArtifactIRenderer* renderer,
     }
     // Surface compositing applies layer opacity afterwards: keep vertex
     // alpha at full layer strength here.
-    const ArtifactCore::ParticleRenderData renderData =
-        transformParticleRenderData(lodData, surfaceMap, 1.0f);
+    ArtifactCore::ParticleRenderData renderData =
+        transformParticleRenderData(std::move(lodData), surfaceMap, 1.0f);
     renderer->drawParticles(renderData);
     if (!renderer->particleDrawQueued()) {
         return false;
@@ -3912,10 +3935,12 @@ SharedPtr<ArtifactParticleLayer> createParticleLayer()
 }
 
 ArtifactCore::ParticleRenderData applyParticleRenderLOD(
-    const ArtifactCore::ParticleRenderData& source,
+    ArtifactCore::ParticleRenderData source,
     float screenScale)
 {
-    if (source.particles.size() < 256 || !std::isfinite(screenScale)) return source;
+    if (source.particles.size() < 256 || !std::isfinite(screenScale)) {
+        return source;
+    }
     const float safeScreenScale = std::clamp(screenScale, 0.0f, 1000000.0f);
     if (safeScreenScale >= 0.75f) return source;
     const float keepRatio = std::clamp(safeScreenScale / 0.75f, 0.125f, 1.0f);
@@ -3925,13 +3950,21 @@ ArtifactCore::ParticleRenderData applyParticleRenderLOD(
     ArtifactCore::ParticleRenderData reduced;
     reduced.frameNumber = source.frameNumber;
     reduced.options = source.options;
-    reduced.particles.reserve(targetCount);
     const std::size_t stride = std::max<std::size_t>(1,
         static_cast<std::size_t>(std::ceil(static_cast<float>(source.particles.size()) /
                                            static_cast<float>(targetCount))));
-    for (std::size_t i = 0; i < source.particles.size() && reduced.particles.size() < targetCount; i += stride) {
-        reduced.particles.push_back(source.particles[i]);
-    }
+    const std::size_t selectedCount = std::min(
+        targetCount,
+        source.particles.size() / stride +
+            (source.particles.size() % stride != 0 ? 1u : 0u));
+    reduced.particles.resize(selectedCount);
+    const std::size_t copyWorkItems =
+        selectedCount * sizeof(ArtifactCore::ParticleVertex);
+    ArtifactCore::Parallel::ForSize(
+        0, selectedCount, copyWorkItems, [&](size_t outputIndex) {
+            const size_t sourceIndex = outputIndex * stride;
+            reduced.particles[outputIndex] = source.particles[sourceIndex];
+        });
     return reduced;
 }
 
@@ -3979,13 +4012,14 @@ void ArtifactParticleDebugLayer::draw(ArtifactIRenderer* renderer)
         const QTransform globalTransform = getGlobalTransform();
         const float screenScale = std::max(std::hypot(globalTransform.m11(), globalTransform.m21()),
                                            std::hypot(globalTransform.m12(), globalTransform.m22()));
-        const auto lodData = applyParticleRenderLOD(
+        auto lodData = applyParticleRenderLOD(
             std::move(coreData), screenScale);
         if (!lodData.particles.empty()) {
             ArtifactCore::ParticleRenderData renderData =
-                transformParticleRenderData(lodData, globalTransform, opacity());
+                transformParticleRenderData(std::move(lodData),
+                                            globalTransform, opacity());
             boostDebugParticleRenderData(renderData);
-            renderer->drawParticles(renderData);
+            renderer->drawParticles(std::move(renderData));
         }
         return;
     }

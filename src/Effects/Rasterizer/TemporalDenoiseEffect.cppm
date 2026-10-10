@@ -81,7 +81,7 @@ public:
         dst = src.DeepCopy();
         float* d = dst.image().rgba32fData();
 
-Parallel::For(0, H, W * H, [&](int y) {
+Parallel::ForPixels(0, H, W, H, [&](int y) {
             const size_t rowBase = static_cast<size_t>(y) * static_cast<size_t>(W);
             for (int x = 0; x < W; ++x) {
                 const size_t px = rowBase + static_cast<size_t>(x);

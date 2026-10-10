@@ -37,7 +37,7 @@ public:
         // Compute mean luminance of current frame
         const int sampleRows = (H + 3) / 4;
         std::vector<double> rowLuma(static_cast<size_t>(sampleRows), 0.0);
-        ArtifactCore::Parallel::For(0, sampleRows, W * H, [&](int sampleRow) {
+        ArtifactCore::Parallel::ForPixels(0, sampleRows, W, H, [&](int sampleRow) {
             const int y = sampleRow * 4;
             const float* row = sd + static_cast<size_t>(y) * static_cast<size_t>(W) * 4u;
             double total = 0.0;
@@ -70,7 +70,7 @@ public:
         float fac=(float)std::clamp(ratio,0.1,10.0);
 
         dst=src.DeepCopy();float* d=dst.image().rgba32fData();
-ArtifactCore::Parallel::For(0,H,W*H,[&](int y){float* o=d+(size_t)y*W*4;
+ArtifactCore::Parallel::ForPixels(0, H, W, H,[&](int y){float* o=d+(size_t)y*W*4;
             for(int x=0;x<W;++x){float* p=o+(size_t)x*4;
                 float adj=1.0f+(fac-1.0f)*lw;
                 p[0]=std::clamp(p[0]*adj,0.0f,1.0f);p[1]=std::clamp(p[1]*adj,0.0f,1.0f);p[2]=std::clamp(p[2]*adj,0.0f,1.0f);

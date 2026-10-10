@@ -320,7 +320,7 @@ namespace Artifact
     cv::Vec4f cEnd(endColor_.redF(), endColor_.greenF(), endColor_.blueF(), endColor_.alphaF());
 
     if (gradientType_ == Linear) {
-Parallel::For(0, height, width * height, [&](int y) {
+Parallel::ForPixels(0, height, width, height, [&](int y) {
             float t = static_cast<float>(y) / std::max(1, height - 1);
             cv::Vec4f color = cStart * (1.0f - t) + cEnd * t;
             mat.row(y).setTo(color);
@@ -330,7 +330,7 @@ Parallel::For(0, height, width * height, [&](int y) {
         float cx = width / 2.0f;
         float cy = height / 2.0f;
         float maxDist = std::max(1.0f, std::sqrt(cx*cx + cy*cy));
-Parallel::For(0, height, width * height, [&](int y) {
+Parallel::ForPixels(0, height, width, height, [&](int y) {
             cv::Vec4f* row = mat.ptr<cv::Vec4f>(y);
             for (int x = 0; x < width; ++x) {
                 float dist = std::sqrt((x-cx)*(x-cx) + (y-cy)*(y-cy));
@@ -344,7 +344,7 @@ Parallel::For(0, height, width * height, [&](int y) {
         const float cy = height / 2.0f;
         constexpr float twoPi = 6.28318530717958647692f;
         constexpr float pi = 3.14159265358979323846f;
-        Parallel::For(0, height, width * height, [&](int y) {
+        Parallel::ForPixels(0, height, width, height, [&](int y) {
             cv::Vec4f* row = mat.ptr<cv::Vec4f>(y);
             for (int x = 0; x < width; ++x) {
                 float angle = std::atan2(static_cast<float>(y) - cy,

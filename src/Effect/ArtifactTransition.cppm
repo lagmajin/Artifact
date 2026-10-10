@@ -137,7 +137,7 @@ void CrossDissolveTransition::process(const QImage& fromFrame,
     int w = output.width();
     int h = output.height();
     
-    ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
+    ArtifactCore::Parallel::ForPixels(0, h, w, h, [&](int y) {
         const auto* fromRow = reinterpret_cast<const QRgb*>(fromPixels.constScanLine(y));
         const auto* toRow = reinterpret_cast<const QRgb*>(toPixels.constScanLine(y));
         auto* outputRow = reinterpret_cast<QRgb*>(output.scanLine(y));
@@ -251,7 +251,7 @@ void WipeTransition::process(const QImage& fromFrame,
     int w = output.width();
     int h = output.height();
     
-    ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
+    ArtifactCore::Parallel::ForPixels(0, h, w, h, [&](int y) {
         const auto* fromRow = reinterpret_cast<const QRgb*>(fromPixels.constScanLine(y));
         const auto* toRow = reinterpret_cast<const QRgb*>(toPixels.constScanLine(y));
         auto* outputRow = reinterpret_cast<QRgb*>(output.scanLine(y));
@@ -577,7 +577,7 @@ void GlitchTransition::process(const QImage& fromFrame,
         
         QImage result(output.size(), output.format());
         
-        ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
+        ArtifactCore::Parallel::ForPixels(0, h, w, h, [&](int y) {
             const auto* inputRow = reinterpret_cast<const QRgb*>(output.constScanLine(y));
             auto* resultRow = reinterpret_cast<QRgb*>(result.scanLine(y));
             for (int x = 0; x < w; x++) {
@@ -598,7 +598,7 @@ void GlitchTransition::process(const QImage& fromFrame,
     // Noise
     if (glitchParams_.noiseAmount > 0) {
         const uint64_t noiseSeed = rng.state();
-        ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
+        ArtifactCore::Parallel::ForPixels(0, h, w, h, [&](int y) {
             ArtifactCore::RandomStream rowRng(
                 ArtifactCore::RandomStream::mix(noiseSeed ^ static_cast<uint64_t>(y)));
             auto* outputRow = reinterpret_cast<QRgb*>(output.scanLine(y));
@@ -616,7 +616,7 @@ void GlitchTransition::process(const QImage& fromFrame,
     }
     
     // Blend with to frame based on progress
-    ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
+    ArtifactCore::Parallel::ForPixels(0, h, w, h, [&](int y) {
         const auto* fromRow = reinterpret_cast<const QRgb*>(output.constScanLine(y));
         const auto* toRow = reinterpret_cast<const QRgb*>(toPixels.constScanLine(y));
         auto* outputRow = reinterpret_cast<QRgb*>(output.scanLine(y));
@@ -746,7 +746,7 @@ void RippleTransition::process(const QImage& fromFrame,
     float cy = rippleParams_.center.y() * h;
     float time = progress * rippleParams_.speed * 10.0f;
     
-    ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
+    ArtifactCore::Parallel::ForPixels(0, h, w, h, [&](int y) {
         const auto* toRow = reinterpret_cast<const QRgb*>(toPixels.constScanLine(y));
         auto* outputRow = reinterpret_cast<QRgb*>(output.scanLine(y));
         for (int x = 0; x < w; x++) {

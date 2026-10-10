@@ -76,7 +76,7 @@ public:
         cv::Mat result = color.clone();
         cv::Mat hc(highlight.size(), CV_32FC3);
         cv::Mat sc(shadow.size(), CV_32FC3);
-          ArtifactCore::Parallel::For(0, hc.rows, hc.rows * hc.cols, [&](int y) {
+          ArtifactCore::Parallel::ForPixels(0, hc.rows, hc.rows, hc.cols, [&](int y) {
             const float* highlightRow = highlight.ptr<float>(y);
             const float* shadowRow = shadow.ptr<float>(y);
             cv::Vec3f* highlightOutRow = hc.ptr<cv::Vec3f>(y);

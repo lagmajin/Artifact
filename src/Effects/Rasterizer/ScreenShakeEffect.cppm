@@ -75,7 +75,7 @@ public:
         const int W = si.width(), H = si.height();
         ImageF32x4_RGBA tmp;
         tmp.resize(W, H);
-ArtifactCore::Parallel::For(0, H, W * H, [&](int y) {
+ArtifactCore::Parallel::ForPixels(0, H, W, H, [&](int y) {
             float* dstRow = tmp.rgba32fData() + static_cast<size_t>(y) * static_cast<size_t>(W) * 4u;
             for (int x = 0; x < W; ++x) {
                 const float sx = (wrap_ == 2) ? mirrorCoord(static_cast<float>(x) + dx, W)

@@ -3,6 +3,7 @@ module;
 #include <limits>
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 #include <QRectF>
 #include <QVector3D>
@@ -155,7 +156,7 @@ void renderLayerSmokeRuntime(LayerFluidRuntimeState& state,
     particle.a *= std::clamp(opacityScale, 0.0f, 1.0f);
     renderData.particles.push_back(particle);
   }
-  renderer->drawParticles(renderData);
+  renderer->drawParticles(std::move(renderData));
 }
 
 } // namespace Artifact

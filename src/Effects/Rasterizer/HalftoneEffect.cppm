@@ -33,7 +33,7 @@ public:
         float cs=std::cos(rad),sn=std::sin(rad);
 
         dst=src.DeepCopy();float* d=dst.image().rgba32fData();
-        Parallel::For(0,H,W*H,[&](int y){float* o=d+(size_t)y*W*4;
+        Parallel::ForPixels(0, H, W, H,[&](int y){float* o=d+(size_t)y*W*4;
             for(int x=0;x<W;++x){float* p=o+(size_t)x*4;
                 float rx=(float)x*cs-(float)y*sn,ry=(float)x*sn+(float)y*cs;
                 float cx=std::round(rx/ds)*ds,cy=std::round(ry/ds)*ds;

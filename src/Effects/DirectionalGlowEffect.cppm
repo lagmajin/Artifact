@@ -38,7 +38,7 @@ static cv::Mat directionalBlur1D(const cv::Mat& src, float angleDeg, float lengt
 
     cv::Mat result = cv::Mat::zeros(src.size(), src.type());
 
-    ArtifactCore::Parallel::For(0, src.rows, src.rows * src.cols, [&](int y) {
+    ArtifactCore::Parallel::ForPixels(0, src.rows, src.rows, src.cols, [&](int y) {
         cv::Vec4f* resultRow = result.ptr<cv::Vec4f>(y);
         for (int x = 0; x < src.cols; ++x) {
             cv::Vec4f sum(0, 0, 0, 0);
@@ -124,7 +124,7 @@ public:
         cv::Mat mat(srcImage.height(), srcImage.width(), CV_32FC4, const_cast<float*>(srcData));
 
         cv::Mat bright = cv::Mat::zeros(mat.size(), CV_32FC4);
-        ArtifactCore::Parallel::For(0, mat.rows, mat.rows * mat.cols, [&](int y) {
+        ArtifactCore::Parallel::ForPixels(0, mat.rows, mat.rows, mat.cols, [&](int y) {
             const cv::Vec4f* matRow = mat.ptr<cv::Vec4f>(y);
             cv::Vec4f* brightRow = bright.ptr<cv::Vec4f>(y);
             for (int x = 0; x < mat.cols; ++x) {
@@ -153,7 +153,7 @@ public:
         }
 
         cv::Mat result = mat.clone();
-        ArtifactCore::Parallel::For(0, mat.rows, mat.rows * mat.cols, [&](int y) {
+        ArtifactCore::Parallel::ForPixels(0, mat.rows, mat.rows, mat.cols, [&](int y) {
             const cv::Vec4f* streakRow = streaks.ptr<cv::Vec4f>(y);
             cv::Vec4f* resultRow = result.ptr<cv::Vec4f>(y);
             for (int x = 0; x < mat.cols; ++x) {

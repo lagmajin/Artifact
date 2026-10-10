@@ -121,7 +121,7 @@ static cv::Mat applyFeather(const cv::Mat& original, const cv::Mat& processed, c
 
     int channels = origRoi.channels();
     for (int c = 0; c < channels; ++c) {
-        ArtifactCore::Parallel::For(0, expanded.height, expanded.width * expanded.height, [&](int y) {
+        ArtifactCore::Parallel::ForPixels(0, expanded.height, expanded.width, expanded.height, [&](int y) {
             const float* maskRow = mask.ptr<float>(y);
             uchar* origRow = origChannels[c].ptr<uchar>(y);
             const uchar* procRow = procChannels[c].ptr<uchar>(y);

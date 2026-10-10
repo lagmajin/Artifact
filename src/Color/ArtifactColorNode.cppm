@@ -1169,7 +1169,7 @@ void BlurNode::process(float* pixels, int width, int height) {
         auto kernelH = buildKernel(radiusX_);
         int kSize = static_cast<int>(kernelH.size()) / 2;
 
-Parallel::For(0, height, width * height, [&](int y) {
+Parallel::ForPixels(0, height, width, height, [&](int y) {
             const float* sourceRow = pixels + static_cast<std::size_t>(y) * static_cast<std::size_t>(width) * 4u;
             float* tempRow = temp.data() + static_cast<std::size_t>(y) * static_cast<std::size_t>(width) * 4u;
             for (int x = 0; x < width; ++x) {
@@ -1199,7 +1199,7 @@ Parallel::For(0, height, width * height, [&](int y) {
         auto kernelV = buildKernel(radiusY_);
         int kSize = static_cast<int>(kernelV.size()) / 2;
 
-Parallel::For(0, height, width * height, [&](int y) {
+Parallel::ForPixels(0, height, width, height, [&](int y) {
             float* destinationRow = pixels + static_cast<std::size_t>(y) * static_cast<std::size_t>(width) * 4u;
             for (int x = 0; x < width; ++x) {
                 float sumR = 0, sumG = 0, sumB = 0, sumA = 0;

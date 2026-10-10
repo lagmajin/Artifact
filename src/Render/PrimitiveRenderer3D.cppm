@@ -1791,7 +1791,7 @@ void PrimitiveRenderer3D::drawBillboardQuad(const QVector3D& center, const QVect
                                             float opacity, float rollDegrees)
 {
     if (impl_->cmdBuf_ && impl_->currentRTV()) {
-        impl_->cmdBuf_->targetRTV = impl_->currentRTV();
+        impl_->cmdBuf_->setTargetRTV(impl_->currentRTV());
         BillboardPkt pkt;
         pkt.center = center;
         pkt.size = size;
@@ -1810,7 +1810,7 @@ void PrimitiveRenderer3D::drawBillboardQuad(const QVector3D& center, const QVect
                                             float opacity, float rollDegrees)
 {
     if (impl_->cmdBuf_ && impl_->currentRTV()) {
-        impl_->cmdBuf_->targetRTV = impl_->currentRTV();
+        impl_->cmdBuf_->setTargetRTV(impl_->currentRTV());
         BillboardImagePkt pkt;
         pkt.center = center;
         pkt.size = size;

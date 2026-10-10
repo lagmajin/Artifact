@@ -55,7 +55,7 @@ public:
         cv::Mat hsv;
         cv::cvtColor(bgr, hsv, cv::COLOR_RGB2HSV);
 
-        ArtifactCore::Parallel::For(0, hsv.rows, hsv.rows * hsv.cols, [&](int y) {
+        ArtifactCore::Parallel::ForPixels(0, hsv.rows, hsv.rows, hsv.cols, [&](int y) {
             cv::Vec3f* row = hsv.ptr<cv::Vec3f>(y);
             for (int x = 0; x < hsv.cols; ++x) {
                 cv::Vec3f& pixel = row[x];

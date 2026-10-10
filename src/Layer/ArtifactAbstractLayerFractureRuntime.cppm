@@ -732,7 +732,7 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
         }
       }
       if (!renderData.particles.empty()) {
-        renderer->drawParticles(renderData);
+        renderer->drawParticles(std::move(renderData));
       }
     } else {
       if (impl_->fluidRuntime_.liquidSolver_ || !impl_->fluidRuntime_.liquidCheckpoints_.empty()) {
@@ -811,7 +811,7 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
           !impl_->fractureState_.shards.empty()) {
         fractureElement.debris = std::move(renderData);
       } else {
-        renderer->drawParticles(renderData);
+        renderer->drawParticles(std::move(renderData));
       }
     }
   }

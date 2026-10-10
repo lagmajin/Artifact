@@ -110,7 +110,7 @@ public:
         float* dstData = dst.image().rgba32fData();
         cv::Mat dstMat(H, W, CV_32FC4, dstData);
 
-ArtifactCore::Parallel::For(0, H, W * H, [&](int y) {
+ArtifactCore::Parallel::ForPixels(0, H, W, H, [&](int y) {
             const float* mapRow = srcMat.ptr<float>(y);
             cv::Vec4f*   outRow = dstMat.ptr<cv::Vec4f>(y);
             for (int x = 0; x < W; ++x) {

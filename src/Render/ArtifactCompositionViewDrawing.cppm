@@ -946,7 +946,7 @@ QImage applyMatteStackToSurface(
     const bool useLuminance =
         ArtifactCore::MatteModeUtils::isLuminance(node.mode());
     const bool invertMask = ArtifactCore::MatteModeUtils::isInverted(node.mode());
-    ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
+    ArtifactCore::Parallel::ForPixels(0, h, w, h, [&](int y) {
         for (int x = 0; x < w; ++x) {
           const int sx = std::min(x * srcW / w, srcW - 1);
           const int sy = std::min(y * srcH / h, srcH - 1);
@@ -974,9 +974,8 @@ QImage applyMatteStackToSurface(
     }
 
     const ArtifactCore::MatteStackMode stackMode = matteStack.stackMode();
-    ArtifactCore::Parallel::For(0, static_cast<int>(pixelCount),
-                                static_cast<int>(pixelCount), [&](int index) {
-      const size_t i = static_cast<size_t>(index);
+    ArtifactCore::Parallel::ForSize(0, pixelCount, pixelCount,
+                                    [&](size_t i) {
         switch (stackMode) {
         case ArtifactCore::MatteStackMode::Add:
           combinedMask[i] = std::min(1.0f, combinedMask[i] + matteMask[i]);
@@ -997,7 +996,7 @@ QImage applyMatteStackToSurface(
   QImage result = surface.convertToFormat(QImage::Format_ARGB32_Premultiplied);
   auto* resultBits = result.bits();
   const int resultStride = result.bytesPerLine();
-  ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
+  ArtifactCore::Parallel::ForPixels(0, h, w, h, [&](int y) {
       auto* resultRow = reinterpret_cast<QRgb*>(resultBits + y * resultStride);
       for (int x = 0; x < w; ++x) {
         const size_t idx = static_cast<size_t>(y) * w + x;
@@ -1156,7 +1155,7 @@ static QImage applyLayerMatteReferencesToSurfaceImpl(
     const bool useLuma = ref.type == MatteType::Luma ||
                          ref.type == MatteType::InverseLuma;
     const float opacity = std::clamp(ref.opacity, 0.0f, 1.0f);
-    ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
+    ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
       const auto* row = fitted.constScanLine(y);
       for (int x = 0; x < width; ++x) {
         const auto* pixel = row + x * 4;
@@ -1199,7 +1198,7 @@ static QImage applyLayerMatteReferencesToSurfaceImpl(
   QImage result = surface.convertToFormat(QImage::Format_ARGB32_Premultiplied);
   auto* resultBits = result.bits();
   const int resultStride = result.bytesPerLine();
-  ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
+  ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
     auto* row = reinterpret_cast<QRgb*>(resultBits + y * resultStride);
     for (int x = 0; x < width; ++x) {
       const float factor = combined[static_cast<size_t>(y) * width + x];

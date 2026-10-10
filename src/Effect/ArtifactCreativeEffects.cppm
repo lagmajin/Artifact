@@ -562,7 +562,7 @@ void ArtifactCinematicLensFlareEffect::apply(
     const float axisY = centerY - flareY;
     const float overall = impl_->intensity * sourceEnergy;
 
-    ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
+    ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
         for (int x = 0; x < width; ++x) {
             const float dx = x - flareX;
             const float dy = y - flareY;
@@ -3924,7 +3924,7 @@ void ArtifactGlitchEffect::apply(const ImageF32x4RGBAWithCache& src, ImageF32x4R
     
     // Each row owns a disjoint destination range.  Keep the per-row RNG fork so
     // CPU and future GPU/reference comparisons remain deterministic.
-    ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
+    ArtifactCore::Parallel::ForPixels(0, h, w, h, [&](int y) {
         auto rowRng = rng.fork(static_cast<uint64_t>(y));
         float rowOffset = 0.0f;
         if (y % 15 < 4) {
@@ -3979,7 +3979,7 @@ void ArtifactHalftoneEffect::apply(const ImageF32x4RGBAWithCache& src, ImageF32x
     
     const int tileRows = (h + dotSize - 1) / dotSize;
     // A tile row never overlaps another tile row in the destination.
-    ArtifactCore::Parallel::For(0, tileRows, w * h, [&](int tileRow) {
+    ArtifactCore::Parallel::ForPixels(0, tileRows, w, h, [&](int tileRow) {
         const int y = tileRow * dotSize;
         for (int x = 0; x < w; x += dotSize) {
             float lum = 0;
@@ -4041,7 +4041,7 @@ void ArtifactOldTVEffect::apply(const ImageF32x4RGBAWithCache& src, ImageF32x4RG
     ArtifactCore::RandomStream rng(42);
     
     // rowRng is forked from y, so scheduling does not affect the Old TV noise.
-    ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
+    ArtifactCore::Parallel::ForPixels(0, h, w, h, [&](int y) {
         auto rowRng = rng.fork(static_cast<uint64_t>(y));
         float scanline = (y % 4 == 0) ? 0.7f : 1.0f;
         float jitter = (rowRng.chance(0.08f)) ? rowRng.range(-5.0f, 5.0f) : 0.0f;

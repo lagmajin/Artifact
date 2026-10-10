@@ -50,7 +50,7 @@ public:
                 patch.rgb.resize(static_cast<size_t>(sw) * 3u);
                 for(float& value : patch.rgb) value=d01(rng_);
             }}
-            Parallel::For(0, H, W * H, [&](int y) {
+            Parallel::ForPixels(0, H, W, H, [&](int y) {
                 const auto& patch = scanlinePatches[static_cast<size_t>(y)];
                 float* row = d + static_cast<size_t>(y) * W * 4u;
                 for(size_t i=0; i<patch.rgb.size(); i+=3u){
@@ -80,7 +80,7 @@ public:
                 channelShift[static_cast<size_t>(y)*W+x]=d01(rng_)<cs*0.5f?1u:0u;
             }
             }
-            Parallel::For(0, H, W * H, [&](int y) {
+            Parallel::ForPixels(0, H, W, H, [&](int y) {
                 float* row=d+static_cast<size_t>(y)*W*4u;
                 for(int x=1;x<W-1;++x){if(channelShift[static_cast<size_t>(y)*W+x]){
                     float* p=row+static_cast<size_t>(x)*4u;

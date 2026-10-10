@@ -37,7 +37,7 @@ public:
         }
         const int width = dst.image().width();
         const int height = dst.image().height();
-        ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
+        ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
             processor_.applyRow(pixels, width, height, y);
         });
     }
@@ -62,7 +62,7 @@ public:
         }
         const int width = dst.image().width();
         const int height = dst.image().height();
-        ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
+        ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
             processor_.applyRow(pixels, width, height, y);
         });
     }

@@ -536,7 +536,7 @@ namespace Artifact
    if (!crowdSettings_.enabled || !boidsSystem_) return;
    auto renderData = boidsSystem_->captureRenderData(currentFrame_);
    if (!renderData.particles.empty()) {
-    renderer->drawParticles(renderData);
+    renderer->drawParticles(std::move(renderData));
    }
    // Render obstacles as cyan circles
    for (const auto& obs : boidsSystem_->getObstacles()) {

@@ -705,7 +705,7 @@ void ArtifactLightLayer::draw(ArtifactIRenderer* renderer) {
       glowVertex.age = 0.0f;
       glowVertex.lifetime = 1.0f;
       glowData.particles.push_back(glowVertex);
-      renderer->drawParticles(glowData);
+      renderer->drawParticles(std::move(glowData));
     }
   }
 }

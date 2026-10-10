@@ -91,7 +91,7 @@ public:
         const float whiteClipLuma = 1.0f - whiteClip;
         const float clipSpan = std::max(whiteClipLuma - blackClipLuma, 1e-4f);
 
-        Parallel::For(0, height, width * height, [&](int y) {
+        Parallel::ForPixels(0, height, width, height, [&](int y) {
             float* row = pixels + static_cast<size_t>(y) * static_cast<size_t>(width) * 4u;
             for (int x = 0; x < width; ++x) {
                 float* pixel = row + static_cast<size_t>(x) * 4u;

@@ -243,7 +243,7 @@ const ArtifactCore::ImageF32x4_RGBA &ArtifactSvgLayer::currentFrameBuffer() cons
             const size_t rowBytes = static_cast<size_t>(rgba.width()) * 4u;
             std::vector<std::uint8_t> packed(
                 rowBytes * static_cast<size_t>(rgba.height()));
-            ArtifactCore::Parallel::For(0, rgba.height(), rgba.width() * rgba.height(), [&](int y) {
+            ArtifactCore::Parallel::ForPixels(0, rgba.height(), rgba.width(), rgba.height(), [&](int y) {
                 const auto* row = rgba.constScanLine(y);
                 std::memcpy(packed.data() + rowBytes * static_cast<size_t>(y),
                             row, rowBytes);

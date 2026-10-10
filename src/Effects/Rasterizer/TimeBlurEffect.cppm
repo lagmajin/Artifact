@@ -63,7 +63,7 @@ public:
         if(refs.empty())return;
         float inv=1.0f/totalW;
 
-        Parallel::For(0,H,W*H,[&](int y){
+        Parallel::ForPixels(0, H, W, H,[&](int y){
             for(int x=0;x<W;++x){
             const size_t i=(size_t)y*W+x;
             float acc[4]={d[i*4],d[i*4+1],d[i*4+2],d[i*4+3]};

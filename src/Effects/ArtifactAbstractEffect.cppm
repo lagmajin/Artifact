@@ -472,7 +472,7 @@ void ArtifactAbstractEffect::applyConfigured(const ImageF32x4RGBAWithCache& src,
 
     // Mask evaluation only reads shared mask images and writes one destination
     // row at a time, so rows can be processed independently.
-    Parallel::For(0, height, width * height, [&](int y) {
+    Parallel::ForPixels(0, height, width, height, [&](int y) {
         const size_t rowOffset = static_cast<size_t>(y) * static_cast<size_t>(width) * 4u;
         const float* sourceRow = sourcePixels + rowOffset;
         float* effectRow = effectPixels + rowOffset;

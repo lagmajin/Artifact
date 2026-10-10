@@ -51,7 +51,7 @@ public:
         const int offsetX = static_cast<int>(std::round(dirX * chromaticOffset));
         const int offsetY = static_cast<int>(std::round(dirY * chromaticOffset));
         cv::Mat output = input.clone();
-        ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
+        ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
             const auto* sourceRow = input.ptr<cv::Vec4f>(y);
             const float* gxRow = gx.ptr<float>(y);
             const float* gyRow = gy.ptr<float>(y);

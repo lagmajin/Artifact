@@ -83,7 +83,7 @@ void SpherizeEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, ImageF3
     }
     
     // ピクセルごとの処理 — 行単位で並列化
-    ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
+    ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
         const cv::Vec4f* srcRow = srcMat.ptr<cv::Vec4f>(y);
         cv::Vec4f* dstRow = dstMat.ptr<cv::Vec4f>(y);
         for (int x = 0; x < width; x++) {

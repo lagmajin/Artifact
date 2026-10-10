@@ -122,7 +122,7 @@ public:
 
         // Invalid/unknown layouts leave the copied input unchanged.
         (void)ArtifactCore::withMutableColorFloat4View(dst.image().surfaceView(), pixels, [&](const auto& view) {
-            Parallel::For(0, height, width * height, [&](int y) {
+            Parallel::ForPixels(0, height, width, height, [&](int y) {
                 const auto row = view.row(y);
                 for (int x = 0; x < width; ++x) {
                     auto p = row[x];

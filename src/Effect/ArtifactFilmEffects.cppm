@@ -507,7 +507,7 @@ public:
         
         const uint64_t baseSeed = streamFor(time * g.speed, 0x47524F554Eull).state();
 
-        ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
+        ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
             ArtifactCore::RandomStream rowRng(
                 ArtifactCore::RandomStream::mix(baseSeed ^ static_cast<uint64_t>(y)));
             float* row = pixels + static_cast<size_t>(y) * static_cast<size_t>(width) * 4u;
@@ -541,7 +541,7 @@ public:
         float cy = v.center.y() * height;
         float maxDist = std::sqrt(width * width + height * height) * v.size;
         
-        ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
+        ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
             float* row = pixels + static_cast<size_t>(y) * static_cast<size_t>(width) * 4u;
             for (int x = 0; x < width; ++x) {
                 float dx = (x - cx) / maxDist;
@@ -569,7 +569,7 @@ public:
         const auto& cf = currentPreset_->colorFade();
         if (cf.fadeAmount <= 0.0f && cf.contrast == 1.0f && cf.brightness == 0.0f) return;
         
-        ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
+        ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
             float* row = pixels + static_cast<size_t>(y) * static_cast<size_t>(width) * 4u;
             for (int x = 0; x < width; ++x) {
                 const int i = x * 4;
@@ -627,7 +627,7 @@ public:
         
         if (!f.additive) {
             // Multiplicative (darker flickers)
-            ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
+            ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
                 float* row = pixels + (y * width * 4);
                 for (int i = 0; i < width * 4; ++i) {
                     row[i] *= flicker;
@@ -636,7 +636,7 @@ public:
         } else {
             // Additive
             float add = (flicker - 1.0f) * 0.5f;
-            ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
+            ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
                 float* row = pixels + (y * width * 4);
                 for (int i = 0; i < width * 4; ++i) {
                     row[i] += add;

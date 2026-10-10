@@ -118,7 +118,7 @@ public:
         const float shiftY = dirY * shift;
 
         cv::Mat result = srcMat.clone();
-        ArtifactCore::Parallel::For(0, srcMat.rows, srcMat.rows * srcMat.cols, [&](int y) {
+        ArtifactCore::Parallel::ForPixels(0, srcMat.rows, srcMat.rows, srcMat.cols, [&](int y) {
             cv::Vec4f* resultRow = result.ptr<cv::Vec4f>(y);
             for (int x = 0; x < srcMat.cols; ++x) {
                 const float fx = static_cast<float>(x);

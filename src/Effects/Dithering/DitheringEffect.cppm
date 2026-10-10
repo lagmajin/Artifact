@@ -114,7 +114,7 @@ public:
             const float bayerScale = 1.0f / static_cast<float>(bayerEntryCount);
             const float bayerOffset = 0.5f / static_cast<float>(bayerEntryCount);
 
-            ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
+            ArtifactCore::Parallel::ForPixels(0, h, w, h, [&](int y) {
                 float* row = dstPixels + static_cast<size_t>(y) * static_cast<size_t>(w) * 4u;
                 for (int x = 0; x < w; ++x) {
                     float* pixel = row + static_cast<size_t>(x) * 4u;

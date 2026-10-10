@@ -80,7 +80,7 @@ static void applyLiftGammaGainCore(const ImageF32x4RGBAWithCache& src,
     const int height = dst.image().height();
     // Invalid/unknown layouts leave the copied input unchanged.
     (void)ArtifactCore::withMutableColorFloat4View(dst.image().surfaceView(), pixels, [&](const auto& view) {
-        ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
+        ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
             const auto row = view.row(y);
             for (int x = 0; x < width; ++x) {
                 auto p = row[x];

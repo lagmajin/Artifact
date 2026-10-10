@@ -91,7 +91,7 @@ public:
         const float ca = std::cos(rad);
         const float sa = std::sin(rad);
 
-        Parallel::For(0, h, w * h, [&](int y) {
+        Parallel::ForPixels(0, h, w, h, [&](int y) {
             cv::Vec4f* row = mat.ptr<cv::Vec4f>(y);
             for (int x = 0; x < w; ++x) {
                 float proj = x * ca + y * sa;

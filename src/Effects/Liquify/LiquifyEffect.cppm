@@ -241,7 +241,7 @@ void LiquifyEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32
 
     cv::Mat dstMat(height, width, CV_32FC4);
 
-    ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
+    ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
         cv::Vec4f* dstRow = dstMat.ptr<cv::Vec4f>(y);
         for (int x = 0; x < width; ++x) {
             float sx, sy;

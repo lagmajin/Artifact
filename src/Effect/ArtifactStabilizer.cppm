@@ -116,7 +116,7 @@ QImage StabilizerEffect::processFrame(const QImage& frame, int frameIndex)
     double cosRot = std::cos(rotation);
     double sinRot = std::sin(rotation);
     
-    ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
+    ArtifactCore::Parallel::ForPixels(0, h, w, h, [&](int y) {
         auto* resultRow = reinterpret_cast<QRgb*>(result.scanLine(y));
         for (int x = 0; x < w; x++) {
             double srcX = x - outputSize.width() / 2.0;

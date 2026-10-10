@@ -220,7 +220,7 @@ void MagicSharpEffect::apply(const ImageF32x4RGBAWithCache& src,
     // Row-independent neighborhood math: parallelize per row with the shared
     // Parallel::For pattern (same row/w*h form as SoftwareRender::blendSurface,
     // so small workloads stay serial via the threshold).
-    ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
+    ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
         const float* lumaRow = luma.ptr<float>(y);
         const float* fineRow = blurFine.ptr<float>(y);
         const float* smallRow = blurSmall.ptr<float>(y);

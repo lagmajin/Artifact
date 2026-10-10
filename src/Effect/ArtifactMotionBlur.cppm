@@ -73,7 +73,7 @@ public:
         int samples = std::min(settings.samples, 64);
         const size_t rowStride = static_cast<size_t>(width) * 4u;
 
-        ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
+        ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
             float* tempRow = temp.data() + static_cast<size_t>(y) * rowStride;
             for (int x = 0; x < width; ++x) {
                 float r = 0, g = 0, b = 0, a = 0;
@@ -140,7 +140,7 @@ public:
         int samples = std::min(settings.samples, 64);
         const size_t rowStride = static_cast<size_t>(width) * 4u;
 
-        ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
+        ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
             float* tempRow = temp.data() + static_cast<size_t>(y) * rowStride;
             for (int x = 0; x < width; ++x) {
                 float r = 0, g = 0, b = 0, a = 0;
@@ -203,7 +203,7 @@ public:
         int samples = std::min(settings.samples, 32);
         const size_t rowStride = static_cast<size_t>(width) * 4u;
 
-        ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
+        ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
             const float* motionRow = motionVectors + static_cast<size_t>(y) * static_cast<size_t>(width) * 2u;
             float* tempRow = temp.data() + static_cast<size_t>(y) * rowStride;
             for (int x = 0; x < width; ++x) {
@@ -469,7 +469,7 @@ public:
         int blocksX = width / blockSize;
         int blocksY = height / blockSize;
         
-        ArtifactCore::Parallel::For(0, blocksY, width * height, [&](int by) {
+        ArtifactCore::Parallel::ForPixels(0, blocksY, width, height, [&](int by) {
             for (int bx = 0; bx < blocksX; ++bx) {
                 int blockX = bx * blockSize;
                 int blockY = by * blockSize;

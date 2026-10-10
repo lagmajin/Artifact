@@ -58,7 +58,7 @@ public:
         const float segAngle = 2.0f * kPI / std::max(2, segments_);
         const float rotRad = rotation_ * kPI / 180.0f;
 
-        ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
+        ArtifactCore::Parallel::ForPixels(0, h, w, h, [&](int y) {
             for (int x = 0; x < w; ++x) {
                 float dx = float(x) - cx;
                 float dy = float(y) - cy;

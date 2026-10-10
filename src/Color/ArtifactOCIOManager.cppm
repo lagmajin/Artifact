@@ -559,7 +559,7 @@ void ArtifactOCIOManager::applyViewTransformToImage(ArtifactCore::ImageF32x4_RGB
     const int w = image.width();
     const int h = image.height();
     float* data = image.rgba32fData();
-ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
+ArtifactCore::Parallel::ForPixels(0, h, w, h, [&](int y) {
         float* row = data + static_cast<size_t>(y) * static_cast<size_t>(w) * 4u;
         for (int x = 0; x < w; ++x) {
             float* pixel = row + static_cast<size_t>(x) * 4u;
@@ -977,7 +977,7 @@ void ArtifactOCIOManager::applyInputTransformToWorkingImage(
                                ArtifactCore::SurfaceAlphaMode::Premultiplied;
     const int redIndex = bgra ? 2 : 0;
     const int blueIndex = bgra ? 0 : 2;
-    ArtifactCore::Parallel::For(0, h, w * h, [&](int y) {
+    ArtifactCore::Parallel::ForPixels(0, h, w, h, [&](int y) {
         float* row = data + static_cast<size_t>(y) * static_cast<size_t>(w) * 4u;
         for (int x = 0; x < w; ++x) {
             float* pixel = row + static_cast<size_t>(x) * 4u;

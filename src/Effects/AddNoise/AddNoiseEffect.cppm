@@ -118,7 +118,7 @@ public:
         };
 
         if (monochrome_) {
-            Parallel::For(0, mat.rows, mat.rows * mat.cols, [&](int y) {
+            Parallel::ForPixels(0, mat.rows, mat.rows, mat.cols, [&](int y) {
                 cv::Vec4f* row = mat.ptr<cv::Vec4f>(y);
                 for (int x = 0; x < mat.cols; ++x) {
                     const auto ux = static_cast<uint32_t>(std::floor(static_cast<float>(x) / size_));
@@ -133,7 +133,7 @@ public:
                 }
             });
         } else if (colorNoise_) {
-            Parallel::For(0, mat.rows, mat.rows * mat.cols, [&](int y) {
+            Parallel::ForPixels(0, mat.rows, mat.rows, mat.cols, [&](int y) {
                 cv::Vec4f* row = mat.ptr<cv::Vec4f>(y);
                 for (int x = 0; x < mat.cols; ++x) {
                     cv::Vec4f& p = row[x];
@@ -146,7 +146,7 @@ public:
             });
         } else {
             // luminance-only noise
-            Parallel::For(0, mat.rows, mat.rows * mat.cols, [&](int y) {
+            Parallel::ForPixels(0, mat.rows, mat.rows, mat.cols, [&](int y) {
                 cv::Vec4f* row = mat.ptr<cv::Vec4f>(y);
                 for (int x = 0; x < mat.cols; ++x) {
                     const auto ux = static_cast<uint32_t>(std::floor(static_cast<float>(x) / size_));

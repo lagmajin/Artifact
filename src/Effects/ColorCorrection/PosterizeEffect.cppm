@@ -46,7 +46,7 @@ public:
         const float n = std::max(2.0f, levels_);
         const float denom = n - 1.0f;
 
-        ArtifactCore::Parallel::For(0, height, width * height, [&](int y) {
+        ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
             float* row = pixels + static_cast<size_t>(y) * static_cast<size_t>(width) * 4u;
             for (int x = 0; x < width; ++x) {
                 float* pixel = row + static_cast<size_t>(x) * 4u;

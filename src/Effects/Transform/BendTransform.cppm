@@ -56,8 +56,8 @@ void BendTransformCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32
     const float twoPi = 2.0f * 3.14159265358979323846f;
     const float k = twoPi / size;
 
-    ArtifactCore::Parallel::For(0, height, [&](int y) {
-        const cv::Vec4f* srcRow = srcMat.ptr<cv::Vec4f>(y);
+    ArtifactCore::Parallel::ForPixels(0, height, [&](int y) {
+        const cv::Vec4f, srcRow = srcMat.ptr<cv::Vec4f>(y);
         cv::Vec4f* dstRow = dstMat.ptr<cv::Vec4f>(y);
         for (int x = 0; x < width; x++) {
             const float nx = std::sin(static_cast<float>(y) * k) * amount;

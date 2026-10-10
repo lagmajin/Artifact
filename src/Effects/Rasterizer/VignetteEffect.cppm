@@ -44,7 +44,7 @@ public:
         const float maxY=std::max(cy, static_cast<float>(H)-cy);
         const float maxD=std::sqrt(maxX*maxX+maxY*maxY)*r;
         dst=src.DeepCopy();float* d=dst.image().rgba32fData();
-Parallel::For(0,H,W*H,[&](int y){float* o=d+(size_t)y*W*4;
+Parallel::ForPixels(0, H, W, H,[&](int y){float* o=d+(size_t)y*W*4;
             for(int x=0;x<W;++x){float* p=o+(size_t)x*4;
                 float dx=(float)x-cx,dy=(float)y-cy,dist=std::sqrt(dx*dx+dy*dy);
                 float mask=1.0f-std::clamp((dist-maxD*f)/(maxD*(1.0f-f)+0.001f),0.0f,1.0f)*a;

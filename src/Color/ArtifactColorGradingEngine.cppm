@@ -334,10 +334,9 @@ ArtifactColorGradingEngine::applyGrading(const FloatColor &input) const {
 
 void ArtifactColorGradingEngine::applyGradingToBuffer(
     std::vector<FloatColor> &buffer) const {
-  ArtifactCore::Parallel::For(0, static_cast<int>(buffer.size()),
-                              static_cast<int>(buffer.size()),
-                              [&](int index) {
-    auto &color = buffer[static_cast<size_t>(index)];
+  ArtifactCore::Parallel::ForSize(
+      0, buffer.size(), buffer.size(), [&](std::size_t index) {
+    auto &color = buffer[index];
     color = applyGrading(color);
   });
 }
