@@ -1739,6 +1739,9 @@ void ArtifactProject::setExtensionData(const QJsonObject& data)
    // Add layer to composition
    auto appendResult = compositionPtr->appendLayerTop(result.layer);
    result.success = appendResult.success;
+   if (!appendResult.success) {
+    return result;
+   }
 
    // ダーティ状態に設定
    setDirty(true);

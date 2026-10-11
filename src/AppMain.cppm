@@ -13,6 +13,7 @@ module;
 #include <algorithm>
 #include <cmath>
 #include <chrono>
+#include <functional>
 #include <thread>
 #include <vector>
 #include <clocale>
@@ -28,6 +29,7 @@ module;
 #include <QAbstractButton>
 #include <QAbstractScrollArea>
 #include <QApplication>
+#include <QByteArray>
 #include <QStyle>
 #include <QLocale>
 #include <QColor>
@@ -51,8 +53,13 @@ module;
 #include <QListWidget>
 #include <QMouseEvent>
 #include <QImage>
+#include <QThreadPool>
+#include <QRunnable>
+#include <atomic>
 #include <QImageReader>
+#include <QJsonArray>
 #include <QJsonDocument>
+#include <QJsonObject>
 #include <QCryptographicHash>
 #include <QLoggingCategory>
 #include <QLayout>
@@ -109,9 +116,12 @@ module;
 module Artifact.AppMain;
 
 // DirectX 12 Agility SDK retail runtime selection.
-// D3D12Core.dll is deployed beside the executable by CMake.
+// D3D12Core.dll is deployed beside the executable by CMake when the optional
+// retail SDK is configured. Without that runtime, use the OS D3D12 runtime.
+#if defined(ARTIFACT_HAS_AGILITY_SDK)
 extern "C" __declspec(dllexport) const UINT D3D12SDKVersion = 619;
 extern "C" __declspec(dllexport) const char* D3D12SDKPath = ".\\";
+#endif
 
 import Memory.SharedPtr;
 import Core.AI.Context;
@@ -129,6 +139,8 @@ import Artifact.Widgets.PlaybackControlTestWidget;
 import Artifact.Layer.Factory;
 import Artifact.Layer.Clone;
 import Artifact.Layer.Image;
+import Artifact.Layer.Video;
+import Artifact.Layer.Camera;
 import Artifact.Layer.Shape;
 import Artifact.Layer.Solid2D;
 import Artifact.Layers.SolidImage;
@@ -206,7 +218,9 @@ import Artifact.Widgets.AudioMiniWidget;
 import Artifact.Widgets.HistoryTimelineWidget;
 import Artifact.Widgets.AI.ArtifactAICloudWidget;
 import Artifact.Widgets.CompositionEditor;
+import Artifact.Widgets.StartupScreenshot;
 import Artifact.Widgets.CompositionRenderController;
+import Artifact.Tool.CameraTracker;
 import Artifact.Widgets.RenderLayerEditor;
 import Artifact.Widgets.SoftwareRenderInspectors;
 import Artifact.Widgets.MarkdownNoteEditorWidget;
@@ -7296,6 +7310,928 @@ int Artifact::runApplication(int argc, char *argv[]) {
       renderCenterWindow->present();
       qInfo() << "[RenderManagerUiFixture] showing fixed queue with"
               << queueService->jobCount() << "jobs";
+    });
+  }
+
+  if (uiTestExecutable &&
+      qEnvironmentVariableIsSet("ARTIFACT_UI_TEST_CLONER")) {
+    QTimer::singleShot(0, mw, [mw, projectService, compositionEditor]() {
+      if (!mw || !projectService) {
+        qWarning() << "[ClonerUiFixture] application services unavailable";
+        return;
+      }
+
+      auto &projectManager = ArtifactProjectManager::getInstance();
+      if (projectManager.isProjectCreated()) {
+        qWarning() << "[ClonerUiFixture] refusing to replace an existing project";
+        return;
+      }
+      projectManager.createProject(
+          QStringLiteral("ClonerUiFixture_%1")
+              .arg(QCoreApplication::applicationPid()),
+          false);
+      if (!projectManager.isProjectCreated()) {
+        qWarning() << "[ClonerUiFixture] temporary project creation failed";
+        return;
+      }
+
+      auto compositionParams = ArtifactCompositionInitParams::hdPreset();
+      compositionParams.setDurationSeconds(4.0);
+      projectService->createComposition(compositionParams);
+      const auto composition = projectService->currentComposition().lock();
+      if (!composition) {
+        qWarning() << "[ClonerUiFixture] composition creation failed";
+        return;
+      }
+
+      const QString sourceImagePath = QDir(projectManager.currentProjectPath())
+                                          .filePath(QStringLiteral("cloner-source.png"));
+      QImage sourceImage(80, 48, QImage::Format_RGBA8888);
+      sourceImage.fill(QColor(242, 92, 31, 255));
+      if (!sourceImage.save(sourceImagePath, "PNG")) {
+        qWarning() << "[ClonerUiFixture] failed to create raster source"
+                   << sourceImagePath;
+        return;
+      }
+      ArtifactImageInitParams source(QStringLiteral("GPU Cloner Source"));
+      source.setImagePath(sourceImagePath);
+      projectService->addLayerToCurrentComposition(source);
+      const auto layer = composition->frontMostLayer();
+      if (!layer) {
+        qWarning() << "[ClonerUiFixture] source layer creation failed";
+        return;
+      }
+      const auto imageLayer =
+          ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(layer);
+      if (!imageLayer) {
+        qWarning() << "[ClonerUiFixture] created source is not an image layer";
+        return;
+      }
+      imageLayer->setFromQImage(sourceImage);
+      layer->setLayerPropertyValue(QStringLiteral("transform.position.x"),
+                                   960.0);
+      layer->setLayerPropertyValue(QStringLiteral("transform.position.y"),
+                                   540.0);
+      const bool linearDistribution =
+          qEnvironmentVariable("ARTIFACT_UI_TEST_CLONER_DISTRIBUTION") ==
+          QStringLiteral("linear");
+      const bool randomDistribution =
+          qEnvironmentVariable("ARTIFACT_UI_TEST_CLONER_DISTRIBUTION") ==
+          QStringLiteral("random");
+      const bool matrixDistribution =
+          qEnvironmentVariable("ARTIFACT_UI_TEST_CLONER_DISTRIBUTION") ==
+          QStringLiteral("matrix");
+      const bool transformStackFixture = qEnvironmentVariableIsSet(
+          "ARTIFACT_UI_TEST_CLONER_TRANSFORM_STACK");
+      const bool plainTranslationFixture = qEnvironmentVariableIsSet(
+          "ARTIFACT_UI_TEST_CLONER_PLAIN_TRANSLATION");
+      const bool plainRotationFixture = qEnvironmentVariableIsSet(
+          "ARTIFACT_UI_TEST_CLONER_PLAIN_ROTATION");
+      const bool plainScaleFixture = qEnvironmentVariableIsSet(
+          "ARTIFACT_UI_TEST_CLONER_PLAIN_SCALE");
+      const bool plainChainFixture = qEnvironmentVariableIsSet(
+          "ARTIFACT_UI_TEST_CLONER_PLAIN_CHAIN");
+      const bool radialDistribution =
+          qEnvironmentVariable("ARTIFACT_UI_TEST_CLONER_DISTRIBUTION") ==
+          QStringLiteral("radial");
+      const bool clonerEnabled = layer->setLayerPropertyValue(
+          QStringLiteral("component.cloner.enabled"), true);
+      bool distributionSelected = clonerEnabled &&
+          layer->setLayerPropertyValue(
+              QStringLiteral("component.cloner.mode"),
+              radialDistribution ? 6 : (randomDistribution ? 3 :
+                  (linearDistribution ? 0 : 5)));
+      if (linearDistribution) {
+        distributionSelected = distributionSelected &&
+            layer->setLayerPropertyValue(
+                QStringLiteral("component.cloner.cloneCount"), 3);
+      }
+      if (transformStackFixture) {
+        distributionSelected =
+            layer->setLayerPropertyValue(
+                QStringLiteral("component.cloner.enabled"), false) &&
+            layer->setLayerPropertyValue(
+                QStringLiteral("component.generators.add"),
+                radialDistribution ? QStringLiteral("radial") :
+                    (linearDistribution ? QStringLiteral("linear") :
+                                          QStringLiteral("grid")));
+        if (distributionSelected) {
+          auto descriptorSnapshot = layer->componentDescriptorSnapshot();
+          auto generators = descriptorSnapshot.value(
+              QStringLiteral("generators")).toArray();
+          if (generators.size() != 1 || !generators.at(0).isObject()) {
+            distributionSelected = false;
+          } else {
+            auto generator = generators.at(0).toObject();
+            auto settings = generator.value(
+                QStringLiteral("settings")).toObject();
+            if (linearDistribution) {
+              generator.insert(QStringLiteral("typeId"),
+                               QStringLiteral("artifact.generator.cloner.linear"));
+            }
+            QJsonArray transformStack;
+            transformStack.append(QJsonObject{
+                {QStringLiteral("name"), QStringLiteral("GPU Stack A")},
+                {QStringLiteral("enabled"), true},
+                {QStringLiteral("positionX"), 13.0},
+                {QStringLiteral("positionY"), -5.0},
+                {QStringLiteral("positionZ"), 2.0},
+                {QStringLiteral("rotationZ"), 30.0}});
+            transformStack.append(QJsonObject{
+                {QStringLiteral("name"), QStringLiteral("GPU Stack B")},
+                {QStringLiteral("enabled"), true},
+                {QStringLiteral("positionX"), -4.0},
+                {QStringLiteral("positionY"), 9.0},
+                {QStringLiteral("positionZ"), 1.0},
+                {QStringLiteral("rotationZ"), -15.0},
+                {QStringLiteral("scaleX"), 1.5},
+                {QStringLiteral("scaleY"), 0.75}});
+            settings.insert(QStringLiteral("transformStack"), transformStack);
+            generator.insert(QStringLiteral("settings"), settings);
+            generators.replace(0, generator);
+            descriptorSnapshot.insert(QStringLiteral("generators"), generators);
+            distributionSelected =
+                layer->restoreComponentDescriptorSnapshot(descriptorSnapshot);
+          }
+        }
+      }
+      if (matrixDistribution) {
+        distributionSelected =
+            layer->setLayerPropertyValue(
+                QStringLiteral("component.cloner.enabled"), false) &&
+            layer->setLayerPropertyValue(
+                QStringLiteral("component.generators.add"),
+                QStringLiteral("matrix")) &&
+            layer->setLayerPropertyValue(
+                QStringLiteral("component.generators.0.opacityDecay"),
+                qEnvironmentVariable("ARTIFACT_UI_TEST_CLONER_OPACITY_DECAY")
+                    .toDouble());
+      }
+      if (radialDistribution) {
+        distributionSelected = distributionSelected &&
+            layer->setLayerPropertyValue(
+                QStringLiteral("component.cloner.radialCount"), 4) &&
+            layer->setLayerPropertyValue(
+                QStringLiteral("component.cloner.radius"), 120.0) &&
+            layer->setLayerPropertyValue(
+                QStringLiteral("component.cloner.startAngle"), 0.0) &&
+            layer->setLayerPropertyValue(
+                QStringLiteral("component.cloner.endAngle"), 270.0);
+      }
+      if (linearDistribution || radialDistribution) {
+        const QString rotationStepText = qEnvironmentVariable(
+            "ARTIFACT_UI_TEST_CLONER_ROTATION_STEP");
+        if (!rotationStepText.isEmpty()) {
+          bool rotationStepValid = false;
+          const double rotationStep = rotationStepText.toDouble(
+              &rotationStepValid);
+          distributionSelected = distributionSelected && rotationStepValid &&
+              layer->setLayerPropertyValue(
+                  QStringLiteral("component.cloner.rotationStep"),
+                  rotationStep);
+        }
+      }
+        const QString opacityDecayText = qEnvironmentVariable(
+            "ARTIFACT_UI_TEST_CLONER_OPACITY_DECAY");
+        if (!opacityDecayText.isEmpty()) {
+          bool opacityDecayValid = false;
+          const double opacityDecay = opacityDecayText.toDouble(
+              &opacityDecayValid);
+          distributionSelected = distributionSelected && opacityDecayValid &&
+              layer->setLayerPropertyValue(
+                  QStringLiteral("component.cloner.opacityDecay"),
+                  opacityDecay);
+        }
+      if (plainChainFixture && distributionSelected) {
+        distributionSelected =
+            layer->setLayerPropertyValue(
+                QStringLiteral("component.cloneModifiers.add"),
+                QStringLiteral("plain")) &&
+            layer->setLayerPropertyValue(
+                QStringLiteral("component.cloneModifiers.add"),
+                QStringLiteral("plain")) &&
+            layer->setLayerPropertyValue(
+                QStringLiteral("component.cloneModifiers.0.positionX"), 0.0) &&
+            layer->setLayerPropertyValue(
+                QStringLiteral("component.cloneModifiers.0.positionY"), 0.0) &&
+            layer->setLayerPropertyValue(
+                QStringLiteral("component.cloneModifiers.0.positionZ"), 0.0) &&
+            layer->setLayerPropertyValue(
+                QStringLiteral("component.cloneModifiers.0.rotationZ"),
+                15.0) &&
+            layer->setLayerPropertyValue(
+                QStringLiteral("component.cloneModifiers.0.scaleX"), 1.2) &&
+            layer->setLayerPropertyValue(
+                QStringLiteral("component.cloneModifiers.0.scaleY"), 1.2) &&
+            layer->setLayerPropertyValue(
+                QStringLiteral("component.cloneModifiers.1.positionX"), 9.0) &&
+            layer->setLayerPropertyValue(
+                QStringLiteral("component.cloneModifiers.1.positionY"), -6.0) &&
+            layer->setLayerPropertyValue(
+                QStringLiteral("component.cloneModifiers.1.positionZ"), 0.0) &&
+            layer->setLayerPropertyValue(
+                QStringLiteral("component.cloneModifiers.1.rotationZ"), 0.0) &&
+            layer->setLayerPropertyValue(
+                QStringLiteral("component.cloneModifiers.1.scaleX"), 1.5) &&
+            layer->setLayerPropertyValue(
+                QStringLiteral("component.cloneModifiers.1.scaleY"), 0.75);
+      }
+      if ((plainTranslationFixture || plainRotationFixture ||
+           plainScaleFixture) &&
+          distributionSelected) {
+        distributionSelected =
+            layer->setLayerPropertyValue(
+                QStringLiteral("component.cloneModifiers.add"),
+                QStringLiteral("plain")) &&
+            layer->setLayerPropertyValue(
+                QStringLiteral("component.cloneModifiers.0.positionX"),
+                plainTranslationFixture ? 9.0 : 0.0) &&
+            layer->setLayerPropertyValue(
+                QStringLiteral("component.cloneModifiers.0.positionY"),
+                plainTranslationFixture ? -6.0 : 0.0) &&
+            layer->setLayerPropertyValue(
+                QStringLiteral("component.cloneModifiers.0.positionZ"), 0.0) &&
+            layer->setLayerPropertyValue(
+                QStringLiteral("component.cloneModifiers.0.rotationZ"),
+                plainRotationFixture ? 15.0 : 0.0) &&
+            layer->setLayerPropertyValue(
+                QStringLiteral("component.cloneModifiers.0.scaleX"),
+                plainScaleFixture ? 1.5 : 1.0) &&
+            layer->setLayerPropertyValue(
+                QStringLiteral("component.cloneModifiers.0.scaleY"),
+                plainScaleFixture ? 0.75 : 1.0);
+      }
+      if (transformStackFixture && distributionSelected) {
+        const auto generators = layer->layerGenerators();
+        const QJsonArray stack = generators.size() == 1
+            ? generators[0].settings
+                  .value(QStringLiteral("transformStack")).toArray()
+            : QJsonArray{};
+        const QString expectedStackGenerator = radialDistribution
+            ? QStringLiteral("artifact.generator.cloner.radial")
+            : (linearDistribution
+                   ? QStringLiteral("artifact.generator.cloner.linear")
+                   : QStringLiteral("artifact.generator.cloner.grid"));
+        const QString expectedStackGeneratorMarker = radialDistribution
+            ? QStringLiteral("radial")
+            : (linearDistribution ? QStringLiteral("linear")
+                                  : QStringLiteral("grid"));
+        const bool stackMatchesFixture =
+            generators.size() == 1 &&
+            generators[0].typeId == expectedStackGenerator &&
+            stack.size() == 2 && stack.at(0).isObject() &&
+            stack.at(1).isObject() &&
+            std::abs(stack.at(0).toObject()
+                         .value(QStringLiteral("positionX")).toDouble() -
+                     13.0) < 0.001 &&
+            std::abs(stack.at(0).toObject()
+                         .value(QStringLiteral("positionY")).toDouble() +
+                     5.0) < 0.001 &&
+            std::abs(stack.at(0).toObject()
+                         .value(QStringLiteral("positionZ")).toDouble() -
+                     2.0) < 0.001 &&
+            std::abs(stack.at(1).toObject()
+                         .value(QStringLiteral("positionX")).toDouble() +
+                     4.0) < 0.001 &&
+            std::abs(stack.at(1).toObject()
+                         .value(QStringLiteral("positionY")).toDouble() -
+                     9.0) < 0.001 &&
+            std::abs(stack.at(1).toObject()
+                         .value(QStringLiteral("positionZ")).toDouble() -
+                     1.0) < 0.001 &&
+            std::abs(stack.at(1).toObject()
+                         .value(QStringLiteral("scaleX")).toDouble(1.0) -
+                     1.5) < 0.001 &&
+            std::abs(stack.at(1).toObject()
+                         .value(QStringLiteral("scaleY")).toDouble(1.0) -
+                     0.75) < 0.001 &&
+            std::abs(stack.at(0).toObject()
+                         .value(QStringLiteral("rotationZ")).toDouble() -
+                     30.0) < 0.001 &&
+            std::abs(stack.at(1).toObject()
+                         .value(QStringLiteral("rotationZ")).toDouble() +
+                     15.0) < 0.001;
+        const QString renderOutputPath = qEnvironmentVariable(
+            "ARTIFACT_UI_TEST_CLONER_RENDER_OUTPUT");
+        const QString stackFixturePath = renderOutputPath.isEmpty()
+            ? QString{}
+            : renderOutputPath + QStringLiteral(".route.txt.stackfixture.txt");
+        if (!stackMatchesFixture || stackFixturePath.isEmpty()) {
+          distributionSelected = false;
+        } else {
+          QSaveFile stackFixtureFile(stackFixturePath);
+          const QByteArray stackFixtureMarker =
+              QStringLiteral("generator=%1 entries=2 translationA=13,-5,2 "
+                             "translationB=-4,9,1 scaleB=1.5,0.75 "
+                             "rotationTotal=15\n")
+                  .arg(expectedStackGeneratorMarker)
+                  .toUtf8();
+          distributionSelected =
+              stackFixtureFile.open(QIODevice::WriteOnly | QIODevice::Text) &&
+              stackFixtureFile.write(stackFixtureMarker) ==
+                  stackFixtureMarker.size() &&
+              stackFixtureFile.commit();
+        }
+      }
+      if (!distributionSelected) {
+        qWarning() << "[ClonerUiFixture] Cloner setup failed";
+        return;
+      }
+      const auto fixtureGenerators = layer->layerGenerators();
+      const auto fixtureModifiers = layer->layerCloneModifiers();
+      const QString fixtureOutputPath = qEnvironmentVariable(
+          "ARTIFACT_UI_TEST_CLONER_RENDER_OUTPUT");
+      if (!fixtureOutputPath.isEmpty()) {
+        const QString fixturePath = fixtureOutputPath +
+            QStringLiteral(".route.txt.fixture.txt");
+        const QString actualGeneratorType = fixtureGenerators.size() == 1U
+            ? fixtureGenerators[0].typeId
+            : QStringLiteral("multiple");
+        QJsonObject plainModifierSettings;
+        QJsonObject firstPlainModifierSettings;
+        int plainModifierCount = 0;
+        for (const auto& modifier : fixtureModifiers) {
+          if (modifier.enabled && modifier.typeId ==
+                                      QStringLiteral("artifact.modifier.plain")) {
+            if (plainModifierCount == 0) {
+              firstPlainModifierSettings = modifier.settings;
+            }
+            plainModifierSettings = modifier.settings;
+            ++plainModifierCount;
+          }
+        }
+        QString modifierMarker;
+        if (plainChainFixture && plainModifierCount == 2 &&
+            fixtureModifiers.size() >= 2U) {
+          modifierMarker = QStringLiteral(
+              "modifier=plain-chain plainCount=2 plain0RotationZ=%1 "
+              "plain0ScaleX=%2 plain0ScaleY=%3 plain1TranslationX=%4 "
+              "plain1TranslationY=%5 plain1TranslationZ=%6 "
+              "plain1RotationZ=%7 plain1ScaleX=%8 plain1ScaleY=%9")
+              .arg(firstPlainModifierSettings.value(QStringLiteral("rotationZ"))
+                       .toDouble(), 0, 'g', 9)
+              .arg(firstPlainModifierSettings.value(QStringLiteral("scaleX"))
+                       .toDouble(1.0), 0, 'g', 9)
+              .arg(firstPlainModifierSettings.value(QStringLiteral("scaleY"))
+                       .toDouble(1.0), 0, 'g', 9)
+              .arg(plainModifierSettings.value(QStringLiteral("positionX"))
+                       .toDouble(), 0, 'g', 9)
+              .arg(plainModifierSettings.value(QStringLiteral("positionY"))
+                       .toDouble(), 0, 'g', 9)
+              .arg(plainModifierSettings.value(QStringLiteral("positionZ"))
+                       .toDouble(), 0, 'g', 9)
+              .arg(plainModifierSettings.value(QStringLiteral("rotationZ"))
+                       .toDouble(), 0, 'g', 9)
+              .arg(plainModifierSettings.value(QStringLiteral("scaleX"))
+                       .toDouble(1.0), 0, 'g', 9)
+              .arg(plainModifierSettings.value(QStringLiteral("scaleY"))
+                       .toDouble(1.0), 0, 'g', 9);
+        } else if ((plainTranslationFixture || plainRotationFixture ||
+                    plainScaleFixture) && plainModifierCount == 1) {
+          modifierMarker = QStringLiteral(
+              "modifier=plain plainTranslationX=%1 plainTranslationY=%2 "
+              "plainTranslationZ=%3 plainRotationZ=%4 plainScaleX=%5 "
+              "plainScaleY=%6")
+              .arg(plainModifierSettings.value(QStringLiteral("positionX"))
+                       .toDouble(), 0, 'g', 9)
+              .arg(plainModifierSettings.value(QStringLiteral("positionY"))
+                       .toDouble(), 0, 'g', 9)
+              .arg(plainModifierSettings.value(QStringLiteral("positionZ"))
+                       .toDouble(), 0, 'g', 9)
+              .arg(plainModifierSettings.value(QStringLiteral("rotationZ"))
+                       .toDouble(), 0, 'g', 9)
+              .arg(plainModifierSettings.value(QStringLiteral("scaleX"))
+                       .toDouble(1.0), 0, 'g', 9)
+              .arg(plainModifierSettings.value(QStringLiteral("scaleY"))
+                       .toDouble(1.0), 0, 'g', 9);
+        } else if (!plainTranslationFixture && !plainRotationFixture &&
+                   !plainScaleFixture && !plainChainFixture &&
+                   plainModifierCount == 0) {
+          modifierMarker = QStringLiteral("modifier=none");
+        }
+        const QByteArray fixtureMarker =
+            QStringLiteral("generator=%1 generatorCount=%2 %3\n")
+                .arg(actualGeneratorType)
+                .arg(fixtureGenerators.size())
+                .arg(modifierMarker)
+                .toUtf8();
+        QSaveFile fixtureFile(fixturePath);
+        distributionSelected =
+            fixtureGenerators.size() == 1U &&
+            !modifierMarker.isEmpty() &&
+            fixtureFile.open(QIODevice::WriteOnly | QIODevice::Text) &&
+            fixtureFile.write(fixtureMarker) == fixtureMarker.size() &&
+            fixtureFile.commit();
+      }
+      if (!distributionSelected) {
+        qWarning() << "[ClonerUiFixture] Cloner descriptor marker failed";
+        return;
+      }
+      if (compositionEditor) {
+        compositionEditor->setComposition(composition);
+      }
+
+      const QString renderOutputPath =
+          qEnvironmentVariable("ARTIFACT_UI_TEST_CLONER_RENDER_OUTPUT");
+      if (!renderOutputPath.isEmpty()) {
+        QTimer::singleShot(3000, mw, [compositionEditor, renderOutputPath,
+                                      layer, composition]() {
+          auto *controller = compositionEditor
+                                 ? compositionEditor->renderController()
+                                 : nullptr;
+          if (!controller) {
+            qWarning() << "[ClonerUiFixture] render controller unavailable";
+            return;
+          }
+          controller->renderOneFrame();
+          controller->renderOneFrame();
+          const auto boundComposition = controller->composition();
+          const auto sourceSize = layer->sourceSize();
+          const auto imageLayer =
+              ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(layer);
+          const auto localBounds = layer->localBounds();
+          const auto worldBounds = layer->transformedBoundingBox();
+          const auto clonerGenerators = layer->layerGenerators();
+          const double fixtureOpacityDecay = clonerGenerators.empty()
+              ? -1.0
+              : clonerGenerators[0].settings
+                    .value(QStringLiteral("opacityDecay")).toDouble(-1.0);
+          const QString fixtureState =
+              QStringLiteral("controllerComposition=%1 fixtureComposition=%2 "
+                              "layerCount=%3 sourceSize=%4x%5 frame=%6 "
+                              "visible=%7 solo=%8 active=%9 opacity=%10 "
+                              "imageBuffer=%11 sourcePath=%12 "
+                              "localBounds=%13,%14,%15x%16 "
+                              "worldBounds=%17,%18,%19x%20 "
+                              "clonerOpacityDecay=%21\n")
+                  .arg(boundComposition ? boundComposition->id().toString()
+                                        : QStringLiteral("<null>"),
+                       composition->id().toString())
+                  .arg(composition->allLayerRef().size())
+                  .arg(sourceSize.width)
+                  .arg(sourceSize.height)
+                  .arg(controller->currentFrameSerial())
+                  .arg(layer->isVisible() ? 1 : 0)
+                  .arg(layer->isSolo() ? 1 : 0)
+                  .arg(layer->isActiveAt(FramePosition(0)) ? 1 : 0)
+                  .arg(layer->opacity(), 0, 'f', 3)
+                  .arg(imageLayer && imageLayer->hasCurrentFrameBuffer() ? 1 : 0)
+                  .arg(imageLayer && !imageLayer->sourcePath().isEmpty() ? 1 : 0)
+                  .arg(localBounds.x(), 0, 'f', 2)
+                  .arg(localBounds.y(), 0, 'f', 2)
+                  .arg(localBounds.width(), 0, 'f', 2)
+                  .arg(localBounds.height(), 0, 'f', 2)
+                  .arg(worldBounds.x(), 0, 'f', 2)
+                  .arg(worldBounds.y(), 0, 'f', 2)
+                  .arg(worldBounds.width(), 0, 'f', 2)
+                  .arg(worldBounds.height(), 0, 'f', 2)
+                  .arg(fixtureOpacityDecay, 0, 'f', 3);
+          const bool accepted = controller->requestCurrentFrameImageAsync(
+              [renderOutputPath, fixtureState](QImage image,
+                                                quint64 frameSerial) {
+                if (image.isNull() || !image.save(renderOutputPath, "PNG")) {
+                  qWarning() << "[ClonerUiFixture] renderer readback save failed"
+                             << "frame=" << frameSerial
+                             << "size=" << image.size()
+                             << "path=" << renderOutputPath;
+                  return;
+                }
+                QFile stateFile(renderOutputPath + QStringLiteral(".txt"));
+                if (stateFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+                  stateFile.write(fixtureState.toUtf8());
+                  stateFile.write(
+                      QStringLiteral("readbackSize=%1x%2 frame=%3\n")
+                          .arg(image.width())
+                          .arg(image.height())
+                          .arg(frameSerial)
+                          .toUtf8());
+                }
+                qInfo() << "[ClonerUiFixture] saved renderer readback"
+                        << "frame=" << frameSerial
+                        << "size=" << image.size()
+                        << "path=" << renderOutputPath;
+              });
+          if (!accepted) {
+            qWarning() << "[ClonerUiFixture] renderer readback request rejected";
+          }
+        });
+      }
+
+      qInfo() << "[ClonerUiFixture] created Cloner source"
+              << "distribution="
+              << (linearDistribution ? "linear" : "grid")
+              << "GPU placement="
+              << qEnvironmentVariableIsSet("ARTIFACT_ENABLE_GPU_CLONER");
+    });
+  }
+
+  if (uiTestExecutable &&
+      qEnvironmentVariableIsSet("ARTIFACT_UI_TEST_TRACKER")) {
+    QTimer::singleShot(0, mw, [mw, projectService, compositionEditor]() {
+      if (!mw || !projectService) {
+        qWarning() << "[TrackerUiFixture] application services unavailable";
+        return;
+      }
+
+      auto &projectManager = ArtifactProjectManager::getInstance();
+      if (projectManager.isProjectCreated()) {
+        qWarning() << "[TrackerUiFixture] refusing to replace an existing project";
+        return;
+      }
+      projectManager.createProject(
+          QStringLiteral("TrackerUiFixture_%1")
+              .arg(QCoreApplication::applicationPid()),
+          false);
+      if (!projectManager.isProjectCreated()) {
+        qWarning() << "[TrackerUiFixture] temporary project creation failed";
+        return;
+      }
+
+      const QDir fixtureProjectRoot(
+          qEnvironmentVariable("ARTIFACT_UI_TEST_PROJECT_ROOT"));
+      QStringList sequencePaths;
+      const QString sequenceDirectory = qEnvironmentVariable(
+          "ARTIFACT_UI_TEST_TRACKER_SEQUENCE_DIR");
+      if (!sequenceDirectory.isEmpty()) {
+        const QDir inputDirectory(sequenceDirectory);
+        for (const QString &fileName : inputDirectory.entryList(
+                 {QStringLiteral("*.png")}, QDir::Files, QDir::Name)) {
+          sequencePaths.append(inputDirectory.filePath(fileName));
+        }
+      }
+      if (sequencePaths.isEmpty()) {
+        for (int frameIndex = 0; frameIndex < 6; ++frameIndex) {
+        QImage frame(160, 120, QImage::Format_RGB32);
+        for (int y = 0; y < frame.height(); ++y) {
+          auto *row = reinterpret_cast<QRgb *>(frame.scanLine(y));
+          for (int x = 0; x < frame.width(); ++x) {
+            const int sourceX = x - frameIndex;
+            const int sourceY = y - frameIndex;
+            if (sourceX < 0 || sourceY < 0) {
+              row[x] = qRgb(20, 24, 30);
+              continue;
+            }
+            double texture =
+                126.0 + 38.0 * std::sin(sourceX * 0.11) +
+                34.0 * std::cos(sourceY * 0.13) +
+                27.0 * std::sin((sourceX + sourceY) * 0.08) +
+                19.0 * std::cos((sourceX - 2.0 * sourceY) * 0.05);
+            int value = static_cast<int>(std::lround(texture));
+            if ((sourceX - 42) * (sourceX - 42) +
+                    (sourceY - 38) * (sourceY - 38) <
+                144) {
+              value = std::min(248, value + 45);
+            }
+            if ((sourceX - 120) * (sourceX - 120) +
+                    (sourceY - 60) * (sourceY - 60) <
+                196) {
+              value = std::max(8, value - 55);
+            }
+            value = std::clamp(value, 0, 255);
+            row[x] = qRgb(value, value, value);
+          }
+        }
+        const QString framePath = fixtureProjectRoot.filePath(
+            QStringLiteral("tracker-frame-%1.png").arg(frameIndex));
+        if (!frame.save(framePath, "PNG")) {
+          qWarning() << "[TrackerUiFixture] sequence frame save failed"
+                     << framePath;
+          return;
+        }
+        sequencePaths.append(framePath);
+        }
+      }
+      if (sequencePaths.size() < 2) {
+        qWarning() << "[TrackerUiFixture] fewer than two sequence frames";
+        return;
+      }
+      const QImage firstFrame(sequencePaths.front());
+      if (firstFrame.isNull()) {
+        qWarning() << "[TrackerUiFixture] first sequence frame failed to load";
+        return;
+      }
+      const double sequenceFps = qEnvironmentVariable(
+          "ARTIFACT_UI_TEST_TRACKER_SEQUENCE_FPS", QStringLiteral("30"))
+                                     .toDouble();
+      if (!std::isfinite(sequenceFps) || sequenceFps <= 0.0 ||
+          sequenceFps > 240.0) {
+        qWarning() << "[TrackerUiFixture] invalid sequence frame rate";
+        return;
+      }
+      auto compositionParams = ArtifactCompositionInitParams::hdPreset();
+      compositionParams.setResolution(firstFrame.width(), firstFrame.height());
+      compositionParams.setFrameRate(sequenceFps);
+      compositionParams.setDurationFrames(sequencePaths.size() - 1);
+      projectService->createComposition(compositionParams);
+      const auto composition = projectService->currentComposition().lock();
+      if (!composition) {
+        qWarning() << "[TrackerUiFixture] composition creation failed";
+        return;
+      }
+      ArtifactImageInitParams source(QStringLiteral("Fixture Source"));
+      source.setSequencePaths(sequencePaths);
+      source.setSequenceFrameRate(sequenceFps);
+      projectService->addLayerToCurrentComposition(source);
+      const auto sourceLayer = composition->frontMostLayer();
+      if (!sourceLayer) {
+        qWarning() << "[TrackerUiFixture] image sequence layer creation failed";
+        return;
+      }
+      ArtifactCore::SharedPtr<ArtifactVideoLayer> cameraVideoLayer;
+      const QString cameraFootagePath = qEnvironmentVariable(
+          "ARTIFACT_UI_TEST_TRACKER_CAMERA_PATH");
+      if (!cameraFootagePath.isEmpty()) {
+        ArtifactVideoInitParams videoParams(QStringLiteral("Camera Footage"));
+        videoParams.setVideoPath(cameraFootagePath);
+        projectService->addLayerToCurrentComposition(videoParams, false);
+        cameraVideoLayer = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(
+            composition->frontMostLayer());
+        if (!cameraVideoLayer) {
+          qWarning() << "[TrackerUiFixture] video source layer creation failed";
+          return;
+        }
+      }
+
+      auto startTrackerFixture =
+          std::make_shared<std::function<void()>>();
+      auto cameraAnalysisStarted = std::make_shared<bool>(false);
+      auto cameraAnalysisFinished = std::make_shared<std::atomic_bool>(false);
+      auto cameraAnalysisResult = std::make_shared<
+          ArtifactCameraTrackerTool::AnalysisResult>();
+      *startTrackerFixture = [mw, compositionEditor, composition, sourceLayer,
+                              cameraVideoLayer,
+                              cameraAnalysisStarted, cameraAnalysisFinished,
+                              cameraAnalysisResult,
+                              frameCount = sequencePaths.size(),
+                              startTrackerFixture]() {
+        auto *controller = compositionEditor
+                               ? compositionEditor->renderController()
+                               : nullptr;
+        if (!mw || !controller ||
+            !mw->hasDock(QStringLiteral("Tracker"))) {
+          qWarning() << "[TrackerUiFixture] Tracker dock registration failed";
+          *startTrackerFixture = {};
+          return;
+        }
+        const int previousMutationDepth =
+            mw->property("artifactProgrammaticDockMutationDepth").toInt();
+        if (!mw->property("artifactTrackerFixtureWindowPrepared").toBool()) {
+          mw->setProperty("artifactProgrammaticDockMutationDepth",
+                          previousMutationDepth + 1);
+          mw->setDockVisible(QStringLiteral("Tracker"), true);
+          mw->activateDock(QStringLiteral("Tracker"));
+          mw->showNormal();
+          mw->resize(1774, 950);
+          mw->setProperty("artifactProgrammaticDockMutationDepth",
+                          previousMutationDepth);
+          mw->setProperty("artifactTrackerFixtureWindowPrepared", true);
+        }
+        if (controller->composition() != composition ||
+            !controller->isInitialized()) {
+          QTimer::singleShot(250, mw, *startTrackerFixture);
+          return;
+        }
+        controller->trackerInitialize();
+        auto *gizmo = controller->trackerGizmo();
+        const bool hasSession = controller->trackerHasSession();
+        if (!gizmo || !hasSession) {
+          qWarning() << "[TrackerUiFixture] session or geometry unavailable";
+          return;
+        }
+        const bool footageInput = !qEnvironmentVariable(
+            "ARTIFACT_UI_TEST_TRACKER_SEQUENCE_DIR").isEmpty();
+        const bool planarMode = qEnvironmentVariable(
+            "ARTIFACT_UI_TEST_TRACKER_MODE") == QStringLiteral("planar");
+        if (planarMode) controller->trackerUsePlanarMode();
+        auto state = gizmo->state();
+        state.innerCenter = footageInput
+                                ? (planarMode ? QPointF(180.0, 320.0)
+                                              : QPointF(270.0, 365.0))
+                                : QPointF(80.0, 60.0);
+        state.innerHalfW = footageInput
+                               ? (planarMode ? 170.0f : 38.0f)
+                               : 12.0f;
+        state.innerHalfH = footageInput
+                               ? (planarMode ? 300.0f : 34.0f)
+                               : 12.0f;
+        state.outerHalfW = footageInput ? 88.0f : 40.0f;
+        state.outerHalfH = footageInput ? 92.0f : 32.0f;
+        gizmo->setState(state);
+        const QString direction = qEnvironmentVariable(
+            "ARTIFACT_UI_TEST_TRACKER_DIRECTION", QStringLiteral("all"));
+        if (!cameraVideoLayer) {
+          controller->trackerUseSelectedLayerAsSource();
+          if (direction == QStringLiteral("backward")) {
+            if (auto *playback = ArtifactPlaybackService::instance(); playback &&
+                playback->currentComposition() == composition) {
+              playback->goToFrame(FramePosition(composition->frameRange().end()));
+            } else {
+              composition->setFramePosition(
+                  FramePosition(composition->frameRange().end()));
+            }
+            controller->trackerTrackBackward();
+          } else if (direction == QStringLiteral("forward")) {
+            controller->trackerTrackForward();
+          } else {
+            controller->trackerTrackAll();
+          }
+        }
+        const bool startedImmediately = cameraVideoLayer ||
+                                        controller->trackerJobRunning();
+        qInfo() << "[TrackerUiFixture] tracking" << frameCount
+                << (footageInput ? "real footage frames" : "fixture frames")
+                << "mode=" << (planarMode ? "planar" : "point")
+                << "direction=" << direction;
+
+        auto pollTracker =
+            std::make_shared<std::function<void()>>();
+        *pollTracker = [mw, compositionEditor, controller, composition, sourceLayer,
+                        cameraVideoLayer,
+                        cameraAnalysisStarted, cameraAnalysisFinished,
+                        cameraAnalysisResult,
+                        startedImmediately, pollTracker, frameCount, footageInput,
+                        planarMode]() {
+          if (!mw || (!cameraVideoLayer && controller->trackerJobRunning())) {
+            if (mw) QTimer::singleShot(50, mw, *pollTracker);
+            return;
+          }
+          ArtifactCameraTrackerTool::AnalysisResult cameraAnalysis;
+          if (cameraVideoLayer) {
+            if (!*cameraAnalysisStarted) {
+              *cameraAnalysisStarted = true;
+              QThreadPool::globalInstance()->start(QRunnable::create(
+                  [composition, cameraVideoLayer, cameraAnalysisResult,
+                   cameraAnalysisFinished]() {
+                    *cameraAnalysisResult = ArtifactCameraTrackerTool::analyze(
+                        composition.get(), cameraVideoLayer,
+                        [](const ArtifactCameraTrackerTool::ProgressUpdate&) {});
+                    cameraAnalysisFinished->store(true,
+                                                   std::memory_order_release);
+                  }));
+              QTimer::singleShot(50, mw, *pollTracker);
+              return;
+            }
+            if (!cameraAnalysisFinished->load(std::memory_order_acquire)) {
+              QTimer::singleShot(50, mw, *pollTracker);
+              return;
+            }
+          }
+          const bool hasResult = cameraVideoLayer
+                                     ? false
+                                     : controller->trackerHasResult();
+          const int resultFrames = cameraVideoLayer
+                                       ? 0
+                                       : controller->trackerResultFrameCount();
+          const int problemFrames = cameraVideoLayer
+                                        ? 0
+                                        : controller->trackerProblemFrameCount();
+          const double averageConfidence = cameraVideoLayer
+                                               ? 0.0
+                                               : controller->trackerAverageConfidence();
+          const QJsonObject beforeBake = sourceLayer->toJson();
+          const qsizetype layerCountBefore =
+              composition->allLayerRef().size();
+          if (hasResult && resultFrames >= 2) {
+            if (qEnvironmentVariable("ARTIFACT_UI_TEST_TRACKER_MODE") ==
+                QStringLiteral("planar")) {
+              controller->trackerApplyPlanarCornerPin();
+            } else {
+              controller->trackerApplyToPosition();
+            }
+          }
+          const bool bakeApplied =
+              sourceLayer->toJson() != beforeBake ||
+              composition->allLayerRef().size() > layerCountBefore;
+          bool cameraSucceeded = !cameraVideoLayer;
+          int cameraLayerCount = 0;
+          int cameraKeyframeCount = 0;
+          if (cameraVideoLayer) {
+            cameraSucceeded = ArtifactCameraTrackerTool::apply(
+                composition.get(), *cameraAnalysisResult);
+            cameraLayerCount = cameraSucceeded ? 1 : 0;
+            cameraKeyframeCount = cameraSucceeded
+                ? static_cast<int>(cameraAnalysisResult->tracking.cameraPath.size())
+                : 0;
+          }
+          const bool lastJobFailed = cameraVideoLayer
+                                         ? false
+                                         : controller->trackerLastJobFailed();
+          const bool hasSession = cameraVideoLayer
+                                      ? true
+                                      : controller->trackerHasSession();
+          const bool jobStillRunning = cameraVideoLayer
+                                           ? false
+                                           : controller->trackerJobRunning();
+          const int trackPointCount = cameraVideoLayer
+                                          ? 0
+                                          : controller->trackerTrackPointCount();
+          const bool cancellationRequested = cameraVideoLayer
+                                                ? false
+                                                : controller->trackerCancellationRequested();
+          const bool compositionStillActive =
+              cameraVideoLayer ? true
+                               : controller->composition() == composition;
+          const QString resultPath = qEnvironmentVariable(
+              "ARTIFACT_UI_TEST_TRACKER_RESULT_PATH");
+          const bool fixtureEnoughFrames = resultFrames >=
+              (footageInput ? std::max(2, static_cast<int>(frameCount) - 3) : 2);
+          const bool fixtureTrackingSucceeded = cameraVideoLayer
+              ? cameraSucceeded && cameraLayerCount > 0 && cameraKeyframeCount >= 2
+              : hasResult && fixtureEnoughFrames && bakeApplied;
+          const bool fixtureSuccess = fixtureTrackingSucceeded &&
+              (!cameraVideoLayer || cameraSucceeded) && !lastJobFailed &&
+              !jobStillRunning && !cancellationRequested && hasSession &&
+              compositionStillActive && startedImmediately;
+          const QByteArray fixtureReport =
+              QStringLiteral("%1 frames=%2 camera=%3 camera_layers=%4 camera_keys=%5")
+                  .arg(fixtureSuccess ? QStringLiteral("success")
+                                      : QStringLiteral("failure"))
+                  .arg(resultFrames)
+                  .arg(cameraSucceeded ? 1 : 0)
+                  .arg(cameraLayerCount)
+                  .arg(cameraKeyframeCount)
+                  .toUtf8();
+          if (!resultPath.isEmpty()) {
+            QFile resultFile(resultPath);
+            if (resultFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+              resultFile.write(fixtureReport);
+            }
+          }
+          qInfo() << "[TrackerUiFixture] early result:" << fixtureReport;
+          if (mw) captureStartupScreenshot(mw);
+          const auto releasePoller = pollTracker;
+          QTimer::singleShot(0, mw, [releasePoller]() {
+            *releasePoller = {};
+          });
+          QTimer::singleShot(200, mw,
+                             [mw, hasResult, resultFrames, bakeApplied,
+                              lastJobFailed, hasSession, jobStillRunning,
+                              trackPointCount, cancellationRequested,
+                              compositionStillActive, startedImmediately,
+                               resultPath, compositionEditor, footageInput,
+                               frameCount, planarMode, problemFrames,
+                               cameraVideoLayer,
+                               averageConfidence, cameraSucceeded,
+                               cameraLayerCount, cameraKeyframeCount]() {
+            if (mw) {
+              mw->setDockVisible(QStringLiteral("Tracker"), true);
+              mw->activateDock(QStringLiteral("Tracker"));
+              compositionEditor->trackerPanelWidget();
+              QTimer::singleShot(150, mw, [mw, compositionEditor]() {
+                if (mw && compositionEditor) {
+                  captureStartupScreenshot(mw);
+                }
+              });
+            }
+          const bool enoughFrames =
+              resultFrames >= (footageInput
+                                   ? std::max(2, static_cast<int>(frameCount) - 3)
+                                   : 2);
+          const bool trackingSucceeded = cameraVideoLayer
+              ? cameraSucceeded && cameraLayerCount > 0 &&
+                    cameraKeyframeCount >= 2
+              : hasResult && enoughFrames && bakeApplied;
+          const bool success = trackingSucceeded &&
+                               (!cameraVideoLayer || cameraSucceeded) &&
+                               !lastJobFailed && !jobStillRunning &&
+                               !cancellationRequested && hasSession &&
+                               compositionStillActive && startedImmediately;
+            const QByteArray report =
+                QStringLiteral(
+                  "%1 frames=%2 bake=%3 failed=%4 session=%5 running=%6 points=%7 cancelled=%8 comp=%9 started=%10 mode=%11 confidence=%12 problems=%13 camera=%14 camera_layers=%15 camera_keys=%16")
+                    .arg(success ? QStringLiteral("success")
+                                 : QStringLiteral("failure"))
+                    .arg(resultFrames)
+                    .arg(bakeApplied ? QStringLiteral("applied")
+                                     : QStringLiteral("missing"))
+                    .arg(lastJobFailed ? 1 : 0)
+                    .arg(hasSession ? 1 : 0)
+                    .arg(jobStillRunning ? 1 : 0)
+                    .arg(trackPointCount)
+                    .arg(cancellationRequested ? 1 : 0)
+                    .arg(compositionStillActive ? 1 : 0)
+                    .arg(startedImmediately ? 1 : 0)
+                  .arg(planarMode ? QStringLiteral("planar")
+                                  : QStringLiteral("point"))
+                  .arg(averageConfidence, 0, 'f', 4)
+                  .arg(problemFrames)
+                  .arg(cameraSucceeded ? 1 : 0)
+                  .arg(cameraLayerCount)
+                  .arg(cameraKeyframeCount)
+                    .toUtf8();
+            if (!resultPath.isEmpty()) {
+              QFile resultFile(resultPath);
+              if (resultFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+                resultFile.write(report);
+              }
+            }
+            qInfo() << "[TrackerUiFixture] result:" << report;
+          });
+        };
+        QTimer::singleShot(50, mw, *pollTracker);
+        *startTrackerFixture = {};
+      };
+      QTimer::singleShot(900, mw, *startTrackerFixture);
     });
   }
 

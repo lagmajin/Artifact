@@ -18,12 +18,18 @@ module;
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QMetaObject>
+#include <QPointer>
+#include <functional>
+#include <memory>
+#include <atomic>
 #include <QPair>
 #include <QStatusBar>
 #include <QThread>
 #include <QUrl>
 #include <QtSVG/QSvgRenderer>
 #include <QTimer>
+#include <QThreadPool>
+#include <QRunnable>
 #include <QSet>
 #include <QPointF>
 #include <QRectF>
@@ -4606,37 +4612,70 @@ void ArtifactLayerMenu::Impl::handleTrackCamera()
         return;
     }
 
-    // 実行
     auto* window = qobject_cast<QWidget*>(menu_ ? menu_->window() : nullptr);
-    bool success = ArtifactCameraTrackerTool::run(
-        comp.get(), layer,
-        [window](const ArtifactCameraTrackerTool::ProgressUpdate& update) {
-            qDebug() << "Tracking progress:" << update.currentFrame << "/" << update.totalFrames
-                     << update.message;
-            if (!window) {
-                return;
-            }
-            const QString status = QStringLiteral("Tracking %1/%2: %3")
-                                       .arg(update.currentFrame)
-                                       .arg(update.totalFrames)
-                                       .arg(update.message);
-            QMetaObject::invokeMethod(
-                window,
-                [window, status]() {
-                    if (window) {
-                        if (auto *statusBar = window->findChild<QStatusBar *>()) {
-                          statusBar->showMessage(status, 1500);
-                        }
-                    }
-                },
-                Qt::QueuedConnection);
-        });
+    if (!window) return;
 
-    if (success) {
-        QMessageBox::information(menu_->window(), "3D Tracker", TranslationManager::instance().tr(QStringLiteral("dialog.layer.tracking_done"), QStringLiteral("トラッキングが完了しました。カメラと特徴点レイヤーが作成されました。")));
-    } else {
-        QMessageBox::warning(menu_->window(), "3D Tracker", TranslationManager::instance().tr(QStringLiteral("dialog.layer.tracking_failed"), QStringLiteral("トラッキングに失敗しました。十分な特徴点が見つからなかった可能性があります。")));
-    }
+    const QPointer<QWidget> windowGuard(window);
+    auto analysis = std::make_shared<
+        ArtifactCameraTrackerTool::AnalysisResult>();
+    auto analysisFinished = std::make_shared<std::atomic_bool>(false);
+    QThreadPool::globalInstance()->start(QRunnable::create(
+        [comp, layer, windowGuard, analysis, analysisFinished]() mutable {
+            *analysis = ArtifactCameraTrackerTool::analyze(
+                comp.get(), layer,
+                [windowGuard](const ArtifactCameraTrackerTool::ProgressUpdate& update) {
+                    if (!windowGuard) return;
+                    const QString status = QStringLiteral("Tracking %1/%2: %3")
+                                               .arg(update.currentFrame)
+                                               .arg(update.totalFrames)
+                                               .arg(update.message);
+                    const int timeoutMs = update.currentFrame >= update.totalFrames
+                                              ? 0
+                                              : 1500;
+                    QMetaObject::invokeMethod(
+                        windowGuard.data(),
+                        [windowGuard, status, timeoutMs]() {
+                            if (windowGuard) {
+                                if (auto* statusBar =
+                                        windowGuard->findChild<QStatusBar*>()) {
+                                    statusBar->showMessage(status, timeoutMs);
+                                }
+                            }
+                        },
+                        Qt::QueuedConnection);
+                });
+            analysisFinished->store(true, std::memory_order_release);
+        }));
+    auto poll = std::make_shared<std::function<void()>>();
+    *poll = [analysis, analysisFinished, poll, windowGuard, comp]() {
+        if (!windowGuard) {
+            *poll = {};
+            return;
+        }
+        if (!analysisFinished->load(std::memory_order_acquire)) {
+            QTimer::singleShot(30, windowGuard.data(), *poll);
+            return;
+        }
+        if (auto* statusBar = windowGuard->findChild<QStatusBar*>()) {
+            statusBar->clearMessage();
+        }
+        const bool success = ArtifactCameraTrackerTool::apply(comp.get(), *analysis);
+        *poll = {};
+        if (success) {
+            QMessageBox::information(
+                windowGuard.data(), "3D Tracker",
+                TranslationManager::instance().tr(
+                    QStringLiteral("dialog.layer.tracking_done"),
+                    QStringLiteral("トラッキングが完了しました。カメラと特徴点レイヤーが作成されました。")));
+        } else {
+            QMessageBox::warning(
+                windowGuard.data(), "3D Tracker",
+                TranslationManager::instance().tr(
+                    QStringLiteral("dialog.layer.tracking_failed"),
+                    QStringLiteral("トラッキングに失敗しました。十分な特徴点が見つからなかった可能性があります。")));
+        }
+    };
+    QTimer::singleShot(0, window, *poll);
 }
 
 void ArtifactLayerMenu::Impl::handleCreateMotionTracker()

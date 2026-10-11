@@ -804,19 +804,53 @@ WorldRay createPickingRay(
   void trackerInitialize();
   void trackerUsePointMode();
   void trackerUsePlanarMode();
+  int trackerTrackPointCount() const;
+  bool trackerPointPlacementArmed() const;
+  void trackerTogglePointPlacement();
+  void trackerRemoveLastPoint();
   void trackerReset();
   void trackerTrackForward();
   void trackerTrackBackward();
+  void trackerTrackStepForward();
+  void trackerTrackStepBackward();
   void trackerTrackAll();
   void trackerStop();
   bool trackerJobRunning() const;
+  bool trackerCancellationRequested() const;
+  bool trackerHasSession() const;
+  bool trackerLastJobFailed() const;
   double trackerSolveProgress() const;
+  // Combined progress: first 50% frame capture, final 50% background solve.
+  double trackerOverallProgress() const;
   QString trackerModeLabel() const;
   double trackerAverageConfidence() const;
   int trackerProblemFrameCount() const;
+  // Fill caller-owned fixed storage with evenly sampled confidence values.
+  // Returns the number of values written and never allocates.
+  int trackerConfidenceSamples(float* confidence, float* timeFraction,
+                               bool* breakBefore, int capacity) const;
+  double trackerFrameConfidenceAt(int64_t frame, int64_t& resultFrame,
+                                  bool& isFailureFrame,
+                                  bool& isLowConfidence) const;
   int trackerResultFrameCount() const;
+  int trackerMethodIndex() const;
+  void trackerCycleMethod();
+  double trackerConfidenceThreshold() const;
+  void trackerAdjustConfidenceThreshold(double delta);
+  // Tracker input can be selected independently from the Composition target.
+  LayerID trackerSourceLayerId() const;
+  void trackerCycleSourceLayer(int direction);
+  void trackerUseSelectedLayerAsSource();
+  QString trackerSessionLabel() const;
+  int trackerSessionCount() const;
+  void trackerCycleSession(int direction);
+  void trackerSelectSession(int trackerId);
+  bool trackerSessionSelectionOutOfDate() const;
+  void trackerRestoreCompositionSession();
+  void trackerDetachSession();
   bool trackerHasResult() const;
   void trackerNextProblemFrame();
+  void trackerPreviousProblemFrame();
   // Applies the MotionTracker's bounded five-frame smoothing to the current
   // result. It does not re-run the solve or manufacture keyframes.
   void trackerSmooth();
@@ -830,8 +864,12 @@ WorldRay createPickingRay(
   void trackerApplyToAnchor();
   void trackerApplyAllPoints();
   void trackerApplyPlanarCornerPin();
-  // Applies the active planar track to the first mask of the selected layer by
-  // writing per-frame MaskPath keyframes.  Requires TrackerType::Planar.
+  int trackerMaskIndex() const;
+  int trackerMaskPathIndex() const;
+  int trackerMaskPathCount() const;
+  void trackerCycleMaskPath(int direction);
+  // Applies the active planar track to the selected mask path by writing
+  // per-frame MaskPath keyframes. Requires TrackerType::Planar.
   void trackerApplyToMask();
   void trackerDelete();
   void trackerCaptureNextFrame(std::uint64_t generation);

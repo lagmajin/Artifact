@@ -198,6 +198,147 @@
     "mem_na": "内存: N/A",
     "comp1": "合成1"
   },
+  "tracker": {
+    "panel": {
+      "title": "跟踪器",
+      "mode": {
+        "point": "点跟踪器",
+        "planar": "平面跟踪器",
+        "point_button": "点跟踪",
+        "point_tooltip": "使用点跟踪",
+        "planar_button": "平面",
+        "planar_tooltip": "使用四角平面跟踪"
+      },
+      "session": {
+        "create_tooltip": "为当前合成添加另一个跟踪会话",
+        "delete": "删除",
+        "delete_tooltip": "删除当前跟踪器",
+        "none": "没有跟踪器会话",
+        "previous_tooltip": "选择上一个跟踪器会话",
+        "next_tooltip": "选择下一个跟踪器会话"
+      },
+      "source": {
+        "no_composition": "跟踪源：没有活动合成",
+        "select_image": "跟踪源：请选择图像图层",
+        "target_line": "应用目标：%1",
+        "not_trackable_suffix": "（不可跟踪）",
+        "tooltip": "从上方的来源进行跟踪。应用位置时可创建 Null 图层；锚点、Corner Pin 和蒙版使用当前选中的目标图层。",
+        "source_line": "跟踪来源：%1%2",
+        "select_target": "应用目标：选择图层",
+        "source_tooltip": "跟踪此静态图像或图像序列图层。Composition 中选中的图层仍作为结果应用目标。",
+        "previous_tooltip": "选择上一个可跟踪的图像来源",
+        "next_tooltip": "选择下一个可跟踪的图像来源",
+        "use_selection": "使用所选项",
+        "use_selection_tooltip": "将当前选中的图层用作跟踪来源"
+      },
+      "section": {
+        "setup": "设置",
+        "points": "跟踪点",
+        "settings": "跟踪设置",
+        "analyze": "分析",
+        "quality": "质量",
+        "apply": "应用"
+      },
+      "setup": {
+        "geometry": "设置跟踪形状",
+        "geometry_tooltip": "启用跟踪工具，并在视口中编辑点或平面",
+        "add_point": "添加点",
+        "add_point_tooltip": "启用放置后，点击视口添加点",
+        "remove_last_point": "移除最后一点",
+        "remove_last_point_tooltip": "分析前移除最近添加的点",
+        "point_count": "跟踪点：%1",
+        "reset": "重置跟踪",
+        "reset_tooltip": "开始新分析前清除跟踪点、平面区域和跟踪结果"
+      },
+      "analyze": {
+        "backward": "向后跟踪",
+        "stop": "停止跟踪",
+        "forward": "向前跟踪",
+        "step_backward": "向后跟踪一帧",
+        "step_forward": "向前跟踪一帧",
+        "step_requires_playback": "请先在 Playback 中激活此合成，再逐帧跟踪",
+        "step_requires_pause": "逐帧跟踪前请暂停 Playback",
+        "full_sequence": "跟踪整个序列"
+      },
+      "quality": {
+        "review": "检查问题帧",
+        "review_previous": "上一个问题",
+        "review_next": "下一个问题",
+        "review_previous_tooltip": "跳转到上一个问题帧",
+        "review_tooltip": "跳转到下一个问题帧",
+        "review_requires_playback": "请先在 Playback 中激活此合成，再检查问题帧",
+        "smooth": "平滑轨迹",
+        "smooth_tooltip": "对活动跟踪点应用五帧移动平均",
+        "remove_outliers": "移除离群值",
+        "remove_outliers_tooltip": "停用速度离群点并标记对应帧以供检查",
+        "filter_confidence": "按置信度筛选",
+        "filter_confidence_tooltip": "停用低于当前跟踪置信度阈值的点",
+        "confidence_empty": "置信度 —",
+        "confidence": "置信度 %1%",
+        "tracking": "跟踪中…",
+        "cancelling": "正在取消…",
+        "problem_frames_empty": "问题帧 —",
+        "problem_frames": "问题帧 %1",
+        "frame_live": "正在播放",
+        "frame_unavailable": "帧 %1 • 无结果",
+        "frame_confidence": "最近结果帧 %1 • 置信度 %2%",
+        "frame_low_confidence": "最近结果帧 %1 • 低置信度 (%2%)",
+        "frame_failure": "最近结果帧 %1 • 跟踪失败 • 置信度 %2%",
+        "frame_failure_low_confidence": "最近结果帧 %1 • 跟踪失败且置信度低 • 置信度 %2%",
+        "frame_failed_no_result": "帧 %1 • 跟踪失败",
+        "chart_tooltip": "按结果时间显示置信度；虚线表示阈值，断线表示结果缺失区间",
+        "chart_name": "跟踪置信度图表",
+        "tracked_frames_empty": "已跟踪帧 —",
+        "tracked_frames": "已跟踪帧 %1"
+      },
+      "settings": {
+        "method_label": "方法：%1",
+        "method_tooltip": "切换分析使用的跟踪算法",
+        "method": {
+          "optical_flow": "光流",
+          "feature_based": "特征点",
+          "template_match": "模板匹配",
+          "hybrid": "混合"
+        },
+        "confidence_threshold": "置信度阈值：%1%",
+        "confidence_down_tooltip": "将置信度阈值降低5%",
+        "confidence_up_tooltip": "将置信度阈值提高5%"
+      },
+      "apply": {
+        "position": "烘焙位置",
+        "position_tooltip": "将点跟踪应用到所选图层，或创建 Null 图层",
+        "anchor": "烘焙锚点",
+        "anchor_tooltip": "将点跟踪应用到所选图层的锚点",
+        "all_points": "为所有点创建 Null",
+        "all_points_tooltip": "为每个跟踪点创建一个 Null 图层",
+        "corner_pin": "应用角点固定",
+        "corner_pin_tooltip": "将平面跟踪应用到所选图层的 Corner Pin",
+        "mask": "将跟踪应用到蒙版",
+        "mask_tooltip": "将平面跟踪应用到所选蒙版路径",
+        "mask_target": "蒙版 %1 • 路径 %2",
+        "mask_target_empty": "没有蒙版路径",
+        "mask_previous_tooltip": "选择上一个蒙版路径",
+        "mask_next_tooltip": "选择下一个蒙版路径",
+        "problem_frames_title": "跟踪问题",
+        "problem_frames_confirmation": "有 %1 个问题帧。失败帧可能没有关键帧，且可能会使用低置信度值。请先检查这些帧，或明确继续。",
+        "confirm_with_problems": "仍要烘焙",
+        "cancel_bake": "取消"
+      },
+      "status": {
+        "no_composition": "没有活动合成",
+        "analyzing": "正在分析…",
+        "cancelling": "正在取消…",
+        "cancelled": "已取消；未采用部分结果",
+        "failed": "跟踪失败；请检查源图层和跟踪区域",
+        "result_ready": "跟踪结果已就绪",
+        "select_source": "请选择静态图像或图像序列图层",
+        "create_session": "创建跟踪器，然后在视口中设置跟踪形状",
+        "set_geometry": "请在视口中检查或调整跟踪形状，然后开始跟踪",
+        "add_point": "请在视口中点击以放置跟踪点",
+        "ready": "就绪"
+      }
+    }
+  },
   "file_dialog": {
     "image_filter": "图像 (*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.webp);;所有文件 (*.*)",
     "media_filter": "媒体文件 (*.mp4 *.mov *.mkv *.avi *.webm *.mp3 *.wav *.flac *.aac *.m4a *.ogg);;所有文件 (*.*)"

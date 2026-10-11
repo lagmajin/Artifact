@@ -1,5 +1,6 @@
 module;
 #include <cmath>
+#include <cstddef>
 #include <cstring>
 #include <algorithm>
 #include <array>
@@ -50,22 +51,24 @@ using namespace ArtifactCore;
 
 Q_LOGGING_CATEGORY(particleSubmitterLog, "artifact.render.particles", QtInfoMsg)
 
-static void mapWriteDiscard(IDeviceContext* ctx, IBuffer* buf, const void* data, size_t size,
+static bool mapWriteDiscard(IDeviceContext* ctx, IBuffer* buf, const void* data,
+                            size_t size,
                             ArtifactCore::RenderCostStats* stats = nullptr)
 {
     if (!ctx || !buf || !data || size == 0) {
-        return;
+        return false;
     }
     void* pData = nullptr;
     ctx->MapBuffer(buf, MAP_WRITE, MAP_FLAG_DISCARD, pData);
     if (!pData) {
-        return;
+        return false;
     }
     std::memcpy(pData, data, size);
     ctx->UnmapBuffer(buf, MAP_WRITE);
     if (stats) {
         ++stats->bufferUpdates;
     }
+    return true;
 }
 
 static void recordDrawCall(ArtifactCore::RenderCostStats* stats, bool indexed = false)

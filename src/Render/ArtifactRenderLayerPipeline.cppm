@@ -846,7 +846,10 @@ cbuffer ChromaKeyParams : register(b0)
     float g_ViewMode;
     float g_Choke;
     float g_MatteBlur;
-    float4 g_Pad;
+    float g_DetailRecovery;
+    float g_LightWrapIntensity;
+    float g_LightWrapWidth;
+    float g_Pad;
 };
 
 float3 rgbToYCbCr(float3 color)
@@ -867,7 +870,11 @@ float baseAlpha(float3 color)
     const float t = saturate((distance - g_HueTolerance) / softness);
     const float smooth = t * t * (3.0 - 2.0 * t);
     const float range = max(g_ClipWhite - g_ClipBlack, 1.0e-4);
-    return saturate((smooth - g_ClipBlack) / range);
+    float clipped = saturate((smooth - g_ClipBlack) / range);
+    if (g_DetailRecovery > 1.0e-4 && clipped > 0.0 && clipped < 1.0) {
+        clipped = saturate(clipped + (smooth - clipped) * g_DetailRecovery);
+    }
+    return clipped;
 }
 
 float3 despillColor(float3 color, float alpha)
@@ -882,11 +889,25 @@ float3 despillColor(float3 color, float alpha)
         else if (g_KeyR >= g_KeyG && g_KeyR >= g_KeyB)
             color.r -= max(0.0, color.r - max(color.g, color.b)) * spill;
         else
-            color.b -= max(0.0, color.b - max(color.r, color.g)) * spill;
+            color.b -= max(0.0, color.b - max(color.r, color.b)) * spill;
+        return max(color, 0.0);
+    } else if (mode == 2) {
+        const float luma = dot(max(color, 0.0), float3(0.299, 0.587, 0.114));
+        return max(lerp(color, float3(luma, luma, luma), spill), 0.0);
+    } else if (mode == 3) {
+        if (g_KeyG >= g_KeyR && g_KeyG >= g_KeyB) {
+            const float target = (color.r + color.b) * 0.5;
+            if (color.g > target) color.g = max(target, color.g - (color.g - target) * spill);
+        } else if (g_KeyR >= g_KeyG && g_KeyR >= g_KeyB) {
+            const float target = (color.g + color.b) * 0.5;
+            if (color.r > target) color.r = max(target, color.r - (color.r - target) * spill);
+        } else {
+            const float target = (color.r + color.g) * 0.5;
+            if (color.b > target) color.b = max(target, color.b - (color.b - target) * spill);
+        }
         return max(color, 0.0);
     }
-    const float luma = dot(max(color, 0.0), float3(0.299, 0.587, 0.114));
-    return max(lerp(color, float3(luma, luma, luma), spill), 0.0);
+    return max(color, 0.0);
 }
 
 [numthreads(8, 8, 1)]
@@ -1057,7 +1078,10 @@ void ChromaKeyCS(uint3 dispatchId : SV_DispatchThreadID)
    float viewMode = 0.0f;
    float choke = 0.0f;
    float matteBlur = 0.0f;
-   float pad[4] = {};
+   float detailRecovery = 0.0f;
+   float lightWrapIntensity = 0.0f;
+   float lightWrapWidth = 4.0f;
+   float pad = 0.0f;
   };
 
   inline constexpr const char* kScreenSpaceGlobalIlluminationResolveShader = R"(
@@ -1264,6 +1288,8 @@ void ScreenSpaceGIResolveCS(uint3 dispatchId : SV_DispatchThreadID)
   TextureBundle effectMaskSource_;
  TextureBundle layer_;
  TextureBundle layerFloat_;
+ // Persistent scratch for batched multi-matte accumulation.
+ TextureBundle matteAccum_;
   std::array<TextureBundle, 3> matteSources_;
   TextureBundle emission_;
   TextureBundle normal_;
@@ -1543,6 +1569,7 @@ bool RenderPipeline::initialize(IRenderDevice* device,
   impl_->effectAdditionalMaskCoverage_ = {};
   impl_->layer_ = {};
   impl_->layerFloat_ = {};
+  impl_->matteAccum_ = {};
   for (auto& matteSource : impl_->matteSources_) {
    matteSource = {};
   }
@@ -2391,10 +2418,13 @@ bool RenderPipeline::initialize(IRenderDevice* device,
    params.clipWhite = std::max(node.parameters[6], params.clipBlack + 0.0001f);
    params.clipWhite = std::min(params.clipWhite, 1.0f);
    params.despillStrength = std::clamp(node.parameters[7], 0.0f, 1.0f);
-   params.despillMode = std::clamp(node.parameters[8], 0.0f, 2.0f);
+   params.despillMode = std::clamp(node.parameters[8], 0.0f, 3.0f);
    params.viewMode = std::clamp(node.parameters[9], 0.0f, 3.0f);
    params.choke = std::clamp(node.parameters[10], -1.0f, 1.0f);
    params.matteBlur = std::clamp(node.parameters[11], 0.0f, 2.0f);
+   params.detailRecovery = std::clamp(node.parameters[12], 0.0f, 1.0f);
+   params.lightWrapIntensity = std::clamp(node.parameters[13], 0.0f, 1.0f);
+   params.lightWrapWidth = std::clamp(node.parameters[14], 1.0f, 16.0f);
    std::memcpy(mapped, &params, sizeof(params));
    ctx->UnmapBuffer(impl_->chromaKeyParams_, MAP_WRITE);
    if (!impl_->chromaKeyExecutor_->setTextureView("g_InputTexture", inputSRV) ||
@@ -2842,12 +2872,14 @@ bool RenderPipeline::applyEffectMaskComposite(
  {
  return impl_->device_ != nullptr && impl_->width_ > 0 && impl_->height_ > 0 &&
          impl_->accum_.texture && impl_->temp_.texture && impl_->layer_.texture &&
-         impl_->layerFloat_.texture && impl_->matteSources_[0].texture &&
+         impl_->layerFloat_.texture && impl_->matteAccum_.texture &&
+         impl_->matteSources_[0].texture &&
          impl_->matteSources_[1].texture && impl_->matteSources_[2].texture &&
          impl_->accum_.srv && impl_->accum_.uav && impl_->accum_.rtv &&
          impl_->temp_.srv && impl_->temp_.uav && impl_->temp_.rtv &&
          impl_->layer_.srv && impl_->layer_.rtv &&
          impl_->layerFloat_.srv && impl_->layerFloat_.uav &&
+         impl_->matteAccum_.srv && impl_->matteAccum_.uav &&
          impl_->matteSources_[0].srv &&
          impl_->matteSources_[1].srv &&
          impl_->matteSources_[2].srv &&
@@ -2923,6 +2955,8 @@ bool RenderPipeline::applyEffectMaskComposite(
  ITextureView* RenderPipeline::layerRTV() const { return impl_->layer_.rtv; }
 ITextureView* RenderPipeline::layerFloatSRV() const { return impl_->layerFloat_.srv; }
 ITextureView* RenderPipeline::layerFloatUAV() const { return impl_->layerFloat_.uav; }
+ITextureView* RenderPipeline::matteAccumSRV() const { return impl_->matteAccum_.srv; }
+ITextureView* RenderPipeline::matteAccumUAV() const { return impl_->matteAccum_.uav; }
 ITextureView* RenderPipeline::matteSourceSRV() const {
  return impl_->matteSources_[0].srv;
 }
@@ -3548,6 +3582,12 @@ bool RenderPipeline::createTextures(IRenderDevice* device,
   if (!createTextureBundle(device, width, height, format,
                            BIND_RENDER_TARGET | BIND_SHADER_RESOURCE | BIND_UNORDERED_ACCESS,
                            "RenderPipeline.LayerFloat", impl_->layerFloat_))
+  {
+   return false;
+  }
+  if (!createTextureBundle(device, width, height, format,
+                           BIND_SHADER_RESOURCE | BIND_UNORDERED_ACCESS,
+                           "RenderPipeline.MatteAccum", impl_->matteAccum_))
   {
    return false;
   }

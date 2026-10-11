@@ -1,10 +1,13 @@
 module;
 #include <utility>
+#include <cstddef>
+#include <cstdint>
 #include <span>
 #include <RenderDevice.h>
 #include <DeviceContext.h>
 #include <SwapChain.h>
 #include <Texture.h>
+#include <Buffer.h>
 #include <RefCntAutoPtr.hpp>
 #include <BasicMath.hpp>
 #include <QImage>
@@ -28,6 +31,7 @@ import Text.GlyphLayout;
 import Utils.String.UniString;
 import Artifact.Render.ShaderManager;
 import Artifact.Render.RenderCommandBuffer;
+import Core.ArtifactArray;
 
 export namespace Artifact {
 

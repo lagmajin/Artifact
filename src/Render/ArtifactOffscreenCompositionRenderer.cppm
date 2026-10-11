@@ -37,7 +37,9 @@ namespace Artifact
     export class OffscreenCompositionRenderer
     {
     public:
-        OffscreenCompositionRenderer(RefCntAutoPtr<IRenderDevice> pDevice, Uint32 width, Uint32 height);
+        OffscreenCompositionRenderer(RefCntAutoPtr<IRenderDevice> pDevice,
+                                    RefCntAutoPtr<IDeviceContext> pContext,
+                                    Uint32 width, Uint32 height);
         ~OffscreenCompositionRenderer() = default;
 
         // 指定された時刻のフレームをレンダリング
@@ -89,17 +91,19 @@ module :private;
 
 namespace Artifact
 {
-    OffscreenCompositionRenderer::OffscreenCompositionRenderer(RefCntAutoPtr<IRenderDevice> pDevice, Uint32 width, Uint32 height)
-        : pDevice_(pDevice), width_(width), height_(height)
+    OffscreenCompositionRenderer::OffscreenCompositionRenderer(
+        RefCntAutoPtr<IRenderDevice> pDevice,
+        RefCntAutoPtr<IDeviceContext> pContext, Uint32 width, Uint32 height)
+        : pDevice_(pDevice), pContext_(pContext), width_(width), height_(height)
     {
-        // 独自のイミディエイト/ディファードコンテキストを作成
-        pDevice_->CreateDeferredContext(&pContext_);
-        initializeResources();
-        
-        // IRendererを初期化（ウィジェットなしモード）
+        // The renderer's readback path submits and maps resources through its
+        // immediate context, so drawing and readback must share that context.
         renderer_ = std::make_unique<ArtifactIRenderer>(pDevice_, pContext_, nullptr);
+        renderer_->initializeHeadless(static_cast<int>(width_),
+                                      static_cast<int>(height_));
         renderer_->setCanvasSize((float)width_, (float)height_);
         renderer_->setViewportSize((float)width_, (float)height_);
+        initializeResources();
     }
     void OffscreenCompositionRenderer::initializeResources()
     {

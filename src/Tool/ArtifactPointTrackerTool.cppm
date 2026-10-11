@@ -131,7 +131,8 @@ public:
         const ArtifactCompositionPtr& comp,
         const ArtifactCore::MotionTracker& tracker,
         const ApplyOptions& options,
-        ArtifactAbstractLayerPtr targetLayer = nullptr)
+        ArtifactAbstractLayerPtr targetLayer = nullptr,
+        MacroUndoCommand* parentUndoMacro = nullptr)
     {
         if (!comp) return false;
 
@@ -292,34 +293,38 @@ public:
                 return restored && restoredAnchor;
             };
 
-            auto macro = std::make_unique<MacroUndoCommand>(
-                QStringLiteral("Apply Tracking Result"));
+            if (!restoreBefore()) return false;
+
+            auto macro = parentUndoMacro
+                ? std::unique_ptr<MacroUndoCommand>{}
+                : std::make_unique<MacroUndoCommand>(
+                      QStringLiteral("Apply Tracking Result"));
+            auto* commandTarget = parentUndoMacro ? parentUndoMacro : macro.get();
             if (createdNullLayer) {
-                macro->addChild(std::make_unique<AddLayerCommand>(
+                commandTarget->addChild(std::make_unique<AddLayerCommand>(
                     comp, writeLayer, true));
             }
             if (!sameKeyframes(beforePositionX, afterPositionX)) {
-                macro->addChild(std::make_unique<SetLayerPropertyKeyframesCommand>(
+                commandTarget->addChild(std::make_unique<SetLayerPropertyKeyframesCommand>(
                     writeLayer, QStringLiteral("transform.position.x"),
                     beforePositionX, afterPositionX));
             }
             if (!sameKeyframes(beforePositionY, afterPositionY)) {
-                macro->addChild(std::make_unique<SetLayerPropertyKeyframesCommand>(
+                commandTarget->addChild(std::make_unique<SetLayerPropertyKeyframesCommand>(
                     writeLayer, QStringLiteral("transform.position.y"),
                     beforePositionY, afterPositionY));
             }
             if (options.writeAnchor && !sameKeyframes(beforeAnchorX, afterAnchorX)) {
-                macro->addChild(std::make_unique<SetLayerPropertyKeyframesCommand>(
+                commandTarget->addChild(std::make_unique<SetLayerPropertyKeyframesCommand>(
                     writeLayer, QStringLiteral("transform.anchor.x"),
                     beforeAnchorX, afterAnchorX));
             }
             if (options.writeAnchor && !sameKeyframes(beforeAnchorY, afterAnchorY)) {
-                macro->addChild(std::make_unique<SetLayerPropertyKeyframesCommand>(
+                commandTarget->addChild(std::make_unique<SetLayerPropertyKeyframesCommand>(
                     writeLayer, QStringLiteral("transform.anchor.y"),
                     beforeAnchorY, afterAnchorY));
             }
-            if (!restoreBefore()) return false;
-            if (!undo->push(std::move(macro))) {
+            if (!parentUndoMacro && !undo->push(std::move(macro))) {
                 restoreAfter();
                 return false;
             }
@@ -364,6 +369,21 @@ public:
         }
 
         int applied = 0;
+        if (auto* undo = UndoManager::instance()) {
+            auto batch = std::make_unique<MacroUndoCommand>(
+                QStringLiteral("Apply All Tracking Points"));
+            for (int id : pointIds) {
+                ApplyOptions opts = options;
+                opts.pointId = id;
+                if (applyTrackingResult(comp, tracker, opts, nullptr,
+                                       batch.get())) {
+                    ++applied;
+                }
+            }
+            if (applied <= 0 || !undo->push(std::move(batch))) return 0;
+            return applied;
+        }
+
         for (int id : pointIds) {
             ApplyOptions opts = options;
             opts.pointId = id;

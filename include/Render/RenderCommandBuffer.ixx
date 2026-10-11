@@ -1,5 +1,6 @@
 module;
 #include <compare>
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstddef>
@@ -17,11 +18,13 @@ module;
 #include <QVector2D>
 #include <QVector3D>
 #include <Texture.h>
+#include <Buffer.h>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <BasicMath.hpp>
 export module Artifact.Render.RenderCommandBuffer;
 
 import Text.Style;
+import Core.ArtifactArray;
 import Graphics.ParticleData;
 
 export namespace Artifact {
@@ -271,6 +274,8 @@ using DrawPacket = std::variant<
 
 class RenderCommandBuffer {
 public:
+    static constexpr std::size_t kRecycledParticleBufferLimit = 4;
+
     void setTargetRTV(ITextureView* target) {
         retainedTargetRTV_ = target;
         targetRTV_ = target;
@@ -401,6 +406,12 @@ private:
         std::visit([](auto& packet) {
             if constexpr (requires { packet.pSRV; packet.retainedSRV; }) {
                 packet.retainedSRV = packet.pSRV;
+            }
+            if constexpr (requires {
+                              packet.placementBuffer;
+                              packet.retainedPlacementBuffer;
+                          }) {
+                packet.retainedPlacementBuffer = packet.placementBuffer;
             }
             if constexpr (requires { packet.depthDSV; packet.retainedDepthDSV; }) {
                 packet.retainedDepthDSV = packet.depthDSV;

@@ -342,15 +342,21 @@ bool ArtifactAbstractLayer::setComponentDescriptorPropertyValue(
             field == QStringLiteral("spacingZ") ||
             field == QStringLiteral("radius") ||
             field == QStringLiteral("startAngle") ||
-            field == QStringLiteral("endAngle")) {
+            field == QStringLiteral("endAngle") ||
+            field == QStringLiteral("opacityDecay")) {
           const double fallback =
               descriptor->settings.value(field).toDouble(0.0);
           const bool angle = field == QStringLiteral("startAngle") ||
                              field == QStringLiteral("endAngle");
+          const bool opacityDecay = field == QStringLiteral("opacityDecay");
           return setSetting(
               field, finiteClampedValue(value.toDouble(), fallback,
-                                        angle ? -360000.0 : -100000.0,
-                                        angle ? 360000.0 : 100000.0));
+                                        opacityDecay ? 0.0
+                                                     : (angle ? -360000.0
+                                                              : -100000.0),
+                                        opacityDecay ? 1.0
+                                                     : (angle ? 360000.0
+                                                              : 100000.0)));
         }
       }
       return false;

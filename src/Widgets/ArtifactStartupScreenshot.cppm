@@ -7,6 +7,7 @@ module;
 #include <QFile>
 #include <QFileInfo>
 #include <QPixmap>
+#include <QScreen>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QWidget>
@@ -78,7 +79,16 @@ void captureStartupScreenshot(QWidget *window) {
       return;
     }
   }
-  const QPixmap screenshot = captureTarget->grab();
+  QPixmap screenshot;
+  if (qEnvironmentVariableIsSet(
+          "ARTIFACT_STARTUP_SCREENSHOT_NATIVE_WINDOW")) {
+    QScreen *screen = window->screen();
+    if (screen) {
+      screenshot = screen->grabWindow(window->winId());
+    }
+  } else {
+    screenshot = captureTarget->grab();
+  }
   if (screenshot.isNull()) {
     qWarning() << "[StartupScreenshot] window capture returned an empty pixmap";
     return;

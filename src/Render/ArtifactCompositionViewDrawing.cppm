@@ -5,6 +5,8 @@ module;
 #include <QColor>
 #include <QHash>
 #include <QImage>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QMutex>
 #include <QMutexLocker>
 #include <QMatrix4x4>
@@ -20,7 +22,9 @@ module;
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <opencv2/opencv.hpp>
@@ -2070,7 +2074,8 @@ QImage renderParticleSurfaceGPU(ArtifactIRenderer* renderer,
     ParticleGpuSurfaceHelper entry;
     entry.device = deviceKey;
     entry.renderer = std::make_shared<OffscreenCompositionRenderer>(
-        deviceHolder, static_cast<Diligent::Uint32>(surfaceSize.width()),
+        deviceHolder, renderer->immediateContext(),
+        static_cast<Diligent::Uint32>(surfaceSize.width()),
         static_cast<Diligent::Uint32>(surfaceSize.height()));
     it = helpers.insert(ownerKey, std::move(entry));
   }

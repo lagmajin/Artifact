@@ -2642,6 +2642,10 @@ if(WIN32)
     target_sources(Artifact PRIVATE App/ArtifactAppIcon.rc)
 endif()
 add_library(ArtifactAppRuntime OBJECT)
+if(WIN32 AND ARTIFACT_AGILITY_SDK_DIR)
+    target_compile_definitions(ArtifactAppRuntime PRIVATE
+        ARTIFACT_HAS_AGILITY_SDK=1)
+endif()
 
 set_target_properties(Artifact ArtifactUiTest ArtifactAppRuntime PROPERTIES
     CXX_STANDARD 23
@@ -2731,7 +2735,7 @@ if(ARTIFACT_FRONTEND_MSVC)
     # The installed MSVC toolchain no longer supports FASTLINK, so omit the
     # executable PDB while keeping embedded debug information in object files.
     target_link_options(Artifact PRIVATE
-        "$<$<CONFIG:Debug>:/PDB:NONE>"
+        "$<$<CONFIG:Debug>:/DEBUG:NONE>"
     )
 endif()
 if(ARTIFACT_ENABLE_LINK_LIBRARY_TRACE)

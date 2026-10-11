@@ -1579,14 +1579,17 @@ void ArtifactAbstractLayer::enableMaterialPhysics(int preset) {
   if (!bounds.isValid() || bounds.width() <= 0.0 || bounds.height() <= 0.0) {
     return;
   }
+  const int safePreset = std::clamp(preset, 0, 3);
+  if (!LayerPhysics::createMaterialGrid(
+      id(), static_cast<float>(bounds.left()), static_cast<float>(bounds.top()),
+      static_cast<float>(bounds.width()), static_cast<float>(bounds.height()),
+      20, 20, safePreset)) {
+    return;
+  }
   impl_->materialPhysicsEnabled_ = true;
   impl_->physicsComponent_.authoring().solverKind =
       PhysicsSolverKind::Mpm2D;
-  impl_->materialPhysicsPreset_ = std::clamp(preset, 0, 3);
-  LayerPhysics::createMaterialGrid(
-      id(), static_cast<float>(bounds.left()), static_cast<float>(bounds.top()),
-      static_cast<float>(bounds.width()), static_cast<float>(bounds.height()),
-      20, 20, impl_->materialPhysicsPreset_);
+  impl_->materialPhysicsPreset_ = safePreset;
 }
 
 void ArtifactAbstractLayer::disableMaterialPhysics() {
@@ -1931,6 +1934,11 @@ void ArtifactAbstractLayer::applyRigidBodyWorldGravity() {
 NamedVector<QPointF> ArtifactAbstractLayer::collisionOutlineLocalPoints()
     const {
   return {};
+}
+
+void ArtifactAbstractLayer::appendCollisionOutlineLocalPoints(
+    ArtifactCore::NamedVector<QPointF>& output) const {
+  (void)output;
 }
 
 ArtifactCore::Collider2DEditState ArtifactAbstractLayer::collision2DEditState() const {

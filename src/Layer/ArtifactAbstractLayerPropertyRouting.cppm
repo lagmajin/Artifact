@@ -1278,9 +1278,11 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     return true;
   }
   if (propertyPath == QStringLiteral("physics.material.preset")) {
-    impl_->materialPhysicsPreset_ = std::clamp(value.toInt(), 0, 3);
+    const int requestedPreset = std::clamp(value.toInt(), 0, 3);
     if (impl_->materialPhysicsEnabled_) {
-      enableMaterialPhysics(impl_->materialPhysicsPreset_);
+      enableMaterialPhysics(requestedPreset);
+    } else {
+      impl_->materialPhysicsPreset_ = requestedPreset;
     }
     notifyLayerMutation(this, LayerDirtyFlag::Effect,
                         LayerDirtyReason::PropertyChanged);

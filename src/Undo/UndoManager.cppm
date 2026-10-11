@@ -2825,6 +2825,130 @@ bool MoveMaskCommand::deserialize(const QJsonObject& data) {
 }
 
 // --- RemoveLayerCommand ---
+namespace {
+ArtifactProjectPtr projectOwningComposition(
+    const ArtifactCompositionPtr& composition) {
+    if (!composition) return {};
+    auto project = ArtifactProjectManager::getInstance()
+                       .getCurrentProjectSharedPtr();
+    if (!project || !project->hasComposition(composition->id())) return {};
+    const auto found = project->findComposition(composition->id());
+    if (!found.success || found.ptr.lock() != composition) return {};
+    return project;
+}
+
+void captureTrackerSourceMetadata(
+    const ArtifactCompositionPtr& composition, const QString& layerId,
+    QString& compositionSourceLayerId,
+    QJsonObject& sessionSourceLayerIds) {
+    const auto project = projectOwningComposition(composition);
+    if (!project || layerId.isEmpty()) return;
+    const QString compositionKey = composition->id().toString();
+    const QJsonObject extensionData = project->extensionData();
+    const QJsonObject compositionSources = extensionData
+        .value(QStringLiteral("trackerSourceLayersByComposition"))
+        .toObject();
+    if (compositionSources.value(compositionKey).toString() == layerId) {
+        compositionSourceLayerId = layerId;
+    }
+    const QJsonObject allSessionSources = extensionData
+        .value(QStringLiteral("trackerSourceLayersBySession"))
+        .toObject();
+    const QJsonObject sessionSources = allSessionSources
+        .value(compositionKey)
+        .toObject();
+    for (const QString& trackerId : sessionSources.keys()) {
+        if (sessionSources.value(trackerId).toString() == layerId) {
+            sessionSourceLayerIds.insert(trackerId, layerId);
+        }
+    }
+}
+
+void updateTrackerSourceMetadataForLayerRemoval(
+    const ArtifactCompositionPtr& composition, const QString& layerId,
+    const QString& compositionSourceLayerId,
+    const QJsonObject& sessionSourceLayerIds, bool restore) {
+    const auto project = projectOwningComposition(composition);
+    if (!project || layerId.isEmpty()) return;
+    const QString compositionKey = composition->id().toString();
+    QJsonObject extensionData = project->extensionData();
+    bool changed = false;
+
+    QJsonObject compositionSources = extensionData
+        .value(QStringLiteral("trackerSourceLayersByComposition"))
+        .toObject();
+    const QString currentCompositionSource =
+        compositionSources.value(compositionKey).toString();
+    bool compositionSourcesChanged = false;
+    if (restore) {
+        if (!compositionSourceLayerId.isEmpty() &&
+            currentCompositionSource.isEmpty()) {
+            compositionSources.insert(compositionKey,
+                                      compositionSourceLayerId);
+            compositionSourcesChanged = true;
+        }
+    } else if (compositionSourceLayerId == layerId &&
+               currentCompositionSource == layerId) {
+        compositionSources.remove(compositionKey);
+        compositionSourcesChanged = true;
+    }
+    if (compositionSourcesChanged) {
+        if (compositionSources.isEmpty()) {
+            extensionData.remove(
+                QStringLiteral("trackerSourceLayersByComposition"));
+        } else {
+            extensionData.insert(
+                QStringLiteral("trackerSourceLayersByComposition"),
+                compositionSources);
+        }
+        changed = true;
+    }
+
+    QJsonObject allSessionSources = extensionData
+        .value(QStringLiteral("trackerSourceLayersBySession"))
+        .toObject();
+    QJsonObject sessionSources = allSessionSources
+        .value(compositionKey)
+        .toObject();
+    bool sessionSourcesChanged = false;
+    if (restore) {
+        for (const QString& trackerId : sessionSourceLayerIds.keys()) {
+            if (sessionSources.value(trackerId).toString().isEmpty()) {
+                sessionSources.insert(trackerId,
+                                      sessionSourceLayerIds.value(trackerId));
+                sessionSourcesChanged = true;
+            }
+        }
+    } else {
+        for (const QString& trackerId : sessionSourceLayerIds.keys()) {
+            if (sessionSources.value(trackerId).toString() == layerId) {
+                sessionSources.remove(trackerId);
+                sessionSourcesChanged = true;
+            }
+        }
+    }
+    if (sessionSourcesChanged) {
+        if (sessionSources.isEmpty()) {
+            allSessionSources.remove(compositionKey);
+        } else {
+            allSessionSources.insert(compositionKey, sessionSources);
+        }
+        if (allSessionSources.isEmpty()) {
+            extensionData.remove(
+                QStringLiteral("trackerSourceLayersBySession"));
+        } else {
+            extensionData.insert(
+                QStringLiteral("trackerSourceLayersBySession"),
+                allSessionSources);
+        }
+        changed = true;
+    }
+    if (!changed) return;
+    project->setExtensionData(extensionData);
+    project->setDirty(true);
+}
+} // namespace
+
 RemoveLayerCommand::RemoveLayerCommand(ArtifactCompositionPtr comp, ArtifactAbstractLayerPtr layer)
     : comp_(comp), layer_(layer),
       compositionId_(comp ? comp->id().toString() : QString()),
@@ -2833,6 +2957,9 @@ RemoveLayerCommand::RemoveLayerCommand(ArtifactCompositionPtr comp, ArtifactAbst
     if (!comp || !layer) {
         return;
     }
+    captureTrackerSourceMetadata(
+        comp, layerId_, removedCompositionTrackerSourceLayerId_,
+        removedSessionTrackerSourceLayerIds_);
     if (auto* selection = ArtifactLayerSelectionManager::instance();
         selection && selection->activeComposition() == comp) {
         hasSelectionSnapshot_ = true;
@@ -2934,6 +3061,9 @@ void RemoveLayerCommand::undo() {
             return;
         }
         if (lastOperationSucceeded_) {
+            updateTrackerSourceMetadataForLayerRemoval(
+                comp, layerId_, removedCompositionTrackerSourceLayerId_,
+                removedSessionTrackerSourceLayerIds_, true);
             if (auto mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
         }
     }
@@ -3002,6 +3132,9 @@ void RemoveLayerCommand::redo() {
             return;
         }
         if (lastOperationSucceeded_) {
+            updateTrackerSourceMetadataForLayerRemoval(
+                comp, layerId_, removedCompositionTrackerSourceLayerId_,
+                removedSessionTrackerSourceLayerIds_, false);
             if (auto mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
         }
     }
@@ -3023,6 +3156,12 @@ size_t RemoveLayerCommand::estimatedMemoryBytes() const {
     }
     bytes += sizeof(ArtifactCore::LayerID) * removedParentReferences_.size();
     bytes += static_cast<size_t>(currentSelectedLayerId_.size()) * sizeof(QChar);
+    bytes += static_cast<size_t>(
+        removedCompositionTrackerSourceLayerId_.size()) * sizeof(QChar);
+    bytes += static_cast<size_t>(QJsonDocument(
+        removedSessionTrackerSourceLayerIds_)
+            .toJson(QJsonDocument::Compact)
+            .size());
     for (const auto& id : selectedLayerIds_) {
         bytes += static_cast<size_t>(id.size()) * sizeof(QChar);
     }
@@ -3037,7 +3176,11 @@ QJsonObject RemoveLayerCommand::serialize() const {
                        {QStringLiteral("originalIndex"), originalIndex_},
                        {QStringLiteral("selectedLayerIds"), selected},
                        {QStringLiteral("currentSelectedLayerId"),
-                        currentSelectedLayerId_}};
+                        currentSelectedLayerId_},
+                       {QStringLiteral("removedCompositionTrackerSourceLayerId"),
+                        removedCompositionTrackerSourceLayerId_},
+                       {QStringLiteral("removedSessionTrackerSourceLayerIds"),
+                        removedSessionTrackerSourceLayerIds_}};
 }
 
 bool RemoveLayerCommand::deserialize(const QJsonObject& data) {
@@ -3053,6 +3196,10 @@ bool RemoveLayerCommand::deserialize(const QJsonObject& data) {
     }
     currentSelectedLayerId_ = data.value(
         QStringLiteral("currentSelectedLayerId")).toString();
+    removedCompositionTrackerSourceLayerId_ = data.value(
+        QStringLiteral("removedCompositionTrackerSourceLayerId")).toString();
+    removedSessionTrackerSourceLayerIds_ = data.value(
+        QStringLiteral("removedSessionTrackerSourceLayerIds")).toObject();
     auto* manager = UndoManager::instance();
     if (!manager) return false;
     comp_ = manager->resolveComposition(compositionId_);
@@ -7985,6 +8132,9 @@ void TrackerResultCommand::undo() {
 
 void TrackerResultCommand::redo() {
     if (alreadyApplied_) {
+        // Skip only the first redo invoked when the command is pushed; later
+        // redo calls must restore newJson_ after an undo.
+        alreadyApplied_ = false;
         lastOperationSucceeded_ = true;
         return;
     }

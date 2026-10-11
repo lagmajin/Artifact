@@ -1544,6 +1544,14 @@ void DiligentDeviceManager::Impl::initialize(QWidget* widget)
 
 void DiligentDeviceManager::Impl::initializeHeadless()
 {
+    // A manager constructed from an existing device/context is already
+    // initialized. Keep that shared device for offscreen renderers instead of
+    // replacing it with a second headless device.
+    if (device_ && immediateContext_) {
+        initialized_ = true;
+        return;
+    }
+
     const auto backendPreference = getBackendPreferenceFromEnv();
 
     bool ok = false;

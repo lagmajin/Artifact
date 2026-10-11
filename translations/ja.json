@@ -6,7 +6,7 @@
     "translators": [
       "Artifact Team"
     ],
-    "lastUpdated": "2026-10-09"
+    "lastUpdated": "2026-10-11"
   },
   "app": {
     "name": "Artifact",
@@ -1798,6 +1798,147 @@
       "tracking_fade": "トラッキングフェードプリセット",
       "wiggly_position": "揺れる位置プリセット",
       "blur_reveal": "ぼかし表示プリセット"
+    }
+  },
+  "tracker": {
+    "panel": {
+      "title": "トラッカー",
+      "mode": {
+        "point": "ポイントトラッカー",
+        "planar": "平面トラッカー",
+        "point_button": "ポイント",
+        "point_tooltip": "ポイントトラッキングを使用",
+        "planar_button": "平面",
+        "planar_tooltip": "4隅の平面トラッキングを使用"
+      },
+      "session": {
+        "create_tooltip": "アクティブなコンポジションに追跡セッションを追加",
+        "delete": "削除",
+        "delete_tooltip": "アクティブなトラッカーを削除",
+        "none": "トラッカーセッションなし",
+        "previous_tooltip": "前のトラッカーセッションを選択",
+        "next_tooltip": "次のトラッカーセッションを選択"
+      },
+      "source": {
+        "no_composition": "追跡元: アクティブなコンポジションがありません",
+        "select_image": "追跡元: 画像レイヤーを選択してください",
+        "target_line": "適用先: %1",
+        "not_trackable_suffix": "（追跡不可）",
+        "tooltip": "上記の追跡元から解析します。位置の適用では Null レイヤーを作成できます。アンカー、Corner Pin、マスクは選択中の適用先レイヤーを使います。",
+        "source_line": "追跡元: %1%2",
+        "select_target": "適用先: レイヤーを選択",
+        "source_tooltip": "この静止画または連番画像レイヤーを追跡します。Composition で選択中のレイヤーは結果の適用先です。",
+        "previous_tooltip": "前の追跡可能な画像ソースを選択",
+        "next_tooltip": "次の追跡可能な画像ソースを選択",
+        "use_selection": "選択を使用",
+        "use_selection_tooltip": "現在選択中のレイヤーを追跡元にします"
+      },
+      "section": {
+        "setup": "設定",
+        "points": "追跡点",
+        "settings": "追跡設定",
+        "analyze": "解析",
+        "quality": "品質",
+        "apply": "適用"
+      },
+      "setup": {
+        "geometry": "追跡形状を設定",
+        "geometry_tooltip": "追跡ツールを有効にして、ビューポートでポイントまたは平面を編集します",
+        "add_point": "点を追加",
+        "add_point_tooltip": "追加を有効にしてからビューポートをクリック",
+        "remove_last_point": "最後の点を削除",
+        "remove_last_point_tooltip": "解析前に最後に追加した点を削除します",
+        "point_count": "追跡点: %1",
+        "reset": "追跡をリセット",
+        "reset_tooltip": "次の解析に備えて追跡点、平面領域、解析結果を消去します"
+      },
+      "analyze": {
+        "backward": "逆方向に追跡",
+        "stop": "追跡を停止",
+        "forward": "順方向に追跡",
+        "step_backward": "1フレーム戻って追跡",
+        "step_forward": "1フレーム進めて追跡",
+        "step_requires_playback": "1フレーム追跡するには、このコンポジションをPlaybackでアクティブにしてください",
+        "step_requires_pause": "1フレーム追跡する前にPlaybackを一時停止してください",
+        "full_sequence": "シーケンス全体を追跡"
+      },
+      "quality": {
+        "review": "問題フレームを確認",
+        "review_previous": "前の問題",
+        "review_next": "次の問題",
+        "review_previous_tooltip": "前の問題フレームへ移動",
+        "review_tooltip": "次の問題フレームへ移動",
+        "review_requires_playback": "問題フレームを確認するには、このコンポジションをPlaybackでアクティブにしてください",
+        "smooth": "軌跡を平滑化",
+        "smooth_tooltip": "有効な追跡点に5フレーム移動平均を適用します",
+        "remove_outliers": "外れ値を除去",
+        "remove_outliers_tooltip": "速度の外れ値を無効にし、該当フレームを確認対象にします",
+        "filter_confidence": "信頼度でフィルター",
+        "filter_confidence_tooltip": "設定された追跡信頼度のしきい値を下回る点を無効にします",
+        "confidence_empty": "信頼度 —",
+        "confidence": "信頼度 %1%",
+        "tracking": "追跡中…",
+        "cancelling": "キャンセル中…",
+        "problem_frames_empty": "問題フレーム —",
+        "problem_frames": "問題フレーム %1",
+        "frame_live": "再生中",
+        "frame_unavailable": "フレーム %1 • 結果なし",
+        "frame_confidence": "最寄りの結果フレーム %1 • 信頼度 %2%",
+        "frame_low_confidence": "最寄りの結果フレーム %1 • 信頼度低 (%2%)",
+        "frame_failure": "最寄りの結果フレーム %1 • 追跡失敗 • 信頼度 %2%",
+        "frame_failure_low_confidence": "最寄りの結果フレーム %1 • 追跡失敗・信頼度低 • 信頼度 %2%",
+        "frame_failed_no_result": "フレーム %1 • 追跡失敗",
+        "chart_tooltip": "結果時間ごとの信頼度。破線はしきい値、線の切れ目は結果の欠落区間です",
+        "chart_name": "追跡信頼度グラフ",
+        "tracked_frames_empty": "追跡済みフレーム —",
+        "tracked_frames": "追跡済みフレーム %1"
+      },
+      "settings": {
+        "method_label": "方式: %1",
+        "method_tooltip": "解析に使う追跡アルゴリズムを切り替えます",
+        "method": {
+          "optical_flow": "オプティカルフロー",
+          "feature_based": "特徴点ベース",
+          "template_match": "テンプレートマッチング",
+          "hybrid": "ハイブリッド"
+        },
+        "confidence_threshold": "信頼度しきい値: %1%",
+        "confidence_down_tooltip": "信頼度しきい値を5%下げます",
+        "confidence_up_tooltip": "信頼度しきい値を5%上げます"
+      },
+      "apply": {
+        "position": "位置をベイク",
+        "position_tooltip": "ポイント追跡を選択レイヤーへ適用するか、Null レイヤーを作成します",
+        "anchor": "アンカーをベイク",
+        "anchor_tooltip": "ポイント追跡を選択レイヤーのアンカーへ適用します",
+        "all_points": "全ポイントから Null を作成",
+        "all_points_tooltip": "追跡点ごとに Null レイヤーを1つ作成します",
+        "corner_pin": "Corner Pin を適用",
+        "corner_pin_tooltip": "平面追跡を選択レイヤーの Corner Pin に適用します",
+        "mask": "追跡をマスクに適用",
+        "mask_tooltip": "平面追跡を選択したマスクパスに適用します",
+        "mask_target": "マスク %1 • パス %2",
+        "mask_target_empty": "マスクパスなし",
+        "mask_previous_tooltip": "前のマスクパスを選択",
+        "mask_next_tooltip": "次のマスクパスを選択",
+        "problem_frames_title": "トラッキングの問題",
+        "problem_frames_confirmation": "問題フレームが %1 個あります。失敗フレームにはキーが作られず、信頼度の低い値が使われる可能性があります。先に確認するか、明示的に続行してください。",
+        "confirm_with_problems": "続けてBake",
+        "cancel_bake": "キャンセル"
+      },
+      "status": {
+        "no_composition": "アクティブなコンポジションがありません",
+        "analyzing": "解析中…",
+        "cancelling": "キャンセル中…",
+        "cancelled": "キャンセルしました（途中結果は採用されません）",
+        "failed": "追跡に失敗しました。追跡元と形状を確認してください",
+        "result_ready": "追跡結果を適用できます",
+        "select_source": "静止画または連番画像レイヤーを選択してください",
+        "create_session": "トラッカーを作成し、ビューポートで形状を設定してください",
+        "set_geometry": "ビューポートで追跡形状を確認・調整してから追跡を開始してください",
+        "add_point": "ビューポートをクリックして追跡点を配置してください",
+        "ready": "待機中"
+      }
     }
   },
   "file_dialog": {

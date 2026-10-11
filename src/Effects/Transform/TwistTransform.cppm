@@ -54,8 +54,7 @@ void TwistTransformCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, ImageF3
     }
     const float radians = angle * (3.14159265358979323846f / 180.0f);
 
-    ArtifactCore::Parallel::ForPixels(0, height, [&](int y) {
-        const cv::Vec4f, srcRow = srcMat.ptr<cv::Vec4f>(y);
+    ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
         cv::Vec4f* dstRow = dstMat.ptr<cv::Vec4f>(y);
         for (int x = 0; x < width; x++) {
             const float dx = static_cast<float>(x) - cx;

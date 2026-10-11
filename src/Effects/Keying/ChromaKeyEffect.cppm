@@ -91,6 +91,9 @@ void ChromaKeyEffectCPUImpl::applyCPU(const ArtifactCore::ImageF32x4RGBAWithCach
     params.choke = choke_;
     params.matteBlur = matteBlur_;
     params.viewMode = viewMode_;
+    params.detailRecovery = detailRecovery_;
+    params.lightWrapIntensity = lightWrapIntensity_;
+    params.lightWrapWidth = lightWrapWidth_;
     const ArtifactCore::Keying::ChromaKeyBuffers buffers{
         srcData, dstData, srcImage.width(), srcImage.height()};
     if (!ArtifactCore::Keying::processChromaKey(buffers, params)) {
@@ -246,7 +249,7 @@ cbuffer ChromaParams : register(b0) {
   float4 KeyColor;
   float HueTolerance; float EdgeSoftness; float ClipBlack; float ClipWhite;
   float DespillStrength; int DespillMode; int ViewMode; float Choke;
-  float MatteBlur; float3 Pad;
+  float MatteBlur; float DetailRecovery; float LightWrapIntensity; float LightWrapWidth;
 };
 float3 rgbToYCbCr(float3 c) {
   float y = dot(c, float3(0.299, 0.587, 0.114));
@@ -260,7 +263,11 @@ float baseAlpha(float3 rgb) {
   float d = sqrt(chroma * chroma + (luma * 0.35) * (luma * 0.35));
   float a = smoothstep(HueTolerance, HueTolerance + max(EdgeSoftness, 1e-4), d);
   float range = max(ClipWhite - ClipBlack, 1e-4);
-  return saturate((a - ClipBlack) / range);
+  float clipped = saturate((a - ClipBlack) / range);
+  if (DetailRecovery > 1e-4 && clipped > 0.0 && clipped < 1.0) {
+    clipped = saturate(clipped + (a - clipped) * DetailRecovery);
+  }
+  return clipped;
 }
 float3 despillColor(float3 rgb, float alpha) {
   if (DespillMode <= 0 || DespillStrength <= 0 || alpha >= 0.999) return max(rgb, 0);
@@ -273,9 +280,23 @@ float3 despillColor(float3 rgb, float alpha) {
     else
       rgb.b -= max(0, rgb.b - max(rgb.r, rgb.g)) * spill;
     return max(rgb, 0);
+  } else if (DespillMode == 2) {
+    float y = dot(max(rgb, 0), float3(0.299, 0.587, 0.114));
+    return max(lerp(rgb, float3(y, y, y), spill), 0);
+  } else if (DespillMode == 3) {
+    if (KeyColor.g >= KeyColor.r && KeyColor.g >= KeyColor.b) {
+      float target = (rgb.r + rgb.b) * 0.5;
+      if (rgb.g > target) rgb.g = max(target, rgb.g - (rgb.g - target) * spill);
+    } else if (KeyColor.r >= KeyColor.g && KeyColor.r >= KeyColor.b) {
+      float target = (rgb.g + rgb.b) * 0.5;
+      if (rgb.r > target) rgb.r = max(target, rgb.r - (rgb.r - target) * spill);
+    } else {
+      float target = (rgb.r + rgb.g) * 0.5;
+      if (rgb.b > target) rgb.b = max(target, rgb.b - (rgb.b - target) * spill);
+    }
+    return max(rgb, 0);
   }
-  float y = dot(max(rgb, 0), float3(0.299, 0.587, 0.114));
-  return max(lerp(rgb, float3(y, y, y), spill), 0);
+  return max(rgb, 0);
 }
 [numthreads(16,16,1)] void main(uint3 id : SV_DispatchThreadID) {
   uint w, h; OutputTexture.GetDimensions(w, h);
@@ -339,6 +360,24 @@ float3 despillColor(float3 rgb, float alpha) {
     matte = lerp(matte, sum / 9.0, saturate(MatteBlur * 0.5));
   }
   matte = saturate(matte);
+  if (LightWrapIntensity > 1e-4 && matte > 0.001 && matte < 0.98) {
+    float edgeWeight = (1.0 - matte) * saturate(LightWrapIntensity);
+    int wrapR = clamp((int)(LightWrapWidth + 0.5), 1, 16);
+    float3 amb = 0; int cnt = 0;
+    for (int wy = -wrapR; wy <= wrapR; wy += 2) {
+      for (int wx = -wrapR; wx <= wrapR; wx += 2) {
+        int2 wq = clamp(int2(id.xy) + int2(wx, wy), int2(0, 0), int2(w, h) - 1);
+        float4 nf = ForegroundTexture[uint2(wq)];
+        float na = saturate(nf.a);
+        amb += (na > 1e-6 ? nf.rgb / na : 0);
+        cnt++;
+      }
+    }
+    if (cnt > 0) {
+      amb /= cnt;
+      color = max(color + (amb - color) * edgeWeight, 0);
+    }
+  }
   OutputTexture[id.xy] = float4(color * matte, matte);
 })";
 
@@ -471,15 +510,21 @@ std::vector<ArtifactCore::AbstractProperty> ChromaKeyEffect::getProperties() con
              "Erodes (+) or dilates (-) the matte, about 3px at full range.");
     addFloat("matteBlur", "Matte Blur", matteBlur(), 0.0, 2.0, 0.0, 2.0, 0.0,
              "Softens the finished matte with a 3x3 blend.");
+    addFloat("detailRecovery", "Detail Recovery", detailRecovery(), 0.0, 1.0, 0.0, 1.0, 0.0,
+             "Restores fine semi-transparent edge details lost to clipping.");
+    addFloat("lightWrapIntensity", "Light Wrap Intensity", lightWrapIntensity(), 0.0, 1.0, 0.0, 1.0, 0.0,
+             "Blends ambient edge luminance into foreground perimeter.");
+    addFloat("lightWrapWidth", "Light Wrap Width", lightWrapWidth(), 1.0, 16.0, 1.0, 16.0, 4.0,
+             "Radius of light wrap sampling in pixels.");
 
     auto& despillModeProp = props.emplace_back();
     despillModeProp.setName("despillMode");
     despillModeProp.setDisplayLabel(QStringLiteral("Despill Mode"));
     despillModeProp.setType(ArtifactCore::PropertyType::Integer);
-    despillModeProp.setSoftRange(0, 2);
-    despillModeProp.setHardRange(0, 2);
+    despillModeProp.setSoftRange(0, 3);
+    despillModeProp.setHardRange(0, 3);
     despillModeProp.setMinValue(QVariant(0));
-    despillModeProp.setMaxValue(QVariant(2));
+    despillModeProp.setMaxValue(QVariant(3));
     despillModeProp.setDefaultValue(QVariant(1));
     despillModeProp.setValue(QVariant(despillMode()));
     // Integer properties with this option-list contract are rendered as a
@@ -487,7 +532,7 @@ std::vector<ArtifactCore::AbstractProperty> ChromaKeyEffect::getProperties() con
     // here makes the keying diagnostic modes discoverable without introducing
     // a separate, competing effect panel.
     despillModeProp.setTooltip(
-        QStringLiteral("0=Off, 1=Channel Suppress, 2=Luminance Preserve"));
+        QStringLiteral("0=Off, 1=Channel Suppress, 2=Luminance Preserve, 3=Target Neutral"));
 
     auto& viewProp = props.emplace_back();
     viewProp.setName("viewMode");
@@ -522,13 +567,19 @@ void ChromaKeyEffect::setPropertyValue(const ArtifactCore::UniString& name, cons
     } else if (n == "despillStrength") {
         setDespillStrength(safeFloat(0.7f, 0.0f, 1.0f));
     } else if (n == "despillMode") {
-        setDespillMode(value.isValid() ? std::clamp(value.toInt(), 0, 2) : 1);
+        setDespillMode(value.isValid() ? std::clamp(value.toInt(), 0, 3) : 1);
     } else if (n == "choke") {
         setChoke(safeFloat(0.0f, -1.0f, 1.0f));
     } else if (n == "matteBlur") {
         setMatteBlur(safeFloat(0.0f, 0.0f, 2.0f));
     } else if (n == "viewMode") {
         setViewMode(value.isValid() ? std::clamp(value.toInt(), 0, 3) : 0);
+    } else if (n == "detailRecovery") {
+        setDetailRecovery(safeFloat(0.0f, 0.0f, 1.0f));
+    } else if (n == "lightWrapIntensity") {
+        setLightWrapIntensity(safeFloat(0.0f, 0.0f, 1.0f));
+    } else if (n == "lightWrapWidth") {
+        setLightWrapWidth(safeFloat(4.0f, 1.0f, 16.0f));
     } else if (n == "keyColor") {
         if (value.canConvert<QColor>()) {
             QColor c = value.value<QColor>();
@@ -576,6 +627,9 @@ void ChromaKeyEffect::syncGpuImpl() {
     gpu->params_.choke = typedCpuImpl_->choke();
     gpu->params_.matteBlur = typedCpuImpl_->matteBlur();
     gpu->params_.viewMode = typedCpuImpl_->viewMode();
+    gpu->params_.detailRecovery = typedCpuImpl_->detailRecovery();
+    gpu->params_.lightWrapIntensity = typedCpuImpl_->lightWrapIntensity();
+    gpu->params_.lightWrapWidth = typedCpuImpl_->lightWrapWidth();
 }
 
 ChromaKeyEffect::ChromaKeyEffect() : ArtifactAbstractEffect() {
@@ -655,5 +709,23 @@ void ChromaKeyEffect::setViewMode(int mode) {
     syncGpuImpl();
 }
 int ChromaKeyEffect::viewMode() const { return typedCpuImpl_->viewMode(); }
+
+void ChromaKeyEffect::setDetailRecovery(float val) {
+    typedCpuImpl_->setDetailRecovery(val);
+    syncGpuImpl();
+}
+float ChromaKeyEffect::detailRecovery() const { return typedCpuImpl_->detailRecovery(); }
+
+void ChromaKeyEffect::setLightWrapIntensity(float val) {
+    typedCpuImpl_->setLightWrapIntensity(val);
+    syncGpuImpl();
+}
+float ChromaKeyEffect::lightWrapIntensity() const { return typedCpuImpl_->lightWrapIntensity(); }
+
+void ChromaKeyEffect::setLightWrapWidth(float val) {
+    typedCpuImpl_->setLightWrapWidth(val);
+    syncGpuImpl();
+}
+float ChromaKeyEffect::lightWrapWidth() const { return typedCpuImpl_->lightWrapWidth(); }
 
 }

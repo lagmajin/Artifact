@@ -4,6 +4,8 @@
 * text=auto
 .gitattributes text eol=lf
 *.cppm text eol=lf
+*.ixx text eol=lf
+*.json text eol=lf
 
 ###############################################################################
 # Set default behavior for command prompt diff.

@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <iostream>
 #include <vector>
 #include <string>
@@ -95,8 +95,18 @@ public:
     float matteBlur() const { return matteBlur_; }
     void setViewMode(int mode) { viewMode_ = std::clamp(mode, 0, 3); }
     int viewMode() const { return viewMode_; }
+    void setDetailRecovery(float val) { detailRecovery_ = std::isfinite(val) ? std::clamp(val, 0.0f, 1.0f) : 0.0f; }
+    float detailRecovery() const { return detailRecovery_; }
+    void setLightWrapIntensity(float val) { lightWrapIntensity_ = std::isfinite(val) ? std::clamp(val, 0.0f, 1.0f) : 0.0f; }
+    float lightWrapIntensity() const { return lightWrapIntensity_; }
+    void setLightWrapWidth(float val) { lightWrapWidth_ = std::isfinite(val) ? std::clamp(val, 1.0f, 16.0f) : 4.0f; }
+    float lightWrapWidth() const { return lightWrapWidth_; }
 
     void applyCPU(const ArtifactCore::ImageF32x4RGBAWithCache& src, ArtifactCore::ImageF32x4RGBAWithCache& dst) override;
+private:
+    float detailRecovery_ = 0.0f;
+    float lightWrapIntensity_ = 0.0f;
+    float lightWrapWidth_ = 4.0f;
 };
 
 class ChromaKeyEffect : public ArtifactAbstractEffect {
@@ -134,6 +144,12 @@ public:
     float matteBlur() const;
     void setViewMode(int mode);
     int viewMode() const;
+    void setDetailRecovery(float val);
+    float detailRecovery() const;
+    void setLightWrapIntensity(float val);
+    float lightWrapIntensity() const;
+    void setLightWrapWidth(float val);
+    float lightWrapWidth() const;
 
     bool supportsGPU() const override { return true; }
 
@@ -143,7 +159,8 @@ public:
         // planner can express that extra surface; the basic key/despill pass
         // remains fully GPU-resident.
         return std::abs(choke()) <= 1.0e-4f &&
-                       matteBlur() <= 1.0e-4f
+                       matteBlur() <= 1.0e-4f &&
+                       lightWrapIntensity() <= 1.0e-4f
                    ? GpuRasterEffectDomain::Spatial
                    : GpuRasterEffectDomain::None;
     }
@@ -164,6 +181,9 @@ public:
         node.parameters[9] = static_cast<float>(viewMode());
         node.parameters[10] = choke();
         node.parameters[11] = matteBlur();
+        node.parameters[12] = detailRecovery();
+        node.parameters[13] = lightWrapIntensity();
+        node.parameters[14] = lightWrapWidth();
         return stack.append(node);
     }
 };

@@ -1367,7 +1367,8 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
   }
 
   const auto applyPreviewValue =
-      [handler = previewValue ? previewValue : commitValue, propertyPtr, layer,
+      [handler = previewValue ? previewValue : commitValue, propertyPtr,
+       editor, layer,
        guardedLayerIds, cancelValueEdit, currentTimeProvider, playback,
        propertyName = property.getName(), row, rowValueChanged, beginValueEdit,
        restorePreviewBaseline](const QVariant &value) {
@@ -1403,9 +1404,16 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
           rowValueChanged(row, propertyPtr, value);
         }
         handler(propertyName, value);
+        if (propertyPtr && propertyPtr->getValue() != value) {
+          const QVariant canonicalValue = propertyPtr->getValue();
+          editor->setValueFromVariant(canonicalValue);
+          if (rowValueChanged) {
+            rowValueChanged(row, propertyPtr, canonicalValue);
+          }
+        }
       };
   const auto applyCommitValue =
-      [commitValue, propertyPtr, playback, currentTimeProvider,
+      [commitValue, propertyPtr, editor, playback, currentTimeProvider,
        propertyName = property.getName(), row, rowValueChanged,
        keyframeChanged, layer, beginValueEdit, guardedLayerIds, cancelValueEdit,
        restorePreviewBaseline](const QVariant &value) {
@@ -1458,6 +1466,13 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
           }
         }
         commitValue(propertyName, value);
+        if (propertyPtr && propertyPtr->getValue() != value) {
+          const QVariant canonicalValue = propertyPtr->getValue();
+          editor->setValueFromVariant(canonicalValue);
+          if (rowValueChanged) {
+            rowValueChanged(row, propertyPtr, canonicalValue);
+          }
+        }
         if (row) row->setProperty("collaborationPreviewActive", false);
       };
   editor->setPreviewHandler(applyPreviewValue);

@@ -29,6 +29,9 @@ module;
 #include <QFontMetrics>
 #include <QFont>
 #include <QPalette>
+#include <QPen>
+#include <QRectF>
+#include <QSizePolicy>
 #include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QHash>
@@ -116,6 +119,7 @@ import Artifact.Widgets.CompositionTextEditor;
 import Artifact.Widgets.CompositionCleanup;
 import Artifact.Widgets.ViewOrientationWidget;
 import Artifact.Widgets.PointTrackerGizmo;
+import Translation.Manager;
 import Artifact.Service.Application;
 import Tool;
 import Artifact.Contents.Viewer;
@@ -202,6 +206,98 @@ W_OBJECT_IMPL(ArtifactCompositionEditor)
 Q_LOGGING_CATEGORY(compositionViewLog, "artifact.compositionview");
 
 namespace {
+QString trackerPanelText(const QString& key, const QString& fallback) {
+  return TranslationManager::instance().tr(
+      QStringLiteral("tracker.panel.") + key, fallback);
+}
+
+class TrackerConfidenceChart final : public QWidget {
+public:
+  static constexpr int SampleCapacity = 48;
+
+  explicit TrackerConfidenceChart(QWidget* parent = nullptr) : QWidget(parent) {
+    setMinimumHeight(52);
+    setMinimumWidth(112);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    setAccessibleName(trackerPanelText(QStringLiteral("quality.chart_name"),
+                                       QStringLiteral("Tracking confidence")));
+  }
+
+  void setSamples(const float* values, const float* timeFractions,
+                  const bool* breakBefore, int count, double threshold) {
+    const int boundedCount = values
+                                 ? std::clamp(count, 0, SampleCapacity)
+                                 : 0;
+    const float boundedThreshold = std::isfinite(threshold)
+                                       ? static_cast<float>(std::clamp(threshold, 0.0, 1.0))
+                                       : 0.5f;
+    bool changed = boundedCount != count_ || boundedThreshold != threshold_;
+    threshold_ = boundedThreshold;
+    for (int i = 0; i < boundedCount; ++i) {
+      const auto index = static_cast<std::size_t>(i);
+      const float time = timeFractions ? timeFractions[i] :
+                         (boundedCount > 1 ? static_cast<float>(i) / (boundedCount - 1)
+                                           : 0.5f);
+      const bool gap = breakBefore && breakBefore[i];
+      if (samples_[index] != values[i] || times_[index] != time ||
+          breakBefore_[index] != gap) {
+        changed = true;
+      }
+      samples_[index] = values[i];
+      times_[index] = time;
+      breakBefore_[index] = gap;
+    }
+    if (count_ > boundedCount) changed = true;
+    count_ = boundedCount;
+    if (changed) update();
+  }
+
+protected:
+  void paintEvent(QPaintEvent*) override {
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    const QRectF plot = QRectF(rect()).adjusted(1.0, 1.0, -1.0, -1.0);
+    painter.fillRect(plot, palette().color(QPalette::Base));
+    painter.setPen(QPen(palette().color(QPalette::Mid), 1.0));
+    painter.drawRect(plot);
+    const QRectF graph = plot.adjusted(4.0, 4.0, -4.0, -4.0);
+    painter.setPen(QPen(palette().color(QPalette::Mid), 0.7));
+    for (int row = 1; row < 4; ++row) {
+      const qreal y = graph.top() + graph.height() * row / 4.0;
+      painter.drawLine(QPointF(graph.left(), y), QPointF(graph.right(), y));
+    }
+    if (count_ <= 0 || graph.width() <= 0.0 || graph.height() <= 0.0) return;
+    const qreal thresholdY = graph.bottom() - threshold_ * graph.height();
+    painter.setPen(QPen(palette().color(QPalette::Link), 1.0, Qt::DashLine));
+    painter.drawLine(QPointF(graph.left(), thresholdY),
+                     QPointF(graph.right(), thresholdY));
+    painter.setPen(QPen(palette().color(QPalette::Highlight), 1.6,
+                        Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    QPointF previous;
+    for (int i = 0; i < count_; ++i) {
+      const qreal x = graph.left() + graph.width() *
+                          std::clamp(static_cast<qreal>(times_[static_cast<std::size_t>(i)]),
+                                     0.0, 1.0);
+      const qreal confidence = std::clamp(
+          static_cast<qreal>(samples_[static_cast<std::size_t>(i)]), 0.0, 1.0);
+      const QPointF point(x, graph.bottom() - confidence * graph.height());
+      if (i == 0 || breakBefore_[static_cast<std::size_t>(i)]) {
+        painter.drawPoint(point);
+      } else {
+        painter.drawLine(previous, point);
+      }
+      previous = point;
+    }
+  }
+
+private:
+  std::array<float, SampleCapacity> samples_{};
+  std::array<float, SampleCapacity> times_{};
+  std::array<bool, SampleCapacity> breakBefore_{};
+  int count_ = 0;
+  float threshold_ = 0.5f;
+};
+
 void updateAccessibleState(QWidget* widget, const QString& description) {
   if (!widget || widget->accessibleDescription() == description) {
     return;
@@ -4551,69 +4647,6 @@ public:
       add(QStringLiteral("Command Palette"), [this]() { showCommandPalette(); });
     }
 
-    // Tracker context menu (when TrackPoint tool is active)
-    {
-      const auto *app = ArtifactApplicationManager::instance();
-      const auto *tm = app ? app->toolManager() : nullptr;
-      if (tm && tm->activeTool() == ToolType::TrackPoint) {
-        addSeparator();
-        add(QStringLiteral("Track Forward"),
-            [this, ctrl = controller_]() {
-              if (ctrl) ctrl->trackerTrackForward();
-            });
-        add(QStringLiteral("Track Backward"),
-            [this, ctrl = controller_]() {
-              if (ctrl) ctrl->trackerTrackBackward();
-            });
-        add(QStringLiteral("Track All"),
-            [this, ctrl = controller_]() {
-              if (ctrl) ctrl->trackerTrackAll();
-            });
-        add(QStringLiteral("Stop Tracking"),
-            [this, ctrl = controller_]() {
-              if (ctrl) ctrl->trackerStop();
-            }, controller_->trackerJobRunning());
-        add(QStringLiteral("Review Next Problem Frame"),
-            [this, ctrl = controller_]() {
-              if (ctrl) ctrl->trackerNextProblemFrame();
-            });
-        add(QStringLiteral("Use Planar Tracker"),
-            [this, ctrl = controller_]() {
-              if (ctrl) ctrl->trackerUsePlanarMode();
-            });
-        add(QStringLiteral("Use Point Tracker"),
-            [this, ctrl = controller_]() {
-              if (ctrl) ctrl->trackerUsePointMode();
-            });
-        addSeparator();
-        add(QStringLiteral("Apply to Layer Position"),
-            [this, ctrl = controller_]() {
-              if (ctrl) ctrl->trackerApplyToPosition();
-            });
-        add(QStringLiteral("Apply to Layer Anchor"),
-            [this, ctrl = controller_]() {
-              if (ctrl) ctrl->trackerApplyToAnchor();
-            });
-        add(QStringLiteral("Apply All Points to Null Layers"),
-            [this, ctrl = controller_]() {
-              if (ctrl) ctrl->trackerApplyAllPoints();
-            });
-        add(QStringLiteral("Apply Planar Track as Corner Pin"),
-            [this, ctrl = controller_]() {
-              if (ctrl) ctrl->trackerApplyPlanarCornerPin();
-            });
-        add(QStringLiteral("Apply Planar Track to Mask"),
-            [this, ctrl = controller_]() {
-              if (ctrl) ctrl->trackerApplyToMask();
-            });
-        addSeparator();
-        add(QStringLiteral("Delete Tracker"),
-            [this, ctrl = controller_]() {
-              if (ctrl) ctrl->trackerDelete();
-            });
-      }
-    }
-
     if (selectedCount > 0) {
       addSeparator();
       const auto arrangeHasSelection = selectedCount > 0;
@@ -8857,13 +8890,54 @@ public:
   QToolButton *toolModeButton_ = nullptr;
   QFrame *trackerPanel_ = nullptr;
   QLabel *trackerPanelModeLabel_ = nullptr;
+  QLabel *trackerSessionNamePanelLabel_ = nullptr;
+  QLabel *trackerPanelSourceLabel_ = nullptr;
   QLabel *trackerPanelQualityLabel_ = nullptr;
   QLabel *trackerPanelProblemsLabel_ = nullptr;
+  QLabel *trackerPanelFrameReviewLabel_ = nullptr;
+  TrackerConfidenceChart *trackerPanelConfidenceChart_ = nullptr;
   QLabel *trackerPanelFramesLabel_ = nullptr;
   QLabel *trackerPanelStatusLabel_ = nullptr;
+  QLabel *trackerPanelTargetLabel_ = nullptr;
+  QLabel *trackerMaskPathPanelLabel_ = nullptr;
+  QLabel *trackerConfidenceThresholdPanelLabel_ = nullptr;
+  QLabel *trackerPointCountPanelLabel_ = nullptr;
+  QWidget *trackerPointControlsPanel_ = nullptr;
   QProgressBar *trackerPanelProgress_ = nullptr;
   ViewportLayoutButton *trackerPointModePanelButton_ = nullptr;
   ViewportLayoutButton *trackerPlanarModePanelButton_ = nullptr;
+  ViewportLayoutButton *trackerCreatePanelButton_ = nullptr;
+  ViewportLayoutButton *trackerDeletePanelButton_ = nullptr;
+  ViewportLayoutButton *trackerSessionPreviousPanelButton_ = nullptr;
+  ViewportLayoutButton *trackerSessionNextPanelButton_ = nullptr;
+  ViewportLayoutButton *trackerSourcePreviousPanelButton_ = nullptr;
+  ViewportLayoutButton *trackerSourceNextPanelButton_ = nullptr;
+  ViewportLayoutButton *trackerSourceUseSelectionPanelButton_ = nullptr;
+  ViewportLayoutButton *trackerGeometryPanelButton_ = nullptr;
+  ViewportLayoutButton *trackerResetPanelButton_ = nullptr;
+  ViewportLayoutButton *trackerAddPointPanelButton_ = nullptr;
+  ViewportLayoutButton *trackerRemovePointPanelButton_ = nullptr;
+  ViewportLayoutButton *trackerMethodPanelButton_ = nullptr;
+  ViewportLayoutButton *trackerConfidenceDownPanelButton_ = nullptr;
+  ViewportLayoutButton *trackerConfidenceUpPanelButton_ = nullptr;
+  ViewportLayoutButton *trackerApplyPositionPanelButton_ = nullptr;
+  ViewportLayoutButton *trackerApplyAnchorPanelButton_ = nullptr;
+  ViewportLayoutButton *trackerApplyAllPanelButton_ = nullptr;
+  ViewportLayoutButton *trackerApplyCornerPinPanelButton_ = nullptr;
+  ViewportLayoutButton *trackerApplyMaskPanelButton_ = nullptr;
+  ViewportLayoutButton *trackerMaskPathPreviousPanelButton_ = nullptr;
+  ViewportLayoutButton *trackerMaskPathNextPanelButton_ = nullptr;
+  ViewportLayoutButton *trackerTrackBackwardPanelButton_ = nullptr;
+  ViewportLayoutButton *trackerStepBackwardPanelButton_ = nullptr;
+  ViewportLayoutButton *trackerStopPanelButton_ = nullptr;
+  ViewportLayoutButton *trackerTrackForwardPanelButton_ = nullptr;
+  ViewportLayoutButton *trackerStepForwardPanelButton_ = nullptr;
+  ViewportLayoutButton *trackerTrackAllPanelButton_ = nullptr;
+  ViewportLayoutButton *trackerReviewProblemsPanelButton_ = nullptr;
+  ViewportLayoutButton *trackerReviewPreviousProblemPanelButton_ = nullptr;
+  ViewportLayoutButton *trackerSmoothPanelButton_ = nullptr;
+  ViewportLayoutButton *trackerRemoveOutliersPanelButton_ = nullptr;
+  ViewportLayoutButton *trackerFilterConfidencePanelButton_ = nullptr;
   QToolButton *gizmoModeButton_ = nullptr;
   QToolButton *pivotModeButton_ = nullptr;
   QAction *immersiveAction_ = nullptr;
@@ -9879,6 +9953,7 @@ public:
     }
     syncChromeSummary(owner);
     syncOverlayGeometry(owner);
+    refreshTrackerPanel();
   }
 
   void refreshTrackerPanel() {
@@ -9887,20 +9962,172 @@ public:
     }
     auto *controller = activeRenderController();
     if (!controller) {
-      if (trackerPanelModeLabel_) trackerPanelModeLabel_->setText(QStringLiteral("Point Tracker"));
-      if (trackerPanelQualityLabel_) trackerPanelQualityLabel_->setText(QStringLiteral("Confidence —"));
-      if (trackerPanelProblemsLabel_) trackerPanelProblemsLabel_->setText(QStringLiteral("Problem frames —"));
-      if (trackerPanelFramesLabel_) trackerPanelFramesLabel_->setText(QStringLiteral("Frames —"));
-      if (trackerPanelStatusLabel_) trackerPanelStatusLabel_->setText(QStringLiteral("No active composition"));
+      if (trackerPanelModeLabel_) trackerPanelModeLabel_->setText(trackerPanelText(QStringLiteral("mode.point"), QStringLiteral("Point Tracker")));
+      if (trackerSessionNamePanelLabel_) trackerSessionNamePanelLabel_->setText(trackerPanelText(QStringLiteral("session.none"), QStringLiteral("No tracker session")));
+      if (trackerPanelSourceLabel_) trackerPanelSourceLabel_->setText(trackerPanelText(QStringLiteral("source.no_composition"), QStringLiteral("Source: No active composition")));
+      if (trackerPanelTargetLabel_) trackerPanelTargetLabel_->setText(trackerPanelText(QStringLiteral("source.no_composition"), QStringLiteral("Source: No active composition")));
+      if (trackerSourcePreviousPanelButton_) trackerSourcePreviousPanelButton_->setEnabled(false);
+      if (trackerSourceNextPanelButton_) trackerSourceNextPanelButton_->setEnabled(false);
+      if (trackerSourceUseSelectionPanelButton_) trackerSourceUseSelectionPanelButton_->setEnabled(false);
+      if (trackerPanelQualityLabel_) trackerPanelQualityLabel_->setText(trackerPanelText(QStringLiteral("quality.confidence_empty"), QStringLiteral("Confidence —")));
+      if (trackerPanelProblemsLabel_) trackerPanelProblemsLabel_->setText(trackerPanelText(QStringLiteral("quality.problem_frames_empty"), QStringLiteral("Problem frames —")));
+      if (trackerPanelFrameReviewLabel_) trackerPanelFrameReviewLabel_->setText(
+          trackerPanelText(QStringLiteral("quality.frame_unavailable"), QStringLiteral("Frame %1 • No result")).arg(0));
+      if (trackerPanelConfidenceChart_)
+        trackerPanelConfidenceChart_->setSamples(nullptr, nullptr, nullptr, 0, 0.5);
+      if (trackerPanelFramesLabel_) trackerPanelFramesLabel_->setText(trackerPanelText(QStringLiteral("quality.tracked_frames_empty"), QStringLiteral("Frames —")));
+      if (trackerPanelStatusLabel_) trackerPanelStatusLabel_->setText(trackerPanelText(QStringLiteral("status.no_composition"), QStringLiteral("No active composition")));
       if (trackerPanelProgress_) trackerPanelProgress_->setValue(0);
+      if (trackerApplyPositionPanelButton_) trackerApplyPositionPanelButton_->setEnabled(false);
+      if (trackerApplyAnchorPanelButton_) trackerApplyAnchorPanelButton_->setEnabled(false);
+      if (trackerApplyAllPanelButton_) trackerApplyAllPanelButton_->setEnabled(false);
+      if (trackerApplyCornerPinPanelButton_) trackerApplyCornerPinPanelButton_->setEnabled(false);
+      if (trackerApplyMaskPanelButton_) trackerApplyMaskPanelButton_->setEnabled(false);
+      if (trackerMaskPathPreviousPanelButton_) trackerMaskPathPreviousPanelButton_->setEnabled(false);
+      if (trackerMaskPathNextPanelButton_) trackerMaskPathNextPanelButton_->setEnabled(false);
+      if (trackerMaskPathPanelLabel_) trackerMaskPathPanelLabel_->setText(QString());
+      if (trackerPointModePanelButton_) trackerPointModePanelButton_->setEnabled(false);
+      if (trackerPlanarModePanelButton_) trackerPlanarModePanelButton_->setEnabled(false);
+      if (trackerTrackBackwardPanelButton_) trackerTrackBackwardPanelButton_->setEnabled(false);
+      if (trackerStepBackwardPanelButton_) trackerStepBackwardPanelButton_->setEnabled(false);
+      if (trackerStopPanelButton_) trackerStopPanelButton_->setEnabled(false);
+      if (trackerTrackForwardPanelButton_) trackerTrackForwardPanelButton_->setEnabled(false);
+      if (trackerStepForwardPanelButton_) trackerStepForwardPanelButton_->setEnabled(false);
+      if (trackerTrackAllPanelButton_) trackerTrackAllPanelButton_->setEnabled(false);
+      if (trackerReviewProblemsPanelButton_) trackerReviewProblemsPanelButton_->setEnabled(false);
+      if (trackerReviewPreviousProblemPanelButton_) trackerReviewPreviousProblemPanelButton_->setEnabled(false);
+      if (trackerSmoothPanelButton_) trackerSmoothPanelButton_->setEnabled(false);
+      if (trackerRemoveOutliersPanelButton_) trackerRemoveOutliersPanelButton_->setEnabled(false);
+      if (trackerFilterConfidencePanelButton_) trackerFilterConfidencePanelButton_->setEnabled(false);
+      if (trackerCreatePanelButton_) trackerCreatePanelButton_->setEnabled(false);
+      if (trackerDeletePanelButton_) trackerDeletePanelButton_->setEnabled(false);
+      if (trackerSessionPreviousPanelButton_) trackerSessionPreviousPanelButton_->setEnabled(false);
+      if (trackerSessionNextPanelButton_) trackerSessionNextPanelButton_->setEnabled(false);
+      if (trackerGeometryPanelButton_) trackerGeometryPanelButton_->setEnabled(false);
+      if (trackerResetPanelButton_) trackerResetPanelButton_->setEnabled(false);
+      if (trackerAddPointPanelButton_) trackerAddPointPanelButton_->setEnabled(false);
+      if (trackerAddPointPanelButton_) trackerAddPointPanelButton_->setChecked(false);
+      if (trackerRemovePointPanelButton_) trackerRemovePointPanelButton_->setEnabled(false);
+      if (trackerPointControlsPanel_) trackerPointControlsPanel_->setVisible(false);
+      if (trackerPointCountPanelLabel_) {
+        trackerPointCountPanelLabel_->setText(
+            trackerPanelText(QStringLiteral("setup.point_count"),
+                             QStringLiteral("Tracking points: %1"))
+                .arg(0));
+      }
+      if (trackerMethodPanelButton_) trackerMethodPanelButton_->setEnabled(false);
+      if (trackerConfidenceDownPanelButton_) trackerConfidenceDownPanelButton_->setEnabled(false);
+      if (trackerConfidenceUpPanelButton_) trackerConfidenceUpPanelButton_->setEnabled(false);
       return;
     }
-    if (trackerPanelModeLabel_) {
-      trackerPanelModeLabel_->setText(controller->trackerModeLabel());
-    }
     const bool tracking = controller->trackerJobRunning();
+    const bool cancelling = controller->trackerCancellationRequested();
+    const bool hasSession = controller->trackerHasSession();
     const bool planar = controller->trackerModeLabel().contains(
         QStringLiteral("Planar"), Qt::CaseInsensitive);
+    if (trackerPanelModeLabel_) {
+      trackerPanelModeLabel_->setText(
+          trackerPanelText(planar ? QStringLiteral("mode.planar")
+                                  : QStringLiteral("mode.point"),
+                           planar ? QStringLiteral("Planar Tracker")
+                                  : QStringLiteral("Point Tracker")));
+    }
+    const bool hasResult = controller->trackerHasResult();
+    const bool pointPlacementArmed =
+        controller->trackerPointPlacementArmed();
+    const int trackerPointCount = controller->trackerTrackPointCount();
+    const bool lastJobFailed = controller->trackerLastJobFailed();
+    const int problemFrameCount = controller->trackerProblemFrameCount();
+    if (trackerPanelConfidenceChart_) {
+      std::array<float, TrackerConfidenceChart::SampleCapacity> samples{};
+      std::array<float, TrackerConfidenceChart::SampleCapacity> times{};
+      std::array<bool, TrackerConfidenceChart::SampleCapacity> breaks{};
+      const int sampleCount = tracking
+                                  ? 0
+                                  : controller->trackerConfidenceSamples(
+                                        samples.data(),
+                                        times.data(),
+                                        breaks.data(),
+                                        TrackerConfidenceChart::SampleCapacity);
+      trackerPanelConfidenceChart_->setSamples(
+          samples.data(), times.data(), breaks.data(), sampleCount,
+          controller->trackerConfidenceThreshold());
+    }
+    const int resultFrameCount = controller->trackerResultFrameCount();
+    const auto composition = controller->composition();
+    auto *playbackService = ArtifactPlaybackService::instance();
+    const bool playbackOwnsComposition = composition && playbackService &&
+        playbackService->currentComposition() == composition;
+    const bool playbackAllowsStep = playbackOwnsComposition &&
+        !playbackService->isPlaying();
+    const auto targetLayer = composition
+        ? composition->layerById(controller->selectedLayerId())
+        : ArtifactAbstractLayerPtr{};
+    const auto sourceLayer = composition
+        ? composition->layerById(controller->trackerSourceLayerId())
+        : ArtifactAbstractLayerPtr{};
+    QString sourceName;
+    if (sourceLayer) {
+      sourceName = sourceLayer->layerName().trimmed();
+      if (sourceName.isEmpty()) sourceName = sourceLayer->id().toString();
+    }
+    QString targetName;
+    if (targetLayer) {
+      targetName = targetLayer->layerName().trimmed();
+      if (targetName.isEmpty()) {
+        targetName = targetLayer->id().toString();
+      }
+    }
+    const bool hasImageSource = sourceLayer &&
+        ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(sourceLayer);
+    if (trackerPanelSourceLabel_) {
+      trackerPanelSourceLabel_->setText(
+          sourceName.isEmpty()
+              ? trackerPanelText(QStringLiteral("source.select_image"),
+                                 QStringLiteral("Source: Select an image layer"))
+              : trackerPanelText(QStringLiteral("source.source_line"),
+                                 QStringLiteral("Tracking source: %1%2"))
+                    .arg(sourceName,
+                         hasImageSource
+                             ? QString()
+                             : trackerPanelText(QStringLiteral("source.not_trackable_suffix"),
+                                                QStringLiteral(" (not trackable)"))));
+      trackerPanelSourceLabel_->setToolTip(
+          trackerPanelText(QStringLiteral("source.source_tooltip"),
+                           QStringLiteral("Tracking reads this still-image or image-sequence layer. The selected Composition layer remains the apply target.")));
+    }
+    if (trackerPanelTargetLabel_) {
+      trackerPanelTargetLabel_->setText(
+          targetName.isEmpty()
+              ? trackerPanelText(QStringLiteral("source.select_target"),
+                                 QStringLiteral("Apply target: Select a layer"))
+              : trackerPanelText(QStringLiteral("source.target_line"),
+                                 QStringLiteral("Apply target: %1"))
+                    .arg(targetName));
+      trackerPanelTargetLabel_->setToolTip(
+          trackerPanelText(
+              QStringLiteral("source.tooltip"),
+              QStringLiteral("Tracking reads the source above. Bake Position can create Null layers; Anchor, Corner Pin, and Mask use the selected target layer.")));
+    }
+    const bool hasTrackableSources = composition && std::any_of(
+        composition->allLayerRef().begin(), composition->allLayerRef().end(),
+        [](const auto& layer) {
+          return layer && dynamic_cast<ArtifactImageLayer*>(layer.get());
+        });
+    if (trackerSourcePreviousPanelButton_) {
+      trackerSourcePreviousPanelButton_->setEnabled(
+          !tracking && !hasResult && hasTrackableSources);
+    }
+    if (trackerSourceNextPanelButton_) {
+      trackerSourceNextPanelButton_->setEnabled(
+          !tracking && !hasResult && hasTrackableSources);
+    }
+    if (trackerSourceUseSelectionPanelButton_) {
+      const bool selectedLayerIsImage = targetLayer &&
+          ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(targetLayer);
+      trackerSourceUseSelectionPanelButton_->setEnabled(
+          !tracking && !hasResult && selectedLayerIsImage);
+    }
     if (trackerPointModePanelButton_) {
       trackerPointModePanelButton_->setChecked(!planar);
       trackerPointModePanelButton_->update();
@@ -9909,46 +10136,346 @@ public:
       trackerPlanarModePanelButton_->setChecked(planar);
       trackerPlanarModePanelButton_->update();
     }
+    if (trackerPointModePanelButton_) {
+      trackerPointModePanelButton_->setEnabled(!tracking && composition);
+    }
+    if (trackerPlanarModePanelButton_) {
+      trackerPlanarModePanelButton_->setEnabled(!tracking && composition);
+    }
+    if (trackerCreatePanelButton_) {
+      trackerCreatePanelButton_->setEnabled(
+          !tracking && composition);
+    }
+    if (trackerDeletePanelButton_) trackerDeletePanelButton_->setEnabled(!tracking && hasSession);
+    if (trackerSessionNamePanelLabel_) {
+      const QString sessionLabel = controller->trackerSessionLabel();
+      trackerSessionNamePanelLabel_->setText(
+          sessionLabel.isEmpty()
+              ? trackerPanelText(QStringLiteral("session.none"),
+                                 QStringLiteral("No tracker session"))
+              : sessionLabel);
+    }
+    const bool hasMultipleTrackerSessions =
+        controller->trackerSessionCount() > 1;
+    if (trackerSessionPreviousPanelButton_) {
+      trackerSessionPreviousPanelButton_->setEnabled(
+          !tracking && hasMultipleTrackerSessions);
+    }
+    if (trackerSessionNextPanelButton_) {
+      trackerSessionNextPanelButton_->setEnabled(
+          !tracking && hasMultipleTrackerSessions);
+    }
+    if (trackerGeometryPanelButton_) trackerGeometryPanelButton_->setEnabled(!tracking);
+    if (trackerResetPanelButton_) trackerResetPanelButton_->setEnabled(!tracking && hasSession);
+    if (trackerPointCountPanelLabel_) {
+      trackerPointCountPanelLabel_->setText(
+          trackerPanelText(QStringLiteral("setup.point_count"),
+                           QStringLiteral("Tracking points: %1"))
+              .arg(trackerPointCount));
+    }
+    if (trackerAddPointPanelButton_) {
+      trackerAddPointPanelButton_->setChecked(pointPlacementArmed);
+      trackerAddPointPanelButton_->setEnabled(
+          !tracking && hasSession && !planar && !hasResult);
+    }
+    if (trackerRemovePointPanelButton_) {
+      trackerRemovePointPanelButton_->setEnabled(
+          !tracking && hasSession && !planar && !hasResult &&
+          trackerPointCount > 0);
+    }
+    if (trackerPointControlsPanel_) {
+      trackerPointControlsPanel_->setVisible(!planar);
+    }
+    const int methodIndex = std::clamp(controller->trackerMethodIndex(), 0, 3);
+    const std::array<QString, 4> methodKeys{
+        QStringLiteral("settings.method.optical_flow"),
+        QStringLiteral("settings.method.feature_based"),
+        QStringLiteral("settings.method.template_match"),
+        QStringLiteral("settings.method.hybrid")};
+    const std::array<QString, 4> methodFallbacks{
+        QStringLiteral("Optical Flow"), QStringLiteral("Feature Based"),
+        QStringLiteral("Template Match"), QStringLiteral("Hybrid")};
+    if (trackerMethodPanelButton_) {
+      trackerMethodPanelButton_->setText(
+          trackerPanelText(QStringLiteral("settings.method_label"),
+                           QStringLiteral("Method: %1"))
+              .arg(trackerPanelText(methodKeys[static_cast<std::size_t>(methodIndex)],
+                                    methodFallbacks[static_cast<std::size_t>(methodIndex)])));
+      trackerMethodPanelButton_->setEnabled(!tracking && hasSession);
+    }
+    const QString thresholdText =
+        trackerPanelText(QStringLiteral("settings.confidence_threshold"),
+                         QStringLiteral("Confidence threshold: %1%"))
+            .arg(controller->trackerConfidenceThreshold() * 100.0, 0, 'f', 0);
+    if (trackerConfidenceThresholdPanelLabel_) {
+      trackerConfidenceThresholdPanelLabel_->setText(thresholdText);
+    }
+    if (trackerConfidenceDownPanelButton_) {
+      trackerConfidenceDownPanelButton_->setEnabled(
+          !tracking && hasSession && controller->trackerConfidenceThreshold() > 0.0);
+    }
+    if (trackerConfidenceUpPanelButton_) {
+      trackerConfidenceUpPanelButton_->setEnabled(
+          !tracking && hasSession && controller->trackerConfidenceThreshold() < 1.0);
+    }
+    if (trackerTrackBackwardPanelButton_) trackerTrackBackwardPanelButton_->setEnabled(!tracking && hasImageSource);
+    bool canStepBackward = false;
+    bool canStepForward = false;
+    if (composition) {
+      const auto frameRange = playbackOwnsComposition
+                                  ? playbackService->playableRange()
+                                  : composition->frameRange();
+      const int64_t currentFrame = playbackOwnsComposition
+          ? playbackService->currentFrame().framePosition()
+          : composition->framePosition().framePosition();
+      canStepBackward = frameRange.isValid() &&
+                        currentFrame > frameRange.start();
+      canStepForward = frameRange.isValid() &&
+                       currentFrame < frameRange.end();
+    }
+    if (trackerStepBackwardPanelButton_) {
+      trackerStepBackwardPanelButton_->setEnabled(
+          !tracking && playbackAllowsStep && hasImageSource &&
+          canStepBackward);
+      trackerStepBackwardPanelButton_->setToolTip(
+          trackerPanelText(
+              !playbackOwnsComposition
+                  ? QStringLiteral("analyze.step_requires_playback")
+                  : playbackAllowsStep
+                      ? QStringLiteral("analyze.step_backward")
+                      : QStringLiteral("analyze.step_requires_pause"),
+              !playbackOwnsComposition
+                  ? QStringLiteral("Activate this composition in Playback to track one frame")
+                  : playbackAllowsStep
+                  ? QStringLiteral("Track one frame backward")
+                  : QStringLiteral("Pause playback before tracking one frame")));
+    }
+    if (trackerStepForwardPanelButton_) {
+      trackerStepForwardPanelButton_->setEnabled(
+          !tracking && playbackAllowsStep && hasImageSource &&
+          canStepForward);
+      trackerStepForwardPanelButton_->setToolTip(
+          trackerPanelText(
+              !playbackOwnsComposition
+                  ? QStringLiteral("analyze.step_requires_playback")
+                  : playbackAllowsStep
+                      ? QStringLiteral("analyze.step_forward")
+                      : QStringLiteral("analyze.step_requires_pause"),
+              !playbackOwnsComposition
+                  ? QStringLiteral("Activate this composition in Playback to track one frame")
+                  : playbackAllowsStep
+                  ? QStringLiteral("Track one frame forward")
+                  : QStringLiteral("Pause playback before tracking one frame")));
+    }
+    if (trackerStopPanelButton_) trackerStopPanelButton_->setEnabled(tracking && !cancelling);
+    if (trackerTrackForwardPanelButton_) trackerTrackForwardPanelButton_->setEnabled(!tracking && hasImageSource);
+    if (trackerTrackAllPanelButton_) trackerTrackAllPanelButton_->setEnabled(!tracking && hasImageSource);
+    if (trackerReviewProblemsPanelButton_) {
+      trackerReviewProblemsPanelButton_->setEnabled(
+          hasResult && !tracking && problemFrameCount > 0 &&
+          playbackOwnsComposition);
+      trackerReviewProblemsPanelButton_->setToolTip(
+          trackerPanelText(
+              playbackOwnsComposition
+                  ? QStringLiteral("quality.review_tooltip")
+                  : QStringLiteral("quality.review_requires_playback"),
+              playbackOwnsComposition
+                  ? QStringLiteral("Jump to the next problem frame")
+                  : QStringLiteral("Activate this composition in Playback to review problem frames")));
+    }
+    if (trackerReviewPreviousProblemPanelButton_) {
+      trackerReviewPreviousProblemPanelButton_->setEnabled(
+          hasResult && !tracking && problemFrameCount > 0 &&
+          playbackOwnsComposition);
+      trackerReviewPreviousProblemPanelButton_->setToolTip(
+          trackerPanelText(
+              playbackOwnsComposition
+                  ? QStringLiteral("quality.review_previous_tooltip")
+                  : QStringLiteral("quality.review_requires_playback"),
+              playbackOwnsComposition
+                  ? QStringLiteral("Jump to the previous problem frame")
+                  : QStringLiteral("Activate this composition in Playback to review problem frames")));
+    }
+    if (trackerSmoothPanelButton_) trackerSmoothPanelButton_->setEnabled(hasResult && !tracking && resultFrameCount >= 5);
+    if (trackerRemoveOutliersPanelButton_) trackerRemoveOutliersPanelButton_->setEnabled(hasResult && !tracking);
+    if (trackerFilterConfidencePanelButton_) trackerFilterConfidencePanelButton_->setEnabled(hasResult && !tracking);
+    const bool canApply = hasResult && !tracking;
+    const int maskPathCount = controller->trackerMaskPathCount();
+    const int selectedMaskIndex = controller->trackerMaskIndex();
+    const int selectedMaskPathIndex = controller->trackerMaskPathIndex();
+    const auto *selectedMask = targetLayer && selectedMaskIndex >= 0 &&
+                                       selectedMaskIndex < targetLayer->maskCount()
+                                   ? targetLayer->maskView(selectedMaskIndex)
+                                   : nullptr;
+    const bool hasMaskTarget = selectedMask && selectedMaskPathIndex >= 0 &&
+                               selectedMaskPathIndex < selectedMask->maskPathCount();
+    if (trackerMaskPathPanelLabel_) {
+      trackerMaskPathPanelLabel_->setText(
+          maskPathCount > 0 && hasMaskTarget
+              ? trackerPanelText(QStringLiteral("apply.mask_target"), QStringLiteral("Mask %1 • Path %2"))
+                    .arg(selectedMaskIndex + 1).arg(selectedMaskPathIndex + 1)
+              : trackerPanelText(QStringLiteral("apply.mask_target_empty"), QStringLiteral("No mask paths")));
+    }
+    if (trackerMaskPathPreviousPanelButton_)
+      trackerMaskPathPreviousPanelButton_->setEnabled(maskPathCount > 1 && planar && !tracking);
+    if (trackerMaskPathNextPanelButton_)
+      trackerMaskPathNextPanelButton_->setEnabled(maskPathCount > 1 && planar && !tracking);
+    if (trackerApplyPositionPanelButton_) trackerApplyPositionPanelButton_->setEnabled(canApply && !planar);
+    if (trackerApplyAnchorPanelButton_) trackerApplyAnchorPanelButton_->setEnabled(canApply && !planar && targetLayer);
+    if (trackerApplyAllPanelButton_) trackerApplyAllPanelButton_->setEnabled(canApply && !planar);
+    if (trackerApplyCornerPinPanelButton_) trackerApplyCornerPinPanelButton_->setEnabled(canApply && planar && targetLayer);
+    if (trackerApplyMaskPanelButton_) trackerApplyMaskPanelButton_->setEnabled(canApply && planar && hasMaskTarget);
     if (trackerPanelProgress_) {
       trackerPanelProgress_->setValue(
-          tracking ? static_cast<int>(controller->trackerSolveProgress() * 100.0)
+          tracking ? static_cast<int>(controller->trackerOverallProgress() * 100.0)
                    : (controller->trackerHasResult() ? 100 : 0));
+      trackerPanelProgress_->setTextVisible(tracking);
     }
     if (trackerPanelQualityLabel_) {
       trackerPanelQualityLabel_->setText(
           tracking
-              ? QStringLiteral("Tracking…")
+              ? cancelling
+                    ? trackerPanelText(QStringLiteral("quality.cancelling"), QStringLiteral("Cancelling…"))
+                    : trackerPanelText(QStringLiteral("quality.tracking"), QStringLiteral("Tracking…"))
               : controller->trackerHasResult()
-                    ? QStringLiteral("Confidence %1%")
+                    ? trackerPanelText(QStringLiteral("quality.confidence"), QStringLiteral("Confidence %1%"))
                           .arg(controller->trackerAverageConfidence() * 100.0, 0, 'f', 1)
-                    : QStringLiteral("Confidence —"));
+                    : trackerPanelText(QStringLiteral("quality.confidence_empty"), QStringLiteral("Confidence —")));
     }
     if (trackerPanelProblemsLabel_) {
       trackerPanelProblemsLabel_->setText(
           tracking
-              ? QStringLiteral("Problem frames —")
-              : QStringLiteral("Problem frames %1")
+              ? trackerPanelText(QStringLiteral("quality.problem_frames_empty"), QStringLiteral("Problem frames —"))
+              : trackerPanelText(QStringLiteral("quality.problem_frames"), QStringLiteral("Problem frames %1"))
                     .arg(controller->trackerProblemFrameCount()));
     }
     if (trackerPanelFramesLabel_) {
       trackerPanelFramesLabel_->setText(
           tracking
-              ? QStringLiteral("Tracked frames —")
-              : QStringLiteral("Tracked frames %1")
+              ? trackerPanelText(QStringLiteral("quality.tracked_frames_empty"), QStringLiteral("Tracked frames —"))
+              : trackerPanelText(QStringLiteral("quality.tracked_frames"), QStringLiteral("Tracked frames %1"))
                     .arg(controller->trackerResultFrameCount()));
     }
     if (trackerPanelStatusLabel_) {
-      trackerPanelStatusLabel_->setText(
-          tracking ? QStringLiteral("Analyzing…")
-                   : controller->trackerHasResult()
-                         ? QStringLiteral("Session stored with composition")
-                         : QStringLiteral("Ready"));
+      QString statusText;
+      if (tracking && cancelling) {
+        statusText = trackerPanelText(QStringLiteral("status.cancelling"),
+                                      QStringLiteral("Cancelling…"));
+      } else if (tracking) {
+        statusText = trackerPanelText(QStringLiteral("status.analyzing"),
+                                      QStringLiteral("Analyzing…"));
+      } else if (pointPlacementArmed) {
+        statusText = trackerPanelText(
+            QStringLiteral("status.add_point"),
+            QStringLiteral("Click in the viewport to place a tracking point"));
+      } else if (cancelling && hasSession) {
+        statusText = trackerPanelText(
+            QStringLiteral("status.cancelled"),
+            QStringLiteral("Cancelled; partial result was not accepted"));
+      } else if (lastJobFailed && hasSession) {
+        statusText = trackerPanelText(
+            QStringLiteral("status.failed"),
+            QStringLiteral("Tracking failed; check source and track geometry"));
+      } else if (hasResult) {
+        statusText = trackerPanelText(QStringLiteral("status.result_ready"),
+                                      QStringLiteral("Tracking result ready"));
+      } else if (!hasImageSource) {
+        statusText = trackerPanelText(
+            QStringLiteral("status.select_source"),
+            QStringLiteral("Select a still-image or image-sequence layer"));
+      } else if (!hasSession) {
+        statusText = trackerPanelText(
+            QStringLiteral("status.create_session"),
+            QStringLiteral("Create a tracker, then set its geometry in the viewport"));
+      } else {
+        statusText = trackerPanelText(
+            QStringLiteral("status.set_geometry"),
+            QStringLiteral("Set track geometry in the viewport, then start tracking"));
+      }
+      trackerPanelStatusLabel_->setText(statusText);
     }
-    if (trackerPanel_->isVisible() && tracking) {
+    // Keep the dock's progress and action state current while it is tabbed or
+    // hidden too, so reopening the Tracker panel does not show stale status.
+    if (tracking || pointPlacementArmed) {
       QTimer::singleShot(100, trackerPanel_, [this]() {
         refreshTrackerPanel();
       });
     }
+    if (auto *playback = ArtifactPlaybackService::instance()) {
+      refreshTrackerFrameReview(playback->currentFrame().framePosition());
+    }
+  }
+
+  void refreshTrackerFrameReview(qint64 frame) {
+    if (!trackerPanelFrameReviewLabel_) return;
+    auto *controller = activeRenderController();
+    auto *playback = ArtifactPlaybackService::instance();
+    const auto composition = controller ? controller->composition() : nullptr;
+    if (!controller || !playback || !composition ||
+        playback->currentComposition() != composition) {
+      trackerPanelFrameReviewLabel_->setText(
+          trackerPanelText(QStringLiteral("quality.frame_unavailable"), QStringLiteral("Frame %1 • No result"))
+              .arg(frame));
+      return;
+    }
+    if (playback->isPlaying()) {
+      trackerPanelFrameReviewLabel_->setText(
+          trackerPanelText(QStringLiteral("quality.frame_live"), QStringLiteral("Live playback")));
+      return;
+    }
+    bool isFailureFrame = false;
+    bool isLowConfidence = false;
+    int64_t resultFrame = -1;
+    const double confidence =
+        controller->trackerFrameConfidenceAt(frame, resultFrame, isFailureFrame,
+                                             isLowConfidence);
+    if (confidence < 0.0) {
+      trackerPanelFrameReviewLabel_->setText(
+          trackerPanelText(isFailureFrame ? QStringLiteral("quality.frame_failed_no_result")
+                                          : QStringLiteral("quality.frame_unavailable"),
+                           isFailureFrame ? QStringLiteral("Frame %1 • Tracking failed")
+                                          : QStringLiteral("Frame %1 • No result"))
+              .arg(frame));
+      return;
+    }
+    const QString qualityKey =
+        isFailureFrame && isLowConfidence
+            ? QStringLiteral("quality.frame_failure_low_confidence")
+            : isFailureFrame ? QStringLiteral("quality.frame_failure")
+                             : isLowConfidence ? QStringLiteral("quality.frame_low_confidence")
+                                               : QStringLiteral("quality.frame_confidence");
+    const QString qualityFallback =
+        isFailureFrame && isLowConfidence
+            ? QStringLiteral("Nearest result frame %1 • Failure and low confidence • Confidence %2%")
+            : isFailureFrame ? QStringLiteral("Nearest result frame %1 • Failure • Confidence %2%")
+                             : isLowConfidence ? QStringLiteral("Nearest result frame %1 • Low confidence • %2%")
+                                               : QStringLiteral("Nearest result frame %1 • Confidence %2%");
+    trackerPanelFrameReviewLabel_->setText(
+        trackerPanelText(qualityKey, qualityFallback)
+            .arg(resultFrame)
+            .arg(confidence * 100.0, 0, 'f', 1));
+  }
+
+  bool confirmTrackerBakeIfProblems(QWidget *owner, int problemFrameCount) {
+    if (problemFrameCount <= 0) return true;
+    QMessageBox prompt(owner);
+    prompt.setIcon(QMessageBox::Warning);
+    prompt.setWindowTitle(
+        trackerPanelText(QStringLiteral("apply.problem_frames_title"),
+                         QStringLiteral("Tracking Problems")));
+    prompt.setText(
+        trackerPanelText(QStringLiteral("apply.problem_frames_confirmation"),
+                         QStringLiteral("There are %1 problem frames. Bake can leave gaps at failed frames and use low-confidence values. Review them first, or continue explicitly."))
+            .arg(problemFrameCount));
+    prompt.setStandardButtons(QMessageBox::Apply | QMessageBox::Cancel);
+    prompt.button(QMessageBox::Apply)->setText(
+        trackerPanelText(QStringLiteral("apply.confirm_with_problems"),
+                         QStringLiteral("Bake Anyway")));
+    prompt.button(QMessageBox::Cancel)->setText(
+        trackerPanelText(QStringLiteral("apply.cancel_bake"), QStringLiteral("Cancel")));
+    prompt.setDefaultButton(QMessageBox::Cancel);
+    prompt.setEscapeButton(QMessageBox::Cancel);
+    return prompt.exec() == QMessageBox::Apply;
   }
 
   void syncToolLabel(ArtifactCompositionEditor *owner) {
@@ -11941,33 +12468,119 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
 
   auto *sessionRow = new QHBoxLayout();
   sessionRow->setSpacing(6);
-  auto *sessionLabel = new QLabel(QStringLiteral("Tracker"), impl_->trackerPanel_);
+  auto *sessionLabel = new QLabel(
+      trackerPanelText(QStringLiteral("title"), QStringLiteral("Tracker")),
+      impl_->trackerPanel_);
   sessionRow->addWidget(sessionLabel);
-  impl_->trackerPanelModeLabel_ = new QLabel(QStringLiteral("Point Tracker"),
-                                             impl_->trackerPanel_);
+  impl_->trackerPanelModeLabel_ = new QLabel(
+      trackerPanelText(QStringLiteral("mode.point"), QStringLiteral("Point Tracker")),
+      impl_->trackerPanel_);
   impl_->trackerPanelModeLabel_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
   sessionRow->addWidget(impl_->trackerPanelModeLabel_, 1);
-  makePanelButton(sessionRow, QStringLiteral("+"),
-                  QStringLiteral("Initialize a tracker for the active composition"),
+  impl_->trackerCreatePanelButton_ = makePanelButton(
+                  sessionRow, QStringLiteral("+"),
+                  trackerPanelText(QStringLiteral("session.create_tooltip"), QStringLiteral("Create a tracker session for the active composition")),
                   [this]() {
                     if (!impl_) return;
+                    auto *controller = impl_->activeRenderController();
+                    if (!controller || controller->trackerJobRunning()) {
+                      return;
+                    }
                     if (auto *toolManager = ArtifactApplicationManager::instance()
                                                 ? ArtifactApplicationManager::instance()->toolManager()
                                                 : nullptr) {
                       toolManager->setActiveTool(ToolType::TrackPoint);
                     }
-                    if (auto *controller = impl_->activeRenderController()) controller->trackerInitialize();
+                    controller->trackerInitialize();
                     impl_->syncToolLabel(this);
                   });
-  makePanelButton(sessionRow, QStringLiteral("Delete"),
-                  QStringLiteral("Delete the active tracker"),
-                  [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerDelete(); });
+  impl_->trackerDeletePanelButton_ = makePanelButton(sessionRow,
+                  trackerPanelText(QStringLiteral("session.delete"), QStringLiteral("Delete")),
+                  trackerPanelText(QStringLiteral("session.delete_tooltip"), QStringLiteral("Delete the active tracker")),
+                  [this]() {
+                    if (auto *c = impl_ ? impl_->activeRenderController() : nullptr;
+                        c && !c->trackerJobRunning()) {
+                      c->trackerDelete();
+                    }
+                  });
   trackerPanelLayout->addLayout(sessionRow);
+  auto *trackerSessionRow = new QHBoxLayout();
+  trackerSessionRow->setSpacing(4);
+  impl_->trackerSessionPreviousPanelButton_ = makePanelButton(
+      trackerSessionRow, QStringLiteral("‹"),
+      trackerPanelText(QStringLiteral("session.previous_tooltip"),
+                       QStringLiteral("Select the previous tracker session")),
+      [this]() {
+        if (auto *controller = impl_ ? impl_->activeRenderController() : nullptr) {
+          controller->trackerCycleSession(-1);
+        }
+      });
+  impl_->trackerSessionNamePanelLabel_ = new QLabel(
+      trackerPanelText(QStringLiteral("session.none"),
+                       QStringLiteral("No tracker session")),
+      impl_->trackerPanel_);
+  impl_->trackerSessionNamePanelLabel_->setWordWrap(true);
+  trackerSessionRow->addWidget(impl_->trackerSessionNamePanelLabel_, 1);
+  impl_->trackerSessionNextPanelButton_ = makePanelButton(
+      trackerSessionRow, QStringLiteral("›"),
+      trackerPanelText(QStringLiteral("session.next_tooltip"),
+                       QStringLiteral("Select the next tracker session")),
+      [this]() {
+        if (auto *controller = impl_ ? impl_->activeRenderController() : nullptr) {
+          controller->trackerCycleSession(1);
+        }
+      });
+  trackerPanelLayout->addLayout(trackerSessionRow);
+  auto *trackerSourceRow = new QHBoxLayout();
+  trackerSourceRow->setSpacing(4);
+  impl_->trackerSourcePreviousPanelButton_ = makePanelButton(
+      trackerSourceRow, QStringLiteral("‹"),
+      trackerPanelText(QStringLiteral("source.previous_tooltip"),
+                       QStringLiteral("Select the previous trackable image source")),
+      [this]() {
+        if (auto *controller = impl_ ? impl_->activeRenderController() : nullptr) {
+          controller->trackerCycleSourceLayer(-1);
+        }
+      });
+  impl_->trackerPanelSourceLabel_ = new QLabel(
+      trackerPanelText(QStringLiteral("source.select_image"),
+                       QStringLiteral("Source: Select an image layer")),
+      impl_->trackerPanel_);
+  impl_->trackerPanelSourceLabel_->setWordWrap(true);
+  trackerSourceRow->addWidget(impl_->trackerPanelSourceLabel_, 1);
+  impl_->trackerSourceNextPanelButton_ = makePanelButton(
+      trackerSourceRow, QStringLiteral("›"),
+      trackerPanelText(QStringLiteral("source.next_tooltip"),
+                       QStringLiteral("Select the next trackable image source")),
+      [this]() {
+        if (auto *controller = impl_ ? impl_->activeRenderController() : nullptr) {
+          controller->trackerCycleSourceLayer(1);
+        }
+      });
+  impl_->trackerSourceUseSelectionPanelButton_ = makePanelButton(
+      trackerSourceRow,
+      trackerPanelText(QStringLiteral("source.use_selection"),
+                       QStringLiteral("Use Selection")),
+      trackerPanelText(QStringLiteral("source.use_selection_tooltip"),
+                       QStringLiteral("Use the currently selected layer as the tracking source")),
+      [this]() {
+        if (auto *controller = impl_ ? impl_->activeRenderController() : nullptr) {
+          controller->trackerUseSelectedLayerAsSource();
+        }
+      });
+  trackerPanelLayout->addLayout(trackerSourceRow);
+  impl_->trackerPanelTargetLabel_ = new QLabel(
+      trackerPanelText(QStringLiteral("source.select_target"),
+                       QStringLiteral("Apply target: Select a layer")),
+      impl_->trackerPanel_);
+  impl_->trackerPanelTargetLabel_->setWordWrap(true);
+  trackerPanelLayout->addWidget(impl_->trackerPanelTargetLabel_);
 
   auto *modeRow = new QHBoxLayout();
   modeRow->setSpacing(4);
   impl_->trackerPointModePanelButton_ = makePanelButton(
-      modeRow, QStringLiteral("Point"), QStringLiteral("Use point tracking"),
+      modeRow, trackerPanelText(QStringLiteral("mode.point_button"), QStringLiteral("Point")),
+      trackerPanelText(QStringLiteral("mode.point_tooltip"), QStringLiteral("Use point tracking")),
       [this]() {
         if (!impl_) return;
         if (auto *toolManager = ArtifactApplicationManager::instance()
@@ -11979,7 +12592,8 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
         impl_->syncToolLabel(this);
       });
   impl_->trackerPlanarModePanelButton_ = makePanelButton(
-      modeRow, QStringLiteral("Planar"), QStringLiteral("Use four-corner planar tracking"),
+      modeRow, trackerPanelText(QStringLiteral("mode.planar_button"), QStringLiteral("Planar")),
+      trackerPanelText(QStringLiteral("mode.planar_tooltip"), QStringLiteral("Use four-corner planar tracking")),
                   [this]() {
                     if (!impl_) return;
                     if (auto *toolManager = ArtifactApplicationManager::instance()
@@ -11997,13 +12611,16 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->trackerPointModePanelButton_->setChecked(true);
   trackerPanelLayout->addLayout(modeRow);
 
-  makeSectionLabel(QStringLiteral("Setup"));
+  makeSectionLabel(trackerPanelText(QStringLiteral("section.setup"), QStringLiteral("Setup")));
   auto *setupRow = new QHBoxLayout();
   setupRow->setSpacing(6);
-  makePanelButton(setupRow, QStringLiteral("Set Track Geometry"),
-                  QStringLiteral("Activate the tracking tool and edit its point or plane in the viewport"),
+  impl_->trackerGeometryPanelButton_ = makePanelButton(setupRow,
+                  trackerPanelText(QStringLiteral("setup.geometry"), QStringLiteral("Set Track Geometry")),
+                  trackerPanelText(QStringLiteral("setup.geometry_tooltip"), QStringLiteral("Activate the tracking tool and edit its point or plane in the viewport")),
                   [this]() {
                     if (!impl_) return;
+                    auto *controller = impl_->activeRenderController();
+                    if (!controller || controller->trackerJobRunning()) return;
                     if (auto *toolManager = ArtifactApplicationManager::instance()
                                                 ? ArtifactApplicationManager::instance()->toolManager()
                                                 : nullptr) {
@@ -12011,75 +12628,273 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                     }
                     impl_->syncToolLabel(this);
                   });
-  makePanelButton(setupRow, QStringLiteral("Reset Track"),
-                  QStringLiteral("Clear track points, planar regions, and tracked results before a new solve"),
-                  [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerReset(); });
+  impl_->trackerResetPanelButton_ = makePanelButton(setupRow,
+                  trackerPanelText(QStringLiteral("setup.reset"), QStringLiteral("Reset Track")),
+                  trackerPanelText(QStringLiteral("setup.reset_tooltip"), QStringLiteral("Clear track points, planar regions, and tracked results before a new solve")),
+                  [this]() {
+                    if (auto *c = impl_ ? impl_->activeRenderController() : nullptr;
+                        c && !c->trackerJobRunning()) {
+                      c->trackerReset();
+                    }
+                  });
   trackerPanelLayout->addLayout(setupRow);
 
-  makeSectionLabel(QStringLiteral("Analyze"));
+  impl_->trackerPointControlsPanel_ = new QWidget(impl_->trackerPanel_);
+  auto *pointControlsLayout =
+      new QVBoxLayout(impl_->trackerPointControlsPanel_);
+  pointControlsLayout->setContentsMargins(0, 0, 0, 0);
+  pointControlsLayout->setSpacing(4);
+  auto *pointControlsTitle = new QLabel(
+      trackerPanelText(QStringLiteral("section.points"), QStringLiteral("Track Points")),
+      impl_->trackerPointControlsPanel_);
+  QFont pointControlsTitleFont = pointControlsTitle->font();
+  pointControlsTitleFont.setBold(true);
+  pointControlsTitle->setFont(pointControlsTitleFont);
+  pointControlsLayout->addWidget(pointControlsTitle);
+  auto *pointControlsRow = new QHBoxLayout();
+  pointControlsRow->setSpacing(4);
+  impl_->trackerPointCountPanelLabel_ = new QLabel(
+      trackerPanelText(QStringLiteral("setup.point_count"), QStringLiteral("Tracking points: %1"))
+          .arg(0), impl_->trackerPointControlsPanel_);
+  impl_->trackerPointCountPanelLabel_->setAlignment(Qt::AlignCenter);
+  pointControlsRow->addWidget(impl_->trackerPointCountPanelLabel_, 1);
+  impl_->trackerAddPointPanelButton_ = makePanelButton(
+      pointControlsRow,
+      trackerPanelText(QStringLiteral("setup.add_point"), QStringLiteral("Add Point")),
+      trackerPanelText(QStringLiteral("setup.add_point_tooltip"), QStringLiteral("Arm point placement, then click the viewport")),
+      [this]() {
+        if (!impl_) return;
+        auto *controller = impl_->activeRenderController();
+        if (!controller) return;
+        controller->trackerTogglePointPlacement();
+        if (controller->trackerPointPlacementArmed()) {
+          if (auto *toolManager = ArtifactApplicationManager::instance()
+                                      ? ArtifactApplicationManager::instance()->toolManager()
+                                      : nullptr) {
+            toolManager->setActiveTool(ToolType::TrackPoint);
+          }
+        }
+        impl_->syncToolLabel(this);
+      });
+  impl_->trackerAddPointPanelButton_->setCheckable(true);
+  impl_->trackerRemovePointPanelButton_ = makePanelButton(
+      pointControlsRow,
+      trackerPanelText(QStringLiteral("setup.remove_last_point"), QStringLiteral("Remove Last")),
+      trackerPanelText(QStringLiteral("setup.remove_last_point_tooltip"), QStringLiteral("Remove the most recently placed point before analysis")),
+      [this]() {
+        if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) {
+          c->trackerRemoveLastPoint();
+        }
+      });
+  pointControlsLayout->addLayout(pointControlsRow);
+  trackerPanelLayout->addWidget(impl_->trackerPointControlsPanel_);
+
+  makeSectionLabel(trackerPanelText(QStringLiteral("section.settings"), QStringLiteral("Tracking Settings")));
+  auto *settingsLayout = new QVBoxLayout();
+  settingsLayout->setSpacing(4);
+  impl_->trackerMethodPanelButton_ = makePanelButton(
+      settingsLayout,
+      trackerPanelText(QStringLiteral("settings.method_label"), QStringLiteral("Method: Optical Flow")),
+      trackerPanelText(QStringLiteral("settings.method_tooltip"), QStringLiteral("Cycle the tracking algorithm used for analysis")),
+      [this]() {
+        if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) {
+          c->trackerCycleMethod();
+        }
+      });
+  auto *confidenceRow = new QHBoxLayout();
+  confidenceRow->setSpacing(4);
+  impl_->trackerConfidenceDownPanelButton_ = makePanelButton(
+      confidenceRow, QStringLiteral("−"),
+      trackerPanelText(QStringLiteral("settings.confidence_down_tooltip"), QStringLiteral("Lower confidence threshold by 5%")),
+      [this]() {
+        if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) {
+          c->trackerAdjustConfidenceThreshold(-0.05);
+        }
+      });
+  impl_->trackerConfidenceThresholdPanelLabel_ = new QLabel(
+      trackerPanelText(QStringLiteral("settings.confidence_threshold"), QStringLiteral("Confidence threshold: %1%"))
+          .arg(50), impl_->trackerPanel_);
+  impl_->trackerConfidenceThresholdPanelLabel_->setAlignment(Qt::AlignCenter);
+  confidenceRow->addWidget(impl_->trackerConfidenceThresholdPanelLabel_, 1);
+  impl_->trackerConfidenceUpPanelButton_ = makePanelButton(
+      confidenceRow, QStringLiteral("+"),
+      trackerPanelText(QStringLiteral("settings.confidence_up_tooltip"), QStringLiteral("Raise confidence threshold by 5%")),
+      [this]() {
+        if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) {
+          c->trackerAdjustConfidenceThreshold(0.05);
+        }
+      });
+  settingsLayout->addLayout(confidenceRow);
+  trackerPanelLayout->addLayout(settingsLayout);
+
+  makeSectionLabel(trackerPanelText(QStringLiteral("section.analyze"), QStringLiteral("Analyze")));
   auto *analyzeRow = new QHBoxLayout();
   analyzeRow->setSpacing(4);
-  makePanelButton(analyzeRow, QStringLiteral("|◀"), QStringLiteral("Track backward"),
-                  [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerTrackBackward(); });
-  makePanelButton(analyzeRow, QStringLiteral("■"), QStringLiteral("Stop tracking"),
-                  [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerStop(); });
-  makePanelButton(analyzeRow, QStringLiteral("▶"), QStringLiteral("Track forward"),
-                  [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerTrackForward(); });
-  makePanelButton(analyzeRow, QStringLiteral("▶|"), QStringLiteral("Track full sequence"),
-                  [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerTrackAll(); });
+  impl_->trackerTrackBackwardPanelButton_ = makePanelButton(
+      analyzeRow, QStringLiteral("|◀"), trackerPanelText(QStringLiteral("analyze.backward"), QStringLiteral("Track backward")),
+      [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerTrackBackward(); });
+  impl_->trackerStopPanelButton_ = makePanelButton(
+      analyzeRow, QStringLiteral("■"), trackerPanelText(QStringLiteral("analyze.stop"), QStringLiteral("Stop tracking")),
+      [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerStop(); });
+  impl_->trackerTrackForwardPanelButton_ = makePanelButton(
+      analyzeRow, QStringLiteral("▶"), trackerPanelText(QStringLiteral("analyze.forward"), QStringLiteral("Track forward")),
+      [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerTrackForward(); });
+  impl_->trackerTrackAllPanelButton_ = makePanelButton(
+      analyzeRow, QStringLiteral("▶|"), trackerPanelText(QStringLiteral("analyze.full_sequence"), QStringLiteral("Track full sequence")),
+      [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerTrackAll(); });
   trackerPanelLayout->addLayout(analyzeRow);
+  auto *stepRow = new QHBoxLayout();
+  stepRow->setSpacing(4);
+  impl_->trackerStepBackwardPanelButton_ = makePanelButton(
+      stepRow, QStringLiteral("−1"),
+      trackerPanelText(QStringLiteral("analyze.step_backward"), QStringLiteral("Track one frame backward")),
+      [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerTrackStepBackward(); });
+  impl_->trackerStepForwardPanelButton_ = makePanelButton(
+      stepRow, QStringLiteral("+1"),
+      trackerPanelText(QStringLiteral("analyze.step_forward"), QStringLiteral("Track one frame forward")),
+      [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerTrackStepForward(); });
+  trackerPanelLayout->addLayout(stepRow);
   impl_->trackerPanelProgress_ = new QProgressBar(impl_->trackerPanel_);
   impl_->trackerPanelProgress_->setRange(0, 100);
   impl_->trackerPanelProgress_->setValue(0);
   impl_->trackerPanelProgress_->setTextVisible(false);
-  impl_->trackerPanelProgress_->setFixedHeight(6);
+  impl_->trackerPanelProgress_->setFormat(QStringLiteral("%p%"));
+  impl_->trackerPanelProgress_->setFixedHeight(14);
   trackerPanelLayout->addWidget(impl_->trackerPanelProgress_);
 
-  makeSectionLabel(QStringLiteral("Quality"));
-  makePanelButton(trackerPanelLayout, QStringLiteral("Review Problem Frames"),
-                  QStringLiteral("Jump to the next problem frame"),
-                  [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerNextProblemFrame(); });
-  makePanelButton(trackerPanelLayout, QStringLiteral("Smooth Track"),
-                  QStringLiteral("Apply a five-frame moving average to active tracking points"),
-                  [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerSmooth(); });
-  makePanelButton(trackerPanelLayout, QStringLiteral("Remove Outliers"),
-                  QStringLiteral("Deactivate velocity outliers and flag their frames for review"),
-                  [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerRemoveOutliers(); });
-  makePanelButton(trackerPanelLayout, QStringLiteral("Filter Confidence"),
-                  QStringLiteral("Deactivate points below the configured tracking-confidence threshold"),
-                  [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerFilterByConfidence(); });
+  makeSectionLabel(trackerPanelText(QStringLiteral("section.quality"), QStringLiteral("Quality")));
+  auto *reviewProblemRow = new QHBoxLayout();
+  impl_->trackerReviewPreviousProblemPanelButton_ = makePanelButton(
+      reviewProblemRow,
+      trackerPanelText(QStringLiteral("quality.review_previous"), QStringLiteral("Previous Issue")),
+      trackerPanelText(QStringLiteral("quality.review_previous_tooltip"), QStringLiteral("Jump to the previous problem frame")),
+      [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerPreviousProblemFrame(); });
+  impl_->trackerReviewProblemsPanelButton_ = makePanelButton(
+      reviewProblemRow,
+      trackerPanelText(QStringLiteral("quality.review_next"), QStringLiteral("Next Issue")),
+      trackerPanelText(QStringLiteral("quality.review_tooltip"), QStringLiteral("Jump to the next problem frame")),
+      [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerNextProblemFrame(); });
+  trackerPanelLayout->addLayout(reviewProblemRow);
+  impl_->trackerSmoothPanelButton_ = makePanelButton(
+      trackerPanelLayout,
+      trackerPanelText(QStringLiteral("quality.smooth"), QStringLiteral("Smooth Track")),
+      trackerPanelText(QStringLiteral("quality.smooth_tooltip"), QStringLiteral("Apply a five-frame moving average to active tracking points")),
+      [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerSmooth(); });
+  impl_->trackerRemoveOutliersPanelButton_ = makePanelButton(
+      trackerPanelLayout,
+      trackerPanelText(QStringLiteral("quality.remove_outliers"), QStringLiteral("Remove Outliers")),
+      trackerPanelText(QStringLiteral("quality.remove_outliers_tooltip"), QStringLiteral("Deactivate velocity outliers and flag their frames for review")),
+      [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerRemoveOutliers(); });
+  impl_->trackerFilterConfidencePanelButton_ = makePanelButton(
+      trackerPanelLayout,
+      trackerPanelText(QStringLiteral("quality.filter_confidence"), QStringLiteral("Filter Confidence")),
+      trackerPanelText(QStringLiteral("quality.filter_confidence_tooltip"), QStringLiteral("Deactivate points below the configured tracking-confidence threshold")),
+      [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerFilterByConfidence(); });
 
-  impl_->trackerPanelQualityLabel_ = new QLabel(QStringLiteral("Confidence —"),
+  auto *qualitySummaryRow = new QHBoxLayout();
+  auto *qualityMetricsColumn = new QVBoxLayout();
+  qualityMetricsColumn->setContentsMargins(0, 0, 0, 0);
+  qualityMetricsColumn->setSpacing(2);
+  impl_->trackerPanelQualityLabel_ = new QLabel(
+                                                trackerPanelText(QStringLiteral("quality.confidence_empty"), QStringLiteral("Confidence —")),
                                                 impl_->trackerPanel_);
-  impl_->trackerPanelProblemsLabel_ = new QLabel(QStringLiteral("Problem frames 0"),
+  impl_->trackerPanelProblemsLabel_ = new QLabel(
+                                                 trackerPanelText(QStringLiteral("quality.problem_frames"), QStringLiteral("Problem frames %1")).arg(0),
                                                  impl_->trackerPanel_);
-  impl_->trackerPanelFramesLabel_ = new QLabel(QStringLiteral("Tracked frames 0"),
+  impl_->trackerPanelFrameReviewLabel_ = new QLabel(
+      trackerPanelText(QStringLiteral("quality.frame_unavailable"), QStringLiteral("Frame %1 • No result")).arg(0),
+      impl_->trackerPanel_);
+  impl_->trackerPanelFramesLabel_ = new QLabel(
+                                               trackerPanelText(QStringLiteral("quality.tracked_frames"), QStringLiteral("Tracked frames %1")).arg(0),
                                                impl_->trackerPanel_);
-  trackerPanelLayout->addWidget(impl_->trackerPanelQualityLabel_);
-  trackerPanelLayout->addWidget(impl_->trackerPanelProblemsLabel_);
-  trackerPanelLayout->addWidget(impl_->trackerPanelFramesLabel_);
+  qualityMetricsColumn->addWidget(impl_->trackerPanelQualityLabel_);
+  qualityMetricsColumn->addWidget(impl_->trackerPanelProblemsLabel_);
+  qualityMetricsColumn->addWidget(impl_->trackerPanelFrameReviewLabel_);
+  qualityMetricsColumn->addWidget(impl_->trackerPanelFramesLabel_);
+  qualitySummaryRow->addLayout(qualityMetricsColumn, 3);
+  impl_->trackerPanelConfidenceChart_ = new TrackerConfidenceChart(impl_->trackerPanel_);
+  impl_->trackerPanelConfidenceChart_->setToolTip(
+      trackerPanelText(QStringLiteral("quality.chart_tooltip"),
+                       QStringLiteral("Confidence by result time; dashed line shows threshold, broken segments show missing intervals")));
+  impl_->trackerPanelConfidenceChart_->setAccessibleDescription(
+      impl_->trackerPanelConfidenceChart_->toolTip());
+  qualitySummaryRow->addWidget(impl_->trackerPanelConfidenceChart_, 2);
+  trackerPanelLayout->addLayout(qualitySummaryRow);
 
-  makeSectionLabel(QStringLiteral("Apply"));
+  makeSectionLabel(trackerPanelText(QStringLiteral("section.apply"), QStringLiteral("Apply")));
   auto *applyPointRow = new QHBoxLayout();
   applyPointRow->setSpacing(6);
-  makePanelButton(applyPointRow, QStringLiteral("Bake Position"),
-                  QStringLiteral("Apply the point track to position"),
-                  [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerApplyToPosition(); });
-  makePanelButton(applyPointRow, QStringLiteral("Bake Anchor"),
-                  QStringLiteral("Apply the point track to anchor"),
-                  [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerApplyToAnchor(); });
+  impl_->trackerApplyPositionPanelButton_ = makePanelButton(
+      applyPointRow,
+      trackerPanelText(QStringLiteral("apply.position"), QStringLiteral("Bake Position")),
+      trackerPanelText(QStringLiteral("apply.position_tooltip"), QStringLiteral("Apply the point track to the selected layer or create a Null layer")),
+      [this]() {
+        if (auto *c = impl_ ? impl_->activeRenderController() : nullptr;
+            c && impl_->confirmTrackerBakeIfProblems(this, c->trackerProblemFrameCount())) {
+          c->trackerApplyToPosition();
+        }
+      });
+  impl_->trackerApplyAnchorPanelButton_ = makePanelButton(
+      applyPointRow,
+      trackerPanelText(QStringLiteral("apply.anchor"), QStringLiteral("Bake Anchor")),
+      trackerPanelText(QStringLiteral("apply.anchor_tooltip"), QStringLiteral("Apply the point track to the selected layer's anchor")),
+      [this]() {
+        if (auto *c = impl_ ? impl_->activeRenderController() : nullptr;
+            c && impl_->confirmTrackerBakeIfProblems(this, c->trackerProblemFrameCount())) {
+          c->trackerApplyToAnchor();
+        }
+      });
   trackerPanelLayout->addLayout(applyPointRow);
-  makePanelButton(trackerPanelLayout, QStringLiteral("Create Nulls for All Points"),
-                  QStringLiteral("Create one Null layer per tracked point"),
-                  [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerApplyAllPoints(); });
-  makePanelButton(trackerPanelLayout, QStringLiteral("Apply Corner Pin"),
-                  QStringLiteral("Apply planar tracking to Corner Pin"),
-                  [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) c->trackerApplyPlanarCornerPin(); });
+  impl_->trackerApplyAllPanelButton_ = makePanelButton(
+      trackerPanelLayout,
+      trackerPanelText(QStringLiteral("apply.all_points"), QStringLiteral("Create Nulls for All Points")),
+      trackerPanelText(QStringLiteral("apply.all_points_tooltip"), QStringLiteral("Create one Null layer per tracked point")),
+      [this]() {
+        if (auto *c = impl_ ? impl_->activeRenderController() : nullptr;
+            c && impl_->confirmTrackerBakeIfProblems(this, c->trackerProblemFrameCount())) {
+          c->trackerApplyAllPoints();
+        }
+      });
+  impl_->trackerApplyCornerPinPanelButton_ = makePanelButton(
+      trackerPanelLayout,
+      trackerPanelText(QStringLiteral("apply.corner_pin"), QStringLiteral("Apply Corner Pin")),
+      trackerPanelText(QStringLiteral("apply.corner_pin_tooltip"), QStringLiteral("Apply planar tracking to Corner Pin on the selected layer")),
+      [this]() {
+        if (auto *c = impl_ ? impl_->activeRenderController() : nullptr;
+            c && impl_->confirmTrackerBakeIfProblems(this, c->trackerProblemFrameCount())) {
+          c->trackerApplyPlanarCornerPin();
+        }
+      });
+  impl_->trackerApplyMaskPanelButton_ = makePanelButton(
+      trackerPanelLayout,
+      trackerPanelText(QStringLiteral("apply.mask"), QStringLiteral("Apply Track to Mask")),
+      trackerPanelText(QStringLiteral("apply.mask_tooltip"), QStringLiteral("Apply planar tracking to the selected mask path")),
+      [this]() {
+        if (auto *c = impl_ ? impl_->activeRenderController() : nullptr;
+            c && impl_->confirmTrackerBakeIfProblems(this, c->trackerProblemFrameCount())) {
+          c->trackerApplyToMask();
+        }
+      });
+  auto *maskPathRow = new QHBoxLayout();
+  impl_->trackerMaskPathPreviousPanelButton_ = makePanelButton(
+      maskPathRow, QStringLiteral("‹"),
+      trackerPanelText(QStringLiteral("apply.mask_previous_tooltip"), QStringLiteral("Select previous mask path")),
+      [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) { c->trackerCycleMaskPath(-1); impl_->refreshTrackerPanel(); } });
+  impl_->trackerMaskPathPanelLabel_ = new QLabel(impl_->trackerPanel_);
+  impl_->trackerMaskPathPanelLabel_->setAlignment(Qt::AlignCenter);
+  maskPathRow->addWidget(impl_->trackerMaskPathPanelLabel_, 1);
+  impl_->trackerMaskPathNextPanelButton_ = makePanelButton(
+      maskPathRow, QStringLiteral("›"),
+      trackerPanelText(QStringLiteral("apply.mask_next_tooltip"), QStringLiteral("Select next mask path")),
+      [this]() { if (auto *c = impl_ ? impl_->activeRenderController() : nullptr) { c->trackerCycleMaskPath(1); impl_->refreshTrackerPanel(); } });
+  trackerPanelLayout->insertLayout(trackerPanelLayout->count() - 1, maskPathRow);
   trackerPanelLayout->addStretch(1);
   auto *statusLine = new QFrame(impl_->trackerPanel_);
   statusLine->setFrameShape(QFrame::HLine);
   trackerPanelLayout->addWidget(statusLine);
-  impl_->trackerPanelStatusLabel_ = new QLabel(QStringLiteral("Ready"), impl_->trackerPanel_);
+  impl_->trackerPanelStatusLabel_ = new QLabel(
+      trackerPanelText(QStringLiteral("status.ready"), QStringLiteral("Ready")),
+      impl_->trackerPanel_);
   trackerPanelLayout->addWidget(impl_->trackerPanelStatusLabel_);
 
   auto *gizmoMenu = new QMenu(this);
@@ -13926,6 +14741,10 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
             const auto comp = impl_->renderController_->composition();
             if (!comp || comp->id().toString() != event.compositionId) return;
             impl_->syncViewerFrame(event.frame);
+            auto *playback = ArtifactPlaybackService::instance();
+            if (playback && !playback->isPlaying()) {
+              impl_->refreshTrackerFrameReview(event.frame);
+            }
           }));
 
   impl_->eventBusSubscriptions_.push_back(
@@ -13936,6 +14755,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
             impl_->syncViewerFrame(
                 playback ? playback->currentFrame().framePosition() : 0);
             impl_->syncPlaybackButtonState();
+            impl_->refreshTrackerPanel();
           }));
 
   impl_->eventBusSubscriptions_.push_back(
@@ -14416,7 +15236,9 @@ QWidget* ArtifactCompositionEditor::viewportHostWidget() const {
 }
 
 QWidget* ArtifactCompositionEditor::trackerPanelWidget() const {
-  return impl_ ? impl_->trackerPanel_ : nullptr;
+  if (!impl_) return nullptr;
+  impl_->refreshTrackerPanel();
+  return impl_->trackerPanel_;
 }
 
 void ArtifactCompositionEditor::play() {

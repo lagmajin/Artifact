@@ -243,8 +243,39 @@ void ShaderManager::Impl::createShaders()
     spriteTransformVsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
     spriteTransformVsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_VERTEX;
     spriteTransformVsInfo.Desc.Name = "SpriteTransformVertexShader";
-    spriteTransformVsInfo.Source = ArtifactCore::drawSpriteTransformVSSource.constData();
-    spriteTransformVsInfo.SourceLength = ArtifactCore::drawSpriteTransformVSSource.length();
+    static const char spriteTransformVSSource[] = R"hlsl(
+cbuffer TransformCB : register(b0)
+{
+    float4 row0;
+    float4 row1;
+    float4 row2;
+    float4 row3;
+};
+struct VSInput
+{
+    float2 pos : ATTRIB0;
+    float2 texCoord : ATTRIB1;
+    float4 color : ATTRIB2;
+};
+struct PSInput
+{
+    float4 pos : SV_POSITION;
+    float2 texCoord : TEXCOORD0;
+    float4 color : COLOR0;
+};
+PSInput main(VSInput input)
+{
+    PSInput output;
+    float4 localPos = float4(input.pos.xy, 0.0f, 1.0f);
+    output.pos = float4(dot(localPos, row0), dot(localPos, row1),
+                        dot(localPos, row2), dot(localPos, row3));
+    output.texCoord = input.texCoord;
+    output.color = input.color;
+    return output;
+}
+)hlsl";
+    spriteTransformVsInfo.Source = spriteTransformVSSource;
+    spriteTransformVsInfo.SourceLength = sizeof(spriteTransformVSSource) - 1;
 
     ShaderCreateInfo glyphTransformVsInfo;
     glyphTransformVsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
@@ -1038,6 +1069,8 @@ void ShaderManager::Impl::createSpriteFamilyPSOs()
     static const LayoutElement spriteTransformLayoutElems[] = {
         LayoutElement{0, 0, 2, VT_FLOAT32, false, 0, 8 * sizeof(float)},
         LayoutElement{1, 0, 2, VT_FLOAT32, false, 2 * sizeof(float),
+                      8 * sizeof(float)},
+        LayoutElement{2, 0, 4, VT_FLOAT32, false, 4 * sizeof(float),
                       8 * sizeof(float)}
     };
     spriteTransformInfo.PSODesc.Name = "DrawSpriteTransform PSO";

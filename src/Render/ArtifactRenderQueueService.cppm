@@ -2689,6 +2689,7 @@ namespace Artifact
             void* colorTarget = nullptr;
             void* depthTarget = nullptr;
             void* computeTarget = nullptr;
+            void* computeTarget2 = nullptr;
         };
 
         struct GpuMatteResourcePool {
@@ -2732,8 +2733,13 @@ namespace Artifact
                     slot.computeTarget = renderer->createOffscreenComputeTexture(
                         size.width(), size.height());
                 }
+                if (requireComputeTarget && !slot.computeTarget2) {
+                    slot.computeTarget2 = renderer->createOffscreenComputeTexture(
+                        size.width(), size.height());
+                }
                 if (!slot.colorTarget || !slot.depthTarget ||
-                    (requireComputeTarget && !slot.computeTarget)) {
+                    (requireComputeTarget &&
+                     (!slot.computeTarget || !slot.computeTarget2))) {
                     release(slot);
                     return nullptr;
                 }
@@ -2746,6 +2752,7 @@ namespace Artifact
                     renderer->destroyOffscreenTexture(slot.colorTarget);
                     renderer->destroyOffscreenTexture(slot.depthTarget);
                     renderer->destroyOffscreenTexture(slot.computeTarget);
+                    renderer->destroyOffscreenTexture(slot.computeTarget2);
                 }
                 slot = {};
             }
@@ -7055,25 +7062,30 @@ namespace Artifact
                     !layer->isActiveAt(gpuPos)) continue;
                 layer->goToFrame(snap.frameNumber);
                 std::vector<LayerMatteReference> gpuMatteRefs;
-                gpuMatteRefs.reserve(3);
-                if (gpuMattePipelineReady && !layer->is3D()) {
-                    for (const auto& ref : layer->matteReferences()) {
-                        if (!ref.enabled || ref.sourceLayerId.isNil() ||
-                            ref.sourceLayerId == layer->id()) {
-                            continue;
-                        }
-                        if (ref.fitMode != MatteFitMode::Stretch ||
-                            !matteSourceGpuViews.contains(ref.sourceLayerId)) {
-                            gpuMatteRefs.clear();
-                            break;
-                        }
-                        gpuMatteRefs.push_back(ref);
+                const auto matteReferences = layer->matteReferences();
+                gpuMatteRefs.reserve(matteReferences.size());
+                bool hasUnsupportedMatte = false;
+                for (const auto& ref : matteReferences) {
+                    if (!ref.enabled || ref.sourceLayerId.isNil() ||
+                        ref.sourceLayerId == layer->id()) {
+                        continue;
                     }
-                    if (gpuMatteRefs.size() > 3) {
-                        gpuMatteRefs.clear();
+                    if (!gpuMattePipelineReady || layer->is3D() ||
+                        ref.fitMode != MatteFitMode::Stretch ||
+                        !matteSourceGpuViews.contains(ref.sourceLayerId)) {
+                        hasUnsupportedMatte = true;
+                        break;
                     }
+                    gpuMatteRefs.push_back(ref);
                 }
-                if (!gpuMatteRefs.empty() && !layer->revealEnabled()) {
+                if (hasUnsupportedMatte ||
+                    (!gpuMatteRefs.empty() && layer->revealEnabled())) {
+                    failureReason = QStringLiteral(
+                        "GPU track matte cannot process this layer; retrying with CPU render: %1")
+                        .arg(layer->layerName());
+                    return false;
+                }
+                if (!gpuMatteRefs.empty()) {
                     auto* layerResources = snap.gpuMatteResourcePool
                         ? snap.gpuMatteResourcePool->acquire(true)
                         : nullptr;
@@ -7083,11 +7095,24 @@ namespace Artifact
                         ? layerResources->depthTarget : nullptr;
                     void* outputTarget = layerResources
                         ? layerResources->computeTarget : nullptr;
+                    void* outputTarget2 = layerResources
+                        ? layerResources->computeTarget2 : nullptr;
                     auto* layerSRV = renderer->offscreenTextureShaderResourceView(layerTarget);
-                    auto* outputSRV = renderer->offscreenTextureShaderResourceView(outputTarget);
-                    auto* outputUAV = renderer->offscreenTextureUnorderedAccessView(outputTarget);
-                    if (layerTarget && layerDepth && outputTarget && layerSRV &&
-                        outputSRV && outputUAV) {
+                    std::array<Diligent::ITextureView*, 2> maskSRVs = {
+                        renderer->offscreenTextureShaderResourceView(outputTarget),
+                        renderer->offscreenTextureShaderResourceView(outputTarget2)};
+                    std::array<Diligent::ITextureView*, 2> maskUAVs = {
+                        renderer->offscreenTextureUnorderedAccessView(outputTarget),
+                        renderer->offscreenTextureUnorderedAccessView(outputTarget2)};
+                    if (!layerTarget || !layerDepth || !outputTarget ||
+                        !outputTarget2 || !layerSRV || !maskSRVs[0] ||
+                        !maskSRVs[1] || !maskUAVs[0] || !maskUAVs[1]) {
+                        failureReason = QStringLiteral(
+                            "GPU track matte scratch resources are unavailable: %1")
+                            .arg(layer->layerName());
+                        return false;
+                    }
+                    {
                         renderer->pushRenderTarget(layerTarget, layerDepth);
                         renderer->setClearColor(FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
                         renderer->clear();
@@ -7098,41 +7123,76 @@ namespace Artifact
                         renderer->flush();
                         renderer->popRenderTarget();
 
-                        ArtifactCore::MatteTrackParams params;
-                        params.matteCount = static_cast<unsigned int>(gpuMatteRefs.size());
-                        params.matteMode0 = shaderModeFor(gpuMatteRefs[0]);
-                        params.matteBlendMode0 = shaderBlendModeFor(gpuMatteRefs[0]);
-                        params.matteOpacity0 = std::clamp(gpuMatteRefs[0].opacity, 0.0f, 1.0f);
-                        std::array<Diligent::ITextureView*, 3> matteViews{};
-                        for (size_t i = 0; i < gpuMatteRefs.size(); ++i) {
-                            matteViews[i] = matteSourceGpuViews.value(
-                                gpuMatteRefs[i].sourceLayerId);
-                        }
-                        if (gpuMatteRefs.size() > 1) {
-                            params.matteMode1 = shaderModeFor(gpuMatteRefs[1]);
-                            params.matteBlendMode1 = shaderBlendModeFor(gpuMatteRefs[1]);
-                            params.matteOpacity1 = std::clamp(gpuMatteRefs[1].opacity, 0.0f, 1.0f);
-                        }
-                        if (gpuMatteRefs.size() > 2) {
-                            params.matteMode2 = shaderModeFor(gpuMatteRefs[2]);
-                            params.matteBlendMode2 = shaderBlendModeFor(gpuMatteRefs[2]);
-                            params.matteOpacity2 = std::clamp(gpuMatteRefs[2].opacity, 0.0f, 1.0f);
-                        }
-                        params.lumaMode = 0;
-                        if (renderer->applyTrackMatte(
+                        Diligent::ITextureView* currentMask = nullptr;
+                        size_t outputIndex = 0;
+                        bool matteDispatchSucceeded = true;
+                        for (size_t first = 0; first < gpuMatteRefs.size();
+                             first += 3) {
+                            const size_t count = std::min<size_t>(
+                                3, gpuMatteRefs.size() - first);
+                            std::array<Diligent::ITextureView*, 3> matteViews{};
+                            ArtifactCore::MatteTrackParams params;
+                            params.matteCount = static_cast<unsigned int>(count);
+                            for (size_t slot = 0; slot < count; ++slot) {
+                                const auto& ref = gpuMatteRefs[first + slot];
+                                matteViews[slot] = matteSourceGpuViews.value(
+                                    ref.sourceLayerId);
+                                const auto mode = shaderModeFor(ref);
+                                const auto blendMode = shaderBlendModeFor(ref);
+                                const float opacity = std::clamp(ref.opacity, 0.0f, 1.0f);
+                                if (slot == 0) {
+                                    params.matteMode0 = mode;
+                                    params.matteBlendMode0 = blendMode;
+                                    params.matteOpacity0 = opacity;
+                                } else if (slot == 1) {
+                                    params.matteMode1 = mode;
+                                    params.matteBlendMode1 = blendMode;
+                                    params.matteOpacity1 = opacity;
+                                } else {
+                                    params.matteMode2 = mode;
+                                    params.matteBlendMode2 = blendMode;
+                                    params.matteOpacity2 = opacity;
+                                }
+                            }
+                            params.lumaMode = 0;
+                            matteDispatchSucceeded = renderer->applyTrackMatte(
                                 gpuMattePipeline, layerSRV, matteViews[0],
-                                gpuMatteRefs.size() > 1 ? matteViews[1] : nullptr,
-                                gpuMatteRefs.size() > 2 ? matteViews[2] : nullptr,
-                                outputUAV, params,
+                                count > 1 ? matteViews[1] : nullptr,
+                                count > 2 ? matteViews[2] : nullptr,
+                                maskUAVs[outputIndex], params,
                                 static_cast<Diligent::Uint32>(gpuMatteSize.width()),
-                                static_cast<Diligent::Uint32>(gpuMatteSize.height()))) {
+                                static_cast<Diligent::Uint32>(gpuMatteSize.height()),
+                                currentMask, true);
+                            if (!matteDispatchSucceeded) {
+                                break;
+                            }
+                            currentMask = maskSRVs[outputIndex];
+                            outputIndex = 1u - outputIndex;
+                        }
+                        ArtifactCore::MatteTrackParams applyParams;
+                        applyParams.matteCount = 0;
+                        applyParams.lumaMode = 0;
+                        matteDispatchSucceeded = matteDispatchSucceeded &&
+                            renderer->applyTrackMatte(
+                                gpuMattePipeline, layerSRV,
+                                nullptr, nullptr, nullptr, maskUAVs[outputIndex],
+                                applyParams,
+                                static_cast<Diligent::Uint32>(gpuMatteSize.width()),
+                                static_cast<Diligent::Uint32>(gpuMatteSize.height()),
+                                currentMask, false);
+                        if (matteDispatchSucceeded) {
                             renderer->drawSprite(
                                 0.0f, 0.0f, static_cast<float>(gpuMatteSize.width()),
-                                static_cast<float>(gpuMatteSize.height()), outputSRV, 1.0f);
+                                static_cast<float>(gpuMatteSize.height()),
+                                maskSRVs[outputIndex], 1.0f);
                             renderer->flush();
                             continue;
                         }
                     }
+                    failureReason = QStringLiteral(
+                        "GPU track matte dispatch failed; retrying with CPU render: %1")
+                        .arg(layer->layerName());
+                    return false;
                 }
                 if (layer->revealEnabled()) {
                     layer->goToFrame(snap.frameNumber);

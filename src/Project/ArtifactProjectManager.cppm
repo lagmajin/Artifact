@@ -39,6 +39,7 @@ import Application.AppSettings;
 import Artifact.Project.Exporter;
 import Artifact.Project.Importer;
 import Artifact.Project.Health;
+import Tracking.MotionTracker;
 import Artifact.Diagnostics.AppValidationRules;
 import Artifact.Composition.Result;
 import Artifact.Composition.Abstract;
@@ -687,6 +688,8 @@ bool ArtifactProjectManager::loadFromFile(const QString& fullpath)
    return false;
   }
 
+  ArtifactCore::TrackerManager::instance().fromJson(importResult.trackerData);
+
   const int restoredComponentBakes =
       loadComponentBakeSidecar(importResult.project, normalizedPath);
   if (restoredComponentBakes > 0) {
@@ -1118,6 +1121,7 @@ void ArtifactProjectManager::loadFromFileAsync(const QString& fullpath,
       if (!impl_ || requestGeneration != impl_->projectOperationGeneration_) {
         return;
       }
+      ArtifactCore::TrackerManager::instance().fromJson(importResult.trackerData);
       impl_->currentProjectPtr_.reset();
       impl_->currentProjectPtr_ = importResult.project;
       impl_->currentProjectPath_ = normalizedPath;

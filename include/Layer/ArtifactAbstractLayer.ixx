@@ -415,6 +415,9 @@ public:
 
   virtual void setComposition(QObject *comp);
   virtual void setComposition(void *comp);
+  // Called after setComposition() and before the layer enters a composition's
+  // registries. Runtime-backed layers can reject attachment when setup failed.
+  virtual bool isCompositionAttachmentReady() const { return true; }
   void *composition() const;
   QObject *compositionObject() const;
   float compositionFieldInfluenceAtCanvasPoint(
@@ -507,6 +510,10 @@ public:
   // the layer has no outline and collision falls back to auto bounds.
   virtual ArtifactCore::NamedVector<QPointF>
   collisionOutlineLocalPoints() const;
+  // Append the current polygon outline into caller-owned reusable storage.
+  // The default layer has no explicit outline.
+  virtual void appendCollisionOutlineLocalPoints(
+      ArtifactCore::NamedVector<QPointF>& output) const;
   ArtifactCore::Collider2DEditState collision2DEditState() const;
   bool setCollision2DEditState(const ArtifactCore::Collider2DEditState& state);
   void enableMaterialPhysics(int preset = 0);

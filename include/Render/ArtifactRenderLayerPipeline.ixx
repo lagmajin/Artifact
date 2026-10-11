@@ -194,6 +194,8 @@ export namespace Artifact
   ITextureView* layerRTV() const;
   ITextureView* layerFloatSRV() const;
   ITextureView* layerFloatUAV() const;
+  ITextureView* matteAccumSRV() const;
+  ITextureView* matteAccumUAV() const;
   ITextureView* matteSourceSRV() const;
   ITextureView* matteSourceSRV(int index) const;
   ITextureView* emissionSRV() const;

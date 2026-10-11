@@ -60,7 +60,9 @@ public:
 
     // PathPoint ヒットテスト・ドラッグ用
     int hitPathIndex = -1;
+    int hitPathPointId = -1;
     int draggedPathIndex = -1;
+    int draggedPathPointId = -1;
     QPointF dragStartPathPos;
 
     // Per-frame draw scratch buffers. The gizmo redraws every frame, so these
@@ -177,6 +179,43 @@ void ArtifactPointTrackerGizmo::draw(ArtifactIRenderer* renderer) {
                               fillColor, accentColor, false);
     }
 
+    // Show all manually placed point tracks before and after analysis. Result
+    // positions come from the current frame; the setup positions come from the
+    // tracker's current point list without copying its backing container.
+    if (impl_->tracker && impl_->tracker->trackerType() ==
+            ArtifactCore::TrackerType::Point) {
+        const float pointSize = std::max(8.0f, 9.0f * invZoom);
+        const FloatColor pointAccent{0.95f, 0.96f, 1.0f, 1.0f};
+        if (impl_->tracker->hasResult()) {
+            const ArtifactCore::TrackFrame* frame =
+                impl_->tracker->frameAt(impl_->currentTime);
+            if (frame) {
+                for (const auto& point : frame->points) {
+                    if (!point.active) continue;
+                    const float confidence = static_cast<float>(
+                        std::clamp(point.confidence, 0.0, 1.0));
+                    const FloatColor pointFill{
+                        1.0f - confidence, 0.25f + confidence * 0.65f,
+                        0.25f, 0.92f};
+                    drawTrackerPinOverlay(
+                        renderer, static_cast<float>(point.position.x()),
+                        static_cast<float>(point.position.y()), pointSize,
+                        pointFill, pointAccent, false);
+                }
+            }
+        } else {
+            const int pointCount = impl_->tracker->trackPointCount();
+            const FloatColor pointFill{0.2f, 0.78f, 1.0f, 0.92f};
+            for (int index = 0; index < pointCount; ++index) {
+                const auto point = impl_->tracker->trackPoint(index);
+                drawTrackerPinOverlay(
+                    renderer, static_cast<float>(point.position.x()),
+                    static_cast<float>(point.position.y()), pointSize,
+                    pointFill, pointAccent, false);
+            }
+        }
+    }
+
     // --- Planar track quad: project the feature region through the current
     // homography so planar tracking remains visible even without point paths.
     if (impl_->tracker && impl_->tracker->trackerType() ==
@@ -228,92 +267,99 @@ void ArtifactPointTrackerGizmo::draw(ArtifactIRenderer* renderer) {
             Qt::AlignLeft | Qt::AlignVCenter);
     }
 
-    // --- モーションパス軌跡 (tracker 参照がある場合) ---
-    if (impl_->tracker && impl_->tracker->hasResult()) {
-        // 最初に登録された点の実IDで軌跡を描画する。MotionTrackerの
-        // ID採番は0始まりとは限らないため、固定IDを仮定しない。
-        const int pointId = impl_->tracker->firstTrackPointId();
+    // --- Motion paths for every configured point ---
+    if (impl_->tracker && impl_->tracker->hasResult() &&
+        impl_->tracker->trackerType() == ArtifactCore::TrackerType::Point) {
+        const ArtifactCore::TrackResult& result = impl_->tracker->resultRef();
+        const int pointCount = impl_->tracker->trackPointCount();
         auto& path = impl_->motionPathCache;
-        if (impl_->tracker->motionPath(pointId, path)) {
-            auto& pts = impl_->pathVertexCache;
-            pts.clear();
-            pts.reserve(path.size());
-            for (const auto& p : path) {
-                pts.emplace_back(static_cast<float>(p.x()), static_cast<float>(p.y()));
-            }
-            // Path line drawn in translucent green.
-            const FloatColor pathColor{0.2f, 0.95f, 0.4f, 0.55f};
-            renderer->drawPolyline(pts, pathColor, 1.5f * invZoom);
+        auto& vertices = impl_->pathVertexCache;
+        auto& frameIndices = impl_->pathToFrameIndex;
+        const FloatColor dotAccent{0.45f, 1.0f, 0.62f, 1.0f};
+        const float dotSize = 5.6f * invZoom;
 
-            const FloatColor dotAccent{0.45f, 1.0f, 0.62f, 1.0f};
-            const float dotSize = 5.6f * invZoom;
-            // resultRef() avoids copying every frame and point per draw.
-            const ArtifactCore::TrackResult& result =
-                impl_->tracker->resultRef();
-            auto& frameIndices = impl_->pathToFrameIndex;
+        for (int pointIndex = 0; pointIndex < pointCount; ++pointIndex) {
+            const auto configuredPoint = impl_->tracker->trackPoint(pointIndex);
+            const int pointId = configuredPoint.id;
+            if (!impl_->tracker->motionPath(pointId, path) || path.empty()) {
+                continue;
+            }
+
+            vertices.clear();
+            vertices.reserve(path.size());
+            for (const auto& position : path) {
+                vertices.emplace_back(static_cast<float>(position.x()),
+                                      static_cast<float>(position.y()));
+            }
+            renderer->drawPolyline(vertices, {0.2f, 0.95f, 0.4f, 0.55f},
+                                   1.5f * invZoom);
+
             buildPathToFrameIndex(result, pointId, frameIndices);
-            for (size_t i = 0; i < pts.size(); ++i) {
+            for (std::size_t i = 0; i < vertices.size(); ++i) {
                 float confidence = 1.0f;
                 if (i < frameIndices.size()) {
-                    const auto &point =
-                        result.frames[static_cast<std::size_t>(
-                            frameIndices[i])].findPoint(pointId);
+                    const auto& point = result.frames[static_cast<std::size_t>(
+                        frameIndices[i])].findPoint(pointId);
                     if (point) {
                         confidence = static_cast<float>(
                             std::clamp(point->confidence, 0.0, 1.0));
                     }
                 }
-                const FloatColor confidenceFill{
-                    1.0f - confidence, 0.25f + confidence * 0.65f,
-                    0.25f, 0.88f};
-                drawTrackerPinOverlay(renderer, pts[i].x, pts[i].y, dotSize,
-                                      confidenceFill, dotAccent, false);
+                drawTrackerPinOverlay(
+                    renderer, vertices[i].x, vertices[i].y, dotSize,
+                    {1.0f - confidence, 0.25f + confidence * 0.65f,
+                     0.25f, 0.88f},
+                    dotAccent, false);
             }
-            int currentIndex = 0;
-            if (!frameIndices.empty()) {
+
+            std::size_t currentIndex = 0;
+            const std::size_t alignedPathCount =
+                std::min(frameIndices.size(), vertices.size());
+            if (alignedPathCount > 0) {
                 double bestDistance = std::numeric_limits<double>::max();
                 for (std::size_t pathIndex = 0;
-                     pathIndex < frameIndices.size(); ++pathIndex) {
+                     pathIndex < alignedPathCount; ++pathIndex) {
                     const double distance = std::abs(
                         result.frames[static_cast<std::size_t>(
-                            frameIndices[pathIndex])].time -
-                        impl_->currentTime);
+                            frameIndices[pathIndex])].time - impl_->currentTime);
                     if (distance < bestDistance) {
                         bestDistance = distance;
-                        currentIndex = static_cast<int>(pathIndex);
+                        currentIndex = pathIndex;
                     }
                 }
             }
-            const auto &currentPoint = pts[static_cast<std::size_t>(currentIndex)];
+            currentIndex = std::min(currentIndex, vertices.size() - 1);
+            const auto& currentPoint = vertices[currentIndex];
             renderer->drawPoint(currentPoint.x, currentPoint.y,
                                 10.0f * invZoom,
                                 {1.0f, 1.0f, 1.0f, 0.95f});
             renderer->drawPoint(currentPoint.x, currentPoint.y,
                                 5.0f * invZoom,
                                 {0.15f, 0.95f, 0.9f, 1.0f});
-            const QString confidenceLabel =
-                QStringLiteral("Confidence %1")
-                    .arg(QString::number(impl_->tracker->averageConfidence(),
-                                         'f', 2));
+        }
+
+        const QString confidenceLabel =
+            QStringLiteral("Confidence %1")
+                .arg(QString::number(impl_->tracker->averageConfidence(), 'f', 2));
+        renderer->drawText(
+            QRectF(cx + st.outerHalfW + 8.0f,
+                   cy - st.outerHalfH - 8.0f, 96.0f, 16.0f),
+            confidenceLabel, impl_->labelFont,
+            {0.75f, 1.0f, 0.78f, 0.95f},
+            Qt::AlignLeft | Qt::AlignVCenter);
+        if (!result.failureFrames.empty()) {
+            const QString problemLabel =
+                QStringLiteral("Problems %1")
+                    .arg(static_cast<int>(result.failureFrames.size()));
             renderer->drawText(
                 QRectF(cx + st.outerHalfW + 8.0f,
-                       cy - st.outerHalfH - 8.0f, 96.0f, 16.0f),
-                confidenceLabel, impl_->labelFont,
-                {0.75f, 1.0f, 0.78f, 0.95f},
+                       cy - st.outerHalfH + 10.0f, 128.0f, 16.0f),
+                problemLabel, impl_->labelFont,
+                {1.0f, 0.45f, 0.35f, 0.95f},
                 Qt::AlignLeft | Qt::AlignVCenter);
-            if (!result.failureFrames.empty()) {
-                const QString problemLabel =
-                    QStringLiteral("Problems %1")
-                        .arg(static_cast<int>(result.failureFrames.size()));
-                renderer->drawText(
-                    QRectF(cx + st.outerHalfW + 8.0f,
-                           cy - st.outerHalfH + 10.0f, 128.0f, 16.0f),
-                    problemLabel, impl_->labelFont,
-                    {1.0f, 0.45f, 0.35f, 0.95f},
-                    Qt::AlignLeft | Qt::AlignVCenter);
-            }
         }
     }
+
 }
 
 // ============================================================================
@@ -365,16 +411,21 @@ ArtifactPointTrackerGizmo::HandleType ArtifactPointTrackerGizmo::hitTest(
     if (impl_->tracker && impl_->tracker->trackerType() ==
             ArtifactCore::TrackerType::Point &&
         impl_->tracker->hasResult()) {
-        const int pointId = impl_->tracker->firstTrackPointId();
         auto& path = impl_->hitTestPathCache;
-        impl_->tracker->motionPath(pointId, path);
         const float pathHitRadius = 6.0f / zoom;
-        for (int i = 0; i < static_cast<int>(path.size()); ++i) {
-            const float dx = mouseCanvas.x() - path[i].x();
-            const float dy = mouseCanvas.y() - path[i].y();
-            if (dx * dx + dy * dy < pathHitRadius * pathHitRadius) {
-                const_cast<Impl*>(impl_)->hitPathIndex = i;
-                return HandleType::PathPoint;
+        for (int pointIndex = 0;
+             pointIndex < impl_->tracker->trackPointCount(); ++pointIndex) {
+            const auto trackPoint = impl_->tracker->trackPoint(pointIndex);
+            if (!impl_->tracker->motionPath(trackPoint.id, path)) continue;
+            for (int i = 0; i < static_cast<int>(path.size()); ++i) {
+                const float dx = mouseCanvas.x() - path[i].x();
+                const float dy = mouseCanvas.y() - path[i].y();
+                if (dx * dx + dy * dy < pathHitRadius * pathHitRadius) {
+                    auto* mutableImpl = const_cast<Impl*>(impl_);
+                    mutableImpl->hitPathIndex = i;
+                    mutableImpl->hitPathPointId = trackPoint.id;
+                    return HandleType::PathPoint;
+                }
             }
         }
     }
@@ -486,14 +537,15 @@ bool ArtifactPointTrackerGizmo::handleMousePress(const QPointF& viewportPos, Art
 
     if (ht == HandleType::PathPoint && impl_->tracker && impl_->tracker->hasResult()) {
         // PathPoint ドラッグ開始
-        const int pointId = impl_->tracker->firstTrackPointId();
+        const int pointId = impl_->hitPathPointId;
         const auto path = impl_->tracker->motionPath(pointId);
         buildPathToFrameIndex(impl_->tracker->resultRef(), pointId,
                               impl_->pathToFrameIndex);
         const int idx = impl_->hitPathIndex;
-        if (idx >= 0 && idx < static_cast<int>(path.size())) {
+        if (pointId >= 0 && idx >= 0 && idx < static_cast<int>(path.size())) {
             impl_->draggedPathIndex = idx;
-            impl_->dragStartPathPos = path[idx];
+            impl_->draggedPathPointId = pointId;
+            impl_->dragStartPathPos = path[static_cast<std::size_t>(idx)];
         }
     } else {
         impl_->dragStartCenter = impl_->state.innerCenter;
@@ -528,7 +580,7 @@ bool ArtifactPointTrackerGizmo::handleMouseMove(const QPointF& viewportPos, Arti
         const auto &result = impl_->tracker->resultRef();
         const auto& frames = result.frames;
         const int idx = impl_->draggedPathIndex;
-        const int pointId = impl_->tracker->firstTrackPointId();
+        const int pointId = impl_->draggedPathPointId;
         const auto& frameIndices = impl_->pathToFrameIndex;
         if (idx >= 0 && static_cast<std::size_t>(idx) < frameIndices.size()) {
             const int frameIndex = frameIndices[static_cast<std::size_t>(idx)];
@@ -620,7 +672,9 @@ void ArtifactPointTrackerGizmo::handleMouseRelease() {
     impl_->isDragging = false;
     impl_->activeHandle = HandleType::None;
     impl_->draggedPathIndex = -1;
+    impl_->draggedPathPointId = -1;
     impl_->hitPathIndex = -1;
+    impl_->hitPathPointId = -1;
 }
 
 } // namespace Artifact

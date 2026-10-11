@@ -239,12 +239,14 @@ export namespace Artifact {
   ~ArtifactAbstractComposition();
   AppendLayerToCompositionResult appendLayerTop(ArtifactAbstractLayerPtr layer);
   AppendLayerToCompositionResult appendLayerBottom(ArtifactAbstractLayerPtr layer);
-   void insertLayerAt(ArtifactAbstractLayerPtr layer, int index=0);
+   AppendLayerToCompositionResult insertLayerAt(
+       ArtifactAbstractLayerPtr layer, int index=0);
    void moveLayerToIndex(const LayerID& id, int newIndex);
    void removeLayer(const LayerID& id);
   void removeLayerById(const LayerID& id);
   void removeAllLayers();
   CompositionID id() const;
+  std::uint64_t runtimePhysicsWorldId() const;
   int layerCount() const;
   
   CompositionSettings settings() const;

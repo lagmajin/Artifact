@@ -533,7 +533,8 @@ int runOfflineRenderTests()
         return 1;
     }
 
-    OffscreenCompositionRenderer renderer(device, width, height);
+    OffscreenCompositionRenderer renderer(device, deviceManager.immediateContext(),
+                                          width, height);
     renderer.renderFrame(FramePosition(0), &composition);
     const auto image = renderer.captureImage();
     if (image.width() != width || image.height() != height) {

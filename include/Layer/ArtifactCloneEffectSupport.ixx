@@ -6,12 +6,14 @@ module;
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <random>
 #include <vector>
 #include <Graphics/InstanceData.h>
 #include <QMatrix4x4>
 #include <QJsonArray>
+#include <QJsonObject>
 #include <QPointF>
 #include <QRectF>
 #include <QSizeF>
@@ -40,7 +42,12 @@ struct CloneRenderInstance {
     float timeOffset = 0.0f;
     std::array<QPointF, 4> canvasCorners{};
     QRectF canvasBounds;
+    int cloneIndex = -1;
 };
+
+using CloneGridPlacementObserver = void (*)(
+    void*, const QString&, const QJsonObject&, float, float, float, float,
+    float, float);
 
 struct FragmentRenderInstance {
     SimulationEntityId entityId;
@@ -659,7 +666,9 @@ inline void applyClonerComponentTransform(const ArtifactAbstractLayer* layer,
 int cloneComponentMode(const ArtifactAbstractLayer* layer);
 std::vector<CloneRenderInstance> clonerComponentInstances(
       const ArtifactAbstractLayer* layer,
-      const QMatrix4x4& baseTransform);
+      const QMatrix4x4& baseTransform,
+      CloneGridPlacementObserver placementObserver = nullptr,
+      void* placementObserverContext = nullptr);
 ArtifactCore::InstanceData cloneRenderInstanceToInstanceData(
     const CloneRenderInstance& instance);
 
@@ -822,7 +831,9 @@ export std::vector<FragmentRenderInstance> fragmentRenderInstances(
 
 inline std::vector<CloneRenderInstance> cloneRenderInstancesImpl(
     const ArtifactAbstractLayer* layer, const QMatrix4x4& baseTransform,
-    const bool useAuthoritativeState, const bool applyPreviewDynamics)
+    const bool useAuthoritativeState, const bool applyPreviewDynamics,
+    CloneGridPlacementObserver placementObserver = nullptr,
+    void* placementObserverContext = nullptr)
 {
     std::vector<CloneRenderInstance> instances;
     if (!layer) {
@@ -1428,6 +1439,87 @@ float generatorSettingFloat(const QJsonObject& settings,
     return static_cast<float>(settings.value(key).toDouble(fallback));
 }
 
+inline bool gpuCompatibleTransformStack(
+    const QJsonObject& settings, float& offsetX, float& offsetY, float& offsetZ,
+    float& rotationDegrees, float& outputScaleX, float& outputScaleY)
+{
+    float accumulatedX = 0.0f;
+    float accumulatedY = 0.0f;
+    float accumulatedZ = 0.0f;
+    float accumulatedRotation = 0.0f;
+    float accumulatedScaleX = 1.0f;
+    float accumulatedScaleY = 1.0f;
+    const auto transformStack =
+        settings.value(QStringLiteral("transformStack")).toArray();
+    for (const auto& value : transformStack) {
+        if (!value.isObject()) {
+            continue;
+        }
+        const auto transform = value.toObject();
+        if (!transform.value(QStringLiteral("enabled")).toBool(true)) {
+            continue;
+        }
+        const double x = transform.value(QStringLiteral("positionX")).toDouble();
+        const double y = transform.value(QStringLiteral("positionY")).toDouble();
+        const double z = transform.value(QStringLiteral("positionZ")).toDouble();
+        const double rotationZ =
+            transform.value(QStringLiteral("rotationZ")).toDouble();
+        const double scaleX =
+            transform.value(QStringLiteral("scaleX")).toDouble(1.0);
+        const double scaleY =
+            transform.value(QStringLiteral("scaleY")).toDouble(1.0);
+        const double scaleZ =
+            transform.value(QStringLiteral("scaleZ")).toDouble(1.0);
+        if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z) ||
+            !std::isfinite(rotationZ) || !std::isfinite(scaleX) ||
+            !std::isfinite(scaleY) || !std::isfinite(scaleZ) ||
+            std::abs(rotationZ) > 360000.0 || scaleZ != 1.0) {
+            return false;
+        }
+        const float transformScaleX = static_cast<float>(scaleX);
+        const float transformScaleY = static_cast<float>(scaleY);
+        const float transformRotation = static_cast<float>(rotationZ);
+        if (!std::isfinite(transformScaleX) ||
+            !std::isfinite(transformScaleY) ||
+            !std::isfinite(transformRotation) ||
+            (accumulatedScaleX != accumulatedScaleY &&
+             transformRotation != 0.0f)) {
+            return false;
+        }
+        const float translationX = static_cast<float>(x);
+        const float translationY = static_cast<float>(y);
+        const float translationZ = static_cast<float>(z);
+        const float angleRadians = accumulatedRotation *
+            0.017453292519943295f;
+        const float cosineAngle = std::cos(angleRadians);
+        const float sineAngle = std::sin(angleRadians);
+        accumulatedX += translationX * accumulatedScaleX * cosineAngle -
+                        translationY * accumulatedScaleY * sineAngle;
+        accumulatedY += translationX * accumulatedScaleX * sineAngle +
+                        translationY * accumulatedScaleY * cosineAngle;
+        accumulatedZ += translationZ;
+        accumulatedRotation += transformRotation;
+        accumulatedScaleX *= transformScaleX;
+        accumulatedScaleY *= transformScaleY;
+        if (!std::isfinite(translationX) || !std::isfinite(translationY) ||
+            !std::isfinite(translationZ) || !std::isfinite(accumulatedX) ||
+            !std::isfinite(accumulatedY) || !std::isfinite(accumulatedZ) ||
+            !std::isfinite(accumulatedRotation) ||
+            !std::isfinite(accumulatedScaleX) ||
+            !std::isfinite(accumulatedScaleY) ||
+            std::abs(accumulatedRotation) > 360000.0f) {
+            return false;
+        }
+    }
+    offsetX = accumulatedX;
+    offsetY = accumulatedY;
+    offsetZ = accumulatedZ;
+    rotationDegrees = accumulatedRotation;
+    outputScaleX = accumulatedScaleX;
+    outputScaleY = accumulatedScaleY;
+    return true;
+}
+
 int cloneComponentMode(const ArtifactAbstractLayer* layer)
 {
     return cloneComponentIntProperty(layer, QStringLiteral("component.cloner.mode"), 0);
@@ -1466,6 +1558,95 @@ inline void applyGeneratorTransformStack(const QJsonObject& settings,
             static_cast<float>(
                 transformObject.value(QStringLiteral("scaleZ")).toDouble(1.0)));
     }
+}
+
+inline bool gpuCompatiblePlainModifierTransform(
+    const ArtifactCore::NamedVector<LayerModifierDescriptor>& modifiers,
+    float& translationX, float& translationY, float& translationZ,
+    float& rotationDegrees, float& outputScaleX, float& outputScaleY)
+{
+    for (const auto& modifier : modifiers) {
+        if (!modifier.enabled) {
+            continue;
+        }
+        const auto& settings = modifier.settings;
+        if (modifier.typeId == QStringLiteral("artifact.modifier.time-offset")) {
+            if (settings.value(QStringLiteral("step")).toDouble(0.0) != 0.0) {
+                return false;
+            }
+            continue;
+        }
+        if (modifier.typeId == QStringLiteral("artifact.modifier.sequence")) {
+            if (settings.value(QStringLiteral("enabled")).toBool(true)) {
+                return false;
+            }
+            continue;
+        }
+        if (modifier.typeId != QStringLiteral("artifact.modifier.plain")) {
+            return false;
+        }
+        const float strength = static_cast<float>(
+            settings.value(QStringLiteral("strength")).toDouble(1.0));
+        const float positionX = static_cast<float>(
+            settings.value(QStringLiteral("positionX")).toDouble(0.0));
+        const float positionY = static_cast<float>(
+            settings.value(QStringLiteral("positionY")).toDouble(0.0));
+        const float positionZ = static_cast<float>(
+            settings.value(QStringLiteral("positionZ")).toDouble(0.0));
+        const float rotationX = static_cast<float>(
+            settings.value(QStringLiteral("rotationX")).toDouble(0.0));
+        const float rotationY = static_cast<float>(
+            settings.value(QStringLiteral("rotationY")).toDouble(0.0));
+        const float modifierRotationZ = static_cast<float>(
+            settings.value(QStringLiteral("rotationZ")).toDouble(0.0));
+        const float scaleX = static_cast<float>(
+            settings.value(QStringLiteral("scaleX")).toDouble(1.0));
+        const float scaleY = static_cast<float>(
+            settings.value(QStringLiteral("scaleY")).toDouble(1.0));
+        const float scaleZ = static_cast<float>(
+            settings.value(QStringLiteral("scaleZ")).toDouble(1.0));
+        if (!std::isfinite(strength) || !std::isfinite(positionX) ||
+            !std::isfinite(positionY) || !std::isfinite(positionZ) ||
+            !std::isfinite(rotationX) || !std::isfinite(rotationY) ||
+            !std::isfinite(modifierRotationZ) || !std::isfinite(scaleX) ||
+            !std::isfinite(scaleY) || !std::isfinite(scaleZ) ||
+            rotationX != 0.0f || rotationY != 0.0f || scaleZ != 1.0f) {
+            return false;
+        }
+        const float clampedStrength = std::clamp(strength, 0.0f, 1.0f);
+        const float effectiveScaleX =
+            1.0f + (scaleX - 1.0f) * clampedStrength;
+        const float effectiveScaleY =
+            1.0f + (scaleY - 1.0f) * clampedStrength;
+        const float effectiveRotation =
+            modifierRotationZ * clampedStrength;
+        // The placement record stores rotation plus diagonal XY scale. Once
+        // the accumulated scale is non-uniform, a later Z rotation would add
+        // shear that this compact representation cannot preserve.
+        if (outputScaleX != outputScaleY && effectiveRotation != 0.0f) {
+            return false;
+        }
+        const float radians = rotationDegrees * 0.017453292519943295f;
+        const float cosine = std::cos(radians);
+        const float sine = std::sin(radians);
+        const float scaledPositionX = positionX * clampedStrength *
+                                      outputScaleX;
+        const float scaledPositionY = positionY * clampedStrength *
+                                      outputScaleY;
+        translationX += scaledPositionX * cosine - scaledPositionY * sine;
+        translationY += scaledPositionX * sine + scaledPositionY * cosine;
+        translationZ += positionZ * clampedStrength;
+        rotationDegrees += effectiveRotation;
+        outputScaleX *= effectiveScaleX;
+        outputScaleY *= effectiveScaleY;
+        if (!std::isfinite(translationX) || !std::isfinite(translationY) ||
+            !std::isfinite(translationZ) ||
+            !std::isfinite(rotationDegrees) || !std::isfinite(outputScaleX) ||
+            !std::isfinite(outputScaleY)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 inline void applyCloneEffectorModifiers(
@@ -1613,7 +1794,9 @@ inline void applyCloneEffectorModifiers(
 
 std::vector<CloneRenderInstance> clonerComponentInstances(
       const ArtifactAbstractLayer* layer,
-      const QMatrix4x4& baseTransform)
+      const QMatrix4x4& baseTransform,
+      CloneGridPlacementObserver placementObserver,
+      void* placementObserverContext)
   {
     std::vector<CloneRenderInstance> instances;
     if (!layer) {
@@ -1709,7 +1892,8 @@ std::vector<CloneRenderInstance> clonerComponentInstances(
         instances.push_back(CloneRenderInstance{
             baseTransform * cloneTransform,
             std::clamp(weight * sequenceWeight, 0.0f, 1.0f),
-            cloneModifierTimeOffset(modifiers, settings, cloneIndex)});
+            cloneModifierTimeOffset(modifiers, settings, cloneIndex),
+            {}, {}, cloneIndex});
     };
 
     for (const auto& generator : generators) {
@@ -1734,6 +1918,8 @@ std::vector<CloneRenderInstance> clonerComponentInstances(
                 settings, QStringLiteral("spacingY"), 48.0f);
             const float spacingZ = generatorSettingFloat(
                 settings, QStringLiteral("spacingZ"), 0.0f);
+            const float opacityDecay = generatorSettingFloat(
+                settings, QStringLiteral("opacityDecay"), 0.0f);
             const QVector3D startPos(
                 -((cols - 1) * spacingX) * 0.5f,
                 -((rows - 1) * spacingY) * 0.5f,
@@ -1750,7 +1936,10 @@ std::vector<CloneRenderInstance> clonerComponentInstances(
                         const int cloneIndex = z * (rows * cols) + y * cols + x;
                         applyCloneEffectorModifiers(layer, modifiers, cloneIndex, cloneTransform);
                         appendCloneInstance(
-                            settings, cloneTransform, 1.0f, cloneIndex);
+                            settings, cloneTransform,
+                            1.0f - opacityDecay *
+                                static_cast<float>(cloneIndex),
+                            cloneIndex);
                     }
                 }
             }

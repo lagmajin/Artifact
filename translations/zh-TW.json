@@ -198,6 +198,147 @@
     "mem_na": "記憶體: N/A",
     "comp1": "合成 1"
   },
+  "tracker": {
+    "panel": {
+      "title": "追蹤器",
+      "mode": {
+        "point": "點追蹤器",
+        "planar": "平面追蹤器",
+        "point_button": "點追蹤",
+        "point_tooltip": "使用點追蹤",
+        "planar_button": "平面",
+        "planar_tooltip": "使用四角平面追蹤"
+      },
+      "session": {
+        "create_tooltip": "為目前合成新增另一個追蹤工作階段",
+        "delete": "刪除",
+        "delete_tooltip": "刪除目前追蹤器",
+        "none": "沒有追蹤器工作階段",
+        "previous_tooltip": "選取上一個追蹤器工作階段",
+        "next_tooltip": "選取下一個追蹤器工作階段"
+      },
+      "source": {
+        "no_composition": "追蹤來源：沒有作用中的合成",
+        "select_image": "追蹤來源：請選取影像圖層",
+        "target_line": "套用目標：%1",
+        "not_trackable_suffix": "（無法追蹤）",
+        "tooltip": "從上方來源進行追蹤。套用位置時可建立 Null 圖層；錨點、Corner Pin 和遮罩使用目前選取的目標圖層。",
+        "source_line": "追蹤來源：%1%2",
+        "select_target": "套用目標：選取圖層",
+        "source_tooltip": "追蹤此靜態影像或影像序列圖層。Composition 中選取的圖層仍是結果套用目標。",
+        "previous_tooltip": "選取上一個可追蹤的影像來源",
+        "next_tooltip": "選取下一個可追蹤的影像來源",
+        "use_selection": "使用目前選取",
+        "use_selection_tooltip": "將目前選取的圖層設為追蹤來源"
+      },
+      "section": {
+        "setup": "設定",
+        "points": "追蹤點",
+        "settings": "追蹤設定",
+        "analyze": "分析",
+        "quality": "品質",
+        "apply": "套用"
+      },
+      "setup": {
+        "geometry": "設定追蹤形狀",
+        "geometry_tooltip": "啟用追蹤工具，並在檢視區編輯點或平面",
+        "add_point": "新增點",
+        "add_point_tooltip": "啟用放置後，點擊檢視區新增點",
+        "remove_last_point": "移除最後一點",
+        "remove_last_point_tooltip": "分析前移除最近新增的點",
+        "point_count": "追蹤點：%1",
+        "reset": "重設追蹤",
+        "reset_tooltip": "開始新的分析前清除追蹤點、平面區域和追蹤結果"
+      },
+      "analyze": {
+        "backward": "向後追蹤",
+        "stop": "停止追蹤",
+        "forward": "向前追蹤",
+        "step_backward": "向後追蹤一格",
+        "step_forward": "向前追蹤一格",
+        "step_requires_playback": "請先在 Playback 中啟用此合成，再逐格追蹤",
+        "step_requires_pause": "逐格追蹤前請先暫停 Playback",
+        "full_sequence": "追蹤整個序列"
+      },
+      "quality": {
+        "review": "檢查問題影格",
+        "review_previous": "上一個問題",
+        "review_next": "下一個問題",
+        "review_previous_tooltip": "跳至上一個問題影格",
+        "review_tooltip": "跳至下一個問題影格",
+        "review_requires_playback": "請先在 Playback 中啟用此合成，再檢查問題影格",
+        "smooth": "平滑軌跡",
+        "smooth_tooltip": "對作用中的追蹤點套用五影格移動平均",
+        "remove_outliers": "移除離群值",
+        "remove_outliers_tooltip": "停用速度離群點並標記對應影格以供檢查",
+        "filter_confidence": "依信賴度篩選",
+        "filter_confidence_tooltip": "停用低於目前追蹤信賴度閾值的點",
+        "confidence_empty": "信賴度 —",
+        "confidence": "信賴度 %1%",
+        "tracking": "追蹤中…",
+        "cancelling": "正在取消…",
+        "problem_frames_empty": "問題影格 —",
+        "problem_frames": "問題影格 %1",
+        "frame_live": "播放中",
+        "frame_unavailable": "影格 %1 • 無結果",
+        "frame_confidence": "最近結果影格 %1 • 信心度 %2%",
+        "frame_low_confidence": "最近結果影格 %1 • 信心度偏低 (%2%)",
+        "frame_failure": "最近結果影格 %1 • 追蹤失敗 • 信心度 %2%",
+        "frame_failure_low_confidence": "最近結果影格 %1 • 追蹤失敗且信心度偏低 • 信心度 %2%",
+        "frame_failed_no_result": "影格 %1 • 追蹤失敗",
+        "chart_tooltip": "依結果時間顯示信心度；虛線表示閾值，斷線表示結果缺失區間",
+        "chart_name": "追蹤信心度圖表",
+        "tracked_frames_empty": "已追蹤影格 —",
+        "tracked_frames": "已追蹤影格 %1"
+      },
+      "settings": {
+        "method_label": "方法：%1",
+        "method_tooltip": "切換分析使用的追蹤演算法",
+        "method": {
+          "optical_flow": "光流",
+          "feature_based": "特徵點",
+          "template_match": "範本比對",
+          "hybrid": "混合"
+        },
+        "confidence_threshold": "信心門檻：%1%",
+        "confidence_down_tooltip": "將信心門檻降低5%",
+        "confidence_up_tooltip": "將信心門檻提高5%"
+      },
+      "apply": {
+        "position": "烘焙位置",
+        "position_tooltip": "將點追蹤套用至所選圖層，或建立 Null 圖層",
+        "anchor": "烘焙錨點",
+        "anchor_tooltip": "將點追蹤套用至所選圖層的錨點",
+        "all_points": "為所有點建立 Null",
+        "all_points_tooltip": "為每個追蹤點建立一個 Null 圖層",
+        "corner_pin": "套用角點固定",
+        "corner_pin_tooltip": "將平面追蹤套用至所選圖層的 Corner Pin",
+        "mask": "將追蹤套用至遮罩",
+        "mask_tooltip": "將平面追蹤套用至所選遮罩路徑",
+        "mask_target": "遮罩 %1 • 路徑 %2",
+        "mask_target_empty": "沒有遮罩路徑",
+        "mask_previous_tooltip": "選取上一個遮罩路徑",
+        "mask_next_tooltip": "選取下一個遮罩路徑",
+        "problem_frames_title": "追蹤問題",
+        "problem_frames_confirmation": "有 %1 個問題影格。失敗影格可能沒有關鍵影格，且可能會使用低信心度值。請先檢查這些影格，或明確繼續。",
+        "confirm_with_problems": "仍要烘焙",
+        "cancel_bake": "取消"
+      },
+      "status": {
+        "no_composition": "沒有作用中的合成",
+        "analyzing": "分析中…",
+        "cancelling": "正在取消…",
+        "cancelled": "已取消；未採用部分結果",
+        "failed": "追蹤失敗；請檢查來源圖層與追蹤區域",
+        "result_ready": "追蹤結果已就緒",
+        "select_source": "請選取靜態影像或影像序列圖層",
+        "create_session": "建立追蹤器，然後在檢視區設定追蹤形狀",
+        "set_geometry": "請在檢視區檢查或調整追蹤形狀，然後開始追蹤",
+        "add_point": "請在檢視區點擊以放置追蹤點",
+        "ready": "就緒"
+      }
+    }
+  },
   "file_dialog": {
     "image_filter": "影像 (*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.webp);;所有檔案 (*.*)",
     "media_filter": "媒體檔案 (*.mp4 *.mov *.mkv *.avi *.webm *.mp3 *.wav *.flac *.aac *.m4a *.ogg);;所有檔案 (*.*)"

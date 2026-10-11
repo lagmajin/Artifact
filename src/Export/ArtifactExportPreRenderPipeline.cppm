@@ -29,9 +29,10 @@ public:
         bootstrap_.initializeHeadless(size.width(), size.height());
         if (!bootstrap_.isInitialized()) return false;
         const auto device = bootstrap_.device();
-        if (!device) return false;
+        const auto context = bootstrap_.immediateContext();
+        if (!device || !context) return false;
         renderer_ = std::make_unique<OffscreenCompositionRenderer>(
-            device, static_cast<unsigned int>(size.width()),
+            device, context, static_cast<unsigned int>(size.width()),
             static_cast<unsigned int>(size.height()));
         return renderer_ && renderer_->renderer();
     }

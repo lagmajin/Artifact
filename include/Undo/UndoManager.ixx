@@ -597,6 +597,8 @@ private:
         removedParentReferences_;
     QStringList selectedLayerIds_;
     QString currentSelectedLayerId_;
+    QString removedCompositionTrackerSourceLayerId_;
+    QJsonObject removedSessionTrackerSourceLayerIds_;
     bool hasSelectionSnapshot_ = false;
     bool lastOperationSucceeded_ = true;
 };

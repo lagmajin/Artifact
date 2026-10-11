@@ -6,7 +6,7 @@
     "translators": [
       "Artifact Team"
     ],
-    "lastUpdated": "2026-10-09"
+    "lastUpdated": "2026-10-11"
   },
   "app": {
     "name": "Artifact",
@@ -1798,6 +1798,147 @@
       "tracking_fade": "Tracking Fade Preset",
       "wiggly_position": "Wiggly Position Preset",
       "blur_reveal": "Blur Reveal Preset"
+    }
+  },
+  "tracker": {
+    "panel": {
+      "title": "Tracker",
+      "mode": {
+        "point": "Point Tracker",
+        "planar": "Planar Tracker",
+        "point_button": "Point",
+        "point_tooltip": "Use point tracking",
+        "planar_button": "Planar",
+        "planar_tooltip": "Use four-corner planar tracking"
+      },
+      "session": {
+        "create_tooltip": "Create another tracker session for the active composition",
+        "delete": "Delete",
+        "delete_tooltip": "Delete the active tracker",
+        "none": "No tracker session",
+        "previous_tooltip": "Select the previous tracker session",
+        "next_tooltip": "Select the next tracker session"
+      },
+      "source": {
+        "no_composition": "Source: No active composition",
+        "select_image": "Source: Select an image layer",
+        "target_line": "Apply target: %1",
+        "not_trackable_suffix": " (not trackable)",
+        "tooltip": "Tracking reads the source above. Bake Position can create Null layers; Anchor, Corner Pin, and Mask use the selected target layer.",
+        "source_line": "Tracking source: %1%2",
+        "select_target": "Apply target: Select a layer",
+        "source_tooltip": "Tracking reads this still-image or image-sequence layer. The selected Composition layer remains the apply target.",
+        "previous_tooltip": "Select the previous trackable image source",
+        "next_tooltip": "Select the next trackable image source",
+        "use_selection": "Use Selection",
+        "use_selection_tooltip": "Use the currently selected layer as the tracking source"
+      },
+      "section": {
+        "setup": "Setup",
+        "points": "Track Points",
+        "settings": "Tracking Settings",
+        "analyze": "Analyze",
+        "quality": "Quality",
+        "apply": "Apply"
+      },
+      "setup": {
+        "geometry": "Set Track Geometry",
+        "geometry_tooltip": "Activate the tracking tool and edit its point or plane in the viewport",
+        "add_point": "Add Point",
+        "add_point_tooltip": "Arm point placement, then click the viewport",
+        "remove_last_point": "Remove Last",
+        "remove_last_point_tooltip": "Remove the most recently placed point before analysis",
+        "point_count": "Tracking points: %1",
+        "reset": "Reset Track",
+        "reset_tooltip": "Clear track points, planar regions, and tracked results before a new solve"
+      },
+      "analyze": {
+        "backward": "Track backward",
+        "stop": "Stop tracking",
+        "forward": "Track forward",
+        "step_backward": "Track one frame backward",
+        "step_forward": "Track one frame forward",
+        "step_requires_playback": "Activate this composition in Playback to track one frame",
+        "step_requires_pause": "Pause playback before tracking one frame",
+        "full_sequence": "Track full sequence"
+      },
+      "quality": {
+        "review": "Review Problem Frames",
+        "review_previous": "Previous Issue",
+        "review_next": "Next Issue",
+        "review_previous_tooltip": "Jump to the previous problem frame",
+        "review_tooltip": "Jump to the next problem frame",
+        "review_requires_playback": "Activate this composition in Playback to review problem frames",
+        "smooth": "Smooth Track",
+        "smooth_tooltip": "Apply a five-frame moving average to active tracking points",
+        "remove_outliers": "Remove Outliers",
+        "remove_outliers_tooltip": "Deactivate velocity outliers and flag their frames for review",
+        "filter_confidence": "Filter Confidence",
+        "filter_confidence_tooltip": "Deactivate points below the configured tracking-confidence threshold",
+        "confidence_empty": "Confidence —",
+        "confidence": "Confidence %1%",
+        "tracking": "Tracking…",
+        "cancelling": "Cancelling…",
+        "problem_frames_empty": "Problem frames —",
+        "problem_frames": "Problem frames %1",
+        "frame_live": "Live playback",
+        "frame_unavailable": "Frame %1 • No result",
+        "frame_confidence": "Nearest result frame %1 • Confidence %2%",
+        "frame_low_confidence": "Nearest result frame %1 • Low confidence (%2%)",
+        "frame_failure": "Nearest result frame %1 • Tracking failed • Confidence %2%",
+        "frame_failure_low_confidence": "Nearest result frame %1 • Failed and low confidence • Confidence %2%",
+        "frame_failed_no_result": "Frame %1 • Tracking failed",
+        "chart_tooltip": "Confidence by result time; dashed line shows threshold, broken segments show missing intervals",
+        "chart_name": "Tracking confidence chart",
+        "tracked_frames_empty": "Tracked frames —",
+        "tracked_frames": "Tracked frames %1"
+      },
+      "settings": {
+        "method_label": "Method: %1",
+        "method_tooltip": "Cycle the tracking algorithm used for analysis",
+        "method": {
+          "optical_flow": "Optical Flow",
+          "feature_based": "Feature Based",
+          "template_match": "Template Match",
+          "hybrid": "Hybrid"
+        },
+        "confidence_threshold": "Confidence threshold: %1%",
+        "confidence_down_tooltip": "Lower confidence threshold by 5%",
+        "confidence_up_tooltip": "Raise confidence threshold by 5%"
+      },
+      "apply": {
+        "position": "Bake Position",
+        "position_tooltip": "Apply the point track to the selected layer or create a Null layer",
+        "anchor": "Bake Anchor",
+        "anchor_tooltip": "Apply the point track to the selected layer's anchor",
+        "all_points": "Create Nulls for All Points",
+        "all_points_tooltip": "Create one Null layer per tracked point",
+        "corner_pin": "Apply Corner Pin",
+        "corner_pin_tooltip": "Apply planar tracking to Corner Pin on the selected layer",
+        "mask": "Apply Track to Mask",
+        "mask_tooltip": "Apply planar tracking to the selected mask path",
+        "mask_target": "Mask %1 • Path %2",
+        "mask_target_empty": "No mask paths",
+        "mask_previous_tooltip": "Select previous mask path",
+        "mask_next_tooltip": "Select next mask path",
+        "problem_frames_title": "Tracking Problems",
+        "problem_frames_confirmation": "There are %1 problem frames. Bake can leave gaps at failed frames and use low-confidence values. Review them first, or continue explicitly.",
+        "confirm_with_problems": "Bake Anyway",
+        "cancel_bake": "Cancel"
+      },
+      "status": {
+        "no_composition": "No active composition",
+        "analyzing": "Analyzing…",
+        "cancelling": "Cancelling…",
+        "cancelled": "Cancelled; partial result was not accepted",
+        "failed": "Tracking failed; check the source and track geometry",
+        "result_ready": "Tracking result ready",
+        "select_source": "Select a still-image or image-sequence layer",
+        "create_session": "Create a tracker, then set its geometry in the viewport",
+        "set_geometry": "Review or adjust track geometry in the viewport, then start tracking",
+        "add_point": "Click in the viewport to place a tracking point",
+        "ready": "Ready"
+      }
     }
   },
   "file_dialog": {

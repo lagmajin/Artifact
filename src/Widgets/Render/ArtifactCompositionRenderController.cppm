@@ -407,6 +407,314 @@ QImage resolveProjectRenderInputImage(const ArtifactCore::Id& projectItemId,
   return decoded.toQImage();
 }
 
+LayerID projectTrackerSourceLayerId(const CompositionID& compositionId,
+                                    int trackerId) {
+  if (compositionId.isNil()) return LayerID();
+  auto* service = ArtifactProjectService::instance();
+  const auto project = service ? service->getCurrentProjectSharedPtr() : nullptr;
+  if (!project) return LayerID();
+  const QJsonObject extensionData = project->extensionData();
+  const QJsonObject bySession = extensionData
+      .value(QStringLiteral("trackerSourceLayersBySession"))
+      .toObject()
+      .value(compositionId.toString())
+      .toObject();
+  if (trackerId > 0) {
+    const QString sessionLayerId = bySession
+        .value(QString::number(trackerId))
+        .toString()
+        .trimmed();
+    if (!sessionLayerId.isEmpty()) return LayerID(sessionLayerId);
+  }
+  const QJsonObject sourceLayers = extensionData
+      .value(QStringLiteral("trackerSourceLayersByComposition"))
+      .toObject();
+  const QString layerId = sourceLayers
+      .value(compositionId.toString())
+      .toString()
+      .trimmed();
+  return layerId.isEmpty() ? LayerID() : LayerID(layerId);
+}
+
+void persistProjectTrackerSourceLayerId(const CompositionID& compositionId,
+                                        int trackerId,
+                                        const LayerID& layerId) {
+  if (compositionId.isNil() || layerId.isNil()) return;
+  auto* service = ArtifactProjectService::instance();
+  const auto project = service ? service->getCurrentProjectSharedPtr() : nullptr;
+  if (!project) return;
+  QJsonObject extensionData = project->extensionData();
+  QJsonObject sourceLayers = extensionData
+      .value(QStringLiteral("trackerSourceLayersByComposition"))
+      .toObject();
+  const QString compositionKey = compositionId.toString();
+  const QString layerKey = layerId.toString();
+  bool changed = false;
+  if (sourceLayers.value(compositionKey).toString() != layerKey) {
+    sourceLayers.insert(compositionKey, layerKey);
+    extensionData.insert(QStringLiteral("trackerSourceLayersByComposition"),
+                         sourceLayers);
+    changed = true;
+  }
+  if (trackerId > 0) {
+    QJsonObject allSessionSources = extensionData
+        .value(QStringLiteral("trackerSourceLayersBySession"))
+        .toObject();
+    QJsonObject sessionSources = allSessionSources
+        .value(compositionKey)
+        .toObject();
+    const QString trackerKey = QString::number(trackerId);
+    if (sessionSources.value(trackerKey).toString() != layerKey) {
+      sessionSources.insert(trackerKey, layerKey);
+      allSessionSources.insert(compositionKey, sessionSources);
+      extensionData.insert(QStringLiteral("trackerSourceLayersBySession"),
+                           allSessionSources);
+      changed = true;
+    }
+  }
+  if (!changed) return;
+  project->setExtensionData(extensionData);
+  project->setDirty(true);
+}
+
+QJsonObject projectTrackerSessionManifest(const CompositionID& compositionId) {
+  if (compositionId.isNil()) return {};
+  auto* service = ArtifactProjectService::instance();
+  const auto project = service ? service->getCurrentProjectSharedPtr() : nullptr;
+  if (!project) return {};
+  const QJsonObject allSessions = project->extensionData()
+      .value(QStringLiteral("trackerSessionsByComposition"))
+      .toObject();
+  return allSessions.value(compositionId.toString()).toObject();
+}
+
+void persistProjectTrackerSessionManifest(const CompositionID& compositionId,
+                                          const QJsonObject& manifest) {
+  if (compositionId.isNil()) return;
+  auto* service = ArtifactProjectService::instance();
+  const auto project = service ? service->getCurrentProjectSharedPtr() : nullptr;
+  if (!project) return;
+  QJsonObject extensionData = project->extensionData();
+  QJsonObject allSessions = extensionData
+      .value(QStringLiteral("trackerSessionsByComposition"))
+      .toObject();
+  const QString compositionKey = compositionId.toString();
+  if (allSessions.value(compositionKey).toObject() == manifest) return;
+  allSessions.insert(compositionKey, manifest);
+  extensionData.insert(QStringLiteral("trackerSessionsByComposition"),
+                       allSessions);
+  project->setExtensionData(extensionData);
+  project->setDirty(true);
+}
+
+void registerProjectTrackerSession(const CompositionID& compositionId,
+                                   int trackerId, bool activate = true) {
+  if (compositionId.isNil() || trackerId <= 0) return;
+  QJsonObject manifest = projectTrackerSessionManifest(compositionId);
+  QJsonArray trackerIds = manifest.value(QStringLiteral("trackerIds")).toArray();
+  const QJsonValue trackerIdValue(trackerId);
+  if (!trackerIds.contains(trackerIdValue)) trackerIds.append(trackerId);
+  manifest.insert(QStringLiteral("trackerIds"), trackerIds);
+  if (activate || manifest.value(QStringLiteral("activeTrackerId")).toInt() <= 0) {
+    manifest.insert(QStringLiteral("activeTrackerId"), trackerId);
+  }
+  persistProjectTrackerSessionManifest(compositionId, manifest);
+}
+
+void setProjectActiveTrackerSession(const CompositionID& compositionId,
+                                    int trackerId) {
+  if (compositionId.isNil() || trackerId <= 0) return;
+  QJsonObject manifest = projectTrackerSessionManifest(compositionId);
+  manifest.insert(QStringLiteral("activeTrackerId"), trackerId);
+  persistProjectTrackerSessionManifest(compositionId, manifest);
+}
+
+void removeProjectTrackerSession(const CompositionID& compositionId,
+                                 int trackerId) {
+  if (compositionId.isNil() || trackerId <= 0) return;
+  QJsonObject manifest = projectTrackerSessionManifest(compositionId);
+  const QJsonArray existing = manifest.value(QStringLiteral("trackerIds")).toArray();
+  QJsonArray remaining;
+  for (const QJsonValue& value : existing) {
+    if (value.toInt() != trackerId) remaining.append(value);
+  }
+  manifest.insert(QStringLiteral("trackerIds"), remaining);
+  if (manifest.value(QStringLiteral("activeTrackerId")).toInt() == trackerId) {
+    manifest.insert(QStringLiteral("activeTrackerId"),
+                    remaining.isEmpty() ? 0 : remaining.first().toInt());
+  }
+  QJsonObject geometryByTracker =
+      manifest.value(QStringLiteral("geometryByTracker")).toObject();
+  geometryByTracker.remove(QString::number(trackerId));
+  manifest.insert(QStringLiteral("geometryByTracker"), geometryByTracker);
+  persistProjectTrackerSessionManifest(compositionId, manifest);
+
+  auto* service = ArtifactProjectService::instance();
+  const auto project = service ? service->getCurrentProjectSharedPtr() : nullptr;
+  if (project) {
+    QJsonObject extensionData = project->extensionData();
+    QJsonObject allSessionSources = extensionData
+        .value(QStringLiteral("trackerSourceLayersBySession"))
+        .toObject();
+    QJsonObject sessionSources = allSessionSources
+        .value(compositionId.toString())
+        .toObject();
+    const QString trackerKey = QString::number(trackerId);
+    if (sessionSources.contains(trackerKey)) {
+      sessionSources.remove(trackerKey);
+      allSessionSources.insert(compositionId.toString(), sessionSources);
+      extensionData.insert(QStringLiteral("trackerSourceLayersBySession"),
+                           allSessionSources);
+      project->setExtensionData(extensionData);
+      project->setDirty(true);
+    }
+  }
+}
+
+void persistProjectTrackerGeometry(
+    const CompositionID& compositionId, int trackerId,
+    const ArtifactPointTrackerGizmo::TrackerBoxState& state) {
+  if (compositionId.isNil() || trackerId <= 0) return;
+  QJsonObject manifest = projectTrackerSessionManifest(compositionId);
+  QJsonObject geometryByTracker =
+      manifest.value(QStringLiteral("geometryByTracker")).toObject();
+  QJsonObject geometry;
+  geometry.insert(QStringLiteral("centerX"), state.innerCenter.x());
+  geometry.insert(QStringLiteral("centerY"), state.innerCenter.y());
+  geometry.insert(QStringLiteral("innerHalfW"), state.innerHalfW);
+  geometry.insert(QStringLiteral("innerHalfH"), state.innerHalfH);
+  geometry.insert(QStringLiteral("outerHalfW"), state.outerHalfW);
+  geometry.insert(QStringLiteral("outerHalfH"), state.outerHalfH);
+  const QString trackerKey = QString::number(trackerId);
+  if (geometryByTracker.value(trackerKey).toObject() == geometry) return;
+  geometryByTracker.insert(trackerKey, geometry);
+  manifest.insert(QStringLiteral("geometryByTracker"), geometryByTracker);
+  persistProjectTrackerSessionManifest(compositionId, manifest);
+}
+
+void persistProjectTrackerSessionSourceLayerId(
+    const CompositionID& compositionId, int trackerId, const LayerID& layerId) {
+  if (compositionId.isNil() || trackerId <= 0) return;
+  auto* service = ArtifactProjectService::instance();
+  const auto project = service ? service->getCurrentProjectSharedPtr() : nullptr;
+  if (!project) return;
+  QJsonObject extensionData = project->extensionData();
+  QJsonObject allSessionSources = extensionData
+      .value(QStringLiteral("trackerSourceLayersBySession"))
+      .toObject();
+  QJsonObject sessionSources = allSessionSources
+      .value(compositionId.toString())
+      .toObject();
+  const QString trackerKey = QString::number(trackerId);
+  const QString layerKey = layerId.isNil() ? QString() : layerId.toString();
+  if (sessionSources.value(trackerKey).toString() == layerKey) return;
+  if (layerKey.isEmpty()) sessionSources.remove(trackerKey);
+  else sessionSources.insert(trackerKey, layerKey);
+  allSessionSources.insert(compositionId.toString(), sessionSources);
+  extensionData.insert(QStringLiteral("trackerSourceLayersBySession"),
+                       allSessionSources);
+  project->setExtensionData(extensionData);
+  project->setDirty(true);
+}
+
+class TrackerSessionUndoCommand final : public UndoCommand {
+public:
+  TrackerSessionUndoCommand(CompositionID compositionId, int trackerId,
+                            QString trackerJson, QJsonObject geometry,
+                            LayerID sourceLayerId, bool wasCreated,
+                            int previousActiveTrackerId = 0)
+      : compositionId_(std::move(compositionId)), trackerId_(trackerId),
+        trackerJson_(std::move(trackerJson)), geometry_(std::move(geometry)),
+        sourceLayerId_(std::move(sourceLayerId)), wasCreated_(wasCreated),
+        previousActiveTrackerId_(previousActiveTrackerId), firstRedo_(true) {}
+
+  void undo() override { lastOperationSucceeded_ = setExists(!wasCreated_); }
+
+  void redo() override {
+    if (firstRedo_) {
+      firstRedo_ = false;
+      lastOperationSucceeded_ = true;
+      return;
+    }
+    lastOperationSucceeded_ = setExists(wasCreated_);
+  }
+
+  bool lastOperationSucceeded() const override {
+    return lastOperationSucceeded_;
+  }
+
+  QString label() const override {
+    return wasCreated_ ? QStringLiteral("Create Motion Tracker")
+                       : QStringLiteral("Delete Motion Tracker");
+  }
+
+  size_t estimatedMemoryBytes() const override {
+    return sizeof(*this) +
+           static_cast<size_t>(trackerJson_.size()) * sizeof(QChar) +
+           static_cast<size_t>(geometry_.size()) * sizeof(QJsonValue);
+  }
+
+private:
+  bool setExists(bool shouldExist) {
+    if (compositionId_.isNil() || trackerId_ <= 0 || trackerJson_.isEmpty()) {
+      return false;
+    }
+    auto* projectService = ArtifactProjectService::instance();
+    const auto project = projectService
+        ? projectService->getCurrentProjectSharedPtr()
+        : nullptr;
+    if (!project || !project->hasComposition(compositionId_)) return false;
+    auto& manager = ArtifactCore::TrackerManager::instance();
+    auto* tracker = manager.tracker(trackerId_);
+    if (shouldExist) {
+      if (!tracker) {
+        auto restored = std::make_unique<ArtifactCore::MotionTracker>(trackerId_);
+        if (!restored->fromJson(trackerJson_) ||
+            restored->id() != trackerId_) {
+          return false;
+        }
+        tracker = manager.adoptTracker(std::move(restored));
+        if (!tracker) return false;
+      } else if (!tracker->fromJson(trackerJson_)) {
+        return false;
+      }
+      registerProjectTrackerSession(compositionId_, trackerId_, true);
+      if (!geometry_.isEmpty()) {
+        QJsonObject manifest =
+            projectTrackerSessionManifest(compositionId_);
+        QJsonObject geometryByTracker = manifest
+            .value(QStringLiteral("geometryByTracker"))
+            .toObject();
+        geometryByTracker.insert(QString::number(trackerId_), geometry_);
+        manifest.insert(QStringLiteral("geometryByTracker"),
+                        geometryByTracker);
+        persistProjectTrackerSessionManifest(compositionId_, manifest);
+      }
+      persistProjectTrackerSessionSourceLayerId(
+          compositionId_, trackerId_, sourceLayerId_);
+      return true;
+    }
+    if (tracker) manager.removeTracker(trackerId_);
+    removeProjectTrackerSession(compositionId_, trackerId_);
+    if (wasCreated_ && previousActiveTrackerId_ > 0 &&
+        manager.tracker(previousActiveTrackerId_)) {
+      setProjectActiveTrackerSession(compositionId_,
+                                     previousActiveTrackerId_);
+    }
+    return true;
+  }
+
+  CompositionID compositionId_;
+  int trackerId_ = 0;
+  QString trackerJson_;
+  QJsonObject geometry_;
+  LayerID sourceLayerId_;
+  bool wasCreated_ = false;
+  int previousActiveTrackerId_ = 0;
+  bool firstRedo_ = true;
+  bool lastOperationSucceeded_ = true;
+};
+
 ArtifactCore::Id hitTestRigBone(ArtifactCore::Bone2D *bone,
                                 const QPointF &localPoint, float threshold);
 ArtifactCore::Id hitTestRigControl(const ArtifactCore::Rig2D &rig,
@@ -11333,26 +11641,44 @@ public:
   std::unique_ptr<ArtifactPointTrackerGizmo> trackerGizmo_;
 
   ArtifactCore::MotionTracker* trackerMotionTracker_ = nullptr;
+  int trackerMotionTrackerId_ = 0;
+  LayerID trackerSourceLayerId_;
+  LayerID trackerCaptureSourceLayerId_;
+  int trackerMaskIndex_ = 0;
+  int trackerMaskPathIndex_ = 0;
   // Snapshot taken before a solve / clear / smoothing mutates the tracker, so
   // the operation can be pushed as an undoable command once it succeeds.
   QString trackerPreSolveJson_;
+  QString trackerPreDragJson_;
+  std::unique_ptr<ArtifactCore::MotionTracker> trackerSolveWorkingCopy_;
+  QString trackerSolveModeTitle_;
 
   std::unique_ptr<Artifact::OffscreenCompositionRenderer> trackerOffscreenRenderer_;
 
-  enum class TrackerJobDirection { None, Forward, Backward, All };
+  enum class TrackerJobDirection {
+    None,
+    Forward,
+    Backward,
+    StepForward,
+    StepBackward,
+    All
+  };
   TrackerJobDirection trackerJobDirection_ = TrackerJobDirection::None;
   QFuture<void> trackerSolveFuture_;
   std::atomic_bool trackerCancelRequested_{false};
   std::atomic_bool trackerSolveFinished_{false};
   std::atomic_bool trackerSolveSucceeded_{false};
+  bool trackerLastJobFailed_ = false;
   std::atomic<double> trackerSolveProgress_{0.0};
   quint64 trackerJobGeneration_ = 0;
   bool trackerCaptureActive_ = false;
+  bool trackerPointPlacementArmed_ = false;
   int64_t trackerCaptureStartFrame_ = 0;
   int64_t trackerCaptureEndFrame_ = 0;
   int64_t trackerCaptureNextFrame_ = 0;
   int64_t trackerCapturedFrameCount_ = 0;
   int64_t trackerCaptureFrameCount_ = 0;
+  int trackerCaptureFrameRetryCount_ = 0;
   double trackerFrameStep_ = 0.0;
 
   std::unique_ptr<ArtifactCore::LayerBlendPipeline> blendPipeline_;
@@ -11853,6 +12179,7 @@ public:
   QVector<QMetaObject::Connection> layerChangedConnections_;
 
   ArtifactCore::EventBus::Subscription compositionChangedSubscription_;
+  ArtifactCore::EventBus::Subscription trackerUndoSubscription_;
 
 
 
@@ -13443,6 +13770,108 @@ public:
 
     const bool batchSizeSupported = !batchRefs.empty() && batchRefs.size() <= 3;
     const bool canBatch = batchSizeSupported && allMatted;
+    if (batchRefs.size() > 3) {
+      if (!allMatted) {
+        qWarning() << "[CompositionView] GPU track matte batch source unavailable"
+                   << "layer=" << layer->id().toString()
+                   << "layerName=" << layer->layerName();
+        return nullptr;
+      }
+      std::array<Diligent::ITextureView*, 2> maskViews = {
+          renderPipeline.tempSRV(), renderPipeline.matteAccumSRV()};
+      std::array<Diligent::ITextureView*, 2> maskOutputs = {
+          tempUAV, renderPipeline.matteAccumUAV()};
+      if (!maskViews[0] || !maskViews[1] ||
+          !maskOutputs[0] || !maskOutputs[1]) {
+        return nullptr;
+      }
+
+      Diligent::ITextureView* currentMask = nullptr;
+      size_t outputIndex = 0;
+      for (size_t first = 0; first < batchRefs.size(); first += 3) {
+        const size_t count = std::min<size_t>(3, batchRefs.size() - first);
+        std::array<Diligent::ITextureView*, 3> matteViews{};
+        bool uploadedAll = true;
+        for (size_t slot = 0; slot < count; ++slot) {
+          const auto& matteRef = batchRefs[first + slot];
+          const auto gpuIt = matteSourceGpuViews.constFind(
+              matteRef.sourceLayerId);
+          if (gpuIt != matteSourceGpuViews.constEnd() && gpuIt.value()) {
+            matteViews[slot] = gpuIt.value();
+            continue;
+          }
+          const QImage matteSrc = fitMatteSourceToTarget(
+              matteSourceImages.value(matteRef.sourceLayerId),
+              QSize(static_cast<int>(renderPipeline.width()),
+                    static_cast<int>(renderPipeline.height())),
+              matteRef.fitMode);
+          uploadedAll = uploadedAll && !matteSrc.isNull() &&
+              renderPipeline.updateMatteSourceFromData(
+                  devCtx.RawPtr(), static_cast<int>(slot),
+                  matteSrc.constBits(),
+                  static_cast<Diligent::Uint32>(matteSrc.width()),
+                  static_cast<Diligent::Uint32>(matteSrc.height()),
+                  static_cast<Diligent::Uint32>(matteSrc.bytesPerLine()));
+          matteViews[slot] = renderPipeline.matteSourceSRV(
+              static_cast<int>(slot));
+        }
+        if (!uploadedAll) {
+          return nullptr;
+        }
+
+        ArtifactCore::MatteTrackParams params;
+        params.matteCount = static_cast<Diligent::Uint32>(count);
+        for (size_t slot = 0; slot < count; ++slot) {
+          const auto& matteRef = batchRefs[first + slot];
+          if (slot == 0) {
+            params.matteMode0 = shaderModeFor(matteRef);
+            params.matteBlendMode0 = shaderBlendModeFor(matteRef);
+            params.matteOpacity0 = std::clamp(matteRef.opacity, 0.0f, 1.0f);
+          } else if (slot == 1) {
+            params.matteMode1 = shaderModeFor(matteRef);
+            params.matteBlendMode1 = shaderBlendModeFor(matteRef);
+            params.matteOpacity1 = std::clamp(matteRef.opacity, 0.0f, 1.0f);
+          } else {
+            params.matteMode2 = shaderModeFor(matteRef);
+            params.matteBlendMode2 = shaderBlendModeFor(matteRef);
+            params.matteOpacity2 = std::clamp(matteRef.opacity, 0.0f, 1.0f);
+          }
+        }
+        params.lumaMode = 0;
+        if (!renderer_->applyTrackMatte(
+                blendPipeline_.get(), layerFloatSRV,
+                matteViews[0], count > 1 ? matteViews[1] : nullptr,
+                count > 2 ? matteViews[2] : nullptr,
+                maskOutputs[outputIndex], params,
+                renderPipeline.width(), renderPipeline.height(),
+                currentMask, true)) {
+          return nullptr;
+        }
+        currentMask = maskViews[outputIndex];
+        outputIndex = 1u - outputIndex;
+      }
+
+      ArtifactCore::MatteTrackParams applyParams;
+      applyParams.matteCount = 0;
+      applyParams.lumaMode = 0;
+      if (!renderer_->applyTrackMatte(
+              blendPipeline_.get(), layerFloatSRV,
+              nullptr, nullptr, nullptr, maskOutputs[outputIndex],
+              applyParams, renderPipeline.width(), renderPipeline.height(),
+              currentMask, false)) {
+        return nullptr;
+      }
+      Diligent::CopyTextureAttribs copyAttrs = {};
+      copyAttrs.pSrcTexture = maskOutputs[outputIndex]->GetTexture();
+      copyAttrs.SrcTextureTransitionMode =
+          Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+      copyAttrs.pDstTexture = layerFloatUAV->GetTexture();
+      copyAttrs.DstTextureTransitionMode =
+          Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+      devCtx->CopyTexture(copyAttrs);
+      return layerFloatSRV;
+    }
+
     if (canBatch) {
       bool uploadedAll = true;
       std::array<Diligent::ITextureView*, 3> matteViews{};
@@ -17543,6 +17972,7 @@ public:
     // CompositionChangedEvent.
 
     compositionChangedSubscription_.disconnect();
+    trackerUndoSubscription_.disconnect();
 
     if (!owner || !composition) {
 
@@ -17553,6 +17983,14 @@ public:
     {
 
       const QString compositionId = composition->id().toString();
+
+      trackerUndoSubscription_ = eventBus_.subscribe<UndoManagerChangedEvent>(
+          [owner](const UndoManagerChangedEvent&) {
+            if (!owner || owner->trackerJobRunning()) return;
+            if (owner->trackerSessionSelectionOutOfDate()) {
+              owner->trackerRestoreCompositionSession();
+            }
+          });
 
       compositionChangedSubscription_ =
 
@@ -18934,11 +19372,13 @@ void CompositionRenderController::destroy() {
   if (impl_) {
     impl_->trackerCancelRequested_.store(true, std::memory_order_release);
     impl_->trackerSolveFuture_.waitForFinished();
+    impl_->trackerSolveWorkingCopy_.reset();
+    impl_->trackerPreSolveJson_.clear();
     ++impl_->trackerJobGeneration_;
     impl_->trackerCaptureActive_ = false;
     impl_->trackerJobDirection_ = Impl::TrackerJobDirection::None;
     if (impl_->trackerMotionTracker_) {
-      trackerDelete();
+      trackerDetachSession();
     }
   }
 
@@ -19123,7 +19563,7 @@ void CompositionRenderController::recreateSwapChain(QWidget *hostWidget) {
   float savedPanY = 0.0f;
   impl_->renderer_->getPan(savedPanX, savedPanY);
 
-  impl_->renderer_->flushAndWait();
+  impl_->renderer_->flushAndWait(false);
 
   // If swapchain was never created (e.g., widget was 0×0 at init time),
 
@@ -19531,9 +19971,12 @@ void CompositionRenderController::setComposition(
     cancelGizmoInteraction();
   }
 
-  if (trackerJobRunning()) {
+  if (trackerJobRunning() &&
+      composition != impl_->previewPipeline_.composition()) {
     trackerStop();
     impl_->trackerSolveFuture_.waitForFinished();
+    impl_->trackerSolveWorkingCopy_.reset();
+    impl_->trackerPreSolveJson_.clear();
     ++impl_->trackerJobGeneration_;
     impl_->trackerCaptureActive_ = false;
     impl_->trackerJobDirection_ = Impl::TrackerJobDirection::None;
@@ -19562,14 +20005,26 @@ void CompositionRenderController::setComposition(
 
                       composition->id() == currentComposition->id();
 
-  // Tracker results are controller-local analysis state.  Keeping them while
-  // switching to another composition would make the path/ROI belong to the
-  // previous source layer and could also leave a manager-owned tracker alive
-  // after its source composition has been released.  Preserve the tracker for
-  // same-composition rebinding, but discard it for an actual composition
-  // change (including replacement instances with the same composition ID).
+  // TrackerManager sessions are project-owned. Register the active session
+  // against the composition before detaching the controller, so switching
+  // views does not delete a saved analysis or leave its pointer bound to the
+  // wrong composition.
   if (!samePointer && impl_->trackerMotionTracker_) {
-    trackerDelete();
+    const bool trackerStillRegistered =
+        ArtifactCore::TrackerManager::instance().tracker(
+            impl_->trackerMotionTrackerId_) == impl_->trackerMotionTracker_;
+    if (currentComposition && trackerStillRegistered) {
+      registerProjectTrackerSession(currentComposition->id(),
+                                    impl_->trackerMotionTrackerId_);
+    }
+    trackerDetachSession();
+  }
+
+  if (!samePointer) {
+    impl_->trackerSourceLayerId_ = LayerID();
+    impl_->trackerCaptureSourceLayerId_ = LayerID();
+    impl_->trackerMaskIndex_ = 0;
+    impl_->trackerMaskPathIndex_ = 0;
   }
 
   if (!samePointer && !sameId) {
@@ -19652,6 +20107,10 @@ void CompositionRenderController::setComposition(
 
     }
 
+    if (!impl_->trackerMotionTracker_) {
+      trackerRestoreCompositionSession();
+    }
+
     markRenderDirty();
 
     return;
@@ -19702,6 +20161,8 @@ void CompositionRenderController::setComposition(
 
 
   impl_->previewPipeline_.setComposition(composition);
+
+  trackerRestoreCompositionSession();
 
   impl_->resetLayerDamageBounds(composition);
 
@@ -19974,6 +20435,8 @@ void CompositionRenderController::setSelectedLayerId(const LayerID &id) {
   impl_->clearPendingMaskCreation();
 
   impl_->selectedLayerId_ = id;
+  impl_->trackerMaskIndex_ = 0;
+  impl_->trackerMaskPathIndex_ = 0;
   impl_->selectedMotionPathFrames_.clear();
   impl_->draggingMotionPathGroupBefore_.clear();
 
@@ -27769,6 +28232,9 @@ bool selectedCameraPoiHoverable(const ArtifactAbstractLayerPtr &layer);
 
 } // namespace
 
+static QString trackerModeTitle(
+    const ArtifactCore::MotionTracker *tracker);
+
 void CompositionRenderController::handleMousePress(QMouseEvent *event) {
   impl_->projectedFrameSnapCache_.invalidate();
   if (event && impl_->gizmoSession_.owner != GizmoOwner::None) {
@@ -30325,9 +30791,38 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
 
     }
 
+    if (impl_->trackerPointPlacementArmed_) {
+      impl_->trackerPointPlacementArmed_ = false;
+      auto *tracker = impl_->trackerMotionTracker_;
+      if (tracker && !tracker->hasResult() &&
+          tracker->trackerType() == ArtifactCore::TrackerType::Point &&
+          impl_->renderer_) {
+        const auto canvas = impl_->renderer_->viewportToCanvas(
+            {static_cast<float>(viewportPos.x()),
+             static_cast<float>(viewportPos.y())});
+        const QString previousJson = tracker->toJson();
+        if (tracker->addTrackPoint(QPointF(canvas.x, canvas.y)) >= 0) {
+          pushTrackerUndo(previousJson, tracker->toJson());
+          setInfoOverlayText(
+              trackerModeTitle(tracker),
+              QStringLiteral("Added tracking point %1")
+                  .arg(tracker->trackPointCount()));
+        }
+      }
+      markRenderDirty();
+      return;
+    }
+
     impl_->trackerGizmo_->handleMousePress(viewportPos, impl_->renderer_.get());
 
     if (impl_->trackerGizmo_->isDragging()) {
+
+      impl_->trackerPreDragJson_ =
+          impl_->trackerGizmo_->activeHandle() ==
+                  ArtifactPointTrackerGizmo::HandleType::PathPoint &&
+                  impl_->trackerMotionTracker_
+              ? impl_->trackerMotionTracker_->toJson()
+              : QString();
 
       impl_->trackerGizmoDragActive_ = true;
 
@@ -34868,10 +35363,28 @@ void CompositionRenderController::handleMouseRelease() {
   if (impl_->trackerGizmo_) {
 
     const bool wasTrackerDragging = impl_->trackerGizmoDragActive_;
+    const bool wasPathPointDrag =
+        impl_->trackerGizmo_->activeHandle() ==
+        ArtifactPointTrackerGizmo::HandleType::PathPoint;
 
     impl_->trackerGizmoDragActive_ = false;
 
     impl_->trackerGizmo_->handleMouseRelease();
+
+    if (wasTrackerDragging && wasPathPointDrag && impl_->trackerMotionTracker_ &&
+        !impl_->trackerPreDragJson_.isEmpty()) {
+      pushTrackerUndo(impl_->trackerPreDragJson_,
+                      impl_->trackerMotionTracker_->toJson());
+    }
+    if (wasTrackerDragging && !wasPathPointDrag &&
+        impl_->trackerMotionTracker_ && impl_->trackerGizmo_) {
+      if (const auto comp = impl_->previewPipeline_.composition()) {
+        persistProjectTrackerGeometry(
+            comp->id(), impl_->trackerMotionTracker_->id(),
+            impl_->trackerGizmo_->state());
+      }
+    }
+    impl_->trackerPreDragJson_.clear();
 
     impl_->invalidateOverlayComposite();
 
@@ -38624,20 +39137,87 @@ bool CompositionRenderController::resetSelectedShapeCornerRadius() {
 
 void CompositionRenderController::trackerInitialize() {
 
+  if (!impl_ || trackerJobRunning() ||
+      !impl_->previewPipeline_.composition()) {
+    return;
+  }
+
+  auto* previousTracker = impl_->trackerMotionTracker_;
+  int previousTrackerId = impl_->trackerMotionTrackerId_;
+  auto& trackerManager = ArtifactCore::TrackerManager::instance();
+  if (previousTrackerId <= 0 ||
+      trackerManager.tracker(previousTrackerId) != previousTracker) {
+    previousTracker = nullptr;
+    previousTrackerId = 0;
+  }
+
+  if (previousTracker && impl_->trackerGizmo_) {
+    const auto comp = impl_->previewPipeline_.composition();
+    if (comp) {
+      persistProjectTrackerGeometry(
+          comp->id(), previousTrackerId,
+          impl_->trackerGizmo_->state());
+    }
+  }
+
   auto* tm = ArtifactCore::TrackerManager::instance().createTracker(
 
       QStringLiteral("Point Tracker"));
 
   impl_->trackerMotionTracker_ = tm;
+  impl_->trackerMotionTrackerId_ = tm ? tm->id() : 0;
+  impl_->trackerLastJobFailed_ = false;
+  impl_->trackerPointPlacementArmed_ = false;
 
   if (impl_->trackerMotionTracker_) {
     impl_->trackerMotionTracker_->setTrackerType(
         ArtifactCore::TrackerType::Point);
+    if (const auto comp = impl_->previewPipeline_.composition()) {
+      const int trackerId = impl_->trackerMotionTrackerId_;
+      registerProjectTrackerSession(comp->id(),
+                                    trackerId);
+      if (impl_->trackerGizmo_) {
+        persistProjectTrackerGeometry(
+            comp->id(), trackerId,
+            impl_->trackerGizmo_->state());
+      }
+      const QJsonObject manifest = projectTrackerSessionManifest(comp->id());
+      const QJsonObject geometry = manifest
+          .value(QStringLiteral("geometryByTracker"))
+          .toObject()
+          .value(QString::number(trackerId))
+          .toObject();
+      bool creationRecorded = true;
+      if (auto* undo = UndoManager::instance()) {
+        creationRecorded = undo->push(std::make_unique<TrackerSessionUndoCommand>(
+            comp->id(), trackerId, impl_->trackerMotionTracker_->toJson(),
+            geometry,
+            projectTrackerSourceLayerId(comp->id(), trackerId), true,
+            previousTrackerId));
+      }
+      if (!creationRecorded) {
+        removeProjectTrackerSession(comp->id(), trackerId);
+        ArtifactCore::TrackerManager::instance().removeTracker(trackerId);
+        if (previousTracker &&
+            ArtifactCore::TrackerManager::instance().tracker(
+                previousTrackerId) == previousTracker) {
+          setProjectActiveTrackerSession(comp->id(), previousTrackerId);
+          impl_->trackerMotionTracker_ = previousTracker;
+          impl_->trackerMotionTrackerId_ = previousTrackerId;
+        } else {
+          impl_->trackerMotionTracker_ = nullptr;
+          impl_->trackerMotionTrackerId_ = 0;
+        }
+        tm = nullptr;
+        setInfoOverlayText(QStringLiteral("Tracker"),
+                           QStringLiteral("Could not record tracker creation in Undo history"));
+      }
+    }
   }
 
   if (impl_->trackerGizmo_) {
 
-    impl_->trackerGizmo_->setTracker(tm);
+    impl_->trackerGizmo_->setTracker(impl_->trackerMotionTracker_);
 
   }
 
@@ -38649,6 +39229,8 @@ void CompositionRenderController::trackerUsePointMode() {
     trackerInitialize();
   }
   if (!impl_->trackerMotionTracker_) return;
+  impl_->trackerPointPlacementArmed_ = false;
+  impl_->trackerLastJobFailed_ = false;
   const QString previousJson = impl_->trackerMotionTracker_->toJson();
   impl_->trackerMotionTracker_->setTrackerType(ArtifactCore::TrackerType::Point);
   impl_->trackerMotionTracker_->clearTrackingData();
@@ -38667,6 +39249,8 @@ void CompositionRenderController::trackerUsePlanarMode() {
     trackerInitialize();
   }
   if (!impl_->trackerMotionTracker_) return;
+  impl_->trackerPointPlacementArmed_ = false;
+  impl_->trackerLastJobFailed_ = false;
   const QString previousJson = impl_->trackerMotionTracker_->toJson();
   impl_->trackerMotionTracker_->setTrackerType(ArtifactCore::TrackerType::Planar);
   impl_->trackerMotionTracker_->clearTrackingData();
@@ -38676,6 +39260,46 @@ void CompositionRenderController::trackerUsePlanarMode() {
   }
   setInfoOverlayText(QStringLiteral("Planar Tracker"),
                      QStringLiteral("Planar mode enabled; track the four-corner region"));
+  markRenderDirty();
+}
+
+int CompositionRenderController::trackerTrackPointCount() const {
+  return impl_ && impl_->trackerMotionTracker_ &&
+                 impl_->trackerMotionTracker_->trackerType() ==
+                     ArtifactCore::TrackerType::Point
+             ? impl_->trackerMotionTracker_->trackPointCount()
+             : 0;
+}
+
+bool CompositionRenderController::trackerPointPlacementArmed() const {
+  return impl_ && impl_->trackerPointPlacementArmed_;
+}
+
+void CompositionRenderController::trackerTogglePointPlacement() {
+  if (!impl_ || trackerJobRunning() || !impl_->trackerMotionTracker_ ||
+      impl_->trackerMotionTracker_->trackerType() !=
+          ArtifactCore::TrackerType::Point ||
+      impl_->trackerMotionTracker_->hasResult()) {
+    return;
+  }
+  impl_->trackerPointPlacementArmed_ = !impl_->trackerPointPlacementArmed_;
+  markRenderDirty();
+}
+
+void CompositionRenderController::trackerRemoveLastPoint() {
+  if (!impl_ || trackerJobRunning() || !impl_->trackerMotionTracker_ ||
+      impl_->trackerMotionTracker_->trackerType() !=
+          ArtifactCore::TrackerType::Point ||
+      impl_->trackerMotionTracker_->hasResult()) {
+    return;
+  }
+  const int pointCount = impl_->trackerMotionTracker_->trackPointCount();
+  if (pointCount <= 0) return;
+  const QString previousJson = impl_->trackerMotionTracker_->toJson();
+  const auto point = impl_->trackerMotionTracker_->trackPoint(pointCount - 1);
+  impl_->trackerMotionTracker_->removeTrackPoint(point.id);
+  impl_->trackerPointPlacementArmed_ = false;
+  pushTrackerUndo(previousJson, impl_->trackerMotionTracker_->toJson());
   markRenderDirty();
 }
 
@@ -38698,6 +39322,8 @@ void CompositionRenderController::pushTrackerUndo(
 
 void CompositionRenderController::trackerReset() {
   if (!impl_ || trackerJobRunning() || !impl_->trackerMotionTracker_) return;
+  impl_->trackerLastJobFailed_ = false;
+  impl_->trackerPointPlacementArmed_ = false;
   impl_->trackerMotionTracker_->stopTracking();
   const QString previousJson = impl_->trackerMotionTracker_->toJson();
   impl_->trackerMotionTracker_->clearTrackingData();
@@ -38725,12 +39351,14 @@ static void ensureOffscreenRenderer(
   if (!renderer && mainRenderer) {
 
     auto device = mainRenderer->device();
+    auto context = mainRenderer->immediateContext();
 
-    if (device) {
+    if (device && context) {
 
       renderer = std::make_unique<Artifact::OffscreenCompositionRenderer>(
 
-          device, static_cast<unsigned int>(width), static_cast<unsigned int>(height));
+          device, context, static_cast<unsigned int>(width),
+          static_cast<unsigned int>(height));
 
     }
 
@@ -38750,6 +39378,8 @@ void CompositionRenderController::trackerTrackForward() {
   if (!impl_ || trackerJobRunning()) return;
   if (!impl_->trackerMotionTracker_) trackerInitialize();
   if (!impl_->trackerMotionTracker_) return;
+  impl_->trackerLastJobFailed_ = false;
+  impl_->trackerPointPlacementArmed_ = false;
   impl_->trackerJobDirection_ = Impl::TrackerJobDirection::Forward;
   trackerCaptureNextFrame(++impl_->trackerJobGeneration_);
 }
@@ -38760,7 +39390,39 @@ void CompositionRenderController::trackerTrackBackward() {
   if (!impl_ || trackerJobRunning()) return;
   if (!impl_->trackerMotionTracker_) trackerInitialize();
   if (!impl_->trackerMotionTracker_) return;
+  impl_->trackerLastJobFailed_ = false;
+  impl_->trackerPointPlacementArmed_ = false;
   impl_->trackerJobDirection_ = Impl::TrackerJobDirection::Backward;
+  trackerCaptureNextFrame(++impl_->trackerJobGeneration_);
+}
+
+
+void CompositionRenderController::trackerTrackStepForward() {
+  if (!impl_ || trackerJobRunning()) return;
+  const auto comp = impl_->previewPipeline_.composition();
+  auto* playback = ArtifactPlaybackService::instance();
+  if (!comp || !playback || playback->currentComposition() != comp ||
+      playback->isPlaying()) return;
+  if (!impl_->trackerMotionTracker_) trackerInitialize();
+  if (!impl_->trackerMotionTracker_) return;
+  impl_->trackerLastJobFailed_ = false;
+  impl_->trackerPointPlacementArmed_ = false;
+  impl_->trackerJobDirection_ = Impl::TrackerJobDirection::StepForward;
+  trackerCaptureNextFrame(++impl_->trackerJobGeneration_);
+}
+
+
+void CompositionRenderController::trackerTrackStepBackward() {
+  if (!impl_ || trackerJobRunning()) return;
+  const auto comp = impl_->previewPipeline_.composition();
+  auto* playback = ArtifactPlaybackService::instance();
+  if (!comp || !playback || playback->currentComposition() != comp ||
+      playback->isPlaying()) return;
+  if (!impl_->trackerMotionTracker_) trackerInitialize();
+  if (!impl_->trackerMotionTracker_) return;
+  impl_->trackerLastJobFailed_ = false;
+  impl_->trackerPointPlacementArmed_ = false;
+  impl_->trackerJobDirection_ = Impl::TrackerJobDirection::StepBackward;
   trackerCaptureNextFrame(++impl_->trackerJobGeneration_);
 }
 
@@ -38770,6 +39432,8 @@ void CompositionRenderController::trackerTrackAll() {
   if (!impl_ || trackerJobRunning()) return;
   if (!impl_->trackerMotionTracker_) trackerInitialize();
   if (!impl_->trackerMotionTracker_) return;
+  impl_->trackerLastJobFailed_ = false;
+  impl_->trackerPointPlacementArmed_ = false;
   impl_->trackerJobDirection_ = Impl::TrackerJobDirection::All;
   trackerCaptureNextFrame(++impl_->trackerJobGeneration_);
 }
@@ -38779,11 +39443,51 @@ bool CompositionRenderController::trackerJobRunning() const {
          impl_->trackerJobDirection_ != Impl::TrackerJobDirection::None;
 }
 
+bool CompositionRenderController::trackerCancellationRequested() const {
+  return impl_ &&
+         impl_->trackerCancelRequested_.load(std::memory_order_acquire);
+}
+
+bool CompositionRenderController::trackerHasSession() const {
+  if (!impl_ || !impl_->trackerMotionTracker_) return false;
+  auto* registered = ArtifactCore::TrackerManager::instance().tracker(
+      impl_->trackerMotionTrackerId_);
+  if (registered == impl_->trackerMotionTracker_) return true;
+  // Project loading replaces TrackerManager's objects. Drop the stale raw
+  // binding before a UI refresh asks for tracker data through it.
+  impl_->trackerMotionTracker_ = nullptr;
+  impl_->trackerMotionTrackerId_ = 0;
+  impl_->trackerPointPlacementArmed_ = false;
+  if (impl_->trackerGizmo_) impl_->trackerGizmo_->setTracker(nullptr);
+  return false;
+}
+
+bool CompositionRenderController::trackerLastJobFailed() const {
+  return impl_ && impl_->trackerLastJobFailed_;
+}
+
 double CompositionRenderController::trackerSolveProgress() const {
   return impl_ ? std::clamp(
                      impl_->trackerSolveProgress_.load(std::memory_order_acquire),
                      0.0, 1.0)
                : 0.0;
+}
+
+double CompositionRenderController::trackerOverallProgress() const {
+  if (!impl_) {
+    return 0.0;
+  }
+  if (impl_->trackerCaptureActive_ && impl_->trackerCaptureFrameCount_ > 0) {
+    const double captureProgress =
+        static_cast<double>(impl_->trackerCapturedFrameCount_) /
+        static_cast<double>(impl_->trackerCaptureFrameCount_);
+    return std::clamp(captureProgress * 0.5, 0.0, 0.5);
+  }
+  if (impl_->trackerJobDirection_ != Impl::TrackerJobDirection::None) {
+    const double solveProgress = trackerSolveProgress();
+    return std::clamp(0.5 + solveProgress * 0.5, 0.5, 1.0);
+  }
+  return trackerSolveProgress();
 }
 
 QString CompositionRenderController::trackerModeLabel() const {
@@ -38802,10 +39506,469 @@ int CompositionRenderController::trackerProblemFrameCount() const {
              : 0;
 }
 
+int CompositionRenderController::trackerConfidenceSamples(
+    float* confidenceValues, float* timeFractions, bool* breakBefore,
+    int capacity) const {
+  if (!confidenceValues || !timeFractions || !breakBefore || capacity <= 0 || !impl_ ||
+      !impl_->trackerMotionTracker_) {
+    return 0;
+  }
+  const auto& frames = impl_->trackerMotionTracker_->resultRef().frames;
+  if (frames.empty()) return 0;
+  const int sampleCount = static_cast<int>(
+      std::min<std::size_t>(frames.size(), static_cast<std::size_t>(capacity)));
+  const std::size_t last = frames.size() - 1;
+  const double firstTime = frames.front().time;
+  const double lastTime = frames.back().time;
+  const double timeSpan = lastTime - firstTime;
+  const auto composition = impl_->previewPipeline_.composition();
+  const double fps = composition ? composition->frameRate().framerate() : 0.0;
+  const double expectedStep = sampleCount > 1
+                                  ? timeSpan / (sampleCount - 1)
+                                  : 0.0;
+  const double gapThreshold = expectedStep +
+                              (std::isfinite(fps) && fps > 0.0
+                                   ? 0.5 / fps
+                                   : expectedStep * 0.25);
+  double previousTime = firstTime;
+  for (int i = 0; i < sampleCount; ++i) {
+    const std::size_t index = sampleCount == 1
+                                  ? last
+                                  : (static_cast<std::size_t>(i) * last) /
+                                        static_cast<std::size_t>(sampleCount - 1);
+    const double confidence = frames[index].overallConfidence;
+    confidenceValues[i] = std::isfinite(confidence)
+                              ? static_cast<float>(std::clamp(confidence, 0.0, 1.0))
+                              : 0.0f;
+    const double sampleTime = frames[index].time;
+    timeFractions[i] = std::isfinite(timeSpan) && timeSpan > 0.0
+                           ? static_cast<float>(std::clamp(
+                                 (sampleTime - firstTime) / timeSpan, 0.0, 1.0))
+                           : (sampleCount > 1
+                                  ? static_cast<float>(i) / (sampleCount - 1)
+                                  : 0.5f);
+    breakBefore[i] = i > 0 && std::isfinite(sampleTime) &&
+                     sampleTime - previousTime > gapThreshold;
+    previousTime = sampleTime;
+  }
+  return sampleCount;
+}
+
+double CompositionRenderController::trackerFrameConfidenceAt(
+    int64_t frame, int64_t& resultFrame, bool& isFailureFrame,
+    bool& isLowConfidence) const {
+  resultFrame = -1;
+  isFailureFrame = false;
+  isLowConfidence = false;
+  if (!impl_ || !impl_->trackerMotionTracker_) return -1.0;
+  const auto comp = impl_->previewPipeline_.composition();
+  if (!comp) return -1.0;
+  const double fps = comp->frameRate().framerate();
+  if (!std::isfinite(fps) || fps <= 0.0) return -1.0;
+  const double time = static_cast<double>(frame) / fps;
+  const auto& tracker = *impl_->trackerMotionTracker_;
+  const double frameTolerance = 0.5 / fps;
+  for (const double failedTime : tracker.resultRef().failureFrames) {
+    if (std::isfinite(failedTime) && std::abs(failedTime - time) <= frameTolerance) {
+      isFailureFrame = true;
+      break;
+    }
+  }
+  const auto* sample = tracker.frameAt(time);
+  if (!sample) return -1.0;
+  resultFrame = static_cast<int64_t>(std::llround(sample->time * fps));
+  isLowConfidence = !std::isfinite(sample->overallConfidence) ||
+                    sample->overallConfidence < tracker.settings().confidenceThreshold;
+  return sample->overallConfidence;
+}
+
 int CompositionRenderController::trackerResultFrameCount() const {
   return impl_ && impl_->trackerMotionTracker_
              ? static_cast<int>(impl_->trackerMotionTracker_->resultRef().frames.size())
              : 0;
+}
+
+int CompositionRenderController::trackerMethodIndex() const {
+  return impl_ && impl_->trackerMotionTracker_
+             ? static_cast<int>(impl_->trackerMotionTracker_->settings().method)
+             : static_cast<int>(ArtifactCore::TrackingMethod::OpticalFlow);
+}
+
+void CompositionRenderController::trackerCycleMethod() {
+  if (!impl_ || trackerJobRunning() || !impl_->trackerMotionTracker_) return;
+  const QString previousJson = impl_->trackerMotionTracker_->toJson();
+  auto settings = impl_->trackerMotionTracker_->settings();
+  const int methodCount = 4;
+  settings.method = static_cast<ArtifactCore::TrackingMethod>(
+      (static_cast<int>(settings.method) + 1) % methodCount);
+  impl_->trackerMotionTracker_->setSettings(settings);
+  pushTrackerUndo(previousJson, impl_->trackerMotionTracker_->toJson());
+  markRenderDirty();
+}
+
+double CompositionRenderController::trackerConfidenceThreshold() const {
+  return impl_ && impl_->trackerMotionTracker_
+             ? impl_->trackerMotionTracker_->settings().confidenceThreshold
+             : 0.5;
+}
+
+void CompositionRenderController::trackerAdjustConfidenceThreshold(
+    double delta) {
+  if (!impl_ || trackerJobRunning() || !impl_->trackerMotionTracker_ ||
+      !std::isfinite(delta) || delta == 0.0) {
+    return;
+  }
+  const QString previousJson = impl_->trackerMotionTracker_->toJson();
+  auto settings = impl_->trackerMotionTracker_->settings();
+  settings.confidenceThreshold = std::clamp(
+      settings.confidenceThreshold + delta, 0.0, 1.0);
+  if (settings.confidenceThreshold ==
+      impl_->trackerMotionTracker_->settings().confidenceThreshold) {
+    return;
+  }
+  impl_->trackerMotionTracker_->setSettings(settings);
+  pushTrackerUndo(previousJson, impl_->trackerMotionTracker_->toJson());
+  markRenderDirty();
+}
+
+LayerID CompositionRenderController::trackerSourceLayerId() const {
+  if (!impl_) return LayerID();
+  const auto comp = impl_->previewPipeline_.composition();
+  if (!impl_->trackerSourceLayerId_.isNil() && comp &&
+      comp->layerById(impl_->trackerSourceLayerId_)) {
+    return impl_->trackerSourceLayerId_;
+  }
+  if (comp) {
+    const LayerID savedSource = projectTrackerSourceLayerId(
+        comp->id(), impl_->trackerMotionTracker_
+                      ? impl_->trackerMotionTracker_->id()
+                      : 0);
+    if (!savedSource.isNil() && comp->layerById(savedSource)) {
+      return savedSource;
+    }
+  }
+  return impl_->selectedLayerId_;
+}
+
+void CompositionRenderController::trackerCycleSourceLayer(int direction) {
+  if (!impl_ || direction == 0 || trackerJobRunning() || trackerHasResult()) {
+    return;
+  }
+  const auto comp = impl_->previewPipeline_.composition();
+  if (!comp) return;
+  const auto& layers = comp->allLayerRef();
+  int sourceCount = 0;
+  int currentIndex = -1;
+  const LayerID currentId = trackerSourceLayerId();
+  for (const auto& layer : layers) {
+    if (!layer || !dynamic_cast<ArtifactImageLayer*>(layer.get())) continue;
+    if (layer->id() == currentId) currentIndex = sourceCount;
+    ++sourceCount;
+  }
+  if (sourceCount == 0) return;
+  if (currentIndex < 0) currentIndex = direction > 0 ? -1 : 0;
+  const int delta = direction > 0 ? 1 : -1;
+  const int targetIndex = (currentIndex + delta + sourceCount) % sourceCount;
+  int sourceIndex = 0;
+  for (const auto& layer : layers) {
+    if (!layer || !dynamic_cast<ArtifactImageLayer*>(layer.get())) continue;
+    if (sourceIndex++ == targetIndex) {
+      impl_->trackerSourceLayerId_ = layer->id();
+      persistProjectTrackerSourceLayerId(
+          comp->id(), impl_->trackerMotionTracker_
+                          ? impl_->trackerMotionTracker_->id()
+                          : 0,
+          layer->id());
+      markRenderDirty();
+      return;
+    }
+  }
+}
+
+void CompositionRenderController::trackerUseSelectedLayerAsSource() {
+  if (!impl_ || impl_->selectedLayerId_.isNil() || trackerJobRunning() ||
+      trackerHasResult()) {
+    return;
+  }
+  const auto comp = impl_->previewPipeline_.composition();
+  const auto selectedLayer = comp
+      ? comp->layerById(impl_->selectedLayerId_)
+      : ArtifactAbstractLayerPtr{};
+  if (!selectedLayer ||
+      !dynamic_cast<ArtifactImageLayer*>(selectedLayer.get())) {
+    return;
+  }
+  impl_->trackerSourceLayerId_ = impl_->selectedLayerId_;
+  if (comp) {
+    persistProjectTrackerSourceLayerId(
+        comp->id(), impl_->trackerMotionTracker_
+                        ? impl_->trackerMotionTracker_->id()
+                        : 0,
+        impl_->selectedLayerId_);
+  }
+  markRenderDirty();
+}
+
+int CompositionRenderController::trackerSessionCount() const {
+  if (!impl_) return 0;
+  const auto comp = impl_->previewPipeline_.composition();
+  if (!comp) return impl_->trackerMotionTracker_ ? 1 : 0;
+  const QJsonArray trackerIds = projectTrackerSessionManifest(comp->id())
+      .value(QStringLiteral("trackerIds"))
+      .toArray();
+  int count = 0;
+  auto& manager = ArtifactCore::TrackerManager::instance();
+  for (const QJsonValue& value : trackerIds) {
+    if (value.isDouble() && manager.tracker(value.toInt())) ++count;
+  }
+  if (count == 0 && impl_->trackerMotionTracker_) return 1;
+  return count;
+}
+
+QString CompositionRenderController::trackerSessionLabel() const {
+  if (!impl_ || !impl_->trackerMotionTracker_) return QString();
+  const auto comp = impl_->previewPipeline_.composition();
+  const QString name = impl_->trackerMotionTracker_->name().trimmed().isEmpty()
+                           ? QStringLiteral("Tracker %1")
+                                 .arg(impl_->trackerMotionTracker_->id())
+                           : impl_->trackerMotionTracker_->name();
+  if (!comp) return name;
+  const QJsonArray trackerIds = projectTrackerSessionManifest(comp->id())
+      .value(QStringLiteral("trackerIds"))
+      .toArray();
+  int index = -1;
+  int validCount = 0;
+  auto& manager = ArtifactCore::TrackerManager::instance();
+  for (const QJsonValue& value : trackerIds) {
+    const int id = value.toInt();
+    if (!manager.tracker(id)) continue;
+    if (id == impl_->trackerMotionTracker_->id()) index = validCount;
+    ++validCount;
+  }
+  return index >= 0 && validCount > 1
+             ? QStringLiteral("%1/%2 · %3")
+                   .arg(index + 1).arg(validCount).arg(name)
+             : name;
+}
+
+void CompositionRenderController::trackerCycleSession(int direction) {
+  if (!impl_ || direction == 0 || trackerJobRunning()) return;
+  const auto comp = impl_->previewPipeline_.composition();
+  if (!comp) return;
+  trackerRestoreCompositionSession();
+  const QJsonArray trackerIds = projectTrackerSessionManifest(comp->id())
+      .value(QStringLiteral("trackerIds"))
+      .toArray();
+  auto& manager = ArtifactCore::TrackerManager::instance();
+  int validCount = 0;
+  int currentIndex = -1;
+  int targetId = 0;
+  for (const QJsonValue& value : trackerIds) {
+    const int id = value.toInt();
+    if (!manager.tracker(id)) continue;
+    if (impl_->trackerMotionTracker_ &&
+        id == impl_->trackerMotionTracker_->id()) {
+      currentIndex = validCount;
+    }
+    ++validCount;
+  }
+  if (validCount <= 1) return;
+  if (currentIndex < 0) {
+    currentIndex = direction > 0 ? -1 : 0;
+  }
+  const int targetIndex = currentIndex < 0
+      ? (direction > 0 ? 0 : validCount - 1)
+      : (currentIndex + (direction > 0 ? 1 : -1) + validCount) % validCount;
+  int index = 0;
+  for (const QJsonValue& value : trackerIds) {
+    const int id = value.toInt();
+    if (!manager.tracker(id)) continue;
+    if (index++ == targetIndex) {
+      targetId = id;
+      break;
+    }
+  }
+  if (targetId > 0) trackerSelectSession(targetId);
+}
+
+void CompositionRenderController::trackerSelectSession(int trackerId) {
+  if (!impl_ || trackerJobRunning() || trackerId <= 0) return;
+  auto* tracker = ArtifactCore::TrackerManager::instance().tracker(trackerId);
+  const auto comp = impl_->previewPipeline_.composition();
+  if (!tracker || !comp) return;
+  const bool currentTrackerIsRegistered = impl_->trackerMotionTracker_ &&
+      ArtifactCore::TrackerManager::instance().tracker(
+          impl_->trackerMotionTrackerId_) == impl_->trackerMotionTracker_;
+  if (currentTrackerIsRegistered && impl_->trackerGizmo_) {
+    persistProjectTrackerGeometry(
+        comp->id(), impl_->trackerMotionTrackerId_,
+        impl_->trackerGizmo_->state());
+  }
+  registerProjectTrackerSession(comp->id(), trackerId, false);
+  impl_->trackerMotionTracker_ = tracker;
+  impl_->trackerMotionTrackerId_ = trackerId;
+  impl_->trackerLastJobFailed_ = false;
+  impl_->trackerPointPlacementArmed_ = false;
+  impl_->trackerSourceLayerId_ = LayerID();
+  impl_->trackerCaptureSourceLayerId_ = LayerID();
+
+  if (impl_->trackerGizmo_) {
+    impl_->trackerGizmo_->setTracker(tracker);
+    auto state = impl_->trackerGizmo_->state();
+    const QSize compositionSize = comp->settings().compositionSize();
+    state.innerCenter = QPointF(compositionSize.width() * 0.5,
+                                compositionSize.height() * 0.5);
+    auto& config = ArtifactCore::LayeredConfigStore::instance();
+    state.innerHalfW = std::clamp(
+        static_cast<float>(config.valueDouble(
+            std::string_view("Viewport/TrackPoint/FeatureWidth"),
+            32.0) * 0.5), 2.0f, 4096.0f);
+    state.innerHalfH = std::clamp(
+        static_cast<float>(config.valueDouble(
+            std::string_view("Viewport/TrackPoint/FeatureHeight"),
+            32.0) * 0.5), 2.0f, 4096.0f);
+    state.outerHalfW = std::max(
+        state.innerHalfW + 2.0f,
+        static_cast<float>(config.valueDouble(
+            std::string_view("Viewport/TrackPoint/SearchWidth"),
+            64.0) * 0.5));
+    state.outerHalfH = std::max(
+        state.innerHalfH + 2.0f,
+        static_cast<float>(config.valueDouble(
+            std::string_view("Viewport/TrackPoint/SearchHeight"),
+            64.0) * 0.5));
+    if (tracker->trackerType() == ArtifactCore::TrackerType::Point) {
+      if (tracker->trackPointCount() > 0) {
+        state.innerCenter = tracker->trackPoint(0).position;
+      }
+      const auto settings = tracker->settings();
+      state.innerHalfW = state.innerHalfH =
+          std::clamp(static_cast<float>(settings.windowSize) * 0.5f,
+                     4.0f, 50.5f);
+      const QRectF searchRegion = tracker->searchRegion();
+      if (searchRegion.isValid() && searchRegion.width() > 0.0 &&
+          searchRegion.height() > 0.0) {
+        state.outerHalfW = std::max(
+            state.innerHalfW + 2.0f,
+            static_cast<float>(searchRegion.width()) * 0.5f);
+        state.outerHalfH = std::max(
+            state.innerHalfH + 2.0f,
+            static_cast<float>(searchRegion.height()) * 0.5f);
+      }
+    }
+
+    const QJsonObject manifest = projectTrackerSessionManifest(comp->id());
+    const QJsonObject geometry = manifest
+        .value(QStringLiteral("geometryByTracker"))
+        .toObject()
+        .value(QString::number(trackerId))
+        .toObject();
+    if (!geometry.isEmpty()) {
+      const double centerX = geometry.value(QStringLiteral("centerX")).toDouble(
+          std::numeric_limits<double>::quiet_NaN());
+      const double centerY = geometry.value(QStringLiteral("centerY")).toDouble(
+          std::numeric_limits<double>::quiet_NaN());
+      const double innerHalfW = geometry.value(QStringLiteral("innerHalfW")).toDouble(
+          std::numeric_limits<double>::quiet_NaN());
+      const double innerHalfH = geometry.value(QStringLiteral("innerHalfH")).toDouble(
+          std::numeric_limits<double>::quiet_NaN());
+      const double outerHalfW = geometry.value(QStringLiteral("outerHalfW")).toDouble(
+          std::numeric_limits<double>::quiet_NaN());
+      const double outerHalfH = geometry.value(QStringLiteral("outerHalfH")).toDouble(
+          std::numeric_limits<double>::quiet_NaN());
+      if (std::isfinite(centerX) && std::isfinite(centerY) &&
+          std::isfinite(innerHalfW) && std::isfinite(innerHalfH) &&
+          std::isfinite(outerHalfW) && std::isfinite(outerHalfH) &&
+          innerHalfW >= 4.0 && innerHalfH >= 4.0 &&
+          outerHalfW >= innerHalfW + 2.0 &&
+          outerHalfH >= innerHalfH + 2.0) {
+        state.innerCenter = QPointF(centerX, centerY);
+        state.innerHalfW = static_cast<float>(innerHalfW);
+        state.innerHalfH = static_cast<float>(innerHalfH);
+        state.outerHalfW = static_cast<float>(outerHalfW);
+        state.outerHalfH = static_cast<float>(outerHalfH);
+      }
+    }
+    impl_->trackerGizmo_->setState(state);
+  }
+  setProjectActiveTrackerSession(comp->id(), trackerId);
+  markRenderDirty();
+}
+
+bool CompositionRenderController::trackerSessionSelectionOutOfDate() const {
+  if (!impl_ || trackerJobRunning()) return false;
+  const auto comp = impl_->previewPipeline_.composition();
+  if (!comp) return false;
+  const bool hasBoundSession = trackerHasSession();
+  const QJsonObject manifest = projectTrackerSessionManifest(comp->id());
+  const QJsonArray trackerIds =
+      manifest.value(QStringLiteral("trackerIds")).toArray();
+  auto& manager = ArtifactCore::TrackerManager::instance();
+  int desiredId = manifest.value(QStringLiteral("activeTrackerId")).toInt();
+  if (desiredId <= 0 || !manager.tracker(desiredId)) {
+    desiredId = 0;
+    for (const QJsonValue& value : trackerIds) {
+      const int candidateId = value.toInt();
+      if (manager.tracker(candidateId)) {
+        desiredId = candidateId;
+        break;
+      }
+    }
+  }
+  const int boundId = hasBoundSession ? impl_->trackerMotionTrackerId_ : 0;
+  return desiredId != boundId;
+}
+
+void CompositionRenderController::trackerRestoreCompositionSession() {
+  if (!impl_ || trackerJobRunning()) return;
+  const auto comp = impl_->previewPipeline_.composition();
+  if (!comp) return;
+  auto& manager = ArtifactCore::TrackerManager::instance();
+  for (const auto& layer : comp->allLayerRef()) {
+    auto* videoLayer = layer
+        ? dynamic_cast<ArtifactVideoLayer*>(layer.get())
+        : nullptr;
+    if (!videoLayer) continue;
+    const int trackerId = videoLayer->motionTrackerId();
+    if (trackerId > 0 && manager.tracker(trackerId)) {
+      registerProjectTrackerSession(comp->id(), trackerId, false);
+    }
+  }
+  if (impl_->trackerMotionTracker_ &&
+      manager.tracker(impl_->trackerMotionTrackerId_) ==
+          impl_->trackerMotionTracker_) {
+    registerProjectTrackerSession(
+        comp->id(), impl_->trackerMotionTrackerId_, false);
+  }
+  const QJsonObject manifest = projectTrackerSessionManifest(comp->id());
+  const QJsonArray trackerIds = manifest
+      .value(QStringLiteral("trackerIds"))
+      .toArray();
+  int targetId = manifest.value(QStringLiteral("activeTrackerId")).toInt();
+  if (targetId <= 0 || !manager.tracker(targetId)) {
+    targetId = 0;
+    for (const QJsonValue& value : trackerIds) {
+      const int id = value.toInt();
+      if (manager.tracker(id)) {
+        targetId = id;
+        break;
+      }
+    }
+  }
+  if (targetId > 0) {
+    trackerSelectSession(targetId);
+  } else if (impl_->trackerMotionTracker_) {
+    trackerDetachSession();
+  }
+}
+
+void CompositionRenderController::trackerDetachSession() {
+  if (!impl_) return;
+  impl_->trackerPointPlacementArmed_ = false;
+  impl_->trackerMotionTracker_ = nullptr;
+  impl_->trackerMotionTrackerId_ = 0;
+  if (impl_->trackerGizmo_) impl_->trackerGizmo_->setTracker(nullptr);
+  markRenderDirty();
 }
 
 bool CompositionRenderController::trackerHasResult() const {
@@ -38817,6 +39980,8 @@ void CompositionRenderController::trackerNextProblemFrame() {
   if (!impl_ || trackerJobRunning() || !impl_->trackerMotionTracker_) return;
   const auto comp = impl_->previewPipeline_.composition();
   if (!comp) return;
+  auto* playback = ArtifactPlaybackService::instance();
+  if (!playback || playback->currentComposition() != comp) return;
   const float fps = comp->frameRate().framerate();
   if (fps <= 0.0f) return;
   const auto problems = impl_->trackerMotionTracker_->problemFrames();
@@ -38826,7 +39991,7 @@ void CompositionRenderController::trackerNextProblemFrame() {
     return;
   }
   const double currentTime =
-      static_cast<double>(comp->framePosition().framePosition()) / fps;
+      static_cast<double>(playback->currentFrame().framePosition()) / fps;
   double targetTime = problems.front();
   for (const double problemTime : problems) {
     if (problemTime > currentTime + (0.5 / fps)) {
@@ -38835,11 +40000,38 @@ void CompositionRenderController::trackerNextProblemFrame() {
     }
   }
   const auto targetFrame = static_cast<int64_t>(std::llround(targetTime * fps));
-  if (auto* playback = ArtifactPlaybackService::instance()) {
-    playback->goToFrame(FramePosition(targetFrame));
-  } else {
-    comp->goToFrame(targetFrame);
+  playback->goToFrame(FramePosition(targetFrame));
+  setInfoOverlayText(trackerModeTitle(impl_->trackerMotionTracker_),
+                     QStringLiteral("Reviewing problem frame %1")
+                         .arg(targetFrame));
+  markRenderDirty();
+}
+
+void CompositionRenderController::trackerPreviousProblemFrame() {
+  if (!impl_ || trackerJobRunning() || !impl_->trackerMotionTracker_) return;
+  const auto comp = impl_->previewPipeline_.composition();
+  if (!comp) return;
+  auto* playback = ArtifactPlaybackService::instance();
+  if (!playback || playback->currentComposition() != comp) return;
+  const float fps = comp->frameRate().framerate();
+  if (fps <= 0.0f) return;
+  const auto problems = impl_->trackerMotionTracker_->problemFrames();
+  if (problems.empty()) {
+    setInfoOverlayText(trackerModeTitle(impl_->trackerMotionTracker_),
+                       QStringLiteral("No problem frames"));
+    return;
   }
+  const double currentTime =
+      static_cast<double>(playback->currentFrame().framePosition()) / fps;
+  double targetTime = problems.back();
+  for (auto it = problems.rbegin(); it != problems.rend(); ++it) {
+    if (*it < currentTime - (0.5 / fps)) {
+      targetTime = *it;
+      break;
+    }
+  }
+  const auto targetFrame = static_cast<int64_t>(std::llround(targetTime * fps));
+  playback->goToFrame(FramePosition(targetFrame));
   setInfoOverlayText(trackerModeTitle(impl_->trackerMotionTracker_),
                      QStringLiteral("Reviewing problem frame %1")
                          .arg(targetFrame));
@@ -38906,7 +40098,7 @@ void CompositionRenderController::trackerFilterByConfidence() {
 void CompositionRenderController::trackerStop() {
   if (!impl_ || !trackerJobRunning()) return;
   impl_->trackerCancelRequested_.store(true, std::memory_order_release);
-  setInfoOverlayText(trackerModeTitle(impl_->trackerMotionTracker_),
+  setInfoOverlayText(impl_->trackerSolveModeTitle_,
                      QStringLiteral("Cancelling…"));
   markRenderDirty();
 }
@@ -38914,22 +40106,62 @@ void CompositionRenderController::trackerStop() {
 void CompositionRenderController::trackerCaptureNextFrame(
     std::uint64_t generation) {
   if (!impl_ || generation != impl_->trackerJobGeneration_) return;
-  auto *tracker = impl_->trackerMotionTracker_;
+  if (impl_->trackerMotionTracker_ &&
+      ArtifactCore::TrackerManager::instance().tracker(
+          impl_->trackerMotionTrackerId_) != impl_->trackerMotionTracker_) {
+    impl_->trackerCancelRequested_.store(true, std::memory_order_release);
+    impl_->trackerCaptureActive_ = false;
+    impl_->trackerJobDirection_ = Impl::TrackerJobDirection::None;
+    impl_->trackerMotionTracker_ = nullptr;
+    impl_->trackerMotionTrackerId_ = 0;
+    impl_->trackerSolveWorkingCopy_.reset();
+    impl_->trackerPreSolveJson_.clear();
+    if (impl_->trackerGizmo_) impl_->trackerGizmo_->setTracker(nullptr);
+    setInfoOverlayText(QStringLiteral("Tracker"),
+                       QStringLiteral("Tracker session changed; operation discarded"));
+    markRenderDirty();
+    return;
+  }
+  auto *tracker = impl_->trackerCaptureActive_
+                      ? impl_->trackerSolveWorkingCopy_.get()
+                      : impl_->trackerMotionTracker_;
+  const auto discardCapture = [this]() {
+    impl_->trackerSolveWorkingCopy_.reset();
+    impl_->trackerPreSolveJson_.clear();
+    impl_->trackerCaptureActive_ = false;
+  };
+  if (tracker) impl_->trackerSolveModeTitle_ = trackerModeTitle(tracker);
   auto *gizmo = impl_->trackerGizmo_.get();
   auto *renderer = impl_->renderer_.get();
   const auto comp = impl_->previewPipeline_.composition();
   if (!tracker || !gizmo || !renderer || !comp) {
+    discardCapture();
+    impl_->trackerLastJobFailed_ = true;
     impl_->trackerJobDirection_ = Impl::TrackerJobDirection::None;
     return;
   }
-  const auto selectedLayer = impl_->selectedLayerId_.isNil()
+  if (!impl_->trackerCaptureActive_) {
+    impl_->trackerCaptureSourceLayerId_ = trackerSourceLayerId();
+    if (impl_->trackerCaptureSourceLayerId_.isNil()) {
+      impl_->trackerCaptureSourceLayerId_ = impl_->selectedLayerId_;
+    }
+    impl_->trackerSourceLayerId_ = impl_->trackerCaptureSourceLayerId_;
+    persistProjectTrackerSourceLayerId(
+        comp->id(), tracker->id(), impl_->trackerCaptureSourceLayerId_);
+  }
+  const LayerID sourceLayerId = impl_->trackerCaptureActive_
+                                    ? impl_->trackerCaptureSourceLayerId_
+                                    : trackerSourceLayerId();
+  const auto selectedLayer = sourceLayerId.isNil()
                                  ? ArtifactAbstractLayerPtr{}
-                                 : comp->layerById(impl_->selectedLayerId_);
+                                 : comp->layerById(sourceLayerId);
   if (!selectedLayer ||
       !dynamic_cast<ArtifactImageLayer *>(selectedLayer.get())) {
+    discardCapture();
+    impl_->trackerLastJobFailed_ = true;
     impl_->trackerJobDirection_ = Impl::TrackerJobDirection::None;
     setInfoOverlayText(
-        trackerModeTitle(tracker),
+        impl_->trackerSolveModeTitle_,
         QStringLiteral("Select a still-image or image-sequence layer"));
     markRenderDirty();
     return;
@@ -38940,17 +40172,25 @@ void CompositionRenderController::trackerCaptureNextFrame(
     const float fps = comp->frameRate().framerate();
     const QSize size = comp->settings().compositionSize();
     if (!range.isValid() || fps <= 0.0f || size.isEmpty()) {
+      discardCapture();
+      impl_->trackerLastJobFailed_ = true;
       impl_->trackerJobDirection_ = Impl::TrackerJobDirection::None;
       return;
     }
     ensureOffscreenRenderer(impl_->trackerOffscreenRenderer_, renderer,
                             size.width(), size.height());
     if (!impl_->trackerOffscreenRenderer_) {
+      discardCapture();
+      impl_->trackerLastJobFailed_ = true;
       impl_->trackerJobDirection_ = Impl::TrackerJobDirection::None;
       return;
     }
 
     impl_->trackerPreSolveJson_ = tracker->toJson();
+    impl_->trackerSolveWorkingCopy_.reset(
+        new ArtifactCore::MotionTracker(*tracker));
+    tracker = impl_->trackerSolveWorkingCopy_.get();
+    const auto configuredTrackPoints = tracker->trackPoints();
     tracker->clearTrackingData();
     const auto &state = gizmo->state();
     const QRectF featureRect(
@@ -38976,7 +40216,13 @@ void CompositionRenderController::trackerCaptureNextFrame(
                  state.innerHalfW * 2.0f, state.innerHalfH * 2.0f));
       tracker->setSearchRegion(QRectF());
     } else {
-      tracker->addTrackPoint(state.innerCenter);
+      if (configuredTrackPoints.empty()) {
+        tracker->addTrackPoint(state.innerCenter);
+      } else {
+        for (const auto& point : configuredTrackPoints) {
+          tracker->addTrackPoint(point.position);
+        }
+      }
       tracker->setSearchRegion(searchRect);
       auto trackerSettings = tracker->settings();
       const int featureSize = std::max(
@@ -38986,21 +40232,43 @@ void CompositionRenderController::trackerCaptureNextFrame(
       tracker->setSettings(trackerSettings);
     }
 
+    auto* playback = ArtifactPlaybackService::instance();
+    const int64_t currentFrame = playback &&
+            playback->currentComposition() == comp
+        ? playback->currentFrame().framePosition()
+        : comp->framePosition().framePosition();
     const int64_t current = std::clamp(
-        comp->framePosition().framePosition(), range.start(), range.end());
+        currentFrame, range.start(), range.end());
+    const auto direction = impl_->trackerJobDirection_;
     impl_->trackerCaptureStartFrame_ =
-        impl_->trackerJobDirection_ == Impl::TrackerJobDirection::All
-            ? range.start()
-            : current;
-    impl_->trackerCaptureEndFrame_ =
-        impl_->trackerJobDirection_ == Impl::TrackerJobDirection::Backward
-            ? range.start()
-            : range.end();
+        direction == Impl::TrackerJobDirection::All ? range.start() : current;
+    if (direction == Impl::TrackerJobDirection::Backward) {
+      impl_->trackerCaptureEndFrame_ = range.start();
+    } else if (direction == Impl::TrackerJobDirection::StepBackward) {
+      if (current <= range.start()) {
+        discardCapture();
+        impl_->trackerLastJobFailed_ = true;
+        impl_->trackerJobDirection_ = Impl::TrackerJobDirection::None;
+        return;
+      }
+      impl_->trackerCaptureEndFrame_ = current - 1;
+    } else if (direction == Impl::TrackerJobDirection::StepForward) {
+      if (current >= range.end()) {
+        discardCapture();
+        impl_->trackerLastJobFailed_ = true;
+        impl_->trackerJobDirection_ = Impl::TrackerJobDirection::None;
+        return;
+      }
+      impl_->trackerCaptureEndFrame_ = current + 1;
+    } else {
+      impl_->trackerCaptureEndFrame_ = range.end();
+    }
     impl_->trackerCaptureNextFrame_ = impl_->trackerCaptureStartFrame_;
     impl_->trackerCaptureFrameCount_ =
         std::abs(impl_->trackerCaptureEndFrame_ -
                  impl_->trackerCaptureStartFrame_) + 1;
     impl_->trackerCapturedFrameCount_ = 0;
+    impl_->trackerCaptureFrameRetryCount_ = 0;
     impl_->trackerFrameStep_ = 1.0 / static_cast<double>(fps);
     impl_->trackerCancelRequested_.store(false, std::memory_order_release);
     impl_->trackerSolveFinished_.store(false, std::memory_order_release);
@@ -39010,9 +40278,9 @@ void CompositionRenderController::trackerCaptureNextFrame(
   }
 
   if (impl_->trackerCancelRequested_.load(std::memory_order_acquire)) {
-    impl_->trackerCaptureActive_ = false;
+    discardCapture();
     impl_->trackerJobDirection_ = Impl::TrackerJobDirection::None;
-    setInfoOverlayText(trackerModeTitle(tracker),
+    setInfoOverlayText(impl_->trackerSolveModeTitle_,
                        QStringLiteral("Cancelled"));
     markRenderDirty();
     return;
@@ -39021,10 +40289,52 @@ void CompositionRenderController::trackerCaptureNextFrame(
   const int64_t frame = impl_->trackerCaptureNextFrame_;
   const QImage image = impl_->trackerOffscreenRenderer_->renderLayerToQImage(
       ArtifactCore::FramePosition(frame), selectedLayer.get());
+  auto* sequenceLayer = dynamic_cast<ArtifactImageLayer*>(selectedLayer.get());
+  if (sequenceLayer && sequenceLayer->isImageSequence()) {
+    const double sourceFrame = std::floor(
+        (static_cast<double>(frame) / comp->frameRate().framerate()) *
+        sequenceLayer->sequenceFrameRate());
+    const auto expectedSequenceFrame = std::max<qint64>(
+        0, static_cast<qint64>(sourceFrame));
+    if (sequenceLayer->sequenceCachedFrameIndex() != expectedSequenceFrame) {
+      constexpr int kMaximumSequenceFrameRetries = 300;
+      if (++impl_->trackerCaptureFrameRetryCount_ <=
+          kMaximumSequenceFrameRetries) {
+        setInfoOverlayText(
+            impl_->trackerSolveModeTitle_,
+            QStringLiteral("Decoding source frame %1…").arg(frame));
+        QTimer::singleShot(10, this, [this, generation]() {
+          trackerCaptureNextFrame(generation);
+        });
+        return;
+      }
+      discardCapture();
+      impl_->trackerLastJobFailed_ = true;
+      impl_->trackerJobDirection_ = Impl::TrackerJobDirection::None;
+      setInfoOverlayText(
+          impl_->trackerSolveModeTitle_,
+          QStringLiteral("Could not decode sequence frame %1; tracking stopped")
+              .arg(expectedSequenceFrame));
+      markRenderDirty();
+      return;
+    }
+    impl_->trackerCaptureFrameRetryCount_ = 0;
+  }
+  const QString trackerCaptureDump = qEnvironmentVariable(
+      "ARTIFACT_UI_TEST_TRACKER_CAPTURE_DUMP_DIR");
+  if (!trackerCaptureDump.isEmpty() && impl_->trackerCapturedFrameCount_ < 3) {
+    const QString dumpPath = QDir(trackerCaptureDump).filePath(
+        QStringLiteral("captured-%1.png").arg(impl_->trackerCapturedFrameCount_));
+    if (!image.isNull() && !image.save(dumpPath, "PNG")) {
+      qWarning() << "[TrackerUiFixture] capture dump failed" << dumpPath;
+    }
+  }
   if (image.isNull()) {
+    discardCapture();
+    impl_->trackerLastJobFailed_ = true;
     impl_->trackerCaptureActive_ = false;
     impl_->trackerJobDirection_ = Impl::TrackerJobDirection::None;
-    setInfoOverlayText(trackerModeTitle(tracker),
+    setInfoOverlayText(impl_->trackerSolveModeTitle_,
                        QStringLiteral("Could not capture frame %1; tracking stopped")
                            .arg(frame));
     markRenderDirty();
@@ -39042,8 +40352,10 @@ void CompositionRenderController::trackerCaptureNextFrame(
   markRenderDirty();
 
   if (frame != impl_->trackerCaptureEndFrame_) {
+    impl_->trackerCaptureFrameRetryCount_ = 0;
     impl_->trackerCaptureNextFrame_ +=
-        impl_->trackerJobDirection_ == Impl::TrackerJobDirection::Backward
+        (impl_->trackerJobDirection_ == Impl::TrackerJobDirection::Backward ||
+         impl_->trackerJobDirection_ == Impl::TrackerJobDirection::StepBackward)
             ? -1
             : 1;
     QTimer::singleShot(0, this, [this, generation]() {
@@ -39062,9 +40374,11 @@ void CompositionRenderController::trackerCaptureNextFrame(
   const double endTime =
       static_cast<double>(impl_->trackerCaptureEndFrame_) *
       impl_->trackerFrameStep_;
+  auto* solveTracker = impl_->trackerSolveWorkingCopy_.get();
+  impl_->trackerSolveModeTitle_ = trackerModeTitle(tracker);
   impl_->trackerSolveFuture_ = QtConcurrent::run(
       &sharedBackgroundThreadPool(),
-      [jobImpl, tracker, direction, startTime, endTime]() {
+      [jobImpl, solveTracker, direction, startTime, endTime]() {
         const auto progress = [jobImpl](double value) {
           jobImpl->trackerSolveProgress_.store(value,
                                                std::memory_order_release);
@@ -39073,13 +40387,14 @@ void CompositionRenderController::trackerCaptureNextFrame(
         };
         bool succeeded = false;
         try {
-          if (direction == Impl::TrackerJobDirection::Backward) {
-            succeeded =
-                tracker->trackBackwardRange(startTime, endTime, progress);
+          if (direction == Impl::TrackerJobDirection::Backward ||
+              direction == Impl::TrackerJobDirection::StepBackward) {
+            succeeded = solveTracker->trackBackwardRange(startTime, endTime,
+                                                           progress);
           } else if (direction == Impl::TrackerJobDirection::All) {
-            succeeded = tracker->trackAll(progress);
+            succeeded = solveTracker->trackAll(progress);
           } else {
-            succeeded = tracker->trackRange(startTime, endTime, progress);
+            succeeded = solveTracker->trackRange(startTime, endTime, progress);
           }
         } catch (...) {
           succeeded = false;
@@ -39098,7 +40413,7 @@ void CompositionRenderController::trackerPollJob(std::uint64_t generation) {
     const int progress = 50 + static_cast<int>(std::round(
         50.0 * impl_->trackerSolveProgress_.load(std::memory_order_acquire)));
     setInfoOverlayText(
-        trackerModeTitle(impl_->trackerMotionTracker_),
+        impl_->trackerSolveModeTitle_,
         QStringLiteral("Solving track • %1% • Stop available").arg(progress));
     markRenderDirty();
     QTimer::singleShot(50, this,
@@ -39109,8 +40424,23 @@ void CompositionRenderController::trackerPollJob(std::uint64_t generation) {
   impl_->trackerSolveFuture_.waitForFinished();
   const bool cancelled =
       impl_->trackerCancelRequested_.load(std::memory_order_acquire);
-  const bool succeeded =
+  bool succeeded =
       impl_->trackerSolveSucceeded_.load(std::memory_order_acquire);
+  const auto completedDirection = impl_->trackerJobDirection_;
+  const bool trackerStillRegistered = impl_->trackerMotionTracker_ &&
+      ArtifactCore::TrackerManager::instance().tracker(
+          impl_->trackerMotionTrackerId_) == impl_->trackerMotionTracker_;
+  if (succeeded && !cancelled && trackerStillRegistered &&
+      impl_->trackerSolveWorkingCopy_) {
+    succeeded = impl_->trackerMotionTracker_->fromJson(
+        impl_->trackerSolveWorkingCopy_->toJson());
+  } else if (!trackerStillRegistered) {
+    succeeded = false;
+    impl_->trackerMotionTracker_ = nullptr;
+    impl_->trackerMotionTrackerId_ = 0;
+  }
+  impl_->trackerSolveWorkingCopy_.reset();
+  impl_->trackerLastJobFailed_ = !succeeded && !cancelled;
   if (impl_->trackerGizmo_) {
     impl_->trackerGizmo_->setTracker(impl_->trackerMotionTracker_);
   }
@@ -39123,8 +40453,9 @@ void CompositionRenderController::trackerPollJob(std::uint64_t generation) {
     markRenderDirty();
   }
   impl_->trackerPreSolveJson_.clear();
-  const QString detail =
-      cancelled
+  const QString detail = !trackerStillRegistered
+          ? QStringLiteral("Project changed; tracking result discarded")
+          : cancelled
           ? QStringLiteral("Cancelled; partial result was not accepted")
           : succeeded
                 ? QStringLiteral("Complete • confidence %1 • problem frames %2")
@@ -39134,8 +40465,24 @@ void CompositionRenderController::trackerPollJob(std::uint64_t generation) {
                                                 ->problemFrames()
                                                 .size()))
                 : QStringLiteral("Tracking failed: check the feature region and image detail");
+  if (succeeded && trackerStillRegistered && !cancelled &&
+      (completedDirection == Impl::TrackerJobDirection::StepForward ||
+       completedDirection == Impl::TrackerJobDirection::StepBackward)) {
+    const auto composition = impl_->previewPipeline_.composition();
+    auto *playback = ArtifactPlaybackService::instance();
+    if (composition && playback &&
+        playback->currentComposition() == composition &&
+        playback->currentFrame().framePosition() ==
+            impl_->trackerCaptureStartFrame_) {
+      playback->setCurrentFrame(
+          ArtifactCore::FramePosition(impl_->trackerCaptureEndFrame_));
+    }
+  }
   impl_->trackerJobDirection_ = Impl::TrackerJobDirection::None;
-  setInfoOverlayText(trackerModeTitle(impl_->trackerMotionTracker_), detail);
+  setInfoOverlayText(impl_->trackerMotionTracker_
+                         ? trackerModeTitle(impl_->trackerMotionTracker_)
+                         : QStringLiteral("Tracker"),
+                     detail);
   markRenderDirty();
 }
 
@@ -39143,7 +40490,8 @@ void CompositionRenderController::trackerPollJob(std::uint64_t generation) {
 
 void CompositionRenderController::trackerApplyToPosition() {
 
-  if (!impl_->trackerMotionTracker_ || !impl_->trackerGizmo_) return;
+  if (!impl_ || trackerJobRunning() || !impl_->trackerMotionTracker_ ||
+      !impl_->trackerGizmo_) return;
 
 
 
@@ -39167,6 +40515,7 @@ void CompositionRenderController::trackerApplyToPosition() {
 
   opts.pointId = impl_->trackerMotionTracker_->firstTrackPointId();
   opts.createNullLayer = true;
+  opts.writeAnchor = false;
 
   opts.applyToSelectedLayer = (targetLayer != nullptr);
 
@@ -39196,7 +40545,8 @@ void CompositionRenderController::trackerApplyToPosition() {
 
 void CompositionRenderController::trackerApplyToAnchor() {
 
-  if (!impl_->trackerMotionTracker_ || !impl_->trackerGizmo_) return;
+  if (!impl_ || trackerJobRunning() || !impl_->trackerMotionTracker_ ||
+      !impl_->trackerGizmo_) return;
 
 
 
@@ -39242,7 +40592,8 @@ void CompositionRenderController::trackerApplyToAnchor() {
 }
 
 void CompositionRenderController::trackerApplyAllPoints() {
-  if (!impl_->trackerMotionTracker_ || !impl_->trackerGizmo_) return;
+  if (!impl_ || trackerJobRunning() || !impl_->trackerMotionTracker_ ||
+      !impl_->trackerGizmo_) return;
   const auto comp = impl_->previewPipeline_.composition();
   if (!comp) return;
 
@@ -39260,7 +40611,8 @@ void CompositionRenderController::trackerApplyAllPoints() {
 }
 
 void CompositionRenderController::trackerApplyPlanarCornerPin() {
-  if (!impl_->trackerMotionTracker_ || !impl_->trackerGizmo_ ||
+  if (!impl_ || trackerJobRunning() || !impl_->trackerMotionTracker_ ||
+      !impl_->trackerGizmo_ ||
       impl_->trackerMotionTracker_->trackerType() != ArtifactCore::TrackerType::Planar) {
     setInfoOverlayText(QStringLiteral("Planar Tracker"),
                       QStringLiteral("Planar tracking is not active"));
@@ -39288,7 +40640,8 @@ void CompositionRenderController::trackerApplyPlanarCornerPin() {
 }
 
 void CompositionRenderController::trackerApplyToMask() {
-  if (!impl_->trackerMotionTracker_ || !impl_->trackerGizmo_ ||
+  if (!impl_ || trackerJobRunning() || !impl_->trackerMotionTracker_ ||
+      !impl_->trackerGizmo_ ||
       impl_->trackerMotionTracker_->trackerType() != ArtifactCore::TrackerType::Planar) {
     setInfoOverlayText(QStringLiteral("Planar Tracker"),
                        QStringLiteral("Planar tracking is not active"));
@@ -39308,14 +40661,11 @@ void CompositionRenderController::trackerApplyToMask() {
     return;
   }
 
-  // Track the first mask of the selected layer.  Layer selection does not
-  // currently carry a "which mask" address, so this matches the single-mask
-  // workflow AE's Mask Tracking exposes on a per-mask basis; a mask picker
-  // would be the follow-up.
-  const int maskIndex = 0;
-  const int pathIndex = 0;
+  const int maskIndex = impl_->trackerMaskIndex_;
+  const int pathIndex = impl_->trackerMaskPathIndex_;
+  if (maskIndex < 0 || maskIndex >= targetLayer->maskCount()) return;
   LayerMask mask = targetLayer->mask(maskIndex);
-  if (mask.maskPathCount() <= 0) {
+  if (pathIndex < 0 || pathIndex >= mask.maskPathCount()) {
     setInfoOverlayText(QStringLiteral("Planar Tracker • Mask"),
                        QStringLiteral("The selected mask has no path"));
     return;
@@ -39355,36 +40705,130 @@ void CompositionRenderController::trackerApplyToMask() {
   markRenderDirty();
 }
 
+int CompositionRenderController::trackerMaskIndex() const {
+  return impl_ ? impl_->trackerMaskIndex_ : 0;
+}
+
+int CompositionRenderController::trackerMaskPathIndex() const {
+  return impl_ ? impl_->trackerMaskPathIndex_ : 0;
+}
+
+int CompositionRenderController::trackerMaskPathCount() const {
+  if (!impl_) return 0;
+  const auto comp = impl_->previewPipeline_.composition();
+  const auto target = comp && !impl_->selectedLayerId_.isNil()
+                          ? comp->layerById(impl_->selectedLayerId_)
+                          : nullptr;
+  if (!target) return 0;
+  int total = 0;
+  for (int i = 0; i < target->maskCount(); ++i) {
+    if (const auto *mask = target->maskView(i)) total += mask->maskPathCount();
+  }
+  return total;
+}
+
+void CompositionRenderController::trackerCycleMaskPath(int direction) {
+  if (!impl_ || direction == 0 || trackerJobRunning()) return;
+  const auto comp = impl_->previewPipeline_.composition();
+  const auto target = comp && !impl_->selectedLayerId_.isNil()
+                          ? comp->layerById(impl_->selectedLayerId_)
+                          : nullptr;
+  if (!target) return;
+  int total = 0;
+  for (int i = 0; i < target->maskCount(); ++i) {
+    if (const auto *mask = target->maskView(i)) total += mask->maskPathCount();
+  }
+  if (total <= 0) {
+    impl_->trackerMaskIndex_ = 0;
+    impl_->trackerMaskPathIndex_ = 0;
+    return;
+  }
+  int flat = 0;
+  bool found = false;
+  for (int i = 0; i < target->maskCount(); ++i) {
+    const auto *mask = target->maskView(i);
+    if (!mask) continue;
+    if (i == impl_->trackerMaskIndex_ &&
+        impl_->trackerMaskPathIndex_ >= 0 &&
+        impl_->trackerMaskPathIndex_ < mask->maskPathCount()) {
+      flat += impl_->trackerMaskPathIndex_;
+      found = true;
+      break;
+    }
+    flat += mask->maskPathCount();
+  }
+  if (!found) flat = direction > 0 ? -1 : 0;
+  flat = (flat + (direction > 0 ? 1 : total - 1)) % total;
+  for (int i = 0; i < target->maskCount(); ++i) {
+    const auto *mask = target->maskView(i);
+    if (!mask) continue;
+    if (flat < mask->maskPathCount()) {
+      impl_->trackerMaskIndex_ = i;
+      impl_->trackerMaskPathIndex_ = flat;
+      break;
+    }
+    flat -= mask->maskPathCount();
+  }
+  markRenderDirty();
+}
+
 
 
 void CompositionRenderController::trackerDelete() {
-
+  if (!impl_) return;
   trackerStop();
+  impl_->trackerPointPlacementArmed_ = false;
   impl_->trackerSolveFuture_.waitForFinished();
+  impl_->trackerSolveWorkingCopy_.reset();
+  impl_->trackerPreSolveJson_.clear();
   ++impl_->trackerJobGeneration_;
   impl_->trackerCaptureActive_ = false;
   impl_->trackerJobDirection_ = Impl::TrackerJobDirection::None;
 
-  if (impl_->trackerMotionTracker_) {
-
-    ArtifactCore::TrackerManager::instance().removeTracker(
-
-        impl_->trackerMotionTracker_->id());
-
-    impl_->trackerMotionTracker_ = nullptr;
-
+  const auto comp = impl_->previewPipeline_.composition();
+  const bool trackerStillRegistered = impl_->trackerMotionTracker_ &&
+          ArtifactCore::TrackerManager::instance().tracker(
+              impl_->trackerMotionTrackerId_) == impl_->trackerMotionTracker_;
+  const int trackerId = trackerStillRegistered
+                            ? impl_->trackerMotionTrackerId_
+                            : 0;
+  QString trackerJson;
+  QJsonObject geometry;
+  LayerID sourceLayerId;
+  if (trackerStillRegistered && comp) {
+    trackerJson = impl_->trackerMotionTracker_->toJson();
+    if (impl_->trackerGizmo_) {
+      persistProjectTrackerGeometry(comp->id(), trackerId,
+                                    impl_->trackerGizmo_->state());
+    }
+    const QJsonObject manifest = projectTrackerSessionManifest(comp->id());
+    geometry = manifest.value(QStringLiteral("geometryByTracker"))
+                   .toObject()
+                   .value(QString::number(trackerId))
+                   .toObject();
+    sourceLayerId = projectTrackerSourceLayerId(comp->id(), trackerId);
+  }
+  if (trackerId > 0 && comp && !trackerJson.isEmpty()) {
+    if (auto* undo = UndoManager::instance()) {
+      const bool deletionRecorded = undo->push(
+          std::make_unique<TrackerSessionUndoCommand>(
+              comp->id(), trackerId, trackerJson, geometry, sourceLayerId,
+              false));
+      if (!deletionRecorded) {
+        setInfoOverlayText(QStringLiteral("Tracker"),
+                           QStringLiteral("Could not record tracker deletion in Undo history"));
+        return;
+      }
+    }
+  }
+  if (trackerId > 0) {
+    if (comp) removeProjectTrackerSession(comp->id(), trackerId);
+    ArtifactCore::TrackerManager::instance().removeTracker(trackerId);
   }
 
-  if (impl_->trackerGizmo_) {
-
-    impl_->trackerGizmo_->setTracker(nullptr);
-
-  }
-
-  markRenderDirty();
-
+  trackerDetachSession();
+  if (comp) trackerRestoreCompositionSession();
 }
-
 
 
 CompositionRenderController::CameraFrustumVisual

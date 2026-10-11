@@ -21,6 +21,7 @@ module;
 #include <functional>
 #include <span>
 #include <QImage>
+#include <QByteArray>
 #include <QThread>
 #include <QFont>
 #include <QColor>
@@ -36,6 +37,7 @@ module;
 #include <QMatrix4x4>
 #include <QVector2D>
 #include <QtGlobal>
+#include <QVariant>
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -86,6 +88,7 @@ import Core.Light;
 import Math.Vec;
 import Core.Parallel;
 import ArtifactCore.Utils.PerformanceProfiler;
+import Configuration.LayeredConfigStore;
 import Color.TransferFunction;
 import Memory.SharedPtr;
 
@@ -1511,7 +1514,7 @@ namespace {
   void reserveRenderCommandPackets(std::size_t totalCapacity);
   bool prepareParallelGeometryRecording();
   bool tryMergeCompletedWorkerBuffers(RenderCommandBufferPool& pool);
-  void flushAndWait();
+  void flushAndWait(bool restoreRenderTarget = true);
   void flush();
   void destroy();
 
@@ -1956,6 +1959,7 @@ namespace {
     ParticlePkt pkt;
     if (transferableData) {
       pkt.data = std::move(*transferableData);
+      transferableData->particles = cmdBuf_.takeRecycledParticleBuffer();
     } else {
       pkt.data = data;
     }
@@ -3229,6 +3233,7 @@ void ArtifactIRenderer::Impl::setRenderTargetOverrides(ITextureView* colorRTV,
                                   deviceManager_.swapChain());
   primitiveRenderer3D_.setOverrideDSV(nullptr);
   createLayerRT(window);
+  cmdBuf_.setTargetRTV(primitiveRenderer_.currentRTV());
  }
 
  void ArtifactIRenderer::Impl::recreateSwapChain(QWidget* widget)
@@ -3253,6 +3258,7 @@ void ArtifactIRenderer::Impl::setRenderTargetOverrides(ITextureView* colorRTV,
                                   deviceManager_.swapChain());
   primitiveRenderer3D_.setOverrideDSV(nullptr);
   createLayerRT(widget);
+  cmdBuf_.setTargetRTV(primitiveRenderer_.currentRTV());
  }
 
  // ---------------------------------------------------------------------------
@@ -3501,7 +3507,7 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
   return flushContextTimeUs_;
  }
 
- void ArtifactIRenderer::Impl::flushAndWait()
+ void ArtifactIRenderer::Impl::flushAndWait(bool restoreRenderTarget)
  {
   auto device = deviceManager_.device();
   auto ctx    = deviceManager_.immediateContext();
@@ -3512,7 +3518,7 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
   desc.Name = "StopRenderLoopFence";
   desc.Type = FENCE_TYPE_GENERAL;
   device->CreateFence(desc, &fence);
-  submitQueuedDraws(ctx);
+  submitQueuedDraws(ctx, restoreRenderTarget);
   ctx->Flush();
   ctx->EnqueueSignal(fence, 1);
   ctx->Flush();
@@ -3788,7 +3794,9 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
 
   void ArtifactIRenderer::clear()        { impl_->clear(); }
   void ArtifactIRenderer::flush()        { impl_->flush(); }
-  void ArtifactIRenderer::flushAndWait() { impl_->flushAndWait(); }
+ void ArtifactIRenderer::flushAndWait(bool restoreRenderTarget) {
+  impl_->flushAndWait(restoreRenderTarget);
+ }
   void ArtifactIRenderer::reserveRenderCommandPackets(std::size_t totalCapacity)
   { impl_->reserveRenderCommandPackets(totalCapacity); }
   bool ArtifactIRenderer::tryMergeCompletedWorkerBuffers(
@@ -5911,7 +5919,9 @@ bool ArtifactIRenderer::applyTrackMatte(
     Diligent::ITextureView *outUAV,
     const ArtifactCore::MatteTrackParams &params,
     Diligent::Uint32 width,
-    Diligent::Uint32 height) const
+    Diligent::Uint32 height,
+    Diligent::ITextureView *priorMaskSRV,
+    bool outputMaskOnly) const
 {
  auto ctx = impl_->deviceManager_.immediateContext();
  if (!pipeline || !ctx) {

@@ -32,6 +32,7 @@
 
 #include <QString>
 #include <QList>
+#include <QJsonArray>
 export module Artifact.Project.Importer;
 
 
@@ -49,6 +50,7 @@ export namespace Artifact
  {
   bool success = false;
   ArtifactProjectPtr project;
+  QJsonArray trackerData;
   UniString errorMessage;
   int compositionsLoaded = 0;
   int layersLoaded = 0;

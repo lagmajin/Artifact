@@ -2101,6 +2101,198 @@ std::vector<QPointF> buildRenderablePoints(Artifact::ShapeType shapeType,
  return {};
 }
 
+// Collision stepping writes into retained caller storage; keep these samples
+// in the same order and with the same formulas as buildRenderablePoints().
+void appendCollisionOutlinePoints(
+    ArtifactCore::NamedVector<QPointF>& points,
+    Artifact::ShapeType shapeType, int width, int height,
+    float cornerRadius, int starPoints, float starInnerRadius,
+    int polygonSides, const std::vector<QPointF>& customPolygonPoints) {
+ const float w = static_cast<float>(width);
+ const float h = static_cast<float>(height);
+ const float cx = w * 0.5f;
+ const float cy = h * 0.5f;
+ const float pi = static_cast<float>(M_PI);
+ const auto add = [&points](float x, float y) {
+  points.add(QPointF(x, y));
+ };
+
+ if (shapeType == Artifact::ShapeType::Polygon &&
+     customPolygonPoints.size() >= 3) {
+  for (const QPointF& point : customPolygonPoints) points.add(point);
+  return;
+ }
+
+ const auto appendRoundedRect = [&](float x, float y, float rectWidth,
+                                    float rectHeight, float radius) {
+  const float r = std::clamp(radius, 0.0f,
+                             std::min(rectWidth, rectHeight) * 0.5f);
+  if (r <= 0.0f) {
+   add(x, y);
+   add(x + rectWidth, y);
+   add(x + rectWidth, y + rectHeight);
+   add(x, y + rectHeight);
+   return;
+  }
+  const auto arc = [&add, pi, r](float arcCx, float arcCy, float startDeg,
+                               float endDeg) {
+   constexpr int segments = 6;
+   const float start = startDeg * pi / 180.0f;
+   const float end = endDeg * pi / 180.0f;
+   const float step = (end - start) / static_cast<float>(segments);
+   for (int i = 0; i <= segments; ++i) {
+    const float angle = start + step * static_cast<float>(i);
+    add(arcCx + std::cos(angle) * r, arcCy + std::sin(angle) * r);
+   }
+  };
+  arc(x + rectWidth - r, y + r, -90.0f, 0.0f);
+  arc(x + rectWidth - r, y + rectHeight - r, 0.0f, 90.0f);
+  arc(x + r, y + rectHeight - r, 90.0f, 180.0f);
+  arc(x + r, y + r, 180.0f, 270.0f);
+ };
+
+ switch (shapeType) {
+ case Artifact::ShapeType::Rect:
+  appendRoundedRect(0.0f, 0.0f, w, h, cornerRadius);
+  return;
+ case Artifact::ShapeType::Square: {
+  const float side = std::min(w, h);
+  appendRoundedRect((w - side) * 0.5f, (h - side) * 0.5f,
+                    side, side, cornerRadius);
+  return;
+ }
+ case Artifact::ShapeType::Triangle:
+  add(cx, 0.0f); add(w, h); add(0.0f, h);
+  return;
+ case Artifact::ShapeType::Line:
+  add(0.0f, cy); add(w, cy);
+  return;
+ case Artifact::ShapeType::Ellipse: {
+  constexpr int segments = 48;
+  for (int i = 0; i < segments; ++i) {
+   const float angle = static_cast<float>(i) * 2.0f * pi /
+                       static_cast<float>(segments);
+   add(cx + std::cos(angle) * cx, cy + std::sin(angle) * cy);
+  }
+  return;
+ }
+ case Artifact::ShapeType::Star: {
+  const int count = std::max(3, starPoints);
+  const float outerRadius = std::min(cx, cy);
+  const float innerRadius = outerRadius *
+      std::clamp(starInnerRadius, 0.0f, 1.0f);
+  for (int i = 0; i < count * 2; ++i) {
+   const float angle = static_cast<float>(i) * pi /
+                       static_cast<float>(count) - pi * 0.5f;
+   const float radius = (i % 2 == 0) ? outerRadius : innerRadius;
+   add(cx + radius * std::cos(angle), cy + radius * std::sin(angle));
+  }
+  return;
+ }
+ case Artifact::ShapeType::Polygon: {
+  const int sides = std::max(3, polygonSides);
+  const float radius = std::min(cx, cy);
+  for (int i = 0; i < sides; ++i) {
+   const float angle = static_cast<float>(i) * 2.0f * pi /
+                       static_cast<float>(sides) - pi * 0.5f;
+   add(cx + radius * std::cos(angle), cy + radius * std::sin(angle));
+  }
+  return;
+ }
+ case Artifact::ShapeType::Arrow: {
+  const float headStart = w *
+      (1.0f - std::clamp(starInnerRadius, 0.1f, 0.5f));
+  constexpr float shaftHalfRatio = 0.14f;
+  add(0.0f, cy - h * shaftHalfRatio);
+  add(headStart, cy - h * shaftHalfRatio);
+  add(headStart, 0.0f); add(w, cy); add(headStart, h);
+  add(headStart, cy + h * shaftHalfRatio);
+  add(0.0f, cy + h * shaftHalfRatio);
+  return;
+ }
+ case Artifact::ShapeType::Heart: {
+  constexpr int segments = 48;
+  const float curvature = std::clamp(starInnerRadius, 0.1f, 0.8f);
+  for (int i = 0; i < segments; ++i) {
+   const float t = static_cast<float>(i) * 2.0f * pi /
+                   static_cast<float>(segments);
+   const float s = std::sin(t);
+   const float x = 16.0f * s * s * s;
+   const float y = 13.0f * std::cos(t) - 5.0f * std::cos(2.0f * t) -
+                   2.0f * std::cos(3.0f * t) - std::cos(4.0f * t);
+   const float px = (x + 17.0f) * (w / 34.0f);
+   float py = (12.0f - y) * (h / 29.0f);
+   const float centerDistance = std::abs(px - cx) /
+       std::max(w * 0.22f, 1.0f);
+   const float notchInfluence =
+       std::max(0.0f, 1.0f - centerDistance) *
+       std::max(0.0f, 1.0f - py / std::max(h * 0.55f, 1.0f));
+   py += (curvature - 0.5f) * h * 0.45f * notchInfluence;
+   add(px, py);
+  }
+  return;
+ }
+ case Artifact::ShapeType::Diamond: {
+  const std::array<QPointF, 4> vertices = {
+      QPointF(w * 0.5f, 0.0f), QPointF(w, h * 0.5f),
+      QPointF(w * 0.5f, h), QPointF(0.0f, h * 0.5f)};
+  const float edgeLength = static_cast<float>(
+      QLineF(vertices[0], vertices[1]).length());
+  const float radius = std::clamp(cornerRadius, 0.0f, edgeLength * 0.45f);
+  if (radius <= 0.001f || edgeLength <= 0.001f) {
+   for (const QPointF& point : vertices) points.add(point);
+   return;
+  }
+  constexpr int curveSegments = 4;
+  for (std::size_t i = 0; i < vertices.size(); ++i) {
+   const QPointF& previous = vertices[(i + vertices.size() - 1) % vertices.size()];
+   const QPointF& vertex = vertices[i];
+   const QPointF& next = vertices[(i + 1) % vertices.size()];
+   const QLineF incoming(vertex, previous);
+   const QLineF outgoing(vertex, next);
+   const QPointF entry = incoming.pointAt(radius / incoming.length());
+   const QPointF exit = outgoing.pointAt(radius / outgoing.length());
+   points.add(entry);
+   for (int segment = 1; segment <= curveSegments; ++segment) {
+    const float t = static_cast<float>(segment) /
+                    static_cast<float>(curveSegments);
+    const float oneMinusT = 1.0f - t;
+    points.add(entry * (oneMinusT * oneMinusT) +
+               vertex * (2.0f * oneMinusT * t) + exit * (t * t));
+   }
+  }
+  return;
+ }
+ case Artifact::ShapeType::Gear: {
+  const int teeth = std::clamp(polygonSides, 3, 64);
+  const float outerRadius = std::min(cx, cy);
+  const float innerRadius = outerRadius *
+      std::clamp(starInnerRadius, 0.15f, 0.95f);
+  for (int i = 0; i < teeth * 4; ++i) {
+   const float angle = static_cast<float>(i) * 2.0f * pi /
+                       static_cast<float>(teeth * 4) - pi * 0.5f;
+   const float radius = (i % 4 == 1 || i % 4 == 2)
+       ? outerRadius : innerRadius;
+   add(cx + radius * std::cos(angle), cy + radius * std::sin(angle));
+  }
+  return;
+ }
+ case Artifact::ShapeType::Cross: {
+  const float halfArm = std::min(w, h) *
+      std::clamp(starInnerRadius, 0.1f, 0.45f) * 0.5f;
+  add(cx - halfArm, 0.0f); add(cx + halfArm, 0.0f);
+  add(cx + halfArm, cy - halfArm); add(w, cy - halfArm);
+  add(w, cy + halfArm); add(cx + halfArm, cy + halfArm);
+  add(cx + halfArm, h); add(cx - halfArm, h);
+  add(cx - halfArm, cy + halfArm); add(0.0f, cy + halfArm);
+  add(0.0f, cy - halfArm); add(cx - halfArm, cy - halfArm);
+  return;
+ }
+ default:
+  return;
+ }
+}
+
 static ArtifactCore::ShapePath buildShapePath(Artifact::ShapeType shapeType,
                                 int width,
                                 int height,
@@ -4896,15 +5088,22 @@ QRectF ArtifactShapeLayer::localBounds() const
 ArtifactCore::NamedVector<QPointF>
 ArtifactShapeLayer::collisionOutlineLocalPoints() const
 {
+  ArtifactCore::NamedVector<QPointF> points{
+      ArtifactCore::ContainerName{"Layer.ShapeCollisionOutline"}};
+  appendCollisionOutlineLocalPoints(points);
+  return points;
+}
+
+void ArtifactShapeLayer::appendCollisionOutlineLocalPoints(
+    ArtifactCore::NamedVector<QPointF>& points) const
+{
   // Multi-content: concatenate per-content outlines (custom path, polygon,
   // or primitive sample points). Operator/merge reshaping falls back to
   // the auto-bounds path, same as the legacy operator case below.
   if (impl_ && !impl_->shapeContents_.empty()) {
     if (!impl_->shapeOperators_.empty()) {
-      return {};
+      return;
     }
-    ArtifactCore::NamedVector<QPointF> points{
-        ArtifactCore::ContainerName{"Layer.ShapeCollisionOutline"}};
     for (const auto& content : impl_->shapeContents_) {
       if (!content.visible) {
         continue;
@@ -4925,60 +5124,47 @@ ArtifactShapeLayer::collisionOutlineLocalPoints() const
       if (g.type == Artifact::ShapeType::Line) {
         continue;
       }
-      const auto sampled = buildRenderablePoints(
-          g.type, std::max(1, g.width), std::max(1, g.height), g.cornerRadius,
-          std::max(3, g.starPoints), g.starInnerRadius, std::max(3, g.polygonSides),
-          g.polygonPoints, g.polygonClosed);
-      for (const QPointF& point : sampled) {
-        points.add(point);
-      }
+      appendCollisionOutlinePoints(
+          points, g.type, std::max(1, g.width), std::max(1, g.height),
+          g.cornerRadius, std::max(3, g.starPoints), g.starInnerRadius,
+          std::max(3, g.polygonSides), g.polygonPoints);
     }
-    return points;
+    return;
   }
   // Operator stacks reshape the outline; a stale proxy would misrepresent the
   // collision shape, so fall back to the auto-bounds path instead.
   if (!impl_->shapeOperators_.empty()) {
-    return {};
+    return;
   }
 
   if (impl_->customPathVertices_.size() >= 3) {
-   ArtifactCore::NamedVector<QPointF> points{
-       ArtifactCore::ContainerName{"Layer.ShapeCollisionOutline"}};
-   points.reserve(impl_->customPathVertices_.size());
+   points.reserve(points.size() + impl_->customPathVertices_.size());
    for (const auto& vertex : impl_->customPathVertices_) {
     points.push_back(vertex.pos);
    }
-   return points;
+   return;
   }
 
   if (impl_->customPolygonPoints_.size() >= 3) {
-    ArtifactCore::NamedVector<QPointF> points{
-        ArtifactCore::ContainerName{"Layer.ShapeCollisionOutline"}};
-    points.reserve(impl_->customPolygonPoints_.size());
+    points.reserve(points.size() + impl_->customPolygonPoints_.size());
     for (const QPointF& point : impl_->customPolygonPoints_) {
       points.add(point);
     }
-    return points;
+    return;
   }
 
   if (impl_->shapeType_ == Artifact::ShapeType::Line) {
-    return {};
+    return;
   }
 
   const ShapeGeomDims dims = resolveShapeGeomDims(
       this, impl_->width_, impl_->height_, impl_->cornerRadius_,
       impl_->starPoints_, impl_->starInnerRadius_, impl_->polygonSides_);
-  const auto sampled = buildRenderablePoints(
-      impl_->shapeType_, dims.width, dims.height, dims.cornerRadius,
+  appendCollisionOutlinePoints(
+      points, impl_->shapeType_, dims.width, dims.height, dims.cornerRadius,
       dims.starPoints, dims.starInnerRadius, dims.polygonSides,
-      impl_->customPolygonPoints_, impl_->customPolygonClosed_);
-  ArtifactCore::NamedVector<QPointF> points{
-      ArtifactCore::ContainerName{"Layer.ShapeCollisionOutline"}};
-  points.reserve(sampled.size());
-  for (const QPointF& point : sampled) {
-    points.add(point);
-  }
-  return points;
+      impl_->customPolygonPoints_);
+  return;
 }
 // ============================================================
 // GPU vector painting (gaps 1 & 3)

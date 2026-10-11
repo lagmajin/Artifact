@@ -37,7 +37,8 @@ enum class AppendLayerToCompositionError {
   CompositionNotFound,
   LayerNotFound,
   LayerTypeMismatch,
-  UnknownError
+  UnknownError,
+  LayerInitializationFailed
 };
 
 struct AppendLayerToCompositionResult {

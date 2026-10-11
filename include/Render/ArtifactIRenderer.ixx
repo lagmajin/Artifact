@@ -7,6 +7,8 @@ module;
 // architecture.
 #include <DeviceContext.h>
 #include <cstddef>
+#include <cstdint>
+#include <Buffer.h>
 #include <QFont>
 #include <QImage>
 #include <QMatrix4x4>
@@ -61,6 +63,7 @@ import Graphics.ParticleData;
 export import Artifact.Render.RenderCommandBuffer;
 import Core.Light;
 import Artifact.LOD.Manager;
+import Core.ArtifactArray;
 
 export namespace Artifact {
 using namespace ArtifactCore;
@@ -681,7 +684,9 @@ public:
                        Diligent::ITextureView *outUAV,
                        const ArtifactCore::MatteTrackParams &params,
                        Diligent::Uint32 width,
-                       Diligent::Uint32 height) const;
+                       Diligent::Uint32 height,
+                       Diligent::ITextureView *priorMaskSRV = nullptr,
+                       bool outputMaskOnly = false) const;
    // Display-only viewport exposure and false-color clipping warnings. Writes
    // to dstUAV and never mutates srcSRV, so readback and output stay untouched.
    // gainStops is in stops; gamma/saturation and thresholds are dimensionless.

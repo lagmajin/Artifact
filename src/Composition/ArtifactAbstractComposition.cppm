@@ -1,6 +1,7 @@
 // ReSharper disable All
 module;
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cstddef>
 #include <utility>
@@ -77,6 +78,8 @@ import Artifact.Audio.Limiter;
 import Artifact.Audio.Effects.Manager;
 import Artifact.Composition.InOutPoints;
 import Artifact.Composition.Nodes;
+import Core.ArtifactArray;
+import Container.NamedVector;
 import Artifact.Layer.Audio;
 import Artifact.Layer.Video;
 import ArtifactCore.Control.External;
@@ -87,6 +90,7 @@ import Math.Interpolate;
 import Audio.Modulation.Router;
 import Physics.System;
 import Physics.Mpm2D;
+import Artifact.Layer.PhysicsBridge;
 import Artifact.Acoustic.System;
 import Script.ArtifactScript;
 import Composition.Registry;
@@ -94,6 +98,13 @@ import Composition.Registry;
 //import Playback.Clock;
 
 namespace {
+
+std::uint64_t allocateRuntimePhysicsWorldId() noexcept {
+  static std::atomic<std::uint64_t> nextId{1};
+  auto id = nextId.fetch_add(1, std::memory_order_relaxed);
+  if (id == 0) id = nextId.fetch_add(1, std::memory_order_relaxed);
+  return id;
+}
 
 void renderAcousticMasterInput(void* context, ArtifactCore::AudioSegment& segment)
 {
@@ -1811,18 +1822,6 @@ QRectF compositionCollisionBounds(const ArtifactAbstractLayerPtr& layer)
   return layer->getGlobalTransform().mapRect(localBounds);
 }
 
-QString collisionPairKey(const ArtifactAbstractLayerPtr& a,
-                         const ArtifactAbstractLayerPtr& b)
-{
-  if (!a || !b) {
-    return QString();
-  }
-  const QString idA = a->id().toString();
-  const QString idB = b->id().toString();
-  return idA <= idB ? QStringLiteral("%1|%2").arg(idA, idB)
-                    : QStringLiteral("%1|%2").arg(idB, idA);
-}
-
 QJsonObject serializeModulationRouter(
     const Audio::Modulation::ModulationRouter& router) {
   QJsonObject result;
@@ -2199,6 +2198,8 @@ class ArtifactAbstractComposition::Impl {
   Artifact::Acoustic::AcousticSystem acousticSystem_;
   std::unique_ptr<ArtifactInOutPoints> inOutPoints_;
   CompositionID id_;
+  const std::uint64_t runtimePhysicsWorldId_ =
+      allocateRuntimePhysicsWorldId();
   QString compositionNote_;
   int colorPipelineVersion_ =
       ArtifactAbstractComposition::CanonicalColorPipelineVersion;
@@ -2581,7 +2582,15 @@ void ArtifactAbstractComposition::Impl::invalidateThumbnailCache()
 
   auto id = layer->id();
 
+  const bool alreadyAttached = layer->compositionObject() == owner_;
   layer->setComposition(owner_);
+  if (!alreadyAttached && !layer->isCompositionAttachmentReady()) {
+    layer->setComposition(static_cast<QObject*>(nullptr));
+    result.success = false;
+    result.error = AppendLayerToCompositionError::LayerInitializationFailed;
+    result.message = QString("Layer initialization failed");
+    return result;
+  }
   
   // Newly created layers often have a default duration. 
   // If it's a solid/plane layer and hasn't been configured yet, match composition duration.
@@ -2648,6 +2657,7 @@ void ArtifactAbstractComposition::Impl::invalidateThumbnailCache()
    }
   }
    layerMultiIndex_.clear();
+   collisionLayersScratch_.removeAll();
    nodeStore_ = CompositionNodeStore{};
    invalidateThumbnailCache();
    owner_->changed();
@@ -2682,6 +2692,7 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
        }
    }
     layerMultiIndex_.removeById(id);
+    collisionLayersScratch_.removeAll();
     nodeStore_.removeNode(id.toString());
     if (removedLayer) {
      removedLayer->disableRigidBodyPhysics();
@@ -2743,7 +2754,10 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
     constexpr int64_t kMaxCatchUpSteps = 8;
     const int64_t stepCount = std::min(advancedFrames, kMaxCatchUpSteps);
     const float fixedDeltaSeconds = static_cast<float>(1.0 / fps);
-    if (advanceOtherPhysics) physics.captureSoftBodySnapshots(previousFrame);
+    if (advanceOtherPhysics) {
+        physics.captureSoftBodySnapshots(previousFrame,
+                                         runtimePhysicsWorldId_);
+    }
     for (int64_t step = 0; step < stepCount; ++step) {
         position_ = FramePosition(previousFrame + step);
         evaluateLayerCollisionPairs();
@@ -2761,7 +2775,8 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
             physics.advanceSoftBodyFrame(fixedDeltaSeconds);
             continue;
         }
-        physics.advancePhysicsFrame(fixedDeltaSeconds, 0.0f, 9.8f, false);
+        physics.advancePhysicsFrame(fixedDeltaSeconds, 0.0f, 9.8f, false,
+                                    runtimePhysicsWorldId_);
         for (const auto& event : physics.takeMaterialFractureEvents()) {
             const auto layer = layerMultiIndex_.findById(event.layerId);
             if (!layer || event.fracturedParticleCount <= 0) {
@@ -3792,7 +3807,15 @@ void ArtifactAbstractComposition::Impl::evaluateLayerComponentSimulation(
           result.error = AppendLayerToCompositionError::LayerNotFound;
           return result;
       }
+      const bool alreadyAttached = layer->compositionObject() == owner_;
       layer->setComposition(owner_);
+      if (!alreadyAttached && !layer->isCompositionAttachmentReady()) {
+          layer->setComposition(static_cast<QObject*>(nullptr));
+          result.success = false;
+          result.error = AppendLayerToCompositionError::LayerInitializationFailed;
+          result.message = QString("Layer initialization failed");
+          return result;
+      }
       
       const int64_t currentOut = layer->outPoint().framePosition();
       const int64_t currentIn = layer->inPoint().framePosition();
@@ -5611,10 +5634,23 @@ AppendLayerToCompositionResult ArtifactAbstractComposition::appendLayerTop(Artif
    return impl_->appendLayerBottom(layer);
  }
 
-void ArtifactAbstractComposition::insertLayerAt(ArtifactAbstractLayerPtr layer, int index/*=0*/)
+AppendLayerToCompositionResult ArtifactAbstractComposition::insertLayerAt(
+    ArtifactAbstractLayerPtr layer, int index/*=0*/)
 {
-    if (!layer) return;
+    AppendLayerToCompositionResult result;
+    if (!layer) {
+        result.error = AppendLayerToCompositionError::LayerNotFound;
+        result.message = QString("Layer not found");
+        return result;
+    }
+    const bool alreadyAttached = layer->compositionObject() == this;
     layer->setComposition(this);
+    if (!alreadyAttached && !layer->isCompositionAttachmentReady()) {
+        layer->setComposition(static_cast<QObject*>(nullptr));
+        result.error = AppendLayerToCompositionError::LayerInitializationFailed;
+        result.message = QString("Layer initialization failed");
+        return result;
+    }
     
     const int64_t currentOut = layer->outPoint().framePosition();
     const int64_t currentIn = layer->inPoint().framePosition();
@@ -5627,6 +5663,10 @@ void ArtifactAbstractComposition::insertLayerAt(ArtifactAbstractLayerPtr layer, 
     impl_->layerMultiIndex_.insertAt(index, layer, layer->id(), layer->type_index());
     impl_->recalculateFrameRange();
     Q_EMIT changed();
+    result.success = true;
+    result.error = AppendLayerToCompositionError::None;
+    result.message = QString("Layer inserted successfully");
+    return result;
 }
 
 void ArtifactAbstractComposition::moveLayerToIndex(const LayerID& id, int newIndex)
@@ -5670,6 +5710,11 @@ void ArtifactAbstractComposition::sendToBack(const LayerID& id)
 CompositionID ArtifactAbstractComposition::id() const
 {
     return impl_->id_;
+}
+
+std::uint64_t ArtifactAbstractComposition::runtimePhysicsWorldId() const
+{
+    return impl_->runtimePhysicsWorldId_;
 }
 
 int ArtifactAbstractComposition::layerCount() const
@@ -7424,7 +7469,10 @@ ArtifactCompositionPtr ArtifactAbstractComposition::fromJson(const QJsonDocument
                             layer->setId(LayerID());
                         } while (comp->containsLayerById(layer->id()));
                     }
-                    comp->appendLayerTop(layer);
+                    const auto appendResult = comp->appendLayerTop(layer);
+                    if (!appendResult.success) {
+                        continue;
+                    }
                     loadedLayers.append(layer);
                     loadedLayerObjects.append(v.toObject());
                 }

@@ -580,16 +580,11 @@ namespace Artifact
   ArtifactCore::AssetManager::instance().resetSourceRegistry();
   if (root.contains("assets") && root["assets"].isObject()) {
    QJsonObject assets = root["assets"].toObject();
-   // Motion tracking セッションを復元する。従来は復元経路が無く、
-   // レイヤー側の motionTrackerId が孤児 ID のまま残っていた。
+   // Preserve tracker payload in the import result. TrackerManager is global
+   // mutable state and must only be replaced when ProjectManager commits the
+   // imported project on the application thread.
    if (assets.contains("trackers") && assets["trackers"].isArray()) {
-    ArtifactCore::TrackerManager::instance().fromJson(
-        assets["trackers"].toArray());
-    qDebug() << "[Importer] Motion trackers restored:"
-             << ArtifactCore::TrackerManager::instance().trackerCount();
-   } else {
-    // 旧プロジェクトにトラッキングは無いので、登録済み分を落とす。
-    ArtifactCore::TrackerManager::instance().clearTrackers();
+    result.trackerData = assets["trackers"].toArray();
    }
    if (assets.contains("sourceRegistry") && assets["sourceRegistry"].isObject()) {
     QJsonObject sourceRegistry = assets["sourceRegistry"].toObject();
