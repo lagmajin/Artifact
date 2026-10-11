@@ -1421,6 +1421,80 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
     impl_->cmdBuf_->append(std::move(pkt));
 }
 
+bool PrimitiveRenderer2D::drawSpriteTransformedClonerGrid(
+    float x, float y, float w, float h, const QMatrix4x4& baseTransform,
+    const QMatrix4x4& cpuFallbackTransform,
+    ITextureView* texture, float opacity, IBuffer* placementBuffer,
+    std::uint32_t placementIndex, bool applyPlacementRotation)
+{
+    auto* placementSRV = placementBuffer
+        ? placementBuffer->GetDefaultView(BUFFER_VIEW_SHADER_RESOURCE)
+        : nullptr;
+    if (!impl_->cmdBuf_ || !texture || !placementBuffer ||
+        !placementSRV ||
+        !std::isfinite(w) || !std::isfinite(h) || w <= 0.0f || h <= 0.0f) {
+        return false;
+    }
+    const auto viewportCB = impl_->viewport_.GetViewportCB();
+    const float screenW = std::max(viewportCB.screenSize.x, 0.001f);
+    const float screenH = std::max(viewportCB.screenSize.y, 0.001f);
+    const float zoom = std::max(viewportCB.zoom, 0.001f);
+    const auto makeFinalMatrix = [&](const QMatrix4x4& transform,
+                                     bool applyLocalSize,
+                                     bool includeLocalOrigin = true) {
+        QMatrix4x4 model = transform;
+        if (includeLocalOrigin) {
+            model.translate(x, y, 0.0f);
+        }
+        if (applyLocalSize) {
+            model.scale(w, h, 1.0f);
+        }
+        if (impl_->useExternalMatrices_) {
+            return impl_->externalProjMatrix_ * impl_->externalViewMatrix_ * model;
+        }
+        QMatrix4x4 canvasToNdc;
+        canvasToNdc.setToIdentity();
+        canvasToNdc.translate(-1.0f, 1.0f, 0.0f);
+        canvasToNdc.scale(2.0f / screenW, -2.0f / screenH, 1.0f);
+        canvasToNdc.scale(zoom, zoom, 1.0f);
+        canvasToNdc.translate(viewportCB.offset.x / zoom,
+                              viewportCB.offset.y / zoom, 0.0f);
+        return canvasToNdc * model;
+    };
+    const QMatrix4x4 finalMat = makeFinalMatrix(
+        baseTransform, false, !applyPlacementRotation);
+    const QMatrix4x4 fallbackMat = makeFinalMatrix(cpuFallbackTransform, true);
+
+    ClonerSpriteXformPkt packet;
+    packet.mat.row0 = {finalMat.row(0).x(), finalMat.row(0).y(),
+                       finalMat.row(0).z(), finalMat.row(0).w()};
+    packet.mat.row1 = {finalMat.row(1).x(), finalMat.row(1).y(),
+                       finalMat.row(1).z(), finalMat.row(1).w()};
+    packet.mat.row2 = {finalMat.row(2).x(), finalMat.row(2).y(),
+                       finalMat.row(2).z(), finalMat.row(2).w()};
+    packet.mat.row3 = {finalMat.row(3).x(), finalMat.row(3).y(),
+                       finalMat.row(3).z(), finalMat.row(3).w()};
+    packet.fallbackMat.row0 = {fallbackMat.row(0).x(), fallbackMat.row(0).y(),
+                               fallbackMat.row(0).z(), fallbackMat.row(0).w()};
+    packet.fallbackMat.row1 = {fallbackMat.row(1).x(), fallbackMat.row(1).y(),
+                               fallbackMat.row(1).z(), fallbackMat.row(1).w()};
+    packet.fallbackMat.row2 = {fallbackMat.row(2).x(), fallbackMat.row(2).y(),
+                               fallbackMat.row(2).z(), fallbackMat.row(2).w()};
+    packet.fallbackMat.row3 = {fallbackMat.row(3).x(), fallbackMat.row(3).y(),
+                               fallbackMat.row(3).z(), fallbackMat.row(3).w()};
+    packet.pSRV = texture;
+    packet.placementBuffer = placementBuffer;
+    packet.placementSRV = placementSRV;
+    packet.firstPlacement = placementIndex;
+    packet.instanceCount = 1;
+    packet.localWidth = w;
+    packet.localHeight = h;
+    packet.localX = applyPlacementRotation ? x : 0.0f;
+    packet.localY = applyPlacementRotation ? y : 0.0f;
+    packet.opacity = opacity;
+    return impl_->cmdBuf_->tryAppend(std::move(packet));
+}
+
 void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, ITextureView* pSRV, float opacity, const QRectF& uvRect)
 {
     if (!impl_->cmdBuf_ || !pSRV) return;

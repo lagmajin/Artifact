@@ -9957,12 +9957,127 @@ void drawLayerForCompositionView(
           hasStableSourceIdentity && imageLayer->isImageSequence()
               ? imageLayer->sequenceCachedFrameContentKey() : 0);
 
+      static const QString clonerTestDiagnosticPath = [] {
+        const QString outputPath = qEnvironmentVariable(
+            "ARTIFACT_UI_TEST_CLONER_RENDER_OUTPUT");
+        return outputPath.isEmpty()
+            ? QString{}
+            : outputPath + QStringLiteral(".route.txt");
+      }();
+      static bool clonerTestDiagnosticWritten = false;
+      bool gpuGridHandled = false;
+      int gpuGridDrawCount = 0;
+      int gpuGridFallbackCount = 0;
+      QStringList clonerWeightTrace;
+      if (sourceTexture && !imageLayer->sourceCropEnabled() &&
+          cropLayout.localTransform.isIdentity()) {
+        struct ClonerSpriteDrawContext {
+          ArtifactIRenderer* renderer = nullptr;
+          ArtifactImageLayer* imageLayer = nullptr;
+          ArtifactPuppetTool* puppetTool = nullptr;
+          Diligent::ITextureView* texture = nullptr;
+          QRectF rect;
+          QRectF uvRect;
+          QMatrix4x4 baseTransform;
+          float opacity = 1.0f;
+          int* gpuGridDrawCount = nullptr;
+          int* gpuGridFallbackCount = nullptr;
+          QStringList* weightTrace = nullptr;
+        };
+        ClonerSpriteDrawContext drawContext{
+            renderer, imageLayer, puppetTool, sourceTexture, drawRect, uvRect,
+            globalTransform4x4 * cropLayout.localTransform, baseOpacity,
+            &gpuGridDrawCount, &gpuGridFallbackCount, &clonerWeightTrace};
+        const auto drawClonerSprite = [](
+            void* opaqueContext, const QMatrix4x4& instanceTransform,
+            float instanceWeight,
+            const ClonerGridPlacementRange& placementRange,
+            std::uint32_t placementIndex) {
+          auto* context = static_cast<ClonerSpriteDrawContext*>(opaqueContext);
+          if (!context || !context->renderer || !context->imageLayer ||
+              !context->texture) {
+            return;
+          }
+          const auto& rect = context->rect;
+          if (context->weightTrace && context->weightTrace->size() < 32) {
+            context->weightTrace->append(QString::number(instanceWeight, 'f', 3));
+          }
+          if (context->puppetTool &&
+              context->puppetTool->renderDeformedLayer(
+                  context->renderer, context->imageLayer, instanceTransform,
+                  context->opacity * instanceWeight)) {
+            return;
+          }
+          if (placementRange.buffer &&
+              context->renderer->drawSpriteTransformedClonerGrid(
+                  static_cast<float>(rect.x()), static_cast<float>(rect.y()),
+                  static_cast<float>(rect.width()),
+                  static_cast<float>(rect.height()), context->baseTransform,
+                  instanceTransform, context->texture,
+                  context->opacity * instanceWeight, placementRange,
+                  placementIndex)) {
+            if (context->gpuGridDrawCount) {
+              ++*context->gpuGridDrawCount;
+            }
+            return;
+          }
+          if (context->gpuGridFallbackCount) {
+            ++*context->gpuGridFallbackCount;
+          }
+          context->renderer->drawSpriteTransformed(
+              static_cast<float>(rect.x()), static_cast<float>(rect.y()),
+              static_cast<float>(rect.width()),
+              static_cast<float>(rect.height()), instanceTransform,
+              context->texture, context->opacity * instanceWeight,
+              context->uvRect);
+        };
+        gpuGridHandled = drawGpuClonerGridInstances(
+            layer, renderer, globalTransform4x4 * cropLayout.localTransform,
+            drawClonerSprite, &drawContext);
+      }
+      if (!clonerTestDiagnosticPath.isEmpty() && !clonerWeightTrace.isEmpty()) {
+        QSaveFile weightFile(clonerTestDiagnosticPath +
+                             QStringLiteral(".weights.txt"));
+        if (weightFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+          weightFile.write(clonerWeightTrace.join(QLatin1Char(',' )).toUtf8());
+          weightFile.write("\n");
+          weightFile.commit();
+        }
+      }
+      if (gpuGridHandled) {
+        if (!clonerTestDiagnosticWritten &&
+            !clonerTestDiagnosticPath.isEmpty()) {
+          clonerTestDiagnosticWritten = true;
+          QSaveFile diagnostic(clonerTestDiagnosticPath);
+          if (diagnostic.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            const QString report =
+                QStringLiteral("texture=%1 gpuReady=%2 placementHandled=%3 "
+                               "gpuDraws=%4 cpuFallbackDraws=%5 crop=%6 "
+                               "puppet=%7\n")
+                    .arg(sourceTexture ? 1 : 0)
+                    .arg(renderer->clonerGridPlacementGpuReady() ? 1 : 0)
+                    .arg(gpuGridHandled ? 1 : 0)
+                    .arg(gpuGridDrawCount)
+                    .arg(gpuGridFallbackCount)
+                    .arg(imageLayer->sourceCropEnabled() ? 1 : 0)
+                    .arg(puppetTool ? 1 : 0);
+            diagnostic.write(report.toUtf8());
+            diagnostic.commit();
+          }
+        }
+        return;
+      }
+
       drawWithClonerEffect(
 
           layer, globalTransform4x4,
 
           [&](const QMatrix4x4 &instanceTransform, float instanceWeight) {
-
+            ++gpuGridFallbackCount;
+            if (!clonerTestDiagnosticPath.isEmpty() &&
+                clonerWeightTrace.size() < 32) {
+              clonerWeightTrace.append(QString::number(instanceWeight, 'f', 3));
+            }
             if (puppetTool && puppetTool->renderDeformedLayer(
                     renderer, imageLayer, instanceTransform,
                     baseOpacity * instanceWeight)) {
@@ -9988,6 +10103,35 @@ void drawLayerForCompositionView(
                 cropTransform, buffer, baseOpacity * instanceWeight, uvRect);
 
           });
+      if (!clonerTestDiagnosticPath.isEmpty() && !clonerWeightTrace.isEmpty()) {
+        QSaveFile weightFile(clonerTestDiagnosticPath +
+                             QStringLiteral(".weights.txt"));
+        if (weightFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+          weightFile.write(clonerWeightTrace.join(QLatin1Char(',')).toUtf8());
+          weightFile.write("\n");
+          weightFile.commit();
+        }
+      }
+      if (!clonerTestDiagnosticWritten &&
+          !clonerTestDiagnosticPath.isEmpty()) {
+        clonerTestDiagnosticWritten = true;
+        QSaveFile diagnostic(clonerTestDiagnosticPath);
+        if (diagnostic.open(QIODevice::WriteOnly | QIODevice::Text)) {
+          const QString report =
+              QStringLiteral("texture=%1 gpuReady=%2 placementHandled=%3 "
+                             "gpuDraws=%4 cpuFallbackDraws=%5 crop=%6 "
+                             "puppet=%7\n")
+                  .arg(sourceTexture ? 1 : 0)
+                  .arg(renderer->clonerGridPlacementGpuReady() ? 1 : 0)
+                  .arg(gpuGridHandled ? 1 : 0)
+                  .arg(gpuGridDrawCount)
+                  .arg(gpuGridFallbackCount)
+                  .arg(imageLayer->sourceCropEnabled() ? 1 : 0)
+                  .arg(puppetTool ? 1 : 0);
+          diagnostic.write(report.toUtf8());
+          diagnostic.commit();
+        }
+      }
 
       return;
 

@@ -477,6 +477,16 @@ void DiligentImmediateSubmitter::createBuffers(RefCntAutoPtr<IRenderDevice> devi
 
     {
         BufferDesc desc;
+        desc.Name           = "DIS ClonerSpriteCB";
+        desc.Size           = 32;
+        desc.Usage          = USAGE_DYNAMIC;
+        desc.BindFlags      = BIND_UNIFORM_BUFFER;
+        desc.CPUAccessFlags = CPU_ACCESS_WRITE;
+        device->CreateBuffer(desc, nullptr, &m_draw_cloner_sprite_cb_);
+    }
+
+    {
+        BufferDesc desc;
         desc.Name           = "DIS SolidRectCB";
         desc.Size           = sizeof(float4);
         desc.Usage          = USAGE_DYNAMIC;
@@ -771,6 +781,8 @@ void DiligentImmediateSubmitter::setPSOs(ShaderManager& sm)
 
     m_draw_sprite_pso_and_srb               = sm.spritePsoAndSrb();
     m_draw_sprite_transform_pso_and_srb     = sm.spriteTransformPsoAndSrb();
+    m_draw_cloner_sprite_transform_pso_and_srb_ =
+        sm.clonerSpriteTransformPsoAndSrb();
     m_draw_masked_sprite_pso_and_srb        = sm.maskedSpritePsoAndSrb();
     m_draw_glyph_pso_and_srb                = adoptGlyphPair(glyphProvider.glyphPipeline,
                                                              glyphProvider.glyphBinding);
@@ -817,6 +829,10 @@ void DiligentImmediateSubmitter::setPSOs(ShaderManager& sm)
         if (m_sprite_sampler)
             bindVar(m_draw_sprite_pso_and_srb.pSRB,           SHADER_TYPE_PIXEL,  "g_sampler",      m_sprite_sampler);
         bindVar(m_draw_sprite_transform_pso_and_srb.pSRB,     SHADER_TYPE_VERTEX, "TransformCB",    m_draw_sprite_transform_matrix_cb);
+        bindVar(m_draw_cloner_sprite_transform_pso_and_srb_.pSRB, SHADER_TYPE_VERTEX, "TransformCB", m_draw_sprite_transform_matrix_cb);
+        bindVar(m_draw_cloner_sprite_transform_pso_and_srb_.pSRB, SHADER_TYPE_VERTEX, "ClonerSpriteCB", m_draw_cloner_sprite_cb_);
+        if (m_sprite_sampler)
+            bindVar(m_draw_cloner_sprite_transform_pso_and_srb_.pSRB, SHADER_TYPE_PIXEL, "g_sampler", m_sprite_sampler);
         if (m_sprite_sampler)
             bindVar(m_draw_sprite_transform_pso_and_srb.pSRB, SHADER_TYPE_PIXEL,  "g_sampler",      m_sprite_sampler);
         bindVar(m_draw_masked_sprite_pso_and_srb.pSRB,        SHADER_TYPE_VERTEX, "TransformCB",    m_draw_sprite_cb);
@@ -836,6 +852,10 @@ void DiligentImmediateSubmitter::setPSOs(ShaderManager& sm)
         ? m_draw_sprite_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_texture") : nullptr;
     m_var_spriteXform_gTexture_ = m_draw_sprite_transform_pso_and_srb.pSRB
         ? m_draw_sprite_transform_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_texture") : nullptr;
+    m_var_clonerGridOutput_ = m_draw_cloner_sprite_transform_pso_and_srb_.pSRB
+        ? m_draw_cloner_sprite_transform_pso_and_srb_.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "g_ClonerGridOutput") : nullptr;
+    m_var_clonerSprite_gTexture_ = m_draw_cloner_sprite_transform_pso_and_srb_.pSRB
+        ? m_draw_cloner_sprite_transform_pso_and_srb_.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_texture") : nullptr;
     m_var_maskedSprite_gScene_  = m_draw_masked_sprite_pso_and_srb.pSRB
         ? m_draw_masked_sprite_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_scene") : nullptr;
     m_var_maskedSprite_gMask_   = m_draw_masked_sprite_pso_and_srb.pSRB
@@ -870,6 +890,7 @@ void DiligentImmediateSubmitter::destroy()
     m_draw_solid_rect_index_buffer          = nullptr;
     m_draw_sprite_cb                        = nullptr;
     m_draw_sprite_transform_matrix_cb       = nullptr;
+    m_draw_cloner_sprite_cb_                 = nullptr;
     m_draw_solid_rect_cb                    = nullptr;
     m_draw_solid_rect_trnsform_cb           = nullptr;
     m_draw_solid_rect_transform_matrix_cb   = nullptr;
@@ -884,6 +905,7 @@ void DiligentImmediateSubmitter::destroy()
     m_device                                = nullptr;
     m_draw_sprite_pso_and_srb               = {};
     m_draw_sprite_transform_pso_and_srb     = {};
+    m_draw_cloner_sprite_transform_pso_and_srb_ = {};
     m_draw_masked_sprite_pso_and_srb        = {};
     m_draw_glyph_pso_and_srb                = {};
     m_draw_glyph_transform_pso_and_srb      = {};
@@ -904,6 +926,8 @@ void DiligentImmediateSubmitter::destroy()
     m_currentPSO_                           = nullptr;
     m_var_sprite_gTexture_                  = nullptr;
     m_var_spriteXform_gTexture_             = nullptr;
+    m_var_clonerGridOutput_                  = nullptr;
+    m_var_clonerSprite_gTexture_             = nullptr;
     m_var_maskedSprite_gScene_              = nullptr;
     m_var_maskedSprite_gMask_               = nullptr;
     m_var_glyph_gTexture_                   = nullptr;
@@ -936,6 +960,16 @@ void DiligentImmediateSubmitter::setPrimitiveRenderer3D(PrimitiveRenderer3D* ren
 void DiligentImmediateSubmitter::setParticleRenderer(ArtifactCore::ParticleRenderer* renderer)
 {
     m_particleRenderer_ = renderer;
+}
+
+bool DiligentImmediateSubmitter::clonerSpriteGpuReady() const noexcept
+{
+    return m_draw_cloner_sprite_transform_pso_and_srb_.pPSO &&
+           m_draw_cloner_sprite_transform_pso_and_srb_.pSRB &&
+           m_var_clonerGridOutput_ && m_var_clonerSprite_gTexture_ &&
+           m_draw_cloner_sprite_cb_ && m_draw_sprite_transform_matrix_cb &&
+           m_sprite_unit_quad_vb_ && m_draw_solid_rect_index_buffer &&
+           m_sprite_sampler;
 }
 
 void DiligentImmediateSubmitter::beginFrameDebugCapture()
@@ -973,17 +1007,14 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
     auto* pRTV = buf.targetRTV();
     if (!pRTV) { buf.reset(); return; }
 
-    // ParticleRenderer::updateBuffer() updates the context-owned particle
-    // buffer, while prepare()/draw() operate on the submit context.  Keeping
-    // a particle packet on a deferred context therefore makes the upload and
-    // draw ordering/visibility dependent on backend scheduling.  Submit a
-    // particle-containing buffer directly on the immediate context so the
-    // upload and draw share one command stream.
-    const bool containsParticles = std::any_of(
+    // Particle uploads and Cloner placement compute dispatches use the
+    // immediate context. Keep their consumers on that same ordered stream.
+    const bool containsImmediateComputeConsumers = std::any_of(
         buf.packets().begin(), buf.packets().end(), [](const auto& packet) {
-            return std::holds_alternative<ParticlePkt>(packet);
+            return std::holds_alternative<ParticlePkt>(packet) ||
+                   std::holds_alternative<ClonerSpriteXformPkt>(packet);
         });
-    const bool useDeferredCtx = m_deferredCtx_ && !containsParticles;
+    const bool useDeferredCtx = m_deferredCtx_ && !containsImmediateComputeConsumers;
 
     // Phase 7a: record into deferred context, then execute on immediate
     IDeviceContext* recordCtx = ctx;
@@ -1345,6 +1376,7 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
                 else if constexpr (std::is_same_v<T, RectOutlinePkt>)     submitRectOutline(p, recordCtx, pRTV);
                 else if constexpr (std::is_same_v<T, SpritePkt>)          { recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.Sprite"); submitSprite(p, recordCtx, pRTV); recordCtx->EndDebugGroup(); }
                 else if constexpr (std::is_same_v<T, SpriteXformPkt>)     { recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.Sprite"); submitSpriteXform(p, recordCtx, pRTV); recordCtx->EndDebugGroup(); }
+                else if constexpr (std::is_same_v<T, ClonerSpriteXformPkt>) { recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.ClonerSprite"); submitClonerSpriteXform(p, recordCtx, pRTV); recordCtx->EndDebugGroup(); }
                 else if constexpr (std::is_same_v<T, AtlasSpritePkt>) {
                     const bool sameTex = m_batchSpriteSRV_ == p.pSRV;
                     const bool sameScreen = m_batchSpriteXform_.screenSize.x == p.xform.screenSize.x &&
@@ -1947,6 +1979,91 @@ void DiligentImmediateSubmitter::submitSpriteXform(const SpriteXformPkt& p, IDev
     ctx->SetVertexBuffers(0, 1, pBufs, offs, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
     ctx->SetIndexBuffer(m_draw_solid_rect_index_buffer, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     DrawIndexedAttribs drawAttrs(6, VT_UINT32, DRAW_FLAG_NONE);
+    recordDrawCall(m_frameCostStats_, true);
+    ctx->DrawIndexed(drawAttrs);
+}
+
+void DiligentImmediateSubmitter::submitClonerSpriteXform(
+    const ClonerSpriteXformPkt& p, IDeviceContext* ctx, ITextureView* pRTV)
+{
+    auto& pipeline = m_draw_cloner_sprite_transform_pso_and_srb_;
+    if (!ctx || !pRTV || !p.pSRV) {
+        return;
+    }
+
+    const auto submitCpuFallback = [&]() {
+        SpriteXformPkt fallback;
+        fallback.mat = p.fallbackMat;
+        fallback.pSRV = p.pSRV;
+        fallback.retainedSRV = p.retainedSRV;
+        fallback.opacity = p.opacity;
+        submitSpriteXform(fallback, ctx, pRTV);
+    };
+    bool placementStorageValid = false;
+    if (p.placementBuffer && p.placementSRV && p.instanceCount != 0) {
+        const auto& placementDesc = p.placementBuffer->GetDesc();
+        placementStorageValid =
+            placementDesc.Mode == BUFFER_MODE_STRUCTURED &&
+            placementDesc.ElementByteStride != 0 &&
+            (placementDesc.BindFlags & BIND_SHADER_RESOURCE) != 0 &&
+            static_cast<Uint64>(p.firstPlacement) + p.instanceCount <=
+                placementDesc.Size / placementDesc.ElementByteStride;
+    }
+    if (!placementStorageValid ||
+        !pipeline.pPSO || !pipeline.pSRB || !m_sprite_unit_quad_vb_ ||
+        !m_draw_sprite_transform_matrix_cb || !m_draw_cloner_sprite_cb_ ||
+        !m_sprite_sampler || !m_var_clonerGridOutput_ ||
+        !m_var_clonerSprite_gTexture_) {
+        submitCpuFallback();
+        return;
+    }
+
+    struct ClonerSpriteConstants {
+        Uint32 firstPlacement;
+        float localWidth;
+        float localHeight;
+        float opacity;
+        float localX;
+        float localY;
+        float padding[2];
+    };
+    static_assert(sizeof(ClonerSpriteConstants) == 32);
+    static_assert(offsetof(ClonerSpriteConstants, firstPlacement) == 0);
+    static_assert(offsetof(ClonerSpriteConstants, localWidth) == 4);
+    static_assert(offsetof(ClonerSpriteConstants, localHeight) == 8);
+    static_assert(offsetof(ClonerSpriteConstants, opacity) == 12);
+    static_assert(offsetof(ClonerSpriteConstants, localX) == 16);
+    static_assert(offsetof(ClonerSpriteConstants, localY) == 20);
+    const ClonerSpriteConstants constants{
+        p.firstPlacement, p.localWidth, p.localHeight, p.opacity,
+        p.localX, p.localY, {0.0f, 0.0f}};
+    if (!mapWriteDiscard(ctx, m_draw_sprite_transform_matrix_cb, &p.mat,
+                         sizeof(p.mat), m_frameCostStats_) ||
+        !mapWriteDiscard(ctx, m_draw_cloner_sprite_cb_, &constants,
+                         sizeof(constants), m_frameCostStats_)) {
+        submitCpuFallback();
+        return;
+    }
+
+    if (m_currentPSO_ != pipeline.pPSO) {
+        recordPipelineStateSwitch(m_frameCostStats_);
+        ctx->SetPipelineState(pipeline.pPSO);
+        m_currentPSO_ = pipeline.pPSO;
+    }
+    m_var_clonerGridOutput_->Set(p.placementSRV);
+    m_var_clonerSprite_gTexture_->Set(p.pSRV);
+    recordShaderResourceCommit(m_frameCostStats_);
+    ctx->CommitShaderResources(pipeline.pSRB,
+                               RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    IBuffer* buffers[] = {m_sprite_unit_quad_vb_.RawPtr()};
+    Uint64 offsets[] = {0};
+    ctx->SetVertexBuffers(0, 1, buffers, offsets,
+                          RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
+                          SET_VERTEX_BUFFERS_FLAG_RESET);
+    ctx->SetIndexBuffer(m_draw_solid_rect_index_buffer, 0,
+                        RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    DrawIndexedAttribs drawAttrs(6, VT_UINT32, DRAW_FLAG_NONE);
+    drawAttrs.NumInstances = p.instanceCount;
     recordDrawCall(m_frameCostStats_, true);
     ctx->DrawIndexed(drawAttrs);
 }

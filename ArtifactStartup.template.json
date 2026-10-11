@@ -3,6 +3,7 @@
 
   "Render": {
     "_comment": "Solid-rect batch diagnostics. The batched path had an unreproducible swap-chain 'clear-only' report, so it is still under investigation. 'SolidRectIndirect' stays false so the direct DrawIndexed path is tested first.",
+    "_ClonerGpuPlacement": "Set true to opt in to the experimental GPU Grid/Matrix placement and raster-sprite draw path in the interactive Composition View. Default is off; unsupported cases keep the CPU path.",
     "SolidRectBatch": true,
     "SolidRectIndirect": false,
     "SolidRectVerbose": false

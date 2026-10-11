@@ -26,6 +26,8 @@ public:
     void initialize(RefCntAutoPtr<IRenderDevice> device, TEXTURE_FORMAT rtvFormat);
     void createShaders();
     void createPSOs();
+    // Select optional Cloner pipeline creation before createPSOs().
+    void setClonerGpuPlacementEnabled(bool enabled) noexcept;
     void destroy();
     void abandonDeviceResources();
 
@@ -52,6 +54,8 @@ public:
     PSOAndSRB checkerboardPsoAndSrb() const;
     PSOAndSRB gridPsoAndSrb() const;
     PSOAndSRB spriteTransformPsoAndSrb() const;
+    PSOAndSRB clonerSpriteTransformPsoAndSrb() const;
+    bool hasClonerSpriteTransformPipeline() const noexcept;
     PSOAndSRB maskedSpritePsoAndSrb() const;
     PSOAndSRB glyphQuadPsoAndSrb() const;
     PSOAndSRB glyphQuadTransformPsoAndSrb() const;

@@ -43,6 +43,7 @@ public:
     void setDeferredContext(RefCntAutoPtr<IDeviceContext> deferred);
     void setPrimitiveRenderer3D(PrimitiveRenderer3D* renderer);
     void setParticleRenderer(ArtifactCore::ParticleRenderer* renderer);
+    bool clonerSpriteGpuReady() const noexcept;
     void beginFrameDebugCapture();
     void endFrameDebugCapture();
     void setFrameDebugCaptureEnabled(bool enabled);
@@ -70,6 +71,7 @@ private:
     // ---- Constant Buffers ----
     RefCntAutoPtr<IBuffer> m_draw_sprite_cb;
     RefCntAutoPtr<IBuffer> m_draw_sprite_transform_matrix_cb;
+    RefCntAutoPtr<IBuffer> m_draw_cloner_sprite_cb_;
     RefCntAutoPtr<IBuffer> m_draw_solid_rect_cb;
     RefCntAutoPtr<IBuffer> m_draw_solid_rect_trnsform_cb;
     RefCntAutoPtr<IBuffer> m_draw_solid_rect_transform_matrix_cb;
@@ -193,6 +195,8 @@ private:
     // These point into per-PSO SRBs; nulled in destroy(), repopulated in setPSOs()
     IShaderResourceVariable* m_var_sprite_gTexture_      = nullptr;
     IShaderResourceVariable* m_var_spriteXform_gTexture_ = nullptr;
+    IShaderResourceVariable* m_var_clonerGridOutput_      = nullptr;
+    IShaderResourceVariable* m_var_clonerSprite_gTexture_ = nullptr;
     IShaderResourceVariable* m_var_maskedSprite_gScene_  = nullptr;
     IShaderResourceVariable* m_var_maskedSprite_gMask_   = nullptr;
     IShaderResourceVariable* m_var_glyph_gTexture_       = nullptr;
@@ -201,6 +205,7 @@ private:
     // ---- PSOs ----
     PSOAndSRB m_draw_sprite_pso_and_srb;
     PSOAndSRB m_draw_sprite_transform_pso_and_srb;
+    PSOAndSRB m_draw_cloner_sprite_transform_pso_and_srb_;
     PSOAndSRB m_draw_masked_sprite_pso_and_srb;
     PSOAndSRB m_draw_glyph_pso_and_srb;
     PSOAndSRB m_draw_glyph_transform_pso_and_srb;
@@ -230,6 +235,7 @@ private:
     void submitRectOutline   (const RectOutlinePkt&,    IDeviceContext*, ITextureView*);
     void submitSprite        (const SpritePkt&,         IDeviceContext*, ITextureView*);
     void submitSpriteXform   (const SpriteXformPkt&,    IDeviceContext*, ITextureView*);
+    void submitClonerSpriteXform(const ClonerSpriteXformPkt&, IDeviceContext*, ITextureView*);
     void submitAtlasSprite   (const AtlasSpritePkt&,    IDeviceContext*, ITextureView*);
     void submitAtlasSpriteXform(const AtlasSpriteXformPkt&, IDeviceContext*, ITextureView*);
     void submitTexturedTriangleXform(const TexturedTriangleXformPkt&, IDeviceContext*, ITextureView*);

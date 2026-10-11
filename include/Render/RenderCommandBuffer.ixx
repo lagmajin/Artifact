@@ -147,6 +147,24 @@ struct SpriteXformPkt {
     float                  _pad[3];
 };
 
+struct ClonerSpriteXformPkt {
+    RenderSolidRectTransform2D mat;
+    RenderSolidRectTransform2D fallbackMat;
+    ITextureView* pSRV = nullptr;
+    RefCntAutoPtr<ITextureView> retainedSRV;
+    IBuffer* placementBuffer = nullptr;
+    RefCntAutoPtr<IBuffer> retainedPlacementBuffer;
+    // Borrowed from placementBuffer; retainedPlacementBuffer keeps its owner alive.
+    IBufferView* placementSRV = nullptr;
+    std::uint32_t firstPlacement = 0;
+    std::uint32_t instanceCount = 0;
+    float localWidth = 1.0f;
+    float localHeight = 1.0f;
+    float localX = 0.0f;
+    float localY = 0.0f;
+    float opacity = 1.0f;
+};
+
 struct AtlasSpritePkt {
     RenderSolidTransform2D xform;
     ITextureView*      pSRV    = nullptr;
@@ -245,7 +263,7 @@ using DrawPacket = std::variant<
     SolidRectPkt, SolidRectXformPkt, GradientRectPkt,
     LinePkt, QuadPkt, DotLinePkt, SolidTriPkt, SolidCirclePkt,
     CheckerboardPkt, GridPkt, RectOutlinePkt,
-    SpritePkt, SpriteXformPkt, MaskedSpritePkt,
+    SpritePkt, SpriteXformPkt, ClonerSpriteXformPkt, MaskedSpritePkt,
     AtlasSpritePkt, AtlasSpriteXformPkt, TexturedTriangleXformPkt,
     BillboardPkt, BillboardImagePkt, ParticlePkt,
     GlyphTextPkt, GlyphTextXformPkt

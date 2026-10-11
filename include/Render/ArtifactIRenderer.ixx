@@ -136,6 +136,33 @@ export struct GlobalIlluminationState {
   bool usingFallback = false;
 };
 
+// GPU Cloner placement ABI consumed by the sprite vertex shader. A group
+// contains slot 0 for the base clone followed by stable generator-order slots.
+export struct ClonerGridPlacementRecord {
+  float offsetX = 0.0f;
+  float offsetY = 0.0f;
+  float offsetZ = 0.0f;
+  std::uint32_t cloneIndex = 0;
+  std::uint32_t valid = 0;
+  float rotationDegrees = 0.0f;
+  float localScaleX = 1.0f;
+  float localScaleY = 1.0f;
+};
+static_assert(sizeof(ClonerGridPlacementRecord) == 32);
+static_assert(offsetof(ClonerGridPlacementRecord, cloneIndex) == 12);
+static_assert(offsetof(ClonerGridPlacementRecord, valid) == 16);
+static_assert(offsetof(ClonerGridPlacementRecord, rotationDegrees) == 20);
+static_assert(offsetof(ClonerGridPlacementRecord, localScaleX) == 24);
+static_assert(offsetof(ClonerGridPlacementRecord, localScaleY) == 28);
+
+export struct ClonerGridPlacementRange {
+  Diligent::IBuffer *buffer = nullptr;
+  std::uint32_t firstIndex = 0;
+  std::uint32_t count = 0;
+  // The vertex shader applies each placement record's local rotation and scale.
+  bool rotationAware = false;
+};
+
 export class ArtifactIRenderer {
 public:
   class Impl;
@@ -149,13 +176,17 @@ public:
 
   void initialize(QWidget *widget);
   void initializeHeadless(int width, int height);
+  // Opt in to the production Cloner GPU placement and sprite pipelines for
+  // headless renderer contract tests. The existing overload remains disabled.
+  void initializeHeadless(int width, int height,
+                          bool enableGpuClonerPlacement);
   void initializeHeadlessWithAdapter(int width, int height, int adapterId);
   void createSwapChain(QWidget *widget);
   void recreateSwapChain(QWidget *widget);
 
   void clear();
   void flush();
-  void flushAndWait();
+  void flushAndWait(bool restoreRenderTarget = true);
   // Reserve total packet capacity on the renderer owner thread before worker
   // recording. Completed worker buffers merge in slot order without growth.
   void reserveRenderCommandPackets(std::size_t totalCapacity);
@@ -444,6 +475,12 @@ public:
                              const QMatrix4x4 &transform,
                              Diligent::ITextureView *texture, float opacity,
                              const QRectF &uvRect);
+  bool drawSpriteTransformedClonerGrid(
+      float x, float y, float w, float h, const QMatrix4x4 &baseTransform,
+      const QMatrix4x4 &cpuFallbackTransform,
+      Diligent::ITextureView *texture, float opacity,
+      const ClonerGridPlacementRange &placementRange,
+      std::uint32_t placementIndex);
   void drawMaskedTextureLocal(float x, float y, float w, float h,
                               Diligent::ITextureView *sceneTexture,
                               const QImage &maskImage, float opacity = 1.0f);
@@ -658,6 +695,29 @@ public:
                               bool clippingWarningsEnabled,
                               float underThreshold,
                               float overThreshold) const;
+
+  // Build the Cloner placement PSO and constants on a caller-selected cold
+  // path. It is not initialized automatically, so existing renderer startup
+  // keeps its current cost and behavior.
+  bool initializeClonerGridPlacementGpu();
+  bool clonerGridPlacementGpuReady() const;
+  // Generate centered Grid/Matrix offsets when rows and depth are nonzero.
+  // rows=depth=0 encodes Linear offsets with columns as count and spacingXYZ
+  // as the per-clone offset. rows=0, depth=1 encodes Radial placement with
+  // columns as count, spacingXYZ as radius/startAngle/endAngle, and
+  // placementRotationStep as the per-clone rotation increment. A finite
+  // modifierTranslation is applied after that placement rotation. Plain scale
+  // is applied to sprite-local vertices. The returned
+  // range is valid until its submitter batch is submitted. No GPU readback is done.
+  bool dispatchClonerGridPlacement(
+      std::uint32_t columns, std::uint32_t rows, std::uint32_t depth,
+      float spacingX, float spacingY, float spacingZ,
+      float placementRotationStep,
+      float modifierTranslationX, float modifierTranslationY,
+      float modifierTranslationZ,
+      float modifierRotationDegrees,
+      float modifierScaleX, float modifierScaleY,
+      ClonerGridPlacementRange &outputRange) const;
 
   Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device() const;
   Diligent::RefCntAutoPtr<Diligent::IDeviceContext> immediateContext() const;

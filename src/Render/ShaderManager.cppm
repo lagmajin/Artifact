@@ -120,6 +120,8 @@ public:
     PSOAndSRB checkerboardPsoAndSrb_;
     PSOAndSRB gridPsoAndSrb_;
     PSOAndSRB spriteTransformPsoAndSrb_;
+    PSOAndSRB clonerSpriteTransformPsoAndSrb_;
+    RefCntAutoPtr<IShader> clonerSpriteTransformVS_;
     PSOAndSRB maskedSpritePsoAndSrb_;
     PSOAndSRB glyphQuadPsoAndSrb_;
     PSOAndSRB glyphQuadTransformPsoAndSrb_;
@@ -134,6 +136,7 @@ public:
     RefCntAutoPtr<ISampler> glyphAtlasSampler_;
 
     bool initialized_ = false;
+    bool clonerGpuPlacementEnabled_ = false;
     QString psoCacheDebugState_ = QStringLiteral("not-created");
 
     Impl() = default;
@@ -1051,6 +1054,141 @@ void ShaderManager::Impl::createSpriteFamilyPSOs()
         qWarning() << "[ShaderManager] Failed to create PSO:" << "DrawSpriteTransform PSO";
     }
 
+    if (clonerGpuPlacementEnabled_) {
+    static const char clonerSpriteVS[] = R"hlsl(
+cbuffer TransformCB : register(b0)
+{
+    float4 row0;
+    float4 row1;
+    float4 row2;
+    float4 row3;
+};
+cbuffer ClonerSpriteCB : register(b1)
+{
+    uint FirstPlacement;
+    float LocalWidth;
+    float LocalHeight;
+    float Opacity;
+    float LocalX;
+    float LocalY;
+    float2 Padding;
+};
+struct CloneGridPlacementRecord
+{
+    float3 Offset;
+    uint CloneIndex;
+    uint Valid;
+    float RotationDegrees;
+    float2 LocalScale;
+};
+StructuredBuffer<CloneGridPlacementRecord> g_ClonerGridOutput;
+struct VSInput
+{
+    float2 pos : ATTRIB0;
+    float2 texCoord : ATTRIB1;
+};
+struct PSInput
+{
+    float4 pos : SV_POSITION;
+    float2 TexCoord : TEXCOORD0;
+    float4 Color : COLOR0;
+};
+PSInput main(VSInput input, uint instanceId : SV_InstanceID)
+{
+    PSInput output;
+    CloneGridPlacementRecord placement =
+        g_ClonerGridOutput[FirstPlacement + instanceId];
+    if (placement.Valid == 0)
+    {
+        output.pos = float4(2.0, 2.0, 0.0, 1.0);
+        output.TexCoord = input.texCoord;
+        output.Color = float4(0.0, 0.0, 0.0, 0.0);
+        return output;
+    }
+    float angleRadians = placement.RotationDegrees *
+                         0.017453292519943295;
+    float2 localPosition = float2(LocalX + input.pos.x * LocalWidth,
+                                  LocalY + input.pos.y * LocalHeight);
+    float2 rotatedPosition = localPosition * placement.LocalScale;
+    if (placement.RotationDegrees != 0.0)
+    {
+        float sineAngle;
+        float cosineAngle;
+        sincos(angleRadians, sineAngle, cosineAngle);
+        rotatedPosition = float2(
+            rotatedPosition.x * cosineAngle - rotatedPosition.y * sineAngle,
+            rotatedPosition.x * sineAngle + rotatedPosition.y * cosineAngle);
+    }
+    float4 localPos;
+    if (placement.RotationDegrees == 0.0 && LocalX == 0.0 && LocalY == 0.0)
+    {
+        localPos = float4(
+            input.pos.x * LocalWidth * placement.LocalScale.x +
+                placement.Offset.x,
+            input.pos.y * LocalHeight * placement.LocalScale.y +
+                placement.Offset.y,
+            placement.Offset.z, 1.0);
+    }
+    else
+    {
+        localPos = float4(
+            rotatedPosition.x + placement.Offset.x,
+            rotatedPosition.y + placement.Offset.y,
+            placement.Offset.z, 1.0);
+    }
+    output.pos = float4(dot(localPos, row0), dot(localPos, row1),
+                        dot(localPos, row2), dot(localPos, row3));
+    output.TexCoord = input.texCoord;
+    output.Color = float4(1.0, 1.0, 1.0, Opacity);
+    return output;
+}
+)hlsl";
+    ShaderCreateInfo clonerSpriteVSInfo;
+    clonerSpriteVSInfo.SourceLanguage = SHADER_SOURCE_LANGUAGE_HLSL;
+    clonerSpriteVSInfo.Desc.ShaderType = SHADER_TYPE_VERTEX;
+    clonerSpriteVSInfo.Desc.Name = "ClonerSpriteTransformVertexShader";
+    clonerSpriteVSInfo.Source = clonerSpriteVS;
+    clonerSpriteVSInfo.SourceLength = sizeof(clonerSpriteVS) - 1;
+    device_->CreateShader(clonerSpriteVSInfo, &clonerSpriteTransformVS_);
+    if (!clonerSpriteTransformVS_) {
+        qWarning() << "[ShaderManager] Failed to create shader:"
+                   << clonerSpriteVSInfo.Desc.Name;
+    }
+    if (clonerSpriteTransformVS_) {
+        static const ShaderResourceVariableDesc clonerSpriteVars[] = {
+            { SHADER_TYPE_VERTEX, "TransformCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
+            { SHADER_TYPE_VERTEX, "ClonerSpriteCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
+            { SHADER_TYPE_VERTEX, "g_ClonerGridOutput", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
+            { SHADER_TYPE_PIXEL, "g_texture", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
+            { SHADER_TYPE_PIXEL, "g_sampler", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
+        };
+        GraphicsPipelineStateCreateInfo clonerSpriteInfo = spriteTransformInfo;
+        static const LayoutElement clonerSpriteLayoutElems[] = {
+            LayoutElement{0, 0, 2, VT_FLOAT32, false, 0, 8 * sizeof(float)},
+            LayoutElement{1, 0, 2, VT_FLOAT32, false, 2 * sizeof(float),
+                          8 * sizeof(float)}
+        };
+        clonerSpriteInfo.GraphicsPipeline.InputLayout.LayoutElements =
+            clonerSpriteLayoutElems;
+        clonerSpriteInfo.GraphicsPipeline.InputLayout.NumElements =
+            _countof(clonerSpriteLayoutElems);
+        clonerSpriteInfo.PSODesc.Name = "DrawClonerSpriteTransform PSO";
+        clonerSpriteInfo.pVS = clonerSpriteTransformVS_;
+        clonerSpriteInfo.PSODesc.ResourceLayout.Variables = clonerSpriteVars;
+        clonerSpriteInfo.PSODesc.ResourceLayout.NumVariables =
+            _countof(clonerSpriteVars);
+        device_->CreateGraphicsPipelineState(
+            clonerSpriteInfo, &clonerSpriteTransformPsoAndSrb_.pPSO);
+        if (clonerSpriteTransformPsoAndSrb_.pPSO) {
+            clonerSpriteTransformPsoAndSrb_.pPSO->CreateShaderResourceBinding(
+                &clonerSpriteTransformPsoAndSrb_.pSRB, true);
+        } else {
+            qWarning() << "[ShaderManager] Failed to create PSO:"
+                       << "DrawClonerSpriteTransform PSO";
+        }
+    }
+    }
+
     static const ShaderResourceVariableDesc maskedSpriteVars[] = {
         { SHADER_TYPE_VERTEX, "TransformCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
         { SHADER_TYPE_PIXEL, "g_scene", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
@@ -1402,6 +1540,7 @@ void ShaderManager::Impl::destroy(bool persistCache)
     clearPso(solidRectTransformPsoAndSrb_);
     clearPso(gradientRectPsoAndSrb_);
     clearPso(spritePsoAndSrb_);
+    clearPso(clonerSpriteTransformPsoAndSrb_);
     clearPso(maskedSpritePsoAndSrb_);
     clearPso(glyphQuadPsoAndSrb_);
     clearPso(glyphQuadTransformPsoAndSrb_);
@@ -1425,6 +1564,7 @@ void ShaderManager::Impl::destroy(bool persistCache)
     clearShaderPair(gradientTransformShaders_);
     clearShaderPair(spriteShaders_);
     clearShaderPair(spriteTransformShaders_);
+    clonerSpriteTransformVS_ = nullptr;
     clearShaderPair(maskedSpriteShaders_);
     clearShaderPair(glyphQuadShaders_);
     clearShaderPair(glyphQuadTransformShaders_);
@@ -1475,6 +1615,11 @@ void ShaderManager::createShaders()
 void ShaderManager::createPSOs()
 {
     impl_->createPSOs();
+}
+
+void ShaderManager::setClonerGpuPlacementEnabled(bool enabled) noexcept
+{
+    impl_->clonerGpuPlacementEnabled_ = enabled;
 }
 
 void ShaderManager::destroy()
@@ -1595,6 +1740,17 @@ PSOAndSRB ShaderManager::gridPsoAndSrb() const
 PSOAndSRB ShaderManager::spriteTransformPsoAndSrb() const
 {
     return impl_->spriteTransformPsoAndSrb_;
+}
+
+PSOAndSRB ShaderManager::clonerSpriteTransformPsoAndSrb() const
+{
+    return impl_->clonerSpriteTransformPsoAndSrb_;
+}
+
+bool ShaderManager::hasClonerSpriteTransformPipeline() const noexcept
+{
+    return impl_->clonerSpriteTransformPsoAndSrb_.pPSO &&
+           impl_->clonerSpriteTransformPsoAndSrb_.pSRB;
 }
 
 PSOAndSRB ShaderManager::maskedSpritePsoAndSrb() const

@@ -883,7 +883,8 @@ inline std::vector<CloneRenderInstance> cloneRenderInstancesImpl(
         return instances;
     }
 
-    instances = clonerComponentInstances(layer, baseTransform);
+    instances = clonerComponentInstances(
+        layer, baseTransform, placementObserver, placementObserverContext);
     if (!instances.empty()) {
         applyLayoutComponent(layer, instances);
         const bool authoritative = useAuthoritativeState &&
@@ -913,9 +914,13 @@ inline std::vector<CloneRenderInstance> cloneRenderInstancesImpl(
 }
 
 export std::vector<CloneRenderInstance> cloneRenderInstances(
-    const ArtifactAbstractLayer* layer, const QMatrix4x4& baseTransform)
+    const ArtifactAbstractLayer* layer, const QMatrix4x4& baseTransform,
+    CloneGridPlacementObserver placementObserver = nullptr,
+    void* placementObserverContext = nullptr)
 {
-    return cloneRenderInstancesImpl(layer, baseTransform, true, true);
+    return cloneRenderInstancesImpl(layer, baseTransform, true, true,
+                                    placementObserver,
+                                    placementObserverContext);
 }
 
 export std::vector<CloneRenderInstance> cloneRenderInstancesForSimulation(
@@ -926,12 +931,412 @@ export std::vector<CloneRenderInstance> cloneRenderInstancesForSimulation(
 
 export void drawWithClonerEffect(const ArtifactAbstractLayer* layer,
                                  const QMatrix4x4& baseTransform,
-                                 const std::function<void(const QMatrix4x4&, float)>& drawFn)
+                                 const std::function<void(const QMatrix4x4&, float)>& drawFn,
+                                 CloneGridPlacementObserver placementObserver = nullptr,
+                                 void* placementObserverContext = nullptr)
 {
-    const auto instances = cloneRenderInstances(layer, baseTransform);
+    const auto instances = cloneRenderInstances(
+        layer, baseTransform, placementObserver, placementObserverContext);
     for (const auto& instance : instances) {
         drawFn(instance.transform, instance.weight);
     }
+}
+
+export void drawWithClonerEffectIndexed(
+    const ArtifactAbstractLayer* layer, const QMatrix4x4& baseTransform,
+    const std::function<void(const QMatrix4x4&, float, int)>& drawFn,
+    CloneGridPlacementObserver placementObserver = nullptr,
+    void* placementObserverContext = nullptr)
+{
+    const auto instances = cloneRenderInstances(
+        layer, baseTransform, placementObserver, placementObserverContext);
+    for (const auto& instance : instances) {
+        drawFn(instance.transform, instance.weight, instance.cloneIndex);
+    }
+}
+
+// Stream plain Grid/Matrix, Linear, and Radial placements for the GPU placement
+// renderer. Opacity decay is carried as a per-draw weight; finite Plain
+// translation, Z rotation, and XY scale are folded into placement while their
+// composition remains representable as rotation plus diagonal scale.
+inline bool gpuCompatibleTransformStack(
+    const QJsonObject& settings, float& offsetX, float& offsetY, float& offsetZ,
+    float& rotationDegrees, float& scaleX, float& scaleY);
+inline void applyGeneratorTransformStack(const QJsonObject& settings,
+                                         QMatrix4x4& cloneTransform);
+// Accumulate an enabled Plain modifier chain onto the transform already in the
+// output references. Callers seed identity for a Plain-only transform or the
+// compatible generator stack when validating a combined chain.
+inline bool gpuCompatiblePlainModifierTransform(
+    const ArtifactCore::NamedVector<LayerModifierDescriptor>& modifiers,
+    float& translationX, float& translationY, float& translationZ,
+    float& rotationDegrees, float& scaleX, float& scaleY);
+
+export bool drawWithGpuEligibleClonerGridIndexed(
+    const ArtifactAbstractLayer* layer, const QMatrix4x4& baseTransform,
+    const std::function<void(const QMatrix4x4&, float, int)>& drawFn,
+    CloneGridPlacementObserver placementObserver,
+    void* placementObserverContext)
+{
+    if (!layer || !drawFn || !placementObserver) {
+        return false;
+    }
+
+    for (const auto& effect : layer->getEffects()) {
+        const auto cloner =
+            ArtifactCore::dynamicPointerCast<ClonerGenerator>(effect);
+        if (cloner && cloner->isEnabled()) {
+            return false;
+        }
+    }
+
+    const auto generators = layer->layerGenerators();
+    if (generators.size() != 1U) {
+        return false;
+    }
+    const auto& generator = generators[0];
+    const bool isGrid =
+        generator.typeId == QStringLiteral("artifact.generator.cloner.grid") ||
+        generator.typeId == QStringLiteral("artifact.generator.cloner.matrix");
+    const bool isLinear = generator.typeId ==
+        QStringLiteral("artifact.generator.cloner.linear");
+    const bool isRadial = generator.typeId ==
+        QStringLiteral("artifact.generator.cloner.radial");
+    float stackOffsetX = 0.0f;
+    float stackOffsetY = 0.0f;
+    float stackOffsetZ = 0.0f;
+    float stackRotationDegrees = 0.0f;
+    float stackScaleX = 1.0f;
+    float stackScaleY = 1.0f;
+    const bool hasCompatibleTransformStack =
+        gpuCompatibleTransformStack(
+            generator.settings, stackOffsetX, stackOffsetY, stackOffsetZ,
+            stackRotationDegrees, stackScaleX, stackScaleY);
+    if (!generator.enabled || (!isGrid && !isLinear && !isRadial) ||
+        !hasCompatibleTransformStack ||
+        generator.settings.value(QStringLiteral("sequenceEnabled"))
+            .toBool(false)) {
+        return false;
+    }
+    if (isGrid) {
+        const float opacityDecay = generatorSettingFloat(
+            generator.settings, QStringLiteral("opacityDecay"), 0.0f);
+        if (!std::isfinite(opacityDecay) || opacityDecay < 0.0f ||
+            opacityDecay > 1.0f) {
+            return false;
+        }
+    }
+    if ((isLinear &&
+         (generatorSettingInt(generator.settings,
+                              QStringLiteral("legacyMode"), 0) == 3 ||
+          !std::isfinite(generatorSettingFloat(
+              generator.settings, QStringLiteral("rotationStep"), 0.0f)) ||
+          !std::isfinite(generatorSettingFloat(
+              generator.settings, QStringLiteral("opacityDecay"), 0.0f)) ||
+          generatorSettingFloat(generator.settings,
+                                QStringLiteral("opacityDecay"), 0.0f) < 0.0f ||
+          generatorSettingFloat(generator.settings,
+                                QStringLiteral("opacityDecay"), 0.0f) > 1.0f)) ||
+        (isRadial &&
+         (!std::isfinite(generatorSettingFloat(generator.settings,
+                                QStringLiteral("rotationStep"), 0.0f)) ||
+          !std::isfinite(generatorSettingFloat(generator.settings,
+                                QStringLiteral("opacityDecay"), 0.0f)) ||
+          generatorSettingFloat(generator.settings,
+                                QStringLiteral("opacityDecay"), 0.0f) < 0.0f ||
+          generatorSettingFloat(generator.settings,
+                                QStringLiteral("opacityDecay"), 0.0f) > 1.0f))) {
+        return false;
+    }
+
+    const auto modifiers = layer->layerCloneModifiers();
+    float modifierTranslationX = 0.0f;
+    float modifierTranslationY = 0.0f;
+    float modifierTranslationZ = 0.0f;
+    float modifierRotationDegrees = stackRotationDegrees;
+    float modifierScaleX = stackScaleX;
+    float modifierScaleY = stackScaleY;
+    modifierTranslationX = stackOffsetX;
+    modifierTranslationY = stackOffsetY;
+    modifierTranslationZ = stackOffsetZ;
+    if (!gpuCompatiblePlainModifierTransform(
+            modifiers, modifierTranslationX, modifierTranslationY,
+            modifierTranslationZ, modifierRotationDegrees, modifierScaleX,
+            modifierScaleY)) {
+        return false;
+    }
+    float plainTranslationX = 0.0f;
+    float plainTranslationY = 0.0f;
+    float plainTranslationZ = 0.0f;
+    float plainRotationDegrees = 0.0f;
+    float plainScaleX = 1.0f;
+    float plainScaleY = 1.0f;
+    if (!gpuCompatiblePlainModifierTransform(
+            modifiers, plainTranslationX, plainTranslationY,
+            plainTranslationZ, plainRotationDegrees, plainScaleX,
+            plainScaleY)) {
+        return false;
+    }
+
+    if (layer->authoritativeComponentEvaluationState() ||
+        cloneComponentBoolProperty(
+            layer, QStringLiteral("component.layout.enabled")) ||
+        cloneComponentBoolProperty(
+            layer, QStringLiteral("component.crowd.enabled")) ||
+        cloneComponentBoolProperty(layer, QStringLiteral("physics.enabled")) ||
+        cloneComponentBoolProperty(
+            layer, QStringLiteral("component.collision.enabled"))) {
+        return false;
+    }
+    for (const auto& field : layer->layerFields()) {
+        if (field.enabled && field.strength != 0.0f) {
+            return false;
+        }
+    }
+
+    const auto& settings = generator.settings;
+    const int columns = std::max(
+        1, generatorSettingInt(settings, QStringLiteral("columns"), 3));
+    const int rows = std::max(
+        1, generatorSettingInt(settings, QStringLiteral("rows"), 3));
+    const int depth = std::max(
+        1, generatorSettingInt(settings, QStringLiteral("depth"), 1));
+    const float spacingX = generatorSettingFloat(
+        settings, QStringLiteral("spacingX"), 160.0f);
+    const float spacingY = generatorSettingFloat(
+        settings, QStringLiteral("spacingY"), 48.0f);
+    const float spacingZ = generatorSettingFloat(
+        settings, QStringLiteral("spacingZ"), 0.0f);
+    const float gridOpacityDecay = generatorSettingFloat(
+        settings, QStringLiteral("opacityDecay"), 0.0f);
+    const QRectF localBounds = layer->localBounds();
+    const bool applyCompositionFieldChannels =
+        localBounds.isValid() && localBounds.width() > 0.0 &&
+        localBounds.height() > 0.0;
+    const std::array<QPointF, 4> localCorners{
+        localBounds.topLeft(), localBounds.topRight(),
+        localBounds.bottomRight(), localBounds.bottomLeft()};
+
+    const auto drawLinearCandidate = [&](const QMatrix4x4& cloneTransform,
+                                         int cloneIndex,
+                                         float generatorWeight = 1.0f) {
+        QMatrix4x4 placedCloneTransform = cloneTransform;
+        applyGeneratorTransformStack(settings, placedCloneTransform);
+        placedCloneTransform.translate(modifierTranslationX,
+                                       modifierTranslationY,
+                                       modifierTranslationZ);
+        if (modifierRotationDegrees != 0.0f) {
+            placedCloneTransform.rotate(modifierRotationDegrees,
+                                        0.0f, 0.0f, 1.0f);
+        }
+        placedCloneTransform.scale(modifierScaleX, modifierScaleY, 1.0f);
+        if (placedCloneTransform.isIdentity()) {
+            return;
+        }
+        QMatrix4x4 instanceTransform =
+            baseTransform * placedCloneTransform;
+        float instanceWeight = std::clamp(generatorWeight, 0.0f, 1.0f);
+        if (applyCompositionFieldChannels) {
+            qreal minX = 0.0;
+            qreal maxX = 0.0;
+            qreal minY = 0.0;
+            qreal maxY = 0.0;
+            for (std::size_t cornerIndex = 0;
+                 cornerIndex < localCorners.size(); ++cornerIndex) {
+                const QPointF& point = localCorners[cornerIndex];
+                const QVector3D mapped = instanceTransform.map(
+                    QVector3D(static_cast<float>(point.x()),
+                              static_cast<float>(point.y()), 0.0f));
+                const qreal mappedX = static_cast<qreal>(mapped.x());
+                const qreal mappedY = static_cast<qreal>(mapped.y());
+                if (cornerIndex == 0) {
+                    minX = maxX = mappedX;
+                    minY = maxY = mappedY;
+                } else {
+                    minX = std::min(minX, mappedX);
+                    maxX = std::max(maxX, mappedX);
+                    minY = std::min(minY, mappedY);
+                    maxY = std::max(maxY, mappedY);
+                }
+            }
+            const QRectF canvasBounds(minX, minY, maxX - minX,
+                                      maxY - minY);
+            const auto channels = layer->compositionFieldChannelsAtCanvasPoint(
+                canvasBounds.center());
+            if (channels.affected) {
+                instanceWeight = std::clamp(
+                    instanceWeight * channels.weight, 0.0f, 1.0f);
+                if (std::abs(channels.scaleMultiplier - 1.0f) > 0.0001f) {
+                    const QPointF localCenter = localBounds.center();
+                    instanceTransform.translate(
+                        static_cast<float>(localCenter.x()),
+                        static_cast<float>(localCenter.y()));
+                    instanceTransform.scale(channels.scaleMultiplier);
+                    instanceTransform.translate(
+                        static_cast<float>(-localCenter.x()),
+                        static_cast<float>(-localCenter.y()));
+                }
+            }
+        }
+        drawFn(instanceTransform, instanceWeight, cloneIndex);
+    };
+
+    placementObserver(placementObserverContext, generator.typeId, settings,
+                      plainTranslationX, plainTranslationY,
+                      plainTranslationZ, plainRotationDegrees,
+                      plainScaleX, plainScaleY);
+    drawFn(baseTransform, 1.0f, -1);
+    if (isRadial) {
+        const int count = std::max(
+            1, generatorSettingInt(settings, QStringLiteral("radialCount"), 8));
+        const float radius = generatorSettingFloat(
+            settings, QStringLiteral("radius"), 160.0f);
+        const float startAngle = generatorSettingFloat(
+            settings, QStringLiteral("startAngle"), 0.0f);
+        const float endAngle = generatorSettingFloat(
+            settings, QStringLiteral("endAngle"), 360.0f);
+        const float rotationStep = generatorSettingFloat(
+            settings, QStringLiteral("rotationStep"), 0.0f);
+        const float opacityDecay = generatorSettingFloat(
+            settings, QStringLiteral("opacityDecay"), 0.0f);
+        const float angleStep = count > 1
+            ? (endAngle - startAngle) / static_cast<float>(count - 1)
+            : 0.0f;
+        for (int i = 0; i < count; ++i) {
+            const float angle = startAngle + angleStep * static_cast<float>(i);
+            const float radians = angle * 3.1415926535f / 180.0f;
+            QMatrix4x4 cloneTransform;
+            cloneTransform.setToIdentity();
+            cloneTransform.translate(std::cos(radians) * radius,
+                                     std::sin(radians) * radius, 0.0f);
+            cloneTransform.rotate(angle + rotationStep * static_cast<float>(i),
+                                  0.0f, 0.0f, 1.0f);
+            drawLinearCandidate(
+                cloneTransform, i,
+                1.0f - opacityDecay * static_cast<float>(i));
+        }
+        return true;
+    }
+    if (isLinear) {
+        const int count = std::max(
+            1, generatorSettingInt(settings, QStringLiteral("count"), 3));
+        const float offsetX = generatorSettingFloat(
+            settings, QStringLiteral("offsetX"), 160.0f);
+        const float offsetY = generatorSettingFloat(
+            settings, QStringLiteral("offsetY"), 48.0f);
+        const float offsetZ = generatorSettingFloat(
+            settings, QStringLiteral("offsetZ"), 0.0f);
+        const float rotationStep = generatorSettingFloat(
+            settings, QStringLiteral("rotationStep"), 0.0f);
+        const float opacityDecay = generatorSettingFloat(
+            settings, QStringLiteral("opacityDecay"), 0.0f);
+        for (int i = 1; i <= count; ++i) {
+            QMatrix4x4 cloneTransform;
+            cloneTransform.setToIdentity();
+            cloneTransform.translate(offsetX * static_cast<float>(i),
+                                     offsetY * static_cast<float>(i),
+                                     offsetZ * static_cast<float>(i));
+            if (rotationStep != 0.0f) {
+                cloneTransform.rotate(rotationStep * static_cast<float>(i),
+                                      0.0f, 0.0f, 1.0f);
+            }
+            drawLinearCandidate(
+                cloneTransform, i - 1,
+                1.0f - opacityDecay * static_cast<float>(i - 1));
+        }
+        return true;
+    }
+    const QVector3D startPos(
+        -((columns - 1) * spacingX) * 0.5f,
+        -((rows - 1) * spacingY) * 0.5f,
+        -((depth - 1) * spacingZ) * 0.5f);
+    std::uint64_t candidateIndex = 0;
+    const auto maxCloneIndex = static_cast<std::uint64_t>(
+        std::numeric_limits<int>::max());
+    for (int z = 0; z < depth; ++z) {
+        for (int y = 0; y < rows; ++y) {
+            for (int x = 0; x < columns; ++x) {
+                const int cloneIndex = candidateIndex <= maxCloneIndex
+                    ? static_cast<int>(candidateIndex)
+                    : -2;
+                if (candidateIndex <= maxCloneIndex) {
+                    ++candidateIndex;
+                }
+                QMatrix4x4 cloneTransform;
+                cloneTransform.setToIdentity();
+                cloneTransform.translate(startPos.x() + spacingX * x,
+                                         startPos.y() + spacingY * y,
+                                         startPos.z() + spacingZ * z);
+                applyGeneratorTransformStack(settings, cloneTransform);
+                cloneTransform.translate(modifierTranslationX,
+                                         modifierTranslationY,
+                                         modifierTranslationZ);
+                if (modifierRotationDegrees != 0.0f) {
+                    cloneTransform.rotate(modifierRotationDegrees,
+                                          0.0f, 0.0f, 1.0f);
+                }
+                cloneTransform.scale(modifierScaleX, modifierScaleY, 1.0f);
+                if (!cloneTransform.isIdentity()) {
+                    // Grid groups larger than the renderer's bounded GPU
+                    // arena use CPU drawing. Keep their callback index out of
+                    // signed-overflow territory and make GPU matching fail.
+                    QMatrix4x4 instanceTransform =
+                        baseTransform * cloneTransform;
+                    float instanceWeight = std::clamp(
+                        1.0f - gridOpacityDecay * static_cast<float>(cloneIndex),
+                        0.0f, 1.0f);
+                    if (applyCompositionFieldChannels) {
+                        qreal minX = 0.0;
+                        qreal maxX = 0.0;
+                        qreal minY = 0.0;
+                        qreal maxY = 0.0;
+                        for (std::size_t cornerIndex = 0;
+                             cornerIndex < localCorners.size();
+                             ++cornerIndex) {
+                            const QPointF& point = localCorners[cornerIndex];
+                            const QVector3D mapped = instanceTransform.map(
+                                QVector3D(static_cast<float>(point.x()),
+                                          static_cast<float>(point.y()), 0.0f));
+                            const qreal mappedX = static_cast<qreal>(mapped.x());
+                            const qreal mappedY = static_cast<qreal>(mapped.y());
+                            if (cornerIndex == 0) {
+                                minX = maxX = mappedX;
+                                minY = maxY = mappedY;
+                            } else {
+                                minX = std::min(minX, mappedX);
+                                maxX = std::max(maxX, mappedX);
+                                minY = std::min(minY, mappedY);
+                                maxY = std::max(maxY, mappedY);
+                            }
+                        }
+                        const QRectF canvasBounds(minX, minY,
+                                                  maxX - minX, maxY - minY);
+                        const auto channels =
+                            layer->compositionFieldChannelsAtCanvasPoint(
+                                canvasBounds.center());
+                        if (channels.affected) {
+                            instanceWeight = std::clamp(
+                                instanceWeight * channels.weight, 0.0f, 1.0f);
+                            if (std::abs(channels.scaleMultiplier - 1.0f) >
+                                0.0001f) {
+                                const QPointF localCenter = localBounds.center();
+                                instanceTransform.translate(
+                                    static_cast<float>(localCenter.x()),
+                                    static_cast<float>(localCenter.y()));
+                                instanceTransform.scale(
+                                    channels.scaleMultiplier);
+                                instanceTransform.translate(
+                                    static_cast<float>(-localCenter.x()),
+                                    static_cast<float>(-localCenter.y()));
+                            }
+                        }
+                    }
+                    drawFn(instanceTransform, instanceWeight, cloneIndex);
+                }
+            }
+        }
+    }
+    return true;
 }
 
 export std::vector<ArtifactCore::InstanceData> cloneRenderInstanceData(
@@ -1219,6 +1624,76 @@ std::vector<CloneRenderInstance> clonerComponentInstances(
     const auto modifiers = layer->layerCloneModifiers();
     if (generators.empty()) {
         return instances;
+    }
+
+    // The GPU placement observer accepts one plain Grid/Matrix, Linear, or
+    // Radial generator with a finite per-clone opacity-decay weight.
+    // It runs before clone modifiers and later component stages, so its output
+    // is the generator placement data rather than a claim about final drawing.
+    if (placementObserver && generators.size() == 1U) {
+        const auto& generator = generators[0];
+        const bool isGrid =
+            generator.typeId ==
+                QStringLiteral("artifact.generator.cloner.grid") ||
+            generator.typeId ==
+                QStringLiteral("artifact.generator.cloner.matrix");
+        const bool isLinear = generator.typeId ==
+            QStringLiteral("artifact.generator.cloner.linear");
+        const bool isRadial = generator.typeId ==
+            QStringLiteral("artifact.generator.cloner.radial");
+        const float gridOpacityDecay = generatorSettingFloat(
+            generator.settings, QStringLiteral("opacityDecay"), 0.0f);
+        const bool gridOpacityValid = std::isfinite(gridOpacityDecay) &&
+            gridOpacityDecay >= 0.0f && gridOpacityDecay <= 1.0f;
+        const float linearRotationStep = generatorSettingFloat(
+            generator.settings, QStringLiteral("rotationStep"), 0.0f);
+        const float linearOpacityDecay = generatorSettingFloat(
+            generator.settings, QStringLiteral("opacityDecay"), 0.0f);
+        const bool linearOpacityValid =
+            std::isfinite(linearOpacityDecay) && linearOpacityDecay >= 0.0f &&
+            linearOpacityDecay <= 1.0f;
+        const bool simplePlacement =
+            (!isLinear && !isRadial && (!isGrid || gridOpacityValid)) ||
+            ((isLinear || isRadial) &&
+             generatorSettingInt(generator.settings,
+                                 QStringLiteral("legacyMode"), 0) != 3 &&
+             (!isLinear ||
+              (std::isfinite(linearRotationStep) && linearOpacityValid)) &&
+             (!isRadial ||
+              (std::isfinite(generatorSettingFloat(generator.settings,
+                                     QStringLiteral("rotationStep"), 0.0f)) &&
+               std::isfinite(generatorSettingFloat(generator.settings,
+                                     QStringLiteral("opacityDecay"), 0.0f)) &&
+               generatorSettingFloat(generator.settings,
+                                     QStringLiteral("opacityDecay"), 0.0f) >= 0.0f &&
+               generatorSettingFloat(generator.settings,
+                                     QStringLiteral("opacityDecay"), 0.0f) <= 1.0f)));
+        if (generator.enabled && (isGrid || isLinear || isRadial) && simplePlacement &&
+            generator.settings
+                          .value(QStringLiteral("transformStack"))
+                          .toArray()
+                          .isEmpty()) {
+            float modifierTranslationX = 0.0f;
+            float modifierTranslationY = 0.0f;
+            float modifierTranslationZ = 0.0f;
+            float modifierRotationDegrees = 0.0f;
+            float modifierScaleX = 1.0f;
+            float modifierScaleY = 1.0f;
+            const bool placementOnlyModifiers =
+                !generator.settings.value(QStringLiteral("sequenceEnabled"))
+                     .toBool(false) &&
+                gpuCompatiblePlainModifierTransform(
+                    modifiers, modifierTranslationX, modifierTranslationY,
+                    modifierTranslationZ, modifierRotationDegrees,
+                    modifierScaleX, modifierScaleY);
+            if (placementOnlyModifiers) {
+                placementObserver(placementObserverContext, generator.typeId,
+                                  generator.settings, modifierTranslationX,
+                                  modifierTranslationY, modifierTranslationZ,
+                                  modifierRotationDegrees, modifierScaleX,
+                                  modifierScaleY);
+            }
+        }
     }
 
     instances.push_back(CloneRenderInstance{baseTransform, 1.0f, 0.0f});

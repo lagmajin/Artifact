@@ -98,6 +98,32 @@ namespace Artifact
  Q_LOGGING_CATEGORY(particleRendererLog, "artifact.render.particles", QtInfoMsg)
 
 namespace {
+  bool clonerGpuPlacementStartupEnabled()
+  {
+    static const bool enabled = [] {
+      constexpr auto environmentName = "ARTIFACT_ENABLE_GPU_CLONER";
+      constexpr auto configKey = "Render/ClonerGpuPlacement";
+      const QByteArray environmentValue = qgetenv(environmentName);
+      const QVariant configured = ArtifactCore::LayeredConfigStore::instance()
+                                      .value(QString::fromLatin1(configKey));
+      if (configured.isValid()) {
+        if (!environmentValue.isEmpty()) {
+          qWarning().noquote()
+              << "[StartupFlags]" << environmentName << "is set in the environment but"
+              << configKey << "is set in ArtifactStartup.json; the JSON value wins.";
+        }
+        return configured.toBool();
+      }
+      if (environmentValue.isEmpty()) {
+        return false;
+      }
+      bool ok = false;
+      const int parsed = environmentValue.toInt(&ok);
+      return ok && parsed != 0;
+    }();
+    return enabled;
+  }
+
   QImage extractRgbaChannelToGray(const QImage& image, int channelOffset)
   {
     if (image.isNull() || channelOffset < 0 || channelOffset >= 4) {
@@ -525,6 +551,15 @@ namespace {
   Diligent::RefCntAutoPtr<Diligent::IBuffer> viewportExposureParams_;
   mutable bool viewportExposureReady_ = false;
 
+  // Cloner GPU-1 resources are opt-in. Its bounded output arena is partitioned
+  // in recording order and recycled after the corresponding submit batch.
+  std::unique_ptr<ArtifactCore::ComputeExecutor> clonerGridExecutor_;
+  Diligent::RefCntAutoPtr<Diligent::IBuffer> clonerGridParams_;
+  Diligent::RefCntAutoPtr<Diligent::IBuffer> clonerGridOutput_;
+  mutable std::uint32_t clonerGridOutputCursor_ = 0;
+  static constexpr std::uint32_t kClonerGridOutputCapacity = 65536;
+  bool clonerGridReady_ = false;
+
   RefCntAutoPtr<ITexture> m_layerRT;
   RefCntAutoPtr<ITexture> m_layerDepthTex;
   RefCntAutoPtr<ITextureView> m_layerDepthDSV;
@@ -694,17 +729,20 @@ namespace {
   void bindActiveRenderTargets(IDeviceContext* context) const;
   void setRenderTargetOverrides(ITextureView* colorRTV, ITextureView* depthDSV);
   float upscaleRenderScale() const { return m_upscaleEnabled ? m_upscaleScale : 1.0f; }
-  void submitQueuedDraws(IDeviceContext* ctx) const
+  void submitQueuedDraws(IDeviceContext* ctx, bool restoreRenderTarget = true) const
   {
    if (!ctx) {
     return;
    }
     submitter_.submit(cmdBuf_, ctx);
+   clonerGridOutputCursor_ = 0;
    primitiveRenderer3D_.flushGizmo3D();
    // RenderCommandBuffer::reset() clears targetRTV. Mid-frame barriers (mesh
    // draws, render-target changes, overlays) must leave the shared 2D command
    // buffer armed for the target that is still active.
-   cmdBuf_.setTargetRTV(primitiveRenderer_.currentRTV());
+   if (restoreRenderTarget) {
+    cmdBuf_.setTargetRTV(primitiveRenderer_.currentRTV());
+   }
   }
 
   ArtifactCore::MeshRenderer* meshRendererFor(const QString& key)
@@ -1390,9 +1428,13 @@ namespace {
   ~Impl();
 
   void initialize(QWidget* parent);
-  void initializeHeadless(int width, int height);
-  void initializeHeadlessWithAdapter(int width, int height, int adapterId);
+  void initializeHeadless(int width, int height,
+                          bool enableGpuClonerPlacement = false);
+  void initializeHeadlessWithAdapter(
+      int width, int height, int adapterId,
+      bool enableGpuClonerPlacement = false);
   bool initializeViewportExposure();
+  bool initializeClonerGridPlacement();
   QImage readbackToImage() const;
   ArtifactCore::ImageF32x4_RGBA readbackToImageF32() const;
   QImage readbackDepthToImage() const;
@@ -1965,6 +2007,11 @@ namespace {
    viewportExposureExecutor_.reset();
    viewportExposureParams_.Release();
    viewportExposureReady_ = false;
+   clonerGridExecutor_.reset();
+   clonerGridParams_.Release();
+   clonerGridOutput_.Release();
+   clonerGridOutputCursor_ = 0;
+   clonerGridReady_ = false;
    gpuContext_.reset();
 
    {
@@ -1979,6 +2026,8 @@ namespace {
    }
 
   shaderManager_.initialize(deviceManager_.device(), RenderConfig::MainRTVFormat);
+  shaderManager_.setClonerGpuPlacementEnabled(
+      clonerGpuPlacementStartupEnabled());
   shaderManager_.createShaders();
   shaderManager_.createPSOs();
 
@@ -2038,19 +2087,28 @@ namespace {
 
   m_initialized = true;
 
+  if (clonerGpuPlacementStartupEnabled() &&
+      !initializeClonerGridPlacement()) {
+    qWarning() << "[ArtifactIRenderer] GPU Cloner placement initialization failed;"
+                   "the Composition View will keep using CPU clone drawing.";
+  }
+
   // Log startup profile summary
   const auto startupReport = StartupProfiler::instance().generateReport();
   qInfo().noquote() << QString::fromUtf8(
       startupReport.data(), static_cast<int>(startupReport.length()));
  }
 
- void ArtifactIRenderer::Impl::initializeHeadless(int width, int height)
+ void ArtifactIRenderer::Impl::initializeHeadless(
+     int width, int height, bool enableGpuClonerPlacement)
  {
-  initializeHeadlessWithAdapter(width, height, -1);
+  initializeHeadlessWithAdapter(width, height, -1,
+                                enableGpuClonerPlacement);
  }
 
  void ArtifactIRenderer::Impl::initializeHeadlessWithAdapter(int width, int height,
-                                                              int adapterId)
+                                                              int adapterId,
+                                                              bool enableGpuClonerPlacement)
  {
   m_offlineWidth  = width;
   m_offlineHeight = height;
@@ -2060,6 +2118,11 @@ namespace {
   viewportExposureExecutor_.reset();
   viewportExposureParams_.Release();
   viewportExposureReady_ = false;
+  clonerGridExecutor_.reset();
+  clonerGridParams_.Release();
+  clonerGridOutput_.Release();
+  clonerGridOutputCursor_ = 0;
+  clonerGridReady_ = false;
   gpuContext_.reset();
 
   if (adapterId >= 0) {
@@ -2070,6 +2133,7 @@ namespace {
   if (!deviceManager_.isInitialized()) return;
 
   shaderManager_.initialize(deviceManager_.device(), RenderConfig::MainRTVFormat);
+  shaderManager_.setClonerGpuPlacementEnabled(enableGpuClonerPlacement);
   shaderManager_.createShaders();
   shaderManager_.createPSOs();
 
@@ -2162,6 +2226,9 @@ namespace {
    ctx->SetViewports(1, &VP, width, height);
   }
   m_initialized = true;
+  if (enableGpuClonerPlacement && !initializeClonerGridPlacement()) {
+   qWarning() << "[ArtifactIRenderer] headless GPU Cloner placement initialization failed";
+  }
  }
 
 QImage ArtifactIRenderer::Impl::readbackToImage() const
@@ -3126,6 +3193,8 @@ void ArtifactIRenderer::Impl::setRenderTargetOverrides(ITextureView* colorRTV,
 
   if (!m_initialized) {
    shaderManager_.initialize(deviceManager_.device(), RenderConfig::MainRTVFormat);
+   shaderManager_.setClonerGpuPlacementEnabled(
+       clonerGpuPlacementStartupEnabled());
    shaderManager_.createShaders();
    shaderManager_.createPSOs();
    primitiveRenderer_.createBuffers(deviceManager_.device(), RenderConfig::MainRTVFormat);
@@ -3507,6 +3576,11 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
   viewportExposureExecutor_.reset();
   viewportExposureParams_.Release();
   viewportExposureReady_ = false;
+  clonerGridExecutor_.reset();
+  clonerGridParams_.Release();
+  clonerGridOutput_.Release();
+  clonerGridOutputCursor_ = 0;
+  clonerGridReady_ = false;
   primitiveRenderer_.destroy();
   primitiveRenderer3D_.destroy();
   particleRenderer_.reset();
@@ -3696,6 +3770,12 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
  void ArtifactIRenderer::initializeHeadless(int w, int h)
  {
    impl_->initializeHeadless(w, h);
+   if (impl_->isInitialized()) (void)impl_->prepareParallelGeometryRecording();
+ }
+ void ArtifactIRenderer::initializeHeadless(int w, int h,
+                                            bool enableGpuClonerPlacement)
+ {
+   impl_->initializeHeadless(w, h, enableGpuClonerPlacement);
    if (impl_->isInitialized()) (void)impl_->prepareParallelGeometryRecording();
  }
  void ArtifactIRenderer::initializeHeadlessWithAdapter(int w, int h, int adapterId)
@@ -5026,6 +5106,37 @@ void ArtifactIRenderer::drawSprite(float x, float y, float w, float h, const QIm
  {
   impl_->primitiveRenderer_.drawSpriteTransformed(x, y, w, h, transform, texture, opacity, uvRect);
  }
+ bool ArtifactIRenderer::drawSpriteTransformedClonerGrid(
+     float x, float y, float w, float h, const QMatrix4x4& baseTransform,
+     const QMatrix4x4& cpuFallbackTransform,
+     Diligent::ITextureView* texture, float opacity,
+     const ClonerGridPlacementRange& placementRange,
+     std::uint32_t placementIndex) {
+  if (!impl_->shaderManager_.hasClonerSpriteTransformPipeline() ||
+      !impl_->submitter_.clonerSpriteGpuReady() ||
+      !placementRange.buffer || placementRange.count == 0 ||
+      placementIndex < placementRange.firstIndex ||
+      placementIndex - placementRange.firstIndex >= placementRange.count) {
+   return false;
+  }
+  const auto& placementDesc = placementRange.buffer->GetDesc();
+  if (placementDesc.Mode != Diligent::BUFFER_MODE_STRUCTURED ||
+      placementDesc.ElementByteStride != sizeof(ClonerGridPlacementRecord) ||
+      (placementDesc.BindFlags & Diligent::BIND_SHADER_RESOURCE) == 0) {
+   return false;
+  }
+  const auto placementCapacity = static_cast<std::uint64_t>(
+      placementDesc.Size / placementDesc.ElementByteStride);
+  if (placementRange.firstIndex > placementCapacity ||
+      placementRange.count > placementCapacity - placementRange.firstIndex ||
+      placementIndex >= placementCapacity) {
+   return false;
+  }
+  return impl_->primitiveRenderer_.drawSpriteTransformedClonerGrid(
+      x, y, w, h, baseTransform, cpuFallbackTransform, texture, opacity,
+      placementRange.buffer,
+      placementIndex, placementRange.rotationAware);
+ }
  void ArtifactIRenderer::drawMaskedTextureLocal(float x, float y, float w, float h, Diligent::ITextureView* sceneTexture, const QImage& maskImage, float opacity)
  {
   impl_->primitiveRenderer_.drawMaskedTextureLocal(x, y, w, h, sceneTexture, maskImage, opacity);
@@ -5808,9 +5919,169 @@ bool ArtifactIRenderer::applyTrackMatte(
  }
  return pipeline->applyTrackMatte(ctx, layerSRV, matteSrc0SRV,
                                   matteSrc1SRV, matteSrc2SRV,
-                                  outUAV, params, width, height);
+                                  outUAV, params, width, height,
+                                  priorMaskSRV, outputMaskOnly);
 }
 namespace {
+struct ClonerGridGpuParams {
+  Diligent::Uint32 columns = 0;
+  Diligent::Uint32 rows = 0;
+  Diligent::Uint32 depth = 0;
+  Diligent::Uint32 candidateCount = 0;
+  float spacingX = 0.0f;
+  float spacingY = 0.0f;
+  float spacingZ = 0.0f;
+  Diligent::Uint32 outputCapacity = 0;
+  Diligent::Uint32 outputOffset = 0;
+  float distributionParamX = 0.0f;
+  float distributionParamY = 0.0f;
+  float distributionParamZ = 0.0f;
+  float placementRotationStep = 0.0f;
+  float modifierTranslationX = 0.0f;
+  float modifierTranslationY = 0.0f;
+  float modifierTranslationZ = 0.0f;
+  float modifierRotationDegrees = 0.0f;
+  float modifierScaleX = 1.0f;
+  float modifierScaleY = 1.0f;
+  float padding2 = 0.0f;
+};
+static_assert(sizeof(ClonerGridGpuParams) == 80);
+static_assert(offsetof(ClonerGridGpuParams, outputCapacity) == 28);
+static_assert(offsetof(ClonerGridGpuParams, outputOffset) == 32);
+static_assert(offsetof(ClonerGridGpuParams, distributionParamX) == 36);
+static_assert(offsetof(ClonerGridGpuParams, placementRotationStep) == 48);
+static_assert(offsetof(ClonerGridGpuParams, modifierTranslationX) == 52);
+static_assert(offsetof(ClonerGridGpuParams, modifierRotationDegrees) == 64);
+static_assert(offsetof(ClonerGridGpuParams, modifierScaleX) == 68);
+static_assert(offsetof(ClonerGridGpuParams, modifierScaleY) == 72);
+
+constexpr char kClonerGridPlacementHlsl[] = R"hlsl(
+struct CloneGridPlacementRecord
+{
+    float3 Offset;
+    uint CloneIndex;
+    uint Valid;
+    float RotationDegrees;
+    float2 LocalScale;
+};
+
+cbuffer ClonerGridParams
+{
+    uint Columns;
+    uint Rows;
+    uint Depth;
+    uint CandidateCount;
+    float SpacingX;
+    float SpacingY;
+    float SpacingZ;
+    uint OutputCapacity;
+    uint OutputOffset;
+    float3 DistributionParams;
+    float RotationStep;
+    float3 ModifierTranslation;
+    float ModifierRotationDegrees;
+    float2 ModifierScale;
+    float Padding;
+};
+
+RWStructuredBuffer<CloneGridPlacementRecord> g_ClonerGridOutput;
+
+[numthreads(64, 1, 1)]
+void main(uint3 dispatchThreadId : SV_DispatchThreadID)
+{
+    uint candidateIndex = dispatchThreadId.x;
+    if (candidateIndex == 0 && OutputOffset < OutputCapacity)
+    {
+        CloneGridPlacementRecord baseRecord;
+        baseRecord.Offset = float3(0.0, 0.0, 0.0);
+        baseRecord.CloneIndex = 0xffffffff;
+        baseRecord.Valid = 1;
+        baseRecord.RotationDegrees = 0.0;
+        baseRecord.LocalScale = float2(1.0, 1.0);
+        g_ClonerGridOutput[OutputOffset] = baseRecord;
+    }
+    if (candidateIndex >= CandidateCount)
+        return;
+
+    uint outputIndex = OutputOffset + candidateIndex + 1;
+    if (outputIndex >= OutputCapacity)
+        return;
+
+    float3 offset;
+    float rotationDegrees = 0.0;
+    if (Rows == 0 && Depth == 0)
+    {
+        offset = DistributionParams * (candidateIndex + 1);
+        rotationDegrees = RotationStep * (candidateIndex + 1);
+    }
+    else if (Rows == 0)
+    {
+        float angleStep = CandidateCount > 1
+            ? (DistributionParams.z - DistributionParams.y) / (CandidateCount - 1)
+            : 0.0;
+        float placementAngle =
+            DistributionParams.y + angleStep * candidateIndex;
+        rotationDegrees = placementAngle + RotationStep * candidateIndex;
+        float angleRadians = placementAngle * 0.017453292519943295;
+        offset = float3(cos(angleRadians), sin(angleRadians), 0.0) *
+                 DistributionParams.x;
+    }
+    else
+    {
+        uint x = candidateIndex % Columns;
+        uint y = (candidateIndex / Columns) % Rows;
+        uint z = candidateIndex / (Columns * Rows);
+        float3 gridSize = float3((Columns - 1) * SpacingX,
+                                 (Rows - 1) * SpacingY,
+                                 (Depth - 1) * SpacingZ);
+        offset = -0.5 * gridSize +
+                 float3(x * SpacingX, y * SpacingY, z * SpacingZ);
+        rotationDegrees = RotationStep;
+    }
+
+    if (any(ModifierTranslation != 0.0))
+    {
+        float2 modifierOffset = ModifierTranslation.xy;
+        if (rotationDegrees != 0.0)
+        {
+            float modifierSine;
+            float modifierCosine;
+            sincos(rotationDegrees * 0.017453292519943295,
+                   modifierSine, modifierCosine);
+            modifierOffset = float2(
+                ModifierTranslation.x * modifierCosine -
+                    ModifierTranslation.y * modifierSine,
+                ModifierTranslation.x * modifierSine +
+                    ModifierTranslation.y * modifierCosine);
+        }
+        offset += float3(modifierOffset, ModifierTranslation.z);
+    }
+    rotationDegrees += ModifierRotationDegrees;
+
+    CloneGridPlacementRecord record;
+    record.Offset = offset;
+    record.CloneIndex = candidateIndex;
+    // CPU clone enumeration decides whether an identity transform is drawn.
+    // Keep every in-range slot valid here so shader float rounding cannot
+    // disagree with QMatrix4x4::isIdentity() and clip a CPU-selected clone.
+    record.Valid = 1;
+    record.RotationDegrees = rotationDegrees;
+    record.LocalScale = ModifierScale;
+    g_ClonerGridOutput[outputIndex] = record;
+}
+)hlsl";
+
+const Diligent::ShaderResourceVariableDesc *clonerGridVariables(
+    Diligent::Uint32 &count) {
+  static Diligent::ShaderResourceVariableDesc vars[] = {
+      {Diligent::SHADER_TYPE_COMPUTE, "ClonerGridParams",
+       Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+      {Diligent::SHADER_TYPE_COMPUTE, "g_ClonerGridOutput",
+       Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC}};
+  count = 2;
+  return vars;
+}
+
 // Fixed-size parameter block for the viewport exposure/clipping stage.
 struct ViewportExposureParams {
   float gain;
@@ -5836,6 +6107,72 @@ const ShaderResourceVariableDesc *viewportExposureVariables(Uint32 &count) {
   return vars;
 }
 } // namespace
+
+bool ArtifactIRenderer::Impl::initializeClonerGridPlacement() {
+  if (clonerGridReady_ && clonerGridExecutor_ &&
+      clonerGridExecutor_->ready() && clonerGridParams_ && clonerGridOutput_) {
+    return true;
+  }
+  if (!shaderManager_.hasClonerSpriteTransformPipeline() ||
+      !submitter_.clonerSpriteGpuReady()) {
+    return false;
+  }
+  auto device = deviceManager_.device();
+  if (!device || !gpuContext_) {
+    return false;
+  }
+
+  Diligent::Uint32 variableCount = 0;
+  ArtifactCore::ComputePipelineDesc desc;
+  desc.name = "Cloner Grid Placement/PSO";
+  desc.shaderSource = kClonerGridPlacementHlsl;
+  desc.entryPoint = "main";
+  desc.sourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
+  desc.variables = clonerGridVariables(variableCount);
+  desc.variableCount = variableCount;
+  desc.defaultVariableType =
+      Diligent::SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
+  auto executor =
+      std::make_unique<ArtifactCore::ComputeExecutor>(*gpuContext_);
+  if (!executor->build(desc) ||
+      !executor->createShaderResourceBinding(true)) {
+    return false;
+  }
+
+  Diligent::BufferDesc paramsDesc;
+  paramsDesc.Name = "Cloner Grid Placement/Params";
+  paramsDesc.Size = sizeof(ClonerGridGpuParams);
+  paramsDesc.Usage = Diligent::USAGE_DYNAMIC;
+  paramsDesc.BindFlags = Diligent::BIND_UNIFORM_BUFFER;
+  paramsDesc.CPUAccessFlags = Diligent::CPU_ACCESS_WRITE;
+  Diligent::RefCntAutoPtr<Diligent::IBuffer> paramsBuffer;
+  device->CreateBuffer(paramsDesc, nullptr, &paramsBuffer);
+  if (!paramsBuffer) {
+    return false;
+  }
+
+  Diligent::BufferDesc outputDesc;
+  outputDesc.Name = "Cloner Grid Placement/Output";
+  outputDesc.Size = static_cast<Diligent::Uint64>(
+      kClonerGridOutputCapacity) * sizeof(ClonerGridPlacementRecord);
+  outputDesc.Usage = Diligent::USAGE_DEFAULT;
+  outputDesc.BindFlags = Diligent::BIND_SHADER_RESOURCE |
+                         Diligent::BIND_UNORDERED_ACCESS;
+  outputDesc.Mode = Diligent::BUFFER_MODE_STRUCTURED;
+  outputDesc.ElementByteStride = sizeof(ClonerGridPlacementRecord);
+  Diligent::RefCntAutoPtr<Diligent::IBuffer> outputBuffer;
+  device->CreateBuffer(outputDesc, nullptr, &outputBuffer);
+  if (!outputBuffer) {
+    return false;
+  }
+
+  clonerGridExecutor_ = std::move(executor);
+  clonerGridParams_ = std::move(paramsBuffer);
+  clonerGridOutput_ = std::move(outputBuffer);
+  clonerGridOutputCursor_ = 0;
+  clonerGridReady_ = true;
+  return true;
+}
 
 bool ArtifactIRenderer::Impl::initializeViewportExposure() {
   auto device = deviceManager_.device();
@@ -5932,6 +6269,155 @@ bool ArtifactIRenderer::applyViewportExposure(
                      RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
   return true;
 }
+
+bool ArtifactIRenderer::initializeClonerGridPlacementGpu() {
+  return impl_ && impl_->initializeClonerGridPlacement();
+}
+
+bool ArtifactIRenderer::clonerGridPlacementGpuReady() const {
+  return impl_ && impl_->clonerGridReady_ && impl_->clonerGridExecutor_ &&
+         impl_->clonerGridExecutor_->ready() &&
+         impl_->clonerGridParams_ && impl_->clonerGridOutput_ &&
+         impl_->shaderManager_.hasClonerSpriteTransformPipeline() &&
+         impl_->submitter_.clonerSpriteGpuReady();
+}
+
+bool ArtifactIRenderer::dispatchClonerGridPlacement(
+    std::uint32_t columns, std::uint32_t rows, std::uint32_t depth,
+    float spacingX, float spacingY, float spacingZ,
+    float placementRotationStep,
+    float modifierTranslationX, float modifierTranslationY,
+    float modifierTranslationZ,
+    float modifierRotationDegrees,
+    float modifierScaleX, float modifierScaleY,
+    ClonerGridPlacementRange &outputRange) const {
+  outputRange = {};
+  const bool linear = rows == 0 && depth == 0;
+  const bool radial = rows == 0 && depth == 1;
+  if (!impl_ || !impl_->clonerGridReady_ ||
+      !impl_->clonerGridExecutor_ || !impl_->clonerGridExecutor_->ready() ||
+      !impl_->clonerGridParams_ || !impl_->clonerGridOutput_ ||
+      columns == 0 || (!linear && !radial && (rows == 0 || depth == 0))) {
+    return false;
+  }
+  if (!std::isfinite(spacingX) || !std::isfinite(spacingY) ||
+      !std::isfinite(spacingZ) || !std::isfinite(placementRotationStep) ||
+      !std::isfinite(modifierTranslationX) ||
+      !std::isfinite(modifierTranslationY) ||
+      !std::isfinite(modifierTranslationZ) ||
+      !std::isfinite(modifierRotationDegrees) ||
+      !std::isfinite(modifierScaleX) || !std::isfinite(modifierScaleY)) {
+    return false;
+  }
+  const auto hasFiniteGridExtent = [](std::uint32_t count, float spacing) {
+    const double extent = static_cast<double>(count - 1u) *
+                          static_cast<double>(spacing);
+    return std::isfinite(extent) &&
+           std::abs(extent) <=
+               static_cast<double>(std::numeric_limits<float>::max());
+  };
+  if (!(linear
+            ? std::isfinite(static_cast<double>(columns) * spacingX) &&
+                  std::abs(static_cast<double>(columns) * spacingX) <=
+                      static_cast<double>(std::numeric_limits<float>::max()) &&
+                  std::isfinite(static_cast<double>(columns) * spacingY) &&
+                  std::abs(static_cast<double>(columns) * spacingY) <=
+                      static_cast<double>(std::numeric_limits<float>::max()) &&
+                  std::isfinite(static_cast<double>(columns) * spacingZ) &&
+                  std::abs(static_cast<double>(columns) * spacingZ) <=
+                      static_cast<double>(std::numeric_limits<float>::max())
+            : radial
+                  ? std::isfinite(spacingX) && std::isfinite(spacingY) &&
+                        std::isfinite(spacingZ)
+                  : hasFiniteGridExtent(columns, spacingX) &&
+                  hasFiniteGridExtent(rows, spacingY) &&
+                  hasFiniteGridExtent(depth, spacingZ))) {
+    return false;
+  }
+
+  constexpr auto maxUint64 = std::numeric_limits<std::uint64_t>::max();
+  std::uint64_t candidateCount64 = columns;
+  if (!linear && !radial) {
+    if (rows > maxUint64 / candidateCount64) {
+      return false;
+    }
+    candidateCount64 *= rows;
+    if (depth > maxUint64 / candidateCount64) {
+      return false;
+    }
+    candidateCount64 *= depth;
+  }
+  if (candidateCount64 > std::numeric_limits<std::uint32_t>::max() - 1u ||
+      impl_->clonerGridOutputCursor_ > Impl::kClonerGridOutputCapacity ||
+      candidateCount64 + 1u >
+          Impl::kClonerGridOutputCapacity - impl_->clonerGridOutputCursor_) {
+    return false;
+  }
+  auto *outputBuffer = impl_->clonerGridOutput_.RawPtr();
+  const auto &outputDesc = outputBuffer->GetDesc();
+  const auto outputCapacity = Impl::kClonerGridOutputCapacity;
+  const std::uint64_t requiredBytes =
+      static_cast<std::uint64_t>(outputCapacity) *
+      sizeof(ClonerGridPlacementRecord);
+  if (outputDesc.Mode != Diligent::BUFFER_MODE_STRUCTURED ||
+      outputDesc.ElementByteStride != sizeof(ClonerGridPlacementRecord) ||
+      outputDesc.Size < requiredBytes ||
+      (outputDesc.BindFlags & (Diligent::BIND_SHADER_RESOURCE |
+                               Diligent::BIND_UNORDERED_ACCESS)) !=
+          (Diligent::BIND_SHADER_RESOURCE |
+           Diligent::BIND_UNORDERED_ACCESS)) {
+    return false;
+  }
+
+  auto context = impl_->deviceManager_.immediateContext();
+  auto *outputUav = outputBuffer->GetDefaultView(
+      Diligent::BUFFER_VIEW_UNORDERED_ACCESS);
+  if (!context || !outputUav) {
+    return false;
+  }
+
+  const auto candidateCount =
+      static_cast<std::uint32_t>(candidateCount64);
+  const ClonerGridGpuParams params{
+      columns, rows, depth, candidateCount,
+      spacingX, spacingY, spacingZ, outputCapacity,
+      impl_->clonerGridOutputCursor_,
+      (linear || radial) ? spacingX : 0.0f,
+      (linear || radial) ? spacingY : 0.0f,
+      (linear || radial) ? spacingZ : 0.0f,
+      placementRotationStep, modifierTranslationX, modifierTranslationY,
+      modifierTranslationZ, modifierRotationDegrees, modifierScaleX,
+      modifierScaleY, 0.0f};
+  void *mapped = nullptr;
+  context->MapBuffer(impl_->clonerGridParams_, Diligent::MAP_WRITE,
+                     Diligent::MAP_FLAG_DISCARD, mapped);
+  if (!mapped) {
+    return false;
+  }
+  std::memcpy(mapped, &params, sizeof(params));
+  context->UnmapBuffer(impl_->clonerGridParams_, Diligent::MAP_WRITE);
+
+  auto &executor = impl_->clonerGridExecutor_;
+  if (!executor->setBuffer("ClonerGridParams",
+                           impl_->clonerGridParams_) ||
+      !executor->setBufferView("g_ClonerGridOutput", outputUav)) {
+    return false;
+  }
+  executor->dispatch(
+      context,
+      ArtifactCore::ComputeExecutor::makeDispatchAttribs(
+          candidateCount, 1, 1, 64, 1, 1),
+      Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+  outputRange.buffer = outputBuffer;
+  outputRange.firstIndex = impl_->clonerGridOutputCursor_;
+  outputRange.count = candidateCount + 1u;
+  outputRange.rotationAware = radial || placementRotationStep != 0.0f ||
+      modifierRotationDegrees != 0.0f || modifierScaleX != 1.0f ||
+      modifierScaleY != 1.0f;
+  impl_->clonerGridOutputCursor_ += outputRange.count;
+  return true;
+}
+
  Diligent::RefCntAutoPtr<Diligent::IRenderDevice> ArtifactIRenderer::device() const
  { return impl_->deviceManager_.device(); }
  Diligent::RefCntAutoPtr<Diligent::IDeviceContext> ArtifactIRenderer::immediateContext() const

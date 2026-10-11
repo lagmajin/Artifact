@@ -2898,6 +2898,9 @@ ArtifactAbstractLayer::layerGenerators() const {
                                .value(QStringLiteral("mode"))
                                .toInt(impl_->clonerMode_);
     switch (clonerMode) {
+    case 3:
+      generator.typeId = QStringLiteral("artifact.generator.cloner.random");
+      break;
     case 5:
       generator.typeId = QStringLiteral("artifact.generator.cloner.grid");
       break;
@@ -2910,6 +2913,45 @@ ArtifactAbstractLayer::layerGenerators() const {
     }
 
     generator.settings = cloner->settings;
+    // Keep the normalized generator descriptor in sync with the legacy
+    // component properties. Those property routes own the canonical values
+    // in ArtifactAbstractLayerImpl; the component descriptor may predate the
+    // latest edit and otherwise retain its initial settings.
+    generator.settings[QStringLiteral("count")] = impl_->clonerCloneCount_;
+    generator.settings[QStringLiteral("seed")] = impl_->clonerSeed_;
+    generator.settings[QStringLiteral("offsetX")] =
+        static_cast<double>(impl_->clonerOffsetX_);
+    generator.settings[QStringLiteral("offsetY")] =
+        static_cast<double>(impl_->clonerOffsetY_);
+    generator.settings[QStringLiteral("offsetZ")] =
+        static_cast<double>(impl_->clonerOffsetZ_);
+    generator.settings[QStringLiteral("jitterX")] =
+        static_cast<double>(impl_->clonerJitterX_);
+    generator.settings[QStringLiteral("jitterY")] =
+        static_cast<double>(impl_->clonerJitterY_);
+    generator.settings[QStringLiteral("jitterZ")] =
+        static_cast<double>(impl_->clonerJitterZ_);
+    generator.settings[QStringLiteral("columns")] = impl_->clonerColumns_;
+    generator.settings[QStringLiteral("rows")] = impl_->clonerRows_;
+    generator.settings[QStringLiteral("depth")] = impl_->clonerDepth_;
+    generator.settings[QStringLiteral("spacingX")] =
+        static_cast<double>(impl_->clonerSpacingX_);
+    generator.settings[QStringLiteral("spacingY")] =
+        static_cast<double>(impl_->clonerSpacingY_);
+    generator.settings[QStringLiteral("spacingZ")] =
+        static_cast<double>(impl_->clonerSpacingZ_);
+    generator.settings[QStringLiteral("radialCount")] =
+        impl_->clonerRadialCount_;
+    generator.settings[QStringLiteral("radius")] =
+        static_cast<double>(impl_->clonerRadius_);
+    generator.settings[QStringLiteral("startAngle")] =
+        static_cast<double>(impl_->clonerStartAngle_);
+    generator.settings[QStringLiteral("endAngle")] =
+        static_cast<double>(impl_->clonerEndAngle_);
+    generator.settings[QStringLiteral("rotationStep")] =
+        static_cast<double>(impl_->clonerRotationStep_);
+    generator.settings[QStringLiteral("opacityDecay")] =
+        static_cast<double>(impl_->clonerOpacityDecay_);
     generator.settings[QStringLiteral("legacySourceComponentId")] =
         cloner->componentId;
     generator.settings[QStringLiteral("legacyMode")] = clonerMode;

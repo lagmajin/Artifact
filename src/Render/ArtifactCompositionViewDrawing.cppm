@@ -134,6 +134,13 @@ export void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
                                         DetailLevel lod = DetailLevel::High,
                                         const std::vector<ArtifactCore::Light>* sceneLights = nullptr,
                                         const QHash<ArtifactCore::Id, QImage>* matteSourceImages = nullptr);
+export using GpuClonerGridInstanceDrawCallback = void (*)(
+    void*, const QMatrix4x4&, float, const ClonerGridPlacementRange&,
+    std::uint32_t);
+export bool drawGpuClonerGridInstances(
+    const ArtifactAbstractLayer* layer, ArtifactIRenderer* renderer,
+    const QMatrix4x4& baseTransform,
+    GpuClonerGridInstanceDrawCallback drawCallback, void* drawContext);
 
 export ArtifactCore::SurfaceColorDescriptor qImageCvMatSurfaceDescriptor(
     const QImage& image)
@@ -305,6 +312,581 @@ export QImage makeVersionedSolidGradientImage(
 }
 
 namespace {
+
+struct ClonerGridDrawContext {
+  ArtifactIRenderer *renderer = nullptr;
+  ClonerGridPlacementRange range{};
+  QString generatorType;
+  QJsonObject settings;
+  float modifierTranslationX = 0.0f;
+  float modifierTranslationY = 0.0f;
+  float modifierTranslationZ = 0.0f;
+  float modifierRotationDegrees = 0.0f;
+  float modifierScaleX = 1.0f;
+  float modifierScaleY = 1.0f;
+  bool dispatchAttempted = false;
+};
+
+bool composeClonerTransformStackWithModifier(
+    const QJsonObject &settings, float modifierTranslationX,
+    float modifierTranslationY, float modifierTranslationZ,
+    float modifierRotationDegrees, float modifierScaleX,
+    float modifierScaleY, float &translationX, float &translationY,
+    float &translationZ, float &rotationDegrees, float &scaleX, float &scaleY)
+{
+  float stackOffsetX = 0.0f;
+  float stackOffsetY = 0.0f;
+  float stackOffsetZ = 0.0f;
+  float stackRotationDegrees = 0.0f;
+  float stackScaleX = 1.0f;
+  float stackScaleY = 1.0f;
+  if (!gpuCompatibleTransformStack(
+          settings, stackOffsetX, stackOffsetY, stackOffsetZ,
+          stackRotationDegrees, stackScaleX, stackScaleY)) {
+    return false;
+  }
+  const float angleRadians = stackRotationDegrees * 0.017453292519943295f;
+  const float cosineAngle = std::cos(angleRadians);
+  const float sineAngle = std::sin(angleRadians);
+  translationX = stackOffsetX +
+                 modifierTranslationX * stackScaleX * cosineAngle -
+                 modifierTranslationY * stackScaleY * sineAngle;
+  translationY = stackOffsetY +
+                 modifierTranslationX * stackScaleX * sineAngle +
+                 modifierTranslationY * stackScaleY * cosineAngle;
+  translationZ = stackOffsetZ + modifierTranslationZ;
+  rotationDegrees = stackRotationDegrees + modifierRotationDegrees;
+  scaleX = stackScaleX * modifierScaleX;
+  scaleY = stackScaleY * modifierScaleY;
+  return std::isfinite(translationX) && std::isfinite(translationY) &&
+         std::isfinite(translationZ) && std::isfinite(rotationDegrees) &&
+         std::isfinite(scaleX) && std::isfinite(scaleY);
+}
+
+bool gpuGridPlacementMatchesCpuInstance(
+    const QMatrix4x4 &baseTransform, const QMatrix4x4 &instanceTransform,
+    float weight, int cloneIndex, const QString &generatorType,
+    const QJsonObject &settings, float modifierTranslationX,
+    float modifierTranslationY, float modifierTranslationZ,
+    float modifierRotationDegrees, float modifierScaleX,
+    float modifierScaleY)
+{
+  if (settings.isEmpty() || !std::isfinite(weight) ||
+      weight < 0.0f || weight > 1.0f ||
+      !std::isfinite(modifierScaleX) || !std::isfinite(modifierScaleY)) {
+    return false;
+  }
+  if (cloneIndex < -1) {
+    return false;
+  }
+  if (cloneIndex == -1) {
+    for (int i = 0; i < 16; ++i) {
+      const float baseValue = baseTransform.constData()[i];
+      const float instanceValue = instanceTransform.constData()[i];
+      if (!std::isfinite(baseValue) || !std::isfinite(instanceValue) ||
+          std::abs(baseValue - instanceValue) > 1.0e-4f) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  if (generatorType == QStringLiteral("artifact.generator.cloner.linear")) {
+    const int count = std::max(
+        1, settings.value(QStringLiteral("count")).toInt(3));
+    const float rotationStep = static_cast<float>(settings.value(
+        QStringLiteral("rotationStep")).toDouble(0.0));
+    const float opacityDecay = static_cast<float>(settings.value(
+        QStringLiteral("opacityDecay")).toDouble(0.0));
+    const float expectedWeight = std::clamp(
+        1.0f - opacityDecay * static_cast<float>(cloneIndex), 0.0f, 1.0f);
+    if (cloneIndex >= count || !std::isfinite(rotationStep) ||
+        !std::isfinite(opacityDecay) || opacityDecay < 0.0f ||
+        opacityDecay > 1.0f ||
+        std::abs(weight - expectedWeight) > 1.0e-5f ||
+        settings.value(QStringLiteral("legacyMode")).toInt(0) == 3) {
+      return false;
+    }
+    QMatrix4x4 offset;
+    offset.setToIdentity();
+    offset.translate(
+        static_cast<float>(settings.value(QStringLiteral("offsetX")).toDouble(160.0)) *
+            static_cast<float>(cloneIndex + 1),
+        static_cast<float>(settings.value(QStringLiteral("offsetY")).toDouble(48.0)) *
+            static_cast<float>(cloneIndex + 1),
+        static_cast<float>(settings.value(QStringLiteral("offsetZ")).toDouble(0.0)) *
+            static_cast<float>(cloneIndex + 1));
+    if (rotationStep != 0.0f) {
+      offset.rotate(rotationStep * static_cast<float>(cloneIndex + 1),
+                    0.0f, 0.0f, 1.0f);
+    }
+    float stackOffsetX = 0.0f;
+    float stackOffsetY = 0.0f;
+    float stackOffsetZ = 0.0f;
+    float stackRotationDegrees = 0.0f;
+    float stackScaleX = 1.0f;
+    float stackScaleY = 1.0f;
+    if (!gpuCompatibleTransformStack(
+            settings, stackOffsetX, stackOffsetY, stackOffsetZ,
+            stackRotationDegrees, stackScaleX, stackScaleY)) {
+      return false;
+    }
+    offset.translate(stackOffsetX, stackOffsetY, stackOffsetZ);
+    if (stackRotationDegrees != 0.0f) {
+      offset.rotate(stackRotationDegrees, 0.0f, 0.0f, 1.0f);
+    }
+    offset.scale(stackScaleX, stackScaleY, 1.0f);
+    offset.translate(modifierTranslationX, modifierTranslationY,
+                     modifierTranslationZ);
+    if (modifierRotationDegrees != 0.0f) {
+      offset.rotate(modifierRotationDegrees, 0.0f, 0.0f, 1.0f);
+    }
+    offset.scale(modifierScaleX, modifierScaleY, 1.0f);
+    const QMatrix4x4 expected = baseTransform * offset;
+    float combinedTranslationX = 0.0f;
+    float combinedTranslationY = 0.0f;
+    float combinedTranslationZ = 0.0f;
+    float combinedRotationDegrees = 0.0f;
+    float combinedScaleX = 1.0f;
+    float combinedScaleY = 1.0f;
+    if (!composeClonerTransformStackWithModifier(
+            settings, modifierTranslationX, modifierTranslationY,
+            modifierTranslationZ, modifierRotationDegrees, modifierScaleX,
+            modifierScaleY,
+            combinedTranslationX, combinedTranslationY,
+            combinedTranslationZ, combinedRotationDegrees, combinedScaleX,
+            combinedScaleY)) {
+      return false;
+    }
+    QMatrix4x4 gpuExpected = baseTransform;
+    gpuExpected.translate(
+        static_cast<float>(settings.value(QStringLiteral("offsetX")).toDouble(160.0)) *
+            static_cast<float>(cloneIndex + 1),
+        static_cast<float>(settings.value(QStringLiteral("offsetY")).toDouble(48.0)) *
+            static_cast<float>(cloneIndex + 1),
+        static_cast<float>(settings.value(QStringLiteral("offsetZ")).toDouble(0.0)) *
+            static_cast<float>(cloneIndex + 1));
+    if (rotationStep != 0.0f) {
+      gpuExpected.rotate(rotationStep * static_cast<float>(cloneIndex + 1),
+                         0.0f, 0.0f, 1.0f);
+    }
+    gpuExpected.translate(combinedTranslationX, combinedTranslationY,
+                          combinedTranslationZ);
+    if (combinedRotationDegrees != 0.0f) {
+      gpuExpected.rotate(combinedRotationDegrees, 0.0f, 0.0f, 1.0f);
+    }
+    gpuExpected.scale(combinedScaleX, combinedScaleY, 1.0f);
+    for (int i = 0; i < 16; ++i) {
+      const float a = expected.constData()[i];
+      const float b = instanceTransform.constData()[i];
+      const float gpuValue = gpuExpected.constData()[i];
+      if (!std::isfinite(a) || !std::isfinite(b) || !std::isfinite(gpuValue) ||
+          std::abs(a - b) > 1.0e-4f * std::max(1.0f, std::abs(a)) ||
+          std::abs(gpuValue - b) >
+              1.0e-4f * std::max(1.0f, std::abs(b))) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  if (generatorType == QStringLiteral("artifact.generator.cloner.radial")) {
+    const int count = std::max(
+        1, settings.value(QStringLiteral("radialCount")).toInt(8));
+    if (cloneIndex >= count) {
+      return false;
+    }
+    const float opacityDecay = static_cast<float>(settings.value(
+        QStringLiteral("opacityDecay")).toDouble(0.0));
+    const float expectedWeight = std::clamp(
+        1.0f - opacityDecay * static_cast<float>(cloneIndex), 0.0f, 1.0f);
+    if (!std::isfinite(opacityDecay) || opacityDecay < 0.0f ||
+        opacityDecay > 1.0f || std::abs(weight - expectedWeight) > 1.0e-5f) {
+      return false;
+    }
+    const float radius = static_cast<float>(
+        settings.value(QStringLiteral("radius")).toDouble(160.0));
+    const float startAngle = static_cast<float>(
+        settings.value(QStringLiteral("startAngle")).toDouble(0.0));
+    const float endAngle = static_cast<float>(
+        settings.value(QStringLiteral("endAngle")).toDouble(360.0));
+    const float placementAngle = startAngle +
+        (count > 1 ? (endAngle - startAngle) /
+                        static_cast<float>(count - 1) * cloneIndex
+                   : 0.0f);
+    const float radians = placementAngle * 3.1415926535f / 180.0f;
+    QMatrix4x4 offset;
+    offset.setToIdentity();
+    offset.translate(std::cos(radians) * radius,
+                     std::sin(radians) * radius, 0.0f);
+    const float rotationStep = static_cast<float>(settings.value(
+        QStringLiteral("rotationStep")).toDouble(0.0));
+    offset.rotate(placementAngle + rotationStep * cloneIndex,
+                  0.0f, 0.0f, 1.0f);
+    float stackOffsetX = 0.0f;
+    float stackOffsetY = 0.0f;
+    float stackOffsetZ = 0.0f;
+    float stackRotationDegrees = 0.0f;
+    float stackScaleX = 1.0f;
+    float stackScaleY = 1.0f;
+    if (!gpuCompatibleTransformStack(
+            settings, stackOffsetX, stackOffsetY, stackOffsetZ,
+            stackRotationDegrees, stackScaleX, stackScaleY)) {
+      return false;
+    }
+    offset.translate(stackOffsetX, stackOffsetY, stackOffsetZ);
+    if (stackRotationDegrees != 0.0f) {
+      offset.rotate(stackRotationDegrees, 0.0f, 0.0f, 1.0f);
+    }
+    offset.scale(stackScaleX, stackScaleY, 1.0f);
+    offset.translate(modifierTranslationX, modifierTranslationY,
+                     modifierTranslationZ);
+    if (modifierRotationDegrees != 0.0f) {
+      offset.rotate(modifierRotationDegrees, 0.0f, 0.0f, 1.0f);
+    }
+    offset.scale(modifierScaleX, modifierScaleY, 1.0f);
+    const QMatrix4x4 expected = baseTransform * offset;
+    float combinedTranslationX = 0.0f;
+    float combinedTranslationY = 0.0f;
+    float combinedTranslationZ = 0.0f;
+    float combinedRotationDegrees = 0.0f;
+    float combinedScaleX = 1.0f;
+    float combinedScaleY = 1.0f;
+    if (!composeClonerTransformStackWithModifier(
+            settings, modifierTranslationX, modifierTranslationY,
+            modifierTranslationZ, modifierRotationDegrees, modifierScaleX,
+            modifierScaleY,
+            combinedTranslationX, combinedTranslationY,
+            combinedTranslationZ, combinedRotationDegrees, combinedScaleX,
+            combinedScaleY)) {
+      return false;
+    }
+    QMatrix4x4 gpuExpected = baseTransform;
+    gpuExpected.translate(std::cos(radians) * radius,
+                          std::sin(radians) * radius, 0.0f);
+    gpuExpected.rotate(placementAngle + rotationStep * cloneIndex,
+                       0.0f, 0.0f, 1.0f);
+    gpuExpected.translate(combinedTranslationX, combinedTranslationY,
+                          combinedTranslationZ);
+    if (combinedRotationDegrees != 0.0f) {
+      gpuExpected.rotate(combinedRotationDegrees, 0.0f, 0.0f, 1.0f);
+    }
+    gpuExpected.scale(combinedScaleX, combinedScaleY, 1.0f);
+    for (int i = 0; i < 16; ++i) {
+      const float a = expected.constData()[i];
+      const float b = instanceTransform.constData()[i];
+      const float gpuValue = gpuExpected.constData()[i];
+      if (!std::isfinite(a) || !std::isfinite(b) || !std::isfinite(gpuValue) ||
+          std::abs(a - b) > 1.0e-4f * std::max(1.0f, std::abs(a)) ||
+          std::abs(gpuValue - b) >
+              1.0e-4f * std::max(1.0f, std::abs(b))) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  const int columns = std::max(1, settings.value(QStringLiteral("columns")).toInt(3));
+  const int rows = std::max(1, settings.value(QStringLiteral("rows")).toInt(3));
+  const int depth = std::max(1, settings.value(QStringLiteral("depth")).toInt(1));
+  const std::uint64_t candidateCount =
+      static_cast<std::uint64_t>(columns) *
+      static_cast<std::uint64_t>(rows) *
+      static_cast<std::uint64_t>(depth);
+  if (static_cast<std::uint64_t>(cloneIndex) >= candidateCount) {
+    return false;
+  }
+  const float opacityDecay = static_cast<float>(
+      settings.value(QStringLiteral("opacityDecay")).toDouble(0.0));
+  const float expectedWeight = std::clamp(
+      1.0f - opacityDecay * static_cast<float>(cloneIndex), 0.0f, 1.0f);
+  if (!std::isfinite(opacityDecay) || opacityDecay < 0.0f ||
+      opacityDecay > 1.0f || std::abs(weight - expectedWeight) > 1.0e-5f) {
+    return false;
+  }
+  const float spacingX = static_cast<float>(
+      settings.value(QStringLiteral("spacingX")).toDouble(160.0));
+  const float spacingY = static_cast<float>(
+      settings.value(QStringLiteral("spacingY")).toDouble(48.0));
+  const float spacingZ = static_cast<float>(
+      settings.value(QStringLiteral("spacingZ")).toDouble(0.0));
+  const int x = cloneIndex % columns;
+  const int y = (cloneIndex / columns) % rows;
+  const int z = cloneIndex / (columns * rows);
+  QMatrix4x4 offset;
+  offset.setToIdentity();
+  offset.translate(-((columns - 1) * spacingX) * 0.5f + spacingX * x,
+                   -((rows - 1) * spacingY) * 0.5f + spacingY * y,
+                   -((depth - 1) * spacingZ) * 0.5f + spacingZ * z);
+  const auto transformStack =
+      settings.value(QStringLiteral("transformStack")).toArray();
+  for (const auto &value : transformStack) {
+    if (!value.isObject()) {
+      continue;
+    }
+    const auto transform = value.toObject();
+    if (!transform.value(QStringLiteral("enabled")).toBool(true)) {
+      continue;
+    }
+    offset.translate(
+        static_cast<float>(transform.value(QStringLiteral("positionX")).toDouble()),
+        static_cast<float>(transform.value(QStringLiteral("positionY")).toDouble()),
+        static_cast<float>(transform.value(QStringLiteral("positionZ")).toDouble()));
+    const float rotationZ = static_cast<float>(
+        transform.value(QStringLiteral("rotationZ")).toDouble());
+    if (rotationZ != 0.0f) {
+      offset.rotate(rotationZ, 0.0f, 0.0f, 1.0f);
+    }
+    offset.scale(
+        static_cast<float>(transform.value(QStringLiteral("scaleX")).toDouble(1.0)),
+        static_cast<float>(transform.value(QStringLiteral("scaleY")).toDouble(1.0)),
+        1.0f);
+  }
+  offset.translate(modifierTranslationX, modifierTranslationY,
+                   modifierTranslationZ);
+  if (modifierRotationDegrees != 0.0f) {
+    offset.rotate(modifierRotationDegrees, 0.0f, 0.0f, 1.0f);
+  }
+  offset.scale(modifierScaleX, modifierScaleY, 1.0f);
+  const QMatrix4x4 expected = baseTransform * offset;
+  QMatrix4x4 gpuExpected = baseTransform;
+  if (cloneIndex >= 0) {
+    float stackOffsetX = 0.0f;
+    float stackOffsetY = 0.0f;
+    float stackOffsetZ = 0.0f;
+    float stackRotationDegrees = 0.0f;
+    float stackScaleX = 1.0f;
+    float stackScaleY = 1.0f;
+    if (!gpuCompatibleTransformStack(
+            settings, stackOffsetX, stackOffsetY, stackOffsetZ,
+            stackRotationDegrees, stackScaleX, stackScaleY)) {
+      return false;
+    }
+    gpuExpected.translate(stackOffsetX, stackOffsetY, stackOffsetZ);
+    gpuExpected.translate(-((columns - 1) * spacingX) * 0.5f + spacingX * x,
+                          -((rows - 1) * spacingY) * 0.5f + spacingY * y,
+                          -((depth - 1) * spacingZ) * 0.5f + spacingZ * z);
+    if (stackRotationDegrees != 0.0f) {
+      gpuExpected.rotate(stackRotationDegrees, 0.0f, 0.0f, 1.0f);
+    }
+    gpuExpected.scale(stackScaleX, stackScaleY, 1.0f);
+    gpuExpected.translate(modifierTranslationX, modifierTranslationY,
+                          modifierTranslationZ);
+    if (modifierRotationDegrees != 0.0f) {
+      gpuExpected.rotate(modifierRotationDegrees, 0.0f, 0.0f, 1.0f);
+    }
+    gpuExpected.scale(modifierScaleX, modifierScaleY, 1.0f);
+  }
+  for (int i = 0; i < 16; ++i) {
+    const float a = expected.constData()[i];
+    const float b = instanceTransform.constData()[i];
+    const float gpuValue = gpuExpected.constData()[i];
+    if (!std::isfinite(a) || !std::isfinite(b) ||
+        !std::isfinite(gpuValue) ||
+        std::abs(a - b) > 1.0e-4f * std::max(1.0f, std::abs(a)) ||
+        std::abs(gpuValue - b) >
+            1.0e-4f * std::max(1.0f, std::abs(b))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void dispatchClonerGridPlacementObserver(
+    void *context, const QString &generatorType, const QJsonObject &settings,
+    float modifierTranslationX, float modifierTranslationY,
+    float modifierTranslationZ, float modifierRotationDegrees,
+    float modifierScaleX, float modifierScaleY)
+{
+  auto *drawContext = static_cast<ClonerGridDrawContext *>(context);
+  if (!drawContext || !drawContext->renderer) {
+    return;
+  }
+  drawContext->generatorType = generatorType;
+  drawContext->settings = settings;
+  drawContext->modifierTranslationX = modifierTranslationX;
+  drawContext->modifierTranslationY = modifierTranslationY;
+  drawContext->modifierTranslationZ = modifierTranslationZ;
+  drawContext->modifierRotationDegrees = modifierRotationDegrees;
+  drawContext->modifierScaleX = modifierScaleX;
+  drawContext->modifierScaleY = modifierScaleY;
+}
+
+void ensureClonerGridPlacementDispatched(ClonerGridDrawContext &drawContext)
+{
+  if (drawContext.dispatchAttempted) {
+    return;
+  }
+  drawContext.dispatchAttempted = true;
+  if (!drawContext.renderer || drawContext.settings.isEmpty()) {
+    return;
+  }
+  const auto &settings = drawContext.settings;
+  if (drawContext.generatorType ==
+      QStringLiteral("artifact.generator.cloner.linear")) {
+    const auto count = std::max(
+        1, settings.value(QStringLiteral("count")).toInt(3));
+    const float offsetX = static_cast<float>(
+        settings.value(QStringLiteral("offsetX")).toDouble(160.0));
+    const float offsetY = static_cast<float>(
+        settings.value(QStringLiteral("offsetY")).toDouble(48.0));
+    const float offsetZ = static_cast<float>(
+        settings.value(QStringLiteral("offsetZ")).toDouble(0.0));
+    const float rotationStep = static_cast<float>(settings.value(
+        QStringLiteral("rotationStep")).toDouble(0.0));
+    const float opacityDecay = static_cast<float>(settings.value(
+        QStringLiteral("opacityDecay")).toDouble(0.0));
+    const double finalRotationStep =
+        static_cast<double>(rotationStep) * static_cast<double>(count);
+    float placementTranslationX = 0.0f;
+    float placementTranslationY = 0.0f;
+    float placementTranslationZ = 0.0f;
+    float placementModifierRotation = 0.0f;
+    float placementScaleX = 1.0f;
+    float placementScaleY = 1.0f;
+    if (!composeClonerTransformStackWithModifier(
+            settings, drawContext.modifierTranslationX,
+            drawContext.modifierTranslationY,
+            drawContext.modifierTranslationZ,
+            drawContext.modifierRotationDegrees,
+            drawContext.modifierScaleX, drawContext.modifierScaleY,
+            placementTranslationX,
+            placementTranslationY, placementTranslationZ,
+            placementModifierRotation, placementScaleX,
+            placementScaleY)) {
+      return;
+    }
+    if (!std::isfinite(rotationStep) || !std::isfinite(opacityDecay) ||
+        opacityDecay < 0.0f || opacityDecay > 1.0f ||
+        !std::isfinite(finalRotationStep) ||
+        std::abs(finalRotationStep) >
+            static_cast<double>(std::numeric_limits<float>::max()) ||
+        settings.value(QStringLiteral("legacyMode")).toInt(0) == 3 ||
+        (offsetX == 0.0f && offsetY == 0.0f && offsetZ == 0.0f &&
+         rotationStep == 0.0f && placementTranslationX == 0.0f &&
+         placementTranslationY == 0.0f && placementTranslationZ == 0.0f &&
+         placementModifierRotation == 0.0f &&
+         placementScaleX == 1.0f && placementScaleY == 1.0f)) {
+      return;
+    }
+    ClonerGridPlacementRange outputRange{};
+    if (drawContext.renderer->dispatchClonerGridPlacement(
+            static_cast<std::uint32_t>(count), 0, 0, offsetX, offsetY,
+            offsetZ, rotationStep, placementTranslationX,
+            placementTranslationY, placementTranslationZ,
+            placementModifierRotation,
+            placementScaleX, placementScaleY,
+            outputRange)) {
+      drawContext.range = outputRange;
+    }
+    return;
+  }
+  if (drawContext.generatorType ==
+      QStringLiteral("artifact.generator.cloner.radial")) {
+    const auto count = std::max(
+        1, settings.value(QStringLiteral("radialCount")).toInt(8));
+    const float radius = static_cast<float>(
+        settings.value(QStringLiteral("radius")).toDouble(160.0));
+    const float startAngle = static_cast<float>(
+        settings.value(QStringLiteral("startAngle")).toDouble(0.0));
+    const float endAngle = static_cast<float>(
+        settings.value(QStringLiteral("endAngle")).toDouble(360.0));
+    const float rotationStep = static_cast<float>(
+        settings.value(QStringLiteral("rotationStep")).toDouble(0.0));
+    const float opacityDecay = static_cast<float>(
+        settings.value(QStringLiteral("opacityDecay")).toDouble(0.0));
+    if (!std::isfinite(opacityDecay) || opacityDecay < 0.0f ||
+        opacityDecay > 1.0f || !std::isfinite(radius) ||
+        !std::isfinite(startAngle) || !std::isfinite(endAngle) ||
+        !std::isfinite(rotationStep)) {
+      return;
+    }
+    float placementTranslationX = 0.0f;
+    float placementTranslationY = 0.0f;
+    float placementTranslationZ = 0.0f;
+    float placementModifierRotation = 0.0f;
+    float placementScaleX = 1.0f;
+    float placementScaleY = 1.0f;
+    if (!composeClonerTransformStackWithModifier(
+            settings, drawContext.modifierTranslationX,
+            drawContext.modifierTranslationY,
+            drawContext.modifierTranslationZ,
+            drawContext.modifierRotationDegrees,
+            drawContext.modifierScaleX, drawContext.modifierScaleY,
+            placementTranslationX,
+            placementTranslationY, placementTranslationZ,
+            placementModifierRotation, placementScaleX,
+            placementScaleY)) {
+      return;
+    }
+    ClonerGridPlacementRange outputRange{};
+    if (drawContext.renderer->dispatchClonerGridPlacement(
+            static_cast<std::uint32_t>(count), 0, 1, radius, startAngle,
+            endAngle, rotationStep, placementTranslationX,
+            placementTranslationY, placementTranslationZ,
+            placementModifierRotation,
+            placementScaleX, placementScaleY,
+            outputRange)) {
+      drawContext.range = outputRange;
+    }
+    return;
+  }
+  const auto columns = std::max(1, settings.value(QStringLiteral("columns")).toInt(3));
+  const auto rows = std::max(1, settings.value(QStringLiteral("rows")).toInt(3));
+  const auto depth = std::max(1, settings.value(QStringLiteral("depth")).toInt(1));
+  const float spacingX = static_cast<float>(settings.value(QStringLiteral("spacingX")).toDouble(160.0));
+  const float spacingY = static_cast<float>(settings.value(QStringLiteral("spacingY")).toDouble(48.0));
+  const float spacingZ = static_cast<float>(settings.value(QStringLiteral("spacingZ")).toDouble(0.0));
+  const bool hasGridExtent =
+      (columns > 1 && spacingX != 0.0f) ||
+      (rows > 1 && spacingY != 0.0f) ||
+      (depth > 1 && spacingZ != 0.0f);
+  const bool hasPlainModifierTransform =
+      drawContext.modifierTranslationX != 0.0f ||
+      drawContext.modifierTranslationY != 0.0f ||
+      drawContext.modifierTranslationZ != 0.0f ||
+      drawContext.modifierRotationDegrees != 0.0f ||
+      drawContext.modifierScaleX != 1.0f ||
+      drawContext.modifierScaleY != 1.0f;
+  float stackOffsetX = 0.0f;
+  float stackOffsetY = 0.0f;
+  float stackOffsetZ = 0.0f;
+  float stackRotationDegrees = 0.0f;
+  float stackScaleX = 1.0f;
+  float stackScaleY = 1.0f;
+  if (!gpuCompatibleTransformStack(
+          settings, stackOffsetX, stackOffsetY, stackOffsetZ,
+          stackRotationDegrees, stackScaleX, stackScaleY)) {
+    return;
+  }
+  const bool hasStackTransform = stackOffsetX != 0.0f ||
+      stackOffsetY != 0.0f || stackOffsetZ != 0.0f ||
+      stackRotationDegrees != 0.0f || stackScaleX != 1.0f ||
+      stackScaleY != 1.0f;
+  if (!hasGridExtent && !hasPlainModifierTransform && !hasStackTransform) {
+    return;
+  }
+  ClonerGridPlacementRange outputRange{};
+  const float modifierTranslationX =
+      stackScaleX * drawContext.modifierTranslationX;
+  const float modifierTranslationY =
+      stackScaleY * drawContext.modifierTranslationY;
+  const float modifierScaleX = stackScaleX * drawContext.modifierScaleX;
+  const float modifierScaleY = stackScaleY * drawContext.modifierScaleY;
+  if (drawContext.renderer->dispatchClonerGridPlacement(
+      static_cast<std::uint32_t>(columns), static_cast<std::uint32_t>(rows),
+      static_cast<std::uint32_t>(depth), spacingX, spacingY, spacingZ,
+      stackRotationDegrees, modifierTranslationX,
+      modifierTranslationY, drawContext.modifierTranslationZ,
+      drawContext.modifierRotationDegrees,
+      modifierScaleX, modifierScaleY,
+      outputRange)) {
+    outputRange.rotationAware = stackRotationDegrees != 0.0f ||
+        drawContext.modifierRotationDegrees != 0.0f ||
+        modifierScaleX != 1.0f || modifierScaleY != 1.0f;
+    drawContext.range = outputRange;
+  }
+}
 
 int layerColorPipelineVersion(ArtifactAbstractLayer* layer)
 {
@@ -1215,6 +1797,48 @@ static QImage applyLayerMatteReferencesToSurfaceImpl(
 
 } // namespace
 
+bool drawGpuClonerGridInstances(
+    const ArtifactAbstractLayer* layer, ArtifactIRenderer* renderer,
+    const QMatrix4x4& baseTransform,
+    GpuClonerGridInstanceDrawCallback drawCallback, void* drawContext)
+{
+  if (!layer || !renderer || !drawCallback ||
+      !renderer->clonerGridPlacementGpuReady()) {
+    return false;
+  }
+
+  ClonerGridDrawContext placementContext{renderer, {}};
+  const auto indexedDraw = [&](const QMatrix4x4& instanceTransform,
+                               float instanceWeight, int cloneIndex) {
+    ensureClonerGridPlacementDispatched(placementContext);
+    auto placementRange = placementContext.range;
+    std::uint32_t placementIndex = 0;
+    const bool transformMatches = placementRange.buffer &&
+        gpuGridPlacementMatchesCpuInstance(
+            baseTransform, instanceTransform, instanceWeight, cloneIndex,
+            placementContext.generatorType, placementContext.settings,
+            placementContext.modifierTranslationX,
+            placementContext.modifierTranslationY,
+            placementContext.modifierTranslationZ,
+            placementContext.modifierRotationDegrees,
+            placementContext.modifierScaleX,
+            placementContext.modifierScaleY);
+    if (transformMatches) {
+      placementIndex =
+          placementRange.firstIndex +
+          (cloneIndex < 0 ? 0u : static_cast<std::uint32_t>(cloneIndex) + 1u);
+    } else {
+      placementRange = {};
+    }
+    drawCallback(drawContext, instanceTransform, instanceWeight,
+                 placementRange, placementIndex);
+  };
+
+  return drawWithGpuEligibleClonerGridIndexed(
+      layer, baseTransform, indexedDraw, &dispatchClonerGridPlacementObserver,
+      &placementContext);
+}
+
 export QImage applyLayerMatteReferencesToSurface(
     const QImage& surface,
     const std::vector<LayerMatteReference>& references,
@@ -1469,6 +2093,46 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
   if (!layer || !renderer) {
     return;
   }
+
+  ClonerGridDrawContext clonerGridDrawContext{renderer, {}};
+  const auto placementObserver =
+      (!offlineRender && renderer->clonerGridPlacementGpuReady())
+          ? &dispatchClonerGridPlacementObserver
+          : nullptr;
+  void *placementObserverContext =
+      placementObserver ? &clonerGridDrawContext : nullptr;
+  const auto drawWithPlacementObserver =
+      [](const ArtifactAbstractLayer *cloneLayer,
+         const QMatrix4x4 &transform,
+         const std::function<void(const QMatrix4x4 &, float)> &drawFn) {
+         drawWithClonerEffect(cloneLayer, transform, drawFn);
+      };
+  const auto drawWithPlacementObserverIndexed =
+      [placementObserver, placementObserverContext](
+          const ArtifactAbstractLayer *cloneLayer,
+          const QMatrix4x4 &transform,
+          const std::function<void(const QMatrix4x4 &, float, int)> &drawFn) {
+        if (placementObserverContext) {
+          auto *drawContext =
+              static_cast<ClonerGridDrawContext *>(placementObserverContext);
+          drawContext->range = {};
+          drawContext->generatorType = {};
+          drawContext->settings = {};
+          drawContext->dispatchAttempted = false;
+        }
+        const auto indexedDrawFn = [&](const QMatrix4x4 &instanceTransform,
+                                       float weight, int cloneIndex) {
+          drawFn(instanceTransform, weight, cloneIndex);
+        };
+         if (drawWithGpuEligibleClonerGridIndexed(
+                cloneLayer, transform, indexedDrawFn, placementObserver,
+                placementObserverContext)) {
+          return;
+        }
+         drawWithClonerEffectIndexed(cloneLayer, transform, indexedDrawFn,
+                                      placementObserver,
+                                      placementObserverContext);
+      };
 
   if (offlineRender && !layer->shouldIncludeInFinalRender()) {
     return;
@@ -1764,8 +2428,9 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
     // materialized above, so the previous per-frame full-image pass is gone.
 
     const float baseOpacity = (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
-    drawWithClonerEffect(layer, globalTransform4x4,
-      [&](const QMatrix4x4& instanceTransform, float instanceWeight) {
+    drawWithPlacementObserverIndexed(layer, globalTransform4x4,
+      [&](const QMatrix4x4& instanceTransform, float instanceWeight,
+          int cloneIndex) {
         const float finalOpacity = baseOpacity * instanceWeight;
 
         if (usesGpuTextureCache) {
@@ -1803,6 +2468,61 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
           }
           const auto binding = gpuTextureCacheManager->bindingRecord(textureHandle);
           if (binding.isValid()) {
+            if (placementObserver && !hasResolvedMattes && !layer->is3D() &&
+                instanceWeight == 1.0f) {
+              ensureClonerGridPlacementDispatched(clonerGridDrawContext);
+            }
+            const auto& placementRange = clonerGridDrawContext.range;
+            float stackOffsetX = 0.0f;
+            float stackOffsetY = 0.0f;
+            float stackOffsetZ = 0.0f;
+            float stackRotationDegrees = 0.0f;
+            float stackScaleX = 1.0f;
+            float stackScaleY = 1.0f;
+            const bool isGridPlacement =
+                clonerGridDrawContext.generatorType ==
+                    QStringLiteral("artifact.generator.cloner.grid") ||
+                clonerGridDrawContext.generatorType ==
+                    QStringLiteral("artifact.generator.cloner.matrix");
+            const bool compatiblePlacementTransformStack =
+                gpuCompatibleTransformStack(
+                    clonerGridDrawContext.settings, stackOffsetX,
+                    stackOffsetY, stackOffsetZ, stackRotationDegrees,
+                    stackScaleX, stackScaleY);
+            const bool useGpuPlacement =
+                !hasResolvedMattes && !layer->is3D() && placementObserver &&
+                compatiblePlacementTransformStack &&
+                placementRange.buffer &&
+                gpuGridPlacementMatchesCpuInstance(
+                    globalTransform4x4, instanceTransform, instanceWeight,
+                    cloneIndex, clonerGridDrawContext.generatorType,
+                    clonerGridDrawContext.settings,
+                    clonerGridDrawContext.modifierTranslationX,
+                    clonerGridDrawContext.modifierTranslationY,
+                    clonerGridDrawContext.modifierTranslationZ,
+                    clonerGridDrawContext.modifierRotationDegrees,
+                    clonerGridDrawContext.modifierScaleX,
+                    clonerGridDrawContext.modifierScaleY);
+            if (useGpuPlacement) {
+              const std::uint32_t placementIndex =
+                  placementRange.firstIndex +
+                  (cloneIndex < 0 ? 0u
+                                  : static_cast<std::uint32_t>(cloneIndex) + 1u);
+              QMatrix4x4 placementBaseTransform = globalTransform4x4;
+              if (isGridPlacement && cloneIndex >= 0) {
+                placementBaseTransform.translate(
+                    stackOffsetX, stackOffsetY, stackOffsetZ);
+              }
+              if (renderer->drawSpriteTransformedClonerGrid(
+                      static_cast<float>(rect.x()),
+                      static_cast<float>(rect.y()),
+                      static_cast<float>(rect.width()),
+                      static_cast<float>(rect.height()), placementBaseTransform,
+                      instanceTransform, binding.srv, finalOpacity, placementRange,
+                      placementIndex)) {
+                return;
+              }
+            }
             renderer->drawSpriteTransformed(static_cast<float>(rect.x()),
                                  static_cast<float>(rect.y()),
                                  static_cast<float>(rect.width()),
@@ -1973,7 +2693,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
 
     const float baseOpacity =
         opacityOverride >= 0.0f ? opacityOverride : layer->opacity();
-    drawWithClonerEffect(layer, globalTransform4x4,
+    drawWithPlacementObserver(layer, globalTransform4x4,
         [&](const QMatrix4x4& instanceTransform, float instanceWeight) {
           const float opacity = baseOpacity * instanceWeight;
           if (binding.isValid()) {
@@ -2041,7 +2761,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
       const float baseOpacity =
           (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
       if (solid2D->fillType() != ArtifactSolidFillType::Solid) {
-        drawWithClonerEffect(
+        drawWithPlacementObserver(
             layer, globalTransform4x4,
             [&](const QMatrix4x4& instanceTransform, float instanceWeight) {
               renderer->drawGradientRectTransformed(
@@ -2057,7 +2777,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
             });
         return;
       }
-      drawWithClonerEffect(
+      drawWithPlacementObserver(
           layer, globalTransform4x4,
           [&](const QMatrix4x4& instanceTransform, float instanceWeight) {
             renderer->drawSolidRectTransformed(
@@ -2095,7 +2815,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
     } else if (gradientEnabled) {
       const float baseOpacity =
           (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
-      drawWithClonerEffect(
+      drawWithPlacementObserver(
           layer, globalTransform4x4,
           [&](const QMatrix4x4& instanceTransform, float instanceWeight) {
             renderer->drawGradientRectTransformed(
@@ -2112,7 +2832,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
     } else {
       const float baseOpacity =
           (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
-      drawWithClonerEffect(
+      drawWithPlacementObserver(
           layer, globalTransform4x4,
           [&](const QMatrix4x4& instanceTransform, float instanceWeight) {
             renderer->drawSolidRectTransformed(
@@ -2179,7 +2899,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
                 hasStableSourceIdentity ? imageLayer->sourceVersion() : 0,
                 hasStableSourceIdentity && imageLayer->isImageSequence()
                     ? imageLayer->sequenceCachedFrameContentKey() : 0);
-      drawWithClonerEffect(layer, globalTransform4x4,
+      drawWithPlacementObserver(layer, globalTransform4x4,
         [&](const QMatrix4x4& instanceTransform, float instanceWeight) {
           if (cachedBinding.isValid()) {
             renderer->drawSpriteTransformed(
@@ -2317,7 +3037,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
         Diligent::ITextureView* sourceTexture = cachedBinding.isValid()
             ? nullptr
             : renderer->textureForImage(buffer);
-        drawWithClonerEffect(layer, globalTransform4x4,
+        drawWithPlacementObserver(layer, globalTransform4x4,
           [&](const QMatrix4x4& instanceTransform, float instanceWeight) {
             if (cachedBinding.isValid()) {
               renderer->drawSpriteTransformed(
@@ -2409,7 +3129,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
                                .arg(op.framePosition())
                                .arg(layer->currentFrame());
         }
-        drawWithClonerEffect(layer, globalTransform4x4,
+        drawWithPlacementObserver(layer, globalTransform4x4,
           [&](const QMatrix4x4& instanceTransform, float instanceWeight) {
             renderer->drawSpriteTransformed(static_cast<float>(localRect.x()),
                                  static_cast<float>(localRect.y()),
@@ -2474,7 +3194,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
                                  .arg(op.framePosition())
                                  .arg(layer->currentFrame());
           }
-          drawWithClonerEffect(layer, globalTransform4x4,
+          drawWithPlacementObserver(layer, globalTransform4x4,
             [&](const QMatrix4x4& instanceTransform, float instanceWeight) {
               renderer->drawSpriteTransformed(static_cast<float>(localRect.x()),
                                    static_cast<float>(localRect.y()),
@@ -2545,7 +3265,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
       }
       const float baseOpacity =
           (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
-      drawWithClonerEffect(layer, globalTransform4x4,
+      drawWithPlacementObserver(layer, globalTransform4x4,
         [&](const QMatrix4x4& instanceTransform, float instanceWeight) {
           renderer->drawSpriteTransformed(static_cast<float>(localRect.x()),
                                static_cast<float>(localRect.y()),
@@ -2642,7 +3362,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
       }
       const float baseOpacity =
           (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
-      drawWithClonerEffect(layer, globalTransform4x4,
+      drawWithPlacementObserver(layer, globalTransform4x4,
         [&](const QMatrix4x4& instanceTransform, float instanceWeight) {
           renderer->drawSpriteTransformed(static_cast<float>(localRect.x()),
                                static_cast<float>(localRect.y()),

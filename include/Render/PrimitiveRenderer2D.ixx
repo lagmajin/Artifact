@@ -127,6 +127,11 @@ public:
     void drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, const ArtifactCore::ImageF32x4_RGBA& image, float opacity = 1.0f, const QRectF& uvRect = QRectF(0.0, 0.0, 1.0, 1.0));
     void drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, ITextureView* texture, float opacity = 1.0f);
     void drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, ITextureView* texture, float opacity, const QRectF& uvRect);
+    bool drawSpriteTransformedClonerGrid(
+        float x, float y, float w, float h, const QMatrix4x4& baseTransform,
+        const QMatrix4x4& cpuFallbackTransform,
+        ITextureView* texture, float opacity, IBuffer* placementBuffer,
+        std::uint32_t placementIndex, bool applyPlacementRotation);
     void drawTexturedTriangleTransformed(float2 p0, float2 p1, float2 p2,
                                          float2 uv0, float2 uv1, float2 uv2,
                                          const QMatrix4x4& transform,
