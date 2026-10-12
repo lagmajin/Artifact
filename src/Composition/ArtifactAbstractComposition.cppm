@@ -2,8 +2,11 @@
 module;
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstddef>
+#include <cstdio>
+#include <cstdlib>
 #include <utility>
 #include <QByteArray>
 #include <QChar>
@@ -2940,6 +2943,10 @@ bool ArtifactAbstractComposition::Impl::replayGranularMaterialToFrame(
     int64_t frame)
 {
     auto& physics = ArtifactCore::PhysicsSystem::instance();
+    if (!physics.hasGranularMaterialSolvers(runtimePhysicsWorldId_)) {
+        position_ = FramePosition(frame);
+        return true;
+    }
     int64_t restoredFrame = 0;
     if (!physics.restoreGranularMaterialSnapshots(
             frame, runtimePhysicsWorldId_, &restoredFrame)) {
@@ -3557,6 +3564,18 @@ void ArtifactAbstractComposition::Impl::resetLayerComponentSimulation()
 void ArtifactAbstractComposition::Impl::evaluateLayerComponentSimulation(
     const FramePosition& frame, const bool interactive)
 {
+  static const bool profileVideoPreviewSimulation = [] {
+    const char* setting = std::getenv("ARTIFACT_VIDEO_PREVIEW_PROFILE_SETUP");
+    return setting && setting[0] != '\0' && setting[0] != '0';
+  }();
+  const auto profileStart = profileVideoPreviewSimulation
+      ? std::chrono::steady_clock::now()
+      : std::chrono::steady_clock::time_point{};
+  const auto profileMs = [](const std::chrono::steady_clock::time_point start) {
+    return std::chrono::duration<double, std::milli>(
+               std::chrono::steady_clock::now() - start)
+        .count();
+  };
   const int64_t frameNumber = frame.framePosition();
   if (componentSimulation_.valid &&
       (componentSimulation_.snapshotInterval <= 1 ||
@@ -3668,7 +3687,12 @@ void ArtifactAbstractComposition::Impl::evaluateLayerComponentSimulation(
   ArtifactCore::NamedVector<SimulationLayerEntry> entries{
       ArtifactCore::ContainerName{"Composition.SimulationLayerEntries"}};
 
+  const auto layerEvaluationStart = profileStart;
+  std::size_t profiledLayerIndex = 0;
   for (const auto& layer : layerMultiIndex_) {
+    const auto layerStart = profileVideoPreviewSimulation
+        ? std::chrono::steady_clock::now()
+        : std::chrono::steady_clock::time_point{};
     if (discontinuousSeek && layer &&
         (layerBooleanProperty(
              layer, QStringLiteral("fracture.enabled"), false) ||
@@ -3719,6 +3743,14 @@ void ArtifactAbstractComposition::Impl::evaluateLayerComponentSimulation(
         layer, QStringLiteral("component.collision.enabled"), false);
     if (!crowdEnabled && !collisionEnabled) {
       layer->clearAuthoritativeComponentEvaluationState();
+      if (profileVideoPreviewSimulation) {
+        std::fprintf(stderr,
+                     "[VideoPreviewSimulationProfile] frame=%lld layer=%zu "
+                     "layerMs=%.2f active=1 simulated=0\n",
+                     static_cast<long long>(frameNumber), profiledLayerIndex,
+                     profileMs(layerStart));
+      }
+      ++profiledLayerIndex;
       continue;
     }
 
@@ -3811,6 +3843,21 @@ void ArtifactAbstractComposition::Impl::evaluateLayerComponentSimulation(
       }
     }
     entries.push_back(std::move(entry));
+    if (profileVideoPreviewSimulation) {
+      std::fprintf(stderr,
+                   "[VideoPreviewSimulationProfile] frame=%lld layer=%zu "
+                   "layerMs=%.2f active=1 simulated=1\n",
+                   static_cast<long long>(frameNumber), profiledLayerIndex,
+                   profileMs(layerStart));
+    }
+    ++profiledLayerIndex;
+  }
+  if (profileVideoPreviewSimulation) {
+    std::fprintf(stderr,
+                 "[VideoPreviewSimulationProfile] frame=%lld "
+                 "layerEvaluationMs=%.2f layers=%zu\n",
+                 static_cast<long long>(frameNumber),
+                 profileMs(layerEvaluationStart), profiledLayerIndex);
   }
 
   const auto boundsForInstance = [](const SimulationLayerEntry& entry,

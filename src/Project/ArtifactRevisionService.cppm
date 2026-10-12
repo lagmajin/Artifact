@@ -1201,7 +1201,7 @@ public:
     }
 
     QFile file(ledgerPath_);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Append)) {
+    if (!file.open(QIODevice::ReadWrite | QIODevice::Append)) {
       return false;
     }
     // A previous crash may have left a partially written line. Appending

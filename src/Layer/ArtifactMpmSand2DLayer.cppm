@@ -877,9 +877,10 @@ QJsonObject ArtifactMpmSand2DLayer::toJson() const {
 void ArtifactMpmSand2DLayer::fromJsonProperties(const QJsonObject& object) {
     ArtifactAbstractLayer::fromJsonProperties(object);
     const auto readFinite = [&object](const QString& key, float fallback) {
-        bool ok = false;
-        const double value = object.value(key).toDouble(&ok);
-        return ok && std::isfinite(value) &&
+        const QJsonValue jsonValue = object.value(key);
+        if (!jsonValue.isDouble()) return fallback;
+        const double value = jsonValue.toDouble();
+        return std::isfinite(value) &&
                 std::abs(value) <= std::numeric_limits<float>::max()
             ? static_cast<float>(value) : fallback;
     };
