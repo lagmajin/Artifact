@@ -502,7 +502,9 @@ struct LayerSelectionManagerSelectionChangedEvent {
 struct LayerChangedEvent {
     QString compositionId;
     QString layerId;
-    enum class ChangeType { Created, Removed, Modified } changeType;
+    // FrameReady is a runtime redraw hint, never an authoring mutation.
+    // Reuse the existing event route without invalidating persistent previews.
+    enum class ChangeType { Created, Removed, Modified, FrameReady } changeType;
 };
 
 struct LayerNoteChangedEvent {

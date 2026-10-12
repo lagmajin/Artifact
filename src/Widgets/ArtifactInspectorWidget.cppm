@@ -7888,6 +7888,7 @@ QDesktopServices::openUrl(
   impl_->eventBusSubscriptions_.push_back(
       impl_->eventBus_.subscribe<LayerChangedEvent>(
           [this](const LayerChangedEvent &event) {
+            if (event.changeType == LayerChangedEvent::ChangeType::FrameReady) return;
             if (!impl_ ||
                 event.changeType != LayerChangedEvent::ChangeType::Created) {
               return;

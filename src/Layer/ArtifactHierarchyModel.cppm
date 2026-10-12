@@ -66,6 +66,7 @@ public:
 
     // レイヤー変更イベントの購読
     subscriptions_.push_back(bus.subscribe<LayerChangedEvent>([this](const LayerChangedEvent &event) {
+            if (event.changeType == LayerChangedEvent::ChangeType::FrameReady) return;
       if (CompositionID(Id(event.compositionId)) != currentCompositionId_)
         return;
       if (event.changeType == LayerChangedEvent::ChangeType::Modified) {

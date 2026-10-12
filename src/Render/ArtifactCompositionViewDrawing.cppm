@@ -3117,7 +3117,14 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
         videoLayer->isTimeRemapEnabled() &&
         videoLayer->timeRemapFrameBlendMode() != ArtifactCore::FrameBlendMode::None &&
         std::abs(mappedSourceFrame - std::round(mappedSourceFrame)) >= 0.001;
-    if (!hasRasterizer && !offlineRender && !requiresBlendedSourceFrame) {
+    void* sharedD3D12Device = (!hasRasterizer && !offlineRender &&
+                               !requiresBlendedSourceFrame && gpuTextureCacheManager)
+        ? gpuTextureCacheManager->nativeD3D12Device() : nullptr;
+    const bool useDirectD3D12Video = sharedD3D12Device &&
+        videoLayer->streamInfo().codecName.compare(
+            QStringLiteral("h264"), Qt::CaseInsensitive) == 0;
+    if (!hasRasterizer && !offlineRender && !requiresBlendedSourceFrame &&
+        !useDirectD3D12Video) {
       const ArtifactCore::ImageF32x4_RGBA buffer =
           videoLayer->cachedFrameImageBuffer(targetFrame);
       if (!buffer.isEmpty()) {
@@ -3153,9 +3160,9 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
     bool usedSyncFallback = false;
     bool usedBufferFallback = false;
     QString reason;
-    if (!hasRasterizer && gpuTextureCacheManager && !offlineRender) {
+    if (useDirectD3D12Video) {
       const ArtifactCore::GpuVideoFrame gpuFrame =
-          videoLayer->decodeFrameToGpuFrame(targetFrame);
+          videoLayer->decodeFrameToGpuFrame(targetFrame, sharedD3D12Device);
       if (gpuFrame.isValid()) {
         QString gpuOwnerId = layer->id().toString();
         QString remapSuffix;

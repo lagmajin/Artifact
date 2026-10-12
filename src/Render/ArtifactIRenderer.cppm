@@ -1,4 +1,6 @@
 module;
+#include <new>
+#include <cstdio>
 #include <utility>
 #include <string>
 #include <cstddef>
@@ -628,6 +630,7 @@ namespace {
   };
   struct AsyncReadbackSlot {
    RefCntAutoPtr<ITexture> staging;
+   ArtifactCore::SharedPtr<ArtifactCore::ImageUploadBuffer> pixels;
    RefCntAutoPtr<IFence>   fence;
    ArtifactCore::SharedPtr<std::atomic_bool> busy = ArtifactCore::makeShared<std::atomic_bool>(false);
    Uint64 signaledValue = 0;
@@ -737,9 +740,25 @@ namespace {
    if (!ctx) {
     return;
    }
-    submitter_.submit(cmdBuf_, ctx);
+   static const bool profileSubmit =
+       qEnvironmentVariableIsSet("ARTIFACT_VIDEO_PREVIEW_PROFILE_SETUP") &&
+       qEnvironmentVariable("ARTIFACT_VIDEO_PREVIEW_PROFILE_SETUP") != QStringLiteral("0");
+   static thread_local unsigned int profileSubmitCount = 0;
+   const bool sampleSubmit = profileSubmit && profileSubmitCount < 4096 && !cmdBuf_.empty();
+   const auto packetCount = sampleSubmit ? cmdBuf_.packets().size() : 0;
+   QElapsedTimer submitTimer;
+   if (sampleSubmit) submitTimer.start();
+   submitter_.submit(cmdBuf_, ctx);
+   const auto submitted2DNs = sampleSubmit ? submitTimer.nsecsElapsed() : 0;
    clonerGridOutputCursor_ = 0;
    primitiveRenderer3D_.flushGizmo3D();
+   if (sampleSubmit) {
+     std::fprintf(stderr,
+         "[VideoPreviewSubmitProfile] packets=%llu submit2DMs=%.3f gizmo3DMs=%.3f\n",
+         static_cast<unsigned long long>(packetCount), submitted2DNs / 1.0e6,
+         (submitTimer.nsecsElapsed() - submitted2DNs) / 1.0e6);
+     ++profileSubmitCount;
+   }
    // RenderCommandBuffer::reset() clears targetRTV. Mid-frame barriers (mesh
    // draws, render-target changes, overlays) must leave the shared 2D command
    // buffer armed for the target that is still active.
@@ -1484,7 +1503,9 @@ namespace {
   bool readbackToImageAsync(ArtifactIRenderer::ReadbackCallback callback) const;
   bool readbackTextureViewToImageAsync(
       ITextureView* textureView,
-      ArtifactIRenderer::ReadbackCallback callback) const;
+      ArtifactIRenderer::ReadbackCallback callback,
+      ArtifactIRenderer::ReadbackBufferCallback bufferCallback = {},
+      bool allowColdAllocation = false) const;
 
    void clear();
   void setClearColor(const FloatColor& color);
@@ -2827,10 +2848,13 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
 
  bool ArtifactIRenderer::Impl::readbackTextureViewToImageAsync(
      ITextureView* textureView,
-     ReadbackCallback callback) const
+     ReadbackCallback callback,
+     ArtifactIRenderer::ReadbackBufferCallback bufferCallback,
+     bool allowColdAllocation) const
  {
   if (!deviceManager_.device() || !deviceManager_.immediateContext()) {
     if (callback) callback(QImage());
+    if (bufferCallback) bufferCallback({});
     return true;
   }
 
@@ -2844,6 +2868,7 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
                                     deviceManager_.swapChain(),
                                     srcTexPtr, srcWidth, srcHeight)) {
     if (callback) callback(QImage());
+    if (bufferCallback) bufferCallback({});
     return true;
   }
 
@@ -2858,6 +2883,9 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
   RefCntAutoPtr<IFence> fence;
   ArtifactCore::SharedPtr<std::atomic_bool> busyFlag;
   bool cachedSlot = false;
+  ArtifactCore::SharedPtr<ArtifactCore::ImageUploadBuffer> outputPixels;
+  const std::uint64_t outputBytes = static_cast<std::uint64_t>(srcWidth) * srcHeight * 4u;
+  if (bufferCallback && (outputBytes == 0 || outputBytes > 64ull * 1024ull * 1024ull)) return false;
   Uint64 waitValue = 1;
 
   auto createAsyncResources = [&](RefCntAutoPtr<ITexture>& outStaging,
@@ -2893,10 +2921,13 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
     if (formatChanged) {
       bool anyBusy = false;
       for (const auto& slot : m_asyncReadbackRing) {
-        anyBusy = anyBusy || (slot.busy && slot.busy->load());
+        anyBusy = anyBusy || (slot.busy && slot.busy->load()) ||
+            (slot.pixels && slot.pixels.useCount() > 1);
       }
+      if (bufferCallback && !allowColdAllocation) return false;
       if (!anyBusy) {
         for (auto& slot : m_asyncReadbackRing) {
+          slot.pixels.reset();
           slot.staging = nullptr;
           slot.fence = nullptr;
           slot.signaledValue = 0;
@@ -2918,8 +2949,25 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
     for (Uint32 attempt = 0; attempt < kAsyncReadbackRingSize; ++attempt) {
       const Uint32 index = (m_asyncReadbackRingIndex + attempt) % kAsyncReadbackRingSize;
       auto& slot = m_asyncReadbackRing[index];
-      if (slot.busy && slot.busy->load()) {
+      if ((slot.busy && slot.busy->load()) ||
+          (slot.pixels && slot.pixels.useCount() > 1)) {
         continue;
+      }
+      if (bufferCallback && (!slot.pixels || slot.pixels->width != srcWidth ||
+          slot.pixels->height != srcHeight)) {
+        if (!allowColdAllocation) continue;
+        try {
+          auto pixels = ArtifactCore::makeShared<ArtifactCore::ImageUploadBuffer>();
+          pixels->width = srcWidth;
+          pixels->height = srcHeight;
+          pixels->rowStride = static_cast<std::uint64_t>(srcWidth) * 4u;
+          pixels->descriptor = ArtifactCore::SurfaceColorDescriptor::encodedSrgbRgba8Straight();
+          pixels->bytes.resize(static_cast<std::size_t>(outputBytes));
+          slot.pixels = std::move(pixels);
+        } catch (const std::bad_alloc&) {
+          // Do not publish a partially initialized pool buffer.
+          return false;
+        }
       }
       if (!slot.busy) {
         slot.busy = ArtifactCore::makeShared<std::atomic_bool>(false);
@@ -2928,6 +2976,7 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
           slot.width != srcWidth ||
           slot.height != srcHeight ||
           slot.format != stagingFormat) {
+        if (bufferCallback && !allowColdAllocation) continue;
         if (!createAsyncResources(slot.staging, slot.fence, "AsyncReadbackRing")) {
           slot.staging = nullptr;
           slot.fence = nullptr;
@@ -2946,6 +2995,7 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
       stagingTex = slot.staging;
       fence = slot.fence;
       busyFlag = slot.busy;
+      if (bufferCallback) outputPixels = slot.pixels;
       cachedSlot = true;
       waitValue = ++slot.signaledValue;
       m_asyncReadbackRingIndex = (index + 1) % kAsyncReadbackRingSize;
@@ -2987,7 +3037,9 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
     [[maybe_unused]] auto future = QtConcurrent::run([fence, stagingTex, ctx, w, h,
                                                        float16Readback, float32Readback,
                                                        waitValue, busyFlag, cachedSlot,
-                                                       cb = std::move(callback)]() mutable {
+                                                       cb = std::move(callback),
+                                                       bufferCb = std::move(bufferCallback),
+                                                       outputPixels]() mutable {
     auto releaseSlot = [&]() {
       if (cachedSlot && busyFlag) {
         busyFlag->store(false);
@@ -3002,13 +3054,17 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
     if (!mapped.pData) {
       releaseSlot();
       if (cb) cb(QImage());
+      if (bufferCb) bufferCb({});
       return;
     }
 
-    // Convert to QImage
-    QImage result(static_cast<int>(w), static_cast<int>(h), QImage::Format_RGBA8888);
-    uint8_t* resultBits = result.bits();
-    const size_t resultStride = static_cast<size_t>(result.bytesPerLine());
+    // Native consumers write directly into a leased, preallocated buffer.
+    // The Qt image allocation remains only for existing compatibility callers.
+    QImage result;
+    if (!outputPixels) result = QImage(static_cast<int>(w), static_cast<int>(h), QImage::Format_RGBA8888);
+    uint8_t* resultBits = outputPixels ? outputPixels->bytes.data() : result.bits();
+    const size_t resultStride = outputPixels ? static_cast<size_t>(outputPixels->rowStride)
+                                            : static_cast<size_t>(result.bytesPerLine());
     const size_t copyRowBytes = static_cast<size_t>(w) * 4u;
     const size_t sourceRowBytes =
         float16Readback ? static_cast<size_t>(w) * 8u
@@ -3023,16 +3079,16 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
     }
 
     if (!float16Readback && !float32Readback) {
-      ArtifactCore::Parallel::ForPixels(0, result.height(), result.width(),
-                                        result.height(), [&](int row) {
+      ArtifactCore::Parallel::ForPixels(0, static_cast<int>(h), static_cast<int>(w),
+                                        static_cast<int>(h), [&](int row) {
         const auto* source = static_cast<const uint8_t*>(mapped.pData) +
                              static_cast<size_t>(row) * mapped.Stride;
         std::memcpy(resultBits + static_cast<size_t>(row) * resultStride,
                     source, copyRowBytes);
       });
     } else if (float16Readback) {
-      ArtifactCore::Parallel::ForPixels(0, result.height(), result.width(),
-                                        result.height(), [&](int row) {
+      ArtifactCore::Parallel::ForPixels(0, static_cast<int>(h), static_cast<int>(w),
+                                        static_cast<int>(h), [&](int row) {
         const auto* srcRow = reinterpret_cast<const uint16_t*>(
             static_cast<const uint8_t*>(mapped.pData) +
             static_cast<size_t>(row) * mapped.Stride);
@@ -3049,8 +3105,8 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
         }
       });
     } else {
-      ArtifactCore::Parallel::ForPixels(0, result.height(), result.width(),
-                                        result.height(), [&](int row) {
+      ArtifactCore::Parallel::ForPixels(0, static_cast<int>(h), static_cast<int>(w),
+                                        static_cast<int>(h), [&](int row) {
         const auto* srcFloat = reinterpret_cast<const float*>(
             static_cast<const uint8_t*>(mapped.pData) +
             static_cast<size_t>(row) * mapped.Stride);
@@ -3080,7 +3136,8 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
     releaseSlot();
 
     // Invoke callback on the caller's thread (or thread pool)
-      if (cb) cb(result);
+      if (bufferCb) bufferCb(outputPixels);
+      else if (cb) cb(result);
     });
   return true;
  }
@@ -3938,6 +3995,14 @@ QImage ArtifactIRenderer::readbackTextureViewToImage(
      ReadbackCallback callback) const
  {
   return impl_->readbackTextureViewToImageAsync(textureView, std::move(callback));
+ }
+ bool ArtifactIRenderer::readbackTextureViewToBufferAsync(
+     Diligent::ITextureView* textureView, ReadbackBufferCallback callback,
+     bool allowColdAllocation) const
+ {
+  return impl_->readbackTextureViewToImageAsync(
+      textureView ? textureView : impl_->activeColorView(), {},
+      std::move(callback), allowColdAllocation);
  }
  QImage ArtifactIRenderer::readbackChannelToImage(ChannelType channel) const
  {
@@ -5303,6 +5368,22 @@ Diligent::ITextureView* ArtifactIRenderer::textureForImage(
     quint64 sourceVersion, qint64 sourceFrameContentKey) {
   return impl_->primitiveRenderer_.textureForImage(
       image, sourceIdentityId, sourceVersion, sourceFrameContentKey);
+}
+
+Diligent::ITextureView* ArtifactIRenderer::textureForVideoFrame(
+    const ArtifactCore::ImageF32x4_RGBA& image, const QUuid& videoLayerId,
+    qint64 frameContentKey,
+    const ArtifactCore::ImageUploadBuffer* preparedUpload) {
+    return textureForVideoFrame(image, videoLayerId, frameContentKey,
+                                preparedUpload, false);
+}
+
+Diligent::ITextureView* ArtifactIRenderer::textureForVideoFrame(
+    const ArtifactCore::ImageF32x4_RGBA& image, const QUuid& videoLayerId,
+    qint64 frameContentKey,
+    const ArtifactCore::ImageUploadBuffer* preparedUpload, bool residentOnly) {
+  return impl_->primitiveRenderer_.textureForVideoFrame(
+      image, videoLayerId, frameContentKey, preparedUpload, residentOnly);
 }
 
 Diligent::ITextureView* ArtifactIRenderer::textureForImage(

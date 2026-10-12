@@ -1,4 +1,6 @@
 module;
+#include <cstdio>
+#include <QElapsedTimer>
 #include <cmath>
 #include <cstddef>
 #include <cstring>
@@ -1017,7 +1019,21 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
             return std::holds_alternative<ParticlePkt>(packet) ||
                    std::holds_alternative<ClonerSpriteXformPkt>(packet);
         });
-    const bool useDeferredCtx = m_deferredCtx_ && !containsImmediateComputeConsumers;
+    // Tiny serial viewport batches do not amortize command-list handoff.
+    // Keep their resource transitions and draws on the existing immediate
+    // stream, while retaining deferred recording for larger batches.
+    constexpr std::size_t kMinimumDeferredPackets = 16;
+    const bool useDeferredCtx = m_deferredCtx_ && !containsImmediateComputeConsumers &&
+        buf.packets().size() >= kMinimumDeferredPackets;
+    static const bool profileSubmitStages =
+        qEnvironmentVariableIsSet("ARTIFACT_VIDEO_PREVIEW_PROFILE_SETUP") &&
+        qEnvironmentVariable("ARTIFACT_VIDEO_PREVIEW_PROFILE_SETUP") != QStringLiteral("0");
+    static thread_local unsigned int submitStageSamples = 0;
+    const bool sampleSubmitStages = profileSubmitStages && submitStageSamples < 4096;
+    QElapsedTimer submitStageTimer;
+    if (sampleSubmitStages) submitStageTimer.start();
+    qint64 finishListNs = 0, executeNs = 0, finishFrameNs = 0;
+
 
     // Phase 7a: record into deferred context, then execute on immediate
     IDeviceContext* recordCtx = ctx;
@@ -1442,12 +1458,27 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
     flushSpriteBatch();
     flushSolidRectBatch(); // flush any remaining
     recordCtx->EndDebugGroup();
+    const auto recordNs = sampleSubmitStages ? submitStageTimer.nsecsElapsed() : 0;
     if (useDeferredCtx) {
         RefCntAutoPtr<ICommandList> pCmdList;
         m_deferredCtx_->FinishCommandList(&pCmdList);
+        const auto listFinishedNs = sampleSubmitStages ? submitStageTimer.nsecsElapsed() : 0;
         ICommandList* raw = pCmdList.RawPtr();
         ctx->ExecuteCommandLists(1, &raw);
+        const auto executedNs = sampleSubmitStages ? submitStageTimer.nsecsElapsed() : 0;
         m_deferredCtx_->FinishFrame();
+        if (sampleSubmitStages) {
+            finishListNs = listFinishedNs - recordNs;
+            executeNs = executedNs - listFinishedNs;
+            finishFrameNs = submitStageTimer.nsecsElapsed() - executedNs;
+        }
+    }
+    if (sampleSubmitStages) {
+        std::fprintf(stderr,
+            "[VideoPreviewSubmitStageProfile] deferred=%d packets=%llu recordMs=%.3f finishListMs=%.3f executeMs=%.3f finishFrameMs=%.3f\n",
+            useDeferredCtx ? 1 : 0, static_cast<unsigned long long>(buf.packets().size()),
+            recordNs / 1.0e6, finishListNs / 1.0e6, executeNs / 1.0e6, finishFrameNs / 1.0e6);
+        ++submitStageSamples;
     }
     buf.reset();
 }

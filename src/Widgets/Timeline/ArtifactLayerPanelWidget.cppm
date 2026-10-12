@@ -3706,6 +3706,7 @@ ArtifactLayerPanelWidget::ArtifactLayerPanelWidget(QWidget* parent)
 
  impl_->eventBusSubscriptions_.push_back(
   impl_->eventBus_.subscribe<LayerChangedEvent>([this](const LayerChangedEvent& event) {
+            if (event.changeType == LayerChangedEvent::ChangeType::FrameReady) return;
       const QString compositionId = event.compositionId;
       const LayerID layerId(event.layerId);
       const auto changeType = event.changeType;

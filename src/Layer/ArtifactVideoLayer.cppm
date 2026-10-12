@@ -13,7 +13,9 @@ module;
 #include <QVariant>
 #include <QLoggingCategory>
 #include <QMetaObject>
+#include <QPointer>
 #include <QThread>
+#include <QThreadPool>
 #include <QFuture>
 #include <QFutureWatcher>
 #include <QtConcurrent>
@@ -47,6 +49,7 @@ module;
 #include <mutex>
 #include <thread>
 #include <chrono>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -83,6 +86,8 @@ import Artifact.Event.Types;
 import CvUtils;
 import Graphics.SurfaceColorContract;
 import Image.ImageF32x4_RGBA;
+import Image.UploadConversion;
+import Core.Parallel;
 import Memory.SharedPtr;
 import Artifact.Layer.SourceCrop;
 import Utils.String.UniString;
@@ -99,6 +104,18 @@ namespace Artifact {
  Q_LOGGING_CATEGORY(videoLayerLog, "artifact.layer.video")
 
  namespace {
+
+QThreadPool& videoUploadConversionThreadPool()
+{
+    static QThreadPool pool;
+    static const bool configured = [] {
+        pool.setMaxThreadCount(1);
+        pool.setExpiryTimeout(-1);
+        return true;
+    }();
+    Q_UNUSED(configured);
+    return pool;
+}
 
 int64_t timelineFrameToSourceFrame(const ArtifactVideoLayer* layer, int64_t timelineFrame)
 {
@@ -129,6 +146,11 @@ double timelineFrameToSourceFrameDouble(const ArtifactVideoLayer* layer, int64_t
 QString videoFramePayloadRepresentation(const int64_t sourceFrame)
 {
     return QStringLiteral("video.f32.frame.%1").arg(sourceFrame);
+}
+
+QString videoUploadPayloadRepresentation(const int64_t sourceFrame)
+{
+    return QStringLiteral("video.rgba8-upload.frame.%1").arg(sourceFrame);
 }
 
 int64_t sourceFrameToTimelineFrame(const ArtifactVideoLayer* layer, int64_t sourceFrame)
@@ -271,13 +293,29 @@ ArtifactCore::ImageF32x4_RGBA cpuVideoFrameToImageF32x4_RGBA(const ArtifactCore:
     }
 
     if (frame.meta.pixelFormat == ArtifactCore::VideoFramePixelFormat::RGB24) {
-        cv::Mat wrapped(frame.meta.height, frame.meta.width, CV_8UC3,
-                        const_cast<std::uint8_t*>(frame.bytes.data()),
-                        frame.strideBytes);
         cv::Mat converted;
-        cv::cvtColor(wrapped, converted, cv::COLOR_RGB2BGRA);
-        image.setFromCVMat(
-            converted, cpuVideoFrameSurfaceDescriptor(frame.meta.pixelFormat));
+        converted.create(frame.meta.height, frame.meta.width, CV_32FC4);
+        const int width = frame.meta.width;
+        const int height = frame.meta.height;
+        const int sourceStride = frame.strideBytes;
+        const auto* sourceBytes = frame.bytes.data();
+        ArtifactCore::Parallel::ForPixels(
+            0, height, width, height, 16, [&](int y) {
+                const auto* sourceRow =
+                    sourceBytes + static_cast<std::size_t>(y) *
+                                      static_cast<std::size_t>(sourceStride);
+                auto* destinationRow = converted.ptr<cv::Vec4f>(y);
+                for (int x = 0; x < width; ++x) {
+                    const auto* pixel = sourceRow + static_cast<std::size_t>(x) * 3u;
+                    destinationRow[x] = cv::Vec4f(
+                        static_cast<float>(pixel[2]) / 255.0f,
+                        static_cast<float>(pixel[1]) / 255.0f,
+                        static_cast<float>(pixel[0]) / 255.0f, 1.0f);
+                }
+            });
+        image.setFromCVMatOwned(
+            std::move(converted),
+            cpuVideoFrameSurfaceDescriptor(frame.meta.pixelFormat));
     }
     else if (frame.meta.pixelFormat == ArtifactCore::VideoFramePixelFormat::RGBA8) {
         cv::Mat wrapped(frame.meta.height, frame.meta.width, CV_8UC4,
@@ -319,6 +357,13 @@ ArtifactCore::ImageF32x4_RGBA decodedVideoFrameToImageF32x4_RGBA(const ArtifactC
     return ArtifactCore::ImageF32x4_RGBA();
 }
 
+bool decodedVideoFrameHasCpuPayload(
+    const ArtifactCore::DecodedVideoFrame& decoded)
+{
+    const auto* cpu = std::get_if<ArtifactCore::CpuVideoFrame>(&decoded);
+    return cpu && cpu->isValid();
+}
+
 ArtifactCore::GpuVideoFrame decodedVideoFrameToGpuFrame(const ArtifactCore::DecodedVideoFrame& decoded)
 {
     if (const auto* gpu = std::get_if<ArtifactCore::GpuVideoFrame>(&decoded)) {
@@ -350,16 +395,28 @@ QRect sourceCropToRect(const Artifact::SourceCrop& crop, const QSize& sourceSize
         QRect(0, 0, sourceSize.width(), sourceSize.height()));
 }
 
-void publishVideoLayerModified(ArtifactVideoLayer* layer)
+void publishVideoLayerModified(ArtifactVideoLayer* layer, bool frameReady = false)
 {
     if (!layer) {
         return;
     }
 
     if (auto* comp = static_cast<ArtifactAbstractComposition*>(layer->composition())) {
+        static const bool profileNotifications =
+            qEnvironmentVariableIntValue("ARTIFACT_VIDEO_PREVIEW_PROFILE_SETUP") != 0;
+        static int notificationSamples = 0;
+        const bool profileThisNotification = profileNotifications && notificationSamples++ < 64;
+        const auto notificationStart = profileThisNotification
+            ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
             LayerChangedEvent{comp->id().toString(), layer->id().toString(),
-                              LayerChangedEvent::ChangeType::Modified});
+                              frameReady ? LayerChangedEvent::ChangeType::FrameReady
+                                         : LayerChangedEvent::ChangeType::Modified});
+        if (profileThisNotification) {
+            std::fprintf(stderr, "[VideoPreviewNotification] elapsedMs=%.3f\n",
+                         std::chrono::duration<double, std::milli>(
+                             std::chrono::steady_clock::now() - notificationStart).count());
+        }
     }
 }
 
@@ -403,6 +460,7 @@ public:
                 ? (currentBytes_ - it->second.byteSize + newBytes)
                 : newBytes;
             it->second.data = frameData;
+            it->second.sharedData.reset();
             it->second.byteSize = newBytes;
             touch(it);
             evictIfNeeded();
@@ -410,7 +468,42 @@ public:
         }
 
         cacheOrder_.push_front(frame);
-        cache_.emplace(frame, CacheEntry{frameData, newBytes, cacheOrder_.begin()});
+        CacheEntry entry;
+        entry.data = frameData;
+        entry.byteSize = newBytes;
+        entry.orderIt = cacheOrder_.begin();
+        cache_.emplace(frame, std::move(entry));
+        currentBytes_ += newBytes;
+        evictIfNeeded();
+    }
+
+    void putShared(
+        int64_t frame,
+        const ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA>& frameData) {
+        if (!frameData || frameData->isEmpty()) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(mutex_);
+        const size_t newBytes = calculateFrameBytes(*frameData);
+        auto it = cache_.find(frame);
+        if (it != cache_.end()) {
+            currentBytes_ = (currentBytes_ >= it->second.byteSize)
+                ? (currentBytes_ - it->second.byteSize + newBytes)
+                : newBytes;
+            it->second.data = ArtifactCore::ImageF32x4_RGBA();
+            it->second.sharedData = frameData;
+            it->second.byteSize = newBytes;
+            touch(it);
+            evictIfNeeded();
+            return;
+        }
+
+        cacheOrder_.push_front(frame);
+        CacheEntry entry;
+        entry.sharedData = frameData;
+        entry.byteSize = newBytes;
+        entry.orderIt = cacheOrder_.begin();
+        cache_.emplace(frame, std::move(entry));
         currentBytes_ += newBytes;
         evictIfNeeded();
     }
@@ -420,11 +513,32 @@ public:
 
         auto it = cache_.find(frame);
         if (it != cache_.end()) {
-            outFrame = it->second.data;
+            outFrame = it->second.sharedData
+                ? *it->second.sharedData
+                : it->second.data;
             touch(it);
             return true;
         }
         return false;
+    }
+
+    ArtifactCore::SharedPtr<const ArtifactCore::ImageF32x4_RGBA> getShared(
+        int64_t frame) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = cache_.find(frame);
+        if (it == cache_.end()) {
+            return {};
+        }
+        if (!it->second.sharedData) {
+            if (it->second.data.isEmpty()) {
+                return {};
+            }
+            it->second.sharedData = ArtifactCore::makeShared<
+                ArtifactCore::ImageF32x4_RGBA>(std::move(it->second.data));
+        }
+        touch(it);
+        return ArtifactCore::staticPointerCast<
+            const ArtifactCore::ImageF32x4_RGBA>(it->second.sharedData);
     }
 
     bool contains(int64_t frame) const {
@@ -452,6 +566,7 @@ public:
 private:
     struct CacheEntry {
         ArtifactCore::ImageF32x4_RGBA data;
+        ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA> sharedData;
         size_t byteSize = 0;
         std::list<int64_t>::iterator orderIt;
     };
@@ -557,6 +672,7 @@ public:
         QString presentStatus = QStringLiteral("unknown");
         QString bottleneck = QStringLiteral("none");
         bool repeatedLastGood = false;
+        bool presentationRecorded = false;
         double lateByMs = 0.0;
     };
 
@@ -586,11 +702,30 @@ public:
         uint64_t requestId = 0;
     };
 
+    struct UploadConversionRequest {
+        int64_t sourceFrame = -1;
+        uint32_t generation = 0;
+        bool priority = false;
+        QUuid sourceAssetId;
+        std::uint64_t sourceVersion = 0;
+        ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA> image;
+    };
+
     ArtifactCore::SharedPtr<ArtifactCore::MediaPlaybackController> playbackController_;
     ArtifactCore::SharedPtr<ArtifactCore::MediaPlaybackController> proxyController_;
     FrameCache frameCache_;
     VideoStreamInfo streamInfo_;
-    
+    bool isCompatibleVideoFrame(
+        const ArtifactCore::ImageF32x4_RGBA& image) const
+    {
+        if (image.isEmpty()) {
+            return false;
+        }
+        return streamInfo_.width <= 0 || streamInfo_.height <= 0 ||
+               (image.width() == streamInfo_.width &&
+                image.height() == streamInfo_.height);
+    }
+
     // Audio buffering
     std::deque<float> audioBufferL_;
     std::deque<float> audioBufferR_;
@@ -625,6 +760,18 @@ public:
     ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA> currentSharedFrame_;
     mutable std::mutex sharedFramePayloadMutex_;
     std::unordered_map<int64_t, ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA>> sharedFramePayloads_;
+    mutable std::mutex uploadFrameMutex_;
+    std::unordered_map<int64_t, ArtifactCore::SharedPtr<ArtifactCore::ImageUploadBuffer>> uploadFrames_;
+    std::deque<int64_t> uploadFrameOrder_;
+    std::array<ArtifactCore::SharedPtr<ArtifactCore::ImageUploadBuffer>, 4>
+        uploadBufferPool_{};
+    std::size_t uploadBufferPoolCount_ = 0;
+    std::size_t uploadBufferPoolBytes_ = 0;
+    std::size_t uploadFrameBytes_ = 0;
+    mutable std::mutex uploadRequestMutex_;
+    std::deque<UploadConversionRequest> pendingUploadConversions_;
+    bool uploadConversionRunning_ = false;
+    mutable QFuture<void> uploadConversionFuture_;
     bool hasCurrentFrameBuffer_ = false;
     int64_t lastDecodedFrame_ = -1;
     int64_t currentTimelineFrame_ = 0;
@@ -649,6 +796,20 @@ public:
     std::size_t prefetchedFrameCount_ = 0;
     mutable std::mutex frameTicketMutex_;
     FrameTicket frameTicket_;
+    int64_t lastRecordedOutcomeFrame_ = -1;
+    uint32_t lastRecordedOutcomeGeneration_ = 0;
+    quint64 cumulativeLateFrameCount_ = 0;
+    quint64 cumulativeRepeatedFrameCount_ = 0;
+    struct FirstLatePresentation {
+        int64_t timelineFrame = -1;
+        int64_t sourceFrame = -1;
+        double elapsedMs = 0.0;
+        double decodeMs = 0.0;
+        double queuedMs = 0.0;
+        double presentedMs = 0.0;
+        double renderToPresentMs = 0.0;
+    } firstLatePresentation_;
+    std::chrono::steady_clock::time_point frameDiagnosticsEpoch_{};
     std::deque<FrameOutcome> recentFrameOutcomes_;
 
     std::deque<int64_t> sharedFrameOrder_;
@@ -684,6 +845,318 @@ public:
         sharedFrameOrder_.clear();
     }
 
+    void cacheUploadFrame(
+        const int64_t sourceFrame,
+        const ArtifactCore::ImageF32x4_RGBA& image,
+        const uint32_t generation,
+        const QUuid& sourceAssetId,
+        const std::uint64_t sourceVersion)
+    {
+        if (image.isEmpty() || generation !=
+                decodeGeneration_.load(std::memory_order_acquire)) {
+            return;
+        }
+
+        ArtifactCore::SharedPtr<ArtifactCore::ImageUploadBuffer> converted;
+        if (!sourceAssetId.isNull() && sourceVersion > 0) {
+            converted = ArtifactCore::staticPointerCast<
+                ArtifactCore::ImageUploadBuffer>(
+                ArtifactCore::AssetManager::instance().decodedPayload(
+                    sourceAssetId, sourceVersion,
+                    videoUploadPayloadRepresentation(sourceFrame)));
+            if (converted && !converted->isValid()) {
+                converted.reset();
+            }
+        }
+        const bool sharedPayloadReady = static_cast<bool>(converted);
+        {
+            std::lock_guard<std::mutex> lock(uploadFrameMutex_);
+            for (std::size_t index = 0;
+                 !converted && index < uploadBufferPoolCount_; ++index) {
+                if (uploadBufferPool_[index] &&
+                    uploadBufferPool_[index].useCount() == 1) {
+                    converted = std::move(uploadBufferPool_[index]);
+                    uploadBufferPoolBytes_ -= std::min(
+                        uploadBufferPoolBytes_, converted->bytes.size());
+                    --uploadBufferPoolCount_;
+                    if (index != uploadBufferPoolCount_) {
+                        uploadBufferPool_[index] =
+                            std::move(uploadBufferPool_[uploadBufferPoolCount_]);
+                    }
+                    uploadBufferPool_[uploadBufferPoolCount_].reset();
+                    break;
+                }
+            }
+        }
+        if (!sharedPayloadReady) {
+            if (!converted) {
+                converted = ArtifactCore::makeShared<
+                    ArtifactCore::ImageUploadBuffer>();
+            }
+            ArtifactCore::convertImageForUploadInto(
+                image, ArtifactCore::ImageUploadTarget::Rgba8SrgbStraight,
+                *converted);
+            if (!converted->isValid()) {
+                return;
+            }
+            if (!sourceAssetId.isNull() && sourceVersion > 0) {
+                auto published = ArtifactCore::AssetManager::instance()
+                                     .publishDecodedPayload(
+                                         sourceAssetId, sourceVersion,
+                                         videoUploadPayloadRepresentation(
+                                             sourceFrame),
+                                         converted);
+                if (published) {
+                    converted = ArtifactCore::staticPointerCast<
+                        ArtifactCore::ImageUploadBuffer>(published);
+                }
+            }
+        }
+        if (!converted || !converted->isValid()) {
+            return;
+        }
+
+        // Keep the current request plus the decoder's three-frame lookahead.
+        constexpr std::size_t kMaxUploadFrames = 4;
+        constexpr std::size_t kMaxUploadBytes = 64u * 1024u * 1024u;
+        constexpr std::size_t kMaxPooledUploadBuffers = 4;
+        constexpr std::size_t kMaxPooledUploadBytes = 64u * 1024u * 1024u;
+        const std::size_t newBytes = converted->bytes.size();
+        if (newBytes > kMaxUploadBytes) {
+            return;
+        }
+        if (generation != decodeGeneration_.load(std::memory_order_acquire)) {
+            return;
+        }
+
+        std::array<ArtifactCore::SharedPtr<ArtifactCore::ImageUploadBuffer>,
+                   kMaxUploadFrames + 1> evicted{};
+        std::size_t evictedCount = 0;
+        {
+            std::lock_guard<std::mutex> lock(uploadFrameMutex_);
+            if (generation != decodeGeneration_.load(std::memory_order_acquire)) {
+                return;
+            }
+            const auto existing = uploadFrames_.find(sourceFrame);
+            if (existing != uploadFrames_.end()) {
+                uploadFrameBytes_ -= std::min(uploadFrameBytes_,
+                                              existing->second->bytes.size());
+                evicted[evictedCount++] = std::move(existing->second);
+                existing->second = std::move(converted);
+                uploadFrameBytes_ += newBytes;
+                const auto order = std::find(uploadFrameOrder_.begin(),
+                                             uploadFrameOrder_.end(), sourceFrame);
+                if (order != uploadFrameOrder_.end()) {
+                    uploadFrameOrder_.erase(order);
+                }
+                uploadFrameOrder_.push_back(sourceFrame);
+            } else {
+                uploadFrames_.emplace(sourceFrame, std::move(converted));
+                uploadFrameBytes_ += newBytes;
+                uploadFrameOrder_.push_back(sourceFrame);
+            }
+
+            while ((uploadFrames_.size() > kMaxUploadFrames ||
+                    uploadFrameBytes_ > kMaxUploadBytes) &&
+                   !uploadFrameOrder_.empty()) {
+                const int64_t oldest = uploadFrameOrder_.front();
+                uploadFrameOrder_.pop_front();
+                const auto it = uploadFrames_.find(oldest);
+                if (it != uploadFrames_.end()) {
+                    uploadFrameBytes_ -= std::min(uploadFrameBytes_,
+                                                  it->second->bytes.size());
+                    if (evictedCount < evicted.size()) {
+                        evicted[evictedCount++] = std::move(it->second);
+                    }
+                    uploadFrames_.erase(it);
+                }
+            }
+
+            for (std::size_t index = 0; index < evictedCount; ++index) {
+                if (evicted[index] && evicted[index].useCount() == 1 &&
+                    uploadBufferPoolCount_ < kMaxPooledUploadBuffers &&
+                    evicted[index]->bytes.size() <=
+                        kMaxPooledUploadBytes - std::min(
+                            uploadBufferPoolBytes_, kMaxPooledUploadBytes)) {
+                    uploadBufferPoolBytes_ += evicted[index]->bytes.size();
+                    uploadBufferPool_[uploadBufferPoolCount_++] =
+                        std::move(evicted[index]);
+                }
+            }
+        }
+    }
+
+    ArtifactCore::SharedPtr<const ArtifactCore::ImageUploadBuffer>
+    cachedUploadFrame(const int64_t sourceFrame) const
+    {
+        {
+            std::lock_guard<std::mutex> lock(uploadFrameMutex_);
+            const auto it = uploadFrames_.find(sourceFrame);
+            if (it != uploadFrames_.end()) {
+                return ArtifactCore::staticPointerCast<
+                    const ArtifactCore::ImageUploadBuffer>(it->second);
+            }
+        }
+        if (sourceAssetId_.isNull() || cachedSourceVersion_ == 0) {
+            return {};
+        }
+        return ArtifactCore::staticPointerCast<
+            const ArtifactCore::ImageUploadBuffer>(
+            ArtifactCore::AssetManager::instance().decodedPayload(
+                sourceAssetId_, cachedSourceVersion_,
+                videoUploadPayloadRepresentation(sourceFrame)));
+    }
+
+    bool hasCachedUploadFrame(const int64_t sourceFrame) const
+    {
+        {
+            std::lock_guard<std::mutex> lock(uploadFrameMutex_);
+            if (uploadFrames_.find(sourceFrame) != uploadFrames_.end()) {
+                return true;
+            }
+        }
+        return !sourceAssetId_.isNull() && cachedSourceVersion_ > 0 &&
+               static_cast<bool>(ArtifactCore::AssetManager::instance()
+                                     .decodedPayload(
+                                         sourceAssetId_, cachedSourceVersion_,
+                                         videoUploadPayloadRepresentation(
+                                             sourceFrame)));
+    }
+
+    void clearUploadFrames()
+    {
+        std::lock_guard<std::mutex> lock(uploadFrameMutex_);
+        uploadFrames_.clear();
+        uploadFrameOrder_.clear();
+        uploadFrameBytes_ = 0;
+    }
+
+    void enqueueUploadFrame(
+        const int64_t sourceFrame,
+        ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA> image,
+        const uint32_t generation,
+        const bool priority,
+        const QUuid& sourceAssetId,
+        const std::uint64_t sourceVersion,
+        ArtifactVideoLayer* owner)
+    {
+        if (!owner || generation != decodeGeneration_.load(std::memory_order_acquire)) {
+            return;
+        }
+        if (!image || image->isEmpty()) {
+            return;
+        }
+
+        bool startWorker = false;
+        {
+            std::lock_guard<std::mutex> lock(uploadRequestMutex_);
+            if (generation != decodeGeneration_.load(std::memory_order_acquire)) {
+                return;
+            }
+            for (const auto& queued : pendingUploadConversions_) {
+                if (queued.sourceFrame == sourceFrame &&
+                    queued.generation == generation) {
+                    return;
+                }
+            }
+            constexpr std::size_t kMaxPendingUploadConversions = 4;
+            while (pendingUploadConversions_.size() >= kMaxPendingUploadConversions) {
+                if (priority) {
+                    pendingUploadConversions_.pop_back();
+                } else {
+                    pendingUploadConversions_.pop_front();
+                }
+            }
+            UploadConversionRequest request{
+                sourceFrame, generation, priority, sourceAssetId,
+                sourceVersion, std::move(image)};
+            if (priority) {
+                pendingUploadConversions_.push_front(std::move(request));
+            } else {
+                pendingUploadConversions_.push_back(std::move(request));
+            }
+            if (!uploadConversionRunning_) {
+                uploadConversionRunning_ = true;
+                startWorker = true;
+            }
+        }
+        if (!startWorker) {
+            return;
+        }
+
+        QPointer<ArtifactVideoLayer> ownerGuard(owner);
+        uploadConversionFuture_ = QtConcurrent::run(
+            &videoUploadConversionThreadPool(),
+            [this, ownerGuard]() mutable {
+                ArtifactCore::ScopedThreadName threadName(
+                    QStringLiteral("VideoLayer/upload-convert"));
+                for (;;) {
+                    UploadConversionRequest request;
+                    {
+                        std::lock_guard<std::mutex> lock(uploadRequestMutex_);
+                        if (pendingUploadConversions_.empty()) {
+                            uploadConversionRunning_ = false;
+                            return;
+                        }
+                        request = std::move(pendingUploadConversions_.front());
+                        pendingUploadConversions_.pop_front();
+                    }
+
+                    if (request.generation !=
+                            decodeGeneration_.load(std::memory_order_acquire) ||
+                        !request.image || request.image->isEmpty()) {
+                        continue;
+                    }
+                    cacheUploadFrame(request.sourceFrame, *request.image,
+                                     request.generation,
+                                     request.sourceAssetId,
+                                     request.sourceVersion);
+                    if (request.generation !=
+                            decodeGeneration_.load(std::memory_order_acquire) ||
+                        !ownerGuard) {
+                        continue;
+                    }
+                    const int64_t sourceFrame = request.sourceFrame;
+                    QMetaObject::invokeMethod(
+                        ownerGuard,
+                        [ownerGuard, sourceFrame,
+                         generation = request.generation]() {
+                            if (!ownerGuard ||
+                                ownerGuard->impl_->decodeGeneration_.load(
+                                    std::memory_order_acquire) != generation) {
+                                return;
+                            }
+                            int64_t currentSource = -1;
+                            {
+                                std::lock_guard<std::mutex> lock(
+                                    ownerGuard->impl_->frameStateMutex_);
+                                currentSource =
+                                    ownerGuard->impl_->currentSourceFrame_;
+                            }
+                            if (sourceFrame == currentSource) {
+                                publishVideoLayerModified(ownerGuard, true);
+                            }
+                        },
+                        Qt::QueuedConnection);
+                }
+            });
+    }
+
+    void cancelPendingUploadConversions()
+    {
+        {
+            std::lock_guard<std::mutex> lock(uploadRequestMutex_);
+            pendingUploadConversions_.clear();
+        }
+        if (uploadConversionFuture_.isRunning()) {
+            uploadConversionFuture_.waitForFinished();
+        }
+        uploadConversionFuture_ = QFuture<void>();
+        std::lock_guard<std::mutex> lock(uploadRequestMutex_);
+        pendingUploadConversions_.clear();
+        uploadConversionRunning_ = false;
+    }
+
     bool refreshSourceVersionIfNeeded()
     {
         if (sourceAssetId_.isNull()) {
@@ -703,13 +1176,16 @@ public:
         invalidatePendingDecode();
         frameCache_.clear();
         clearSharedFrames();
+        clearUploadFrames();
         {
             std::lock_guard<std::mutex> lock(frameStateMutex_);
             // Keep the last presented CPU frame visible while the refreshed
             // source version is decoded. Clearing it here exposes the
             // composition's black background for one or more render ticks.
             currentSharedFrame_.reset();
-            hasCurrentFrameBuffer_ = !currentFrameBuffer_.isEmpty();
+            // ImageF32x4_RGBA's default value is a transparent 1x1 image, so
+            // isEmpty() cannot distinguish an uninitialized buffer here.
+            // Preserve the validity bit set only by a decoded presentation.
             lastDecodedFrame_ = -1;
         }
         decodeTargetFrame_ = -1;
@@ -771,15 +1247,17 @@ public:
     void invalidatePendingDecode() {
         const uint32_t generation =
             decodeGeneration_.fetch_add(1, std::memory_order_acq_rel) + 1;
-        std::lock_guard<std::mutex> lock(decodeRequestMutex_);
-        pendingDecodeRequest_.reset();
-        failedDecodeRequestId_ = 0;
-        lastDecodeFailureAt_ = {};
-        latestDecodeGeneration_ = generation;
-        latestDecodeTimelineFrame_ = -1;
-        latestDecodeSourceFrame_ = -1;
-        prefetchedFrameCount_ = 0;
-        latestDecodeRequestId_ = ++nextDecodeRequestId_;
+        {
+            std::lock_guard<std::mutex> lock(decodeRequestMutex_);
+            pendingDecodeRequest_.reset();
+            failedDecodeRequestId_ = 0;
+            lastDecodeFailureAt_ = {};
+            latestDecodeGeneration_ = generation;
+            latestDecodeTimelineFrame_ = -1;
+            latestDecodeSourceFrame_ = -1;
+            prefetchedFrameCount_ = 0;
+            latestDecodeRequestId_ = ++nextDecodeRequestId_;
+        }
     }
 
     void cancelPendingDecode() {
@@ -797,6 +1275,7 @@ public:
         decoding_.store(false, std::memory_order_release);
         decodeTargetFrame_.store(-1, std::memory_order_release);
         decodeFuture_ = QFuture<void>();
+        cancelPendingUploadConversions();
     }
 
     double frameBudgetMs() const {
@@ -858,6 +1337,8 @@ public:
         if (frameTicket_.sourceFrame != sourceFrame) {
             return;
         }
+        if (frameTicket_.source == QStringLiteral("composition-ram") ||
+            frameTicket_.source == QStringLiteral("composition-disk")) return;
         frameTicket_.stage = FrameStage::Decoding;
         frameTicket_.decodeStartedAt = std::chrono::steady_clock::now();
     }
@@ -868,6 +1349,8 @@ public:
         if (frameTicket_.sourceFrame != sourceFrame) {
             return;
         }
+        if (frameTicket_.source == QStringLiteral("composition-ram") ||
+            frameTicket_.source == QStringLiteral("composition-disk")) return;
         // A latest-wins request can replace the ticket with the same source
         // frame while an older decode is still running. In that case the new
         // ticket has no decode start timestamp; subtracting the epoch produced
@@ -892,7 +1375,10 @@ public:
         const auto now = std::chrono::steady_clock::now();
         std::lock_guard<std::mutex> lock(frameTicketMutex_);
         if (frameTicket_.timelineFrame != timelineFrame ||
-            frameTicket_.stage == FrameStage::Failed) {
+            frameTicket_.stage == FrameStage::Failed ||
+            frameTicket_.presentationRecorded ||
+            (lastRecordedOutcomeFrame_ == timelineFrame &&
+             lastRecordedOutcomeGeneration_ == decodeGeneration_.load(std::memory_order_acquire))) {
             return;
         }
         frameTicket_.renderQueuedMs =
@@ -907,7 +1393,10 @@ public:
         const auto now = std::chrono::steady_clock::now();
         std::lock_guard<std::mutex> lock(frameTicketMutex_);
         if (frameTicket_.timelineFrame != timelineFrame ||
-            frameTicket_.stage != FrameStage::RenderQueued) {
+            frameTicket_.stage != FrameStage::RenderQueued ||
+            frameTicket_.presentationRecorded ||
+            (lastRecordedOutcomeFrame_ == timelineFrame &&
+             lastRecordedOutcomeGeneration_ == decodeGeneration_.load(std::memory_order_acquire))) {
             return;
         }
         frameTicket_.presentedMs =
@@ -936,6 +1425,20 @@ public:
         frameTicket_.stage = frameTicket_.lateByMs > 0.0
             ? FrameStage::Late
             : FrameStage::Presented;
+        frameTicket_.presentationRecorded = true;
+        lastRecordedOutcomeFrame_ = timelineFrame;
+        lastRecordedOutcomeGeneration_ = decodeGeneration_.load(std::memory_order_acquire);
+        cumulativeLateFrameCount_ += frameTicket_.lateByMs > 0.0 ? 1 : 0;
+        cumulativeRepeatedFrameCount_ += frameTicket_.repeatedLastGood ? 1 : 0;
+        if (frameTicket_.lateByMs > 0.0 && firstLatePresentation_.timelineFrame < 0) {
+            firstLatePresentation_ = {
+                timelineFrame, frameTicket_.sourceFrame,
+                frameDiagnosticsEpoch_ == std::chrono::steady_clock::time_point{}
+                    ? 0.0 : std::chrono::duration<double, std::milli>(
+                        now - frameDiagnosticsEpoch_).count(),
+                frameTicket_.decodeMs, frameTicket_.renderQueuedMs,
+                frameTicket_.presentedMs, frameTicket_.renderToPresentMs};
+        }
         recentFrameOutcomes_.push_back(
             FrameOutcome{frameTicket_.lateByMs > 0.0,
                          frameTicket_.repeatedLastGood,
@@ -947,7 +1450,7 @@ public:
         }
     }
 
-    QString frameTicketSummary() const {
+    QString frameTicketSummary(bool includeFirstLatePresentation) const {
         std::lock_guard<std::mutex> lock(frameTicketMutex_);
         int lateCount = 0;
         int repeatedCount = 0;
@@ -965,7 +1468,7 @@ public:
             ? 100.0 * static_cast<double>(
                   recentFrameOutcomes_.size() - lateCount) / windowSize
             : 100.0;
-        return QStringLiteral(
+        QString summary = QStringLiteral(
                    "ticketFrame=%1 sourceFrame=%2 stage=%3 source=%4 "
                    "budgetMs=%5 decodeMs=%6 readyMs=%7 renderQueuedMs=%8 "
                    "presentedMs=%9 renderToPresentMs=%10 "
@@ -973,7 +1476,8 @@ public:
                    "gpuTiming=%13 presentStatus=%14 bottleneck=%15 "
                    "fallback=%16 lateByMs=%17 windowFrames=%18 "
                    "onTimePct=%19 lateFrames=%20 repeatedFrames=%21 "
-                   "avgDecodeMs=%22 avgPresentedMs=%23")
+                   "avgDecodeMs=%22 avgPresentedMs=%23 "
+                   "cumulativeLateFrames=%24 cumulativeRepeatedFrames=%25")
             .arg(frameTicket_.timelineFrame)
             .arg(frameTicket_.sourceFrame)
             .arg(frameStageName(frameTicket_.stage))
@@ -1002,10 +1506,28 @@ public:
             .arg(windowSize > 0.0 ? decodeTotalMs / windowSize : 0.0,
                  0, 'f', 2)
             .arg(windowSize > 0.0 ? presentedTotalMs / windowSize : 0.0,
-                 0, 'f', 2);
+                 0, 'f', 2)
+            .arg(cumulativeLateFrameCount_)
+            .arg(cumulativeRepeatedFrameCount_);
+        if (!includeFirstLatePresentation) return summary;
+        return summary + QStringLiteral(
+            " firstLateFrame=%1 firstLateSourceFrame=%2 firstLateElapsedMs=%3 "
+            "firstLateDecodeMs=%4 firstLateQueuedMs=%5 firstLatePresentedMs=%6 "
+            "firstLateRenderToPresentMs=%7")
+            .arg(firstLatePresentation_.timelineFrame)
+            .arg(firstLatePresentation_.sourceFrame)
+            .arg(firstLatePresentation_.elapsedMs, 0, 'f', 2)
+            .arg(firstLatePresentation_.decodeMs, 0, 'f', 2)
+            .arg(firstLatePresentation_.queuedMs, 0, 'f', 2)
+            .arg(firstLatePresentation_.presentedMs, 0, 'f', 2)
+            .arg(firstLatePresentation_.renderToPresentMs, 0, 'f', 2);
     }
 
     std::optional<DecodeRequest> prepareDecodeRequest(ArtifactVideoLayer* layer) {
+        static const bool profileVideoPreviewDecodeRequest =
+            qEnvironmentVariableIsSet("ARTIFACT_VIDEO_PREVIEW_PROFILE_SETUP") &&
+            qEnvironmentVariable("ARTIFACT_VIDEO_PREVIEW_PROFILE_SETUP") !=
+                QStringLiteral("0");
         if (!layer || !isLoaded_) {
             lastDecodeState_ = QStringLiteral("not-loaded");
             return std::nullopt;
@@ -1068,30 +1590,66 @@ public:
             alreadyPresented =
                 sourceFrame == lastDecodedFrame_ && hasCurrentFrameBuffer_;
         }
+        // The decoded frame is already the current presentation while its
+        // renderer-owned upload sidecar may still be converting asynchronously.
+        // Re-reading it from FrameCache here deep-copies a full RGBA32F frame
+        // on every composition/render tick and can block the UI thread for
+        // tens of milliseconds. The decode worker enqueued the sidecar before
+        // publishing lastDecodedFrame_, so leave the current buffer in place
+        // until the bounded upload worker publishes readiness.
         if (alreadyPresented) {
             discardPendingRequestIfCurrent(requestId);
-            lastDecodeState_ = QStringLiteral("cached");
+            lastDecodeState_ = hasCachedUploadFrame(sourceFrame)
+                ? QStringLiteral("cached")
+                : QStringLiteral("upload-convert-pending");
             return std::nullopt;
         }
 
         if (!usingProxy && !sourceAssetId_.isNull()) {
+            const auto sharedLookupStart = profileVideoPreviewDecodeRequest
+                ? std::chrono::steady_clock::now()
+                : std::chrono::steady_clock::time_point{};
             const auto sourceVersion = ArtifactCore::AssetManager::instance().sourceVersion(sourceAssetId_);
             const auto sharedFrame = ArtifactCore::staticPointerCast<ArtifactCore::ImageF32x4_RGBA>(
                 ArtifactCore::AssetManager::instance().decodedPayload(
                     sourceAssetId_, sourceVersion, videoFramePayloadRepresentation(sourceFrame)));
-            if (sharedFrame && !sharedFrame->isEmpty()) {
+            const double sharedLookupMs = profileVideoPreviewDecodeRequest
+                ? std::chrono::duration<double, std::milli>(
+                      std::chrono::steady_clock::now() - sharedLookupStart).count()
+                : 0.0;
+            if (sharedFrame && isCompatibleVideoFrame(*sharedFrame)) {
                 discardPendingRequestIfCurrent(requestId);
+                const bool hasInputTransform =
+                    !inputColorSpace_.isEmpty() ||
+                    !inputTransferFunction_.isEmpty();
                 {
                     std::lock_guard<std::mutex> lock(frameStateMutex_);
                     // The cache and the shared payload keep the source values; only the
                     // presented buffer is converted, so switching the interpretation
                     // back does not require a re-decode.
                     currentSharedFrame_ = sharedFrame;
-                    applyInputColorTransform(currentFrameBuffer_ = *sharedFrame);
+                    if (hasInputTransform) {
+                        applyInputColorTransform(currentFrameBuffer_ = *sharedFrame);
+                    }
                     hasCurrentFrameBuffer_ = true;
                     lastDecodedFrame_ = sourceFrame;
                 }
-                frameCache_.put(sourceFrame, *sharedFrame);
+                frameCache_.putShared(sourceFrame, sharedFrame);
+                // The bounded upload cache can evict its representation while
+                // the decoded CPU payload is still valid. Regenerate only the
+                // upload through the existing worker instead of re-decoding.
+                if (!hasCachedUploadFrame(sourceFrame)) {
+                    enqueueUploadFrame(sourceFrame, sharedFrame, generation, true,
+                                       sourceAssetId_, sourceVersion, layer);
+                }
+                if (profileVideoPreviewDecodeRequest) {
+                    std::fprintf(stderr,
+                                 "[VideoPreviewDecodeRequestProfile] frame=%lld "
+                                 "sharedLookupMs=%.2f sharedPayloadReuse=1 "
+                                 "inputTransform=%d\n",
+                                 static_cast<long long>(sourceFrame),
+                                 sharedLookupMs, hasInputTransform ? 1 : 0);
+                }
                 beginFrameTicket(timelineFrame, sourceFrame, QStringLiteral("shared-payload"));
                 {
                     std::lock_guard<std::mutex> lock(frameTicketMutex_);
@@ -1103,7 +1661,8 @@ public:
         }
 
         ArtifactCore::ImageF32x4_RGBA cachedFrame;
-        if (!usingProxy && frameCache_.get(sourceFrame, cachedFrame)) {
+        if (!usingProxy && hasCachedUploadFrame(sourceFrame) &&
+            frameCache_.get(sourceFrame, cachedFrame)) {
             discardPendingRequestIfCurrent(requestId);
             {
                 std::lock_guard<std::mutex> lock(frameStateMutex_);
@@ -1243,6 +1802,7 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
     impl_->audioOutputSampleRate_ = 0;
     impl_->frameCache_.clear();
     impl_->clearSharedFrames();
+    impl_->clearUploadFrames();
     setSourceSize(Size_2D(0, 0));
     impl_->sourceCrop_.clampToSource(QSizeF(0.0, 0.0));
 
@@ -1374,6 +1934,9 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
 
         if (layer->impl_->streamInfo_.width > 0 && layer->impl_->streamInfo_.height > 0) {
             layer->setSourceSize(Size_2D(layer->impl_->streamInfo_.width, layer->impl_->streamInfo_.height));
+            // Metadata resolves the placeholder's bounds at the same timeline
+            // frame. Source size alone does not advance geometryRevision_.
+            layer->setDirty(LayerDirtyFlag::Source);
             layer->impl_->sourceCrop_.clampToSource(
                 QSizeF(layer->impl_->streamInfo_.width, layer->impl_->streamInfo_.height));
         }
@@ -1462,14 +2025,13 @@ void ArtifactVideoLayer::setStreamFrameRate(double fps)
         // the validity of the last presented pixels. Retain those pixels until
         // the replacement frame is ready.
         impl_->currentSharedFrame_.reset();
-        impl_->hasCurrentFrameBuffer_ =
-            !impl_->currentFrameBuffer_.isEmpty();
         impl_->lastDecodedFrame_ = -1;
     }
     impl_->decodeTargetFrame_ = -1;
     impl_->lastDecodeState_ = QStringLiteral("rate_changed");
     impl_->frameCache_.clear();
     impl_->clearSharedFrames();
+    impl_->clearUploadFrames();
     Q_EMIT changed();
 }
 
@@ -1483,7 +2045,11 @@ QString ArtifactVideoLayer::debugState() const
     bool hasCurrentFrameBuffer = false;
     if (impl_) {
         std::lock_guard<std::mutex> lock(impl_->frameStateMutex_);
-        currentBufferSize = QSize(impl_->currentFrameBuffer_.width(), impl_->currentFrameBuffer_.height());
+        const auto* effectiveFrame = impl_->currentSharedFrame_ &&
+            impl_->isCompatibleVideoFrame(*impl_->currentSharedFrame_) &&
+            impl_->inputColorSpace_.isEmpty() && impl_->inputTransferFunction_.isEmpty()
+                ? impl_->currentSharedFrame_.get() : &impl_->currentFrameBuffer_;
+        currentBufferSize = QSize(effectiveFrame->width(), effectiveFrame->height());
         lastDecodedFrame = impl_->lastDecodedFrame_;
         hasCurrentFrameBuffer = impl_->hasCurrentFrameBuffer_;
     }
@@ -1514,6 +2080,11 @@ QString ArtifactVideoLayer::debugState() const
 
 QString ArtifactVideoLayer::decodeState() const
 {
+    return decodeState(false);
+}
+
+QString ArtifactVideoLayer::decodeState(bool includeFirstLatePresentation) const
+{
     const auto* controller = impl_ ? impl_->playbackController_.get() : nullptr;
     const int64_t sourceFrame = currentSourceFrame(this);
     int64_t lastDecodedFrame = -1;
@@ -1535,8 +2106,22 @@ QString ArtifactVideoLayer::decodeState() const
         .arg(impl_ && impl_->lastSyncFallbackSucceeded_ ? QStringLiteral("true") : QStringLiteral("false"))
         .arg(decoderBackendName(controller))
         .arg(controller ? controller->getLastError() : QStringLiteral("<no controller>"))
-        .arg(impl_ ? impl_->frameTicketSummary() : QStringLiteral("ticket=none"))
+        .arg(impl_ ? impl_->frameTicketSummary(includeFirstLatePresentation) : QStringLiteral("ticket=none"))
         .arg(impl_ ? impl_->decodeQueueSummary() : QStringLiteral("none"));
+}
+
+void ArtifactVideoLayer::resetFrameTimingDiagnostics()
+{
+    if (!impl_) return;
+    std::lock_guard<std::mutex> lock(impl_->frameTicketMutex_);
+    impl_->recentFrameOutcomes_.clear();
+    impl_->lastRecordedOutcomeFrame_ = -1;
+    impl_->lastRecordedOutcomeGeneration_ = 0;
+    impl_->cumulativeLateFrameCount_ = 0;
+    impl_->cumulativeRepeatedFrameCount_ = 0;
+    impl_->firstLatePresentation_ = {};
+    impl_->frameDiagnosticsEpoch_ = std::chrono::steady_clock::now();
+    impl_->frameTicket_ = Impl::FrameTicket{};
 }
 
 void ArtifactVideoLayer::markFrameRenderQueued(int64_t timelineFrame,
@@ -1553,12 +2138,20 @@ void ArtifactVideoLayer::markFrameCompositionCacheReady(int64_t timelineFrame,
     if (!impl_) {
         return;
     }
-    impl_->beginFrameTicket(
-        timelineFrame,
-        timelineFrameToSourceFrame(this, timelineFrame),
-        fromDisk ? QStringLiteral("composition-disk")
-                 : QStringLiteral("composition-ram"));
     std::lock_guard<std::mutex> lock(impl_->frameTicketMutex_);
+    if (impl_->frameTicket_.timelineFrame == timelineFrame &&
+        impl_->frameTicket_.presentationRecorded) return;
+    const auto requestedAt =
+        impl_->frameTicket_.timelineFrame == timelineFrame &&
+        impl_->frameTicket_.requestedAt.time_since_epoch().count() != 0
+            ? impl_->frameTicket_.requestedAt : std::chrono::steady_clock::now();
+    impl_->frameTicket_ = Impl::FrameTicket{};
+    impl_->frameTicket_.timelineFrame = timelineFrame;
+    impl_->frameTicket_.sourceFrame = timelineFrameToSourceFrame(this, timelineFrame);
+    impl_->frameTicket_.requestedAt = requestedAt;
+    impl_->frameTicket_.budgetMs = impl_->frameBudgetMs();
+    impl_->frameTicket_.source = fromDisk ? QStringLiteral("composition-disk")
+                                        : QStringLiteral("composition-ram");
     impl_->frameTicket_.stage = Impl::FrameStage::DecodedRam;
 }
 
@@ -1693,6 +2286,12 @@ VideoFrameInfo ArtifactVideoLayer::currentFrameInfo() const
 ArtifactCore::ImageF32x4_RGBA ArtifactVideoLayer::currentFrameBuffer() const
 {
     std::lock_guard<std::mutex> lock(impl_->frameStateMutex_);
+    if (impl_->currentSharedFrame_ &&
+        impl_->isCompatibleVideoFrame(*impl_->currentSharedFrame_) &&
+        impl_->inputColorSpace_.isEmpty() &&
+        impl_->inputTransferFunction_.isEmpty()) {
+        return *impl_->currentSharedFrame_;
+    }
     return impl_->currentFrameBuffer_;
 }
 
@@ -1778,6 +2377,33 @@ void ArtifactVideoLayer::decodeCurrentFrame()
                 << threadIdTag();
 
             impl_->markDecodeStarted(activeRequest.sourceFrame);
+            static const bool profileVideoDecodePipeline = [] {
+                return qEnvironmentVariableIsSet(
+                           "ARTIFACT_VIDEO_PREVIEW_PROFILE_UPLOAD") &&
+                       qEnvironmentVariable(
+                           "ARTIFACT_VIDEO_PREVIEW_PROFILE_UPLOAD") !=
+                           QStringLiteral("0");
+            }();
+            const auto decodePipelineStart = profileVideoDecodePipeline
+                ? std::chrono::steady_clock::now()
+                : std::chrono::steady_clock::time_point{};
+            double rawDecodeMs = 0.0;
+            double cpuImageConvertMs = 0.0;
+            static const bool traceFfmpegGpuDecode =
+                qEnvironmentVariable("ARTIFACT_VIDEO_PREVIEW_FFMPEG_HWACCEL")
+                        .compare(QStringLiteral("d3d11va"),
+                                 Qt::CaseInsensitive) == 0;
+            static std::atomic<int> ffmpegGpuDecodeTraceCount{0};
+            if (profileVideoDecodePipeline &&
+                ffmpegGpuDecodeTraceCount.fetch_add(
+                    1, std::memory_order_relaxed) < 4) {
+                const QByteArray hardwareMode = qgetenv(
+                    "ARTIFACT_VIDEO_PREVIEW_FFMPEG_HWACCEL");
+                std::fprintf(stderr,
+                             "[VideoLayerGPUProbe] runtime env=%s\n",
+                             hardwareMode.constData());
+                std::fflush(stderr);
+            }
             const QUuid sourceAssetId = impl_->sourceAssetId_;
             const auto sourceVersion =
                 ArtifactCore::AssetManager::instance().sourceVersion(sourceAssetId);
@@ -1789,22 +2415,70 @@ void ArtifactVideoLayer::decodeCurrentFrame()
                 : ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA>{};
             ArtifactCore::DecodedVideoFrame rawDecoded = std::monostate{};
             ArtifactCore::ImageF32x4_RGBA decoded;
-            if (sharedFrame && !sharedFrame->isEmpty()) {
+            if (sharedFrame &&
+                impl_->isCompatibleVideoFrame(*sharedFrame)) {
                 decoded = *sharedFrame;
             } else {
                 sharedFrame.reset();
+                const auto rawDecodeStart = profileVideoDecodePipeline
+                    ? std::chrono::steady_clock::now()
+                    : std::chrono::steady_clock::time_point{};
+                const bool traceThisGpuDecode = traceFfmpegGpuDecode &&
+                    ffmpegGpuDecodeTraceCount.fetch_add(
+                        1, std::memory_order_relaxed) < 16;
+                if (traceThisGpuDecode) {
+                    std::fprintf(stderr,
+                                 "[VideoLayerGPUProbe] calling direct decoder "
+                                 "frame=%lld controller=%p\n",
+                                 static_cast<long long>(activeRequest.sourceFrame),
+                                 static_cast<void*>(activeRequest.controller.get()));
+                    std::fflush(stderr);
+                }
                 rawDecoded = activeRequest.controller->getVideoFrameAtFrameDirectRaw(
                     activeRequest.sourceFrame);
+                if (traceThisGpuDecode) {
+                    std::fprintf(stderr,
+                                 "[VideoLayerGPUProbe] direct decoder returned "
+                                 "frame=%lld cpu=%d gpu=%d empty=%d\n",
+                                 static_cast<long long>(activeRequest.sourceFrame),
+                                 std::holds_alternative<ArtifactCore::CpuVideoFrame>(rawDecoded) ? 1 : 0,
+                                 std::holds_alternative<ArtifactCore::GpuVideoFrame>(rawDecoded) ? 1 : 0,
+                                 std::holds_alternative<std::monostate>(rawDecoded) ? 1 : 0);
+                    std::fflush(stderr);
+                }
+                if (profileVideoDecodePipeline) {
+                    rawDecodeMs = std::chrono::duration<double, std::milli>(
+                                      std::chrono::steady_clock::now() -
+                                      rawDecodeStart)
+                                      .count();
+                }
+                const auto cpuImageConvertStart = profileVideoDecodePipeline
+                    ? std::chrono::steady_clock::now()
+                    : std::chrono::steady_clock::time_point{};
                 decoded = decodedVideoFrameToImageF32x4_RGBA(rawDecoded);
+                if (profileVideoDecodePipeline) {
+                    cpuImageConvertMs =
+                        std::chrono::duration<double, std::milli>(
+                            std::chrono::steady_clock::now() -
+                            cpuImageConvertStart)
+                            .count();
+                }
             }
 
             const bool generationCurrent =
                 activeRequest.generation ==
                 impl_->decodeGeneration_.load(std::memory_order_acquire);
+            const bool decodedFrameReady =
+                !decoded.isEmpty() &&
+                ((sharedFrame &&
+                  impl_->isCompatibleVideoFrame(*sharedFrame)) ||
+                 decodedVideoFrameHasCpuPayload(rawDecoded));
+            const int decodedWidth = decoded.width();
+            const int decodedHeight = decoded.height();
             const bool hasGpuOnlyFrame =
-                decoded.isEmpty() && decodedVideoFrameHasGpuPayload(rawDecoded);
+                !decodedFrameReady && decodedVideoFrameHasGpuPayload(rawDecoded);
             ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA> publishedFrame = sharedFrame;
-            if (generationCurrent && !decoded.isEmpty()) {
+            if (generationCurrent && decodedFrameReady) {
                 if (!publishedFrame && !sourceAssetId.isNull() && sourceVersion > 0) {
                     publishedFrame =
                         ArtifactCore::makeShared<ArtifactCore::ImageF32x4_RGBA>(decoded);
@@ -1816,7 +2490,21 @@ void ArtifactVideoLayer::decodeCurrentFrame()
                                 publishedFrame));
                     impl_->retainSharedFrame(activeRequest.sourceFrame, publishedFrame);
                 }
-                impl_->frameCache_.put(activeRequest.sourceFrame, decoded);
+                if (publishedFrame) {
+                    impl_->frameCache_.putShared(activeRequest.sourceFrame,
+                                                 publishedFrame);
+                } else {
+                    impl_->frameCache_.put(activeRequest.sourceFrame, decoded);
+                }
+                if (!publishedFrame) {
+                    publishedFrame =
+                        ArtifactCore::makeShared<ArtifactCore::ImageF32x4_RGBA>(
+                            decoded);
+                }
+                impl_->enqueueUploadFrame(activeRequest.sourceFrame,
+                                          publishedFrame,
+                                          activeRequest.generation, true,
+                                          sourceAssetId, sourceVersion, this);
             }
 
             bool publishResult = false;
@@ -1827,7 +2515,7 @@ void ArtifactVideoLayer::decodeCurrentFrame()
                 const bool requestGenerationCurrent =
                     generationCurrent &&
                     activeRequest.generation == impl_->latestDecodeGeneration_;
-                if (requestGenerationCurrent && !decoded.isEmpty()) {
+                if (requestGenerationCurrent && decodedFrameReady) {
                     bool adoptForPresentation = latestRequest;
                     {
                         std::lock_guard<std::mutex> frameLock(
@@ -1850,7 +2538,7 @@ void ArtifactVideoLayer::decodeCurrentFrame()
                             adoptForPresentation || advancesTowardLatest;
                         if (adoptForPresentation) {
                             impl_->currentSharedFrame_ = publishedFrame;
-                            impl_->currentFrameBuffer_ = decoded;
+                            impl_->currentFrameBuffer_ = std::move(decoded);
                             impl_->applyInputColorTransform(impl_->currentFrameBuffer_);
                             impl_->hasCurrentFrameBuffer_ = true;
                             impl_->lastDecodedFrame_ = activeRequest.sourceFrame;
@@ -1876,14 +2564,30 @@ void ArtifactVideoLayer::decodeCurrentFrame()
 
             if (publishResult) {
                 impl_->markDecodeFinished(activeRequest.sourceFrame,
-                                          !decoded.isEmpty());
-                if (!decoded.isEmpty()) {
+                                          decodedFrameReady);
+                if (profileVideoDecodePipeline) {
+                    const double workerMs =
+                        std::chrono::duration<double, std::milli>(
+                            std::chrono::steady_clock::now() -
+                            decodePipelineStart)
+                            .count();
+                    std::fprintf(
+                        stderr,
+                        "[VideoPreviewDecodeProfile] frame=%lld rawDecodeMs=%.2f "
+                        "cpuImageConvertMs=%.2f workerMs=%.2f sharedPayload=%d "
+                        "size=%dx%d\n",
+                        static_cast<long long>(activeRequest.sourceFrame),
+                        rawDecodeMs, cpuImageConvertMs, workerMs,
+                        sharedFrame ? 1 : 0, decodedWidth, decodedHeight);
+                    std::fflush(stderr);
+                }
+                if (decodedFrameReady) {
                     qCDebug(videoLayerLog) << "[VideoLayer] bg decoded frame"
                                            << "request=" << activeRequest.requestId
                                            << "timeline=" << activeRequest.timelineFrame
                                            << "source=" << activeRequest.sourceFrame
-                                           << "size=" << decoded.width() << "x"
-                                           << decoded.height()
+                                            << "size=" << decodedWidth << "x"
+                                            << decodedHeight
                                            << threadIdTag();
                 } else {
                     qWarning() << "[VideoLayer] DECODE FAILED"
@@ -1908,8 +2612,7 @@ void ArtifactVideoLayer::decodeCurrentFrame()
                     [this, generation = activeRequest.generation,
                      requestId = activeRequest.requestId,
                      sourceFrame = activeRequest.sourceFrame,
-                     decodedWidth = decoded.width(),
-                     decodedHeight = decoded.height()]() {
+                      decodedWidth, decodedHeight]() {
                         bool stillRelevant = false;
                         {
                             std::lock_guard<std::mutex> requestLock(
@@ -1924,16 +2627,19 @@ void ArtifactVideoLayer::decodeCurrentFrame()
                             }
                         }
                         if (stillRelevant) {
+                            bool sourceGeometryChanged = false;
                             if (decodedWidth > 0 && decodedHeight > 0 &&
                                 (impl_->streamInfo_.width <= 0 ||
                                  impl_->streamInfo_.height <= 0)) {
+                                sourceGeometryChanged = true;
                                 impl_->streamInfo_.width = decodedWidth;
                                 impl_->streamInfo_.height = decodedHeight;
                                 setSourceSize(Size_2D(decodedWidth, decodedHeight));
+                                setDirty(LayerDirtyFlag::Source);
                                 impl_->sourceCrop_.clampToSource(
                                     QSizeF(decodedWidth, decodedHeight));
                             }
-                            publishVideoLayerModified(this);
+                            publishVideoLayerModified(this, !sourceGeometryChanged);
                         }
                     },
                     Qt::QueuedConnection);
@@ -1941,9 +2647,10 @@ void ArtifactVideoLayer::decodeCurrentFrame()
 
             // Keep the decoder's sequential path warm like MLT's image-ahead
             // behavior, but never let prefetch outrank an explicit request.
-            // Decode a small window so a worker that finishes slightly late
-            // does not immediately fall behind on the next render ticks.
-            constexpr int kPrefetchFrameCount = 3;
+            // Keep one frame ahead while preserving decoder time for the next
+            // explicit timeline request. Larger sequential bursts can hold the
+            // decode worker beyond the 30 fps frame budget.
+            constexpr int kPrefetchFrameCount = 1;
             for (int prefetchOffset = 1;
                  prefetchOffset <= kPrefetchFrameCount;
                  ++prefetchOffset) {
@@ -1971,8 +2678,11 @@ void ArtifactVideoLayer::decodeCurrentFrame()
                             videoFramePayloadRepresentation(*prefetchSourceFrame)))
                     : ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA>{};
                 ArtifactCore::ImageF32x4_RGBA prefetchedFrame;
-                if (prefetchedSharedFrame && !prefetchedSharedFrame->isEmpty()) {
+                bool prefetchedFrameReady = false;
+                if (prefetchedSharedFrame &&
+                    impl_->isCompatibleVideoFrame(*prefetchedSharedFrame)) {
                     prefetchedFrame = *prefetchedSharedFrame;
+                    prefetchedFrameReady = true;
                 } else {
                     prefetchedSharedFrame.reset();
                     bool requestStillIdle = false;
@@ -1984,9 +2694,15 @@ void ArtifactVideoLayer::decodeCurrentFrame()
                             !impl_->pendingDecodeRequest_;
                     }
                     if (requestStillIdle) {
-                        prefetchedFrame = decodedVideoFrameToImageF32x4_RGBA(
+                        const auto rawPrefetchedFrame =
                             activeRequest.controller->getVideoFrameAtFrameDirectRaw(
-                                *prefetchSourceFrame));
+                                *prefetchSourceFrame);
+                        prefetchedFrameReady =
+                            decodedVideoFrameHasCpuPayload(rawPrefetchedFrame);
+                        if (prefetchedFrameReady) {
+                            prefetchedFrame = decodedVideoFrameToImageF32x4_RGBA(
+                                rawPrefetchedFrame);
+                        }
                     }
                 }
 
@@ -1998,7 +2714,7 @@ void ArtifactVideoLayer::decodeCurrentFrame()
                     sourceVersion == ArtifactCore::AssetManager::instance().sourceVersion(
                                          sourceAssetId);
                 if (prefetchGenerationCurrent && sourceVersionCurrent &&
-                    !prefetchedFrame.isEmpty()) {
+                    prefetchedFrameReady && !prefetchedFrame.isEmpty()) {
                     if (!prefetchedSharedFrame && !sourceAssetId.isNull() &&
                         sourceVersion > 0) {
                         prefetchedSharedFrame =
@@ -2015,7 +2731,19 @@ void ArtifactVideoLayer::decodeCurrentFrame()
                         impl_->retainSharedFrame(*prefetchSourceFrame,
                                                  prefetchedSharedFrame);
                     }
-                    impl_->frameCache_.put(*prefetchSourceFrame, prefetchedFrame);
+                    if (!prefetchedSharedFrame) {
+                        prefetchedSharedFrame = ArtifactCore::makeShared<
+                            ArtifactCore::ImageF32x4_RGBA>(prefetchedFrame);
+                    }
+                    // Retain the immutable payload used by upload preparation.
+                    // A separate value cache would clone this full frame again.
+                    impl_->frameCache_.putShared(*prefetchSourceFrame,
+                                                prefetchedSharedFrame);
+                    impl_->enqueueUploadFrame(*prefetchSourceFrame,
+                                              prefetchedSharedFrame,
+                                              activeRequest.generation, false,
+                                              sourceAssetId, sourceVersion,
+                                              this);
                     {
                         std::lock_guard<std::mutex> lock(
                             impl_->decodeRequestMutex_);
@@ -2058,6 +2786,12 @@ ArtifactCore::ImageF32x4_RGBA ArtifactVideoLayer::currentFrameImageBuffer() cons
     if (impl_->opening_.load()) {
         impl_->lastDecodeState_ = QStringLiteral("opening");
         std::lock_guard<std::mutex> lock(impl_->frameStateMutex_);
+        if (impl_->currentSharedFrame_ &&
+            impl_->isCompatibleVideoFrame(*impl_->currentSharedFrame_) &&
+            impl_->inputColorSpace_.isEmpty() &&
+            impl_->inputTransferFunction_.isEmpty()) {
+            return *impl_->currentSharedFrame_;
+        }
         return impl_->currentFrameBuffer_;
     }
 
@@ -2076,6 +2810,13 @@ ArtifactCore::ImageF32x4_RGBA ArtifactVideoLayer::currentFrameImageBuffer() cons
     }
 
     std::lock_guard<std::mutex> lock(impl_->frameStateMutex_);
+    if (impl_->currentSharedFrame_ &&
+        impl_->currentSourceFrame_ == sourceFrame &&
+        impl_->isCompatibleVideoFrame(*impl_->currentSharedFrame_) &&
+        impl_->inputColorSpace_.isEmpty() &&
+        impl_->inputTransferFunction_.isEmpty()) {
+        return *impl_->currentSharedFrame_;
+    }
     return impl_->currentFrameBuffer_;
 }
 
@@ -2094,6 +2835,58 @@ ArtifactCore::ImageF32x4_RGBA ArtifactVideoLayer::cachedFrameImageBuffer(int64_t
 
     impl_->frameCache_.get(timelineFrameToSourceFrame(this, frameNumber), frame);
     return frame;
+}
+
+ArtifactCore::SharedPtr<const ArtifactCore::ImageF32x4_RGBA>
+ArtifactVideoLayer::cachedFrameImageBufferShared(int64_t frameNumber) const
+{
+    if (!impl_) {
+        return {};
+    }
+
+    const int64_t sourceFrame = timelineFrameToSourceFrame(this, frameNumber);
+    if (auto cached = impl_->frameCache_.getShared(sourceFrame);
+        cached && impl_->isCompatibleVideoFrame(*cached)) {
+        return cached;
+    }
+    {
+        std::lock_guard<std::mutex> lock(impl_->sharedFramePayloadMutex_);
+        const auto it = impl_->sharedFramePayloads_.find(sourceFrame);
+        if (it != impl_->sharedFramePayloads_.end() && it->second &&
+            impl_->isCompatibleVideoFrame(*it->second)) {
+            return ArtifactCore::staticPointerCast<
+                const ArtifactCore::ImageF32x4_RGBA>(it->second);
+        }
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(impl_->frameStateMutex_);
+        if (impl_->currentSourceFrame_ == sourceFrame &&
+            impl_->currentSharedFrame_ &&
+            impl_->isCompatibleVideoFrame(*impl_->currentSharedFrame_)) {
+            return ArtifactCore::staticPointerCast<
+                const ArtifactCore::ImageF32x4_RGBA>(
+                    impl_->currentSharedFrame_);
+        }
+    }
+
+    return {};
+}
+
+ArtifactCore::SharedPtr<const ArtifactCore::ImageUploadBuffer>
+ArtifactVideoLayer::cachedFrameUploadBufferShared(int64_t frameNumber) const
+{
+    if (!impl_) {
+        return {};
+    }
+    return impl_->cachedUploadFrame(
+        timelineFrameToSourceFrame(this, frameNumber));
+}
+
+bool ArtifactVideoLayer::isFrameUploadCached(int64_t frameNumber) const
+{
+    return impl_ && impl_->hasCachedUploadFrame(
+                        timelineFrameToSourceFrame(this, frameNumber));
 }
 
 ArtifactCore::ImageF32x4_RGBA ArtifactVideoLayer::decodeFrameToImageBuffer(int64_t frameNumber) const
@@ -2126,7 +2919,7 @@ ArtifactCore::ImageF32x4_RGBA ArtifactVideoLayer::decodeFrameToImageBuffer(int64
             ArtifactCore::AssetManager::instance().decodedPayload(
                 impl_->sourceAssetId_, sourceVersion,
                 videoFramePayloadRepresentation(sourceFrame)));
-        if (sharedFrame && !sharedFrame->isEmpty()) {
+        if (sharedFrame && impl_->isCompatibleVideoFrame(*sharedFrame)) {
             impl_->frameCache_.put(sourceFrame, *sharedFrame);
             if (sourceFrame == currentSourceFrame(this)) {
                 std::lock_guard<std::mutex> lock(impl_->frameStateMutex_);
@@ -2173,7 +2966,7 @@ ArtifactCore::ImageF32x4_RGBA ArtifactVideoLayer::decodeFrameToImageBuffer(int64
         impl_->playbackController_->getVideoFrameAtFrameDirectRaw(sourceFrame);
     const ArtifactCore::ImageF32x4_RGBA decoded =
         decodedVideoFrameToImageF32x4_RGBA(rawDecoded);
-    if (!decoded.isEmpty()) {
+    if (decodedVideoFrameHasCpuPayload(rawDecoded) && !decoded.isEmpty()) {
         ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA> sharedFrame;
         if (!impl_->sourceAssetId_.isNull()) {
             const auto sourceVersion = ArtifactCore::AssetManager::instance().sourceVersion(
@@ -2252,7 +3045,8 @@ ArtifactCore::ImageF32x4_RGBA ArtifactVideoLayer::decodeFrameToImageBuffer(doubl
     return bufferA.blend(bufferB, weight);
 }
 
-ArtifactCore::GpuVideoFrame ArtifactVideoLayer::decodeFrameToGpuFrame(int64_t frameNumber) const
+ArtifactCore::GpuVideoFrame ArtifactVideoLayer::decodeFrameToGpuFrame(
+    int64_t frameNumber, void* nativeD3D12Device) const
 {
     impl_->refreshSourceVersionIfNeeded();
     if (!impl_->isLoaded_ || impl_->opening_.load()) {
@@ -2277,8 +3071,10 @@ ArtifactCore::GpuVideoFrame ArtifactVideoLayer::decodeFrameToGpuFrame(int64_t fr
         return {};
     }
 
+    impl_->playbackController_->setD3D12Device(nativeD3D12Device);
     return decodedVideoFrameToGpuFrame(
-        impl_->playbackController_->getVideoFrameAtFrameDirectRaw(sourceFrame));
+        impl_->playbackController_->getVideoFrameAtFrameDirectRaw(
+            sourceFrame, nativeD3D12Device != nullptr));
 }
 
 bool ArtifactVideoLayer::isFrameCached(int64_t frameNumber) const
@@ -2303,6 +3099,7 @@ void ArtifactVideoLayer::preloadFrames(int64_t startFrame, int count)
             (!hasKnownFrameCount || sourceFrame < impl_->streamInfo_.frameCount)) {
             if (!impl_->frameCache_.contains(sourceFrame)) {
                 ArtifactCore::ImageF32x4_RGBA frameData;
+                bool frameDataReady = false;
                 if (!impl_->sourceAssetId_.isNull()) {
                     const auto sourceVersion = ArtifactCore::AssetManager::instance().sourceVersion(
                         impl_->sourceAssetId_);
@@ -2310,15 +3107,22 @@ void ArtifactVideoLayer::preloadFrames(int64_t startFrame, int count)
                         ArtifactCore::AssetManager::instance().decodedPayload(
                             impl_->sourceAssetId_, sourceVersion,
                             videoFramePayloadRepresentation(sourceFrame)));
-                    if (sharedFrame && !sharedFrame->isEmpty()) {
+                    if (sharedFrame &&
+                        impl_->isCompatibleVideoFrame(*sharedFrame)) {
                         frameData = *sharedFrame;
+                        frameDataReady = true;
                     }
                 }
-                if (frameData.isEmpty()) {
-                    frameData = decodedVideoFrameToImageF32x4_RGBA(
-                        impl_->playbackController_->getVideoFrameAtFrameDirectRaw(sourceFrame));
+                if (!frameDataReady) {
+                    const auto rawFrame =
+                        impl_->playbackController_->getVideoFrameAtFrameDirectRaw(
+                            sourceFrame);
+                    frameDataReady = decodedVideoFrameHasCpuPayload(rawFrame);
+                    if (frameDataReady) {
+                        frameData = decodedVideoFrameToImageF32x4_RGBA(rawFrame);
+                    }
                 }
-                if (!frameData.isEmpty()) {
+                if (frameDataReady && !frameData.isEmpty()) {
                     if (!impl_->sourceAssetId_.isNull()) {
                         const auto sourceVersion = ArtifactCore::AssetManager::instance().sourceVersion(
                             impl_->sourceAssetId_);

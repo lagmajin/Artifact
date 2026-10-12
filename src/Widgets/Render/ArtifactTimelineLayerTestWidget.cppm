@@ -558,6 +558,7 @@ ArtifactTimelineLayerTestWidget::ArtifactTimelineLayerTestWidget(QWidget* parent
     if (impl_->service) {
         impl_->eventBusSubscriptions_.push_back(
             impl_->eventBus_.subscribe<LayerChangedEvent>([this](const LayerChangedEvent& e) {
+            if (e.changeType == LayerChangedEvent::ChangeType::FrameReady) return;
                 if (!impl_->followCurrentComposition->isChecked()) {
                     return;
                 }

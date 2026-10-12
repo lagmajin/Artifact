@@ -44,6 +44,7 @@ import Frame.Rate;
 import Frame.Range;
 import Frame.Debug;
 import Image.ImageF32x4_RGBA;
+import Image.UploadConversion;
 import Playback.State;
 import Artifact.Composition.PlaybackController;
 import Artifact.Composition.Abstract;
@@ -203,6 +204,8 @@ public:
   ArtifactCore::FrameDebugSnapshot frameDebugSnapshot() const;
   double audioOffsetSeconds() const;
   std::int64_t droppedFrameCount() const;
+  std::int64_t lastObservedPresentedFrame() const;
+  std::int64_t observedPresentedFrameCount() const;
   void recordPresentedFrame(int64_t frame);
 
   // In/Out Points
@@ -263,6 +266,11 @@ public:
   int64_t nextRamPreviewBuildFrame() const;
   bool tryGetRamPreviewFrameImage(int64_t frame,
                                   ArtifactCore::ImageF32x4_RGBA &outImage) const;
+  // Owner-thread synchronous draw only. The pointer expires on cache mutation;
+  // do not retain it, pump events, or pass it to background work.
+  const ArtifactCore::ImageF32x4_RGBA *borrowRamPreviewFrameImage(int64_t frame) const;
+  const ArtifactCore::ImageUploadBuffer *borrowRamPreviewFrameUpload(
+      int64_t frame, std::uint64_t &contentRevision) const;
   // UI thumbnail boundary: sample into caller-owned, pre-sized storage.
   // Does not copy or resize the full-resolution cached frame.
   bool sampleRamPreviewThumbnail(int64_t frame,

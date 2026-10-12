@@ -1337,7 +1337,8 @@ ArtifactSoftwareCompositionTestWidget::ArtifactSoftwareCompositionTestWidget(QWi
             }));
     impl_->eventBusSubscriptions_.push_back(
         impl_->eventBus_.subscribe<LayerChangedEvent>(
-            [this](const LayerChangedEvent&) {
+            [this](const LayerChangedEvent& event) {
+            if (event.changeType == LayerChangedEvent::ChangeType::FrameReady) return;
                 impl_->schedulePreviewRefresh();
             }));
 }
@@ -1495,7 +1496,8 @@ ArtifactSoftwareLayerTestWidget::ArtifactSoftwareLayerTestWidget(QWidget* parent
             }));
     impl_->eventBusSubscriptions_.push_back(
         impl_->eventBus_.subscribe<LayerChangedEvent>(
-            [this](const LayerChangedEvent&) {
+            [this](const LayerChangedEvent& event) {
+            if (event.changeType == LayerChangedEvent::ChangeType::FrameReady) return;
                 impl_->schedulePreviewRefresh();
             }));
     impl_->eventBusSubscriptions_.push_back(

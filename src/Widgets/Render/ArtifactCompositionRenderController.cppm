@@ -90,6 +90,7 @@ module;
 #include <Layer/ArtifactSolidGradientUtil.hpp>
 
 #include <deque>
+#include <cstdio>
 
 #include <QtConcurrent>
 
@@ -6103,6 +6104,11 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer *layer,
 
   if (auto *videoLayer = dynamic_cast<ArtifactVideoLayer *>(layer)) {
 
+    static const bool profileVideoLayerRendering =
+        qEnvironmentVariableIsSet("ARTIFACT_VIDEO_PREVIEW_PROFILE_UPLOAD") &&
+        qEnvironmentVariable("ARTIFACT_VIDEO_PREVIEW_PROFILE_UPLOAD") !=
+            QStringLiteral("0");
+
     key += QStringLiteral("|video|src=%1|rev=%2|frame=%3|proxy=%4|size=%5x%6")
 
                .arg(videoLayer->sourcePath())
@@ -10576,12 +10582,22 @@ void drawLayerForCompositionView(
 
   if (auto *videoLayer = dynamic_cast<ArtifactVideoLayer *>(layer)) {
 
+    static const bool profileVideoLayerRendering = [] {
+      return qEnvironmentVariableIsSet(
+                 "ARTIFACT_VIDEO_PREVIEW_PROFILE_UPLOAD") &&
+             qEnvironmentVariable("ARTIFACT_VIDEO_PREVIEW_PROFILE_UPLOAD") !=
+                 QStringLiteral("0");
+    }();
+    static int videoLayerProfileSamples = 0;
+    const bool profileThisVideoLayer =
+        profileVideoLayerRendering && videoLayerProfileSamples++ < 24;
+
     const bool hasRasterizer = layerHasRasterizerEffectsOrMasks(layer);
     const bool hasBuffer = videoLayer->hasCurrentFrameBuffer();
 
     const bool currentFrameReady =
 
-        videoLayer->isFrameCached(layer->currentFrame());
+        videoLayer->isFrameUploadCached(layer->currentFrame());
 
     const bool loaded = videoLayer->isLoaded();
 
@@ -10589,15 +10605,103 @@ void drawLayerForCompositionView(
 
         layer->isActiveAt(FramePosition(static_cast<int>(layer->currentFrame())));
 
+    if (profileThisVideoLayer) {
+      std::fprintf(stderr,
+                   "[VideoPreviewLayerProfile] enter frame=%lld ready=%d "
+                   "rasterizer=%d hasBuffer=%d loaded=%d\n",
+                   static_cast<long long>(layer->currentFrame()),
+                   currentFrameReady ? 1 : 0, hasRasterizer ? 1 : 0,
+                   hasBuffer ? 1 : 0, loaded ? 1 : 0);
+      std::fflush(stderr);
+      qWarning().noquote()
+          << "[VideoPreviewLayerProfile] enter frame=" << layer->currentFrame()
+          << "frameReady=" << currentFrameReady << "rasterizer="
+          << hasRasterizer << "hasBuffer=" << hasBuffer << "loaded=" << loaded;
+    }
+
     const FramePosition ip = layer->inPoint();
 
     const FramePosition op = layer->outPoint();
 
+    const qint64 directGpuFrameNumber =
+        cacheFrameNumber != std::numeric_limits<int64_t>::min()
+            ? cacheFrameNumber : layer->currentFrame();
+    void* sharedD3D12Device =
+        (!hasRasterizer && gpuTextureCacheManager)
+            ? gpuTextureCacheManager->nativeD3D12Device() : nullptr;
+    const bool useDirectD3D12Video =
+        sharedD3D12Device &&
+        videoLayer->streamInfo().codecName.compare(
+            QStringLiteral("h264"), Qt::CaseInsensitive) == 0;
+    if (useDirectD3D12Video) {
+      QString gpuOwnerId = layer->id().toString();
+      const QString gpuCacheSignature = QStringLiteral("video-gpu:v%1:f%2")
+                                            .arg(videoLayer->sourceVersion())
+                                            .arg(directGpuFrameNumber);
+      GPUTextureCacheHandle gpuHandle = gpuTextureCacheManager->findExisting(
+          gpuOwnerId, gpuCacheSignature, Diligent::TEX_FORMAT_RGBA16_FLOAT);
+      GPUTextureBindingRecord gpuBinding =
+          gpuTextureCacheManager->bindingRecord(gpuHandle);
+      if (!gpuBinding.isValid()) {
+        const ArtifactCore::GpuVideoFrame gpuFrame =
+            videoLayer->decodeFrameToGpuFrame(directGpuFrameNumber,
+                                               sharedD3D12Device);
+        if (gpuFrame.isValid()) {
+          gpuHandle = gpuTextureCacheManager->acquireOrCreate(
+              gpuOwnerId, gpuCacheSignature, gpuFrame);
+          gpuBinding = gpuTextureCacheManager->bindingRecord(gpuHandle);
+        }
+      }
+      if (gpuBinding.isValid()) {
+        if (profileThisVideoLayer) {
+          qWarning().noquote()
+              << "[VideoPreviewLayerProfile] branch=d3d12-gpu frame="
+              << directGpuFrameNumber;
+        }
+        if (videoDebugOut) {
+          *videoDebugOut = QStringLiteral(
+              "[Video] branch=d3d12-gpu frame=%1 size=%2x%3")
+                               .arg(directGpuFrameNumber)
+                               .arg(videoLayer->streamInfo().width)
+                               .arg(videoLayer->streamInfo().height);
+        }
+        videoLayer->markFrameRenderQueued(directGpuFrameNumber);
+        const float baseOpacity =
+            opacityOverride >= 0.0f ? opacityOverride : layer->opacity();
+        drawWithClonerEffect(
+            layer, globalTransform4x4,
+            [&](const QMatrix4x4& instanceTransform, float instanceWeight) {
+              renderer->drawSpriteTransformed(
+                  static_cast<float>(localRect.x()),
+                  static_cast<float>(localRect.y()),
+                  static_cast<float>(localRect.width()),
+                  static_cast<float>(localRect.height()), instanceTransform,
+                  gpuBinding.srv, baseOpacity * instanceWeight);
+            });
+        return;
+      }
+    }
+
     if (!hasRasterizer && currentFrameReady) {
 
-      const ArtifactCore::ImageF32x4_RGBA buffer =
+      QElapsedTimer videoBufferTimer;
+      if (profileThisVideoLayer) videoBufferTimer.start();
 
-          videoLayer->cachedFrameImageBuffer(layer->currentFrame());
+      const auto sharedBuffer =
+          videoLayer->cachedFrameImageBufferShared(layer->currentFrame());
+      const auto preparedUpload =
+          videoLayer->cachedFrameUploadBufferShared(layer->currentFrame());
+      ArtifactCore::ImageF32x4_RGBA bufferFallback;
+      if (!sharedBuffer) {
+        bufferFallback =
+            videoLayer->cachedFrameImageBuffer(layer->currentFrame());
+      }
+      const ArtifactCore::ImageF32x4_RGBA& buffer =
+          sharedBuffer ? *sharedBuffer : bufferFallback;
+
+      const qint64 videoBufferReadMs = profileThisVideoLayer
+          ? videoBufferTimer.elapsed()
+          : 0;
 
       if (buffer.isEmpty()) {
 
@@ -10646,20 +10750,47 @@ void drawLayerForCompositionView(
         }
 
         videoLayer->markFrameRenderQueued(layer->currentFrame());
+        QElapsedTimer videoDrawTimer;
+        if (profileThisVideoLayer) videoDrawTimer.start();
         drawWithClonerEffect(
 
             layer, globalTransform4x4,
 
             [&](const QMatrix4x4 &instanceTransform, float instanceWeight) {
 
+                Diligent::ITextureView* videoTexture =
+                    renderer->textureForVideoFrame(
+                    buffer, QUuid(layer->id().toString()),
+                    static_cast<qint64>(layer->currentFrame()),
+                    preparedUpload.get());
+                if (!videoTexture) {
+                    videoTexture = renderer->textureForImage(buffer);
+                }
                 renderer->drawSpriteTransformed(
                     static_cast<float>(localRect.x()),
                     static_cast<float>(localRect.y()),
                     static_cast<float>(localRect.width()),
                     static_cast<float>(localRect.height()), instanceTransform,
-                    buffer, baseOpacity * instanceWeight);
+                    videoTexture, baseOpacity * instanceWeight);
 
             });
+
+        if (profileThisVideoLayer) {
+          std::fprintf(
+              stderr,
+              "[VideoPreviewLayerProfile] branch=cached frame=%lld "
+              "cacheReadMs=%lld drawSubmitMs=%lld size=%dx%d\n",
+              static_cast<long long>(layer->currentFrame()),
+              static_cast<long long>(videoBufferReadMs),
+              static_cast<long long>(videoDrawTimer.elapsed()), buffer.width(),
+              buffer.height());
+          std::fflush(stderr);
+          qWarning().noquote()
+              << "[VideoPreviewLayerProfile] branch=cached frame="
+              << layer->currentFrame() << "cacheReadMs=" << videoBufferReadMs
+              << "drawSubmitMs=" << videoDrawTimer.elapsed()
+              << "size=" << buffer.width() << 'x' << buffer.height();
+        }
 
         return;
 
@@ -10670,6 +10801,23 @@ void drawLayerForCompositionView(
 
 
     ArtifactCore::ImageF32x4_RGBA frameBuffer;
+    ArtifactCore::SharedPtr<const ArtifactCore::ImageF32x4_RGBA>
+        cachedFallbackFrame;
+    ArtifactCore::SharedPtr<const ArtifactCore::ImageUploadBuffer>
+        cachedFallbackUpload;
+    qint64 fallbackFrameContentKey = layer->currentFrame();
+    bool hasFallbackFrame = false;
+    const auto isCurrentVideoSize = [videoLayer](
+        const ArtifactCore::ImageF32x4_RGBA& candidate) {
+      const auto& stream = videoLayer->streamInfo();
+      return !candidate.isEmpty() &&
+             (stream.width <= 0 || stream.height <= 0 ||
+              (candidate.width() == stream.width &&
+               candidate.height() == stream.height));
+    };
+
+    QElapsedTimer videoFallbackTimer;
+    if (profileThisVideoLayer) videoFallbackTimer.start();
 
     QImage frame;
 
@@ -10681,9 +10829,43 @@ void drawLayerForCompositionView(
 
     if (loaded) {
 
-      frameBuffer = videoLayer->cachedFrameImageBuffer(layer->currentFrame());
+      cachedFallbackFrame =
+          videoLayer->cachedFrameImageBufferShared(layer->currentFrame());
 
-      usedBufferFallback = !frameBuffer.isEmpty();
+      if (cachedFallbackFrame &&
+          !isCurrentVideoSize(*cachedFallbackFrame)) {
+        cachedFallbackFrame.reset();
+      }
+
+      hasFallbackFrame = static_cast<bool>(cachedFallbackFrame);
+
+      usedBufferFallback = hasFallbackFrame;
+
+      if (!currentFrameReady) {
+        for (int offset = 1; offset <= 4; ++offset) {
+          const qint64 candidateFrame =
+              static_cast<qint64>(layer->currentFrame()) - offset;
+          if (candidateFrame < 0) {
+            break;
+          }
+          auto candidateImage =
+              videoLayer->cachedFrameImageBufferShared(candidateFrame);
+          auto candidateUpload =
+              videoLayer->cachedFrameUploadBufferShared(candidateFrame);
+          if (!candidateImage || !candidateUpload ||
+              !isCurrentVideoSize(*candidateImage) ||
+              candidateUpload->width != candidateImage->width() ||
+              candidateUpload->height != candidateImage->height()) {
+            continue;
+          }
+          cachedFallbackFrame = std::move(candidateImage);
+          cachedFallbackUpload = std::move(candidateUpload);
+          fallbackFrameContentKey = candidateFrame;
+          hasFallbackFrame = true;
+          usedBufferFallback = true;
+          break;
+        }
+      }
 
     } else {
 
@@ -10691,7 +10873,7 @@ void drawLayerForCompositionView(
 
     }
 
-    if (frameBuffer.isEmpty() && loaded) {
+    if (!hasFallbackFrame && loaded && hasBuffer) {
 
       // Rendering must never wait for a decoder. This starts or observes the
 
@@ -10701,9 +10883,18 @@ void drawLayerForCompositionView(
 
       frameBuffer = videoLayer->currentFrameImageBuffer();
 
-      usedBufferFallback = !frameBuffer.isEmpty();
+      hasFallbackFrame = isCurrentVideoSize(frameBuffer);
+
+      usedBufferFallback = hasFallbackFrame;
 
     }
+
+    const ArtifactCore::ImageF32x4_RGBA& fallbackFrame =
+        cachedFallbackFrame ? *cachedFallbackFrame : frameBuffer;
+
+    const qint64 videoFallbackReadMs = profileThisVideoLayer
+        ? videoFallbackTimer.elapsed()
+        : 0;
 
     if (videoDebugOut) {
 
@@ -10723,7 +10914,7 @@ void drawLayerForCompositionView(
 
                                      : QStringLiteral("repeatLastGood");
 
-        } else if (frameBuffer.isEmpty()) {
+        } else if (!hasFallbackFrame) {
 
           reason = hasBuffer ? QStringLiteral("decodeNull")
 
@@ -10773,7 +10964,7 @@ void drawLayerForCompositionView(
 
     }
 
-    if (!frameBuffer.isEmpty() && !hasRasterizer &&
+    if (hasFallbackFrame && !hasRasterizer &&
 
         !layerHasEnabledMatteReferences(layer)) {
 
@@ -10785,33 +10976,67 @@ void drawLayerForCompositionView(
 
           layer->currentFrame(), !currentFrameReady);
 
+      Diligent::ITextureView* fallbackVideoTexture = nullptr;
+      if (cachedFallbackUpload) {
+        fallbackVideoTexture = renderer->textureForVideoFrame(
+            fallbackFrame, QUuid(layer->id().toString()),
+            fallbackFrameContentKey, cachedFallbackUpload.get());
+      }
+
+      QElapsedTimer videoFallbackDrawTimer;
+      if (profileThisVideoLayer) videoFallbackDrawTimer.start();
+
       drawWithClonerEffect(
 
           layer, globalTransform4x4,
 
           [&](const QMatrix4x4 &instanceTransform, float instanceWeight) {
 
-            renderer->drawSpriteTransformed(
-
-                static_cast<float>(localRect.x()),
-
-                static_cast<float>(localRect.y()),
-
-                static_cast<float>(localRect.width()),
-
-                static_cast<float>(localRect.height()), instanceTransform,
-
-                frameBuffer, baseOpacity * instanceWeight);
+            if (fallbackVideoTexture) {
+              renderer->drawSpriteTransformed(
+                  static_cast<float>(localRect.x()),
+                  static_cast<float>(localRect.y()),
+                  static_cast<float>(localRect.width()),
+                  static_cast<float>(localRect.height()), instanceTransform,
+                  fallbackVideoTexture, baseOpacity * instanceWeight);
+            } else {
+              renderer->drawSpriteTransformed(
+                  static_cast<float>(localRect.x()),
+                  static_cast<float>(localRect.y()),
+                  static_cast<float>(localRect.width()),
+                  static_cast<float>(localRect.height()), instanceTransform,
+                  fallbackFrame, baseOpacity * instanceWeight);
+            }
 
           });
+
+      if (profileThisVideoLayer) {
+        std::fprintf(
+            stderr,
+            "[VideoPreviewLayerProfile] branch=fallback frame=%lld ready=%d "
+            "rasterizer=%d cacheReadMs=%lld drawSubmitMs=%lld size=%dx%d\n",
+            static_cast<long long>(layer->currentFrame()),
+            currentFrameReady ? 1 : 0, hasRasterizer ? 1 : 0,
+            static_cast<long long>(videoFallbackReadMs),
+            static_cast<long long>(videoFallbackDrawTimer.elapsed()),
+            fallbackFrame.width(), fallbackFrame.height());
+        std::fflush(stderr);
+        qWarning().noquote()
+            << "[VideoPreviewLayerProfile] branch=fallback frame="
+            << layer->currentFrame() << "frameReady=" << currentFrameReady
+            << "rasterizer=" << hasRasterizer
+            << "cacheReadMs=" << videoFallbackReadMs
+            << "drawSubmitMs=" << videoFallbackDrawTimer.elapsed()
+            << "size=" << fallbackFrame.width() << 'x' << fallbackFrame.height();
+      }
 
       return;
 
     }
 
-    if (!frameBuffer.isEmpty()) {
+    if (hasFallbackFrame) {
 
-      frame = frameBuffer.toQImage();
+      frame = fallbackFrame.toQImage();
 
     }
 
@@ -11042,7 +11267,7 @@ void drawLayerForCompositionView(
     QImage surface = mpmSandLayer->getSoftwareRenderSurface(
         surfaceSize.width(), surfaceSize.height(), &surfaceBounds, true);
     if (!surface.isNull()) {
-      applySurfaceAndDraw(surface, surfaceBounds, false, nullptr, true);
+      applySurfaceAndDraw(surface, surfaceBounds, false);
     }
     return;
   }
@@ -11843,6 +12068,8 @@ public:
 
     quint64 buildGeneration = 0;
 
+    bool capturedDuringPlayback = false;
+
   };
 
   class RenderPass {
@@ -12086,6 +12313,17 @@ public:
   std::unique_ptr<ArtifactCore::PreciseTicker> renderTickDriver_;
 
   std::atomic_bool renderTickPosted_{false};
+  // Diagnostic values are owned only by the ticker's worker callback.
+  uint32_t renderDispatchProfileCount_ = 0;
+  // Accessed only by the GUI callback; diagnostic sampling is bounded.
+  uint32_t renderGuiDispatchProfileCount_ = 0;
+  uint32_t renderSlowGuiDispatchProfileCount_ = 0;
+  bool profilePresentStages_ = false;
+  uint32_t presentStageProfileCount_ = 0;
+  uint32_t renderDurationProfileCount_ = 0;
+  uint32_t playbackSetupProfileCount_ = 0;
+  uint32_t renderIdleStopProfileCount_ = 0;
+  std::chrono::steady_clock::time_point renderDispatchPreviousTick_{};
 
   std::atomic_bool renderDirty_{false};
 
@@ -14567,32 +14805,37 @@ public:
 
     PresentStageResult result;
 
+    const bool samplePresentStages = profilePresentStages_ &&
+        presentStageProfileCount_ < 64 &&
+        ArtifactPlaybackService::instance() && ArtifactPlaybackService::instance()->isPlaying();
+    const auto presentStarted = samplePresentStages
+        ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     renderer_->present();
+    const auto presentFinished = samplePresentStages
+        ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    if (gpuTextureCacheManager_) gpuTextureCacheManager_->endFrame();
 
     result.presentedGpuFrameMs = renderer_->lastFrameGpuTimeMs();
 
     result.presentedStatus = renderer_->lastPresentStatus();
+    lastPresentedRamPreviewFrame_ =
+        useRamPreviewFallback && result.presentedStatus == QStringLiteral("ok")
+            ? currentFrame.framePosition() : -1;
+    if (lastPresentedRamPreviewFrame_ >= 0) {
+      if (const auto comp = previewPipeline_.composition())
+        lastPresentedRamPreviewComposition_ = comp->id();
+      else
+        lastPresentedRamPreviewFrame_ = -1;
+    }
     if (auto *playback = ArtifactPlaybackService::instance();
         playback && playback->isPlaying() &&
-        !result.presentedStatus.contains(QStringLiteral("fail"), Qt::CaseInsensitive)) {
+        result.presentedStatus == QStringLiteral("ok")) {
       playback->recordPresentedFrame(currentFrame.framePosition());
     }
 
     for (const auto& layer : layers) {
 
       if (auto* videoLayer = dynamic_cast<ArtifactVideoLayer*>(layer.get())) {
-
-        if (useRamPreviewFallback && isLayerEffectivelyVisible(layer) &&
-
-            layer->isActiveAt(currentFrame)) {
-
-          videoLayer->markFrameCompositionCacheReady(
-
-              layer->currentFrame(), playbackPreviewState.onDisk);
-
-          videoLayer->markFrameRenderQueued(layer->currentFrame());
-
-        }
 
         videoLayer->markFramePresented(layer->currentFrame(),
 
@@ -14632,6 +14875,15 @@ public:
 
     }
 
+    if (samplePresentStages) {
+      const auto bookkeepingFinished = std::chrono::steady_clock::now();
+      std::fprintf(stderr,
+          "[VideoPreviewPresentStageProfile] frame=%lld presentMs=%.3f bookkeepingMs=%.3f\n",
+          static_cast<long long>(currentFrame.framePosition()),
+          std::chrono::duration<double, std::milli>(presentFinished - presentStarted).count(),
+          std::chrono::duration<double, std::milli>(bookkeepingFinished - presentFinished).count());
+      ++presentStageProfileCount_;
+    }
     return result;
 
   }
@@ -15254,6 +15506,8 @@ public:
   // +1 (a seek, a reverse, a dropped tick) means retained temporal history is
   // no longer a neighbour and is dropped.  -1 means "not yet evaluated".
   qint64 lastEvaluatedTemporalFrame_ = -1;
+  qint64 lastPresentedRamPreviewFrame_ = -1;
+  CompositionID lastPresentedRamPreviewComposition_;
 
   quint64 renderFrameCounter_ = 0;
 
@@ -15833,22 +16087,23 @@ public:
       const QPointer<ArtifactPlaybackService>& weakPlayback,
 
       const PreviewFrameRequest& request,
+      const QPointer<CompositionRenderController>& weakOwner,
 
-      const QImage& capturedFrame) {
+      ArtifactCore::SharedPtr<const ArtifactCore::ImageUploadBuffer> capturedFrame) {
 
-    if (!weakPlayback || capturedFrame.isNull()) {
+    if (!weakPlayback || !capturedFrame || !capturedFrame->isValid()) {
 
       return;
 
     }
 
-    const QImage frameForPublish = capturedFrame;
+    const auto frameForPublish = std::move(capturedFrame);
 
     QMetaObject::invokeMethod(
 
         weakPlayback.data(),
 
-        [weakPlayback, request, frameForPublish]() {
+        [weakPlayback, weakOwner, request, frameForPublish]() {
 
           if (!weakPlayback) {
 
@@ -15870,7 +16125,8 @@ public:
 
           if (currentSummary.buildQueueGeneration != request.buildGeneration ||
 
-              currentSummary.buildQueueNextFrame != request.buildTargetFrame ||
+              (!request.capturedDuringPlayback &&
+               currentSummary.buildQueueNextFrame != request.buildTargetFrame) ||
 
               request.buildTargetFrame != request.framePos ||
 
@@ -15886,13 +16142,39 @@ public:
 
               : QStringLiteral("fallback");
 
+          ArtifactCore::ImageF32x4_RGBA cpuFrame;
+          cpuFrame.setFromRGBA8(frameForPublish->bytes.data(),
+              static_cast<int>(frameForPublish->width),
+              static_cast<int>(frameForPublish->height));
           weakPlayback->storeCompositionPreviewFrameImage(
 
-              request.framePos, frameForPublish, request.compositionId,
+              request.framePos, cpuFrame, request.compositionId,
 
               request.previewDownsample, request.effectiveDownsample,
 
               renderPath, request.priorityReason, true);
+
+          // Warm only after authoritative RAM publication, on the GUI/render
+          // owner lane while paused. Resource creation stays outside playback.
+          // These owners share the renderer's existing 50-entry / 512 MiB LRU;
+          // eviction is an ordinary resident miss, never a stale texture use.
+          if (!request.capturedDuringPlayback && weakOwner &&
+              !weakPlayback->isPlaying() && weakOwner->impl_->renderer_ &&
+              !weakOwner->impl_->renderInProgress_) {
+            auto* impl = weakOwner->impl_;
+            std::uint64_t revision = 0;
+            const auto* image = weakPlayback->borrowRamPreviewFrameImage(request.framePos);
+            const auto* upload = weakPlayback->borrowRamPreviewFrameUpload(request.framePos, revision);
+            if (image && upload) {
+              const auto slot = static_cast<std::uint64_t>(request.framePos) %
+                  impl->ramPreviewResidentOwners_.size();
+              impl->renderer_->textureForVideoFrame(*image,
+                  impl->ramPreviewResidentOwners_[slot], static_cast<qint64>(revision), upload);
+              // Retain the original streaming slot as a no-resident fallback.
+              impl->renderer_->textureForVideoFrame(*image,
+                  impl->ramPreviewTextureOwner_, static_cast<qint64>(revision), upload);
+            }
+          }
 
         },
 
@@ -16029,6 +16311,12 @@ public:
   };
 
   RenderKeyState lastRenderKeyState_{};
+  const QUuid ramPreviewTextureOwner_ = QUuid::createUuid();
+  const ArtifactCore::ArtifactStaticArray<QUuid, 32> ramPreviewResidentOwners_ = [] {
+    ArtifactCore::ArtifactStaticArray<QUuid, 32> owners{};
+    for (auto& id : owners) id = QUuid::createUuid();
+    return owners;
+  }();
 
   QString lastOverlayDebugSummary_;
 
@@ -16397,16 +16685,6 @@ public:
           .toBool();
 
   std::unique_ptr<GPUTextureCacheManager> gpuTextureCacheManager_;
-
-  QElapsedTimer projectPreflightTimer_;
-
-  CompositionID projectPreflightCompositionId_;
-
-  bool cachedProjectHasBlockingErrors_ = false;
-
-  int cachedProjectDiagnosticCount_ = 0;
-
-
 
   // Render debounce timer: coalesces rapid LayerChangedEvent notifications
 
@@ -18065,8 +18343,6 @@ public:
 
                 }
 
-                projectPreflightTimer_.invalidate();
-
                 resetOnionSkinHistory();
 
                 applyCompositionState(composition);
@@ -18228,11 +18504,22 @@ public:
 
 
 
-  void invalidateBaseComposite(bool preserveLayerDamage = false) {
+  void invalidateBaseComposite(bool preserveLayerDamage = false,
+                               bool preserveViewportTransform = false) {
 
     ++baseInvalidationSerial_;
 
+    const float previousZoom = lastRenderKeyState_.zoom;
+    const float previousPanX = lastRenderKeyState_.panX;
+    const float previousPanY = lastRenderKeyState_.panY;
     lastRenderKeyState_ = {};
+    if (preserveViewportTransform) {
+      // Frame readiness invalidates content, not the user's view. Losing
+      // these values falsely disables RAM presentation as a changing view.
+      lastRenderKeyState_.zoom = previousZoom;
+      lastRenderKeyState_.panX = previousPanX;
+      lastRenderKeyState_.panY = previousPanY;
+    }
 
     if (!preserveLayerDamage) {
 
@@ -18673,6 +18960,35 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
 
               }
 
+              if (event.changeType == LayerChangedEvent::ChangeType::FrameReady) {
+                // Decode/upload completion changes availability, not authored
+                // content. Refresh this frame while preserving the RAM build
+                // and persistent preview entries for other timeline frames.
+                const auto layer = comp->layerById(LayerID(event.layerId));
+                if (layer && !impl_->renderQueueActive_) {
+                  impl_->invalidateLayerSurfaceCache(layer);
+                  impl_->changeDetector_.markLayerChanged(event.layerId);
+                  impl_->invalidateBaseComposite(true, true);
+                  // Decode availability cannot change a final RAM image
+                  // already presented for this frame. Keep surface damage for
+                  // the next live draw without another same-frame Present.
+                  const auto* playback = ArtifactPlaybackService::instance();
+                  const auto playbackComp = playback
+                      ? playback->currentComposition() : nullptr;
+                  const bool alreadyPresentedRamFrame =
+                      playback && playback->isPlaying() && playbackComp &&
+                      playbackComp->id() == comp->id() &&
+                      impl_->lastPresentedRamPreviewComposition_ == comp->id() &&
+                      !impl_->interactionBusy() &&
+                      impl_->lastPresentedRamPreviewFrame_ ==
+                          playback->currentFrame().framePosition() &&
+                      playback->borrowRamPreviewFrameImage(
+                          playback->currentFrame().framePosition());
+                  if (!alreadyPresentedRamFrame) markRenderDirty();
+                }
+                return;
+              }
+
               impl_->resetOnionSkinHistory();
 
               if (impl_->renderQueueActive_) {
@@ -18681,7 +18997,10 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
 
               }
 
-              const auto layerId = LayerID(event.layerId);
+              // Bulk removal deliberately has no individual layer ID.
+              // Do not send that sentinel through the UUID parser.
+              const auto layerId = event.layerId.isEmpty()
+                  ? LayerID(ArtifactCore::Id::Nil()) : LayerID(event.layerId);
 
               if (event.changeType == LayerChangedEvent::ChangeType::Created) {
                 impl_->pendingFullGizmoLayerId_ = layerId;
@@ -18703,7 +19022,8 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
 
                     LayerChangedEvent::ChangeType::Removed) {
 
-                  if (layerId == impl_->selectedLayerId_) {
+                  if (event.layerId.isEmpty() ||
+                      layerId == impl_->selectedLayerId_) {
                     if (impl_->gizmoSession_.owner != GizmoOwner::None)
                       cancelGizmoInteraction();
 
@@ -19112,7 +19432,31 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
 
       compositionRenderDispatchIntervalMs(impl_->previewPipeline_.composition())));
 
-  impl_->renderTickDriver_->setCallback([this]() {
+  const bool profileRenderDispatch =
+      qEnvironmentVariableIsSet("ARTIFACT_VIDEO_PREVIEW_PROFILE_SETUP") &&
+      qEnvironmentVariable("ARTIFACT_VIDEO_PREVIEW_PROFILE_SETUP") != QStringLiteral("0");
+  impl_->profilePresentStages_ = profileRenderDispatch;
+  impl_->renderTickDriver_->setCallback([this, profileRenderDispatch]() {
+
+    if (!impl_) return;
+    if (profileRenderDispatch) {
+      const auto requestedInterval = impl_->renderTickDriver_->interval();
+      if (requestedInterval > std::chrono::milliseconds(2)) {
+        impl_->renderDispatchProfileCount_ = 0;
+        impl_->renderDispatchPreviousTick_ = {};
+      } else if (impl_->renderDispatchProfileCount_ < 64) {
+        const auto tickNow = std::chrono::steady_clock::now();
+        if (impl_->renderDispatchPreviousTick_.time_since_epoch().count() != 0) {
+          const double elapsedMs = std::chrono::duration<double, std::milli>(
+              tickNow - impl_->renderDispatchPreviousTick_).count();
+          std::fprintf(stderr, "[VideoPreviewDispatchProfile] requestedMs=%.3f actualMs=%.3f\n",
+                       std::chrono::duration<double, std::milli>(requestedInterval).count(),
+                       elapsedMs);
+        }
+        impl_->renderDispatchPreviousTick_ = tickNow;
+        ++impl_->renderDispatchProfileCount_;
+      }
+    }
 
     if (!impl_ || impl_->renderTickPosted_.exchange(true, std::memory_order_acq_rel)) {
 
@@ -19120,11 +19464,15 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
 
     }
 
+    const bool profileActiveDispatch = profileRenderDispatch &&
+        impl_->renderTickDriver_->interval() <= std::chrono::milliseconds(2);
+    const auto dispatchPostedAt = profileActiveDispatch
+        ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     QMetaObject::invokeMethod(
 
         this,
 
-        [this]() {
+        [this, profileActiveDispatch, dispatchPostedAt]() {
 
           if (!impl_) {
 
@@ -19132,6 +19480,22 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
 
           }
 
+          const bool inspectDispatch = profileActiveDispatch &&
+              (impl_->renderGuiDispatchProfileCount_ < 64 ||
+               impl_->renderSlowGuiDispatchProfileCount_ < 32);
+          const double callbackQueuedMs = inspectDispatch
+              ? std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - dispatchPostedAt).count() : 0.0;
+          const bool slowDispatch = inspectDispatch && callbackQueuedMs > 20.0 &&
+              impl_->renderSlowGuiDispatchProfileCount_ < 32;
+          const bool sampleDispatch = inspectDispatch &&
+              (impl_->renderGuiDispatchProfileCount_ < 64 || slowDispatch);
+          qint64 frameAtCallback = -1;
+          if (sampleDispatch) {
+            if (const auto dispatchComposition = impl_->previewPipeline_.composition()) {
+              frameAtCallback = dispatchComposition->framePosition().framePosition();
+            }
+          }
           impl_->renderTickPosted_.store(false, std::memory_order_release);
 
           renderCrashTrace("tick-enter", impl_->renderFrameCounter_);
@@ -19186,8 +19550,19 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
 
           if (!impl_->renderDirty_.exchange(false, std::memory_order_acq_rel)) {
 
-            if (!impl_->viewportInteracting_ && impl_->renderTickDriver_) {
+            const auto* idlePlayback = ArtifactPlaybackService::instance();
+            // Keep the existing worker alive across playback frames. Restarting
+            // it for each dirty frame creates/joins a thread on the GUI path.
+            if (!impl_->viewportInteracting_ && impl_->renderTickDriver_ &&
+                !(idlePlayback && idlePlayback->isPlaying())) {
 
+              if (impl_->profilePresentStages_ && impl_->renderIdleStopProfileCount_ < 64) {
+                const auto* playback = ArtifactPlaybackService::instance();
+                std::fprintf(stderr, "[VideoPreviewIdleStopProfile] playing=%d frameSerial=%llu\n",
+                    playback && playback->isPlaying(),
+                    static_cast<unsigned long long>(impl_->renderFrameCounter_));
+                ++impl_->renderIdleStopProfileCount_;
+              }
               impl_->renderTickDriver_->stop();
 
             }
@@ -19218,7 +19593,24 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
 
           } renderGuard(impl_->renderInProgress_);
 
-          // Temporal history is only meaningful across a contiguous step.  A
+          // The engine can advance its clock before the service's GUI-thread
+          // composition update is dispatched. Do not present a new cache frame
+          // with old layer state or acknowledge it ahead of that update.
+          // FrameChanged marks the renderer dirty after service synchronization.
+          if (const auto* playback = ArtifactPlaybackService::instance();
+              playback && playback->isPlaying() && !impl_->renderQueueActive_) {
+            const auto composition = impl_->previewPipeline_.composition();
+            const auto playbackComposition = playback->currentComposition();
+            if (composition && playbackComposition &&
+                composition->id() == playbackComposition->id() &&
+                composition->framePosition().framePosition() !=
+                    playback->currentFrame().framePosition()) {
+              return;
+            }
+          }
+
+          // A redraw of the same frame retains its temporal history. History
+          // is otherwise only meaningful across a contiguous step. A
           // seek, a reverse step, or any other discontinuity makes the retained
           // frames the wrong neighbours, so drop them rather than letting a
           // temporal effect blend against a distant frame.  Forward playback
@@ -19235,6 +19627,7 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
             temporalFrame = playback->currentFrame().framePosition();
             temporalDiscontinuity =
                 temporalFrame >= 0 && impl_->lastEvaluatedTemporalFrame_ >= 0 &&
+                temporalFrame != impl_->lastEvaluatedTemporalFrame_ &&
                 temporalFrame != impl_->lastEvaluatedTemporalFrame_ + 1;
             if (temporalDiscontinuity) {
               ArtifactEffectFrameSampler::instance().invalidateAll();
@@ -19260,7 +19653,35 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
             }
           }
 
+          if (sampleDispatch) {
+            std::fprintf(stderr,
+                "[VideoPreviewGuiDispatchProfile] queuedMs=%.3f frameAtCallback=%lld frameSerialBefore=%llu\n",
+                callbackQueuedMs, static_cast<long long>(frameAtCallback),
+                static_cast<unsigned long long>(impl_->renderFrameCounter_));
+            if (impl_->renderGuiDispatchProfileCount_ < 64)
+              ++impl_->renderGuiDispatchProfileCount_;
+            if (slowDispatch) ++impl_->renderSlowGuiDispatchProfileCount_;
+          }
+          const bool profileRenderDuration = impl_->profilePresentStages_ &&
+              impl_->renderDurationProfileCount_ < 64 &&
+              ArtifactPlaybackService::instance() && ArtifactPlaybackService::instance()->isPlaying();
+          const auto renderStarted = profileRenderDuration
+              ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+          qint64 frameAtRenderStart = -1;
+          if (profileRenderDuration) {
+            if (const auto renderComposition = impl_->previewPipeline_.composition()) {
+              frameAtRenderStart = renderComposition->framePosition().framePosition();
+            }
+          }
           impl_->renderOneFrameImpl(this);
+          if (profileRenderDuration) {
+            std::fprintf(stderr, "[VideoPreviewRenderDurationProfile] frameSerial=%llu frameAtRenderStart=%lld totalMs=%.3f\n",
+                static_cast<unsigned long long>(impl_->renderFrameCounter_),
+                static_cast<long long>(frameAtRenderStart),
+                std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - renderStarted).count());
+            ++impl_->renderDurationProfileCount_;
+          }
 
           renderCrashTrace("tick-render-end", impl_->renderFrameCounter_);
 
@@ -42054,6 +42475,26 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
   QElapsedTimer frameTimer;
 
   frameTimer.start();
+  static const bool profileVideoPreviewSetup = [] {
+    return qEnvironmentVariableIsSet("ARTIFACT_VIDEO_PREVIEW_PROFILE_SETUP") &&
+           qEnvironmentVariable("ARTIFACT_VIDEO_PREVIEW_PROFILE_SETUP") !=
+               QStringLiteral("0");
+  }();
+  const auto* setupPlayback = profileVideoPreviewSetup
+      ? ArtifactPlaybackService::instance() : nullptr;
+  const bool profilePlaybackSetup = profileVideoPreviewSetup && setupPlayback &&
+      setupPlayback->isPlaying() && playbackSetupProfileCount_ < 64;
+  if (profilePlaybackSetup) ++playbackSetupProfileCount_;
+  const bool profileThisVideoPreviewSetup = profileVideoPreviewSetup &&
+      (renderFrameCounter_ < 32 || profilePlaybackSetup);
+  std::array<qint64, 17> videoPreviewSetupMarksNs{};
+  const auto markVideoPreviewSetupStage = [&](const std::size_t index) {
+    if (profileThisVideoPreviewSetup &&
+        index < videoPreviewSetupMarksNs.size()) {
+      videoPreviewSetupMarksNs[index] = frameTimer.nsecsElapsed();
+    }
+  };
+  markVideoPreviewSetupStage(0);
   recordInteractionPerfEvent(7);
 
   // Cost/trace/RenderGraph diagnostics are opt-in.  Sampling them every 30
@@ -42162,6 +42603,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     renderer_->clearRenderTarget(viewportClearColor_);
 
     renderer_->present();
+    if (gpuTextureCacheManager_) gpuTextureCacheManager_->endFrame();
 
     renderCrashTrace("render-no-comp-present-end", renderFrameCounter_);
 
@@ -42193,69 +42635,22 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
   // Normal composition changes seed this cache in setComposition(). The lazy
   // path covers a controller that adopted a composition through the fallback
   // route above without adding an O(layer-count) operation to every frame.
-  if (!layerDamageBoundsInitialized_) {
+  const qint64 damageBoundsRefreshStartNs =
+      profileThisVideoPreviewSetup ? frameTimer.nsecsElapsed() : 0;
+  const bool refreshDamageBounds = !layerDamageBoundsInitialized_;
+  if (refreshDamageBounds) {
 
     resetLayerDamageBounds(comp);
 
   }
-
-
-
-  if (auto *service = ArtifactProjectService::instance()) {
-
-    constexpr qint64 kProjectPreflightRefreshMs = 1000;
-
-    const bool compositionChanged =
-
-        projectPreflightCompositionId_ != comp->id();
-
-    if (compositionChanged || !projectPreflightTimer_.isValid() ||
-
-        projectPreflightTimer_.elapsed() >= kProjectPreflightRefreshMs) {
-
-      const auto projectDiagnostics = service->currentProjectDiagnostics();
-
-      cachedProjectHasBlockingErrors_ = std::any_of(
-
-          projectDiagnostics.begin(), projectDiagnostics.end(),
-
-          [](const auto &diagnostic) { return diagnostic.isError(); });
-
-      cachedProjectDiagnosticCount_ =
-
-          static_cast<int>(projectDiagnostics.size());
-
-      projectPreflightCompositionId_ = comp->id();
-
-      projectPreflightTimer_.restart();
-
-    }
-
-    if (cachedProjectHasBlockingErrors_) {
-
-      const QString blockedSummary =
-
-          QStringLiteral("preflight=issues issues=%1")
-
-              .arg(cachedProjectDiagnosticCount_);
-
-      if (blockedSummary != lastRenderPathSummary_) {
-
-        qWarning() << "[CompositionView] project health errors; continuing interactive render"
-
-                   << "issues=" << cachedProjectDiagnosticCount_;
-
-      }
-
-      lastRenderPathSummary_ = blockedSummary;
-
-      // Project diagnostics are advisory for the interactive viewer. Blocking
-      // the complete render here hides otherwise valid solid/image layers and
-      // also prevents selection overlays from explaining the bad asset. Let
-      // the individual layer render paths handle unavailable resources.
-
-    }
-
+  if (profileThisVideoPreviewSetup && refreshDamageBounds) {
+    std::fprintf(stderr,
+                 "[VideoPreviewSetupProfile] frame=%llu "
+                 "damageBoundsRefreshMs=%.2f\n",
+                 static_cast<unsigned long long>(renderFrameCounter_),
+                 static_cast<double>(frameTimer.nsecsElapsed() -
+                                     damageBoundsRefreshStartNs) /
+                     1000000.0);
   }
 
 
@@ -42264,6 +42659,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
       renderer_.get(), renderFrameCounter_, captureRenderDiagnostics,
       profileGpuFrame);
+
+  markVideoPreviewSetupStage(1);
 
   renderCrashTrace("render-cost-begin", renderFrameCounter_);
 
@@ -42491,7 +42888,17 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
   // Crowd and clone collision are owned by a composition-wide fixed-step
   // session. The layer-local code remains only as a fallback for isolated
   // layer previews that do not have a composition owner.
+  const qint64 componentSimulationStartNs =
+      profileThisVideoPreviewSetup ? frameTimer.nsecsElapsed() : 0;
   comp->evaluateLayerComponentSimulation(currentFrame, viewportInteracting_);
+  if (profileThisVideoPreviewSetup) {
+    std::fprintf(stderr,
+                 "[VideoPreviewSetupProfile] frame=%llu componentSimulationMs=%.2f\n",
+                 static_cast<unsigned long long>(renderFrameCounter_),
+                 static_cast<double>(frameTimer.nsecsElapsed() -
+                                     componentSimulationStartNs) /
+                     1000000.0);
+  }
 
 
 
@@ -42550,6 +42957,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
   }
 
   renderer_->setSceneLights(rendererSceneLights);
+  markVideoPreviewSetupStage(2);
 
   // The environment layer is a scene-level lighting source rather than a
   // drawable 2D layer. Select the first active environment map deterministically
@@ -42633,6 +43041,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     break;
   }
   renderer_->beginShadowMapFrame(shadowLightViewProjection, shadowMapLight);
+  markVideoPreviewSetupStage(3);
 
 
 
@@ -42951,8 +43360,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       (framePos < 0 ||
 
        (effectiveEndFrame > 0 && framePos >= effectiveEndFrame));
+  markVideoPreviewSetupStage(4);
 
-  ArtifactCore::ImageF32x4_RGBA ramPreviewFrameImage;
+  const ArtifactCore::ImageF32x4_RGBA *ramPreviewFrameImage = nullptr;
   // A retained video frame is valid for live presentation, but must not be
   // published as the completed composite for a different timeline frame.
   bool videoFramesReadyForRamPreview = true;
@@ -43024,7 +43434,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
         ramPreviewFallbackReason = QStringLiteral("ready-missing-image");
 
-      } else if (!playback->tryGetRamPreviewFrameImage(framePos, ramPreviewFrameImage)) {
+      } else if (!(ramPreviewFrameImage = playback->borrowRamPreviewFrameImage(framePos))) {
 
         ramPreviewFallbackReason = QStringLiteral("ready-missing-image");
 
@@ -43082,6 +43492,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     lastPlaybackDiagnosticReason.clear();
   }
 
+  markVideoPreviewSetupStage(5);
+
   float panX = 0.0f;
 
   float panY = 0.0f;
@@ -43109,6 +43521,19 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
     ramPreviewFallbackReason = QStringLiteral("viewport-transform-changing");
 
+  }
+
+  if (useRamPreviewFallback) {
+    // Start timing before drawing, preserving the composition-frame request
+    // timestamp. Resetting tickets after present hides cached render latency.
+    for (const auto& layer : layers) {
+      if (layer && isLayerEffectivelyVisible(layer) && layer->isActiveAt(currentFrame)) {
+        if (auto* video = dynamic_cast<ArtifactVideoLayer*>(layer.get())) {
+          video->markFrameCompositionCacheReady(layer->currentFrame(), false);
+          video->markFrameRenderQueued(layer->currentFrame());
+        }
+      }
+    }
   }
 
   const QRectF visibleCanvasRect = viewportRectToCanvasRect(
@@ -43288,6 +43713,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
   }
 
   lastRenderKeyState_ = currentKey;
+  markVideoPreviewSetupStage(6);
 
   // A previous GPU-blend/offscreen pass may leave renderer target overrides
   // alive even when this frame chooses the direct path. Reset both targets
@@ -43945,6 +44371,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                                   : PreviewRenderPipelineSlot::State::Free;
 
+    markVideoPreviewSetupStage(7);
+
     const QString multiFrameReason = multiFramePreviewFallbackReason(
 
         gpuBlendEnabled_, blendPipelineReady_, hasGpuBlendJustification,
@@ -44186,6 +44614,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             : 0.0f;
 
     qint64 setupMs = markPhaseMs();
+    markVideoPreviewSetupStage(8);
 
     qint64 basePassMs = 0;
 
@@ -44341,6 +44770,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     lastPresentedReadbackSRV_ = nullptr;
 
     if (useRamPreviewFallback) {
+      markVideoPreviewSetupStage(10);
 
       renderCrashTrace("render-branch-ram-preview", renderFrameCounter_);
 
@@ -44428,9 +44858,28 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
             QMatrix4x4 identity;
 
-            context.renderer->drawSpriteTransformed(
-
-                0.0f, 0.0f, cw, ch, identity, ramPreviewFrameImage, 1.0f);
+            std::uint64_t contentRevision = 0;
+            const auto* playback = ArtifactPlaybackService::instance();
+            const auto* prepared = playback
+                ? playback->borrowRamPreviewFrameUpload(framePos, contentRevision) : nullptr;
+            const auto residentSlot = static_cast<std::uint64_t>(framePos) %
+                ramPreviewResidentOwners_.size();
+            auto* texture = prepared
+                ? context.renderer->textureForVideoFrame(*ramPreviewFrameImage,
+                    ramPreviewResidentOwners_[residentSlot],
+                    static_cast<qint64>(contentRevision), prepared, true)
+                : nullptr;
+            if (!texture && prepared) {
+              texture = context.renderer->textureForVideoFrame(*ramPreviewFrameImage,
+                  ramPreviewTextureOwner_, static_cast<qint64>(contentRevision), prepared);
+            }
+            if (texture) {
+              context.renderer->drawSpriteTransformed(
+                  0.0f, 0.0f, cw, ch, identity, texture, 1.0f);
+            } else {
+              context.renderer->drawSpriteTransformed(
+                  0.0f, 0.0f, cw, ch, identity, *ramPreviewFrameImage, 1.0f);
+            }
 
             surfacePassMs = markPhaseMs();
 
@@ -44444,6 +44893,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
       RenderPassExecutor::runAllWithRenderGraph(ramPasses, ramContext,
                                                 ramResources);
+      markVideoPreviewSetupStage(11);
 
       maskPassMs = surfacePassMs;
 
@@ -45025,7 +45475,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           ++drawnLayerCount;
           if (const auto* video = dynamic_cast<const ArtifactVideoLayer*>(layer.get())) {
             videoFramesReadyForRamPreview = videoFramesReadyForRamPreview &&
-                !video->cachedFrameImageBuffer(framePos).isEmpty();
+                static_cast<bool>(video->cachedFrameImageBufferShared(framePos));
           }
 
           if (layerUsesSurfaceUploadForCompositionView(layer.get())) {
@@ -45996,7 +46446,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           ++drawnLayerCount;
           if (const auto* video = dynamic_cast<const ArtifactVideoLayer*>(layer.get())) {
             videoFramesReadyForRamPreview = videoFramesReadyForRamPreview &&
-                !video->cachedFrameImageBuffer(framePos).isEmpty();
+                static_cast<bool>(video->cachedFrameImageBufferShared(framePos));
           }
 
           if (layerUsesSurfaceUploadForCompositionView(layer.get())) {
@@ -46204,10 +46654,24 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       // also submits queued draws, but by then later passes may have reset the
       // shared command buffer. Re-arm the swap-chain target for overlays after
       // this barrier.
+      markVideoPreviewSetupStage(14);
       renderer_->renderShadowMapFrame();
+      const auto flushContextBeforeUs = profileThisVideoPreviewSetup
+          ? renderer_->flushContextTimeUs() : 0;
+      const auto flushStartedNs = profileThisVideoPreviewSetup
+          ? frameTimer.nsecsElapsed() : 0;
       renderer_->flush();
+      if (profileThisVideoPreviewSetup && useRamPreviewFallback) {
+        const auto flushFinishedNs = frameTimer.nsecsElapsed();
+        std::fprintf(stderr,
+            "[VideoPreviewRamFlushProfile] frame=%llu totalMs=%.3f contextFlushMs=%.3f\n",
+            static_cast<unsigned long long>(renderFrameCounter_),
+            static_cast<double>(flushFinishedNs - flushStartedNs) / 1.0e6,
+            static_cast<double>(renderer_->flushContextTimeUs() - flushContextBeforeUs) / 1000.0);
+      }
       renderer_->setOverrideRTV(nullptr);
       compositeFinalizedThisFrame_ = true;
+      markVideoPreviewSetupStage(15);
 
       postPassMs = markPhaseMs();
 
@@ -46224,6 +46688,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                                 currentFrame, cw, ch, has3DCamera,
 
                                 cameraViewMatrix, cameraProjMatrix);
+    markVideoPreviewSetupStage(16);
 
 
 
@@ -47848,6 +48313,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
 
 
+    markVideoPreviewSetupStage(12);
     RenderPassContext overlayContext{renderer_.get(), renderFrameCounter_};
 
     RenderPassResources overlayResources;
@@ -47887,6 +48353,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     framePassesSucceeded = RenderPassExecutor::runWithRenderGraph(
         overlayPass, overlayContext, overlayResources) && framePassesSucceeded;
 
+    markVideoPreviewSetupStage(13);
     overlayMs = markPhaseMs();
 
 
@@ -48033,7 +48500,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
             framePos,
 
-            previewSummary.buildQueueNextFrame,
+            // Paused warmup follows the queue head. During playback a
+            // deferred earlier frame must not block capturing later exact
+            // frames that are still pending in this same build generation.
+            playbackPlaying ? framePos : previewSummary.buildQueueNextFrame,
 
             comp->id().toString(),
 
@@ -48045,7 +48515,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
             previewSummary.currentPriorityReason,
 
-            previewSummary.buildQueueGeneration};
+            previewSummary.buildQueueGeneration, playbackPlaying};
 
         const bool previewRequestMatchesRenderedFrame =
 
@@ -48059,17 +48529,17 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
         } else if (previewRequest.pipelineEnabled && ramPreviewReadbackSRV) {
 
-          const bool accepted = renderer_->readbackTextureViewToImageAsync(
+          const bool accepted = renderer_->readbackTextureViewToBufferAsync(
 
               ramPreviewReadbackSRV,
 
-              [weakPlayback, previewRequest](const QImage& capturedFrame) {
+              [weakPlayback, previewRequest, weakOwner = QPointer<CompositionRenderController>(owner)](ArtifactCore::SharedPtr<const ArtifactCore::ImageUploadBuffer> capturedFrame) {
 
-                publishPreviewFrameRequestResult(weakPlayback, previewRequest,
+                publishPreviewFrameRequestResult(weakPlayback, previewRequest, weakOwner,
 
-                                                 capturedFrame);
+                                                 std::move(capturedFrame));
 
-              });
+              }, !playbackPlaying);
 
           if (!accepted) {
             playback->deferRamPreviewBuildFrame(
@@ -48079,15 +48549,15 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
         } else {
 
-          const bool accepted = renderer_->readbackToImageAsync(
+          const bool accepted = renderer_->readbackTextureViewToBufferAsync(nullptr,
 
-              [weakPlayback, previewRequest](const QImage& capturedFrame) {
+              [weakPlayback, previewRequest, weakOwner = QPointer<CompositionRenderController>(owner)](ArtifactCore::SharedPtr<const ArtifactCore::ImageUploadBuffer> capturedFrame) {
 
-                publishPreviewFrameRequestResult(weakPlayback, previewRequest,
+                publishPreviewFrameRequestResult(weakPlayback, previewRequest, weakOwner,
 
-                                                 capturedFrame);
+                                                 std::move(capturedFrame));
 
-              });
+              }, !playbackPlaying);
 
           if (!accepted) {
             playback->deferRamPreviewBuildFrame(
@@ -48104,6 +48574,36 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     }
 
     presentMs = markPhaseMs();
+    markVideoPreviewSetupStage(9);
+
+    if (profileThisVideoPreviewSetup) {
+      const auto stageMs = [&](const std::size_t begin,
+                               const std::size_t end) -> double {
+        return static_cast<double>(videoPreviewSetupMarksNs[end] -
+                                   videoPreviewSetupMarksNs[begin]) /
+               1000000.0;
+      };
+      std::fprintf(
+          stderr,
+          "[VideoPreviewSetupProfile] frame=%llu layers=%zu "
+          "preSceneMs=%.2f sceneLightsMs=%.2f envShadowMs=%.2f "
+          "cameraRangeMs=%.2f playbackStateMs=%.2f damageMs=%.2f "
+          "pipelineMs=%.2f graphSetupMs=%.2f renderPresentMs=%.2f\n",
+          static_cast<unsigned long long>(renderFrameCounter_), layers.size(),
+          stageMs(0, 1), stageMs(1, 2), stageMs(2, 3), stageMs(3, 4),
+          stageMs(4, 5), stageMs(5, 6), stageMs(6, 7), stageMs(7, 8),
+          stageMs(8, 9));
+      if (useRamPreviewFallback) {
+        std::fprintf(stderr,
+            "[VideoPreviewRamPassProfile] frame=%llu ramPassMs=%.3f betweenMs=%.3f overlayMs=%.3f tailPresentMs=%.3f\n",
+            static_cast<unsigned long long>(renderFrameCounter_),
+            stageMs(10, 11), stageMs(11, 12), stageMs(12, 13), stageMs(13, 9));
+        std::fprintf(stderr,
+            "[VideoPreviewRamFinalizeProfile] frame=%llu beforeFinalizeMs=%.3f finalizeMs=%.3f selectionMs=%.3f afterSelectionMs=%.3f\n",
+            static_cast<unsigned long long>(renderFrameCounter_),
+            stageMs(11, 14), stageMs(14, 15), stageMs(15, 16), stageMs(16, 12));
+      }
+    }
 
     lastSubmit2DMs_ = latestTimerMs("Submit2D");
 
@@ -48636,7 +49136,6 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                  .arg(drawnLayerCount)
                  .arg(compositedLayerCount)
                  .arg(frameOutOfRange ? 1 : 0)
-                 .arg(cachedProjectHasBlockingErrors_ ? 1 : 0)
                  .arg(selectedLayerId_.toString())
                  .arg(layerReports.join(QStringLiteral("\n  ")));
     }

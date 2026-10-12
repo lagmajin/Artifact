@@ -24,6 +24,7 @@ export module Artifact.Render.PrimitiveRenderer2D;
 
 import Graphics;
 import Image.ImageF32x4_RGBA;
+import Image.UploadConversion;
 import Color.Float;
 import Text.Style;
 import Text.GlyphAtlas;
@@ -150,6 +151,15 @@ public:
         const ArtifactCore::ImageF32x4_RGBA& image,
         const QUuid& sourceIdentityId, quint64 sourceVersion,
         qint64 sourceFrameContentKey);
+    ITextureView* textureForVideoFrame(
+        const ArtifactCore::ImageF32x4_RGBA& image,
+        const QUuid& videoLayerId, qint64 frameContentKey,
+        const ArtifactCore::ImageUploadBuffer* preparedUpload = nullptr);
+    ITextureView* textureForVideoFrame(
+        const ArtifactCore::ImageF32x4_RGBA& image,
+        const QUuid& videoLayerId, qint64 frameContentKey,
+        const ArtifactCore::ImageUploadBuffer* preparedUpload,
+        bool residentOnly);
     ITextureView* textureForImage(const QImage& image);
     void drawTextureLocal(float x, float y, float w, float h, ITextureView* pSRV, float opacity = 1.0f);
     void drawMaskedTextureLocal(float x, float y, float w, float h, ITextureView* sceneSRV, const QImage& maskImage, float opacity = 1.0f);

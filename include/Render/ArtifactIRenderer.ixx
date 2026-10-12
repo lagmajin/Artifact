@@ -54,6 +54,8 @@ import Utils.String.UniString;
 import Mesh;
 import Material.Material;
 import Image.ImageF32x4_RGBA;
+import Image.UploadConversion;
+import Memory.SharedPtr;
 export import Image.MultiChannelImage;
 import Frame.Debug;
 import Graphics.RayTracingManager;
@@ -268,6 +270,13 @@ public:
   bool readbackToImageAsync(ReadbackCallback callback) const;
   bool readbackTextureViewToImageAsync(Diligent::ITextureView *textureView,
                                        ReadbackCallback callback) const;
+
+  // Native RGBA8 readback. A pool slot remains leased while the receiver
+  // retains the payload; allocation is permitted only at cold boundaries.
+  using ReadbackBufferCallback = std::function<void(
+      ArtifactCore::SharedPtr<const ArtifactCore::ImageUploadBuffer>)>;
+  bool readbackTextureViewToBufferAsync(Diligent::ITextureView *textureView,
+      ReadbackBufferCallback callback, bool allowColdAllocation = false) const;
 
   void setClearColor(const FloatColor &color);
   FloatColor getClearColor() const;
@@ -544,6 +553,15 @@ public:
       const ArtifactCore::ImageF32x4_RGBA& image,
       const QUuid& sourceIdentityId, quint64 sourceVersion,
       qint64 sourceFrameContentKey);
+  Diligent::ITextureView* textureForVideoFrame(
+      const ArtifactCore::ImageF32x4_RGBA& image,
+      const QUuid& videoLayerId, qint64 frameContentKey,
+      const ArtifactCore::ImageUploadBuffer* preparedUpload = nullptr);
+  Diligent::ITextureView* textureForVideoFrame(
+      const ArtifactCore::ImageF32x4_RGBA& image,
+      const QUuid& videoLayerId, qint64 frameContentKey,
+      const ArtifactCore::ImageUploadBuffer* preparedUpload,
+        bool residentOnly);
   Diligent::ITextureView* textureForImage(const QImage& image);
 
   // Gizmo specialized APIs

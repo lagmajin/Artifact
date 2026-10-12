@@ -103,6 +103,7 @@ struct GPUTextureOwnerStats {
 };
 
 class DiligentUploadCoordinator;
+class D3D12VideoFrameConversionPool;
 
 class GPUTextureCacheManager {
 public:
@@ -125,6 +126,12 @@ public:
     // either per-frame budget. Expiration is disabled when
     // resourceExpirationFrames is zero; eviction work is bounded.
     void beginFrame(quint64 frameIndex);
+    // Signals D3D12 video outputs after their last draw submission so fixed
+    // conversion slots are not reused while the renderer still reads them.
+    void endFrame();
+    // Borrowed native device for configuring the optional direct D3D12 video
+    // decoder lane. Valid until the renderer resets or clears this cache.
+    void* nativeD3D12Device() const;
     void setResourceExpirationFrames(quint64 frameCount);
     quint64 resourceExpirationFrames() const;
     // The effective value is clamped to the fixed per-frame maximum (8).
@@ -183,6 +190,7 @@ private:
         Diligent::RefCntAutoPtr<Diligent::ITexture> texture;
         Diligent::RefCntAutoPtr<Diligent::ITextureView> srv;
         ArtifactCore::GpuVideoFrame sourceGpuFrame;
+        int d3d12SlotIndex = -1;
         size_t memoryBytes = 0;
         quint64 lastUsedTick = 0;
         quint64 lastUsedFrame = 0;
@@ -218,12 +226,14 @@ private:
     void applyPendingD3D12TrimLocked();
     void processPendingUploadsLocked();
     void clearLocked();
+    size_t totalMemoryBytesLocked() const;
     void eraseEntryByIdLocked(quint64 id);
     void pruneAssetVersionTokenIfOwnerUnusedLocked(const QString& ownerId);
     void recordInvalidationLocked(GPUTextureCacheInvalidationReason reason);
 
     mutable QMutex mutex_;
     Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device_;
+    Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context_;
     Diligent::TEXTURE_FORMAT textureFormat_ = Diligent::TEX_FORMAT_RGBA8_UNORM_SRGB;
     mutable QHash<quint64, Entry> entries_;
     QHash<QString, quint64> keyToId_;
@@ -233,6 +243,7 @@ private:
     QHash<quint64, PendingUpload> pendingUploads_;
     QHash<QString, quint64> pendingKeyToTicket_;
     DiligentUploadCoordinator* uploadCoordinator_ = nullptr;
+    D3D12VideoFrameConversionPool* d3d12VideoFramePool_ = nullptr;
     quint64 nextId_ = 1;
     quint64 generation_ = 1;
     mutable quint64 usageTick_ = 1;

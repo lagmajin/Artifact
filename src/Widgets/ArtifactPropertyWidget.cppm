@@ -952,6 +952,7 @@ ArtifactPropertyWidget::ArtifactPropertyWidget(QWidget *parent)
   impl_->eventBusSubscriptions_.push_back(
       impl_->eventBus_.subscribe<LayerChangedEvent>(
           [this](const LayerChangedEvent &event) {
+            if (event.changeType == LayerChangedEvent::ChangeType::FrameReady) return;
             const auto refresh = [this, layerId = event.layerId]() {
               if (!impl_ || impl_->localPropertyEditDepth > 0 ||
                   !impl_->currentLayer ||

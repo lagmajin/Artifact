@@ -163,6 +163,7 @@ public:
         }));
     eventBusSubscriptions_.push_back(eventBus_.subscribe<LayerChangedEvent>(
         [this](const LayerChangedEvent& event) {
+            if (event.changeType == LayerChangedEvent::ChangeType::FrameReady) return;
           if (target_ == MarkdownNoteTarget::Layer && currentLayerId_.toString() == event.layerId) {
             refreshBinding();
           }

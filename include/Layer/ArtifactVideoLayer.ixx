@@ -44,6 +44,7 @@ export module Artifact.Layer.Video;
 
 import Artifact.Layer.Abstract;
 import Image.ImageF32x4_RGBA;
+import Image.UploadConversion;
 import Memory.SharedPtr;
 import Video.VideoFrame;
 import Proxy.Service;
@@ -128,10 +129,16 @@ public:
 
     /// Short status string for render-path logs
     QString decodeState() const;
+    // Extended diagnostic formatting is for cold snapshots, not frame updates.
+    QString decodeState(bool includeFirstLatePresentation) const;
 
     /// Record the render/present phases for the current frame ticket.
     /// These calls are diagnostics only and never trigger decoding.
     void markFrameCompositionCacheReady(int64_t timelineFrame, bool fromDisk);
+    /// Clear diagnostic outcomes before a measured playback phase.
+    /// Does not change decoder state, caches, or transport.
+    void resetFrameTimingDiagnostics();
+
     void markFrameRenderQueued(int64_t timelineFrame,
                                bool repeatedLastGood = false);
     void markFramePresented(int64_t timelineFrame, double gpuFrameEstimateMs,
@@ -165,9 +172,15 @@ public:
     bool hasCurrentFrameBuffer() const;
     ArtifactCore::ImageF32x4_RGBA currentFrameImageBuffer() const;
     ArtifactCore::ImageF32x4_RGBA cachedFrameImageBuffer(int64_t frameNumber) const;
+    ArtifactCore::SharedPtr<const ArtifactCore::ImageF32x4_RGBA>
+    cachedFrameImageBufferShared(int64_t frameNumber) const;
+    ArtifactCore::SharedPtr<const ArtifactCore::ImageUploadBuffer>
+    cachedFrameUploadBufferShared(int64_t frameNumber) const;
+    bool isFrameUploadCached(int64_t frameNumber) const;
     ArtifactCore::ImageF32x4_RGBA decodeFrameToImageBuffer(int64_t frameNumber) const;
     ArtifactCore::ImageF32x4_RGBA decodeFrameToImageBuffer(double frameNumber, bool isDraftOrPreview = false) const;
-    ArtifactCore::GpuVideoFrame decodeFrameToGpuFrame(int64_t frameNumber) const;
+    ArtifactCore::GpuVideoFrame decodeFrameToGpuFrame(int64_t frameNumber,
+                                                       void* nativeD3D12Device = nullptr) const;
 
     // === Frame Decoding ===
     

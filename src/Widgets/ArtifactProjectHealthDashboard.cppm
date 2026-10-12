@@ -135,7 +135,8 @@ public:
                 });
             }));
         eventBusSubscriptions_.push_back(
-            eventBus_.subscribe<LayerChangedEvent>([this](const LayerChangedEvent&) {
+            eventBus_.subscribe<LayerChangedEvent>([this](const LayerChangedEvent& event) {
+            if (event.changeType == LayerChangedEvent::ChangeType::FrameReady) return;
                 QTimer::singleShot(0, this, [this]() {
                     refresh();
                 });

@@ -2,6 +2,7 @@
 #include <utility>
 #include <atomic>
 #include <cstdint>
+#include <cstdio>
 #include <thread>
 #include <chrono>
 #include <mutex>
@@ -168,6 +169,9 @@ public:
     // 同期プリミティブ
     std::mutex mutex_;
     std::condition_variable condition_;
+    bool presentationObserverSeen_ = false; // guarded by mutex_
+    bool framePresentationPending_ = false;
+    int64_t awaitingPresentedFrame_ = -1;
     
     // フレームバッファ（ダブルバッファリング）
     QImage frontBuffer_;
@@ -315,6 +319,7 @@ public:
     void pause() {
         PlaybackState oldState = state_.load();
         state_ = PlaybackState::Paused;
+        condition_.notify_all();
         qDebug() << "[PlaybackEngine] state transition:" << (int)oldState << "->" << (int)PlaybackState::Paused;
 
         playbackStartFrame_ = currentFrame_.load();
@@ -573,7 +578,17 @@ public:
                     }
                 }
                 currentFrame_ = targetFrame;
+                static const bool profileDispatch =
+                    qEnvironmentVariableIntValue("ARTIFACT_VIDEO_PREVIEW_PROFILE_SETUP") != 0;
+                static int dispatchSamples = 0;
+                QElapsedTimer dispatchTimer;
+                const bool profileThisDispatch = profileDispatch && dispatchSamples++ < 32;
+                if (profileThisDispatch) dispatchTimer.start();
                 updateFrame(targetFrame);
+                if (profileThisDispatch) {
+                    std::fprintf(stderr, "[VideoPreviewDispatch] frame=%lld elapsedMs=%.3f\n",
+                                 static_cast<long long>(targetFrame), dispatchTimer.nsecsElapsed() / 1.0e6);
+                }
                 lastEmittedFrame_ = targetFrame;
                 emittedFrame = true;
                 ++emittedFrames;
@@ -606,7 +621,16 @@ public:
             }
             
             // オーディオパケットの供給
+            static const bool profileAudio =
+                qEnvironmentVariableIntValue("ARTIFACT_VIDEO_PREVIEW_PROFILE_SETUP") != 0;
+            static int audioSamples = 0;
+            const bool profileThisAudio = profileAudio && audioSamples++ < 32;
+            QElapsedTimer audioTimer;
+            if (profileThisAudio) audioTimer.start();
             updateAudio();
+            if (profileThisAudio) {
+                std::fprintf(stderr, "[VideoPreviewAudio] elapsedMs=%.3f\n", audioTimer.nsecsElapsed() / 1.0e6);
+            }
             
             // オーディオ同期
             if (audioClockProviderSnapshot() && audioRenderer_ &&
@@ -674,9 +698,32 @@ public:
             skipMode_.load() == PlaybackSkipMode::None
                 ? Qt::BlockingQueuedConnection
                 : Qt::QueuedConnection;
+        bool awaitPresentation = false;
+        if (dispatchType == Qt::BlockingQueuedConnection) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            awaitPresentation = presentationObserverSeen_;
+            awaitingPresentedFrame_ = targetFrame;
+            framePresentationPending_ = awaitPresentation;
+        }
         QMetaObject::invokeMethod(owner_, [this, pos = FramePosition(targetFrame)]() {
             Q_EMIT owner_->frameChanged(pos, QImage());
         }, dispatchType);
+        if (awaitPresentation) {
+            // Composition sync alone can outrun the event-driven renderer and
+            // coalesce away undisplayed frames. Backpressure stays on this
+            // worker, never on the GUI/GPU submission thread. Bound the wait
+            // when a viewport disappears or its renderer cannot present.
+            std::unique_lock<std::mutex> lock(mutex_);
+            const bool acknowledged = condition_.wait_for(
+                lock, std::chrono::milliseconds(100), [this]() {
+                    return !framePresentationPending_ ||
+                           state_.load() != PlaybackState::Playing;
+                });
+            if (!acknowledged) {
+                presentationObserverSeen_ = false;
+            }
+            framePresentationPending_ = false;
+        }
     }
 
     /// フレーム描画
@@ -1236,6 +1283,18 @@ void ArtifactPlaybackEngine::play() {
     impl_->start();
     
     Q_EMIT playbackStateChanged(PlaybackState::Playing);
+}
+
+void ArtifactPlaybackEngine::recordPresentedFrame(int64_t frame)
+{
+    {
+        std::lock_guard<std::mutex> lock(impl_->mutex_);
+        impl_->presentationObserverSeen_ = true;
+        if (impl_->framePresentationPending_ && impl_->awaitingPresentedFrame_ == frame) {
+            impl_->framePresentationPending_ = false;
+        }
+    }
+    impl_->condition_.notify_all();
 }
 
 void ArtifactPlaybackEngine::pause() {

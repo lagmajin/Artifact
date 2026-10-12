@@ -7380,6 +7380,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
 
     impl_->eventBusSubscriptions_.push_back(
         impl_->eventBus_.subscribe<LayerChangedEvent>([queueProjectPresentationRefresh](const LayerChangedEvent& event) {
+            if (event.changeType == LayerChangedEvent::ChangeType::FrameReady) return;
         queueProjectPresentationRefresh(
             event.changeType == LayerChangedEvent::ChangeType::Created ||
             event.changeType == LayerChangedEvent::ChangeType::Removed);

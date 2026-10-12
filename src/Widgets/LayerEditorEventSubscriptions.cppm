@@ -22,6 +22,7 @@ subscribeLayerEditorEvents(ArtifactCore::EventBus& eventBus,
      }));
  subscriptions.push_back(eventBus.subscribe<LayerChangedEvent>(
      [callback = std::move(callbacks.layerChanged)](const auto& event) {
+            if (event.changeType == LayerChangedEvent::ChangeType::FrameReady) return;
        if (callback) callback(event);
      }));
  subscriptions.push_back(eventBus.subscribe<FrameChangedEvent>(

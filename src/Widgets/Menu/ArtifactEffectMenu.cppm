@@ -401,6 +401,7 @@ ArtifactEffectMenu::Impl::Impl(ArtifactEffectMenu* menu) : menu_(menu)
   eventBusSubscriptions_.push_back(
       eventBus.subscribe<LayerChangedEvent>(
           [this](const LayerChangedEvent& event) {
+            if (event.changeType == LayerChangedEvent::ChangeType::FrameReady) return;
               if (!event.compositionId.isEmpty()) {
                   auto* service = ArtifactProjectService::instance();
                   if (service) {

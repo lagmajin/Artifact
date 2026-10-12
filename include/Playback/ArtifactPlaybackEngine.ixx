@@ -125,6 +125,10 @@ public:
     void setPlaybackSkipMode(PlaybackSkipMode mode);
     PlaybackSkipMode playbackSkipMode() const;
 
+    // Presentation feedback from the owning PlaybackService. Sequential
+    // transport waits for this acknowledgement when a renderer is present.
+    void recordPresentedFrame(int64_t frame);
+
     // 再生制御
     void play();
     void pause();

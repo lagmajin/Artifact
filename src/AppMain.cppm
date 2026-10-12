@@ -6408,6 +6408,7 @@ int Artifact::runApplication(int argc, char *argv[]) {
               }));
         appEventSubscriptions.push_back(appEventBus.subscribe<LayerChangedEvent>(
           [status, autoSaveManager](const LayerChangedEvent &event) {
+            if (event.changeType == LayerChangedEvent::ChangeType::FrameReady) return;
             if (event.changeType == LayerChangedEvent::ChangeType::Created) {
               if (status) {
                 status->setProjectText("Layer Added");

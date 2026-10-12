@@ -5,10 +5,12 @@ module;
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <cstdio>
 #include <iterator>
 #include <numbers>
 #include <vector>
 #include <QImage>
+#include <QElapsedTimer>
 #include <QColor>
 #include <QFont>
 #include <QFontMetricsF>
@@ -367,6 +369,9 @@ public:
         RefCntAutoPtr<ITexture> pTexture;
         quint64 lastUsedAccess = 0;
         size_t estimatedBytes = 0;
+        qint64 contentKey = 0;
+        bool reusableVideoTexture = false;
+        bool hasVideoContent = false;
     };
     std::unordered_map<qint64, CachedTexture> m_spriteTexCache;
     std::unordered_map<qint64, CachedTexture> m_maskTexCache;
@@ -444,6 +449,7 @@ public:
         cache[key] = { texture, m_textureAccessSequence, estimatedBytes };
         m_cachedTextureBytes += estimatedBytes;
     }
+
 
     ViewportTransformer viewport_;
     float devicePixelRatio_ = 1.0f;
@@ -1685,6 +1691,154 @@ ITextureView* PrimitiveRenderer2D::textureForImage(
         : nullptr;
 }
 
+ITextureView* PrimitiveRenderer2D::textureForVideoFrame(
+    const ArtifactCore::ImageF32x4_RGBA& image, const QUuid& videoLayerId,
+    qint64 frameContentKey,
+    const ArtifactCore::ImageUploadBuffer* preparedUpload) {
+    return textureForVideoFrame(image, videoLayerId, frameContentKey,
+                                preparedUpload, false);
+}
+
+ITextureView* PrimitiveRenderer2D::textureForVideoFrame(
+    const ArtifactCore::ImageF32x4_RGBA& image, const QUuid& videoLayerId,
+    qint64 frameContentKey,
+    const ArtifactCore::ImageUploadBuffer* preparedUpload, bool residentOnly) {
+    if (image.isEmpty() || videoLayerId.isNull() || !impl_->pDevice_ ||
+        !impl_->pContext_) {
+        return nullptr;
+    }
+
+    static const bool profileVideoTexturePool = [] {
+        return qEnvironmentVariableIsSet(
+                   "ARTIFACT_VIDEO_PREVIEW_PROFILE_UPLOAD") &&
+               qEnvironmentVariable(
+                   "ARTIFACT_VIDEO_PREVIEW_PROFILE_UPLOAD") !=
+                   QStringLiteral("0");
+    }();
+    static int videoTexturePoolProfileSamples = 0;
+    static int preparedTexturePoolProfileSamples = 0;
+    const bool profileThisUpload =
+        profileVideoTexturePool &&
+        (preparedUpload ? preparedTexturePoolProfileSamples++ < 2048
+                        : videoTexturePoolProfileSamples++ < 24);
+    QElapsedTimer profileTimer;
+    if (profileThisUpload) profileTimer.start();
+
+    ++impl_->m_textureAccessSequence;
+    const qint64 uploadContentKey = static_cast<qint64>(qHashMulti(
+        quint64{0x564944454f46524dull}, frameContentKey,
+        computeImageContentKey(image)));
+    const qint64 cacheKey = static_cast<qint64>(qHashMulti(
+        quint64{0x564944454f544558ull}, videoLayerId, image.width(),
+        image.height()));
+    auto it = impl_->m_spriteTexCache.find(cacheKey);
+    if (it != impl_->m_spriteTexCache.end() &&
+        !it->second.reusableVideoTexture) {
+        it = impl_->m_spriteTexCache.end();
+    }
+    const bool poolHit = it != impl_->m_spriteTexCache.end();
+    // Resident playback never allocates, converts, or uploads on a miss.
+    // The caller keeps the existing streaming upload path as its fallback.
+    if (residentOnly && (!poolHit || !it->second.hasVideoContent ||
+                         it->second.contentKey != uploadContentKey)) {
+        return nullptr;
+    }
+
+    // Reuse a bounded render-thread upload allocation across video frames.
+    // Oversized frames use a one-shot buffer and cannot grow the retained slot.
+    static thread_local ArtifactCore::ImageUploadBuffer videoUploadBuffer;
+    ArtifactCore::ImageUploadBuffer oversizedUpload;
+    constexpr std::size_t kVideoUploadPoolMaxBytes = 64u * 1024u * 1024u;
+    const std::size_t uploadBytes =
+        static_cast<std::size_t>(image.width()) *
+        static_cast<std::size_t>(image.height()) * 4u;
+    const bool usePooledUpload = uploadBytes <= kVideoUploadPoolMaxBytes;
+    const ArtifactCore::ImageUploadBuffer* upload = preparedUpload;
+    if (it == impl_->m_spriteTexCache.end() ||
+        !it->second.hasVideoContent ||
+        it->second.contentKey != uploadContentKey) {
+        if (!upload) {
+            ArtifactCore::ImageUploadBuffer& scratch =
+                usePooledUpload ? videoUploadBuffer : oversizedUpload;
+            ArtifactCore::convertImageForUploadInto(
+                image, ArtifactCore::ImageUploadTarget::Rgba8SrgbStraight,
+                scratch);
+            upload = &scratch;
+        }
+        if (!upload->isValid() || upload->width != image.width() ||
+            upload->height != image.height()) {
+            return nullptr;
+        }
+    }
+    const qint64 convertMs = profileThisUpload
+        ? profileTimer.nsecsElapsed() / 1000000
+        : 0;
+
+    qint64 createTextureMs = 0;
+    if (it == impl_->m_spriteTexCache.end()) {
+        TextureDesc desc;
+        desc.Name = "Artifact.VideoPreviewTexturePoolSlot";
+        desc.Type = RESOURCE_DIM_TEX_2D;
+        desc.Width = static_cast<Uint32>(image.width());
+        desc.Height = static_cast<Uint32>(image.height());
+        desc.Format = TEX_FORMAT_RGBA8_UNORM_SRGB;
+        desc.MipLevels = 1;
+        desc.Usage = USAGE_DEFAULT;
+        desc.BindFlags = BIND_SHADER_RESOURCE;
+        desc.CPUAccessFlags = CPU_ACCESS_NONE;
+        RefCntAutoPtr<ITexture> texture;
+        if (profileThisUpload) profileTimer.restart();
+        impl_->pDevice_->CreateTexture(desc, nullptr, &texture);
+        createTextureMs = profileThisUpload
+            ? profileTimer.nsecsElapsed() / 1000000
+            : 0;
+        if (!texture) {
+            return nullptr;
+        }
+        impl_->cacheTexture(impl_->m_spriteTexCache, cacheKey, texture);
+        it = impl_->m_spriteTexCache.find(cacheKey);
+        if (it == impl_->m_spriteTexCache.end()) {
+            return nullptr;
+        }
+        it->second.reusableVideoTexture = true;
+    }
+
+    it->second.lastUsedAccess = impl_->m_textureAccessSequence;
+    qint64 updateTextureMs = 0;
+    if (!it->second.hasVideoContent ||
+        it->second.contentKey != uploadContentKey) {
+        TextureSubResData subresource;
+        subresource.pData = upload->bytes.data();
+        subresource.Stride = upload->rowStride;
+        const Box updateBox(0, upload->width, 0, upload->height, 0, 1);
+        if (profileThisUpload) profileTimer.restart();
+        impl_->pContext_->UpdateTexture(
+            it->second.pTexture, 0, 0, updateBox, subresource,
+            RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
+            RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        updateTextureMs = profileThisUpload
+            ? profileTimer.nsecsElapsed() / 1000000
+            : 0;
+        it->second.contentKey = uploadContentKey;
+        it->second.hasVideoContent = true;
+    }
+
+    if (profileThisUpload) {
+        std::fprintf(stderr,
+                     "[VideoPreviewTexturePoolProfile] convertMs=%lld "
+                     "createTextureMs=%lld updateTextureMs=%lld poolHit=%d "
+                     "prepared=%d size=%dx%d\n",
+                     static_cast<long long>(convertMs),
+                     static_cast<long long>(createTextureMs),
+                     static_cast<long long>(updateTextureMs), poolHit ? 1 : 0,
+                     preparedUpload ? 1 : 0, image.width(), image.height());
+    }
+
+    return it->second.pTexture
+        ? it->second.pTexture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE)
+        : nullptr;
+}
+
 ITextureView* PrimitiveRenderer2D::textureForImage(const QImage& image) {
     if (image.isNull() || !impl_->pDevice_) return nullptr;
     ++impl_->m_textureAccessSequence;
@@ -1815,19 +1969,42 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
         return;
     }
 
+    static const bool profileVideoUpload = [] {
+        return qEnvironmentVariableIsSet(
+                   "ARTIFACT_VIDEO_PREVIEW_PROFILE_UPLOAD") &&
+               qEnvironmentVariable(
+                   "ARTIFACT_VIDEO_PREVIEW_PROFILE_UPLOAD") !=
+                   QStringLiteral("0");
+    }();
+    static int videoUploadProfileSamples = 0;
+    const bool profileThisUpload =
+        profileVideoUpload && videoUploadProfileSamples++ < 384;
+    QElapsedTimer videoUploadTimer;
+    if (profileThisUpload) videoUploadTimer.start();
+
     impl_->m_textureAccessSequence++;
 
     const qint64 cacheKey = computeImageContentKey(image);
+    const qint64 imageKeyMs = profileThisUpload
+        ? videoUploadTimer.nsecsElapsed() / 1000000
+        : 0;
+    qint64 convertMs = 0;
+    qint64 createTextureMs = 0;
     RefCntAutoPtr<ITexture> pTexture;
 
     auto it = impl_->m_spriteTexCache.find(cacheKey);
+    const bool textureCacheHit = it != impl_->m_spriteTexCache.end();
     if (it != impl_->m_spriteTexCache.end()) {
         pTexture = it->second.pTexture;
         it->second.lastUsedAccess = impl_->m_textureAccessSequence;
     } else {
+        if (profileThisUpload) videoUploadTimer.restart();
         const ArtifactCore::ImageUploadBuffer upload =
             ArtifactCore::convertImageForUpload(
                 image, ArtifactCore::ImageUploadTarget::Rgba8SrgbStraight);
+        convertMs = profileThisUpload
+            ? videoUploadTimer.nsecsElapsed() / 1000000
+            : 0;
         if (!upload.isValid()) {
             return;
         }
@@ -1852,7 +2029,11 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
         initData.NumSubresources = 1;
 
         RefCntAutoPtr<ITexture> newTex;
+        if (profileThisUpload) videoUploadTimer.restart();
         impl_->pDevice_->CreateTexture(texDesc, &initData, &newTex);
+        createTextureMs = profileThisUpload
+            ? videoUploadTimer.nsecsElapsed() / 1000000
+            : 0;
         if (!newTex) {
             return;
         }
@@ -1907,6 +2088,15 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
                   static_cast<float>(clampedUv.right()),
                   static_cast<float>(clampedUv.bottom())};
     pkt.color = {1.0f, 1.0f, 1.0f, opacity};
+    if (profileThisUpload) {
+        std::fprintf(stderr,
+                     "[VideoPreviewUploadProfile] keyMs=%lld convertMs=%lld "
+                     "createTextureMs=%lld frameSize=%dx%d cacheHit=%d\n",
+                     static_cast<long long>(imageKeyMs),
+                     static_cast<long long>(convertMs),
+                     static_cast<long long>(createTextureMs), image.width(),
+                     image.height(), textureCacheHit ? 1 : 0);
+    }
     impl_->cmdBuf_->append(std::move(pkt));
 }
 
