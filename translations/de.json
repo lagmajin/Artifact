@@ -14,6 +14,24 @@
       "import": "Import...",
       "export": "Export...",
       "quit": "Quit"
+    },
+    "layer": {
+      "new_mpm_sand": "MPM-Sandsimulation (2D)",
+      "new_mpm_sand_tooltip": "Fügt eine 2D-Simulation körnigen Materials mit der Material Point Method hinzu.",
+      "mpm_sand": {
+        "group": "MPM-Sand",
+        "young_modulus": "Elastizitätsmodul",
+        "friction_angle": "Anfangs-Reibungswinkel",
+        "poisson_ratio": "Poissonzahl",
+        "density": "Dichte",
+        "damping": "Dämpfung",
+        "gravity_y": "Schwerkraft Y",
+        "gravity_tooltip": "Schwerebeschleunigung in Kompositionspixeln pro Sekunde zum Quadrat.",
+        "columns": "Spalten",
+        "rows": "Zeilen",
+        "backlog_warning": "Die Sandsimulation gerät in Rückstand. Wird die Rückstandsgrenze erreicht, kann Simulationszeit übersprungen werden.",
+        "grid_limit_warning": "Das Sandraster hat seine Grenze erreicht. Die Partikelbewegung ist eingeschränkt."
+      }
     }
   },
   "render_queue": {

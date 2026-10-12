@@ -6,7 +6,7 @@
     "translators": [
       "Artifact Team"
     ],
-    "lastUpdated": "2026-10-11"
+    "lastUpdated": "2026-10-12"
   },
   "app": {
     "name": "Artifact",
@@ -423,6 +423,22 @@
       "bring_forward": "Bring Forward(&W)",
       "send_backward": "Send Backward(&B)",
       "new_particle_2d": "2D Particle(&P)",
+      "new_mpm_sand": "MPM Sand Simulation (2D)",
+      "new_mpm_sand_tooltip": "Add a 2D granular material simulation using the Material Point Method.",
+      "mpm_sand": {
+        "group": "MPM Sand",
+        "young_modulus": "Young's Modulus",
+        "friction_angle": "Initial Friction Angle",
+        "poisson_ratio": "Poisson Ratio",
+        "density": "Density",
+        "damping": "Damping",
+        "gravity_y": "Gravity Y",
+        "gravity_tooltip": "Gravity acceleration in composition pixels per second squared.",
+        "columns": "Columns",
+        "rows": "Rows",
+        "backlog_warning": "The sand simulation is falling behind. Time may be skipped if the backlog reaches its limit.",
+        "grid_limit_warning": "The sand simulation reached its grid limit. Particle motion is being constrained."
+      },
       "new_2d": "2D Layer(&2)",
       "new_2d_tooltip": "Create a 2D plane with an initial bone.",
       "new_3d_box": "3D Box Layer(&B)",

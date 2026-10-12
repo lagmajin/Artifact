@@ -39,6 +39,7 @@ import Artifact.Layer.Composition;
 import Artifact.Layer.MaterialContainer;
 import Artifact.Layer.Switch;
 import Artifact.Layer.SandSim2D;
+import Artifact.Layer.MpmSand2D;
 import Artifact.Layers.Noise;
 import Artifact.Layer.ParametricComposition;
 import Artifact.Layer.EnvironmentMap;
@@ -271,6 +272,9 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(const Artifa
   case LayerType::SandSim2D:
      ptr = ArtifactCore::makeShared<ArtifactSandSim2DLayer>();
     break;
+  case LayerType::MpmSand2D:
+     ptr = ArtifactCore::makeShared<ArtifactMpmSand2DLayer>();
+    break;
   case LayerType::Noise:
      ptr = ArtifactCore::makeShared<ArtifactNoiseLayer>();
     if (auto* noiseParams = dynamic_cast<const ArtifactNoiseLayerInitParams*>(&params)) {
@@ -384,6 +388,8 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(const Artifa
           legacyLayerType == QStringLiteral("ParametricCompositionLayer") ||
           legacyLayerType == QStringLiteral("SandSim2D") ||
           legacyLayerType == QStringLiteral("SandSim2DLayer") ||
+          legacyLayerType == QStringLiteral("MpmSand2D") ||
+          legacyLayerType == QStringLiteral("MpmSand2DLayer") ||
           legacyLayerType == QStringLiteral("EnvironmentMap") ||
           legacyLayerType == QStringLiteral("EnvironmentMapLayer") ||
           legacyLayerType == QStringLiteral("Switch") ||
@@ -487,6 +493,9 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(const Artifa
       } else if (serializedType == QStringLiteral("SandSim2D") ||
                  serializedType == QStringLiteral("SandSim2DLayer")) {
           type = LayerType::SandSim2D;
+      } else if (serializedType == QStringLiteral("MpmSand2D") ||
+                 serializedType == QStringLiteral("MpmSand2DLayer")) {
+          type = LayerType::MpmSand2D;
       } else if (serializedType == QStringLiteral("EnvironmentMap") ||
                  serializedType == QStringLiteral("EnvironmentMapLayer")) {
           type = LayerType::EnvironmentMap;
@@ -563,6 +572,9 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(const Artifa
       } else if (legacyLayerType == QStringLiteral("SandSim2D") ||
                  legacyLayerType == QStringLiteral("SandSim2DLayer")) {
           type = LayerType::SandSim2D;
+      } else if (legacyLayerType == QStringLiteral("MpmSand2D") ||
+                 legacyLayerType == QStringLiteral("MpmSand2DLayer")) {
+          type = LayerType::MpmSand2D;
       } else if (legacyLayerType == QStringLiteral("EnvironmentMap") ||
                  legacyLayerType == QStringLiteral("EnvironmentMapLayer")) {
           type = LayerType::EnvironmentMap;

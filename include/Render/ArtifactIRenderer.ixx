@@ -414,6 +414,12 @@ public:
   void drawParticles(const ArtifactCore::ParticleRenderData &data);
   // Accepted rvalue packets take ownership; rejected draws leave data intact.
   void drawParticles(ArtifactCore::ParticleRenderData &&data);
+  // Queue one bounded solid mesh using reusable triangle-batch storage.
+  // Vertices are composition-space coordinates and remain caller-owned if rejected.
+  bool acquireMpmSurfaceBuffer(ArtifactCore::ArtifactArray<MpmSurfaceVertex> &vertices,
+                               std::size_t minimumCapacity);
+  bool drawMpmSurface(ArtifactCore::ArtifactArray<MpmSurfaceVertex> &vertices,
+                      const FloatColor &color);
   void drawSprite(float x, float y, float w, float h);
   void drawSprite(Detail::float2 pos, Detail::float2 size);
   void drawSprite(float x, float y, float w, float h,

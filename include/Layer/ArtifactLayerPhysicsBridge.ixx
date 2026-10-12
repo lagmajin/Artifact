@@ -7,6 +7,7 @@ export module Artifact.Layer.PhysicsBridge;
 import Memory.SharedPtr;
 import Utils.Id;
 import Physics2D;
+import Physics.Mpm2D;
 import Physics.SoftBody;
 import Physics.Cloth3D;
 
@@ -57,9 +58,33 @@ void removeCloth3D(const ArtifactCore::LayerID& layerId);
 void setCloth3DWind(const ArtifactCore::LayerID& layerId, float x, float y,
                     float z, float strength);
 
-void createMaterialGrid(const ArtifactCore::LayerID& layerId, float left,
+bool createMaterialGrid(const ArtifactCore::LayerID& layerId, float left,
                         float top, float width, float height, int columns,
                         int rows, int preset);
+ArtifactCore::SharedPtr<ArtifactCore::MpmSolver2D>
+createGranularMaterialGrid(std::uint64_t simulationWorldId,
+                           const ArtifactCore::LayerID& layerId, float left,
+                           float top, float width, float height,
+                           float domainLeft, float domainTop, float domainWidth,
+                           float domainHeight, int columns, int rows,
+                           float youngModulus, float poissonRatio,
+                           float frictionAngleRadians, float density,
+                           float gravityY, float damping,
+                           float supportRadiusLimit);
+ArtifactCore::SharedPtr<ArtifactCore::MpmSolver2D>
+granularMaterialSolver(std::uint64_t simulationWorldId,
+                       const ArtifactCore::LayerID& layerId);
+void removeGranularMaterialSolver(std::uint64_t simulationWorldId,
+                                  const ArtifactCore::LayerID& layerId);
+void setGranularMaterialGravity(std::uint64_t simulationWorldId,
+                                const ArtifactCore::LayerID& layerId,
+                                float gravityX, float gravityY);
+void setGranularMaterialSolverActive(std::uint64_t simulationWorldId,
+                                     const ArtifactCore::LayerID& layerId,
+                                     bool active);
+float granularMaterialBacklogSeconds(
+    std::uint64_t simulationWorldId,
+    const ArtifactCore::LayerID& layerId);
 void removeMaterialSolver(const ArtifactCore::LayerID& layerId);
 
 FractureLodScale fractureLodScale();

@@ -71,6 +71,7 @@ import Artifact.Layer.Text;
 import Artifact.Layer.Clone;
 import Artifact.Layer.Matte;
 import Artifact.Layer.Factory;
+import Artifact.Layer.MpmSand2D;
 import Artifact.Mask.LayerMask;
 import Artifact.Composition.Abstract;
 import Artifact.Project.Manager;
@@ -3474,6 +3475,12 @@ bool applyLayerPropertyValue(const ArtifactAbstractLayerPtr& layer,
     }
     if (layer->setLayerPropertyValue(propertyPath, value)) {
         return true;
+    }
+    // MPM setters can reject an edit when the replacement solver cannot be
+    // created. Do not bypass that transactional failure by updating only the
+    // cached AbstractProperty value below.
+    if (ArtifactCore::dynamicPointerCast<ArtifactMpmSand2DLayer>(layer)) {
+        return false;
     }
     const auto previousValue = property->getValue();
     property->setValue(value);

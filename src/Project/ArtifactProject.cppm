@@ -823,6 +823,9 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names)
   if (typeName.find("null") != std::string::npos) return LayerType::Null;
   if (typeName.find("solid") != std::string::npos) return LayerType::Solid;
   if (typeName.find("image") != std::string::npos) return LayerType::Image;
+  if (typeName.find("mpmsand2d") != std::string::npos) {
+   return LayerType::MpmSand2D;
+  }
   if (typeName.find("shape") != std::string::npos) return LayerType::Shape;
   if (typeName.find("svg") != std::string::npos) return LayerType::Shape;
   if (typeName.find("formparticle") != std::string::npos) return LayerType::FormParticle;
@@ -875,6 +878,12 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names)
     duplicatedProperty->clearKeyFrames();
     duplicatedProperty->clearEnvelopes();
     ArtifactCore::PropertySerializationBridge::deserializeProperty(duplicatedProperty, serialized);
+    if (propertyName == QStringLiteral("mpmSand.gravityY")) {
+      duplicatedProperty->setAnimatable(
+          property->isAnimatable() || !serialized.keyframes.isEmpty());
+      duplicatedLayer->setLayerPropertyValue(propertyName,
+                                             duplicatedProperty->getValue());
+    }
    }
   }
 

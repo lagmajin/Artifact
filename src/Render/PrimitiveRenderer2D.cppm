@@ -959,6 +959,42 @@ void PrimitiveRenderer2D::drawSolidTriangleLocal(float2 p0, float2 p1, float2 p2
     impl_->cmdBuf_->append(std::move(pkt));
 }
 
+bool PrimitiveRenderer2D::acquireMpmSurfaceBuffer(
+    ArtifactArray<MpmSurfaceVertex>& vertices, std::size_t minimumCapacity) {
+    if (vertices.capacity() >= minimumCapacity) return true;
+    if (!impl_->cmdBuf_) return false;
+    auto recycled = impl_->cmdBuf_->takeRecycledMpmSurfaceBuffer();
+    if (recycled.capacity() < minimumCapacity) {
+        impl_->cmdBuf_->returnRecycledMpmSurfaceBuffer(std::move(recycled));
+        return false;
+    }
+    vertices = std::move(recycled);
+    return true;
+}
+
+bool PrimitiveRenderer2D::drawMpmSurface(
+    ArtifactArray<MpmSurfaceVertex>& vertices, const FloatColor& color) {
+    if (!impl_->cmdBuf_ || vertices.isEmpty() || vertices.size() % 3 != 0 ||
+        impl_->cmdBuf_->size() >= impl_->cmdBuf_->capacity()) {
+        return false;
+    }
+    const auto viewportCB = impl_->viewport_.GetViewportCB();
+    MpmSurfacePkt packet;
+    packet.xform.offset = viewportCB.offset;
+    packet.xform.scale = {
+        std::max(viewportCB.zoom, 0.001f),
+        std::max(viewportCB.zoom, 0.001f)};
+    packet.xform.screenSize = viewportCB.screenSize;
+    packet.color = {color.r(), color.g(), color.b(), color.a()};
+    packet.vertices = std::move(vertices);
+    if (!impl_->cmdBuf_->tryAppend(std::move(packet))) {
+        vertices = std::move(packet.vertices);
+        return false;
+    }
+    vertices = impl_->cmdBuf_->takeRecycledMpmSurfaceBuffer();
+    return true;
+}
+
 void PrimitiveRenderer2D::drawCircle(float x, float y, float radius, const FloatColor& color, float thickness, bool fill)
 {
     if (radius <= 0.0f) return;

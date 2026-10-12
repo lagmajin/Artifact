@@ -1,6 +1,10 @@
+module;
+#include <cstdint>
+
 module Artifact.Layer.PhysicsBridge;
 
 import Physics.System;
+import Physics.Mpm2D;
 
 namespace Artifact::LayerPhysicsBridge {
 
@@ -101,12 +105,58 @@ void setCloth3DWind(const LayerID& layerId, float x, float y, float z,
   PhysicsSystem::instance().setCloth3DWind(layerId, x, y, z, strength);
 }
 
-void createMaterialGrid(const LayerID& layerId, float left, float top,
+bool createMaterialGrid(const LayerID& layerId, float left, float top,
                         float width, float height, int columns, int rows,
                         int preset) {
-  PhysicsSystem::instance().createMaterialGrid(
+  return static_cast<bool>(PhysicsSystem::instance().createMaterialGrid(
       layerId, left, top, width, height, columns, rows,
-      static_cast<MpmMaterialPreset>(preset));
+      static_cast<MpmMaterialPreset>(preset)));
+}
+
+SharedPtr<MpmSolver2D> createGranularMaterialGrid(
+    std::uint64_t simulationWorldId, const LayerID& layerId, float left,
+    float top, float width, float height, float domainLeft, float domainTop,
+    float domainWidth, float domainHeight,
+    int columns, int rows, float youngModulus, float poissonRatio,
+    float frictionAngleRadians, float density, float gravityY,
+    float damping, float supportRadiusLimit) {
+  return PhysicsSystem::instance().createGranularMaterialGrid(
+      simulationWorldId, layerId, left, top, width, height, domainLeft,
+      domainTop, domainWidth, domainHeight, columns, rows, youngModulus,
+      poissonRatio, frictionAngleRadians, density, gravityY, damping,
+      supportRadiusLimit);
+}
+
+SharedPtr<MpmSolver2D> granularMaterialSolver(
+    std::uint64_t simulationWorldId, const LayerID& layerId) {
+  return PhysicsSystem::instance().getGranularMaterialSolver(
+      simulationWorldId, layerId);
+}
+
+void removeGranularMaterialSolver(std::uint64_t simulationWorldId,
+                                  const LayerID& layerId) {
+  PhysicsSystem::instance().unregisterGranularMaterialSolver(
+      simulationWorldId, layerId);
+}
+
+void setGranularMaterialGravity(std::uint64_t simulationWorldId,
+                                const LayerID& layerId, float gravityX,
+                                float gravityY) {
+  const auto solver = PhysicsSystem::instance().getGranularMaterialSolver(
+      simulationWorldId, layerId);
+  if (solver) solver->setGravity(gravityX, gravityY);
+}
+
+void setGranularMaterialSolverActive(std::uint64_t simulationWorldId,
+                                     const LayerID& layerId, bool active) {
+  PhysicsSystem::instance().setGranularMaterialSolverActive(
+      simulationWorldId, layerId, active);
+}
+
+float granularMaterialBacklogSeconds(std::uint64_t simulationWorldId,
+                                     const LayerID& layerId) {
+  return PhysicsSystem::instance().granularMaterialBacklogSeconds(
+      simulationWorldId, layerId);
 }
 
 void removeMaterialSolver(const LayerID& layerId) {

@@ -85,6 +85,7 @@ import Artifact.Layer.Video;
 import ArtifactCore.Control.External;
 import Memory.SharedPtr;
 import Property.SerializationBridge;
+import Property.Abstract;
 import Animation.Value;
 import Math.Interpolate;
 import Audio.Modulation.Router;
@@ -94,6 +95,7 @@ import Artifact.Layer.PhysicsBridge;
 import Artifact.Acoustic.System;
 import Script.ArtifactScript;
 import Composition.Registry;
+import Script.Expression.Evaluator;
 
 //import Playback.Clock;
 
@@ -582,6 +584,80 @@ float layerFloatProperty(const ArtifactAbstractLayerPtr& layer,
   }
   const auto property = layer->getProperty(propertyPath);
   return property ? property->getValue().toFloat() : fallback;
+}
+
+float layerAnimatedFloatPropertyAtFrame(
+    const ArtifactAbstractLayerPtr& layer, const QString& propertyPath,
+    int64_t frame, float fallback = 0.0f)
+{
+  if (!layer) return fallback;
+  const auto property = layer->getProperty(propertyPath);
+  if (!property) return fallback;
+  const ArtifactCore::RationalTime time(
+      frame, layer->compositionFrameRate());
+  QVariant value;
+  if (property->hasExpression()) {
+    ArtifactCore::ExpressionEvaluator evaluator;
+    value = property->evaluateValue(time, &evaluator);
+  } else if (property->hasEnvelopes() ||
+             property->hasExternalOverride()) {
+    value = property->evaluateValue(time);
+  } else {
+    ArtifactCore::KeyFrameInterpolationSegment segment;
+    if (property->keyFrameInterpolationSegment(time, segment)) {
+      bool startOk = false;
+      bool endOk = false;
+      const float start = segment.startValue.toFloat(&startOk);
+      const float end = segment.endValue.toFloat(&endOk);
+      if (!startOk || !endOk) return fallback;
+      const float alpha = std::clamp(segment.alpha, 0.0f, 1.0f);
+      float interpolated = start;
+      if (segment.interpolation == ArtifactCore::InterpolationType::Bezier) {
+        interpolated = ArtifactCore::bezierInterpolate(
+            start, end, alpha, segment.cp1_x, segment.cp1_y,
+            segment.cp2_x, segment.cp2_y);
+      } else if (segment.interpolation ==
+                 ArtifactCore::InterpolationType::CatmullRom) {
+        bool previousOk = false;
+        bool nextOk = false;
+        const float previous = segment.previousValue.toFloat(&previousOk);
+        const float next = segment.nextValue.toFloat(&nextOk);
+        if (!previousOk || !nextOk) return fallback;
+        interpolated = ArtifactCore::catmullRomInterpolate(
+            previous, start, end, next, alpha);
+      } else if (segment.interpolation ==
+                 ArtifactCore::InterpolationType::Hermite) {
+        bool previousOk = false;
+        bool nextOk = false;
+        const float previous = segment.previousValue.toFloat(&previousOk);
+        const float next = segment.nextValue.toFloat(&nextOk);
+        if (!previousOk || !nextOk) return fallback;
+        const float m0 = segment.beforeSpan > 0.0
+            ? (end - previous) * static_cast<float>(
+                  segment.duration / segment.beforeSpan)
+            : end - start;
+        const float m1 = segment.afterSpan > 0.0
+            ? (next - start) * static_cast<float>(
+                  segment.duration / segment.afterSpan)
+            : end - start;
+        interpolated = ArtifactCore::hermiteInterpolate(
+            start, m0, end, m1, alpha);
+      } else {
+        interpolated = ArtifactCore::interpolate(
+            start, end, alpha, segment.interpolation);
+      }
+      return std::isfinite(interpolated) ? interpolated : fallback;
+    }
+    if (!property->keyFrameBoundaryValue(time, value)) {
+      // Roving keys use the general evaluator; this uncommon authored mode
+      // preserves existing semantics when the allocation-free segment API
+      // declines the track.
+      value = property->interpolateValue(time);
+    }
+  }
+  bool ok = false;
+  const float result = value.toFloat(&ok);
+  return ok && std::isfinite(result) ? result : fallback;
 }
 
 QString layerStringProperty(const ArtifactAbstractLayerPtr& layer,
@@ -2239,6 +2315,7 @@ class ArtifactAbstractComposition::Impl {
   void removeLayer(const LayerID& id);
   const FramePosition framePosition() const;
   void setFramePosition(const FramePosition& position, bool advanceOtherPhysics = true);
+  bool replayGranularMaterialToFrame(int64_t frame);
   void goToStartFrame();
   void goToEndFrame();
   void goToFrame(int64_t frame=0);
@@ -2262,8 +2339,25 @@ class ArtifactAbstractComposition::Impl {
    int effectCount() const;
    bool hasEnabledRasterizerEffect() const;
 
+    struct CollisionLayerScratch {
+      ArtifactAbstractLayerPtr layer;
+      bool isCollisionSource = false;
+      bool hasLegacyMaterialSolver = false;
+      bool hasGranularMaterialSolver = false;
+      int collisionShape = 0;
+      float offsetX = 0.0f;
+      float offsetY = 0.0f;
+      float restitution = 0.1f;
+      QTransform globalTransform;
+      QTransform inverseGlobalTransform;
+      bool inverseGlobalTransformValid = false;
+      QRectF worldCollisionBounds;
+    };
     bool isPlaying_ = false;
-    QSet<QString> activeCollisionPairs_;
+    ArtifactArray<CollisionLayerScratch> collisionLayersScratch_;
+    ArtifactCore::MpmCollider2D collisionColliderScratch_;
+    ArtifactCore::NamedVector<QPointF> collisionOutlineScratch_{
+        ArtifactCore::ContainerName{"Composition.MpmCollisionOutline"}};
     std::map<QString, QString> jointSignatures_;
 
     // Asset usage tracking
@@ -2738,6 +2832,18 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
         // Soft bodies retain their existing snapshot policy. Shared rigid
         // bodies restart from authored values on rewind / a large seek.
         physics.restoreSoftBodySnapshots(nextFrame);
+        if (advanceOtherPhysics) {
+            const bool replaySucceeded =
+                replayGranularMaterialToFrame(nextFrame);
+            if (!replaySucceeded && physics.hasGranularMaterialSolvers(
+                                        runtimePhysicsWorldId_)) {
+                physics.restoreSoftBodySnapshots(previousFrame);
+                position_ = FramePosition(previousFrame);
+                evaluateLayerCollisionPairs();
+                evaluateJointConstraints();
+                return;
+            }
+        }
         // A rewind has no forward clock to rejoin, so a soft body that missed
         // its snapshot must go back to its built shape instead of carrying the
         // last solution into the new timeline position.
@@ -2755,6 +2861,13 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
     const int64_t stepCount = std::min(advancedFrames, kMaxCatchUpSteps);
     const float fixedDeltaSeconds = static_cast<float>(1.0 / fps);
     if (advanceOtherPhysics) {
+        if (physics.granularMaterialReplayRequired(runtimePhysicsWorldId_) &&
+            !replayGranularMaterialToFrame(previousFrame)) {
+            position_ = FramePosition(previousFrame);
+            evaluateLayerCollisionPairs();
+            evaluateJointConstraints();
+            return;
+        }
         physics.captureSoftBodySnapshots(previousFrame,
                                          runtimePhysicsWorldId_);
     }
@@ -2815,10 +2928,56 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
                                         impactPosition.x() / kPixelsPerMeter);
             layer->applyFractureImpact(impact);
         }
-        physics.captureSoftBodySnapshots(previousFrame + step + 1);
+        physics.captureSoftBodySnapshots(previousFrame + step + 1,
+                                         runtimePhysicsWorldId_);
+        physics.captureGranularMaterialSnapshots(
+            previousFrame + step + 1, runtimePhysicsWorldId_);
     }
     position_ = position;
  }
+
+bool ArtifactAbstractComposition::Impl::replayGranularMaterialToFrame(
+    int64_t frame)
+{
+    auto& physics = ArtifactCore::PhysicsSystem::instance();
+    int64_t restoredFrame = 0;
+    if (!physics.restoreGranularMaterialSnapshots(
+            frame, runtimePhysicsWorldId_, &restoredFrame)) {
+        if (!physics.resetGranularMaterialToBaseline(runtimePhysicsWorldId_)) {
+            qWarning() << "[Composition][MPM] Failed to reset granular solver"
+                       << "world" << runtimePhysicsWorldId_
+                       << "while replaying frame" << frame;
+            return false;
+        }
+        restoredFrame = 0;
+    }
+    const double fps = std::max<double>(1.0, frameRate_.framerate());
+    const float frameDeltaSeconds = static_cast<float>(1.0 / fps);
+    if (restoredFrame == 0) {
+        physics.captureGranularMaterialSnapshots(0, runtimePhysicsWorldId_);
+    }
+    for (int64_t currentFrame = restoredFrame; currentFrame < frame; ++currentFrame) {
+        position_ = FramePosition(currentFrame);
+        for (auto& layer : layerMultiIndex_) {
+            if (layer) layer->goToFrame(currentFrame);
+        }
+        evaluateLayerCollisionPairs();
+        physics.advanceGranularMaterialSolvers(frameDeltaSeconds,
+                                               runtimePhysicsWorldId_);
+        physics.captureGranularMaterialSnapshots(currentFrame + 1,
+                                                  runtimePhysicsWorldId_);
+    }
+    position_ = FramePosition(frame);
+    for (auto& layer : layerMultiIndex_) {
+        if (layer) layer->goToFrame(frame);
+    }
+    evaluateLayerCollisionPairs();
+    // A restored checkpoint already contains this frame's particle state,
+    // but layer-evaluated gravity and collider proxies are frame inputs for
+    // the next incremental step. Keep them synchronized at the replay target.
+    physics.completeGranularMaterialReplay(runtimePhysicsWorldId_);
+    return true;
+}
 
  const FramePosition ArtifactAbstractComposition::Impl::framePosition() const
  {
@@ -2829,86 +2988,233 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
   {
     // Playback also enters through goToFrame. Share the same clock so it
     // cannot reset every tick or step twice after setFramePosition.
+    const int64_t previousFrame = framePosition().framePosition();
     setFramePosition(FramePosition(frame), false);
     for (auto& layer : layerMultiIndex_) {
         if (layer) layer->goToFrame(frame);
     }
-    ArtifactCore::PhysicsSystem::instance().restoreSoftBodySnapshots(frame);
+    auto& physics = ArtifactCore::PhysicsSystem::instance();
+    physics.restoreSoftBodySnapshots(frame);
+    const bool granularReplaySucceeded = replayGranularMaterialToFrame(frame);
+    if (!granularReplaySucceeded &&
+        physics.hasGranularMaterialSolvers(runtimePhysicsWorldId_)) {
+        position_ = FramePosition(previousFrame);
+        for (auto& layer : layerMultiIndex_) {
+            if (layer) layer->goToFrame(previousFrame);
+        }
+        physics.restoreSoftBodySnapshots(previousFrame);
+        resetRigidBodySimulation();
+        evaluateLayerCollisionPairs();
+        evaluateJointConstraints();
+        return;
+    }
     evaluateLayerCollisionPairs();
     evaluateJointConstraints();
   }
 
 void ArtifactAbstractComposition::Impl::evaluateLayerCollisionPairs()
 {
-  QSet<QString> nextPairs;
-  std::vector<ArtifactAbstractLayerPtr> collisionLayers;
-  collisionLayers.reserve(static_cast<std::size_t>(layerMultiIndex_.all().size()));
+  auto& collisionLayers = collisionLayersScratch_;
+  collisionLayers.removeAll();
+  collisionLayers.reserve(
+      static_cast<std::size_t>(layerMultiIndex_.all().size()));
+  auto& physics = ArtifactCore::PhysicsSystem::instance();
 
   for (const auto& layer : layerMultiIndex_) {
-    if (!layer || !layer->isActiveAt(position_)) {
-      continue;
+    if (!layer) continue;
+    const bool active = layer->isActiveAt(position_);
+    const bool hasGranularMaterialSolver = static_cast<bool>(
+        physics.getGranularMaterialSolver(runtimePhysicsWorldId_, layer->id()));
+    if (hasGranularMaterialSolver) {
+      Artifact::LayerPhysicsBridge::setGranularMaterialSolverActive(
+          runtimePhysicsWorldId_, layer->id(), active);
     }
+    if (!active) continue;
     const bool isCollisionSource = layerBooleanProperty(
         layer, QStringLiteral("component.collision.enabled"), false);
-    const bool isMaterialTarget = static_cast<bool>(
-        ArtifactCore::PhysicsSystem::instance().getMaterialSolver(layer->id()));
+    const bool hasLegacyMaterialSolver = static_cast<bool>(
+        physics.getMaterialSolver(layer->id()));
+    const bool isMaterialTarget = hasLegacyMaterialSolver ||
+                                  hasGranularMaterialSolver;
     if (!isCollisionSource && !isMaterialTarget) {
       continue;
     }
-    collisionLayers.push_back(layer);
+    CollisionLayerScratch entry;
+    entry.layer = layer;
+    entry.isCollisionSource = isCollisionSource;
+    entry.hasLegacyMaterialSolver = hasLegacyMaterialSolver;
+    entry.hasGranularMaterialSolver = hasGranularMaterialSolver;
+    // Collision proxies are rebuilt for each simulation frame, including
+    // normal playback where Layer::goToFrame() is not propagated. Evaluate
+    // authored transforms at the Composition frame instead of using the
+    // Layer-current-frame keyed transform cache.
+    entry.globalTransform = layer->getGlobalTransformAt(
+        position_.framePosition());
+    if (isCollisionSource) {
+      entry.collisionShape = layerIntProperty(
+          layer, QStringLiteral("component.collision.shape"), 0);
+      if (entry.collisionShape == 3) {
+        entry.offsetX = layerFloatProperty(
+            layer, QStringLiteral("component.collision.offsetX"), 0.0f);
+        entry.offsetY = layerFloatProperty(
+            layer, QStringLiteral("component.collision.offsetY"), 0.0f);
+      }
+      entry.restitution = std::clamp(
+          layerFloatProperty(layer, QStringLiteral("physics.restitution"), 0.1f),
+          0.0f, 1.0f);
+      const QRectF localCollisionBounds =
+          compositionCollisionLocalBounds(layer);
+      if (localCollisionBounds.isValid()) {
+        entry.worldCollisionBounds =
+            entry.globalTransform.mapRect(localCollisionBounds);
+      }
+    }
+    if (!std::isfinite(entry.globalTransform.m11()) ||
+        !std::isfinite(entry.globalTransform.m12()) ||
+        !std::isfinite(entry.globalTransform.m13()) ||
+        !std::isfinite(entry.globalTransform.m21()) ||
+        !std::isfinite(entry.globalTransform.m22()) ||
+        !std::isfinite(entry.globalTransform.m23()) ||
+        !std::isfinite(entry.globalTransform.m31()) ||
+        !std::isfinite(entry.globalTransform.m32()) ||
+        !std::isfinite(entry.globalTransform.m33())) {
+      entry.worldCollisionBounds = QRectF();
+    }
+    collisionLayers.append(std::move(entry));
   }
 
-  auto& physics = ArtifactCore::PhysicsSystem::instance();
-  for (const auto& target : collisionLayers) {
-    if (!physics.getMaterialSolver(target->id())) {
+  for (auto& target : collisionLayers) {
+    if (!target.hasLegacyMaterialSolver &&
+        !target.hasGranularMaterialSolver) {
       continue;
     }
-    physics.clearMaterialColliders(target->id());
+    if (target.hasLegacyMaterialSolver) {
+      physics.clearMaterialColliders(target.layer->id());
+    }
+    if (target.hasGranularMaterialSolver) {
+      physics.clearGranularMaterialColliders(
+          runtimePhysicsWorldId_, target.layer->id());
+    }
     bool invertible = false;
-    const QTransform inverseTarget = target->getGlobalTransform().inverted(&invertible);
-    if (!invertible) {
-      continue;
+    target.inverseGlobalTransform =
+        target.globalTransform.inverted(&invertible);
+    const auto& inverse = target.inverseGlobalTransform;
+    target.inverseGlobalTransformValid =
+        invertible && std::isfinite(inverse.m11()) &&
+        std::isfinite(inverse.m12()) && std::isfinite(inverse.m13()) &&
+        std::isfinite(inverse.m21()) && std::isfinite(inverse.m22()) &&
+        std::isfinite(inverse.m23()) && std::isfinite(inverse.m31()) &&
+        std::isfinite(inverse.m32()) && std::isfinite(inverse.m33());
+    if (target.hasGranularMaterialSolver) {
+      // MPM particles live in Layer-local px, while the authored gravity
+      // parameter is a Composition-space acceleration. Map the direction and
+      // magnitude through the inverse linear transform; translation cancels.
+      float localGravityX = 0.0f;
+      float localGravityY = 0.0f;
+      if (target.inverseGlobalTransformValid &&
+          target.globalTransform.isAffine() && inverse.isAffine()) {
+        const float gravityY = layerAnimatedFloatPropertyAtFrame(
+            target.layer, QStringLiteral("mpmSand.gravityY"),
+            position_.framePosition(), 980.0f);
+        const QPointF localOrigin = inverse.map(QPointF(0.0, 0.0));
+        const QPointF localGravityEndpoint =
+            inverse.map(QPointF(0.0, gravityY));
+        const double gravityX =
+            localGravityEndpoint.x() - localOrigin.x();
+        const double gravityLocalY =
+            localGravityEndpoint.y() - localOrigin.y();
+        const double maxFloat =
+            static_cast<double>(std::numeric_limits<float>::max());
+        if (std::isfinite(gravityX) && std::isfinite(gravityLocalY) &&
+            std::abs(gravityX) <= maxFloat &&
+            std::abs(gravityLocalY) <= maxFloat) {
+          localGravityX = static_cast<float>(gravityX);
+          localGravityY = static_cast<float>(gravityLocalY);
+        }
+      }
+      Artifact::LayerPhysicsBridge::setGranularMaterialGravity(
+          runtimePhysicsWorldId_, target.layer->id(), localGravityX,
+          localGravityY);
     }
-    for (const auto& source : collisionLayers) {
-      if (source == target || !layerBooleanProperty(
-              source, QStringLiteral("component.collision.enabled"), false)) {
+  }
+
+  for (const auto& source : collisionLayers) {
+    if (!source.isCollisionSource) continue;
+    auto& outline = collisionOutlineScratch_;
+    bool outlineBuilt = false;
+    bool hasPolygonOutline = false;
+    const QPointF sourceOffset(static_cast<qreal>(source.offsetX),
+                               static_cast<qreal>(source.offsetY));
+    const bool sourceTransformIsAffine = source.globalTransform.isAffine();
+    const QTransform sourceOffsetToWorld = source.collisionShape == 3
+        ? QTransform::fromTranslate(sourceOffset.x(), sourceOffset.y()) *
+              source.globalTransform
+        : source.globalTransform;
+    for (const auto& target : collisionLayers) {
+      if ((!target.hasLegacyMaterialSolver &&
+           !target.hasGranularMaterialSolver) ||
+          source.layer == target.layer ||
+          !target.inverseGlobalTransformValid) {
         continue;
       }
-      const QRectF sourceBounds = compositionCollisionBounds(source);
-      const QRectF localBounds = inverseTarget.mapRect(sourceBounds);
-      if (!localBounds.isValid() || localBounds.isEmpty()) {
+      const QRectF localBounds =
+          target.inverseGlobalTransform.mapRect(source.worldCollisionBounds);
+      if (!localBounds.isValid() || localBounds.isEmpty() ||
+          !std::isfinite(localBounds.x()) ||
+          !std::isfinite(localBounds.y()) ||
+          !std::isfinite(localBounds.width()) ||
+          !std::isfinite(localBounds.height())) {
         continue;
       }
-      ArtifactCore::MpmCollider2D collider;
+      if (source.collisionShape == 3 && !outlineBuilt) {
+        outline.clear();
+        source.layer->appendCollisionOutlineLocalPoints(outline);
+        hasPolygonOutline = outline.size() >= 3;
+        outlineBuilt = true;
+      }
+      auto& collider = collisionColliderScratch_;
+      collider.polygonPoints.clear();
+      collider.type = ArtifactCore::MpmCollider2D::Type::Plane;
+      collider.x = 0.0f;
+      collider.y = 0.0f;
+      collider.width = 0.0f;
+      collider.height = 0.0f;
+      collider.radius = 0.0f;
       collider.x = static_cast<float>(localBounds.center().x());
       collider.y = static_cast<float>(localBounds.center().y());
-      const int sourceShape = layerIntProperty(
-          source, QStringLiteral("component.collision.shape"), 0);
+      const int sourceShape = source.collisionShape;
       bool polygonCollider = false;
-      if (sourceShape == 3) {
+      if (sourceShape == 3 && hasPolygonOutline) {
         // A transformed outline maps vertex-exact into the material target's
         // local space; fall back to the box proxy when no outline exists.
-        const auto outline = source->collisionOutlineLocalPoints();
-        if (outline.size() >= 3) {
-          const float sourceOffsetX = layerFloatProperty(
-              source, QStringLiteral("component.collision.offsetX"), 0.0f);
-          const float sourceOffsetY = layerFloatProperty(
-              source, QStringLiteral("component.collision.offsetY"), 0.0f);
-          const QPointF sourceOffset(static_cast<qreal>(sourceOffsetX),
-                                     static_cast<qreal>(sourceOffsetY));
-          const QTransform sourceGlobal = source->getGlobalTransform();
-          collider.type = ArtifactCore::MpmCollider2D::Type::Polygon;
-          collider.polygonPoints.reserve(outline.size() * 2U);
-          for (const QPointF& point : outline) {
-            const QPointF mapped = inverseTarget.map(
-                sourceGlobal.map(point + sourceOffset));
-            collider.polygonPoints.push_back(
-                static_cast<float>(mapped.x()));
-            collider.polygonPoints.push_back(
-                static_cast<float>(mapped.y()));
+        collider.type = ArtifactCore::MpmCollider2D::Type::Polygon;
+        collider.polygonPoints.reserve(outline.size() * 2U);
+        const bool canUseCombinedAffineTransform =
+            sourceTransformIsAffine &&
+            target.inverseGlobalTransform.isAffine();
+        const QTransform outlineToTarget = canUseCombinedAffineTransform
+            ? sourceOffsetToWorld * target.inverseGlobalTransform
+            : QTransform{};
+        bool polygonCoordinatesValid = true;
+        for (const QPointF& point : outline) {
+          const QPointF mapped = canUseCombinedAffineTransform
+              ? outlineToTarget.map(point)
+              : target.inverseGlobalTransform.map(
+                    source.globalTransform.map(point + sourceOffset));
+          const float x = static_cast<float>(mapped.x());
+          const float y = static_cast<float>(mapped.y());
+          if (!std::isfinite(mapped.x()) || !std::isfinite(mapped.y()) ||
+              !std::isfinite(x) || !std::isfinite(y)) {
+            polygonCoordinatesValid = false;
+            break;
           }
-          polygonCollider = true;
+          collider.polygonPoints.push_back(x);
+          collider.polygonPoints.push_back(y);
         }
+        if (!polygonCoordinatesValid) {
+          continue;
+        }
+        polygonCollider = true;
       }
       if (!polygonCollider) {
         if (sourceShape == 2) {
@@ -2923,43 +3229,18 @@ void ArtifactAbstractComposition::Impl::evaluateLayerCollisionPairs()
           collider.height = static_cast<float>(localBounds.height());
         }
       }
-      collider.restitution = std::clamp(
-          layerFloatProperty(source, QStringLiteral("physics.restitution"), 0.1f),
-          0.0f, 1.0f);
+      collider.restitution = source.restitution;
       collider.friction = 0.2f;
-      physics.registerMaterialCollider(target->id(), collider);
+      if (target.hasLegacyMaterialSolver) {
+        physics.registerMaterialCollider(target.layer->id(), collider);
+      }
+      if (target.hasGranularMaterialSolver) {
+        physics.registerGranularMaterialCollider(
+            runtimePhysicsWorldId_, target.layer->id(), collider);
+      }
     }
   }
 
-  for (std::size_t i = 0; i < collisionLayers.size(); ++i) {
-    const auto& first = collisionLayers[i];
-    const QRectF firstBounds = compositionCollisionBounds(first);
-    if (!firstBounds.isValid()) {
-      continue;
-    }
-    for (std::size_t j = i + 1; j < collisionLayers.size(); ++j) {
-      const auto& second = collisionLayers[j];
-      const QRectF secondBounds = compositionCollisionBounds(second);
-      if (!secondBounds.isValid() || !firstBounds.intersects(secondBounds)) {
-        continue;
-      }
-
-      const QString pairKey = collisionPairKey(first, second);
-      if (pairKey.isEmpty()) {
-        continue;
-      }
-      nextPairs.insert(pairKey);
-      if (activeCollisionPairs_.contains(pairKey)) {
-        continue;
-      }
-
-      // This pass only maintains material-solver collider registration and
-      // pair lifetime. Topology/emit mutation is consumed from the
-      // authoritative component event queues after dynamics evaluation.
-    }
-  }
-
-  activeCollisionPairs_ = std::move(nextPairs);
 }
 
 void ArtifactAbstractComposition::Impl::evaluateJointConstraints()
@@ -4400,6 +4681,8 @@ bool CompositionStateVariant::hasOverride(const LayerID& layerId,
         impl_->settings_.compositionName(), this);
    ArtifactCore::PhysicsSystem::instance().unregisterCompositionRigidWorld(
        impl_->id_);
+   ArtifactCore::PhysicsSystem::instance().unregisterGranularMaterialWorld(
+       impl_->runtimePhysicsWorldId_);
    delete impl_;
   }
 
@@ -5895,12 +6178,25 @@ void ArtifactAbstractComposition::setFrameRate(const FrameRate& rate)
         return;
     }
     impl_->frameRate_ = rate;
+    // Granular checkpoints encode the prior frame-to-time mapping. Keep the
+    // live sand state but rebuild seek history under the new frame rate.
+    ArtifactCore::PhysicsSystem::instance().invalidateGranularMaterialSnapshots(
+        impl_->runtimePhysicsWorldId_, true);
     // Keep every Transform3D keyframe domain aligned with the new composition
-    // rate. setComposition() updates base and variant transforms together.
+    // rate. Same-composition MPM binds only update this domain; they preserve
+    // the solver's live particle state.
     for (const auto &layer : impl_->layerMultiIndex_) {
         if (layer) {
             layer->setComposition(this);
         }
+    }
+    impl_->evaluateLayerCollisionPairs();
+    auto& physics = ArtifactCore::PhysicsSystem::instance();
+    if (physics.captureGranularMaterialSnapshots(
+            impl_->position_.framePosition(), impl_->runtimePhysicsWorldId_,
+            true)) {
+        physics.completeGranularMaterialReplay(
+            impl_->runtimePhysicsWorldId_);
     }
     const int startFrame = impl_->startTimeCode_.frame();
     impl_->startTimeCode_ = TimeCode(startFrame, rate.framerate());

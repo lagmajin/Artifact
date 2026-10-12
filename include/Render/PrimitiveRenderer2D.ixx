@@ -105,6 +105,10 @@ public:
     void drawBezierLocal(float2 p0, float2 p1, float2 p2, float thickness, const FloatColor& color);
     void drawBezierLocal(float2 p0, float2 p1, float2 p2, float2 p3, float thickness, const FloatColor& color);
     void drawSolidTriangleLocal(float2 p0, float2 p1, float2 p2, const FloatColor& color);
+    bool acquireMpmSurfaceBuffer(ArtifactArray<MpmSurfaceVertex>& vertices,
+                                 std::size_t minimumCapacity);
+    bool drawMpmSurface(ArtifactArray<MpmSurfaceVertex>& vertices,
+                        const FloatColor& color);
     void drawCircle(float x, float y, float radius, const FloatColor& color, float thickness = 1.0f, bool fill = false);
     void drawSolidCircle(float x, float y, float radius, const FloatColor& color);  // 最適化：塗り円
     void drawCrosshair(float x, float y, float size, const FloatColor& color);

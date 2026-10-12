@@ -45,6 +45,22 @@
       "new_null": "新建空物件",
       "new_adjustment": "新建調整圖層",
       "new_text": "新建文字圖層",
+      "new_mpm_sand": "MPM 砂粒模擬（2D）",
+      "new_mpm_sand_tooltip": "新增採用物質點法（MPM）的 2D 顆粒材料模擬。",
+      "mpm_sand": {
+        "group": "MPM 砂粒",
+        "young_modulus": "楊氏模數",
+        "friction_angle": "初始內摩擦角",
+        "poisson_ratio": "蒲松比",
+        "density": "密度",
+        "damping": "阻尼",
+        "gravity_y": "Y 方向重力",
+        "gravity_tooltip": "重力加速度，單位為合成座標像素每秒平方。",
+        "columns": "粒子欄數",
+        "rows": "粒子列數",
+        "backlog_warning": "砂粒模擬正在落後。積壓達到上限時，可能會略過部分模擬時間。",
+        "grid_limit_warning": "砂粒模擬已達網格上限，粒子運動範圍受到限制。"
+      },
       "pre_compose": "預合成"
     },
     "help": {

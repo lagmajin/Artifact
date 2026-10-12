@@ -1792,6 +1792,25 @@ namespace {
   { primitiveRenderer_.drawBezierLocal(p0, p1, p2, p3, thickness, color); }
   void drawSolidTriangleLocal(float2 p0, float2 p1, float2 p2, const FloatColor& color)
   { primitiveRenderer_.drawSolidTriangleLocal(p0, p1, p2, color); }
+  bool acquireMpmSurfaceBuffer(ArtifactArray<MpmSurfaceVertex>& vertices,
+                               std::size_t minimumCapacity)
+  { return primitiveRenderer_.acquireMpmSurfaceBuffer(vertices, minimumCapacity); }
+  bool drawMpmSurface(ArtifactArray<MpmSurfaceVertex>& vertices,
+                      const FloatColor& color)
+  {
+   if (primitiveRenderer_.drawMpmSurface(vertices, color)) return true;
+   if (cmdBuf_.capacity() == 0 || cmdBuf_.size() < cmdBuf_.capacity() ||
+       vertices.isEmpty() || vertices.size() % 3 != 0) {
+    return false;
+   }
+   auto context = deviceManager_.immediateContext();
+   if (!context) return false;
+   // Preserve packet order while making room for the bounded MPM surface.
+   // submitQueuedDraws restores the active render target after resetting the
+   // owner queue, so the retry remains in the same composition pass.
+   submitQueuedDraws(context.RawPtr());
+   return primitiveRenderer_.drawMpmSurface(vertices, color);
+  }
   void drawCircle(float x, float y, float radius, const FloatColor& color, float thickness, bool fill)
   { primitiveRenderer_.drawCircle(x, y, radius, color, thickness, fill); }
   void drawCheckerboard(float x, float y, float w, float h,
@@ -5305,6 +5324,14 @@ void ArtifactIRenderer::drawParticles(const ArtifactCore::ParticleRenderData& da
 }
 void ArtifactIRenderer::drawParticles(ArtifactCore::ParticleRenderData&& data) {
   impl_->drawParticles(data, &data);
+}
+bool ArtifactIRenderer::drawMpmSurface(
+    ArtifactArray<MpmSurfaceVertex>& vertices, const FloatColor& color) {
+  return impl_->drawMpmSurface(vertices, color);
+}
+bool ArtifactIRenderer::acquireMpmSurfaceBuffer(
+    ArtifactArray<MpmSurfaceVertex>& vertices, std::size_t minimumCapacity) {
+  return impl_->acquireMpmSurfaceBuffer(vertices, minimumCapacity);
 }
 
 QString ArtifactIRenderer::particleDebugState() const {

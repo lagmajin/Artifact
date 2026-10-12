@@ -1362,6 +1362,30 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
                     m_batchQuadHasLast_ = true;
                 }
                 else if constexpr (std::is_same_v<T, DotLinePkt>)         submitDotLine(p, recordCtx, pRTV);
+                else if constexpr (std::is_same_v<T, MpmSurfacePkt>) {
+                    if (p.vertices.isEmpty() || p.vertices.size() % 3 != 0) return;
+                    if (!m_batchTriActive_ ||
+                        !xformsEqual(m_batchTriXform_, p.xform)) {
+                        flushTriBatch();
+                        m_batchTriXform_ = p.xform;
+                        m_batchTriActive_ = true;
+                    }
+                    for (std::size_t index = 0;
+                         index < p.vertices.size(); index += 3) {
+                        if (m_batchTriVerts_.size() + 3 > k_batch_prim_verts) {
+                            flushTriBatch();
+                            m_batchTriXform_ = p.xform;
+                            m_batchTriActive_ = true;
+                        }
+                        for (std::size_t corner = 0; corner < 3; ++corner) {
+                            const auto& vertex = p.vertices[index + corner];
+                            m_batchTriVerts_.push_back(RectVertex{
+                                {vertex.x, vertex.y},
+                                {p.color.x, p.color.y, p.color.z,
+                                 vertex.a * p.color.w}});
+                        }
+                    }
+                }
                 else if constexpr (std::is_same_v<T, SolidTriPkt>) {
                     if (!m_batchTriActive_ || !xformsEqual(m_batchTriXform_, p.xform) ||
                         m_batchTriVerts_.size() + 3 > k_batch_prim_verts) {

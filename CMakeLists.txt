@@ -348,6 +348,16 @@ list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Layer/ArtifactSandSim
 if(_sand_sim_2d_layer_module_idx EQUAL -1)
     list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Layer/ArtifactSandSim2DLayer.ixx")
 endif()
+
+# MpmSand2DLayer uses the independent granular MPM material model.
+list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Layer/ArtifactMpmSand2DLayer.ixx" _mpm_sand_2d_layer_module_idx)
+if(_mpm_sand_2d_layer_module_idx EQUAL -1)
+    list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Layer/ArtifactMpmSand2DLayer.ixx")
+endif()
+list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactMpmSand2DLayer.cppm" _mpm_sand_2d_layer_impl_idx)
+if(_mpm_sand_2d_layer_impl_idx EQUAL -1)
+    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactMpmSand2DLayer.cppm")
+endif()
 list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactSandSim2DLayer.cppm" _sand_sim_2d_layer_impl_idx)
 if(_sand_sim_2d_layer_impl_idx EQUAL -1)
     list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactSandSim2DLayer.cppm")

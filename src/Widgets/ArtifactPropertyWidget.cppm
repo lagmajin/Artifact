@@ -77,6 +77,7 @@ module;
 module Artifact.Widgets.ArtifactPropertyWidget;
 
 import Artifact.Layer.Abstract;
+import Artifact.Layer.MpmSand2D;
 import Artifact.Layer.Text;
 import Artifact.Layer.InitParams;
 import Artifact.Composition.Abstract;
@@ -100,6 +101,7 @@ import Artifact.Widgets.PropertyEditor;
 import Artifact.Service.Playback;
 import Artifact.Service.Project;
 import Artifact.Service.Effect;
+import Translation.Manager;
 import Input.Operator;
 import Event.Bus;
 import Artifact.Event.Types;
@@ -480,11 +482,15 @@ public:
   bool sliderBeforeValue = false;
   bool favoriteOnly = false;
   bool isPlaying = false;
+  int mpmStatusFrameSampleCount = 0;
+  enum class MpmGridStatusKind { Hidden, GridLimit, Backlog };
   int localPropertyEditDepth = 0;
   ArtifactAbstractLayerPtr pendingEffectPreviewLayer;
   bool effectPreviewPending = false;
   quint64 effectPreviewRevision = 0;
   QMultiHash<QString, ArtifactPropertyEditorRowWidget *> propertyEditors;
+  QPointer<QLabel> mpmGridStatusLabel;
+  MpmGridStatusKind mpmGridStatusKind = MpmGridStatusKind::Hidden;
   QSet<QString> channelLockedPaths;
   QSet<QString> selectedChannelPaths;
   QString rebuildSignature;
@@ -516,6 +522,44 @@ public:
     }
     invalidatePropertyValueCache();
     updateValuesTimer->start(updateValuesDebounceMs);
+  }
+
+  void refreshMpmGridStatus() {
+    if (!mpmGridStatusLabel) {
+      return;
+    }
+    const auto mpmLayer = targetLayers.size() == 1
+        ? ArtifactCore::dynamicPointerCast<ArtifactMpmSand2DLayer>(currentLayer)
+        : ArtifactCore::SharedPtr<ArtifactMpmSand2DLayer>{};
+    if (!mpmLayer) {
+      mpmGridStatusKind = MpmGridStatusKind::Hidden;
+      mpmGridStatusLabel->setVisible(false);
+      return;
+    }
+    if (mpmLayer->isGridExpansionLimitReached()) {
+      if (mpmGridStatusKind != MpmGridStatusKind::GridLimit) {
+        mpmGridStatusLabel->setText(TranslationManager::instance().tr(
+            QStringLiteral("menu.layer.mpm_sand.grid_limit_warning"),
+            QStringLiteral("The sand simulation reached its grid limit. "
+                           "Particle motion is being constrained.")));
+      }
+      mpmGridStatusKind = MpmGridStatusKind::GridLimit;
+      mpmGridStatusLabel->setVisible(true);
+      return;
+    }
+    constexpr float kBacklogWarningSeconds = 0.25f;
+    const float backlogSeconds = mpmLayer->simulationBacklogSeconds();
+    const bool isBehind = std::isfinite(backlogSeconds) &&
+                          backlogSeconds >= kBacklogWarningSeconds;
+    if (isBehind && mpmGridStatusKind != MpmGridStatusKind::Backlog) {
+      mpmGridStatusLabel->setText(TranslationManager::instance().tr(
+          QStringLiteral("menu.layer.mpm_sand.backlog_warning"),
+          QStringLiteral("The sand simulation is falling behind. "
+                         "Time may be skipped if the backlog reaches its limit.")));
+    }
+    mpmGridStatusKind = isBehind ? MpmGridStatusKind::Backlog
+                                 : MpmGridStatusKind::Hidden;
+    mpmGridStatusLabel->setVisible(isBehind);
   }
 
   void scheduleEffectPreview(const ArtifactAbstractLayerPtr &layer) {
@@ -869,6 +913,7 @@ ArtifactPropertyWidget::ArtifactPropertyWidget(QWidget *parent)
           [this](const PlaybackStateChangedEvent &event) {
             impl_->isPlaying = event.state == PlaybackState::Playing;
             if (!impl_->isPlaying) {
+              impl_->mpmStatusFrameSampleCount = 0;
               impl_->updatePropertyValues();
             }
           }));
@@ -880,7 +925,12 @@ ArtifactPropertyWidget::ArtifactPropertyWidget(QWidget *parent)
               // of playback or not playing.
               // High-frequency UI updates during playback can cause
               // significant lag.
-              if (!impl_->isPlaying) {
+              if (impl_->isPlaying) {
+                if (++impl_->mpmStatusFrameSampleCount >= 8) {
+                  impl_->mpmStatusFrameSampleCount = 0;
+                  impl_->refreshMpmGridStatus();
+                }
+              } else {
                 // Timeline scrubbing may publish many frame changes in one
                 // gesture. Preserve immediate local property edits, but
                 // coalesce evaluated-value refreshes to roughly one UI frame.
@@ -1469,8 +1519,10 @@ Artifact::ArtifactAbstractLayerPtr ArtifactPropertyWidget::activePropertyLayer()
 }
 
 void ArtifactPropertyWidget::Impl::updatePropertyValues() {
-  if (!currentLayer || rebuilding)
+  if (!currentLayer)
     return;
+  refreshMpmGridStatus();
+  if (rebuilding) return;
 
   auto *playback = ArtifactPlaybackService::instance();
   const auto now = currentPlaybackTime(playback, currentLayer);
@@ -1644,6 +1696,8 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
   invalidatePropertyValueCache();
 
   clearLayoutRecursive(mainLayout);
+  mpmGridStatusLabel = nullptr;
+  mpmGridStatusKind = MpmGridStatusKind::Hidden;
   propertyEditors.clear();
   const bool embeddedComponentEditor =
       owner && owner->property("artifactEmbeddedComponentEditor").toBool();
@@ -1674,6 +1728,24 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     selectionHeader->setFont(headerFont);
     applyPropertySectionLabel(selectionHeader, true);
     mainLayout->addWidget(selectionHeader);
+    if (const auto mpmLayer =
+            ArtifactCore::dynamicPointerCast<ArtifactMpmSand2DLayer>(
+                currentLayer);
+        mpmLayer && targetLayers.size() == 1) {
+      auto *statusLabel = new QLabel(
+          TranslationManager::instance().tr(
+              QStringLiteral("menu.layer.mpm_sand.grid_limit_warning"),
+              QStringLiteral("The sand simulation reached its grid limit. "
+                             "Particle motion is being constrained.")));
+      statusLabel->setObjectName(QStringLiteral("mpmGridExpansionWarning"));
+      statusLabel->setWordWrap(true);
+      statusLabel->setContentsMargins(8, 4, 8, 4);
+      applyPropertySectionLabel(statusLabel, false);
+      applyThemeTextPalette(statusLabel, 110);
+      mpmGridStatusLabel = statusLabel;
+      mainLayout->addWidget(statusLabel);
+      refreshMpmGridStatus();
+    }
   }
 
   if (!embeddedComponentEditor) {
@@ -2924,6 +2996,14 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
           name == QStringLiteral("reveal.brushPreset") ||
           name == QStringLiteral("reveal.timingPath") ||
           name == QStringLiteral("reveal.supportPath")) return;
+
+      // MPM Sand property edits rebuild the solver and intentionally reseed
+      // its particles. Keep these edits at commit boundaries so slider/text
+      // previews cannot repeatedly destroy the running material state.
+      if (name.startsWith(QStringLiteral("mpmSand."), Qt::CaseSensitive) &&
+          ArtifactCore::dynamicPointerCast<ArtifactMpmSand2DLayer>(layer)) {
+        return;
+      }
 
       ScopedPropertyEditGuard guard(localPropertyEditDepth);
       if (name.compare(QStringLiteral("layer.opacity"),

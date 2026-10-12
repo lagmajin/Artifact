@@ -14,6 +14,24 @@
       "import": "Import...",
       "export": "Export...",
       "quit": "Quit"
+    },
+    "layer": {
+      "new_mpm_sand": "MPM 모래 시뮬레이션 (2D)",
+      "new_mpm_sand_tooltip": "물질점법을 사용하는 2D 입상 재료 시뮬레이션을 추가합니다.",
+      "mpm_sand": {
+        "group": "MPM 모래",
+        "young_modulus": "영률",
+        "friction_angle": "초기 내부 마찰각",
+        "poisson_ratio": "푸아송비",
+        "density": "밀도",
+        "damping": "감쇠",
+        "gravity_y": "Y 중력",
+        "gravity_tooltip": "컴포지션 픽셀/초² 단위의 중력 가속도입니다.",
+        "columns": "열 수",
+        "rows": "행 수",
+        "backlog_warning": "모래 시뮬레이션이 뒤처지고 있습니다. 적체가 한도에 도달하면 일부 시뮬레이션 시간이 생략될 수 있습니다.",
+        "grid_limit_warning": "모래 시뮬레이션이 그리드 한계에 도달해 입자 이동 범위가 제한됩니다."
+      }
     }
   },
   "render_queue": {

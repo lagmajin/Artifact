@@ -14,6 +14,24 @@
       "import": "Import...",
       "export": "Export...",
       "quit": "Quit"
+    },
+    "layer": {
+      "new_mpm_sand": "Simulación de arena MPM (2D)",
+      "new_mpm_sand_tooltip": "Añade una simulación 2D de material granular mediante el método de puntos materiales.",
+      "mpm_sand": {
+        "group": "Arena MPM",
+        "young_modulus": "Módulo de Young",
+        "friction_angle": "Ángulo de fricción inicial",
+        "poisson_ratio": "Coeficiente de Poisson",
+        "density": "Densidad",
+        "damping": "Amortiguación",
+        "gravity_y": "Gravedad Y",
+        "gravity_tooltip": "Aceleración de la gravedad en píxeles de composición por segundo al cuadrado.",
+        "columns": "Columnas",
+        "rows": "Filas",
+        "backlog_warning": "La simulación de arena se está retrasando. Si alcanza el límite de retraso, puede omitirse parte del tiempo de simulación.",
+        "grid_limit_warning": "La cuadrícula de arena alcanzó su límite. El movimiento de las partículas está restringido."
+      }
     }
   },
   "render_queue": {

@@ -138,6 +138,7 @@ import Artifact.Layer.Shape;
 import Artifact.Layer.FormParticle;
 import Artifact.Layer.Procedural3D;
 import Artifact.Layers.Model3D;
+import Artifact.Layer.MpmSand2D;
 import Artifact.Layer.Camera;
 import Artifact.Layer.Light;
 import Math.Vec;
@@ -4226,6 +4227,33 @@ namespace Artifact
             if (!layer) {
                 return fallback;
             }
+            if (const auto mpmSandLayer =
+                    ArtifactCore::dynamicPointerCast<ArtifactMpmSand2DLayer>(layer)) {
+                const QRectF bounds = mpmSandLayer->particleRenderBounds();
+                if (bounds.isValid() && !bounds.isEmpty()) {
+                    constexpr double kMaximumMpmSurfaceDimension = 4096.0;
+                    constexpr double kMaximumMpmSurfacePixels =
+                        4.0 * 1024.0 * 1024.0;
+                    const double width = bounds.width();
+                    const double height = bounds.height();
+                    if (!std::isfinite(width) || !std::isfinite(height) ||
+                        width <= 0.0 || height <= 0.0) {
+                        return QSize(16, 16);
+                    }
+                    const double areaScale = width >
+                            kMaximumMpmSurfacePixels / height
+                        ? std::sqrt(kMaximumMpmSurfacePixels / width / height)
+                        : 1.0;
+                    const double scale = std::min({
+                        1.0,
+                        kMaximumMpmSurfaceDimension / width,
+                        kMaximumMpmSurfaceDimension / height,
+                        areaScale});
+                    return QSize(
+                        std::max(16, static_cast<int>(std::ceil(width * scale))),
+                        std::max(16, static_cast<int>(std::ceil(height * scale))));
+                }
+            }
             // Solid2D / SolidImage は sourceSize() が 0 を返すため localBounds() から取得
             if (ArtifactCore::dynamicPointerCast<ArtifactSolid2DLayer>(layer) ||
                 ArtifactCore::dynamicPointerCast<ArtifactSolidImageLayer>(layer)) {
@@ -4272,13 +4300,14 @@ namespace Artifact
         QImage renderLayerSurface(const ArtifactAbstractLayerPtr& layer,
                                   const QMatrix4x4* cameraView = nullptr,
                                   const QMatrix4x4* cameraProjection = nullptr,
-                                  const QSize& compositionSize = {}) const
+                                  const QSize& compositionSize = {},
+                                  QRectF* outLocalBounds = nullptr) const
         {
             if (!layer) {
                 return {};
             }
-
             const QSize layerSize = safeLayerSize(layer);
+            if (outLocalBounds) *outLocalBounds = {};
             if (const auto imageLayer = ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(layer)) {
                 const QImage image = imageLayer->toQImage();
                 if (!image.isNull()) {
@@ -4350,6 +4379,13 @@ namespace Artifact
                         return raster;
                     }
                 }
+            }
+
+            if (const auto mpmSandLayer =
+                    ArtifactCore::dynamicPointerCast<ArtifactMpmSand2DLayer>(layer)) {
+                const QImage surface = mpmSandLayer->getSoftwareRenderSurface(
+                    layerSize.width(), layerSize.height(), outLocalBounds);
+                if (!surface.isNull()) return surface;
             }
 
             QImage fallback = layer->getThumbnail(layerSize.width(), layerSize.height());
@@ -4546,9 +4582,11 @@ namespace Artifact
                     continue;
                 }
 
+                QRectF surfaceLocalBounds;
                 QImage surface = renderLayerSurface(
                     layer, activeCamera ? &cameraView : nullptr,
-                    activeCamera ? &cameraProjection : nullptr, QSize(compW, compH));
+                    activeCamera ? &cameraProjection : nullptr, QSize(compW, compH),
+                    &surfaceLocalBounds);
                 if (surface.isNull()) {
                     continue;
                 }
@@ -4567,6 +4605,11 @@ namespace Artifact
                     surface, matteReferences, softwareMatteSources);
 
                 const QSize layerSize(surface.size());
+                if (!surfaceLocalBounds.isValid() ||
+                    surfaceLocalBounds.isEmpty()) {
+                    surfaceLocalBounds = QRectF(
+                        0.0, 0.0, layerSize.width(), layerSize.height());
+                }
                 const qreal opacity = std::clamp(static_cast<qreal>(layer->opacity()), 0.0, 1.0);
                 const auto blendMode = ArtifactCore::toBlendMode(
                     layer ? layer->layerBlendType() : LAYER_BLEND_TYPE::BLEND_NORMAL);
@@ -4582,7 +4625,7 @@ namespace Artifact
                         surfacePainter.setTransform(layer->getGlobalTransform(), true);
                         surfacePainter.setOpacity(1.0);
                         surfacePainter.drawImage(
-                            QRectF(0.0, 0.0, layerSize.width(), layerSize.height()),
+                            surfaceLocalBounds,
                             surface,
                             QRectF(0.0, 0.0, surface.width(), surface.height()));
                     }
@@ -4602,7 +4645,7 @@ namespace Artifact
                 painter.setCompositionMode(compositionModeForLayer(layer));
                 painter.setTransform(layer->getGlobalTransform(), true);
                 painter.drawImage(
-                    QRectF(0.0, 0.0, layerSize.width(), layerSize.height()),
+                    surfaceLocalBounds,
                     surface,
                     QRectF(0.0, 0.0, surface.width(), surface.height()));
                 painter.restore();

@@ -14,6 +14,24 @@
       "import": "Import...",
       "export": "Export...",
       "quit": "Quit"
+    },
+    "layer": {
+      "new_mpm_sand": "Simulation de sable MPM (2D)",
+      "new_mpm_sand_tooltip": "Ajoute une simulation 2D de matériau granulaire avec la méthode des points matériels.",
+      "mpm_sand": {
+        "group": "Sable MPM",
+        "young_modulus": "Module de Young",
+        "friction_angle": "Angle de frottement initial",
+        "poisson_ratio": "Coefficient de Poisson",
+        "density": "Densité",
+        "damping": "Amortissement",
+        "gravity_y": "Gravité Y",
+        "gravity_tooltip": "Accélération de la gravité en pixels de composition par seconde carrée.",
+        "columns": "Colonnes",
+        "rows": "Lignes",
+        "backlog_warning": "La simulation du sable prend du retard. Une partie du temps simulé peut être omise si le retard atteint sa limite.",
+        "grid_limit_warning": "La grille de simulation du sable a atteint sa limite. Le mouvement des particules est restreint."
+      }
     }
   },
   "render_queue": {

@@ -101,6 +101,20 @@ struct SolidTriPkt {
     float4 color;
 };
 
+struct MpmSurfaceVertex {
+    float x = 0.0f;
+    float y = 0.0f;
+    float a = 0.0f;
+};
+
+// A bounded CPU mesh packet consumed by the existing solid-triangle batch.
+// Positions are composition-space coordinates; xform captures the viewport.
+struct MpmSurfacePkt {
+    RenderSolidTransform2D xform;
+    float4 color{1.0f, 1.0f, 1.0f, 1.0f};
+    ArtifactCore::ArtifactArray<MpmSurfaceVertex> vertices;
+};
+
 struct SolidCirclePkt {
     RenderSolidTransform2D xform;
     float cx, cy, radius;
@@ -264,7 +278,7 @@ struct GlyphTextXformPkt {
 
 using DrawPacket = std::variant<
     SolidRectPkt, SolidRectXformPkt, GradientRectPkt,
-    LinePkt, QuadPkt, DotLinePkt, SolidTriPkt, SolidCirclePkt,
+    LinePkt, QuadPkt, DotLinePkt, SolidTriPkt, MpmSurfacePkt, SolidCirclePkt,
     CheckerboardPkt, GridPkt, RectOutlinePkt,
     SpritePkt, SpriteXformPkt, ClonerSpriteXformPkt, MaskedSpritePkt,
     AtlasSpritePkt, AtlasSpriteXformPkt, TexturedTriangleXformPkt,
@@ -284,14 +298,62 @@ public:
     ITextureView* targetRTV() const noexcept { return targetRTV_; }
 
     void reset()  {
+        for (auto& packet : packets_) {
+            if (auto* particle = std::get_if<ParticlePkt>(&packet)) {
+                if (recycledParticleBuffers_.size() < recycledParticleBuffers_.capacity()) {
+                    recycledParticleBuffers_.emplace_back();
+                    recycledParticleBuffers_.back().swap(particle->data.particles);
+                }
+            } else if (auto* surface = std::get_if<MpmSurfacePkt>(&packet)) {
+                if (recycledMpmSurfaceBuffers_.size() <
+                    recycledMpmSurfaceBuffers_.capacity()) {
+                    const std::size_t index = recycledMpmSurfaceBuffers_.size();
+                    recycledMpmSurfaceBuffers_.append(
+                        ArtifactCore::ArtifactArray<MpmSurfaceVertex>{});
+                    recycledMpmSurfaceBuffers_[index].swap(surface->vertices);
+                }
+            }
+        }
         packets_.clear();
         targetRTV_ = nullptr;
         retainedTargetRTV_ = nullptr;
     }
     // Reserve on the owning frame/worker slot before recording so steady-state
     // append and buffer merges can reuse storage.
-    void reserve(std::size_t packetCapacity) { packets_.reserve(packetCapacity); }
+    void reserve(std::size_t packetCapacity) {
+        packets_.reserve(packetCapacity);
+        recycledParticleBuffers_.reserve(
+            std::min(packetCapacity, kRecycledParticleBufferLimit));
+        // A surface packet can consume one full bounded mesh buffer per MPM
+        // layer in the frame. Match the packet capacity so reset() can recycle
+        // every accepted surface without dropping later layers' storage.
+        recycledMpmSurfaceBuffers_.reserve(packetCapacity);
+    }
     std::size_t capacity() const noexcept { return packets_.capacity(); }
+
+    std::vector<ArtifactCore::ParticleVertex> takeRecycledParticleBuffer() {
+        if (recycledParticleBuffers_.empty()) return {};
+        auto buffer = std::move(recycledParticleBuffers_.back());
+        recycledParticleBuffers_.pop_back();
+        return buffer;
+    }
+
+    ArtifactCore::ArtifactArray<MpmSurfaceVertex> takeRecycledMpmSurfaceBuffer() {
+        if (recycledMpmSurfaceBuffers_.isEmpty()) return {};
+        auto buffer = std::move(
+            recycledMpmSurfaceBuffers_[recycledMpmSurfaceBuffers_.size() - 1]);
+        recycledMpmSurfaceBuffers_.removeLast();
+        return buffer;
+    }
+
+    void returnRecycledMpmSurfaceBuffer(
+        ArtifactCore::ArtifactArray<MpmSurfaceVertex>&& buffer) {
+        if (recycledMpmSurfaceBuffers_.size() >=
+                recycledMpmSurfaceBuffers_.capacity()) {
+            return;
+        }
+        recycledMpmSurfaceBuffers_.append(std::move(buffer));
+    }
 
     template <typename Packet>
     void append(Packet&& packet) {
@@ -429,6 +491,9 @@ private:
     }
 
     std::vector<DrawPacket> packets_;
+    std::vector<std::vector<ArtifactCore::ParticleVertex>> recycledParticleBuffers_;
+    ArtifactCore::ArtifactArray<ArtifactCore::ArtifactArray<MpmSurfaceVertex>>
+        recycledMpmSurfaceBuffers_;
     ITextureView* targetRTV_ = nullptr;
     RefCntAutoPtr<ITextureView> retainedTargetRTV_;
 };

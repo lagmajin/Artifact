@@ -14,6 +14,24 @@
       "import": "Import...",
       "export": "Export...",
       "quit": "Quit"
+    },
+    "layer": {
+      "new_mpm_sand": "Simulação de areia MPM (2D)",
+      "new_mpm_sand_tooltip": "Adiciona uma simulação 2D de material granular pelo método dos pontos materiais.",
+      "mpm_sand": {
+        "group": "Areia MPM",
+        "young_modulus": "Módulo de Young",
+        "friction_angle": "Ângulo de atrito inicial",
+        "poisson_ratio": "Coeficiente de Poisson",
+        "density": "Densidade",
+        "damping": "Amortecimento",
+        "gravity_y": "Gravidade Y",
+        "gravity_tooltip": "Aceleração da gravidade em pixels da composição por segundo ao quadrado.",
+        "columns": "Colunas",
+        "rows": "Linhas",
+        "backlog_warning": "A simulação de areia está ficando para trás. Parte do tempo pode ser ignorada se o atraso atingir o limite.",
+        "grid_limit_warning": "A grade da areia atingiu o limite. O movimento das partículas está restrito."
+      }
     }
   },
   "render_queue": {

@@ -6,7 +6,7 @@
     "translators": [
       "Artifact Team"
     ],
-    "lastUpdated": "2026-10-11"
+    "lastUpdated": "2026-10-12"
   },
   "app": {
     "name": "Artifact",
@@ -423,6 +423,22 @@
       "bring_forward": "1つ前面へ(&W)",
       "send_backward": "1つ背面へ(&B)",
       "new_particle_2d": "2D パーティクル(&P)",
+      "new_mpm_sand": "MPM砂シミュレーション (2D)",
+      "new_mpm_sand_tooltip": "Material Point Methodによる2D粒状体シミュレーションを追加します",
+      "mpm_sand": {
+        "group": "MPM砂",
+        "young_modulus": "ヤング率",
+        "friction_angle": "初期内部摩擦角",
+        "poisson_ratio": "ポアソン比",
+        "density": "密度",
+        "damping": "減衰",
+        "gravity_y": "Y方向の重力",
+        "gravity_tooltip": "重力加速度。コンポジション座標のピクセル毎秒の二乗で指定します。",
+        "columns": "粒子列数",
+        "rows": "粒子行数",
+        "backlog_warning": "砂シミュレーションの計算が遅れています。遅れが上限に達すると、一部の時間が省略される場合があります。",
+        "grid_limit_warning": "砂の計算領域が上限に達しました。粒子の移動範囲が制限されています。"
+      },
       "new_2d": "2Dレイヤー(&2)",
       "new_2d_tooltip": "2D平面と初期ボーンを作成します",
       "new_3d_box": "3D Boxレイヤー(&B)",

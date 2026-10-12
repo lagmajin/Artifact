@@ -50,6 +50,7 @@ import Artifact.Layer.Shape;
 import Artifact.Layer.Solid2D;
 import Artifact.Layers.SolidImage;
 import Artifact.Layer.Particle;
+import Artifact.Layer.MpmSand2D;
 import Artifact.Layer.FormParticle;
 import Artifact.Render.OffscreenComposition;
 import Artifact.Layer.Composition;
@@ -3446,6 +3447,52 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
       if (!childImage.isNull()) {
         applySurfaceAndDraw(childImage, localRect, hasRasterizerEffectsOrMasks(layer));
       }
+    }
+    return;
+  }
+
+  if (auto* mpmSandLayer = dynamic_cast<ArtifactMpmSand2DLayer*>(layer)) {
+    const int64_t targetFrame =
+        (cacheFrameNumber != std::numeric_limits<int64_t>::min())
+            ? cacheFrameNumber
+            : layer->currentFrame();
+    mpmSandLayer->goToFrame(targetFrame);
+    const bool hasRasterizer = hasRasterizerEffectsOrMasks(layer);
+    if (!hasRasterizer) {
+      mpmSandLayer->draw(
+          renderer, opacityOverride >= 0.0f ? opacityOverride
+                                            : layer->opacity());
+      return;
+    }
+
+    const QRectF renderBounds = mpmSandLayer->particleRenderBounds();
+    if (!renderBounds.isValid() || renderBounds.isEmpty()) return;
+    constexpr double kMaximumMpmSurfaceDimension = 4096.0;
+    constexpr double kMaximumMpmSurfacePixels = 4.0 * 1024.0 * 1024.0;
+    const double layerWidth = localRect.width();
+    const double layerHeight = localRect.height();
+    if (!std::isfinite(layerWidth) || !std::isfinite(layerHeight) ||
+        layerWidth <= 0.0 || layerHeight <= 0.0) {
+      return;
+    }
+    const double lodOutputScale = static_cast<double>(lodScale(lod));
+    const double pixelScale = lodOutputScale * std::min(
+        {kMaximumMpmSurfaceDimension / layerWidth,
+         kMaximumMpmSurfaceDimension / layerHeight,
+         std::sqrt(kMaximumMpmSurfacePixels / layerWidth / layerHeight)});
+    if (!std::isfinite(pixelScale) || pixelScale <= 0.0) return;
+    const QSize surfaceSize(
+        static_cast<int>(std::clamp(
+            std::floor(layerWidth * pixelScale), 1.0,
+            kMaximumMpmSurfaceDimension)),
+        static_cast<int>(std::clamp(
+            std::floor(layerHeight * pixelScale), 1.0,
+            kMaximumMpmSurfaceDimension)));
+    QRectF surfaceBounds;
+    QImage surface = mpmSandLayer->getSoftwareRenderSurface(
+        surfaceSize.width(), surfaceSize.height(), &surfaceBounds, true);
+    if (!surface.isNull()) {
+      applySurfaceAndDraw(surface, surfaceBounds, false, nullptr, true);
     }
     return;
   }

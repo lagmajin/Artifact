@@ -221,6 +221,7 @@ enum class LayerType {
   Noise = 30,                   // Procedural noise source layer
   Particle3D = 31,              // 3D camera/depth particle layer
   Accumulator = 32,             // Temporal composition-space feedback operator
+  MpmSand2D = 33,                // 2D granular sand using material point method
 };
 
 enum class LayerDirtyFlag : uint32_t {

@@ -828,6 +828,7 @@ public:
     QAction* createAdjustAction = nullptr;
     QAction* createTextAction = nullptr;
     QAction* createParticleAction = nullptr;
+    QAction* createMpmSandAction = nullptr;
     QAction* createParticle3DAction = nullptr;
     QAction* createPaintAction = nullptr;
     QAction* createFormParticleAction = nullptr;
@@ -976,6 +977,7 @@ public:
     void handleCreateAdjust();
     void handleCreateText();
     void handleCreateParticle();
+    void handleCreateMpmSand();
     void handleCreateParticle3D();
     void handleCreatePaint();
     void handleCreateFormParticle();
@@ -1115,6 +1117,12 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createParticleAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_particle_2d"), QStringLiteral("2D パーティクル(&P)")), createMenu);
     createParticleAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_particle.svg")));
     createParticleAction->setToolTip(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_particle_2d_tooltip"), QStringLiteral("コンポジション平面で動作する2Dパーティクルレイヤーを追加します")));
+    createMpmSandAction = new QAction(TranslationManager::instance().tr(
+        QStringLiteral("menu.layer.new_mpm_sand"), QStringLiteral("MPM砂シミュレーション (2D)")), createMenu);
+    createMpmSandAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_mpm_sand.svg")));
+    createMpmSandAction->setToolTip(TranslationManager::instance().tr(
+        QStringLiteral("menu.layer.new_mpm_sand_tooltip"),
+        QStringLiteral("Material Point Methodによる粒状体シミュレーションを追加します")));
     createParticle3DAction = new QAction(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_particle_3d"), QStringLiteral("3D パーティクル")), createMenu);
     createParticle3DAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_particle.svg")));
     createParticle3DAction->setToolTip(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_particle_3d_tooltip"), QStringLiteral("3Dカメラと深度を使うパーティクルレイヤーを追加します")));
@@ -1277,11 +1285,12 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     create2DMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.layer.new_2d"), QStringLiteral("2Dレイヤー(&2)")), createMenu);
     create2DMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_shape_rect.svg")));
     create2DMenu->setAccessibleName(QStringLiteral("New 2D Layer"));
-    create2DMenu->setAccessibleDescription(QStringLiteral("Create a 2D shape, text, adjustment, paint, or SVG layer"));
+    create2DMenu->setAccessibleDescription(QStringLiteral("Create a 2D shape, text, paint, SVG, or material simulation layer"));
     create2DMenu->addMenu(createShapeMenu);
     create2DMenu->addAction(createTextAction);
     create2DMenu->addAction(createAdjustAction);
     create2DMenu->addAction(createPaintAction);
+    create2DMenu->addAction(createMpmSandAction);
     create2DMenu->addAction(createSvgAction);
 
     createUtilityMenu = new QMenu(TranslationManager::instance().tr(QStringLiteral("menu.layer.utility_layers"), QStringLiteral("補助レイヤー(&U)")), createMenu);
@@ -1711,6 +1720,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
         if (action == createAdjustAction) { handleCreateAdjust(); return; }
         if (action == createTextAction) { handleCreateText(); return; }
         if (action == createParticleAction) { handleCreateParticle(); return; }
+        if (action == createMpmSandAction) { handleCreateMpmSand(); return; }
         if (action == createParticle3DAction) { handleCreateParticle3D(); return; }
         if (action == createPaintAction) { handleCreatePaint(); return; }
         if (action == createFormParticleAction) { handleCreateFormParticle(); return; }
@@ -2802,6 +2812,36 @@ void ArtifactLayerMenu::Impl::handleCreateParticle()
     }
     ArtifactLayerInitParams params(uniqueLayerName(u8"2D Particle 1"), LayerType::Particle);
     ArtifactProjectService::instance()->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
+}
+
+void ArtifactLayerMenu::Impl::handleCreateMpmSand()
+{
+    if (!ensureCurrentComposition()) {
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, QStringLiteral("Layer"),
+                             TranslationManager::instance().tr(QStringLiteral("dialog.layer.no_composition_selected"), QStringLiteral("コンポジションが選択されていません。")));
+        return;
+    }
+    ArtifactLayerInitParams params(uniqueLayerName(QStringLiteral("MPM Sand 1")),
+                                   LayerType::MpmSand2D);
+    auto *service = ArtifactProjectService::instance();
+    if (!service) {
+        return;
+    }
+    const auto composition = service->currentComposition().lock();
+    if (!composition) {
+        return;
+    }
+    const auto previousLayerCount = composition->allLayer().size();
+    service->addLayerToCurrentComposition(
+        params, true, placeAtCurrentFrameRequested());
+    if (composition->allLayer().size() == previousLayerCount) {
+        QMessageBox::warning(
+            menu_ ? menu_->window() : nullptr,
+            QStringLiteral("Layer"),
+            TranslationManager::instance().tr(
+                QStringLiteral("dialog.layer.add_failed"),
+                QStringLiteral("レイヤーの追加に失敗しました。")));
+    }
 }
 
 void ArtifactLayerMenu::Impl::handleCreateParticle3D()

@@ -14,6 +14,24 @@
       "import": "Import...",
       "export": "Export...",
       "quit": "Quit"
+    },
+    "layer": {
+      "new_mpm_sand": "محاكاة رمل MPM (2D)",
+      "new_mpm_sand_tooltip": "أضف محاكاة ثنائية الأبعاد لمادة حبيبية باستخدام طريقة النقاط المادية.",
+      "mpm_sand": {
+        "group": "رمل MPM",
+        "young_modulus": "معامل يونغ",
+        "friction_angle": "زاوية الاحتكاك الأولية",
+        "poisson_ratio": "نسبة بواسون",
+        "density": "الكثافة",
+        "damping": "التخميد",
+        "gravity_y": "الجاذبية Y",
+        "gravity_tooltip": "تسارع الجاذبية بوحدة بكسل التركيب لكل ثانية مربعة.",
+        "columns": "الأعمدة",
+        "rows": "الصفوف",
+        "backlog_warning": "محاكاة الرمل تتأخر. قد يُتخطى جزء من وقت المحاكاة إذا بلغ التراكم حده الأقصى.",
+        "grid_limit_warning": "وصلت شبكة محاكاة الرمل إلى حدها. حركة الجسيمات مقيدة."
+      }
     }
   },
   "render_queue": {

@@ -179,6 +179,7 @@ import Artifact.Composition.Abstract;
 
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Particle;
+import Artifact.Layer.MpmSand2D;
 import Artifact.Layer.EnvironmentMap;
 import Artifact.Layers.Abstract._2D;
 
@@ -10985,6 +10986,66 @@ void drawLayerForCompositionView(
   }
 
 
+
+  if (auto* mpmSandLayer =
+          dynamic_cast<ArtifactMpmSand2DLayer*>(layer)) {
+    const int64_t targetFrame =
+        (cacheFrameNumber != std::numeric_limits<int64_t>::min())
+            ? cacheFrameNumber
+            : layer->currentFrame();
+    mpmSandLayer->goToFrame(targetFrame);
+
+    const bool hasRasterizerWork =
+        layerHasRasterizerEffectsOrMasks(layer);
+    const bool canDeferRasterizerWorkToGpu =
+        deferRasterizerEffectsToGpu && !layer->hasMasks();
+    if (!hasRasterizerWork || canDeferRasterizerWorkToGpu) {
+      // The composition GPU pipeline owns the intermediate target and applies
+      // supported raster effects/mattes before blending. Keep the granular
+      // density surface on that GPU path instead of reading it back to CPU.
+      const float drawOpacity = opacityOverride >= 0.0f
+          ? opacityOverride
+          : layer->opacity();
+      mpmSandLayer->draw(renderer, drawOpacity);
+      return;
+    }
+
+    // Unsupported CPU effects and layer masks use the established software
+    // surface boundary. Bound the transient image by the same limits as the
+    // Render Queue path while preserving the particle-expanded local bounds.
+    const QRectF renderBounds = mpmSandLayer->particleRenderBounds();
+    if (!renderBounds.isValid() || renderBounds.isEmpty()) return;
+    constexpr double kMaximumMpmSurfaceDimension = 4096.0;
+    constexpr double kMaximumMpmSurfacePixels = 4.0 * 1024.0 * 1024.0;
+    const double layerWidth = localRect.width();
+    const double layerHeight = localRect.height();
+    if (!std::isfinite(layerWidth) || !std::isfinite(layerHeight) ||
+        layerWidth <= 0.0 || layerHeight <= 0.0) {
+      return;
+    }
+    const double lodScale = lod == DetailLevel::Low
+        ? 0.5
+        : lod == DetailLevel::Medium ? 0.75 : 1.0;
+    const double pixelScale = lodScale * std::min(
+        {kMaximumMpmSurfaceDimension / layerWidth,
+         kMaximumMpmSurfaceDimension / layerHeight,
+         std::sqrt(kMaximumMpmSurfacePixels / layerWidth / layerHeight)});
+    if (!std::isfinite(pixelScale) || pixelScale <= 0.0) return;
+    const QSize surfaceSize(
+        static_cast<int>(std::clamp(
+            std::floor(layerWidth * pixelScale), 1.0,
+            kMaximumMpmSurfaceDimension)),
+        static_cast<int>(std::clamp(
+            std::floor(layerHeight * pixelScale), 1.0,
+            kMaximumMpmSurfaceDimension)));
+    QRectF surfaceBounds;
+    QImage surface = mpmSandLayer->getSoftwareRenderSurface(
+        surfaceSize.width(), surfaceSize.height(), &surfaceBounds, true);
+    if (!surface.isNull()) {
+      applySurfaceAndDraw(surface, surfaceBounds, false, nullptr, true);
+    }
+    return;
+  }
 
   if (layer->isParticleLayer()) {
 
