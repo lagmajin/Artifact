@@ -3734,11 +3734,118 @@ Artifact3DLayer::getLayerPropertyGroups() const {
   groups.push_back(geometryGroup);
   groups.push_back(renderGroup);
   groups.push_back(materialGroup);
+  if (impl_->meshUsesSingleInstanceForMaterialSlots_ &&
+      impl_->meshMaterials_.size() > 1) {
+    for (std::size_t slotIndex = 0;
+         slotIndex < impl_->meshMaterials_.size(); ++slotIndex) {
+      const auto& material = impl_->meshMaterials_[slotIndex];
+      const QString slotName = material.name().toQString().trimmed();
+      PropertyGroup slotGroup(
+          slotName.isEmpty()
+              ? QStringLiteral("Material Slot %1").arg(
+                    static_cast<int>(slotIndex + 1))
+              : QStringLiteral("Material: %1").arg(slotName));
+      const QString prefix = QStringLiteral("material.slots.%1.")
+                                 .arg(slotIndex);
+      const auto addColor = [&](const QString& field, const QString& label,
+                                const QColor& color, int priority) {
+        auto property = persistentLayerProperty(
+            prefix + field, PropertyType::Color, color, priority);
+        property->setDisplayLabel(label);
+        slotGroup.addProperty(property);
+      };
+      const auto addScalar = [&](const QString& field, const QString& label,
+          float scalar, double minimum, double maximum, int priority) {
+        auto property = persistentLayerProperty(
+            prefix + field, PropertyType::Float, scalar, priority);
+        property->setDisplayLabel(label);
+        property->setHardRange(minimum, maximum);
+        slotGroup.addProperty(property);
+      };
+      addColor(QStringLiteral("baseColor"), QStringLiteral("Base Color"),
+               material.baseColor(), -80);
+      addScalar(QStringLiteral("metallic"), QStringLiteral("Metallic"),
+                material.metallic(), 0.0, 1.0, -79);
+      addScalar(QStringLiteral("roughness"), QStringLiteral("Roughness"),
+                material.roughness(), 0.0, 1.0, -78);
+      addScalar(QStringLiteral("specular"), QStringLiteral("Specular"),
+                material.specular(), 0.0, 1.0, -77);
+      addColor(QStringLiteral("specularTint"),
+               QStringLiteral("Specular Tint"), material.specularTint(), -76);
+      addScalar(QStringLiteral("ior"), QStringLiteral("IOR"), material.ior(),
+                1.0, 3.0, -75);
+      addScalar(QStringLiteral("transmission"), QStringLiteral("Transmission"),
+                material.transmission(), 0.0, 1.0, -74);
+      addScalar(QStringLiteral("clearcoat"), QStringLiteral("Clearcoat"),
+                material.clearcoat(), 0.0, 1.0, -73);
+      addScalar(QStringLiteral("clearcoatRoughness"),
+                QStringLiteral("Clearcoat Roughness"),
+                material.clearcoatRoughness(), 0.0, 1.0, -72);
+      addScalar(QStringLiteral("sheen"), QStringLiteral("Sheen"),
+                material.sheen(), 0.0, 1.0, -71);
+      addScalar(QStringLiteral("sheenRoughness"),
+                QStringLiteral("Sheen Roughness"),
+                material.sheenRoughness(), 0.0, 1.0, -70);
+      addColor(QStringLiteral("sheenTint"), QStringLiteral("Sheen Tint"),
+               material.sheenTint(), -69);
+      groups.push_back(std::move(slotGroup));
+    }
+  }
   return groups;
 }
 
 bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
                                             const QVariant &value) {
+  const QString materialSlotPrefix = QStringLiteral("material.slots.");
+  if (propertyPath.startsWith(materialSlotPrefix)) {
+    const QString slotAndField = propertyPath.mid(materialSlotPrefix.size());
+    const qsizetype separator = slotAndField.indexOf(QLatin1Char('.'));
+    if (separator <= 0) return false;
+    bool indexValid = false;
+    const int slotIndex = slotAndField.left(separator).toInt(&indexValid);
+    if (!indexValid || slotIndex < 0 ||
+        static_cast<std::size_t>(slotIndex) >= impl_->meshMaterials_.size()) {
+      return false;
+    }
+    auto& material = impl_->meshMaterials_[static_cast<std::size_t>(slotIndex)];
+    const QString field = slotAndField.mid(separator + 1);
+    if (field == QStringLiteral("baseColor")) {
+      material.setBaseColor(value.value<QColor>());
+    } else if (field == QStringLiteral("specularTint")) {
+      material.setSpecularTint(value.value<QColor>());
+    } else if (field == QStringLiteral("sheenTint")) {
+      material.setSheenTint(value.value<QColor>());
+    } else {
+      const auto scalar = [&]() {
+        const float incoming = value.toFloat();
+        return std::isfinite(incoming) ? incoming : 0.0f;
+      };
+      const float incoming = scalar();
+      if (field == QStringLiteral("metallic")) {
+        material.setMetallic(std::clamp(incoming, 0.0f, 1.0f));
+      } else if (field == QStringLiteral("roughness")) {
+        material.setRoughness(std::clamp(incoming, 0.0f, 1.0f));
+      } else if (field == QStringLiteral("specular")) {
+        material.setSpecular(std::clamp(incoming, 0.0f, 1.0f));
+      } else if (field == QStringLiteral("ior")) {
+        material.setIOR(std::clamp(incoming, 1.0f, 3.0f));
+      } else if (field == QStringLiteral("transmission")) {
+        material.setTransmission(std::clamp(incoming, 0.0f, 1.0f));
+      } else if (field == QStringLiteral("clearcoat")) {
+        material.setClearcoat(std::clamp(incoming, 0.0f, 1.0f));
+      } else if (field == QStringLiteral("clearcoatRoughness")) {
+        material.setClearcoatRoughness(std::clamp(incoming, 0.0f, 1.0f));
+      } else if (field == QStringLiteral("sheen")) {
+        material.setSheen(std::clamp(incoming, 0.0f, 1.0f));
+      } else if (field == QStringLiteral("sheenRoughness")) {
+        material.setSheenRoughness(std::clamp(incoming, 0.0f, 1.0f));
+      } else {
+        return false;
+      }
+    }
+    Q_EMIT changed();
+    return true;
+  }
   if (propertyPath == QStringLiteral("geometry.type")) {
     int geometryInt = value.toInt();
     if (geometryInt >= static_cast<int>(FixedGeometry3D::Auto) &&
