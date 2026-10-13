@@ -119,6 +119,7 @@ public:
   // Empty on the single-mesh import path; mesh_/material_ stay authoritative.
   std::vector<ArtifactCore::Material> meshMaterials_;
   std::vector<QMatrix4x4> meshLocalTransforms_;
+  bool meshUsesSingleInstanceForMaterialSlots_ = false;
   QString sourcePath_;
   QUuid sourceAssetId_;
   bool meshLoaded_ = false;
@@ -199,6 +200,7 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
     impl_->animationImporter_ = new ArtifactCore::MeshImporter();
   }
   ArtifactCore::MeshImporter* importer = impl_->animationImporter_;
+  impl_->meshUsesSingleInstanceForMaterialSlots_ = false;
   const QString canonicalInput = inputInfo.canonicalFilePath().isEmpty()
       ? inputInfo.absoluteFilePath()
       : inputInfo.canonicalFilePath();
@@ -278,6 +280,90 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
       impl_->meshMaterials_.clear();
       impl_->meshLocalTransforms_.clear();
       centerMeshPositions(impl_->mesh_);
+    }
+    const bool importedUfbxMaterialSlots =
+        (importer->lastBackend() == ArtifactCore::MeshImporter::Backend::Ufbx ||
+         importer->lastBackend() == ArtifactCore::MeshImporter::Backend::UfbxGltf) &&
+        importer->importedPbrMaterials().size() > 1 &&
+        impl_->mesh_.materialSlotCount() > 0;
+    if (importedUfbxMaterialSlots) {
+      impl_->meshMaterials_.clear();
+      impl_->meshMaterials_.reserve(
+          importer->importedPbrMaterials().size());
+      for (const auto& imported : importer->importedPbrMaterials()) {
+        ArtifactCore::Material sourceMaterial = impl_->material_;
+        if (imported.hasBaseColor) {
+          sourceMaterial.setBaseColor(QColor::fromRgbF(
+              imported.baseColor[0], imported.baseColor[1],
+              imported.baseColor[2], imported.baseColor[3]));
+        }
+        if (imported.baseColor[3] < 0.999f) {
+          sourceMaterial.setAlphaMode(ArtifactCore::MaterialAlphaMode::Blended);
+        }
+        if (!imported.baseColorTexture.toQString().isEmpty()) {
+          sourceMaterial.setBaseColorTexture(imported.baseColorTexture);
+        }
+        if (!imported.metallicRoughnessTexture.toQString().isEmpty()) {
+          sourceMaterial.setMetallicRoughnessTexture(
+              imported.metallicRoughnessTexture);
+        }
+        if (!imported.normalTexture.toQString().isEmpty()) {
+          sourceMaterial.setNormalTexture(imported.normalTexture);
+        }
+        if (!imported.clearcoatNormalTexture.toQString().isEmpty()) {
+          sourceMaterial.setClearcoatNormalTexture(
+              imported.clearcoatNormalTexture);
+        }
+        if (!imported.emissionTexture.toQString().isEmpty()) {
+          sourceMaterial.setEmissionTexture(imported.emissionTexture);
+        }
+        if (!imported.occlusionTexture.toQString().isEmpty()) {
+          sourceMaterial.setOcclusionTexture(imported.occlusionTexture);
+        }
+        if (!imported.opacityTexture.toQString().isEmpty()) {
+          sourceMaterial.setOpacityTexture(imported.opacityTexture);
+        }
+        if (imported.hasMetallic) {
+          sourceMaterial.setMetallic(imported.metallic);
+        }
+        if (imported.hasRoughness) {
+          sourceMaterial.setRoughness(imported.roughness);
+        }
+        if (imported.hasClearcoat) {
+          sourceMaterial.setClearcoat(imported.clearcoat);
+        }
+        if (imported.hasClearcoatRoughness) {
+          sourceMaterial.setClearcoatRoughness(imported.clearcoatRoughness);
+        }
+        if (imported.hasTransmission) {
+          sourceMaterial.setTransmission(imported.transmission);
+        }
+        if (imported.hasIor) {
+          sourceMaterial.setIOR(imported.ior);
+        }
+        if (imported.hasSheen) {
+          sourceMaterial.setSheen(imported.sheen);
+        }
+        if (imported.hasSheenRoughness) {
+          sourceMaterial.setSheenRoughness(imported.sheenRoughness);
+        }
+        if (imported.hasSpecular) {
+          sourceMaterial.setSpecular(imported.specular);
+        }
+        if (imported.hasSpecularTint) {
+          sourceMaterial.setSpecularTint(QColor::fromRgbF(
+              imported.specularTint[0], imported.specularTint[1],
+              imported.specularTint[2]));
+        }
+        if (imported.hasSheenTint) {
+          sourceMaterial.setSheenTint(QColor::fromRgbF(
+              imported.sheenTint[0], imported.sheenTint[1],
+              imported.sheenTint[2]));
+        }
+        impl_->meshMaterials_.push_back(std::move(sourceMaterial));
+      }
+      impl_->meshLocalTransforms_.clear();
+      impl_->meshUsesSingleInstanceForMaterialSlots_ = true;
     }
     impl_->meshLoaded_ = true;
     updateSourceSizeFromMesh();
@@ -2277,15 +2363,22 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
       // the geometry is already concatenated into mesh_ and split by material
       // slots, so one instance per source mesh reproduces the hierarchy while
       // the renderer issues one draw per material span.
-      const std::size_t meshCount = std::min(
-          impl_->meshLocalTransforms_.size(), impl_->meshMaterials_.size());
-      if (meshCount > 1) {
+      const std::size_t meshCount =
+          impl_->meshUsesSingleInstanceForMaterialSlots_
+              ? 1u
+              : std::min(impl_->meshLocalTransforms_.size(),
+                         impl_->meshMaterials_.size());
+      if (meshCount > 1 ||
+          (meshCount == 1 &&
+           impl_->meshUsesSingleInstanceForMaterialSlots_)) {
         std::vector<ArtifactCore::InstanceData> instances;
         instances.reserve(meshCount);
         const float layerAlpha = std::clamp(opacity(), 0.0f, 1.0f);
         for (std::size_t meshIndex = 0; meshIndex < meshCount; ++meshIndex) {
-          const QMatrix4x4 combined = modelMatrix *
-                                      impl_->meshLocalTransforms_[meshIndex];
+          const QMatrix4x4 combined =
+              impl_->meshUsesSingleInstanceForMaterialSlots_
+                  ? modelMatrix
+                  : modelMatrix * impl_->meshLocalTransforms_[meshIndex];
           ArtifactCore::InstanceData instance{};
           const float* modelData = combined.constData();
           for (int row = 0; row < 4; ++row) {
