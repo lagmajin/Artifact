@@ -330,12 +330,10 @@ cbuffer GaussianBlurParams : register(b0)
     float g_Sigma;
     uint g_Horizontal;
     float2 g_Pad;
+    // CPU-normalized kernel weights, packed as float4 to match cbuffer array
+    // register spacing. Offset -64..64 maps to element 0..128.
+    float4 g_Weights[33];
 };
-
-float gaussianWeight(float x, float sigma)
-{
-    return exp(-0.5 * x * x / max(0.0001, sigma * sigma));
-}
 
 [numthreads(8, 8, 1)]
 void GaussianBlurCS(uint3 id : SV_DispatchThreadID)
@@ -346,20 +344,18 @@ void GaussianBlurCS(uint3 id : SV_DispatchThreadID)
     const float sigma = max(0.1, g_Sigma);
     const int radius = min(64, (int)ceil(sigma * 3.0));
     float4 sum = 0.0;
-    float weightSum = 0.0;
     [loop] for (int i = -radius; i <= radius; ++i) {
         int2 p = int2(id.xy);
         if (g_Horizontal != 0) p.x = clamp(p.x + i, 0, int(width) - 1);
         else p.y = clamp(p.y + i, 0, int(height) - 1);
-        const float weight = gaussianWeight((float)i, sigma);
+        const uint weightIndex = uint(i + 64);
+        const float weight = g_Weights[weightIndex / 4][weightIndex % 4];
         // layerFloat is the internal linear-premultiplied surface. Filter
         // all channels together; multiplying RGB by alpha again would darken
         // transparent edges.
         const float4 sample = g_InputTexture.Load(int3(p, 0));
         sum += sample * weight;
-        weightSum += weight;
     }
-    sum /= max(weightSum, 0.0001);
     g_OutputTexture[id.xy] = sum;
 }
 )";
@@ -952,7 +948,9 @@ void ChromaKeyCS(uint3 dispatchId : SV_DispatchThreadID)
    float sigma = 0.0f;
    Uint32 horizontal = 0;
    float pad[2] = {};
+   float weights[33 * 4] = {};
   };
+  static_assert(sizeof(GaussianBlurParams) == 16 + 33 * 16);
 
   struct VignetteParams
   {
@@ -2482,14 +2480,27 @@ bool RenderPipeline::initialize(IRenderDevice* device,
     return false;
    }
   }
+  GaussianBlurParams params{};
+  params.sigma = std::clamp(sigma, 0.1f, 64.0f);
+  const int radius = std::min(64, static_cast<int>(std::ceil(params.sigma * 3.0f)));
+  float weightSum = 0.0f;
+  for (int offset = -radius; offset <= radius; ++offset) {
+   const float value = std::exp(-0.5f * static_cast<float>(offset * offset) /
+                                (params.sigma * params.sigma));
+   const auto weightIndex = static_cast<std::size_t>(offset + 64);
+   params.weights[weightIndex] = value;
+   weightSum += value;
+  }
+  for (int offset = -radius; offset <= radius; ++offset) {
+   const auto weightIndex = static_cast<std::size_t>(offset + 64);
+   params.weights[weightIndex] /= weightSum;
+  }
   auto dispatchPass = [&](ITextureView* source, ITextureView* destination,
                           Uint32 horizontal) {
+   params.horizontal = horizontal;
    void* mapped = nullptr;
    ctx->MapBuffer(impl_->gaussianBlurParams_, MAP_WRITE, MAP_FLAG_DISCARD, mapped);
    if (!mapped) return false;
-   GaussianBlurParams params;
-   params.sigma = std::clamp(sigma, 0.1f, 64.0f);
-   params.horizontal = horizontal;
    std::memcpy(mapped, &params, sizeof(params));
    ctx->UnmapBuffer(impl_->gaussianBlurParams_, MAP_WRITE);
    if (!impl_->gaussianBlurExecutor_->setTextureView("g_InputTexture", source) ||
