@@ -1573,6 +1573,7 @@ void ShaderManager::Impl::destroy(bool persistCache)
     clearPso(solidRectTransformPsoAndSrb_);
     clearPso(gradientRectPsoAndSrb_);
     clearPso(spritePsoAndSrb_);
+    clearPso(spriteTransformPsoAndSrb_);
     clearPso(clonerSpriteTransformPsoAndSrb_);
     clearPso(maskedSpritePsoAndSrb_);
     clearPso(glyphQuadPsoAndSrb_);
