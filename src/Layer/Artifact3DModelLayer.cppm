@@ -293,6 +293,21 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
           importer->importedPbrMaterials().size());
       for (const auto& imported : importer->importedPbrMaterials()) {
         ArtifactCore::Material sourceMaterial = impl_->material_;
+        const auto applyImportedUv = [&](const auto& transform,
+            auto scaleSetter, auto rotationSetter, auto offsetUSetter,
+            auto offsetVSetter, auto uvSetSetter) {
+          if (!transform.hasTransform && transform.uvSet == 0) return;
+          if (transform.hasTransform && transform.scaleU > 0.0f &&
+              std::abs(transform.scaleU - transform.scaleV) <= 1.0e-4f) {
+            (sourceMaterial.*scaleSetter)(transform.scaleU);
+          }
+          if (transform.hasTransform) {
+            (sourceMaterial.*rotationSetter)(transform.rotationDegrees);
+            (sourceMaterial.*offsetUSetter)(transform.offsetU);
+            (sourceMaterial.*offsetVSetter)(transform.offsetV);
+          }
+          (sourceMaterial.*uvSetSetter)(transform.uvSet);
+        };
         if (!imported.name.toQString().isEmpty()) {
           sourceMaterial.setName(imported.name);
         }
@@ -306,26 +321,68 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
         }
         if (!imported.baseColorTexture.toQString().isEmpty()) {
           sourceMaterial.setBaseColorTexture(imported.baseColorTexture);
+          applyImportedUv(imported.baseColorUv,
+              &ArtifactCore::Material::setBaseColorUvScale,
+              &ArtifactCore::Material::setBaseColorUvRotationDegrees,
+              &ArtifactCore::Material::setBaseColorUvOffsetU,
+              &ArtifactCore::Material::setBaseColorUvOffsetV,
+              &ArtifactCore::Material::setBaseColorUvSet);
         }
         if (!imported.metallicRoughnessTexture.toQString().isEmpty()) {
           sourceMaterial.setMetallicRoughnessTexture(
               imported.metallicRoughnessTexture);
+          applyImportedUv(imported.metallicRoughnessUv,
+              &ArtifactCore::Material::setMetallicRoughnessUvScale,
+              &ArtifactCore::Material::setMetallicRoughnessUvRotationDegrees,
+              &ArtifactCore::Material::setMetallicRoughnessUvOffsetU,
+              &ArtifactCore::Material::setMetallicRoughnessUvOffsetV,
+              &ArtifactCore::Material::setMetallicRoughnessUvSet);
         }
         if (!imported.normalTexture.toQString().isEmpty()) {
           sourceMaterial.setNormalTexture(imported.normalTexture);
+          applyImportedUv(imported.normalUv,
+              &ArtifactCore::Material::setNormalUvScale,
+              &ArtifactCore::Material::setNormalUvRotationDegrees,
+              &ArtifactCore::Material::setNormalUvOffsetU,
+              &ArtifactCore::Material::setNormalUvOffsetV,
+              &ArtifactCore::Material::setNormalUvSet);
         }
         if (!imported.clearcoatNormalTexture.toQString().isEmpty()) {
           sourceMaterial.setClearcoatNormalTexture(
               imported.clearcoatNormalTexture);
+          applyImportedUv(imported.clearcoatNormalUv,
+              &ArtifactCore::Material::setClearcoatNormalUvScale,
+              &ArtifactCore::Material::setClearcoatNormalUvRotationDegrees,
+              &ArtifactCore::Material::setClearcoatNormalUvOffsetU,
+              &ArtifactCore::Material::setClearcoatNormalUvOffsetV,
+              &ArtifactCore::Material::setClearcoatNormalUvSet);
         }
         if (!imported.emissionTexture.toQString().isEmpty()) {
           sourceMaterial.setEmissionTexture(imported.emissionTexture);
+          applyImportedUv(imported.emissionUv,
+              &ArtifactCore::Material::setEmissionTextureUvScale,
+              &ArtifactCore::Material::setEmissionTextureUvRotationDegrees,
+              &ArtifactCore::Material::setEmissionTextureUvOffsetU,
+              &ArtifactCore::Material::setEmissionTextureUvOffsetV,
+              &ArtifactCore::Material::setEmissionTextureUvSet);
         }
         if (!imported.occlusionTexture.toQString().isEmpty()) {
           sourceMaterial.setOcclusionTexture(imported.occlusionTexture);
+          applyImportedUv(imported.occlusionUv,
+              &ArtifactCore::Material::setOcclusionTextureUvScale,
+              &ArtifactCore::Material::setOcclusionTextureUvRotationDegrees,
+              &ArtifactCore::Material::setOcclusionTextureUvOffsetU,
+              &ArtifactCore::Material::setOcclusionTextureUvOffsetV,
+              &ArtifactCore::Material::setOcclusionTextureUvSet);
         }
         if (!imported.opacityTexture.toQString().isEmpty()) {
           sourceMaterial.setOpacityTexture(imported.opacityTexture);
+          applyImportedUv(imported.opacityUv,
+              &ArtifactCore::Material::setOpacityTextureUvScale,
+              &ArtifactCore::Material::setOpacityTextureUvRotationDegrees,
+              &ArtifactCore::Material::setOpacityTextureUvOffsetU,
+              &ArtifactCore::Material::setOpacityTextureUvOffsetV,
+              &ArtifactCore::Material::setOpacityTextureUvSet);
         }
         if (imported.hasMetallic) {
           sourceMaterial.setMetallic(imported.metallic);
@@ -707,6 +764,14 @@ QJsonObject Artifact3DLayer::toJson() const {
       const QColor specular = material.specularTint();
       const QColor sheen = material.sheenTint();
       const QColor emission = material.emissionColor();
+      const auto textureUv = [](float scale, float rotation, float offsetU,
+                                float offsetV, int uvSet) {
+        return QJsonObject{{QStringLiteral("scale"), scale},
+                           {QStringLiteral("rotation"), rotation},
+                           {QStringLiteral("offsetU"), offsetU},
+                           {QStringLiteral("offsetV"), offsetV},
+                           {QStringLiteral("uvSet"), uvSet}};
+      };
       materialSlots.append(QJsonObject{
           {QStringLiteral("name"), material.name().toQString()},
           {QStringLiteral("baseColor"), QJsonArray{base.redF(), base.greenF(),
@@ -742,7 +807,46 @@ QJsonObject Artifact3DLayer::toJson() const {
           {QStringLiteral("occlusionTexture"),
               material.occlusionTexture().toQString()},
           {QStringLiteral("opacityTexture"),
-              material.opacityTexture().toQString()}});
+              material.opacityTexture().toQString()},
+          {QStringLiteral("baseColorUv"), textureUv(
+              material.baseColorUvScale(),
+              material.baseColorUvRotationDegrees(),
+              material.baseColorUvOffsetU(), material.baseColorUvOffsetV(),
+              material.baseColorUvSet())},
+          {QStringLiteral("metallicRoughnessUv"), textureUv(
+              material.metallicRoughnessUvScale(),
+              material.metallicRoughnessUvRotationDegrees(),
+              material.metallicRoughnessUvOffsetU(),
+              material.metallicRoughnessUvOffsetV(),
+              material.metallicRoughnessUvSet())},
+          {QStringLiteral("normalUv"), textureUv(
+              material.normalUvScale(), material.normalUvRotationDegrees(),
+              material.normalUvOffsetU(), material.normalUvOffsetV(),
+              material.normalUvSet())},
+          {QStringLiteral("clearcoatNormalUv"), textureUv(
+              material.clearcoatNormalUvScale(),
+              material.clearcoatNormalUvRotationDegrees(),
+              material.clearcoatNormalUvOffsetU(),
+              material.clearcoatNormalUvOffsetV(),
+              material.clearcoatNormalUvSet())},
+          {QStringLiteral("emissionUv"), textureUv(
+              material.emissionTextureUvScale(),
+              material.emissionTextureUvRotationDegrees(),
+              material.emissionTextureUvOffsetU(),
+              material.emissionTextureUvOffsetV(),
+              material.emissionTextureUvSet())},
+          {QStringLiteral("occlusionUv"), textureUv(
+              material.occlusionTextureUvScale(),
+              material.occlusionTextureUvRotationDegrees(),
+              material.occlusionTextureUvOffsetU(),
+              material.occlusionTextureUvOffsetV(),
+              material.occlusionTextureUvSet())},
+          {QStringLiteral("opacityUv"), textureUv(
+              material.opacityTextureUvScale(),
+              material.opacityTextureUvRotationDegrees(),
+              material.opacityTextureUvOffsetU(),
+              material.opacityTextureUvOffsetV(),
+              material.opacityTextureUvSet())}});
     }
     obj["material.slots"] = materialSlots;
   }
@@ -1276,6 +1380,15 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
                 static_cast<double>(minimum), static_cast<double>(maximum)))
           : fallback;
     };
+    const auto readScalarFromObject = [](const QJsonObject& object,
+        const char* key, float fallback, float minimum, float maximum) {
+      const double number = object.value(QString::fromLatin1(key))
+                                .toDouble(fallback);
+      return std::isfinite(number)
+          ? static_cast<float>(std::clamp(number,
+                static_cast<double>(minimum), static_cast<double>(maximum)))
+          : fallback;
+    };
     material.setMetallic(readScalar("metallic", material.metallic(), 0.0f, 1.0f));
     material.setRoughness(readScalar("roughness", material.roughness(), 0.0f, 1.0f));
     material.setSpecular(readScalar("specular", material.specular(), 0.0f, 1.0f));
@@ -1305,6 +1418,93 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
                                         material.emissionColor(), false));
     material.setEmissionStrength(readScalar("emissionStrength",
         material.emissionStrength(), 0.0f, 100000.0f));
+    const auto restoreUv = [&](const char* key, auto scaleSetter,
+        auto rotationSetter, auto offsetUSetter, auto offsetVSetter,
+        auto uvSetSetter, float currentScale, float currentRotation,
+        float currentOffsetU, float currentOffsetV, int currentUvSet) {
+      const QJsonObject uv = slot.value(QString::fromLatin1(key)).toObject();
+      if (uv.isEmpty()) return;
+      (material.*scaleSetter)(readScalarFromObject(uv, "scale", currentScale,
+                                                   0.01f, 10.0f));
+      (material.*rotationSetter)(readScalarFromObject(uv, "rotation",
+          currentRotation, -360.0f, 360.0f));
+      (material.*offsetUSetter)(readScalarFromObject(uv, "offsetU",
+          currentOffsetU, -10.0f, 10.0f));
+      (material.*offsetVSetter)(readScalarFromObject(uv, "offsetV",
+          currentOffsetV, -10.0f, 10.0f));
+      (material.*uvSetSetter)(std::clamp(uv.value("uvSet").toInt(currentUvSet),
+                                         0, 1));
+    };
+    restoreUv("baseColorUv", &ArtifactCore::Material::setBaseColorUvScale,
+        &ArtifactCore::Material::setBaseColorUvRotationDegrees,
+        &ArtifactCore::Material::setBaseColorUvOffsetU,
+        &ArtifactCore::Material::setBaseColorUvOffsetV,
+        &ArtifactCore::Material::setBaseColorUvSet,
+        material.baseColorUvScale(), material.baseColorUvRotationDegrees(),
+        material.baseColorUvOffsetU(), material.baseColorUvOffsetV(),
+        material.baseColorUvSet());
+    restoreUv("metallicRoughnessUv",
+        &ArtifactCore::Material::setMetallicRoughnessUvScale,
+        &ArtifactCore::Material::setMetallicRoughnessUvRotationDegrees,
+        &ArtifactCore::Material::setMetallicRoughnessUvOffsetU,
+        &ArtifactCore::Material::setMetallicRoughnessUvOffsetV,
+        &ArtifactCore::Material::setMetallicRoughnessUvSet,
+        material.metallicRoughnessUvScale(),
+        material.metallicRoughnessUvRotationDegrees(),
+        material.metallicRoughnessUvOffsetU(),
+        material.metallicRoughnessUvOffsetV(),
+        material.metallicRoughnessUvSet());
+    restoreUv("normalUv", &ArtifactCore::Material::setNormalUvScale,
+        &ArtifactCore::Material::setNormalUvRotationDegrees,
+        &ArtifactCore::Material::setNormalUvOffsetU,
+        &ArtifactCore::Material::setNormalUvOffsetV,
+        &ArtifactCore::Material::setNormalUvSet,
+        material.normalUvScale(), material.normalUvRotationDegrees(),
+        material.normalUvOffsetU(), material.normalUvOffsetV(),
+        material.normalUvSet());
+    restoreUv("clearcoatNormalUv",
+        &ArtifactCore::Material::setClearcoatNormalUvScale,
+        &ArtifactCore::Material::setClearcoatNormalUvRotationDegrees,
+        &ArtifactCore::Material::setClearcoatNormalUvOffsetU,
+        &ArtifactCore::Material::setClearcoatNormalUvOffsetV,
+        &ArtifactCore::Material::setClearcoatNormalUvSet,
+        material.clearcoatNormalUvScale(),
+        material.clearcoatNormalUvRotationDegrees(),
+        material.clearcoatNormalUvOffsetU(),
+        material.clearcoatNormalUvOffsetV(),
+        material.clearcoatNormalUvSet());
+    restoreUv("emissionUv",
+        &ArtifactCore::Material::setEmissionTextureUvScale,
+        &ArtifactCore::Material::setEmissionTextureUvRotationDegrees,
+        &ArtifactCore::Material::setEmissionTextureUvOffsetU,
+        &ArtifactCore::Material::setEmissionTextureUvOffsetV,
+        &ArtifactCore::Material::setEmissionTextureUvSet,
+        material.emissionTextureUvScale(),
+        material.emissionTextureUvRotationDegrees(),
+        material.emissionTextureUvOffsetU(),
+        material.emissionTextureUvOffsetV(),
+        material.emissionTextureUvSet());
+    restoreUv("occlusionUv",
+        &ArtifactCore::Material::setOcclusionTextureUvScale,
+        &ArtifactCore::Material::setOcclusionTextureUvRotationDegrees,
+        &ArtifactCore::Material::setOcclusionTextureUvOffsetU,
+        &ArtifactCore::Material::setOcclusionTextureUvOffsetV,
+        &ArtifactCore::Material::setOcclusionTextureUvSet,
+        material.occlusionTextureUvScale(),
+        material.occlusionTextureUvRotationDegrees(),
+        material.occlusionTextureUvOffsetU(),
+        material.occlusionTextureUvOffsetV(),
+        material.occlusionTextureUvSet());
+    restoreUv("opacityUv", &ArtifactCore::Material::setOpacityTextureUvScale,
+        &ArtifactCore::Material::setOpacityTextureUvRotationDegrees,
+        &ArtifactCore::Material::setOpacityTextureUvOffsetU,
+        &ArtifactCore::Material::setOpacityTextureUvOffsetV,
+        &ArtifactCore::Material::setOpacityTextureUvSet,
+        material.opacityTextureUvScale(),
+        material.opacityTextureUvRotationDegrees(),
+        material.opacityTextureUvOffsetU(),
+        material.opacityTextureUvOffsetV(),
+        material.opacityTextureUvSet());
     const auto restoreTexture = [&](const char* key,
                                     void (ArtifactCore::Material::*setter)(
                                         const ArtifactCore::UniString&)) {
