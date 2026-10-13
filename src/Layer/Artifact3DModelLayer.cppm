@@ -438,6 +438,18 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
         transform.uvSet = imported.sheenColorUv.uvSet;
         sourceMaterial.setSheenColorTextureUvTransform(transform);
       }
+      if (!imported.sheenRoughnessTexture.toQString().isEmpty()) {
+        sourceMaterial.setSheenRoughnessTexture(
+            imported.sheenRoughnessTexture);
+        ArtifactCore::MaterialTextureUvTransform transform;
+        transform.scaleU = imported.sheenRoughnessUv.scaleU;
+        transform.scaleV = imported.sheenRoughnessUv.scaleV;
+        transform.rotationDegrees = imported.sheenRoughnessUv.rotationDegrees;
+        transform.offsetU = imported.sheenRoughnessUv.offsetU;
+        transform.offsetV = imported.sheenRoughnessUv.offsetV;
+        transform.uvSet = imported.sheenRoughnessUv.uvSet;
+        sourceMaterial.setSheenRoughnessTextureUvTransform(transform);
+      }
       if (imported.hasMetallic) {
         sourceMaterial.setMetallic(imported.metallic);
       }
@@ -912,6 +924,10 @@ QJsonObject Artifact3DLayer::toJson() const {
       impl_->material_.sheenColorTexture().toQString();
   obj["material.sheenColorTextureUv"] = textureTransformJson(
       impl_->material_.sheenColorTextureUvTransform());
+  obj["material.sheenRoughnessTexture"] =
+      impl_->material_.sheenRoughnessTexture().toQString();
+  obj["material.sheenRoughnessTextureUv"] = textureTransformJson(
+      impl_->material_.sheenRoughnessTextureUvTransform());
   obj["material.emissionTexture"] = impl_->material_.emissionTexture().toQString();
   obj["material.emissionTextureUvScale"] =
       impl_->material_.emissionTextureUvScale();
@@ -1040,6 +1056,10 @@ QJsonObject Artifact3DLayer::toJson() const {
               material.sheenColorTexture().toQString()},
           {QStringLiteral("sheenColorUv"),
               textureUvSeparate(material.sheenColorTextureUvTransform())},
+          {QStringLiteral("sheenRoughnessTexture"),
+              material.sheenRoughnessTexture().toQString()},
+          {QStringLiteral("sheenRoughnessUv"),
+              textureUvSeparate(material.sheenRoughnessTextureUvTransform())},
           {QStringLiteral("emissionTexture"),
               material.emissionTexture().toQString()},
           {QStringLiteral("occlusionTexture"),
@@ -1590,6 +1610,22 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
     transform.uvSet = std::clamp(uv.value("uvSet").toInt(transform.uvSet), 0, 1);
     impl_->material_.setSheenColorTextureUvTransform(transform);
   }
+  if (obj.contains("material.sheenRoughnessTexture")) {
+    impl_->material_.setSheenRoughnessTexture(
+        ArtifactCore::UniString::fromQString(
+            obj.value("material.sheenRoughnessTexture").toString()));
+  }
+  if (obj.contains("material.sheenRoughnessTextureUv")) {
+    const QJsonObject uv = obj.value("material.sheenRoughnessTextureUv").toObject();
+    auto transform = impl_->material_.sheenRoughnessTextureUvTransform();
+    transform.scaleU = static_cast<float>(uv.value("scaleU").toDouble(transform.scaleU));
+    transform.scaleV = static_cast<float>(uv.value("scaleV").toDouble(transform.scaleV));
+    transform.rotationDegrees = static_cast<float>(uv.value("rotation").toDouble(transform.rotationDegrees));
+    transform.offsetU = static_cast<float>(uv.value("offsetU").toDouble(transform.offsetU));
+    transform.offsetV = static_cast<float>(uv.value("offsetV").toDouble(transform.offsetV));
+    transform.uvSet = std::clamp(uv.value("uvSet").toInt(transform.uvSet), 0, 1);
+    impl_->material_.setSheenRoughnessTextureUvTransform(transform);
+  }
 
   const QString emissionTexture = obj.value("material.emissionTexture").toString();
   impl_->material_.setEmissionTexture(ArtifactCore::UniString::fromQString(emissionTexture));
@@ -1927,6 +1963,9 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
     restoreIndependentUv("sheenColorUv",
         &ArtifactCore::Material::setSheenColorTextureUvTransform,
         &ArtifactCore::Material::sheenColorTextureUvTransform);
+    restoreIndependentUv("sheenRoughnessUv",
+        &ArtifactCore::Material::setSheenRoughnessTextureUvTransform,
+        &ArtifactCore::Material::sheenRoughnessTextureUvTransform);
     const auto restoreTexture = [&](const char* key,
                                     void (ArtifactCore::Material::*setter)(
                                         const ArtifactCore::UniString&)) {
@@ -1954,6 +1993,8 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
     restoreTexture("opacityTexture", &ArtifactCore::Material::setOpacityTexture);
     restoreTexture("sheenColorTexture",
         &ArtifactCore::Material::setSheenColorTexture);
+    restoreTexture("sheenRoughnessTexture",
+        &ArtifactCore::Material::setSheenRoughnessTexture);
   }
 }
 
@@ -3714,6 +3755,48 @@ Artifact3DLayer::getLayerPropertyGroups() const {
   sheenColorUvSetProp->setHardRange(0, 1);
   materialGroup.addProperty(sheenColorUvSetProp);
 
+  auto sheenRoughnessTextureProp = persistentLayerProperty(
+      QStringLiteral("material.sheenRoughnessTexture"), PropertyType::String,
+      impl_->material_.sheenRoughnessTexture().toQString(), -31);
+  sheenRoughnessTextureProp->setDisplayLabel(
+      QStringLiteral("Sheen Roughness Texture"));
+  materialGroup.addProperty(sheenRoughnessTextureProp);
+  const auto sheenRoughnessUv =
+      impl_->material_.sheenRoughnessTextureUvTransform();
+  const auto addSheenRoughnessUv = [&](const QString& suffix,
+                                       const QString& label, double value,
+                                       double minimum, double maximum,
+                                       int priority) {
+    auto property = persistentLayerProperty(
+        QStringLiteral("material.sheenRoughnessTextureUv.") + suffix,
+        PropertyType::Float, value, priority);
+    property->setDisplayLabel(label);
+    property->setHardRange(minimum, maximum);
+    materialGroup.addProperty(property);
+  };
+  addSheenRoughnessUv(QStringLiteral("scaleU"),
+      QStringLiteral("Sheen Roughness U Scale"), sheenRoughnessUv.scaleU,
+      0.0001, 10000.0, -30);
+  addSheenRoughnessUv(QStringLiteral("scaleV"),
+      QStringLiteral("Sheen Roughness V Scale"), sheenRoughnessUv.scaleV,
+      0.0001, 10000.0, -29);
+  addSheenRoughnessUv(QStringLiteral("rotation"),
+      QStringLiteral("Sheen Roughness Texture Rotation"),
+      sheenRoughnessUv.rotationDegrees, -360.0, 360.0, -28);
+  addSheenRoughnessUv(QStringLiteral("offsetU"),
+      QStringLiteral("Sheen Roughness Texture U Offset"),
+      sheenRoughnessUv.offsetU, -1000000.0, 1000000.0, -27);
+  addSheenRoughnessUv(QStringLiteral("offsetV"),
+      QStringLiteral("Sheen Roughness Texture V Offset"),
+      sheenRoughnessUv.offsetV, -1000000.0, 1000000.0, -26);
+  auto sheenRoughnessUvSetProp = persistentLayerProperty(
+      QStringLiteral("material.sheenRoughnessTextureUv.uvSet"),
+      PropertyType::Integer, sheenRoughnessUv.uvSet, -25);
+  sheenRoughnessUvSetProp->setDisplayLabel(
+      QStringLiteral("Sheen Roughness Texture UV Set"));
+  sheenRoughnessUvSetProp->setHardRange(0, 1);
+  materialGroup.addProperty(sheenRoughnessUvSetProp);
+
   auto subsurfaceProp = persistentLayerProperty(
       QStringLiteral("material.subsurface"), PropertyType::Float,
       impl_->material_.subsurface(), -34);
@@ -4554,6 +4637,12 @@ Artifact3DLayer::getLayerPropertyGroups() const {
       addIndependentTextureUv(QStringLiteral("sheenColorTexture"),
           QStringLiteral("Sheen Color"),
           material.sheenColorTextureUvTransform(), -21);
+      addTexturePath(QStringLiteral("sheenRoughnessTexture"),
+          QStringLiteral("Sheen Roughness Texture"),
+          material.sheenRoughnessTexture(), -20);
+      addIndependentTextureUv(QStringLiteral("sheenRoughnessTexture"),
+          QStringLiteral("Sheen Roughness"),
+          material.sheenRoughnessTextureUvTransform(), -19);
       addTextureUv(QStringLiteral("clearcoatTexture"),
           QStringLiteral("Clearcoat"),
           material.clearcoatTextureUvScale(),
@@ -4638,6 +4727,8 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
             &ArtifactCore::Material::setClearcoatRoughnessTexture) ||
         setTexturePath(QStringLiteral("sheenColorTexture"),
             &ArtifactCore::Material::setSheenColorTexture) ||
+        setTexturePath(QStringLiteral("sheenRoughnessTexture"),
+            &ArtifactCore::Material::setSheenRoughnessTexture) ||
         setTexturePath(QStringLiteral("emissionTexture"),
             &ArtifactCore::Material::setEmissionTexture) ||
         setTexturePath(QStringLiteral("occlusionTexture"),
@@ -4767,6 +4858,9 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
       updateIndependentTextureUv(QStringLiteral("sheenColorTextureUv."),
           &ArtifactCore::Material::setSheenColorTextureUvTransform,
           &ArtifactCore::Material::sheenColorTextureUvTransform);
+      updateIndependentTextureUv(QStringLiteral("sheenRoughnessTextureUv."),
+          &ArtifactCore::Material::setSheenRoughnessTextureUvTransform,
+          &ArtifactCore::Material::sheenRoughnessTextureUvTransform);
       if (uvPropertyHandled) {
         Q_EMIT changed();
         return true;
@@ -5142,6 +5236,39 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
              QStringLiteral("material.sheenColorTexture")) {
     impl_->material_.setSheenColorTexture(
         ArtifactCore::UniString::fromQString(value.toString()));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath ==
+             QStringLiteral("material.sheenRoughnessTexture")) {
+    impl_->material_.setSheenRoughnessTexture(
+        ArtifactCore::UniString::fromQString(value.toString()));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath.startsWith(
+                 QStringLiteral("material.sheenRoughnessTextureUv."))) {
+    auto transform = impl_->material_.sheenRoughnessTextureUvTransform();
+    const QString field = propertyPath.mid(
+        QStringLiteral("material.sheenRoughnessTextureUv.").size());
+    if (field == QStringLiteral("scaleU"))
+      transform.scaleU = finiteClamped(value.toFloat(), transform.scaleU,
+                                       0.0001f, 10000.0f);
+    else if (field == QStringLiteral("scaleV"))
+      transform.scaleV = finiteClamped(value.toFloat(), transform.scaleV,
+                                       0.0001f, 10000.0f);
+    else if (field == QStringLiteral("rotation"))
+      transform.rotationDegrees = finiteClamped(value.toFloat(),
+          transform.rotationDegrees, -360.0f, 360.0f);
+    else if (field == QStringLiteral("offsetU"))
+      transform.offsetU = finiteClamped(value.toFloat(), transform.offsetU,
+                                        -1000000.0f, 1000000.0f);
+    else if (field == QStringLiteral("offsetV"))
+      transform.offsetV = finiteClamped(value.toFloat(), transform.offsetV,
+                                        -1000000.0f, 1000000.0f);
+    else if (field == QStringLiteral("uvSet"))
+      transform.uvSet = value.toInt() == 1 ? 1 : 0;
+    else
+      return false;
+    impl_->material_.setSheenRoughnessTextureUvTransform(transform);
     Q_EMIT changed();
     return true;
   } else if (propertyPath.startsWith(
@@ -5750,6 +5877,17 @@ QString Artifact3DLayer::materialSignature() const
       .arg(sheenColorTextureUv.offsetU, 0, 'f', 6)
       .arg(sheenColorTextureUv.offsetV, 0, 'f', 6)
       .arg(sheenColorTextureUv.uvSet);
+  const auto sheenRoughnessTextureUv =
+      impl_->material_.sheenRoughnessTextureUvTransform();
+  signature += QStringLiteral(
+      "|sheenRoughnessTexture=%1|sheenRoughnessTextureUv=%2,%3,%4,%5,%6,%7")
+      .arg(impl_->material_.sheenRoughnessTexture().toQString())
+      .arg(sheenRoughnessTextureUv.scaleU, 0, 'f', 6)
+      .arg(sheenRoughnessTextureUv.scaleV, 0, 'f', 6)
+      .arg(sheenRoughnessTextureUv.rotationDegrees, 0, 'f', 6)
+      .arg(sheenRoughnessTextureUv.offsetU, 0, 'f', 6)
+      .arg(sheenRoughnessTextureUv.offsetV, 0, 'f', 6)
+      .arg(sheenRoughnessTextureUv.uvSet);
   const auto metallicTextureUv = impl_->material_.metallicTextureUvTransform();
   const auto roughnessTextureUv = impl_->material_.roughnessTextureUvTransform();
   signature += QStringLiteral("|metallicMapUv=%1,%2,%3,%4,%5,%6|"
@@ -5794,6 +5932,18 @@ QString Artifact3DLayer::materialSignature() const
         .arg(slotSheenUv.offsetU, 0, 'f', 6)
         .arg(slotSheenUv.offsetV, 0, 'f', 6)
         .arg(slotSheenUv.uvSet);
+    const auto slotSheenRoughnessUv =
+        material.sheenRoughnessTextureUvTransform();
+    signature += QStringLiteral(
+        "|slot%1SheenRoughnessMap=%2,%3,%4,%5,%6,%7,%8")
+        .arg(static_cast<qulonglong>(index))
+        .arg(material.sheenRoughnessTexture().toQString())
+        .arg(slotSheenRoughnessUv.scaleU, 0, 'f', 6)
+        .arg(slotSheenRoughnessUv.scaleV, 0, 'f', 6)
+        .arg(slotSheenRoughnessUv.rotationDegrees, 0, 'f', 6)
+        .arg(slotSheenRoughnessUv.offsetU, 0, 'f', 6)
+        .arg(slotSheenRoughnessUv.offsetV, 0, 'f', 6)
+        .arg(slotSheenRoughnessUv.uvSet);
     signature += QStringLiteral("|slot%1PbrUv=%2,%3,%4,%5,%6,%7,%8,%9,%10,%11,%12")
         .arg(static_cast<qulonglong>(index))
         .arg(metallicUv.scaleU, 0, 'f', 6)

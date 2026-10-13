@@ -1357,6 +1357,16 @@ namespace {
           result.sheenColorTextureUvOffsetU = sheenColorUv.offsetU;
           result.sheenColorTextureUvOffsetV = sheenColorUv.offsetV;
           result.sheenColorTextureUvSet = sheenColorUv.uvSet;
+          result.sheenRoughnessTexture = source.sheenRoughnessTexture();
+          const auto sheenRoughnessUv =
+              source.sheenRoughnessTextureUvTransform();
+          result.sheenRoughnessTextureUvScaleU = sheenRoughnessUv.scaleU;
+          result.sheenRoughnessTextureUvScaleV = sheenRoughnessUv.scaleV;
+          result.sheenRoughnessTextureUvRotationDegrees =
+              sheenRoughnessUv.rotationDegrees;
+          result.sheenRoughnessTextureUvOffsetU = sheenRoughnessUv.offsetU;
+          result.sheenRoughnessTextureUvOffsetV = sheenRoughnessUv.offsetV;
+          result.sheenRoughnessTextureUvSet = sheenRoughnessUv.uvSet;
           result.anisotropy = source.anisotropy();
           result.anisotropyRotationDegrees =
               source.anisotropyRotationDegrees();
@@ -1534,6 +1544,8 @@ namespace {
             slotMaterial.clearcoatRoughnessTexture().toQString().trimmed();
         range.sheenColorTexturePath =
             slotMaterial.sheenColorTexture().toQString().trimmed();
+        range.sheenRoughnessTexturePath =
+            slotMaterial.sheenRoughnessTexture().toQString().trimmed();
         range.clearcoatNormalTexturePath = lowMaterialLOD
             ? QString()
             : slotMaterial.clearcoatNormalTexture().toQString().trimmed();
@@ -1631,6 +1643,15 @@ namespace {
         state.sheenColorTextureUvOffset = {
             sheenUv.offsetU, sheenUv.offsetV,
             sheenUv.rotationDegrees * std::numbers::pi_v<float> / 180.0f,
+            0.0f};
+        const auto sheenRoughnessUv =
+            slotMaterial.sheenRoughnessTextureUvTransform();
+        state.sheenRoughnessTextureFactors = {
+            0.0f, sheenRoughnessUv.uvSet == 1 ? 1.0f : 0.0f,
+            sheenRoughnessUv.scaleU, sheenRoughnessUv.scaleV};
+        state.sheenRoughnessTextureUvOffset = {
+            sheenRoughnessUv.offsetU, sheenRoughnessUv.offsetV,
+            sheenRoughnessUv.rotationDegrees * std::numbers::pi_v<float> / 180.0f,
             0.0f};
         const QColor clearcoatTint = slotMaterial.clearcoatTint();
         state.clearcoatTintFactors = {
@@ -1786,6 +1807,12 @@ namespace {
         material.sheenColorTexture().toQString(), sheenColorUv.scaleU,
         sheenColorUv.scaleV, sheenColorUv.rotationDegrees,
         sheenColorUv.offsetU, sheenColorUv.offsetV, sheenColorUv.uvSet);
+    const auto sheenRoughnessUv = material.sheenRoughnessTextureUvTransform();
+    renderer->setSheenRoughnessTexture(
+        material.sheenRoughnessTexture().toQString(), sheenRoughnessUv.scaleU,
+        sheenRoughnessUv.scaleV, sheenRoughnessUv.rotationDegrees,
+        sheenRoughnessUv.offsetU, sheenRoughnessUv.offsetV,
+        sheenRoughnessUv.uvSet);
     renderer->setClearcoatNormalTexture(
         lowMaterialLOD ? QString()
                        : material.clearcoatNormalTexture().toQString());
