@@ -7,6 +7,7 @@ module;
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QJsonValue>
 #include <QRectF>
 #include <QSizeF>
 #include <QObject>
@@ -696,6 +697,51 @@ QJsonObject Artifact3DLayer::toJson() const {
       impl_->material_.opacityTextureUvRotationDegrees();
   obj["material.opacityTextureUvSet"] =
       impl_->material_.opacityTextureUvSet();
+  if (!impl_->meshMaterials_.empty()) {
+    QJsonArray materialSlots;
+    for (const auto& material : impl_->meshMaterials_) {
+      const QColor base = material.baseColor();
+      const QColor specular = material.specularTint();
+      const QColor sheen = material.sheenTint();
+      const QColor emission = material.emissionColor();
+      materialSlots.append(QJsonObject{
+          {QStringLiteral("baseColor"), QJsonArray{base.redF(), base.greenF(),
+                                                   base.blueF(), base.alphaF()}},
+          {QStringLiteral("metallic"), material.metallic()},
+          {QStringLiteral("roughness"), material.roughness()},
+          {QStringLiteral("specular"), material.specular()},
+          {QStringLiteral("specularTint"), QJsonArray{specular.redF(),
+              specular.greenF(), specular.blueF()}},
+          {QStringLiteral("ior"), material.ior()},
+          {QStringLiteral("transmission"), material.transmission()},
+          {QStringLiteral("clearcoat"), material.clearcoat()},
+          {QStringLiteral("clearcoatRoughness"), material.clearcoatRoughness()},
+          {QStringLiteral("sheen"), material.sheen()},
+          {QStringLiteral("sheenRoughness"), material.sheenRoughness()},
+          {QStringLiteral("sheenTint"), QJsonArray{sheen.redF(), sheen.greenF(),
+                                                   sheen.blueF()}},
+          {QStringLiteral("opacity"), material.opacity()},
+          {QStringLiteral("alphaMode"), static_cast<int>(material.alphaMode())},
+          {QStringLiteral("alphaCutoff"), material.alphaCutoff()},
+          {QStringLiteral("emissionColor"), QJsonArray{emission.redF(),
+              emission.greenF(), emission.blueF()}},
+          {QStringLiteral("emissionStrength"), material.emissionStrength()},
+          {QStringLiteral("baseColorTexture"),
+              material.baseColorTexture().toQString()},
+          {QStringLiteral("metallicRoughnessTexture"),
+              material.metallicRoughnessTexture().toQString()},
+          {QStringLiteral("normalTexture"), material.normalTexture().toQString()},
+          {QStringLiteral("clearcoatNormalTexture"),
+              material.clearcoatNormalTexture().toQString()},
+          {QStringLiteral("emissionTexture"),
+              material.emissionTexture().toQString()},
+          {QStringLiteral("occlusionTexture"),
+              material.occlusionTexture().toQString()},
+          {QStringLiteral("opacityTexture"),
+              material.opacityTexture().toQString()}});
+    }
+    obj["material.slots"] = materialSlots;
+  }
   const QString materialGraphJson = impl_->material_.materialGraphJson().toQString();
   if (!materialGraphJson.trimmed().isEmpty()) {
     obj["material.graph"] = materialGraphJson;
@@ -1169,6 +1215,90 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
   // first draw. Invalid payloads are ignored at apply time, never here.
   impl_->material_.setMaterialGraphJson(ArtifactCore::UniString::fromQString(
       obj.value("material.graph").toString()));
+
+  const QJsonArray savedMaterialSlots =
+      obj.value(QStringLiteral("material.slots")).toArray();
+  const std::size_t slotCount = std::min(
+      impl_->meshMaterials_.size(),
+      static_cast<std::size_t>(savedMaterialSlots.size()));
+  const auto readColor = [](const QJsonValue& value, const QColor& fallback,
+                            bool includeAlpha) {
+    const QJsonArray components = value.toArray();
+    if (components.size() < (includeAlpha ? 4 : 3)) return fallback;
+    const auto component = [&](int index, float defaultValue) {
+      const double number = components[index].toDouble(defaultValue);
+      return std::isfinite(number)
+          ? static_cast<float>(std::clamp(number, 0.0, 1.0)) : defaultValue;
+    };
+    return QColor::fromRgbF(component(0, fallback.redF()),
+                            component(1, fallback.greenF()),
+                            component(2, fallback.blueF()),
+                            includeAlpha ? component(3, fallback.alphaF())
+                                         : fallback.alphaF());
+  };
+  for (std::size_t index = 0; index < slotCount; ++index) {
+    const QJsonValue slotValue =
+        savedMaterialSlots[static_cast<qsizetype>(index)];
+    if (!slotValue.isObject()) continue;
+    const QJsonObject slot = slotValue.toObject();
+    auto& material = impl_->meshMaterials_[index];
+    material.setBaseColor(readColor(slot.value("baseColor"),
+                                    material.baseColor(), true));
+    const auto readScalar = [&](const char* key, float fallback,
+                                float minimum, float maximum) {
+      const double number = slot.value(QString::fromLatin1(key)).toDouble(fallback);
+      return std::isfinite(number)
+          ? static_cast<float>(std::clamp(number,
+                static_cast<double>(minimum), static_cast<double>(maximum)))
+          : fallback;
+    };
+    material.setMetallic(readScalar("metallic", material.metallic(), 0.0f, 1.0f));
+    material.setRoughness(readScalar("roughness", material.roughness(), 0.0f, 1.0f));
+    material.setSpecular(readScalar("specular", material.specular(), 0.0f, 1.0f));
+    material.setSpecularTint(readColor(slot.value("specularTint"),
+                                       material.specularTint(), false));
+    material.setIOR(readScalar("ior", material.ior(), 1.0f, 3.0f));
+    material.setTransmission(readScalar("transmission", material.transmission(),
+                                        0.0f, 1.0f));
+    material.setClearcoat(readScalar("clearcoat", material.clearcoat(),
+                                     0.0f, 1.0f));
+    material.setClearcoatRoughness(readScalar("clearcoatRoughness",
+        material.clearcoatRoughness(), 0.0f, 1.0f));
+    material.setSheen(readScalar("sheen", material.sheen(), 0.0f, 1.0f));
+    material.setSheenRoughness(readScalar("sheenRoughness",
+        material.sheenRoughness(), 0.0f, 1.0f));
+    material.setSheenTint(readColor(slot.value("sheenTint"),
+                                    material.sheenTint(), false));
+    material.setOpacity(readScalar("opacity", material.opacity(), 0.0f, 1.0f));
+    const int alphaMode = std::clamp(slot.value("alphaMode").toInt(
+        static_cast<int>(material.alphaMode())),
+        static_cast<int>(ArtifactCore::MaterialAlphaMode::Opaque),
+        static_cast<int>(ArtifactCore::MaterialAlphaMode::Blended));
+    material.setAlphaMode(static_cast<ArtifactCore::MaterialAlphaMode>(alphaMode));
+    material.setAlphaCutoff(readScalar("alphaCutoff", material.alphaCutoff(),
+                                       0.0f, 1.0f));
+    material.setEmissionColor(readColor(slot.value("emissionColor"),
+                                        material.emissionColor(), false));
+    material.setEmissionStrength(readScalar("emissionStrength",
+        material.emissionStrength(), 0.0f, 100000.0f));
+    const auto restoreTexture = [&](const char* key,
+                                    void (ArtifactCore::Material::*setter)(
+                                        const ArtifactCore::UniString&)) {
+      const QString path = slot.value(QString::fromLatin1(key)).toString();
+      if (!path.isEmpty()) {
+        (material.*setter)(ArtifactCore::UniString::fromQString(path));
+      }
+    };
+    restoreTexture("baseColorTexture", &ArtifactCore::Material::setBaseColorTexture);
+    restoreTexture("metallicRoughnessTexture",
+        &ArtifactCore::Material::setMetallicRoughnessTexture);
+    restoreTexture("normalTexture", &ArtifactCore::Material::setNormalTexture);
+    restoreTexture("clearcoatNormalTexture",
+        &ArtifactCore::Material::setClearcoatNormalTexture);
+    restoreTexture("emissionTexture", &ArtifactCore::Material::setEmissionTexture);
+    restoreTexture("occlusionTexture", &ArtifactCore::Material::setOcclusionTexture);
+    restoreTexture("opacityTexture", &ArtifactCore::Material::setOpacityTexture);
+  }
 }
 
 void Artifact3DLayer::createCubeMesh() {
