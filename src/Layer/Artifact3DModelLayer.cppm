@@ -342,6 +342,32 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
         impl_->material_.roughness() == 0.5f) {
       impl_->material_.setRoughness(importer->lastRoughnessFactor());
     }
+    if (factorsFromUfbx && importer->hasLastClearcoatFactor() &&
+        impl_->material_.clearcoat() == 0.0f) {
+      impl_->material_.setClearcoat(importer->lastClearcoatFactor());
+    }
+    if (factorsFromUfbx && importer->hasLastClearcoatRoughnessFactor() &&
+        impl_->material_.clearcoatRoughness() == 0.03f) {
+      impl_->material_.setClearcoatRoughness(
+          importer->lastClearcoatRoughnessFactor());
+    }
+    if (factorsFromUfbx && importer->hasLastTransmissionFactor() &&
+        impl_->material_.transmission() == 0.0f) {
+      impl_->material_.setTransmission(importer->lastTransmissionFactor());
+    }
+    if (factorsFromUfbx && importer->hasLastIorFactor() &&
+        impl_->material_.ior() == 1.5f) {
+      impl_->material_.setIOR(importer->lastIorFactor());
+    }
+    if (factorsFromUfbx && importer->hasLastSheenFactor() &&
+        impl_->material_.sheen() == 0.0f) {
+      impl_->material_.setSheen(importer->lastSheenFactor());
+    }
+    if (factorsFromUfbx && importer->hasLastSheenRoughnessFactor() &&
+        impl_->material_.sheenRoughness() == 0.5f) {
+      impl_->material_.setSheenRoughness(
+          importer->lastSheenRoughnessFactor());
+    }
     if (impl_->material_.baseColorTexture().toQString().isEmpty()) {
       const QString detectedTexture = detectSiblingBaseColorTexture(normalizedInput);
       if (!detectedTexture.isEmpty()) {
