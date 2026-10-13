@@ -540,6 +540,17 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
                 ? imported.anisotropyRotationDegrees
                 : sourceMaterial.anisotropyRotationDegrees());
       }
+      if (!imported.anisotropyTexture.toQString().isEmpty()) {
+        sourceMaterial.setAnisotropyTexture(imported.anisotropyTexture);
+        ArtifactCore::MaterialTextureUvTransform transform;
+        transform.scaleU = imported.anisotropyUv.scaleU;
+        transform.scaleV = imported.anisotropyUv.scaleV;
+        transform.rotationDegrees = imported.anisotropyUv.rotationDegrees;
+        transform.offsetU = imported.anisotropyUv.offsetU;
+        transform.offsetV = imported.anisotropyUv.offsetV;
+        transform.uvSet = imported.anisotropyUv.uvSet;
+        sourceMaterial.setAnisotropyTextureUvTransform(transform);
+      }
       return sourceMaterial;
     };
     const auto& importedMaterials = importer->importedPbrMaterials();
@@ -813,6 +824,10 @@ QJsonObject Artifact3DLayer::toJson() const {
   obj["material.anisotropy"] = impl_->material_.anisotropy();
   obj["material.anisotropyRotationDegrees"] =
       impl_->material_.anisotropyRotationDegrees();
+  obj["material.anisotropyTexture"] =
+      impl_->material_.anisotropyTexture().toQString();
+  obj["material.anisotropyTextureUv"] = textureTransformJson(
+      impl_->material_.anisotropyTextureUvTransform());
   obj["material.sheenRoughness"] = impl_->material_.sheenRoughness();
   const QColor sheenTint = impl_->material_.sheenTint();
   obj["material.sheenTint"] = QJsonObject{
@@ -1018,6 +1033,10 @@ QJsonObject Artifact3DLayer::toJson() const {
           {QStringLiteral("anisotropy"), material.anisotropy()},
           {QStringLiteral("anisotropyRotation"),
               material.anisotropyRotationDegrees()},
+          {QStringLiteral("anisotropyTexture"),
+              material.anisotropyTexture().toQString()},
+          {QStringLiteral("anisotropyTextureUv"),
+              textureUvSeparate(material.anisotropyTextureUvTransform())},
           {QStringLiteral("opacity"), material.opacity()},
           {QStringLiteral("alphaMode"), static_cast<int>(material.alphaMode())},
           {QStringLiteral("alphaCutoff"), material.alphaCutoff()},
@@ -1060,6 +1079,10 @@ QJsonObject Artifact3DLayer::toJson() const {
               material.sheenRoughnessTexture().toQString()},
           {QStringLiteral("sheenRoughnessUv"),
               textureUvSeparate(material.sheenRoughnessTextureUvTransform())},
+          {QStringLiteral("anisotropyTexture"),
+              material.anisotropyTexture().toQString()},
+          {QStringLiteral("anisotropyTextureUv"),
+              textureUvSeparate(material.anisotropyTextureUvTransform())},
           {QStringLiteral("emissionTexture"),
               material.emissionTexture().toQString()},
           {QStringLiteral("occlusionTexture"),
@@ -1377,6 +1400,21 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
           "material.anisotropyRotationDegrees").toDouble(
               impl_->material_.anisotropyRotationDegrees())),
           impl_->material_.anisotropyRotationDegrees(), -180.0f, 180.0f));
+  if (obj.contains("material.anisotropyTexture")) {
+    impl_->material_.setAnisotropyTexture(ArtifactCore::UniString::fromQString(
+        obj.value("material.anisotropyTexture").toString()));
+  }
+  if (obj.contains("material.anisotropyTextureUv")) {
+    const QJsonObject uv = obj.value("material.anisotropyTextureUv").toObject();
+    auto transform = impl_->material_.anisotropyTextureUvTransform();
+    transform.scaleU = finiteClamped(static_cast<float>(uv.value("scaleU").toDouble(transform.scaleU)), transform.scaleU, 0.0001f, 10000.0f);
+    transform.scaleV = finiteClamped(static_cast<float>(uv.value("scaleV").toDouble(transform.scaleV)), transform.scaleV, 0.0001f, 10000.0f);
+    transform.rotationDegrees = finiteClamped(static_cast<float>(uv.value("rotation").toDouble(transform.rotationDegrees)), transform.rotationDegrees, -360.0f, 360.0f);
+    transform.offsetU = finiteClamped(static_cast<float>(uv.value("offsetU").toDouble(transform.offsetU)), transform.offsetU, -1000000.0f, 1000000.0f);
+    transform.offsetV = finiteClamped(static_cast<float>(uv.value("offsetV").toDouble(transform.offsetV)), transform.offsetV, -1000000.0f, 1000000.0f);
+    transform.uvSet = std::clamp(uv.value("uvSet").toInt(transform.uvSet), 0, 1);
+    impl_->material_.setAnisotropyTextureUvTransform(transform);
+  }
   impl_->material_.setSheenRoughness(finiteClamped(
       static_cast<float>(obj.value("material.sheenRoughness").toDouble(
           impl_->material_.sheenRoughness())),
@@ -1535,6 +1573,9 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
   restoreIndependentTextureUv("material.roughnessTextureUv",
       &ArtifactCore::Material::setRoughnessTextureUvTransform,
       &ArtifactCore::Material::roughnessTextureUvTransform);
+  restoreIndependentTextureUv("material.anisotropyTextureUv",
+      &ArtifactCore::Material::setAnisotropyTextureUvTransform,
+      &ArtifactCore::Material::anisotropyTextureUvTransform);
   impl_->material_.setMetallicRoughnessUvScale(finiteClamped(
       static_cast<float>(obj.value("material.metallicRoughnessUvScale")
           .toDouble(impl_->material_.metallicRoughnessUvScale())),
@@ -1798,6 +1839,10 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
         readScalar("anisotropy", material.anisotropy(), -1.0f, 1.0f),
         readScalar("anisotropyRotation", material.anisotropyRotationDegrees(),
                    -180.0f, 180.0f));
+    if (slot.contains(QStringLiteral("anisotropyTexture"))) {
+      material.setAnisotropyTexture(ArtifactCore::UniString::fromQString(
+          slot.value(QStringLiteral("anisotropyTexture")).toString()));
+    }
     material.setOpacity(readScalar("opacity", material.opacity(), 0.0f, 1.0f));
     const int alphaMode = std::clamp(slot.value("alphaMode").toInt(
         static_cast<int>(material.alphaMode())),
@@ -1966,6 +2011,9 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
     restoreIndependentUv("sheenRoughnessUv",
         &ArtifactCore::Material::setSheenRoughnessTextureUvTransform,
         &ArtifactCore::Material::sheenRoughnessTextureUvTransform);
+    restoreIndependentUv("anisotropyTextureUv",
+        &ArtifactCore::Material::setAnisotropyTextureUvTransform,
+        &ArtifactCore::Material::anisotropyTextureUvTransform);
     const auto restoreTexture = [&](const char* key,
                                     void (ArtifactCore::Material::*setter)(
                                         const ArtifactCore::UniString&)) {
@@ -1995,6 +2043,8 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
         &ArtifactCore::Material::setSheenColorTexture);
     restoreTexture("sheenRoughnessTexture",
         &ArtifactCore::Material::setSheenRoughnessTexture);
+    restoreTexture("anisotropyTexture",
+        &ArtifactCore::Material::setAnisotropyTexture);
   }
 }
 
@@ -3863,6 +3913,33 @@ Artifact3DLayer::getLayerPropertyGroups() const {
       QStringLiteral("Anisotropy Rotation"));
   anisotropyRotationProp->setHardRange(-180.0, 180.0);
   materialGroup.addProperty(anisotropyRotationProp);
+  auto anisotropyTextureProp = persistentLayerProperty(
+      QStringLiteral("material.anisotropyTexture"), PropertyType::String,
+      impl_->material_.anisotropyTexture().toQString(), -34);
+  anisotropyTextureProp->setDisplayLabel(QStringLiteral("Anisotropy Texture"));
+  materialGroup.addProperty(anisotropyTextureProp);
+  const auto anisotropyUv = impl_->material_.anisotropyTextureUvTransform();
+  const auto addAnisotropyUv = [&](const QString& suffix,
+      const QString& label, double value, double minimum, double maximum,
+      int priority) {
+    auto property = persistentLayerProperty(
+        QStringLiteral("material.anisotropyTextureUv.") + suffix,
+        PropertyType::Float, value, priority);
+    property->setDisplayLabel(label);
+    property->setHardRange(minimum, maximum);
+    materialGroup.addProperty(property);
+  };
+  addAnisotropyUv(QStringLiteral("scaleU"), QStringLiteral("Anisotropy Texture U Scale"), anisotropyUv.scaleU, 0.0001, 10000.0, -33);
+  addAnisotropyUv(QStringLiteral("scaleV"), QStringLiteral("Anisotropy Texture V Scale"), anisotropyUv.scaleV, 0.0001, 10000.0, -32);
+  addAnisotropyUv(QStringLiteral("rotation"), QStringLiteral("Anisotropy Texture Rotation"), anisotropyUv.rotationDegrees, -360.0, 360.0, -31);
+  addAnisotropyUv(QStringLiteral("offsetU"), QStringLiteral("Anisotropy Texture U Offset"), anisotropyUv.offsetU, -1000000.0, 1000000.0, -30);
+  addAnisotropyUv(QStringLiteral("offsetV"), QStringLiteral("Anisotropy Texture V Offset"), anisotropyUv.offsetV, -1000000.0, 1000000.0, -29);
+  auto anisotropyUvSetProp = persistentLayerProperty(
+      QStringLiteral("material.anisotropyTextureUv.uvSet"),
+      PropertyType::Integer, anisotropyUv.uvSet, -28);
+  anisotropyUvSetProp->setDisplayLabel(QStringLiteral("Anisotropy Texture UV Set"));
+  anisotropyUvSetProp->setHardRange(0, 1);
+  materialGroup.addProperty(anisotropyUvSetProp);
 
   auto opacityProp = persistentLayerProperty(
       QStringLiteral("material.opacity"), PropertyType::Float,
@@ -4558,6 +4635,11 @@ Artifact3DLayer::getLayerPropertyGroups() const {
       addScalar(QStringLiteral("anisotropyRotation"),
                 QStringLiteral("Anisotropy Rotation"),
                 material.anisotropyRotationDegrees(), -180.0, 180.0, -54);
+      addTexturePath(QStringLiteral("anisotropyTexture"),
+          QStringLiteral("Anisotropy Texture"), material.anisotropyTexture(), -52);
+      addIndependentTextureUv(QStringLiteral("anisotropyTexture"),
+          QStringLiteral("Anisotropy Texture"),
+          material.anisotropyTextureUvTransform(), -51);
       addColor(QStringLiteral("emissionColor"), QStringLiteral("Emission Color"),
                material.emissionColor(), -53);
       addScalar(QStringLiteral("emissionStrength"),
@@ -4643,6 +4725,11 @@ Artifact3DLayer::getLayerPropertyGroups() const {
       addIndependentTextureUv(QStringLiteral("sheenRoughnessTexture"),
           QStringLiteral("Sheen Roughness"),
           material.sheenRoughnessTextureUvTransform(), -19);
+      addTexturePath(QStringLiteral("anisotropyTexture"),
+          QStringLiteral("Anisotropy Texture"), material.anisotropyTexture(), -18);
+      addIndependentTextureUv(QStringLiteral("anisotropyTexture"),
+          QStringLiteral("Anisotropy Texture"),
+          material.anisotropyTextureUvTransform(), -17);
       addTextureUv(QStringLiteral("clearcoatTexture"),
           QStringLiteral("Clearcoat"),
           material.clearcoatTextureUvScale(),
@@ -4729,6 +4816,8 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
             &ArtifactCore::Material::setSheenColorTexture) ||
         setTexturePath(QStringLiteral("sheenRoughnessTexture"),
             &ArtifactCore::Material::setSheenRoughnessTexture) ||
+        setTexturePath(QStringLiteral("anisotropyTexture"),
+            &ArtifactCore::Material::setAnisotropyTexture) ||
         setTexturePath(QStringLiteral("emissionTexture"),
             &ArtifactCore::Material::setEmissionTexture) ||
         setTexturePath(QStringLiteral("occlusionTexture"),
@@ -4861,6 +4950,9 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
       updateIndependentTextureUv(QStringLiteral("sheenRoughnessTextureUv."),
           &ArtifactCore::Material::setSheenRoughnessTextureUvTransform,
           &ArtifactCore::Material::sheenRoughnessTextureUvTransform);
+      updateIndependentTextureUv(QStringLiteral("anisotropyTextureUv."),
+          &ArtifactCore::Material::setAnisotropyTextureUvTransform,
+          &ArtifactCore::Material::anisotropyTextureUvTransform);
       if (uvPropertyHandled) {
         Q_EMIT changed();
         return true;
@@ -5632,6 +5724,38 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
         impl_->material_.anisotropyRotationDegrees());
     Q_EMIT changed();
     return true;
+  } else if (propertyPath == QStringLiteral("material.anisotropyTexture")) {
+    impl_->material_.setAnisotropyTexture(
+        ArtifactCore::UniString::fromQString(value.toString()));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath.startsWith(
+                 QStringLiteral("material.anisotropyTextureUv."))) {
+    auto transform = impl_->material_.anisotropyTextureUvTransform();
+    const QString field = propertyPath.mid(
+        QStringLiteral("material.anisotropyTextureUv.").size());
+    if (field == QStringLiteral("scaleU"))
+      transform.scaleU = finiteClamped(value.toFloat(), transform.scaleU,
+                                       0.0001f, 10000.0f);
+    else if (field == QStringLiteral("scaleV"))
+      transform.scaleV = finiteClamped(value.toFloat(), transform.scaleV,
+                                       0.0001f, 10000.0f);
+    else if (field == QStringLiteral("rotation"))
+      transform.rotationDegrees = finiteClamped(value.toFloat(),
+          transform.rotationDegrees, -360.0f, 360.0f);
+    else if (field == QStringLiteral("offsetU"))
+      transform.offsetU = finiteClamped(value.toFloat(), transform.offsetU,
+                                        -1000000.0f, 1000000.0f);
+    else if (field == QStringLiteral("offsetV"))
+      transform.offsetV = finiteClamped(value.toFloat(), transform.offsetV,
+                                        -1000000.0f, 1000000.0f);
+    else if (field == QStringLiteral("uvSet"))
+      transform.uvSet = std::clamp(value.toInt(), 0, 1);
+    else
+      return false;
+    impl_->material_.setAnisotropyTextureUvTransform(transform);
+    Q_EMIT changed();
+    return true;
   } else if (propertyPath ==
              QStringLiteral("material.anisotropyRotationDegrees")) {
     impl_->material_.setAnisotropy(
@@ -5888,6 +6012,17 @@ QString Artifact3DLayer::materialSignature() const
       .arg(sheenRoughnessTextureUv.offsetU, 0, 'f', 6)
       .arg(sheenRoughnessTextureUv.offsetV, 0, 'f', 6)
       .arg(sheenRoughnessTextureUv.uvSet);
+  const auto anisotropyTextureUv =
+      impl_->material_.anisotropyTextureUvTransform();
+  signature += QStringLiteral(
+      "|anisotropyTexture=%1|anisotropyTextureUv=%2,%3,%4,%5,%6,%7")
+      .arg(impl_->material_.anisotropyTexture().toQString())
+      .arg(anisotropyTextureUv.scaleU, 0, 'f', 6)
+      .arg(anisotropyTextureUv.scaleV, 0, 'f', 6)
+      .arg(anisotropyTextureUv.rotationDegrees, 0, 'f', 6)
+      .arg(anisotropyTextureUv.offsetU, 0, 'f', 6)
+      .arg(anisotropyTextureUv.offsetV, 0, 'f', 6)
+      .arg(anisotropyTextureUv.uvSet);
   const auto metallicTextureUv = impl_->material_.metallicTextureUvTransform();
   const auto roughnessTextureUv = impl_->material_.roughnessTextureUvTransform();
   signature += QStringLiteral("|metallicMapUv=%1,%2,%3,%4,%5,%6|"
@@ -5944,6 +6079,17 @@ QString Artifact3DLayer::materialSignature() const
         .arg(slotSheenRoughnessUv.offsetU, 0, 'f', 6)
         .arg(slotSheenRoughnessUv.offsetV, 0, 'f', 6)
         .arg(slotSheenRoughnessUv.uvSet);
+    const auto slotAnisotropyUv = material.anisotropyTextureUvTransform();
+    signature += QStringLiteral(
+        "|slot%1AnisotropyMap=%2,%3,%4,%5,%6,%7,%8")
+        .arg(static_cast<qulonglong>(index))
+        .arg(material.anisotropyTexture().toQString())
+        .arg(slotAnisotropyUv.scaleU, 0, 'f', 6)
+        .arg(slotAnisotropyUv.scaleV, 0, 'f', 6)
+        .arg(slotAnisotropyUv.rotationDegrees, 0, 'f', 6)
+        .arg(slotAnisotropyUv.offsetU, 0, 'f', 6)
+        .arg(slotAnisotropyUv.offsetV, 0, 'f', 6)
+        .arg(slotAnisotropyUv.uvSet);
     signature += QStringLiteral("|slot%1PbrUv=%2,%3,%4,%5,%6,%7,%8,%9,%10,%11,%12")
         .arg(static_cast<qulonglong>(index))
         .arg(metallicUv.scaleU, 0, 'f', 6)

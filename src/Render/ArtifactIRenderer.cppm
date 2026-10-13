@@ -1370,6 +1370,15 @@ namespace {
           result.anisotropy = source.anisotropy();
           result.anisotropyRotationDegrees =
               source.anisotropyRotationDegrees();
+          result.anisotropyTexture = source.anisotropyTexture();
+          const auto anisotropyUv = source.anisotropyTextureUvTransform();
+          result.anisotropyTextureUvScaleU = anisotropyUv.scaleU;
+          result.anisotropyTextureUvScaleV = anisotropyUv.scaleV;
+          result.anisotropyTextureUvRotationDegrees =
+              anisotropyUv.rotationDegrees;
+          result.anisotropyTextureUvOffsetU = anisotropyUv.offsetU;
+          result.anisotropyTextureUvOffsetV = anisotropyUv.offsetV;
+          result.anisotropyTextureUvSet = anisotropyUv.uvSet;
           const QColor emissionColor = source.emissionColor();
           result.emissionColor[0] = emissionColor.redF();
           result.emissionColor[1] = emissionColor.greenF();
@@ -1546,6 +1555,8 @@ namespace {
             slotMaterial.sheenColorTexture().toQString().trimmed();
         range.sheenRoughnessTexturePath =
             slotMaterial.sheenRoughnessTexture().toQString().trimmed();
+        range.anisotropyTexturePath =
+            slotMaterial.anisotropyTexture().toQString().trimmed();
         range.clearcoatNormalTexturePath = lowMaterialLOD
             ? QString()
             : slotMaterial.clearcoatNormalTexture().toQString().trimmed();
@@ -1746,6 +1757,14 @@ namespace {
         state.anisotropyFactors[1] =
             slotMaterial.anisotropyRotationDegrees() *
             std::numbers::pi_v<float> / 180.0f;
+        const auto anisotropyUv = slotMaterial.anisotropyTextureUvTransform();
+        state.anisotropyTextureFactors = {
+            0.0f, anisotropyUv.uvSet == 1 ? 1.0f : 0.0f,
+            anisotropyUv.scaleU, anisotropyUv.scaleV};
+        state.anisotropyTextureUvOffset = {
+            anisotropyUv.offsetU, anisotropyUv.offsetV,
+            anisotropyUv.rotationDegrees * std::numbers::pi_v<float> / 180.0f,
+            0.0f};
         const QColor subsurfaceColor = slotMaterial.subsurfaceColor();
         state.subsurfaceFactors = {
             slotMaterial.subsurface(), subsurfaceColor.redF(),
@@ -1824,6 +1843,11 @@ namespace {
                                    material.subsurfaceAnisotropy());
     renderer->setAnisotropy(material.anisotropy(),
                             material.anisotropyRotationDegrees());
+    const auto anisotropyUv = material.anisotropyTextureUvTransform();
+    renderer->setAnisotropyTexture(
+        material.anisotropyTexture().toQString(), anisotropyUv.scaleU,
+        anisotropyUv.scaleV, anisotropyUv.rotationDegrees,
+        anisotropyUv.offsetU, anisotropyUv.offsetV, anisotropyUv.uvSet);
     renderer->setUvTransform(material.uvOffsetU(), material.uvOffsetV(),
                              material.uvScaleU(), material.uvScaleV(),
                              material.uvRotationDegrees(),
