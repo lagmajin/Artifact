@@ -414,6 +414,15 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
               imported.clearcoatTint[0], imported.clearcoatTint[1],
               imported.clearcoatTint[2]));
         }
+        if (imported.hasThinFilmThickness || imported.hasThinFilmIor) {
+          sourceMaterial.setThinFilm(
+              imported.hasThinFilmThickness
+                  ? imported.thinFilmThickness
+                  : sourceMaterial.thinFilmThickness(),
+              imported.hasThinFilmIor
+                  ? imported.thinFilmIor
+                  : sourceMaterial.thinFilmIOR());
+        }
         if (imported.hasTransmission) {
           sourceMaterial.setTransmission(imported.transmission);
         }
