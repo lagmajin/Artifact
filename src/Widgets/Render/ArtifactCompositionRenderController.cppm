@@ -42987,7 +42987,6 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
   renderer_->setEnvironmentMap(environmentMapPath, environmentMapIntensity);
   renderer_->setEnvironmentRotation(environmentMapRotation);
   renderer_->setEnvironmentBackgroundVisible(environmentMapVisibleAsBackground);
-  renderer_->drawEnvironmentSkybox();
 
   // Shadow maps currently support the two single-projection light types.  A
   // point light needs six faces and an area light needs an approximation, so
@@ -44762,6 +44761,12 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         setupPass, setupContext, setupResources);
 
     renderCrashTrace("render-clear-end", renderFrameCounter_);
+
+    // Draw the HDR environment after clearing the swap chain. Drawing it in
+    // the scene-setup block above is lost when this frame-level clear runs.
+    // The later composition sprite uses alpha blending, so empty canvas pixels
+    // retain this background while rendered layers cover it.
+    renderer_->drawEnvironmentSkybox();
 
 
 

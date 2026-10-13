@@ -940,6 +940,19 @@ namespace {
     }
 
     const auto cachedGeometry = meshRendererGeometry_.find(cacheKey);
+    std::vector<float> positions;
+    std::vector<float> normals;
+    std::vector<float> uvs;
+    std::vector<float> uvs1;
+    std::vector<float> colors;
+    std::vector<uint32_t> indices;
+    std::vector<uint32_t> rayTracingMaterialIndices;
+    bool rayTracingHasVertexNormals = false;
+    bool rayTracingHasUvs = false;
+    const bool rayTracingGeometryTracking =
+        rayTracingManager_ && rayTracingManager_->isSupported();
+    std::uint64_t rayTracingGeometryRevision = 1469598103934665603ull;
+    std::uint64_t rayTracingTopologyRevision = 1469598103934665603ull;
     const auto meshRevision = mesh.revision();
     const bool geometryCacheCurrent =
         cachedGeometry != meshRendererGeometry_.end() &&
@@ -956,10 +969,6 @@ namespace {
     const size_t vertexCount = static_cast<size_t>(data.positions.size());
     const size_t indexCount = static_cast<size_t>(data.indices.size());
     std::uint64_t geometryHash = 1469598103934665603ull;
-    std::uint64_t rayTracingGeometryRevision = 1469598103934665603ull;
-    std::uint64_t rayTracingTopologyRevision = 1469598103934665603ull;
-    const bool rayTracingGeometryTracking =
-        rayTracingManager_ && rayTracingManager_->isSupported();
     const auto hashBytesInto = [](std::uint64_t& hash, const void* bytes,
                                   size_t size) {
       const auto* dataBytes = static_cast<const std::uint8_t*>(bytes);
@@ -991,6 +1000,13 @@ namespace {
       const float values[] = {uv.x(), uv.y()};
       hashBytes(values, sizeof(values));
     }
+    for (const auto& uv : data.uvs1) {
+      const float values[] = {uv.x(), uv.y()};
+      hashBytes(values, sizeof(values));
+      if (rayTracingGeometryTracking) {
+        hashBytesInto(rayTracingGeometryRevision, values, sizeof(values));
+      }
+    }
     for (const auto& color : data.colors) {
       const float values[] = {color.x(), color.y(), color.z(), color.w()};
       hashBytes(values, sizeof(values));
@@ -1000,6 +1016,13 @@ namespace {
       if (rayTracingGeometryTracking) {
         hashBytesInto(rayTracingTopologyRevision, &index, sizeof(index));
       }
+    }
+    const int materialSlotCount = mesh.materialSlotCount();
+    hashBytes(&materialSlotCount, sizeof(materialSlotCount));
+    for (const auto& slot : mesh.materialSlots()) {
+      const int slotValues[] = {slot.firstIndex, slot.indexCount,
+                                slot.materialIndex};
+      hashBytes(slotValues, sizeof(slotValues));
     }
     const auto geometryIt = cachedGeometry;
     const bool instanceCapacityChanged =
@@ -1019,7 +1042,6 @@ namespace {
     }
 
     if (geometryContentChanged) {
-      std::vector<float> positions;
       positions.reserve(vertexCount * 3u);
       for (const auto& p : data.positions) {
         positions.push_back(p.x());
@@ -1027,8 +1049,9 @@ namespace {
         positions.push_back(p.z());
       }
 
-      std::vector<float> normals(vertexCount * 3u, 0.0f);
       const bool hasNormals = data.normals.size() == data.positions.size() && !data.normals.isEmpty();
+      rayTracingHasVertexNormals = hasNormals;
+      normals.assign(vertexCount * 3u, 0.0f);
       if (hasNormals) {
         normals.reserve(vertexCount * 3u);
         normals.clear();
@@ -1045,18 +1068,32 @@ namespace {
         }
       }
 
-      std::vector<float> uvs(vertexCount * 2u, 0.0f);
       const bool hasUvs = data.uvs.size() == data.positions.size() && !data.uvs.isEmpty();
+      rayTracingHasUvs = hasUvs;
+      uvs.assign(vertexCount * 2u, 0.0f);
       if (hasUvs) {
-        uvs.reserve(vertexCount * 2u);
         uvs.clear();
+        uvs.reserve(vertexCount * 2u);
         for (const auto& uv : data.uvs) {
           uvs.push_back(uv.x());
           uvs.push_back(uv.y());
         }
       }
+      const bool hasUvs1 = data.uvs1.size() == data.positions.size() &&
+                           !data.uvs1.isEmpty();
+      uvs1.assign(vertexCount * 2u, 0.0f);
+      if (hasUvs1) {
+        uvs1.clear();
+        uvs1.reserve(vertexCount * 2u);
+        for (const auto& uv : data.uvs1) {
+          uvs1.push_back(uv.x());
+          uvs1.push_back(uv.y());
+        }
+      } else if (hasUvs) {
+        uvs1 = uvs;
+      }
 
-      std::vector<float> colors(vertexCount * 4u, 1.0f);
+      colors.assign(vertexCount * 4u, 1.0f);
       const bool hasColors = data.colors.size() == data.positions.size() && !data.colors.isEmpty();
       if (hasColors) {
         colors.reserve(vertexCount * 4u);
@@ -1076,13 +1113,33 @@ namespace {
         }
       }
 
-      std::vector<uint32_t> indices;
       indices.reserve(indexCount);
       for (const auto idx : data.indices) {
         indices.push_back(static_cast<uint32_t>(idx));
       }
+      const bool hasRayTracingMaterialSlots =
+          multiMaterials && multiMaterials->size() > 1 &&
+          mesh.materialSlotCount() > 0;
+      if (hasRayTracingMaterialSlots) {
+        rayTracingMaterialIndices.assign(indexCount / 3u, 0u);
+        for (const auto& slot : mesh.materialSlots()) {
+          if (slot.firstIndex < 0 || slot.indexCount <= 0 ||
+              slot.materialIndex < 0 ||
+              (slot.firstIndex % 3) != 0 || (slot.indexCount % 3) != 0 ||
+              static_cast<size_t>(slot.materialIndex) >= multiMaterials->size()) {
+            continue;
+          }
+          const size_t firstIndex = static_cast<size_t>(slot.firstIndex);
+          const size_t endIndex = std::min(
+              indexCount, firstIndex + static_cast<size_t>(slot.indexCount));
+          for (size_t first = firstIndex; first + 2u < endIndex; first += 3u) {
+            rayTracingMaterialIndices[first / 3u] =
+                static_cast<uint32_t>(slot.materialIndex);
+          }
+        }
+      }
       renderer->updateMeshGeometry(positions.data(), normals.data(), uvs.data(),
-                                   indices.data(), colors.data());
+                                   indices.data(), colors.data(), uvs1.data());
 
       // Prepare the mesh-shader resources alongside the indexed fallback.
       // The packed index stream is already expanded per meshlet by Mesh, so
@@ -1133,10 +1190,25 @@ namespace {
     }
     }
 
-    const bool rayTracingOpaque =
-        wantedInstances == 1 && opacity >= 0.9999f && material.opacity() >= 0.9999f &&
-        material.baseColor().alphaF() >= 0.9999f &&
-        !material.hasOpacityTexture();
+    const auto supportsRayTracingAlpha = [](const ArtifactCore::Material& candidate) {
+      if (candidate.alphaMode() == ArtifactCore::MaterialAlphaMode::Masked) {
+        return true;
+      }
+      return candidate.alphaMode() == ArtifactCore::MaterialAlphaMode::Opaque &&
+             candidate.opacity() >= 0.9999f &&
+             candidate.baseColor().alphaF() >= 0.9999f;
+    };
+    bool rayTracingOpaque = wantedInstances == 1 && opacity >= 0.9999f &&
+                            supportsRayTracingAlpha(material);
+    if (rayTracingOpaque && multiMaterials && multiMaterials->size() > 1 &&
+        mesh.materialSlotCount() > 0) {
+      for (const auto& slotMaterial : *multiMaterials) {
+        if (!supportsRayTracingAlpha(slotMaterial)) {
+          rayTracingOpaque = false;
+          break;
+        }
+      }
+    }
     // Instanced draws skip ray-tracing registration: one BLAS/TLAS entry per
     // mesh cannot represent N instance transforms (future work).
     if (wantedInstances == 1 && rayTracingGeometryTracking) {
@@ -1167,9 +1239,161 @@ namespace {
           geometry.topologyRevision = rayTracingTopologyRevision;
           tlasDirty = rayTracingManager_->createOrUpdateBLAS(
               rayTracingId, geometry);
+          if (geometryChangedForRayTracing) {
+            rayTracingManager_->updateShadingGeometry(
+                rayTracingId, positions.data(),
+                static_cast<Uint32>(renderer->vertexCount()), indices.data(),
+                static_cast<Uint32>(renderer->indexCount()),
+                rayTracingHasVertexNormals ? normals.data() : nullptr,
+                rayTracingMaterialIndices.empty()
+                    ? nullptr : rayTracingMaterialIndices.data(),
+                rayTracingHasUvs ? uvs.data() : nullptr,
+                colors.data());
+            tlasDirty = true;
+          }
         } else {
           tlasDirty = rayTracingManager_->updateInstanceTransform(
               rayTracingId, transform);
+        }
+        const auto makeRayTracingPbrMaterial = [opacity](const ArtifactCore::Material& source) {
+          ArtifactCore::RTPbrMaterial result;
+          const QColor baseColor = source.baseColor();
+          result.baseColor[0] = baseColor.redF();
+          result.baseColor[1] = baseColor.greenF();
+          result.baseColor[2] = baseColor.blueF();
+          result.baseColorAlpha = baseColor.alphaF();
+          result.baseColorUvScale = source.baseColorUvScale();
+          result.baseColorUvRotationDegrees =
+              source.baseColorUvRotationDegrees();
+          result.baseColorUvOffsetU = source.baseColorUvOffsetU();
+          result.baseColorUvOffsetV = source.baseColorUvOffsetV();
+          result.metallicRoughnessUvScale =
+              source.metallicRoughnessUvScale();
+          result.metallicRoughnessUvOffsetU =
+              source.metallicRoughnessUvOffsetU();
+          result.metallicRoughnessUvOffsetV =
+              source.metallicRoughnessUvOffsetV();
+          result.metallicRoughnessUvRotationDegrees =
+              source.metallicRoughnessUvRotationDegrees();
+          result.metallic = source.metallic();
+          result.roughness = source.roughness();
+          result.diffuseRoughness = source.diffuseRoughness();
+          result.specular = source.specular();
+          const QColor specularTint = source.specularTint();
+          result.specularTint[0] = specularTint.redF();
+          result.specularTint[1] = specularTint.greenF();
+          result.specularTint[2] = specularTint.blueF();
+          result.thinFilmThickness = source.thinFilmThickness();
+          result.thinFilmIOR = source.thinFilmIOR();
+          result.ior = source.ior();
+          result.transmission = source.transmission();
+          result.clearcoat = source.clearcoat();
+          result.clearcoatRoughness = source.clearcoatRoughness();
+          result.clearcoatIOR = source.clearcoatIOR();
+          const QColor clearcoatTint = source.clearcoatTint();
+          result.clearcoatTint[0] = clearcoatTint.redF();
+          result.clearcoatTint[1] = clearcoatTint.greenF();
+          result.clearcoatTint[2] = clearcoatTint.blueF();
+          result.clearcoatNormalStrength =
+              source.clearcoatNormalStrength();
+          result.clearcoatNormalTexture = source.clearcoatNormalTexture();
+          result.clearcoatNormalUvRotationDegrees =
+              source.clearcoatNormalUvRotationDegrees();
+          result.clearcoatNormalUvScale = source.clearcoatNormalUvScale();
+          result.clearcoatNormalUvOffsetU =
+              source.clearcoatNormalUvOffsetU();
+          result.clearcoatNormalUvOffsetV =
+              source.clearcoatNormalUvOffsetV();
+          result.sheen = source.sheen();
+          result.subsurface = source.subsurface();
+          result.subsurfaceIOR = source.subsurfaceIOR();
+          result.subsurfaceAnisotropy = source.subsurfaceAnisotropy();
+          const QColor subsurfaceColor = source.subsurfaceColor();
+          result.subsurfaceColor[0] = subsurfaceColor.redF();
+          result.subsurfaceColor[1] = subsurfaceColor.greenF();
+          result.subsurfaceColor[2] = subsurfaceColor.blueF();
+          const QVector3D subsurfaceRadius = source.subsurfaceRadius();
+          result.subsurfaceRadius[0] = subsurfaceRadius.x();
+          result.subsurfaceRadius[1] = subsurfaceRadius.y();
+          result.subsurfaceRadius[2] = subsurfaceRadius.z();
+          result.sheenRoughness = source.sheenRoughness();
+          const QColor sheenTint = source.sheenTint();
+          result.sheenTint[0] = sheenTint.redF();
+          result.sheenTint[1] = sheenTint.greenF();
+          result.sheenTint[2] = sheenTint.blueF();
+          result.anisotropy = source.anisotropy();
+          result.anisotropyRotationDegrees =
+              source.anisotropyRotationDegrees();
+          const QColor emissionColor = source.emissionColor();
+          result.emissionColor[0] = emissionColor.redF();
+          result.emissionColor[1] = emissionColor.greenF();
+          result.emissionColor[2] = emissionColor.blueF();
+          result.emissionStrength = source.emissionStrength();
+          result.opacity = std::clamp(
+              opacity * source.opacity(), 0.0f, 1.0f);
+          result.alphaCutoff = source.alphaCutoff();
+          result.alphaMode = static_cast<Uint32>(source.alphaMode());
+          result.emissionTexture = source.emissionTexture();
+          result.opacityTexture = source.opacityTexture();
+          result.opacityTextureUvScale = source.opacityTextureUvScale();
+          result.opacityTextureUvOffsetU =
+              source.opacityTextureUvOffsetU();
+          result.opacityTextureUvOffsetV =
+              source.opacityTextureUvOffsetV();
+          result.opacityTextureUvRotationDegrees =
+              source.opacityTextureUvRotationDegrees();
+          result.baseColorTexture = source.baseColorTexture();
+          result.metallicRoughnessTexture = source.metallicRoughnessTexture();
+          result.normalTexture = source.normalTexture();
+          result.normalStrength = source.normalStrength();
+          result.normalUvRotationDegrees =
+              source.normalUvRotationDegrees();
+          result.normalUvScale = source.normalUvScale();
+          result.normalUvOffsetU = source.normalUvOffsetU();
+          result.normalUvOffsetV = source.normalUvOffsetV();
+          result.occlusionTexture = source.occlusionTexture();
+          result.occlusionTextureUvScale =
+              source.occlusionTextureUvScale();
+          result.occlusionTextureUvOffsetU =
+              source.occlusionTextureUvOffsetU();
+          result.occlusionTextureUvOffsetV =
+              source.occlusionTextureUvOffsetV();
+          result.occlusionTextureUvRotationDegrees =
+              source.occlusionTextureUvRotationDegrees();
+          result.emissionTextureUvScale =
+              source.emissionTextureUvScale();
+          result.emissionTextureUvOffsetU =
+              source.emissionTextureUvOffsetU();
+          result.emissionTextureUvOffsetV =
+              source.emissionTextureUvOffsetV();
+          result.emissionTextureUvRotationDegrees =
+              source.emissionTextureUvRotationDegrees();
+          result.occlusionStrength = source.occlusionStrength();
+          result.uvOffsetU = source.uvOffsetU();
+          result.uvOffsetV = source.uvOffsetV();
+          result.uvScaleU = source.uvScaleU();
+          result.uvScaleV = source.uvScaleV();
+          result.uvRotationDegrees = source.uvRotationDegrees();
+          return result;
+        };
+        rayTracingManager_->setEnvironmentLighting(
+            deviceManager_.immediateContext(), renderer->irradianceMapView(),
+            renderer->environmentMapView(), renderer->brdfLutView(),
+            renderer->hasEnvironmentMap(), environmentMapIntensity_,
+            environmentMapRotation_, renderer->sheenEnvironmentMapView());
+        if (multiMaterials && multiMaterials->size() > 1 &&
+            mesh.materialSlotCount() > 0) {
+          for (size_t materialIndex = 0;
+               materialIndex < multiMaterials->size(); ++materialIndex) {
+            tlasDirty = rayTracingManager_->setInstancePbrMaterial(
+                            rayTracingId,
+                            makeRayTracingPbrMaterial((*multiMaterials)[materialIndex]),
+                            static_cast<Uint32>(materialIndex)) || tlasDirty;
+          }
+        } else {
+          tlasDirty = rayTracingManager_->setInstancePbrMaterial(
+                          rayTracingId, makeRayTracingPbrMaterial(material)) ||
+                      tlasDirty;
         }
         if (tlasDirty) {
           rayTracingManager_->buildTLAS(deviceManager_.immediateContext());
@@ -1184,13 +1408,16 @@ namespace {
                                  modelMatrix.constData());
     renderer->setPreviousViewMatrix(previousMeshViewMatrix_.constData());
     renderer->setPreviousProjectionMatrix(previousMeshProjMatrix_.constData());
+    const bool lowMaterialLOD = detailLevel_ == LODManager::DetailLevel::Low;
+    const bool usesMaterialSlots =
+        multiMaterials && multiMaterials->size() > 1 &&
+        mesh.materialSlotCount() > 0;
     // A mesh that concatenates several source primitives (a USD stage with
     // multiple UsdGeomMesh prims) carries material slots.  Publish the spans so
     // the renderer can issue one draw per material instead of a single draw
     // over the whole index buffer.  Spans come from the mesh and only change
     // when the geometry does, so this runs outside the per-frame hot path.
-    if (multiMaterials && multiMaterials->size() > 1 &&
-        mesh.materialSlotCount() > 0) {
+    if (usesMaterialSlots) {
       std::vector<ArtifactCore::MeshRenderer::MaterialRange>& ranges =
           materialRangeCache_[cacheKey];
       bool rangesDirty = ranges.size() !=
@@ -1223,13 +1450,169 @@ namespace {
           ranges.push_back(range);
         }
       }
+      for (auto& range : ranges) {
+        if (range.materialIndex >= multiMaterials->size()) {
+          continue;
+        }
+        const auto& slotMaterial = (*multiMaterials)[range.materialIndex];
+        const QColor slotColor = slotMaterial.baseColor();
+        auto& state = range.material;
+        range.baseColorTexturePath =
+            slotMaterial.baseColorTexture().toQString().trimmed();
+        range.metallicRoughnessTexturePath =
+            slotMaterial.metallicRoughnessTexture().toQString().trimmed();
+        range.normalTexturePath =
+            lowMaterialLOD ? QString()
+                           : slotMaterial.normalTexture().toQString().trimmed();
+        range.clearcoatNormalTexturePath = lowMaterialLOD
+            ? QString()
+            : slotMaterial.clearcoatNormalTexture().toQString().trimmed();
+        range.occlusionTexturePath =
+            lowMaterialLOD ? QString()
+                           : slotMaterial.occlusionTexture().toQString().trimmed();
+        range.emissionTexturePath =
+            slotMaterial.emissionTexture().toQString().trimmed();
+        range.opacityTexturePath =
+            slotMaterial.opacityTexture().toQString().trimmed();
+        range.transparent =
+            slotMaterial.alphaMode() ==
+                ArtifactCore::MaterialAlphaMode::Blended ||
+            (slotMaterial.alphaMode() ==
+                 ArtifactCore::MaterialAlphaMode::Opaque &&
+             (slotMaterial.opacity() * slotColor.alphaF() < 0.9999f ||
+              slotMaterial.hasOpacityTexture()));
+        state.baseColorFactor = {
+            slotColor.redF(), slotColor.greenF(), slotColor.blueF(),
+            slotMaterial.opacity() * slotColor.alphaF()};
+
+        const QColor emission = slotMaterial.emissionColor();
+        state.emissionColorStrength = {
+            emission.redF(), emission.greenF(), emission.blueF(),
+            slotMaterial.emissionStrength()};
+        state.pbrFactors = {
+            slotMaterial.metallic(), slotMaterial.roughness(),
+            slotMaterial.normalStrength(), slotMaterial.occlusionStrength()};
+        state.pbrTextureFlags = {
+            slotMaterial.hasMetallicRoughnessTexture() ? 1.0f : 0.0f,
+            lowMaterialLOD || !slotMaterial.hasNormalTexture() ? 0.0f : 1.0f,
+            lowMaterialLOD || !slotMaterial.hasOcclusionTexture() ? 0.0f : 1.0f,
+            slotMaterial.alphaMode() ==
+                    ArtifactCore::MaterialAlphaMode::Masked
+                ? 1.0f : 0.0f};
+        state.principledFactors = {
+            slotMaterial.specular(), slotMaterial.ior(),
+            slotMaterial.transmission(), slotMaterial.sheen()};
+        const QColor specularTint = slotMaterial.specularTint();
+        state.specularTintFactors = {specularTint.redF(), specularTint.greenF(),
+                                     specularTint.blueF(), 0.0f};
+        state.thinFilmFactors = {slotMaterial.thinFilmThickness(),
+                                 slotMaterial.thinFilmIOR(), 0.0f, 0.0f};
+        state.clearcoatFactors = {
+            slotMaterial.clearcoat(), slotMaterial.clearcoatRoughness(),
+            slotMaterial.clearcoatIOR(),
+            slotMaterial.clearcoatNormalTexture().toQString().trimmed().isEmpty()
+                ? 0.0f : 1.0f};
+        const QColor clearcoatTint = slotMaterial.clearcoatTint();
+        state.clearcoatTintFactors = {
+            clearcoatTint.redF(), clearcoatTint.greenF(),
+            clearcoatTint.blueF(), slotMaterial.clearcoatNormalStrength()};
+        state.alphaSettings[0] = slotMaterial.alphaCutoff();
+        state.uvTransformA = {
+            slotMaterial.uvOffsetU(), slotMaterial.uvOffsetV(),
+            slotMaterial.uvScaleU(), slotMaterial.uvScaleV()};
+        state.uvTransformB[0] =
+            slotMaterial.uvRotationDegrees() * std::numbers::pi_v<float> /
+            180.0f;
+        state.uvTransformB[1] =
+            slotMaterial.normalUvRotationDegrees() *
+            std::numbers::pi_v<float> / 180.0f;
+        state.uvTransformB[2] = slotMaterial.normalUvScale();
+        state.uvTransformB[3] = slotMaterial.baseColorUvScale();
+        state.baseColorTextureUvTransform[0] =
+            slotMaterial.baseColorUvOffsetU();
+        state.baseColorTextureUvTransform[1] =
+            slotMaterial.baseColorUvOffsetV();
+        state.baseColorTextureUvTransform[2] =
+            slotMaterial.baseColorUvRotationDegrees() *
+            std::numbers::pi_v<float> / 180.0f;
+        state.normalTextureUvOffset[0] = slotMaterial.normalUvOffsetU();
+        state.normalTextureUvOffset[1] = slotMaterial.normalUvOffsetV();
+        state.normalTextureUvOffset[2] =
+            slotMaterial.normalUvSet() == 1 ? 1.0f : 0.0f;
+        state.occlusionTextureUvTransform[0] =
+            slotMaterial.occlusionTextureUvScale();
+        state.occlusionTextureUvTransform[1] =
+            slotMaterial.occlusionTextureUvOffsetU();
+        state.occlusionTextureUvTransform[2] =
+            slotMaterial.occlusionTextureUvOffsetV();
+        state.occlusionTextureUvTransform[3] =
+            slotMaterial.occlusionTextureUvRotationDegrees() *
+            std::numbers::pi_v<float> / 180.0f;
+        state.emissionTextureUvTransform[0] =
+            slotMaterial.emissionTextureUvScale();
+        state.emissionTextureUvTransform[1] =
+            slotMaterial.emissionTextureUvOffsetU();
+        state.emissionTextureUvTransform[2] =
+            slotMaterial.emissionTextureUvOffsetV();
+        state.emissionTextureUvRotation[0] =
+            slotMaterial.emissionTextureUvRotationDegrees() *
+            (3.14159265358979323846f / 180.0f);
+        state.opacityTextureUvTransform[0] =
+            slotMaterial.opacityTextureUvScale();
+        state.opacityTextureUvOffset[0] =
+            slotMaterial.opacityTextureUvOffsetU();
+        state.opacityTextureUvOffset[1] =
+            slotMaterial.opacityTextureUvOffsetV();
+        state.opacityTextureUvTransform[3] =
+            slotMaterial.opacityTextureUvRotationDegrees() *
+            std::numbers::pi_v<float> / 180.0f;
+        state.surfaceTextureUvTransform[0] =
+            slotMaterial.metallicRoughnessUvScale();
+        state.surfaceTextureUvTransform[1] =
+            slotMaterial.metallicRoughnessUvOffsetU();
+        state.surfaceTextureUvTransform[2] =
+            slotMaterial.metallicRoughnessUvOffsetV();
+        state.surfaceTextureUvTransform[3] =
+            slotMaterial.metallicRoughnessUvRotationDegrees() *
+            std::numbers::pi_v<float> / 180.0f;
+        state.clearcoatNormalUvTransform[0] =
+            slotMaterial.clearcoatNormalUvRotationDegrees() *
+            std::numbers::pi_v<float> / 180.0f;
+        state.clearcoatNormalUvTransform[1] =
+            slotMaterial.clearcoatNormalUvScale();
+        state.clearcoatNormalUvTransform[2] =
+            slotMaterial.clearcoatNormalUvOffsetU();
+        state.clearcoatNormalUvTransform[3] =
+            slotMaterial.clearcoatNormalUvOffsetV();
+        state.envFactors[0] = slotMaterial.environmentIntensity();
+        const QColor sheenTint = slotMaterial.sheenTint();
+        state.sheenFactors = {
+            slotMaterial.sheenRoughness(), sheenTint.redF(),
+            sheenTint.greenF(), sheenTint.blueF()};
+        state.anisotropyFactors[0] = slotMaterial.anisotropy();
+        state.anisotropyFactors[1] =
+            slotMaterial.anisotropyRotationDegrees() *
+            std::numbers::pi_v<float> / 180.0f;
+        const QColor subsurfaceColor = slotMaterial.subsurfaceColor();
+        state.subsurfaceFactors = {
+            slotMaterial.subsurface(), subsurfaceColor.redF(),
+            subsurfaceColor.greenF(), subsurfaceColor.blueF()};
+        const QVector3D subsurfaceRadius = slotMaterial.subsurfaceRadius();
+        state.subsurfaceRadius = {subsurfaceRadius.x(), subsurfaceRadius.y(),
+                                  subsurfaceRadius.z(),
+                                  slotMaterial.subsurfaceIOR()};
+        state.subsurfaceScatteringFactors = {
+            slotMaterial.subsurfaceAnisotropy(),
+            slotMaterial.diffuseRoughness(), 0.0f, 0.0f};
+      }
       renderer->setMaterialRanges(ranges.data(), ranges.size());
     } else {
       materialRangeCache_.erase(cacheKey);
       renderer->clearMaterialRanges();
     }
-    // MeshRenderer owns texture loading and does not expose a raw-view setter.
-    // Keep the material path as the single supported texture boundary.
+    // MeshRenderer owns texture loading and does not expose raw-view setters.
+    // Keep the primary material path as the single-material fallback; each
+    // multi-material range resolves its own map paths above.
     renderer->setBaseColorTexture(material.baseColorTexture().toQString());
     renderer->setOpacityTexture(material.opacityTexture().toQString());
     renderer->setEmissionTexture(material.emissionTexture().toQString());
@@ -1238,12 +1621,67 @@ namespace {
     renderer->setPbrFactors(material.metallic(), material.roughness(),
                             material.normalStrength(),
                             material.occlusionStrength());
+    renderer->setDiffuseRoughness(material.diffuseRoughness());
     renderer->setPrincipledFactors(material.specular(), material.ior(),
                                    material.transmission(), material.clearcoat(),
-                                   material.clearcoatRoughness(), material.sheen());
+                                   material.clearcoatRoughness(), material.sheen(),
+                                   material.clearcoatIOR());
+    renderer->setSpecularTint(material.specularTint());
+    renderer->setThinFilm(material.thinFilmThickness(), material.thinFilmIOR());
+    renderer->setClearcoatTint(material.clearcoatTint(),
+                               material.clearcoatNormalStrength());
+    renderer->setClearcoatNormalTexture(
+        lowMaterialLOD ? QString()
+                       : material.clearcoatNormalTexture().toQString());
+    renderer->setSheenFactors(material.sheenRoughness(), material.sheenTint());
+    renderer->setSubsurfaceFactors(material.subsurface(),
+                                   material.subsurfaceColor(),
+                                   material.subsurfaceRadius(),
+                                   material.subsurfaceIOR(),
+                                   material.subsurfaceAnisotropy());
+    renderer->setAnisotropy(material.anisotropy(),
+                            material.anisotropyRotationDegrees());
     renderer->setUvTransform(material.uvOffsetU(), material.uvOffsetV(),
                              material.uvScaleU(), material.uvScaleV(),
-                             material.uvRotationDegrees());
+                             material.uvRotationDegrees(),
+                             material.normalUvRotationDegrees(),
+                             material.normalUvScale(),
+                             material.baseColorUvScale(),
+                             material.baseColorUvOffsetU(),
+                             material.baseColorUvOffsetV(),
+                             material.baseColorUvRotationDegrees());
+    renderer->setMetallicRoughnessUvScale(
+        material.metallicRoughnessUvScale(),
+        material.metallicRoughnessUvOffsetU(),
+        material.metallicRoughnessUvOffsetV());
+    renderer->setMetallicRoughnessUvRotation(
+        material.metallicRoughnessUvRotationDegrees());
+    renderer->setNormalUvOffset(material.normalUvOffsetU(),
+                                material.normalUvOffsetV(),
+                                material.normalUvSet());
+    renderer->setOcclusionTextureUvScale(
+        material.occlusionTextureUvScale(),
+        material.occlusionTextureUvOffsetU(),
+        material.occlusionTextureUvOffsetV());
+    renderer->setOcclusionTextureUvRotation(
+        material.occlusionTextureUvRotationDegrees());
+    renderer->setEmissionTextureUvScale(
+        material.emissionTextureUvScale(),
+        material.emissionTextureUvOffsetU(),
+        material.emissionTextureUvOffsetV());
+    renderer->setEmissionTextureUvRotation(
+        material.emissionTextureUvRotationDegrees());
+    renderer->setOpacityTextureUvScale(
+        material.opacityTextureUvScale(),
+        material.opacityTextureUvOffsetU(),
+        material.opacityTextureUvOffsetV());
+    renderer->setOpacityTextureUvRotation(
+        material.opacityTextureUvRotationDegrees());
+    renderer->setClearcoatNormalUvTransform(
+        material.clearcoatNormalUvRotationDegrees(),
+        material.clearcoatNormalUvScale(),
+        material.clearcoatNormalUvOffsetU(),
+        material.clearcoatNormalUvOffsetV());
     renderer->setEnvironmentIntensity(material.environmentIntensity());
     renderer->setMetallicRoughnessTexture(
         material.metallicRoughnessTexture().toQString());
@@ -1251,7 +1689,6 @@ namespace {
     // payload differs, so the per-frame call stays a string compare.
     renderer->setMaterialGraphJson(
         static_cast<std::string>(material.materialGraphJson()));
-    const bool lowMaterialLOD = detailLevel_ == LODManager::DetailLevel::Low;
     renderer->setNormalTexture(lowMaterialLOD ? QString() : material.normalTexture().toQString());
     renderer->setOcclusionTexture(lowMaterialLOD ? QString() : material.occlusionTexture().toQString());
     bool sharedEnvironment = false;
@@ -1285,6 +1722,19 @@ namespace {
         meshPositionOnlyPass_ ? 9 :
         meshUvOnlyPass_ ? 10
                             : std::clamp(shadingMode, 1, 8);
+    const auto needsTransparentMaterialPass =
+        [&](float instanceOpacity) {
+          if (!usesMaterialSlots) {
+            return !alphaMasked &&
+                   (material.alphaMode() ==
+                        ArtifactCore::MaterialAlphaMode::Blended ||
+                    opacity * material.opacity() * color.alphaF() *
+                            instanceOpacity < 0.9999f);
+          }
+          // Slot-local alpha lives in MaterialRange::transparent. This flag
+          // now represents only object/instance opacity shared by all ranges.
+          return opacity * instanceOpacity < 0.9999f;
+        };
     float combinedAlpha = 1.0f;
     if (wantedInstances > 1 && instancedData) {
       // Caller-owned matrices/colors (CloneLayer world instances). Reuse the
@@ -1295,9 +1745,19 @@ namespace {
       }
       combinedAlpha = std::clamp(opacity * material.opacity() * color.alphaF() *
                                  minInstanceAlpha, 0.0f, 1.0f);
+      if (usesMaterialSlots) {
+        float minMaterialAlpha = 1.0f;
+        for (const auto& slotMaterial : *multiMaterials) {
+          minMaterialAlpha = std::min(
+              minMaterialAlpha,
+              slotMaterial.opacity() * slotMaterial.baseColor().alphaF());
+        }
+        combinedAlpha = std::clamp(opacity * minMaterialAlpha *
+                                       minInstanceAlpha,
+                                   0.0f, 1.0f);
+      }
       renderer->setTransparentPass(
-          !alphaMasked && (material.alphaMode() == ArtifactCore::MaterialAlphaMode::Blended ||
-                           combinedAlpha < 0.9999f));
+          needsTransparentMaterialPass(minInstanceAlpha));
       if (meshIdPassChannel_ == ArtifactIRenderer::ChannelType::ObjectId ||
           meshIdPassChannel_ == ArtifactIRenderer::ChannelType::MaterialId) {
         // Debug ID passes need uniform colors: copy once (rare path only).
@@ -1327,11 +1787,22 @@ namespace {
             previousModelData[col * 4 + row];
       }
     }
-    const float alpha = std::clamp(opacity * material.opacity() * color.alphaF(), 0.0f, 1.0f);
+    const float alpha = std::clamp(
+        usesMaterialSlots ? opacity
+                          : opacity * material.opacity() * color.alphaF(),
+        0.0f, 1.0f);
     combinedAlpha = alpha;
+    if (usesMaterialSlots) {
+      float minMaterialAlpha = 1.0f;
+      for (const auto& slotMaterial : *multiMaterials) {
+        minMaterialAlpha = std::min(
+            minMaterialAlpha,
+            slotMaterial.opacity() * slotMaterial.baseColor().alphaF());
+      }
+      combinedAlpha = std::clamp(opacity * minMaterialAlpha, 0.0f, 1.0f);
+    }
     renderer->setTransparentPass(
-        !alphaMasked && (material.alphaMode() == ArtifactCore::MaterialAlphaMode::Blended ||
-                         alpha < 0.9999f));
+        needsTransparentMaterialPass(1.0f));
     if (meshIdPassChannel_ == ArtifactIRenderer::ChannelType::ObjectId ||
         meshIdPassChannel_ == ArtifactIRenderer::ChannelType::MaterialId) {
       instance.color[0] = meshIdPassEncodedValue_;
@@ -1339,9 +1810,9 @@ namespace {
       instance.color[2] = meshIdPassEncodedValue_;
       instance.color[3] = 1.0f;
     } else {
-      instance.color[0] = color.redF();
-      instance.color[1] = color.greenF();
-      instance.color[2] = color.blueF();
+      instance.color[0] = usesMaterialSlots ? 1.0f : color.redF();
+      instance.color[1] = usesMaterialSlots ? 1.0f : color.greenF();
+      instance.color[2] = usesMaterialSlots ? 1.0f : color.blueF();
       instance.color[3] = alpha;
     }
     instance.weight = 1.0f;
@@ -4589,7 +5060,45 @@ void ArtifactIRenderer::setStereoCameraMatrices(const QMatrix4x4& leftView,
 void ArtifactIRenderer::resetStereoCameraMatrices()
 { impl_->resetStereoCameraMatrices(); }
 void ArtifactIRenderer::setSceneLights(const std::vector<ArtifactCore::Light>& lights)
-{ impl_->m_sceneLights = lights; }
+{
+ impl_->m_sceneLights = lights;
+ if (!impl_->rayTracingManager_) return;
+ std::array<ArtifactCore::RTSceneLight, 8> rayTracingLights{};
+ size_t count = 0;
+ for (const auto& light : lights) {
+  if (!light.enabled() || count >= rayTracingLights.size()) continue;
+  auto& target = rayTracingLights[count++];
+  const auto position = light.position();
+  const auto direction = light.direction();
+  const auto color = light.color();
+  target.positionType[0] = position.x;
+  target.positionType[1] = position.y;
+  target.positionType[2] = position.z;
+  target.positionType[3] = static_cast<float>(light.type());
+  target.directionIntensity[0] = direction.x;
+  target.directionIntensity[1] = direction.y;
+  target.directionIntensity[2] = direction.z;
+  target.directionIntensity[3] = std::max(light.intensity(), 0.0f);
+  target.colorAttenuationConstant[0] = color.x;
+  target.colorAttenuationConstant[1] = color.y;
+  target.colorAttenuationConstant[2] = color.z;
+  target.colorAttenuationConstant[3] = light.attenuationConstant();
+  target.attenuationSpot[0] = light.attenuationLinear();
+  target.attenuationSpot[1] = light.attenuationQuadratic();
+  target.attenuationSpot[2] = std::cos(
+      light.spotInnerCutoff().value * std::numbers::pi_v<float> / 180.0f);
+  target.attenuationSpot[3] = std::cos(
+      light.spotOuterCutoff().value * std::numbers::pi_v<float> / 180.0f);
+  target.shadowParams[0] = light.castsShadows()
+      ? std::clamp(light.shadowSoftness(), 0.0f, 2.0f) : -1.0f;
+  target.shadowParams[1] = std::max(light.areaWidth().value, 0.0f);
+  target.shadowParams[2] = std::max(light.areaHeight().value, 0.0f);
+  target.shadowParams[3] = static_cast<float>(light.areaShape());
+ }
+ impl_->rayTracingManager_->setSceneLights(
+     impl_->deviceManager_.immediateContext(), rayTracingLights.data(),
+     static_cast<Uint32>(count));
+}
 void ArtifactIRenderer::setEnvironmentMap(const QString& path, float intensity)
 {
  impl_->environmentMapPath_ = path.trimmed();
@@ -6392,9 +6901,16 @@ bool ArtifactIRenderer::applyViewportExposure(
 
   // Exact identity at the documented exposure defaults when clipping warnings
   // are disabled, so the stage can stay enabled without changing presentation.
+  auto *destinationTexture = dstUAV->GetTexture();
+  if (!destinationTexture) {
+    return false;
+  }
+  const auto &destinationDesc = destinationTexture->GetDesc();
+  const bool preserveHdr = destinationDesc.Format == TEX_FORMAT_RGBA16_FLOAT ||
+                           destinationDesc.Format == TEX_FORMAT_RGBA32_FLOAT;
   const ViewportExposureParams params{
       gainStops, gamma, saturation, clippingWarningsEnabled ? 1.0f : 0.0f,
-      underThreshold, overThreshold, 0.0f, 0.0f};
+      underThreshold, overThreshold, preserveHdr ? 1.0f : 0.0f, 0.0f};
   void *mapped = nullptr;
   ctx->MapBuffer(paramsBuffer, MAP_WRITE, MAP_FLAG_DISCARD, mapped);
   if (!mapped) {

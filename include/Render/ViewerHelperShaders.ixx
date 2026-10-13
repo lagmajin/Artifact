@@ -85,7 +85,7 @@ export namespace Artifact
         float clippingWarningsEnabled;
         float underThreshold;
         float overThreshold;
-        float _pad0;
+        float preserveHdr;
         float _pad1;
     };
 
@@ -109,7 +109,9 @@ export namespace Artifact
         // stops -> linear multiplier
         const float linearGain = exp2(gain);
         const float3 adjustedLinear = straightSource * linearGain;
-        float3 c = saturate(adjustedLinear);
+        float3 c = preserveHdr > 0.5
+            ? max(adjustedLinear, 0.0)
+            : saturate(adjustedLinear);
         c = pow(max(c, 0.0), 1.0 / max(gamma, 1e-3));
         const float luma = dot(c, float3(0.2126, 0.7152, 0.0722));
         c = lerp(float3(luma, luma, luma), c, max(saturation, 0.0));

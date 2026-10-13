@@ -443,12 +443,56 @@ QJsonObject Artifact3DLayer::toJson() const {
       {QStringLiteral("a"), baseColor.alphaF()}};
   obj["material.metallic"] = impl_->material_.metallic();
   obj["material.roughness"] = impl_->material_.roughness();
+  obj["material.diffuseRoughness"] =
+      impl_->material_.diffuseRoughness();
   obj["material.specular"] = impl_->material_.specular();
+  const QColor specularTint = impl_->material_.specularTint();
+  obj["material.specularTint"] = QJsonObject{
+      {QStringLiteral("r"), specularTint.redF()},
+      {QStringLiteral("g"), specularTint.greenF()},
+      {QStringLiteral("b"), specularTint.blueF()},
+      {QStringLiteral("a"), specularTint.alphaF()}};
+  obj["material.thinFilmThickness"] = impl_->material_.thinFilmThickness();
+  obj["material.thinFilmIOR"] = impl_->material_.thinFilmIOR();
   obj["material.ior"] = impl_->material_.ior();
   obj["material.transmission"] = impl_->material_.transmission();
   obj["material.clearcoat"] = impl_->material_.clearcoat();
   obj["material.clearcoatRoughness"] = impl_->material_.clearcoatRoughness();
+  obj["material.clearcoatIOR"] = impl_->material_.clearcoatIOR();
+  const QColor clearcoatTint = impl_->material_.clearcoatTint();
+  obj["material.clearcoatTint"] = QJsonObject{
+      {QStringLiteral("r"), clearcoatTint.redF()},
+      {QStringLiteral("g"), clearcoatTint.greenF()},
+      {QStringLiteral("b"), clearcoatTint.blueF()},
+      {QStringLiteral("a"), clearcoatTint.alphaF()}};
+  obj["material.clearcoatNormalStrength"] =
+      impl_->material_.clearcoatNormalStrength();
   obj["material.sheen"] = impl_->material_.sheen();
+  obj["material.subsurface"] = impl_->material_.subsurface();
+  obj["material.subsurfaceIOR"] = impl_->material_.subsurfaceIOR();
+  obj["material.subsurfaceAnisotropy"] =
+      impl_->material_.subsurfaceAnisotropy();
+  const QColor subsurfaceColor = impl_->material_.subsurfaceColor();
+  obj["material.subsurfaceColor"] = QJsonObject{
+      {QStringLiteral("r"), subsurfaceColor.redF()},
+      {QStringLiteral("g"), subsurfaceColor.greenF()},
+      {QStringLiteral("b"), subsurfaceColor.blueF()},
+      {QStringLiteral("a"), subsurfaceColor.alphaF()}};
+  const QVector3D subsurfaceRadius = impl_->material_.subsurfaceRadius();
+  obj["material.subsurfaceRadius"] = QJsonObject{
+      {QStringLiteral("r"), subsurfaceRadius.x()},
+      {QStringLiteral("g"), subsurfaceRadius.y()},
+      {QStringLiteral("b"), subsurfaceRadius.z()}};
+  obj["material.anisotropy"] = impl_->material_.anisotropy();
+  obj["material.anisotropyRotationDegrees"] =
+      impl_->material_.anisotropyRotationDegrees();
+  obj["material.sheenRoughness"] = impl_->material_.sheenRoughness();
+  const QColor sheenTint = impl_->material_.sheenTint();
+  obj["material.sheenTint"] = QJsonObject{
+      {QStringLiteral("r"), sheenTint.redF()},
+      {QStringLiteral("g"), sheenTint.greenF()},
+      {QStringLiteral("b"), sheenTint.blueF()},
+      {QStringLiteral("a"), sheenTint.alphaF()}};
   obj["material.opacity"] = impl_->material_.opacity();
   obj["material.alphaMode"] = static_cast<int>(impl_->material_.alphaMode());
   obj["material.alphaCutoff"] = impl_->material_.alphaCutoff();
@@ -460,7 +504,21 @@ QJsonObject Artifact3DLayer::toJson() const {
       {QStringLiteral("a"), emissionColor.alphaF()}};
   obj["material.emissionStrength"] = impl_->material_.emissionStrength();
   obj["material.normalStrength"] = impl_->material_.normalStrength();
+  obj["material.normalUvRotation"] =
+      impl_->material_.normalUvRotationDegrees();
+  obj["material.normalUvScale"] = impl_->material_.normalUvScale();
+  obj["material.normalUvOffsetU"] = impl_->material_.normalUvOffsetU();
+  obj["material.normalUvOffsetV"] = impl_->material_.normalUvOffsetV();
+  obj["material.normalUvSet"] = impl_->material_.normalUvSet();
   obj["material.occlusionStrength"] = impl_->material_.occlusionStrength();
+  obj["material.occlusionTextureUvScale"] =
+      impl_->material_.occlusionTextureUvScale();
+  obj["material.occlusionTextureUvOffsetU"] =
+      impl_->material_.occlusionTextureUvOffsetU();
+  obj["material.occlusionTextureUvOffsetV"] =
+      impl_->material_.occlusionTextureUvOffsetV();
+  obj["material.occlusionTextureUvRotation"] =
+      impl_->material_.occlusionTextureUvRotationDegrees();
   obj["material.uv.offsetU"] = impl_->material_.uvOffsetU();
   obj["material.uv.offsetV"] = impl_->material_.uvOffsetV();
   obj["material.uv.scaleU"] = impl_->material_.uvScaleU();
@@ -468,12 +526,53 @@ QJsonObject Artifact3DLayer::toJson() const {
   obj["material.uv.rotation"] = impl_->material_.uvRotationDegrees();
   obj["material.envIntensity"] = impl_->material_.environmentIntensity();
   obj["material.baseColorTexture"] = impl_->material_.baseColorTexture().toQString();
+  obj["material.baseColorUvScale"] = impl_->material_.baseColorUvScale();
+  obj["material.baseColorUvRotation"] =
+      impl_->material_.baseColorUvRotationDegrees();
+  obj["material.baseColorUvOffsetU"] =
+      impl_->material_.baseColorUvOffsetU();
+  obj["material.baseColorUvOffsetV"] =
+      impl_->material_.baseColorUvOffsetV();
   obj["material.metallicRoughnessTexture"] =
       impl_->material_.metallicRoughnessTexture().toQString();
+  obj["material.metallicRoughnessUvScale"] =
+      impl_->material_.metallicRoughnessUvScale();
+  obj["material.metallicRoughnessUvOffsetU"] =
+      impl_->material_.metallicRoughnessUvOffsetU();
+  obj["material.metallicRoughnessUvOffsetV"] =
+      impl_->material_.metallicRoughnessUvOffsetV();
+  obj["material.metallicRoughnessUvRotation"] =
+      impl_->material_.metallicRoughnessUvRotationDegrees();
   obj["material.normalTexture"] = impl_->material_.normalTexture().toQString();
+  obj["material.clearcoatNormalTexture"] =
+      impl_->material_.clearcoatNormalTexture().toQString();
+  obj["material.clearcoatNormalUvRotation"] =
+      impl_->material_.clearcoatNormalUvRotationDegrees();
+  obj["material.clearcoatNormalUvScale"] =
+      impl_->material_.clearcoatNormalUvScale();
+  obj["material.clearcoatNormalUvOffsetU"] =
+      impl_->material_.clearcoatNormalUvOffsetU();
+  obj["material.clearcoatNormalUvOffsetV"] =
+      impl_->material_.clearcoatNormalUvOffsetV();
   obj["material.emissionTexture"] = impl_->material_.emissionTexture().toQString();
+  obj["material.emissionTextureUvScale"] =
+      impl_->material_.emissionTextureUvScale();
+  obj["material.emissionTextureUvOffsetU"] =
+      impl_->material_.emissionTextureUvOffsetU();
+  obj["material.emissionTextureUvOffsetV"] =
+      impl_->material_.emissionTextureUvOffsetV();
+  obj["material.emissionTextureUvRotation"] =
+      impl_->material_.emissionTextureUvRotationDegrees();
   obj["material.occlusionTexture"] = impl_->material_.occlusionTexture().toQString();
   obj["material.opacityTexture"] = impl_->material_.opacityTexture().toQString();
+  obj["material.opacityTextureUvScale"] =
+      impl_->material_.opacityTextureUvScale();
+  obj["material.opacityTextureUvOffsetU"] =
+      impl_->material_.opacityTextureUvOffsetU();
+  obj["material.opacityTextureUvOffsetV"] =
+      impl_->material_.opacityTextureUvOffsetV();
+  obj["material.opacityTextureUvRotation"] =
+      impl_->material_.opacityTextureUvRotationDegrees();
   const QString materialGraphJson = impl_->material_.materialGraphJson().toQString();
   if (!materialGraphJson.trimmed().isEmpty()) {
     obj["material.graph"] = materialGraphJson;
@@ -620,9 +719,33 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
   impl_->material_.setRoughness(
       finiteClamped(static_cast<float>(obj.value("material.roughness").toDouble(impl_->material_.roughness())),
                     impl_->material_.roughness(), 0.0f, 1.0f));
+  impl_->material_.setDiffuseRoughness(finiteClamped(
+      static_cast<float>(obj.value("material.diffuseRoughness").toDouble(
+          impl_->material_.diffuseRoughness())),
+      impl_->material_.diffuseRoughness(), 0.0f, 1.0f));
   impl_->material_.setSpecular(
       finiteClamped(static_cast<float>(obj.value("material.specular").toDouble(impl_->material_.specular())),
                     impl_->material_.specular(), 0.0f, 1.0f));
+  const QJsonObject specularTint = obj.value("material.specularTint").toObject();
+  if (!specularTint.isEmpty()) {
+    impl_->material_.setSpecularTint(QColor::fromRgbF(
+        finiteClamped(static_cast<float>(specularTint.value("r").toDouble(1.0)),
+                      1.0f, 0.0f, 1.0f),
+        finiteClamped(static_cast<float>(specularTint.value("g").toDouble(1.0)),
+                      1.0f, 0.0f, 1.0f),
+        finiteClamped(static_cast<float>(specularTint.value("b").toDouble(1.0)),
+                      1.0f, 0.0f, 1.0f),
+        finiteClamped(static_cast<float>(specularTint.value("a").toDouble(1.0)),
+                      1.0f, 0.0f, 1.0f)));
+  }
+  impl_->material_.setThinFilm(
+      finiteClamped(static_cast<float>(obj.value(
+          "material.thinFilmThickness").toDouble(
+              impl_->material_.thinFilmThickness())),
+          impl_->material_.thinFilmThickness(), 0.0f, 1000.0f),
+      finiteClamped(static_cast<float>(obj.value(
+          "material.thinFilmIOR").toDouble(impl_->material_.thinFilmIOR())),
+          impl_->material_.thinFilmIOR(), 1.0f, 2.5f));
   impl_->material_.setIOR(
       finiteClamped(static_cast<float>(obj.value("material.ior").toDouble(impl_->material_.ior())),
                     impl_->material_.ior(), 1.0f, 3.0f));
@@ -635,9 +758,87 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
   impl_->material_.setClearcoatRoughness(
       finiteClamped(static_cast<float>(obj.value("material.clearcoatRoughness").toDouble(impl_->material_.clearcoatRoughness())),
                     impl_->material_.clearcoatRoughness(), 0.0f, 1.0f));
+  impl_->material_.setClearcoatIOR(finiteClamped(
+      static_cast<float>(obj.value("material.clearcoatIOR").toDouble(
+          impl_->material_.clearcoatIOR())),
+      impl_->material_.clearcoatIOR(), 1.0f, 2.0f));
+  const QJsonObject clearcoatTint =
+      obj.value("material.clearcoatTint").toObject();
+  if (!clearcoatTint.isEmpty()) {
+    impl_->material_.setClearcoatTint(QColor::fromRgbF(
+        finiteClamped(static_cast<float>(clearcoatTint.value(
+            QStringLiteral("r")).toDouble(1.0)), 1.0f, 0.0f, 1.0f),
+        finiteClamped(static_cast<float>(clearcoatTint.value(
+            QStringLiteral("g")).toDouble(1.0)), 1.0f, 0.0f, 1.0f),
+        finiteClamped(static_cast<float>(clearcoatTint.value(
+            QStringLiteral("b")).toDouble(1.0)), 1.0f, 0.0f, 1.0f),
+        finiteClamped(static_cast<float>(clearcoatTint.value(
+            QStringLiteral("a")).toDouble(1.0)), 1.0f, 0.0f, 1.0f)));
+  }
+  impl_->material_.setClearcoatNormalStrength(finiteClamped(
+      static_cast<float>(obj.value("material.clearcoatNormalStrength").toDouble(
+          impl_->material_.clearcoatNormalStrength())),
+      impl_->material_.clearcoatNormalStrength(), 0.0f, 1.0f));
   impl_->material_.setSheen(
       finiteClamped(static_cast<float>(obj.value("material.sheen").toDouble(impl_->material_.sheen())),
                     impl_->material_.sheen(), 0.0f, 1.0f));
+  impl_->material_.setSubsurface(finiteClamped(
+      static_cast<float>(obj.value("material.subsurface").toDouble(
+          impl_->material_.subsurface())),
+      impl_->material_.subsurface(), 0.0f, 1.0f));
+  impl_->material_.setSubsurfaceIOR(finiteClamped(
+      static_cast<float>(obj.value("material.subsurfaceIOR").toDouble(
+          impl_->material_.subsurfaceIOR())),
+      impl_->material_.subsurfaceIOR(), 1.0f, 2.0f));
+  impl_->material_.setSubsurfaceAnisotropy(finiteClamped(
+      static_cast<float>(obj.value("material.subsurfaceAnisotropy").toDouble(
+          impl_->material_.subsurfaceAnisotropy())),
+      impl_->material_.subsurfaceAnisotropy(), -0.9f, 0.9f));
+  const QJsonObject subsurfaceColor =
+      obj.value("material.subsurfaceColor").toObject();
+  if (!subsurfaceColor.isEmpty()) {
+    impl_->material_.setSubsurfaceColor(QColor::fromRgbF(
+        finiteClamped(static_cast<float>(subsurfaceColor.value(
+            QStringLiteral("r")).toDouble(1.0)), 1.0f, 0.0f, 1.0f),
+        finiteClamped(static_cast<float>(subsurfaceColor.value(
+            QStringLiteral("g")).toDouble(1.0)), 1.0f, 0.0f, 1.0f),
+        finiteClamped(static_cast<float>(subsurfaceColor.value(
+            QStringLiteral("b")).toDouble(1.0)), 1.0f, 0.0f, 1.0f),
+        finiteClamped(static_cast<float>(subsurfaceColor.value(
+            QStringLiteral("a")).toDouble(1.0)), 1.0f, 0.0f, 1.0f)));
+  }
+  const QJsonObject subsurfaceRadius =
+      obj.value("material.subsurfaceRadius").toObject();
+  if (!subsurfaceRadius.isEmpty()) {
+    impl_->material_.setSubsurfaceRadius(QVector3D(
+        finiteClamped(static_cast<float>(subsurfaceRadius.value("r").toDouble(1.0)),
+                      1.0f, 0.0f, 10.0f),
+        finiteClamped(static_cast<float>(subsurfaceRadius.value("g").toDouble(0.2)),
+                      0.2f, 0.0f, 10.0f),
+        finiteClamped(static_cast<float>(subsurfaceRadius.value("b").toDouble(0.1)),
+                      0.1f, 0.0f, 10.0f)));
+  }
+  impl_->material_.setAnisotropy(
+      finiteClamped(
+          static_cast<float>(obj.value("material.anisotropy").toDouble(
+              impl_->material_.anisotropy())),
+          impl_->material_.anisotropy(), -1.0f, 1.0f),
+      finiteClamped(static_cast<float>(obj.value(
+          "material.anisotropyRotationDegrees").toDouble(
+              impl_->material_.anisotropyRotationDegrees())),
+          impl_->material_.anisotropyRotationDegrees(), -180.0f, 180.0f));
+  impl_->material_.setSheenRoughness(finiteClamped(
+      static_cast<float>(obj.value("material.sheenRoughness").toDouble(
+          impl_->material_.sheenRoughness())),
+      impl_->material_.sheenRoughness(), 0.0f, 1.0f));
+  const QJsonObject sheenTint = obj.value("material.sheenTint").toObject();
+  if (!sheenTint.isEmpty()) {
+    impl_->material_.setSheenTint(QColor::fromRgbF(
+        finiteClamped(static_cast<float>(sheenTint.value("r").toDouble(1.0)), 1.0f, 0.0f, 1.0f),
+        finiteClamped(static_cast<float>(sheenTint.value("g").toDouble(1.0)), 1.0f, 0.0f, 1.0f),
+        finiteClamped(static_cast<float>(sheenTint.value("b").toDouble(1.0)), 1.0f, 0.0f, 1.0f),
+        finiteClamped(static_cast<float>(sheenTint.value("a").toDouble(1.0)), 1.0f, 0.0f, 1.0f)));
+  }
   impl_->material_.setOpacity(
       finiteClamped(static_cast<float>(obj.value("material.opacity").toDouble(impl_->material_.opacity())),
                     impl_->material_.opacity(), 0.0f, 1.0f));
@@ -668,9 +869,43 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
   impl_->material_.setNormalStrength(
       finiteClamped(static_cast<float>(obj.value("material.normalStrength").toDouble(impl_->material_.normalStrength())),
                     impl_->material_.normalStrength(), 0.0f, 10.0f));
+  impl_->material_.setNormalUvRotationDegrees(
+      finiteClamped(static_cast<float>(obj.value("material.normalUvRotation").toDouble(
+          impl_->material_.normalUvRotationDegrees())),
+          impl_->material_.normalUvRotationDegrees(), -360.0f, 360.0f));
+  impl_->material_.setNormalUvScale(finiteClamped(
+      static_cast<float>(obj.value("material.normalUvScale").toDouble(
+          impl_->material_.normalUvScale())),
+      impl_->material_.normalUvScale(), 0.01f, 10.0f));
+  impl_->material_.setNormalUvOffsetU(finiteClamped(
+      static_cast<float>(obj.value("material.normalUvOffsetU").toDouble(
+          impl_->material_.normalUvOffsetU())),
+      impl_->material_.normalUvOffsetU(), -10.0f, 10.0f));
+  impl_->material_.setNormalUvOffsetV(finiteClamped(
+      static_cast<float>(obj.value("material.normalUvOffsetV").toDouble(
+          impl_->material_.normalUvOffsetV())),
+      impl_->material_.normalUvOffsetV(), -10.0f, 10.0f));
+  impl_->material_.setNormalUvSet(
+      obj.value("material.normalUvSet").toInt(0));
   impl_->material_.setOcclusionStrength(
       finiteClamped(static_cast<float>(obj.value("material.occlusionStrength").toDouble(impl_->material_.occlusionStrength())),
                     impl_->material_.occlusionStrength(), 0.0f, 1.0f));
+  impl_->material_.setOcclusionTextureUvScale(finiteClamped(
+      static_cast<float>(obj.value("material.occlusionTextureUvScale")
+          .toDouble(impl_->material_.occlusionTextureUvScale())),
+      impl_->material_.occlusionTextureUvScale(), 0.01f, 10.0f));
+  impl_->material_.setOcclusionTextureUvOffsetU(finiteClamped(
+      static_cast<float>(obj.value("material.occlusionTextureUvOffsetU")
+          .toDouble(impl_->material_.occlusionTextureUvOffsetU())),
+      impl_->material_.occlusionTextureUvOffsetU(), -10.0f, 10.0f));
+  impl_->material_.setOcclusionTextureUvOffsetV(finiteClamped(
+      static_cast<float>(obj.value("material.occlusionTextureUvOffsetV")
+          .toDouble(impl_->material_.occlusionTextureUvOffsetV())),
+      impl_->material_.occlusionTextureUvOffsetV(), -10.0f, 10.0f));
+  impl_->material_.setOcclusionTextureUvRotationDegrees(finiteClamped(
+      static_cast<float>(obj.value("material.occlusionTextureUvRotation")
+          .toDouble(impl_->material_.occlusionTextureUvRotationDegrees())),
+      impl_->material_.occlusionTextureUvRotationDegrees(), -360.0f, 360.0f));
   impl_->material_.setUvOffsetU(
       finiteClamped(static_cast<float>(obj.value("material.uv.offsetU").toDouble(impl_->material_.uvOffsetU())),
                     impl_->material_.uvOffsetU(), -10.0f, 10.0f));
@@ -694,23 +929,106 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
                                        ? obj.value("material.baseColorTexture").toString()
                                        : QString();
   impl_->material_.setBaseColorTexture(ArtifactCore::UniString::fromQString(baseColorTexture));
+  impl_->material_.setBaseColorUvScale(finiteClamped(
+      static_cast<float>(obj.value("material.baseColorUvScale").toDouble(
+          impl_->material_.baseColorUvScale())),
+      impl_->material_.baseColorUvScale(), 0.01f, 10.0f));
+  impl_->material_.setBaseColorUvRotationDegrees(finiteClamped(
+      static_cast<float>(obj.value("material.baseColorUvRotation")
+          .toDouble(impl_->material_.baseColorUvRotationDegrees())),
+      impl_->material_.baseColorUvRotationDegrees(), -360.0f, 360.0f));
+  impl_->material_.setBaseColorUvOffsetU(finiteClamped(
+      static_cast<float>(obj.value("material.baseColorUvOffsetU")
+          .toDouble(impl_->material_.baseColorUvOffsetU())),
+      impl_->material_.baseColorUvOffsetU(), -10.0f, 10.0f));
+  impl_->material_.setBaseColorUvOffsetV(finiteClamped(
+      static_cast<float>(obj.value("material.baseColorUvOffsetV")
+          .toDouble(impl_->material_.baseColorUvOffsetV())),
+      impl_->material_.baseColorUvOffsetV(), -10.0f, 10.0f));
 
   const QString metallicRoughnessTexture =
       obj.value("material.metallicRoughnessTexture").toString();
   impl_->material_.setMetallicRoughnessTexture(
       ArtifactCore::UniString::fromQString(metallicRoughnessTexture));
+  impl_->material_.setMetallicRoughnessUvScale(finiteClamped(
+      static_cast<float>(obj.value("material.metallicRoughnessUvScale")
+          .toDouble(impl_->material_.metallicRoughnessUvScale())),
+      impl_->material_.metallicRoughnessUvScale(), 0.01f, 10.0f));
+  impl_->material_.setMetallicRoughnessUvOffsetU(finiteClamped(
+      static_cast<float>(obj.value("material.metallicRoughnessUvOffsetU")
+          .toDouble(impl_->material_.metallicRoughnessUvOffsetU())),
+      impl_->material_.metallicRoughnessUvOffsetU(), -10.0f, 10.0f));
+  impl_->material_.setMetallicRoughnessUvOffsetV(finiteClamped(
+      static_cast<float>(obj.value("material.metallicRoughnessUvOffsetV")
+          .toDouble(impl_->material_.metallicRoughnessUvOffsetV())),
+      impl_->material_.metallicRoughnessUvOffsetV(), -10.0f, 10.0f));
+  impl_->material_.setMetallicRoughnessUvRotationDegrees(finiteClamped(
+      static_cast<float>(obj.value("material.metallicRoughnessUvRotation")
+          .toDouble(impl_->material_.metallicRoughnessUvRotationDegrees())),
+      impl_->material_.metallicRoughnessUvRotationDegrees(), -360.0f, 360.0f));
 
   const QString normalTexture = obj.value("material.normalTexture").toString();
   impl_->material_.setNormalTexture(ArtifactCore::UniString::fromQString(normalTexture));
+  impl_->material_.setClearcoatNormalTexture(
+      ArtifactCore::UniString::fromQString(
+          obj.value("material.clearcoatNormalTexture").toString()));
+  impl_->material_.setClearcoatNormalUvRotationDegrees(finiteClamped(
+      static_cast<float>(obj.value("material.clearcoatNormalUvRotation")
+          .toDouble(impl_->material_.clearcoatNormalUvRotationDegrees())),
+      impl_->material_.clearcoatNormalUvRotationDegrees(), -360.0f, 360.0f));
+  impl_->material_.setClearcoatNormalUvScale(finiteClamped(
+      static_cast<float>(obj.value("material.clearcoatNormalUvScale")
+          .toDouble(impl_->material_.clearcoatNormalUvScale())),
+      impl_->material_.clearcoatNormalUvScale(), 0.01f, 10.0f));
+  impl_->material_.setClearcoatNormalUvOffsetU(finiteClamped(
+      static_cast<float>(obj.value("material.clearcoatNormalUvOffsetU")
+          .toDouble(impl_->material_.clearcoatNormalUvOffsetU())),
+      impl_->material_.clearcoatNormalUvOffsetU(), -10.0f, 10.0f));
+  impl_->material_.setClearcoatNormalUvOffsetV(finiteClamped(
+      static_cast<float>(obj.value("material.clearcoatNormalUvOffsetV")
+          .toDouble(impl_->material_.clearcoatNormalUvOffsetV())),
+      impl_->material_.clearcoatNormalUvOffsetV(), -10.0f, 10.0f));
 
   const QString emissionTexture = obj.value("material.emissionTexture").toString();
   impl_->material_.setEmissionTexture(ArtifactCore::UniString::fromQString(emissionTexture));
+  impl_->material_.setEmissionTextureUvScale(finiteClamped(
+      static_cast<float>(obj.value("material.emissionTextureUvScale")
+          .toDouble(impl_->material_.emissionTextureUvScale())),
+      impl_->material_.emissionTextureUvScale(), 0.01f, 10.0f));
+  impl_->material_.setEmissionTextureUvOffsetU(finiteClamped(
+      static_cast<float>(obj.value("material.emissionTextureUvOffsetU")
+          .toDouble(impl_->material_.emissionTextureUvOffsetU())),
+      impl_->material_.emissionTextureUvOffsetU(), -10.0f, 10.0f));
+  impl_->material_.setEmissionTextureUvOffsetV(finiteClamped(
+      static_cast<float>(obj.value("material.emissionTextureUvOffsetV")
+          .toDouble(impl_->material_.emissionTextureUvOffsetV())),
+      impl_->material_.emissionTextureUvOffsetV(), -10.0f, 10.0f));
+  impl_->material_.setEmissionTextureUvRotationDegrees(finiteClamped(
+      static_cast<float>(obj.value("material.emissionTextureUvRotation")
+          .toDouble(impl_->material_.emissionTextureUvRotationDegrees())),
+      impl_->material_.emissionTextureUvRotationDegrees(), -360.0f, 360.0f));
 
   const QString occlusionTexture = obj.value("material.occlusionTexture").toString();
   impl_->material_.setOcclusionTexture(ArtifactCore::UniString::fromQString(occlusionTexture));
 
   const QString opacityTexture = obj.value("material.opacityTexture").toString();
   impl_->material_.setOpacityTexture(ArtifactCore::UniString::fromQString(opacityTexture));
+  impl_->material_.setOpacityTextureUvScale(clampFinite(
+      static_cast<float>(obj.value("material.opacityTextureUvScale")
+          .toDouble(impl_->material_.opacityTextureUvScale())),
+      impl_->material_.opacityTextureUvScale(), 0.01f, 10.0f));
+  impl_->material_.setOpacityTextureUvOffsetU(clampFinite(
+      static_cast<float>(obj.value("material.opacityTextureUvOffsetU")
+          .toDouble(impl_->material_.opacityTextureUvOffsetU())),
+      impl_->material_.opacityTextureUvOffsetU(), -10.0f, 10.0f));
+  impl_->material_.setOpacityTextureUvOffsetV(clampFinite(
+      static_cast<float>(obj.value("material.opacityTextureUvOffsetV")
+          .toDouble(impl_->material_.opacityTextureUvOffsetV())),
+      impl_->material_.opacityTextureUvOffsetV(), -10.0f, 10.0f));
+  impl_->material_.setOpacityTextureUvRotationDegrees(clampFinite(
+      static_cast<float>(obj.value("material.opacityTextureUvRotation")
+          .toDouble(impl_->material_.opacityTextureUvRotationDegrees())),
+      impl_->material_.opacityTextureUvRotationDegrees(), -360.0f, 360.0f));
 
   // Material graph JSON is stored verbatim; the renderer compiles it on
   // first draw. Invalid payloads are ignored at apply time, never here.
@@ -2292,12 +2610,41 @@ Artifact3DLayer::getLayerPropertyGroups() const {
   roughnessProp->setSoftRange(0.0, 1.0);
   materialGroup.addProperty(roughnessProp);
 
+  auto diffuseRoughnessProp = persistentLayerProperty(
+      QStringLiteral("material.diffuseRoughness"), PropertyType::Float,
+      impl_->material_.diffuseRoughness(), -47);
+  diffuseRoughnessProp->setDisplayLabel(QStringLiteral("Diffuse Roughness"));
+  diffuseRoughnessProp->setTooltip(QStringLiteral(
+      "Roughens the diffuse response independently from specular roughness."));
+  diffuseRoughnessProp->setHardRange(0.0, 1.0);
+  diffuseRoughnessProp->setSoftRange(0.0, 1.0);
+  materialGroup.addProperty(diffuseRoughnessProp);
+
   auto specularProp = persistentLayerProperty(
       QStringLiteral("material.specular"), PropertyType::Float,
       impl_->material_.specular(), -46);
   specularProp->setDisplayLabel(QStringLiteral("Specular"));
   specularProp->setHardRange(0.0, 1.0);
   materialGroup.addProperty(specularProp);
+  auto specularTintProp = persistentLayerProperty(
+      QStringLiteral("material.specularTint"), PropertyType::Color,
+      impl_->material_.specularTint(), -45);
+  specularTintProp->setDisplayLabel(QStringLiteral("Specular Tint"));
+  materialGroup.addProperty(specularTintProp);
+  auto thinFilmThicknessProp = persistentLayerProperty(
+      QStringLiteral("material.thinFilmThickness"), PropertyType::Float,
+      impl_->material_.thinFilmThickness(), -44);
+  thinFilmThicknessProp->setDisplayLabel(QStringLiteral("Thin Film Thickness"));
+  thinFilmThicknessProp->setTooltip(QStringLiteral(
+      "Interference film thickness in nanometers; zero disables the effect"));
+  thinFilmThicknessProp->setHardRange(0.0, 1000.0);
+  materialGroup.addProperty(thinFilmThicknessProp);
+  auto thinFilmIorProp = persistentLayerProperty(
+      QStringLiteral("material.thinFilmIOR"), PropertyType::Float,
+      impl_->material_.thinFilmIOR(), -43);
+  thinFilmIorProp->setDisplayLabel(QStringLiteral("Thin Film IOR"));
+  thinFilmIorProp->setHardRange(1.0, 2.5);
+  materialGroup.addProperty(thinFilmIorProp);
 
   auto iorProp = persistentLayerProperty(
       QStringLiteral("material.ior"), PropertyType::Float,
@@ -2327,12 +2674,115 @@ Artifact3DLayer::getLayerPropertyGroups() const {
   clearcoatRoughnessProp->setHardRange(0.0, 1.0);
   materialGroup.addProperty(clearcoatRoughnessProp);
 
+  auto clearcoatIorProp = persistentLayerProperty(
+      QStringLiteral("material.clearcoatIOR"), PropertyType::Float,
+      impl_->material_.clearcoatIOR(), -41);
+  clearcoatIorProp->setDisplayLabel(QStringLiteral("Clearcoat IOR"));
+  clearcoatIorProp->setHardRange(1.0, 2.0);
+  materialGroup.addProperty(clearcoatIorProp);
+
+  auto clearcoatTintProp = persistentLayerProperty(
+      QStringLiteral("material.clearcoatTint"), PropertyType::Color,
+      impl_->material_.clearcoatTint(), -40);
+  clearcoatTintProp->setDisplayLabel(QStringLiteral("Clearcoat Tint"));
+  materialGroup.addProperty(clearcoatTintProp);
+
+  auto clearcoatNormalStrengthProp = persistentLayerProperty(
+      QStringLiteral("material.clearcoatNormalStrength"), PropertyType::Float,
+      impl_->material_.clearcoatNormalStrength(), -39);
+  clearcoatNormalStrengthProp->setDisplayLabel(
+      QStringLiteral("Coat Normal Strength"));
+  clearcoatNormalStrengthProp->setTooltip(QStringLiteral(
+      "Controls how strongly the base normal map affects the clearcoat layer"));
+  clearcoatNormalStrengthProp->setHardRange(0.0, 1.0);
+  materialGroup.addProperty(clearcoatNormalStrengthProp);
+
   auto sheenProp = persistentLayerProperty(
       QStringLiteral("material.sheen"), PropertyType::Float,
-      impl_->material_.sheen(), -41);
+      impl_->material_.sheen(), -39);
   sheenProp->setDisplayLabel(QStringLiteral("Sheen"));
   sheenProp->setHardRange(0.0, 1.0);
   materialGroup.addProperty(sheenProp);
+
+  auto sheenRoughnessProp = persistentLayerProperty(
+      QStringLiteral("material.sheenRoughness"), PropertyType::Float,
+      impl_->material_.sheenRoughness(), -38);
+  sheenRoughnessProp->setDisplayLabel(QStringLiteral("Sheen Roughness"));
+  sheenRoughnessProp->setHardRange(0.0, 1.0);
+  materialGroup.addProperty(sheenRoughnessProp);
+
+  auto sheenTintProp = persistentLayerProperty(
+      QStringLiteral("material.sheenTint"), PropertyType::Color,
+      impl_->material_.sheenTint(), -37);
+  sheenTintProp->setDisplayLabel(QStringLiteral("Sheen Tint"));
+  materialGroup.addProperty(sheenTintProp);
+
+  auto subsurfaceProp = persistentLayerProperty(
+      QStringLiteral("material.subsurface"), PropertyType::Float,
+      impl_->material_.subsurface(), -34);
+  subsurfaceProp->setDisplayLabel(QStringLiteral("Subsurface Weight"));
+  subsurfaceProp->setHardRange(0.0, 1.0);
+  materialGroup.addProperty(subsurfaceProp);
+  auto subsurfaceIorProp = persistentLayerProperty(
+      QStringLiteral("material.subsurfaceIOR"), PropertyType::Float,
+      impl_->material_.subsurfaceIOR(), -32);
+  subsurfaceIorProp->setDisplayLabel(QStringLiteral("Subsurface IOR"));
+  subsurfaceIorProp->setTooltip(QStringLiteral(
+      "IOR for the subsurface component; used by its Fresnel energy approximation"));
+  subsurfaceIorProp->setHardRange(1.0, 2.0);
+  materialGroup.addProperty(subsurfaceIorProp);
+  auto subsurfaceAnisotropyProp = persistentLayerProperty(
+      QStringLiteral("material.subsurfaceAnisotropy"), PropertyType::Float,
+      impl_->material_.subsurfaceAnisotropy(), -31);
+  subsurfaceAnisotropyProp->setDisplayLabel(
+      QStringLiteral("Subsurface Anisotropy"));
+  subsurfaceAnisotropyProp->setTooltip(QStringLiteral(
+      "Directional phase approximation for direct light; does not model volume scattering"));
+  subsurfaceAnisotropyProp->setHardRange(-0.9, 0.9);
+  materialGroup.addProperty(subsurfaceAnisotropyProp);
+
+  auto subsurfaceColorProp = persistentLayerProperty(
+      QStringLiteral("material.subsurfaceColor"), PropertyType::Color,
+      impl_->material_.subsurfaceColor(), -33);
+  subsurfaceColorProp->setDisplayLabel(QStringLiteral("Subsurface Color"));
+  materialGroup.addProperty(subsurfaceColorProp);
+
+  const QVector3D subsurfaceRadius = impl_->material_.subsurfaceRadius();
+  auto subsurfaceRadiusR = persistentLayerProperty(
+      QStringLiteral("material.subsurfaceRadius.r"), PropertyType::Float,
+      subsurfaceRadius.x(), -32);
+  subsurfaceRadiusR->setDisplayLabel(QStringLiteral("Subsurface Radius R"));
+  subsurfaceRadiusR->setTooltip(QStringLiteral(
+      "Relative scattering radius multiplier; the fast approximation does not trace volume thickness"));
+  subsurfaceRadiusR->setHardRange(0.0, 10.0);
+  materialGroup.addProperty(subsurfaceRadiusR);
+  auto subsurfaceRadiusG = persistentLayerProperty(
+      QStringLiteral("material.subsurfaceRadius.g"), PropertyType::Float,
+      subsurfaceRadius.y(), -31);
+  subsurfaceRadiusG->setDisplayLabel(QStringLiteral("Subsurface Radius G"));
+  subsurfaceRadiusG->setHardRange(0.0, 10.0);
+  materialGroup.addProperty(subsurfaceRadiusG);
+  auto subsurfaceRadiusB = persistentLayerProperty(
+      QStringLiteral("material.subsurfaceRadius.b"), PropertyType::Float,
+      subsurfaceRadius.z(), -30);
+  subsurfaceRadiusB->setDisplayLabel(QStringLiteral("Subsurface Radius B"));
+  subsurfaceRadiusB->setHardRange(0.0, 10.0);
+  materialGroup.addProperty(subsurfaceRadiusB);
+
+  auto anisotropyProp = persistentLayerProperty(
+      QStringLiteral("material.anisotropy"), PropertyType::Float,
+      impl_->material_.anisotropy(), -36);
+  anisotropyProp->setDisplayLabel(QStringLiteral("Anisotropy"));
+  anisotropyProp->setHardRange(-1.0, 1.0);
+  materialGroup.addProperty(anisotropyProp);
+
+  auto anisotropyRotationProp = persistentLayerProperty(
+      QStringLiteral("material.anisotropyRotationDegrees"),
+      PropertyType::Float, impl_->material_.anisotropyRotationDegrees(), -35);
+  anisotropyRotationProp->setDisplayLabel(
+      QStringLiteral("Anisotropy Rotation"));
+  anisotropyRotationProp->setHardRange(-180.0, 180.0);
+  materialGroup.addProperty(anisotropyRotationProp);
 
   auto opacityProp = persistentLayerProperty(
       QStringLiteral("material.opacity"), PropertyType::Float,
@@ -2366,11 +2816,82 @@ Artifact3DLayer::getLayerPropertyGroups() const {
   baseColorTextureProp->setTooltip(QStringLiteral("Texture path for the base color"));
   materialGroup.addProperty(baseColorTextureProp);
 
+  auto baseColorUvScaleProp = persistentLayerProperty(
+      QStringLiteral("material.baseColorUvScale"), PropertyType::Float,
+      impl_->material_.baseColorUvScale(), -37);
+  baseColorUvScaleProp->setDisplayLabel(
+      QStringLiteral("Base Color Texture UV Scale"));
+  baseColorUvScaleProp->setTooltip(QStringLiteral(
+      "Scales base color texture coordinates around the UV center"));
+  baseColorUvScaleProp->setHardRange(0.01, 10.0);
+  baseColorUvScaleProp->setSoftRange(0.1, 4.0);
+  materialGroup.addProperty(baseColorUvScaleProp);
+
+  auto baseColorUvRotationProp = persistentLayerProperty(
+      QStringLiteral("material.baseColorUvRotation"), PropertyType::Float,
+      impl_->material_.baseColorUvRotationDegrees(), -34);
+  baseColorUvRotationProp->setDisplayLabel(
+      QStringLiteral("Base Color Texture UV Rotation"));
+  baseColorUvRotationProp->setHardRange(-360.0, 360.0);
+  materialGroup.addProperty(baseColorUvRotationProp);
+
+  auto baseColorUvOffsetUProp = persistentLayerProperty(
+      QStringLiteral("material.baseColorUvOffsetU"), PropertyType::Float,
+      impl_->material_.baseColorUvOffsetU(), -36);
+  baseColorUvOffsetUProp->setDisplayLabel(
+      QStringLiteral("Base Color Texture UV Offset U"));
+  baseColorUvOffsetUProp->setHardRange(-10.0, 10.0);
+  materialGroup.addProperty(baseColorUvOffsetUProp);
+
+  auto baseColorUvOffsetVProp = persistentLayerProperty(
+      QStringLiteral("material.baseColorUvOffsetV"), PropertyType::Float,
+      impl_->material_.baseColorUvOffsetV(), -35);
+  baseColorUvOffsetVProp->setDisplayLabel(
+      QStringLiteral("Base Color Texture UV Offset V"));
+  baseColorUvOffsetVProp->setHardRange(-10.0, 10.0);
+  materialGroup.addProperty(baseColorUvOffsetVProp);
+
   auto metallicRoughnessTextureProp = persistentLayerProperty(
       QStringLiteral("material.metallicRoughnessTexture"), PropertyType::String,
       impl_->material_.metallicRoughnessTexture().toQString(), -39);
   metallicRoughnessTextureProp->setDisplayLabel(QStringLiteral("Metallic Roughness Texture"));
   materialGroup.addProperty(metallicRoughnessTextureProp);
+
+  auto metallicRoughnessUvScaleProp = persistentLayerProperty(
+      QStringLiteral("material.metallicRoughnessUvScale"), PropertyType::Float,
+      impl_->material_.metallicRoughnessUvScale(), -36);
+  metallicRoughnessUvScaleProp->setDisplayLabel(
+      QStringLiteral("Metallic Roughness Texture UV Scale"));
+  metallicRoughnessUvScaleProp->setTooltip(QStringLiteral(
+      "Scales metallic roughness texture coordinates around the UV center"));
+  metallicRoughnessUvScaleProp->setHardRange(0.01, 10.0);
+  metallicRoughnessUvScaleProp->setSoftRange(0.1, 4.0);
+  materialGroup.addProperty(metallicRoughnessUvScaleProp);
+
+  auto metallicRoughnessUvOffsetUProp = persistentLayerProperty(
+      QStringLiteral("material.metallicRoughnessUvOffsetU"),
+      PropertyType::Float, impl_->material_.metallicRoughnessUvOffsetU(), -35);
+  metallicRoughnessUvOffsetUProp->setDisplayLabel(
+      QStringLiteral("Metallic Roughness Texture UV Offset U"));
+  metallicRoughnessUvOffsetUProp->setHardRange(-10.0, 10.0);
+  materialGroup.addProperty(metallicRoughnessUvOffsetUProp);
+
+  auto metallicRoughnessUvOffsetVProp = persistentLayerProperty(
+      QStringLiteral("material.metallicRoughnessUvOffsetV"),
+      PropertyType::Float, impl_->material_.metallicRoughnessUvOffsetV(), -34);
+  metallicRoughnessUvOffsetVProp->setDisplayLabel(
+      QStringLiteral("Metallic Roughness Texture UV Offset V"));
+  metallicRoughnessUvOffsetVProp->setHardRange(-10.0, 10.0);
+  materialGroup.addProperty(metallicRoughnessUvOffsetVProp);
+
+  auto metallicRoughnessUvRotationProp = persistentLayerProperty(
+      QStringLiteral("material.metallicRoughnessUvRotation"),
+      PropertyType::Float,
+      impl_->material_.metallicRoughnessUvRotationDegrees(), -33);
+  metallicRoughnessUvRotationProp->setDisplayLabel(
+      QStringLiteral("Metallic Roughness Texture UV Rotation"));
+  metallicRoughnessUvRotationProp->setHardRange(-360.0, 360.0);
+  materialGroup.addProperty(metallicRoughnessUvRotationProp);
 
   auto normalTextureProp = persistentLayerProperty(
       QStringLiteral("material.normalTexture"), PropertyType::String,
@@ -2378,11 +2899,128 @@ Artifact3DLayer::getLayerPropertyGroups() const {
   normalTextureProp->setDisplayLabel(QStringLiteral("Normal Texture"));
   materialGroup.addProperty(normalTextureProp);
 
+  auto normalUvRotationProp = persistentLayerProperty(
+      QStringLiteral("material.normalUvRotation"), PropertyType::Float,
+      impl_->material_.normalUvRotationDegrees(), -37);
+  normalUvRotationProp->setDisplayLabel(QStringLiteral("Normal UV Rotation"));
+  normalUvRotationProp->setTooltip(QStringLiteral(
+      "Additional counter-clockwise rotation for normal map coordinates"));
+  normalUvRotationProp->setHardRange(-360.0, 360.0);
+  materialGroup.addProperty(normalUvRotationProp);
+
+  auto normalUvSetProp = persistentLayerProperty(
+      QStringLiteral("material.normalUvSet"), PropertyType::Integer,
+      impl_->material_.normalUvSet(), -35);
+  normalUvSetProp->setDisplayLabel(QStringLiteral("Normal UV Set"));
+  normalUvSetProp->setHardRange(0, 1);
+  materialGroup.addProperty(normalUvSetProp);
+
+  auto normalUvScaleProp = persistentLayerProperty(
+      QStringLiteral("material.normalUvScale"), PropertyType::Float,
+      impl_->material_.normalUvScale(), -36);
+  normalUvScaleProp->setDisplayLabel(QStringLiteral("Normal UV Scale"));
+  normalUvScaleProp->setTooltip(QStringLiteral(
+      "Uniform tiling for the normal texture"));
+  normalUvScaleProp->setHardRange(0.01, 10.0);
+  normalUvScaleProp->setSoftRange(0.1, 4.0);
+  materialGroup.addProperty(normalUvScaleProp);
+
+  auto normalUvOffsetUProp = persistentLayerProperty(
+      QStringLiteral("material.normalUvOffsetU"), PropertyType::Float,
+      impl_->material_.normalUvOffsetU(), -33);
+  normalUvOffsetUProp->setDisplayLabel(QStringLiteral("Normal UV Offset U"));
+  normalUvOffsetUProp->setHardRange(-10.0, 10.0);
+  materialGroup.addProperty(normalUvOffsetUProp);
+
+  auto normalUvOffsetVProp = persistentLayerProperty(
+      QStringLiteral("material.normalUvOffsetV"), PropertyType::Float,
+      impl_->material_.normalUvOffsetV(), -32);
+  normalUvOffsetVProp->setDisplayLabel(QStringLiteral("Normal UV Offset V"));
+  normalUvOffsetVProp->setHardRange(-10.0, 10.0);
+  materialGroup.addProperty(normalUvOffsetVProp);
+
+  auto clearcoatNormalTextureProp = persistentLayerProperty(
+      QStringLiteral("material.clearcoatNormalTexture"), PropertyType::String,
+      impl_->material_.clearcoatNormalTexture().toQString(), -38);
+  clearcoatNormalTextureProp->setDisplayLabel(
+      QStringLiteral("Coat Normal Texture"));
+  materialGroup.addProperty(clearcoatNormalTextureProp);
+
+  auto clearcoatNormalUvRotationProp = persistentLayerProperty(
+      QStringLiteral("material.clearcoatNormalUvRotation"),
+      PropertyType::Float,
+      impl_->material_.clearcoatNormalUvRotationDegrees(), -35);
+  clearcoatNormalUvRotationProp->setDisplayLabel(
+      QStringLiteral("Coat Normal UV Rotation"));
+  clearcoatNormalUvRotationProp->setHardRange(-360.0, 360.0);
+  materialGroup.addProperty(clearcoatNormalUvRotationProp);
+
+  auto clearcoatNormalUvScaleProp = persistentLayerProperty(
+      QStringLiteral("material.clearcoatNormalUvScale"), PropertyType::Float,
+      impl_->material_.clearcoatNormalUvScale(), -34);
+  clearcoatNormalUvScaleProp->setDisplayLabel(
+      QStringLiteral("Coat Normal UV Scale"));
+  clearcoatNormalUvScaleProp->setHardRange(0.01, 10.0);
+  clearcoatNormalUvScaleProp->setSoftRange(0.1, 4.0);
+  materialGroup.addProperty(clearcoatNormalUvScaleProp);
+
+  auto clearcoatNormalUvOffsetUProp = persistentLayerProperty(
+      QStringLiteral("material.clearcoatNormalUvOffsetU"),
+      PropertyType::Float, impl_->material_.clearcoatNormalUvOffsetU(), -33);
+  clearcoatNormalUvOffsetUProp->setDisplayLabel(
+      QStringLiteral("Coat Normal UV Offset U"));
+  clearcoatNormalUvOffsetUProp->setHardRange(-10.0, 10.0);
+  materialGroup.addProperty(clearcoatNormalUvOffsetUProp);
+
+  auto clearcoatNormalUvOffsetVProp = persistentLayerProperty(
+      QStringLiteral("material.clearcoatNormalUvOffsetV"),
+      PropertyType::Float, impl_->material_.clearcoatNormalUvOffsetV(), -32);
+  clearcoatNormalUvOffsetVProp->setDisplayLabel(
+      QStringLiteral("Coat Normal UV Offset V"));
+  clearcoatNormalUvOffsetVProp->setHardRange(-10.0, 10.0);
+  materialGroup.addProperty(clearcoatNormalUvOffsetVProp);
+
   auto emissionTextureProp = persistentLayerProperty(
       QStringLiteral("material.emissionTexture"), PropertyType::String,
       impl_->material_.emissionTexture().toQString(), -37);
   emissionTextureProp->setDisplayLabel(QStringLiteral("Emission Texture"));
   materialGroup.addProperty(emissionTextureProp);
+
+  auto emissionTextureUvScaleProp = persistentLayerProperty(
+      QStringLiteral("material.emissionTextureUvScale"), PropertyType::Float,
+      impl_->material_.emissionTextureUvScale(), -29);
+  emissionTextureUvScaleProp->setDisplayLabel(
+      QStringLiteral("Emission Texture UV Scale"));
+  emissionTextureUvScaleProp->setTooltip(QStringLiteral(
+      "Scales emission texture coordinates around the UV center"));
+  emissionTextureUvScaleProp->setHardRange(0.01, 10.0);
+  emissionTextureUvScaleProp->setSoftRange(0.1, 4.0);
+  materialGroup.addProperty(emissionTextureUvScaleProp);
+
+  auto emissionTextureUvOffsetUProp = persistentLayerProperty(
+      QStringLiteral("material.emissionTextureUvOffsetU"),
+      PropertyType::Float, impl_->material_.emissionTextureUvOffsetU(), -27);
+  emissionTextureUvOffsetUProp->setDisplayLabel(
+      QStringLiteral("Emission Texture UV Offset U"));
+  emissionTextureUvOffsetUProp->setHardRange(-10.0, 10.0);
+  materialGroup.addProperty(emissionTextureUvOffsetUProp);
+
+  auto emissionTextureUvOffsetVProp = persistentLayerProperty(
+      QStringLiteral("material.emissionTextureUvOffsetV"),
+      PropertyType::Float, impl_->material_.emissionTextureUvOffsetV(), -26);
+  emissionTextureUvOffsetVProp->setDisplayLabel(
+      QStringLiteral("Emission Texture UV Offset V"));
+  emissionTextureUvOffsetVProp->setHardRange(-10.0, 10.0);
+  materialGroup.addProperty(emissionTextureUvOffsetVProp);
+
+  auto emissionTextureUvRotationProp = persistentLayerProperty(
+      QStringLiteral("material.emissionTextureUvRotation"),
+      PropertyType::Float,
+      impl_->material_.emissionTextureUvRotationDegrees(), -25);
+  emissionTextureUvRotationProp->setDisplayLabel(
+      QStringLiteral("Emission Texture UV Rotation"));
+  emissionTextureUvRotationProp->setHardRange(-360.0, 360.0);
+  materialGroup.addProperty(emissionTextureUvRotationProp);
 
   auto occlusionTextureProp = persistentLayerProperty(
       QStringLiteral("material.occlusionTexture"), PropertyType::String,
@@ -2390,11 +3028,82 @@ Artifact3DLayer::getLayerPropertyGroups() const {
   occlusionTextureProp->setDisplayLabel(QStringLiteral("Occlusion Texture"));
   materialGroup.addProperty(occlusionTextureProp);
 
+  auto occlusionTextureUvScaleProp = persistentLayerProperty(
+      QStringLiteral("material.occlusionTextureUvScale"), PropertyType::Float,
+      impl_->material_.occlusionTextureUvScale(), -30);
+  occlusionTextureUvScaleProp->setDisplayLabel(
+      QStringLiteral("Occlusion Texture UV Scale"));
+  occlusionTextureUvScaleProp->setTooltip(QStringLiteral(
+      "Scales occlusion texture coordinates around the UV center"));
+  occlusionTextureUvScaleProp->setHardRange(0.01, 10.0);
+  occlusionTextureUvScaleProp->setSoftRange(0.1, 4.0);
+  materialGroup.addProperty(occlusionTextureUvScaleProp);
+
+  auto occlusionTextureUvOffsetUProp = persistentLayerProperty(
+      QStringLiteral("material.occlusionTextureUvOffsetU"),
+      PropertyType::Float, impl_->material_.occlusionTextureUvOffsetU(), -24);
+  occlusionTextureUvOffsetUProp->setDisplayLabel(
+      QStringLiteral("Occlusion Texture UV Offset U"));
+  occlusionTextureUvOffsetUProp->setHardRange(-10.0, 10.0);
+  materialGroup.addProperty(occlusionTextureUvOffsetUProp);
+
+  auto occlusionTextureUvOffsetVProp = persistentLayerProperty(
+      QStringLiteral("material.occlusionTextureUvOffsetV"),
+      PropertyType::Float, impl_->material_.occlusionTextureUvOffsetV(), -23);
+  occlusionTextureUvOffsetVProp->setDisplayLabel(
+      QStringLiteral("Occlusion Texture UV Offset V"));
+  occlusionTextureUvOffsetVProp->setHardRange(-10.0, 10.0);
+  materialGroup.addProperty(occlusionTextureUvOffsetVProp);
+
+  auto occlusionTextureUvRotationProp = persistentLayerProperty(
+      QStringLiteral("material.occlusionTextureUvRotation"),
+      PropertyType::Float,
+      impl_->material_.occlusionTextureUvRotationDegrees(), -22);
+  occlusionTextureUvRotationProp->setDisplayLabel(
+      QStringLiteral("Occlusion Texture UV Rotation"));
+  occlusionTextureUvRotationProp->setHardRange(-360.0, 360.0);
+  materialGroup.addProperty(occlusionTextureUvRotationProp);
+
   auto opacityTextureProp = persistentLayerProperty(
       QStringLiteral("material.opacityTexture"), PropertyType::String,
       impl_->material_.opacityTexture().toQString(), -35);
   opacityTextureProp->setDisplayLabel(QStringLiteral("Opacity Texture"));
   materialGroup.addProperty(opacityTextureProp);
+  auto opacityTextureUvScaleProp = persistentLayerProperty(
+      QStringLiteral("material.opacityTextureUvScale"), PropertyType::Float,
+      impl_->material_.opacityTextureUvScale(), -28);
+  opacityTextureUvScaleProp->setDisplayLabel(
+      QStringLiteral("Opacity Texture UV Scale"));
+  opacityTextureUvScaleProp->setTooltip(QStringLiteral(
+      "Scales the opacity map UVs around the center independently."));
+  opacityTextureUvScaleProp->setHardRange(0.01, 10.0);
+  opacityTextureUvScaleProp->setSoftRange(0.1, 4.0);
+  materialGroup.addProperty(opacityTextureUvScaleProp);
+
+  auto opacityTextureUvOffsetUProp = persistentLayerProperty(
+      QStringLiteral("material.opacityTextureUvOffsetU"),
+      PropertyType::Float, impl_->material_.opacityTextureUvOffsetU(), -22);
+  opacityTextureUvOffsetUProp->setDisplayLabel(
+      QStringLiteral("Opacity Texture UV Offset U"));
+  opacityTextureUvOffsetUProp->setHardRange(-10.0, 10.0);
+  materialGroup.addProperty(opacityTextureUvOffsetUProp);
+
+  auto opacityTextureUvOffsetVProp = persistentLayerProperty(
+      QStringLiteral("material.opacityTextureUvOffsetV"),
+      PropertyType::Float, impl_->material_.opacityTextureUvOffsetV(), -21);
+  opacityTextureUvOffsetVProp->setDisplayLabel(
+      QStringLiteral("Opacity Texture UV Offset V"));
+  opacityTextureUvOffsetVProp->setHardRange(-10.0, 10.0);
+  materialGroup.addProperty(opacityTextureUvOffsetVProp);
+
+  auto opacityTextureUvRotationProp = persistentLayerProperty(
+      QStringLiteral("material.opacityTextureUvRotation"),
+      PropertyType::Float,
+      impl_->material_.opacityTextureUvRotationDegrees(), -20);
+  opacityTextureUvRotationProp->setDisplayLabel(
+      QStringLiteral("Opacity Texture UV Rotation"));
+  opacityTextureUvRotationProp->setHardRange(-360.0, 360.0);
+  materialGroup.addProperty(opacityTextureUvRotationProp);
 
   auto emissionColorProp = persistentLayerProperty(
       QStringLiteral("material.emission.color"), PropertyType::Color,
@@ -2618,29 +3327,225 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
     impl_->material_.setBaseColorTexture(ArtifactCore::UniString::fromQString(value.toString()));
     Q_EMIT changed();
     return true;
+  } else if (propertyPath == QStringLiteral("material.baseColorUvScale")) {
+    impl_->material_.setBaseColorUvScale(finiteClamped(
+        value.toFloat(), impl_->material_.baseColorUvScale(), 0.01f, 10.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.baseColorUvRotation")) {
+    impl_->material_.setBaseColorUvRotationDegrees(finiteClamped(
+        value.toFloat(), impl_->material_.baseColorUvRotationDegrees(),
+        -360.0f, 360.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.baseColorUvOffsetU")) {
+    impl_->material_.setBaseColorUvOffsetU(finiteClamped(
+        value.toFloat(), impl_->material_.baseColorUvOffsetU(),
+        -10.0f, 10.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.baseColorUvOffsetV")) {
+    impl_->material_.setBaseColorUvOffsetV(finiteClamped(
+        value.toFloat(), impl_->material_.baseColorUvOffsetV(),
+        -10.0f, 10.0f));
+    Q_EMIT changed();
+    return true;
   } else if (propertyPath == QStringLiteral("material.metallicRoughnessTexture")) {
     impl_->material_.setMetallicRoughnessTexture(
         ArtifactCore::UniString::fromQString(value.toString()));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath ==
+             QStringLiteral("material.metallicRoughnessUvScale")) {
+    impl_->material_.setMetallicRoughnessUvScale(finiteClamped(
+        value.toFloat(), impl_->material_.metallicRoughnessUvScale(),
+        0.01f, 10.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath ==
+             QStringLiteral("material.metallicRoughnessUvOffsetU")) {
+    impl_->material_.setMetallicRoughnessUvOffsetU(finiteClamped(
+        value.toFloat(), impl_->material_.metallicRoughnessUvOffsetU(),
+        -10.0f, 10.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath ==
+             QStringLiteral("material.metallicRoughnessUvOffsetV")) {
+    impl_->material_.setMetallicRoughnessUvOffsetV(finiteClamped(
+        value.toFloat(), impl_->material_.metallicRoughnessUvOffsetV(),
+        -10.0f, 10.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath ==
+             QStringLiteral("material.metallicRoughnessUvRotation")) {
+    impl_->material_.setMetallicRoughnessUvRotationDegrees(finiteClamped(
+        value.toFloat(),
+        impl_->material_.metallicRoughnessUvRotationDegrees(),
+        -360.0f, 360.0f));
     Q_EMIT changed();
     return true;
   } else if (propertyPath == QStringLiteral("material.normalTexture")) {
     impl_->material_.setNormalTexture(ArtifactCore::UniString::fromQString(value.toString()));
     Q_EMIT changed();
     return true;
+  } else if (propertyPath == QStringLiteral("material.normalUvRotation")) {
+    impl_->material_.setNormalUvRotationDegrees(finiteClamped(
+        value.toFloat(), impl_->material_.normalUvRotationDegrees(),
+        -360.0f, 360.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.normalUvSet")) {
+    impl_->material_.setNormalUvSet(value.toInt());
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.normalUvScale")) {
+    impl_->material_.setNormalUvScale(finiteClamped(
+        value.toFloat(), impl_->material_.normalUvScale(), 0.01f, 10.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.normalUvOffsetU")) {
+    impl_->material_.setNormalUvOffsetU(finiteClamped(
+        value.toFloat(), impl_->material_.normalUvOffsetU(), -10.0f, 10.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.normalUvOffsetV")) {
+    impl_->material_.setNormalUvOffsetV(finiteClamped(
+        value.toFloat(), impl_->material_.normalUvOffsetV(), -10.0f, 10.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath ==
+             QStringLiteral("material.clearcoatNormalTexture")) {
+    impl_->material_.setClearcoatNormalTexture(
+        ArtifactCore::UniString::fromQString(value.toString()));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath ==
+             QStringLiteral("material.clearcoatNormalUvRotation")) {
+    impl_->material_.setClearcoatNormalUvRotationDegrees(finiteClamped(
+        value.toFloat(),
+        impl_->material_.clearcoatNormalUvRotationDegrees(),
+        -360.0f, 360.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath ==
+             QStringLiteral("material.clearcoatNormalUvScale")) {
+    impl_->material_.setClearcoatNormalUvScale(finiteClamped(
+        value.toFloat(), impl_->material_.clearcoatNormalUvScale(),
+        0.01f, 10.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath ==
+             QStringLiteral("material.clearcoatNormalUvOffsetU")) {
+    impl_->material_.setClearcoatNormalUvOffsetU(finiteClamped(
+        value.toFloat(), impl_->material_.clearcoatNormalUvOffsetU(),
+        -10.0f, 10.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath ==
+             QStringLiteral("material.clearcoatNormalUvOffsetV")) {
+    impl_->material_.setClearcoatNormalUvOffsetV(finiteClamped(
+        value.toFloat(), impl_->material_.clearcoatNormalUvOffsetV(),
+        -10.0f, 10.0f));
+    Q_EMIT changed();
+    return true;
   } else if (propertyPath == QStringLiteral("material.emissionTexture")) {
     impl_->material_.setEmissionTexture(ArtifactCore::UniString::fromQString(value.toString()));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath ==
+             QStringLiteral("material.emissionTextureUvScale")) {
+    impl_->material_.setEmissionTextureUvScale(finiteClamped(
+        value.toFloat(), impl_->material_.emissionTextureUvScale(),
+        0.01f, 10.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath ==
+             QStringLiteral("material.emissionTextureUvOffsetU")) {
+    impl_->material_.setEmissionTextureUvOffsetU(finiteClamped(
+        value.toFloat(), impl_->material_.emissionTextureUvOffsetU(),
+        -10.0f, 10.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath ==
+             QStringLiteral("material.emissionTextureUvOffsetV")) {
+    impl_->material_.setEmissionTextureUvOffsetV(finiteClamped(
+        value.toFloat(), impl_->material_.emissionTextureUvOffsetV(),
+        -10.0f, 10.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath ==
+             QStringLiteral("material.emissionTextureUvRotation")) {
+    impl_->material_.setEmissionTextureUvRotationDegrees(finiteClamped(
+        value.toFloat(),
+        impl_->material_.emissionTextureUvRotationDegrees(),
+        -360.0f, 360.0f));
     Q_EMIT changed();
     return true;
   } else if (propertyPath == QStringLiteral("material.occlusionTexture")) {
     impl_->material_.setOcclusionTexture(ArtifactCore::UniString::fromQString(value.toString()));
     Q_EMIT changed();
     return true;
+  } else if (propertyPath ==
+             QStringLiteral("material.occlusionTextureUvScale")) {
+    impl_->material_.setOcclusionTextureUvScale(finiteClamped(
+        value.toFloat(), impl_->material_.occlusionTextureUvScale(),
+        0.01f, 10.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath ==
+             QStringLiteral("material.occlusionTextureUvOffsetU")) {
+    impl_->material_.setOcclusionTextureUvOffsetU(finiteClamped(
+        value.toFloat(), impl_->material_.occlusionTextureUvOffsetU(),
+        -10.0f, 10.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath ==
+             QStringLiteral("material.occlusionTextureUvOffsetV")) {
+    impl_->material_.setOcclusionTextureUvOffsetV(finiteClamped(
+        value.toFloat(), impl_->material_.occlusionTextureUvOffsetV(),
+        -10.0f, 10.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath ==
+             QStringLiteral("material.occlusionTextureUvRotation")) {
+    impl_->material_.setOcclusionTextureUvRotationDegrees(finiteClamped(
+        value.toFloat(), impl_->material_.occlusionTextureUvRotationDegrees(),
+        -360.0f, 360.0f));
+    Q_EMIT changed();
+    return true;
   } else if (propertyPath == QStringLiteral("material.opacityTexture")) {
     impl_->material_.setOpacityTexture(ArtifactCore::UniString::fromQString(value.toString()));
+  } else if (propertyPath == QStringLiteral("material.opacityTextureUvScale")) {
+    impl_->material_.setOpacityTextureUvScale(value.toFloat());
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath ==
+             QStringLiteral("material.opacityTextureUvOffsetU")) {
+    impl_->material_.setOpacityTextureUvOffsetU(finiteClamped(
+        value.toFloat(), impl_->material_.opacityTextureUvOffsetU(),
+        -10.0f, 10.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath ==
+             QStringLiteral("material.opacityTextureUvOffsetV")) {
+    impl_->material_.setOpacityTextureUvOffsetV(finiteClamped(
+        value.toFloat(), impl_->material_.opacityTextureUvOffsetV(),
+        -10.0f, 10.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath ==
+             QStringLiteral("material.opacityTextureUvRotation")) {
+    impl_->material_.setOpacityTextureUvRotationDegrees(finiteClamped(
+        value.toFloat(), impl_->material_.opacityTextureUvRotationDegrees(),
+        -360.0f, 360.0f));
     Q_EMIT changed();
     return true;
   } else if (propertyPath == QStringLiteral("material.emission.color")) {
     impl_->material_.setEmissionColor(value.value<QColor>());
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.sheenTint")) {
+    impl_->material_.setSheenTint(value.value<QColor>());
     Q_EMIT changed();
     return true;
   } else if (propertyPath == QStringLiteral("material.metallic")) {
@@ -2651,8 +3556,31 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
     impl_->material_.setRoughness(finiteClamped(value.toFloat(), impl_->material_.roughness(), 0.0f, 1.0f));
     Q_EMIT changed();
     return true;
+  } else if (propertyPath == QStringLiteral("material.diffuseRoughness")) {
+    impl_->material_.setDiffuseRoughness(finiteClamped(
+        value.toFloat(), impl_->material_.diffuseRoughness(), 0.0f, 1.0f));
+    Q_EMIT changed();
+    return true;
   } else if (propertyPath == QStringLiteral("material.specular")) {
     impl_->material_.setSpecular(finiteClamped(value.toFloat(), impl_->material_.specular(), 0.0f, 1.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.specularTint")) {
+    impl_->material_.setSpecularTint(value.value<QColor>());
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.thinFilmThickness")) {
+    impl_->material_.setThinFilm(
+        finiteClamped(value.toFloat(), impl_->material_.thinFilmThickness(),
+                      0.0f, 1000.0f),
+        impl_->material_.thinFilmIOR());
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.thinFilmIOR")) {
+    impl_->material_.setThinFilm(
+        impl_->material_.thinFilmThickness(),
+        finiteClamped(value.toFloat(), impl_->material_.thinFilmIOR(),
+                      1.0f, 2.5f));
     Q_EMIT changed();
     return true;
   } else if (propertyPath == QStringLiteral("material.ior")) {
@@ -2671,8 +3599,75 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
     impl_->material_.setClearcoatRoughness(finiteClamped(value.toFloat(), impl_->material_.clearcoatRoughness(), 0.0f, 1.0f));
     Q_EMIT changed();
     return true;
+  } else if (propertyPath == QStringLiteral("material.clearcoatIOR")) {
+    impl_->material_.setClearcoatIOR(finiteClamped(
+        value.toFloat(), impl_->material_.clearcoatIOR(), 1.0f, 2.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.clearcoatTint")) {
+    impl_->material_.setClearcoatTint(value.value<QColor>());
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath ==
+             QStringLiteral("material.clearcoatNormalStrength")) {
+    impl_->material_.setClearcoatNormalStrength(finiteClamped(
+        value.toFloat(), impl_->material_.clearcoatNormalStrength(),
+        0.0f, 1.0f));
+    Q_EMIT changed();
+    return true;
   } else if (propertyPath == QStringLiteral("material.sheen")) {
     impl_->material_.setSheen(finiteClamped(value.toFloat(), impl_->material_.sheen(), 0.0f, 1.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.subsurface")) {
+    impl_->material_.setSubsurface(finiteClamped(
+        value.toFloat(), impl_->material_.subsurface(), 0.0f, 1.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.subsurfaceIOR")) {
+    impl_->material_.setSubsurfaceIOR(finiteClamped(
+        value.toFloat(), impl_->material_.subsurfaceIOR(), 1.0f, 2.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath ==
+             QStringLiteral("material.subsurfaceAnisotropy")) {
+    impl_->material_.setSubsurfaceAnisotropy(finiteClamped(
+        value.toFloat(), impl_->material_.subsurfaceAnisotropy(),
+        -0.9f, 0.9f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.subsurfaceColor")) {
+    impl_->material_.setSubsurfaceColor(value.value<QColor>());
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath.startsWith(QStringLiteral("material.subsurfaceRadius."))) {
+    QVector3D radius = impl_->material_.subsurfaceRadius();
+    const float component = finiteClamped(value.toFloat(), 1.0f, 0.0f, 10.0f);
+    if (propertyPath.endsWith(QLatin1Char('r'))) radius.setX(component);
+    else if (propertyPath.endsWith(QLatin1Char('g'))) radius.setY(component);
+    else if (propertyPath.endsWith(QLatin1Char('b'))) radius.setZ(component);
+    impl_->material_.setSubsurfaceRadius(radius);
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.anisotropy")) {
+    impl_->material_.setAnisotropy(
+        finiteClamped(value.toFloat(), impl_->material_.anisotropy(),
+                      -1.0f, 1.0f),
+        impl_->material_.anisotropyRotationDegrees());
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath ==
+             QStringLiteral("material.anisotropyRotationDegrees")) {
+    impl_->material_.setAnisotropy(
+        impl_->material_.anisotropy(),
+        finiteClamped(value.toFloat(),
+                      impl_->material_.anisotropyRotationDegrees(),
+                      -180.0f, 180.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.sheenRoughness")) {
+    impl_->material_.setSheenRoughness(finiteClamped(
+        value.toFloat(), impl_->material_.sheenRoughness(), 0.0f, 1.0f));
     Q_EMIT changed();
     return true;
   } else if (propertyPath == QStringLiteral("material.emissionStrength")) {
@@ -2745,13 +3740,35 @@ QString Artifact3DLayer::materialSignature() const
 {
   const QColor baseColor = impl_->material_.baseColor();
   const QColor emissionColor = impl_->material_.emissionColor();
+  const QColor specularTint = impl_->material_.specularTint();
+  const QColor sheenTint = impl_->material_.sheenTint();
+  const QColor subsurfaceColor = impl_->material_.subsurfaceColor();
+  const QVector3D subsurfaceRadius = impl_->material_.subsurfaceRadius();
+  const QColor clearcoatTint = impl_->material_.clearcoatTint();
   return QStringLiteral(
              "src=%1|baseTex=%2|mrTex=%3|normalTex=%4|emissionTex=%5|occTex=%6|opacityTex=%7|"
              "base=%8,%9,%10,%11|emission=%12,%13,%14,%15|metallic=%16|roughness=%17|"
              "specular=%18|ior=%19|transmission=%20|clearcoat=%21|clearcoatRoughness=%22|"
              "alphaMode=%23|alphaCutoff=%24|emissionStrength=%25|opacity=%26|"
              "normalStrength=%27|occlusionStrength=%28|sheen=%29|solidTexture=%30|"
-             "wireOverlay=%31|graph=%32|uv=%33,%34,%35,%36,%37|env=%38")
+             "wireOverlay=%31|graph=%32|uv=%33,%34,%35,%36,%37|env=%38|"
+             "sheenRoughness=%39|sheenTint=%40,%41,%42,%43|"
+             "anisotropy=%44|anisotropyRotation=%45|subsurface=%46|"
+             "subsurfaceColor=%47,%48,%49|clearcoatIOR=%50|"
+             "clearcoatTint=%51,%52,%53|clearcoatNormalStrength=%54|"
+             "subsurfaceRadius=%55,%56,%57|specularTint=%58,%59,%60|"
+             "thinFilm=%61,%62|subsurfaceIOR=%63|subsurfaceAnisotropy=%64|"
+             "clearcoatNormalTexture=%65|diffuseRoughness=%66|normalUvRotation=%67|"
+             "normalUvScale=%68|coatNormalUv=%69,%70|baseColorUvScale=%71|"
+             "metallicRoughnessUvScale=%72|normalUvOffset=%73,%74|"
+             "occlusionTextureUvScale=%75|emissionTextureUvScale=%76|"
+             "opacityTextureUvScale=%77|coatNormalUvOffset=%78,%79|"
+             "metallicRoughnessUvOffset=%80,%81|emissionTextureUvOffset=%82,%83|"
+             "occlusionTextureUvOffset=%84,%85|baseColorUvOffset=%86,%87|"
+             "opacityTextureUvOffset=%88,%89|baseColorUvRotation=%90|"
+             "emissionTextureUvRotation=%91|metallicRoughnessUvRotation=%92|"
+             "opacityTextureUvRotation=%93|occlusionTextureUvRotation=%94|"
+             "normalUvSet=%95")
       .arg(impl_->sourcePath_)
       .arg(impl_->material_.baseColorTexture().toQString())
       .arg(impl_->material_.metallicRoughnessTexture().toQString())
@@ -2789,7 +3806,63 @@ QString Artifact3DLayer::materialSignature() const
       .arg(impl_->material_.uvScaleU(), 0, 'f', 6)
       .arg(impl_->material_.uvScaleV(), 0, 'f', 6)
       .arg(impl_->material_.uvRotationDegrees(), 0, 'f', 6)
-      .arg(impl_->material_.environmentIntensity(), 0, 'f', 6);
+      .arg(impl_->material_.environmentIntensity(), 0, 'f', 6)
+      .arg(impl_->material_.sheenRoughness(), 0, 'f', 6)
+      .arg(sheenTint.redF(), 0, 'f', 6)
+      .arg(sheenTint.greenF(), 0, 'f', 6)
+      .arg(sheenTint.blueF(), 0, 'f', 6)
+      .arg(impl_->material_.anisotropy(), 0, 'f', 6)
+      .arg(impl_->material_.anisotropyRotationDegrees(), 0, 'f', 6)
+      .arg(impl_->material_.subsurface(), 0, 'f', 6)
+      .arg(subsurfaceColor.redF(), 0, 'f', 6)
+      .arg(subsurfaceColor.greenF(), 0, 'f', 6)
+      .arg(subsurfaceColor.blueF(), 0, 'f', 6)
+      .arg(impl_->material_.clearcoatIOR(), 0, 'f', 6)
+      .arg(clearcoatTint.redF(), 0, 'f', 6)
+      .arg(clearcoatTint.greenF(), 0, 'f', 6)
+      .arg(clearcoatTint.blueF(), 0, 'f', 6)
+      .arg(impl_->material_.clearcoatNormalStrength(), 0, 'f', 6)
+      .arg(subsurfaceRadius.x(), 0, 'f', 6)
+      .arg(subsurfaceRadius.y(), 0, 'f', 6)
+      .arg(subsurfaceRadius.z(), 0, 'f', 6)
+      .arg(specularTint.redF(), 0, 'f', 6)
+      .arg(specularTint.greenF(), 0, 'f', 6)
+      .arg(specularTint.blueF(), 0, 'f', 6)
+      .arg(impl_->material_.thinFilmThickness(), 0, 'f', 6)
+      .arg(impl_->material_.thinFilmIOR(), 0, 'f', 6)
+      .arg(impl_->material_.subsurfaceIOR(), 0, 'f', 6)
+      .arg(impl_->material_.subsurfaceAnisotropy(), 0, 'f', 6)
+      .arg(impl_->material_.clearcoatNormalTexture().toQString())
+      .arg(impl_->material_.diffuseRoughness(), 0, 'f', 6)
+      .arg(impl_->material_.normalUvRotationDegrees(), 0, 'f', 6)
+      .arg(impl_->material_.normalUvScale(), 0, 'f', 6)
+      .arg(impl_->material_.clearcoatNormalUvRotationDegrees(), 0, 'f', 6)
+      .arg(impl_->material_.clearcoatNormalUvScale(), 0, 'f', 6)
+      .arg(impl_->material_.baseColorUvScale(), 0, 'f', 6)
+      .arg(impl_->material_.metallicRoughnessUvScale(), 0, 'f', 6)
+      .arg(impl_->material_.normalUvOffsetU(), 0, 'f', 6)
+      .arg(impl_->material_.normalUvOffsetV(), 0, 'f', 6)
+      .arg(impl_->material_.occlusionTextureUvScale(), 0, 'f', 6)
+      .arg(impl_->material_.emissionTextureUvScale(), 0, 'f', 6)
+      .arg(impl_->material_.opacityTextureUvScale(), 0, 'f', 6)
+      .arg(impl_->material_.clearcoatNormalUvOffsetU(), 0, 'f', 6)
+      .arg(impl_->material_.clearcoatNormalUvOffsetV(), 0, 'f', 6)
+      .arg(impl_->material_.metallicRoughnessUvOffsetU(), 0, 'f', 6)
+      .arg(impl_->material_.metallicRoughnessUvOffsetV(), 0, 'f', 6)
+      .arg(impl_->material_.emissionTextureUvOffsetU(), 0, 'f', 6)
+      .arg(impl_->material_.emissionTextureUvOffsetV(), 0, 'f', 6)
+      .arg(impl_->material_.occlusionTextureUvOffsetU(), 0, 'f', 6)
+      .arg(impl_->material_.occlusionTextureUvOffsetV(), 0, 'f', 6)
+      .arg(impl_->material_.baseColorUvOffsetU(), 0, 'f', 6)
+      .arg(impl_->material_.baseColorUvOffsetV(), 0, 'f', 6)
+      .arg(impl_->material_.opacityTextureUvOffsetU(), 0, 'f', 6)
+      .arg(impl_->material_.opacityTextureUvOffsetV(), 0, 'f', 6)
+      .arg(impl_->material_.baseColorUvRotationDegrees(), 0, 'f', 6)
+      .arg(impl_->material_.emissionTextureUvRotationDegrees(), 0, 'f', 6)
+      .arg(impl_->material_.metallicRoughnessUvRotationDegrees(), 0, 'f', 6)
+      .arg(impl_->material_.opacityTextureUvRotationDegrees(), 0, 'f', 6)
+      .arg(impl_->material_.occlusionTextureUvRotationDegrees(), 0, 'f', 6)
+      .arg(impl_->material_.normalUvSet());
 }
 
 void Artifact3DLayer::setMaterialGraphJson(const QString& json)
