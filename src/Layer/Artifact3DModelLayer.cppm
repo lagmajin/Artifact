@@ -336,6 +336,28 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
             &ArtifactCore::Material::setMetallicRoughnessUvOffsetV,
             &ArtifactCore::Material::setMetallicRoughnessUvSet);
       }
+      if (!imported.metallicTexture.toQString().isEmpty()) {
+        sourceMaterial.setMetallicTexture(imported.metallicTexture);
+        ArtifactCore::MaterialTextureUvTransform transform;
+        transform.scaleU = imported.metallicUv.scaleU;
+        transform.scaleV = imported.metallicUv.scaleV;
+        transform.rotationDegrees = imported.metallicUv.rotationDegrees;
+        transform.offsetU = imported.metallicUv.offsetU;
+        transform.offsetV = imported.metallicUv.offsetV;
+        transform.uvSet = imported.metallicUv.uvSet;
+        sourceMaterial.setMetallicTextureUvTransform(transform);
+      }
+      if (!imported.roughnessTexture.toQString().isEmpty()) {
+        sourceMaterial.setRoughnessTexture(imported.roughnessTexture);
+        ArtifactCore::MaterialTextureUvTransform transform;
+        transform.scaleU = imported.roughnessUv.scaleU;
+        transform.scaleV = imported.roughnessUv.scaleV;
+        transform.rotationDegrees = imported.roughnessUv.rotationDegrees;
+        transform.offsetU = imported.roughnessUv.offsetU;
+        transform.offsetV = imported.roughnessUv.offsetV;
+        transform.uvSet = imported.roughnessUv.uvSet;
+        sourceMaterial.setRoughnessTextureUvTransform(transform);
+      }
       if (!imported.normalTexture.toQString().isEmpty()) {
         sourceMaterial.setNormalTexture(imported.normalTexture);
         applyImportedUv(imported.normalUv,
@@ -646,6 +668,15 @@ UniString Artifact3DLayer::className() const { return QStringLiteral("Artifact3D
 
 QJsonObject Artifact3DLayer::toJson() const {
   QJsonObject obj = ArtifactAbstractLayer::toJson();
+  const auto textureTransformJson = [](const auto& transform) {
+    return QJsonObject{
+        {QStringLiteral("scaleU"), transform.scaleU},
+        {QStringLiteral("scaleV"), transform.scaleV},
+        {QStringLiteral("rotation"), transform.rotationDegrees},
+        {QStringLiteral("offsetU"), transform.offsetU},
+        {QStringLiteral("offsetV"), transform.offsetV},
+        {QStringLiteral("uvSet"), transform.uvSet}};
+  };
   obj["type"] = static_cast<int>(LayerType::Model3D);
   obj["sourcePath"] = impl_->sourcePath_;
   obj["model.sourceAssetId"] = impl_->sourceAssetId_.toString(QUuid::WithoutBraces);
@@ -779,6 +810,14 @@ QJsonObject Artifact3DLayer::toJson() const {
   obj["material.baseColorUvSet"] = impl_->material_.baseColorUvSet();
   obj["material.metallicRoughnessTexture"] =
       impl_->material_.metallicRoughnessTexture().toQString();
+  obj["material.metallicTexture"] =
+      impl_->material_.metallicTexture().toQString();
+  obj["material.roughnessTexture"] =
+      impl_->material_.roughnessTexture().toQString();
+  obj["material.metallicTextureUv"] = textureTransformJson(
+      impl_->material_.metallicTextureUvTransform());
+  obj["material.roughnessTextureUv"] = textureTransformJson(
+      impl_->material_.roughnessTextureUvTransform());
   obj["material.metallicRoughnessUvScale"] =
       impl_->material_.metallicRoughnessUvScale();
   obj["material.metallicRoughnessUvOffsetU"] =
@@ -839,6 +878,15 @@ QJsonObject Artifact3DLayer::toJson() const {
                            {QStringLiteral("offsetU"), offsetU},
                            {QStringLiteral("offsetV"), offsetV},
                            {QStringLiteral("uvSet"), uvSet}};
+      };
+      const auto textureUvSeparate = [](const auto& transform) {
+        return QJsonObject{
+            {QStringLiteral("scaleU"), transform.scaleU},
+            {QStringLiteral("scaleV"), transform.scaleV},
+            {QStringLiteral("rotation"), transform.rotationDegrees},
+            {QStringLiteral("offsetU"), transform.offsetU},
+            {QStringLiteral("offsetV"), transform.offsetV},
+            {QStringLiteral("uvSet"), transform.uvSet}};
       };
       materialSlots.append(QJsonObject{
           {QStringLiteral("name"), material.name().toQString()},
@@ -901,6 +949,14 @@ QJsonObject Artifact3DLayer::toJson() const {
               material.baseColorTexture().toQString()},
           {QStringLiteral("metallicRoughnessTexture"),
               material.metallicRoughnessTexture().toQString()},
+          {QStringLiteral("metallicTexture"),
+              material.metallicTexture().toQString()},
+          {QStringLiteral("roughnessTexture"),
+              material.roughnessTexture().toQString()},
+          {QStringLiteral("metallicTextureUv"),
+              textureUvSeparate(material.metallicTextureUvTransform())},
+          {QStringLiteral("roughnessTextureUv"),
+              textureUvSeparate(material.roughnessTextureUvTransform())},
           {QStringLiteral("normalTexture"), material.normalTexture().toQString()},
           {QStringLiteral("clearcoatNormalTexture"),
               material.clearcoatNormalTexture().toQString()},
@@ -1333,6 +1389,37 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
       obj.value("material.metallicRoughnessTexture").toString();
   impl_->material_.setMetallicRoughnessTexture(
       ArtifactCore::UniString::fromQString(metallicRoughnessTexture));
+  impl_->material_.setMetallicTexture(ArtifactCore::UniString::fromQString(
+      obj.value("material.metallicTexture").toString()));
+  impl_->material_.setRoughnessTexture(ArtifactCore::UniString::fromQString(
+      obj.value("material.roughnessTexture").toString()));
+  const auto restoreIndependentTextureUv = [&](const char* key, auto setter,
+                                                auto getter) {
+    QJsonObject uv = obj.value(QString::fromLatin1(key)).toObject();
+    if (uv.isEmpty()) return;
+    auto transform = (impl_->material_.*getter)();
+    const auto readUv = [&](const char* field, float current,
+                            float minimum, float maximum) {
+      return finiteClamped(static_cast<float>(uv.value(
+          QString::fromLatin1(field)).toDouble(current)), current,
+          minimum, maximum);
+    };
+    transform.scaleU = readUv("scaleU", transform.scaleU, 0.01f, 10.0f);
+    transform.scaleV = readUv("scaleV", transform.scaleV, 0.01f, 10.0f);
+    transform.rotationDegrees = readUv(
+        "rotation", transform.rotationDegrees, -360.0f, 360.0f);
+    transform.offsetU = readUv("offsetU", transform.offsetU, -10.0f, 10.0f);
+    transform.offsetV = readUv("offsetV", transform.offsetV, -10.0f, 10.0f);
+    transform.uvSet = std::clamp(
+        uv.value(QStringLiteral("uvSet")).toInt(transform.uvSet), 0, 1);
+    (impl_->material_.*setter)(transform);
+  };
+  restoreIndependentTextureUv("material.metallicTextureUv",
+      &ArtifactCore::Material::setMetallicTextureUvTransform,
+      &ArtifactCore::Material::metallicTextureUvTransform);
+  restoreIndependentTextureUv("material.roughnessTextureUv",
+      &ArtifactCore::Material::setRoughnessTextureUvTransform,
+      &ArtifactCore::Material::roughnessTextureUvTransform);
   impl_->material_.setMetallicRoughnessUvScale(finiteClamped(
       static_cast<float>(obj.value("material.metallicRoughnessUvScale")
           .toDouble(impl_->material_.metallicRoughnessUvScale())),
@@ -1590,6 +1677,25 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
       (material.*uvSetSetter)(std::clamp(uv.value("uvSet").toInt(currentUvSet),
                                          0, 1));
     };
+    const auto restoreIndependentUv = [&](const char* key, auto setter,
+                                          auto getter) {
+      const QJsonObject uv = slot.value(QString::fromLatin1(key)).toObject();
+      if (uv.isEmpty()) return;
+      auto transform = (material.*getter)();
+      transform.scaleU = readScalarFromObject(
+          uv, "scaleU", transform.scaleU, 0.01f, 10.0f);
+      transform.scaleV = readScalarFromObject(
+          uv, "scaleV", transform.scaleV, 0.01f, 10.0f);
+      transform.rotationDegrees = readScalarFromObject(
+          uv, "rotation", transform.rotationDegrees, -360.0f, 360.0f);
+      transform.offsetU = readScalarFromObject(
+          uv, "offsetU", transform.offsetU, -10.0f, 10.0f);
+      transform.offsetV = readScalarFromObject(
+          uv, "offsetV", transform.offsetV, -10.0f, 10.0f);
+      transform.uvSet = std::clamp(
+          uv.value(QStringLiteral("uvSet")).toInt(transform.uvSet), 0, 1);
+      (material.*setter)(transform);
+    };
     restoreUv("baseColorUv", &ArtifactCore::Material::setBaseColorUvScale,
         &ArtifactCore::Material::setBaseColorUvRotationDegrees,
         &ArtifactCore::Material::setBaseColorUvOffsetU,
@@ -1609,6 +1715,12 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
         material.metallicRoughnessUvOffsetU(),
         material.metallicRoughnessUvOffsetV(),
         material.metallicRoughnessUvSet());
+    restoreIndependentUv("metallicTextureUv",
+        &ArtifactCore::Material::setMetallicTextureUvTransform,
+        &ArtifactCore::Material::metallicTextureUvTransform);
+    restoreIndependentUv("roughnessTextureUv",
+        &ArtifactCore::Material::setRoughnessTextureUvTransform,
+        &ArtifactCore::Material::roughnessTextureUvTransform);
     restoreUv("normalUv", &ArtifactCore::Material::setNormalUvScale,
         &ArtifactCore::Material::setNormalUvRotationDegrees,
         &ArtifactCore::Material::setNormalUvOffsetU,
@@ -1671,6 +1783,10 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
     restoreTexture("baseColorTexture", &ArtifactCore::Material::setBaseColorTexture);
     restoreTexture("metallicRoughnessTexture",
         &ArtifactCore::Material::setMetallicRoughnessTexture);
+    restoreTexture("metallicTexture",
+        &ArtifactCore::Material::setMetallicTexture);
+    restoreTexture("roughnessTexture",
+        &ArtifactCore::Material::setRoughnessTexture);
     restoreTexture("normalTexture", &ArtifactCore::Material::setNormalTexture);
     restoreTexture("clearcoatNormalTexture",
         &ArtifactCore::Material::setClearcoatNormalTexture);
@@ -3238,6 +3354,36 @@ Artifact3DLayer::getLayerPropertyGroups() const {
   renderGroup.addProperty(pointSizeProp);
 
   PropertyGroup materialGroup(QStringLiteral("Material"));
+  const auto addIndependentTextureUvProperties = [&] (
+      const QString& prefix, const QString& label,
+      const ArtifactCore::MaterialTextureUvTransform& transform,
+      int priority) {
+    const auto addFloat = [&](const QString& field, const QString& fieldLabel,
+                              float value, double minimum, double maximum,
+                              int order) {
+      auto property = persistentLayerProperty(
+          prefix + field, PropertyType::Float, value, order);
+      property->setDisplayLabel(fieldLabel);
+      property->setHardRange(minimum, maximum);
+      materialGroup.addProperty(property);
+    };
+    addFloat(QStringLiteral("scaleU"), label + QStringLiteral(" UV Scale U"),
+             transform.scaleU, 0.01, 10.0, priority);
+    addFloat(QStringLiteral("scaleV"), label + QStringLiteral(" UV Scale V"),
+             transform.scaleV, 0.01, 10.0, priority + 1);
+    addFloat(QStringLiteral("rotation"), label + QStringLiteral(" UV Rotation"),
+             transform.rotationDegrees, -360.0, 360.0, priority + 2);
+    addFloat(QStringLiteral("offsetU"), label + QStringLiteral(" UV Offset U"),
+             transform.offsetU, -10.0, 10.0, priority + 3);
+    addFloat(QStringLiteral("offsetV"), label + QStringLiteral(" UV Offset V"),
+             transform.offsetV, -10.0, 10.0, priority + 4);
+    auto uvSet = persistentLayerProperty(
+        prefix + QStringLiteral("uvSet"), PropertyType::Integer,
+        transform.uvSet, priority + 5);
+    uvSet->setDisplayLabel(label + QStringLiteral(" UV Set"));
+    uvSet->setHardRange(0, 1);
+    materialGroup.addProperty(uvSet);
+  };
 
   auto baseColorProp = persistentLayerProperty(
       QStringLiteral("material.base.color"), PropertyType::Color,
@@ -3514,6 +3660,26 @@ Artifact3DLayer::getLayerPropertyGroups() const {
       impl_->material_.metallicRoughnessTexture().toQString(), -39);
   metallicRoughnessTextureProp->setDisplayLabel(QStringLiteral("Metallic Roughness Texture"));
   materialGroup.addProperty(metallicRoughnessTextureProp);
+
+  auto metallicTextureProp = persistentLayerProperty(
+      QStringLiteral("material.metallicTexture"), PropertyType::String,
+      impl_->material_.metallicTexture().toQString(), -38);
+  metallicTextureProp->setDisplayLabel(QStringLiteral("Metallic Texture"));
+  materialGroup.addProperty(metallicTextureProp);
+
+  auto roughnessTextureProp = persistentLayerProperty(
+      QStringLiteral("material.roughnessTexture"), PropertyType::String,
+      impl_->material_.roughnessTexture().toQString(), -37);
+  roughnessTextureProp->setDisplayLabel(QStringLiteral("Roughness Texture"));
+  materialGroup.addProperty(roughnessTextureProp);
+  addIndependentTextureUvProperties(
+      QStringLiteral("material.metallicTextureUv."),
+      QStringLiteral("Metallic Texture"),
+      impl_->material_.metallicTextureUvTransform(), -30);
+  addIndependentTextureUvProperties(
+      QStringLiteral("material.roughnessTextureUv."),
+      QStringLiteral("Roughness Texture"),
+      impl_->material_.roughnessTextureUvTransform(), -24);
 
   auto metallicRoughnessUvScaleProp = persistentLayerProperty(
       QStringLiteral("material.metallicRoughnessUvScale"), PropertyType::Float,
@@ -3948,6 +4114,33 @@ Artifact3DLayer::getLayerPropertyGroups() const {
         uvSetProperty->setHardRange(0, 1);
         slotGroup.addProperty(uvSetProperty);
       };
+      const auto addIndependentTextureUv = [&](const QString& field,
+          const QString& label,
+          const ArtifactCore::MaterialTextureUvTransform& transform,
+          int priority) {
+        const QString uvPrefix = field + QStringLiteral("Uv.");
+        addScalar(uvPrefix + QStringLiteral("scaleU"),
+            label + QStringLiteral(" UV Scale U"), transform.scaleU,
+            0.01, 10.0, priority);
+        addScalar(uvPrefix + QStringLiteral("scaleV"),
+            label + QStringLiteral(" UV Scale V"), transform.scaleV,
+            0.01, 10.0, priority + 1);
+        addScalar(uvPrefix + QStringLiteral("rotation"),
+            label + QStringLiteral(" UV Rotation"),
+            transform.rotationDegrees, -360.0, 360.0, priority + 2);
+        addScalar(uvPrefix + QStringLiteral("offsetU"),
+            label + QStringLiteral(" UV Offset U"), transform.offsetU,
+            -10.0, 10.0, priority + 3);
+        addScalar(uvPrefix + QStringLiteral("offsetV"),
+            label + QStringLiteral(" UV Offset V"), transform.offsetV,
+            -10.0, 10.0, priority + 4);
+        auto uvSetProperty = persistentLayerProperty(
+            prefix + uvPrefix + QStringLiteral("uvSet"),
+            PropertyType::Integer, transform.uvSet, priority + 5);
+        uvSetProperty->setDisplayLabel(label + QStringLiteral(" UV Set"));
+        uvSetProperty->setHardRange(0, 1);
+        slotGroup.addProperty(uvSetProperty);
+      };
       addColor(QStringLiteral("baseColor"), QStringLiteral("Base Color"),
                material.baseColor(), -80);
       addScalar(QStringLiteral("metallic"), QStringLiteral("Metallic"),
@@ -4057,6 +4250,16 @@ Artifact3DLayer::getLayerPropertyGroups() const {
       addTexturePath(QStringLiteral("metallicRoughnessTexture"),
           QStringLiteral("Metallic-Roughness Texture"),
           material.metallicRoughnessTexture(), -34);
+      addTexturePath(QStringLiteral("metallicTexture"),
+          QStringLiteral("Metallic Texture"), material.metallicTexture(), -32);
+      addTexturePath(QStringLiteral("roughnessTexture"),
+          QStringLiteral("Roughness Texture"), material.roughnessTexture(), -31);
+      addIndependentTextureUv(QStringLiteral("metallicTexture"),
+          QStringLiteral("Metallic Texture"),
+          material.metallicTextureUvTransform(), -30);
+      addIndependentTextureUv(QStringLiteral("roughnessTexture"),
+          QStringLiteral("Roughness Texture"),
+          material.roughnessTextureUvTransform(), -24);
       addTextureUv(QStringLiteral("metallicRoughness"),
           QStringLiteral("Metallic-Roughness"),
           material.metallicRoughnessUvScale(),
@@ -4136,6 +4339,10 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
             &ArtifactCore::Material::setBaseColorTexture) ||
         setTexturePath(QStringLiteral("metallicRoughnessTexture"),
             &ArtifactCore::Material::setMetallicRoughnessTexture) ||
+        setTexturePath(QStringLiteral("metallicTexture"),
+            &ArtifactCore::Material::setMetallicTexture) ||
+        setTexturePath(QStringLiteral("roughnessTexture"),
+            &ArtifactCore::Material::setRoughnessTexture) ||
         setTexturePath(QStringLiteral("normalTexture"),
             &ArtifactCore::Material::setNormalTexture) ||
         setTexturePath(QStringLiteral("clearcoatNormalTexture"),
@@ -4227,6 +4434,33 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
           &ArtifactCore::Material::setOpacityTextureUvOffsetU,
           &ArtifactCore::Material::setOpacityTextureUvOffsetV,
           &ArtifactCore::Material::setOpacityTextureUvSet);
+      const auto updateIndependentTextureUv = [&](const QString& uvPrefix,
+          auto setter, auto getter) {
+        if (!field.startsWith(uvPrefix)) return;
+        const QString uvField = field.mid(uvPrefix.size());
+        auto transform = (material.*getter)();
+        if (uvField == QStringLiteral("scaleU"))
+          transform.scaleU = std::clamp(incoming, 0.01f, 10.0f);
+        else if (uvField == QStringLiteral("scaleV"))
+          transform.scaleV = std::clamp(incoming, 0.01f, 10.0f);
+        else if (uvField == QStringLiteral("rotation"))
+          transform.rotationDegrees = std::clamp(incoming, -360.0f, 360.0f);
+        else if (uvField == QStringLiteral("offsetU"))
+          transform.offsetU = std::clamp(incoming, -10.0f, 10.0f);
+        else if (uvField == QStringLiteral("offsetV"))
+          transform.offsetV = std::clamp(incoming, -10.0f, 10.0f);
+        else if (uvField == QStringLiteral("uvSet"))
+          transform.uvSet = std::clamp(value.toInt(), 0, 1);
+        else return;
+        (material.*setter)(transform);
+        uvPropertyHandled = true;
+      };
+      updateIndependentTextureUv(QStringLiteral("metallicTextureUv."),
+          &ArtifactCore::Material::setMetallicTextureUvTransform,
+          &ArtifactCore::Material::metallicTextureUvTransform);
+      updateIndependentTextureUv(QStringLiteral("roughnessTextureUv."),
+          &ArtifactCore::Material::setRoughnessTextureUvTransform,
+          &ArtifactCore::Material::roughnessTextureUvTransform);
       if (uvPropertyHandled) {
         Q_EMIT changed();
         return true;
@@ -4439,6 +4673,39 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
         value.toFloat(), impl_->pointSize_, 0.25f, 8.0f);
     Q_EMIT changed();
     return true;
+  } else if (propertyPath.startsWith(
+                 QStringLiteral("material.metallicTextureUv.")) ||
+             propertyPath.startsWith(
+                 QStringLiteral("material.roughnessTextureUv."))) {
+    const bool metallicMap = propertyPath.startsWith(
+        QStringLiteral("material.metallicTextureUv."));
+    const auto setter = metallicMap
+        ? &ArtifactCore::Material::setMetallicTextureUvTransform
+        : &ArtifactCore::Material::setRoughnessTextureUvTransform;
+    const auto getter = metallicMap
+        ? &ArtifactCore::Material::metallicTextureUvTransform
+        : &ArtifactCore::Material::roughnessTextureUvTransform;
+    auto transform = (impl_->material_.*getter)();
+    const QString field = propertyPath.section(QLatin1Char('.'), -1);
+    const float incoming = value.toFloat();
+    if (field == QStringLiteral("scaleU"))
+      transform.scaleU = finiteClamped(incoming, transform.scaleU, 0.01f, 10.0f);
+    else if (field == QStringLiteral("scaleV"))
+      transform.scaleV = finiteClamped(incoming, transform.scaleV, 0.01f, 10.0f);
+    else if (field == QStringLiteral("rotation"))
+      transform.rotationDegrees = finiteClamped(
+          incoming, transform.rotationDegrees, -360.0f, 360.0f);
+    else if (field == QStringLiteral("offsetU"))
+      transform.offsetU = finiteClamped(incoming, transform.offsetU, -10.0f, 10.0f);
+    else if (field == QStringLiteral("offsetV"))
+      transform.offsetV = finiteClamped(incoming, transform.offsetV, -10.0f, 10.0f);
+    else if (field == QStringLiteral("uvSet"))
+      transform.uvSet = std::clamp(value.toInt(), 0, 1);
+    else
+      return false;
+    (impl_->material_.*setter)(transform);
+    Q_EMIT changed();
+    return true;
   } else if (propertyPath == QStringLiteral("material.base.color")) {
     impl_->material_.setBaseColor(value.value<QColor>());
     Q_EMIT changed();
@@ -4476,6 +4743,16 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
     return true;
   } else if (propertyPath == QStringLiteral("material.metallicRoughnessTexture")) {
     impl_->material_.setMetallicRoughnessTexture(
+        ArtifactCore::UniString::fromQString(value.toString()));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.metallicTexture")) {
+    impl_->material_.setMetallicTexture(
+        ArtifactCore::UniString::fromQString(value.toString()));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.roughnessTexture")) {
+    impl_->material_.setRoughnessTexture(
         ArtifactCore::UniString::fromQString(value.toString()));
     Q_EMIT changed();
     return true;
@@ -4892,7 +5169,7 @@ QString Artifact3DLayer::materialSignature() const
   const QColor subsurfaceColor = impl_->material_.subsurfaceColor();
   const QVector3D subsurfaceRadius = impl_->material_.subsurfaceRadius();
   const QColor clearcoatTint = impl_->material_.clearcoatTint();
-  return QStringLiteral(
+  QString signature = QStringLiteral(
              "src=%1|baseTex=%2|mrTex=%3|normalTex=%4|emissionTex=%5|occTex=%6|opacityTex=%7|"
              "base=%8,%9,%10,%11|emission=%12,%13,%14,%15|metallic=%16|roughness=%17|"
              "specular=%18|ior=%19|transmission=%20|clearcoat=%21|clearcoatRoughness=%22|"
@@ -5017,6 +5294,50 @@ QString Artifact3DLayer::materialSignature() const
                .arg(impl_->material_.emissionTextureUvSet())
                .arg(impl_->material_.opacityTextureUvSet())
                .arg(impl_->material_.clearcoatNormalUvSet()));
+  signature += QStringLiteral("|metallicTexture=%1|roughnessTexture=%2")
+      .arg(impl_->material_.metallicTexture().toQString())
+      .arg(impl_->material_.roughnessTexture().toQString());
+  const auto metallicTextureUv = impl_->material_.metallicTextureUvTransform();
+  const auto roughnessTextureUv = impl_->material_.roughnessTextureUvTransform();
+  signature += QStringLiteral("|metallicMapUv=%1,%2,%3,%4,%5,%6|"
+                              "roughnessMapUv=%7,%8,%9,%10,%11,%12")
+      .arg(metallicTextureUv.scaleU, 0, 'f', 6)
+      .arg(metallicTextureUv.scaleV, 0, 'f', 6)
+      .arg(metallicTextureUv.rotationDegrees, 0, 'f', 6)
+      .arg(metallicTextureUv.offsetU, 0, 'f', 6)
+      .arg(metallicTextureUv.offsetV, 0, 'f', 6)
+      .arg(metallicTextureUv.uvSet)
+      .arg(roughnessTextureUv.scaleU, 0, 'f', 6)
+      .arg(roughnessTextureUv.scaleV, 0, 'f', 6)
+      .arg(roughnessTextureUv.rotationDegrees, 0, 'f', 6)
+      .arg(roughnessTextureUv.offsetU, 0, 'f', 6)
+      .arg(roughnessTextureUv.offsetV, 0, 'f', 6)
+      .arg(roughnessTextureUv.uvSet);
+  for (std::size_t index = 0; index < impl_->meshMaterials_.size(); ++index) {
+    const auto& material = impl_->meshMaterials_[index];
+    const auto metallicUv = material.metallicTextureUvTransform();
+    const auto roughnessUv = material.roughnessTextureUvTransform();
+    signature += QStringLiteral("|slot%1Maps=%2,%3,%4")
+        .arg(static_cast<qulonglong>(index))
+        .arg(material.metallicRoughnessTexture().toQString())
+        .arg(material.metallicTexture().toQString())
+        .arg(material.roughnessTexture().toQString());
+    signature += QStringLiteral("|slot%1PbrUv=%2,%3,%4,%5,%6,%7,%8,%9,%10,%11,%12")
+        .arg(static_cast<qulonglong>(index))
+        .arg(metallicUv.scaleU, 0, 'f', 6)
+        .arg(metallicUv.scaleV, 0, 'f', 6)
+        .arg(metallicUv.rotationDegrees, 0, 'f', 6)
+        .arg(metallicUv.offsetU, 0, 'f', 6)
+        .arg(metallicUv.offsetV, 0, 'f', 6)
+        .arg(metallicUv.uvSet)
+        .arg(roughnessUv.scaleU, 0, 'f', 6)
+        .arg(roughnessUv.scaleV, 0, 'f', 6)
+        .arg(roughnessUv.rotationDegrees, 0, 'f', 6)
+        .arg(roughnessUv.offsetU, 0, 'f', 6)
+        .arg(roughnessUv.offsetV, 0, 'f', 6)
+        .arg(roughnessUv.uvSet);
+  }
+  return signature;
 }
 
 void Artifact3DLayer::setMaterialGraphJson(const QString& json)

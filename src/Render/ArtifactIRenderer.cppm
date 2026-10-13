@@ -1471,6 +1471,10 @@ namespace {
             slotMaterial.baseColorTexture().toQString().trimmed();
         range.metallicRoughnessTexturePath =
             slotMaterial.metallicRoughnessTexture().toQString().trimmed();
+        range.metallicTexturePath =
+            slotMaterial.metallicTexture().toQString().trimmed();
+        range.roughnessTexturePath =
+            slotMaterial.roughnessTexture().toQString().trimmed();
         range.normalTexturePath =
             lowMaterialLOD ? QString()
                            : slotMaterial.normalTexture().toQString().trimmed();
@@ -1509,6 +1513,27 @@ namespace {
             slotMaterial.alphaMode() ==
                     ArtifactCore::MaterialAlphaMode::Masked
                 ? 1.0f : 0.0f};
+        const auto metallicTextureUv =
+            slotMaterial.metallicTextureUvTransform();
+        const auto roughnessTextureUv =
+            slotMaterial.roughnessTextureUvTransform();
+        state.pbrTextureFlags2 = {
+            slotMaterial.hasMetallicTexture() ? 1.0f : 0.0f,
+            slotMaterial.hasRoughnessTexture() ? 1.0f : 0.0f,
+            metallicTextureUv.uvSet == 1 ? 1.0f : 0.0f,
+            roughnessTextureUv.uvSet == 1 ? 1.0f : 0.0f};
+        state.metallicTextureUvTransform = {
+            metallicTextureUv.scaleU, metallicTextureUv.scaleV,
+            metallicTextureUv.offsetU, metallicTextureUv.offsetV};
+        state.roughnessTextureUvTransform = {
+            roughnessTextureUv.scaleU, roughnessTextureUv.scaleV,
+            roughnessTextureUv.offsetU, roughnessTextureUv.offsetV};
+        state.independentPbrTextureUvRotation = {
+            metallicTextureUv.rotationDegrees *
+                (3.14159265358979323846f / 180.0f),
+            roughnessTextureUv.rotationDegrees *
+                (3.14159265358979323846f / 180.0f),
+            0.0f, 0.0f};
         state.principledFactors = {
             slotMaterial.specular(), slotMaterial.ior(),
             slotMaterial.transmission(), slotMaterial.sheen()};
@@ -1712,6 +1737,18 @@ namespace {
     renderer->setEnvironmentIntensity(material.environmentIntensity());
     renderer->setMetallicRoughnessTexture(
         material.metallicRoughnessTexture().toQString());
+    renderer->setMetallicTexture(material.metallicTexture().toQString());
+    renderer->setRoughnessTexture(material.roughnessTexture().toQString());
+    const auto metallicTextureUv = material.metallicTextureUvTransform();
+    renderer->setMetallicTextureUvTransform(
+        metallicTextureUv.scaleU, metallicTextureUv.scaleV,
+        metallicTextureUv.rotationDegrees, metallicTextureUv.offsetU,
+        metallicTextureUv.offsetV, metallicTextureUv.uvSet);
+    const auto roughnessTextureUv = material.roughnessTextureUvTransform();
+    renderer->setRoughnessTextureUvTransform(
+        roughnessTextureUv.scaleU, roughnessTextureUv.scaleV,
+        roughnessTextureUv.rotationDegrees, roughnessTextureUv.offsetU,
+        roughnessTextureUv.offsetV, roughnessTextureUv.uvSet);
     // Layer-owned material graph: MeshRenderer recompiles only when the
     // payload differs, so the per-frame call stays a string compare.
     renderer->setMaterialGraphJson(
