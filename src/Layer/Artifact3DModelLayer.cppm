@@ -282,210 +282,217 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
       impl_->meshLocalTransforms_.clear();
       centerMeshPositions(impl_->mesh_);
     }
-    const bool importedUfbxMaterialSlots =
+    const auto makeImportedMaterial = [&](const auto& imported) {
+      ArtifactCore::Material sourceMaterial = impl_->material_;
+      const auto applyImportedUv = [&](const auto& transform,
+          auto scaleSetter, auto rotationSetter, auto offsetUSetter,
+          auto offsetVSetter, auto uvSetSetter) {
+        if (!transform.hasTransform && transform.uvSet == 0) return;
+        if (transform.hasTransform && transform.scaleU > 0.0f &&
+            std::abs(transform.scaleU - transform.scaleV) <= 1.0e-4f) {
+          (sourceMaterial.*scaleSetter)(transform.scaleU);
+        }
+        if (transform.hasTransform) {
+          (sourceMaterial.*rotationSetter)(transform.rotationDegrees);
+          (sourceMaterial.*offsetUSetter)(transform.offsetU);
+          (sourceMaterial.*offsetVSetter)(transform.offsetV);
+        }
+        (sourceMaterial.*uvSetSetter)(transform.uvSet);
+      };
+      if (!imported.name.toQString().isEmpty()) {
+        sourceMaterial.setName(imported.name);
+      }
+      if (imported.hasBaseColor) {
+        sourceMaterial.setBaseColor(QColor::fromRgbF(
+            imported.baseColor[0], imported.baseColor[1],
+            imported.baseColor[2], imported.baseColor[3]));
+      }
+      if (imported.baseColor[3] < 0.999f) {
+        sourceMaterial.setAlphaMode(ArtifactCore::MaterialAlphaMode::Blended);
+      }
+      if (imported.hasOpacity) {
+        sourceMaterial.setOpacity(imported.opacity);
+        if (imported.opacity < 0.999f) {
+          sourceMaterial.setAlphaMode(
+              ArtifactCore::MaterialAlphaMode::Blended);
+        }
+      }
+      if (!imported.baseColorTexture.toQString().isEmpty()) {
+        sourceMaterial.setBaseColorTexture(imported.baseColorTexture);
+        applyImportedUv(imported.baseColorUv,
+            &ArtifactCore::Material::setBaseColorUvScale,
+            &ArtifactCore::Material::setBaseColorUvRotationDegrees,
+            &ArtifactCore::Material::setBaseColorUvOffsetU,
+            &ArtifactCore::Material::setBaseColorUvOffsetV,
+            &ArtifactCore::Material::setBaseColorUvSet);
+      }
+      if (!imported.metallicRoughnessTexture.toQString().isEmpty()) {
+        sourceMaterial.setMetallicRoughnessTexture(
+            imported.metallicRoughnessTexture);
+        applyImportedUv(imported.metallicRoughnessUv,
+            &ArtifactCore::Material::setMetallicRoughnessUvScale,
+            &ArtifactCore::Material::setMetallicRoughnessUvRotationDegrees,
+            &ArtifactCore::Material::setMetallicRoughnessUvOffsetU,
+            &ArtifactCore::Material::setMetallicRoughnessUvOffsetV,
+            &ArtifactCore::Material::setMetallicRoughnessUvSet);
+      }
+      if (!imported.normalTexture.toQString().isEmpty()) {
+        sourceMaterial.setNormalTexture(imported.normalTexture);
+        applyImportedUv(imported.normalUv,
+            &ArtifactCore::Material::setNormalUvScale,
+            &ArtifactCore::Material::setNormalUvRotationDegrees,
+            &ArtifactCore::Material::setNormalUvOffsetU,
+            &ArtifactCore::Material::setNormalUvOffsetV,
+            &ArtifactCore::Material::setNormalUvSet);
+      }
+      if (!imported.clearcoatNormalTexture.toQString().isEmpty()) {
+        sourceMaterial.setClearcoatNormalTexture(
+            imported.clearcoatNormalTexture);
+        applyImportedUv(imported.clearcoatNormalUv,
+            &ArtifactCore::Material::setClearcoatNormalUvScale,
+            &ArtifactCore::Material::setClearcoatNormalUvRotationDegrees,
+            &ArtifactCore::Material::setClearcoatNormalUvOffsetU,
+            &ArtifactCore::Material::setClearcoatNormalUvOffsetV,
+            &ArtifactCore::Material::setClearcoatNormalUvSet);
+      }
+      if (!imported.emissionTexture.toQString().isEmpty()) {
+        sourceMaterial.setEmissionTexture(imported.emissionTexture);
+        applyImportedUv(imported.emissionUv,
+            &ArtifactCore::Material::setEmissionTextureUvScale,
+            &ArtifactCore::Material::setEmissionTextureUvRotationDegrees,
+            &ArtifactCore::Material::setEmissionTextureUvOffsetU,
+            &ArtifactCore::Material::setEmissionTextureUvOffsetV,
+            &ArtifactCore::Material::setEmissionTextureUvSet);
+      }
+      if (!imported.occlusionTexture.toQString().isEmpty()) {
+        sourceMaterial.setOcclusionTexture(imported.occlusionTexture);
+        applyImportedUv(imported.occlusionUv,
+            &ArtifactCore::Material::setOcclusionTextureUvScale,
+            &ArtifactCore::Material::setOcclusionTextureUvRotationDegrees,
+            &ArtifactCore::Material::setOcclusionTextureUvOffsetU,
+            &ArtifactCore::Material::setOcclusionTextureUvOffsetV,
+            &ArtifactCore::Material::setOcclusionTextureUvSet);
+      }
+      if (!imported.opacityTexture.toQString().isEmpty()) {
+        sourceMaterial.setOpacityTexture(imported.opacityTexture);
+        applyImportedUv(imported.opacityUv,
+            &ArtifactCore::Material::setOpacityTextureUvScale,
+            &ArtifactCore::Material::setOpacityTextureUvRotationDegrees,
+            &ArtifactCore::Material::setOpacityTextureUvOffsetU,
+            &ArtifactCore::Material::setOpacityTextureUvOffsetV,
+            &ArtifactCore::Material::setOpacityTextureUvSet);
+      }
+      if (imported.hasMetallic) {
+        sourceMaterial.setMetallic(imported.metallic);
+      }
+      if (imported.hasRoughness) {
+        sourceMaterial.setRoughness(imported.roughness);
+      }
+      if (imported.hasDiffuseRoughness) {
+        sourceMaterial.setDiffuseRoughness(imported.diffuseRoughness);
+      }
+      if (imported.hasClearcoat) {
+        sourceMaterial.setClearcoat(imported.clearcoat);
+      }
+      if (imported.hasClearcoatRoughness) {
+        sourceMaterial.setClearcoatRoughness(imported.clearcoatRoughness);
+      }
+      if (imported.hasClearcoatIor) {
+        sourceMaterial.setClearcoatIOR(imported.clearcoatIor);
+      }
+      if (imported.hasClearcoatTint) {
+        sourceMaterial.setClearcoatTint(QColor::fromRgbF(
+            imported.clearcoatTint[0], imported.clearcoatTint[1],
+            imported.clearcoatTint[2]));
+      }
+      if (imported.hasThinFilmThickness || imported.hasThinFilmIor) {
+        sourceMaterial.setThinFilm(
+            imported.hasThinFilmThickness
+                ? imported.thinFilmThickness
+                : sourceMaterial.thinFilmThickness(),
+            imported.hasThinFilmIor
+                ? imported.thinFilmIor
+                : sourceMaterial.thinFilmIOR());
+      }
+      if (imported.hasTransmission) {
+        sourceMaterial.setTransmission(imported.transmission);
+      }
+      if (imported.hasIor) {
+        sourceMaterial.setIOR(imported.ior);
+      }
+      if (imported.hasSheen) {
+        sourceMaterial.setSheen(imported.sheen);
+      }
+      if (imported.hasSheenRoughness) {
+        sourceMaterial.setSheenRoughness(imported.sheenRoughness);
+      }
+      if (imported.hasSpecular) {
+        sourceMaterial.setSpecular(imported.specular);
+      }
+      if (imported.hasSpecularTint) {
+        sourceMaterial.setSpecularTint(QColor::fromRgbF(
+            imported.specularTint[0], imported.specularTint[1],
+            imported.specularTint[2]));
+      }
+      if (imported.hasSheenTint) {
+        sourceMaterial.setSheenTint(QColor::fromRgbF(
+            imported.sheenTint[0], imported.sheenTint[1],
+            imported.sheenTint[2]));
+      }
+      if (imported.hasEmissionColor) {
+        sourceMaterial.setEmissionColor(QColor::fromRgbF(
+            imported.emissionColor[0], imported.emissionColor[1],
+            imported.emissionColor[2]));
+      }
+      if (imported.hasEmissionStrength) {
+        sourceMaterial.setEmissionStrength(imported.emissionStrength);
+      }
+      if (imported.hasSubsurface) {
+        sourceMaterial.setSubsurface(imported.subsurface);
+      }
+      if (imported.hasSubsurfaceColor) {
+        sourceMaterial.setSubsurfaceColor(QColor::fromRgbF(
+            imported.subsurfaceColor[0], imported.subsurfaceColor[1],
+            imported.subsurfaceColor[2]));
+      }
+      if (imported.hasSubsurfaceRadius) {
+        sourceMaterial.setSubsurfaceRadius(QVector3D(
+            imported.subsurfaceRadius[0], imported.subsurfaceRadius[1],
+            imported.subsurfaceRadius[2]));
+      }
+      if (imported.hasSubsurfaceAnisotropy) {
+        sourceMaterial.setSubsurfaceAnisotropy(
+            imported.subsurfaceAnisotropy);
+      }
+      if (imported.hasAnisotropy || imported.hasAnisotropyRotation) {
+        sourceMaterial.setAnisotropy(
+            imported.hasAnisotropy ? imported.anisotropy
+                                   : sourceMaterial.anisotropy(),
+            imported.hasAnisotropyRotation
+                ? imported.anisotropyRotationDegrees
+                : sourceMaterial.anisotropyRotationDegrees());
+      }
+      return sourceMaterial;
+    };
+    const auto& importedMaterials = importer->importedPbrMaterials();
+    const bool importedMaterialSlots =
         (importer->lastBackend() == ArtifactCore::MeshImporter::Backend::Ufbx ||
          importer->lastBackend() == ArtifactCore::MeshImporter::Backend::UfbxGltf ||
          importer->lastBackend() == ArtifactCore::MeshImporter::Backend::TinyObj) &&
-        importer->importedPbrMaterials().size() > 1 &&
-        impl_->mesh_.materialSlotCount() > 0;
-    if (importedUfbxMaterialSlots) {
+        !importedMaterials.empty() && impl_->mesh_.materialSlotCount() > 0;
+    if (importedMaterialSlots && importedMaterials.size() > 1) {
       impl_->meshMaterials_.clear();
-      impl_->meshMaterials_.reserve(
-          importer->importedPbrMaterials().size());
-      for (const auto& imported : importer->importedPbrMaterials()) {
-        ArtifactCore::Material sourceMaterial = impl_->material_;
-        const auto applyImportedUv = [&](const auto& transform,
-            auto scaleSetter, auto rotationSetter, auto offsetUSetter,
-            auto offsetVSetter, auto uvSetSetter) {
-          if (!transform.hasTransform && transform.uvSet == 0) return;
-          if (transform.hasTransform && transform.scaleU > 0.0f &&
-              std::abs(transform.scaleU - transform.scaleV) <= 1.0e-4f) {
-            (sourceMaterial.*scaleSetter)(transform.scaleU);
-          }
-          if (transform.hasTransform) {
-            (sourceMaterial.*rotationSetter)(transform.rotationDegrees);
-            (sourceMaterial.*offsetUSetter)(transform.offsetU);
-            (sourceMaterial.*offsetVSetter)(transform.offsetV);
-          }
-          (sourceMaterial.*uvSetSetter)(transform.uvSet);
-        };
-        if (!imported.name.toQString().isEmpty()) {
-          sourceMaterial.setName(imported.name);
-        }
-        if (imported.hasBaseColor) {
-          sourceMaterial.setBaseColor(QColor::fromRgbF(
-              imported.baseColor[0], imported.baseColor[1],
-              imported.baseColor[2], imported.baseColor[3]));
-        }
-        if (imported.baseColor[3] < 0.999f) {
-          sourceMaterial.setAlphaMode(ArtifactCore::MaterialAlphaMode::Blended);
-        }
-        if (imported.hasOpacity) {
-          sourceMaterial.setOpacity(imported.opacity);
-          if (imported.opacity < 0.999f) {
-            sourceMaterial.setAlphaMode(
-                ArtifactCore::MaterialAlphaMode::Blended);
-          }
-        }
-        if (!imported.baseColorTexture.toQString().isEmpty()) {
-          sourceMaterial.setBaseColorTexture(imported.baseColorTexture);
-          applyImportedUv(imported.baseColorUv,
-              &ArtifactCore::Material::setBaseColorUvScale,
-              &ArtifactCore::Material::setBaseColorUvRotationDegrees,
-              &ArtifactCore::Material::setBaseColorUvOffsetU,
-              &ArtifactCore::Material::setBaseColorUvOffsetV,
-              &ArtifactCore::Material::setBaseColorUvSet);
-        }
-        if (!imported.metallicRoughnessTexture.toQString().isEmpty()) {
-          sourceMaterial.setMetallicRoughnessTexture(
-              imported.metallicRoughnessTexture);
-          applyImportedUv(imported.metallicRoughnessUv,
-              &ArtifactCore::Material::setMetallicRoughnessUvScale,
-              &ArtifactCore::Material::setMetallicRoughnessUvRotationDegrees,
-              &ArtifactCore::Material::setMetallicRoughnessUvOffsetU,
-              &ArtifactCore::Material::setMetallicRoughnessUvOffsetV,
-              &ArtifactCore::Material::setMetallicRoughnessUvSet);
-        }
-        if (!imported.normalTexture.toQString().isEmpty()) {
-          sourceMaterial.setNormalTexture(imported.normalTexture);
-          applyImportedUv(imported.normalUv,
-              &ArtifactCore::Material::setNormalUvScale,
-              &ArtifactCore::Material::setNormalUvRotationDegrees,
-              &ArtifactCore::Material::setNormalUvOffsetU,
-              &ArtifactCore::Material::setNormalUvOffsetV,
-              &ArtifactCore::Material::setNormalUvSet);
-        }
-        if (!imported.clearcoatNormalTexture.toQString().isEmpty()) {
-          sourceMaterial.setClearcoatNormalTexture(
-              imported.clearcoatNormalTexture);
-          applyImportedUv(imported.clearcoatNormalUv,
-              &ArtifactCore::Material::setClearcoatNormalUvScale,
-              &ArtifactCore::Material::setClearcoatNormalUvRotationDegrees,
-              &ArtifactCore::Material::setClearcoatNormalUvOffsetU,
-              &ArtifactCore::Material::setClearcoatNormalUvOffsetV,
-              &ArtifactCore::Material::setClearcoatNormalUvSet);
-        }
-        if (!imported.emissionTexture.toQString().isEmpty()) {
-          sourceMaterial.setEmissionTexture(imported.emissionTexture);
-          applyImportedUv(imported.emissionUv,
-              &ArtifactCore::Material::setEmissionTextureUvScale,
-              &ArtifactCore::Material::setEmissionTextureUvRotationDegrees,
-              &ArtifactCore::Material::setEmissionTextureUvOffsetU,
-              &ArtifactCore::Material::setEmissionTextureUvOffsetV,
-              &ArtifactCore::Material::setEmissionTextureUvSet);
-        }
-        if (!imported.occlusionTexture.toQString().isEmpty()) {
-          sourceMaterial.setOcclusionTexture(imported.occlusionTexture);
-          applyImportedUv(imported.occlusionUv,
-              &ArtifactCore::Material::setOcclusionTextureUvScale,
-              &ArtifactCore::Material::setOcclusionTextureUvRotationDegrees,
-              &ArtifactCore::Material::setOcclusionTextureUvOffsetU,
-              &ArtifactCore::Material::setOcclusionTextureUvOffsetV,
-              &ArtifactCore::Material::setOcclusionTextureUvSet);
-        }
-        if (!imported.opacityTexture.toQString().isEmpty()) {
-          sourceMaterial.setOpacityTexture(imported.opacityTexture);
-          applyImportedUv(imported.opacityUv,
-              &ArtifactCore::Material::setOpacityTextureUvScale,
-              &ArtifactCore::Material::setOpacityTextureUvRotationDegrees,
-              &ArtifactCore::Material::setOpacityTextureUvOffsetU,
-              &ArtifactCore::Material::setOpacityTextureUvOffsetV,
-              &ArtifactCore::Material::setOpacityTextureUvSet);
-        }
-        if (imported.hasMetallic) {
-          sourceMaterial.setMetallic(imported.metallic);
-        }
-        if (imported.hasRoughness) {
-          sourceMaterial.setRoughness(imported.roughness);
-        }
-        if (imported.hasDiffuseRoughness) {
-          sourceMaterial.setDiffuseRoughness(imported.diffuseRoughness);
-        }
-        if (imported.hasClearcoat) {
-          sourceMaterial.setClearcoat(imported.clearcoat);
-        }
-        if (imported.hasClearcoatRoughness) {
-          sourceMaterial.setClearcoatRoughness(imported.clearcoatRoughness);
-        }
-        if (imported.hasClearcoatIor) {
-          sourceMaterial.setClearcoatIOR(imported.clearcoatIor);
-        }
-        if (imported.hasClearcoatTint) {
-          sourceMaterial.setClearcoatTint(QColor::fromRgbF(
-              imported.clearcoatTint[0], imported.clearcoatTint[1],
-              imported.clearcoatTint[2]));
-        }
-        if (imported.hasThinFilmThickness || imported.hasThinFilmIor) {
-          sourceMaterial.setThinFilm(
-              imported.hasThinFilmThickness
-                  ? imported.thinFilmThickness
-                  : sourceMaterial.thinFilmThickness(),
-              imported.hasThinFilmIor
-                  ? imported.thinFilmIor
-                  : sourceMaterial.thinFilmIOR());
-        }
-        if (imported.hasTransmission) {
-          sourceMaterial.setTransmission(imported.transmission);
-        }
-        if (imported.hasIor) {
-          sourceMaterial.setIOR(imported.ior);
-        }
-        if (imported.hasSheen) {
-          sourceMaterial.setSheen(imported.sheen);
-        }
-        if (imported.hasSheenRoughness) {
-          sourceMaterial.setSheenRoughness(imported.sheenRoughness);
-        }
-        if (imported.hasSpecular) {
-          sourceMaterial.setSpecular(imported.specular);
-        }
-        if (imported.hasSpecularTint) {
-          sourceMaterial.setSpecularTint(QColor::fromRgbF(
-              imported.specularTint[0], imported.specularTint[1],
-              imported.specularTint[2]));
-        }
-        if (imported.hasSheenTint) {
-          sourceMaterial.setSheenTint(QColor::fromRgbF(
-              imported.sheenTint[0], imported.sheenTint[1],
-              imported.sheenTint[2]));
-        }
-        if (imported.hasEmissionColor) {
-          sourceMaterial.setEmissionColor(QColor::fromRgbF(
-              imported.emissionColor[0], imported.emissionColor[1],
-              imported.emissionColor[2]));
-        }
-        if (imported.hasEmissionStrength) {
-          sourceMaterial.setEmissionStrength(imported.emissionStrength);
-        }
-        if (imported.hasSubsurface) {
-          sourceMaterial.setSubsurface(imported.subsurface);
-        }
-        if (imported.hasSubsurfaceColor) {
-          sourceMaterial.setSubsurfaceColor(QColor::fromRgbF(
-              imported.subsurfaceColor[0], imported.subsurfaceColor[1],
-              imported.subsurfaceColor[2]));
-        }
-        if (imported.hasSubsurfaceRadius) {
-          sourceMaterial.setSubsurfaceRadius(QVector3D(
-              imported.subsurfaceRadius[0], imported.subsurfaceRadius[1],
-              imported.subsurfaceRadius[2]));
-        }
-        if (imported.hasSubsurfaceAnisotropy) {
-          sourceMaterial.setSubsurfaceAnisotropy(
-              imported.subsurfaceAnisotropy);
-        }
-        if (imported.hasAnisotropy || imported.hasAnisotropyRotation) {
-          sourceMaterial.setAnisotropy(
-              imported.hasAnisotropy ? imported.anisotropy
-                                     : sourceMaterial.anisotropy(),
-              imported.hasAnisotropyRotation
-                  ? imported.anisotropyRotationDegrees
-                  : sourceMaterial.anisotropyRotationDegrees());
-        }
-        impl_->meshMaterials_.push_back(std::move(sourceMaterial));
+      impl_->meshMaterials_.reserve(importedMaterials.size());
+      for (const auto& imported : importedMaterials) {
+        impl_->meshMaterials_.push_back(makeImportedMaterial(imported));
       }
       impl_->meshLocalTransforms_.clear();
       impl_->meshUsesSingleInstanceForMaterialSlots_ = true;
+    } else if (importer->lastBackend() ==
+                   ArtifactCore::MeshImporter::Backend::TinyObj &&
+               importedMaterials.size() == 1 &&
+               impl_->mesh_.materialSlotCount() > 0) {
+      impl_->material_ = makeImportedMaterial(importedMaterials.front());
     }
     impl_->meshLoaded_ = true;
     updateSourceSizeFromMesh();
