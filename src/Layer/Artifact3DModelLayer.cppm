@@ -233,6 +233,8 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
       const auto& emissionTextures = importer->sourceMeshEmissionTextures();
       const auto& occlusionTextures = importer->sourceMeshOcclusionTextures();
       const auto& opacityTextures = importer->sourceMeshOpacityTextures();
+      const auto& clearcoatRoughnessTextures =
+          importer->sourceMeshClearcoatRoughnessTextures();
       for (int sourceIndex = 0; sourceIndex < sourceMeshCount; ++sourceIndex) {
         const auto slotIndex = static_cast<std::size_t>(sourceIndex);
         ArtifactCore::Material sourceMaterial = impl_->material_;
@@ -257,6 +259,8 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
                       &ArtifactCore::Material::setOcclusionTexture);
         assignTexture(opacityTextures, slotIndex,
                       &ArtifactCore::Material::setOpacityTexture);
+        assignTexture(clearcoatRoughnessTextures, slotIndex,
+                      &ArtifactCore::Material::setClearcoatRoughnessTexture);
         if (importer->hasSourceMeshMetallicFactor(sourceIndex)) {
           sourceMaterial.setMetallic(importer->sourceMeshMetallicFactors()[slotIndex]);
         }
@@ -366,6 +370,25 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
             &ArtifactCore::Material::setNormalUvOffsetU,
             &ArtifactCore::Material::setNormalUvOffsetV,
             &ArtifactCore::Material::setNormalUvSet);
+      }
+      if (!imported.clearcoatTexture.toQString().isEmpty()) {
+        sourceMaterial.setClearcoatTexture(imported.clearcoatTexture);
+        applyImportedUv(imported.clearcoatUv,
+            &ArtifactCore::Material::setClearcoatTextureUvScale,
+            &ArtifactCore::Material::setClearcoatTextureUvRotationDegrees,
+            &ArtifactCore::Material::setClearcoatTextureUvOffsetU,
+            &ArtifactCore::Material::setClearcoatTextureUvOffsetV,
+            &ArtifactCore::Material::setClearcoatTextureUvSet);
+      }
+      if (!imported.clearcoatRoughnessTexture.toQString().isEmpty()) {
+        sourceMaterial.setClearcoatRoughnessTexture(
+            imported.clearcoatRoughnessTexture);
+        applyImportedUv(imported.clearcoatRoughnessUv,
+            &ArtifactCore::Material::setClearcoatRoughnessTextureUvScale,
+            &ArtifactCore::Material::setClearcoatRoughnessTextureUvRotationDegrees,
+            &ArtifactCore::Material::setClearcoatRoughnessTextureUvOffsetU,
+            &ArtifactCore::Material::setClearcoatRoughnessTextureUvOffsetV,
+            &ArtifactCore::Material::setClearcoatRoughnessTextureUvSet);
       }
       if (!imported.clearcoatNormalTexture.toQString().isEmpty()) {
         sourceMaterial.setClearcoatNormalTexture(
@@ -540,6 +563,14 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
       qDebug() << "[Artifact3DLayer] Imported normal texture:" << importedNormalTexture;
       impl_->material_.setNormalTexture(
           ArtifactCore::UniString::fromQString(importedNormalTexture));
+    }
+    const QString importedClearcoatRoughnessTexture =
+        importer->lastClearcoatRoughnessTexture();
+    if (!importedClearcoatRoughnessTexture.isEmpty() &&
+        impl_->material_.clearcoatRoughnessTexture().toQString().isEmpty()) {
+      impl_->material_.setClearcoatRoughnessTexture(
+          ArtifactCore::UniString::fromQString(
+              importedClearcoatRoughnessTexture));
     }
     const QString importedEmissionTexture = importer->lastEmissionTexture();
     if (!importedEmissionTexture.isEmpty() &&
@@ -728,6 +759,7 @@ QJsonObject Artifact3DLayer::toJson() const {
   obj["material.thinFilmIOR"] = impl_->material_.thinFilmIOR();
   obj["material.ior"] = impl_->material_.ior();
   obj["material.transmission"] = impl_->material_.transmission();
+  obj["material.thinWall"] = impl_->material_.thinWall();
   obj["material.clearcoat"] = impl_->material_.clearcoat();
   obj["material.clearcoatRoughness"] = impl_->material_.clearcoatRoughness();
   obj["material.clearcoatIOR"] = impl_->material_.clearcoatIOR();
@@ -841,6 +873,30 @@ QJsonObject Artifact3DLayer::toJson() const {
       impl_->material_.clearcoatNormalUvOffsetV();
   obj["material.clearcoatNormalUvSet"] =
       impl_->material_.clearcoatNormalUvSet();
+  obj["material.clearcoatTexture"] =
+      impl_->material_.clearcoatTexture().toQString();
+  obj["material.clearcoatTextureUvScale"] =
+      impl_->material_.clearcoatTextureUvScale();
+  obj["material.clearcoatTextureUvRotation"] =
+      impl_->material_.clearcoatTextureUvRotationDegrees();
+  obj["material.clearcoatTextureUvOffsetU"] =
+      impl_->material_.clearcoatTextureUvOffsetU();
+  obj["material.clearcoatTextureUvOffsetV"] =
+      impl_->material_.clearcoatTextureUvOffsetV();
+  obj["material.clearcoatTextureUvSet"] =
+      impl_->material_.clearcoatTextureUvSet();
+  obj["material.clearcoatRoughnessTexture"] =
+      impl_->material_.clearcoatRoughnessTexture().toQString();
+  obj["material.clearcoatRoughnessTextureUvScale"] =
+      impl_->material_.clearcoatRoughnessTextureUvScale();
+  obj["material.clearcoatRoughnessTextureUvRotation"] =
+      impl_->material_.clearcoatRoughnessTextureUvRotationDegrees();
+  obj["material.clearcoatRoughnessTextureUvOffsetU"] =
+      impl_->material_.clearcoatRoughnessTextureUvOffsetU();
+  obj["material.clearcoatRoughnessTextureUvOffsetV"] =
+      impl_->material_.clearcoatRoughnessTextureUvOffsetV();
+  obj["material.clearcoatRoughnessTextureUvSet"] =
+      impl_->material_.clearcoatRoughnessTextureUvSet();
   obj["material.emissionTexture"] = impl_->material_.emissionTexture().toQString();
   obj["material.emissionTextureUvScale"] =
       impl_->material_.emissionTextureUvScale();
@@ -900,6 +956,7 @@ QJsonObject Artifact3DLayer::toJson() const {
               specular.greenF(), specular.blueF()}},
           {QStringLiteral("ior"), material.ior()},
           {QStringLiteral("transmission"), material.transmission()},
+          {QStringLiteral("thinWall"), material.thinWall()},
           {QStringLiteral("thinFilmThickness"), material.thinFilmThickness()},
           {QStringLiteral("thinFilmIOR"), material.thinFilmIOR()},
           {QStringLiteral("clearcoat"), material.clearcoat()},
@@ -960,6 +1017,10 @@ QJsonObject Artifact3DLayer::toJson() const {
           {QStringLiteral("normalTexture"), material.normalTexture().toQString()},
           {QStringLiteral("clearcoatNormalTexture"),
               material.clearcoatNormalTexture().toQString()},
+          {QStringLiteral("clearcoatTexture"),
+              material.clearcoatTexture().toQString()},
+          {QStringLiteral("clearcoatRoughnessTexture"),
+              material.clearcoatRoughnessTexture().toQString()},
           {QStringLiteral("emissionTexture"),
               material.emissionTexture().toQString()},
           {QStringLiteral("occlusionTexture"),
@@ -987,6 +1048,18 @@ QJsonObject Artifact3DLayer::toJson() const {
               material.clearcoatNormalUvOffsetU(),
               material.clearcoatNormalUvOffsetV(),
               material.clearcoatNormalUvSet())},
+          {QStringLiteral("clearcoatTextureUv"), textureUv(
+              material.clearcoatTextureUvScale(),
+              material.clearcoatTextureUvRotationDegrees(),
+              material.clearcoatTextureUvOffsetU(),
+              material.clearcoatTextureUvOffsetV(),
+              material.clearcoatTextureUvSet())},
+          {QStringLiteral("clearcoatRoughnessTextureUv"), textureUv(
+              material.clearcoatRoughnessTextureUvScale(),
+              material.clearcoatRoughnessTextureUvRotationDegrees(),
+              material.clearcoatRoughnessTextureUvOffsetU(),
+              material.clearcoatRoughnessTextureUvOffsetV(),
+              material.clearcoatRoughnessTextureUvSet())},
           {QStringLiteral("emissionUv"), textureUv(
               material.emissionTextureUvScale(),
               material.emissionTextureUvRotationDegrees(),
@@ -1187,6 +1260,9 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
   impl_->material_.setTransmission(
       finiteClamped(static_cast<float>(obj.value("material.transmission").toDouble(impl_->material_.transmission())),
                     impl_->material_.transmission(), 0.0f, 1.0f));
+  impl_->material_.setThinWall(
+      obj.value(QStringLiteral("material.thinWall")).toBool(
+          impl_->material_.thinWall()));
   impl_->material_.setClearcoat(
       finiteClamped(static_cast<float>(obj.value("material.clearcoat").toDouble(impl_->material_.clearcoat())),
                     impl_->material_.clearcoat(), 0.0f, 1.0f));
@@ -1462,6 +1538,26 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
       impl_->material_.clearcoatNormalUvOffsetV(), -10.0f, 10.0f));
   impl_->material_.setClearcoatNormalUvSet(
       obj.value("material.clearcoatNormalUvSet").toInt(0));
+  impl_->material_.setClearcoatTexture(ArtifactCore::UniString::fromQString(
+      obj.value("material.clearcoatTexture").toString()));
+  impl_->material_.setClearcoatTextureUvScale(finiteClamped(
+      static_cast<float>(obj.value("material.clearcoatTextureUvScale")
+          .toDouble(impl_->material_.clearcoatTextureUvScale())),
+      impl_->material_.clearcoatTextureUvScale(), 0.01f, 10.0f));
+  impl_->material_.setClearcoatTextureUvRotationDegrees(finiteClamped(
+      static_cast<float>(obj.value("material.clearcoatTextureUvRotation")
+          .toDouble(impl_->material_.clearcoatTextureUvRotationDegrees())),
+      impl_->material_.clearcoatTextureUvRotationDegrees(), -360.0f, 360.0f));
+  impl_->material_.setClearcoatTextureUvOffsetU(finiteClamped(
+      static_cast<float>(obj.value("material.clearcoatTextureUvOffsetU")
+          .toDouble(impl_->material_.clearcoatTextureUvOffsetU())),
+      impl_->material_.clearcoatTextureUvOffsetU(), -10.0f, 10.0f));
+  impl_->material_.setClearcoatTextureUvOffsetV(finiteClamped(
+      static_cast<float>(obj.value("material.clearcoatTextureUvOffsetV")
+          .toDouble(impl_->material_.clearcoatTextureUvOffsetV())),
+      impl_->material_.clearcoatTextureUvOffsetV(), -10.0f, 10.0f));
+  impl_->material_.setClearcoatTextureUvSet(
+      obj.value("material.clearcoatTextureUvSet").toInt(0));
 
   const QString emissionTexture = obj.value("material.emissionTexture").toString();
   impl_->material_.setEmissionTexture(ArtifactCore::UniString::fromQString(emissionTexture));
@@ -1588,6 +1684,8 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
     material.setIOR(readScalar("ior", material.ior(), 1.0f, 3.0f));
     material.setTransmission(readScalar("transmission", material.transmission(),
                                         0.0f, 1.0f));
+    material.setThinWall(slot.value(QStringLiteral("thinWall")).toBool(
+        material.thinWall()));
     material.setThinFilm(readScalar("thinFilmThickness",
         material.thinFilmThickness(), 0.0f, 1000.0f),
         readScalar("thinFilmIOR", material.thinFilmIOR(), 1.0f, 2.5f));
@@ -1740,6 +1838,28 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
         material.clearcoatNormalUvOffsetU(),
         material.clearcoatNormalUvOffsetV(),
         material.clearcoatNormalUvSet());
+    restoreUv("clearcoatTextureUv",
+        &ArtifactCore::Material::setClearcoatTextureUvScale,
+        &ArtifactCore::Material::setClearcoatTextureUvRotationDegrees,
+        &ArtifactCore::Material::setClearcoatTextureUvOffsetU,
+        &ArtifactCore::Material::setClearcoatTextureUvOffsetV,
+        &ArtifactCore::Material::setClearcoatTextureUvSet,
+        material.clearcoatTextureUvScale(),
+        material.clearcoatTextureUvRotationDegrees(),
+        material.clearcoatTextureUvOffsetU(),
+        material.clearcoatTextureUvOffsetV(),
+        material.clearcoatTextureUvSet());
+    restoreUv("clearcoatRoughnessTextureUv",
+        &ArtifactCore::Material::setClearcoatRoughnessTextureUvScale,
+        &ArtifactCore::Material::setClearcoatRoughnessTextureUvRotationDegrees,
+        &ArtifactCore::Material::setClearcoatRoughnessTextureUvOffsetU,
+        &ArtifactCore::Material::setClearcoatRoughnessTextureUvOffsetV,
+        &ArtifactCore::Material::setClearcoatRoughnessTextureUvSet,
+        material.clearcoatRoughnessTextureUvScale(),
+        material.clearcoatRoughnessTextureUvRotationDegrees(),
+        material.clearcoatRoughnessTextureUvOffsetU(),
+        material.clearcoatRoughnessTextureUvOffsetV(),
+        material.clearcoatRoughnessTextureUvSet());
     restoreUv("emissionUv",
         &ArtifactCore::Material::setEmissionTextureUvScale,
         &ArtifactCore::Material::setEmissionTextureUvRotationDegrees,
@@ -1790,6 +1910,10 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
     restoreTexture("normalTexture", &ArtifactCore::Material::setNormalTexture);
     restoreTexture("clearcoatNormalTexture",
         &ArtifactCore::Material::setClearcoatNormalTexture);
+    restoreTexture("clearcoatTexture",
+        &ArtifactCore::Material::setClearcoatTexture);
+    restoreTexture("clearcoatRoughnessTexture",
+        &ArtifactCore::Material::setClearcoatRoughnessTexture);
     restoreTexture("emissionTexture", &ArtifactCore::Material::setEmissionTexture);
     restoreTexture("occlusionTexture", &ArtifactCore::Material::setOcclusionTexture);
     restoreTexture("opacityTexture", &ArtifactCore::Material::setOpacityTexture);
@@ -3456,6 +3580,13 @@ Artifact3DLayer::getLayerPropertyGroups() const {
   transmissionProp->setDisplayLabel(QStringLiteral("Transmission"));
   transmissionProp->setHardRange(0.0, 1.0);
   materialGroup.addProperty(transmissionProp);
+  auto thinWallProp = persistentLayerProperty(
+      QStringLiteral("material.thinWall"), PropertyType::Boolean,
+      impl_->material_.thinWall(), -43);
+  thinWallProp->setDisplayLabel(QStringLiteral("Thin Wall"));
+  thinWallProp->setTooltip(QStringLiteral(
+      "Treat transmission as a zero-thickness sheet with no refraction bend"));
+  materialGroup.addProperty(thinWallProp);
 
   auto clearcoatProp = persistentLayerProperty(
       QStringLiteral("material.clearcoat"), PropertyType::Float,
@@ -3777,6 +3908,58 @@ Artifact3DLayer::getLayerPropertyGroups() const {
   clearcoatNormalTextureProp->setDisplayLabel(
       QStringLiteral("Coat Normal Texture"));
   materialGroup.addProperty(clearcoatNormalTextureProp);
+
+  auto clearcoatTextureProp = persistentLayerProperty(
+      QStringLiteral("material.clearcoatTexture"), PropertyType::String,
+      impl_->material_.clearcoatTexture().toQString(), -39);
+  clearcoatTextureProp->setDisplayLabel(
+      QStringLiteral("Clearcoat Texture"));
+  materialGroup.addProperty(clearcoatTextureProp);
+  auto clearcoatRoughnessTextureProp = persistentLayerProperty(
+      QStringLiteral("material.clearcoatRoughnessTexture"), PropertyType::String,
+      impl_->material_.clearcoatRoughnessTexture().toQString(), -40);
+  clearcoatRoughnessTextureProp->setDisplayLabel(
+      QStringLiteral("Clearcoat Roughness Texture"));
+  materialGroup.addProperty(clearcoatRoughnessTextureProp);
+  auto clearcoatTextureScaleProp = persistentLayerProperty(
+      QStringLiteral("material.clearcoatTextureUvScale"), PropertyType::Float,
+      impl_->material_.clearcoatTextureUvScale(), -38);
+  clearcoatTextureScaleProp->setDisplayLabel(
+      QStringLiteral("Clearcoat Texture UV Scale"));
+  clearcoatTextureScaleProp->setHardRange(0.01, 10.0);
+  materialGroup.addProperty(clearcoatTextureScaleProp);
+  auto clearcoatTextureRotationProp = persistentLayerProperty(
+      QStringLiteral("material.clearcoatTextureUvRotation"),
+      PropertyType::Float,
+      impl_->material_.clearcoatTextureUvRotationDegrees(), -37);
+  clearcoatTextureRotationProp->setDisplayLabel(
+      QStringLiteral("Clearcoat Texture UV Rotation"));
+  clearcoatTextureRotationProp->setHardRange(-360.0, 360.0);
+  materialGroup.addProperty(clearcoatTextureRotationProp);
+  auto clearcoatTextureOffsetUProp = persistentLayerProperty(
+      QStringLiteral("material.clearcoatTextureUvOffsetU"),
+      PropertyType::Float,
+      impl_->material_.clearcoatTextureUvOffsetU(), -36);
+  clearcoatTextureOffsetUProp->setDisplayLabel(
+      QStringLiteral("Clearcoat Texture UV Offset U"));
+  clearcoatTextureOffsetUProp->setHardRange(-10.0, 10.0);
+  materialGroup.addProperty(clearcoatTextureOffsetUProp);
+  auto clearcoatTextureOffsetVProp = persistentLayerProperty(
+      QStringLiteral("material.clearcoatTextureUvOffsetV"),
+      PropertyType::Float,
+      impl_->material_.clearcoatTextureUvOffsetV(), -35);
+  clearcoatTextureOffsetVProp->setDisplayLabel(
+      QStringLiteral("Clearcoat Texture UV Offset V"));
+  clearcoatTextureOffsetVProp->setHardRange(-10.0, 10.0);
+  materialGroup.addProperty(clearcoatTextureOffsetVProp);
+  auto clearcoatTextureUvSetProp = persistentLayerProperty(
+      QStringLiteral("material.clearcoatTextureUvSet"),
+      PropertyType::Integer,
+      impl_->material_.clearcoatTextureUvSet(), -34);
+  clearcoatTextureUvSetProp->setDisplayLabel(
+      QStringLiteral("Clearcoat Texture UV Set"));
+  clearcoatTextureUvSetProp->setHardRange(0, 1);
+  materialGroup.addProperty(clearcoatTextureUvSetProp);
 
   auto clearcoatNormalUvRotationProp = persistentLayerProperty(
       QStringLiteral("material.clearcoatNormalUvRotation"),
@@ -4163,11 +4346,28 @@ Artifact3DLayer::getLayerPropertyGroups() const {
                 1.0, 3.0, -72);
       addScalar(QStringLiteral("transmission"), QStringLiteral("Transmission"),
                 material.transmission(), 0.0, 1.0, -71);
+      auto thinWallProperty = persistentLayerProperty(
+          prefix + QStringLiteral("thinWall"), PropertyType::Boolean,
+          material.thinWall(), -70);
+      thinWallProperty->setDisplayLabel(QStringLiteral("Thin Wall"));
+      thinWallProperty->setTooltip(QStringLiteral(
+          "Treat transmission as a zero-thickness sheet with no refraction bend"));
+      slotGroup.addProperty(thinWallProperty);
       addScalar(QStringLiteral("clearcoat"), QStringLiteral("Clearcoat"),
                 material.clearcoat(), 0.0, 1.0, -70);
       addScalar(QStringLiteral("clearcoatRoughness"),
                 QStringLiteral("Clearcoat Roughness"),
                 material.clearcoatRoughness(), 0.0, 1.0, -69);
+      addTexturePath(QStringLiteral("clearcoatRoughnessTexture"),
+          QStringLiteral("Clearcoat Roughness Texture"),
+          material.clearcoatRoughnessTexture(), -68);
+      addTextureUv(QStringLiteral("clearcoatRoughnessTexture"),
+          QStringLiteral("Clearcoat Roughness"),
+          material.clearcoatRoughnessTextureUvScale(),
+          material.clearcoatRoughnessTextureUvRotationDegrees(),
+          material.clearcoatRoughnessTextureUvOffsetU(),
+          material.clearcoatRoughnessTextureUvOffsetV(),
+          material.clearcoatRoughnessTextureUvSet(), -67);
       addScalar(QStringLiteral("clearcoatIOR"), QStringLiteral("Clearcoat IOR"),
                 material.clearcoatIOR(), 1.0, 2.0, -68);
       addColor(QStringLiteral("clearcoatTint"),
@@ -4276,6 +4476,16 @@ Artifact3DLayer::getLayerPropertyGroups() const {
       addTexturePath(QStringLiteral("clearcoatNormalTexture"),
           QStringLiteral("Coat Normal Texture"),
           material.clearcoatNormalTexture(), -22);
+      addTexturePath(QStringLiteral("clearcoatTexture"),
+          QStringLiteral("Clearcoat Texture"),
+          material.clearcoatTexture(), -23);
+      addTextureUv(QStringLiteral("clearcoatTexture"),
+          QStringLiteral("Clearcoat"),
+          material.clearcoatTextureUvScale(),
+          material.clearcoatTextureUvRotationDegrees(),
+          material.clearcoatTextureUvOffsetU(),
+          material.clearcoatTextureUvOffsetV(),
+          material.clearcoatTextureUvSet(), -24);
       addTextureUv(QStringLiteral("clearcoatNormal"),
           QStringLiteral("Coat Normal"), material.clearcoatNormalUvScale(),
           material.clearcoatNormalUvRotationDegrees(),
@@ -4347,6 +4557,10 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
             &ArtifactCore::Material::setNormalTexture) ||
         setTexturePath(QStringLiteral("clearcoatNormalTexture"),
             &ArtifactCore::Material::setClearcoatNormalTexture) ||
+        setTexturePath(QStringLiteral("clearcoatTexture"),
+            &ArtifactCore::Material::setClearcoatTexture) ||
+        setTexturePath(QStringLiteral("clearcoatRoughnessTexture"),
+            &ArtifactCore::Material::setClearcoatRoughnessTexture) ||
         setTexturePath(QStringLiteral("emissionTexture"),
             &ArtifactCore::Material::setEmissionTexture) ||
         setTexturePath(QStringLiteral("occlusionTexture"),
@@ -4416,6 +4630,18 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
           &ArtifactCore::Material::setClearcoatNormalUvOffsetU,
           &ArtifactCore::Material::setClearcoatNormalUvOffsetV,
           &ArtifactCore::Material::setClearcoatNormalUvSet);
+      updateTextureUv(QStringLiteral("clearcoatTextureUv."),
+          &ArtifactCore::Material::setClearcoatTextureUvScale,
+          &ArtifactCore::Material::setClearcoatTextureUvRotationDegrees,
+          &ArtifactCore::Material::setClearcoatTextureUvOffsetU,
+          &ArtifactCore::Material::setClearcoatTextureUvOffsetV,
+          &ArtifactCore::Material::setClearcoatTextureUvSet);
+      updateTextureUv(QStringLiteral("clearcoatRoughnessTextureUv."),
+          &ArtifactCore::Material::setClearcoatRoughnessTextureUvScale,
+          &ArtifactCore::Material::setClearcoatRoughnessTextureUvRotationDegrees,
+          &ArtifactCore::Material::setClearcoatRoughnessTextureUvOffsetU,
+          &ArtifactCore::Material::setClearcoatRoughnessTextureUvOffsetV,
+          &ArtifactCore::Material::setClearcoatRoughnessTextureUvSet);
       updateTextureUv(QStringLiteral("emissionUv."),
           &ArtifactCore::Material::setEmissionTextureUvScale,
           &ArtifactCore::Material::setEmissionTextureUvRotationDegrees,
@@ -4483,6 +4709,8 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
         material.setIOR(std::clamp(incoming, 1.0f, 3.0f));
       } else if (field == QStringLiteral("transmission")) {
         material.setTransmission(std::clamp(incoming, 0.0f, 1.0f));
+      } else if (field == QStringLiteral("thinWall")) {
+        material.setThinWall(value.toBool());
       } else if (field == QStringLiteral("clearcoat")) {
         material.setClearcoat(std::clamp(incoming, 0.0f, 1.0f));
       } else if (field == QStringLiteral("clearcoatRoughness")) {
@@ -4825,6 +5053,86 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
     Q_EMIT changed();
     return true;
   } else if (propertyPath ==
+             QStringLiteral("material.clearcoatTexture")) {
+    impl_->material_.setClearcoatTexture(
+        ArtifactCore::UniString::fromQString(value.toString()));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath ==
+             QStringLiteral("material.clearcoatRoughnessTexture")) {
+    impl_->material_.setClearcoatRoughnessTexture(
+        ArtifactCore::UniString::fromQString(value.toString()));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath ==
+             QStringLiteral("material.clearcoatRoughnessTextureUvScale")) {
+    impl_->material_.setClearcoatRoughnessTextureUvScale(finiteClamped(
+        value.toFloat(), impl_->material_.clearcoatRoughnessTextureUvScale(),
+        0.01f, 10.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral(
+                 "material.clearcoatRoughnessTextureUvRotation")) {
+    impl_->material_.setClearcoatRoughnessTextureUvRotationDegrees(finiteClamped(
+        value.toFloat(),
+        impl_->material_.clearcoatRoughnessTextureUvRotationDegrees(),
+        -360.0f, 360.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral(
+                 "material.clearcoatRoughnessTextureUvOffsetU")) {
+    impl_->material_.setClearcoatRoughnessTextureUvOffsetU(finiteClamped(
+        value.toFloat(),
+        impl_->material_.clearcoatRoughnessTextureUvOffsetU(), -10.0f, 10.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral(
+                 "material.clearcoatRoughnessTextureUvOffsetV")) {
+    impl_->material_.setClearcoatRoughnessTextureUvOffsetV(finiteClamped(
+        value.toFloat(),
+        impl_->material_.clearcoatRoughnessTextureUvOffsetV(), -10.0f, 10.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral(
+                 "material.clearcoatRoughnessTextureUvSet")) {
+    impl_->material_.setClearcoatRoughnessTextureUvSet(value.toInt());
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath ==
+             QStringLiteral("material.clearcoatTextureUvScale")) {
+    impl_->material_.setClearcoatTextureUvScale(finiteClamped(
+        value.toFloat(), impl_->material_.clearcoatTextureUvScale(),
+        0.01f, 10.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath ==
+             QStringLiteral("material.clearcoatTextureUvRotation")) {
+    impl_->material_.setClearcoatTextureUvRotationDegrees(finiteClamped(
+        value.toFloat(),
+        impl_->material_.clearcoatTextureUvRotationDegrees(),
+        -360.0f, 360.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath ==
+             QStringLiteral("material.clearcoatTextureUvOffsetU")) {
+    impl_->material_.setClearcoatTextureUvOffsetU(finiteClamped(
+        value.toFloat(), impl_->material_.clearcoatTextureUvOffsetU(),
+        -10.0f, 10.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath ==
+             QStringLiteral("material.clearcoatTextureUvOffsetV")) {
+    impl_->material_.setClearcoatTextureUvOffsetV(finiteClamped(
+        value.toFloat(), impl_->material_.clearcoatTextureUvOffsetV(),
+        -10.0f, 10.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath ==
+             QStringLiteral("material.clearcoatTextureUvSet")) {
+    impl_->material_.setClearcoatTextureUvSet(value.toInt());
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath ==
              QStringLiteral("material.clearcoatNormalUvRotation")) {
     impl_->material_.setClearcoatNormalUvRotationDegrees(finiteClamped(
         value.toFloat(),
@@ -5013,6 +5321,10 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
     return true;
   } else if (propertyPath == QStringLiteral("material.transmission")) {
     impl_->material_.setTransmission(finiteClamped(value.toFloat(), impl_->material_.transmission(), 0.0f, 1.0f));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.thinWall")) {
+    impl_->material_.setThinWall(value.toBool());
     Q_EMIT changed();
     return true;
   } else if (propertyPath == QStringLiteral("material.clearcoat")) {
@@ -5294,9 +5606,26 @@ QString Artifact3DLayer::materialSignature() const
                .arg(impl_->material_.emissionTextureUvSet())
                .arg(impl_->material_.opacityTextureUvSet())
                .arg(impl_->material_.clearcoatNormalUvSet()));
-  signature += QStringLiteral("|metallicTexture=%1|roughnessTexture=%2")
+  signature += QStringLiteral("|thinWall=%1|metallicTexture=%2|roughnessTexture=%3")
+      .arg(impl_->material_.thinWall() ? 1 : 0)
       .arg(impl_->material_.metallicTexture().toQString())
       .arg(impl_->material_.roughnessTexture().toQString());
+  signature += QStringLiteral("|clearcoatTexture=%1|clearcoatTextureUv=%2,%3,%4,%5,%6")
+      .arg(impl_->material_.clearcoatTexture().toQString())
+      .arg(impl_->material_.clearcoatTextureUvScale(), 0, 'f', 6)
+      .arg(impl_->material_.clearcoatTextureUvRotationDegrees(), 0, 'f', 6)
+      .arg(impl_->material_.clearcoatTextureUvOffsetU(), 0, 'f', 6)
+      .arg(impl_->material_.clearcoatTextureUvOffsetV(), 0, 'f', 6)
+      .arg(impl_->material_.clearcoatTextureUvSet());
+  signature += QStringLiteral(
+      "|clearcoatRoughnessTexture=%1|clearcoatRoughnessTextureUv=%2,%3,%4,%5,%6")
+      .arg(impl_->material_.clearcoatRoughnessTexture().toQString())
+      .arg(impl_->material_.clearcoatRoughnessTextureUvScale(), 0, 'f', 6)
+      .arg(impl_->material_.clearcoatRoughnessTextureUvRotationDegrees(),
+           0, 'f', 6)
+      .arg(impl_->material_.clearcoatRoughnessTextureUvOffsetU(), 0, 'f', 6)
+      .arg(impl_->material_.clearcoatRoughnessTextureUvOffsetV(), 0, 'f', 6)
+      .arg(impl_->material_.clearcoatRoughnessTextureUvSet());
   const auto metallicTextureUv = impl_->material_.metallicTextureUvTransform();
   const auto roughnessTextureUv = impl_->material_.roughnessTextureUvTransform();
   signature += QStringLiteral("|metallicMapUv=%1,%2,%3,%4,%5,%6|"
@@ -5317,11 +5646,20 @@ QString Artifact3DLayer::materialSignature() const
     const auto& material = impl_->meshMaterials_[index];
     const auto metallicUv = material.metallicTextureUvTransform();
     const auto roughnessUv = material.roughnessTextureUvTransform();
-    signature += QStringLiteral("|slot%1Maps=%2,%3,%4")
+    signature += QStringLiteral("|slot%1Maps=%2,%3,%4,%5")
         .arg(static_cast<qulonglong>(index))
         .arg(material.metallicRoughnessTexture().toQString())
         .arg(material.metallicTexture().toQString())
-        .arg(material.roughnessTexture().toQString());
+        .arg(material.roughnessTexture().toQString())
+        .arg(material.thinWall() ? 1 : 0);
+    signature += QStringLiteral("|slot%1ClearcoatMap=%2,%3,%4,%5,%6,%7")
+        .arg(static_cast<qulonglong>(index))
+        .arg(material.clearcoatTexture().toQString())
+        .arg(material.clearcoatTextureUvScale(), 0, 'f', 6)
+        .arg(material.clearcoatTextureUvRotationDegrees(), 0, 'f', 6)
+        .arg(material.clearcoatTextureUvOffsetU(), 0, 'f', 6)
+        .arg(material.clearcoatTextureUvOffsetV(), 0, 'f', 6)
+        .arg(material.clearcoatTextureUvSet());
     signature += QStringLiteral("|slot%1PbrUv=%2,%3,%4,%5,%6,%7,%8,%9,%10,%11,%12")
         .arg(static_cast<qulonglong>(index))
         .arg(metallicUv.scaleU, 0, 'f', 6)

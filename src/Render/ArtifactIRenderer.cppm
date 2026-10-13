@@ -1294,6 +1294,28 @@ namespace {
           result.clearcoat = source.clearcoat();
           result.clearcoatRoughness = source.clearcoatRoughness();
           result.clearcoatIOR = source.clearcoatIOR();
+          result.clearcoatTexture = source.clearcoatTexture();
+          result.clearcoatTextureUvScale =
+              source.clearcoatTextureUvScale();
+          result.clearcoatTextureUvOffsetU =
+              source.clearcoatTextureUvOffsetU();
+          result.clearcoatTextureUvOffsetV =
+              source.clearcoatTextureUvOffsetV();
+          result.clearcoatTextureUvRotationDegrees =
+              source.clearcoatTextureUvRotationDegrees();
+          result.clearcoatTextureUvSet = source.clearcoatTextureUvSet();
+          result.clearcoatRoughnessTexture =
+              source.clearcoatRoughnessTexture();
+          result.clearcoatRoughnessTextureUvScale =
+              source.clearcoatRoughnessTextureUvScale();
+          result.clearcoatRoughnessTextureUvOffsetU =
+              source.clearcoatRoughnessTextureUvOffsetU();
+          result.clearcoatRoughnessTextureUvOffsetV =
+              source.clearcoatRoughnessTextureUvOffsetV();
+          result.clearcoatRoughnessTextureUvRotationDegrees =
+              source.clearcoatRoughnessTextureUvRotationDegrees();
+          result.clearcoatRoughnessTextureUvSet =
+              source.clearcoatRoughnessTextureUvSet();
           const QColor clearcoatTint = source.clearcoatTint();
           result.clearcoatTint[0] = clearcoatTint.redF();
           result.clearcoatTint[1] = clearcoatTint.greenF();
@@ -1338,6 +1360,7 @@ namespace {
               opacity * source.opacity(), 0.0f, 1.0f);
           result.alphaCutoff = source.alphaCutoff();
           result.alphaMode = static_cast<Uint32>(source.alphaMode());
+          result.thinWall = source.thinWall() ? 1.0f : 0.0f;
           result.emissionTexture = source.emissionTexture();
           result.opacityTexture = source.opacityTexture();
           result.opacityTextureUvScale = source.opacityTextureUvScale();
@@ -1350,6 +1373,24 @@ namespace {
           result.opacityTextureUvSet = source.opacityTextureUvSet();
           result.baseColorTexture = source.baseColorTexture();
           result.metallicRoughnessTexture = source.metallicRoughnessTexture();
+          result.metallicTexture = source.metallicTexture();
+          const auto metallicTextureUv = source.metallicTextureUvTransform();
+          result.metallicTextureUvScaleU = metallicTextureUv.scaleU;
+          result.metallicTextureUvScaleV = metallicTextureUv.scaleV;
+          result.metallicTextureUvRotationDegrees =
+              metallicTextureUv.rotationDegrees;
+          result.metallicTextureUvOffsetU = metallicTextureUv.offsetU;
+          result.metallicTextureUvOffsetV = metallicTextureUv.offsetV;
+          result.metallicTextureUvSet = metallicTextureUv.uvSet;
+          result.roughnessTexture = source.roughnessTexture();
+          const auto roughnessTextureUv = source.roughnessTextureUvTransform();
+          result.roughnessTextureUvScaleU = roughnessTextureUv.scaleU;
+          result.roughnessTextureUvScaleV = roughnessTextureUv.scaleV;
+          result.roughnessTextureUvRotationDegrees =
+              roughnessTextureUv.rotationDegrees;
+          result.roughnessTextureUvOffsetU = roughnessTextureUv.offsetU;
+          result.roughnessTextureUvOffsetV = roughnessTextureUv.offsetV;
+          result.roughnessTextureUvSet = roughnessTextureUv.uvSet;
           result.normalTexture = source.normalTexture();
           result.normalStrength = source.normalStrength();
           result.normalUvRotationDegrees =
@@ -1478,6 +1519,10 @@ namespace {
         range.normalTexturePath =
             lowMaterialLOD ? QString()
                            : slotMaterial.normalTexture().toQString().trimmed();
+        range.clearcoatTexturePath =
+            slotMaterial.clearcoatTexture().toQString().trimmed();
+        range.clearcoatRoughnessTexturePath =
+            slotMaterial.clearcoatRoughnessTexture().toQString().trimmed();
         range.clearcoatNormalTexturePath = lowMaterialLOD
             ? QString()
             : slotMaterial.clearcoatNormalTexture().toQString().trimmed();
@@ -1537,6 +1582,8 @@ namespace {
         state.principledFactors = {
             slotMaterial.specular(), slotMaterial.ior(),
             slotMaterial.transmission(), slotMaterial.sheen()};
+        state.transmissionMode = {
+            slotMaterial.thinWall() ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f};
         const QColor specularTint = slotMaterial.specularTint();
         state.specularTintFactors = {specularTint.redF(), specularTint.greenF(),
                                      specularTint.blueF(), 0.0f};
@@ -1547,6 +1594,25 @@ namespace {
             slotMaterial.clearcoatIOR(),
             slotMaterial.clearcoatNormalTexture().toQString().trimmed().isEmpty()
                 ? 0.0f : 1.0f};
+        state.clearcoatTextureFactors = {
+            slotMaterial.hasClearcoatTexture() ? 1.0f : 0.0f,
+            slotMaterial.clearcoatTextureUvSet() == 1 ? 1.0f : 0.0f,
+            slotMaterial.clearcoatTextureUvScale(),
+            slotMaterial.clearcoatTextureUvRotationDegrees() *
+                std::numbers::pi_v<float> / 180.0f};
+        state.clearcoatTextureUvOffset = {
+            slotMaterial.clearcoatTextureUvOffsetU(),
+            slotMaterial.clearcoatTextureUvOffsetV(), 0.0f, 0.0f};
+        state.clearcoatRoughnessTextureFactors = {
+            slotMaterial.clearcoatRoughnessTexture().toQString().trimmed().isEmpty()
+                ? 0.0f : 1.0f,
+            slotMaterial.clearcoatRoughnessTextureUvSet() == 1 ? 1.0f : 0.0f,
+            slotMaterial.clearcoatRoughnessTextureUvScale(),
+            slotMaterial.clearcoatRoughnessTextureUvRotationDegrees() *
+                std::numbers::pi_v<float> / 180.0f};
+        state.clearcoatRoughnessTextureUvOffset = {
+            slotMaterial.clearcoatRoughnessTextureUvOffsetU(),
+            slotMaterial.clearcoatRoughnessTextureUvOffsetV(), 0.0f, 0.0f};
         const QColor clearcoatTint = slotMaterial.clearcoatTint();
         state.clearcoatTintFactors = {
             clearcoatTint.redF(), clearcoatTint.greenF(),
@@ -1677,11 +1743,25 @@ namespace {
     renderer->setPrincipledFactors(material.specular(), material.ior(),
                                    material.transmission(), material.clearcoat(),
                                    material.clearcoatRoughness(), material.sheen(),
-                                   material.clearcoatIOR());
+                                   material.clearcoatIOR(), material.thinWall());
     renderer->setSpecularTint(material.specularTint());
     renderer->setThinFilm(material.thinFilmThickness(), material.thinFilmIOR());
     renderer->setClearcoatTint(material.clearcoatTint(),
                                material.clearcoatNormalStrength());
+    renderer->setClearcoatTexture(
+        material.clearcoatTexture().toQString(),
+        material.clearcoatTextureUvScale(),
+        material.clearcoatTextureUvRotationDegrees(),
+        material.clearcoatTextureUvOffsetU(),
+        material.clearcoatTextureUvOffsetV(),
+        material.clearcoatTextureUvSet());
+    renderer->setClearcoatRoughnessTexture(
+        material.clearcoatRoughnessTexture().toQString(),
+        material.clearcoatRoughnessTextureUvScale(),
+        material.clearcoatRoughnessTextureUvRotationDegrees(),
+        material.clearcoatRoughnessTextureUvOffsetU(),
+        material.clearcoatRoughnessTextureUvOffsetV(),
+        material.clearcoatRoughnessTextureUvSet());
     renderer->setClearcoatNormalTexture(
         lowMaterialLOD ? QString()
                        : material.clearcoatNormalTexture().toQString());
