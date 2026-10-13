@@ -1277,6 +1277,8 @@ namespace {
               source.metallicRoughnessUvOffsetV();
           result.metallicRoughnessUvRotationDegrees =
               source.metallicRoughnessUvRotationDegrees();
+          result.metallicRoughnessUvSet =
+              source.metallicRoughnessUvSet();
           result.metallic = source.metallic();
           result.roughness = source.roughness();
           result.diffuseRoughness = source.diffuseRoughness();
@@ -1306,6 +1308,7 @@ namespace {
               source.clearcoatNormalUvOffsetU();
           result.clearcoatNormalUvOffsetV =
               source.clearcoatNormalUvOffsetV();
+          result.clearcoatNormalUvSet = source.clearcoatNormalUvSet();
           result.sheen = source.sheen();
           result.subsurface = source.subsurface();
           result.subsurfaceIOR = source.subsurfaceIOR();
@@ -1344,6 +1347,7 @@ namespace {
               source.opacityTextureUvOffsetV();
           result.opacityTextureUvRotationDegrees =
               source.opacityTextureUvRotationDegrees();
+          result.opacityTextureUvSet = source.opacityTextureUvSet();
           result.baseColorTexture = source.baseColorTexture();
           result.metallicRoughnessTexture = source.metallicRoughnessTexture();
           result.normalTexture = source.normalTexture();
@@ -1363,6 +1367,8 @@ namespace {
               source.occlusionTextureUvOffsetV();
           result.occlusionTextureUvRotationDegrees =
               source.occlusionTextureUvRotationDegrees();
+          result.occlusionTextureUvSet =
+              source.occlusionTextureUvSet();
           result.emissionTextureUvScale =
               source.emissionTextureUvScale();
           result.emissionTextureUvOffsetU =
@@ -1371,6 +1377,7 @@ namespace {
               source.emissionTextureUvOffsetV();
           result.emissionTextureUvRotationDegrees =
               source.emissionTextureUvRotationDegrees();
+          result.emissionTextureUvSet = source.emissionTextureUvSet();
           result.occlusionStrength = source.occlusionStrength();
           result.uvOffsetU = source.uvOffsetU();
           result.uvOffsetV = source.uvOffsetV();
@@ -1544,6 +1551,16 @@ namespace {
         state.normalTextureUvOffset[1] = slotMaterial.normalUvOffsetV();
         state.normalTextureUvOffset[2] =
             slotMaterial.normalUvSet() == 1 ? 1.0f : 0.0f;
+        state.normalTextureUvOffset[3] =
+            slotMaterial.clearcoatNormalUvSet() == 1 ? 1.0f : 0.0f;
+        state.textureUvSetSelectors[0] =
+            slotMaterial.metallicRoughnessUvSet() == 1 ? 1.0f : 0.0f;
+        state.textureUvSetSelectors[1] =
+            slotMaterial.occlusionTextureUvSet() == 1 ? 1.0f : 0.0f;
+        state.textureUvSetSelectors[2] =
+            slotMaterial.emissionTextureUvSet() == 1 ? 1.0f : 0.0f;
+        state.textureUvSetSelectors[3] =
+            slotMaterial.opacityTextureUvSet() == 1 ? 1.0f : 0.0f;
         state.occlusionTextureUvTransform[0] =
             slotMaterial.occlusionTextureUvScale();
         state.occlusionTextureUvTransform[1] =
@@ -1620,6 +1637,10 @@ namespace {
     // multi-material range resolves its own map paths above.
     renderer->setBaseColorTexture(material.baseColorTexture().toQString());
     renderer->setBaseColorUvSet(material.baseColorUvSet());
+    renderer->setPbrMapUvSets(
+        material.metallicRoughnessUvSet(), material.occlusionTextureUvSet(),
+        material.emissionTextureUvSet(), material.opacityTextureUvSet(),
+        material.clearcoatNormalUvSet());
     renderer->setOpacityTexture(material.opacityTexture().toQString());
     renderer->setEmissionTexture(material.emissionTexture().toQString());
     renderer->setEmissionColor(material.emissionColor(),
