@@ -421,6 +421,12 @@ int sliderPositionToInt(const int sliderValue, const int minValue,
 }
 
 QString fileDialogFilterForProperty(const QString &propertyName) {
+  if (propertyName.startsWith(QStringLiteral("material.slots.")) &&
+      propertyName.endsWith(QStringLiteral("Texture"),
+                            Qt::CaseInsensitive)) {
+    return QStringLiteral("Image Files (*.png *.jpg *.jpeg *.bmp *.gif *.tga *.tif *.tiff *.dpx "
+                          "*.webp *.hdr *.exr *.ico *.dds *.ktx *.psd *.psb);;All Files (*.*)");
+  }
   if (propertyName.contains(QStringLiteral("model"), Qt::CaseInsensitive) ||
       propertyName.contains(QStringLiteral("3d"), Qt::CaseInsensitive)) {
     return QStringLiteral(
@@ -449,7 +455,11 @@ bool isPathProperty(const ArtifactCore::AbstractProperty &property) {
     return false;
   }
   const QString name = property.getName();
-  return name == QStringLiteral("reveal.timingPath") ||
+  const bool materialSlotTexturePath =
+      name.startsWith(QStringLiteral("material.slots.")) &&
+      name.endsWith(QStringLiteral("Texture"), Qt::CaseInsensitive);
+  return materialSlotTexturePath ||
+         name == QStringLiteral("reveal.timingPath") ||
          name == QStringLiteral("reveal.supportPath") ||
          name.compare(QStringLiteral("video.sourcePath"),
                       Qt::CaseInsensitive) == 0 ||
