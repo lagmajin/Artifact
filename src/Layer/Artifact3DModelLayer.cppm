@@ -293,6 +293,9 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
           importer->importedPbrMaterials().size());
       for (const auto& imported : importer->importedPbrMaterials()) {
         ArtifactCore::Material sourceMaterial = impl_->material_;
+        if (!imported.name.toQString().isEmpty()) {
+          sourceMaterial.setName(imported.name);
+        }
         if (imported.hasBaseColor) {
           sourceMaterial.setBaseColor(QColor::fromRgbF(
               imported.baseColor[0], imported.baseColor[1],
@@ -705,6 +708,7 @@ QJsonObject Artifact3DLayer::toJson() const {
       const QColor sheen = material.sheenTint();
       const QColor emission = material.emissionColor();
       materialSlots.append(QJsonObject{
+          {QStringLiteral("name"), material.name().toQString()},
           {QStringLiteral("baseColor"), QJsonArray{base.redF(), base.greenF(),
                                                    base.blueF(), base.alphaF()}},
           {QStringLiteral("metallic"), material.metallic()},
@@ -1218,9 +1222,8 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
 
   const QJsonArray savedMaterialSlots =
       obj.value(QStringLiteral("material.slots")).toArray();
-  const std::size_t slotCount = std::min(
-      impl_->meshMaterials_.size(),
-      static_cast<std::size_t>(savedMaterialSlots.size()));
+  QVector<quint8> restoredSlots(
+      static_cast<qsizetype>(impl_->meshMaterials_.size()), 0);
   const auto readColor = [](const QJsonValue& value, const QColor& fallback,
                             bool includeAlpha) {
     const QJsonArray components = value.toArray();
@@ -1236,12 +1239,33 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
                             includeAlpha ? component(3, fallback.alphaF())
                                          : fallback.alphaF());
   };
-  for (std::size_t index = 0; index < slotCount; ++index) {
-    const QJsonValue slotValue =
-        savedMaterialSlots[static_cast<qsizetype>(index)];
+  for (qsizetype savedIndex = 0; savedIndex < savedMaterialSlots.size();
+       ++savedIndex) {
+    const QJsonValue slotValue = savedMaterialSlots[savedIndex];
     if (!slotValue.isObject()) continue;
     const QJsonObject slot = slotValue.toObject();
-    auto& material = impl_->meshMaterials_[index];
+    const QString savedName = slot.value(QStringLiteral("name")).toString();
+    qsizetype materialIndex = -1;
+    if (!savedName.isEmpty()) {
+      for (qsizetype candidate = 0;
+           candidate < static_cast<qsizetype>(impl_->meshMaterials_.size());
+           ++candidate) {
+        if (!restoredSlots[candidate] &&
+            impl_->meshMaterials_[static_cast<std::size_t>(candidate)]
+                    .name().toQString() == savedName) {
+          materialIndex = candidate;
+          break;
+        }
+      }
+    }
+    if (materialIndex < 0 &&
+        savedIndex < static_cast<qsizetype>(impl_->meshMaterials_.size()) &&
+        !restoredSlots[savedIndex]) {
+      materialIndex = savedIndex;
+    }
+    if (materialIndex < 0) continue;
+    restoredSlots[materialIndex] = 1;
+    auto& material = impl_->meshMaterials_[static_cast<std::size_t>(materialIndex)];
     material.setBaseColor(readColor(slot.value("baseColor"),
                                     material.baseColor(), true));
     const auto readScalar = [&](const char* key, float fallback,
