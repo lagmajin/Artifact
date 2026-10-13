@@ -956,16 +956,32 @@ namespace {
     const size_t vertexCount = static_cast<size_t>(data.positions.size());
     const size_t indexCount = static_cast<size_t>(data.indices.size());
     std::uint64_t geometryHash = 1469598103934665603ull;
-    const auto hashBytes = [&geometryHash](const void* bytes, size_t size) {
+    std::uint64_t rayTracingGeometryRevision = 1469598103934665603ull;
+    std::uint64_t rayTracingTopologyRevision = 1469598103934665603ull;
+    const bool rayTracingGeometryTracking =
+        rayTracingManager_ && rayTracingManager_->isSupported();
+    const auto hashBytesInto = [](std::uint64_t& hash, const void* bytes,
+                                  size_t size) {
       const auto* dataBytes = static_cast<const std::uint8_t*>(bytes);
       for (size_t i = 0; i < size; ++i) {
-        geometryHash ^= dataBytes[i];
-        geometryHash *= 1099511628211ull;
+        hash ^= dataBytes[i];
+        hash *= 1099511628211ull;
       }
     };
+    const auto hashBytes = [&geometryHash, &hashBytesInto](const void* bytes,
+                                                           size_t size) {
+      hashBytesInto(geometryHash, bytes, size);
+    };
+    if (rayTracingGeometryTracking) {
+      hashBytesInto(rayTracingGeometryRevision, &vertexCount,
+                    sizeof(vertexCount));
+    }
     for (const auto& position : data.positions) {
       const float values[] = {position.x(), position.y(), position.z()};
       hashBytes(values, sizeof(values));
+      if (rayTracingGeometryTracking) {
+        hashBytesInto(rayTracingGeometryRevision, values, sizeof(values));
+      }
     }
     for (const auto& normal : data.normals) {
       const float values[] = {normal.x(), normal.y(), normal.z()};
@@ -981,6 +997,9 @@ namespace {
     }
     for (const auto index : data.indices) {
       hashBytes(&index, sizeof(index));
+      if (rayTracingGeometryTracking) {
+        hashBytesInto(rayTracingTopologyRevision, &index, sizeof(index));
+      }
     }
     const auto geometryIt = cachedGeometry;
     const bool instanceCapacityChanged =
@@ -1120,7 +1139,7 @@ namespace {
         !material.hasOpacityTexture();
     // Instanced draws skip ray-tracing registration: one BLAS/TLAS entry per
     // mesh cannot represent N instance transforms (future work).
-    if (wantedInstances == 1 && rayTracingManager_ && rayTracingManager_->isSupported()) {
+    if (wantedInstances == 1 && rayTracingGeometryTracking) {
       const ArtifactCore::UniString rayTracingId(cacheKey);
       if (!rayTracingOpaque) {
         if (rayTracingManager_->setInstanceActive(rayTracingId, false)) {
@@ -1144,6 +1163,8 @@ namespace {
           geometry.pIndexBuffer = renderer->indexBuffer();
           geometry.indexCount = static_cast<Uint32>(renderer->indexCount());
           geometry.transform = transform;
+          geometry.geometryRevision = rayTracingGeometryRevision;
+          geometry.topologyRevision = rayTracingTopologyRevision;
           tlasDirty = rayTracingManager_->createOrUpdateBLAS(
               rayTracingId, geometry);
         } else {
@@ -5513,21 +5534,24 @@ QString ArtifactIRenderer::rayTracingDebugState() const
 
   const auto caps = impl_->rayTracingManager_->capabilities();
   return QStringLiteral(
-             "device=%1 feature=%2 supported=%3 unitQuadBLAS=%4 unitQuadBLASBuilt=%5 "
-             "TLAS=%6 TLASBuilt=%7 blasBuilds=%8 tlasBuilds=%9 "
-             "pipeline=%10 sbt=%11 sbtBound=%12 outputTexture=%13 outputBound=%14 "
-             "traceDispatches=%15 lastTrace=%16x%17 "
-             "maxDepth=%18 maxRayGen=%19 maxTLASInstances=%20 maxBLASPrimitives=%21 "
-             "maxBLASGeometries=%22 scratchAlign=%23 instanceAlign=%24")
+             "device=%1 feature=%2 supported=%3 TLAS=%4 TLASBuilt=%5 "
+             "blasBuilds=%6 blasUpdates=%7 blasRebuilds=%8 tlasBuilds=%9 "
+             "tlasUpdates=%10 tlasRebuilds=%11 pipeline=%12 sbt=%13 sbtBound=%14 "
+             "outputTexture=%15 outputBound=%16 traceDispatches=%17 lastTrace=%18x%19 "
+             "registeredBLAS=%20 activeInstances=%21 maxDepth=%22 maxRayGen=%23 "
+             "maxTLASInstances=%24 maxBLASPrimitives=%25 maxBLASGeometries=%26 "
+             "scratchAlign=%27 instanceAlign=%28")
       .arg(rayTracingDeviceTypeName(caps.deviceType))
       .arg(rayTracingFeatureStateName(caps.featureState))
       .arg(caps.supported)
-      .arg(caps.unitQuadBLASCreated)
-      .arg(caps.unitQuadBLASBuilt)
       .arg(caps.tlasCreated)
       .arg(caps.tlasBuilt)
       .arg(caps.blasBuildCount)
+      .arg(caps.blasUpdateCount)
+      .arg(caps.blasRebuildCount)
       .arg(caps.tlasBuildCount)
+      .arg(caps.tlasUpdateCount)
+      .arg(caps.tlasRebuildCount)
       .arg(caps.pipelineCreated)
       .arg(caps.sbtCreated)
       .arg(caps.sbtBound)
@@ -5536,6 +5560,8 @@ QString ArtifactIRenderer::rayTracingDebugState() const
       .arg(caps.traceDispatchCount)
       .arg(caps.lastTraceWidth)
       .arg(caps.lastTraceHeight)
+      .arg(caps.registeredBLASCount)
+      .arg(caps.activeInstanceCount)
       .arg(caps.maxRecursionDepth)
       .arg(caps.maxRayGenThreads)
       .arg(caps.maxInstancesPerTLAS)
