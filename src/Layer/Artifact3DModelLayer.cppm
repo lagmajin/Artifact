@@ -284,7 +284,8 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
     }
     const bool importedUfbxMaterialSlots =
         (importer->lastBackend() == ArtifactCore::MeshImporter::Backend::Ufbx ||
-         importer->lastBackend() == ArtifactCore::MeshImporter::Backend::UfbxGltf) &&
+         importer->lastBackend() == ArtifactCore::MeshImporter::Backend::UfbxGltf ||
+         importer->lastBackend() == ArtifactCore::MeshImporter::Backend::TinyObj) &&
         importer->importedPbrMaterials().size() > 1 &&
         impl_->mesh_.materialSlotCount() > 0;
     if (importedUfbxMaterialSlots) {
@@ -473,9 +474,13 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
           sourceMaterial.setSubsurfaceAnisotropy(
               imported.subsurfaceAnisotropy);
         }
-        if (imported.hasAnisotropy) {
-          sourceMaterial.setAnisotropy(imported.anisotropy,
-              sourceMaterial.anisotropyRotationDegrees());
+        if (imported.hasAnisotropy || imported.hasAnisotropyRotation) {
+          sourceMaterial.setAnisotropy(
+              imported.hasAnisotropy ? imported.anisotropy
+                                     : sourceMaterial.anisotropy(),
+              imported.hasAnisotropyRotation
+                  ? imported.anisotropyRotationDegrees
+                  : sourceMaterial.anisotropyRotationDegrees());
         }
         impl_->meshMaterials_.push_back(std::move(sourceMaterial));
       }
