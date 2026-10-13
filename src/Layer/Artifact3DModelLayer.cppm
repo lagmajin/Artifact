@@ -778,23 +778,57 @@ QJsonObject Artifact3DLayer::toJson() const {
                                                    base.blueF(), base.alphaF()}},
           {QStringLiteral("metallic"), material.metallic()},
           {QStringLiteral("roughness"), material.roughness()},
+          {QStringLiteral("diffuseRoughness"), material.diffuseRoughness()},
           {QStringLiteral("specular"), material.specular()},
           {QStringLiteral("specularTint"), QJsonArray{specular.redF(),
               specular.greenF(), specular.blueF()}},
           {QStringLiteral("ior"), material.ior()},
           {QStringLiteral("transmission"), material.transmission()},
+          {QStringLiteral("thinFilmThickness"), material.thinFilmThickness()},
+          {QStringLiteral("thinFilmIOR"), material.thinFilmIOR()},
           {QStringLiteral("clearcoat"), material.clearcoat()},
           {QStringLiteral("clearcoatRoughness"), material.clearcoatRoughness()},
+          {QStringLiteral("clearcoatIOR"), material.clearcoatIOR()},
+          {QStringLiteral("clearcoatTint"), QJsonArray{
+              material.clearcoatTint().redF(),
+              material.clearcoatTint().greenF(),
+              material.clearcoatTint().blueF()}},
+          {QStringLiteral("clearcoatNormalStrength"),
+              material.clearcoatNormalStrength()},
           {QStringLiteral("sheen"), material.sheen()},
           {QStringLiteral("sheenRoughness"), material.sheenRoughness()},
           {QStringLiteral("sheenTint"), QJsonArray{sheen.redF(), sheen.greenF(),
                                                    sheen.blueF()}},
+          {QStringLiteral("subsurface"), material.subsurface()},
+          {QStringLiteral("subsurfaceIOR"), material.subsurfaceIOR()},
+          {QStringLiteral("subsurfaceAnisotropy"),
+              material.subsurfaceAnisotropy()},
+          {QStringLiteral("subsurfaceColor"), QJsonArray{
+              material.subsurfaceColor().redF(),
+              material.subsurfaceColor().greenF(),
+              material.subsurfaceColor().blueF()}},
+          {QStringLiteral("subsurfaceRadius"), QJsonArray{
+              material.subsurfaceRadius().x(),
+              material.subsurfaceRadius().y(),
+              material.subsurfaceRadius().z()}},
+          {QStringLiteral("anisotropy"), material.anisotropy()},
+          {QStringLiteral("anisotropyRotation"),
+              material.anisotropyRotationDegrees()},
           {QStringLiteral("opacity"), material.opacity()},
           {QStringLiteral("alphaMode"), static_cast<int>(material.alphaMode())},
           {QStringLiteral("alphaCutoff"), material.alphaCutoff()},
           {QStringLiteral("emissionColor"), QJsonArray{emission.redF(),
               emission.greenF(), emission.blueF()}},
           {QStringLiteral("emissionStrength"), material.emissionStrength()},
+          {QStringLiteral("normalStrength"), material.normalStrength()},
+          {QStringLiteral("occlusionStrength"), material.occlusionStrength()},
+          {QStringLiteral("environmentIntensity"),
+              material.environmentIntensity()},
+          {QStringLiteral("uvOffsetU"), material.uvOffsetU()},
+          {QStringLiteral("uvOffsetV"), material.uvOffsetV()},
+          {QStringLiteral("uvScaleU"), material.uvScaleU()},
+          {QStringLiteral("uvScaleV"), material.uvScaleV()},
+          {QStringLiteral("uvRotation"), material.uvRotationDegrees()},
           {QStringLiteral("baseColorTexture"),
               material.baseColorTexture().toQString()},
           {QStringLiteral("metallicRoughnessTexture"),
@@ -1391,21 +1425,58 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
     };
     material.setMetallic(readScalar("metallic", material.metallic(), 0.0f, 1.0f));
     material.setRoughness(readScalar("roughness", material.roughness(), 0.0f, 1.0f));
+    material.setDiffuseRoughness(readScalar("diffuseRoughness",
+        material.diffuseRoughness(), 0.0f, 1.0f));
     material.setSpecular(readScalar("specular", material.specular(), 0.0f, 1.0f));
     material.setSpecularTint(readColor(slot.value("specularTint"),
                                        material.specularTint(), false));
     material.setIOR(readScalar("ior", material.ior(), 1.0f, 3.0f));
     material.setTransmission(readScalar("transmission", material.transmission(),
                                         0.0f, 1.0f));
+    material.setThinFilm(readScalar("thinFilmThickness",
+        material.thinFilmThickness(), 0.0f, 1000.0f),
+        readScalar("thinFilmIOR", material.thinFilmIOR(), 1.0f, 2.5f));
     material.setClearcoat(readScalar("clearcoat", material.clearcoat(),
                                      0.0f, 1.0f));
     material.setClearcoatRoughness(readScalar("clearcoatRoughness",
         material.clearcoatRoughness(), 0.0f, 1.0f));
+    material.setClearcoatIOR(readScalar("clearcoatIOR",
+        material.clearcoatIOR(), 1.0f, 2.0f));
+    material.setClearcoatTint(readColor(slot.value("clearcoatTint"),
+                                        material.clearcoatTint(), false));
+    material.setClearcoatNormalStrength(readScalar("clearcoatNormalStrength",
+        material.clearcoatNormalStrength(), 0.0f, 1.0f));
     material.setSheen(readScalar("sheen", material.sheen(), 0.0f, 1.0f));
     material.setSheenRoughness(readScalar("sheenRoughness",
         material.sheenRoughness(), 0.0f, 1.0f));
     material.setSheenTint(readColor(slot.value("sheenTint"),
                                     material.sheenTint(), false));
+    material.setSubsurface(readScalar("subsurface", material.subsurface(),
+                                      0.0f, 1.0f));
+    material.setSubsurfaceIOR(readScalar("subsurfaceIOR",
+        material.subsurfaceIOR(), 1.0f, 2.0f));
+    material.setSubsurfaceAnisotropy(readScalar("subsurfaceAnisotropy",
+        material.subsurfaceAnisotropy(), -0.9f, 0.9f));
+    material.setSubsurfaceColor(readColor(slot.value("subsurfaceColor"),
+                                          material.subsurfaceColor(), false));
+    const QJsonArray savedSubsurfaceRadius =
+        slot.value(QStringLiteral("subsurfaceRadius")).toArray();
+    if (savedSubsurfaceRadius.size() >= 3) {
+      const QVector3D currentRadius = material.subsurfaceRadius();
+      const auto radiusComponent = [&](int component, float fallback) {
+        const double number = savedSubsurfaceRadius[component].toDouble(fallback);
+        return std::isfinite(number)
+            ? static_cast<float>(std::clamp(number, 0.0, 10.0)) : fallback;
+      };
+      material.setSubsurfaceRadius(QVector3D(
+          radiusComponent(0, currentRadius.x()),
+          radiusComponent(1, currentRadius.y()),
+          radiusComponent(2, currentRadius.z())));
+    }
+    material.setAnisotropy(
+        readScalar("anisotropy", material.anisotropy(), -1.0f, 1.0f),
+        readScalar("anisotropyRotation", material.anisotropyRotationDegrees(),
+                   -180.0f, 180.0f));
     material.setOpacity(readScalar("opacity", material.opacity(), 0.0f, 1.0f));
     const int alphaMode = std::clamp(slot.value("alphaMode").toInt(
         static_cast<int>(material.alphaMode())),
@@ -1418,6 +1489,22 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
                                         material.emissionColor(), false));
     material.setEmissionStrength(readScalar("emissionStrength",
         material.emissionStrength(), 0.0f, 100000.0f));
+    material.setNormalStrength(readScalar("normalStrength",
+        material.normalStrength(), 0.0f, 10.0f));
+    material.setOcclusionStrength(readScalar("occlusionStrength",
+        material.occlusionStrength(), 0.0f, 1.0f));
+    material.setEnvironmentIntensity(readScalar("environmentIntensity",
+        material.environmentIntensity(), 0.0f, 4.0f));
+    material.setUvOffsetU(readScalar("uvOffsetU", material.uvOffsetU(),
+                                     -10.0f, 10.0f));
+    material.setUvOffsetV(readScalar("uvOffsetV", material.uvOffsetV(),
+                                     -10.0f, 10.0f));
+    material.setUvScaleU(readScalar("uvScaleU", material.uvScaleU(),
+                                    0.01f, 10.0f));
+    material.setUvScaleV(readScalar("uvScaleV", material.uvScaleV(),
+                                    0.01f, 10.0f));
+    material.setUvRotationDegrees(readScalar("uvRotation",
+        material.uvRotationDegrees(), -360.0f, 360.0f));
     const auto restoreUv = [&](const char* key, auto scaleSetter,
         auto rotationSetter, auto offsetUSetter, auto offsetVSetter,
         auto uvSetSetter, float currentScale, float currentRotation,
@@ -3768,26 +3855,99 @@ Artifact3DLayer::getLayerPropertyGroups() const {
                 material.metallic(), 0.0, 1.0, -79);
       addScalar(QStringLiteral("roughness"), QStringLiteral("Roughness"),
                 material.roughness(), 0.0, 1.0, -78);
+      addScalar(QStringLiteral("diffuseRoughness"),
+                QStringLiteral("Diffuse Roughness"),
+                material.diffuseRoughness(), 0.0, 1.0, -77);
       addScalar(QStringLiteral("specular"), QStringLiteral("Specular"),
-                material.specular(), 0.0, 1.0, -77);
+                material.specular(), 0.0, 1.0, -76);
       addColor(QStringLiteral("specularTint"),
-               QStringLiteral("Specular Tint"), material.specularTint(), -76);
+               QStringLiteral("Specular Tint"), material.specularTint(), -75);
+      addScalar(QStringLiteral("thinFilmThickness"),
+                QStringLiteral("Thin Film Thickness"),
+                material.thinFilmThickness(), 0.0, 1000.0, -74);
+      addScalar(QStringLiteral("thinFilmIOR"), QStringLiteral("Thin Film IOR"),
+                material.thinFilmIOR(), 1.0, 2.5, -73);
       addScalar(QStringLiteral("ior"), QStringLiteral("IOR"), material.ior(),
-                1.0, 3.0, -75);
+                1.0, 3.0, -72);
       addScalar(QStringLiteral("transmission"), QStringLiteral("Transmission"),
-                material.transmission(), 0.0, 1.0, -74);
+                material.transmission(), 0.0, 1.0, -71);
       addScalar(QStringLiteral("clearcoat"), QStringLiteral("Clearcoat"),
-                material.clearcoat(), 0.0, 1.0, -73);
+                material.clearcoat(), 0.0, 1.0, -70);
       addScalar(QStringLiteral("clearcoatRoughness"),
                 QStringLiteral("Clearcoat Roughness"),
-                material.clearcoatRoughness(), 0.0, 1.0, -72);
+                material.clearcoatRoughness(), 0.0, 1.0, -69);
+      addScalar(QStringLiteral("clearcoatIOR"), QStringLiteral("Clearcoat IOR"),
+                material.clearcoatIOR(), 1.0, 2.0, -68);
+      addColor(QStringLiteral("clearcoatTint"),
+               QStringLiteral("Clearcoat Tint"), material.clearcoatTint(), -67);
+      addScalar(QStringLiteral("clearcoatNormalStrength"),
+                QStringLiteral("Coat Normal Strength"),
+                material.clearcoatNormalStrength(), 0.0, 1.0, -66);
       addScalar(QStringLiteral("sheen"), QStringLiteral("Sheen"),
-                material.sheen(), 0.0, 1.0, -71);
+                material.sheen(), 0.0, 1.0, -65);
       addScalar(QStringLiteral("sheenRoughness"),
                 QStringLiteral("Sheen Roughness"),
-                material.sheenRoughness(), 0.0, 1.0, -70);
+                material.sheenRoughness(), 0.0, 1.0, -64);
       addColor(QStringLiteral("sheenTint"), QStringLiteral("Sheen Tint"),
-               material.sheenTint(), -69);
+               material.sheenTint(), -63);
+      addScalar(QStringLiteral("subsurface"), QStringLiteral("Subsurface Weight"),
+                material.subsurface(), 0.0, 1.0, -62);
+      addScalar(QStringLiteral("subsurfaceIOR"), QStringLiteral("Subsurface IOR"),
+                material.subsurfaceIOR(), 1.0, 2.0, -61);
+      addScalar(QStringLiteral("subsurfaceAnisotropy"),
+                QStringLiteral("Subsurface Anisotropy"),
+                material.subsurfaceAnisotropy(), -0.9, 0.9, -60);
+      addColor(QStringLiteral("subsurfaceColor"),
+               QStringLiteral("Subsurface Color"), material.subsurfaceColor(), -59);
+      const QVector3D subsurfaceRadius = material.subsurfaceRadius();
+      addScalar(QStringLiteral("subsurfaceRadius.r"),
+                QStringLiteral("Subsurface Radius R"),
+                subsurfaceRadius.x(), 0.0, 10.0, -58);
+      addScalar(QStringLiteral("subsurfaceRadius.g"),
+                QStringLiteral("Subsurface Radius G"),
+                subsurfaceRadius.y(), 0.0, 10.0, -57);
+      addScalar(QStringLiteral("subsurfaceRadius.b"),
+                QStringLiteral("Subsurface Radius B"),
+                subsurfaceRadius.z(), 0.0, 10.0, -56);
+      addScalar(QStringLiteral("anisotropy"), QStringLiteral("Anisotropy"),
+                material.anisotropy(), -1.0, 1.0, -55);
+      addScalar(QStringLiteral("anisotropyRotation"),
+                QStringLiteral("Anisotropy Rotation"),
+                material.anisotropyRotationDegrees(), -180.0, 180.0, -54);
+      addColor(QStringLiteral("emissionColor"), QStringLiteral("Emission Color"),
+               material.emissionColor(), -53);
+      addScalar(QStringLiteral("emissionStrength"),
+                QStringLiteral("Emission Strength"),
+                material.emissionStrength(), 0.0, 100000.0, -52);
+      addScalar(QStringLiteral("opacity"), QStringLiteral("Opacity"),
+                material.opacity(), 0.0, 1.0, -51);
+      auto alphaModeProperty = persistentLayerProperty(
+          prefix + QStringLiteral("alphaMode"), PropertyType::Integer,
+          static_cast<int>(material.alphaMode()), -50);
+      alphaModeProperty->setDisplayLabel(QStringLiteral("Alpha Mode"));
+      alphaModeProperty->setHardRange(0, 2);
+      slotGroup.addProperty(alphaModeProperty);
+      addScalar(QStringLiteral("alphaCutoff"), QStringLiteral("Alpha Cutoff"),
+                material.alphaCutoff(), 0.0, 1.0, -49);
+      addScalar(QStringLiteral("normalStrength"),
+                QStringLiteral("Normal Strength"),
+                material.normalStrength(), 0.0, 10.0, -48);
+      addScalar(QStringLiteral("occlusionStrength"),
+                QStringLiteral("Occlusion Strength"),
+                material.occlusionStrength(), 0.0, 1.0, -47);
+      addScalar(QStringLiteral("environmentIntensity"),
+                QStringLiteral("Environment Intensity"),
+                material.environmentIntensity(), 0.0, 4.0, -46);
+      addScalar(QStringLiteral("uvOffsetU"), QStringLiteral("UV Offset U"),
+                material.uvOffsetU(), -10.0, 10.0, -45);
+      addScalar(QStringLiteral("uvOffsetV"), QStringLiteral("UV Offset V"),
+                material.uvOffsetV(), -10.0, 10.0, -44);
+      addScalar(QStringLiteral("uvScaleU"), QStringLiteral("UV Scale U"),
+                material.uvScaleU(), 0.01, 10.0, -43);
+      addScalar(QStringLiteral("uvScaleV"), QStringLiteral("UV Scale V"),
+                material.uvScaleV(), 0.01, 10.0, -42);
+      addScalar(QStringLiteral("uvRotation"), QStringLiteral("UV Rotation"),
+                material.uvRotationDegrees(), -360.0, 360.0, -41);
       groups.push_back(std::move(slotGroup));
     }
   }
@@ -3815,6 +3975,12 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
       material.setSpecularTint(value.value<QColor>());
     } else if (field == QStringLiteral("sheenTint")) {
       material.setSheenTint(value.value<QColor>());
+    } else if (field == QStringLiteral("clearcoatTint")) {
+      material.setClearcoatTint(value.value<QColor>());
+    } else if (field == QStringLiteral("subsurfaceColor")) {
+      material.setSubsurfaceColor(value.value<QColor>());
+    } else if (field == QStringLiteral("emissionColor")) {
+      material.setEmissionColor(value.value<QColor>());
     } else {
       const auto scalar = [&]() {
         const float incoming = value.toFloat();
@@ -3827,6 +3993,14 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
         material.setRoughness(std::clamp(incoming, 0.0f, 1.0f));
       } else if (field == QStringLiteral("specular")) {
         material.setSpecular(std::clamp(incoming, 0.0f, 1.0f));
+      } else if (field == QStringLiteral("diffuseRoughness")) {
+        material.setDiffuseRoughness(std::clamp(incoming, 0.0f, 1.0f));
+      } else if (field == QStringLiteral("thinFilmThickness")) {
+        material.setThinFilm(std::clamp(incoming, 0.0f, 1000.0f),
+                             material.thinFilmIOR());
+      } else if (field == QStringLiteral("thinFilmIOR")) {
+        material.setThinFilm(material.thinFilmThickness(),
+                             std::clamp(incoming, 1.0f, 2.5f));
       } else if (field == QStringLiteral("ior")) {
         material.setIOR(std::clamp(incoming, 1.0f, 3.0f));
       } else if (field == QStringLiteral("transmission")) {
@@ -3835,10 +4009,62 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
         material.setClearcoat(std::clamp(incoming, 0.0f, 1.0f));
       } else if (field == QStringLiteral("clearcoatRoughness")) {
         material.setClearcoatRoughness(std::clamp(incoming, 0.0f, 1.0f));
+      } else if (field == QStringLiteral("clearcoatIOR")) {
+        material.setClearcoatIOR(std::clamp(incoming, 1.0f, 2.0f));
+      } else if (field == QStringLiteral("clearcoatNormalStrength")) {
+        material.setClearcoatNormalStrength(std::clamp(incoming, 0.0f, 1.0f));
       } else if (field == QStringLiteral("sheen")) {
         material.setSheen(std::clamp(incoming, 0.0f, 1.0f));
       } else if (field == QStringLiteral("sheenRoughness")) {
         material.setSheenRoughness(std::clamp(incoming, 0.0f, 1.0f));
+      } else if (field == QStringLiteral("subsurface")) {
+        material.setSubsurface(std::clamp(incoming, 0.0f, 1.0f));
+      } else if (field == QStringLiteral("subsurfaceIOR")) {
+        material.setSubsurfaceIOR(std::clamp(incoming, 1.0f, 2.0f));
+      } else if (field == QStringLiteral("subsurfaceAnisotropy")) {
+        material.setSubsurfaceAnisotropy(std::clamp(incoming, -0.9f, 0.9f));
+      } else if (field.startsWith(QStringLiteral("subsurfaceRadius."))) {
+        QVector3D radius = material.subsurfaceRadius();
+        const float component = std::clamp(incoming, 0.0f, 10.0f);
+        if (field.endsWith(QLatin1Char('r'))) radius.setX(component);
+        else if (field.endsWith(QLatin1Char('g'))) radius.setY(component);
+        else if (field.endsWith(QLatin1Char('b'))) radius.setZ(component);
+        else return false;
+        material.setSubsurfaceRadius(radius);
+      } else if (field == QStringLiteral("anisotropy")) {
+        material.setAnisotropy(std::clamp(incoming, -1.0f, 1.0f),
+                               material.anisotropyRotationDegrees());
+      } else if (field == QStringLiteral("anisotropyRotation")) {
+        material.setAnisotropy(material.anisotropy(),
+                               std::clamp(incoming, -180.0f, 180.0f));
+      } else if (field == QStringLiteral("emissionStrength")) {
+        material.setEmissionStrength(std::clamp(incoming, 0.0f, 100000.0f));
+      } else if (field == QStringLiteral("opacity")) {
+        material.setOpacity(std::clamp(incoming, 0.0f, 1.0f));
+      } else if (field == QStringLiteral("alphaMode")) {
+        const int mode = std::clamp(value.toInt(),
+            static_cast<int>(ArtifactCore::MaterialAlphaMode::Opaque),
+            static_cast<int>(ArtifactCore::MaterialAlphaMode::Blended));
+        material.setAlphaMode(
+            static_cast<ArtifactCore::MaterialAlphaMode>(mode));
+      } else if (field == QStringLiteral("alphaCutoff")) {
+        material.setAlphaCutoff(std::clamp(incoming, 0.0f, 1.0f));
+      } else if (field == QStringLiteral("normalStrength")) {
+        material.setNormalStrength(std::clamp(incoming, 0.0f, 10.0f));
+      } else if (field == QStringLiteral("occlusionStrength")) {
+        material.setOcclusionStrength(std::clamp(incoming, 0.0f, 1.0f));
+      } else if (field == QStringLiteral("environmentIntensity")) {
+        material.setEnvironmentIntensity(std::clamp(incoming, 0.0f, 4.0f));
+      } else if (field == QStringLiteral("uvOffsetU")) {
+        material.setUvOffsetU(std::clamp(incoming, -10.0f, 10.0f));
+      } else if (field == QStringLiteral("uvOffsetV")) {
+        material.setUvOffsetV(std::clamp(incoming, -10.0f, 10.0f));
+      } else if (field == QStringLiteral("uvScaleU")) {
+        material.setUvScaleU(std::clamp(incoming, 0.01f, 10.0f));
+      } else if (field == QStringLiteral("uvScaleV")) {
+        material.setUvScaleV(std::clamp(incoming, 0.01f, 10.0f));
+      } else if (field == QStringLiteral("uvRotation")) {
+        material.setUvRotationDegrees(std::clamp(incoming, -360.0f, 360.0f));
       } else {
         return false;
       }
