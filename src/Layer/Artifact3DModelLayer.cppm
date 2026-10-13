@@ -390,11 +390,17 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
         if (imported.hasRoughness) {
           sourceMaterial.setRoughness(imported.roughness);
         }
+        if (imported.hasDiffuseRoughness) {
+          sourceMaterial.setDiffuseRoughness(imported.diffuseRoughness);
+        }
         if (imported.hasClearcoat) {
           sourceMaterial.setClearcoat(imported.clearcoat);
         }
         if (imported.hasClearcoatRoughness) {
           sourceMaterial.setClearcoatRoughness(imported.clearcoatRoughness);
+        }
+        if (imported.hasClearcoatIor) {
+          sourceMaterial.setClearcoatIOR(imported.clearcoatIor);
         }
         if (imported.hasTransmission) {
           sourceMaterial.setTransmission(imported.transmission);
@@ -420,6 +426,27 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
           sourceMaterial.setSheenTint(QColor::fromRgbF(
               imported.sheenTint[0], imported.sheenTint[1],
               imported.sheenTint[2]));
+        }
+        if (imported.hasSubsurface) {
+          sourceMaterial.setSubsurface(imported.subsurface);
+        }
+        if (imported.hasSubsurfaceColor) {
+          sourceMaterial.setSubsurfaceColor(QColor::fromRgbF(
+              imported.subsurfaceColor[0], imported.subsurfaceColor[1],
+              imported.subsurfaceColor[2]));
+        }
+        if (imported.hasSubsurfaceRadius) {
+          sourceMaterial.setSubsurfaceRadius(QVector3D(
+              imported.subsurfaceRadius[0], imported.subsurfaceRadius[1],
+              imported.subsurfaceRadius[2]));
+        }
+        if (imported.hasSubsurfaceAnisotropy) {
+          sourceMaterial.setSubsurfaceAnisotropy(
+              imported.subsurfaceAnisotropy);
+        }
+        if (imported.hasAnisotropy) {
+          sourceMaterial.setAnisotropy(imported.anisotropy,
+              sourceMaterial.anisotropyRotationDegrees());
         }
         impl_->meshMaterials_.push_back(std::move(sourceMaterial));
       }
