@@ -1248,7 +1248,8 @@ namespace {
                 rayTracingMaterialIndices.empty()
                     ? nullptr : rayTracingMaterialIndices.data(),
                 rayTracingHasUvs ? uvs.data() : nullptr,
-                colors.data());
+                colors.data(),
+                uvs1.data());
             tlasDirty = true;
           }
         } else {
@@ -1267,6 +1268,7 @@ namespace {
               source.baseColorUvRotationDegrees();
           result.baseColorUvOffsetU = source.baseColorUvOffsetU();
           result.baseColorUvOffsetV = source.baseColorUvOffsetV();
+          result.baseColorUvSet = source.baseColorUvSet();
           result.metallicRoughnessUvScale =
               source.metallicRoughnessUvScale();
           result.metallicRoughnessUvOffsetU =
@@ -1351,6 +1353,7 @@ namespace {
           result.normalUvScale = source.normalUvScale();
           result.normalUvOffsetU = source.normalUvOffsetU();
           result.normalUvOffsetV = source.normalUvOffsetV();
+          result.normalUvSet = source.normalUvSet();
           result.occlusionTexture = source.occlusionTexture();
           result.occlusionTextureUvScale =
               source.occlusionTextureUvScale();
@@ -1535,6 +1538,8 @@ namespace {
         state.baseColorTextureUvTransform[2] =
             slotMaterial.baseColorUvRotationDegrees() *
             std::numbers::pi_v<float> / 180.0f;
+        state.baseColorTextureUvTransform[3] =
+            slotMaterial.baseColorUvSet() == 1 ? 1.0f : 0.0f;
         state.normalTextureUvOffset[0] = slotMaterial.normalUvOffsetU();
         state.normalTextureUvOffset[1] = slotMaterial.normalUvOffsetV();
         state.normalTextureUvOffset[2] =
@@ -1614,6 +1619,7 @@ namespace {
     // Keep the primary material path as the single-material fallback; each
     // multi-material range resolves its own map paths above.
     renderer->setBaseColorTexture(material.baseColorTexture().toQString());
+    renderer->setBaseColorUvSet(material.baseColorUvSet());
     renderer->setOpacityTexture(material.opacityTexture().toQString());
     renderer->setEmissionTexture(material.emissionTexture().toQString());
     renderer->setEmissionColor(material.emissionColor(),

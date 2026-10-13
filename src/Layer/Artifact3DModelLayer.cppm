@@ -533,6 +533,7 @@ QJsonObject Artifact3DLayer::toJson() const {
       impl_->material_.baseColorUvOffsetU();
   obj["material.baseColorUvOffsetV"] =
       impl_->material_.baseColorUvOffsetV();
+  obj["material.baseColorUvSet"] = impl_->material_.baseColorUvSet();
   obj["material.metallicRoughnessTexture"] =
       impl_->material_.metallicRoughnessTexture().toQString();
   obj["material.metallicRoughnessUvScale"] =
@@ -945,6 +946,8 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
       static_cast<float>(obj.value("material.baseColorUvOffsetV")
           .toDouble(impl_->material_.baseColorUvOffsetV())),
       impl_->material_.baseColorUvOffsetV(), -10.0f, 10.0f));
+  impl_->material_.setBaseColorUvSet(
+      obj.value("material.baseColorUvSet").toInt(0));
 
   const QString metallicRoughnessTexture =
       obj.value("material.metallicRoughnessTexture").toString();
@@ -2816,6 +2819,13 @@ Artifact3DLayer::getLayerPropertyGroups() const {
   baseColorTextureProp->setTooltip(QStringLiteral("Texture path for the base color"));
   materialGroup.addProperty(baseColorTextureProp);
 
+  auto baseColorUvSetProp = persistentLayerProperty(
+      QStringLiteral("material.baseColorUvSet"), PropertyType::Integer,
+      impl_->material_.baseColorUvSet(), -38);
+  baseColorUvSetProp->setDisplayLabel(QStringLiteral("Base Color UV Set"));
+  baseColorUvSetProp->setHardRange(0, 1);
+  materialGroup.addProperty(baseColorUvSetProp);
+
   auto baseColorUvScaleProp = persistentLayerProperty(
       QStringLiteral("material.baseColorUvScale"), PropertyType::Float,
       impl_->material_.baseColorUvScale(), -37);
@@ -3332,6 +3342,10 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
         value.toFloat(), impl_->material_.baseColorUvScale(), 0.01f, 10.0f));
     Q_EMIT changed();
     return true;
+  } else if (propertyPath == QStringLiteral("material.baseColorUvSet")) {
+    impl_->material_.setBaseColorUvSet(value.toInt());
+    Q_EMIT changed();
+    return true;
   } else if (propertyPath == QStringLiteral("material.baseColorUvRotation")) {
     impl_->material_.setBaseColorUvRotationDegrees(finiteClamped(
         value.toFloat(), impl_->material_.baseColorUvRotationDegrees(),
@@ -3768,7 +3782,7 @@ QString Artifact3DLayer::materialSignature() const
              "opacityTextureUvOffset=%88,%89|baseColorUvRotation=%90|"
              "emissionTextureUvRotation=%91|metallicRoughnessUvRotation=%92|"
              "opacityTextureUvRotation=%93|occlusionTextureUvRotation=%94|"
-             "normalUvSet=%95")
+             "normalUvSet=%95|baseColorUvSet=%96")
       .arg(impl_->sourcePath_)
       .arg(impl_->material_.baseColorTexture().toQString())
       .arg(impl_->material_.metallicRoughnessTexture().toQString())
@@ -3862,7 +3876,8 @@ QString Artifact3DLayer::materialSignature() const
       .arg(impl_->material_.metallicRoughnessUvRotationDegrees(), 0, 'f', 6)
       .arg(impl_->material_.opacityTextureUvRotationDegrees(), 0, 'f', 6)
       .arg(impl_->material_.occlusionTextureUvRotationDegrees(), 0, 'f', 6)
-      .arg(impl_->material_.normalUvSet());
+      .arg(impl_->material_.normalUvSet())
+      .arg(impl_->material_.baseColorUvSet());
 }
 
 void Artifact3DLayer::setMaterialGraphJson(const QString& json)
