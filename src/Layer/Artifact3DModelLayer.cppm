@@ -319,6 +319,13 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
         if (imported.baseColor[3] < 0.999f) {
           sourceMaterial.setAlphaMode(ArtifactCore::MaterialAlphaMode::Blended);
         }
+        if (imported.hasOpacity) {
+          sourceMaterial.setOpacity(imported.opacity);
+          if (imported.opacity < 0.999f) {
+            sourceMaterial.setAlphaMode(
+                ArtifactCore::MaterialAlphaMode::Blended);
+          }
+        }
         if (!imported.baseColorTexture.toQString().isEmpty()) {
           sourceMaterial.setBaseColorTexture(imported.baseColorTexture);
           applyImportedUv(imported.baseColorUv,
@@ -402,6 +409,11 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
         if (imported.hasClearcoatIor) {
           sourceMaterial.setClearcoatIOR(imported.clearcoatIor);
         }
+        if (imported.hasClearcoatTint) {
+          sourceMaterial.setClearcoatTint(QColor::fromRgbF(
+              imported.clearcoatTint[0], imported.clearcoatTint[1],
+              imported.clearcoatTint[2]));
+        }
         if (imported.hasTransmission) {
           sourceMaterial.setTransmission(imported.transmission);
         }
@@ -426,6 +438,14 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
           sourceMaterial.setSheenTint(QColor::fromRgbF(
               imported.sheenTint[0], imported.sheenTint[1],
               imported.sheenTint[2]));
+        }
+        if (imported.hasEmissionColor) {
+          sourceMaterial.setEmissionColor(QColor::fromRgbF(
+              imported.emissionColor[0], imported.emissionColor[1],
+              imported.emissionColor[2]));
+        }
+        if (imported.hasEmissionStrength) {
+          sourceMaterial.setEmissionStrength(imported.emissionStrength);
         }
         if (imported.hasSubsurface) {
           sourceMaterial.setSubsurface(imported.subsurface);
