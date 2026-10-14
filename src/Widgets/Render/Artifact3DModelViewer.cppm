@@ -89,6 +89,8 @@ public:
     NavMode navMode_ = NavMode::None;
 
     SharedPtr<ArtifactCore::Mesh> currentMesh = nullptr;
+    ArtifactCore::MeshImporter meshImporter;
+    QVector<QMatrix4x4> animationPoseScratch_;
     bool modelLoaded = false;
     DisplayMode mode = DisplayMode::Solid;
     ArtifactCore::MeshImporter::Backend lastBackend = ArtifactCore::MeshImporter::Backend::None;
@@ -101,6 +103,7 @@ public:
     NavHudLabel* navHud_ = nullptr;
     std::unique_ptr<ArtifactCore::PreciseTicker> renderTimer_;
     bool animationPlaybackEnabled_ = false;
+    std::atomic_bool animationTickQueued_{false};
     int animationClipIndex_ = 0;
     double animationTime_ = 0.0;
     std::map<QString, float> blendShapeWeightOverrides_;
@@ -159,6 +162,14 @@ public:
             const QString clipName = activeClip && !activeClip->name.isEmpty()
                 ? activeClip->name
                 : QStringLiteral("-");
+            const QString clipTime = activeClip &&
+                    std::isfinite(activeClip->timeBegin) &&
+                    std::isfinite(activeClip->timeEnd) &&
+                    activeClip->timeEnd > activeClip->timeBegin
+                ? QStringLiteral("%1/%2 s")
+                      .arg(animationTime_ - activeClip->timeBegin, 0, 'f', 2)
+                      .arg(activeClip->timeEnd - activeClip->timeBegin, 0, 'f', 2)
+                : QStringLiteral("-");
             const QString skinningMode = currentMesh->skinBones().isEmpty()
                 ? QStringLiteral("-")
                 : (renderWindow && renderWindow->gpuSkinningActive()
@@ -186,7 +197,7 @@ public:
                     break;
             }
             statusLabel->setText(
-                QString("Preview: %1 | Vertices: %2 | Polygons: %3 | Bones: %4 | Skinning: %5 (%6, %7inf) | Morphs: %8 | Clips: %9 [#%10: %11] | Animation: %12 | Bounds: %13 x %14 x %15 | Backend: %16")
+                QString("Preview: %1 | Vertices: %2 | Polygons: %3 | Bones: %4 | Skinning: %5 (%6, %7inf) | Morphs: %8 | Clips: %9 [#%10: %11] | Time: %12 | Animation: %13 | Bounds: %14 x %15 x %16 | Backend: %17")
                     .arg(currentModelPath.toQString())
                     .arg(currentMesh->vertexCount())
                     .arg(currentMesh->polygonCount())
@@ -198,6 +209,7 @@ public:
                     .arg(currentMesh->skinAnimationClips().size())
                     .arg(animationClipIndex_)
                     .arg(clipName)
+                    .arg(clipTime)
                     .arg(animationPlaybackEnabled_ ? QStringLiteral("Playing")
                                                     : QStringLiteral("Stopped"))
                     .arg(static_cast<int>(std::round(extents.x())))
@@ -318,9 +330,15 @@ Artifact3DModelViewer::Artifact3DModelViewer(QWidget* parent)
     impl_->renderTimer_ = std::make_unique<ArtifactCore::PreciseTicker>();
     impl_->renderTimer_->setInterval(std::chrono::milliseconds(16));
     impl_->renderTimer_->setCallback([this]() {
+        if (impl_->animationTickQueued_.exchange(true,
+                                                  std::memory_order_acq_rel)) {
+            return;
+        }
         QMetaObject::invokeMethod(this, [this]() {
             impl_->advanceAnimation();
             requestUpdate();
+            impl_->animationTickQueued_.store(false,
+                                               std::memory_order_release);
         }, Qt::QueuedConnection);
     });
     // Start only when visible; stopped in hideEvent.
@@ -339,10 +357,14 @@ void Artifact3DModelViewer::loadModel(const ArtifactCore::UniString& filePath)
     impl_->currentModelPath = filePath;
     impl_->blendShapeWeightOverrides_.clear();
 
-    ArtifactCore::MeshImporter importer;
-    impl_->currentMesh = importer.importMeshFromFile(filePath);
-    impl_->lastBackend = importer.lastBackend();
-    impl_->lastErrorText = importer.lastError();
+    impl_->currentMesh = impl_->meshImporter.importMeshFromFile(filePath);
+    impl_->animationPoseScratch_.clear();
+    if (impl_->currentMesh) {
+        impl_->animationPoseScratch_.reserve(
+            impl_->currentMesh->skinBones().size());
+    }
+    impl_->lastBackend = impl_->meshImporter.lastBackend();
+    impl_->lastErrorText = impl_->meshImporter.lastError();
     impl_->animationTime_ = 0.0;
     impl_->animationClipIndex_ = 0;
     impl_->animationPlaybackEnabled_ = impl_->currentMesh &&
@@ -354,12 +376,40 @@ void Artifact3DModelViewer::loadModel(const ArtifactCore::UniString& filePath)
         qDebug() << "Model loaded successfully. Vertices:" << impl_->currentMesh->vertexCount();
         if (impl_->renderWindow) {
             impl_->renderWindow->setMesh(impl_->currentMesh);
-            impl_->renderWindow->setBaseColorTexture(
-                importer.lastBaseColorTexture());
-            impl_->renderWindow->setMetallicRoughnessTexture(
-                importer.lastMetallicRoughnessTexture());
-            impl_->renderWindow->setNormalTexture(
-                importer.lastNormalTexture());
+            const auto& importedMaterials =
+                impl_->meshImporter.importedPbrMaterials();
+            if (!importedMaterials.empty()) {
+                const auto& material = importedMaterials.front();
+                impl_->renderWindow->setBaseColorTexture(
+                    material.baseColorTexture.toQString());
+                impl_->renderWindow->setMetallicRoughnessTexture(
+                    material.metallicRoughnessTexture.toQString());
+                impl_->renderWindow->setNormalTexture(
+                    material.normalTexture.toQString());
+                impl_->renderWindow->setPbrMaterial(
+                    material.hasBaseColor
+                        ? QColor::fromRgbF(material.baseColor[0],
+                                           material.baseColor[1],
+                                           material.baseColor[2],
+                                           material.baseColor[3])
+                        : QColor(180, 185, 195),
+                    material.hasMetallic ? material.metallic : 0.0f,
+                    material.hasRoughness ? material.roughness : 0.55f,
+                    material.hasSheen ? material.sheen : 0.0f,
+                    material.hasClearcoat ? material.clearcoat : 0.0f,
+                    material.hasClearcoatRoughness
+                        ? material.clearcoatRoughness : 0.03f,
+                    material.hasTransmission ? material.transmission : 0.0f,
+                    material.hasSpecular ? material.specular : 0.5f,
+                    material.hasIor ? material.ior : 1.5f);
+            } else {
+                impl_->renderWindow->setBaseColorTexture(
+                    impl_->meshImporter.lastBaseColorTexture());
+                impl_->renderWindow->setMetallicRoughnessTexture(
+                    impl_->meshImporter.lastMetallicRoughnessTexture());
+                impl_->renderWindow->setNormalTexture(
+                    impl_->meshImporter.lastNormalTexture());
+            }
         }
         resetView();
     } else {
@@ -387,9 +437,17 @@ void Artifact3DModelViewer::loadModelAtTime(
 {
     impl_->currentModelPath = filePath;
 
-    ArtifactCore::MeshImporter importer;
-    impl_->currentMesh = importer.importMeshFromFileAtTime(
-        filePath, time, clipIndex);
+    const bool poseUpdatedInPlace = impl_->currentMesh &&
+        impl_->meshImporter.updateSkinPose(
+            filePath, time, clipIndex, *impl_->currentMesh);
+    if (!poseUpdatedInPlace) {
+        // Blend-shape clips and formats without a retained skin scene still
+        // need full timed evaluation. Ordinary skeletal clips update the
+        // existing mesh pose above, avoiding a complete mesh re-import on
+        // every playback tick.
+        impl_->currentMesh = impl_->meshImporter.importMeshFromFileAtTime(
+            filePath, time, clipIndex);
+    }
     if (impl_->currentMesh) {
         for (int shapeIndex = 0;
              shapeIndex < impl_->currentMesh->blendShapes().size();
@@ -402,8 +460,8 @@ void Artifact3DModelViewer::loadModelAtTime(
             }
         }
     }
-    impl_->lastBackend = importer.lastBackend();
-    impl_->lastErrorText = importer.lastError();
+    impl_->lastBackend = impl_->meshImporter.lastBackend();
+    impl_->lastErrorText = impl_->meshImporter.lastError();
     impl_->animationClipIndex_ = impl_->currentMesh &&
         !impl_->currentMesh->skinAnimationClips().isEmpty()
         ? std::clamp(clipIndex, 0,
@@ -433,13 +491,28 @@ void Artifact3DModelViewer::loadModelAtTime(
     if (impl_->currentMesh && impl_->currentMesh->isValid()) {
         impl_->modelLoaded = true;
         if (impl_->renderWindow) {
-            impl_->renderWindow->setMesh(impl_->currentMesh);
+            if (poseUpdatedInPlace) {
+                impl_->animationPoseScratch_.clear();
+                for (const auto& bone : impl_->currentMesh->skinBones()) {
+                    impl_->animationPoseScratch_.push_back(bone.poseMatrix);
+                }
+                if (impl_->renderWindow->gpuSkinningActive()) {
+                    impl_->renderWindow->setSkinPoseMatrices(
+                        impl_->animationPoseScratch_);
+                } else {
+                    // updateSkinPose() has already evaluated CPU vertices;
+                    // upload that result without running the deformer twice.
+                    impl_->renderWindow->refreshMeshGeometry();
+                }
+            } else {
+                impl_->renderWindow->setMesh(impl_->currentMesh);
+            }
             impl_->renderWindow->setBaseColorTexture(
-                importer.lastBaseColorTexture());
+                impl_->meshImporter.lastBaseColorTexture());
             impl_->renderWindow->setMetallicRoughnessTexture(
-                importer.lastMetallicRoughnessTexture());
+                impl_->meshImporter.lastMetallicRoughnessTexture());
             impl_->renderWindow->setNormalTexture(
-                importer.lastNormalTexture());
+                impl_->meshImporter.lastNormalTexture());
         }
     } else {
         impl_->modelLoaded = false;
@@ -625,23 +698,16 @@ void Artifact3DModelViewer::setSkinPoseMatrices(
 
 void Artifact3DModelViewer::resetView()
 {
+    // The render window normalizes model bounds into a fixed-size preview
+    // space, so camera target and distance must use that same space.
     impl_->orbitTarget_ = QVector3D(0.0f, 0.0f, 0.0f);
-    impl_->orbitYaw_ = 0.0f;
-    impl_->orbitPitch_ = 0.0f;
-    impl_->orbitDistance_ = 5.0f;
-
-    if (impl_->currentMesh && impl_->currentMesh->isValid()) {
-        const QVector3D minBounds = impl_->currentMesh->boundingBoxMin();
-        const QVector3D maxBounds = impl_->currentMesh->boundingBoxMax();
-        const QVector3D center = (minBounds + maxBounds) * 0.5f;
-        const QVector3D extents = maxBounds - minBounds;
-        const float radius = 0.5f * extents.length();
-
-        // Keep a comfortable margin while remaining usable for very small
-        // imported assets. The viewer's zoom mapping is distance-based.
-        impl_->orbitTarget_ = center;
-        impl_->orbitDistance_ = std::clamp(radius * 2.8f, 0.5f, 100000.0f);
-    }
+    // Use a three-quarter view by default: a strict front view hides depth
+    // cues that help judge limb direction in animated characters.
+    impl_->orbitYaw_ = 28.0f;
+    impl_->orbitPitch_ = 10.0f;
+    // Keep the full character comfortably large in the viewport. The preview
+    // camera consumes a normalized model, so a fixed distance is appropriate.
+    impl_->orbitDistance_ = 4.0f;
 
     impl_->pushCamera();
     requestUpdate();

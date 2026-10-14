@@ -944,6 +944,7 @@ namespace {
     std::vector<float> normals;
     std::vector<float> uvs;
     std::vector<float> uvs1;
+    std::vector<float> tangents;
     std::vector<float> colors;
     std::vector<uint32_t> indices;
     std::vector<uint32_t> rayTracingMaterialIndices;
@@ -994,6 +995,11 @@ namespace {
     }
     for (const auto& normal : data.normals) {
       const float values[] = {normal.x(), normal.y(), normal.z()};
+      hashBytes(values, sizeof(values));
+    }
+    for (const auto& tangent : data.tangents) {
+      const float values[] = {tangent.x(), tangent.y(), tangent.z(),
+                              tangent.w()};
       hashBytes(values, sizeof(values));
     }
     for (const auto& uv : data.uvs) {
@@ -1093,6 +1099,20 @@ namespace {
         uvs1 = uvs;
       }
 
+      tangents.assign(vertexCount * 4u, 0.0f);
+      const bool hasTangents = data.tangents.size() == data.positions.size() &&
+                               !data.tangents.isEmpty();
+      if (hasTangents) {
+        tangents.clear();
+        tangents.reserve(vertexCount * 4u);
+        for (const auto& tangent : data.tangents) {
+          tangents.push_back(tangent.x());
+          tangents.push_back(tangent.y());
+          tangents.push_back(tangent.z());
+          tangents.push_back(tangent.w());
+        }
+      }
+
       colors.assign(vertexCount * 4u, 1.0f);
       const bool hasColors = data.colors.size() == data.positions.size() && !data.colors.isEmpty();
       if (hasColors) {
@@ -1139,7 +1159,8 @@ namespace {
         }
       }
       renderer->updateMeshGeometry(positions.data(), normals.data(), uvs.data(),
-                                   indices.data(), colors.data(), uvs1.data());
+                                   indices.data(), colors.data(), uvs1.data(),
+                                   tangents.data());
 
       // Prepare the mesh-shader resources alongside the indexed fallback.
       // The packed index stream is already expanded per meshlet by Mesh, so

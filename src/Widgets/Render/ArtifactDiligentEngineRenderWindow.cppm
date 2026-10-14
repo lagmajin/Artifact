@@ -8,6 +8,8 @@
 #include <ShaderResourceBinding.h>
 #include <Sampler.h>
 #include <Texture.h>
+#include <DebugOutput.h>
+#include <Win32Debug.hpp>
 #include <wobjectimpl.h>
 #include <windows.h>
 
@@ -67,6 +69,30 @@ import Mesh;
 import Artifact.Render.DiligentDeviceManager;
 
 namespace {
+ void viewportDiligentMessageCallback(
+     Diligent::DEBUG_MESSAGE_SEVERITY severity,
+     const Diligent::Char* message,
+     const Diligent::Char* function,
+     const Diligent::Char* file,
+     int line)
+ {
+  const char* severityName = "info";
+  if (severity >= Diligent::DEBUG_MESSAGE_SEVERITY_FATAL_ERROR) {
+   severityName = "fatal";
+  } else if (severity >= Diligent::DEBUG_MESSAGE_SEVERITY_ERROR) {
+   severityName = "error";
+  } else if (severity >= Diligent::DEBUG_MESSAGE_SEVERITY_WARNING) {
+   severityName = "warning";
+  }
+  qWarning().noquote()
+      << QStringLiteral("[DiligentViewport][%1] %2 (%3, %4:%5)")
+             .arg(QString::fromLatin1(severityName),
+                  QString::fromUtf8(message ? message : ""),
+                  QString::fromUtf8(function ? function : ""),
+                  QString::fromUtf8(file ? file : ""))
+             .arg(line);
+ }
+
  bool isFiniteMatrix(const QMatrix4x4& matrix)
  {
   const float* values = matrix.constData();
@@ -259,6 +285,15 @@ struct VSOutput
     float2 uv : TEXCOORD1;
 };
 
+float3x3 inverseTranspose3x3(float3x3 value)
+{
+    const float3 cofactor0 = cross(value[1], value[2]);
+    const float3 cofactor1 = cross(value[2], value[0]);
+    const float3 cofactor2 = cross(value[0], value[1]);
+    const float determinantValue = dot(value[0], cofactor0);
+    return float3x3(cofactor0, cofactor1, cofactor2) / determinantValue;
+}
+
 VSOutput main(VSInput input)
 {
     VSOutput output;
@@ -281,8 +316,8 @@ VSOutput main(VSInput input)
             const float boneDeterminant = determinant(boneMatrix);
             if (abs(boneDeterminant) > 1.0e-8f)
             {
-                const float3x3 boneNormalMatrix = transpose(
-                    inverse(boneMatrix));
+                const float3x3 boneNormalMatrix =
+                    inverseTranspose3x3(boneMatrix);
                 weightedNormal += mul(boneNormalMatrix, input.normal) * weight;
             }
             else
@@ -307,7 +342,7 @@ VSOutput main(VSInput input)
     const float3x3 worldMatrix3x3 = (float3x3)WorldMatrix;
     const float worldDeterminant = determinant(worldMatrix3x3);
     const float3 transformedNormal = abs(worldDeterminant) > 1.0e-8f
-        ? mul(transpose(inverse(worldMatrix3x3)), skinnedNormal)
+        ? mul(inverseTranspose3x3(worldMatrix3x3), skinnedNormal)
         : skinnedNormal;
     const float transformedNormalLength = length(transformedNormal);
     output.normal = transformedNormalLength > 1.0e-8f
@@ -360,6 +395,7 @@ float4 main(PSInput input) : SV_TARGET
         baseSample.rgb * srgbToLinear(saturate(BaseColor.rgb)),
         baseSample.a * BaseColor.a);
     float3 N = normalize(input.normal);
+    float3 V = normalize(CameraPositionAndMetallic.xyz - input.worldPosition);
     float3 tangentNormal =
         NormalTexture.Sample(BaseColorSampler, input.uv).xyz * 2.0 - 1.0;
     float3 positionDx = ddx(input.worldPosition);
@@ -380,6 +416,9 @@ float4 main(PSInput input) : SV_TARGET
             bitangent * tangentNormal.y +
             N * tangentNormal.z);
     }
+    if (dot(N, V) < 0.0) {
+        N = -N;
+    }
     float4 metallicRoughnessSample =
         MetallicRoughnessTexture.Sample(BaseColorSampler, input.uv);
     float materialMetallic =
@@ -395,8 +434,6 @@ float4 main(PSInput input) : SV_TARGET
     float coatWeight = saturate(PrincipledFactors.y);
     float coatRoughness = clamp(PrincipledFactors.z, 0.04, 1.0);
     float3 L = normalize(LightDirectionAndRoughness.xyz);
-    float3 V =
-        normalize(CameraPositionAndMetallic.xyz - input.worldPosition);
     float3 H = normalize(L + V);
     float NdotL = saturate(dot(N, L));
     float NdotV = max(saturate(dot(N, V)), 0.001);
@@ -435,22 +472,22 @@ float4 main(PSInput input) : SV_TARGET
     // stays in linear light until the final display conversion below.
     float skyWeight = saturate(N.y * 0.5 + 0.5);
     float3 diffuseEnvironment = lerp(
-        float3(0.055, 0.050, 0.045),
-        float3(0.34, 0.40, 0.52),
+        float3(0.18, 0.16, 0.14),
+        float3(0.72, 0.80, 0.96),
         skyWeight);
     float3 R = reflect(-V, N);
     float reflectionWeight = saturate(R.y * 0.5 + 0.5);
     float3 specularEnvironment = lerp(
-        float3(0.025, 0.020, 0.018),
-        float3(0.22, 0.30, 0.44),
+        float3(0.06, 0.05, 0.045),
+        float3(0.40, 0.50, 0.70),
         reflectionWeight);
     specularEnvironment *= lerp(1.0, 0.16, materialRoughness);
     float3 T = refract(-V, N, 1.0 / max(opticalIor, 1.0));
     float transmissionDirectionValid = step(1e-4, dot(T, T));
     float transmissionEnvironmentWeight = saturate(T.y * 0.5 + 0.5);
     float3 transmissionEnvironment = lerp(
-        float3(0.035, 0.030, 0.028),
-        float3(0.28, 0.36, 0.48),
+        float3(0.10, 0.085, 0.075),
+        float3(0.52, 0.64, 0.84),
         transmissionEnvironmentWeight);
     transmissionEnvironment *= sampledBaseColor.rgb *
         (1.0 - materialMetallic) * (1.0 - materialRoughness * 0.65);
@@ -632,6 +669,10 @@ ArtifactDiligentEngineRenderWindow::~ArtifactDiligentEngineRenderWindow()
 
 bool ArtifactDiligentEngineRenderWindow::initialize()
 {
+  if (qEnvironmentVariableIsSet("ARTIFACT_FBX_VIEWER_DIAGNOSTICS")) {
+   Diligent::SetDebugMessageCallback(viewportDiligentMessageCallback);
+   Diligent::WindowsDebug::SetBreakOnError(false);
+  }
   const QString backendStr = qEnvironmentVariable("ARTIFACT_RENDER_BACKEND").toLower();
   if (backendStr == "software" || backendStr == "sw") {
       useSoftwareFallback_ = true;
@@ -748,7 +789,11 @@ bool ArtifactDiligentEngineRenderWindow::initialize()
           // before the GPU shader applies the pose again.
           mesh_->restoreSkinningBase();
       }
-      skinPoseMatrices_ = boneMatrices;
+  skinPoseMatrices_.clear();
+  skinPoseMatrices_.reserve(boneMatrices.size());
+  for (const QMatrix4x4& matrix : boneMatrices) {
+      skinPoseMatrices_.push_back(matrix);
+  }
       gpuSkinningActive_ = true;
   } else {
       skinPoseMatrices_.clear();
@@ -937,6 +982,8 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
   pDevice->CreateShader(vsInfo, &vs);
   pDevice->CreateShader(psInfo, &ps);
   if (!vs || !ps) {
+   qWarning() << "[DiligentViewport] Shader creation failed: vertex="
+              << static_cast<bool>(vs) << "pixel=" << static_cast<bool>(ps);
    return;
   }
 
@@ -971,16 +1018,15 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
    psoCI.PSODesc.ResourceLayout.DefaultVariableType = SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
 
    auto& gp = psoCI.GraphicsPipeline;
+   const SwapChainDesc swapChainDesc = pSwapChain->GetDesc();
    gp.NumRenderTargets = 1;
-   gp.RTVFormats[0] = Artifact::RenderConfig::hdrDisplayEnabled()
-                          ? TEX_FORMAT_RGBA16_FLOAT
-                          : TEX_FORMAT_RGBA8_UNORM_SRGB;
-   gp.DSVFormat = TEX_FORMAT_D32_FLOAT;
+   gp.RTVFormats[0] = swapChainDesc.ColorBufferFormat;
+   gp.DSVFormat = swapChainDesc.DepthBufferFormat;
    gp.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
    gp.RasterizerDesc.FillMode = fillMode;
    gp.RasterizerDesc.CullMode = CULL_MODE_BACK;
    gp.RasterizerDesc.FrontCounterClockwise = False;
-   gp.RasterizerDesc.ScissorEnable = True;
+   gp.RasterizerDesc.ScissorEnable = False;
    gp.DepthStencilDesc.DepthEnable = True;
    gp.DepthStencilDesc.DepthWriteEnable = True;
 
@@ -997,25 +1043,42 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
    psoCI.pPS = ps;
 
    ShaderResourceVariableDesc vars[] = {
-    {SHADER_TYPE_VERTEX, "TransformCB", SHADER_RESOURCE_VARIABLE_TYPE_STATIC},
-    {SHADER_TYPE_VERTEX, "SkinningCB", SHADER_RESOURCE_VARIABLE_TYPE_STATIC},
-    {SHADER_TYPE_PIXEL, "ColorCB", SHADER_RESOURCE_VARIABLE_TYPE_STATIC},
+    {SHADER_TYPE_VERTEX, "TransformCB", SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE},
+    {SHADER_TYPE_VERTEX, "SkinningCB", SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE},
+    {SHADER_TYPE_PIXEL, "ColorCB", SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE},
     {SHADER_TYPE_PIXEL, "BaseColorTexture", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
     {SHADER_TYPE_PIXEL, "MetallicRoughnessTexture", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
     {SHADER_TYPE_PIXEL, "NormalTexture", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
-    {SHADER_TYPE_PIXEL, "BaseColorSampler", SHADER_RESOURCE_VARIABLE_TYPE_STATIC},
+    {SHADER_TYPE_PIXEL, "BaseColorSampler", SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE},
    };
    psoCI.PSODesc.ResourceLayout.Variables = vars;
    psoCI.PSODesc.ResourceLayout.NumVariables = 7;
 
    pDevice->CreateGraphicsPipelineState(psoCI, &outPSO);
+   if (!outPSO) {
+    qWarning() << "[DiligentViewport] Pipeline creation failed for fill mode"
+               << static_cast<int>(fillMode);
+   }
    if (outPSO) {
     outPSO->CreateShaderResourceBinding(&outSRB, true);
-     outPSO->GetStaticVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(solidTransformBuffer_);
-     outPSO->GetStaticVariableByName(SHADER_TYPE_VERTEX, "SkinningCB")->Set(solidSkinningBuffer_);
-     outPSO->GetStaticVariableByName(SHADER_TYPE_PIXEL, "ColorCB")->Set(solidColorBuffer_);
-     outPSO->GetStaticVariableByName(
-         SHADER_TYPE_PIXEL, "BaseColorSampler")->Set(baseColorSampler_);
+    if (outSRB) {
+     if (auto* variable = outSRB->GetVariableByName(
+             SHADER_TYPE_VERTEX, "TransformCB")) {
+      variable->Set(solidTransformBuffer_);
+     }
+     if (auto* variable = outSRB->GetVariableByName(
+             SHADER_TYPE_VERTEX, "SkinningCB")) {
+      variable->Set(solidSkinningBuffer_);
+     }
+     if (auto* variable = outSRB->GetVariableByName(
+             SHADER_TYPE_PIXEL, "ColorCB")) {
+      variable->Set(solidColorBuffer_);
+     }
+     if (auto* variable = outSRB->GetVariableByName(
+             SHADER_TYPE_PIXEL, "BaseColorSampler")) {
+      variable->Set(baseColorSampler_);
+     }
+    }
    }
   };
 
@@ -1036,6 +1099,14 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
                          static_cast<bool>(solidTransformBuffer_) &&
                          static_cast<bool>(solidColorBuffer_) &&
                          static_cast<bool>(solidSkinningBuffer_);
+  if (!solidResourcesReady_) {
+   qWarning() << "[DiligentViewport] Resource initialization incomplete:"
+              << "solidPSO=" << static_cast<bool>(solidPso_)
+              << "wirePSO=" << static_cast<bool>(wirePso_)
+              << "transformCB=" << static_cast<bool>(solidTransformBuffer_)
+              << "colorCB=" << static_cast<bool>(solidColorBuffer_)
+              << "skinningCB=" << static_cast<bool>(solidSkinningBuffer_);
+  }
  }
 
  void ArtifactDiligentEngineRenderWindow::updateBaseColorTexture()
@@ -1285,22 +1356,19 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
   if (!solidVertexBuffer_ || solidVertexBuffer_->GetDesc().Size != requiredSize) {
    BufferDesc vbDesc;
    vbDesc.Name = "ArtifactSolidViewportVB";
-   vbDesc.Usage = USAGE_DYNAMIC;
+   vbDesc.Usage = USAGE_DEFAULT;
    vbDesc.BindFlags = BIND_VERTEX_BUFFER;
-   vbDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
    vbDesc.Size = requiredSize;
-   pDevice->CreateBuffer(vbDesc, nullptr, &solidVertexBuffer_);
+   BufferData initialData{vertices.data(), requiredSize, pImmediateContext};
+   pDevice->CreateBuffer(vbDesc, &initialData, &solidVertexBuffer_);
+  } else {
+   pImmediateContext->UpdateBuffer(
+       solidVertexBuffer_, 0, requiredSize, vertices.data(),
+       RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
   }
 
   if (!solidVertexBuffer_) {
    return;
-  }
-
-  void* mappedData = nullptr;
-  pImmediateContext->MapBuffer(solidVertexBuffer_, MAP_WRITE, MAP_FLAG_DISCARD, mappedData);
-  if (mappedData) {
-   std::memcpy(mappedData, vertices.data(), requiredSize);
-   pImmediateContext->UnmapBuffer(solidVertexBuffer_, MAP_WRITE);
   }
 
   if (solidIndexCount_ > 0) {
@@ -1310,20 +1378,15 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
        solidIndexBuffer_->GetDesc().Size != requiredIndexSize) {
     BufferDesc indexDesc;
     indexDesc.Name = "ArtifactSolidViewportIB";
-    indexDesc.Usage = USAGE_DYNAMIC;
+    indexDesc.Usage = USAGE_DEFAULT;
     indexDesc.BindFlags = BIND_INDEX_BUFFER;
-    indexDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
     indexDesc.Size = requiredIndexSize;
-    pDevice->CreateBuffer(indexDesc, nullptr, &solidIndexBuffer_);
-   }
-   if (solidIndexBuffer_) {
-    mappedData = nullptr;
-    pImmediateContext->MapBuffer(
-        solidIndexBuffer_, MAP_WRITE, MAP_FLAG_DISCARD, mappedData);
-    if (mappedData) {
-     std::memcpy(mappedData, indices.data(), requiredIndexSize);
-     pImmediateContext->UnmapBuffer(solidIndexBuffer_, MAP_WRITE);
-    }
+    BufferData initialData{indices.data(), requiredIndexSize, pImmediateContext};
+    pDevice->CreateBuffer(indexDesc, &initialData, &solidIndexBuffer_);
+   } else if (solidIndexBuffer_) {
+    pImmediateContext->UpdateBuffer(
+        solidIndexBuffer_, 0, requiredIndexSize, indices.data(),
+        RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
    }
   } else {
    solidIndexBuffer_ = nullptr;
@@ -1399,8 +1462,16 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
 
   auto* pRTV = pSwapChain->GetCurrentBackBufferRTV();
   auto* pDSV = pSwapChain->GetDepthBufferDSV();
+  if (!pRTV || !pDSV) return;
 
   pImmediateContext->SetRenderTargets(1, &pRTV, pDSV, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+  const auto scDesc = pSwapChain->GetDesc();
+  Viewport viewport;
+  viewport.Width = static_cast<float>(scDesc.Width);
+  viewport.Height = static_cast<float>(scDesc.Height);
+  viewport.MinDepth = 0.0f;
+  viewport.MaxDepth = 1.0f;
+  pImmediateContext->SetViewports(1, &viewport, scDesc.Width, scDesc.Height);
   float r = static_cast<float>(clearColor_.redF());
   float g = static_cast<float>(clearColor_.greenF());
   float b = static_cast<float>(clearColor_.blueF());
@@ -1419,7 +1490,6 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
 
   if (solidPso_ && solidVertexBuffer_ && solidTransformBuffer_ &&
       solidColorBuffer_ && solidSkinningBuffer_ && solidVertexCount_ > 0) {
-      const auto scDesc = pSwapChain->GetDesc();
       const float aspect = (scDesc.Height > 0) ? static_cast<float>(scDesc.Width) / static_cast<float>(scDesc.Height) : 1.0f;
 
       QMatrix4x4 world;
@@ -1463,8 +1533,8 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
           const QVector3D center = (minBound + maxBound) * 0.5f;
           const QVector3D extent = maxBound - minBound;
           const float maxExtent = std::max({ extent.x(), extent.y(), extent.z(), 1.0f });
-          world.translate(-center);
           world.scale(2.0f / maxExtent);
+          world.translate(-center);
       }
       QMatrix4x4 view;
       view.setToIdentity();
@@ -1493,7 +1563,7 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
           pImmediateContext->UnmapBuffer(solidTransformBuffer_, MAP_WRITE);
       }
 
-      if (skinPoseDirty_ && gpuSkinningActive_) {
+      {
       struct SkinningCB {
           float boneMatrices[128][16];
       } skinning{};
@@ -1503,8 +1573,9 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
           skinning.boneMatrices[i][10] = 1.0f;
           skinning.boneMatrices[i][15] = 1.0f;
       }
-      const int skinCount = std::min<int>(
-          static_cast<int>(skinPoseMatrices_.size()), 128);
+      const int skinCount = gpuSkinningActive_
+          ? std::min<int>(static_cast<int>(skinPoseMatrices_.size()), 128)
+          : 0;
       for (int i = 0; i < skinCount; ++i) {
           std::memcpy(skinning.boneMatrices[i],
                       skinPoseMatrices_[i].constData(),

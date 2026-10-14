@@ -1694,19 +1694,19 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
 
   const QString opacityTexture = obj.value("material.opacityTexture").toString();
   impl_->material_.setOpacityTexture(ArtifactCore::UniString::fromQString(opacityTexture));
-  impl_->material_.setOpacityTextureUvScale(clampFinite(
+  impl_->material_.setOpacityTextureUvScale(finiteClamped(
       static_cast<float>(obj.value("material.opacityTextureUvScale")
           .toDouble(impl_->material_.opacityTextureUvScale())),
       impl_->material_.opacityTextureUvScale(), 0.01f, 10.0f));
-  impl_->material_.setOpacityTextureUvOffsetU(clampFinite(
+  impl_->material_.setOpacityTextureUvOffsetU(finiteClamped(
       static_cast<float>(obj.value("material.opacityTextureUvOffsetU")
           .toDouble(impl_->material_.opacityTextureUvOffsetU())),
       impl_->material_.opacityTextureUvOffsetU(), -10.0f, 10.0f));
-  impl_->material_.setOpacityTextureUvOffsetV(clampFinite(
+  impl_->material_.setOpacityTextureUvOffsetV(finiteClamped(
       static_cast<float>(obj.value("material.opacityTextureUvOffsetV")
           .toDouble(impl_->material_.opacityTextureUvOffsetV())),
       impl_->material_.opacityTextureUvOffsetV(), -10.0f, 10.0f));
-  impl_->material_.setOpacityTextureUvRotationDegrees(clampFinite(
+  impl_->material_.setOpacityTextureUvRotationDegrees(finiteClamped(
       static_cast<float>(obj.value("material.opacityTextureUvRotation")
           .toDouble(impl_->material_.opacityTextureUvRotationDegrees())),
       impl_->material_.opacityTextureUvRotationDegrees(), -360.0f, 360.0f));
