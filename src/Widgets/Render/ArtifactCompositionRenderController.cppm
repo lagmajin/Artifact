@@ -14,6 +14,7 @@ module;
 #include <QApplication>
 #include <QCoreApplication>
 #include <QJsonObject>
+#include <QJsonArray>
 
 #include <QByteArray>
 
@@ -9883,6 +9884,9 @@ void drawLayerForCompositionView(
 
           (!cacheIt->processedSurface.isNull() || cacheIt->processedBuffer)) {
 
+        if (layerSurfaceCacheDiagnosticsEnabled_) {
+          ++layerSurfaceCacheHitCounts_[cacheSlotKey];
+        }
         cacheEntry = &(*cacheIt);
         directProcessedBuffer = cacheEntry->processedBuffer;
 
@@ -9894,6 +9898,9 @@ void drawLayerForCompositionView(
 
       } else {
 
+        if (layerSurfaceCacheDiagnosticsEnabled_) {
+          ++layerSurfaceCacheMissCounts_[cacheSlotKey];
+        }
         ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA> processedBuffer;
 
         if (allowSurfaceCache) {
@@ -9956,6 +9963,9 @@ void drawLayerForCompositionView(
         }
 
         (*surfaceCache)[cacheSlotKey] = entry;
+        if (layerSurfaceCacheDiagnosticsEnabled_) {
+          ++layerSurfaceCacheBuildCounts_[cacheSlotKey];
+        }
 
         cacheEntry = &(*surfaceCache)[cacheSlotKey];
         directProcessedBuffer = cacheEntry->processedBuffer;
@@ -16670,6 +16680,11 @@ public:
   CompositionID lastBackgroundCompositionId_;
 
   QHash<QString, LayerSurfaceCacheEntry> surfaceCache_;
+  bool layerSurfaceCacheDiagnosticsEnabled_ = false;
+  QHash<QString, quint64> layerSurfaceCacheHitCounts_;
+  QHash<QString, quint64> layerSurfaceCacheMissCounts_;
+  QHash<QString, quint64> layerSurfaceCacheInvalidationCounts_;
+  QHash<QString, quint64> layerSurfaceCacheBuildCounts_;
   SolidPointwisePreviewCache solidPointwiseCache_;
 
   QHash<QString, quint64> surfaceGenerations_;
@@ -18382,6 +18397,17 @@ public:
     }
 
     const QString ownerId = layer->id().toString();
+
+    if (layerSurfaceCacheDiagnosticsEnabled_) {
+      const QString fullKey = ownerId + QStringLiteral("|full");
+      const QString draftKey = ownerId + QStringLiteral("|draft");
+      if (surfaceCache_.contains(fullKey)) {
+        ++layerSurfaceCacheInvalidationCounts_[fullKey];
+      }
+      if (surfaceCache_.contains(draftKey)) {
+        ++layerSurfaceCacheInvalidationCounts_[draftKey];
+      }
+    }
 
     surfaceGenerations_[ownerId] =
 
@@ -20714,6 +20740,40 @@ ArtifactCompositionPtr CompositionRenderController::composition() const {
 
   return impl_->previewPipeline_.composition();
 
+}
+
+void CompositionRenderController::setLayerSurfaceCacheDiagnosticsEnabled(
+    bool enabled) {
+  impl_->layerSurfaceCacheDiagnosticsEnabled_ = enabled;
+  impl_->layerSurfaceCacheHitCounts_.clear();
+  impl_->layerSurfaceCacheMissCounts_.clear();
+  impl_->layerSurfaceCacheInvalidationCounts_.clear();
+  impl_->layerSurfaceCacheBuildCounts_.clear();
+}
+
+QJsonObject CompositionRenderController::layerSurfaceCacheDiagnostics() const {
+  QJsonArray entries;
+  QSet<QString> keys;
+  for (auto it = impl_->layerSurfaceCacheHitCounts_.cbegin();
+       it != impl_->layerSurfaceCacheHitCounts_.cend(); ++it) keys.insert(it.key());
+  for (auto it = impl_->layerSurfaceCacheMissCounts_.cbegin();
+       it != impl_->layerSurfaceCacheMissCounts_.cend(); ++it) keys.insert(it.key());
+  for (auto it = impl_->layerSurfaceCacheInvalidationCounts_.cbegin();
+       it != impl_->layerSurfaceCacheInvalidationCounts_.cend(); ++it) keys.insert(it.key());
+  for (auto it = impl_->layerSurfaceCacheBuildCounts_.cbegin();
+       it != impl_->layerSurfaceCacheBuildCounts_.cend(); ++it) keys.insert(it.key());
+  for (const QString& key : keys) {
+    entries.append(QJsonObject{
+        {QStringLiteral("slot"), key.endsWith(QStringLiteral("|draft"))
+             ? QStringLiteral("draft") : QStringLiteral("full")},
+        {QStringLiteral("layerId"), key.left(key.lastIndexOf(QLatin1Char('|')))},
+        {QStringLiteral("hits"), static_cast<qint64>(impl_->layerSurfaceCacheHitCounts_.value(key))},
+        {QStringLiteral("misses"), static_cast<qint64>(impl_->layerSurfaceCacheMissCounts_.value(key))},
+        {QStringLiteral("invalidations"), static_cast<qint64>(impl_->layerSurfaceCacheInvalidationCounts_.value(key))},
+        {QStringLiteral("builds"), static_cast<qint64>(impl_->layerSurfaceCacheBuildCounts_.value(key))}});
+  }
+  return {{QStringLiteral("enabled"), impl_->layerSurfaceCacheDiagnosticsEnabled_},
+          {QStringLiteral("entries"), entries}};
 }
 
 

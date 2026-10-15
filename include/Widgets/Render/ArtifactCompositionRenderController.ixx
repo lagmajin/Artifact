@@ -17,6 +17,7 @@ module;
 #include <QRectF>
 #include <QString>
 #include <QStringList>
+#include <QJsonObject>
 
 export module Artifact.Widgets.CompositionRenderController;
 
@@ -252,6 +253,10 @@ float viewportZoom() const;
 
   void setComposition(ArtifactCompositionPtr composition);
   ArtifactCompositionPtr composition() const;
+  // Opt-in diagnostics for the standalone layer-surface-cache acceptance test.
+  // Disabled by default; snapshots are cold-path copies for test reporting.
+  void setLayerSurfaceCacheDiagnosticsEnabled(bool enabled);
+  QJsonObject layerSurfaceCacheDiagnostics() const;
 void setSelectedLayerId(const LayerID& id);
 LayerID selectedLayerId() const;
 void clearMotionPathSelection();
