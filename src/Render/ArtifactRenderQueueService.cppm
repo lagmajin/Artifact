@@ -5,6 +5,7 @@ module;
 #include <QObject>
 #include <QList>
 #include <QThread>
+#include <QEventLoop>
 #include <QDir>
 #include <QImage>
 #include <QHash>
@@ -135,6 +136,7 @@ import Artifact.Layer.Video;
 import Artifact.Layers.SolidImage;
 import Artifact.Layer.Solid2D;
 import Artifact.Layer.Shape;
+import Artifact.Layer.Particle;
 import Artifact.Layer.FormParticle;
 import Artifact.Layer.Procedural3D;
 import Artifact.Layers.Model3D;
@@ -4349,6 +4351,35 @@ namespace Artifact
                 }
             }
 
+            if (const auto particleLayer =
+                    ArtifactCore::dynamicPointerCast<ArtifactParticleLayer>(layer)) {
+                const int64_t targetFrame = particleLayer->currentFrame();
+                particleLayer->goToFrame(targetFrame);
+                QImage surface;
+                const bool cacheHit =
+                    particleLayer->getCachedFrame(targetFrame, surface) &&
+                    surface.size() == layerSize;
+                if (!cacheHit) {
+                    float fps = 30.0f;
+                    if (auto* composition = static_cast<ArtifactAbstractComposition*>(
+                            particleLayer->composition())) {
+                        fps = std::max(
+                            0.001f, composition->frameRate().framerate());
+                    }
+                    surface = particleLayer->renderFrame(
+                        layerSize.width(), layerSize.height(),
+                        static_cast<float>(targetFrame) / fps);
+                }
+                if (!surface.isNull()) {
+                    if (outLocalBounds) {
+                        *outLocalBounds = QRectF(
+                            0.0, 0.0, surface.width(), surface.height());
+                    }
+                    return surface.convertToFormat(
+                        QImage::Format_ARGB32_Premultiplied);
+                }
+            }
+
             // The CPU render queue keeps a deliberately small 3D fallback: fixed or
             // imported meshes are rasterized flat-shaded with the active camera.
             // Material graphs, textures, lighting, and skinning remain GPU-only.
@@ -4416,6 +4447,35 @@ namespace Artifact
             const QJsonDocument snapshotDoc = composition->toJson();
             auto clone = ArtifactAbstractComposition::fromJson(snapshotDoc);
             if (clone) {
+                // Video layers reopen their source asynchronously from fromJson().
+                // Render queue snapshots are created on the render worker thread,
+                // which does not run a regular Qt event loop. Pump that thread's
+                // queued open completions before a frame is rendered, otherwise
+                // drawLayerForCompositionView() sees an unloaded layer and emits
+                // a valid but black video frame.
+                QElapsedTimer videoLoadTimeout;
+                videoLoadTimeout.start();
+                const auto allVideoLayersLoaded = [&clone]() {
+                    for (const auto& layer : clone->allLayerRef()) {
+                        const auto videoLayer =
+                            ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer);
+                        if (videoLayer && !videoLayer->isLoaded()) {
+                            return false;
+                        }
+                    }
+                    return true;
+                };
+                while (!allVideoLayersLoaded() &&
+                       videoLoadTimeout.elapsed() < 15000) {
+                    QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+                    QThread::msleep(1);
+                }
+                if (!allVideoLayersLoaded()) {
+                    qWarning() << "[RenderQueue] Timed out opening video sources in render snapshot"
+                               << "timeoutMs=" << videoLoadTimeout.elapsed();
+                    return {};
+                }
+
                 const QJsonObject componentBake =
                     composition->exportLayerComponentSimulationBake();
                 if (!componentBake.isEmpty()) {
