@@ -384,6 +384,8 @@ void Artifact3DModelViewer::loadModel(const ArtifactCore::UniString& filePath)
                     material.baseColorTexture.toQString());
                 impl_->renderWindow->setMetallicRoughnessTexture(
                     material.metallicRoughnessTexture.toQString());
+                impl_->renderWindow->setMetallicAndRoughnessTextures(
+                    material.metallicTexture.toQString(), material.roughnessTexture.toQString());
                 impl_->renderWindow->setNormalTexture(
                     material.normalTexture.toQString());
                 impl_->renderWindow->setPbrMaterial(
@@ -407,6 +409,7 @@ void Artifact3DModelViewer::loadModel(const ArtifactCore::UniString& filePath)
                     impl_->meshImporter.lastBaseColorTexture());
                 impl_->renderWindow->setMetallicRoughnessTexture(
                     impl_->meshImporter.lastMetallicRoughnessTexture());
+                impl_->renderWindow->setMetallicAndRoughnessTextures({}, {});
                 impl_->renderWindow->setNormalTexture(
                     impl_->meshImporter.lastNormalTexture());
             }
@@ -422,6 +425,7 @@ void Artifact3DModelViewer::loadModel(const ArtifactCore::UniString& filePath)
             impl_->renderWindow->clearMesh();
             impl_->renderWindow->setBaseColorTexture(QString());
             impl_->renderWindow->setMetallicRoughnessTexture(QString());
+            impl_->renderWindow->setMetallicAndRoughnessTextures({}, {});
             impl_->renderWindow->setNormalTexture(QString());
         }
     }
@@ -513,6 +517,12 @@ void Artifact3DModelViewer::loadModelAtTime(
                 impl_->meshImporter.lastMetallicRoughnessTexture());
             impl_->renderWindow->setNormalTexture(
                 impl_->meshImporter.lastNormalTexture());
+            if (!poseUpdatedInPlace) {
+                const auto& materials = impl_->meshImporter.importedPbrMaterials();
+                impl_->renderWindow->setMetallicAndRoughnessTextures(
+                    materials.empty() ? QString() : materials.front().metallicTexture.toQString(),
+                    materials.empty() ? QString() : materials.front().roughnessTexture.toQString());
+            }
         }
     } else {
         impl_->modelLoaded = false;
@@ -524,6 +534,7 @@ void Artifact3DModelViewer::loadModelAtTime(
             impl_->renderWindow->setBaseColorTexture(QString());
             impl_->renderWindow->setMetallicRoughnessTexture(QString());
             impl_->renderWindow->setNormalTexture(QString());
+            impl_->renderWindow->setMetallicAndRoughnessTextures({}, {});
         }
     }
 
@@ -680,6 +691,7 @@ void Artifact3DModelViewer::clearModel()
         impl_->renderWindow->setBaseColorTexture(QString());
         impl_->renderWindow->setMetallicRoughnessTexture(QString());
         impl_->renderWindow->setNormalTexture(QString());
+        impl_->renderWindow->setMetallicAndRoughnessTextures({}, {});
     }
     impl_->updateStatus();
     requestUpdate();
