@@ -14,6 +14,9 @@ module;
 #include <QDockWidget>
 #include <QWidget>
 #include <QVector2D>
+#include <QVector3D>
+#include <QVector4D>
+#include <QMatrix4x4>
 #include <QMessageBox>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -50,6 +53,7 @@ import Artifact.Service.ActiveContext;
 import Utils.Path;
 import Utils.Id;
 import Utils.String.UniString;
+import MeshImporter;
 import Artifact.Application.Manager;
 import Artifact.Tool.Manager;
 import Artifact.Layers.Selection.Manager;
@@ -3077,6 +3081,167 @@ void ArtifactLayerMenu::Impl::handleCreateSvg()
     });
 }
 
+namespace {
+
+// An imported camera or light arrives as the world matrix of the node that
+// carries it. ufbx leaves the FBX attribute axes alone, and an FBX camera
+// points down its local +X (ufbx.h, `ufbx_load_opts.target_camera_axes`),
+// while ArtifactCameraLayer documents the -Z forward convention every layer
+// uses. Rotating the imported matrix by -90 degrees about its local Y turns
+// one into the other; AnimatableTransform3D then composes the split rotation
+// as Rz * Ry * Rx.
+void applyImportedSceneTransform(ArtifactAbstractLayer& layer,
+                                 const float* transform)
+{
+  QMatrix4x4 placed;
+  placed.setRow(0, QVector4D(transform[0], transform[1], transform[2],
+                             transform[3]));
+  placed.setRow(1, QVector4D(transform[4], transform[5], transform[6],
+                             transform[7]));
+  placed.setRow(2, QVector4D(transform[8], transform[9], transform[10],
+                             transform[11]));
+  placed.setRow(3, QVector4D(0.0f, 0.0f, 0.0f, 1.0f));
+  QMatrix4x4 forwardToView;
+  forwardToView.rotate(-90.0f, 0.0f, 1.0f, 0.0f);
+  placed = placed * forwardToView;
+
+  layer.setPosition3D({placed(0, 3), placed(1, 3), placed(2, 3)});
+
+  constexpr float radiansToDegrees = 57.29577951308232f;
+  const float m20 = placed(2, 0);
+  const float rotationY = std::asin(std::clamp(-m20, -1.0f, 1.0f));
+  float rotationX = 0.0f;
+  float rotationZ = 0.0f;
+  if (std::abs(m20) > 0.9999f) {
+    // Looking straight up or down: X and Z share an axis, so the pair is not
+    // separable. Keeping X at zero preserves the Y the matrix encodes.
+    rotationZ = std::atan2(-placed(0, 1), placed(1, 1));
+  } else {
+    rotationX = std::atan2(placed(2, 1), placed(2, 2));
+    rotationZ = std::atan2(placed(1, 0), placed(0, 0));
+  }
+  layer.setRotation3D(QVector3D(rotationX * radiansToDegrees,
+                                rotationY * radiansToDegrees,
+                                rotationZ * radiansToDegrees));
+}
+
+} // namespace
+
+// Creates one camera layer and one light layer per camera/light the imported
+// scene declares, named after the FBX node that carries it. The parse behind
+// the 3D model layer is owned by that layer, so the file is read once more
+// here; the extra pass only runs when the scene has cameras or lights.
+void createImportedSceneLayers(ArtifactProjectService* service,
+                               const QString& modelPath)
+{
+  if (!service || modelPath.isEmpty()) {
+    return;
+  }
+  ArtifactCore::MeshImporter importer;
+  if (!importer.importMeshFromFile(UniString(modelPath))) {
+    return;
+  }
+  const auto& cameras = importer.importedCameras();
+  const auto& lights = importer.importedLights();
+  if (cameras.empty() && lights.empty()) {
+    return;
+  }
+
+  auto* app = ArtifactApplicationManager::instance();
+  auto* selectionManager = app ? app->layerSelectionManager() : nullptr;
+  const ArtifactAbstractLayerPtr modelLayer = selectionManager
+      ? selectionManager->currentLayer()
+      : ArtifactAbstractLayerPtr{};
+  const QString sceneName = QFileInfo(modelPath).completeBaseName();
+
+  for (const ArtifactCore::MeshImporter::ImportedCamera& camera : cameras) {
+    const QString importedName = camera.name.toQString().trimmed();
+    ArtifactCameraLayerInitParams params;
+    params.setName(UniString(uniqueLayerName(importedName.isEmpty()
+        ? QStringLiteral("%1 Camera").arg(sceneName)
+        : importedName)));
+    service->addLayerToCurrentComposition(params, true,
+                                          placeAtCurrentFrameRequested());
+    const auto layer = selectionManager
+        ? ArtifactCore::dynamicPointerCast<ArtifactCameraLayer>(
+              selectionManager->currentLayer())
+        : ArtifactCameraLayerPtr{};
+    if (!layer) {
+      continue;
+    }
+    const bool orthographic =
+        camera.projection ==
+        ArtifactCore::MeshImporter::ImportedCameraProjection::Orthographic;
+    layer->setProjectionMode(orthographic ? ProjectionMode::Orthographic
+                                          : ProjectionMode::Perspective);
+    if (orthographic) {
+      layer->setOrthoWidth(
+          ArtifactCore::Units::Pixels{camera.orthographicWidth});
+      layer->setOrthoHeight(
+          ArtifactCore::Units::Pixels{camera.orthographicHeight});
+    } else {
+      layer->setFov(ArtifactCore::Units::Degrees{camera.verticalFovDegrees});
+    }
+    layer->setNearClipPlane(ArtifactCore::Units::Pixels{camera.nearPlane});
+    layer->setFarClipPlane(ArtifactCore::Units::Pixels{camera.farPlane});
+    applyImportedSceneTransform(*layer, camera.transform);
+  }
+
+  for (const ArtifactCore::MeshImporter::ImportedLight& light : lights) {
+    const QString importedName = light.name.toQString().trimmed();
+    ArtifactLayerInitParams params(
+        uniqueLayerName(importedName.isEmpty()
+            ? QStringLiteral("%1 Light").arg(sceneName)
+            : importedName),
+        LayerType::Light);
+    service->addLayerToCurrentComposition(params, true,
+                                          placeAtCurrentFrameRequested());
+    const auto layer = selectionManager
+        ? ArtifactCore::dynamicPointerCast<ArtifactLightLayer>(
+              selectionManager->currentLayer())
+        : ArtifactLightLayerPtr{};
+    if (!layer) {
+      continue;
+    }
+    switch (light.type) {
+      case ArtifactCore::MeshImporter::ImportedLightType::Directional:
+        layer->setLightType(LightType::Parallel);
+        break;
+      case ArtifactCore::MeshImporter::ImportedLightType::Spot:
+        layer->setLightType(LightType::Spot);
+        break;
+      case ArtifactCore::MeshImporter::ImportedLightType::Area:
+        layer->setLightType(LightType::Area);
+        break;
+      case ArtifactCore::MeshImporter::ImportedLightType::Volume:
+      case ArtifactCore::MeshImporter::ImportedLightType::Point:
+      default:
+        // No volume light type exists yet; a point light is the closest
+        // placement-preserving stand-in.
+        layer->setLightType(LightType::Point);
+        break;
+    }
+    // ufbx reports intensity relative to the FBX 100% default, and the layer
+    // stores a percentage of that same reference.
+    layer->setColor(ArtifactCore::FloatColor(
+        light.color[0], light.color[1], light.color[2], 1.0f));
+    layer->setIntensity(
+        ArtifactCore::Units::Percent{light.intensity * 100.0f});
+    layer->setConeAngle(
+        ArtifactCore::Units::Degrees{light.outerConeDegrees});
+    layer->setConeFeather(
+        ArtifactCore::Units::Degrees{light.innerConeDegrees});
+    layer->setCastsShadows(light.castsShadows);
+    applyImportedSceneTransform(*layer, light.transform);
+  }
+
+  // The requested layer is the model, not the last camera or light created
+  // while building the extra layers.
+  if (selectionManager && modelLayer) {
+    selectionManager->selectLayer(modelLayer);
+  }
+}
+
 void ArtifactLayerMenu::Impl::handleCreateModel3D()
 {
     auto* service = ArtifactProjectService::instance();
@@ -3105,6 +3270,7 @@ void ArtifactLayerMenu::Impl::handleCreateModel3D()
         ArtifactModel3DLayerInitParams params(layerName);
         params.setModelPath(importedPaths.first());
     service->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
+    createImportedSceneLayers(service, importedPaths.first());
     });
 }
 

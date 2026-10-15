@@ -4067,6 +4067,15 @@ void ArtifactIRenderer::Impl::setRenderTargetOverrides(ITextureView* colorRTV,
     return;
   }
 
+  // The command buffer deliberately retains its target RTV between frames.
+  // Release both the context binding and that retained reference before the
+  // swap chain drops its old back buffers during Resize().
+  if (auto context = deviceManager_.immediateContext()) {
+   context->SetRenderTargets(0, nullptr, nullptr,
+                            RESOURCE_STATE_TRANSITION_MODE_NONE);
+  }
+  cmdBuf_.setTargetRTV(nullptr);
+
   deviceManager_.recreateSwapChain(widget);
   primitiveRenderer_.setContext(deviceManager_.immediateContext(),
                                  deviceManager_.swapChain());

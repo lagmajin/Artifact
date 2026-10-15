@@ -18,6 +18,7 @@ module;
 #endif
 #include <QAbstractScrollArea>
 #include <QAbstractButton>
+#include <QAction>
 #include <QApplication>
 #include <QByteArray>
 #include <QCloseEvent>
@@ -32,6 +33,7 @@ module;
 #include <QFont>
 #include <QHash>
 #include <QHeaderView>
+#include <QIcon>
 #include <QLabel>
 #include <QKeyEvent>
 #include <QJsonDocument>
@@ -129,6 +131,47 @@ static DockWidgetArea toAdsDockArea(DockArea area) {
   case DockArea::Center: return CenterDockWidgetArea;
   }
   return CenterDockWidgetArea;
+}
+
+static DockWidgetAreas toAdsDockAreas(const QList<DockArea> &areas) {
+  DockWidgetAreas result = InvalidDockWidgetArea;
+  for (const DockArea area : areas) {
+    result |= toAdsDockArea(area);
+  }
+  return result;
+}
+
+static QList<DockArea> fromAdsDockAreas(DockWidgetAreas areas) {
+  QList<DockArea> result;
+  for (const DockArea candidate : {DockArea::Left, DockArea::Right,
+                                   DockArea::Top, DockArea::Bottom,
+                                   DockArea::Center}) {
+    if (areas.testFlag(toAdsDockArea(candidate))) result.push_back(candidate);
+  }
+  return result;
+}
+
+static int toArtifactDropAreaMask(DockWidgetAreas areas) {
+  int result = 0;
+  for (const DockArea candidate : {DockArea::Left, DockArea::Right,
+                                   DockArea::Top, DockArea::Bottom,
+                                   DockArea::Center}) {
+    if (areas.testFlag(toAdsDockArea(candidate))) {
+      result |= dockAreaDropTargetBit(candidate);
+    }
+  }
+  return result;
+}
+
+static QList<DockArea> fromArtifactDropAreaMask(int mask) {
+  QList<DockArea> result;
+  mask &= kAllDockAreaDropTargets;
+  for (const DockArea candidate : {DockArea::Left, DockArea::Right,
+                                   DockArea::Top, DockArea::Bottom,
+                                   DockArea::Center}) {
+    if (mask & dockAreaDropTargetBit(candidate)) result.push_back(candidate);
+  }
+  return result;
 }
 #endif
 
@@ -777,6 +820,10 @@ public:
       auto &entry = it.value();
       entry.visible = dock->isVisible() && !dock->isClosed();
       entry.pinned = dock->property("artifactDockPinned").toBool();
+      if (auto *area = dock->dockAreaWidget()) {
+        entry.allowedDropAreas =
+            toArtifactDropAreaMask(area->allowedAreas());
+      }
       if (auto *floating = findFloatingDockContainer(dock)) {
         entry.floating = true;
         entry.floatingGeometry = floating->geometry();
@@ -896,6 +943,10 @@ public:
           } else if (manager_) {
             manager_->addDockWidget(toAdsDockArea(entry.area), dock);
           }
+        }
+        if (auto *area = dock->dockAreaWidget()) {
+          area->setAllowedAreas(
+              toAdsDockAreas(fromArtifactDropAreaMask(entry.allowedDropAreas)));
         }
         dock->setProperty("artifactDockPinned", entry.pinned);
         setPinned(dock, entry.pinned);
@@ -2386,6 +2437,7 @@ void ArtifactMainWindow::setCentralWorkspace(const QString &title,
   }
   impl_->centralWorkspaceTitle = title;
   impl_->centralWorkspaceWidget = widget;
+  widget->setProperty("artifactDockCloseProtected", true);
   if (impl_->nativeDockSurface) {
     if (impl_->nativeDockSurface->addDockWidget(
         QStringLiteral("Composition Viewer"), title, widget,
@@ -3485,6 +3537,1065 @@ QString ArtifactMainWindow::dockDisplayTitle(const QString &dockId) const {
   }
 #endif
   return {};
+}
+
+bool ArtifactMainWindow::setDockTitle(const QString &dockIdOrTitle,
+                                      const QString &title) {
+  if (!impl_ || dockIdOrTitle.isEmpty())
+    return false;
+  if (impl_->nativeDockSurface) {
+    const QString dockId =
+        impl_->nativeDockSurface->resolveDockId(dockIdOrTitle);
+    return !dockId.isEmpty() &&
+           impl_->nativeDockSurface->setDockTitle(dockId, title);
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  const QString dockId = resolveDockId(dockIdOrTitle);
+  for (auto *dock : impl_->dockWidgets) {
+    if (dock && (dock->objectName() == dockId ||
+                 (dock->objectName().trimmed().isEmpty() &&
+                  dock->windowTitle() == dockId))) {
+      dock->setWindowTitle(title);
+      return true;
+    }
+  }
+#endif
+  return false;
+}
+
+QList<QAction *> ArtifactMainWindow::dockTitleBarActions(
+    const QString &dockIdOrTitle) const {
+  if (!impl_ || dockIdOrTitle.isEmpty()) return {};
+  if (impl_->nativeDockSurface) {
+    const QString dockId =
+        impl_->nativeDockSurface->resolveDockId(dockIdOrTitle);
+    return dockId.isEmpty()
+        ? QList<QAction *>{}
+        : impl_->nativeDockSurface->dockTitleBarActions(dockId);
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  const QString dockId = resolveDockId(dockIdOrTitle);
+  for (auto *dock : impl_->dockWidgets) {
+    if (dock && (dock->objectName() == dockId ||
+                 (dock->objectName().trimmed().isEmpty() &&
+                  dock->windowTitle() == dockId))) {
+      return dock->titleBarActions();
+    }
+  }
+#endif
+  return {};
+}
+
+bool ArtifactMainWindow::setDockTitleBarActions(
+    const QString &dockIdOrTitle, const QList<QAction *> &actions) {
+  if (!impl_ || dockIdOrTitle.isEmpty()) return false;
+  if (impl_->nativeDockSurface) {
+    const QString dockId =
+        impl_->nativeDockSurface->resolveDockId(dockIdOrTitle);
+    return !dockId.isEmpty() &&
+           impl_->nativeDockSurface->setDockTitleBarActions(dockId, actions);
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  const QString dockId = resolveDockId(dockIdOrTitle);
+  for (auto *dock : impl_->dockWidgets) {
+    if (dock && (dock->objectName() == dockId ||
+                 (dock->objectName().trimmed().isEmpty() &&
+                  dock->windowTitle() == dockId))) {
+      dock->setTitleBarActions(actions);
+      return true;
+    }
+  }
+#endif
+  return false;
+}
+
+void ArtifactMainWindow::setDockAreaDynamicTabsMenuButtonVisibility(
+    bool enabled) {
+  if (!impl_) return;
+  if (impl_->nativeDockSurface) {
+    impl_->nativeDockSurface->setDockAreaDynamicTabsMenuButtonVisibility(
+        enabled);
+    return;
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  ads::CDockManager::setConfigFlag(
+      ads::CDockManager::DockAreaDynamicTabsMenuButtonVisibility, enabled);
+#endif
+}
+
+bool ArtifactMainWindow::dockAreaDynamicTabsMenuButtonVisibility() const {
+  if (impl_ && impl_->nativeDockSurface) {
+    return impl_->nativeDockSurface->dockAreaDynamicTabsMenuButtonVisibility();
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  return ads::CDockManager::testConfigFlag(
+      ads::CDockManager::DockAreaDynamicTabsMenuButtonVisibility);
+#else
+  return false;
+#endif
+}
+
+void ArtifactMainWindow::setDockAreaAlwaysShowTabs(bool enabled) {
+  if (!impl_) return;
+  if (impl_->nativeDockSurface) {
+    impl_->nativeDockSurface->setDockAreaAlwaysShowTabs(enabled);
+    return;
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  ads::CDockManager::setConfigFlag(ads::CDockManager::AlwaysShowTabs,
+                                   enabled);
+#endif
+}
+
+bool ArtifactMainWindow::dockAreaAlwaysShowTabs() const {
+  if (impl_ && impl_->nativeDockSurface) {
+    return impl_->nativeDockSurface->dockAreaAlwaysShowTabs();
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  return ads::CDockManager::testConfigFlag(ads::CDockManager::AlwaysShowTabs);
+#else
+  return false;
+#endif
+}
+
+void ArtifactMainWindow::setDockAreaDoubleClickUndocksWidget(bool enabled) {
+  if (!impl_) return;
+  if (impl_->nativeDockSurface) {
+    impl_->nativeDockSurface->setDockAreaDoubleClickUndocksWidget(enabled);
+    return;
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  ads::CDockManager::setConfigFlag(
+      ads::CDockManager::DoubleClickUndocksWidget, enabled);
+#endif
+}
+
+bool ArtifactMainWindow::dockAreaDoubleClickUndocksWidget() const {
+  if (impl_ && impl_->nativeDockSurface) {
+    return impl_->nativeDockSurface->dockAreaDoubleClickUndocksWidget();
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  return ads::CDockManager::testConfigFlag(
+      ads::CDockManager::DoubleClickUndocksWidget);
+#else
+  return false;
+#endif
+}
+
+void ArtifactMainWindow::setDockAreaHasTabsMenuButton(bool enabled) {
+  if (!impl_) return;
+  if (impl_->nativeDockSurface) {
+    impl_->nativeDockSurface->setDockAreaHasTabsMenuButton(enabled);
+    return;
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  ads::CDockManager::setConfigFlag(
+      ads::CDockManager::DockAreaHasTabsMenuButton, enabled);
+#endif
+}
+
+bool ArtifactMainWindow::dockAreaHasTabsMenuButton() const {
+  if (impl_ && impl_->nativeDockSurface) {
+    return impl_->nativeDockSurface->dockAreaHasTabsMenuButton();
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  return ads::CDockManager::testConfigFlag(
+      ads::CDockManager::DockAreaHasTabsMenuButton);
+#else
+  return false;
+#endif
+}
+
+void ArtifactMainWindow::setDockAreaHasCloseButton(bool enabled) {
+  if (!impl_) return;
+  if (impl_->nativeDockSurface) {
+    impl_->nativeDockSurface->setDockAreaHasCloseButton(enabled);
+    return;
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  ads::CDockManager::setConfigFlag(
+      ads::CDockManager::DockAreaHasCloseButton, enabled);
+#endif
+}
+
+bool ArtifactMainWindow::dockAreaHasCloseButton() const {
+  if (impl_ && impl_->nativeDockSurface) {
+    return impl_->nativeDockSurface->dockAreaHasCloseButton();
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  return ads::CDockManager::testConfigFlag(
+      ads::CDockManager::DockAreaHasCloseButton);
+#else
+  return false;
+#endif
+}
+
+void ArtifactMainWindow::setDockAreaCloseButtonClosesTab(bool enabled) {
+  if (!impl_) return;
+  if (impl_->nativeDockSurface) {
+    impl_->nativeDockSurface->setDockAreaCloseButtonClosesTab(enabled);
+    return;
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  ads::CDockManager::setConfigFlag(
+      ads::CDockManager::DockAreaCloseButtonClosesTab, enabled);
+#endif
+}
+
+bool ArtifactMainWindow::dockAreaCloseButtonClosesTab() const {
+  if (impl_ && impl_->nativeDockSurface) {
+    return impl_->nativeDockSurface->dockAreaCloseButtonClosesTab();
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  return ads::CDockManager::testConfigFlag(
+      ads::CDockManager::DockAreaCloseButtonClosesTab);
+#else
+  return false;
+#endif
+}
+
+void ArtifactMainWindow::setDockAreaHasUndockButton(bool enabled) {
+  if (!impl_) return;
+  if (impl_->nativeDockSurface) {
+    impl_->nativeDockSurface->setDockAreaHasUndockButton(enabled);
+    return;
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  ads::CDockManager::setConfigFlag(
+      ads::CDockManager::DockAreaHasUndockButton, enabled);
+#endif
+}
+
+bool ArtifactMainWindow::dockAreaHasUndockButton() const {
+  if (impl_ && impl_->nativeDockSurface) {
+    return impl_->nativeDockSurface->dockAreaHasUndockButton();
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  return ads::CDockManager::testConfigFlag(
+      ads::CDockManager::DockAreaHasUndockButton);
+#else
+  return false;
+#endif
+}
+
+bool ArtifactMainWindow::setDockAreaHideSingleWidgetTitleBar(
+    const QString &dockIdOrTitle, bool enabled) {
+  if (!impl_ || dockIdOrTitle.isEmpty()) return false;
+  if (impl_->nativeDockSurface) {
+    const QString dockId =
+        impl_->nativeDockSurface->resolveDockId(dockIdOrTitle);
+    return !dockId.isEmpty() &&
+           impl_->nativeDockSurface->setDockAreaHideSingleWidgetTitleBar(
+               dockId, enabled);
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  const QString dockId = resolveDockId(dockIdOrTitle);
+  for (auto *dock : impl_->dockWidgets) {
+    if (dock && (dock->objectName() == dockId ||
+                 (dock->objectName().trimmed().isEmpty() &&
+                  dock->windowTitle() == dockId))) {
+      if (auto *area = dock->dockAreaWidget()) {
+        area->setDockAreaFlag(
+            ads::CDockAreaWidget::HideSingleWidgetTitleBar, enabled);
+        return true;
+      }
+    }
+  }
+#endif
+  return false;
+}
+
+bool ArtifactMainWindow::dockAreaHideSingleWidgetTitleBar(
+    const QString &dockIdOrTitle) const {
+  if (!impl_ || dockIdOrTitle.isEmpty()) return false;
+  if (impl_->nativeDockSurface) {
+    const QString dockId =
+        impl_->nativeDockSurface->resolveDockId(dockIdOrTitle);
+    return !dockId.isEmpty() &&
+           impl_->nativeDockSurface->dockAreaHideSingleWidgetTitleBar(dockId);
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  const QString dockId = resolveDockId(dockIdOrTitle);
+  for (auto *dock : impl_->dockWidgets) {
+    if (dock && (dock->objectName() == dockId ||
+                 (dock->objectName().trimmed().isEmpty() &&
+                  dock->windowTitle() == dockId))) {
+      if (auto *area = dock->dockAreaWidget()) {
+        return area->dockAreaFlags().testFlag(
+            ads::CDockAreaWidget::HideSingleWidgetTitleBar);
+      }
+    }
+  }
+#endif
+  return false;
+}
+
+void ArtifactMainWindow::setDockAreaHideSingleCentralWidgetTitleBar(
+    bool enabled) {
+  if (!impl_) return;
+  if (impl_->nativeDockSurface) {
+    impl_->nativeDockSurface->setDockAreaHideSingleCentralWidgetTitleBar(
+        enabled);
+    return;
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  ads::CDockManager::setConfigFlag(
+      ads::CDockManager::HideSingleCentralWidgetTitleBar, enabled);
+#endif
+}
+
+bool ArtifactMainWindow::dockAreaHideSingleCentralWidgetTitleBar() const {
+  if (impl_ && impl_->nativeDockSurface) {
+    return impl_->nativeDockSurface
+        ->dockAreaHideSingleCentralWidgetTitleBar();
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  return ads::CDockManager::testConfigFlag(
+      ads::CDockManager::HideSingleCentralWidgetTitleBar);
+#else
+  return false;
+#endif
+}
+
+void ArtifactMainWindow::setDockEqualSplitOnInsertion(bool enabled) {
+  if (!impl_) return;
+  if (impl_->nativeDockSurface) {
+    impl_->nativeDockSurface->setDockEqualSplitOnInsertion(enabled);
+    return;
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  ads::CDockManager::setConfigFlag(
+      ads::CDockManager::EqualSplitOnInsertion, enabled);
+#endif
+}
+
+bool ArtifactMainWindow::dockEqualSplitOnInsertion() const {
+  if (impl_ && impl_->nativeDockSurface) {
+    return impl_->nativeDockSurface->dockEqualSplitOnInsertion();
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  return ads::CDockManager::testConfigFlag(
+      ads::CDockManager::EqualSplitOnInsertion);
+#else
+  return false;
+#endif
+}
+
+void ArtifactMainWindow::setDockOpaqueSplitterResize(bool enabled) {
+  if (!impl_) return;
+  if (impl_->nativeDockSurface) {
+    impl_->nativeDockSurface->setDockOpaqueSplitterResize(enabled);
+    return;
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  ads::CDockManager::setConfigFlag(
+      ads::CDockManager::OpaqueSplitterResize, enabled);
+#endif
+}
+
+bool ArtifactMainWindow::dockOpaqueSplitterResize() const {
+  if (impl_ && impl_->nativeDockSurface) {
+    return impl_->nativeDockSurface->dockOpaqueSplitterResize();
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  return ads::CDockManager::testConfigFlag(
+      ads::CDockManager::OpaqueSplitterResize);
+#else
+  return false;
+#endif
+}
+
+void ArtifactMainWindow::setDockAreaHideDisabledButtons(bool enabled) {
+  if (!impl_) return;
+  if (impl_->nativeDockSurface) {
+    impl_->nativeDockSurface->setDockAreaHideDisabledButtons(enabled);
+    return;
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  ads::CDockManager::setConfigFlag(
+      ads::CDockManager::DockAreaHideDisabledButtons, enabled);
+#endif
+}
+
+bool ArtifactMainWindow::dockAreaHideDisabledButtons() const {
+  if (impl_ && impl_->nativeDockSurface) {
+    return impl_->nativeDockSurface->dockAreaHideDisabledButtons();
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  return ads::CDockManager::testConfigFlag(
+      ads::CDockManager::DockAreaHideDisabledButtons);
+#else
+  return false;
+#endif
+}
+
+void ArtifactMainWindow::setFloatingContainerHasWidgetIcon(bool enabled) {
+  if (!impl_) return;
+  if (impl_->nativeDockSurface) {
+    impl_->nativeDockSurface->setFloatingContainerHasWidgetIcon(enabled);
+    return;
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  ads::CDockManager::setConfigFlag(
+      ads::CDockManager::FloatingContainerHasWidgetIcon, enabled);
+#endif
+}
+
+bool ArtifactMainWindow::floatingContainerHasWidgetIcon() const {
+  if (impl_ && impl_->nativeDockSurface) {
+    return impl_->nativeDockSurface->floatingContainerHasWidgetIcon();
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  return ads::CDockManager::testConfigFlag(
+      ads::CDockManager::FloatingContainerHasWidgetIcon);
+#else
+  return false;
+#endif
+}
+
+void ArtifactMainWindow::setDockAreaActiveTabHasCloseButton(bool enabled) {
+  if (!impl_) return;
+  if (impl_->nativeDockSurface) {
+    impl_->nativeDockSurface->setDockAreaActiveTabHasCloseButton(enabled);
+    return;
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  ads::CDockManager::setConfigFlag(
+      ads::CDockManager::ActiveTabHasCloseButton, enabled);
+#endif
+}
+
+bool ArtifactMainWindow::dockAreaActiveTabHasCloseButton() const {
+  if (impl_ && impl_->nativeDockSurface) {
+    return impl_->nativeDockSurface->dockAreaActiveTabHasCloseButton();
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  return ads::CDockManager::testConfigFlag(
+      ads::CDockManager::ActiveTabHasCloseButton);
+#else
+  return false;
+#endif
+}
+
+void ArtifactMainWindow::setDockAreaAllTabsHaveCloseButton(bool enabled) {
+  if (!impl_) return;
+  if (impl_->nativeDockSurface) {
+    impl_->nativeDockSurface->setDockAreaAllTabsHaveCloseButton(enabled);
+    return;
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  ads::CDockManager::setConfigFlag(
+      ads::CDockManager::AllTabsHaveCloseButton, enabled);
+#endif
+}
+
+bool ArtifactMainWindow::dockAreaAllTabsHaveCloseButton() const {
+  if (impl_ && impl_->nativeDockSurface) {
+    return impl_->nativeDockSurface->dockAreaAllTabsHaveCloseButton();
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  return ads::CDockManager::testConfigFlag(
+      ads::CDockManager::AllTabsHaveCloseButton);
+#else
+  return false;
+#endif
+}
+
+void ArtifactMainWindow::setDockAreaRetainTabSizeWhenCloseButtonHidden(
+    bool enabled) {
+  if (!impl_) return;
+  if (impl_->nativeDockSurface) {
+    impl_->nativeDockSurface->setDockAreaRetainTabSizeWhenCloseButtonHidden(
+        enabled);
+    return;
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  ads::CDockManager::setConfigFlag(
+      ads::CDockManager::RetainTabSizeWhenCloseButtonHidden, enabled);
+#endif
+}
+
+bool ArtifactMainWindow::dockAreaRetainTabSizeWhenCloseButtonHidden() const {
+  if (impl_ && impl_->nativeDockSurface) {
+    return impl_->nativeDockSurface
+        ->dockAreaRetainTabSizeWhenCloseButtonHidden();
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  return ads::CDockManager::testConfigFlag(
+      ads::CDockManager::RetainTabSizeWhenCloseButtonHidden);
+#else
+  return false;
+#endif
+}
+
+void ArtifactMainWindow::setDockAreaDisableTabTextEliding(bool enabled) {
+  if (!impl_) return;
+  if (impl_->nativeDockSurface) {
+    impl_->nativeDockSurface->setDockAreaDisableTabTextEliding(enabled);
+    return;
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  ads::CDockManager::setConfigFlag(
+      ads::CDockManager::DisableTabTextEliding, enabled);
+#endif
+}
+
+bool ArtifactMainWindow::dockAreaDisableTabTextEliding() const {
+  if (impl_ && impl_->nativeDockSurface) {
+    return impl_->nativeDockSurface->dockAreaDisableTabTextEliding();
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  return ads::CDockManager::testConfigFlag(
+      ads::CDockManager::DisableTabTextEliding);
+#else
+  return false;
+#endif
+}
+
+void ArtifactMainWindow::setDockAreaShowTabTextOnlyForActiveTab(bool enabled) {
+  if (!impl_) return;
+  if (impl_->nativeDockSurface) {
+    impl_->nativeDockSurface->setDockAreaShowTabTextOnlyForActiveTab(enabled);
+    return;
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  ads::CDockManager::setConfigFlag(
+      ads::CDockManager::ShowTabTextOnlyForActiveTab, enabled);
+#endif
+}
+
+bool ArtifactMainWindow::dockAreaShowTabTextOnlyForActiveTab() const {
+  if (impl_ && impl_->nativeDockSurface) {
+    return impl_->nativeDockSurface->dockAreaShowTabTextOnlyForActiveTab();
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  return ads::CDockManager::testConfigFlag(
+      ads::CDockManager::ShowTabTextOnlyForActiveTab);
+#else
+  return false;
+#endif
+}
+
+QIcon ArtifactMainWindow::dockIcon(const QString &dockIdOrTitle) const {
+  if (!impl_ || dockIdOrTitle.isEmpty())
+    return {};
+  if (impl_->nativeDockSurface) {
+    const QString dockId =
+        impl_->nativeDockSurface->resolveDockId(dockIdOrTitle);
+    return dockId.isEmpty() ? QIcon{}
+                            : impl_->nativeDockSurface->dockIcon(dockId);
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  const QString dockId = resolveDockId(dockIdOrTitle);
+  for (auto *dock : impl_->dockWidgets) {
+    if (dock && (dock->objectName() == dockId ||
+                 (dock->objectName().trimmed().isEmpty() &&
+                  dock->windowTitle() == dockId))) {
+      return dock->icon();
+    }
+  }
+#endif
+  return {};
+}
+
+bool ArtifactMainWindow::setDockIcon(const QString &dockIdOrTitle,
+                                     const QIcon &icon) {
+  if (!impl_ || dockIdOrTitle.isEmpty())
+    return false;
+  if (impl_->nativeDockSurface) {
+    const QString dockId =
+        impl_->nativeDockSurface->resolveDockId(dockIdOrTitle);
+    return !dockId.isEmpty() &&
+           impl_->nativeDockSurface->setDockIcon(dockId, icon);
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  const QString dockId = resolveDockId(dockIdOrTitle);
+  for (auto *dock : impl_->dockWidgets) {
+    if (dock && (dock->objectName() == dockId ||
+                 (dock->objectName().trimmed().isEmpty() &&
+                  dock->windowTitle() == dockId))) {
+      dock->setIcon(icon);
+      return true;
+    }
+  }
+#endif
+  return false;
+}
+
+QString ArtifactMainWindow::dockTabToolTip(
+    const QString &dockIdOrTitle) const {
+  if (!impl_ || dockIdOrTitle.isEmpty())
+    return {};
+  if (impl_->nativeDockSurface) {
+    const QString dockId =
+        impl_->nativeDockSurface->resolveDockId(dockIdOrTitle);
+    return dockId.isEmpty()
+        ? QString{}
+        : impl_->nativeDockSurface->dockTabToolTip(dockId);
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  const QString dockId = resolveDockId(dockIdOrTitle);
+  for (auto *dock : impl_->dockWidgets) {
+    if (dock && (dock->objectName() == dockId ||
+                 (dock->objectName().trimmed().isEmpty() &&
+                  dock->windowTitle() == dockId))) {
+      auto *tab = dock->tabWidget();
+      return tab ? tab->toolTip() : QString{};
+    }
+  }
+#endif
+  return {};
+}
+
+bool ArtifactMainWindow::setDockTabToolTip(
+    const QString &dockIdOrTitle, const QString &toolTip) {
+  if (!impl_ || dockIdOrTitle.isEmpty())
+    return false;
+  if (impl_->nativeDockSurface) {
+    const QString dockId =
+        impl_->nativeDockSurface->resolveDockId(dockIdOrTitle);
+    return !dockId.isEmpty() &&
+           impl_->nativeDockSurface->setDockTabToolTip(dockId, toolTip);
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND) && !defined(QT_NO_TOOLTIP)
+  const QString dockId = resolveDockId(dockIdOrTitle);
+  for (auto *dock : impl_->dockWidgets) {
+    if (dock && (dock->objectName() == dockId ||
+                 (dock->objectName().trimmed().isEmpty() &&
+                  dock->windowTitle() == dockId))) {
+      dock->setTabToolTip(toolTip);
+      return true;
+    }
+  }
+#endif
+  return false;
+}
+
+QList<DockArea> ArtifactMainWindow::dockAreaAllowedDropAreas(
+    const QString &dockIdOrTitle) const {
+  if (!impl_ || dockIdOrTitle.isEmpty()) return {};
+  if (impl_->nativeDockSurface) {
+    const QString dockId =
+        impl_->nativeDockSurface->resolveDockId(dockIdOrTitle);
+    return dockId.isEmpty()
+        ? QList<DockArea>{}
+        : impl_->nativeDockSurface->dockAreaAllowedDropAreas(dockId);
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  const QString dockId = resolveDockId(dockIdOrTitle);
+  for (auto *dock : impl_->dockWidgets) {
+    if (!dock || (dock->objectName() != dockId &&
+                  !(dock->objectName().trimmed().isEmpty() &&
+                    dock->windowTitle() == dockId))) {
+      continue;
+    }
+    auto *area = dock->dockAreaWidget();
+    if (!area) return {};
+    return fromAdsDockAreas(area->allowedAreas());
+  }
+#endif
+  return {};
+}
+
+bool ArtifactMainWindow::setDockAreaAllowedDropAreas(
+    const QString &dockIdOrTitle, const QList<DockArea> &areas) {
+  if (!impl_ || dockIdOrTitle.isEmpty()) return false;
+  if (impl_->nativeDockSurface) {
+    const QString dockId =
+        impl_->nativeDockSurface->resolveDockId(dockIdOrTitle);
+    return !dockId.isEmpty() &&
+           impl_->nativeDockSurface->setDockAreaAllowedDropAreas(dockId,
+                                                                  areas);
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  const QString dockId = resolveDockId(dockIdOrTitle);
+  for (auto *dock : impl_->dockWidgets) {
+    if (!dock || (dock->objectName() != dockId &&
+                  !(dock->objectName().trimmed().isEmpty() &&
+                    dock->windowTitle() == dockId))) {
+      continue;
+    }
+    auto *area = dock->dockAreaWidget();
+    if (!area) return false;
+    DockWidgetAreas allowed = InvalidDockWidgetArea;
+    for (const DockArea candidate : areas) {
+      const int value = static_cast<int>(candidate);
+      if (value < static_cast<int>(DockArea::Left) ||
+          value > static_cast<int>(DockArea::Center)) {
+        return false;
+      }
+      allowed |= toAdsDockArea(candidate);
+    }
+    area->setAllowedAreas(allowed);
+    return true;
+  }
+#endif
+  return false;
+}
+
+bool ArtifactMainWindow::setDockNoTab(const QString &dockIdOrTitle,
+                                      bool noTab) {
+  if (!impl_ || dockIdOrTitle.isEmpty())
+    return false;
+  if (impl_->nativeDockSurface) {
+    const QString dockId =
+        impl_->nativeDockSurface->resolveDockId(dockIdOrTitle);
+    return !dockId.isEmpty() &&
+           impl_->nativeDockSurface->setDockNoTab(dockId, noTab);
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  const QString dockId = resolveDockId(dockIdOrTitle);
+  for (auto *dock : impl_->dockWidgets) {
+    if (dock && (dock->objectName() == dockId ||
+                 (dock->objectName().trimmed().isEmpty() &&
+                  dock->windowTitle() == dockId))) {
+      dock->setFeature(ads::CDockWidget::NoTab, noTab);
+      return true;
+    }
+  }
+#endif
+  return false;
+}
+
+bool ArtifactMainWindow::dockClosable(const QString &dockIdOrTitle) const {
+  if (!impl_ || dockIdOrTitle.isEmpty())
+    return false;
+  if (impl_->nativeDockSurface) {
+    const QString dockId =
+        impl_->nativeDockSurface->resolveDockId(dockIdOrTitle);
+    return !dockId.isEmpty() &&
+           impl_->nativeDockSurface->dockClosable(dockId);
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  const QString dockId = resolveDockId(dockIdOrTitle);
+  if (dockId.isEmpty()) return false;
+  for (auto *dock : impl_->dockWidgets) {
+    if (dock && (dock->objectName() == dockId ||
+                 (dock->objectName().trimmed().isEmpty() &&
+                  dock->windowTitle() == dockId))) {
+      return dock->features().testFlag(ads::CDockWidget::DockWidgetClosable);
+    }
+  }
+#endif
+  return false;
+}
+
+bool ArtifactMainWindow::setDockClosable(const QString &dockIdOrTitle,
+                                         bool closable) {
+  if (!impl_ || dockIdOrTitle.isEmpty())
+    return false;
+  if (impl_->nativeDockSurface) {
+    const QString dockId =
+        impl_->nativeDockSurface->resolveDockId(dockIdOrTitle);
+    return !dockId.isEmpty() &&
+           impl_->nativeDockSurface->setDockClosable(dockId, closable);
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  const QString dockId = resolveDockId(dockIdOrTitle);
+  if (dockId.isEmpty()) return false;
+  for (auto *dock : impl_->dockWidgets) {
+    if (dock && (dock->objectName() == dockId ||
+                 (dock->objectName().trimmed().isEmpty() &&
+                  dock->windowTitle() == dockId))) {
+      dock->setFeature(ads::CDockWidget::DockWidgetClosable, closable);
+      return true;
+    }
+  }
+#endif
+  return false;
+}
+
+bool ArtifactMainWindow::dockMovable(const QString &dockIdOrTitle) const {
+  if (!impl_ || dockIdOrTitle.isEmpty())
+    return false;
+  if (impl_->nativeDockSurface) {
+    const QString dockId =
+        impl_->nativeDockSurface->resolveDockId(dockIdOrTitle);
+    return !dockId.isEmpty() &&
+           impl_->nativeDockSurface->dockMovable(dockId);
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  const QString dockId = resolveDockId(dockIdOrTitle);
+  if (dockId.isEmpty()) return false;
+  for (auto *dock : impl_->dockWidgets) {
+    if (dock && (dock->objectName() == dockId ||
+                 (dock->objectName().trimmed().isEmpty() &&
+                  dock->windowTitle() == dockId))) {
+      return dock->features().testFlag(ads::CDockWidget::DockWidgetMovable);
+    }
+  }
+#endif
+  return false;
+}
+
+bool ArtifactMainWindow::setDockMovable(const QString &dockIdOrTitle,
+                                        bool movable) {
+  if (!impl_ || dockIdOrTitle.isEmpty())
+    return false;
+  if (impl_->nativeDockSurface) {
+    const QString dockId =
+        impl_->nativeDockSurface->resolveDockId(dockIdOrTitle);
+    return !dockId.isEmpty() &&
+           impl_->nativeDockSurface->setDockMovable(dockId, movable);
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  const QString dockId = resolveDockId(dockIdOrTitle);
+  if (dockId.isEmpty()) return false;
+  for (auto *dock : impl_->dockWidgets) {
+    if (dock && (dock->objectName() == dockId ||
+                 (dock->objectName().trimmed().isEmpty() &&
+                  dock->windowTitle() == dockId))) {
+      dock->setFeature(ads::CDockWidget::DockWidgetMovable, movable);
+      return true;
+    }
+  }
+#endif
+  return false;
+}
+
+bool ArtifactMainWindow::dockFloatable(const QString &dockIdOrTitle) const {
+  if (!impl_ || dockIdOrTitle.isEmpty())
+    return false;
+  if (impl_->nativeDockSurface) {
+    const QString dockId =
+        impl_->nativeDockSurface->resolveDockId(dockIdOrTitle);
+    return !dockId.isEmpty() &&
+           impl_->nativeDockSurface->dockFloatable(dockId);
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  const QString dockId = resolveDockId(dockIdOrTitle);
+  if (dockId.isEmpty()) return false;
+  for (auto *dock : impl_->dockWidgets) {
+    if (dock && (dock->objectName() == dockId ||
+                 (dock->objectName().trimmed().isEmpty() &&
+                  dock->windowTitle() == dockId))) {
+      return dock->features().testFlag(ads::CDockWidget::DockWidgetFloatable);
+    }
+  }
+#endif
+  return false;
+}
+
+bool ArtifactMainWindow::setDockFloatable(const QString &dockIdOrTitle,
+                                          bool floatable) {
+  if (!impl_ || dockIdOrTitle.isEmpty())
+    return false;
+  if (impl_->nativeDockSurface) {
+    const QString dockId =
+        impl_->nativeDockSurface->resolveDockId(dockIdOrTitle);
+    return !dockId.isEmpty() &&
+           impl_->nativeDockSurface->setDockFloatable(dockId, floatable);
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  const QString dockId = resolveDockId(dockIdOrTitle);
+  if (dockId.isEmpty()) return false;
+  for (auto *dock : impl_->dockWidgets) {
+    if (dock && (dock->objectName() == dockId ||
+                 (dock->objectName().trimmed().isEmpty() &&
+                  dock->windowTitle() == dockId))) {
+      dock->setFeature(ads::CDockWidget::DockWidgetFloatable, floatable);
+      return true;
+    }
+  }
+#endif
+  return false;
+}
+
+bool ArtifactMainWindow::dockAutoHideable(const QString &dockIdOrTitle) const {
+  if (!impl_ || dockIdOrTitle.isEmpty())
+    return false;
+  if (impl_->nativeDockSurface) {
+    const QString dockId =
+        impl_->nativeDockSurface->resolveDockId(dockIdOrTitle);
+    return !dockId.isEmpty() &&
+           impl_->nativeDockSurface->dockAutoHideable(dockId);
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  const QString dockId = resolveDockId(dockIdOrTitle);
+  if (dockId.isEmpty()) return false;
+  for (auto *dock : impl_->dockWidgets) {
+    if (dock && (dock->objectName() == dockId ||
+                 (dock->objectName().trimmed().isEmpty() &&
+                  dock->windowTitle() == dockId))) {
+      return dock->features().testFlag(ads::CDockWidget::DockWidgetPinnable);
+    }
+  }
+#endif
+  return false;
+}
+
+bool ArtifactMainWindow::setDockAutoHideable(
+    const QString &dockIdOrTitle, bool autoHideable) {
+  if (!impl_ || dockIdOrTitle.isEmpty())
+    return false;
+  if (impl_->nativeDockSurface) {
+    const QString dockId =
+        impl_->nativeDockSurface->resolveDockId(dockIdOrTitle);
+    return !dockId.isEmpty() &&
+           impl_->nativeDockSurface->setDockAutoHideable(dockId,
+                                                         autoHideable);
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  const QString dockId = resolveDockId(dockIdOrTitle);
+  if (dockId.isEmpty()) return false;
+  for (auto *dock : impl_->dockWidgets) {
+    if (dock && (dock->objectName() == dockId ||
+                 (dock->objectName().trimmed().isEmpty() &&
+                  dock->windowTitle() == dockId))) {
+      dock->setFeature(ads::CDockWidget::DockWidgetPinnable, autoHideable);
+      return true;
+    }
+  }
+#endif
+  return false;
+}
+
+bool ArtifactMainWindow::dockFocusable(const QString &dockIdOrTitle) const {
+  if (!impl_ || dockIdOrTitle.isEmpty())
+    return false;
+  if (impl_->nativeDockSurface) {
+    const QString dockId =
+        impl_->nativeDockSurface->resolveDockId(dockIdOrTitle);
+    return !dockId.isEmpty() &&
+           impl_->nativeDockSurface->dockFocusable(dockId);
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  const QString dockId = resolveDockId(dockIdOrTitle);
+  if (dockId.isEmpty()) return false;
+  for (auto *dock : impl_->dockWidgets) {
+    if (dock && (dock->objectName() == dockId ||
+                 (dock->objectName().trimmed().isEmpty() &&
+                  dock->windowTitle() == dockId))) {
+      return dock->features().testFlag(ads::CDockWidget::DockWidgetFocusable);
+    }
+  }
+#endif
+  return false;
+}
+
+bool ArtifactMainWindow::setDockFocusable(const QString &dockIdOrTitle,
+                                          bool focusable) {
+  if (!impl_ || dockIdOrTitle.isEmpty())
+    return false;
+  if (impl_->nativeDockSurface) {
+    const QString dockId =
+        impl_->nativeDockSurface->resolveDockId(dockIdOrTitle);
+    return !dockId.isEmpty() &&
+           impl_->nativeDockSurface->setDockFocusable(dockId, focusable);
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  const QString dockId = resolveDockId(dockIdOrTitle);
+  if (dockId.isEmpty()) return false;
+  for (auto *dock : impl_->dockWidgets) {
+    if (dock && (dock->objectName() == dockId ||
+                 (dock->objectName().trimmed().isEmpty() &&
+                  dock->windowTitle() == dockId))) {
+      dock->setFeature(ads::CDockWidget::DockWidgetFocusable, focusable);
+      return true;
+    }
+  }
+#endif
+  return false;
+}
+
+void ArtifactMainWindow::setAutoHideButtonTogglesArea(bool enabled) {
+  if (!impl_)
+    return;
+  if (impl_->nativeDockSurface) {
+    impl_->nativeDockSurface->setAutoHideButtonTogglesArea(enabled);
+    return;
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  ads::CDockManager::setAutoHideConfigFlag(
+      ads::CDockManager::AutoHideButtonTogglesArea, enabled);
+#endif
+}
+
+bool ArtifactMainWindow::autoHideButtonTogglesArea() const {
+  if (impl_ && impl_->nativeDockSurface) {
+    return impl_->nativeDockSurface->autoHideButtonTogglesArea();
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  return ads::CDockManager::testAutoHideConfigFlag(
+      ads::CDockManager::AutoHideButtonTogglesArea);
+#else
+  return false;
+#endif
+}
+
+void ArtifactMainWindow::setAutoHideButtonCheckable(bool enabled) {
+  if (!impl_)
+    return;
+  if (impl_->nativeDockSurface) {
+    impl_->nativeDockSurface->setAutoHideButtonCheckable(enabled);
+    return;
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  ads::CDockManager::setAutoHideConfigFlag(
+      ads::CDockManager::AutoHideButtonCheckable, enabled);
+#endif
+}
+
+bool ArtifactMainWindow::autoHideButtonCheckable() const {
+  if (impl_ && impl_->nativeDockSurface) {
+    return impl_->nativeDockSurface->autoHideButtonCheckable();
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  return ads::CDockManager::testAutoHideConfigFlag(
+      ads::CDockManager::AutoHideButtonCheckable);
+#else
+  return false;
+#endif
+}
+
+void ArtifactMainWindow::setAutoHideSideBarsIconOnly(bool enabled) {
+  if (!impl_)
+    return;
+  if (impl_->nativeDockSurface) {
+    impl_->nativeDockSurface->setAutoHideSideBarsIconOnly(enabled);
+    return;
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  ads::CDockManager::setAutoHideConfigFlag(
+      ads::CDockManager::AutoHideSideBarsIconOnly, enabled);
+#endif
+}
+
+bool ArtifactMainWindow::autoHideSideBarsIconOnly() const {
+  if (impl_ && impl_->nativeDockSurface) {
+    return impl_->nativeDockSurface->autoHideSideBarsIconOnly();
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  return ads::CDockManager::testAutoHideConfigFlag(
+      ads::CDockManager::AutoHideSideBarsIconOnly);
+#else
+  return false;
+#endif
+}
+
+void ArtifactMainWindow::setAutoHideShowOnMouseOver(bool enabled) {
+  if (!impl_)
+    return;
+  if (impl_->nativeDockSurface) {
+    impl_->nativeDockSurface->setAutoHideShowOnMouseOver(enabled);
+    return;
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  ads::CDockManager::setAutoHideConfigFlag(
+      ads::CDockManager::AutoHideShowOnMouseOver, enabled);
+#endif
+}
+
+bool ArtifactMainWindow::autoHideShowOnMouseOver() const {
+  if (impl_ && impl_->nativeDockSurface) {
+    return impl_->nativeDockSurface->autoHideShowOnMouseOver();
+  }
+#if defined(ARTIFACT_QADS_COMPAT_BACKEND)
+  return ads::CDockManager::testAutoHideConfigFlag(
+      ads::CDockManager::AutoHideShowOnMouseOver);
+#else
+  return false;
+#endif
 }
 
 QString ArtifactMainWindow::resolveDockId(const QString &dockIdOrTitle) const {

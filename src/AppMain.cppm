@@ -5186,6 +5186,17 @@ int Artifact::runApplication(int argc, char *argv[]) {
           .arg(verboseVideoLog ? QStringLiteral("true")
                                : QStringLiteral("false")));
   auto *settings = ArtifactCore::ArtifactAppSettings::instance();
+  // Prefer the built-in Modo palette for this launch without rewriting saved
+  // theme preferences. The settings UI can still change these session values.
+  {
+    auto &themeStore = ArtifactCore::LayeredConfigStore::instance();
+    themeStore.setValue(ArtifactCore::ConfigLayer::Session, "UI/ThemeName",
+                        QStringLiteral("Modo"));
+    themeStore.setValue(ArtifactCore::ConfigLayer::Session, "UI/ThemePresetPath",
+                        QString());
+    themeStore.setValue(ArtifactCore::ConfigLayer::Session, "UI/AccentColor",
+                        QString());
+  }
   auto applyThemeFromSettings = [&a, settings]() {
     if (!settings) {
       return;
@@ -8233,6 +8244,53 @@ int Artifact::runApplication(int argc, char *argv[]) {
         *startTrackerFixture = {};
       };
       QTimer::singleShot(900, mw, *startTrackerFixture);
+    });
+  }
+
+  if (uiTestExecutable &&
+      qEnvironmentVariableIsSet("ARTIFACT_UI_TEST_CONTENTS_VIEWER")) {
+    QTimer::singleShot(0, mw, [mw]() {
+      if (!mw) {
+        qWarning() << "[ContentsViewerUiFixture] main window unavailable";
+        return;
+      }
+      const QString filePath = qEnvironmentVariable(
+          "ARTIFACT_UI_TEST_CONTENTS_VIEWER_PATH").trimmed();
+      if (filePath.isEmpty() || !QFileInfo::exists(filePath)) {
+        qWarning() << "[ContentsViewerUiFixture] input file missing" << filePath;
+        return;
+      }
+
+      constexpr auto dockId = "contentsViewerUiFixture";
+      auto *viewer = new ArtifactContentsViewer(mw);
+      viewer->setObjectName(QStringLiteral("contentsViewerUiFixtureWidget"));
+      viewer->setMinimumSize(640, 360);
+      viewer->setFilePath(filePath);
+      mw->addDockedWidgetTabbedWithId(
+          QStringLiteral("Contents Viewer Fixture"), QString::fromLatin1(dockId),
+          DockArea::Center, viewer, QStringLiteral("contents-viewer-fixture::"));
+      if (!mw->hasDock(QString::fromLatin1(dockId))) {
+        qWarning() << "[ContentsViewerUiFixture] dock registration failed";
+        return;
+      }
+
+      const QStringList dockIds = mw->dockIds();
+      const int previousMutationDepth =
+          mw->property("artifactProgrammaticDockMutationDepth").toInt();
+      mw->setProperty("artifactProgrammaticDockMutationDepth",
+                      previousMutationDepth + 1);
+      for (const QString &existingDockId : dockIds) {
+        if (existingDockId != QString::fromLatin1(dockId)) {
+          mw->setDockVisible(existingDockId, false);
+        }
+      }
+      mw->setDockVisible(QString::fromLatin1(dockId), true);
+      mw->activateDock(QString::fromLatin1(dockId));
+      mw->showNormal();
+      mw->resize(1280, 800);
+      mw->setProperty("artifactProgrammaticDockMutationDepth",
+                      previousMutationDepth);
+      qInfo() << "[ContentsViewerUiFixture] showing" << filePath;
     });
   }
 

@@ -99,9 +99,9 @@ struct ThemePresetEntry {
 };
 
 static const ThemePresetEntry kThemePresetEntries[] = {
+    {ArtifactCore::DccStylePreset::ModoStyle},
     {ArtifactCore::DccStylePreset::DefaultQt},
     {ArtifactCore::DccStylePreset::MayaStyle},
-    {ArtifactCore::DccStylePreset::ModoStyle},
     {ArtifactCore::DccStylePreset::StudioStyle},
     {ArtifactCore::DccStylePreset::CalmStyle},
     {ArtifactCore::DccStylePreset::BlenderStyle},

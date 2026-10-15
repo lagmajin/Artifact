@@ -81,6 +81,7 @@ module;
 #include <variant>
 #include <any>
 #include <atomic>
+#include <cstdint>
 #include <condition_variable>
 #include <queue>
 #include <deque>
@@ -176,12 +177,30 @@ namespace Artifact
    {
     QWidget::resizeEvent(event);
     if (renderer_) {
-     renderer_->recreateSwapChain(this);
+     const std::uint64_t requestGeneration = ++resizeRequestGeneration_;
+     QTimer::singleShot(100, this, [this, requestGeneration]() {
+      if (requestGeneration != resizeRequestGeneration_ || !renderer_) {
+       return;
+      }
+      const QSize physicalSize(qRound(width() * devicePixelRatioF()),
+                               qRound(height() * devicePixelRatioF()));
+      if (physicalSize == swapChainPhysicalSize_) {
+       return;
+      }
+      resizeInProgress_ = true;
+      renderer_->recreateSwapChain(this);
+      resizeInProgress_ = false;
+      swapChainPhysicalSize_ = physicalSize;
+      update();
+     });
     }
    }
 
    void paintEvent(QPaintEvent*) override
    {
+    if (resizeInProgress_) {
+     return;
+    }
     ensureRenderer();
     if (!renderer_ || image_.isEmpty() || width() <= 0 || height() <= 0) {
      return;
@@ -218,6 +237,8 @@ namespace Artifact
     }
     renderer_ = new ArtifactIRenderer();
     renderer_->initialize(this);
+    swapChainPhysicalSize_ = QSize(qRound(width() * devicePixelRatioF()),
+                                   qRound(height() * devicePixelRatioF()));
    }
 
    QSize transformedSize() const
@@ -236,6 +257,9 @@ namespace Artifact
    }
 
    ArtifactIRenderer* renderer_ = nullptr;
+   bool resizeInProgress_ = false;
+   std::uint64_t resizeRequestGeneration_ = 0;
+   QSize swapChainPhysicalSize_;
    ArtifactCore::ImageF32x4_RGBA image_;
    double zoom_ = 1.0;
    double rotationDegrees_ = 0.0;
@@ -1243,18 +1267,7 @@ namespace Artifact
     waveform.maxSample = *std::max_element(audioWaveformSamples.constBegin(), audioWaveformSamples.constEnd());
    }
    waveform.width = audioWaveformSamples.size();
-   int sampleRate = 44100;
-   if (audioController_ && audioController_->isMediaOpen()) {
-    const auto metadata = audioController_->getMetadata();
-    for (const auto& stream : metadata.streams) {
-     if (stream.type == ArtifactCore::MediaType::Audio &&
-         stream.audioCodec.sampleRate > 0) {
-      sampleRate = stream.audioCodec.sampleRate;
-      break;
-     }
-    }
-   }
-   waveform.sampleRate = sampleRate;
+   waveform.sampleRate = 44100;
    audioWaveformWidget->setWaveformData(waveform);
    if (!audioWaveformSamples.isEmpty()) {
     audioWaveformWidget->setPosition(static_cast<int>(audioWaveformSamples.size()) - 1);
@@ -1281,16 +1294,6 @@ namespace Artifact
 
    ArtifactCore::AudioSegment segment;
    segment.sampleRate = 44100;
-   if (audioController_ && audioController_->isMediaOpen()) {
-    const auto metadata = audioController_->getMetadata();
-    for (const auto& stream : metadata.streams) {
-     if (stream.type == ArtifactCore::MediaType::Audio &&
-         stream.audioCodec.sampleRate > 0) {
-      segment.sampleRate = stream.audioCodec.sampleRate;
-      break;
-     }
-    }
-   }
    segment.layout = ArtifactCore::AudioChannelLayout::Stereo;
    segment.channelData.resize(2);
    segment.channelData[0].resize(frameCount);
@@ -1376,6 +1379,11 @@ namespace Artifact
    ensureAudioController();
    if (!audioController_->openMediaFile(info.absoluteFilePath())) {
     showInfoMessage("Failed to load audio:\n" + filepath);
+    return;
+   }
+   if (!audioController_->setAudioOutputSampleRate(44100)) {
+    audioController_->closeMedia();
+    showInfoMessage("Failed to prepare audio output:\n" + filepath);
     return;
    }
 
@@ -1469,10 +1477,15 @@ namespace Artifact
    }
 
    if (audioPendingBuffer.isEmpty()) {
-    audioController_->stop();
-    audioPlaybackPositionMs = playbackRangeActive ? playbackRangeStartMs : 0;
-    audioSink->suspend();
-    updatePlaybackState();
+    if (audioController_->isAudioStreamFinished()) {
+     audioController_->stop();
+     audioPlaybackPositionMs = playbackRangeActive ? playbackRangeStartMs : 0;
+     audioSink->suspend();
+     if (audioPumpTimer) {
+      audioPumpTimer->stop();
+     }
+     updatePlaybackState();
+    }
     return;
    }
 
@@ -2508,10 +2521,6 @@ namespace Artifact
 
   void ArtifactContentsViewer::Impl::updatePlaybackState()
   {
-   if (!stateLabel) {
-    return;
-   }
-
    QString stateText = QStringLiteral("Idle");
    QString transportTimeText = QStringLiteral("Time -- / --");
    QString transportFrameText = QStringLiteral("Frame -- / --");
@@ -3296,7 +3305,7 @@ namespace Artifact
     }
    });
 
-   QObject::connect(seekSlider, &QSlider::sliderMoved, parent, [this](int value) {
+   QObject::connect(seekSlider, &QSlider::valueChanged, parent, [this](int value) {
     if (currentFileType == ArtifactCore::FileType::Video && mediaPlayer) {
      mediaPlayer->setPosition(static_cast<qint64>(value));
      updatePlaybackState();

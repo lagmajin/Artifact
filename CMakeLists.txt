@@ -3450,6 +3450,7 @@ if(WIN32)
 
     set(_ARTIFACT_COPY_RUNTIME_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CopyVcpkgRuntimeDeps.cmake")
     set(_ARTIFACT_COPY_QT_PLATFORM_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CopyQtPlatformPlugin.cmake")
+    set(_ARTIFACT_COPY_QT_CONTENT_PLUGINS_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CopyQtContentPlugins.cmake")
     set(_ARTIFACT_VCPKG_INSTALLED "${VCPKG_INSTALLED}")
     if(NOT EXISTS "${_ARTIFACT_VCPKG_INSTALLED}/debug/bin"
        AND DEFINED VCPKG_INSTALLED_DIR
@@ -3477,6 +3478,56 @@ if(WIN32)
         COMMENT "Deploying Qt platform plugin for Artifact"
         VERBATIM
     )
+    add_custom_command(TARGET Artifact POST_BUILD
+        COMMAND "${CMAKE_COMMAND}"
+            "-DTARGET_FILE_DIR=$<TARGET_FILE_DIR:Artifact>"
+            "-DVCPKG_INSTALLED=${_ARTIFACT_VCPKG_INSTALLED}"
+            "-DCONFIG=$<CONFIG>"
+            -P "${_ARTIFACT_COPY_QT_CONTENT_PLUGINS_SCRIPT}"
+        COMMENT "Deploying Qt image and multimedia plugins for Artifact"
+        VERBATIM
+    )
+
+    if(WINDEPLOYQT_EXECUTABLE)
+        add_custom_command(TARGET ArtifactUiTest POST_BUILD
+            COMMAND "${CMAKE_COMMAND}"
+                "-DWINDEPLOYQT_EXECUTABLE=${WINDEPLOYQT_EXECUTABLE}"
+                "-DTARGET_FILE=$<TARGET_FILE:ArtifactUiTest>"
+                "-DVCPKG_INSTALLED=${_ARTIFACT_VCPKG_INSTALLED}"
+                "-DCONFIG=$<CONFIG>"
+                -P "${_ARTIFACT_DEPLOY_QT_SCRIPT}"
+            COMMENT "Deploying Qt runtime for ArtifactUiTest with windeployqt"
+            VERBATIM
+        )
+    endif()
+    add_custom_command(TARGET ArtifactUiTest POST_BUILD
+        COMMAND "${CMAKE_COMMAND}"
+            "-DTARGET_FILE_DIR=$<TARGET_FILE_DIR:ArtifactUiTest>"
+            "-DVCPKG_INSTALLED=${_ARTIFACT_VCPKG_INSTALLED}"
+            "-DCONFIG=$<CONFIG>"
+            -P "${_ARTIFACT_COPY_RUNTIME_SCRIPT}"
+        COMMENT "Deploying vcpkg runtime DLLs for ArtifactUiTest"
+        VERBATIM
+    )
+    add_custom_command(TARGET ArtifactUiTest POST_BUILD
+        COMMAND "${CMAKE_COMMAND}"
+            "-DTARGET_FILE_DIR=$<TARGET_FILE_DIR:ArtifactUiTest>"
+            "-DVCPKG_INSTALLED=${_ARTIFACT_VCPKG_INSTALLED}"
+            "-DCONFIG=$<CONFIG>"
+            -P "${_ARTIFACT_COPY_QT_PLATFORM_SCRIPT}"
+        COMMENT "Deploying Qt platform plugin for ArtifactUiTest"
+        VERBATIM
+    )
+    add_custom_command(TARGET ArtifactUiTest POST_BUILD
+        COMMAND "${CMAKE_COMMAND}"
+            "-DTARGET_FILE_DIR=$<TARGET_FILE_DIR:ArtifactUiTest>"
+            "-DVCPKG_INSTALLED=${_ARTIFACT_VCPKG_INSTALLED}"
+            "-DCONFIG=$<CONFIG>"
+            -P "${_ARTIFACT_COPY_QT_CONTENT_PLUGINS_SCRIPT}"
+        COMMENT "Deploying Qt image and multimedia plugins for ArtifactUiTest"
+        VERBATIM
+    )
+
     # Diligent loads DXC dynamically for Shader Model 6.x.  It is not a link
     # dependency, so TARGET_RUNTIME_DLLS cannot deploy it automatically.
     set(_ARTIFACT_DXC_RUNTIME_DIR

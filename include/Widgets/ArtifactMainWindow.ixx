@@ -2,9 +2,12 @@ module;
 #include <utility>
 
 #include <QWidget>
+#include <QAction>
 #include <QVBoxLayout>
 #include <QStatusBar>
 #include <QString>
+#include <QList>
+#include <QIcon>
 #include <functional>
 #include <memory> // Added for std::unique_ptr if used in Impl
 #include <wobjectcpp.h>
@@ -94,6 +97,78 @@ public /*slots*/:
   QStringList dockTitles() const;
   QStringList dockIds() const;
   QString dockDisplayTitle(const QString &dockId) const;
+  bool setDockTitle(const QString &dockIdOrTitle, const QString &title);
+  QList<QAction *> dockTitleBarActions(const QString &dockIdOrTitle) const;
+  bool setDockTitleBarActions(const QString &dockIdOrTitle,
+                              const QList<QAction *> &actions);
+  void setDockAreaDynamicTabsMenuButtonVisibility(bool enabled);
+  bool dockAreaDynamicTabsMenuButtonVisibility() const;
+  void setDockAreaAlwaysShowTabs(bool enabled);
+  bool dockAreaAlwaysShowTabs() const;
+  void setDockAreaDoubleClickUndocksWidget(bool enabled);
+  bool dockAreaDoubleClickUndocksWidget() const;
+  void setDockAreaHasTabsMenuButton(bool enabled);
+  bool dockAreaHasTabsMenuButton() const;
+  void setDockAreaHasCloseButton(bool enabled);
+  bool dockAreaHasCloseButton() const;
+  void setDockAreaCloseButtonClosesTab(bool enabled);
+  bool dockAreaCloseButtonClosesTab() const;
+  void setDockAreaHasUndockButton(bool enabled);
+  bool dockAreaHasUndockButton() const;
+  bool setDockAreaHideSingleWidgetTitleBar(const QString &dockIdOrTitle,
+                                           bool enabled);
+  bool dockAreaHideSingleWidgetTitleBar(
+      const QString &dockIdOrTitle) const;
+  void setDockAreaHideSingleCentralWidgetTitleBar(bool enabled);
+  bool dockAreaHideSingleCentralWidgetTitleBar() const;
+  void setDockEqualSplitOnInsertion(bool enabled);
+  bool dockEqualSplitOnInsertion() const;
+  void setDockOpaqueSplitterResize(bool enabled);
+  bool dockOpaqueSplitterResize() const;
+  void setDockAreaHideDisabledButtons(bool enabled);
+  bool dockAreaHideDisabledButtons() const;
+  void setFloatingContainerHasWidgetIcon(bool enabled);
+  bool floatingContainerHasWidgetIcon() const;
+  void setDockAreaActiveTabHasCloseButton(bool enabled);
+  bool dockAreaActiveTabHasCloseButton() const;
+  void setDockAreaAllTabsHaveCloseButton(bool enabled);
+  bool dockAreaAllTabsHaveCloseButton() const;
+  void setDockAreaRetainTabSizeWhenCloseButtonHidden(bool enabled);
+  bool dockAreaRetainTabSizeWhenCloseButtonHidden() const;
+  void setDockAreaDisableTabTextEliding(bool enabled);
+  bool dockAreaDisableTabTextEliding() const;
+  void setDockAreaShowTabTextOnlyForActiveTab(bool enabled);
+  bool dockAreaShowTabTextOnlyForActiveTab() const;
+  QIcon dockIcon(const QString &dockIdOrTitle) const;
+  bool setDockIcon(const QString &dockIdOrTitle, const QIcon &icon);
+  QString dockTabToolTip(const QString &dockIdOrTitle) const;
+  bool setDockTabToolTip(const QString &dockIdOrTitle,
+                         const QString &toolTip);
+  QList<DockArea> dockAreaAllowedDropAreas(
+      const QString &dockIdOrTitle) const;
+  bool setDockAreaAllowedDropAreas(const QString &dockIdOrTitle,
+                                   const QList<DockArea> &areas);
+  bool setDockNoTab(const QString &dockIdOrTitle, bool noTab);
+  bool dockClosable(const QString &dockIdOrTitle) const;
+  bool setDockClosable(const QString &dockIdOrTitle, bool closable);
+  bool dockMovable(const QString &dockIdOrTitle) const;
+  bool setDockMovable(const QString &dockIdOrTitle, bool movable);
+  bool dockFloatable(const QString &dockIdOrTitle) const;
+  bool setDockFloatable(const QString &dockIdOrTitle, bool floatable);
+  // QADS DockWidgetPinnable capability: whether Auto-Hide is allowed.
+  bool dockAutoHideable(const QString &dockIdOrTitle) const;
+  bool setDockAutoHideable(const QString &dockIdOrTitle, bool autoHideable);
+  bool dockFocusable(const QString &dockIdOrTitle) const;
+  bool setDockFocusable(const QString &dockIdOrTitle, bool focusable);
+  // QADS AutoHideButtonTogglesArea equivalent for the active dock backend.
+  void setAutoHideButtonTogglesArea(bool enabled);
+  bool autoHideButtonTogglesArea() const;
+  void setAutoHideButtonCheckable(bool enabled);
+  bool autoHideButtonCheckable() const;
+  void setAutoHideSideBarsIconOnly(bool enabled);
+  bool autoHideSideBarsIconOnly() const;
+  void setAutoHideShowOnMouseOver(bool enabled);
+  bool autoHideShowOnMouseOver() const;
   QString resolveDockId(const QString &dockIdOrTitle) const;
   bool isDockVisible(const QString &title) const;
   bool hasDock(const QString &title) const;

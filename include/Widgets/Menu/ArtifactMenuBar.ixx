@@ -1,7 +1,7 @@
 module;
 #include <utility>
 
-#include <QtWidgets>
+#include <QMenuBar>
 #include <wobjectdefs.h>
 export module Menu.MenuBar;
 
