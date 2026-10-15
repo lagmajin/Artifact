@@ -193,6 +193,8 @@ import Artifact.Service.PlaybackShortcuts;
 import Artifact.Service.Project;
 import Artifact.Composition.InitParams;
 import Artifact.Layer.InitParams;
+import Dialog.Composition;
+import Artifact.Widgets.CreatePlaneLayerDialog;
 import Color.Float;
 import Time.Rational;
 import Artifact.Application.ProjectBundleIpc;
@@ -7311,6 +7313,40 @@ int Artifact::runApplication(int argc, char *argv[]) {
       renderCenterWindow->present();
       qInfo() << "[RenderManagerUiFixture] showing fixed queue with"
               << queueService->jobCount() << "jobs";
+    });
+  }
+
+  if (uiTestExecutable &&
+      qEnvironmentVariableIsSet("ARTIFACT_UI_TEST_CREATE_COMPOSITION_DIALOG")) {
+    QTimer::singleShot(0, mw, [mw]() {
+      if (!mw) {
+        qWarning() << "[CreateDialogUiFixture] main window unavailable";
+        return;
+      }
+      auto *dialog = new CreateCompositionDialog(mw);
+      dialog->setObjectName(QStringLiteral("createCompositionDialogFixture"));
+      dialog->showAnimated();
+      QTimer::singleShot(800, mw, [mw]() {
+        captureStartupScreenshot(mw);
+      });
+      qInfo() << "[CreateDialogUiFixture] showing composition creation dialog";
+    });
+  }
+
+  if (uiTestExecutable &&
+      qEnvironmentVariableIsSet("ARTIFACT_UI_TEST_CREATE_LAYER_DIALOG")) {
+    QTimer::singleShot(0, mw, [mw]() {
+      if (!mw) {
+        qWarning() << "[CreateDialogUiFixture] main window unavailable";
+        return;
+      }
+      auto *dialog = new CreateSolidLayerSettingDialog(mw);
+      dialog->setObjectName(QStringLiteral("createLayerDialogFixture"));
+      dialog->showAnimated();
+      QTimer::singleShot(800, mw, [mw]() {
+        captureStartupScreenshot(mw);
+      });
+      qInfo() << "[CreateDialogUiFixture] showing solid layer creation dialog";
     });
   }
 
