@@ -9341,6 +9341,10 @@ void drawLayerForCompositionView(
 
 
 
+  // Light layers contribute scene lighting, not beauty pixels. Their draw()
+  // emits editor controls and belongs to the viewport overlay pass.
+  if (dynamic_cast<ArtifactLightLayer*>(layer)) return;
+
   const QRectF localRect = layer->localBounds();
 
   if (!localRect.isValid() || localRect.width() <= 0.0 ||
@@ -25020,6 +25024,14 @@ QImage CompositionRenderController::captureCurrentFrameImage() const {
 
   return QImage();
 
+}
+
+QImage CompositionRenderController::readbackPresentedFrameImage() const {
+  if (!impl_ || !impl_->renderer_ || !impl_->lastPresentedReadbackSRV_) {
+    return QImage();
+  }
+  return impl_->renderer_->readbackTextureViewToImage(
+      impl_->lastPresentedReadbackSRV_);
 }
 
 bool CompositionRenderController::requestCurrentFrameImageAsync(
@@ -49784,6 +49796,27 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
       (!selectedLayerId_.isNil() && comp) ? comp->layerById(selectedLayerId_)
 
                                           : ArtifactAbstractLayerPtr{};
+
+  if (showGizmoOverlay_ && renderer_) {
+    const QMatrix4x4 view = viewportOrientationMatricesValid_
+        ? viewportOrientationViewForOverlay_
+        : has3DCamera ? cameraViewMatrix : renderer_->getViewMatrix();
+    const QMatrix4x4 projection = viewportOrientationMatricesValid_
+        ? viewportOrientationProjectionForOverlay_
+        : has3DCamera ? cameraProjMatrix : renderer_->getProjectionMatrix();
+    renderer_->set3DCameraMatrices(view, projection);
+    for (const auto& layer : layers) {
+      auto* light = layer ? dynamic_cast<ArtifactLightLayer*>(layer.get()) : nullptr;
+      if (!light || !isLayerEffectivelyVisible(layer) ||
+          !layer->isActiveAt(currentFrame) ||
+          !passesLayerRenderFilter(layerRenderFilter_, selectedIds, selectedLayerId_, layer) ||
+          !passesLayerCategoryMask(viewportLayerCategoryMask_, layer,
+                                  CompositionViewportLayerCategory::Light3D)) continue;
+      light->draw(renderer_.get());
+    }
+    renderer_->flushGizmo3D();
+    renderer_->reset3DCameraMatrices();
+  }
 
   if (showAudioWaveformOverlay_ || showAudioSpectrumOverlay_) {
     if (auto *audioLayer = selectedLayer

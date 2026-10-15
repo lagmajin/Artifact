@@ -262,6 +262,7 @@ public:
   ArtifactCore::ImageF32x4_RGBA readbackToImageF32() const;
   QImage readbackTextureViewToImage(Diligent::ITextureView *textureView) const;
   QImage readbackDepthToImage() const;
+  Diligent::ITextureView *liveDepthStencilView() const;
   Diligent::ITextureView *liveDepthShaderResourceView() const;
   ArtifactCore::MultiChannelImage readbackToMultiChannelImage() const;
   // Async readback: returns whether a bounded readback slot was acquired.

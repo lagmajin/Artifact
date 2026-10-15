@@ -572,6 +572,9 @@ bool isInteractiveRenderRegionDragActive() const;
   // size; external callers must not call setMode() / setROI() on it.
   const Artifact::RenderContext& renderContext() const;
   QImage captureCurrentFrameImage() const;
+  // Reads only the controller's completed GPU composition output. Unlike the
+  // screenshot API above, it never falls back to capturing the desktop.
+  QImage readbackPresentedFrameImage() const;
   // Queues a bounded renderer readback. Returns false when the fixed readback
   // ring is busy; completion runs off the UI thread and carries the rendered
   // frame serial so consumers can reject stale results.

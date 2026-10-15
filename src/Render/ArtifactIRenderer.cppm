@@ -103,6 +103,17 @@ namespace Artifact
  Q_LOGGING_CATEGORY(particleRendererLog, "artifact.render.particles", QtInfoMsg)
 
 namespace {
+void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
+{
+  if (fence->GetCompletedValue() >= value) return;
+  fence->Wait(value);
+  // Some D3D12 dependency revisions retain a signaled manual-reset event
+  // across Wait calls. An event wake alone is not proof of this copy's
+  // completion. Keep the reusable readback slot mapped only after its value
+  // has completed; yielding avoids a tight CPU loop on that compatibility path.
+  while (fence->GetCompletedValue() < value)
+    QThread::yieldCurrentThread();
+}
   bool clonerGpuPlacementStartupEnabled()
   {
     static const bool enabled = [] {
@@ -1047,7 +1058,8 @@ namespace {
       renderer->initialize(wantedInstances, vertexCount, indexCount);
     }
 
-    if (geometryContentChanged) {
+    // Persistent GPU vertex buffers are refreshed only when this mesh's
+    // revision changes; unchanged meshes bypass this conversion/upload block.
       positions.reserve(vertexCount * 3u);
       for (const auto& p : data.positions) {
         positions.push_back(p.x());
@@ -1201,14 +1213,12 @@ namespace {
             gpuMeshlets.data(), gpuMeshlets.size(), meshletIndices.data(),
             meshletIndices.size(), gpuLods.data(), gpuLods.size());
       }
-      meshRendererGeometry_[cacheKey] = {
-          &mesh, meshRevision, vertexCount, indexCount, geometryHash};
-    }
-    if (!geometryContentChanged) {
       auto& state = meshRendererGeometry_[cacheKey];
       state.meshIdentity = &mesh;
       state.meshRevision = meshRevision;
-    }
+      state.vertexCount = vertexCount;
+      state.indexCount = indexCount;
+      state.contentHash = geometryHash;
     }
 
     const auto supportsRayTracingAlpha = [](const ArtifactCore::Material& candidate) {
@@ -2132,9 +2142,9 @@ namespace {
     ScopedGpuDebugGroup debugGroup(ctx.RawPtr(), "ArtifactIRenderer.Mesh");
     bindActiveRenderTargets(ctx.RawPtr());
     if (auto* colorView = activeColorView()) {
-      if (auto* colorTexture = colorView->GetTexture()) {
-        renderer->setRenderTargetFormat(colorTexture->GetDesc().Format);
-      }
+      // The RTV may reinterpret an UNORM resource as SRGB. PSOs must match
+      // the bound view's format rather than the underlying resource format.
+      renderer->setRenderTargetFormat(colorView->GetDesc().Format);
     }
     bool meshShaderDrawn = false;
     // The mesh-shader path shades a single instance; instanced draws stay on
@@ -3063,7 +3073,7 @@ ArtifactCore::ImageF32x4_RGBA ArtifactIRenderer::Impl::readbackToImageF32() cons
   ReadbackSlot& slot = m_readbackRing[m_readbackRingIndex];
   m_readbackRingIndex = (m_readbackRingIndex + 1) % kReadbackRingSize;
   if (slot.fence && slot.signaledValue > slot.completedValue) {
-    slot.fence->Wait(slot.signaledValue);
+    waitForFenceCompletion(slot.fence, slot.signaledValue);
     slot.completedValue = slot.signaledValue;
   }
   const bool slotNeedsRealloc =
@@ -3123,7 +3133,7 @@ ArtifactCore::ImageF32x4_RGBA ArtifactIRenderer::Impl::readbackToImageF32() cons
   const Uint64 waitValue = ++slot.signaledValue;
   ctx->EnqueueSignal(slot.fence, waitValue);
   ctx->Flush();
-  slot.fence->Wait(waitValue);
+  waitForFenceCompletion(slot.fence, waitValue);
   slot.completedValue = waitValue;
 
   // Map the staging texture. The fence wait above guarantees the GPU copy has
@@ -3287,7 +3297,7 @@ bool ArtifactIRenderer::Impl::readbackTextureViewToFloatBuffer(
   ReadbackSlot& slot = m_readbackRing[m_readbackRingIndex];
   m_readbackRingIndex = (m_readbackRingIndex + 1) % kReadbackRingSize;
   if (slot.fence && slot.signaledValue > slot.completedValue) {
-    slot.fence->Wait(slot.signaledValue);
+    waitForFenceCompletion(slot.fence, slot.signaledValue);
     slot.completedValue = slot.signaledValue;
   }
   const bool slotNeedsRealloc =
@@ -3337,7 +3347,7 @@ bool ArtifactIRenderer::Impl::readbackTextureViewToFloatBuffer(
   const Uint64 waitValue = ++slot.signaledValue;
   ctx->EnqueueSignal(slot.fence, waitValue);
   ctx->Flush();
-  slot.fence->Wait(waitValue);
+  waitForFenceCompletion(slot.fence, waitValue);
   slot.completedValue = waitValue;
 
   MappedTextureSubresource mapped = {};
@@ -3976,9 +3986,7 @@ void ArtifactIRenderer::Impl::setRenderTargetOverrides(ITextureView* colorRTV,
   primitiveRenderer3D_.setOverrideRTV(colorRTV);
   primitiveRenderer3D_.setOverrideDSV(depthDSV);
   if (auto* colorView = activeColorView()) {
-    if (auto* colorTexture = colorView->GetTexture()) {
-      primitiveRenderer3D_.setRenderTargetFormat(colorTexture->GetDesc().Format);
-    }
+    primitiveRenderer3D_.setRenderTargetFormat(colorView->GetDesc().Format);
   }
 }
 
@@ -4465,12 +4473,10 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
      submitQueuedDraws(deviceManager_.immediateContext());
       try {
        sc->Present();
-       // Present completes this immediate-context frame. Vulkan's dynamic
-       // upload allocations are retired by FinishFrame(); without it repeated
-       // gizmo uploads eventually exhaust the dynamic heap.
-       if (auto context = deviceManager_.immediateContext()) {
-        context->FinishFrame();
-       }
+       // The backend swap chain owns frame completion. Diligent's Vulkan and
+       // D3D12 swap chains both call FinishFrame() from Present(); calling it
+       // again here observes commands recorded while acquiring the next
+       // backbuffer and reports them as unfinished frame work.
        ++presentSuccessCount_;
        lastPresentStatus_ = QStringLiteral("ok");
        deviceRecoveryAttempted_ = false;
@@ -4709,6 +4715,10 @@ QImage ArtifactIRenderer::readbackTextureViewToImage(
   return impl_->readbackTextureViewToImage(textureView);
  }
  QImage ArtifactIRenderer::readbackDepthToImage() const { return impl_->readbackDepthToImage(); }
+ Diligent::ITextureView* ArtifactIRenderer::liveDepthStencilView() const
+ {
+  return impl_->activeDepthView();
+ }
  Diligent::ITextureView* ArtifactIRenderer::liveDepthShaderResourceView() const
  {
   auto* dsv = impl_->activeDepthView();

@@ -145,18 +145,22 @@ namespace
   rgba8.resize(pixelCount * 4);
   const quint8* srcBytes = rawImage.data.constData();
   const int srcStride = rawImage.channels * channelSize;
+  const bool isUint8 = rawImage.pixelType == QStringLiteral("uint8");
+  const bool isUint16 = rawImage.pixelType == QStringLiteral("uint16");
+  const bool isFloat = rawImage.pixelType == QStringLiteral("float");
+  quint8* outputBytes = rgba8.data();
   auto sampleChannel = [&](int pixelIndex, int channelIndex) -> quint8 {
    const int sourceIndex =
        pixelIndex * srcStride + channelIndex * channelSize;
-   if (rawImage.pixelType == QStringLiteral("uint8")) {
-    return rawImage.data[static_cast<size_t>(sourceIndex)];
+   if (isUint8) {
+    return srcBytes[sourceIndex];
    }
-   if (rawImage.pixelType == QStringLiteral("uint16")) {
+   if (isUint16) {
     quint16 value = 0;
     std::memcpy(&value, srcBytes + sourceIndex, sizeof(value));
     return static_cast<quint8>(value / 257u);
    }
-   if (rawImage.pixelType == QStringLiteral("float")) {
+   if (isFloat) {
     float value = 0.0f;
     std::memcpy(&value, srcBytes + sourceIndex, sizeof(value));
     return static_cast<quint8>(
@@ -173,10 +177,10 @@ namespace
        rawImage.channels > 2 ? sampleChannel(pixel, 2) : c0;
    const quint8 c3 =
        rawImage.channels > 3 ? sampleChannel(pixel, 3) : 255;
-   rgba8[pixel * 4 + 0] = c0;
-   rgba8[pixel * 4 + 1] = c1;
-   rgba8[pixel * 4 + 2] = c2;
-   rgba8[pixel * 4 + 3] = c3;
+   outputBytes[pixel * 4 + 0] = c0;
+   outputBytes[pixel * 4 + 1] = c1;
+   outputBytes[pixel * 4 + 2] = c2;
+   outputBytes[pixel * 4 + 3] = c3;
   }
   return rgba8;
  }
@@ -189,6 +193,16 @@ namespace
   if (base.isEmpty() || width == 0 || height == 0) {
    return levels;
   }
+  // Each input channel is an 8-bit integer: decode the 256 possible values
+  // once, rather than evaluating pow() for every source texel of every mip.
+  std::array<float, 256> linearFromByte{};
+  for (size_t i = 0; i < linearFromByte.size(); ++i) {
+   const float value = static_cast<float>(i) / 255.0f;
+   linearFromByte[i] = srgb
+       ? (value <= 0.04045f ? value / 12.92f
+           : std::pow((value + 0.055f) / 1.055f, 2.4f)) : value;
+  }
+  levels.reserve(32);
   levels.push_back(base);
   Uint32 levelWidth = width;
   Uint32 levelHeight = height;
@@ -197,12 +211,8 @@ namespace
    const Uint32 nextHeight = std::max(1u, levelHeight / 2u);
    QVector<quint8> next(static_cast<qsizetype>(nextWidth) * nextHeight * 4);
    const auto& previous = levels.back();
-   auto toLinear = [srgb](float value) {
-    value /= 255.0f;
-    return srgb ? (value <= 0.04045f ? value / 12.92f
-                                    : std::pow((value + 0.055f) / 1.055f, 2.4f))
-                : value;
-   };
+   const quint8* sourceBytes = previous.constData();
+   quint8* destinationBytes = next.data();
    auto toByte = [srgb](float value) {
     value = std::clamp(value, 0.0f, 1.0f);
     if (srgb) {
@@ -220,10 +230,10 @@ namespace
       for (Uint32 ox = 0; ox < 2; ++ox) {
        const Uint32 sourceX = (std::min)(levelWidth - 1, x * 2 + ox);
        const qsizetype index = (static_cast<qsizetype>(sourceY) * levelWidth + sourceX) * 4;
-       sum[0] += toLinear(previous[index + 0]);
-       sum[1] += toLinear(previous[index + 1]);
-       sum[2] += toLinear(previous[index + 2]);
-       sum[3] += previous[index + 3] / 255.0f;
+       sum[0] += linearFromByte[sourceBytes[index + 0]];
+       sum[1] += linearFromByte[sourceBytes[index + 1]];
+       sum[2] += linearFromByte[sourceBytes[index + 2]];
+       sum[3] += sourceBytes[index + 3] / 255.0f;
        ++count;
       }
      }
@@ -242,10 +252,10 @@ namespace
       }
      }
      const qsizetype output = (static_cast<qsizetype>(y) * nextWidth + x) * 4;
-     next[output + 0] = toByte(r);
-     next[output + 1] = toByte(g);
-     next[output + 2] = toByte(b);
-     next[output + 3] = static_cast<quint8>(std::lround(std::clamp(sum[3] / count, 0.0f, 1.0f) * 255.0f));
+     destinationBytes[output + 0] = toByte(r);
+     destinationBytes[output + 1] = toByte(g);
+     destinationBytes[output + 2] = toByte(b);
+     destinationBytes[output + 3] = static_cast<quint8>(std::lround(std::clamp(sum[3] / count, 0.0f, 1.0f) * 255.0f));
     }
    }
    levels.push_back(std::move(next));
@@ -253,6 +263,48 @@ namespace
    levelHeight = nextHeight;
   }
   return levels;
+ }
+
+ void createScalarViewportTexture(IRenderDevice* device, const QString& path,
+     RefCntAutoPtr<ITexture>& texture, RefCntAutoPtr<ITextureView>& view)
+ {
+  view = nullptr;
+  texture = nullptr;
+  QVector<quint8> rgba8;
+  Uint32 width = 1, height = 1;
+  if (!path.isEmpty()) {
+   ArtifactCore::ImageImporter importer;
+   if (importer.open(path)) {
+    const auto image = importer.readImage();
+    if (image.isValid()) {
+     rgba8 = expandTextureToRgba8(image);
+     width = static_cast<Uint32>(image.width);
+     height = static_cast<Uint32>(image.height);
+    }
+   }
+  }
+  if (rgba8.isEmpty()) { rgba8 = {255, 255, 255, 255}; width = height = 1; }
+  const auto mipChain = buildViewportMipChain(rgba8, width, height, false, false);
+  std::array<TextureSubResData, 32> subresources{};
+  Uint32 subresourceCount = 0;
+  Uint32 mipWidth = width;
+  for (const auto& mip : mipChain) {
+   subresources[subresourceCount++] = {mip.constData(), static_cast<Uint64>(mipWidth) * 4u};
+   mipWidth = std::max(1u, mipWidth / 2u);
+  }
+  TextureDesc desc;
+  desc.Name = "ArtifactViewportScalarTexture";
+  desc.Type = RESOURCE_DIM_TEX_2D;
+  desc.Width = width; desc.Height = height;
+  desc.MipLevels = static_cast<Uint32>(mipChain.size());
+  desc.Format = TEX_FORMAT_RGBA8_UNORM; // scalar maps are linear data
+  desc.Usage = USAGE_IMMUTABLE;
+  desc.BindFlags = BIND_SHADER_RESOURCE;
+  TextureData data;
+  data.pSubResources = subresources.data();
+  data.NumSubresources = subresourceCount;
+  device->CreateTexture(desc, &data, &texture);
+  if (texture) view = texture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
  }
 
  const char* kSolidViewportVS = R"(
@@ -357,6 +409,8 @@ VSOutput main(VSInput input)
 Texture2D BaseColorTexture : register(t0);
 Texture2D MetallicRoughnessTexture : register(t1);
 Texture2D NormalTexture : register(t2);
+Texture2D MetallicTexture : register(t3);
+Texture2D RoughnessTexture : register(t4);
 SamplerState BaseColorSampler : register(s0);
 
 cbuffer ColorCB : register(b0)
@@ -422,10 +476,14 @@ float4 main(PSInput input) : SV_TARGET
     float4 metallicRoughnessSample =
         MetallicRoughnessTexture.Sample(BaseColorSampler, input.uv);
     float materialMetallic =
-        saturate(CameraPositionAndMetallic.w * metallicRoughnessSample.b);
+        saturate(CameraPositionAndMetallic.w * (OpticalFactors.z > 0.5
+            ? MetallicTexture.Sample(BaseColorSampler, input.uv).r
+            : metallicRoughnessSample.b));
     float materialRoughness =
         clamp(
-            LightDirectionAndRoughness.w * metallicRoughnessSample.g,
+            LightDirectionAndRoughness.w * (OpticalFactors.w > 0.5
+                ? RoughnessTexture.Sample(BaseColorSampler, input.uv).r
+                : metallicRoughnessSample.g),
             0.04,
             1.0);
     float transmissionWeight = saturate(PrincipledFactors.w);
@@ -515,7 +573,8 @@ float4 main(PSInput input) : SV_TARGET
          coatSpecular * coatWeight) * NdotL * 2.2 + sheen +
         transmissionFallback;
     color = color / (color + 1.0);
-    color = pow(color, 1.0 / 2.2);
+    // The sRGB swap-chain RTV encodes linear output. A second shader gamma
+    // conversion washes out skin/clothing and makes diffuse surfaces silver.
     return float4(color, sampledBaseColor.a);
 }
 )";
@@ -650,6 +709,10 @@ ArtifactDiligentEngineRenderWindow::~ArtifactDiligentEngineRenderWindow()
  baseColorTexture_ = nullptr;
  metallicRoughnessTextureSrv_ = nullptr;
  metallicRoughnessTexture_ = nullptr;
+ metallicTextureSrv_ = nullptr;
+ metallicTexture_ = nullptr;
+ roughnessTextureSrv_ = nullptr;
+ roughnessTexture_ = nullptr;
  normalTextureSrv_ = nullptr;
  normalTexture_ = nullptr;
  baseColorSampler_ = nullptr;
@@ -881,6 +944,24 @@ void ArtifactDiligentEngineRenderWindow::setMetallicRoughnessTexture(
   requestRender();
 }
 
+void ArtifactDiligentEngineRenderWindow::setMetallicAndRoughnessTextures(
+    const QString& metallic, const QString& roughness)
+{
+ if (metallicTexturePath_ == metallic && roughnessTexturePath_ == roughness) return;
+ metallicTexturePath_ = metallic;
+ roughnessTexturePath_ = roughness;
+ scalarTexturesDirty_ = true;
+ requestRender();
+}
+
+void ArtifactDiligentEngineRenderWindow::updateScalarTextures()
+{
+ if (!scalarTexturesDirty_ || !pDevice) return;
+ scalarTexturesDirty_ = false;
+ createScalarViewportTexture(pDevice, metallicTexturePath_, metallicTexture_, metallicTextureSrv_);
+ createScalarViewportTexture(pDevice, roughnessTexturePath_, roughnessTexture_, roughnessTextureSrv_);
+}
+
 void ArtifactDiligentEngineRenderWindow::setNormalTexture(const QString& path)
 {
   const QString normalizedPath = path.trimmed();
@@ -1025,7 +1106,10 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
    gp.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
    gp.RasterizerDesc.FillMode = fillMode;
    gp.RasterizerDesc.CullMode = CULL_MODE_BACK;
-   gp.RasterizerDesc.FrontCounterClockwise = False;
+   // Mesh render data preserves the right-handed CCW source winding, as
+   // used by Core MeshRenderer. CW here removes the outer skin and exposes
+   // eyes/teeth and the far-side interior through the head and shoes.
+   gp.RasterizerDesc.FrontCounterClockwise = True;
    gp.RasterizerDesc.ScissorEnable = False;
    gp.DepthStencilDesc.DepthEnable = True;
    gp.DepthStencilDesc.DepthWriteEnable = True;
@@ -1043,16 +1127,18 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
    psoCI.pPS = ps;
 
    ShaderResourceVariableDesc vars[] = {
-    {SHADER_TYPE_VERTEX, "TransformCB", SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE},
-    {SHADER_TYPE_VERTEX, "SkinningCB", SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE},
-    {SHADER_TYPE_PIXEL, "ColorCB", SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE},
+    {SHADER_TYPE_VERTEX, "TransformCB", SHADER_RESOURCE_VARIABLE_TYPE_STATIC},
+    {SHADER_TYPE_VERTEX, "SkinningCB", SHADER_RESOURCE_VARIABLE_TYPE_STATIC},
+    {SHADER_TYPE_PIXEL, "ColorCB", SHADER_RESOURCE_VARIABLE_TYPE_STATIC},
     {SHADER_TYPE_PIXEL, "BaseColorTexture", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
     {SHADER_TYPE_PIXEL, "MetallicRoughnessTexture", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
     {SHADER_TYPE_PIXEL, "NormalTexture", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
-    {SHADER_TYPE_PIXEL, "BaseColorSampler", SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE},
+    {SHADER_TYPE_PIXEL, "MetallicTexture", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+    {SHADER_TYPE_PIXEL, "RoughnessTexture", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+    {SHADER_TYPE_PIXEL, "BaseColorSampler", SHADER_RESOURCE_VARIABLE_TYPE_STATIC},
    };
    psoCI.PSODesc.ResourceLayout.Variables = vars;
-   psoCI.PSODesc.ResourceLayout.NumVariables = 7;
+   psoCI.PSODesc.ResourceLayout.NumVariables = 9;
 
    pDevice->CreateGraphicsPipelineState(psoCI, &outPSO);
    if (!outPSO) {
@@ -1060,25 +1146,23 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
                << static_cast<int>(fillMode);
    }
    if (outPSO) {
-    outPSO->CreateShaderResourceBinding(&outSRB, true);
-    if (outSRB) {
-     if (auto* variable = outSRB->GetVariableByName(
-             SHADER_TYPE_VERTEX, "TransformCB")) {
-      variable->Set(solidTransformBuffer_);
-     }
-     if (auto* variable = outSRB->GetVariableByName(
-             SHADER_TYPE_VERTEX, "SkinningCB")) {
-      variable->Set(solidSkinningBuffer_);
-     }
-     if (auto* variable = outSRB->GetVariableByName(
-             SHADER_TYPE_PIXEL, "ColorCB")) {
-      variable->Set(solidColorBuffer_);
-     }
-     if (auto* variable = outSRB->GetVariableByName(
-             SHADER_TYPE_PIXEL, "BaseColorSampler")) {
-      variable->Set(baseColorSampler_);
-     }
+    if (auto* variable = outPSO->GetStaticVariableByName(
+            SHADER_TYPE_VERTEX, "TransformCB")) {
+     variable->Set(solidTransformBuffer_);
     }
+    if (auto* variable = outPSO->GetStaticVariableByName(
+            SHADER_TYPE_VERTEX, "SkinningCB")) {
+     variable->Set(solidSkinningBuffer_);
+    }
+    if (auto* variable = outPSO->GetStaticVariableByName(
+            SHADER_TYPE_PIXEL, "ColorCB")) {
+     variable->Set(solidColorBuffer_);
+    }
+    if (auto* variable = outPSO->GetStaticVariableByName(
+            SHADER_TYPE_PIXEL, "BaseColorSampler")) {
+     variable->Set(baseColorSampler_);
+    }
+    outPSO->CreateShaderResourceBinding(&outSRB, true);
    }
   };
 
@@ -1360,7 +1444,9 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
    vbDesc.BindFlags = BIND_VERTEX_BUFFER;
    vbDesc.Size = requiredSize;
    BufferData initialData{vertices.data(), requiredSize, pImmediateContext};
-   pDevice->CreateBuffer(vbDesc, &initialData, &solidVertexBuffer_);
+   RefCntAutoPtr<IBuffer> replacement;
+   pDevice->CreateBuffer(vbDesc, &initialData, &replacement);
+   solidVertexBuffer_ = std::move(replacement);
   } else {
    pImmediateContext->UpdateBuffer(
        solidVertexBuffer_, 0, requiredSize, vertices.data(),
@@ -1382,7 +1468,9 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
     indexDesc.BindFlags = BIND_INDEX_BUFFER;
     indexDesc.Size = requiredIndexSize;
     BufferData initialData{indices.data(), requiredIndexSize, pImmediateContext};
-    pDevice->CreateBuffer(indexDesc, &initialData, &solidIndexBuffer_);
+    RefCntAutoPtr<IBuffer> replacement;
+    pDevice->CreateBuffer(indexDesc, &initialData, &replacement);
+    solidIndexBuffer_ = std::move(replacement);
    } else if (solidIndexBuffer_) {
     pImmediateContext->UpdateBuffer(
         solidIndexBuffer_, 0, requiredIndexSize, indices.data(),
@@ -1452,9 +1540,22 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
 
   if (!pSwapChain || !pImmediateContext) return;
 
+  // Status/layout changes and moving between displays may change the native
+  // client size after initialization. Resize only at that geometry boundary,
+  // using physical pixels, before obtaining this frame's back-buffer views.
+  const auto targetWidth = static_cast<Uint32>(
+      std::max(1, qRound(width() * devicePixelRatio())));
+  const auto targetHeight = static_cast<Uint32>(
+      std::max(1, qRound(height() * devicePixelRatio())));
+  const auto& currentSwapChain = pSwapChain->GetDesc();
+  if (currentSwapChain.Width != targetWidth || currentSwapChain.Height != targetHeight) {
+      pSwapChain->Resize(targetWidth, targetHeight);
+  }
+
   ensureSolidResources();
   updateBaseColorTexture();
   updateMetallicRoughnessTexture();
+  updateScalarTextures();
   updateNormalTexture();
   if (meshDirty_) {
       uploadMeshGeometry();
@@ -1472,9 +1573,13 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
   viewport.MinDepth = 0.0f;
   viewport.MaxDepth = 1.0f;
   pImmediateContext->SetViewports(1, &viewport, scDesc.Width, scDesc.Height);
-  float r = static_cast<float>(clearColor_.redF());
-  float g = static_cast<float>(clearColor_.greenF());
-  float b = static_cast<float>(clearColor_.blueF());
+  const auto decodeClearChannel = [](float value) {
+      return value <= 0.04045f ? value / 12.92f
+          : std::pow((value + 0.055f) / 1.055f, 2.4f);
+  };
+  float r = decodeClearChannel(static_cast<float>(clearColor_.redF()));
+  float g = decodeClearChannel(static_cast<float>(clearColor_.greenF()));
+  float b = decodeClearChannel(static_cast<float>(clearColor_.blueF()));
   float a = static_cast<float>(clearColor_.alphaF());
   if (shadingMode_ == ShadingMode::Wireframe) {
    r = (std::min)(1.0f, r + 0.10f);
@@ -1615,7 +1720,7 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
               cameraPosition.x(),
               cameraPosition.y(),
               cameraPosition.z(),
-              metallicRoughnessTexturePath_.isEmpty()
+              (metallicRoughnessTexturePath_.isEmpty() || !metallicTexturePath_.isEmpty())
                   ? materialMetallic_
                   : 1.0f
           },
@@ -1623,7 +1728,7 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
               0.45f,
               0.75f,
               0.55f,
-              metallicRoughnessTexturePath_.isEmpty()
+              (metallicRoughnessTexturePath_.isEmpty() || !roughnessTexturePath_.isEmpty())
                   ? materialRoughness_
                   : 1.0f
           },
@@ -1636,8 +1741,8 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
           {
               materialSpecular_,
               materialIor_,
-              0.0f,
-              0.0f
+              metallicTexturePath_.isEmpty() ? 0.0f : 1.0f,
+              roughnessTexturePath_.isEmpty() ? 0.0f : 1.0f
           }
       };
       pImmediateContext->MapBuffer(solidColorBuffer_, MAP_WRITE, MAP_FLAG_DISCARD, mappedData);
@@ -1669,6 +1774,10 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
                   SHADER_TYPE_PIXEL, "NormalTexture")) {
           textureVariable->Set(normalTextureSrv_);
       }
+      if (auto* variable = pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "MetallicTexture"))
+          variable->Set(metallicTextureSrv_);
+      if (auto* variable = pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "RoughnessTexture"))
+          variable->Set(roughnessTextureSrv_);
       pImmediateContext->CommitShaderResources(pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
        Uint64 offsets[] = { 0 };
@@ -1707,6 +1816,10 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
                        SHADER_TYPE_PIXEL, "NormalTexture")) {
                textureVariable->Set(normalTextureSrv_);
            }
+           if (auto* variable = wireSrb_->GetVariableByName(SHADER_TYPE_PIXEL, "MetallicTexture"))
+               variable->Set(metallicTextureSrv_);
+           if (auto* variable = wireSrb_->GetVariableByName(SHADER_TYPE_PIXEL, "RoughnessTexture"))
+               variable->Set(roughnessTextureSrv_);
            pImmediateContext->CommitShaderResources(wireSrb_, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
            pImmediateContext->SetVertexBuffers(0, 1, vertexBuffers, offsets, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
            if (solidIndexBuffer_ && solidIndexCount_ > 0) {

@@ -156,11 +156,20 @@ namespace Artifact
 
         ITextureView* pRTV = pRenderTarget_->GetDefaultView(TEXTURE_VIEW_RENDER_TARGET);
         renderer_->setOverrideRTV(pRTV);
-        pContext_->SetRenderTargets(1, &pRTV, nullptr,
+        // The headless renderer owns a depth texture alongside its default
+        // offline color target. Bind both so production 3D mesh PSOs can depth
+        // test when rendering a single layer into the caller's color target.
+        ITextureView* pDSV = renderer_->liveDepthStencilView();
+        renderer_->setOverrideDSV(pDSV);
+        pContext_->SetRenderTargets(1, &pRTV, pDSV,
                                     RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
         const float clearColor[] = {0.0f, 0.0f, 0.0f, 0.0f};
         pContext_->ClearRenderTarget(pRTV, clearColor,
                                      RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        if (pDSV) {
+            pContext_->ClearDepthStencil(pDSV, CLEAR_DEPTH_FLAG, 1.0f, 0,
+                                         RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        }
         layer->goToFrame(position.framePosition());
         layer->draw(renderer_.get());
         pContext_->Flush();

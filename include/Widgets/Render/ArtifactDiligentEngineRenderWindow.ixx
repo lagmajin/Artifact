@@ -70,6 +70,10 @@ namespace Artifact
    RefCntAutoPtr<ITextureView> baseColorTextureSrv_;
    RefCntAutoPtr<ITexture> metallicRoughnessTexture_;
    RefCntAutoPtr<ITextureView> metallicRoughnessTextureSrv_;
+   RefCntAutoPtr<ITexture> metallicTexture_;
+   RefCntAutoPtr<ITextureView> metallicTextureSrv_;
+   RefCntAutoPtr<ITexture> roughnessTexture_;
+   RefCntAutoPtr<ITextureView> roughnessTextureSrv_;
    RefCntAutoPtr<ITexture> normalTexture_;
    RefCntAutoPtr<ITextureView> normalTextureSrv_;
    RefCntAutoPtr<ISampler> baseColorSampler_;
@@ -81,6 +85,8 @@ namespace Artifact
    Uint32 solidIndexCount_ = 0;
    QString baseColorTexturePath_;
    QString metallicRoughnessTexturePath_;
+   QString metallicTexturePath_;
+   QString roughnessTexturePath_;
    QString normalTexturePath_;
    QColor materialBaseColor_{ 180, 185, 195 };
    float materialMetallic_ = 0.0f;
@@ -93,6 +99,7 @@ namespace Artifact
    float materialIor_ = 1.5f;
    bool baseColorTextureDirty_ = true;
    bool metallicRoughnessTextureDirty_ = true;
+   bool scalarTexturesDirty_ = true;
    bool normalTextureDirty_ = true;
    float previewZoom_ = 1.0f;
    float previewYaw_ = 35.0f;
@@ -110,6 +117,7 @@ namespace Artifact
    void uploadMeshGeometry();
    void updateBaseColorTexture();
    void updateMetallicRoughnessTexture();
+   void updateScalarTextures();
    void updateNormalTexture();
  protected:
   void resizeEvent(QResizeEvent* event);
@@ -133,6 +141,7 @@ namespace Artifact
   QColor clearColor() const;
   void setBaseColorTexture(const QString& path);
   void setMetallicRoughnessTexture(const QString& path);
+  void setMetallicAndRoughnessTextures(const QString& metallic, const QString& roughness);
   void setNormalTexture(const QString& path);
   void setPbrMaterial(const QColor& baseColor, float metallic, float roughness,
                       float sheen = 0.0f, float clearcoat = 0.0f,

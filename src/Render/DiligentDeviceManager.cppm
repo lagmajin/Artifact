@@ -1092,6 +1092,9 @@ namespace {
         }
 
         EngineVkCreateInfo creationAttribs = {};
+        // Existing viewport wireframe PSOs require Vulkan fillModeNonSolid.
+        // Let Diligent enable it when the selected adapter supports it.
+        creationAttribs.Features.WireframeFill = DEVICE_FEATURE_STATE_OPTIONAL;
         const auto adapterSelection = selectGpuAdapter(pFactory);
         creationAttribs.AdapterId = adapterSelection.adapterId;
         creationAttribs.EnableValidation = RenderConfig::diligentValidationEnabled();

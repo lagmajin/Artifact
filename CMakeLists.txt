@@ -679,13 +679,18 @@ list(REMOVE_ITEM APP_MODULES ${ARTIFACT_ASSET_MODULES})
 list(REMOVE_ITEM APP_IMPL ${ARTIFACT_ASSET_IMPL})
 
 add_library(ArtifactAsset SHARED)
+if(ARTIFACT_ENABLE_LAYER_TEST)
+    set(_artifact_shared_runtime_dir "${CMAKE_BINARY_DIR}/bin/LayerTests/$<CONFIG>")
+else()
+    set(_artifact_shared_runtime_dir "${CMAKE_BINARY_DIR}/bin/$<CONFIG>")
+endif()
 set_target_properties(ArtifactAsset PROPERTIES
     CXX_STANDARD 23
     CXX_STANDARD_REQUIRED ON
     WINDOWS_EXPORT_ALL_SYMBOLS ON
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
-    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
+    RUNTIME_OUTPUT_DIRECTORY "${_artifact_shared_runtime_dir}"
+    LIBRARY_OUTPUT_DIRECTORY "${_artifact_shared_runtime_dir}"
+    ARCHIVE_OUTPUT_DIRECTORY "${_artifact_shared_runtime_dir}"
     FOLDER "Artifact/Libraries"
 )
 target_sources(ArtifactAsset
@@ -1029,9 +1034,9 @@ set_target_properties(ArtifactEffectContract PROPERTIES
     CXX_STANDARD 23
     CXX_STANDARD_REQUIRED ON
     WINDOWS_EXPORT_ALL_SYMBOLS ON
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
-    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
+    RUNTIME_OUTPUT_DIRECTORY "${_artifact_shared_runtime_dir}"
+    LIBRARY_OUTPUT_DIRECTORY "${_artifact_shared_runtime_dir}"
+    ARCHIVE_OUTPUT_DIRECTORY "${_artifact_shared_runtime_dir}"
     FOLDER "Artifact/Libraries"
 )
 target_sources(ArtifactEffectContract
