@@ -2254,7 +2254,19 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
   impl_->centralWorkspaceLayout = new QVBoxLayout(impl_->centralWidgetHost);
   impl_->centralWorkspaceLayout->setContentsMargins(0, 0, 0, 0);
   impl_->centralWorkspaceLayout->setSpacing(0);
-  impl_->nativeDockSurface = new NativeDockSurface(impl_->centralWidgetHost);
+  const auto &dockTheme = ArtifactCore::currentDCCTheme();
+  QPalette dockPalette = impl_->centralWidgetHost->palette();
+  dockPalette.setColor(QPalette::Window,
+                      QColor(dockTheme.secondaryBackgroundColor));
+  dockPalette.setColor(QPalette::Base, QColor(dockTheme.backgroundColor));
+  dockPalette.setColor(QPalette::Button,
+                      QColor(dockTheme.secondaryBackgroundColor));
+  dockPalette.setColor(QPalette::ButtonText, QColor(dockTheme.textColor));
+  dockPalette.setColor(QPalette::Text, QColor(dockTheme.textColor));
+  dockPalette.setColor(QPalette::Highlight, QColor(dockTheme.accentColor));
+  dockPalette.setColor(QPalette::HighlightedText, QColor(dockTheme.textColor));
+  impl_->nativeDockSurface =
+      new NativeDockSurface(dockPalette, impl_->centralWidgetHost);
   impl_->nativeDockSurface->setObjectName(
       QStringLiteral("ArtifactNativeDockMvpSurface"));
   const QPointer<ArtifactMainWindow> nativeDockWindowGuard(this);

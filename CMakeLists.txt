@@ -809,6 +809,7 @@ list(APPEND APP_IMPL
 # automatic export generation try to export imported OCIO/Qt symbols.
 add_library(ArtifactColor INTERFACE)
 find_package(Qt6 REQUIRED COMPONENTS Multimedia)
+add_subdirectory(DockFoundation)
 target_link_libraries(ArtifactColor INTERFACE
     ArtifactCore
     ArtifactCoreAudio
@@ -879,15 +880,13 @@ set(ARTIFACT_GPU_FOUNDATION_IMPL
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/DiligentDeviceManager.cppm"
 )
 
-# Shared dock surface used by both Artifact and ArtifactPr.  The backend-
-# neutral contract (Artifact.DockManager) and the native surface
-# (Artifact.NativeDockSurface) live together here so the two applications do
-# not carry independent docking implementations.
+# Public module sources owned by DockFoundation; the independent CMake
+# subproject builds and exports them for Artifact, ArtifactPr, and other apps.
 set(ARTIFACT_DOCK_FOUNDATION_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/Dock/DockManager.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/Dock/NativeDockSurface.ixx"
-)
-set(ARTIFACT_DOCK_FOUNDATION_IMPL
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/Dock/ArtifactDockManager.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/Dock/ArtifactNativeDockSurface.ixx"
 )
 
 set(ARTIFACT_RENDER_MODULES
@@ -936,7 +935,6 @@ set(ARTIFACT_RENDER_IMPL
 list(REMOVE_ITEM APP_MODULES ${ARTIFACT_GPU_FOUNDATION_MODULES})
 list(REMOVE_ITEM APP_IMPL ${ARTIFACT_GPU_FOUNDATION_IMPL})
 list(REMOVE_ITEM APP_MODULES ${ARTIFACT_DOCK_FOUNDATION_MODULES})
-list(REMOVE_ITEM APP_IMPL ${ARTIFACT_DOCK_FOUNDATION_IMPL})
 list(REMOVE_ITEM APP_MODULES ${ARTIFACT_RENDER_MODULES})
 list(REMOVE_ITEM APP_IMPL ${ARTIFACT_RENDER_IMPL})
 list(REMOVE_ITEM APP_MODULES
@@ -2785,10 +2783,9 @@ target_include_directories(Artifact
 # 内部ライブラリ
 target_link_libraries(Artifact PRIVATE ArtifactCore ArtifactCoreAudio ArtifactCoreAI ArtifactCoreVideo ArtifactCoreComposition ArtifactCoreScene ArtifactCoreMaterial ArtifactCoreUI ArtifactCoreData ArtifactCoreCommand ArtifactCoreAsset ArtifactCoreShape ArtifactCoreText ArtifactCoreGenerate ArtifactCoreSimulation ArtifactCoreTrack ArtifactCoreSource ArtifactCoreProject ArtifactCoreRig ArtifactCoreGrid ArtifactCoreColorCollection ArtifactCoreSound ArtifactCoreSequence ArtifactCoreAnalyze ArtifactCoreTracking ArtifactCoreIPC ArtifactCoreNetwork ArtifactCoreCollaborate ArtifactCoreNLE ArtifactCorePlayback ArtifactCorePreview ArtifactCoreExport ArtifactCoreVST3 ArtifactCoreLocalization ArtifactCoreCoordinate ArtifactCoreFile ArtifactCorePlugin ArtifactCoreControl ArtifactCoreDatabase ArtifactCoreMask ArtifactCoreConfiguration ArtifactCoreEnvironment ArtifactCorePlatform ArtifactCoreAcoustic ArtifactCoreLight ArtifactCoreCrowd ArtifactCoreDomain ArtifactCoreFileSystem ArtifactCoreIcon ArtifactColorPalette ArtifactColorNode ArtifactColorSettings ArtifactColorManagement ArtifactColorGrading ArtifactEffectsResidual ArtifactWidgets ArtifactAsset ArtifactColor ArtifactRenderSupport ArtifactRenderSupportContracts ArtifactRender ArtifactEffectContract ArtifactEffectsColor ArtifactEffectsTemporal ArtifactEffectsSpatial ArtifactEffectsKeying ArtifactEffectsBlur ArtifactEffectsGenerate ArtifactEffectsDistort ArtifactEffectsRasterizer)
 target_link_libraries(Artifact PRIVATE ArtifactRender)
-# Shared dock surface.  ArtifactDockFoundation owns Artifact.DockManager and
-# Artifact.NativeDockSurface, so the app target consumes them as a library
-# rather than compiling the modules itself.  ArtifactPr links the same target.
-target_link_libraries(Artifact PRIVATE ArtifactDockFoundation)
+# The app consumes the reusable Dock foundation as a library rather than
+# compiling its public modules itself.
+target_link_libraries(Artifact PRIVATE Dock::Foundation)
 # ArtifactRenderSupport contains the fracture submission implementation and
 # references renderer methods from ArtifactRender.  Repeat the support archive
 # after ArtifactRender so static-library extraction resolves this reverse edge.
@@ -2900,49 +2897,6 @@ if(DILIGENT_COMPILE_DEFINITIONS)
     target_compile_definitions(ArtifactGpuFoundation PUBLIC ${DILIGENT_COMPILE_DEFINITIONS})
 endif()
 target_link_libraries(ArtifactRender PUBLIC ArtifactGpuFoundation)
-
-# The dock surface is shared infrastructure for workspace layout only.  Keeping
-# it in a small leaf target lets ArtifactPr adopt the same contract and surface
-# instead of maintaining a second, divergent docking implementation.
-add_library(ArtifactDockFoundation STATIC)
-set_target_properties(ArtifactDockFoundation PROPERTIES
-    CXX_STANDARD 23
-    CXX_STANDARD_REQUIRED ON
-    FOLDER "Artifact/Libraries"
-)
-target_sources(ArtifactDockFoundation
-    PRIVATE ${ARTIFACT_DOCK_FOUNDATION_IMPL}
-    PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_DOCK_FOUNDATION_MODULES}
-)
-if(TARGET __CMAKE::CXX23)
-    set_property(TARGET ArtifactDockFoundation PROPERTY CXX_MODULE_STD ON)
-else()
-    set_property(TARGET ArtifactDockFoundation PROPERTY CXX_MODULE_STD OFF)
-endif()
-if(ARTIFACT_COMPILER_MSVC_CL)
-    target_compile_options(ArtifactDockFoundation PRIVATE /Zf /Zc:__cplusplus /utf-8 /wd5050)
-    target_compile_definitions(ArtifactDockFoundation PRIVATE
-        PLATFORM_WIN32
-        _GUARDOVERFLOW_CRT_ALLOCATORS=1
-        _SILENCE_CXX23_ALIGNED_STORAGE_DEPRECATION_WARNING
-        _WIN32_WINNT=0x0A00
-    )
-elseif(ARTIFACT_FRONTEND_MSVC)
-    target_compile_options(ArtifactDockFoundation PRIVATE /Zc:__cplusplus /utf-8 /WX- /wd5050)
-    target_compile_definitions(ArtifactDockFoundation PRIVATE
-        PLATFORM_WIN32
-        _GUARDOVERFLOW_CRT_ALLOCATORS=1
-        _SILENCE_CXX23_ALIGNED_STORAGE_DEPRECATION_WARNING
-        _WIN32_WINNT=0x0A00
-    )
-endif()
-target_include_directories(ArtifactDockFoundation PUBLIC
-    "${CMAKE_CURRENT_SOURCE_DIR}/include"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/verdigris/src"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../third_party"
-)
-target_link_libraries(ArtifactDockFoundation PUBLIC
-    ArtifactCore Qt6::Core Qt6::Gui Qt6::Widgets)
 
 # Focused renderer slice for text/GPU smoke tests.  This deliberately omits
 # post-processing, motion-blur, texture-cache, and other composition passes;

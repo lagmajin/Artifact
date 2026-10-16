@@ -14,8 +14,8 @@ module;
 
 export module Artifact.MainWindow;
 
-export import Artifact.DockManager;
-import Artifact.NativeDockSurface;
+export import Dock.Manager;
+import Dock.NativeDockSurface;
 import Artifact.Widgets.AudioMixer;               // Added
 import Audio.Mixer;                               // Added
 import Artifact.Widgets.AI.ArtifactAICloudWidget; // Added

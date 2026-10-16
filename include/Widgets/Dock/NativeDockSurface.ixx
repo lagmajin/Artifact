@@ -58,12 +58,11 @@ module;
 #include <QStringList>
 #include <QWidget>
 
-export module Artifact.NativeDockSurface;
+export module Dock.NativeDockSurface;
 
-import Artifact.DockManager;
-import Widgets.Utils.CSS;
+import Dock.Manager;
 
-export namespace Artifact {
+export namespace Dock {
 
 // Backend-independent dock surface.  Floating docks are represented by owned
 // top-level dialogs; the registry remains the stable routing and persistence
@@ -146,7 +145,7 @@ class NativeDockSurface final : public QWidget {
                                  markerX, contentsRect().bottom() - 2);
         }
         if (!tabs_ ||
-            !tabs_->property("artifactNativeActivePanel").toBool() ||
+            !tabs_->property("dockNativeActivePanel").toBool() ||
             !tabs_->currentPanelFocusable()) {
           return;
         }
@@ -280,7 +279,7 @@ class NativeDockSurface final : public QWidget {
       dockAreaTitleLabel_ = new QLabel(cornerWidget_);
       dockAreaTitleLabel_->setSizePolicy(QSizePolicy::Ignored,
                                          QSizePolicy::Preferred);
-      dockAreaTitleLabel_->setProperty("artifactDockAreaTitleDrag", true);
+      dockAreaTitleLabel_->setProperty("dockAreaTitleDrag", true);
       cornerLayout_->addWidget(dockAreaTitleLabel_, 1);
       dockAreaTitleLabel_->hide();
     }
@@ -431,8 +430,8 @@ class NativeDockSurface final : public QWidget {
 
     bool currentPanelFocusable() const {
       const QWidget *panel = currentWidget();
-      return !panel || !panel->property("artifactDockFocusable").isValid() ||
-             panel->property("artifactDockFocusable").toBool();
+      return !panel || !panel->property("dockFocusable").isValid() ||
+             panel->property("dockFocusable").toBool();
     }
 
     void setDropInsertionIndex(int index) {
@@ -456,7 +455,7 @@ class NativeDockSurface final : public QWidget {
 
     void paintEvent(QPaintEvent *event) override {
       QTabWidget::paintEvent(event);
-      if (!property("artifactNativeActivePanel").toBool() ||
+      if (!property("dockNativeActivePanel").toBool() ||
           !currentPanelFocusable() ||
           currentIndex() < 0) {
         return;
@@ -975,7 +974,9 @@ public:
   using LayoutMutationCallback =
       std::function<void(const QByteArray &, const QString &)>;
 
-  explicit NativeDockSurface(QWidget *parent = nullptr) : QWidget(parent) {
+  explicit NativeDockSurface(const QPalette &dockPalette = QPalette(),
+                             QWidget *parent = nullptr)
+      : QWidget(parent), dockPalette_(dockPalette) {
     setAcceptDrops(true);
     qApp->installEventFilter(this);
     dropPreview_ = new DockDropPreview(this);
@@ -1056,7 +1057,7 @@ public:
         QStyle::SP_ArrowBack));
     autoHideDockBackButton_->setToolTip(tr("Dock panel back"));
     autoHideDockBackButton_->setAccessibleName(tr("Dock panel back"));
-    autoHideDockBackButton_->setProperty("artifactAutoHideDockBack", true);
+    autoHideDockBackButton_->setProperty("dockAutoHideDockBack", true);
     autoHideDockBackButton_->installEventFilter(this);
     autoHideFlyoutHeaderLayout_->addWidget(autoHideDockBackButton_);
     autoHideFlyoutCloseButton_ = new QToolButton(autoHideFlyoutHeader_);
@@ -1065,7 +1066,7 @@ public:
         QStyle::SP_TitleBarCloseButton));
     autoHideFlyoutCloseButton_->setToolTip(tr("Close panel"));
     autoHideFlyoutCloseButton_->setAccessibleName(tr("Close panel"));
-    autoHideFlyoutCloseButton_->setProperty("artifactAutoHideClose", true);
+    autoHideFlyoutCloseButton_->setProperty("dockAutoHideClose", true);
     autoHideFlyoutCloseButton_->installEventFilter(this);
     autoHideFlyoutHeaderLayout_->addWidget(autoHideFlyoutCloseButton_);
     autoHideFlyoutLayout_->addWidget(autoHideFlyoutHeader_);
@@ -1110,6 +1111,21 @@ public:
     layoutMutationCallback_ = std::move(callback);
   }
 
+  void setDockPalette(const QPalette &palette) {
+    dockPalette_ = palette;
+    QWidget::setPalette(dockPalette_);
+    for (auto *tabs : dockedTabSurfaces_) {
+      applyDockPalette(tabs);
+    }
+    for (auto *tabs : dynamicTabSurfaces_) {
+      applyDockPalette(tabs);
+    }
+    for (auto *tabs : floatingTabSurfaces_) {
+      applyDockPalette(tabs);
+    }
+    update();
+  }
+
   bool addDockWidget(const QString &dockId, const QString &title,
                     QWidget *widget, DockArea area) {
     if (dockId.trimmed().isEmpty() || !widget || docks_.contains(dockId)) {
@@ -1119,20 +1135,20 @@ public:
     if (!tabs) {
       return false;
     }
-    if (!widget->property("artifactDockClosable").isValid()) {
-      widget->setProperty("artifactDockClosable", true);
+    if (!widget->property("dockClosable").isValid()) {
+      widget->setProperty("dockClosable", true);
     }
-    if (!widget->property("artifactDockMovable").isValid()) {
-      widget->setProperty("artifactDockMovable", true);
+    if (!widget->property("dockMovable").isValid()) {
+      widget->setProperty("dockMovable", true);
     }
-    if (!widget->property("artifactDockFloatable").isValid()) {
-      widget->setProperty("artifactDockFloatable", true);
+    if (!widget->property("dockFloatable").isValid()) {
+      widget->setProperty("dockFloatable", true);
     }
-    if (!widget->property("artifactDockAutoHideable").isValid()) {
-      widget->setProperty("artifactDockAutoHideable", true);
+    if (!widget->property("dockAutoHideable").isValid()) {
+      widget->setProperty("dockAutoHideable", true);
     }
-    if (!widget->property("artifactDockOpen").isValid()) {
-      widget->setProperty("artifactDockOpen", true);
+    if (!widget->property("dockOpen").isValid()) {
+      widget->setProperty("dockOpen", true);
     }
     widget->setParent(tabs);
     installCloseButton(tabs, tabs->addTab(widget, title), dockId);
@@ -1163,20 +1179,20 @@ public:
     if (!tabs) {
       return false;
     }
-    if (!widget->property("artifactDockClosable").isValid()) {
-      widget->setProperty("artifactDockClosable", true);
+    if (!widget->property("dockClosable").isValid()) {
+      widget->setProperty("dockClosable", true);
     }
-    if (!widget->property("artifactDockMovable").isValid()) {
-      widget->setProperty("artifactDockMovable", true);
+    if (!widget->property("dockMovable").isValid()) {
+      widget->setProperty("dockMovable", true);
     }
-    if (!widget->property("artifactDockFloatable").isValid()) {
-      widget->setProperty("artifactDockFloatable", true);
+    if (!widget->property("dockFloatable").isValid()) {
+      widget->setProperty("dockFloatable", true);
     }
-    if (!widget->property("artifactDockAutoHideable").isValid()) {
-      widget->setProperty("artifactDockAutoHideable", true);
+    if (!widget->property("dockAutoHideable").isValid()) {
+      widget->setProperty("dockAutoHideable", true);
     }
-    if (!widget->property("artifactDockOpen").isValid()) {
-      widget->setProperty("artifactDockOpen", true);
+    if (!widget->property("dockOpen").isValid()) {
+      widget->setProperty("dockOpen", true);
     }
     widget->setParent(tabs);
     insertionIndex = insertionIndex < 0
@@ -1204,27 +1220,27 @@ public:
     }
     auto *dialog = new QDialog(window());
     dialog->setWindowTitle(title);
-    dialog->setObjectName(QStringLiteral("ArtifactNativeFloatingDock_%1")
+    dialog->setObjectName(QStringLiteral("DockFloating_%1")
                               .arg(dockId));
     dialog->setAttribute(Qt::WA_DeleteOnClose, false);
     auto *layout = new QVBoxLayout(dialog);
     layout->setContentsMargins(0, 0, 0, 0);
     installFloatingHeader(dialog, layout, title);
     auto *tabs = createFloatingTabSurface(dialog, layout);
-    if (!widget->property("artifactDockClosable").isValid()) {
-      widget->setProperty("artifactDockClosable", true);
+    if (!widget->property("dockClosable").isValid()) {
+      widget->setProperty("dockClosable", true);
     }
-    if (!widget->property("artifactDockMovable").isValid()) {
-      widget->setProperty("artifactDockMovable", true);
+    if (!widget->property("dockMovable").isValid()) {
+      widget->setProperty("dockMovable", true);
     }
-    if (!widget->property("artifactDockFloatable").isValid()) {
-      widget->setProperty("artifactDockFloatable", true);
+    if (!widget->property("dockFloatable").isValid()) {
+      widget->setProperty("dockFloatable", true);
     }
-    if (!widget->property("artifactDockAutoHideable").isValid()) {
-      widget->setProperty("artifactDockAutoHideable", true);
+    if (!widget->property("dockAutoHideable").isValid()) {
+      widget->setProperty("dockAutoHideable", true);
     }
-    if (!widget->property("artifactDockOpen").isValid()) {
-      widget->setProperty("artifactDockOpen", visible);
+    if (!widget->property("dockOpen").isValid()) {
+      widget->setProperty("dockOpen", visible);
     }
     widget->setParent(tabs);
     const int tabIndex = tabs->addTab(widget, title);
@@ -1276,7 +1292,7 @@ public:
     docks_.remove(resolvedId);
     auto *dialog = new QDialog(window());
     dialog->setWindowTitle(title);
-    dialog->setObjectName(QStringLiteral("ArtifactNativeFloatingDock_%1").arg(resolvedId));
+    dialog->setObjectName(QStringLiteral("DockFloating_%1").arg(resolvedId));
     dialog->setAttribute(Qt::WA_DeleteOnClose, false);
     auto *layout = new QVBoxLayout(dialog);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -1321,7 +1337,7 @@ public:
     const DockArea sourceArea = areaForTabs(sourceTabs);
     auto *dialog = new QDialog(window());
     dialog->setWindowTitle(titles_.value(resolvedId, resolvedId));
-    dialog->setObjectName(QStringLiteral("ArtifactNativeFloatingDockGroup_%1")
+    dialog->setObjectName(QStringLiteral("DockFloatingGroup_%1")
                               .arg(resolvedId));
     dialog->setAttribute(Qt::WA_DeleteOnClose, false);
     auto *layout = new QVBoxLayout(dialog);
@@ -1663,9 +1679,9 @@ public:
       entry.hideSingleWidgetTitleBar = tabs
           ? areaHideSingleWidgetTitleBar_.value(
                 tabs, it.value()->property(
-                          "artifactDockHideSingleWidgetTitleBar").toBool())
+                          "dockHideSingleWidgetTitleBar").toBool())
           : it.value()->property(
-                "artifactDockHideSingleWidgetTitleBar").toBool();
+                "dockHideSingleWidgetTitleBar").toBool();
       entry.autoHidden = autoHideAreas_.contains(it.key());
       if (entry.autoHidden) {
         entry.autoHideArea = autoHideAreas_.value(it.key(), DockArea::Left);
@@ -1723,9 +1739,9 @@ public:
         entry.hideSingleWidgetTitleBar = tabs
             ? areaHideSingleWidgetTitleBar_.value(
                   tabs, it.value()->property(
-                            "artifactDockHideSingleWidgetTitleBar").toBool())
+                            "dockHideSingleWidgetTitleBar").toBool())
             : it.value()->property(
-                  "artifactDockHideSingleWidgetTitleBar").toBool();
+                  "dockHideSingleWidgetTitleBar").toBool();
         const int index = tabs ? tabs->indexOf(it.value()) : -1;
         if (tabs && index >= 0) entry.visible = dockOpen(it.key());
         splitPathForTabs(tabs, entry.splitPath, entry.splitRatios);
@@ -2285,7 +2301,7 @@ public:
     if (auto *dialog = floatingDialogs_.value(resolvedId, nullptr)) {
       auto *widget = floatingWidgets_.value(resolvedId, nullptr);
       auto *tabs = tabsForWidget(widget);
-      if (widget) widget->setProperty("artifactDockOpen", visible);
+      if (widget) widget->setProperty("dockOpen", visible);
       if (tabs && widget) {
         const int index = tabs->indexOf(widget);
         if (index >= 0) {
@@ -2308,7 +2324,7 @@ public:
     if (autoHideAreas_.contains(resolvedId)) {
       autoHideVisible_.insert(resolvedId, visible);
       if (auto *widget = docks_.value(resolvedId, nullptr)) {
-        widget->setProperty("artifactDockOpen", visible);
+        widget->setProperty("dockOpen", visible);
       }
       if (auto *tabs = autoHidePanelSurfaces_.value(resolvedId, nullptr)) {
         const int index = tabs->indexOf(docks_.value(resolvedId, nullptr));
@@ -2335,7 +2351,7 @@ public:
     if (!widget) {
       return false;
     }
-    widget->setProperty("artifactDockOpen", visible);
+    widget->setProperty("dockOpen", visible);
     if (auto *tabs = tabsForWidget(widget)) {
       const int index = tabs->indexOf(widget);
       if (index >= 0) {
@@ -2512,12 +2528,12 @@ public:
       }
       mask |= dockAreaDropTargetBit(area);
     }
-    widget->setProperty("artifactDockAreaAllowedDropAreas", mask);
+    widget->setProperty("dockAreaAllowedDropAreas", mask);
     if (autoHidden) return true;
-    tabs->setProperty("artifactDockAreaAllowedDropAreas", mask);
+    tabs->setProperty("dockAreaAllowedDropAreas", mask);
     for (int index = 0; index < tabs->count(); ++index) {
       if (auto *member = tabs->widget(index)) {
-        member->setProperty("artifactDockAreaAllowedDropAreas", mask);
+        member->setProperty("dockAreaAllowedDropAreas", mask);
       }
     }
     return true;
@@ -2525,7 +2541,7 @@ public:
 
   QIcon dockIcon(const QString &dockId) const {
     const auto *widget = dockWidget(dockId);
-    return widget ? widget->property("artifactDockIcon").value<QIcon>()
+    return widget ? widget->property("dockIcon").value<QIcon>()
                   : QIcon{};
   }
 
@@ -2533,7 +2549,7 @@ public:
     const QString resolvedId = resolveDockId(dockId);
     auto *widget = dockWidget(resolvedId);
     if (!widget) return false;
-    widget->setProperty("artifactDockIcon", QVariant::fromValue(icon));
+    widget->setProperty("dockIcon", QVariant::fromValue(icon));
     if (auto *tabs = tabsForWidget(widget)) {
       const int index = tabs->indexOf(widget);
       if (index >= 0) tabs->setTabIcon(index, icon);
@@ -2601,7 +2617,7 @@ public:
     if (auto *dialog = floatingDialogs_.value(resolvedId, nullptr)) {
       auto *tabs = tabsForWidget(floatingWidgets_.value(resolvedId, nullptr));
       if (auto *widget = floatingWidgets_.value(resolvedId, nullptr)) {
-        widget->setProperty("artifactDockOpen", true);
+        widget->setProperty("dockOpen", true);
         const int index = tabs ? tabs->indexOf(widget) : -1;
         if (index >= 0) {
           tabs->setTabVisible(index, !dockNoTab(resolvedId));
@@ -2627,7 +2643,7 @@ public:
     if (index < 0) {
       return false;
     }
-    widget->setProperty("artifactDockOpen", true);
+    widget->setProperty("dockOpen", true);
     tabs->setTabVisible(index, !dockNoTab(resolvedId));
     tabs->setCurrentIndex(index);
     widget->show();
@@ -2691,7 +2707,7 @@ public:
     }
     const auto *widget = dockWidget(resolvedId);
     if (!widget) return false;
-    const QVariant openState = widget->property("artifactDockOpen");
+    const QVariant openState = widget->property("dockOpen");
     if (openState.isValid()) return openState.toBool();
     auto *tabs = tabsForWidget(const_cast<QWidget *>(widget));
     const int index = tabs ? tabs->indexOf(const_cast<QWidget *>(widget)) : -1;
@@ -2722,29 +2738,29 @@ public:
 
   bool dockClosable(const QString &dockId) const {
     const auto *widget = dockWidget(dockId);
-    return !widget || !widget->property("artifactDockClosable").isValid() ||
-           widget->property("artifactDockClosable").toBool();
+    return !widget || !widget->property("dockClosable").isValid() ||
+           widget->property("dockClosable").toBool();
   }
 
   bool setDockClosable(const QString &dockId, bool closable) {
     auto *widget = dockWidget(dockId);
     if (!widget) return false;
-    widget->setProperty("artifactDockClosable", closable);
+    widget->setProperty("dockClosable", closable);
     syncPinButton(dockId, dockPinned(dockId));
     return true;
   }
 
   bool dockMovable(const QString &dockId) const {
     const auto *widget = dockWidget(dockId);
-    return !widget || !widget->property("artifactDockMovable").isValid() ||
-           widget->property("artifactDockMovable").toBool();
+    return !widget || !widget->property("dockMovable").isValid() ||
+           widget->property("dockMovable").toBool();
   }
 
   bool setDockMovable(const QString &dockId, bool movable) {
     const QString resolvedId = resolveDockId(dockId);
     auto *widget = dockWidget(dockId);
     if (!widget) return false;
-    widget->setProperty("artifactDockMovable", movable);
+    widget->setProperty("dockMovable", movable);
     refreshDockTabGroupCloseButton(tabsForWidget(widget));
     if (auto *dialog = floatingDialogs_.value(resolvedId, nullptr)) {
       syncFloatingDockBackButton(dialog);
@@ -2757,28 +2773,28 @@ public:
 
   bool dockFloatable(const QString &dockId) const {
     const auto *widget = dockWidget(dockId);
-    return !widget || !widget->property("artifactDockFloatable").isValid() ||
-           widget->property("artifactDockFloatable").toBool();
+    return !widget || !widget->property("dockFloatable").isValid() ||
+           widget->property("dockFloatable").toBool();
   }
 
   bool setDockFloatable(const QString &dockId, bool floatable) {
     auto *widget = dockWidget(dockId);
     if (!widget) return false;
-    widget->setProperty("artifactDockFloatable", floatable);
+    widget->setProperty("dockFloatable", floatable);
     refreshDockTabGroupCloseButton(tabsForWidget(widget));
     return true;
   }
 
   bool dockFocusable(const QString &dockId) const {
     const auto *widget = dockWidget(dockId);
-    return !widget || !widget->property("artifactDockFocusable").isValid() ||
-           widget->property("artifactDockFocusable").toBool();
+    return !widget || !widget->property("dockFocusable").isValid() ||
+           widget->property("dockFocusable").toBool();
   }
 
   bool setDockFocusable(const QString &dockId, bool focusable) {
     auto *widget = dockWidget(dockId);
     if (!widget) return false;
-    widget->setProperty("artifactDockFocusable", focusable);
+    widget->setProperty("dockFocusable", focusable);
     if (auto *tabs = tabsForWidget(widget)) {
       static_cast<DockTabSurface *>(tabs)->refreshFocusChrome();
     }
@@ -2787,14 +2803,14 @@ public:
 
   bool dockNoTab(const QString &dockId) const {
     const auto *widget = dockWidget(dockId);
-    return widget && widget->property("artifactDockNoTab").toBool();
+    return widget && widget->property("dockNoTab").toBool();
   }
 
   bool setDockNoTab(const QString &dockId, bool noTab) {
     const QString resolvedId = resolveDockId(dockId);
     auto *widget = dockWidget(resolvedId);
     if (!widget) return false;
-    widget->setProperty("artifactDockNoTab", noTab);
+    widget->setProperty("dockNoTab", noTab);
     if (auto *tabs = tabsForWidget(widget)) {
       const int index = tabs->indexOf(widget);
       if (index >= 0) {
@@ -2807,28 +2823,28 @@ public:
 
   bool dockAutoHideable(const QString &dockId) const {
     const auto *widget = dockWidget(dockId);
-    return !widget || !widget->property("artifactDockAutoHideable").isValid() ||
-           widget->property("artifactDockAutoHideable").toBool();
+    return !widget || !widget->property("dockAutoHideable").isValid() ||
+           widget->property("dockAutoHideable").toBool();
   }
 
   bool setDockAutoHideable(const QString &dockId, bool autoHideable) {
     auto *widget = dockWidget(dockId);
     if (!widget) return false;
-    widget->setProperty("artifactDockAutoHideable", autoHideable);
+    widget->setProperty("dockAutoHideable", autoHideable);
     refreshDockTabGroupCloseButton(tabsForWidget(widget));
     return true;
   }
 
   bool dockLocked(const QString &dockId) const {
     const auto *widget = dockWidget(dockId);
-    return widget && widget->property("artifactDockLocked").toBool();
+    return widget && widget->property("dockLocked").toBool();
   }
 
   bool setDockLocked(const QString &dockId, bool locked) {
     const QString resolvedId = resolveDockId(dockId);
     auto *widget = dockWidget(dockId);
     if (!widget) return false;
-    widget->setProperty("artifactDockLocked", locked);
+    widget->setProperty("dockLocked", locked);
     refreshDockTabGroupCloseButton(tabsForWidget(widget));
     if (auto *dialog = floatingDialogs_.value(resolvedId, nullptr)) {
       syncFloatingDockBackButton(dialog);
@@ -2898,7 +2914,7 @@ public:
     areaHideSingleWidgetTitleBar_.insert(tabs, enabled);
     for (int index = 0; index < tabs->count(); ++index) {
       if (auto *member = tabs->widget(index)) {
-        member->setProperty("artifactDockHideSingleWidgetTitleBar", enabled);
+        member->setProperty("dockHideSingleWidgetTitleBar", enabled);
       }
     }
     refreshDockTabBarVisibility(tabs);
@@ -2910,7 +2926,7 @@ public:
     auto *tabs = widget ? tabsForWidget(widget) : nullptr;
     if (!widget || !tabs) return false;
     return areaHideSingleWidgetTitleBar_.value(
-        tabs, widget->property("artifactDockHideSingleWidgetTitleBar")
+        tabs, widget->property("dockHideSingleWidgetTitleBar")
                   .toBool());
   }
 
@@ -3562,7 +3578,7 @@ protected:
            static_cast<QKeyEvent *>(event)->key() == Qt::Key_Return ||
            static_cast<QKeyEvent *>(event)->key() == Qt::Key_Enter) &&
           !static_cast<QKeyEvent *>(event)->isAutoRepeat();
-      if (button->property("artifactDockFloatGroup").toBool() &&
+      if (button->property("dockFloatGroup").toBool() &&
           button->isDown() && (mouseRelease || keyRelease)) {
         button->setDown(false);
         auto *tabs = tabSurfaceForObject(button);
@@ -3579,7 +3595,7 @@ protected:
         }
         return true;
       }
-      if (button->property("artifactDockAutoHideActive").toBool() &&
+      if (button->property("dockAutoHideActive").toBool() &&
           button->isDown() && (mouseRelease || keyRelease)) {
         button->setDown(false);
         auto *tabs = tabSurfaceForObject(button);
@@ -3598,7 +3614,7 @@ protected:
         }
         return true;
       }
-      if (button->property("artifactDockCloseGroup").toBool() &&
+      if (button->property("dockCloseGroup").toBool() &&
           button->isDown() && (mouseRelease || keyRelease)) {
         button->setDown(false);
         auto *tabs = tabSurfaceForObject(button);
@@ -3609,14 +3625,14 @@ protected:
         }
         return true;
       }
-      if (button->property("artifactDockTabList").toBool() &&
+      if (button->property("dockTabList").toBool() &&
           button->isDown() && (mouseRelease || keyRelease)) {
         button->setDown(false);
         showTabListMenu(tabSurfaceForObject(button),
                         button->mapToGlobal(button->rect().bottomLeft()));
         return true;
       }
-      const QString id = button->property("artifactDockCloseId").toString();
+      const QString id = button->property("dockCloseId").toString();
       if (!id.isEmpty()) {
         if (button->isDown() && (mouseRelease || keyRelease)) {
           button->setDown(false);
@@ -3628,9 +3644,9 @@ protected:
           return true;
         }
       }
-      const QString dockBackId = button->property("artifactDockBackId").toString();
+      const QString dockBackId = button->property("dockBackId").toString();
       const QString autoHideDockBackId =
-          button->property("artifactAutoHideDockBackId").toString();
+          button->property("dockAutoHideDockBackId").toString();
       if (!autoHideDockBackId.isEmpty() && button->isDown() &&
           (mouseRelease || keyRelease)) {
         button->setDown(false);
@@ -3639,7 +3655,7 @@ protected:
             areas_.value(autoHideDockBackId, DockArea::Center));
         return true;
       }
-      if (button->property("artifactDockBackGroup").toBool()) {
+      if (button->property("dockBackGroup").toBool()) {
         if (button->isDown() && (mouseRelease || keyRelease)) {
           button->setDown(false);
           dockFloatingGroup(qobject_cast<QDialog *>(button->window()));
@@ -3656,7 +3672,7 @@ protected:
     }
     if (auto *autoHideBar = qobject_cast<QTabBar *>(watched);
         autoHideBar &&
-        autoHideBar->property("artifactAutoHideSideBar").toBool()) {
+        autoHideBar->property("dockAutoHideSideBar").toBool()) {
       const DockArea side = autoHideAreaForBar(autoHideBar);
       if (autoHideShowOnMouseOver_ &&
           event->type() == QEvent::MouseMove) {
@@ -4022,7 +4038,7 @@ protected:
     auto *tabBar = qobject_cast<QTabBar *>(watched);
     auto *areaTitleDragWidget = qobject_cast<QWidget *>(watched);
     if (!areaTitleDragWidget ||
-        !areaTitleDragWidget->property("artifactDockAreaTitleDrag").toBool() ||
+        !areaTitleDragWidget->property("dockAreaTitleDrag").toBool() ||
         !areaTitleDragWidget->isVisible()) {
       areaTitleDragWidget = nullptr;
     }
@@ -4510,6 +4526,16 @@ protected:
   }
 
 private:
+  QPalette dockPalette_;
+
+  void applyDockPalette(QTabWidget *tabs) const {
+    if (!tabs) {
+      return;
+    }
+    tabs->setPalette(dockPalette_);
+    tabs->tabBar()->setPalette(dockPalette_);
+  }
+
   static QList<int> normalizedSplitterRatios(const QList<int> &sizes) {
     if (sizes.size() != 3) return {};
     qint64 total = 0;
@@ -4830,8 +4856,8 @@ private:
     case DockArea::Bottom: bar->setShape(QTabBar::RoundedSouth); break;
     case DockArea::Center: return;
     }
-    bar->setProperty("artifactAutoHideSideBar", true);
-    bar->setProperty("artifactAutoHideArea", static_cast<int>(area));
+    bar->setProperty("dockAutoHideSideBar", true);
+    bar->setProperty("dockAutoHideArea", static_cast<int>(area));
     bar->setDocumentMode(true);
     bar->setDrawBase(false);
     bar->setExpanding(false);
@@ -4860,7 +4886,7 @@ private:
 
   DockArea autoHideAreaForBar(const QTabBar *bar) const {
     return bar ? static_cast<DockArea>(
-                     bar->property("artifactAutoHideArea").toInt())
+                     bar->property("dockAutoHideArea").toInt())
                : DockArea::Center;
   }
 
@@ -4941,7 +4967,7 @@ private:
       openDockCount += dockOpen(dockIdForWidget(tabs->widget(index))) ? 1 : 0;
       if (QWidget *member = tabs->widget(index)) {
         member->setProperty(
-            "artifactDockHideSingleWidgetTitleBar",
+            "dockHideSingleWidgetTitleBar",
             areaHideSingleWidgetTitleBar_.value(tabs, false));
       }
     }
@@ -5014,7 +5040,7 @@ private:
       ++openCount;
       const QWidget *member = tabs->widget(index);
       if (!dockClosable(memberId) || dockPinned(memberId) ||
-          (member && member->property("artifactDockCloseProtected").toBool())) {
+          (member && member->property("dockCloseProtected").toBool())) {
         return false;
       }
     }
@@ -5357,7 +5383,7 @@ private:
           dockClosable(memberId) && !dockPinned(memberId)) {
         const QWidget *member = tabs->widget(index);
         if (!(member &&
-              member->property("artifactDockCloseProtected").toBool())) {
+              member->property("dockCloseProtected").toBool())) {
           setDockVisible(memberId, false);
         }
       }
@@ -5372,7 +5398,7 @@ private:
     }
     const QWidget *member = dockWidget(dockId);
     return !member ||
-           !member->property("artifactDockCloseProtected").toBool();
+           !member->property("dockCloseProtected").toBool();
   }
 
   void closeActiveDockTab(QTabWidget *tabs) {
@@ -5525,9 +5551,9 @@ private:
     autoHideActiveDockId_ = resolvedId;
     autoHideActiveTabs_ = tabs;
     autoHideFlyoutTitle_->setText(titles_.value(resolvedId, resolvedId));
-    autoHideFlyoutCloseButton_->setProperty("artifactDockCloseId", resolvedId);
+    autoHideFlyoutCloseButton_->setProperty("dockCloseId", resolvedId);
     syncPinButton(resolvedId, dockPinned(resolvedId));
-    autoHideDockBackButton_->setProperty("artifactAutoHideDockBackId",
+    autoHideDockBackButton_->setProperty("dockAutoHideDockBackId",
                                          resolvedId);
     autoHideDockBackButton_->setEnabled(canMoveDock(resolvedId));
     tabs->show();
@@ -5586,7 +5612,7 @@ private:
     if (autoHideAreas_.contains(resolvedId)) {
       removeAutoHidePlacement(resolvedId, widget, true);
     } else if (auto *sourceTabs = tabsForWidget(widget)) {
-      widget->setProperty("artifactDockAreaAllowedDropAreas",
+      widget->setProperty("dockAreaAllowedDropAreas",
                           dockAreaAllowedDropAreasMask(resolvedId));
       const DockArea sourceArea = areas_.value(resolvedId,
                                                 areaForTabs(sourceTabs));
@@ -5926,11 +5952,11 @@ private:
     setDockVisible(resolvedId, visible);
     if (restoredSavedPath) {
       if (auto *tabs = tabsForWidget(widget)) {
-        tabs->setProperty("artifactDockAreaAllowedDropAreas",
+        tabs->setProperty("dockAreaAllowedDropAreas",
                           returnAllowedDropAreas);
         for (int index = 0; index < tabs->count(); ++index) {
           if (auto *member = tabs->widget(index)) {
-            member->setProperty("artifactDockAreaAllowedDropAreas",
+            member->setProperty("dockAreaAllowedDropAreas",
                                 returnAllowedDropAreas);
           }
         }
@@ -8231,11 +8257,11 @@ private:
       tabs->setTabIcon(index, dockIcon(id));
       tabs->setTabToolTip(index, dockTabToolTip(id));
       auto *panel = tabs->widget(index);
-      const QVariant openState = panel ? panel->property("artifactDockOpen")
+      const QVariant openState = panel ? panel->property("dockOpen")
                                        : QVariant{};
       const bool open = !openState.isValid() || openState.toBool();
       const bool noTab = panel &&
-          panel->property("artifactDockNoTab").toBool();
+          panel->property("dockNoTab").toBool();
       tabs->setTabVisible(index, open && !noTab);
       refreshDockTabLabels(tabs);
       refreshDockTabBarVisibility(tabs);
@@ -8250,8 +8276,8 @@ private:
     closeButton->setIcon(closeButton->style()->standardIcon(QStyle::SP_TitleBarCloseButton));
     closeButton->setToolTip(tr("Close panel"));
     closeButton->setAccessibleName(tr("Close panel"));
-    closeButton->setProperty("artifactDockCloseId", id);
-    closeButton->setProperty("artifactDockCloseButton", true);
+    closeButton->setProperty("dockCloseId", id);
+    closeButton->setProperty("dockCloseButton", true);
     closeButton->setFixedSize(20, 20);
     closeButton->installEventFilter(this);
     buttonLayout->addWidget(closeButton);
@@ -8270,7 +8296,7 @@ private:
       if (!side) continue;
       auto *closeButton = side->findChild<QToolButton *>();
       if (!closeButton ||
-          closeButton->property("artifactDockCloseId").toString() != dockId) {
+          closeButton->property("dockCloseId").toString() != dockId) {
         continue;
       }
       const bool closable = !dockId.isEmpty() && dockClosable(dockId);
@@ -8379,7 +8405,7 @@ private:
     if (!dialog) return;
     const bool enabled = floatingGroupMovable(dialog);
     for (auto *button : dialog->findChildren<QToolButton *>()) {
-      if (button && button->property("artifactDockBackGroup").toBool()) {
+      if (button && button->property("dockBackGroup").toBool()) {
         button->setEnabled(enabled);
       }
     }
@@ -8427,7 +8453,7 @@ private:
     headerLayout->setContentsMargins(6, 3, 3, 3);
     auto *label = new QLabel(title, header);
     label->setObjectName(
-        QStringLiteral("artifactNativeFloatingDockTitle"));
+        QStringLiteral("dockNativeFloatingDockTitle"));
     label->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     label->setProperty("artifactFloatingDockHeaderDrag", true);
     label->installEventFilter(this);
@@ -8437,7 +8463,7 @@ private:
     dockBack->setIcon(dockBack->style()->standardIcon(QStyle::SP_ArrowBack));
     dockBack->setToolTip(tr("Dock tab group back"));
     dockBack->setAccessibleName(tr("Dock tab group back"));
-    dockBack->setProperty("artifactDockBackGroup", true);
+    dockBack->setProperty("dockBackGroup", true);
     dockBack->installEventFilter(this);
     headerLayout->addWidget(dockBack);
     layout->addWidget(header);
@@ -8499,7 +8525,7 @@ private:
     tabListButton->setArrowType(Qt::DownArrow);
     tabListButton->setToolTip(tr("Show panel list"));
     tabListButton->setAccessibleName(tr("Show panel list"));
-    tabListButton->setProperty("artifactDockTabList", true);
+    tabListButton->setProperty("dockTabList", true);
     tabListButton->setFixedSize(22, 22);
     tabs->setTabListButton(tabListButton);
     tabs->setTabListButtonEnabled(dockAreaHasTabsMenuButton_);
@@ -8509,7 +8535,7 @@ private:
         QStyle::SP_TitleBarCloseButton));
     closeGroupButton->setToolTip(tr("Close tab group"));
     closeGroupButton->setAccessibleName(tr("Close tab group"));
-    closeGroupButton->setProperty("artifactDockCloseGroup", true);
+    closeGroupButton->setProperty("dockCloseGroup", true);
     closeGroupButton->setFixedSize(22, 22);
     tabs->setCloseGroupButton(closeGroupButton);
     auto *floatGroupButton = new QToolButton(tabs);
@@ -8518,7 +8544,7 @@ private:
         QStyle::SP_TitleBarNormalButton));
     floatGroupButton->setToolTip(tr("Float tab group"));
     floatGroupButton->setAccessibleName(tr("Float tab group"));
-    floatGroupButton->setProperty("artifactDockFloatGroup", true);
+    floatGroupButton->setProperty("dockFloatGroup", true);
     floatGroupButton->setFixedSize(22, 22);
     tabs->setFloatGroupButton(floatGroupButton);
     auto *autoHideButton = new QToolButton(tabs);
@@ -8528,22 +8554,10 @@ private:
     autoHideButton->setCheckable(autoHideButtonCheckable_);
     autoHideButton->setToolTip(tr("Auto-hide active panel"));
     autoHideButton->setAccessibleName(tr("Auto-hide active panel"));
-    autoHideButton->setProperty("artifactDockAutoHideActive", true);
+    autoHideButton->setProperty("dockAutoHideActive", true);
     autoHideButton->setFixedSize(22, 22);
     tabs->setAutoHideButton(autoHideButton);
-    const auto &theme = ArtifactCore::currentDCCTheme();
-    QPalette palette = tabs->palette();
-    palette.setColor(QPalette::Window,
-                     QColor(theme.secondaryBackgroundColor));
-    palette.setColor(QPalette::Base, QColor(theme.backgroundColor));
-    palette.setColor(QPalette::Button,
-                     QColor(theme.secondaryBackgroundColor));
-    palette.setColor(QPalette::ButtonText, QColor(theme.textColor));
-    palette.setColor(QPalette::Text, QColor(theme.textColor));
-    palette.setColor(QPalette::Highlight, QColor(theme.accentColor));
-    palette.setColor(QPalette::HighlightedText, QColor(theme.textColor));
-    tabs->setPalette(palette);
-    tabs->tabBar()->setPalette(palette);
+    applyDockPalette(tabs);
     return tabs;
   }
 
@@ -8612,7 +8626,7 @@ private:
     }
     for (auto *label : dialog->findChildren<QLabel *>()) {
       if (label->objectName() ==
-              QStringLiteral("artifactNativeFloatingDockTitle") &&
+              QStringLiteral("dockNativeFloatingDockTitle") &&
           label->text() != title) {
         label->setText(title);
       }
@@ -8653,7 +8667,7 @@ private:
       return dockAreaAllowedDropAreasMask(tabsForWidget(widget));
     }
     const QVariant stored =
-        widget->property("artifactDockAreaAllowedDropAreas");
+        widget->property("dockAreaAllowedDropAreas");
     if (!stored.isValid()) return kAllDockAreaDropTargets;
     const int mask = stored.toInt();
     return mask >= 0 && (mask & ~kAllDockAreaDropTargets) == 0
@@ -8664,7 +8678,7 @@ private:
   int dockAreaAllowedDropAreasMask(const QTabWidget *tabs) const {
     if (!tabs) return kAllDockAreaDropTargets;
     const QVariant stored =
-        tabs->property("artifactDockAreaAllowedDropAreas");
+        tabs->property("dockAreaAllowedDropAreas");
     if (!stored.isValid()) return kAllDockAreaDropTargets;
     const int mask = stored.toInt();
     return mask >= 0 && (mask & ~kAllDockAreaDropTargets) == 0
@@ -8693,11 +8707,11 @@ private:
       return;
     }
     if (activeTabs_) {
-      activeTabs_->setProperty("artifactNativeActivePanel", false);
+      activeTabs_->setProperty("dockNativeActivePanel", false);
       static_cast<DockTabSurface *>(activeTabs_.data())->refreshFocusChrome();
     }
     activeTabs_ = tabs;
-    activeTabs_->setProperty("artifactNativeActivePanel", true);
+    activeTabs_->setProperty("dockNativeActivePanel", true);
     static_cast<DockTabSurface *>(activeTabs_.data())->refreshFocusChrome();
     refreshDockTabGroupCloseButton(tabs);
   }
@@ -8807,4 +8821,8 @@ private:
   QString recentlyClosedDockId_;
 };
 
-} // namespace Artifact
+} // namespace Dock
+
+export namespace Artifact {
+using Dock::NativeDockSurface;
+}

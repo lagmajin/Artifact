@@ -8,9 +8,9 @@ module;
 #include <QList>
 #include <QString>
 
-export module Artifact.DockManager;
+export module Dock.Manager;
 
-export namespace Artifact {
+export namespace Dock {
 
 inline constexpr int kDockLayoutDocumentVersion = 1;
 
@@ -441,4 +441,24 @@ struct DockLayoutDocument {
   }
 };
 
-} // namespace Artifact
+} // namespace Dock
+
+export namespace Artifact {
+using Dock::DockArea;
+using Dock::DockBackendCapabilities;
+using Dock::DockBackendKind;
+using Dock::DockLayoutDocument;
+using Dock::DockLayoutEntry;
+using Dock::DockLayoutRegistry;
+using Dock::canApplyDockLayoutEntry;
+using Dock::dockAreaDropTargetBit;
+using Dock::dockAreaFromString;
+using Dock::dockAreaToString;
+using Dock::dockBackendKindFromString;
+using Dock::dockBackendKindToString;
+using Dock::dockLayoutEntryFromJson;
+using Dock::dockLayoutEntryToJson;
+using Dock::isValidDockLayoutEntry;
+inline constexpr int kDockLayoutDocumentVersion = Dock::kDockLayoutDocumentVersion;
+inline constexpr int kAllDockAreaDropTargets = Dock::kAllDockAreaDropTargets;
+}
