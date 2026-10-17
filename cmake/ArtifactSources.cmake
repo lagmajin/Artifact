@@ -582,6 +582,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../include/Render/CompositionPassState.ixx"
     "${CMAKE_CURRENT_LIST_DIR}/../include/Render/CompositionRenderPassPlan.ixx"
     "${CMAKE_CURRENT_LIST_DIR}/../include/Render/CompositionRenderPassContext.ixx"
+    "${CMAKE_CURRENT_LIST_DIR}/../include/Render/CompositionRenderPassExecutor.ixx"
     "${CMAKE_CURRENT_LIST_DIR}/../include/Widgets/Render/ArtifactCompositionRenderOverlay.ixx"
     "${CMAKE_CURRENT_LIST_DIR}/../include/Widgets/Render/ArtifactCompositionRenderWidget.ixx"
     "${CMAKE_CURRENT_LIST_DIR}/../include/Widgets/Render/ArtifactCompositionViewerFooter.ixx"

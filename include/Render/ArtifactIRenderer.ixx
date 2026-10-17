@@ -48,6 +48,7 @@ struct ArtifactRendererFloat3 {
 export module Artifact.Render.IRenderer;
 
 import Color.Float;
+export import Graphics.SurfaceColorContract;
 import Text.LayoutContract;
 import Text.Style;
 import Utils.String.UniString;
@@ -164,6 +165,9 @@ export struct ClonerGridPlacementRange {
   Diligent::IBuffer *buffer = nullptr;
   std::uint32_t firstIndex = 0;
   std::uint32_t count = 0;
+  std::size_t dispatchPacketIndex = static_cast<std::size_t>(-1);
+  // Invalidated whenever the renderer submits the batch that owns this range.
+  std::uint64_t batchGeneration = 0;
   // The vertex shader applies each placement record's local rotation and scale.
   bool rotationAware = false;
 };
@@ -191,6 +195,10 @@ public:
 
   void clear();
   void flush();
+  // Flush queued packets after recording them on the bounded deferred worker.
+  // The next immediate-render barrier or present executes the recorded batch;
+  // unsupported packet mixes fall back to the synchronous flush path.
+  bool flushDeferredPacketsAsync();
   void flushAndWait(bool restoreRenderTarget = true);
   // Reserve total packet capacity on the renderer owner thread before worker
   // recording. Completed worker buffers merge in slot order without growth.
@@ -232,6 +240,7 @@ public:
   quint64 presentSuccessCount() const;
   quint64 presentFailureCount() const;
   quint64 presentSkippedCount() const;
+  quint64 deferredWorkerSubmitCount() const;
   QString lastPresentStatus() const;
   void beginFrameCostCapture();
   void endFrameCostCapture();
@@ -258,9 +267,16 @@ public:
   QString pipelineStateCacheDebugState() const;
   QString shadowMapDebugState() const;
 
+  // Order-less readback retains the legacy RGBA source contract.
   QImage readbackToImage() const;
+  QImage readbackToImage(ArtifactCore::SurfaceChannelOrder channelOrder) const;
   ArtifactCore::ImageF32x4_RGBA readbackToImageF32() const;
-  QImage readbackTextureViewToImage(Diligent::ITextureView *textureView) const;
+  // Order-less texture readback overloads retain the legacy RGBA contract.
+  QImage readbackTextureViewToImage(
+      Diligent::ITextureView *textureView) const;
+  QImage readbackTextureViewToImage(
+      Diligent::ITextureView *textureView,
+      ArtifactCore::SurfaceChannelOrder channelOrder) const;
   QImage readbackDepthToImage() const;
   Diligent::ITextureView *liveDepthStencilView() const;
   Diligent::ITextureView *liveDepthShaderResourceView() const;
@@ -269,14 +285,24 @@ public:
   // A false result is transient backpressure; no callback is issued.
   using ReadbackCallback = std::function<void(const QImage &)>;
   bool readbackToImageAsync(ReadbackCallback callback) const;
-  bool readbackTextureViewToImageAsync(Diligent::ITextureView *textureView,
-                                       ReadbackCallback callback) const;
+  bool readbackTextureViewToImageAsync(
+      Diligent::ITextureView *textureView,
+      ReadbackCallback callback) const;
+  bool readbackTextureViewToImageAsync(
+      Diligent::ITextureView *textureView,
+      ArtifactCore::SurfaceChannelOrder channelOrder,
+      ReadbackCallback callback) const;
 
   // Native RGBA8 readback. A pool slot remains leased while the receiver
   // retains the payload; allocation is permitted only at cold boundaries.
   using ReadbackBufferCallback = std::function<void(
       ArtifactCore::SharedPtr<const ArtifactCore::ImageUploadBuffer>)>;
-  bool readbackTextureViewToBufferAsync(Diligent::ITextureView *textureView,
+  bool readbackTextureViewToBufferAsync(
+      Diligent::ITextureView *textureView,
+      ReadbackBufferCallback callback, bool allowColdAllocation = false) const;
+  bool readbackTextureViewToBufferAsync(
+      Diligent::ITextureView *textureView,
+      ArtifactCore::SurfaceChannelOrder channelOrder,
       ReadbackBufferCallback callback, bool allowColdAllocation = false) const;
 
   void setClearColor(const FloatColor &color);
@@ -738,7 +764,9 @@ public:
   // placementRotationStep as the per-clone rotation increment. A finite
   // modifierTranslation is applied after that placement rotation. Plain scale
   // is applied to sprite-local vertices. The returned
-  // range is valid until its submitter batch is submitted. No GPU readback is done.
+  // range is valid until its submitter batch is submitted. The renderer rejects
+  // stale ranges afterward so callers can select their CPU fallback. No GPU
+  // readback is done.
   bool dispatchClonerGridPlacement(
       std::uint32_t columns, std::uint32_t rows, std::uint32_t depth,
       float spacingX, float spacingY, float spacingZ,

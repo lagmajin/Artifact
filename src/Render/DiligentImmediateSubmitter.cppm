@@ -47,6 +47,7 @@ import Artifact.Render.RenderCommandBuffer;
 import Configuration.LayeredConfigStore;
 import Frame.Debug;
 import ArtifactCore.Utils.PerformanceProfiler;
+import Graphics.ParticleData;
 
 namespace Artifact {
 
@@ -1085,7 +1086,7 @@ bool DiligentImmediateSubmitter::canRecordDeferred(
 {
     if (!m_deferredCtx_ || m_frameDebugCaptureEnabled_ || m_frameCostStats_ ||
         !buf.targetRTV() || buf.packets().size() < 16 ||
-        m_primitiveRenderer3D_ || m_particleRenderer_) {
+        m_primitiveRenderer3D_) {
         return false;
     }
     // Accepted packets either use recorder-local state or carry retained
@@ -1094,16 +1095,33 @@ bool DiligentImmediateSubmitter::canRecordDeferred(
     for (const auto& packet : buf.packets()) {
         if (!std::holds_alternative<SolidRectPkt>(packet) &&
             !std::holds_alternative<SolidRectXformPkt>(packet) &&
+            !std::holds_alternative<SolidCirclePkt>(packet) &&
             !std::holds_alternative<SpritePkt>(packet) &&
             !std::holds_alternative<SpriteXformPkt>(packet) &&
             !std::holds_alternative<AtlasSpritePkt>(packet) &&
             !std::holds_alternative<AtlasSpriteXformPkt>(packet) &&
             !std::holds_alternative<ClonerGridDispatchPkt>(packet) &&
             !std::holds_alternative<ClonerSpriteXformPkt>(packet) &&
+            !std::holds_alternative<ParticlePkt>(packet) &&
             !std::holds_alternative<LinePkt>(packet) &&
             !std::holds_alternative<QuadPkt>(packet) &&
+            !std::holds_alternative<GradientRectPkt>(packet) &&
+            !std::holds_alternative<DotLinePkt>(packet) &&
+            !std::holds_alternative<CheckerboardPkt>(packet) &&
+            !std::holds_alternative<GridPkt>(packet) &&
+            !std::holds_alternative<RectOutlinePkt>(packet) &&
             !std::holds_alternative<SolidTriPkt>(packet)) {
             return false;
+        }
+        if (const auto* particle = std::get_if<ParticlePkt>(&packet)) {
+            if (!m_particleRenderer_) return false;
+            const ParticleRenderOptions additive{};
+            ParticleRenderOptions alpha = additive;
+            alpha.blend = ParticleBlendPolicy::Alpha;
+            if (particle->data.options != additive &&
+                particle->data.options != alpha) {
+                return false;
+            }
         }
     }
     return true;
@@ -2001,9 +2019,9 @@ void DiligentImmediateSubmitter::submitSolidCircle(const SolidCirclePkt& p, IDev
     if (!pRTV || !m_draw_solid_triangle_pso_and_srb.pPSO) return;
     if (!m_draw_solid_circle_vertex_buffer || !m_draw_solid_rect_trnsform_cb) return;
 
-    constexpr int segments   = 32;
-    const int     vertexCount = segments * 3;
-    std::vector<RectVertex> vertices(vertexCount);
+    constexpr int segments = 32;
+    constexpr int vertexCount = segments * 3;
+    std::array<RectVertex, vertexCount> vertices{};
 
     const float4 c = p.color;
     for (int i = 0; i < segments; ++i) {

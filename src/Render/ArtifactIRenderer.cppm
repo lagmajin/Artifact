@@ -34,6 +34,11 @@ module;
 #include <QElapsedTimer>
 #include <QDebug>
 #include <QLoggingCategory>
+#include <QMutex>
+#include <QMutexLocker>
+#include <QRunnable>
+#include <QWaitCondition>
+#include <QThreadPool>
 #include <QtConcurrent>
 #include <QTransform>
 #include <QMatrix4x4>
@@ -507,6 +512,244 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
  class ArtifactIRenderer::Impl
  {
  public:
+  class DeferredPacketRecordWorker final : public QRunnable {
+  public:
+    DeferredPacketRecordWorker() {
+      setAutoDelete(false);
+      pool_.setMaxThreadCount(1);
+      pool_.setExpiryTimeout(-1);
+    }
+
+    ~DeferredPacketRecordWorker() override { shutdown(); }
+
+    bool initialize(RefCntAutoPtr<IRenderDevice> device,
+                    ShaderManager& shaderManager) {
+      if (initialized_) return true;
+      if (!device) return false;
+
+      device_ = device;
+      submitter_.createBuffers(device, RenderConfig::MainRTVFormat);
+      submitter_.setPSOs(shaderManager);
+      submitter_.setFrameCostStats(nullptr);
+      if (!warmup()) {
+        shutdown();
+        return false;
+      }
+      initialized_ = true;
+      return true;
+    }
+
+    bool canSubmit(const RenderCommandBuffer& buffer) const noexcept {
+      return initialized_ && submitter_.canRecordDeferred(buffer);
+    }
+
+    void setParticleRenderer(ArtifactCore::ParticleRenderer* renderer) {
+      submitter_.setParticleRenderer(renderer);
+    }
+
+    bool startRecording(RenderCommandBuffer& buffer,
+                        IDeviceContext* immediateContext,
+                        const RenderViewportState& viewportState) {
+      if (!immediateContext || !canSubmit(buffer)) return false;
+      QMutexLocker lock(&mutex_);
+      if (active_ && !completed_) return false;
+      if (active_) {
+        commandList_ = nullptr;
+        buffer_ = nullptr;
+        active_ = false;
+      }
+      active_ = true;
+      warmupPending_ = false;
+      buffer_ = &buffer;
+      viewportState_ = viewportState;
+      immediateContextId_ = immediateContext->GetDesc().ContextId;
+      recordReady_ = false;
+      executeAcknowledged_ = false;
+      executeSucceeded_ = false;
+      completed_ = false;
+      recorded_ = false;
+      commandList_ = nullptr;
+      pool_.start(this);
+      return true;
+    }
+
+    bool executeAndWait(IDeviceContext* immediateContext) {
+      if (!immediateContext) return false;
+      QMutexLocker lock(&mutex_);
+      if (!active_ || warmupPending_) return false;
+      while (!recordReady_) ready_.wait(&mutex_);
+      const bool recorded = recorded_ && commandList_;
+      RenderCommandBuffer* const buffer = buffer_;
+      ICommandList* commandList = commandList_.RawPtr();
+      lock.unlock();
+      if (recorded) {
+        immediateContext->ExecuteCommandLists(1, &commandList);
+      }
+      lock.relock();
+      executeAcknowledged_ = true;
+      executeSucceeded_ = recorded;
+      ready_.wakeAll();
+      while (!completed_) done_.wait(&mutex_);
+
+      commandList_ = nullptr;
+      buffer_ = nullptr;
+      active_ = false;
+      lock.unlock();
+      if (recorded && buffer) buffer->reset();
+      return recorded;
+    }
+
+    bool executeAndRelease(IDeviceContext* immediateContext) {
+      if (!immediateContext) return false;
+      QMutexLocker lock(&mutex_);
+      if (!active_ || warmupPending_) return false;
+      while (!recordReady_) ready_.wait(&mutex_);
+      const bool recorded = recorded_ && commandList_;
+      RenderCommandBuffer* const buffer = buffer_;
+      ICommandList* commandList = commandList_.RawPtr();
+      lock.unlock();
+      if (recorded) {
+        immediateContext->ExecuteCommandLists(1, &commandList);
+      }
+      lock.relock();
+      executeAcknowledged_ = true;
+      executeSucceeded_ = recorded;
+      ready_.wakeAll();
+      if (!recorded) {
+        while (!completed_) done_.wait(&mutex_);
+        commandList_ = nullptr;
+        buffer_ = nullptr;
+        active_ = false;
+        lock.unlock();
+        return false;
+      }
+      lock.unlock();
+
+      // The worker no longer reads the packet buffer after publishing the
+      // command list. It can finish its deferred frame while the immediate
+      // owner submits later packets and presents this frame.
+      if (buffer) buffer->reset();
+      return true;
+    }
+
+    bool submit(RenderCommandBuffer& buffer, IDeviceContext* immediateContext,
+                const RenderViewportState& viewportState) {
+      if (!startRecording(buffer, immediateContext, viewportState)) return false;
+      return executeAndWait(immediateContext);
+    }
+
+    bool hasActiveJob() const {
+      QMutexLocker lock(&mutex_);
+      return active_ && !warmupPending_;
+    }
+
+    void shutdown() {
+      cancelAndWait();
+      pool_.waitForDone();
+      submitter_.setParticleRenderer(nullptr);
+      submitter_.destroy();
+      device_ = nullptr;
+      initialized_ = false;
+    }
+
+    void cancelAndWait() {
+      QMutexLocker lock(&mutex_);
+      if (!active_ || warmupPending_) return;
+      if (!executeAcknowledged_) {
+        while (!recordReady_) ready_.wait(&mutex_);
+        executeSucceeded_ = false;
+        executeAcknowledged_ = true;
+        ready_.wakeAll();
+      }
+      while (!completed_) done_.wait(&mutex_);
+      RenderCommandBuffer* const buffer = buffer_;
+      commandList_ = nullptr;
+      buffer_ = nullptr;
+      active_ = false;
+      lock.unlock();
+      if (buffer) buffer->reset();
+    }
+
+    void run() override {
+      QMutexLocker lock(&mutex_);
+      if (warmupPending_) {
+        warmupPending_ = false;
+        RefCntAutoPtr<IDeviceContext> deferredContext;
+        if (device_) device_->CreateDeferredContext(&deferredContext);
+        warmupSuccess_ = deferredContext != nullptr;
+        if (warmupSuccess_) {
+          submitter_.setDeferredContext(std::move(deferredContext));
+        }
+        completed_ = true;
+        done_.wakeAll();
+        return;
+      }
+
+      RenderCommandBuffer* buffer = buffer_;
+      const Uint32 contextId = immediateContextId_;
+      const RenderViewportState viewportState = viewportState_;
+      lock.unlock();
+
+      RefCntAutoPtr<ICommandList> recordedCommandList;
+      bool recorded = false;
+      try {
+        if (buffer) {
+          submitter_.setViewportState(viewportState);
+          recorded = submitter_.recordDeferred(
+              *buffer, contextId, recordedCommandList);
+        }
+      } catch (...) {
+        recorded = false;
+      }
+
+      lock.relock();
+      commandList_ = std::move(recordedCommandList);
+      recorded_ = recorded;
+      recordReady_ = true;
+      ready_.wakeAll();
+      while (!executeAcknowledged_) ready_.wait(&mutex_);
+      const bool finishRecordedFrame = recorded && executeSucceeded_;
+      lock.unlock();
+      if (finishRecordedFrame) submitter_.finishDeferredFrame();
+      lock.relock();
+      completed_ = true;
+      done_.wakeAll();
+    }
+
+  private:
+    bool warmup() {
+      QMutexLocker lock(&mutex_);
+      active_ = true;
+      warmupPending_ = true;
+      completed_ = false;
+      warmupSuccess_ = false;
+      pool_.start(this);
+      while (!completed_) done_.wait(&mutex_);
+      active_ = false;
+      return warmupSuccess_;
+    }
+
+    DiligentImmediateSubmitter submitter_;
+    mutable QMutex mutex_;
+    QWaitCondition ready_;
+    QWaitCondition done_;
+    QThreadPool pool_;
+    RefCntAutoPtr<IRenderDevice> device_;
+    RenderCommandBuffer* buffer_ = nullptr;
+    RefCntAutoPtr<ICommandList> commandList_;
+    RenderViewportState viewportState_;
+    Uint32 immediateContextId_ = 0;
+    bool initialized_ = false;
+    bool active_ = false;
+    bool warmupPending_ = false;
+    bool recordReady_ = false;
+    bool executeAcknowledged_ = false;
+    bool executeSucceeded_ = false;
+    bool completed_ = false;
+    bool recorded_ = false;
+    bool warmupSuccess_ = false;
+  };
+
   // Reusable fixed worker slots and owner-queue headroom for bounded parallel
   // primitive geometry recording.
   static constexpr std::size_t kParallelGeometryMaxWorkers = 16;
@@ -518,7 +761,7 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
 
   DiligentDeviceManager deviceManager_;
   ShaderManager shaderManager_;
-  PrimitiveRenderer2D primitiveRenderer_;
+  mutable PrimitiveRenderer2D primitiveRenderer_;
   mutable PrimitiveRenderer3D primitiveRenderer3D_;
   mutable std::map<QString, std::unique_ptr<ArtifactCore::MeshRenderer>> meshRenderers_;
   struct MeshGeometryState {
@@ -551,12 +794,18 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
   float lastParticleViewportHeight_ = 0.0f;
 
   mutable DiligentImmediateSubmitter submitter_;
+  mutable DeferredPacketRecordWorker deferredPacketRecordWorker_;
   mutable RenderCommandBuffer cmdBuf_;
+  mutable RenderCommandBuffer deferredPacketRecordBuffer_;
+  mutable bool deferredPacketRecordPending_ = false;
   RenderCommandBufferPool parallelGeometryBuffers_;
   bool parallelGeometryRecordingReady_ = false;
   std::size_t parallelGeometryWorkerCount_ = 0;
+  mutable quint64 deferredWorkerSubmitCount_ = 0;
   ArtifactCore::RenderCostStats m_lastFrameCostStats_;
   ArtifactCore::RenderCostStats m_currentFrameCostStats_;
+  bool m_frameCostCaptureActive_ = false;
+  bool m_frameDebugCaptureActive_ = false;
 
   // Display-only viewport exposure (P1-5). Self-contained so it does not
   // depend on ArtifactCore::LayerBlendPipeline, whose owner lives in the
@@ -573,6 +822,7 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
   Diligent::RefCntAutoPtr<Diligent::IBuffer> clonerGridParams_;
   Diligent::RefCntAutoPtr<Diligent::IBuffer> clonerGridOutput_;
   mutable std::uint32_t clonerGridOutputCursor_ = 0;
+  mutable std::uint64_t clonerGridBatchGeneration_ = 0;
   static constexpr std::uint32_t kClonerGridOutputCapacity = 65536;
   bool clonerGridReady_ = false;
 
@@ -686,6 +936,7 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
   int m_offlineHeight = 0;
   float m_viewportWidth  = 0.0f;
   float m_viewportHeight = 0.0f;
+  RenderViewportState m_renderViewportState_;
   float m_canvasWidth = -1.0f;
   float m_canvasHeight = -1.0f;
   QMatrix4x4 meshViewMatrix_;
@@ -736,6 +987,12 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
   QMatrix4x4 stereoRightViewMatrix_;
   QMatrix4x4 stereoProjectionMatrix_;
   SubmitDiagnosticKey lastSubmitDiagnosticKey_;
+  // This single non-expiring worker owns its deferred context. Keep the pool as
+  // the final data member so its destructor joins before renderer state is torn
+  // down; the context remains alive until that join completes.
+  mutable RefCntAutoPtr<IDeviceContext> m_asyncReadbackContext;
+  mutable IRenderDevice* m_asyncReadbackContextDevice = nullptr;
+  mutable QThreadPool m_asyncReadbackPool;
 
 
   void initFrameQueries();
@@ -744,6 +1001,7 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
   ITextureView* activeColorView() const;
   ITextureView* activeDepthView() const;
   void bindActiveRenderTargets(IDeviceContext* context) const;
+  void applyRenderViewportState(IDeviceContext* context) const;
   void setRenderTargetOverrides(ITextureView* colorRTV, ITextureView* depthDSV);
   float upscaleRenderScale() const { return m_upscaleEnabled ? m_upscaleScale : 1.0f; }
   void submitQueuedDraws(IDeviceContext* ctx, bool restoreRenderTarget = true) const
@@ -751,23 +1009,49 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
    if (!ctx) {
     return;
    }
+   completeDeferredPacketRecording(ctx);
    static const bool profileSubmit =
        qEnvironmentVariableIsSet("ARTIFACT_VIDEO_PREVIEW_PROFILE_SETUP") &&
        qEnvironmentVariable("ARTIFACT_VIDEO_PREVIEW_PROFILE_SETUP") != QStringLiteral("0");
    static thread_local unsigned int profileSubmitCount = 0;
-   const bool sampleSubmit = profileSubmit && profileSubmitCount < 4096 && !cmdBuf_.empty();
+    const bool sampleSubmit = profileSubmit && profileSubmitCount < 4096 &&
+        (!cmdBuf_.empty() || primitiveRenderer3D_.pendingGizmoVertexCount() > 0);
    const auto packetCount = sampleSubmit ? cmdBuf_.packets().size() : 0;
    QElapsedTimer submitTimer;
    if (sampleSubmit) submitTimer.start();
-   submitter_.submit(cmdBuf_, ctx);
-   const auto submitted2DNs = sampleSubmit ? submitTimer.nsecsElapsed() : 0;
+    // The submitter records pending gizmo topology runs after the 2D packets
+    // on the same immediate or deferred context before executing the batch.
+   const bool hadQueuedPackets = !cmdBuf_.empty();
+    // The worker recorder owns only the 2D packet stream. The main submitter
+    // also drains pending 3D gizmo geometry into the same ordered submission;
+    // keep those batches on the owner path so the overlay is not skipped.
+    const bool hasPendingGizmoVertices =
+        primitiveRenderer3D_.pendingGizmoVertexCount() > 0;
+    // ParticleRenderer has mutable GPU buffers/PSO state. The owner thread is
+    // synchronously blocked for this recording/execute handoff, so the same
+    // instance can be used serially on the worker without creating a second
+    // particle resource set or racing the immediate submitter.
+    deferredPacketRecordWorker_.setParticleRenderer(particleRenderer_.get());
+    const bool workerRecorded = !hasPendingGizmoVertices &&
+        !m_frameCostCaptureActive_ &&
+        !m_frameDebugCaptureActive_ &&
+        deferredPacketRecordWorker_.submit(
+            cmdBuf_, ctx, m_renderViewportState_);
+    if (!workerRecorded) {
+      submitter_.submit(cmdBuf_, ctx);
+    } else {
+      ++deferredWorkerSubmitCount_;
+    }
+   primitiveRenderer_.noteCommandBufferSubmitted();
    clonerGridOutputCursor_ = 0;
-   primitiveRenderer3D_.flushGizmo3D();
+   if (hadQueuedPackets) {
+     ++clonerGridBatchGeneration_;
+   }
    if (sampleSubmit) {
      std::fprintf(stderr,
-         "[VideoPreviewSubmitProfile] packets=%llu submit2DMs=%.3f gizmo3DMs=%.3f\n",
-         static_cast<unsigned long long>(packetCount), submitted2DNs / 1.0e6,
-         (submitTimer.nsecsElapsed() - submitted2DNs) / 1.0e6);
+          "[VideoPreviewSubmitProfile] packets=%llu submitAndGizmoMs=%.3f\n",
+          static_cast<unsigned long long>(packetCount),
+          submitTimer.nsecsElapsed() / 1.0e6);
      ++profileSubmitCount;
    }
    // RenderCommandBuffer::reset() clears targetRTV. Mid-frame barriers (mesh
@@ -776,6 +1060,97 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
    if (restoreRenderTarget) {
     cmdBuf_.setTargetRTV(primitiveRenderer_.currentRTV());
    }
+  }
+  void initializeDeferredPacketRecordWorker() {
+    // Reserve the bounded in-flight slot during initialization so the first
+    // Composition frame does not allocate while handing packets to the worker.
+    cmdBuf_.reserve(kParallelGeometryQueueCapacity);
+    deferredPacketRecordBuffer_.reserve(kParallelGeometryQueueCapacity);
+    if (!deferredPacketRecordWorker_.initialize(deviceManager_.device(),
+                                               shaderManager_)) {
+      qWarning() << "[ArtifactIRenderer] worker deferred packet recorder unavailable;"
+                     " queued draws will use the immediate submit path";
+    }
+  }
+  bool completeDeferredPacketRecording(IDeviceContext* ctx) const {
+    if (!deferredPacketRecordPending_) return true;
+    const bool workerRecorded =
+        deferredPacketRecordWorker_.executeAndRelease(ctx);
+    deferredPacketRecordPending_ = false;
+    if (!workerRecorded) {
+      // Recording can be rejected after the conservative preflight (for
+      // example, a resource became unavailable). Preserve the packet batch by
+      // submitting it on the owner context before releasing its references.
+      submitter_.submit(deferredPacketRecordBuffer_, ctx);
+    } else {
+      ++deferredWorkerSubmitCount_;
+    }
+    primitiveRenderer_.noteCommandBufferSubmitted();
+    clonerGridOutputCursor_ = 0;
+    ++clonerGridBatchGeneration_;
+    return workerRecorded;
+  }
+  bool flushDeferredPacketsAsync() {
+    auto ctx = deviceManager_.immediateContext();
+    if (!ctx) return false;
+    if (deferredPacketRecordPending_) {
+      completeDeferredPacketRecording(ctx.RawPtr());
+    }
+    if (cmdBuf_.empty()) {
+      QElapsedTimer flushTimer;
+      flushTimer.start();
+      ctx->Flush();
+      flushContextTimeUs_ += flushTimer.nsecsElapsed() / 1000;
+      ++flushCount_;
+      return false;
+    }
+    const bool hasPendingGizmoVertices =
+        primitiveRenderer3D_.pendingGizmoVertexCount() > 0;
+    if (hasPendingGizmoVertices || m_frameCostCaptureActive_ ||
+        m_frameDebugCaptureActive_ ||
+        !deferredPacketRecordWorker_.canSubmit(cmdBuf_)) {
+      flush();
+      return false;
+    }
+    if (std::any_of(cmdBuf_.packets().begin(), cmdBuf_.packets().end(),
+                    [](const DrawPacket& packet) {
+                      return std::holds_alternative<ParticlePkt>(packet);
+                    })) {
+      // ParticleRenderer has mutable upload/PSO state which overlay packet
+      // preparation can touch on the owner thread. Keep those frames on the
+      // serialized worker handoff until particle state is frame-leased.
+      flush();
+      return false;
+    }
+
+    deferredPacketRecordWorker_.setParticleRenderer(particleRenderer_.get());
+    const auto activeTarget = cmdBuf_.targetRTV();
+    cmdBuf_.swapContents(deferredPacketRecordBuffer_);
+    cmdBuf_.setTargetRTV(activeTarget);
+    if (!deferredPacketRecordWorker_.startRecording(
+            deferredPacketRecordBuffer_, ctx.RawPtr(), m_renderViewportState_)) {
+      deferredPacketRecordBuffer_.swapContents(cmdBuf_);
+      cmdBuf_.setTargetRTV(activeTarget);
+      flush();
+      return false;
+    }
+    deferredPacketRecordPending_ = true;
+    primitiveRenderer_.noteCommandBufferSubmitted();
+    clonerGridOutputCursor_ = 0;
+    ++clonerGridBatchGeneration_;
+    ++flushCount_;
+    return true;
+  }
+  static bool submitQueuedDrawsBeforeTextureOverwrite(void* userData)
+  {
+   auto* self = static_cast<Impl*>(userData);
+   if (!self) return false;
+   if (self->cmdBuf_.empty() && !self->deferredPacketRecordPending_) return true;
+   if (auto context = self->deviceManager_.immediateContext()) {
+    self->submitQueuedDraws(context.RawPtr());
+    return self->cmdBuf_.empty();
+   }
+   return false;
   }
 
   ArtifactCore::MeshRenderer* meshRendererFor(const QString& key)
@@ -818,6 +1193,9 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
     if (!device || !context) {
       return;
     }
+    // Composition can reach the shadow pass with layer packets still queued.
+    // Submit them before changing the immediate context to the shadow target.
+    submitQueuedDraws(context.RawPtr());
     if (!m_shadowMapTex) {
       TextureDesc desc;
       desc.Name = "Composition Shadow Map";
@@ -870,21 +1248,24 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
     }
     m_shadowMapReady = true;
     bindActiveRenderTargets(context);
-    // Restore the logical viewport used by this renderer, not the backing
-    // texture extent. Preview/MSAA targets may be larger or shared; restoring
-    // their full extent makes the next light update render as tiled quadrants.
-    const auto restoreWidth = static_cast<Uint32>(
-        std::max(1.0f, std::round(m_viewportWidth)));
-    const auto restoreHeight = static_cast<Uint32>(
-        std::max(1.0f, std::round(m_viewportHeight)));
-    Viewport restoreViewport;
-    restoreViewport.TopLeftX = 0.0f;
-    restoreViewport.TopLeftY = 0.0f;
-    restoreViewport.Width = static_cast<float>(restoreWidth);
-    restoreViewport.Height = static_cast<float>(restoreHeight);
-    restoreViewport.MinDepth = 0.0f;
-    restoreViewport.MaxDepth = 1.0f;
-    context->SetViewports(1, &restoreViewport, restoreWidth, restoreHeight);
+    if (!m_renderViewportState_.enabled ||
+        m_renderViewportState_.targetWidth == 0 ||
+        m_renderViewportState_.targetHeight == 0) {
+      // A renderer using only setViewportSize() has no captured scissor/view
+      // state. Preserve its historical full logical viewport restoration.
+      const auto restoreWidth = static_cast<Uint32>(
+          std::max(1.0f, std::round(m_viewportWidth)));
+      const auto restoreHeight = static_cast<Uint32>(
+          std::max(1.0f, std::round(m_viewportHeight)));
+      Viewport restoreViewport;
+      restoreViewport.TopLeftX = 0.0f;
+      restoreViewport.TopLeftY = 0.0f;
+      restoreViewport.Width = static_cast<float>(restoreWidth);
+      restoreViewport.Height = static_cast<float>(restoreHeight);
+      restoreViewport.MinDepth = 0.0f;
+      restoreViewport.MaxDepth = 1.0f;
+      context->SetViewports(1, &restoreViewport, restoreWidth, restoreHeight);
+    }
   }
 
   void drawMesh(const QString& cacheKey, const ArtifactCore::Mesh& mesh,
@@ -2210,7 +2591,9 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
                                         std::vector<float>& outRgba,
                                         int& outWidth,
                                         int& outHeight) const;
-  QImage readbackTextureViewToImage(ITextureView* textureView) const;
+  QImage readbackTextureViewToImage(
+      ITextureView* textureView,
+      ArtifactCore::SurfaceChannelOrder channelOrder) const;
   void createSwapChain(QWidget* widget);
   void recreateSwapChain(QWidget* widget);
   void beginFrameGpuProfiling(quint64 executionId);
@@ -2224,6 +2607,9 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
   quint64 presentSuccessCount() const { return presentSuccessCount_; }
   quint64 presentFailureCount() const { return presentFailureCount_; }
   quint64 presentSkippedCount() const { return presentSkippedCount_; }
+  quint64 deferredWorkerSubmitCount() const {
+    return deferredWorkerSubmitCount_;
+  }
   QString lastPresentStatus() const { return lastPresentStatus_; }
   QString gpuAdapterRecoveryDebugState() const {
     return QStringLiteral(
@@ -2242,9 +2628,12 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
   QString shadowMapDebugState() const;
   std::vector<ArtifactCore::FrameDebugPassRecord> frameDebugPasses() const;
    bool isInitialized() const { return m_initialized; }
+  QImage readbackToImage(
+      ArtifactCore::SurfaceChannelOrder channelOrder) const;
   bool readbackToImageAsync(ArtifactIRenderer::ReadbackCallback callback) const;
   bool readbackTextureViewToImageAsync(
       ITextureView* textureView,
+      ArtifactCore::SurfaceChannelOrder channelOrder,
       ArtifactIRenderer::ReadbackCallback callback,
       ArtifactIRenderer::ReadbackBufferCallback bufferCallback = {},
       bool allowColdAllocation = false) const;
@@ -2283,47 +2672,57 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
 
   // Viewport
   void setViewportSize(float w, float h) { primitiveRenderer_.setViewportSize(w, h); m_viewportWidth = w; m_viewportHeight = h; }
-  void setViewportRect(float w, float h) {
-    setViewportSize(w, h);
-    if (auto ctx = deviceManager_.immediateContext()) {
-      Viewport VP;
-      VP.Width = w;
-      VP.Height = h;
-      VP.MinDepth = 0.0f;
-      VP.MaxDepth = 1.0f;
-      VP.TopLeftX = 0.0f;
-      VP.TopLeftY = 0.0f;
-      ctx->SetViewports(1, &VP, static_cast<Uint32>(w), static_cast<Uint32>(h));
-      const Rect scissor{0, 0, static_cast<Int32>(std::lround(w)),
-                         static_cast<Int32>(std::lround(h))};
-      ctx->SetScissorRects(1, &scissor, static_cast<Uint32>(w),
-                           static_cast<Uint32>(h));
+  void setRenderViewportState(RenderViewportState state) {
+    state.enabled = true;
+    const bool changed =
+        !m_renderViewportState_.enabled ||
+        m_renderViewportState_.x != state.x ||
+        m_renderViewportState_.y != state.y ||
+        m_renderViewportState_.width != state.width ||
+        m_renderViewportState_.height != state.height ||
+        m_renderViewportState_.targetWidth != state.targetWidth ||
+        m_renderViewportState_.targetHeight != state.targetHeight;
+    if (changed) {
+      if (auto ctx = deviceManager_.immediateContext();
+          ctx && (!cmdBuf_.empty() || deferredPacketRecordPending_ ||
+                  primitiveRenderer3D_.pendingGizmoVertexCount() > 0)) {
+        // Submit packets against the viewport they were recorded for before
+        // changing the state that a later deferred command list will replay.
+        submitQueuedDraws(ctx.RawPtr());
+      }
     }
+
+    setViewportSize(state.width, state.height);
+    m_renderViewportState_ = state;
+    submitter_.setViewportState(state);
+    if (auto ctx = deviceManager_.immediateContext()) {
+      applyRenderViewportState(ctx.RawPtr());
+    }
+  }
+  void setViewportRect(float w, float h) {
+    RenderViewportState state;
+    state.width = w;
+    state.height = h;
+    state.targetWidth = static_cast<Uint32>(w);
+    state.targetHeight = static_cast<Uint32>(h);
+    setRenderViewportState(state);
   }
   void setViewportRect(float x, float y, float w, float h,
                        float renderTargetW, float renderTargetH) {
-    setViewportSize(w, h);
-    if (auto ctx = deviceManager_.immediateContext()) {
-      const Uint32 targetW = static_cast<Uint32>(std::max(1.0f, std::round(renderTargetW)));
-      const Uint32 targetH = static_cast<Uint32>(std::max(1.0f, std::round(renderTargetH)));
-      Viewport viewport;
-      viewport.TopLeftX = x;
-      viewport.TopLeftY = y;
-      viewport.Width = w;
-      viewport.Height = h;
-      viewport.MinDepth = 0.0f;
-      viewport.MaxDepth = 1.0f;
-      ctx->SetViewports(1, &viewport, targetW, targetH);
-      const Rect scissor{
-          static_cast<Int32>(std::lround(x)),
-          static_cast<Int32>(std::lround(y)),
-          static_cast<Int32>(std::lround(x + w)),
-          static_cast<Int32>(std::lround(y + h))};
-      ctx->SetScissorRects(1, &scissor, targetW, targetH);
-    }
+    RenderViewportState state;
+    state.x = x;
+    state.y = y;
+    state.width = w;
+    state.height = h;
+    state.targetWidth = static_cast<Uint32>(
+        std::max(1.0f, std::round(renderTargetW)));
+    state.targetHeight = static_cast<Uint32>(
+        std::max(1.0f, std::round(renderTargetH)));
+    setRenderViewportState(state);
   }
   void unbindColorTargetsForCompute() {
     if (auto ctx = deviceManager_.immediateContext()) {
+      submitQueuedDraws(ctx.RawPtr());
       ctx->SetRenderTargets(0, nullptr, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     }
   }
@@ -2748,7 +3147,8 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
     // 2D particle targets do not participate in scene depth. For 3D particles,
     // capture the active DSV with the packet so deferred submission uses the
     // matching attachment; only enable depth when that attachment exists.
-    if (cameraMode == QStringLiteral("3d")) {
+    if (cameraMode == QStringLiteral("3d") &&
+        (pkt.data.options.depthTest || pkt.data.options.depthWrite)) {
       pkt.depthDSV = activeDepthView();
     }
     if (!pkt.depthDSV) {
@@ -2770,11 +3170,15 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
                                 QWidget* widget)
   : deviceManager_(device, context), widget_(widget)
  {
+  m_asyncReadbackPool.setMaxThreadCount(1);
+  m_asyncReadbackPool.setExpiryTimeout(-1);
  }
 
  ArtifactIRenderer::Impl::Impl()
   : deviceManager_()
  {
+  m_asyncReadbackPool.setMaxThreadCount(1);
+  m_asyncReadbackPool.setExpiryTimeout(-1);
  }
 
  ArtifactIRenderer::Impl::~Impl() {}
@@ -2784,6 +3188,10 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
 
   void ArtifactIRenderer::Impl::initialize(QWidget* widget)
   {
+   if (auto context = deviceManager_.immediateContext()) {
+     completeDeferredPacketRecording(context.RawPtr());
+   }
+   deferredPacketRecordWorker_.shutdown();
    ScopedStartupTimer totalTimer("ArtifactIRenderer::initialize",
                                   StartupPhase::TotalStartup);
    widget_ = widget;
@@ -2797,6 +3205,7 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
    clonerGridParams_.Release();
    clonerGridOutput_.Release();
    clonerGridOutputCursor_ = 0;
+   ++clonerGridBatchGeneration_;
    clonerGridReady_ = false;
    gpuContext_.reset();
 
@@ -2848,10 +3257,13 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
                                  deviceManager_.swapChain());
    submitter_.createBuffers(deviceManager_.device(), RenderConfig::MainRTVFormat);
    submitter_.setPSOs(shaderManager_);
+   initializeDeferredPacketRecordWorker();
    submitter_.setFrameCostStats(nullptr);
    submitter_.setDeferredContext(deviceManager_.deferredContext());
    submitter_.setPrimitiveRenderer3D(&primitiveRenderer3D_);
    primitiveRenderer_.setCommandBuffer(&cmdBuf_);
+   primitiveRenderer_.setBeforeTextureOverwriteCallback(
+       &Impl::submitQueuedDrawsBeforeTextureOverwrite, this);
   }
 
   gpuContext_ = std::make_unique<ArtifactCore::GpuContext>(deviceManager_.device(),
@@ -2896,6 +3308,7 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
                                                               int adapterId,
                                                               bool enableGpuClonerPlacement)
  {
+  deferredPacketRecordWorker_.shutdown();
   m_offlineWidth  = width;
   m_offlineHeight = height;
   meshRenderers_.clear();
@@ -2908,6 +3321,7 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
   clonerGridParams_.Release();
   clonerGridOutput_.Release();
   clonerGridOutputCursor_ = 0;
+  ++clonerGridBatchGeneration_;
   clonerGridReady_ = false;
   gpuContext_.reset();
 
@@ -2943,10 +3357,13 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
   primitiveRenderer_.setPSOs(shaderManager_);
   submitter_.createBuffers(deviceManager_.device(), RenderConfig::MainRTVFormat);
   submitter_.setPSOs(shaderManager_);
+  initializeDeferredPacketRecordWorker();
   submitter_.setFrameCostStats(nullptr);
   submitter_.setDeferredContext(deviceManager_.deferredContext());
   submitter_.setPrimitiveRenderer3D(&primitiveRenderer3D_);
   primitiveRenderer_.setCommandBuffer(&cmdBuf_);
+  primitiveRenderer_.setBeforeTextureOverwriteCallback(
+      &Impl::submitQueuedDrawsBeforeTextureOverwrite, this);
 
   gpuContext_ = std::make_unique<ArtifactCore::GpuContext>(deviceManager_.device(),
                                                            deviceManager_.immediateContext());
@@ -2999,18 +3416,9 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
   primitiveRenderer3D_.setOverrideDSV(m_layerDepthDSV);
   primitiveRenderer_.setContext(deviceManager_.immediateContext(), nullptr);
   primitiveRenderer3D_.setContext(deviceManager_.immediateContext());
-  primitiveRenderer_.setViewportSize(float(width), float(height));
-  m_viewportWidth  = float(width);
-  m_viewportHeight = float(height);
+  setViewportRect(float(width), float(height));
   setCanvasSize(float(width), float(height));
   primitiveRenderer_.resetView();
-
-  if (auto ctx = deviceManager_.immediateContext()) {
-   Viewport VP;
-   VP.Width = static_cast<float>(width);  VP.Height = static_cast<float>(height);
-   VP.MinDepth = 0.0f; VP.MaxDepth = 1.0f; VP.TopLeftX = 0.0f; VP.TopLeftY = 0.0f;
-   ctx->SetViewports(1, &VP, width, height);
-  }
   m_initialized = true;
   if (enableGpuClonerPlacement && !initializeClonerGridPlacement()) {
    qWarning() << "[ArtifactIRenderer] headless GPU Cloner placement initialization failed";
@@ -3019,7 +3427,14 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
 
 QImage ArtifactIRenderer::Impl::readbackToImage() const
 {
-  return readbackTextureViewToImage(activeColorView());
+  return readbackTextureViewToImage(
+      activeColorView(), ArtifactCore::SurfaceChannelOrder::RGBA);
+}
+
+QImage ArtifactIRenderer::Impl::readbackToImage(
+    ArtifactCore::SurfaceChannelOrder channelOrder) const
+{
+  return readbackTextureViewToImage(activeColorView(), channelOrder);
 }
 
 ArtifactCore::ImageF32x4_RGBA ArtifactIRenderer::Impl::readbackToImageF32() const
@@ -3037,18 +3452,24 @@ ArtifactCore::ImageF32x4_RGBA ArtifactIRenderer::Impl::readbackToImageF32() cons
   }
 
   ArtifactCore::ImageF32x4_RGBA result;
+  // readbackTextureViewToFloatBuffer copies the active RGBA texture's raw
+  // channel order into this buffer. Convert that external RGBA payload into
+  // ImageF32x4_RGBA's canonical BGRA backing at the image boundary.
   result.setFromRGBA32F(rgba.data(), width, height);
   return result;
 }
 
  QImage ArtifactIRenderer::Impl::readbackTextureViewToImage(
-     ITextureView* textureView) const
+     ITextureView* textureView,
+     ArtifactCore::SurfaceChannelOrder channelOrder) const
  {
   std::lock_guard<std::mutex> guard(m_readbackMutex);
 
   auto ctx    = deviceManager_.immediateContext();
   auto device = deviceManager_.device();
-  if (!ctx || !device) return {};
+  if (!ctx || !device ||
+      (channelOrder != ArtifactCore::SurfaceChannelOrder::RGBA &&
+       channelOrder != ArtifactCore::SurfaceChannelOrder::BGRA)) return {};
 
   ITexture* srcTex  = nullptr;
   Uint32 srcWidth   = 0;
@@ -3154,14 +3575,27 @@ ArtifactCore::ImageF32x4_RGBA ArtifactIRenderer::Impl::readbackToImageF32() cons
    ctx->UnmapTextureSubresource(slot.staging, 0, 0);
    return {};
   }
+  const Uint32 redIndex =
+      channelOrder == ArtifactCore::SurfaceChannelOrder::BGRA ? 2u : 0u;
+  const Uint32 blueIndex =
+      channelOrder == ArtifactCore::SurfaceChannelOrder::BGRA ? 0u : 2u;
   if (!useFloatReadback) {
    const auto* sourceBits = static_cast<const uint8_t*>(mapped.pData);
    auto* resultBits = result.bits();
    const int resultStride = result.bytesPerLine();
    ArtifactCore::Parallel::ForPixels(0, result.height(), result.width(), result.height(), [&](int row) {
-    std::memcpy(resultBits + row * resultStride,
-                sourceBits + static_cast<size_t>(row) * mapped.Stride,
-                copyRowBytes);
+    const auto* src = sourceBits + static_cast<size_t>(row) * mapped.Stride;
+    auto* dst = resultBits + row * resultStride;
+    if (channelOrder == ArtifactCore::SurfaceChannelOrder::RGBA) {
+     std::memcpy(dst, src, copyRowBytes);
+    } else {
+     for (Uint32 x = 0; x < srcWidth; ++x) {
+      dst[x * 4 + 0] = src[x * 4 + 2];
+      dst[x * 4 + 1] = src[x * 4 + 1];
+      dst[x * 4 + 2] = src[x * 4 + 0];
+      dst[x * 4 + 3] = src[x * 4 + 3];
+     }
+    }
    });
   } else if (useFloat16Readback) {
    const auto* sourceBits = static_cast<const uint8_t*>(mapped.pData);
@@ -3181,9 +3615,9 @@ ArtifactCore::ImageF32x4_RGBA ArtifactIRenderer::Impl::readbackToImageF32() cons
         sourceBits + static_cast<size_t>(row) * mapped.Stride);
     for (Uint32 x = 0; x < srcWidth; ++x) {
      // Half-float -> 8-bit sRGB for the HDR swap chain path.
-     const float r = sanitize(Float16::HalfBitsToFloat(srcHalf[x * 4 + 0]));
+     const float r = sanitize(Float16::HalfBitsToFloat(srcHalf[x * 4 + redIndex]));
      const float g = sanitize(Float16::HalfBitsToFloat(srcHalf[x * 4 + 1]));
-     const float b = sanitize(Float16::HalfBitsToFloat(srcHalf[x * 4 + 2]));
+     const float b = sanitize(Float16::HalfBitsToFloat(srcHalf[x * 4 + blueIndex]));
      const float a = sanitize(Float16::HalfBitsToFloat(srcHalf[x * 4 + 3]));
      dst[x * 4 + 0] = linearToSrgb8(r);
      dst[x * 4 + 1] = linearToSrgb8(g);
@@ -3213,9 +3647,9 @@ ArtifactCore::ImageF32x4_RGBA ArtifactIRenderer::Impl::readbackToImageF32() cons
     const auto* srcFloat = reinterpret_cast<const float*>(
         sourceBits + static_cast<size_t>(row) * mapped.Stride);
     for (Uint32 x = 0; x < srcWidth; ++x) {
-     const float r = sanitize(srcFloat[x * 4 + 0]);
+     const float r = sanitize(srcFloat[x * 4 + redIndex]);
      const float g = sanitize(srcFloat[x * 4 + 1]);
-     const float b = sanitize(srcFloat[x * 4 + 2]);
+     const float b = sanitize(srcFloat[x * 4 + blueIndex]);
      const float a = sanitize(srcFloat[x * 4 + 3]);
      dst[x * 4 + 0] = linearToSrgb8(r);
      dst[x * 4 + 1] = linearToSrgb8(g);
@@ -3533,7 +3967,8 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
    if (!sourceView) {
     return {};
    }
-   const QImage colorImage = readbackTextureViewToImage(sourceView);
+   const QImage colorImage = readbackTextureViewToImage(
+       sourceView, ArtifactCore::SurfaceChannelOrder::RGBA);
     if (channel == ArtifactIRenderer::ChannelType::NormalX ||
         channel == ArtifactIRenderer::ChannelType::NormalY ||
         channel == ArtifactIRenderer::ChannelType::NormalZ ||
@@ -3563,7 +3998,8 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
    if (!sourceView) {
     return {};
    }
-   const QImage auxColor = readbackTextureViewToImage(sourceView);
+   const QImage auxColor = readbackTextureViewToImage(
+       sourceView, ArtifactCore::SurfaceChannelOrder::RGBA);
    if (auxColor.isNull()) {
     return {};
    }
@@ -3585,16 +4021,21 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
 
  bool ArtifactIRenderer::Impl::readbackToImageAsync(ReadbackCallback callback) const
  {
-  return readbackTextureViewToImageAsync(activeColorView(), std::move(callback));
+  return readbackTextureViewToImageAsync(
+      activeColorView(), ArtifactCore::SurfaceChannelOrder::RGBA,
+      std::move(callback));
  }
 
  bool ArtifactIRenderer::Impl::readbackTextureViewToImageAsync(
      ITextureView* textureView,
+     ArtifactCore::SurfaceChannelOrder channelOrder,
      ReadbackCallback callback,
      ArtifactIRenderer::ReadbackBufferCallback bufferCallback,
      bool allowColdAllocation) const
  {
-  if (!deviceManager_.device() || !deviceManager_.immediateContext()) {
+  if (!deviceManager_.device() || !deviceManager_.immediateContext() ||
+      (channelOrder != ArtifactCore::SurfaceChannelOrder::RGBA &&
+       channelOrder != ArtifactCore::SurfaceChannelOrder::BGRA)) {
     if (callback) callback(QImage());
     if (bufferCallback) bufferCallback({});
     return true;
@@ -3755,6 +4196,10 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
     return false;
   }
 
+  // The requested source can be the active render target. Submit packet draws
+  // first so the readback copy cannot overtake the frame that produced it.
+  submitQueuedDraws(ctx);
+
   // Unbind render target, then copy
   ctx->SetRenderTargets(0, nullptr, nullptr, RESOURCE_STATE_TRANSITION_MODE_NONE);
 
@@ -3776,8 +4221,10 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
   const bool float32Readback = useFloat32Readback;
 
   // Run fence wait + pixel conversion in background thread
-    [[maybe_unused]] auto future = QtConcurrent::run([fence, stagingTex, ctx, w, h,
+    [[maybe_unused]] auto future = QtConcurrent::run(&m_asyncReadbackPool,
+                                                       [this, device, fence, stagingTex, w, h,
                                                        float16Readback, float32Readback,
+                                                       channelOrder,
                                                        waitValue, busyFlag, cachedSlot,
                                                        cb = std::move(callback),
                                                        bufferCb = std::move(bufferCallback),
@@ -3790,9 +4237,29 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
     // Wait for GPU copy to complete
     fence->Wait(waitValue);
 
+    // This worker is the sole owner of its deferred context. Never use the
+    // renderer's immediate context from this background thread.
+    if (m_asyncReadbackContextDevice != device.RawPtr()) {
+      m_asyncReadbackContext.Release();
+      m_asyncReadbackContextDevice = nullptr;
+    }
+    if (!m_asyncReadbackContext) {
+      device->CreateDeferredContext(&m_asyncReadbackContext);
+      if (m_asyncReadbackContext) {
+        m_asyncReadbackContextDevice = device.RawPtr();
+      }
+    }
+    if (!m_asyncReadbackContext) {
+      releaseSlot();
+      if (cb) cb(QImage());
+      if (bufferCb) bufferCb({});
+      return;
+    }
+
     // Map staging texture
     MappedTextureSubresource mapped = {};
-    ctx->MapTextureSubresource(stagingTex, 0, 0, MAP_READ, MAP_FLAG_DO_NOT_WAIT, nullptr, mapped);
+    m_asyncReadbackContext->MapTextureSubresource(
+        stagingTex, 0, 0, MAP_READ, MAP_FLAG_DO_NOT_WAIT, nullptr, mapped);
     if (!mapped.pData) {
       releaseSlot();
       if (cb) cb(QImage());
@@ -3814,19 +4281,33 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
                                            : copyRowBytes);
 
     if (mapped.Stride < sourceRowBytes) {
-      ctx->UnmapTextureSubresource(stagingTex, 0, 0);
+      m_asyncReadbackContext->UnmapTextureSubresource(stagingTex, 0, 0);
       releaseSlot();
       if (cb) cb(QImage());
+      if (bufferCb) bufferCb({});
       return;
     }
+    const Uint32 redIndex =
+        channelOrder == ArtifactCore::SurfaceChannelOrder::BGRA ? 2u : 0u;
+    const Uint32 blueIndex =
+        channelOrder == ArtifactCore::SurfaceChannelOrder::BGRA ? 0u : 2u;
 
     if (!float16Readback && !float32Readback) {
       ArtifactCore::Parallel::ForPixels(0, static_cast<int>(h), static_cast<int>(w),
                                         static_cast<int>(h), [&](int row) {
         const auto* source = static_cast<const uint8_t*>(mapped.pData) +
                              static_cast<size_t>(row) * mapped.Stride;
-        std::memcpy(resultBits + static_cast<size_t>(row) * resultStride,
-                    source, copyRowBytes);
+        auto* destination = resultBits + static_cast<size_t>(row) * resultStride;
+        if (channelOrder == ArtifactCore::SurfaceChannelOrder::RGBA) {
+          std::memcpy(destination, source, copyRowBytes);
+        } else {
+          for (Uint32 x = 0; x < w; ++x) {
+            destination[x * 4 + 0] = source[x * 4 + 2];
+            destination[x * 4 + 1] = source[x * 4 + 1];
+            destination[x * 4 + 2] = source[x * 4 + 0];
+            destination[x * 4 + 3] = source[x * 4 + 3];
+          }
+        }
       });
     } else if (float16Readback) {
       ArtifactCore::Parallel::ForPixels(0, static_cast<int>(h), static_cast<int>(w),
@@ -3836,9 +4317,9 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
             static_cast<size_t>(row) * mapped.Stride);
         auto* dst = resultBits + static_cast<size_t>(row) * resultStride;
         for (Uint32 x = 0; x < w; ++x) {
-          const float r = std::clamp(Float16::HalfBitsToFloat(srcRow[x * 4 + 0]), 0.0f, 1.0f);
+          const float r = std::clamp(Float16::HalfBitsToFloat(srcRow[x * 4 + redIndex]), 0.0f, 1.0f);
           const float g = std::clamp(Float16::HalfBitsToFloat(srcRow[x * 4 + 1]), 0.0f, 1.0f);
-          const float b = std::clamp(Float16::HalfBitsToFloat(srcRow[x * 4 + 2]), 0.0f, 1.0f);
+          const float b = std::clamp(Float16::HalfBitsToFloat(srcRow[x * 4 + blueIndex]), 0.0f, 1.0f);
           const float a = std::clamp(Float16::HalfBitsToFloat(srcRow[x * 4 + 3]), 0.0f, 1.0f);
           dst[x * 4 + 0] = linearToSrgb8(r);
           dst[x * 4 + 1] = linearToSrgb8(g);
@@ -3854,14 +4335,14 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
             static_cast<size_t>(row) * mapped.Stride);
         auto* dst = resultBits + static_cast<size_t>(row) * resultStride;
         for (Uint32 x = 0; x < w; ++x) {
-          const float r = std::isfinite(srcFloat[x * 4 + 0])
-                              ? std::clamp(srcFloat[x * 4 + 0], 0.0f, 1.0f)
+          const float r = std::isfinite(srcFloat[x * 4 + redIndex])
+                              ? std::clamp(srcFloat[x * 4 + redIndex], 0.0f, 1.0f)
                               : 0.0f;
           const float g = std::isfinite(srcFloat[x * 4 + 1])
                               ? std::clamp(srcFloat[x * 4 + 1], 0.0f, 1.0f)
                               : 0.0f;
-          const float b = std::isfinite(srcFloat[x * 4 + 2])
-                              ? std::clamp(srcFloat[x * 4 + 2], 0.0f, 1.0f)
+          const float b = std::isfinite(srcFloat[x * 4 + blueIndex])
+                              ? std::clamp(srcFloat[x * 4 + blueIndex], 0.0f, 1.0f)
                               : 0.0f;
           const float a = std::isfinite(srcFloat[x * 4 + 3])
                               ? std::clamp(srcFloat[x * 4 + 3], 0.0f, 1.0f)
@@ -3874,7 +4355,7 @@ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::Channe
       });
     }
 
-    ctx->UnmapTextureSubresource(stagingTex, 0, 0);
+    m_asyncReadbackContext->UnmapTextureSubresource(stagingTex, 0, 0);
     releaseSlot();
 
     // Invoke callback on the caller's thread (or thread pool)
@@ -3960,6 +4441,36 @@ Diligent::ITextureView* ArtifactIRenderer::Impl::activeDepthView() const
   return nullptr;
 }
 
+void ArtifactIRenderer::Impl::applyRenderViewportState(
+    IDeviceContext* context) const
+{
+  if (!context || !m_renderViewportState_.enabled ||
+      m_renderViewportState_.targetWidth == 0 ||
+      m_renderViewportState_.targetHeight == 0) {
+    return;
+  }
+
+  Viewport viewport{};
+  viewport.TopLeftX = m_renderViewportState_.x;
+  viewport.TopLeftY = m_renderViewportState_.y;
+  viewport.Width = m_renderViewportState_.width;
+  viewport.Height = m_renderViewportState_.height;
+  viewport.MinDepth = 0.0f;
+  viewport.MaxDepth = 1.0f;
+  context->SetViewports(1, &viewport, m_renderViewportState_.targetWidth,
+                        m_renderViewportState_.targetHeight);
+
+  const Rect scissor{
+      static_cast<Int32>(std::lround(m_renderViewportState_.x)),
+      static_cast<Int32>(std::lround(m_renderViewportState_.y)),
+      static_cast<Int32>(std::lround(m_renderViewportState_.x +
+                                     m_renderViewportState_.width)),
+      static_cast<Int32>(std::lround(m_renderViewportState_.y +
+                                     m_renderViewportState_.height))};
+  context->SetScissorRects(1, &scissor, m_renderViewportState_.targetWidth,
+                           m_renderViewportState_.targetHeight);
+}
+
 void ArtifactIRenderer::Impl::bindActiveRenderTargets(IDeviceContext* context) const
 {
   if (!context) return;
@@ -3972,13 +4483,19 @@ void ArtifactIRenderer::Impl::bindActiveRenderTargets(IDeviceContext* context) c
     context->SetRenderTargets(0, nullptr, dsv,
                               RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
   }
+  applyRenderViewportState(context);
 }
 
 void ArtifactIRenderer::Impl::setRenderTargetOverrides(ITextureView* colorRTV,
                                                         ITextureView* depthDSV)
 {
   if (auto context = deviceManager_.immediateContext()) {
-    submitQueuedDraws(context);
+    const bool isolatedAsyncBatch = deferredPacketRecordPending_ &&
+        cmdBuf_.empty() &&
+        primitiveRenderer3D_.pendingGizmoVertexCount() == 0;
+    if (!isolatedAsyncBatch) {
+      submitQueuedDraws(context);
+    }
   }
   m_overrideColorRTV = colorRTV;
   m_overrideDepthDSV = depthDSV;
@@ -3987,6 +4504,12 @@ void ArtifactIRenderer::Impl::setRenderTargetOverrides(ITextureView* colorRTV,
   primitiveRenderer3D_.setOverrideDSV(depthDSV);
   if (auto* colorView = activeColorView()) {
     primitiveRenderer3D_.setRenderTargetFormat(colorView->GetDesc().Format);
+  }
+  if (deferredPacketRecordPending_ && cmdBuf_.empty()) {
+    // The in-flight buffer retains its original target independently. Arm the
+    // fresh owner buffer for subsequent overlay packets without joining the
+    // recording worker.
+    cmdBuf_.setTargetRTV(primitiveRenderer_.currentRTV());
   }
 }
 
@@ -4023,9 +4546,12 @@ void ArtifactIRenderer::Impl::setRenderTargetOverrides(ITextureView* colorRTV,
    primitiveRenderer3D_.setPSOs(shaderManager_);
    submitter_.createBuffers(deviceManager_.device(), RenderConfig::MainRTVFormat);
    submitter_.setPSOs(shaderManager_);
+   initializeDeferredPacketRecordWorker();
    submitter_.setFrameCostStats(nullptr);
    submitter_.setDeferredContext(deviceManager_.deferredContext());
    primitiveRenderer_.setCommandBuffer(&cmdBuf_);
+   primitiveRenderer_.setBeforeTextureOverwriteCallback(
+       &Impl::submitQueuedDrawsBeforeTextureOverwrite, this);
    m_initialized = true;
 
    // Eager particle renderer + async prewarm: without this the first
@@ -4071,6 +4597,7 @@ void ArtifactIRenderer::Impl::setRenderTargetOverrides(ITextureView* colorRTV,
   // Release both the context binding and that retained reference before the
   // swap chain drops its old back buffers during Resize().
   if (auto context = deviceManager_.immediateContext()) {
+   submitQueuedDraws(context.RawPtr(), false);
    context->SetRenderTargets(0, nullptr, nullptr,
                             RESOURCE_STATE_TRANSITION_MODE_NONE);
   }
@@ -4162,6 +4689,7 @@ void ArtifactIRenderer::Impl::setRenderTargetOverrides(ITextureView* colorRTV,
 
 void ArtifactIRenderer::Impl::beginFrameCostCapture()
 {
+  m_frameCostCaptureActive_ = true;
   m_currentFrameCostStats_ = {};
   lastParticleDebug_.clear();
   lastParticleDrawQueued_ = false;
@@ -4174,6 +4702,7 @@ void ArtifactIRenderer::Impl::beginFrameCostCapture()
   static const bool frameDebugEnabled =
       qEnvironmentVariableIsSet("ARTIFACT_ENABLE_CONTINUOUS_RENDER_DIAGNOSTICS") &&
       qEnvironmentVariable("ARTIFACT_ENABLE_CONTINUOUS_RENDER_DIAGNOSTICS") != QStringLiteral("0");
+  m_frameDebugCaptureActive_ = frameDebugEnabled;
   submitter_.setFrameDebugCaptureEnabled(frameDebugEnabled);
   submitter_.setFrameCostStats(&m_currentFrameCostStats_);
   primitiveRenderer3D_.setFrameCostStats(&m_currentFrameCostStats_);
@@ -4181,6 +4710,8 @@ void ArtifactIRenderer::Impl::beginFrameCostCapture()
 
 void ArtifactIRenderer::Impl::endFrameCostCapture()
 {
+  m_frameCostCaptureActive_ = false;
+  m_frameDebugCaptureActive_ = false;
   submitter_.setFrameCostStats(nullptr);
   primitiveRenderer3D_.setFrameCostStats(nullptr);
   submitter_.endFrameDebugCapture();
@@ -4218,6 +4749,9 @@ std::vector<ArtifactCore::FrameDebugPassRecord> ArtifactIRenderer::Impl::frameDe
 
  void ArtifactIRenderer::Impl::clear()
  {
+  if (auto ctx = deviceManager_.immediateContext()) {
+   submitQueuedDraws(ctx.RawPtr());
+  }
   ScopedGpuDebugGroup debugGroup(deviceManager_.immediateContext(),
                                  "ArtifactIRenderer.Clear");
   primitiveRenderer_.clear(deviceManager_.immediateContext(), clearColor_);
@@ -4352,6 +4886,10 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
 
   void ArtifactIRenderer::Impl::destroy()
   {
+  if (auto context = deviceManager_.immediateContext()) {
+   completeDeferredPacketRecording(context.RawPtr());
+  }
+  deferredPacketRecordWorker_.shutdown();
   if (particleRenderer_) {
    particleRenderer_->setFrameCostStats(nullptr);
   }
@@ -4359,6 +4897,7 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
   submitter_.setPrimitiveRenderer3D(nullptr);
   submitter_.destroy();
   cmdBuf_.reset();
+  primitiveRenderer_.noteCommandBufferSubmitted();
   meshRenderers_.clear();
   meshRendererGeometry_.clear();
   materialRangeCache_.clear();
@@ -4411,6 +4950,7 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
   clonerGridParams_.Release();
   clonerGridOutput_.Release();
   clonerGridOutputCursor_ = 0;
+  ++clonerGridBatchGeneration_;
   clonerGridReady_ = false;
   primitiveRenderer_.destroy();
   primitiveRenderer3D_.destroy();
@@ -4617,6 +5157,8 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
 
   void ArtifactIRenderer::clear()        { impl_->clear(); }
   void ArtifactIRenderer::flush()        { impl_->flush(); }
+  bool ArtifactIRenderer::flushDeferredPacketsAsync()
+  { return impl_->flushDeferredPacketsAsync(); }
  void ArtifactIRenderer::flushAndWait(bool restoreRenderTarget) {
   impl_->flushAndWait(restoreRenderTarget);
  }
@@ -4703,6 +5245,8 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
  quint64 ArtifactIRenderer::presentSuccessCount() const { return impl_->presentSuccessCount(); }
  quint64 ArtifactIRenderer::presentFailureCount() const { return impl_->presentFailureCount(); }
  quint64 ArtifactIRenderer::presentSkippedCount() const { return impl_->presentSkippedCount(); }
+ quint64 ArtifactIRenderer::deferredWorkerSubmitCount() const
+ { return impl_->deferredWorkerSubmitCount(); }
  QString ArtifactIRenderer::lastPresentStatus() const { return impl_->lastPresentStatus(); }
  void ArtifactIRenderer::beginFrameCostCapture() { impl_->beginFrameCostCapture(); }
  void ArtifactIRenderer::endFrameCostCapture() { impl_->endFrameCostCapture(); }
@@ -4715,13 +5259,24 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
  quint64 ArtifactIRenderer::lastFrameGpuTimingExecutionId() const { return impl_->lastFrameGpuTimingExecutionId(); }
 
 QImage ArtifactIRenderer::readbackToImage() const { return impl_->readbackToImage(); }
+QImage ArtifactIRenderer::readbackToImage(
+    ArtifactCore::SurfaceChannelOrder channelOrder) const {
+  return impl_->readbackToImage(channelOrder);
+}
 ArtifactCore::ImageF32x4_RGBA ArtifactIRenderer::readbackToImageF32() const {
   return impl_->readbackToImageF32();
 }
 QImage ArtifactIRenderer::readbackTextureViewToImage(
      Diligent::ITextureView* textureView) const
  {
-  return impl_->readbackTextureViewToImage(textureView);
+  return impl_->readbackTextureViewToImage(
+      textureView, ArtifactCore::SurfaceChannelOrder::RGBA);
+ }
+QImage ArtifactIRenderer::readbackTextureViewToImage(
+     Diligent::ITextureView* textureView,
+     ArtifactCore::SurfaceChannelOrder channelOrder) const
+ {
+  return impl_->readbackTextureViewToImage(textureView, channelOrder);
  }
  QImage ArtifactIRenderer::readbackDepthToImage() const { return impl_->readbackDepthToImage(); }
  Diligent::ITextureView* ArtifactIRenderer::liveDepthStencilView() const
@@ -4745,14 +5300,34 @@ QImage ArtifactIRenderer::readbackTextureViewToImage(
      Diligent::ITextureView* textureView,
      ReadbackCallback callback) const
  {
-  return impl_->readbackTextureViewToImageAsync(textureView, std::move(callback));
+  return readbackTextureViewToImageAsync(
+      textureView, ArtifactCore::SurfaceChannelOrder::RGBA,
+      std::move(callback));
+ }
+ bool ArtifactIRenderer::readbackTextureViewToImageAsync(
+     Diligent::ITextureView* textureView,
+     ArtifactCore::SurfaceChannelOrder channelOrder,
+     ReadbackCallback callback) const
+ {
+  return impl_->readbackTextureViewToImageAsync(
+      textureView, channelOrder, std::move(callback));
  }
  bool ArtifactIRenderer::readbackTextureViewToBufferAsync(
      Diligent::ITextureView* textureView, ReadbackBufferCallback callback,
      bool allowColdAllocation) const
  {
+  return readbackTextureViewToBufferAsync(
+      textureView, ArtifactCore::SurfaceChannelOrder::RGBA,
+      std::move(callback), allowColdAllocation);
+ }
+ bool ArtifactIRenderer::readbackTextureViewToBufferAsync(
+     Diligent::ITextureView* textureView,
+     ArtifactCore::SurfaceChannelOrder channelOrder,
+     ReadbackBufferCallback callback,
+     bool allowColdAllocation) const
+ {
   return impl_->readbackTextureViewToImageAsync(
-      textureView ? textureView : impl_->activeColorView(), {},
+      textureView ? textureView : impl_->activeColorView(), channelOrder, {},
       std::move(callback), allowColdAllocation);
  }
  QImage ArtifactIRenderer::readbackChannelToImage(ChannelType channel) const
@@ -4798,11 +5373,23 @@ ArtifactCore::MultiChannelImage ArtifactIRenderer::readbackToMultiChannelImage()
           rgba.size() == static_cast<size_t>(width) * height * 4u;
     }
   };
-  auto readFloat = [&](ITextureView* view) {
+  auto readFloat = [&](ITextureView* view,
+                       ArtifactCore::SurfaceChannelOrder channelOrder) {
     FloatReadback result;
     if (!view) return result;
     impl_->readbackTextureViewToFloatBuffer(
         view, result.rgba, result.width, result.height);
+    if (channelOrder == ArtifactCore::SurfaceChannelOrder::BGRA &&
+        result.valid()) {
+      ArtifactCore::Parallel::ForPixels(
+          0, result.height, result.width, result.height, [&](int y) {
+        float* row = result.rgba.data() +
+            static_cast<size_t>(y) * static_cast<size_t>(result.width) * 4u;
+        for (int x = 0; x < result.width; ++x) {
+          std::swap(row[x * 4], row[x * 4 + 2]);
+        }
+      });
+    }
     return result;
   };
   auto auxiliaryView = [&](ChannelType channel) -> ITextureView* {
@@ -4812,23 +5399,50 @@ ArtifactCore::MultiChannelImage ArtifactIRenderer::readbackToMultiChannelImage()
   };
 
   FloatReadback beauty;
-  if (needRgba) beauty = readFloat(impl_->activeColorView());
+  if (needRgba) {
+    beauty = readFloat(impl_->activeColorView(),
+                       ArtifactCore::SurfaceChannelOrder::BGRA);
+  }
   FloatReadback emission;
-  if (needEmission) emission = readFloat(auxiliaryView(ChannelType::Emission));
+  if (needEmission) {
+    emission = readFloat(auxiliaryView(ChannelType::Emission),
+                         ArtifactCore::SurfaceChannelOrder::RGBA);
+  }
   FloatReadback objectId;
-  if (needObjectId) objectId = readFloat(auxiliaryView(ChannelType::ObjectId));
+  if (needObjectId) {
+    objectId = readFloat(auxiliaryView(ChannelType::ObjectId),
+                         ArtifactCore::SurfaceChannelOrder::RGBA);
+  }
   FloatReadback materialId;
-  if (needMaterialId) materialId = readFloat(auxiliaryView(ChannelType::MaterialId));
+  if (needMaterialId) {
+    materialId = readFloat(auxiliaryView(ChannelType::MaterialId),
+                           ArtifactCore::SurfaceChannelOrder::RGBA);
+  }
   FloatReadback albedo;
-  if (needAlbedo) albedo = readFloat(auxiliaryView(ChannelType::AlbedoR));
+  if (needAlbedo) {
+    albedo = readFloat(auxiliaryView(ChannelType::AlbedoR),
+                       ArtifactCore::SurfaceChannelOrder::BGRA);
+  }
   FloatReadback normal;
-  if (needNormal) normal = readFloat(auxiliaryView(ChannelType::NormalX));
+  if (needNormal) {
+    normal = readFloat(auxiliaryView(ChannelType::NormalX),
+                       ArtifactCore::SurfaceChannelOrder::RGBA);
+  }
   FloatReadback velocity;
-  if (needVelocity) velocity = readFloat(auxiliaryView(ChannelType::VelocityX));
+  if (needVelocity) {
+    velocity = readFloat(auxiliaryView(ChannelType::VelocityX),
+                         ArtifactCore::SurfaceChannelOrder::RGBA);
+  }
   FloatReadback position;
-  if (needPosition) position = readFloat(auxiliaryView(ChannelType::PositionX));
+  if (needPosition) {
+    position = readFloat(auxiliaryView(ChannelType::PositionX),
+                         ArtifactCore::SurfaceChannelOrder::RGBA);
+  }
   FloatReadback uv;
-  if (needUv) uv = readFloat(auxiliaryView(ChannelType::U));
+  if (needUv) {
+    uv = readFloat(auxiliaryView(ChannelType::U),
+                   ArtifactCore::SurfaceChannelOrder::RGBA);
+  }
 
   std::vector<float> depthValues;
   int depthWidth = 0;
@@ -4962,7 +5576,8 @@ ArtifactCore::MultiChannelImage ArtifactIRenderer::readbackToMultiChannelImage()
    if (index < impl_->m_auxiliaryChannelSources.size() &&
        impl_->m_auxiliaryChannelSources[index]) {
     albedo = impl_->readbackTextureViewToImage(
-        impl_->m_auxiliaryChannelSources[index]);
+        impl_->m_auxiliaryChannelSources[index],
+        ArtifactCore::SurfaceChannelOrder::RGBA);
    }
   }
   QImage normal;
@@ -4971,7 +5586,8 @@ ArtifactCore::MultiChannelImage ArtifactIRenderer::readbackToMultiChannelImage()
    if (index < impl_->m_auxiliaryChannelSources.size() &&
        impl_->m_auxiliaryChannelSources[index]) {
     normal = impl_->readbackTextureViewToImage(
-        impl_->m_auxiliaryChannelSources[index]);
+        impl_->m_auxiliaryChannelSources[index],
+        ArtifactCore::SurfaceChannelOrder::RGBA);
    }
   }
   QImage velocity;
@@ -4980,7 +5596,8 @@ ArtifactCore::MultiChannelImage ArtifactIRenderer::readbackToMultiChannelImage()
    if (index < impl_->m_auxiliaryChannelSources.size() &&
        impl_->m_auxiliaryChannelSources[index]) {
     velocity = impl_->readbackTextureViewToImage(
-        impl_->m_auxiliaryChannelSources[index]);
+        impl_->m_auxiliaryChannelSources[index],
+        ArtifactCore::SurfaceChannelOrder::RGBA);
    }
   }
 
@@ -5435,6 +6052,7 @@ void ArtifactIRenderer::drawEnvironmentSkybox()
   if (!invertible) {
     return;
   }
+  impl_->submitQueuedDraws(context.RawPtr());
   impl_->shaderManager_.drawSkybox(context.RawPtr(), environmentMap,
                                    inverseViewProjection.constData(),
                                    impl_->environmentMapIntensity_,
@@ -5996,6 +6614,7 @@ void ArtifactIRenderer::drawSprite(float x, float y, float w, float h, const QIm
   if (!impl_->shaderManager_.hasClonerSpriteTransformPipeline() ||
       !impl_->submitter_.clonerSpriteGpuReady() ||
       !placementRange.buffer || placementRange.count == 0 ||
+      placementRange.batchGeneration != impl_->clonerGridBatchGeneration_ ||
       placementIndex < placementRange.firstIndex ||
       placementIndex - placementRange.firstIndex >= placementRange.count) {
    return false;
@@ -6016,7 +6635,8 @@ void ArtifactIRenderer::drawSprite(float x, float y, float w, float h, const QIm
   return impl_->primitiveRenderer_.drawSpriteTransformedClonerGrid(
       x, y, w, h, baseTransform, cpuFallbackTransform, texture, opacity,
       placementRange.buffer,
-      placementIndex, placementRange.rotationAware);
+      placementIndex, placementRange.rotationAware,
+      placementRange.dispatchPacketIndex);
  }
  void ArtifactIRenderer::drawMaskedTextureLocal(float x, float y, float w, float h, Diligent::ITextureView* sceneTexture, const QImage& maskImage, float opacity)
  {
@@ -6172,7 +6792,8 @@ Diligent::ITextureView* ArtifactIRenderer::textureForVideoFrame(
     qint64 frameContentKey,
     const ArtifactCore::ImageUploadBuffer* preparedUpload, bool residentOnly) {
   return impl_->primitiveRenderer_.textureForVideoFrame(
-      image, videoLayerId, frameContentKey, preparedUpload, residentOnly);
+      image, videoLayerId, frameContentKey, preparedUpload, residentOnly,
+      &Impl::submitQueuedDrawsBeforeTextureOverwrite, impl_.get());
 }
 
 Diligent::ITextureView* ArtifactIRenderer::textureForImage(
@@ -6543,9 +7164,8 @@ void ArtifactIRenderer::drawGizmoCube(Detail::float3 center, float halfExtent, c
 void ArtifactIRenderer::flushGizmo3D()
 {
  if (auto ctx = impl_->deviceManager_.immediateContext()) {
-  // 2D composition commands are buffered while gizmo primitives are issued
-  // immediately. Drain older 2D work first so the delayed composition sprite
-  // cannot be submitted by present() after the gizmo and cover it.
+  // Submit queued composition packets before the gizmo overlay on one context
+  // before present().
   impl_->submitQueuedDraws(ctx.RawPtr());
  }
 }
@@ -6692,6 +7312,7 @@ bool ArtifactIRenderer::blendLayers(ArtifactCore::LayerBlendPipeline *pipeline,
   if (!pipeline || !ctx) {
    return false;
   }
+  impl_->submitQueuedDraws(ctx.RawPtr());
   return pipeline->blend(ctx, srcSRV, dstSRV, outUAV, mode, opacity);
  }
 bool ArtifactIRenderer::blendLayers(ArtifactCore::LayerBlendPipeline *pipeline,
@@ -6706,6 +7327,7 @@ bool ArtifactIRenderer::blendLayers(ArtifactCore::LayerBlendPipeline *pipeline,
   if (!pipeline || !ctx) {
    return false;
   }
+  impl_->submitQueuedDraws(ctx.RawPtr());
   return pipeline->blend(ctx, srcSRV, dstSRV, outUAV, mode, opacity, region);
  }
 bool ArtifactIRenderer::copyTextureOutsideRegion(
@@ -6746,6 +7368,8 @@ bool ArtifactIRenderer::copyTextureOutsideRegion(
   return false;
  }
 
+ impl_->submitQueuedDraws(context.RawPtr());
+
  const auto copyBox = [&](Diligent::Uint32 minX, Diligent::Uint32 maxX,
                           Diligent::Uint32 minY, Diligent::Uint32 maxY) {
   if (minX == maxX || minY == maxY) {
@@ -6782,6 +7406,7 @@ bool ArtifactIRenderer::clearTextureRegion(
  if (!pipeline || !context) {
   return false;
  }
+ impl_->submitQueuedDraws(context.RawPtr());
  return pipeline->clearRegion(context, outUAV, region);
 }
 bool ArtifactIRenderer::convertLayerToFloat(
@@ -6795,6 +7420,7 @@ bool ArtifactIRenderer::convertLayerToFloat(
  if (!pipeline || !ctx) {
   return false;
  }
+ impl_->submitQueuedDraws(ctx.RawPtr());
  return pipeline->convertLayerToFloat(ctx, srcSRV, outUAV, width, height);
 }
 bool ArtifactIRenderer::convertLayerToFloat(
@@ -6809,6 +7435,7 @@ bool ArtifactIRenderer::convertLayerToFloat(
  if (!pipeline || !ctx) {
   return false;
  }
+ impl_->submitQueuedDraws(ctx.RawPtr());
  return pipeline->convertLayerToFloat(ctx, srcSRV, outUAV, width, height,
                                       region);
 }
@@ -6829,43 +7456,22 @@ bool ArtifactIRenderer::applyTrackMatte(
  if (!pipeline || !ctx) {
   return false;
  }
+ impl_->submitQueuedDraws(ctx.RawPtr());
  return pipeline->applyTrackMatte(ctx, layerSRV, matteSrc0SRV,
                                   matteSrc1SRV, matteSrc2SRV,
                                   outUAV, params, width, height,
                                   priorMaskSRV, outputMaskOnly);
 }
 namespace {
-struct ClonerGridGpuParams {
-  Diligent::Uint32 columns = 0;
-  Diligent::Uint32 rows = 0;
-  Diligent::Uint32 depth = 0;
-  Diligent::Uint32 candidateCount = 0;
-  float spacingX = 0.0f;
-  float spacingY = 0.0f;
-  float spacingZ = 0.0f;
-  Diligent::Uint32 outputCapacity = 0;
-  Diligent::Uint32 outputOffset = 0;
-  float distributionParamX = 0.0f;
-  float distributionParamY = 0.0f;
-  float distributionParamZ = 0.0f;
-  float placementRotationStep = 0.0f;
-  float modifierTranslationX = 0.0f;
-  float modifierTranslationY = 0.0f;
-  float modifierTranslationZ = 0.0f;
-  float modifierRotationDegrees = 0.0f;
-  float modifierScaleX = 1.0f;
-  float modifierScaleY = 1.0f;
-  float padding2 = 0.0f;
-};
-static_assert(sizeof(ClonerGridGpuParams) == 80);
-static_assert(offsetof(ClonerGridGpuParams, outputCapacity) == 28);
-static_assert(offsetof(ClonerGridGpuParams, outputOffset) == 32);
-static_assert(offsetof(ClonerGridGpuParams, distributionParamX) == 36);
-static_assert(offsetof(ClonerGridGpuParams, placementRotationStep) == 48);
-static_assert(offsetof(ClonerGridGpuParams, modifierTranslationX) == 52);
-static_assert(offsetof(ClonerGridGpuParams, modifierRotationDegrees) == 64);
-static_assert(offsetof(ClonerGridGpuParams, modifierScaleX) == 68);
-static_assert(offsetof(ClonerGridGpuParams, modifierScaleY) == 72);
+static_assert(sizeof(ClonerGridDispatchParams) == 96);
+static_assert(offsetof(ClonerGridDispatchParams, outputCapacity) == 28);
+static_assert(offsetof(ClonerGridDispatchParams, outputOffset) == 32);
+static_assert(offsetof(ClonerGridDispatchParams, distributionParamX) == 48);
+static_assert(offsetof(ClonerGridDispatchParams, placementRotationStep) == 60);
+static_assert(offsetof(ClonerGridDispatchParams, modifierTranslationX) == 64);
+static_assert(offsetof(ClonerGridDispatchParams, modifierRotationDegrees) == 76);
+static_assert(offsetof(ClonerGridDispatchParams, modifierScaleX) == 80);
+static_assert(offsetof(ClonerGridDispatchParams, modifierScaleY) == 84);
 
 constexpr char kClonerGridPlacementHlsl[] = R"hlsl(
 struct CloneGridPlacementRecord
@@ -6888,12 +7494,16 @@ cbuffer ClonerGridParams
     float SpacingZ;
     uint OutputCapacity;
     uint OutputOffset;
+    float OutputOffsetPadding0;
+    float OutputOffsetPadding1;
+    float OutputOffsetPadding2;
     float3 DistributionParams;
     float RotationStep;
     float3 ModifierTranslation;
     float ModifierRotationDegrees;
     float2 ModifierScale;
-    float Padding;
+    float Padding2;
+    float Padding3;
 };
 
 RWStructuredBuffer<CloneGridPlacementRecord> g_ClonerGridOutput;
@@ -7053,7 +7663,7 @@ bool ArtifactIRenderer::Impl::initializeClonerGridPlacement() {
 
   Diligent::BufferDesc paramsDesc;
   paramsDesc.Name = "Cloner Grid Placement/Params";
-  paramsDesc.Size = sizeof(ClonerGridGpuParams);
+  paramsDesc.Size = sizeof(ClonerGridDispatchParams);
   paramsDesc.Usage = Diligent::USAGE_DYNAMIC;
   paramsDesc.BindFlags = Diligent::BIND_UNIFORM_BUFFER;
   paramsDesc.CPUAccessFlags = Diligent::CPU_ACCESS_WRITE;
@@ -7078,10 +7688,19 @@ bool ArtifactIRenderer::Impl::initializeClonerGridPlacement() {
     return false;
   }
 
+  auto *outputUav = outputBuffer->GetDefaultView(
+      Diligent::BUFFER_VIEW_UNORDERED_ACCESS);
+  if (!outputUav ||
+      !executor->setBuffer("ClonerGridParams", paramsBuffer.RawPtr()) ||
+      !executor->setBufferView("g_ClonerGridOutput", outputUav)) {
+    return false;
+  }
+
   clonerGridExecutor_ = std::move(executor);
   clonerGridParams_ = std::move(paramsBuffer);
   clonerGridOutput_ = std::move(outputBuffer);
   clonerGridOutputCursor_ = 0;
+  ++clonerGridBatchGeneration_;
   clonerGridReady_ = true;
   return true;
 }
@@ -7183,6 +7802,7 @@ bool ArtifactIRenderer::applyViewportExposure(
       !executor->setTextureView("g_ExposureDst", dstUAV)) {
     return false;
   }
+  impl_->submitQueuedDraws(ctx.RawPtr());
   executor->dispatch(ctx, ArtifactCore::ComputeExecutor::makeDispatchAttribs(
                                width, height, 1, 8, 8, 1),
                      RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
@@ -7288,48 +7908,38 @@ bool ArtifactIRenderer::dispatchClonerGridPlacement(
     return false;
   }
 
-  auto context = impl_->deviceManager_.immediateContext();
-  auto *outputUav = outputBuffer->GetDefaultView(
-      Diligent::BUFFER_VIEW_UNORDERED_ACCESS);
-  if (!context || !outputUav) {
-    return false;
-  }
-
   const auto candidateCount =
       static_cast<std::uint32_t>(candidateCount64);
-  const ClonerGridGpuParams params{
+  const ClonerGridDispatchParams params{
       columns, rows, depth, candidateCount,
       spacingX, spacingY, spacingZ, outputCapacity,
-      impl_->clonerGridOutputCursor_,
+      impl_->clonerGridOutputCursor_, 0.0f, 0.0f, 0.0f,
       (linear || radial) ? spacingX : 0.0f,
       (linear || radial) ? spacingY : 0.0f,
       (linear || radial) ? spacingZ : 0.0f,
       placementRotationStep, modifierTranslationX, modifierTranslationY,
       modifierTranslationZ, modifierRotationDegrees, modifierScaleX,
       modifierScaleY, 0.0f};
-  void *mapped = nullptr;
-  context->MapBuffer(impl_->clonerGridParams_, Diligent::MAP_WRITE,
-                     Diligent::MAP_FLAG_DISCARD, mapped);
-  if (!mapped) {
-    return false;
-  }
-  std::memcpy(mapped, &params, sizeof(params));
-  context->UnmapBuffer(impl_->clonerGridParams_, Diligent::MAP_WRITE);
-
   auto &executor = impl_->clonerGridExecutor_;
-  if (!executor->setBuffer("ClonerGridParams",
-                           impl_->clonerGridParams_) ||
-      !executor->setBufferView("g_ClonerGridOutput", outputUav)) {
+  ClonerGridDispatchPkt dispatchPacket;
+  dispatchPacket.params = params;
+  dispatchPacket.pPSO = executor->pipelineState();
+  dispatchPacket.pSRB = executor->shaderResourceBinding();
+  dispatchPacket.paramsBuffer = impl_->clonerGridParams_.RawPtr();
+  dispatchPacket.outputBuffer = outputBuffer;
+  if (!dispatchPacket.pPSO || !dispatchPacket.pSRB) {
     return false;
   }
-  executor->dispatch(
-      context,
-      ArtifactCore::ComputeExecutor::makeDispatchAttribs(
-          candidateCount, 1, 1, 64, 1, 1),
-      Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+  const std::size_t dispatchPacketIndex = impl_->cmdBuf_.size();
+  if (!impl_->cmdBuf_.tryAppend(std::move(dispatchPacket))) {
+    return false;
+  }
   outputRange.buffer = outputBuffer;
   outputRange.firstIndex = impl_->clonerGridOutputCursor_;
   outputRange.count = candidateCount + 1u;
+  outputRange.dispatchPacketIndex = dispatchPacketIndex;
+  outputRange.batchGeneration = impl_->clonerGridBatchGeneration_;
   outputRange.rotationAware = radial || placementRotationStep != 0.0f ||
       modifierRotationDegrees != 0.0f || modifierScaleX != 1.0f ||
       modifierScaleY != 1.0f;
@@ -7502,6 +8112,7 @@ bool ArtifactIRenderer::dispatchClonerGridPlacement(
   auto context = impl_->deviceManager_.immediateContext();
   if (!source || !destination || !context || !source->GetTexture() ||
       !destination->GetTexture()) return false;
+  impl_->submitQueuedDraws(context.RawPtr());
   Diligent::ResolveTextureSubresourceAttribs attribs;
   attribs.SrcTextureTransitionMode = Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
   attribs.DstTextureTransitionMode = Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
@@ -7567,6 +8178,9 @@ bool ArtifactIRenderer::dispatchClonerGridPlacement(
  {
   auto ctx = impl_->deviceManager_.immediateContext();
   if (!ctx) return;
+  // Preserve call order when this immediate clear follows queued composition
+  // packets targeting the active render target.
+  impl_->submitQueuedDraws(ctx.RawPtr());
   auto* rtv = impl_->activeColorView();
   if (!rtv) return;
   const float clearColor[] = { color.r(), color.g(), color.b(), color.a() };
@@ -7578,6 +8192,9 @@ bool ArtifactIRenderer::dispatchClonerGridPlacement(
  {
   auto ctx = impl_->deviceManager_.immediateContext();
   if (!ctx || !textureView) return;
+  // The explicit target clear is immediate; drain earlier packet work first
+  // so it cannot overtake that work when the queued batch is submitted later.
+  impl_->submitQueuedDraws(ctx.RawPtr());
   auto* rtv = static_cast<Diligent::ITextureView*>(textureView);
   const float clearColor[] = { color.r(), color.g(), color.b(), color.a() };
   ctx->SetRenderTargets(1, &rtv, nullptr,
@@ -7590,6 +8207,8 @@ bool ArtifactIRenderer::dispatchClonerGridPlacement(
  {
   auto ctx = impl_->deviceManager_.immediateContext();
   if (!ctx || !depthTextureView) return;
+  // Depth clears share the immediate context with queued color/depth draws.
+  impl_->submitQueuedDraws(ctx.RawPtr());
   auto* dsv = static_cast<Diligent::ITextureView*>(depthTextureView);
   auto clearDepth = std::clamp(depth, 0.0f, 1.0f);
   // Keep the depth view bound while clearing. Some backends require this and

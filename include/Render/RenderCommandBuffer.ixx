@@ -19,6 +19,8 @@ module;
 #include <QVector3D>
 #include <Texture.h>
 #include <Buffer.h>
+#include <PipelineState.h>
+#include <ShaderResourceBinding.h>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <BasicMath.hpp>
 export module Artifact.Render.RenderCommandBuffer;
@@ -30,6 +32,19 @@ import Graphics.ParticleData;
 export namespace Artifact {
 
 using namespace Diligent;
+
+// Logical viewport state captured by the renderer and replayed after a
+// context binds its render target. Deferred contexts do not inherit the
+// immediate context's viewport or scissor state.
+struct RenderViewportState {
+    float x = 0.0f;
+    float y = 0.0f;
+    float width = 0.0f;
+    float height = 0.0f;
+    Uint32 targetWidth = 0;
+    Uint32 targetHeight = 0;
+    bool enabled = false;
+};
 
 struct RenderSolidTransform2D {
     float2 offset;
@@ -180,6 +195,50 @@ struct ClonerSpriteXformPkt {
     float localX = 0.0f;
     float localY = 0.0f;
     float opacity = 1.0f;
+    // Local packet index; RenderCommandBuffer rebases it when merging buffers.
+    std::size_t placementDispatchPacketIndex = static_cast<std::size_t>(-1);
+};
+
+// Parameters copied into the dynamic constant buffer when the ordered
+// dispatch packet is recorded on the selected Diligent context.
+struct ClonerGridDispatchParams {
+    Diligent::Uint32 columns = 0;
+    Diligent::Uint32 rows = 0;
+    Diligent::Uint32 depth = 0;
+    Diligent::Uint32 candidateCount = 0;
+    float spacingX = 0.0f;
+    float spacingY = 0.0f;
+    float spacingZ = 0.0f;
+    Diligent::Uint32 outputCapacity = 0;
+    Diligent::Uint32 outputOffset = 0;
+    float outputOffsetPadding0 = 0.0f;
+    float outputOffsetPadding1 = 0.0f;
+    float outputOffsetPadding2 = 0.0f;
+    float distributionParamX = 0.0f;
+    float distributionParamY = 0.0f;
+    float distributionParamZ = 0.0f;
+    float placementRotationStep = 0.0f;
+    float modifierTranslationX = 0.0f;
+    float modifierTranslationY = 0.0f;
+    float modifierTranslationZ = 0.0f;
+    float modifierRotationDegrees = 0.0f;
+    float modifierScaleX = 1.0f;
+    float modifierScaleY = 1.0f;
+    float padding2 = 0.0f;
+    float padding3 = 0.0f;
+};
+
+struct ClonerGridDispatchPkt {
+    ClonerGridDispatchParams params;
+    IPipelineState* pPSO = nullptr;
+    RefCntAutoPtr<IPipelineState> retainedPSO;
+    IShaderResourceBinding* pSRB = nullptr;
+    RefCntAutoPtr<IShaderResourceBinding> retainedSRB;
+    IBuffer* paramsBuffer = nullptr;
+    RefCntAutoPtr<IBuffer> retainedParamsBuffer;
+    IBuffer* outputBuffer = nullptr;
+    RefCntAutoPtr<IBuffer> retainedOutputBuffer;
+    bool recordingSucceeded = false;
 };
 
 struct AtlasSpritePkt {
@@ -238,6 +297,8 @@ struct BillboardImagePkt {
     QVector3D           center;
     QVector2D           size;
     QImage              image;
+    // Keep a submit-time image texture alive until its command list executes.
+    RefCntAutoPtr<ITexture> retainedTexture;
     float4              tint        = {1.0f, 1.0f, 1.0f, 1.0f};
     float               opacity     = 1.0f;
     float               rollDegrees = 0.0f;
@@ -280,7 +341,8 @@ using DrawPacket = std::variant<
     SolidRectPkt, SolidRectXformPkt, GradientRectPkt,
     LinePkt, QuadPkt, DotLinePkt, SolidTriPkt, MpmSurfacePkt, SolidCirclePkt,
     CheckerboardPkt, GridPkt, RectOutlinePkt,
-    SpritePkt, SpriteXformPkt, ClonerSpriteXformPkt, MaskedSpritePkt,
+    SpritePkt, SpriteXformPkt, ClonerGridDispatchPkt, ClonerSpriteXformPkt,
+    MaskedSpritePkt,
     AtlasSpritePkt, AtlasSpriteXformPkt, TexturedTriangleXformPkt,
     BillboardPkt, BillboardImagePkt, ParticlePkt,
     GlyphTextPkt, GlyphTextXformPkt
@@ -331,6 +393,16 @@ public:
     }
     std::size_t capacity() const noexcept { return packets_.capacity(); }
 
+    // Exchange packet storage and retained target ownership without copying.
+    // Used by the renderer's single bounded in-flight deferred-record slot.
+    void swapContents(RenderCommandBuffer& other) noexcept {
+        packets_.swap(other.packets_);
+        recycledParticleBuffers_.swap(other.recycledParticleBuffers_);
+        recycledMpmSurfaceBuffers_.swap(other.recycledMpmSurfaceBuffers_);
+        std::swap(targetRTV_, other.targetRTV_);
+        retainedTargetRTV_.swap(other.retainedTargetRTV_);
+    }
+
     std::vector<ArtifactCore::ParticleVertex> takeRecycledParticleBuffer() {
         if (recycledParticleBuffers_.empty()) return {};
         auto buffer = std::move(recycledParticleBuffers_.back());
@@ -358,7 +430,7 @@ public:
     template <typename Packet>
     void append(Packet&& packet) {
         packets_.emplace_back(std::forward<Packet>(packet));
-        pinTextureViews(packets_.back());
+        pinPacketResources(packets_.back());
     }
 
     // Append without allowing vector growth. Reserve on a cold path first;
@@ -367,7 +439,7 @@ public:
     bool tryAppend(Packet&& packet) {
         if (packets_.size() >= packets_.capacity()) return false;
         packets_.emplace_back(std::forward<Packet>(packet));
-        pinTextureViews(packets_.back());
+        pinPacketResources(packets_.back());
         return true;
     }
 
@@ -426,7 +498,8 @@ public:
 
     bool empty()  const { return packets_.empty(); }
     std::size_t size() const { return packets_.size(); }
-    const std::vector<DrawPacket>& packets() const { return packets_; }
+    std::vector<DrawPacket>& packetsMutable() noexcept { return packets_; }
+    const std::vector<DrawPacket>& packets() const noexcept { return packets_; }
 
 private:
     bool canAppendBuffers(const std::span<RenderCommandBuffer*> sources,
@@ -459,12 +532,25 @@ private:
 
     void moveAppendBuffer(RenderCommandBuffer& source) {
         if (!targetRTV_) setTargetRTV(source.targetRTV_);
-        for (auto& packet : source.packets_) {
+        const std::size_t packetBase = packets_.size();
+        for (std::size_t sourceIndex = 0;
+             sourceIndex < source.packets_.size(); ++sourceIndex) {
+            auto& packet = source.packets_[sourceIndex];
+            if (auto* clonerSprite =
+                    std::get_if<ClonerSpriteXformPkt>(&packet)) {
+                const std::size_t dispatchIndex =
+                    clonerSprite->placementDispatchPacketIndex;
+                if (dispatchIndex < sourceIndex &&
+                    std::holds_alternative<ClonerGridDispatchPkt>(
+                        source.packets_[dispatchIndex])) {
+                    clonerSprite->placementDispatchPacketIndex += packetBase;
+                }
+            }
             packets_.emplace_back(std::move(packet));
         }
         source.reset();
     }
-    static void pinTextureViews(DrawPacket& pkt) {
+    static void pinPacketResources(DrawPacket& pkt) {
         std::visit([](auto& packet) {
             if constexpr (requires { packet.pSRV; packet.retainedSRV; }) {
                 packet.retainedSRV = packet.pSRV;
@@ -474,6 +560,21 @@ private:
                               packet.retainedPlacementBuffer;
                           }) {
                 packet.retainedPlacementBuffer = packet.placementBuffer;
+            }
+            if constexpr (requires {
+                              packet.pPSO;
+                              packet.retainedPSO;
+                              packet.pSRB;
+                              packet.retainedSRB;
+                              packet.paramsBuffer;
+                              packet.retainedParamsBuffer;
+                              packet.outputBuffer;
+                              packet.retainedOutputBuffer;
+                          }) {
+                packet.retainedPSO = packet.pPSO;
+                packet.retainedSRB = packet.pSRB;
+                packet.retainedParamsBuffer = packet.paramsBuffer;
+                packet.retainedOutputBuffer = packet.outputBuffer;
             }
             if constexpr (requires { packet.depthDSV; packet.retainedDepthDSV; }) {
                 packet.retainedDepthDSV = packet.depthDSV;

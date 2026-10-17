@@ -140,6 +140,7 @@ import Core.ArtifactTuple;
 import Artifact.Layer.Construction;
 
 import Artifact.Render.IRenderer;
+import Graphics.SurfaceColorContract;
 import Material.Material;
 import Artifact.Widgets.ViewportOverlay;
 
@@ -353,6 +354,7 @@ import Artifact.Render.CompositionChangeDetector;
 import Artifact.Render.CompositionPassState;
 import Artifact.Render.CompositionRenderPassPlan;
 import Artifact.Render.CompositionRenderPassContext;
+import Artifact.Render.CompositionPassExecutor;
 import Artifact.Widgets.CompositionMotionPathCommands;
 import Artifact.Widgets.CompositionRigUndoCommands;
 import Artifact.Widgets.CompositionTextPuppetUndoCommands;
@@ -4504,9 +4506,8 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer *targetLayer,
 
   // Keep the legacy QImage boundary in the same internal layout as the
   // float-image path. qImageToCvMat() returns BGRA for ARGB32 on Windows and
-  // setFromCVMat() preserves CV_32FC4 channel order. The GPU upload boundary
-  // owns the single BGRA -> RGBA conversion; converting here as well swaps
-  // red and blue again for effect-processed surfaces.
+  // setFromCVMat() preserves CV_32FC4 channel order. The GPU image pipeline
+  // uploads this canonical BGRA backing directly, so do not swizzle it here.
   if (mat.type() != CV_32FC4) {
 
     mat.convertTo(mat, CV_32FC4, 1.0 / 255.0);
@@ -9295,6 +9296,14 @@ void drawLayerForCompositionView(
 
     QHash<QString, LayerSurfaceCacheEntry> *surfaceCache = nullptr,
 
+    bool *surfaceCacheDiagnosticsEnabled = nullptr,
+
+    QHash<QString, quint64> *surfaceCacheHitCounts = nullptr,
+
+    QHash<QString, quint64> *surfaceCacheMissCounts = nullptr,
+
+    QHash<QString, quint64> *surfaceCacheBuildCounts = nullptr,
+
     GPUTextureCacheManager *gpuTextureCacheManager = nullptr,
 
     int64_t cacheFrameNumber = std::numeric_limits<int64_t>::min(),
@@ -9884,8 +9893,9 @@ void drawLayerForCompositionView(
 
           (!cacheIt->processedSurface.isNull() || cacheIt->processedBuffer)) {
 
-        if (layerSurfaceCacheDiagnosticsEnabled_) {
-          ++layerSurfaceCacheHitCounts_[cacheSlotKey];
+        if (surfaceCacheDiagnosticsEnabled && *surfaceCacheDiagnosticsEnabled &&
+            surfaceCacheHitCounts) {
+          ++(*surfaceCacheHitCounts)[cacheSlotKey];
         }
         cacheEntry = &(*cacheIt);
         directProcessedBuffer = cacheEntry->processedBuffer;
@@ -9898,8 +9908,9 @@ void drawLayerForCompositionView(
 
       } else {
 
-        if (layerSurfaceCacheDiagnosticsEnabled_) {
-          ++layerSurfaceCacheMissCounts_[cacheSlotKey];
+        if (surfaceCacheDiagnosticsEnabled && *surfaceCacheDiagnosticsEnabled &&
+            surfaceCacheMissCounts) {
+          ++(*surfaceCacheMissCounts)[cacheSlotKey];
         }
         ArtifactCore::SharedPtr<ArtifactCore::ImageF32x4_RGBA> processedBuffer;
 
@@ -9963,8 +9974,9 @@ void drawLayerForCompositionView(
         }
 
         (*surfaceCache)[cacheSlotKey] = entry;
-        if (layerSurfaceCacheDiagnosticsEnabled_) {
-          ++layerSurfaceCacheBuildCounts_[cacheSlotKey];
+        if (surfaceCacheDiagnosticsEnabled && *surfaceCacheDiagnosticsEnabled &&
+            surfaceCacheBuildCounts) {
+          ++(*surfaceCacheBuildCounts)[cacheSlotKey];
         }
 
         cacheEntry = &(*surfaceCache)[cacheSlotKey];
@@ -10766,26 +10778,29 @@ void drawLayerForCompositionView(
         videoLayer->markFrameRenderQueued(layer->currentFrame());
         QElapsedTimer videoDrawTimer;
         if (profileThisVideoLayer) videoDrawTimer.start();
+        // Resolve/upload before the Cloner producer queues its dispatch packet.
+        // An overwrite barrier may submit the owner queue and reset dispatch
+        // packet indices; doing it here keeps the current dispatch and sprites
+        // together in one ordered batch.
+        Diligent::RefCntAutoPtr<Diligent::ITextureView> videoTexture(
+            renderer->textureForVideoFrame(
+                buffer, QUuid(layer->id().toString()),
+                static_cast<qint64>(layer->currentFrame()),
+                preparedUpload.get()));
+        if (!videoTexture) {
+            videoTexture = renderer->textureForImage(buffer);
+        }
         drawWithClonerEffect(
 
             layer, globalTransform4x4,
 
             [&](const QMatrix4x4 &instanceTransform, float instanceWeight) {
-
-                Diligent::ITextureView* videoTexture =
-                    renderer->textureForVideoFrame(
-                    buffer, QUuid(layer->id().toString()),
-                    static_cast<qint64>(layer->currentFrame()),
-                    preparedUpload.get());
-                if (!videoTexture) {
-                    videoTexture = renderer->textureForImage(buffer);
-                }
                 renderer->drawSpriteTransformed(
                     static_cast<float>(localRect.x()),
                     static_cast<float>(localRect.y()),
                     static_cast<float>(localRect.width()),
                     static_cast<float>(localRect.height()), instanceTransform,
-                    videoTexture, baseOpacity * instanceWeight);
+                    videoTexture.RawPtr(), baseOpacity * instanceWeight);
 
             });
 
@@ -11903,6 +11918,10 @@ public:
           layer->shouldIncludeInFinalRender()) {
         drawLayerForCompositionView(layer.get(), renderer_.get(), 1.0f,
                                     &lastVideoDebug_, &surfaceCache_,
+                                    &layerSurfaceCacheDiagnosticsEnabled_,
+                                    &layerSurfaceCacheHitCounts_,
+                                    &layerSurfaceCacheMissCounts_,
+                                    &layerSurfaceCacheBuildCounts_,
                                     gpuTextureCacheManager_.get(), childFrame,
                                     true, DetailLevel::High,
                                     static_cast<const QMatrix4x4*>(nullptr));
@@ -12083,166 +12102,6 @@ public:
     quint64 buildGeneration = 0;
 
     bool capturedDuringPlayback = false;
-
-  };
-
-  class RenderPass {
-
-  public:
-
-    virtual ~RenderPass() = default;
-
-    virtual bool setup(RenderPassResources& resources) = 0;
-
-    virtual bool execute(RenderPassContext& context,
-
-                         RenderPassResources& resources) = 0;
-
-    virtual FrameRenderPassKind kind() const = 0;
-
-    virtual QString name() const = 0;
-
-  };
-
-  class FunctionalRenderPass final : public RenderPass {
-
-  public:
-
-    using Setup = std::function<bool(RenderPassResources&)>;
-
-    using Execute =
-
-        std::function<bool(RenderPassContext&, RenderPassResources&)>;
-
-
-
-    FunctionalRenderPass(FrameRenderPassKind passKind, QString passName,
-
-                         Setup setup, Execute execute)
-
-        : kind_(passKind), name_(std::move(passName)),
-
-          setup_(std::move(setup)), execute_(std::move(execute)) {}
-
-
-
-    bool setup(RenderPassResources& resources) override {
-
-      return !setup_ || setup_(resources);
-
-    }
-
-    bool execute(RenderPassContext& context,
-
-                 RenderPassResources& resources) override {
-
-      return execute_ && execute_(context, resources);
-
-    }
-
-    FrameRenderPassKind kind() const override { return kind_; }
-
-    QString name() const override { return name_; }
-
-
-
-  private:
-
-    FrameRenderPassKind kind_ = FrameRenderPassKind::Setup;
-
-    QString name_;
-
-    Setup setup_;
-
-    Execute execute_;
-
-  };
-
-  struct RenderPassExecutor {
-
-    static bool run(RenderPass& pass, RenderPassContext& context,
-
-                    RenderPassResources& resources) {
-
-      if (!context.renderer || !pass.setup(resources)) {
-
-        return false;
-
-      }
-
-      return pass.execute(context, resources);
-
-    }
-
-
-
-    template <std::size_t PassCount>
-
-    static bool runAll(const std::array<RenderPass*, PassCount>& passes,
-
-                       RenderPassContext& context,
-
-                       RenderPassResources& resources) {
-
-      for (RenderPass* pass : passes) {
-
-        if (!pass || !run(*pass, context, resources)) {
-
-          return false;
-
-        }
-
-      }
-
-      return true;
-
-    }
-
-    template <std::size_t PassCount>
-    static bool runAllWithRenderGraph(
-        const std::array<RenderPass*, PassCount>& passes,
-        RenderPassContext& context, RenderPassResources& resources) {
-      static const auto graphAndCompiled = [] {
-        ArtifactCore::RenderGraph graph;
-        // These viewport passes blend or clear the same active target. Model
-        // that write hazard explicitly so graph diagnostics report the real
-        // shared output and the compiler preserves painter order.
-        const auto activeColorTarget = graph.addResource({
-            "Renderer.ActiveColorTarget",
-            ArtifactCore::RenderResourceKind::Texture,
-            ArtifactCore::RenderResourceLifetime::External, 0, 0, 1, 0, 0});
-        for (std::size_t index = 0; index < PassCount; ++index) {
-          graph.addPass({"RenderPass." + std::to_string(index),
-                         ArtifactCore::RenderPassQueue::Graphics,
-                         {}, {activeColorTarget}, true});
-        }
-        auto compiled = graph.compile();
-        return std::pair<ArtifactCore::RenderGraph,
-                         ArtifactCore::CompiledRenderGraph>{
-            std::move(graph), std::move(compiled)};
-      }();
-      const auto& graph = graphAndCompiled.first;
-      const auto& compiled = graphAndCompiled.second;
-      if (!compiled.valid) return false;
-
-      std::size_t nextPass = 0;
-      std::string error;
-      return graph.execute(
-          compiled,
-          [&](const ArtifactCore::RenderGraphExecutionContext&) {
-            return nextPass < PassCount &&
-                   passes[nextPass] != nullptr &&
-                   run(*passes[nextPass++], context, resources);
-          },
-          &error);
-    }
-
-    static bool runWithRenderGraph(RenderPass& pass,
-                                   RenderPassContext& context,
-                                   RenderPassResources& resources) {
-      const std::array<RenderPass*, 1> passes{&pass};
-      return runAllWithRenderGraph(passes, context, resources);
-    }
 
   };
 
@@ -13026,6 +12885,22 @@ public:
       ArtifactCore::PointwiseEffectStack pointwiseStack;
       bool canApplyPointwise = true;
       bool pointwiseApplied = false;
+
+      const auto drawBgraAccumulator = [&](Diligent::ITextureView* source) {
+        const auto context = renderer_->immediateContext();
+        if (renderPipeline && blendPipeline_ && context && source &&
+            blendPipeline_->convertBgraAccumulatorToStraightRgba(
+                context.RawPtr(), source, renderPipeline->tempUAV(),
+                static_cast<Diligent::Uint32>(renderPipeline->width()),
+                static_cast<Diligent::Uint32>(renderPipeline->height()))) {
+          renderer_->drawSprite(0.0f, 0.0f, rcw, rch,
+                                renderPipeline->tempSRV(), 1.0f);
+          return;
+        }
+        qWarning() << "[CompositionView] adjustment BGRA presentation failed;"
+                      " drawing source texture directly";
+        renderer_->drawSprite(0.0f, 0.0f, rcw, rch, source, 1.0f);
+      };
       bool spatialAdjustmentApplied = false;
       // Pointwise processing operates on the full accumulated surface, so the
       // adjustment's mask and opacity are applied *inside* the shader as a lerp
@@ -13335,8 +13210,7 @@ public:
                 context ? context.RawPtr() : nullptr,
                 blendPipeline_.get(), adjustmentBlend);
           }
-          renderer_->drawSprite(0.0f, 0.0f, rcw, rch,
-                                renderPipeline->accumSRV(), 1.0f);
+          drawBgraAccumulator(renderPipeline->accumSRV());
           pointwiseApplied = true;
         }
       }
@@ -13425,13 +13299,12 @@ public:
         };
         spatialAdjustmentApplied = trySpatialAdjustment();
         if (spatialAdjustmentApplied) {
-          renderer_->drawSprite(0.0f, 0.0f, rcw, rch,
-                                renderPipeline->accumSRV(), 1.0f);
+          drawBgraAccumulator(renderPipeline->accumSRV());
         } else {
           if (!pointwiseStack.nodes().empty()) {
             ++adjustmentFallbackCount_;
           }
-          renderer_->drawSprite(0.0f, 0.0f, rcw, rch, accumSRV, 1.0f);
+          drawBgraAccumulator(accumSRV);
         }
       }
 
@@ -13525,6 +13398,8 @@ public:
     drawLayerForCompositionView(
 
         layer, renderer_.get(), 1.0f, dbgOut, &surfaceCache_,
+        &layerSurfaceCacheDiagnosticsEnabled_, &layerSurfaceCacheHitCounts_,
+        &layerSurfaceCacheMissCounts_, &layerSurfaceCacheBuildCounts_,
 
         gpuTextureCacheManager_.get(), currentFrame.framePosition(), true, lod,
 
@@ -14564,13 +14439,12 @@ public:
 
     ++layerToFloatConvertCount;
 
-    const bool convertedAccumToStraight = renderer_->convertLayerToFloat(
-
-        blendPipeline_.get(), accumSRV, layerFloatUAV,
-
-        static_cast<Diligent::Uint32>(renderPipeline.width()),
-
-        static_cast<Diligent::Uint32>(renderPipeline.height()));
+    const auto presentationContext = renderer_->immediateContext();
+    const bool convertedAccumToStraight = blendPipeline_ && presentationContext &&
+        blendPipeline_->convertBgraAccumulatorToStraightRgba(
+            presentationContext.RawPtr(), accumSRV, layerFloatUAV,
+            static_cast<Diligent::Uint32>(renderPipeline.width()),
+            static_cast<Diligent::Uint32>(renderPipeline.height()));
 
     if (convertedAccumToStraight) {
 
@@ -14587,6 +14461,9 @@ public:
 
 
     lastPresentedReadbackSRV_ = finalPresentSRV;
+    lastPresentedReadbackChannelOrder_ = convertedAccumToStraight
+        ? ArtifactCore::SurfaceChannelOrder::RGBA
+        : ArtifactCore::SurfaceChannelOrder::BGRA;
     compositeFinalizedThisFrame_ = true;
 
     // P1-5/P1-10 display-only exposure and clipping warnings. Written to a
@@ -16662,6 +16539,8 @@ public:
   // refer to a ping-pong texture owned by RenderPipeline; retaining it avoids
   // a stale raw pointer when a screenshot is requested between render passes.
   Diligent::RefCntAutoPtr<Diligent::ITextureView> lastPresentedReadbackSRV_;
+  ArtifactCore::SurfaceChannelOrder lastPresentedReadbackChannelOrder_ =
+      ArtifactCore::SurfaceChannelOrder::RGBA;
 
   // Accessibility viewport magnifier (loupe).  Draws the composited frame
   // texture scaled into a scissored inset; no GPU readback is performed.
@@ -18744,7 +18623,27 @@ public:
 
 
 
-  void renderOneFrameImpl(CompositionRenderController *owner);
+  struct HostFrameSnapshot {
+    bool hasHost = false;
+    bool visible = true;
+    bool cancelInvalidGizmoSession = false;
+    bool showDebugProbeLines = false;
+    bool showMaskPathLines = false;
+    bool showMaskHandleLines = false;
+    bool showBoundsLines = false;
+    QSize logicalSize;
+    qreal devicePixelRatio = 1.0;
+    quintptr windowId = 0;
+    bool windowIdCaptured = false;
+  };
+
+  HostFrameSnapshot captureHostFrameSnapshot(
+      const CompositionRenderController *owner) const;
+  bool prepareHostFrame(CompositionRenderController *owner,
+                        const HostFrameSnapshot &snapshot);
+  void renderOneFrameImpl(CompositionRenderController *owner,
+                          const HostFrameSnapshot &hostSnapshot,
+                          bool forceRender);
   // P0-3d: render-only subpath used when an Interactive Render Region is
   // active. The caller picks a RenderQuality (Draft/Preview/Final) based
   // on interactiveRenderRegionResolutionScale_; the function applies the
@@ -19564,17 +19463,14 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
             impl_->renderDirty_.store(true, std::memory_order_release);
           }
 
-          if (auto *host = impl_->hostWidget_.data()) {
+          const auto hostSnapshot = impl_->captureHostFrameSnapshot(this);
+          if (hostSnapshot.hasHost && !hostSnapshot.visible) {
 
-            if (!host->isVisible()) {
+            renderCrashTrace("tick-skip-host-hidden",
 
-              renderCrashTrace("tick-skip-host-hidden",
+                             impl_->renderFrameCounter_);
 
-                               impl_->renderFrameCounter_);
-
-              return;
-
-            }
+            return;
 
           }
 
@@ -19665,6 +19561,10 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
             impl_->lastEvaluatedTemporalFrame_ = temporalFrame;
           }
 
+          if (!impl_->prepareHostFrame(this, hostSnapshot)) {
+            return;
+          }
+
           renderCrashTrace("tick-render-begin", impl_->renderFrameCounter_);
 
           // Pre-roll: on a discontinuity the retained history was just dropped,
@@ -19678,7 +19578,7 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
               const auto savedFrame =
                   composition->framePosition().framePosition();
               composition->goToFrame(temporalFrame - 1);
-              impl_->renderOneFrameImpl(this);
+              impl_->renderOneFrameImpl(this, hostSnapshot, false);
               composition->goToFrame(savedFrame);
             }
           }
@@ -19703,7 +19603,7 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
               frameAtRenderStart = renderComposition->framePosition().framePosition();
             }
           }
-          impl_->renderOneFrameImpl(this);
+          impl_->renderOneFrameImpl(this, hostSnapshot, false);
           if (profileRenderDuration) {
             std::fprintf(stderr, "[VideoPreviewRenderDurationProfile] frameSerial=%llu frameAtRenderStart=%lld totalMs=%.3f\n",
                 static_cast<unsigned long long>(impl_->renderFrameCounter_),
@@ -25040,8 +24940,8 @@ QImage CompositionRenderController::captureCurrentFrameImage() const {
     const QImage frame =
 
         impl_->renderer_->readbackTextureViewToImage(
-
-            impl_->lastPresentedReadbackSRV_);
+            impl_->lastPresentedReadbackSRV_,
+            impl_->lastPresentedReadbackChannelOrder_);
 
     if (!frame.isNull()) {
 
@@ -25091,7 +24991,8 @@ QImage CompositionRenderController::readbackPresentedFrameImage() const {
     return QImage();
   }
   return impl_->renderer_->readbackTextureViewToImage(
-      impl_->lastPresentedReadbackSRV_);
+      impl_->lastPresentedReadbackSRV_,
+      impl_->lastPresentedReadbackChannelOrder_);
 }
 
 bool CompositionRenderController::requestCurrentFrameImageAsync(
@@ -25108,7 +25009,8 @@ bool CompositionRenderController::requestCurrentFrameImageAsync(
 
   if (impl_->lastPresentedReadbackSRV_) {
     return impl_->renderer_->readbackTextureViewToImageAsync(
-        impl_->lastPresentedReadbackSRV_, std::move(publish));
+        impl_->lastPresentedReadbackSRV_,
+        impl_->lastPresentedReadbackChannelOrder_, std::move(publish));
   }
   return impl_->renderer_->readbackToImageAsync(std::move(publish));
 }
@@ -25180,14 +25082,14 @@ CompositionRenderController::frameDebugSnapshot(bool includePreviews) const {
       impl_->lastLayerRtPreview_ =
 
           impl_->renderer_->readbackTextureViewToImage(
-
-              diagnosticPipeline.layerRTV());
+              diagnosticPipeline.layerRTV(),
+              ArtifactCore::SurfaceChannelOrder::RGBA);
 
       impl_->lastAccumRtPreview_ =
 
           impl_->renderer_->readbackTextureViewToImage(
-
-              diagnosticPipeline.accumRTV());
+              diagnosticPipeline.accumRTV(),
+              ArtifactCore::SurfaceChannelOrder::BGRA);
 
       impl_->lastLayerRtPixelStats_ =
 
@@ -41973,15 +41875,8 @@ void CompositionRenderController::renderOneFrame() {
 
   }
 
-  if (auto *host = impl_->hostWidget_.data()) {
-
-    if (!host->isVisible()) {
-
-      return;
-
-    }
-
-  }
+  const auto hostSnapshot = impl_->captureHostFrameSnapshot(this);
+  if (hostSnapshot.hasHost && !hostSnapshot.visible) return;
 
   // When a RotoBrush base frame exists, advance its matte before drawing the
   // next frame so playback and scrubbing use the propagated mask.
@@ -42000,7 +41895,12 @@ void CompositionRenderController::renderOneFrame() {
 
   impl_->renderScheduled_ = true;
 
-  impl_->renderOneFrameImpl(this);
+  if (!impl_->prepareHostFrame(this, hostSnapshot)) {
+    impl_->renderScheduled_ = false;
+    return;
+  }
+
+  impl_->renderOneFrameImpl(this, hostSnapshot, true);
   impl_->recordInteractionPerfEvent(8);
 
   impl_->renderScheduled_ = false;
@@ -42309,9 +42209,93 @@ bool CompositionRenderController::Impl::removeLastPendingShapePathVertex() {
 
 
 
-void CompositionRenderController::Impl::renderOneFrameImpl(
+CompositionRenderController::Impl::HostFrameSnapshot
+CompositionRenderController::Impl::captureHostFrameSnapshot(
+    const CompositionRenderController *owner) const {
+  HostFrameSnapshot snapshot;
+  if (owner) {
+    snapshot.cancelInvalidGizmoSession =
+        !gizmoSessionEnding_ && !gizmoSessionValid();
+    snapshot.showDebugProbeLines =
+        owner->isLineDebugKindVisible(LineDebugKind::DebugProbe);
+    snapshot.showMaskPathLines =
+        owner->isLineDebugKindVisible(LineDebugKind::MaskPath);
+    snapshot.showMaskHandleLines =
+        owner->isLineDebugKindVisible(LineDebugKind::MaskHandle);
+    snapshot.showBoundsLines =
+        owner->isLineDebugKindVisible(LineDebugKind::Bounds);
+  }
+  if (auto *host = hostWidget_.data()) {
+    snapshot.hasHost = true;
+    snapshot.visible = host->isVisible();
+    snapshot.logicalSize = host->size();
+    snapshot.devicePixelRatio = host->devicePixelRatio();
+    const bool captureWindowId = renderFrameCounter_ <= 5 ||
+        (renderer_ &&
+         renderer_->lastPresentStatus() != QStringLiteral("ok"));
+    if (captureWindowId) {
+      snapshot.windowId = static_cast<quintptr>(host->winId());
+      snapshot.windowIdCaptured = true;
+    }
+  }
+  return snapshot;
+}
 
-    CompositionRenderController *owner) {
+bool CompositionRenderController::Impl::prepareHostFrame(
+    CompositionRenderController *owner,
+    const HostFrameSnapshot &snapshot) {
+  if (snapshot.hasHost && !snapshot.visible) {
+    renderCrashTrace("render-skip-host-hidden", renderFrameCounter_);
+    return false;
+  }
+  if (owner && snapshot.cancelInvalidGizmoSession) {
+    owner->cancelGizmoInteraction();
+  }
+  if (!snapshot.hasHost || !renderer_ || !renderer_->hasSwapChain()) {
+    return true;
+  }
+
+  const float curW = static_cast<float>(snapshot.logicalSize.width()) *
+                     snapshot.devicePixelRatio;
+  const float curH = static_cast<float>(snapshot.logicalSize.height()) *
+                     snapshot.devicePixelRatio;
+  if (std::abs(curW - hostWidth_) <= 0.5f &&
+      std::abs(curH - hostHeight_) <= 0.5f) {
+    return true;
+  }
+
+  qCDebug(compositionViewLog)
+      << "[CompositionView] Widget size changed, scheduling swapchain update:"
+      << curW << "x" << curH;
+  pendingResizeSize_ = QSize();
+  if (owner) {
+    renderCrashTrace("render-resize-begin", renderFrameCounter_,
+                     QStringLiteral("size=%1x%2")
+                         .arg(snapshot.logicalSize.width())
+                         .arg(snapshot.logicalSize.height()));
+    owner->setViewportSize(ArtifactCore::Coordinates::screenLogicalExtent(
+        static_cast<float>(snapshot.logicalSize.width()),
+        static_cast<float>(snapshot.logicalSize.height())));
+    auto *host = hostWidget_.data();
+    if (!host) {
+      renderCrashTrace("render-resize-host-lost", renderFrameCounter_);
+      return false;
+    }
+    owner->recreateSwapChain(host);
+    owner->markRenderDirty();
+    renderCrashTrace("render-resize-end", renderFrameCounter_);
+    // Resize and swapchain recreation are synchronous on the GUI thread. Render
+    // this requested frame against the new swapchain instead of returning with
+    // no frame serial advance; the render ticker may also schedule a later one.
+    return renderer_ && renderer_->hasSwapChain();
+  }
+  return false;
+}
+
+void CompositionRenderController::Impl::renderOneFrameImpl(
+    CompositionRenderController *owner,
+    const HostFrameSnapshot &hostSnapshot,
+    bool forceRender) {
 
   renderCrashTrace("render-enter", renderFrameCounter_);
 
@@ -42321,10 +42305,6 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
     return;
 
-  }
-
-  if (!gizmoSessionEnding_ && !gizmoSessionValid()) {
-    owner->cancelGizmoInteraction();
   }
 
   // Swapchain may not exist yet (deferred from 0×0 init).
@@ -42358,18 +42338,6 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     qCDebug(compositionViewLog)
 
         << "[CompositionChangeDetector]" << changeDetector_.debugInfo();
-
-  }
-
-  if (auto *host = hostWidget_.data()) {
-
-    if (!host->isVisible()) {
-
-      renderCrashTrace("render-skip-host-hidden", renderFrameCounter_);
-
-      return;
-
-    }
 
   }
 
@@ -42488,59 +42456,6 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     }
 
   };
-
-
-
-  // 強制的なサイズ同期:
-
-  // ホストウィジェットの物理サイズとスワップチェーンを一致させる
-
-  if (auto *host = hostWidget_.data()) {
-
-    const float curW = static_cast<float>(host->width()) * devicePixelRatio_;
-
-    const float curH = static_cast<float>(host->height()) * devicePixelRatio_;
-
-    if (std::abs(curW - hostWidth_) > 0.5f ||
-
-        std::abs(curH - hostHeight_) > 0.5f) {
-
-      qCDebug(compositionViewLog)
-
-          << "[CompositionView] Widget size changed, scheduling swapchain "
-
-             "update:"
-
-          << curW << "x" << curH;
-
-      const QSize pending(host->width(), host->height());
-
-      pendingResizeSize_ = QSize();
-
-      if (owner && renderer_) {
-
-        renderCrashTrace("render-resize-begin", renderFrameCounter_,
-
-                         QStringLiteral("size=%1x%2").arg(pending.width()).arg(pending.height()));
-
-        owner->setViewportSize(
-            ArtifactCore::Coordinates::screenLogicalExtent(
-                static_cast<float>(pending.width()),
-                static_cast<float>(pending.height())));
-
-        owner->recreateSwapChain(host);
-
-        owner->markRenderDirty();
-
-        renderCrashTrace("render-resize-end", renderFrameCounter_);
-
-      }
-
-      return;
-
-    }
-
-  }
 
 
 
@@ -43743,7 +43658,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
       selectedLayerId_};
 
-  const bool forceContinuousRedraw = interactionBusy();
+  const bool forceContinuousRedraw = interactionBusy() || forceRender;
 
   const auto damageViewportWidth =
       static_cast<int32_t>(std::ceil(viewportW));
@@ -46640,7 +46555,11 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                     layer.get(), context.renderer, opacity, dbgOut,
 
-                    &surfaceCache_, gpuTextureCacheManager_.get(),
+                    &surfaceCache_, &layerSurfaceCacheDiagnosticsEnabled_,
+                    &layerSurfaceCacheHitCounts_,
+                    &layerSurfaceCacheMissCounts_,
+                    &layerSurfaceCacheBuildCounts_,
+                    gpuTextureCacheManager_.get(),
 
                     currentFrame.framePosition(), false, renderLod,
 
@@ -46676,9 +46595,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
             // ROI を赤い枠で表示
 
-            const bool showDebugProbe =
-
-                owner->isLineDebugKindVisible(LineDebugKind::DebugProbe);
+            const bool showDebugProbe = hostSnapshot.showDebugProbeLines;
 
             drawTaggedRectOutline(renderer_.get(), intersected,
 
@@ -46726,18 +46643,17 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
       }
 
-      // Materialize the direct background/layer command buffer before any
-      // immediate overlay work can change or drain its render target. Present
-      // also submits queued draws, but by then later passes may have reset the
-      // shared command buffer. Re-arm the swap-chain target for overlays after
-      // this barrier.
+      // Record the direct background/layer batch on the bounded deferred worker.
+      // Overlay packets use the second command buffer while recording proceeds;
+      // any intervening immediate-render barrier drains this batch first, and
+      // present executes it before the overlays.
       markVideoPreviewSetupStage(14);
       renderer_->renderShadowMapFrame();
       const auto flushContextBeforeUs = profileThisVideoPreviewSetup
           ? renderer_->flushContextTimeUs() : 0;
       const auto flushStartedNs = profileThisVideoPreviewSetup
           ? frameTimer.nsecsElapsed() : 0;
-      renderer_->flush();
+      renderer_->flushDeferredPacketsAsync();
       if (profileThisVideoPreviewSetup && useRamPreviewFallback) {
         const auto flushFinishedNs = frameTimer.nsecsElapsed();
         std::fprintf(stderr,
@@ -47115,13 +47031,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           constexpr float handleStrokeWidth = 3.0f;
 
-          const bool showMaskPath =
-
-              owner->isLineDebugKindVisible(LineDebugKind::MaskPath);
-
-          const bool showMaskHandle =
-
-              owner->isLineDebugKindVisible(LineDebugKind::MaskHandle);
+          const bool showMaskPath = hostSnapshot.showMaskPathLines;
+          const bool showMaskHandle = hostSnapshot.showMaskHandleLines;
 
           const auto isSelectedVertex = [this](int maskIndex, int pathIndex,
                                                 int vertexIndex) {
@@ -48360,9 +48271,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
             const float thickness = primary ? 1.9f : 1.4f;
 
-            const bool showBounds =
-
-                owner->isLineDebugKindVisible(LineDebugKind::Bounds);
+            const bool showBounds = hostSnapshot.showBoundsLines;
 
             drawTaggedSolidLine(renderer_.get(), tl, tr, color, thickness,
 
@@ -48609,6 +48518,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           const bool accepted = renderer_->readbackTextureViewToBufferAsync(
 
               ramPreviewReadbackSRV,
+              lastPresentedReadbackChannelOrder_,
 
               [weakPlayback, previewRequest, weakOwner = QPointer<CompositionRenderController>(owner)](ArtifactCore::SharedPtr<const ArtifactCore::ImageUploadBuffer> capturedFrame) {
 
@@ -48626,7 +48536,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
         } else {
 
-          const bool accepted = renderer_->readbackTextureViewToBufferAsync(nullptr,
+          const bool accepted = renderer_->readbackTextureViewToBufferAsync(
+              nullptr, ArtifactCore::SurfaceChannelOrder::RGBA,
 
               [weakPlayback, previewRequest, weakOwner = QPointer<CompositionRenderController>(owner)](ArtifactCore::SharedPtr<const ArtifactCore::ImageUploadBuffer> capturedFrame) {
 
@@ -48896,19 +48807,12 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
       qreal hostDpr = 1.0;
 
-      bool hostVisible = false;
-
-      if (auto *host = hostWidget_.data()) {
-
-        hostWinId = static_cast<quintptr>(host->winId());
-
-        hostSize = host->size();
-
-        hostDpr = host->devicePixelRatio();
-
-        hostVisible = host->isVisible();
-
+      if (hostSnapshot.windowIdCaptured) {
+        hostWinId = hostSnapshot.windowId;
       }
+      hostSize = hostSnapshot.logicalSize;
+      hostDpr = hostSnapshot.devicePixelRatio;
+      const bool hostVisible = hostSnapshot.hasHost && hostSnapshot.visible;
 
       qInfo() << "[CompositionView][PresentProbe]"
 
