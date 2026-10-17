@@ -698,6 +698,9 @@ public:
   void clearRenderTarget(const FloatColor &color);
   void clearRenderTarget(void *textureView, const FloatColor &color);
   void clearDepthRenderTarget(void *depthTextureView, float depth = 1.0f);
+  void clearDepthRenderTargetForColor(void *colorTextureView,
+                                      void *depthTextureView,
+                                      float depth = 1.0f);
   void drawOffscreenTexture(void *textureView, const QRectF &bounds,
                             float opacity = 1.0f);
   void drawGrid(float x, float y, float w, float h, float spacing,

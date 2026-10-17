@@ -8411,6 +8411,31 @@ bool ArtifactIRenderer::dispatchClonerGridPlacement(
                          Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
  }
 
+ void ArtifactIRenderer::clearDepthRenderTargetForColor(
+     void* colorTextureView, void* depthTextureView, float depth)
+ {
+  auto ctx = impl_->deviceManager_.immediateContext();
+  if (!ctx || !depthTextureView) return;
+  impl_->submitQueuedDraws(ctx.RawPtr());
+  auto* rtv = static_cast<Diligent::ITextureView*>(colorTextureView);
+  auto* dsv = static_cast<Diligent::ITextureView*>(depthTextureView);
+  const auto clearDepth = std::clamp(depth, 0.0f, 1.0f);
+  const auto* colorTexture = rtv ? rtv->GetTexture() : nullptr;
+  const auto* depthTexture = dsv->GetTexture();
+  const bool attachmentsMatch = colorTexture && depthTexture &&
+      colorTexture->GetDesc().Width == depthTexture->GetDesc().Width &&
+      colorTexture->GetDesc().Height == depthTexture->GetDesc().Height;
+  if (attachmentsMatch) {
+   ctx->SetRenderTargets(1, &rtv, dsv,
+                         Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+  } else {
+   ctx->SetRenderTargets(0, nullptr, dsv,
+                         Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+  }
+  ctx->ClearDepthStencil(dsv, Diligent::CLEAR_DEPTH_FLAG, clearDepth, 0,
+                         Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+ }
+
  void ArtifactIRenderer::drawOffscreenTexture(void* textureView, const QRectF& bounds, float opacity)
  {
   if (!textureView) return;
