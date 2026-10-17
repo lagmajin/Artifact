@@ -1354,6 +1354,7 @@ void PrimitiveRenderer2D::drawTextureLocal(float x, float y, float w, float h, I
     pkt.pSRV             = pSRV;
     pkt.opacity          = opacity;
     impl_->cmdBuf_->append(std::move(pkt));
+    impl_->markQueuedVideoTextureUse(pSRV);
 }
 
 void PrimitiveRenderer2D::drawMaskedTextureLocal(float x, float y, float w, float h, ITextureView* sceneSRV, const QImage& maskImage, float opacity)
