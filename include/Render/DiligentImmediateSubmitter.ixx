@@ -55,6 +55,7 @@ public:
     // state. Call submit() from one owner thread per instance; worker-local
     // command buffers do not make a shared submitter safe for concurrent use.
     void submit(RenderCommandBuffer& buf, IDeviceContext* ctx) override;
+    bool canRecordDeferred(const RenderCommandBuffer& buf) const noexcept;
     // Records an eligible packet buffer on this instance's dedicated deferred
     // context. Call this and finishDeferredFrame() on the same recorder thread;
     // retain buf until the immediate owner executes outCommandList. This API

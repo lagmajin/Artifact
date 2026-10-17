@@ -23,6 +23,7 @@ module;
 #include <DiligentCore/Graphics/GraphicsEngine/interface/CommandList.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Buffer.h>
+#include <DiligentCore/Graphics/GraphicsEngine/interface/PipelineState.h>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Common/interface/BasicMath.hpp>
 #include <utility>
@@ -98,6 +99,24 @@ static void recordShaderResourceCommit(ArtifactCore::RenderCostStats* stats)
     if (stats) {
         ++stats->srbCommits;
     }
+}
+
+static PSOAndSRB cloneSubmitterPipeline(
+    IPipelineState* sourcePso, IShaderResourceBinding* sourceSrb)
+{
+    PSOAndSRB owned;
+    if (!sourcePso) return owned;
+    sourcePso->AddRef();
+    owned.pPSO = sourcePso;
+    if (sourceSrb) {
+        sourcePso->CreateShaderResourceBinding(&owned.pSRB, true);
+    }
+    return owned;
+}
+
+static PSOAndSRB cloneSubmitterPipeline(const PSOAndSRB& source)
+{
+    return cloneSubmitterPipeline(source.pPSO, source.pSRB);
 }
 
 // --- Solid-rect batch diagnostic switches -------------------------------------
@@ -777,37 +796,33 @@ void DiligentImmediateSubmitter::setPSOs(ShaderManager& sm)
     // backing implementation during migration; draw behaviour is unchanged.
     const ArtifactTextGlyphPipelineProvider glyphProvider =
         makeArtifactTextGlyphPipelineProvider(sm);
-    auto adoptGlyphPair = [](IPipelineState* pso, IShaderResourceBinding* srb) {
-        PSOAndSRB pair;
-        pair.pPSO = pso;
-        pair.pSRB = srb;
-        if (pair.pPSO) pair.pPSO->AddRef();
-        if (pair.pSRB) pair.pSRB->AddRef();
-        return pair;
+    const auto cloneGlyphPair = [](IPipelineState* pso,
+                                   IShaderResourceBinding* srb) {
+        return cloneSubmitterPipeline(pso, srb);
     };
 
-    m_draw_sprite_pso_and_srb               = sm.spritePsoAndSrb();
-    m_draw_sprite_transform_pso_and_srb     = sm.spriteTransformPsoAndSrb();
+    m_draw_sprite_pso_and_srb               = cloneSubmitterPipeline(sm.spritePsoAndSrb());
+    m_draw_sprite_transform_pso_and_srb     = cloneSubmitterPipeline(sm.spriteTransformPsoAndSrb());
     m_draw_cloner_sprite_transform_pso_and_srb_ =
-        sm.clonerSpriteTransformPsoAndSrb();
-    m_draw_masked_sprite_pso_and_srb        = sm.maskedSpritePsoAndSrb();
-    m_draw_glyph_pso_and_srb                = adoptGlyphPair(glyphProvider.glyphPipeline,
-                                                             glyphProvider.glyphBinding);
-    m_draw_glyph_transform_pso_and_srb      = adoptGlyphPair(glyphProvider.transformedGlyphPipeline,
-                                                             glyphProvider.transformedGlyphBinding);
+        cloneSubmitterPipeline(sm.clonerSpriteTransformPsoAndSrb());
+    m_draw_masked_sprite_pso_and_srb        = cloneSubmitterPipeline(sm.maskedSpritePsoAndSrb());
+    m_draw_glyph_pso_and_srb                = cloneGlyphPair(glyphProvider.glyphPipeline,
+                                                              glyphProvider.glyphBinding);
+    m_draw_glyph_transform_pso_and_srb      = cloneGlyphPair(glyphProvider.transformedGlyphPipeline,
+                                                              glyphProvider.transformedGlyphBinding);
     m_sprite_sampler                        = sm.spriteSampler();
     m_glyph_sampler                         = glyphProvider.atlasSampler;
-    m_draw_solid_rect_pso_and_srb           = sm.solidRectPsoAndSrb();
-    m_draw_solid_rect_transform_pso_and_srb = sm.solidRectTransformPsoAndSrb();
-    m_draw_gradient_rect_pso_and_srb         = sm.gradientRectPsoAndSrb();
-    m_draw_line_pso_and_srb                 = sm.linePsoAndSrb();
-    m_draw_thick_line_pso_and_srb           = sm.thickLinePsoAndSrb();
-    m_draw_dot_line_pso_and_srb             = sm.dotLinePsoAndSrb();
-    m_draw_solid_triangle_pso_and_srb       = sm.solidTrianglePsoAndSrb();
-    m_draw_checkerboard_pso_and_srb         = sm.checkerboardPsoAndSrb();
-    m_draw_grid_pso_and_srb                 = sm.gridPsoAndSrb();
-    m_draw_rect_outline_pso_and_srb         = sm.outlinePsoAndSrb();
-    m_draw_batch_solid_rect_pso_and_srb     = sm.batchSolidRectAAPsoAndSrb();
+    m_draw_solid_rect_pso_and_srb           = cloneSubmitterPipeline(sm.solidRectPsoAndSrb());
+    m_draw_solid_rect_transform_pso_and_srb = cloneSubmitterPipeline(sm.solidRectTransformPsoAndSrb());
+    m_draw_gradient_rect_pso_and_srb         = cloneSubmitterPipeline(sm.gradientRectPsoAndSrb());
+    m_draw_line_pso_and_srb                 = cloneSubmitterPipeline(sm.linePsoAndSrb());
+    m_draw_thick_line_pso_and_srb           = cloneSubmitterPipeline(sm.thickLinePsoAndSrb());
+    m_draw_dot_line_pso_and_srb             = cloneSubmitterPipeline(sm.dotLinePsoAndSrb());
+    m_draw_solid_triangle_pso_and_srb       = cloneSubmitterPipeline(sm.solidTrianglePsoAndSrb());
+    m_draw_checkerboard_pso_and_srb         = cloneSubmitterPipeline(sm.checkerboardPsoAndSrb());
+    m_draw_grid_pso_and_srb                 = cloneSubmitterPipeline(sm.gridPsoAndSrb());
+    m_draw_rect_outline_pso_and_srb         = cloneSubmitterPipeline(sm.outlinePsoAndSrb());
+    m_draw_batch_solid_rect_pso_and_srb     = cloneSubmitterPipeline(sm.batchSolidRectAAPsoAndSrb());
 
     // H1: Pre-bind all static CBs and samplers to their SRBs once
     {
@@ -1060,6 +1075,14 @@ bool DiligentImmediateSubmitter::recordDeferred(
     RefCntAutoPtr<ICommandList>& outCommandList)
 {
     outCommandList = nullptr;
+    if (!canRecordDeferred(buf)) return false;
+    return submitImpl(buf, nullptr, immediateContextId, true,
+                      std::addressof(outCommandList));
+}
+
+bool DiligentImmediateSubmitter::canRecordDeferred(
+    const RenderCommandBuffer& buf) const noexcept
+{
     if (!m_deferredCtx_ || m_frameDebugCaptureEnabled_ || m_frameCostStats_ ||
         !buf.targetRTV() || buf.packets().size() < 16 ||
         m_primitiveRenderer3D_ || m_particleRenderer_) {
@@ -1070,14 +1093,15 @@ bool DiligentImmediateSubmitter::recordDeferred(
     for (const auto& packet : buf.packets()) {
         if (!std::holds_alternative<SolidRectPkt>(packet) &&
             !std::holds_alternative<SolidRectXformPkt>(packet) &&
+            !std::holds_alternative<SpritePkt>(packet) &&
+            !std::holds_alternative<SpriteXformPkt>(packet) &&
             !std::holds_alternative<LinePkt>(packet) &&
             !std::holds_alternative<QuadPkt>(packet) &&
             !std::holds_alternative<SolidTriPkt>(packet)) {
             return false;
         }
     }
-    return submitImpl(buf, nullptr, immediateContextId, true,
-                      std::addressof(outCommandList));
+    return true;
 }
 
 void DiligentImmediateSubmitter::finishDeferredFrame()
