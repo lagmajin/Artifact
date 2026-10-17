@@ -726,6 +726,11 @@ public:
                    Diligent::ITextureView *outUAV,
                    ArtifactCore::BlendMode mode, float opacity,
                    const ArtifactCore::ComputeRegion &region) const;
+  bool convertBgraAccumulatorToStraightRgba(
+      ArtifactCore::LayerBlendPipeline *pipeline,
+      Diligent::ITextureView *sourceSRV,
+      Diligent::ITextureView *destinationUAV,
+      Diligent::Uint32 width, Diligent::Uint32 height) const;
   bool copyTextureOutsideRegion(
       Diligent::ITextureView *sourceSRV,
       Diligent::ITextureView *destinationUAV,

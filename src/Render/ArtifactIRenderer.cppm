@@ -7537,6 +7537,16 @@ bool ArtifactIRenderer::blendLayers(ArtifactCore::LayerBlendPipeline *pipeline,
   impl_->submitQueuedDraws(ctx.RawPtr());
   return pipeline->blend(ctx, srcSRV, dstSRV, outUAV, mode, opacity, region);
  }
+bool ArtifactIRenderer::convertBgraAccumulatorToStraightRgba(
+    ArtifactCore::LayerBlendPipeline *pipeline,
+    Diligent::ITextureView *sourceSRV,
+    Diligent::ITextureView *destinationUAV,
+    const Diligent::Uint32 width, const Diligent::Uint32 height) const {
+  const auto context = impl_->deviceManager_.immediateContext();
+  return pipeline && context && sourceSRV && destinationUAV &&
+         pipeline->convertBgraAccumulatorToStraightRgba(
+             context.RawPtr(), sourceSRV, destinationUAV, width, height);
+}
 bool ArtifactIRenderer::copyTextureOutsideRegion(
     Diligent::ITextureView *sourceSRV,
     Diligent::ITextureView *destinationUAV,

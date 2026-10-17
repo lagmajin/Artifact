@@ -12938,10 +12938,9 @@ public:
       bool pointwiseApplied = false;
 
       const auto drawBgraAccumulator = [&](Diligent::ITextureView* source) {
-        const auto context = renderer_->immediateContext();
-        if (renderPipeline && blendPipeline_ && context && source &&
-            blendPipeline_->convertBgraAccumulatorToStraightRgba(
-                context.RawPtr(), source, renderPipeline->tempUAV(),
+        if (renderPipeline && blendPipeline_ && source &&
+            renderer_->convertBgraAccumulatorToStraightRgba(
+                blendPipeline_.get(), source, renderPipeline->tempUAV(),
                 static_cast<Diligent::Uint32>(renderPipeline->width()),
                 static_cast<Diligent::Uint32>(renderPipeline->height()))) {
           renderer_->drawSprite(0.0f, 0.0f, rcw, rch,
@@ -14490,10 +14489,9 @@ public:
 
     ++layerToFloatConvertCount;
 
-    const auto presentationContext = renderer_->immediateContext();
-    const bool convertedAccumToStraight = blendPipeline_ && presentationContext &&
-        blendPipeline_->convertBgraAccumulatorToStraightRgba(
-            presentationContext.RawPtr(), accumSRV, layerFloatUAV,
+    const bool convertedAccumToStraight = blendPipeline_ && renderer_ &&
+        renderer_->convertBgraAccumulatorToStraightRgba(
+            blendPipeline_.get(), accumSRV, layerFloatUAV,
             static_cast<Diligent::Uint32>(renderPipeline.width()),
             static_cast<Diligent::Uint32>(renderPipeline.height()));
 
