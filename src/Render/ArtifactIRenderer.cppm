@@ -628,17 +628,29 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
       if (!immediateContext) return false;
       QMutexLocker lock(&mutex_);
       if (!active_ || warmupPending_) return false;
-      while (!recordReady_) ready_.wait(&mutex_);
-      const bool recorded = recorded_ && commandList_;
-      RenderCommandBuffer* const buffer = buffer_;
-      const auto packetCount = buffer ? buffer->packets().size() : 0;
-      ICommandList* commandList = commandList_.RawPtr();
-      lock.unlock();
       static const bool profileDeferredWorkerStages = [] {
         return qEnvironmentVariableIsSet("ARTIFACT_VIDEO_PREVIEW_PROFILE_SETUP") &&
                qEnvironmentVariable("ARTIFACT_VIDEO_PREVIEW_PROFILE_SETUP") !=
                    QStringLiteral("0");
       }();
+      static thread_local unsigned int deferredWorkerReadyWaitSamples = 0;
+      const bool sampleReadyWait = profileDeferredWorkerStages &&
+                                   deferredWorkerReadyWaitSamples < 4096;
+      QElapsedTimer readyWaitTimer;
+      if (sampleReadyWait) readyWaitTimer.start();
+      while (!recordReady_) ready_.wait(&mutex_);
+      if (sampleReadyWait) {
+        std::fprintf(stderr,
+            "[VideoPreviewDeferredWorkerProfile] stage=recordReadyWait packets=%llu elapsedMs=%.3f\n",
+            static_cast<unsigned long long>(packetCount_),
+            readyWaitTimer.nsecsElapsed() / 1.0e6);
+        ++deferredWorkerReadyWaitSamples;
+      }
+      const bool recorded = recorded_ && commandList_;
+      RenderCommandBuffer* const buffer = buffer_;
+      const auto packetCount = buffer ? buffer->packets().size() : 0;
+      ICommandList* commandList = commandList_.RawPtr();
+      lock.unlock();
       static thread_local unsigned int deferredWorkerExecuteSamples = 0;
       const bool sampleExecute = profileDeferredWorkerStages &&
                                  deferredWorkerExecuteSamples < 4096;
