@@ -304,6 +304,16 @@ struct BillboardImagePkt {
     float               rollDegrees = 0.0f;
 };
 
+struct CardPkt {
+    QRectF localRect;
+    QMatrix4x4 modelMatrix;
+    ITextureView* depthDSV = nullptr;
+    RefCntAutoPtr<ITextureView> retainedDepthDSV;
+    float4 tint = {1.0f, 1.0f, 1.0f, 1.0f};
+    float opacity = 1.0f;
+    bool writeDepth = true;
+};
+
 struct ParticlePkt {
     ArtifactCore::ParticleRenderData data;
     QMatrix4x4                       viewMatrix;
@@ -344,7 +354,7 @@ using DrawPacket = std::variant<
     SpritePkt, SpriteXformPkt, ClonerGridDispatchPkt, ClonerSpriteXformPkt,
     MaskedSpritePkt,
     AtlasSpritePkt, AtlasSpriteXformPkt, TexturedTriangleXformPkt,
-    BillboardPkt, BillboardImagePkt, ParticlePkt,
+    BillboardPkt, BillboardImagePkt, CardPkt, ParticlePkt,
     GlyphTextPkt, GlyphTextXformPkt
 >;
 

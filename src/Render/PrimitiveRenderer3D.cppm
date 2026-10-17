@@ -1511,13 +1511,18 @@ public:
 
     void drawCardPass(const QRectF& localRect, const QMatrix4x4& modelMatrix,
                       ITextureView* textureView, const FloatColor& tint,
-                      float opacity, bool writeDepth, float alphaMode)
+                      float opacity, bool writeDepth, float alphaMode,
+                      IDeviceContext* recordingContext = nullptr,
+                      ITextureView* recordingTargetRTV = nullptr,
+                      ITextureView* recordingTargetDSV = nullptr)
     {
+        auto* drawContext = recordingContext ? recordingContext : ctx_;
         auto* cardPSO = writeDepth ? cardDepthWritePSO_.RawPtr()
                                    : cardTransparentPSO_.RawPtr();
         auto* cardSRB = writeDepth ? cardDepthWriteSRB_.RawPtr()
                                    : cardTransparentSRB_.RawPtr();
-        if (!hasRenderTarget() || !ctx_ || !cardPSO || !cardSRB ||
+        if ((!recordingTargetRTV && !hasRenderTarget()) || !drawContext ||
+            !cardPSO || !cardSRB ||
             !cardConstantBuffer_) {
             return;
         }
@@ -1531,20 +1536,20 @@ public:
 
         setCardConstants(localRect, modelMatrix, tint, opacity, alphaMode);
         void* mapped = nullptr;
-        ctx_->MapBuffer(cardConstantBuffer_, MAP_WRITE, MAP_FLAG_DISCARD, mapped);
+        drawContext->MapBuffer(cardConstantBuffer_, MAP_WRITE, MAP_FLAG_DISCARD, mapped);
         if (!mapped) {
-            ctx_->UnmapBuffer(cardConstantBuffer_, MAP_WRITE);
+            drawContext->UnmapBuffer(cardConstantBuffer_, MAP_WRITE);
             return;
         }
         std::memcpy(mapped, &cardConstants_, sizeof(CardConstants));
-        ctx_->UnmapBuffer(cardConstantBuffer_, MAP_WRITE);
+        drawContext->UnmapBuffer(cardConstantBuffer_, MAP_WRITE);
 
-        auto* rtv = currentRTV();
-        auto* dsv = currentDSV();
-        ctx_->SetRenderTargets(1, &rtv, dsv,
-                               RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-        applyViewportState(ctx_);
-        ctx_->SetPipelineState(cardPSO);
+        auto* rtv = recordingTargetRTV ? recordingTargetRTV : currentRTV();
+        auto* dsv = recordingContext ? recordingTargetDSV : currentDSV();
+        drawContext->SetRenderTargets(1, &rtv, dsv,
+                                      RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        applyViewportState(drawContext);
+        drawContext->SetPipelineState(cardPSO);
         if (auto* texVar = cardSRB->GetVariableByName(
                 SHADER_TYPE_PIXEL, "g_texture")) {
             texVar->Set(textureView);
@@ -1558,13 +1563,13 @@ public:
                 SHADER_TYPE_VERTEX, "CardCB")) {
             cbVar->Set(cardConstantBuffer_);
         }
-        ctx_->CommitShaderResources(cardSRB,
-                                    RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        drawContext->CommitShaderResources(
+            cardSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
         DrawAttribs drawAttrs;
         drawAttrs.NumVertices = 4;
         drawAttrs.Flags = DRAW_FLAG_NONE;
-        ctx_->Draw(drawAttrs);
+        drawContext->Draw(drawAttrs);
     }
 
     void drawCard(const QRectF& localRect, const QMatrix4x4& modelMatrix,
@@ -2015,6 +2020,22 @@ void PrimitiveRenderer3D::drawCardQuadImmediate(const QRectF& localRect,
                                                 bool writeDepth)
 {
     impl_->drawCard(localRect, modelMatrix, tint, opacity, writeDepth);
+}
+
+void PrimitiveRenderer3D::drawCardQuadWithContext(
+    IDeviceContext* context, ITextureView* targetRTV, ITextureView* targetDSV,
+    const QRectF& localRect, const QMatrix4x4& modelMatrix,
+    const FloatColor& tint, float opacity, bool writeDepth)
+{
+    if (!context || !targetRTV) return;
+    impl_->drawCardPass(localRect, modelMatrix,
+                        impl_->defaultTextureSRV_.RawPtr(), tint, opacity,
+                        writeDepth, 0.0f, context, targetRTV, targetDSV);
+}
+
+bool PrimitiveRenderer3D::hasActiveProjector() const
+{
+    return impl_->projectorEnabled_ && impl_->projectorTexture_ != nullptr;
 }
 
 void PrimitiveRenderer3D::drawTexturedCardQuadImmediate(

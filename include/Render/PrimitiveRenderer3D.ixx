@@ -119,6 +119,14 @@ public:
                              const QMatrix4x4 &modelMatrix,
                              const FloatColor &tint, float opacity = 1.0f,
                              bool writeDepth = true);
+  void drawCardQuadWithContext(IDeviceContext *context,
+                               ITextureView *targetRTV,
+                               ITextureView *targetDSV,
+                               const QRectF &localRect,
+                               const QMatrix4x4 &modelMatrix,
+                               const FloatColor &tint, float opacity,
+                               bool writeDepth);
+  bool hasActiveProjector() const;
   void drawTexturedCardQuadImmediate(const QRectF &localRect,
                                      const QMatrix4x4 &modelMatrix,
                                      ITextureView *texture,

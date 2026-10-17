@@ -1147,7 +1147,8 @@ bool DiligentImmediateSubmitter::canRecordDeferred(
             !std::holds_alternative<SolidTriPkt>(packet) &&
             !(m_primitiveRenderer3D_ &&
               m_deferredPrimitiveRendererOwnsState_ &&
-              std::holds_alternative<BillboardPkt>(packet))) {
+              (std::holds_alternative<BillboardPkt>(packet) ||
+               std::holds_alternative<CardPkt>(packet)))) {
             return false;
         }
         std::size_t packetWorkUnits = 1;
@@ -1690,6 +1691,15 @@ bool DiligentImmediateSubmitter::submitImpl(
                 else if constexpr (std::is_same_v<T, MaskedSpritePkt>)    { recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.Sprite"); submitMaskedSprite(p, recordCtx, pRTV); recordCtx->EndDebugGroup(); }
                 else if constexpr (std::is_same_v<T, BillboardPkt>)       submitBillboard(p, recordCtx, pRTV);
                 else if constexpr (std::is_same_v<T, BillboardImagePkt>)  submitBillboardImage(p, recordCtx, pRTV);
+                else if constexpr (std::is_same_v<T, CardPkt>) {
+                    if (m_primitiveRenderer3D_) {
+                        m_primitiveRenderer3D_->drawCardQuadWithContext(
+                            recordCtx, pRTV, p.depthDSV, p.localRect,
+                            p.modelMatrix,
+                            FloatColor{p.tint.x, p.tint.y, p.tint.z, p.tint.w},
+                            p.opacity, p.writeDepth);
+                    }
+                }
                 else if constexpr (std::is_same_v<T, ParticlePkt>)        submitParticles(p, recordCtx, pRTV, p.depthDSV);
                 else if constexpr (std::is_same_v<T, GlyphTextPkt>)       { recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.GlyphText"); submitGlyphText(p, recordCtx, pRTV); recordCtx->EndDebugGroup(); }
                 else if constexpr (std::is_same_v<T, GlyphTextXformPkt>)  { recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.GlyphText"); submitGlyphTextTransformed(p, recordCtx, pRTV); recordCtx->EndDebugGroup(); }

@@ -7279,9 +7279,22 @@ void ArtifactIRenderer::draw3DCard(const QRectF& localRect,
                                    const FloatColor& color, float opacity,
                                    bool writeDepth)
 {
- if (auto ctx = impl_->deviceManager_.immediateContext()) {
-  impl_->submitQueuedDraws(ctx.RawPtr());
+ auto ctx = impl_->deviceManager_.immediateContext();
+ if (ctx) impl_->submitQueuedDraws(ctx.RawPtr());
+ if (!impl_->primitiveRenderer3D_.hasActiveProjector()) {
+  CardPkt packet;
+  packet.localRect = localRect;
+  packet.modelMatrix = modelMatrix;
+  packet.depthDSV = impl_->activeDepthView();
+  packet.tint = {color.r(), color.g(), color.b(), color.a()};
+  packet.opacity = opacity;
+  packet.writeDepth = writeDepth;
+  impl_->cmdBuf_.setTargetRTV(impl_->primitiveRenderer_.currentRTV());
+  if (impl_->cmdBuf_.tryAppend(std::move(packet))) return;
  }
+ // Preserve the historical barrier for projector draws and bounded queue
+ // exhaustion: earlier worker recording must execute before this immediate draw.
+ if (ctx) impl_->completeDeferredPacketRecording(ctx.RawPtr());
  impl_->primitiveRenderer3D_.setOverrideDSV(impl_->activeDepthView());
  impl_->primitiveRenderer3D_.drawCardQuadImmediate(
      localRect, modelMatrix, color, opacity, writeDepth);
