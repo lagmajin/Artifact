@@ -8,6 +8,7 @@ module;
 #include <array>
 #include <vector>
 #include <type_traits>
+#include <memory>
 #include <QImage>
 #include <QFont>
 #include <QString>
@@ -63,6 +64,7 @@ static bool mapWriteDiscard(IDeviceContext* ctx, IBuffer* buf, const void* data,
     void* pData = nullptr;
     ctx->MapBuffer(buf, MAP_WRITE, MAP_FLAG_DISCARD, pData);
     if (!pData) {
+        ctx->UnmapBuffer(buf, MAP_WRITE);
         return false;
     }
     std::memcpy(pData, data, size);
@@ -957,9 +959,51 @@ void DiligentImmediateSubmitter::setDeferredContext(RefCntAutoPtr<IDeviceContext
     m_deferredCtx_ = std::move(deferred);
 }
 
+void DiligentImmediateSubmitter::setViewportState(
+    const RenderViewportState& state)
+{
+    m_viewportState_ = state;
+    if (m_primitiveRenderer3D_) {
+        m_primitiveRenderer3D_->setViewportState(state);
+    }
+}
+
 void DiligentImmediateSubmitter::setPrimitiveRenderer3D(PrimitiveRenderer3D* renderer)
 {
     m_primitiveRenderer3D_ = renderer;
+    if (m_primitiveRenderer3D_) {
+        m_primitiveRenderer3D_->setViewportState(m_viewportState_);
+    }
+}
+
+void DiligentImmediateSubmitter::applyViewportState(
+    IDeviceContext* context) const
+{
+    if (!context || !m_viewportState_.enabled ||
+        m_viewportState_.targetWidth == 0 ||
+        m_viewportState_.targetHeight == 0) {
+        return;
+    }
+
+    Viewport viewport{};
+    viewport.TopLeftX = m_viewportState_.x;
+    viewport.TopLeftY = m_viewportState_.y;
+    viewport.Width = m_viewportState_.width;
+    viewport.Height = m_viewportState_.height;
+    viewport.MinDepth = 0.0f;
+    viewport.MaxDepth = 1.0f;
+    context->SetViewports(1, &viewport, m_viewportState_.targetWidth,
+                          m_viewportState_.targetHeight);
+
+    const Rect scissor{
+        static_cast<Int32>(std::lround(m_viewportState_.x)),
+        static_cast<Int32>(std::lround(m_viewportState_.y)),
+        static_cast<Int32>(std::lround(m_viewportState_.x +
+                                       m_viewportState_.width)),
+        static_cast<Int32>(std::lround(m_viewportState_.y +
+                                       m_viewportState_.height))};
+    context->SetScissorRects(1, &scissor, m_viewportState_.targetWidth,
+                             m_viewportState_.targetHeight);
 }
 
 void DiligentImmediateSubmitter::setParticleRenderer(ArtifactCore::ParticleRenderer* renderer)
@@ -1007,24 +1051,68 @@ void DiligentImmediateSubmitter::recordDebugPass(ArtifactCore::FrameDebugPassRec
 
 void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext* ctx)
 {
-    ArtifactCore::ScopedPerformanceTimer _profSubmit2D("Submit2D");
-    if (!ctx || buf.empty()) { buf.reset(); return; }
-    auto* pRTV = buf.targetRTV();
-    if (!pRTV) { buf.reset(); return; }
+    if (!ctx) { buf.reset(); return; }
+    (void)submitImpl(buf, ctx, ctx->GetDesc().ContextId, false, nullptr);
+}
 
-    // Particle uploads and Cloner placement compute dispatches use the
-    // immediate context. Keep their consumers on that same ordered stream.
-    const bool containsImmediateComputeConsumers = std::any_of(
-        buf.packets().begin(), buf.packets().end(), [](const auto& packet) {
-            return std::holds_alternative<ParticlePkt>(packet) ||
-                   std::holds_alternative<ClonerSpriteXformPkt>(packet);
-        });
+bool DiligentImmediateSubmitter::recordDeferred(
+    RenderCommandBuffer& buf, Uint32 immediateContextId,
+    RefCntAutoPtr<ICommandList>& outCommandList)
+{
+    outCommandList = nullptr;
+    if (!m_deferredCtx_ || m_frameDebugCaptureEnabled_ || m_frameCostStats_ ||
+        !buf.targetRTV() || buf.packets().size() < 16 ||
+        m_primitiveRenderer3D_ || m_particleRenderer_) {
+        return false;
+    }
+    // Begin with a deliberately narrow lane. These packets use only this
+    // submitter's owned resources and have no external renderer/cache state.
+    for (const auto& packet : buf.packets()) {
+        if (!std::holds_alternative<SolidRectPkt>(packet) &&
+            !std::holds_alternative<SolidRectXformPkt>(packet) &&
+            !std::holds_alternative<LinePkt>(packet) &&
+            !std::holds_alternative<QuadPkt>(packet) &&
+            !std::holds_alternative<SolidTriPkt>(packet)) {
+            return false;
+        }
+    }
+    return submitImpl(buf, nullptr, immediateContextId, true,
+                      std::addressof(outCommandList));
+}
+
+void DiligentImmediateSubmitter::finishDeferredFrame()
+{
+    if (m_deferredCtx_) m_deferredCtx_->FinishFrame();
+}
+
+bool DiligentImmediateSubmitter::submitImpl(
+    RenderCommandBuffer& buf, IDeviceContext* ctx, Uint32 immediateContextId,
+    bool recordOnly, RefCntAutoPtr<ICommandList>* outCommandList)
+{
+    ArtifactCore::ScopedPerformanceTimer _profSubmit2D("Submit2DAndGizmo3D");
+    if (!recordOnly && !ctx) { buf.reset(); return false; }
+    const auto gizmoVertexCount = m_primitiveRenderer3D_
+        ? m_primitiveRenderer3D_->pendingGizmoVertexCount()
+        : 0u;
+    if (buf.empty() && gizmoVertexCount == 0) { buf.reset(); return false; }
+    auto* pRTV = buf.targetRTV();
+    if (!pRTV) {
+        buf.reset();
+        if (gizmoVertexCount > 0 && m_primitiveRenderer3D_ && ctx) {
+            m_primitiveRenderer3D_->flushGizmo3DWithContext(ctx);
+        }
+        return false;
+    }
+
     // Tiny serial viewport batches do not amortize command-list handoff.
-    // Keep their resource transitions and draws on the existing immediate
-    // stream, while retaining deferred recording for larger batches.
+    // Keep those small batches on the immediate stream; eligible packet types
+    // record on recordCtx in packet order.
     constexpr std::size_t kMinimumDeferredPackets = 16;
-    const bool useDeferredCtx = m_deferredCtx_ && !containsImmediateComputeConsumers &&
-        buf.packets().size() >= kMinimumDeferredPackets;
+    const auto packetCount = buf.packets().size();
+    const bool meetsDeferredWorkThreshold =
+        packetCount >= kMinimumDeferredPackets ||
+        gizmoVertexCount >= kMinimumDeferredPackets - packetCount;
+    const bool useDeferredCtx = recordOnly || (m_deferredCtx_ && meetsDeferredWorkThreshold);
     static const bool profileSubmitStages =
         qEnvironmentVariableIsSet("ARTIFACT_VIDEO_PREVIEW_PROFILE_SETUP") &&
         qEnvironmentVariable("ARTIFACT_VIDEO_PREVIEW_PROFILE_SETUP") != QStringLiteral("0");
@@ -1038,11 +1126,12 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
     // Phase 7a: record into deferred context, then execute on immediate
     IDeviceContext* recordCtx = ctx;
     if (useDeferredCtx) {
-        m_deferredCtx_->Begin(ctx->GetDesc().ContextId);
+        m_deferredCtx_->Begin(immediateContextId);
         recordCtx = m_deferredCtx_.RawPtr();
     }
     recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D");
     recordCtx->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION); // H2
+    applyViewportState(recordCtx);
     m_currentPSO_ = nullptr; // H3: reset PSO dedup state per submit
     m_batchSolidRectCount_ = 0;
     // The transformed-rectangle batch produced a clear-only frame on the
@@ -1098,11 +1187,15 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
                 << " ibSize=" << m_batch_solid_rect_ib_->GetDesc().Size
                 << " pso=" << (m_draw_batch_solid_rect_pso_and_srb.pPSO ? "ok" : "null");
         }
+        if (!mapWriteDiscard(recordCtx, m_batch_solid_rect_vb_,
+                m_batch_solid_rect_cpu_.data(),
+                sizeof(BatchRectVertexAA) * Uint32(m_batchSolidRectCount_) * 4,
+                m_frameCostStats_)) {
+            // Do not draw stale GPU data at this batch's position in the stream.
+            m_batchSolidRectCount_ = 0;
+            return;
+        }
         recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.SolidRect");
-        mapWriteDiscard(recordCtx, m_batch_solid_rect_vb_,
-            m_batch_solid_rect_cpu_.data(),
-            sizeof(BatchRectVertexAA) * Uint32(m_batchSolidRectCount_) * 4,
-            m_frameCostStats_);
         if (m_currentPSO_ != m_draw_batch_solid_rect_pso_and_srb.pPSO) {
             recordPipelineStateSwitch(m_frameCostStats_);
             recordCtx->SetPipelineState(m_draw_batch_solid_rect_pso_and_srb.pPSO);
@@ -1147,10 +1240,14 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
             m_batchLineActive_ = false;
             return;
         }
-        mapWriteDiscard(recordCtx, m_batch_line_vb_, m_batchLineVerts_.data(),
-                        sizeof(RectVertex) * m_batchLineVerts_.size(), m_frameCostStats_);
-        mapWriteDiscard(recordCtx, m_draw_solid_rect_trnsform_cb, &m_batchLineXform_,
-                        sizeof(m_batchLineXform_), m_frameCostStats_);
+        if (!mapWriteDiscard(recordCtx, m_batch_line_vb_, m_batchLineVerts_.data(),
+                             sizeof(RectVertex) * m_batchLineVerts_.size(), m_frameCostStats_) ||
+            !mapWriteDiscard(recordCtx, m_draw_solid_rect_trnsform_cb, &m_batchLineXform_,
+                             sizeof(m_batchLineXform_), m_frameCostStats_)) {
+            m_batchLineVerts_.clear();
+            m_batchLineActive_ = false;
+            return;
+        }
         if (m_currentPSO_ != m_draw_line_pso_and_srb.pPSO) {
             recordPipelineStateSwitch(m_frameCostStats_);
             recordCtx->SetPipelineState(m_draw_line_pso_and_srb.pPSO);
@@ -1176,10 +1273,14 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
             m_batchTriActive_ = false;
             return;
         }
-        mapWriteDiscard(recordCtx, m_batch_tri_vb_, m_batchTriVerts_.data(),
-                        sizeof(RectVertex) * m_batchTriVerts_.size(), m_frameCostStats_);
-        mapWriteDiscard(recordCtx, m_draw_solid_rect_trnsform_cb, &m_batchTriXform_,
-                        sizeof(m_batchTriXform_), m_frameCostStats_);
+        if (!mapWriteDiscard(recordCtx, m_batch_tri_vb_, m_batchTriVerts_.data(),
+                             sizeof(RectVertex) * m_batchTriVerts_.size(), m_frameCostStats_) ||
+            !mapWriteDiscard(recordCtx, m_draw_solid_rect_trnsform_cb, &m_batchTriXform_,
+                             sizeof(m_batchTriXform_), m_frameCostStats_)) {
+            m_batchTriVerts_.clear();
+            m_batchTriActive_ = false;
+            return;
+        }
         if (m_currentPSO_ != m_draw_solid_triangle_pso_and_srb.pPSO) {
             recordPipelineStateSwitch(m_frameCostStats_);
             recordCtx->SetPipelineState(m_draw_solid_triangle_pso_and_srb.pPSO);
@@ -1206,10 +1307,15 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
             m_batchQuadHasLast_ = false;
             return;
         }
-        mapWriteDiscard(recordCtx, m_batch_quad_vb_, m_batchQuadVerts_.data(),
-                        sizeof(RectVertex) * m_batchQuadVerts_.size(), m_frameCostStats_);
-        mapWriteDiscard(recordCtx, m_draw_solid_rect_trnsform_cb, &m_batchQuadXform_,
-                        sizeof(m_batchQuadXform_), m_frameCostStats_);
+        if (!mapWriteDiscard(recordCtx, m_batch_quad_vb_, m_batchQuadVerts_.data(),
+                             sizeof(RectVertex) * m_batchQuadVerts_.size(), m_frameCostStats_) ||
+            !mapWriteDiscard(recordCtx, m_draw_solid_rect_trnsform_cb, &m_batchQuadXform_,
+                             sizeof(m_batchQuadXform_), m_frameCostStats_)) {
+            m_batchQuadVerts_.clear();
+            m_batchQuadActive_ = false;
+            m_batchQuadHasLast_ = false;
+            return;
+        }
         if (m_currentPSO_ != m_draw_thick_line_pso_and_srb.pPSO) {
             recordPipelineStateSwitch(m_frameCostStats_);
             recordCtx->SetPipelineState(m_draw_thick_line_pso_and_srb.pPSO);
@@ -1248,11 +1354,22 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
             m_batchSpriteSRV_ = nullptr;
             return;
         }
-        recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.SpriteBatch");
-        mapWriteDiscard(recordCtx, m_batch_sprite_vb_, m_batchSpriteVerts_.data(),
-                        sizeof(SpriteVertex) * m_batchSpriteVerts_.size(), m_frameCostStats_);
+        if (!mapWriteDiscard(recordCtx, m_batch_sprite_vb_, m_batchSpriteVerts_.data(),
+                             sizeof(SpriteVertex) * m_batchSpriteVerts_.size(), m_frameCostStats_)) {
+            m_batchSpriteVerts_.clear();
+            m_batchSpriteActive_ = false;
+            m_batchSpriteSRV_ = nullptr;
+            return;
+        }
         const RenderSolidTransform2D identityXform{{0.0f, 0.0f}, {1.0f, 1.0f}, m_batchSpriteXform_.screenSize};
-        mapWriteDiscard(recordCtx, m_draw_sprite_cb, &identityXform, sizeof(identityXform), m_frameCostStats_);
+        if (!mapWriteDiscard(recordCtx, m_draw_sprite_cb, &identityXform,
+                             sizeof(identityXform), m_frameCostStats_)) {
+            m_batchSpriteVerts_.clear();
+            m_batchSpriteActive_ = false;
+            m_batchSpriteSRV_ = nullptr;
+            return;
+        }
+        recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.SpriteBatch");
         if (m_currentPSO_ != m_draw_sprite_pso_and_srb.pPSO) {
             recordPipelineStateSwitch(m_frameCostStats_);
             recordCtx->SetPipelineState(m_draw_sprite_pso_and_srb.pPSO);
@@ -1281,11 +1398,28 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
                a.screenSize.x == b.screenSize.x && a.screenSize.y == b.screenSize.y;
     };
 
-    for (auto& pkt : buf.packets()) {
+    for (auto& pkt : buf.packetsMutable()) {
         std::visit([&](auto& p) {
             using T = std::decay_t<decltype(p)>;
-            if constexpr (!std::is_same_v<T, LinePkt> && !std::is_same_v<T, QuadPkt> &&
-                          !std::is_same_v<T, SolidTriPkt> && !std::is_same_v<T, AtlasSpritePkt>) {
+            // Only keep one primitive/sprite batch category pending at a time.
+            // Otherwise the end-of-buffer flush order (line, triangle, quad,
+            // sprite) can differ from packet order when these categories are
+            // interleaved.
+            if constexpr (std::is_same_v<T, LinePkt>) {
+                flushTriBatch();
+                flushQuadBatch();
+                flushSpriteBatch();
+            } else if constexpr (std::is_same_v<T, QuadPkt>) {
+                flushLineBatch();
+                flushTriBatch();
+                flushSpriteBatch();
+            } else if constexpr (std::is_same_v<T, SolidTriPkt>) {
+                flushLineBatch();
+                flushQuadBatch();
+                flushSpriteBatch();
+            } else if constexpr (std::is_same_v<T, AtlasSpritePkt>) {
+                flushPrimBatches();
+            } else {
                 flushPrimBatches();
                 flushSpriteBatch();
             }
@@ -1419,7 +1553,22 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
                 else if constexpr (std::is_same_v<T, RectOutlinePkt>)     submitRectOutline(p, recordCtx, pRTV);
                 else if constexpr (std::is_same_v<T, SpritePkt>)          { recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.Sprite"); submitSprite(p, recordCtx, pRTV); recordCtx->EndDebugGroup(); }
                 else if constexpr (std::is_same_v<T, SpriteXformPkt>)     { recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.Sprite"); submitSpriteXform(p, recordCtx, pRTV); recordCtx->EndDebugGroup(); }
-                else if constexpr (std::is_same_v<T, ClonerSpriteXformPkt>) { recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.ClonerSprite"); submitClonerSpriteXform(p, recordCtx, pRTV); recordCtx->EndDebugGroup(); }
+                else if constexpr (std::is_same_v<T, ClonerGridDispatchPkt>) {
+                    recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.ClonerGridDispatch");
+                    submitClonerGridDispatch(p, recordCtx);
+                    recordCtx->EndDebugGroup();
+                }
+                else if constexpr (std::is_same_v<T, ClonerSpriteXformPkt>) {
+                    const auto& packets = buf.packets();
+                    const auto* dispatch = p.placementDispatchPacketIndex < packets.size()
+                        ? std::get_if<ClonerGridDispatchPkt>(
+                              &packets[p.placementDispatchPacketIndex])
+                        : nullptr;
+                    recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.ClonerSprite");
+                    submitClonerSpriteXform(p, recordCtx, pRTV,
+                        dispatch && dispatch->recordingSucceeded);
+                    recordCtx->EndDebugGroup();
+                }
                 else if constexpr (std::is_same_v<T, AtlasSpritePkt>) {
                     const bool sameTex = m_batchSpriteSRV_ == p.pSRV;
                     const bool sameScreen = m_batchSpriteXform_.screenSize.x == p.xform.screenSize.x &&
@@ -1457,12 +1606,22 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
     flushPrimBatches();
     flushSpriteBatch();
     flushSolidRectBatch(); // flush any remaining
+    if (gizmoVertexCount > 0 && m_primitiveRenderer3D_) {
+        recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.Gizmo3D");
+        m_primitiveRenderer3D_->flushGizmo3DWithContext(recordCtx, pRTV);
+        recordCtx->EndDebugGroup();
+        m_currentPSO_ = nullptr;
+    }
     recordCtx->EndDebugGroup();
     const auto recordNs = sampleSubmitStages ? submitStageTimer.nsecsElapsed() : 0;
     if (useDeferredCtx) {
         RefCntAutoPtr<ICommandList> pCmdList;
         m_deferredCtx_->FinishCommandList(&pCmdList);
         const auto listFinishedNs = sampleSubmitStages ? submitStageTimer.nsecsElapsed() : 0;
+        if (recordOnly) {
+            *outCommandList = std::move(pCmdList);
+            return outCommandList->RawPtr() != nullptr;
+        }
         ICommandList* raw = pCmdList.RawPtr();
         ctx->ExecuteCommandLists(1, &raw);
         const auto executedNs = sampleSubmitStages ? submitStageTimer.nsecsElapsed() : 0;
@@ -1481,6 +1640,7 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
         ++submitStageSamples;
     }
     buf.reset();
+    return true;
 }
 
 void DiligentImmediateSubmitter::submitBillboard(const BillboardPkt& p, IDeviceContext* ctx, ITextureView* pRTV)
@@ -1491,12 +1651,12 @@ void DiligentImmediateSubmitter::submitBillboard(const BillboardPkt& p, IDeviceC
     FloatRGBA tint{p.tint.x, p.tint.y, p.tint.z, p.tint.w};
     // The 3D renderer binds its own PSO outside the 2D submitter cache.
     m_currentPSO_ = nullptr;
-    m_primitiveRenderer3D_->setOverrideRTV(pRTV);
-    m_primitiveRenderer3D_->drawBillboardQuadImmediate(p.center, p.size, p.pSRV, tint, p.opacity, p.rollDegrees);
-    m_primitiveRenderer3D_->setOverrideRTV(nullptr);
+    m_primitiveRenderer3D_->drawBillboardQuadWithContext(
+        ctx, pRTV, p.center, p.size, p.pSRV, tint, p.opacity, p.rollDegrees);
 }
 
-void DiligentImmediateSubmitter::submitBillboardImage(const BillboardImagePkt& p, IDeviceContext* ctx, ITextureView* pRTV)
+void DiligentImmediateSubmitter::submitBillboardImage(
+    BillboardImagePkt& p, IDeviceContext* ctx, ITextureView* pRTV)
 {
     if (!ctx || !pRTV || !m_primitiveRenderer3D_) {
         return;
@@ -1504,9 +1664,9 @@ void DiligentImmediateSubmitter::submitBillboardImage(const BillboardImagePkt& p
     FloatRGBA tint{p.tint.x, p.tint.y, p.tint.z, p.tint.w};
     // The 3D renderer binds its own PSO outside the 2D submitter cache.
     m_currentPSO_ = nullptr;
-    m_primitiveRenderer3D_->setOverrideRTV(pRTV);
-    m_primitiveRenderer3D_->drawBillboardQuadImmediate(p.center, p.size, p.image, tint, p.opacity, p.rollDegrees);
-    m_primitiveRenderer3D_->setOverrideRTV(nullptr);
+    m_primitiveRenderer3D_->drawBillboardImageWithContext(
+        ctx, pRTV, p.center, p.size, p.image, tint, p.retainedTexture,
+        p.opacity, p.rollDegrees);
 }
 
 void DiligentImmediateSubmitter::submitParticles(const ParticlePkt& p, IDeviceContext* ctx, ITextureView* pRTV, ITextureView* pDSV)
@@ -1525,7 +1685,7 @@ void DiligentImmediateSubmitter::submitParticles(const ParticlePkt& p, IDeviceCo
     m_particleRenderer_->setViewMatrix(particleViewRows.constData());
     m_particleRenderer_->setProjectionMatrix(particleProjRows.constData());
     m_particleRenderer_->setFrameCostStats(m_frameCostStats_);
-    m_particleRenderer_->updateBuffer(p.data);
+    m_particleRenderer_->updateBuffer(ctx, p.data);
     const size_t uploadedCount = m_particleRenderer_->lastUploadedParticleCount();
     if (uploadedCount == 0) {
         qWarning() << "[ParticleRenderer] submitParticles skipped: uploaded count is zero"
@@ -1561,8 +1721,10 @@ void DiligentImmediateSubmitter::submitParticles(const ParticlePkt& p, IDeviceCo
         return;
     }
     ctx->SetRenderTargets(1, &pRTV, pDSV, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    applyViewportState(ctx);
     m_particleRenderer_->draw(ctx, uploadedCount);
     ctx->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    applyViewportState(ctx);
     qCDebug(particleSubmitterLog) << "[ParticleRenderer] submitParticles drawn"
              << "requested=" << p.data.particles.size()
              << "uploaded=" << uploadedCount
@@ -1576,8 +1738,12 @@ void DiligentImmediateSubmitter::submitSolidRect(const SolidRectPkt& p, IDeviceC
     if (!m_draw_solid_rect_unit_quad_vb_ || !m_draw_solid_rect_cb ||
         !m_draw_solid_rect_trnsform_cb   || !m_draw_solid_rect_index_buffer) return;
 
-    mapWriteDiscard(ctx, m_draw_solid_rect_cb,           &p.color, sizeof(p.color), m_frameCostStats_);
-    mapWriteDiscard(ctx, m_draw_solid_rect_trnsform_cb,  &p.xform, sizeof(p.xform), m_frameCostStats_);
+    if (!mapWriteDiscard(ctx, m_draw_solid_rect_cb, &p.color,
+                         sizeof(p.color), m_frameCostStats_) ||
+        !mapWriteDiscard(ctx, m_draw_solid_rect_trnsform_cb, &p.xform,
+                         sizeof(p.xform), m_frameCostStats_)) {
+        return;
+    }
 
     if (m_currentPSO_ != m_draw_solid_rect_pso_and_srb.pPSO) {
         recordPipelineStateSwitch(m_frameCostStats_);
@@ -1608,8 +1774,12 @@ void DiligentImmediateSubmitter::submitSolidRectXform(const SolidRectXformPkt& p
         recordDebugPass(std::move(debugPass));
     }
 
-    mapWriteDiscard(ctx, m_draw_solid_rect_cb,                 &p.color, sizeof(p.color), m_frameCostStats_);
-    mapWriteDiscard(ctx, m_draw_solid_rect_transform_matrix_cb, &p.mat,  sizeof(p.mat), m_frameCostStats_);
+    if (!mapWriteDiscard(ctx, m_draw_solid_rect_cb, &p.color,
+                         sizeof(p.color), m_frameCostStats_) ||
+        !mapWriteDiscard(ctx, m_draw_solid_rect_transform_matrix_cb, &p.mat,
+                         sizeof(p.mat), m_frameCostStats_)) {
+        return;
+    }
 
     if (m_currentPSO_ != m_draw_solid_rect_transform_pso_and_srb.pPSO) {
         recordPipelineStateSwitch(m_frameCostStats_);
@@ -1637,8 +1807,12 @@ void DiligentImmediateSubmitter::submitGradientRect(const GradientRectPkt& p, ID
     auto gradientParams = p.params;
     gradientParams.startColor.w *= p.opacity;
     gradientParams.endColor.w *= p.opacity;
-    mapWriteDiscard(ctx, m_draw_solid_rect_transform_matrix_cb, &p.mat, sizeof(p.mat), m_frameCostStats_);
-    mapWriteDiscard(ctx, m_draw_gradient_cb, &gradientParams, sizeof(gradientParams), m_frameCostStats_);
+    if (!mapWriteDiscard(ctx, m_draw_solid_rect_transform_matrix_cb, &p.mat,
+                         sizeof(p.mat), m_frameCostStats_) ||
+        !mapWriteDiscard(ctx, m_draw_gradient_cb, &gradientParams,
+                         sizeof(gradientParams), m_frameCostStats_)) {
+        return;
+    }
 
     if (m_currentPSO_ != m_draw_gradient_rect_pso_and_srb.pPSO) {
         recordPipelineStateSwitch(m_frameCostStats_);
@@ -1665,8 +1839,12 @@ void DiligentImmediateSubmitter::submitLine(const LinePkt& p, IDeviceContext* ct
         { p.p1, p.c1 },
         { p.p2, p.c2 },
     };
-    mapWriteDiscard(ctx, m_draw_solid_rect_vertex_buffer, vertices, sizeof(vertices), m_frameCostStats_);
-    mapWriteDiscard(ctx, m_draw_solid_rect_trnsform_cb,   &p.xform, sizeof(p.xform), m_frameCostStats_);
+    if (!mapWriteDiscard(ctx, m_draw_solid_rect_vertex_buffer, vertices,
+                         sizeof(vertices), m_frameCostStats_) ||
+        !mapWriteDiscard(ctx, m_draw_solid_rect_trnsform_cb, &p.xform,
+                         sizeof(p.xform), m_frameCostStats_)) {
+        return;
+    }
 
     if (m_currentPSO_ != m_draw_line_pso_and_srb.pPSO) {
         recordPipelineStateSwitch(m_frameCostStats_);
@@ -1694,8 +1872,12 @@ void DiligentImmediateSubmitter::submitQuad(const QuadPkt& p, IDeviceContext* ct
         { p.p0, p.color }, { p.p1, p.color },
         { p.p2, p.color }, { p.p3, p.color },
     };
-    mapWriteDiscard(ctx, m_draw_thick_line_vertex_buffer, vertices, sizeof(vertices), m_frameCostStats_);
-    mapWriteDiscard(ctx, m_draw_solid_rect_trnsform_cb,   &p.xform, sizeof(p.xform), m_frameCostStats_);
+    if (!mapWriteDiscard(ctx, m_draw_thick_line_vertex_buffer, vertices,
+                         sizeof(vertices), m_frameCostStats_) ||
+        !mapWriteDiscard(ctx, m_draw_solid_rect_trnsform_cb, &p.xform,
+                         sizeof(p.xform), m_frameCostStats_)) {
+        return;
+    }
 
     if (m_currentPSO_ != m_draw_thick_line_pso_and_srb.pPSO) {
         recordPipelineStateSwitch(m_frameCostStats_);
@@ -1725,12 +1907,16 @@ void DiligentImmediateSubmitter::submitDotLine(const DotLinePkt& p, IDeviceConte
         vertices[i].color    = p.verts[i].color;
         vertices[i].dist     = p.verts[i].dist;
     }
-    mapWriteDiscard(ctx, m_draw_dot_line_vertex_buffer, vertices, sizeof(vertices), m_frameCostStats_);
-    mapWriteDiscard(ctx, m_draw_solid_rect_trnsform_cb, &p.xform, sizeof(p.xform), m_frameCostStats_);
-
     struct DotLineShaderCB { float thickness; float spacing; float2 padding; };
     DotLineShaderCB cb = { p.thickness, p.spacing, {0.0f, 0.0f} };
-    mapWriteDiscard(ctx, m_draw_dot_line_cb, &cb, sizeof(cb), m_frameCostStats_);
+    if (!mapWriteDiscard(ctx, m_draw_dot_line_vertex_buffer, vertices,
+                         sizeof(vertices), m_frameCostStats_) ||
+        !mapWriteDiscard(ctx, m_draw_solid_rect_trnsform_cb, &p.xform,
+                         sizeof(p.xform), m_frameCostStats_) ||
+        !mapWriteDiscard(ctx, m_draw_dot_line_cb, &cb, sizeof(cb),
+                         m_frameCostStats_)) {
+        return;
+    }
 
     if (m_currentPSO_ != m_draw_dot_line_pso_and_srb.pPSO) {
         recordPipelineStateSwitch(m_frameCostStats_);
@@ -1757,8 +1943,12 @@ void DiligentImmediateSubmitter::submitSolidTri(const SolidTriPkt& p, IDeviceCon
     RectVertex vertices[3] = {
         { p.p0, p.color }, { p.p1, p.color }, { p.p2, p.color },
     };
-    mapWriteDiscard(ctx, m_draw_solid_triangle_vertex_buffer, vertices, sizeof(vertices), m_frameCostStats_);
-    mapWriteDiscard(ctx, m_draw_solid_rect_trnsform_cb,       &p.xform, sizeof(p.xform), m_frameCostStats_);
+    if (!mapWriteDiscard(ctx, m_draw_solid_triangle_vertex_buffer, vertices,
+                         sizeof(vertices), m_frameCostStats_) ||
+        !mapWriteDiscard(ctx, m_draw_solid_rect_trnsform_cb, &p.xform,
+                         sizeof(p.xform), m_frameCostStats_)) {
+        return;
+    }
 
     if (m_currentPSO_ != m_draw_solid_triangle_pso_and_srb.pPSO) {
         recordPipelineStateSwitch(m_frameCostStats_);
@@ -1795,8 +1985,12 @@ void DiligentImmediateSubmitter::submitSolidCircle(const SolidCirclePkt& p, IDev
         vertices[i * 3 + 2] = {{ p.cx + p.radius * std::cos(a1),     p.cy + p.radius * std::sin(a1)    }, c};
     }
 
-    mapWriteDiscard(ctx, m_draw_solid_circle_vertex_buffer, vertices.data(), sizeof(RectVertex) * vertexCount, m_frameCostStats_);
-    mapWriteDiscard(ctx, m_draw_solid_rect_trnsform_cb,     &p.xform,        sizeof(p.xform), m_frameCostStats_);
+    if (!mapWriteDiscard(ctx, m_draw_solid_circle_vertex_buffer, vertices.data(),
+                         sizeof(RectVertex) * vertexCount, m_frameCostStats_) ||
+        !mapWriteDiscard(ctx, m_draw_solid_rect_trnsform_cb, &p.xform,
+                         sizeof(p.xform), m_frameCostStats_)) {
+        return;
+    }
 
     if (m_currentPSO_ != m_draw_solid_triangle_pso_and_srb.pPSO) {
         recordPipelineStateSwitch(m_frameCostStats_);
@@ -1841,9 +2035,14 @@ void DiligentImmediateSubmitter::submitCheckerboard(const CheckerboardPkt& p, ID
     cb.padding   = {0.0f, 0.0f};
     cb.color1    = p.helper.color1;
     cb.color2    = p.helper.color2;
-    mapWriteDiscard(ctx, m_draw_viewer_helper_cb,      &cb,         sizeof(cb), m_frameCostStats_);
-    mapWriteDiscard(ctx, m_draw_solid_rect_cb,         &p.baseColor, sizeof(p.baseColor), m_frameCostStats_);
-    mapWriteDiscard(ctx, m_draw_solid_rect_trnsform_cb, &p.xform,   sizeof(p.xform), m_frameCostStats_);
+    if (!mapWriteDiscard(ctx, m_draw_viewer_helper_cb, &cb, sizeof(cb),
+                         m_frameCostStats_) ||
+        !mapWriteDiscard(ctx, m_draw_solid_rect_cb, &p.baseColor,
+                         sizeof(p.baseColor), m_frameCostStats_) ||
+        !mapWriteDiscard(ctx, m_draw_solid_rect_trnsform_cb, &p.xform,
+                         sizeof(p.xform), m_frameCostStats_)) {
+        return;
+    }
 
     if (m_currentPSO_ != m_draw_checkerboard_pso_and_srb.pPSO) {
         recordPipelineStateSwitch(m_frameCostStats_);
@@ -1887,9 +2086,14 @@ void DiligentImmediateSubmitter::submitGrid(const GridPkt& p, IDeviceContext* ct
     cb.padding   = { p.helper._pad[0], p.helper._pad[1] };
     cb.color1    = p.helper.color1;
     cb.color2    = p.helper.color2;
-    mapWriteDiscard(ctx, m_draw_viewer_helper_cb,       &cb,          sizeof(cb), m_frameCostStats_);
-    mapWriteDiscard(ctx, m_draw_solid_rect_cb,          &p.baseColor, sizeof(p.baseColor), m_frameCostStats_);
-    mapWriteDiscard(ctx, m_draw_solid_rect_trnsform_cb,  &p.xform,    sizeof(p.xform), m_frameCostStats_);
+    if (!mapWriteDiscard(ctx, m_draw_viewer_helper_cb, &cb, sizeof(cb),
+                         m_frameCostStats_) ||
+        !mapWriteDiscard(ctx, m_draw_solid_rect_cb, &p.baseColor,
+                         sizeof(p.baseColor), m_frameCostStats_) ||
+        !mapWriteDiscard(ctx, m_draw_solid_rect_trnsform_cb, &p.xform,
+                         sizeof(p.xform), m_frameCostStats_)) {
+        return;
+    }
 
     if (m_currentPSO_ != m_draw_grid_pso_and_srb.pPSO) {
         recordPipelineStateSwitch(m_frameCostStats_);
@@ -1965,10 +2169,16 @@ void DiligentImmediateSubmitter::submitSprite(const SpritePkt& p, IDeviceContext
             {{0.0f,1.0f},{0.0f,1.0f},{1,1,1,p.opacity}},
             {{1.0f,1.0f},{1.0f,1.0f},{1,1,1,p.opacity}},
         };
-        mapWriteDiscard(ctx, m_draw_sprite_vertex_buffer, vertices, sizeof(vertices), m_frameCostStats_);
+        if (!mapWriteDiscard(ctx, m_draw_sprite_vertex_buffer, vertices,
+                             sizeof(vertices), m_frameCostStats_)) {
+            return;
+        }
         vb = m_draw_sprite_vertex_buffer;
     }
-    mapWriteDiscard(ctx, m_draw_sprite_cb, &p.xform, sizeof(p.xform), m_frameCostStats_);
+    if (!mapWriteDiscard(ctx, m_draw_sprite_cb, &p.xform, sizeof(p.xform),
+                         m_frameCostStats_)) {
+        return;
+    }
 
     if (m_currentPSO_ != m_draw_sprite_pso_and_srb.pPSO) {
         recordPipelineStateSwitch(m_frameCostStats_);
@@ -2019,10 +2229,16 @@ void DiligentImmediateSubmitter::submitSpriteXform(const SpriteXformPkt& p, IDev
             {{0,0},{0,0},{1,1,1,p.opacity}}, {{1,0},{1,0},{1,1,1,p.opacity}},
             {{0,1},{0,1},{1,1,1,p.opacity}}, {{1,1},{1,1},{1,1,1,p.opacity}},
         };
-        mapWriteDiscard(ctx, m_draw_sprite_vertex_buffer, vertices, sizeof(vertices), m_frameCostStats_);
+        if (!mapWriteDiscard(ctx, m_draw_sprite_vertex_buffer, vertices,
+                             sizeof(vertices), m_frameCostStats_)) {
+            return;
+        }
         vb = m_draw_sprite_vertex_buffer;
     }
-    mapWriteDiscard(ctx, m_draw_sprite_transform_matrix_cb, &p.mat, sizeof(p.mat), m_frameCostStats_);
+    if (!mapWriteDiscard(ctx, m_draw_sprite_transform_matrix_cb, &p.mat,
+                         sizeof(p.mat), m_frameCostStats_)) {
+        return;
+    }
 
     if (m_currentPSO_ != m_draw_sprite_transform_pso_and_srb.pPSO) {
         recordPipelineStateSwitch(m_frameCostStats_);
@@ -2041,8 +2257,44 @@ void DiligentImmediateSubmitter::submitSpriteXform(const SpriteXformPkt& p, IDev
     ctx->DrawIndexed(drawAttrs);
 }
 
+void DiligentImmediateSubmitter::submitClonerGridDispatch(
+    ClonerGridDispatchPkt& p, IDeviceContext* ctx)
+{
+    p.recordingSucceeded = false;
+    if (!ctx || !p.pPSO || !p.pSRB || !p.paramsBuffer ||
+        !p.outputBuffer || p.params.candidateCount == 0) {
+        return;
+    }
+
+    void* mapped = nullptr;
+    ctx->MapBuffer(p.paramsBuffer, MAP_WRITE, MAP_FLAG_DISCARD, mapped);
+    if (!mapped) {
+        ctx->UnmapBuffer(p.paramsBuffer, MAP_WRITE);
+        return;
+    }
+    std::memcpy(mapped, &p.params, sizeof(p.params));
+    ctx->UnmapBuffer(p.paramsBuffer, MAP_WRITE);
+
+    if (m_currentPSO_ != p.pPSO) {
+        recordPipelineStateSwitch(m_frameCostStats_);
+        ctx->SetPipelineState(p.pPSO);
+        m_currentPSO_ = p.pPSO;
+    }
+    recordShaderResourceCommit(m_frameCostStats_);
+    ctx->CommitShaderResources(
+        p.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+    DispatchComputeAttribs dispatchAttribs;
+    dispatchAttribs.ThreadGroupCountX = (p.params.candidateCount + 63u) / 64u;
+    dispatchAttribs.ThreadGroupCountY = 1;
+    dispatchAttribs.ThreadGroupCountZ = 1;
+    ctx->DispatchCompute(dispatchAttribs);
+    p.recordingSucceeded = true;
+}
+
 void DiligentImmediateSubmitter::submitClonerSpriteXform(
-    const ClonerSpriteXformPkt& p, IDeviceContext* ctx, ITextureView* pRTV)
+    const ClonerSpriteXformPkt& p, IDeviceContext* ctx, ITextureView* pRTV,
+    bool placementDispatchSucceeded)
 {
     auto& pipeline = m_draw_cloner_sprite_transform_pso_and_srb_;
     if (!ctx || !pRTV || !p.pSRV) {
@@ -2057,6 +2309,10 @@ void DiligentImmediateSubmitter::submitClonerSpriteXform(
         fallback.opacity = p.opacity;
         submitSpriteXform(fallback, ctx, pRTV);
     };
+    if (!placementDispatchSucceeded) {
+        submitCpuFallback();
+        return;
+    }
     bool placementStorageValid = false;
     if (p.placementBuffer && p.placementSRV && p.instanceCount != 0) {
         const auto& placementDesc = p.placementBuffer->GetDesc();
@@ -2137,10 +2393,15 @@ void DiligentImmediateSubmitter::submitAtlasSprite(const AtlasSpritePkt& p, IDev
         {{0.0f,1.0f}, {p.uvRect.x, p.uvRect.w}, p.color},
         {{1.0f,1.0f}, {p.uvRect.z, p.uvRect.w}, p.color},
     };
-    mapWriteDiscard(ctx, m_draw_sprite_vertex_buffer, vertices, sizeof(vertices), m_frameCostStats_);
+    if (!mapWriteDiscard(ctx, m_draw_sprite_vertex_buffer, vertices,
+                         sizeof(vertices), m_frameCostStats_)) {
+        return;
+    }
     IBuffer* vb = m_draw_sprite_vertex_buffer;
-    
-    mapWriteDiscard(ctx, m_draw_sprite_cb, &p.xform, sizeof(p.xform), m_frameCostStats_);
+    if (!mapWriteDiscard(ctx, m_draw_sprite_cb, &p.xform, sizeof(p.xform),
+                         m_frameCostStats_)) {
+        return;
+    }
 
     if (m_currentPSO_ != m_draw_sprite_pso_and_srb.pPSO) {
         recordPipelineStateSwitch(m_frameCostStats_);
@@ -2170,10 +2431,15 @@ void DiligentImmediateSubmitter::submitAtlasSpriteXform(const AtlasSpriteXformPk
         {{0,1}, {p.uvRect.x, p.uvRect.w}, p.color},
         {{1,1}, {p.uvRect.z, p.uvRect.w}, p.color},
     };
-    mapWriteDiscard(ctx, m_draw_sprite_vertex_buffer, vertices, sizeof(vertices), m_frameCostStats_);
+    if (!mapWriteDiscard(ctx, m_draw_sprite_vertex_buffer, vertices,
+                         sizeof(vertices), m_frameCostStats_)) {
+        return;
+    }
     IBuffer* vb = m_draw_sprite_vertex_buffer;
-    
-    mapWriteDiscard(ctx, m_draw_sprite_transform_matrix_cb, &p.mat, sizeof(p.mat), m_frameCostStats_);
+    if (!mapWriteDiscard(ctx, m_draw_sprite_transform_matrix_cb, &p.mat,
+                         sizeof(p.mat), m_frameCostStats_)) {
+        return;
+    }
 
     if (m_currentPSO_ != m_draw_sprite_transform_pso_and_srb.pPSO) {
         recordPipelineStateSwitch(m_frameCostStats_);
@@ -2205,10 +2471,12 @@ void DiligentImmediateSubmitter::submitTexturedTriangleXform(
         {{p.p1.x, p.p1.y}, {p.uv1.x, p.uv1.y}, p.color},
         {{p.p2.x, p.p2.y}, {p.uv2.x, p.uv2.y}, p.color},
     };
-    mapWriteDiscard(ctx, m_draw_sprite_vertex_buffer, vertices,
-                    sizeof(vertices), m_frameCostStats_);
-    mapWriteDiscard(ctx, m_draw_sprite_transform_matrix_cb, &p.mat,
-                    sizeof(p.mat), m_frameCostStats_);
+    if (!mapWriteDiscard(ctx, m_draw_sprite_vertex_buffer, vertices,
+                         sizeof(vertices), m_frameCostStats_) ||
+        !mapWriteDiscard(ctx, m_draw_sprite_transform_matrix_cb, &p.mat,
+                         sizeof(p.mat), m_frameCostStats_)) {
+        return;
+    }
     if (m_currentPSO_ != m_draw_sprite_transform_pso_and_srb.pPSO) {
         recordPipelineStateSwitch(m_frameCostStats_);
         ctx->SetPipelineState(m_draw_sprite_transform_pso_and_srb.pPSO);
@@ -2243,10 +2511,16 @@ void DiligentImmediateSubmitter::submitMaskedSprite(const MaskedSpritePkt& p, ID
             {{0,0},{0,0},{1,1,1,p.opacity}}, {{1,0},{1,0},{1,1,1,p.opacity}},
             {{0,1},{0,1},{1,1,1,p.opacity}}, {{1,1},{1,1},{1,1,1,p.opacity}},
         };
-        mapWriteDiscard(ctx, m_draw_sprite_vertex_buffer, vertices, sizeof(vertices), m_frameCostStats_);
+        if (!mapWriteDiscard(ctx, m_draw_sprite_vertex_buffer, vertices,
+                             sizeof(vertices), m_frameCostStats_)) {
+            return;
+        }
         vb = m_draw_sprite_vertex_buffer;
     }
-    mapWriteDiscard(ctx, m_draw_sprite_cb, &p.xform, sizeof(p.xform), m_frameCostStats_);
+    if (!mapWriteDiscard(ctx, m_draw_sprite_cb, &p.xform, sizeof(p.xform),
+                         m_frameCostStats_)) {
+        return;
+    }
 
     if (m_currentPSO_ != m_draw_masked_sprite_pso_and_srb.pPSO) {
         recordPipelineStateSwitch(m_frameCostStats_);
@@ -2359,7 +2633,10 @@ void DiligentImmediateSubmitter::submitGlyphText(const GlyphTextPkt& p, IDeviceC
                 {p01, {glyph.rect.u0(m_glyph_atlas.width()), glyph.rect.v1(m_glyph_atlas.height())}, oc},
                 {p11, {glyph.rect.u1(m_glyph_atlas.width()), glyph.rect.v1(m_glyph_atlas.height())}, oc},
             };
-            mapWriteDiscard(ctx, m_draw_sprite_vertex_buffer, ov, sizeof(ov), m_frameCostStats_);
+            if (!mapWriteDiscard(ctx, m_draw_sprite_vertex_buffer, ov,
+                                 sizeof(ov), m_frameCostStats_)) {
+                return;
+            }
             for (const auto& d : dirs) {
                 RenderSolidTransform2D ox{};
                 ox.offset = { (left + d.x) * zoom + p.xform.offset.x,
@@ -2367,7 +2644,10 @@ void DiligentImmediateSubmitter::submitGlyphText(const GlyphTextPkt& p, IDeviceC
                 const float glyphScale = std::max(0.0001f, glyph.offsetScale);
                 ox.scale     = { w * zoom * glyphScale, h * zoom * glyphScale };
                 ox.screenSize = p.xform.screenSize;
-                mapWriteDiscard(ctx, m_draw_sprite_cb, &ox, sizeof(ox), m_frameCostStats_);
+                if (!mapWriteDiscard(ctx, m_draw_sprite_cb, &ox, sizeof(ox),
+                                     m_frameCostStats_)) {
+                    return;
+                }
                 recordDrawCall(m_frameCostStats_, true);
                 ctx->DrawIndexed(DrawIndexedAttribs(6, VT_UINT32, DRAW_FLAG_NONE));
             }
@@ -2412,8 +2692,12 @@ void DiligentImmediateSubmitter::submitGlyphText(const GlyphTextPkt& p, IDeviceC
         glyphXform.scale = { w * zoom * glyphScale, h * zoom * glyphScale };
         glyphXform.screenSize = p.xform.screenSize;
 
-        mapWriteDiscard(ctx, m_draw_sprite_vertex_buffer, vertices, sizeof(vertices), m_frameCostStats_);
-        mapWriteDiscard(ctx, m_draw_sprite_cb, &glyphXform, sizeof(glyphXform), m_frameCostStats_);
+        if (!mapWriteDiscard(ctx, m_draw_sprite_vertex_buffer, vertices,
+                             sizeof(vertices), m_frameCostStats_) ||
+            !mapWriteDiscard(ctx, m_draw_sprite_cb, &glyphXform,
+                             sizeof(glyphXform), m_frameCostStats_)) {
+            return;
+        }
         recordDrawCall(m_frameCostStats_, true);
         ctx->DrawIndexed(DrawIndexedAttribs(6, VT_UINT32, DRAW_FLAG_NONE));
     }
@@ -2516,7 +2800,10 @@ void DiligentImmediateSubmitter::submitGlyphTextTransformed(const GlyphTextXform
                 {{0.0f, 1.0f}, {glyph.rect.u0(m_glyph_atlas.width()), glyph.rect.v1(m_glyph_atlas.height())}, oc},
                 {{1.0f, 1.0f}, {glyph.rect.u1(m_glyph_atlas.width()), glyph.rect.v1(m_glyph_atlas.height())}, oc},
             };
-            mapWriteDiscard(ctx, m_draw_sprite_vertex_buffer, ov, sizeof(ov), m_frameCostStats_);
+            if (!mapWriteDiscard(ctx, m_draw_sprite_vertex_buffer, ov,
+                                 sizeof(ov), m_frameCostStats_)) {
+                return;
+            }
             for (const auto& d : dirs) {
                 QMatrix4x4 om = p.transform;
                 const float glyphScale = std::max(0.0001f, glyph.offsetScale);
@@ -2529,7 +2816,10 @@ void DiligentImmediateSubmitter::submitGlyphTextTransformed(const GlyphTextXform
                 omat.row1 = { om.row(1).x(), om.row(1).y(), om.row(1).z(), om.row(1).w() };
                 omat.row2 = { om.row(2).x(), om.row(2).y(), om.row(2).z(), om.row(2).w() };
                 omat.row3 = { om.row(3).x(), om.row(3).y(), om.row(3).z(), om.row(3).w() };
-                mapWriteDiscard(ctx, m_draw_sprite_transform_matrix_cb, &omat, sizeof(omat), m_frameCostStats_);
+                if (!mapWriteDiscard(ctx, m_draw_sprite_transform_matrix_cb,
+                                     &omat, sizeof(omat), m_frameCostStats_)) {
+                    return;
+                }
                 recordDrawCall(m_frameCostStats_, true);
                 ctx->DrawIndexed(DrawIndexedAttribs(6, VT_UINT32, DRAW_FLAG_NONE));
             }
@@ -2569,8 +2859,12 @@ void DiligentImmediateSubmitter::submitGlyphTextTransformed(const GlyphTextXform
         mat.row1 = { glyphMat.row(1).x(), glyphMat.row(1).y(), glyphMat.row(1).z(), glyphMat.row(1).w() };
         mat.row2 = { glyphMat.row(2).x(), glyphMat.row(2).y(), glyphMat.row(2).z(), glyphMat.row(2).w() };
         mat.row3 = { glyphMat.row(3).x(), glyphMat.row(3).y(), glyphMat.row(3).z(), glyphMat.row(3).w() };
-        mapWriteDiscard(ctx, m_draw_sprite_vertex_buffer, vertices, sizeof(vertices), m_frameCostStats_);
-        mapWriteDiscard(ctx, m_draw_sprite_transform_matrix_cb, &mat, sizeof(mat), m_frameCostStats_);
+        if (!mapWriteDiscard(ctx, m_draw_sprite_vertex_buffer, vertices,
+                             sizeof(vertices), m_frameCostStats_) ||
+            !mapWriteDiscard(ctx, m_draw_sprite_transform_matrix_cb, &mat,
+                             sizeof(mat), m_frameCostStats_)) {
+            return;
+        }
         recordDrawCall(m_frameCostStats_, true);
         ctx->DrawIndexed(DrawIndexedAttribs(6, VT_UINT32, DRAW_FLAG_NONE));
     }

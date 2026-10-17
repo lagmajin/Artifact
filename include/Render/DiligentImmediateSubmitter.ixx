@@ -4,6 +4,7 @@ module;
 #include <vector>
 #include <RenderDevice.h>
 #include <DeviceContext.h>
+#include <CommandList.h>
 #include <Texture.h>
 #include <Sampler.h>
 #include <RefCntAutoPtr.hpp>
@@ -41,6 +42,7 @@ public:
     void destroy();
     void setFrameCostStats(ArtifactCore::RenderCostStats* stats);
     void setDeferredContext(RefCntAutoPtr<IDeviceContext> deferred);
+    void setViewportState(const RenderViewportState& state);
     void setPrimitiveRenderer3D(PrimitiveRenderer3D* renderer);
     void setParticleRenderer(ArtifactCore::ParticleRenderer* renderer);
     bool clonerSpriteGpuReady() const noexcept;
@@ -53,8 +55,18 @@ public:
     // state. Call submit() from one owner thread per instance; worker-local
     // command buffers do not make a shared submitter safe for concurrent use.
     void submit(RenderCommandBuffer& buf, IDeviceContext* ctx) override;
+    // Records an eligible packet buffer on this instance's dedicated deferred
+    // context. Call this and finishDeferredFrame() on the same recorder thread;
+    // retain buf until the immediate owner executes outCommandList. This API
+    // does not make submitter state safe for concurrent calls.
+    bool recordDeferred(RenderCommandBuffer& buf, Uint32 immediateContextId,
+                        RefCntAutoPtr<ICommandList>& outCommandList);
+    void finishDeferredFrame();
 
 private:
+    bool submitImpl(RenderCommandBuffer& buf, IDeviceContext* immediateCtx,
+                    Uint32 immediateContextId, bool recordOnly,
+                    RefCntAutoPtr<ICommandList>* outCommandList);
     RefCntAutoPtr<IRenderDevice> m_device;
 
     // ---- Vertex Buffers ----
@@ -117,6 +129,7 @@ private:
         GlyphRenderMode renderMode, uint32_t shapedGlyphIndex = 0,
         const QString& clusterText = QString(),
         bool isEmojiSequence = false);
+    void applyViewportState(IDeviceContext* context) const;
 
     // Reused by both glyph submit paths.  Capacity is allocated during renderer
     // setup so ordinary text edits do not allocate in frame submission.
@@ -146,6 +159,7 @@ private:
 
     // Phase 7a: deferred context for recording; nullptr = immediate fallback
     RefCntAutoPtr<IDeviceContext> m_deferredCtx_;
+    RenderViewportState m_viewportState_;
 
     // Phase 8: run-batching for line/tri/quad micro-prims. Consecutive
     // packets sharing a bitwise-identical xform accumulate into fixed CPU
@@ -235,13 +249,15 @@ private:
     void submitRectOutline   (const RectOutlinePkt&,    IDeviceContext*, ITextureView*);
     void submitSprite        (const SpritePkt&,         IDeviceContext*, ITextureView*);
     void submitSpriteXform   (const SpriteXformPkt&,    IDeviceContext*, ITextureView*);
-    void submitClonerSpriteXform(const ClonerSpriteXformPkt&, IDeviceContext*, ITextureView*);
+    void submitClonerGridDispatch(ClonerGridDispatchPkt&, IDeviceContext*);
+    void submitClonerSpriteXform(const ClonerSpriteXformPkt&, IDeviceContext*, ITextureView*,
+                                 bool placementDispatchSucceeded);
     void submitAtlasSprite   (const AtlasSpritePkt&,    IDeviceContext*, ITextureView*);
     void submitAtlasSpriteXform(const AtlasSpriteXformPkt&, IDeviceContext*, ITextureView*);
     void submitTexturedTriangleXform(const TexturedTriangleXformPkt&, IDeviceContext*, ITextureView*);
     void submitMaskedSprite  (const MaskedSpritePkt&,   IDeviceContext*, ITextureView*);
     void submitBillboard     (const BillboardPkt&,      IDeviceContext*, ITextureView*);
-    void submitBillboardImage(const BillboardImagePkt&, IDeviceContext*, ITextureView*);
+    void submitBillboardImage(BillboardImagePkt&, IDeviceContext*, ITextureView*);
     void submitParticles     (const ParticlePkt&,       IDeviceContext*, ITextureView*, ITextureView*);
     void submitGlyphText     (const GlyphTextPkt&,      IDeviceContext*, ITextureView*);
     void submitGlyphTextTransformed(const GlyphTextXformPkt&, IDeviceContext*, ITextureView*);
