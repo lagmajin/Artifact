@@ -528,6 +528,9 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
       if (!device) return false;
 
       device_ = device;
+      primitiveRenderer3D_.createBuffers(device, RenderConfig::MainRTVFormat);
+      primitiveRenderer3D_.setPSOs(shaderManager);
+      submitter_.setPrimitiveRenderer3D(&primitiveRenderer3D_);
       submitter_.createBuffers(device, RenderConfig::MainRTVFormat);
       submitter_.setPSOs(shaderManager);
       submitter_.setFrameCostStats(nullptr);
@@ -549,7 +552,9 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
 
     bool startRecording(RenderCommandBuffer& buffer,
                         IDeviceContext* immediateContext,
-                        const RenderViewportState& viewportState) {
+                        const RenderViewportState& viewportState,
+                        const QMatrix4x4& viewMatrix,
+                        const QMatrix4x4& projectionMatrix) {
       if (!immediateContext || !canSubmit(buffer)) return false;
       QMutexLocker lock(&mutex_);
       if (active_ && !completed_) return false;
@@ -563,6 +568,8 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
       buffer_ = &buffer;
       packetCount_ = buffer.packets().size();
       viewportState_ = viewportState;
+      viewMatrix_ = viewMatrix;
+      projectionMatrix_ = projectionMatrix;
       immediateContextId_ = immediateContext->GetDesc().ContextId;
       recordReady_ = false;
       executeAcknowledged_ = false;
@@ -652,8 +659,11 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
     }
 
     bool submit(RenderCommandBuffer& buffer, IDeviceContext* immediateContext,
-                const RenderViewportState& viewportState) {
-      if (!startRecording(buffer, immediateContext, viewportState)) return false;
+                const RenderViewportState& viewportState,
+                const QMatrix4x4& viewMatrix,
+                const QMatrix4x4& projectionMatrix) {
+      if (!startRecording(buffer, immediateContext, viewportState,
+                          viewMatrix, projectionMatrix)) return false;
       return executeAndWait(immediateContext);
     }
 
@@ -666,7 +676,9 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
       cancelAndWait();
       pool_.waitForDone();
       submitter_.setParticleRenderer(nullptr);
+      submitter_.setPrimitiveRenderer3D(nullptr);
       submitter_.destroy();
+      primitiveRenderer3D_.destroy();
       device_ = nullptr;
       initialized_ = false;
     }
@@ -708,12 +720,15 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
       const auto packetCount = packetCount_;
       const Uint32 contextId = immediateContextId_;
       const RenderViewportState viewportState = viewportState_;
+      const QMatrix4x4 viewMatrix = viewMatrix_;
+      const QMatrix4x4 projectionMatrix = projectionMatrix_;
       lock.unlock();
 
       RefCntAutoPtr<ICommandList> recordedCommandList;
       bool recorded = false;
       try {
         if (buffer) {
+          primitiveRenderer3D_.setCameraMatrices(viewMatrix, projectionMatrix);
           submitter_.setViewportState(viewportState);
           recorded = submitter_.recordDeferred(
               *buffer, contextId, recordedCommandList);
@@ -769,6 +784,7 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
     }
 
     DiligentImmediateSubmitter submitter_;
+    PrimitiveRenderer3D primitiveRenderer3D_;
     mutable QMutex mutex_;
     QWaitCondition ready_;
     QWaitCondition done_;
@@ -778,6 +794,8 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
     std::size_t packetCount_ = 0;
     RefCntAutoPtr<ICommandList> commandList_;
     RenderViewportState viewportState_;
+    QMatrix4x4 viewMatrix_;
+    QMatrix4x4 projectionMatrix_;
     Uint32 immediateContextId_ = 0;
     bool initialized_ = false;
     bool active_ = false;
@@ -1076,7 +1094,8 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
         !m_frameCostCaptureActive_ &&
         !m_frameDebugCaptureActive_ &&
         deferredPacketRecordWorker_.submit(
-            cmdBuf_, ctx, m_renderViewportState_);
+            cmdBuf_, ctx, m_renderViewportState_, meshViewMatrix_,
+            meshProjMatrix_);
     if (!workerRecorded) {
       submitter_.submit(cmdBuf_, ctx);
     } else {
@@ -1159,7 +1178,8 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
     cmdBuf_.swapContents(deferredPacketRecordBuffer_);
     cmdBuf_.setTargetRTV(activeTarget);
     if (!deferredPacketRecordWorker_.startRecording(
-            deferredPacketRecordBuffer_, ctx.RawPtr(), m_renderViewportState_)) {
+            deferredPacketRecordBuffer_, ctx.RawPtr(), m_renderViewportState_,
+            meshViewMatrix_, meshProjMatrix_)) {
       deferredPacketRecordBuffer_.swapContents(cmdBuf_);
       cmdBuf_.setTargetRTV(activeTarget);
       flush();
@@ -7234,6 +7254,15 @@ void ArtifactIRenderer::draw3DTexturedCard(
       localRect, modelMatrix, texture,
       FloatColor{1.0f, 1.0f, 1.0f, 1.0f}, opacity);
   impl_->primitiveRenderer3D_.setOverrideDSV(impl_->m_overrideDepthDSV);
+}
+void ArtifactIRenderer::draw3DBillboardQuad(
+    Detail::float3 center, Detail::float2 size,
+    Diligent::ITextureView* texture, const FloatColor& tint,
+    float opacity, float rollDegrees)
+{
+ impl_->primitiveRenderer3D_.drawBillboardQuad(
+     QVector3D(center.x, center.y, center.z),
+     QVector2D(size.x, size.y), texture, tint, opacity, rollDegrees);
 }
 void ArtifactIRenderer::setProjectorSource(Diligent::ITextureView* textureView)
 {

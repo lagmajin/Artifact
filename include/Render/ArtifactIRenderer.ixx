@@ -627,6 +627,12 @@ public:
                           const QMatrix4x4 &modelMatrix,
                           Diligent::ITextureView *texture,
                           float opacity = 1.0f);
+  // Queues a camera-facing billboard into the active render batch. The caller
+  // resolves the texture; the packet retains its SRV through worker execution.
+  void draw3DBillboardQuad(Detail::float3 center, Detail::float2 size,
+                           Diligent::ITextureView *texture,
+                           const FloatColor &tint, float opacity = 1.0f,
+                           float rollDegrees = 0.0f);
   // Project3D-style camera projection for textured cards. Scoped per draw:
   // set source + matrices + enabled, draw, then resetProjector().
   void setProjectorSource(Diligent::ITextureView *textureView);

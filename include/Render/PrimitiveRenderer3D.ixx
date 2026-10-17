@@ -45,6 +45,7 @@ public:
   void setContext(IDeviceContext *ctx, ISwapChain *swapChain);
   void setOverrideRTV(ITextureView *rtv);
   void setOverrideDSV(ITextureView *dsv);
+  void setViewportState(const RenderViewportState& state);
   void setFrameCostStats(ArtifactCore::RenderCostStats* stats);
   void destroy();
 
@@ -86,14 +87,33 @@ public:
   void drawBillboardQuadImmediate(const QVector3D &center, const QVector2D &size,
                                   ITextureView *texture, const FloatRGBA &tint,
                                   float opacity = 1.0f, float rollDegrees = 0.0f);
+  // Records on the supplied context and render target without changing the
+  // renderer's target override.
+  void drawBillboardQuadWithContext(IDeviceContext *context,
+                                   ITextureView *targetRTV,
+                                   const QVector3D &center,
+                                   const QVector2D &size,
+                                   ITextureView *texture,
+                                   const FloatRGBA &tint,
+                                   float opacity = 1.0f,
+                                   float rollDegrees = 0.0f);
+  // Resolves the image on the caller thread, records the draw on context, and
+  // returns a retained texture that must live through command-list execution.
+  void drawBillboardImageWithContext(
+      IDeviceContext *context, ITextureView *targetRTV,
+      const QVector3D &center, const QVector2D &size, const QImage &image,
+      const FloatRGBA &tint, RefCntAutoPtr<ITexture> &retainedTexture,
+      float opacity = 1.0f, float rollDegrees = 0.0f);
   void drawBillboardQuadImmediate(const QVector3D &center, const QVector2D &size,
                                   const QImage &image,
                                   const FloatColor &tint = FloatColor{1.0f, 1.0f, 1.0f,
                                                                       1.0f},
-                                  float opacity = 1.0f, float rollDegrees = 0.0f);
+                                  float opacity = 1.0f, float rollDegrees = 0.0f,
+                                  ITextureView *targetRTV = nullptr);
   void drawBillboardQuadImmediate(const QVector3D &center, const QVector2D &size,
                                   const QImage &image, const FloatRGBA &tint,
-                                  float opacity = 1.0f, float rollDegrees = 0.0f);
+                                  float opacity = 1.0f, float rollDegrees = 0.0f,
+                                  ITextureView *targetRTV = nullptr);
   void drawCardQuadImmediate(const QRectF &localRect,
                              const QMatrix4x4 &modelMatrix,
                              const FloatColor &tint, float opacity = 1.0f,
@@ -127,6 +147,12 @@ public:
   // Submit all accumulated 3D gizmo geometry to the GPU in one batch.
   // Must be called once after all draw3D*/drawGizmo* calls for the frame.
   void flushGizmo3D();
+  // Record the accumulated gizmo geometry on the supplied command context.
+  // The submitter uses this to keep large 2D + gizmo submissions in one
+  // deferred command list.
+  void flushGizmo3DWithContext(IDeviceContext *context,
+                              ITextureView *targetRTV = nullptr);
+  Uint32 pendingGizmoVertexCount() const;
 
   // ImGuizmo 対応 追加関数
   void draw3DCircleArc(const QVector3D &center, const QVector3D &normal,

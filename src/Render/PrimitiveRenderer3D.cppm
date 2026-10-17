@@ -33,6 +33,7 @@ module;
 
 module Artifact.Render.PrimitiveRenderer3D;
 
+import Core.ArtifactArray;
 import FloatRGBA;
 import Color.Float;
 import Artifact.Render.RenderCommandBuffer;
@@ -318,6 +319,7 @@ public:
     ITextureView* overrideRTV_ = nullptr;
     ITextureView* overrideDSV_ = nullptr;
     RenderCommandBuffer* cmdBuf_ = nullptr;
+    RenderViewportState viewportState_;
     RefCntAutoPtr<IRenderDevice> device_;
 
     RefCntAutoPtr<IShader> vs_;
@@ -350,9 +352,17 @@ public:
     Uint32 gizmoLineVertexCapacity_ = 0;
     ArtifactCore::RenderCostStats* frameCostStats_ = nullptr;
 
-    // CPU-side accumulation buffers — flushed once per flushGizmoGeometry() call
-    std::vector<GizmoLineVertex> pendingLineVerts_;
-    std::vector<GizmoLineVertex> pendingTriVerts_;
+    struct GizmoGeometryRun {
+        Uint32 firstVertex = 0;
+        Uint32 vertexCount = 0;
+        bool isTriangle = false;
+    };
+
+    // Keep all gizmo vertices in call order. Runs let the flush retain batching
+    // for adjacent primitives with the same topology without regrouping lines
+    // and filled triangles across one another.
+    ArtifactCore::ArtifactArray<GizmoLineVertex> pendingGizmoVerts_;
+    ArtifactCore::ArtifactArray<GizmoGeometryRun> pendingGizmoRuns_;
     QString lastGizmoFlushDiagnosticOutcome_;
 
     QMatrix4x4 viewMatrix_;
@@ -368,6 +378,35 @@ public:
     BillboardConstants constants_{};
     CardConstants cardConstants_{};
     GizmoLineConstants gizmoLineConstants_{};
+
+    void applyViewportState(IDeviceContext* context) const
+    {
+        if (!context || !viewportState_.enabled ||
+            viewportState_.targetWidth == 0 ||
+            viewportState_.targetHeight == 0) {
+            return;
+        }
+
+        Viewport viewport{};
+        viewport.TopLeftX = viewportState_.x;
+        viewport.TopLeftY = viewportState_.y;
+        viewport.Width = viewportState_.width;
+        viewport.Height = viewportState_.height;
+        viewport.MinDepth = 0.0f;
+        viewport.MaxDepth = 1.0f;
+        context->SetViewports(1, &viewport, viewportState_.targetWidth,
+                              viewportState_.targetHeight);
+
+        const Rect scissor{
+            static_cast<Int32>(std::lround(viewportState_.x)),
+            static_cast<Int32>(std::lround(viewportState_.y)),
+            static_cast<Int32>(std::lround(viewportState_.x +
+                                           viewportState_.width)),
+            static_cast<Int32>(std::lround(viewportState_.y +
+                                           viewportState_.height))};
+        context->SetScissorRects(1, &scissor, viewportState_.targetWidth,
+                                 viewportState_.targetHeight);
+    }
 
     struct CachedTexture {
         RefCntAutoPtr<ITexture> texture;
@@ -547,6 +586,8 @@ public:
         if (gizmoLineVertexBuffer_) {
             gizmoLineVertexCapacity_ = 256;
         }
+        pendingGizmoVerts_.reserve(gizmoLineVertexCapacity_);
+        pendingGizmoRuns_.reserve(256);
 
         BufferDesc lineCbDesc;
         lineCbDesc.Name = "PrimitiveRenderer3D GizmoLine CB";
@@ -597,7 +638,9 @@ public:
         auto& gp = psoCI.GraphicsPipeline;
         gp.NumRenderTargets = 1;
         gp.RTVFormats[0] = rtvFormat_;
-        gp.DSVFormat = TEX_FORMAT_D32_FLOAT;
+        // Billboard depth is disabled, so the pipeline must remain compatible
+        // with color-only composition targets as well as swapchain targets.
+        gp.DSVFormat = TEX_FORMAT_UNKNOWN;
         gp.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
         gp.RasterizerDesc.CullMode = CULL_MODE_NONE;
         gp.DepthStencilDesc.DepthEnable = False;
@@ -903,7 +946,7 @@ public:
     void drawGizmoGeometry(const GizmoLineVertex* vertices, Uint32 vertexCount, const PSOAndSRB& psoAndSrb,
                            PRIMITIVE_TOPOLOGY /*primitiveTopology*/)
     {
-        if (vertexCount < 2) {
+        if (!vertices || vertexCount < 2) {
             return;
         }
         if (!psoAndSrb.pPSO || !psoAndSrb.pSRB) {
@@ -915,22 +958,54 @@ public:
                     .arg(psoAndSrb.pSRB ? 1 : 0));
             return;
         }
-        // Accumulate into CPU-side vector; GPU submission deferred to flushGizmoGeometry()
+        // Accumulate into one ordered CPU-side stream; GPU submission remains
+        // deferred until flushGizmoGeometry() so queued 2D work can be drained
+        // before the gizmo overlay.
         const bool isTriangle = gizmo3DTrianglePsoAndSrb_.pPSO &&
                                 (psoAndSrb.pPSO == gizmo3DTrianglePsoAndSrb_.pPSO);
-        auto& pending = isTriangle ? pendingTriVerts_ : pendingLineVerts_;
-        pending.insert(pending.end(), vertices, vertices + vertexCount);
-    }
-
-    void flushGizmoGeometry()
-    {
-        if (pendingLineVerts_.empty() && pendingTriVerts_.empty()) {
+        constexpr auto maxPendingVertices =
+            static_cast<std::size_t>(std::numeric_limits<Uint32>::max());
+        if (pendingGizmoVerts_.size() > maxPendingVertices - vertexCount) {
+            recordGizmoFlushDiagnostic(
+                QStringLiteral("queue-rejected-vertex-capacity"),
+                QStringLiteral("pendingVertices=%1 requestedVertices=%2")
+                    .arg(pendingGizmoVerts_.size())
+                    .arg(vertexCount));
             return;
         }
-        const Uint32 queuedLineVertices =
-            static_cast<Uint32>(pendingLineVerts_.size());
-        const Uint32 queuedTriangleVertices =
-            static_cast<Uint32>(pendingTriVerts_.size());
+        const auto firstVertex = static_cast<Uint32>(pendingGizmoVerts_.size());
+        for (Uint32 index = 0; index < vertexCount; ++index) {
+            pendingGizmoVerts_.append(vertices[index]);
+        }
+        if (!pendingGizmoRuns_.isEmpty()) {
+            auto& lastRun = pendingGizmoRuns_[pendingGizmoRuns_.size() - 1];
+            if (lastRun.isTriangle == isTriangle &&
+                lastRun.firstVertex + lastRun.vertexCount == firstVertex) {
+                lastRun.vertexCount += vertexCount;
+                return;
+            }
+        }
+        pendingGizmoRuns_.append(GizmoGeometryRun{firstVertex, vertexCount,
+                                                   isTriangle});
+    }
+
+    void flushGizmoGeometry(IDeviceContext* recordingContext = nullptr,
+                            ITextureView* recordingTargetRTV = nullptr)
+    {
+        if (pendingGizmoVerts_.isEmpty() || pendingGizmoRuns_.isEmpty()) {
+            return;
+        }
+        auto* context = recordingContext ? recordingContext : ctx_;
+        auto* targetRTV = recordingTargetRTV ? recordingTargetRTV : currentRTV();
+        Uint32 queuedLineVertices = 0;
+        Uint32 queuedTriangleVertices = 0;
+        for (const auto& run : pendingGizmoRuns_) {
+            if (run.isTriangle) {
+                queuedTriangleVertices += run.vertexCount;
+            } else {
+                queuedLineVertices += run.vertexCount;
+            }
+        }
         const QMatrix4x4 viewProjection = projMatrix_ * viewMatrix_;
         QVector3D ndcMin(std::numeric_limits<float>::max(),
                          std::numeric_limits<float>::max(),
@@ -944,7 +1019,7 @@ public:
         const bool collectProjectionDiagnostics =
             lastGizmoFlushDiagnosticOutcome_ != QStringLiteral("submitted");
         const auto collectProjectionStats =
-            [&](const std::vector<GizmoLineVertex>& vertices) {
+            [&](const auto& vertices) {
                 for (const auto& vertex : vertices) {
                     const QVector4D clip = viewProjection * QVector4D(
                         vertex.position[0], vertex.position[1],
@@ -974,10 +1049,9 @@ public:
                 }
             };
         if (collectProjectionDiagnostics) {
-            collectProjectionStats(pendingLineVerts_);
-            collectProjectionStats(pendingTriVerts_);
+            collectProjectionStats(pendingGizmoVerts_);
         }
-        if (!hasRenderTarget() || !ctx_ || !gizmoLineConstantBuffer_) {
+        if (!targetRTV || !context || !gizmoLineConstantBuffer_) {
             recordGizmoFlushDiagnostic(
                 QStringLiteral("flush-rejected-render-state"),
                 QStringLiteral(
@@ -985,112 +1059,112 @@ public:
                     "renderTarget=%3 context=%4 constantBuffer=%5")
                     .arg(queuedLineVertices)
                     .arg(queuedTriangleVertices)
-                    .arg(hasRenderTarget() ? 1 : 0)
-                    .arg(ctx_ ? 1 : 0)
+                    .arg(targetRTV ? 1 : 0)
+                    .arg(context ? 1 : 0)
                     .arg(gizmoLineConstantBuffer_ ? 1 : 0));
-            pendingLineVerts_.clear();
-            pendingTriVerts_.clear();
+            pendingGizmoVerts_.removeAll();
+            pendingGizmoRuns_.removeAll();
             return;
         }
 
-        // Upload constants once for both batches (same view/proj throughout frame)
+        // Upload constants once for all topology runs in this flush.
         updateGizmoLineConstants();
         void* mapped = nullptr;
-        ctx_->MapBuffer(gizmoLineConstantBuffer_, MAP_WRITE, MAP_FLAG_DISCARD, mapped);
+        context->MapBuffer(gizmoLineConstantBuffer_, MAP_WRITE, MAP_FLAG_DISCARD,
+                           mapped);
         if (!mapped) {
             // MapBuffer registers the buffer as mapped before the Vulkan
             // dynamic allocation is attempted. Balance that state even when
             // allocation fails so the next frame does not assert as already mapped.
-            ctx_->UnmapBuffer(gizmoLineConstantBuffer_, MAP_WRITE);
+            context->UnmapBuffer(gizmoLineConstantBuffer_, MAP_WRITE);
             recordGizmoFlushDiagnostic(
                 QStringLiteral("flush-rejected-constant-map"),
                 QStringLiteral(
                     "queuedLineVertices=%1 queuedTriangleVertices=%2")
                     .arg(queuedLineVertices)
                     .arg(queuedTriangleVertices));
-            pendingLineVerts_.clear();
-            pendingTriVerts_.clear();
+            pendingGizmoVerts_.removeAll();
+            pendingGizmoRuns_.removeAll();
             return;
         }
         std::memcpy(mapped, &gizmoLineConstants_, sizeof(GizmoLineConstants));
-        ctx_->UnmapBuffer(gizmoLineConstantBuffer_, MAP_WRITE);
+        context->UnmapBuffer(gizmoLineConstantBuffer_, MAP_WRITE);
         if (frameCostStats_) {
             ++frameCostStats_->bufferUpdates;
         }
 
+        const auto totalVertexCount =
+            static_cast<Uint32>(pendingGizmoVerts_.size());
+        ensureGizmoLineCapacity(totalVertexCount);
         QString submissionFailure;
-        auto submitBatch = [&](std::vector<GizmoLineVertex>& verts,
-                               const PSOAndSRB& psoAndSrb) -> Uint32 {
-            if (verts.empty()) {
-                return 0;
-            }
-            if (!psoAndSrb.pPSO || !psoAndSrb.pSRB) {
-                submissionFailure = QStringLiteral("pso-or-srb-unavailable");
-                verts.clear();
-                return 0;
-            }
-            const auto vertexCount = static_cast<Uint32>(verts.size());
-            ensureGizmoLineCapacity(vertexCount);
-            if (!gizmoLineVertexBuffer_) {
-                submissionFailure = QStringLiteral("vertex-buffer-unavailable");
-                verts.clear();
-                return 0;
-            }
+        if (!gizmoLineVertexBuffer_ ||
+            totalVertexCount > gizmoLineVertexCapacity_) {
+            submissionFailure = QStringLiteral("vertex-buffer-unavailable");
+        } else {
             void* vmapped = nullptr;
-            ctx_->MapBuffer(gizmoLineVertexBuffer_, MAP_WRITE, MAP_FLAG_DISCARD, vmapped);
+            context->MapBuffer(gizmoLineVertexBuffer_, MAP_WRITE,
+                               MAP_FLAG_DISCARD, vmapped);
             if (!vmapped) {
                 // Keep Diligent's map/unmap bookkeeping balanced on allocation
                 // failure; otherwise the next gizmo flush trips its debug assert.
-                ctx_->UnmapBuffer(gizmoLineVertexBuffer_, MAP_WRITE);
+                context->UnmapBuffer(gizmoLineVertexBuffer_, MAP_WRITE);
                 submissionFailure = QStringLiteral("vertex-buffer-map-failed");
-                verts.clear();
-                return 0;
+            } else {
+                std::memcpy(vmapped, pendingGizmoVerts_.data(),
+                            sizeof(GizmoLineVertex) * totalVertexCount);
+                context->UnmapBuffer(gizmoLineVertexBuffer_, MAP_WRITE);
+                if (frameCostStats_) {
+                    ++frameCostStats_->bufferUpdates;
+                }
             }
-            std::memcpy(vmapped, verts.data(), sizeof(GizmoLineVertex) * vertexCount);
-            ctx_->UnmapBuffer(gizmoLineVertexBuffer_, MAP_WRITE);
-            if (frameCostStats_) {
-                ++frameCostStats_->bufferUpdates;
-            }
+        }
 
-            auto* rtv = currentRTV();
+        if (submissionFailure.isEmpty()) {
             auto* dsv = currentDSV();
-            ctx_->SetRenderTargets(1, &rtv, dsv, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-            if (frameCostStats_) {
-                ++frameCostStats_->psoSwitches;
-            }
-            ctx_->SetPipelineState(psoAndSrb.pPSO);
+            context->SetRenderTargets(1, &targetRTV, dsv,
+                                      RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+            applyViewportState(context);
+            IBuffer* buffers[] = {gizmoLineVertexBuffer_};
+            Uint64 offsets[] = {0};
+            context->SetVertexBuffers(0, 1, buffers, offsets,
+                                      RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
+                                      SET_VERTEX_BUFFERS_FLAG_RESET);
+            for (const auto& run : pendingGizmoRuns_) {
+                const auto& psoAndSrb = run.isTriangle
+                    ? gizmo3DTrianglePsoAndSrb_
+                    : gizmo3DPsoAndSrb_;
+                if (!psoAndSrb.pPSO || !psoAndSrb.pSRB) {
+                    submissionFailure = QStringLiteral("pso-or-srb-unavailable");
+                    break;
+                }
+                if (frameCostStats_) {
+                    ++frameCostStats_->psoSwitches;
+                }
+                context->SetPipelineState(psoAndSrb.pPSO);
+                if (auto* cbVar = psoAndSrb.pSRB->GetVariableByName(
+                        SHADER_TYPE_VERTEX, "TransformCB")) {
+                    cbVar->Set(gizmoLineConstantBuffer_);
+                }
+                if (frameCostStats_) {
+                    ++frameCostStats_->srbCommits;
+                }
+                context->CommitShaderResources(
+                    psoAndSrb.pSRB,
+                    RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
-            IBuffer* buffers[] = { gizmoLineVertexBuffer_ };
-            Uint64 offsets[] = { 0 };
-            ctx_->SetVertexBuffers(0, 1, buffers, offsets, RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
-                                   SET_VERTEX_BUFFERS_FLAG_RESET);
-            if (auto* cbVar = psoAndSrb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")) {
-                cbVar->Set(gizmoLineConstantBuffer_);
+                DrawAttribs drawAttrs;
+                drawAttrs.NumVertices = run.vertexCount;
+                drawAttrs.StartVertexLocation = run.firstVertex;
+                drawAttrs.Flags = DRAW_FLAG_NONE;
+                if (frameCostStats_) {
+                    ++frameCostStats_->drawCalls;
+                }
+                context->Draw(drawAttrs);
             }
-            if (frameCostStats_) {
-                ++frameCostStats_->srbCommits;
-            }
-            ctx_->CommitShaderResources(psoAndSrb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        }
 
-            DrawAttribs drawAttrs;
-            drawAttrs.NumVertices = vertexCount;
-            drawAttrs.Flags = DRAW_FLAG_NONE;
-            if (frameCostStats_) {
-                ++frameCostStats_->drawCalls;
-            }
-            ctx_->Draw(drawAttrs);
-            verts.clear();
-            return vertexCount;
-        };
-
-        const Uint32 submittedLineVertices =
-            submitBatch(pendingLineVerts_, gizmo3DPsoAndSrb_);
-        const Uint32 submittedTriangleVertices =
-            submitBatch(pendingTriVerts_, gizmo3DTrianglePsoAndSrb_);
-        const Uint32 submittedVertices =
-            submittedLineVertices + submittedTriangleVertices;
-        if (submittedVertices > 0) {
-            const auto* diagnosticRTV = currentRTV();
+        if (submissionFailure.isEmpty()) {
+            const auto* diagnosticRTV = targetRTV;
             const auto* diagnosticDSV = currentDSV();
             recordGizmoFlushDiagnostic(
                 QStringLiteral("submitted"),
@@ -1102,8 +1176,8 @@ public:
                     "ndcMin=%12,%13,%14 ndcMax=%15,%16,%17")
                     .arg(queuedLineVertices)
                     .arg(queuedTriangleVertices)
-                    .arg(submittedLineVertices)
-                    .arg(submittedTriangleVertices)
+                    .arg(queuedLineVertices)
+                    .arg(queuedTriangleVertices)
                     .arg(viewMatrix_.isIdentity() ? 1 : 0)
                     .arg(projMatrix_.isIdentity() ? 1 : 0)
                     .arg(diagnosticRTV ? 1 : 0)
@@ -1127,6 +1201,8 @@ public:
                     .arg(queuedTriangleVertices)
                     .arg(submissionFailure));
         }
+        pendingGizmoVerts_.removeAll();
+        pendingGizmoRuns_.removeAll();
     }
 
     void drawGizmoLineGeometry(const GizmoLineVertex* vertices, Uint32 vertexCount)
@@ -1384,9 +1460,13 @@ public:
 
     void drawBillboard(const QVector3D& center, const QVector2D& size,
                        ITextureView* textureView, const FloatColor& tint,
-                       float opacity, float rollDegrees)
+                       float opacity, float rollDegrees,
+                       IDeviceContext* recordingContext = nullptr,
+                       ITextureView* recordingTargetRTV = nullptr)
     {
-        if (!hasRenderTarget() || !ctx_ || !pso_ || !srb_ || !constantBuffer_) {
+        auto* drawContext = recordingContext ? recordingContext : ctx_;
+        if ((!recordingTargetRTV && !hasRenderTarget()) || !drawContext ||
+            !pso_ || !srb_ || !constantBuffer_) {
             return;
         }
 
@@ -1400,17 +1480,19 @@ public:
         setConstants(center, size, tint, opacity, rollDegrees);
 
         void* mapped = nullptr;
-        ctx_->MapBuffer(constantBuffer_, MAP_WRITE, MAP_FLAG_DISCARD, mapped);
+        drawContext->MapBuffer(constantBuffer_, MAP_WRITE, MAP_FLAG_DISCARD, mapped);
         if (!mapped) {
+            drawContext->UnmapBuffer(constantBuffer_, MAP_WRITE);
             return;
         }
         std::memcpy(mapped, &constants_, sizeof(BillboardConstants));
-        ctx_->UnmapBuffer(constantBuffer_, MAP_WRITE);
+        drawContext->UnmapBuffer(constantBuffer_, MAP_WRITE);
 
-        auto* rtv = currentRTV();
+        auto* rtv = recordingTargetRTV ? recordingTargetRTV : currentRTV();
         auto* dsv = currentDSV();
-        ctx_->SetRenderTargets(1, &rtv, dsv, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-        ctx_->SetPipelineState(pso_);
+        drawContext->SetRenderTargets(1, &rtv, dsv, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        applyViewportState(drawContext);
+        drawContext->SetPipelineState(pso_);
 
         if (auto* texVar = srb_->GetVariableByName(SHADER_TYPE_PIXEL, "g_texture")) {
             texVar->Set(textureView);
@@ -1420,12 +1502,12 @@ public:
             cbVar->Set(constantBuffer_);
         }
 
-        ctx_->CommitShaderResources(srb_, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        drawContext->CommitShaderResources(srb_, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
         DrawAttribs drawAttrs;
         drawAttrs.NumVertices = 4;
         drawAttrs.Flags = DRAW_FLAG_NONE;
-        ctx_->Draw(drawAttrs);
+        drawContext->Draw(drawAttrs);
     }
 
     void drawCardPass(const QRectF& localRect, const QMatrix4x4& modelMatrix,
@@ -1452,6 +1534,7 @@ public:
         void* mapped = nullptr;
         ctx_->MapBuffer(cardConstantBuffer_, MAP_WRITE, MAP_FLAG_DISCARD, mapped);
         if (!mapped) {
+            ctx_->UnmapBuffer(cardConstantBuffer_, MAP_WRITE);
             return;
         }
         std::memcpy(mapped, &cardConstants_, sizeof(CardConstants));
@@ -1461,6 +1544,7 @@ public:
         auto* dsv = currentDSV();
         ctx_->SetRenderTargets(1, &rtv, dsv,
                                RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        applyViewportState(ctx_);
         ctx_->SetPipelineState(cardPSO);
         if (auto* texVar = cardSRB->GetVariableByName(
                 SHADER_TYPE_PIXEL, "g_texture")) {
@@ -1555,6 +1639,7 @@ public:
         ctx_->MapBuffer(shapeVertexBuffer_, MAP_WRITE, MAP_FLAG_DISCARD,
                         vertexMapped);
         if (!vertexMapped) {
+            ctx_->UnmapBuffer(shapeVertexBuffer_, MAP_WRITE);
             return;
         }
         std::memcpy(vertexMapped, gpuVertices.data(),
@@ -1566,6 +1651,7 @@ public:
         ctx_->MapBuffer(cardConstantBuffer_, MAP_WRITE, MAP_FLAG_DISCARD,
                         constantsMapped);
         if (!constantsMapped) {
+            ctx_->UnmapBuffer(cardConstantBuffer_, MAP_WRITE);
             return;
         }
         std::memcpy(constantsMapped, &cardConstants_, sizeof(CardConstants));
@@ -1575,6 +1661,7 @@ public:
         auto* dsv = currentDSV();
         ctx_->SetRenderTargets(1, &rtv, dsv,
                                RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        applyViewportState(ctx_);
         ctx_->SetPipelineState(pso);
         IBuffer* buffers[] = {shapeVertexBuffer_};
         Uint64 offsets[] = {0};
@@ -1669,6 +1756,11 @@ void PrimitiveRenderer3D::setOverrideDSV(ITextureView* dsv)
     impl_->overrideDSV_ = dsv;
 }
 
+void PrimitiveRenderer3D::setViewportState(const RenderViewportState& state)
+{
+    impl_->viewportState_ = state;
+}
+
 void PrimitiveRenderer3D::setFrameCostStats(ArtifactCore::RenderCostStats* stats)
 {
     impl_->frameCostStats_ = stats;
@@ -1678,8 +1770,8 @@ void PrimitiveRenderer3D::destroy()
 {
     impl_->textureCache_.clear();
     impl_->textureCacheBytes_ = 0;
-    impl_->pendingLineVerts_.clear();
-    impl_->pendingTriVerts_.clear();
+    impl_->pendingGizmoVerts_.removeAll();
+    impl_->pendingGizmoRuns_.removeAll();
     impl_->defaultTextureSRV_ = nullptr;
     impl_->defaultTexture_ = nullptr;
     impl_->sampler_ = nullptr;
@@ -1810,11 +1902,15 @@ void PrimitiveRenderer3D::drawBillboardQuad(const QVector3D& center, const QVect
                                             float opacity, float rollDegrees)
 {
     if (impl_->cmdBuf_ && impl_->currentRTV()) {
+        auto texture = impl_->textureFromImage(image);
+        auto* textureView = texture
+            ? texture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE)
+            : impl_->defaultTextureSRV_.RawPtr();
         impl_->cmdBuf_->setTargetRTV(impl_->currentRTV());
-        BillboardImagePkt pkt;
+        BillboardPkt pkt;
         pkt.center = center;
         pkt.size = size;
-        pkt.image = image;
+        pkt.pSRV = textureView;
         pkt.tint = { tint.r(), tint.g(), tint.b(), tint.a() };
         pkt.opacity = opacity;
         pkt.rollDegrees = rollDegrees;
@@ -1840,23 +1936,57 @@ void PrimitiveRenderer3D::drawBillboardQuadImmediate(const QVector3D& center, co
                          opacity, rollDegrees);
 }
 
+void PrimitiveRenderer3D::drawBillboardQuadWithContext(
+    IDeviceContext* context, ITextureView* targetRTV,
+    const QVector3D& center, const QVector2D& size,
+    ITextureView* texture, const FloatRGBA& tint, float opacity,
+    float rollDegrees)
+{
+    if (!context || !targetRTV) {
+        return;
+    }
+    impl_->drawBillboard(center, size, texture,
+                         FloatColor{tint.r(), tint.g(), tint.b(), tint.a()},
+                         opacity, rollDegrees, context, targetRTV);
+}
+
+void PrimitiveRenderer3D::drawBillboardImageWithContext(
+    IDeviceContext* context, ITextureView* targetRTV,
+    const QVector3D& center, const QVector2D& size, const QImage& image,
+    const FloatRGBA& tint, RefCntAutoPtr<ITexture>& retainedTexture,
+    float opacity, float rollDegrees)
+{
+    if (!context || !targetRTV) {
+        return;
+    }
+    retainedTexture = impl_->textureFromImage(image);
+    auto* textureView = retainedTexture
+        ? retainedTexture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE)
+        : impl_->defaultTextureSRV_.RawPtr();
+    impl_->drawBillboard(center, size, textureView,
+                         FloatColor{tint.r(), tint.g(), tint.b(), tint.a()},
+                         opacity, rollDegrees, context, targetRTV);
+}
+
 void PrimitiveRenderer3D::drawBillboardQuadImmediate(const QVector3D& center, const QVector2D& size,
                                                      const QImage& image, const FloatColor& tint,
-                                                     float opacity, float rollDegrees)
+                                                     float opacity, float rollDegrees,
+                                                     ITextureView* targetRTV)
 {
     auto texture = impl_->textureFromImage(image);
     impl_->drawBillboard(center, size, texture ? texture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE)
                                                : impl_->defaultTextureSRV_.RawPtr(),
-                         tint, opacity, rollDegrees);
+                         tint, opacity, rollDegrees, nullptr, targetRTV);
 }
 
 void PrimitiveRenderer3D::drawBillboardQuadImmediate(const QVector3D& center, const QVector2D& size,
                                                      const QImage& image, const FloatRGBA& tint,
-                                                     float opacity, float rollDegrees)
+                                                     float opacity, float rollDegrees,
+                                                     ITextureView* targetRTV)
 {
     drawBillboardQuadImmediate(center, size, image,
                                FloatColor{tint.r(), tint.g(), tint.b(), tint.a()},
-                               opacity, rollDegrees);
+                               opacity, rollDegrees, targetRTV);
 }
 
 void PrimitiveRenderer3D::drawCardQuadImmediate(const QRectF& localRect,
@@ -1939,6 +2069,20 @@ void PrimitiveRenderer3D::draw3DCube(const QVector3D& center, float halfExtent,
 void PrimitiveRenderer3D::flushGizmo3D()
 {
     impl_->flushGizmoGeometry();
+}
+
+void PrimitiveRenderer3D::flushGizmo3DWithContext(
+    IDeviceContext* context, ITextureView* targetRTV)
+{
+    if (!context) {
+        return;
+    }
+    impl_->flushGizmoGeometry(context, targetRTV);
+}
+
+Uint32 PrimitiveRenderer3D::pendingGizmoVertexCount() const
+{
+    return static_cast<Uint32>(impl_->pendingGizmoVerts_.size());
 }
 
 } // namespace Artifact

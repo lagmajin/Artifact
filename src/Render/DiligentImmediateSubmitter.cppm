@@ -1085,7 +1085,9 @@ bool DiligentImmediateSubmitter::canRecordDeferred(
     const RenderCommandBuffer& buf) const noexcept
 {
     if (!m_deferredCtx_ || m_frameDebugCaptureEnabled_ || m_frameCostStats_ ||
-        !buf.targetRTV() || m_primitiveRenderer3D_) {
+        !buf.targetRTV() ||
+        (m_primitiveRenderer3D_ &&
+         m_primitiveRenderer3D_->pendingGizmoVertexCount() != 0)) {
         return false;
     }
     // Accepted packets either use recorder-local state or carry retained
@@ -1120,7 +1122,9 @@ bool DiligentImmediateSubmitter::canRecordDeferred(
             !std::holds_alternative<CheckerboardPkt>(packet) &&
             !std::holds_alternative<GridPkt>(packet) &&
             !std::holds_alternative<RectOutlinePkt>(packet) &&
-            !std::holds_alternative<SolidTriPkt>(packet)) {
+            !std::holds_alternative<SolidTriPkt>(packet) &&
+            !(m_primitiveRenderer3D_ &&
+              std::holds_alternative<BillboardPkt>(packet))) {
             return false;
         }
         std::size_t packetWorkUnits = 1;
