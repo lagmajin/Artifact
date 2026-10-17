@@ -1144,6 +1144,9 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
       ++flushCount_;
       return false;
     }
+    // canSubmit() inspects ParticlePkt eligibility, so provide the renderer
+    // before preflight. Any earlier async job was joined above before reuse.
+    deferredPacketRecordWorker_.setParticleRenderer(particleRenderer_.get());
     const bool hasPendingGizmoVertices =
         primitiveRenderer3D_.pendingGizmoVertexCount() > 0;
     if (hasPendingGizmoVertices || m_frameCostCaptureActive_ ||
@@ -1152,18 +1155,6 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
       flush();
       return false;
     }
-    if (std::any_of(cmdBuf_.packets().begin(), cmdBuf_.packets().end(),
-                    [](const DrawPacket& packet) {
-                      return std::holds_alternative<ParticlePkt>(packet);
-                    })) {
-      // ParticleRenderer has mutable upload/PSO state which overlay packet
-      // preparation can touch on the owner thread. Keep those frames on the
-      // serialized worker handoff until particle state is frame-leased.
-      flush();
-      return false;
-    }
-
-    deferredPacketRecordWorker_.setParticleRenderer(particleRenderer_.get());
     const auto activeTarget = cmdBuf_.targetRTV();
     cmdBuf_.swapContents(deferredPacketRecordBuffer_);
     cmdBuf_.setTargetRTV(activeTarget);
@@ -6892,7 +6883,8 @@ QString ArtifactIRenderer::particleDebugState() const {
                      .arg(static_cast<int>(ArtifactCore::DefaultParticleRTVFormat))
                      .arg(impl_->lastParticleTargetFormat_ == ArtifactCore::DefaultParticleRTVFormat ? 1 : 0));
   }
-  if (impl_->particleRenderer_) {
+  if (impl_->particleRenderer_ &&
+      !impl_->deferredPacketRecordWorker_.hasActiveJob()) {
     const QString rendererState = impl_->particleRenderer_->debugStateText();
     if (!rendererState.isEmpty()) {
       if (state == QStringLiteral("<none>")) {
