@@ -12256,7 +12256,7 @@ public:
       }
 
       auto* renderer = renderer_.get();
-      if (!renderer || !renderer->device() || !renderer->immediateContext()) {
+      if (!renderer) {
         blendPipelineInitState_ = QStringLiteral("waiting-for-device");
         scheduleBlendPipelineInitialization(
             owner, 250, QStringLiteral("device-not-ready"));
@@ -12264,12 +12264,19 @@ public:
       }
 
       blendPipelineInitInProgress_ = true;
-      ++blendPipelineInitAttemptCount_;
-      blendPipelineInitState_ = QStringLiteral("initializing:%1").arg(reason);
-
       if (!blendPipeline_) {
         blendPipeline_ = renderer->createLayerBlendPipeline();
       }
+      if (!blendPipeline_) {
+        blendPipelineInitInProgress_ = false;
+        blendPipelineInitState_ = QStringLiteral("waiting-for-device");
+        scheduleBlendPipelineInitialization(
+            owner, 250, QStringLiteral("device-not-ready"));
+        return;
+      }
+
+      ++blendPipelineInitAttemptCount_;
+      blendPipelineInitState_ = QStringLiteral("initializing:%1").arg(reason);
 
       QElapsedTimer timer;
       timer.start();
