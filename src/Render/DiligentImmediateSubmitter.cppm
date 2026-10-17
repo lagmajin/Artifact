@@ -1095,6 +1095,8 @@ bool DiligentImmediateSubmitter::canRecordDeferred(
             !std::holds_alternative<SolidRectXformPkt>(packet) &&
             !std::holds_alternative<SpritePkt>(packet) &&
             !std::holds_alternative<SpriteXformPkt>(packet) &&
+            !std::holds_alternative<AtlasSpritePkt>(packet) &&
+            !std::holds_alternative<AtlasSpriteXformPkt>(packet) &&
             !std::holds_alternative<LinePkt>(packet) &&
             !std::holds_alternative<QuadPkt>(packet) &&
             !std::holds_alternative<SolidTriPkt>(packet)) {
