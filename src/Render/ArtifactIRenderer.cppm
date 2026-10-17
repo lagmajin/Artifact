@@ -544,9 +544,11 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
     }
 
     bool canSubmit(const RenderCommandBuffer& buffer,
-                   Uint32 additionalGizmoVertexCount = 0) const noexcept {
+                   Uint32 additionalGizmoVertexCount = 0,
+                   Uint32 minimumWorkUnits = 16) const noexcept {
       return initialized_ && submitter_.canRecordDeferred(
-                                 buffer, additionalGizmoVertexCount);
+                                 buffer, additionalGizmoVertexCount,
+                                 minimumWorkUnits);
     }
 
     void setParticleRenderer(ArtifactCore::ParticleRenderer* renderer) {
@@ -558,12 +560,13 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
                         const RenderViewportState& viewportState,
                         const QMatrix4x4& viewMatrix,
                         const QMatrix4x4& projectionMatrix,
-                        PrimitiveRenderer3D* pendingGizmoSource = nullptr) {
+                        PrimitiveRenderer3D* pendingGizmoSource = nullptr,
+                        Uint32 minimumWorkUnits = 16) {
       const Uint32 pendingGizmoVertexCount = pendingGizmoSource
           ? pendingGizmoSource->pendingGizmoVertexCount()
           : 0u;
       if (!immediateContext ||
-          !canSubmit(buffer, pendingGizmoVertexCount)) {
+          !canSubmit(buffer, pendingGizmoVertexCount, minimumWorkUnits)) {
         return false;
       }
       QMutexLocker lock(&mutex_);
@@ -589,6 +592,7 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
       viewMatrix_ = viewMatrix;
       projectionMatrix_ = projectionMatrix;
       immediateContextId_ = immediateContext->GetDesc().ContextId;
+      minimumWorkUnits_ = minimumWorkUnits;
       recordReady_ = false;
       executeAcknowledged_ = false;
       executeSucceeded_ = false;
@@ -762,6 +766,7 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
       RenderCommandBuffer* buffer = buffer_;
       const auto packetCount = packetCount_;
       const Uint32 contextId = immediateContextId_;
+      const Uint32 minimumWorkUnits = minimumWorkUnits_;
       const RenderViewportState viewportState = viewportState_;
       const QMatrix4x4 viewMatrix = viewMatrix_;
       const QMatrix4x4 projectionMatrix = projectionMatrix_;
@@ -774,7 +779,7 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
           primitiveRenderer3D_.setCameraMatrices(viewMatrix, projectionMatrix);
           submitter_.setViewportState(viewportState);
           recorded = submitter_.recordDeferred(
-              *buffer, contextId, recordedCommandList);
+              *buffer, contextId, recordedCommandList, minimumWorkUnits);
         }
       } catch (...) {
         recorded = false;
@@ -840,6 +845,7 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
     QMatrix4x4 viewMatrix_;
     QMatrix4x4 projectionMatrix_;
     Uint32 immediateContextId_ = 0;
+    Uint32 minimumWorkUnits_ = 16;
     bool initialized_ = false;
     bool active_ = false;
     bool warmupPending_ = false;
@@ -1216,12 +1222,39 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
     return workerRecorded;
   }
   bool flushDeferredPacketsAsync() {
+    static const bool profileDeferredFlushDecisions = [] {
+      return qEnvironmentVariableIsSet("ARTIFACT_VIDEO_PREVIEW_PROFILE_SETUP") &&
+             qEnvironmentVariable("ARTIFACT_VIDEO_PREVIEW_PROFILE_SETUP") !=
+                 QStringLiteral("0");
+    }();
+    static thread_local unsigned int deferredFlushDecisionSamples = 0;
+    const bool sampleDeferredFlushDecision =
+        profileDeferredFlushDecisions && deferredFlushDecisionSamples < 1024;
+    const auto logDeferredFlushDecision =
+        [&](const char* result, std::size_t packetCount,
+            bool frameCaptureSuppressed, bool glyphPacketsPrepared,
+            bool workerEligible, Uint32 pendingGizmoVertexCount) {
+          if (!sampleDeferredFlushDecision) return;
+          std::fprintf(stderr,
+              "[VideoPreviewDeferredFlush] result=%s packets=%zu "
+              "frameCapture=%d glyphPrepared=%d workerEligible=%d "
+              "pendingGizmoVertices=%u\n",
+              result, packetCount, frameCaptureSuppressed ? 1 : 0,
+              glyphPacketsPrepared ? 1 : 0, workerEligible ? 1 : 0,
+              pendingGizmoVertexCount);
+          ++deferredFlushDecisionSamples;
+        };
     auto ctx = deviceManager_.immediateContext();
-    if (!ctx) return false;
+    if (!ctx) {
+      logDeferredFlushDecision("no-context", cmdBuf_.packets().size(),
+                               false, false, false, 0);
+      return false;
+    }
     if (deferredPacketRecordPending_) {
       completeDeferredPacketRecording(ctx.RawPtr());
     }
     if (cmdBuf_.empty()) {
+      logDeferredFlushDecision("empty", 0, false, false, false, 0);
       QElapsedTimer flushTimer;
       flushTimer.start();
       ctx->Flush();
@@ -1232,16 +1265,27 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
     // canSubmit() inspects ParticlePkt eligibility, so provide the renderer
     // before preflight. Any earlier async job was joined above before reuse.
     deferredPacketRecordWorker_.setParticleRenderer(particleRenderer_.get());
+    // Small tail batches are only allowed here because the owner can record
+    // viewport overlays while this bounded command list is being produced.
+    constexpr Uint32 kMinimumAsyncDeferredWorkUnits = 3;
+    const bool frameCaptureSuppressed =
+        m_frameCostCaptureActive_ || m_frameDebugCaptureActive_;
     const bool glyphPacketsPrepared =
-        !m_frameCostCaptureActive_ && !m_frameDebugCaptureActive_ &&
+        !frameCaptureSuppressed &&
         submitter_.prepareDeferredGlyphPackets(cmdBuf_, ctx.RawPtr());
     const auto pendingGizmoVertexCount =
         primitiveRenderer3D_.pendingGizmoVertexCount();
-    if (m_frameCostCaptureActive_ ||
-        m_frameDebugCaptureActive_ ||
-        !glyphPacketsPrepared ||
-        !deferredPacketRecordWorker_.canSubmit(
-            cmdBuf_, pendingGizmoVertexCount)) {
+    const bool workerEligible = glyphPacketsPrepared &&
+        deferredPacketRecordWorker_.canSubmit(
+            cmdBuf_, pendingGizmoVertexCount,
+            kMinimumAsyncDeferredWorkUnits);
+    if (frameCaptureSuppressed || !glyphPacketsPrepared || !workerEligible) {
+      logDeferredFlushDecision(
+          frameCaptureSuppressed ? "capture-suppressed"
+          : !glyphPacketsPrepared ? "glyph-prepare-rejected"
+                                  : "work-ineligible",
+          cmdBuf_.packets().size(), frameCaptureSuppressed,
+          glyphPacketsPrepared, workerEligible, pendingGizmoVertexCount);
       flush();
       return false;
     }
@@ -1250,12 +1294,22 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
     cmdBuf_.setTargetRTV(activeTarget);
     if (!deferredPacketRecordWorker_.startRecording(
             deferredPacketRecordBuffer_, ctx.RawPtr(), m_renderViewportState_,
-            meshViewMatrix_, meshProjMatrix_, &primitiveRenderer3D_)) {
+            meshViewMatrix_, meshProjMatrix_, &primitiveRenderer3D_,
+            kMinimumAsyncDeferredWorkUnits)) {
+      logDeferredFlushDecision(
+          "start-recording-rejected",
+          deferredPacketRecordBuffer_.packets().size(),
+          frameCaptureSuppressed, glyphPacketsPrepared, workerEligible,
+          pendingGizmoVertexCount);
       deferredPacketRecordBuffer_.swapContents(cmdBuf_);
       cmdBuf_.setTargetRTV(activeTarget);
       flush();
       return false;
     }
+    logDeferredFlushDecision(
+        "recording-started", deferredPacketRecordBuffer_.packets().size(),
+        frameCaptureSuppressed, glyphPacketsPrepared, workerEligible,
+        pendingGizmoVertexCount);
     deferredPacketRecordPending_ = true;
     clonerGridOutputCursor_ = 0;
     ++clonerGridBatchGeneration_;

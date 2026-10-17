@@ -1078,10 +1078,11 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
 
 bool DiligentImmediateSubmitter::recordDeferred(
     RenderCommandBuffer& buf, Uint32 immediateContextId,
-    RefCntAutoPtr<ICommandList>& outCommandList)
+    RefCntAutoPtr<ICommandList>& outCommandList,
+    Uint32 minimumWorkUnits)
 {
     outCommandList = nullptr;
-    if (!canRecordDeferred(buf)) return false;
+    if (!canRecordDeferred(buf, 0, minimumWorkUnits)) return false;
     return submitImpl(buf, nullptr, immediateContextId, true,
                       std::addressof(outCommandList));
 }
@@ -1202,8 +1203,10 @@ bool DiligentImmediateSubmitter::prepareDeferredGlyphPackets(
 
 bool DiligentImmediateSubmitter::canRecordDeferred(
     const RenderCommandBuffer& buf,
-    Uint32 additionalGizmoVertexCount) const noexcept
+    Uint32 additionalGizmoVertexCount,
+    Uint32 minimumWorkUnits) const noexcept
 {
+    if (minimumWorkUnits == 0) return false;
     const Uint32 localGizmoVertexCount = m_primitiveRenderer3D_
         ? m_primitiveRenderer3D_->pendingGizmoVertexCount()
         : 0u;
@@ -1229,7 +1232,7 @@ bool DiligentImmediateSubmitter::canRecordDeferred(
     // surface on the caller even though it can generate many worker draw calls.
     // Large particle packets also account for their uploaded instance payload;
     // one UpdateBuffer can copy several megabytes before recording the draw.
-    constexpr std::size_t kMinimumDeferredWorkUnits = 16;
+    constexpr std::size_t kMaximumDeferredWorkUnits = 16;
     constexpr std::size_t kParticleVerticesPerDeferredWorkUnit = 4096;
     constexpr std::size_t kGizmoVerticesPerDeferredWorkUnit = 256;
     std::size_t deferredWorkUnits = 0;
@@ -1317,9 +1320,9 @@ bool DiligentImmediateSubmitter::canRecordDeferred(
                 kParticleVerticesPerDeferredWorkUnit;
         }
         deferredWorkUnits = std::min(
-            kMinimumDeferredWorkUnits, deferredWorkUnits + packetWorkUnits);
+            kMaximumDeferredWorkUnits, deferredWorkUnits + packetWorkUnits);
     }
-    return deferredWorkUnits >= kMinimumDeferredWorkUnits;
+    return deferredWorkUnits >= static_cast<std::size_t>(minimumWorkUnits);
 }
 
 void DiligentImmediateSubmitter::finishDeferredFrame()

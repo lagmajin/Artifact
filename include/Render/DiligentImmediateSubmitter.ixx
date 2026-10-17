@@ -61,13 +61,15 @@ public:
     // command buffers do not make a shared submitter safe for concurrent use.
     void submit(RenderCommandBuffer& buf, IDeviceContext* ctx) override;
     bool canRecordDeferred(const RenderCommandBuffer& buf,
-                           Uint32 additionalGizmoVertexCount = 0) const noexcept;
+                           Uint32 additionalGizmoVertexCount = 0,
+                           Uint32 minimumWorkUnits = 16) const noexcept;
     // Records an eligible packet buffer on this instance's dedicated deferred
     // context. Call this and finishDeferredFrame() on the same recorder thread;
     // retain buf until the immediate owner executes outCommandList. This API
     // does not make submitter state safe for concurrent calls.
     bool recordDeferred(RenderCommandBuffer& buf, Uint32 immediateContextId,
-                        RefCntAutoPtr<ICommandList>& outCommandList);
+                        RefCntAutoPtr<ICommandList>& outCommandList,
+                        Uint32 minimumWorkUnits = 16);
     void finishDeferredFrame();
 
 private:
