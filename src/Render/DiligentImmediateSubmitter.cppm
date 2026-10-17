@@ -1085,13 +1085,17 @@ bool DiligentImmediateSubmitter::canRecordDeferred(
     const RenderCommandBuffer& buf) const noexcept
 {
     if (!m_deferredCtx_ || m_frameDebugCaptureEnabled_ || m_frameCostStats_ ||
-        !buf.targetRTV() || buf.packets().size() < 16 ||
-        m_primitiveRenderer3D_) {
+        !buf.targetRTV() || m_primitiveRenderer3D_) {
         return false;
     }
     // Accepted packets either use recorder-local state or carry retained
     // references to every external GPU resource read while recording. Packet
     // types that consult mutable renderer/cache state remain on the owner.
+    // Large MPM surfaces add bounded-work units for each full primitive staging
+    // buffer they require; packet count alone would keep a single expensive
+    // surface on the caller even though it can generate many worker draw calls.
+    constexpr std::size_t kMinimumDeferredWorkUnits = 16;
+    std::size_t deferredWorkUnits = 0;
     for (const auto& packet : buf.packets()) {
         if (!std::holds_alternative<SolidRectPkt>(packet) &&
             !std::holds_alternative<SolidRectXformPkt>(packet) &&
@@ -1116,6 +1120,12 @@ bool DiligentImmediateSubmitter::canRecordDeferred(
             !std::holds_alternative<SolidTriPkt>(packet)) {
             return false;
         }
+        std::size_t packetWorkUnits = 1;
+        if (const auto* surface = std::get_if<MpmSurfacePkt>(&packet)) {
+            packetWorkUnits += surface->vertices.size() / k_batch_prim_verts;
+        }
+        deferredWorkUnits = std::min(
+            kMinimumDeferredWorkUnits, deferredWorkUnits + packetWorkUnits);
         if (const auto* particle = std::get_if<ParticlePkt>(&packet)) {
             if (!m_particleRenderer_) return false;
             const ParticleRenderOptions additive{};
@@ -1127,7 +1137,7 @@ bool DiligentImmediateSubmitter::canRecordDeferred(
             }
         }
     }
-    return true;
+    return deferredWorkUnits >= kMinimumDeferredWorkUnits;
 }
 
 void DiligentImmediateSubmitter::finishDeferredFrame()
