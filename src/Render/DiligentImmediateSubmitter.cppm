@@ -1094,7 +1094,10 @@ bool DiligentImmediateSubmitter::canRecordDeferred(
     // Large MPM surfaces add bounded-work units for each full primitive staging
     // buffer they require; packet count alone would keep a single expensive
     // surface on the caller even though it can generate many worker draw calls.
+    // Large particle packets also account for their uploaded instance payload;
+    // one UpdateBuffer can copy several megabytes before recording the draw.
     constexpr std::size_t kMinimumDeferredWorkUnits = 16;
+    constexpr std::size_t kParticleVerticesPerDeferredWorkUnit = 4096;
     std::size_t deferredWorkUnits = 0;
     for (const auto& packet : buf.packets()) {
         if (!std::holds_alternative<SolidRectPkt>(packet) &&
@@ -1124,8 +1127,6 @@ bool DiligentImmediateSubmitter::canRecordDeferred(
         if (const auto* surface = std::get_if<MpmSurfacePkt>(&packet)) {
             packetWorkUnits += surface->vertices.size() / k_batch_prim_verts;
         }
-        deferredWorkUnits = std::min(
-            kMinimumDeferredWorkUnits, deferredWorkUnits + packetWorkUnits);
         if (const auto* particle = std::get_if<ParticlePkt>(&packet)) {
             if (!m_particleRenderer_) return false;
             const ParticleRenderOptions additive{};
@@ -1135,7 +1136,12 @@ bool DiligentImmediateSubmitter::canRecordDeferred(
                 particle->data.options != alpha) {
                 return false;
             }
+            packetWorkUnits +=
+                particle->data.particles.size() /
+                kParticleVerticesPerDeferredWorkUnit;
         }
+        deferredWorkUnits = std::min(
+            kMinimumDeferredWorkUnits, deferredWorkUnits + packetWorkUnits);
     }
     return deferredWorkUnits >= kMinimumDeferredWorkUnits;
 }
