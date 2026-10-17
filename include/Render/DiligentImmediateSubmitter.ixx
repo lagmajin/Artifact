@@ -269,8 +269,9 @@ private:
     void submitParticles     (const ParticlePkt&,       IDeviceContext*, ITextureView*, ITextureView*);
     void submitGlyphText(const GlyphTextPkt&, const RenderCommandBuffer&,
                          IDeviceContext*, ITextureView*);
-    void submitGlyphTextTransformed(const GlyphTextXformPkt&, IDeviceContext*,
-                                    ITextureView*);
+    void submitGlyphTextTransformed(const GlyphTextXformPkt&,
+                                    const RenderCommandBuffer&,
+                                    IDeviceContext*, ITextureView*);
     void recordDebugPass(ArtifactCore::FrameDebugPassRecord&& pass);
 };
 

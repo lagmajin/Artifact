@@ -376,6 +376,9 @@ struct GlyphTextXformPkt {
     float               opacity          = 1.0f;
     float               outlineThickness = 0.0f;
     float               devicePixelRatio = 1.0f;
+    std::size_t         preparedGlyphOffset = 0;
+    std::size_t         preparedGlyphCount = 0;
+    bool                prepared = false;
 };
 
 // Bounded CPU snapshot consumed by deferred glyph recording. Atlas mutation,
