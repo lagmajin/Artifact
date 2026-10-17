@@ -1159,6 +1159,8 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
     // Composition frame does not allocate while handing packets to the worker.
     cmdBuf_.reserve(kParallelGeometryQueueCapacity);
     deferredPacketRecordBuffer_.reserve(kParallelGeometryQueueCapacity);
+    cmdBuf_.reservePreparedGlyphs();
+    deferredPacketRecordBuffer_.reservePreparedGlyphs();
     if (!deferredPacketRecordWorker_.initialize(deviceManager_.device(),
                                                shaderManager_)) {
       qWarning() << "[ArtifactIRenderer] worker deferred packet recorder unavailable;"
@@ -1210,10 +1212,14 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
     // canSubmit() inspects ParticlePkt eligibility, so provide the renderer
     // before preflight. Any earlier async job was joined above before reuse.
     deferredPacketRecordWorker_.setParticleRenderer(particleRenderer_.get());
+    const bool glyphPacketsPrepared =
+        !m_frameCostCaptureActive_ && !m_frameDebugCaptureActive_ &&
+        submitter_.prepareDeferredGlyphPackets(cmdBuf_, ctx.RawPtr());
     const auto pendingGizmoVertexCount =
         primitiveRenderer3D_.pendingGizmoVertexCount();
     if (m_frameCostCaptureActive_ ||
         m_frameDebugCaptureActive_ ||
+        !glyphPacketsPrepared ||
         !deferredPacketRecordWorker_.canSubmit(
             cmdBuf_, pendingGizmoVertexCount)) {
       flush();

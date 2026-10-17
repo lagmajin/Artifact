@@ -47,6 +47,10 @@ public:
                                 bool recorderOwnsState = false);
     void setParticleRenderer(ArtifactCore::ParticleRenderer* renderer);
     bool clonerSpriteGpuReady() const noexcept;
+    // Resolves text and atlas changes on the owner before a batch is handed to
+    // the recorder. False leaves glyph packets on the synchronous path.
+    bool prepareDeferredGlyphPackets(RenderCommandBuffer& buffer,
+                                     IDeviceContext* immediateContext);
     void beginFrameDebugCapture();
     void endFrameDebugCapture();
     void setFrameDebugCaptureEnabled(bool enabled);
@@ -263,8 +267,10 @@ private:
     void submitBillboard     (const BillboardPkt&,      IDeviceContext*, ITextureView*);
     void submitBillboardImage(BillboardImagePkt&, IDeviceContext*, ITextureView*);
     void submitParticles     (const ParticlePkt&,       IDeviceContext*, ITextureView*, ITextureView*);
-    void submitGlyphText     (const GlyphTextPkt&,      IDeviceContext*, ITextureView*);
-    void submitGlyphTextTransformed(const GlyphTextXformPkt&, IDeviceContext*, ITextureView*);
+    void submitGlyphText(const GlyphTextPkt&, const RenderCommandBuffer&,
+                         IDeviceContext*, ITextureView*);
+    void submitGlyphTextTransformed(const GlyphTextXformPkt&, IDeviceContext*,
+                                    ITextureView*);
     void recordDebugPass(ArtifactCore::FrameDebugPassRecord&& pass);
 };
 

@@ -13,6 +13,7 @@ module;
 #include <QFont>
 #include <QImage>
 #include <QMatrix4x4>
+#include <QPointF>
 #include <QRectF>
 #include <QString>
 #include <QVector2D>
@@ -26,6 +27,7 @@ module;
 export module Artifact.Render.RenderCommandBuffer;
 
 import Text.Style;
+import Text.GlyphAtlas;
 import Core.ArtifactArray;
 import Graphics.ParticleData;
 
@@ -358,6 +360,9 @@ struct GlyphTextPkt {
     int                 alignment        = 0;
     float               opacity          = 1.0f;
     float               outlineThickness = 0.0f;  // canvas-space pixels; 0 = no outline
+    std::size_t         preparedGlyphOffset = 0;
+    std::size_t         preparedGlyphCount = 0;
+    bool                prepared = false;
 };
 
 struct GlyphTextXformPkt {
@@ -371,6 +376,17 @@ struct GlyphTextXformPkt {
     float               opacity          = 1.0f;
     float               outlineThickness = 0.0f;
     float               devicePixelRatio = 1.0f;
+};
+
+// Bounded CPU snapshot consumed by deferred glyph recording. Atlas mutation,
+// font fallback, and shaping stay on the owner; workers only read this data.
+struct PreparedGlyphSubmission {
+    QPointF basePosition;
+    QPointF offsetPosition;
+    float offsetRotation = 0.0f;
+    float offsetScale = 1.0f;
+    float offsetOpacity = 1.0f;
+    ArtifactCore::GlyphRect rect;
 };
 
 using DrawPacket = std::variant<
@@ -414,6 +430,8 @@ public:
             }
         }
         packets_.clear();
+        preparedGlyphs_.removeAll();
+        preparedGlyphAtlasSRV_ = nullptr;
         targetRTV_ = nullptr;
         retainedTargetRTV_ = nullptr;
     }
@@ -429,6 +447,21 @@ public:
         recycledMpmSurfaceBuffers_.reserve(packetCapacity);
     }
     std::size_t capacity() const noexcept { return packets_.capacity(); }
+    static constexpr std::size_t kPreparedGlyphCapacity = 4096;
+    void reservePreparedGlyphs() {
+        preparedGlyphs_.reserve(kPreparedGlyphCapacity);
+    }
+    ArtifactCore::ArtifactArray<PreparedGlyphSubmission>& preparedGlyphs() noexcept {
+        return preparedGlyphs_;
+    }
+    const ArtifactCore::ArtifactArray<PreparedGlyphSubmission>&
+    preparedGlyphs() const noexcept { return preparedGlyphs_; }
+    void setPreparedGlyphAtlasSRV(ITextureView* srv) noexcept {
+        preparedGlyphAtlasSRV_ = srv;
+    }
+    ITextureView* preparedGlyphAtlasSRV() const noexcept {
+        return preparedGlyphAtlasSRV_.RawPtr();
+    }
 
     // Exchange packet storage and retained target ownership without copying.
     // Used by the renderer's single bounded in-flight deferred-record slot.
@@ -436,6 +469,8 @@ public:
         packets_.swap(other.packets_);
         recycledParticleBuffers_.swap(other.recycledParticleBuffers_);
         recycledMpmSurfaceBuffers_.swap(other.recycledMpmSurfaceBuffers_);
+        preparedGlyphs_.swap(other.preparedGlyphs_);
+        preparedGlyphAtlasSRV_.swap(other.preparedGlyphAtlasSRV_);
         std::swap(targetRTV_, other.targetRTV_);
         retainedTargetRTV_.swap(other.retainedTargetRTV_);
     }
@@ -632,6 +667,8 @@ private:
     std::vector<std::vector<ArtifactCore::ParticleVertex>> recycledParticleBuffers_;
     ArtifactCore::ArtifactArray<ArtifactCore::ArtifactArray<MpmSurfaceVertex>>
         recycledMpmSurfaceBuffers_;
+    ArtifactCore::ArtifactArray<PreparedGlyphSubmission> preparedGlyphs_;
+    RefCntAutoPtr<ITextureView> preparedGlyphAtlasSRV_;
     ITextureView* targetRTV_ = nullptr;
     RefCntAutoPtr<ITextureView> retainedTargetRTV_;
 };

@@ -1086,6 +1086,109 @@ bool DiligentImmediateSubmitter::recordDeferred(
                       std::addressof(outCommandList));
 }
 
+bool DiligentImmediateSubmitter::prepareDeferredGlyphPackets(
+    RenderCommandBuffer& buffer, IDeviceContext* immediateContext)
+{
+    auto& prepared = buffer.preparedGlyphs();
+    prepared.removeAll();
+    buffer.setPreparedGlyphAtlasSRV(nullptr);
+    bool hasGlyphPacket = false;
+    for (auto& packet : buffer.packetsMutable()) {
+        if (auto* glyph = std::get_if<GlyphTextPkt>(&packet)) {
+            glyph->prepared = false;
+            glyph->preparedGlyphOffset = 0;
+            glyph->preparedGlyphCount = 0;
+            hasGlyphPacket = true;
+        }
+    }
+    if (!hasGlyphPacket) return true;
+
+    // The ordinary owner submit path creates the atlas texture. This path only
+    // updates an established texture before a recording worker is dispatched.
+    if (!immediateContext || !m_device || !m_glyph_atlas_texture ||
+        !m_glyph_atlas_srv || m_glyph_atlas.dirtyRegion().fullUpload) {
+        return false;
+    }
+
+    const auto failPreparation = [&]() {
+        prepared.removeAll();
+        buffer.setPreparedGlyphAtlasSRV(nullptr);
+        for (auto& packet : buffer.packetsMutable()) {
+            if (auto* glyph = std::get_if<GlyphTextPkt>(&packet)) {
+                glyph->prepared = false;
+                glyph->preparedGlyphOffset = 0;
+                glyph->preparedGlyphCount = 0;
+            }
+        }
+        return false;
+    };
+
+    const auto prepareText = [&](auto& packet) {
+        if (packet.text.isEmpty() || packet.rect.width() <= 0.0 ||
+            packet.rect.height() <= 0.0) {
+            packet.prepared = true;
+            return true;
+        }
+        const TextStyle style = textStyleFromQFont(packet.font);
+        const ParagraphStyle paragraph = paragraphStyleFromRectAndAlignment(
+            packet.rect, static_cast<Qt::Alignment>(packet.alignment));
+        const auto glyphs = shapeGlyphsForRender(packet.text, style, paragraph);
+        if (glyphs.size() > m_glyph_submission_scratch_.capacity()) {
+            return false;
+        }
+        packet.preparedGlyphOffset = prepared.size();
+        if (glyphs.empty()) {
+            packet.prepared = true;
+            return true;
+        }
+
+        const size_t fontHash = resolvedGlyphFontHash(packet.font);
+        for (const auto& glyph : glyphs) {
+            const auto& resolved = resolvedGlyphFont(
+                packet.font, fontHash, glyph.charCode, glyph.renderMode,
+                glyph.shapedGlyphIndex, glyph.clusterText,
+                glyph.isEmojiSequence);
+            const GlyphRect glyphRect =
+                m_glyph_atlas.acquire(resolved.key, resolved.font);
+            if (m_glyph_atlas.dirtyRegion().fullUpload ||
+                prepared.size() >= RenderCommandBuffer::kPreparedGlyphCapacity) {
+                return false;
+            }
+            if (!glyphRect.valid) continue;
+            PreparedGlyphSubmission submission;
+            submission.basePosition = glyph.basePosition;
+            submission.offsetPosition = glyph.offsetPosition;
+            submission.offsetRotation = glyph.offsetRotation;
+            submission.offsetScale = glyph.offsetScale;
+            submission.offsetOpacity = glyph.offsetOpacity;
+            submission.rect = glyphRect;
+            prepared.append(std::move(submission));
+        }
+        packet.preparedGlyphCount = prepared.size() -
+                                    packet.preparedGlyphOffset;
+        packet.prepared = true;
+        return true;
+    };
+
+    for (auto& packet : buffer.packetsMutable()) {
+        bool ok = true;
+        if (auto* glyph = std::get_if<GlyphTextPkt>(&packet)) {
+            ok = prepareText(*glyph);
+        }
+        if (!ok) return failPreparation();
+    }
+
+    if (!prepared.isEmpty() &&
+        !updateGlyphAtlasTexture(m_device, immediateContext, m_glyph_atlas,
+                                 m_glyph_atlas_texture, m_glyph_atlas_srv)) {
+        return failPreparation();
+    }
+    if (!prepared.isEmpty()) {
+        buffer.setPreparedGlyphAtlasSRV(m_glyph_atlas_srv);
+    }
+    return true;
+}
+
 bool DiligentImmediateSubmitter::canRecordDeferred(
     const RenderCommandBuffer& buf,
     Uint32 additionalGizmoVertexCount) const noexcept
@@ -1145,12 +1248,24 @@ bool DiligentImmediateSubmitter::canRecordDeferred(
             !std::holds_alternative<GridPkt>(packet) &&
             !std::holds_alternative<RectOutlinePkt>(packet) &&
             !std::holds_alternative<SolidTriPkt>(packet) &&
+            !std::holds_alternative<GlyphTextPkt>(packet) &&
             !(m_primitiveRenderer3D_ &&
               m_deferredPrimitiveRendererOwnsState_ &&
               (std::holds_alternative<BillboardPkt>(packet) ||
                std::holds_alternative<CardPkt>(packet) ||
                std::holds_alternative<TexturedCardPkt>(packet) ||
                std::holds_alternative<ShapeTrianglesPkt>(packet)))) {
+            return false;
+        }
+        if (const auto* glyph = std::get_if<GlyphTextPkt>(&packet);
+            glyph && (!glyph->prepared ||
+                      glyph->preparedGlyphOffset >
+                          buf.preparedGlyphs().size() ||
+                      glyph->preparedGlyphCount >
+                          buf.preparedGlyphs().size() -
+                              glyph->preparedGlyphOffset ||
+                      (glyph->preparedGlyphCount > 0 &&
+                       !buf.preparedGlyphAtlasSRV()))) {
             return false;
         }
         if (const auto* shape = std::get_if<ShapeTrianglesPkt>(&packet);
@@ -1728,7 +1843,7 @@ bool DiligentImmediateSubmitter::submitImpl(
                     }
                 }
                 else if constexpr (std::is_same_v<T, ParticlePkt>)        submitParticles(p, recordCtx, pRTV, p.depthDSV);
-                else if constexpr (std::is_same_v<T, GlyphTextPkt>)       { recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.GlyphText"); submitGlyphText(p, recordCtx, pRTV); recordCtx->EndDebugGroup(); }
+                else if constexpr (std::is_same_v<T, GlyphTextPkt>)       { recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.GlyphText"); submitGlyphText(p, buf, recordCtx, pRTV); recordCtx->EndDebugGroup(); }
                 else if constexpr (std::is_same_v<T, GlyphTextXformPkt>)  { recordCtx->BeginDebugGroup("DiligentImmediateSubmitter.Submit2D.GlyphText"); submitGlyphTextTransformed(p, recordCtx, pRTV); recordCtx->EndDebugGroup(); }
             }
         }, pkt);
@@ -2679,7 +2794,9 @@ void DiligentImmediateSubmitter::submitMaskedSprite(const MaskedSpritePkt& p, ID
     ctx->Draw(drawAttrs);
 }
 
-void DiligentImmediateSubmitter::submitGlyphText(const GlyphTextPkt& p, IDeviceContext* ctx, ITextureView* pRTV)
+void DiligentImmediateSubmitter::submitGlyphText(
+    const GlyphTextPkt& p, const RenderCommandBuffer& buffer,
+    IDeviceContext* ctx, ITextureView* pRTV)
 {
     if (!pRTV || !ctx || !m_draw_glyph_pso_and_srb.pPSO || !m_draw_glyph_pso_and_srb.pSRB || !m_device) {
         return;
@@ -2688,35 +2805,54 @@ void DiligentImmediateSubmitter::submitGlyphText(const GlyphTextPkt& p, IDeviceC
         return;
     }
 
-    const TextStyle style = textStyleFromQFont(p.font);
-    const ParagraphStyle paragraph =
-        paragraphStyleFromRectAndAlignment(p.rect, static_cast<Qt::Alignment>(p.alignment));
-    const auto glyphs = shapeGlyphsForRender(p.text, style, paragraph);
-    if (glyphs.empty()) {
-        return;
-    }
-
     const float zoom = std::max(0.001f, p.xform.scale.x);
-    const size_t fontHash = resolvedGlyphFontHash(p.font);
     auto& drawGlyphs = m_glyph_submission_scratch_;
     drawGlyphs.clear();
-
-    for (const auto& glyph : glyphs) {
-        const auto& resolved = resolvedGlyphFont(
-            p.font, fontHash, glyph.charCode, glyph.renderMode,
-            glyph.shapedGlyphIndex, glyph.clusterText, glyph.isEmojiSequence);
-        const GlyphRect glyphRect =
-            m_glyph_atlas.acquire(resolved.key, resolved.font);
-        if (glyphRect.valid) {
-            drawGlyphs.push_back({glyph.basePosition, glyph.offsetPosition,
-                                  glyph.offsetRotation, glyph.offsetScale,
-                                  glyph.offsetOpacity, glyphRect});
+    ITextureView* glyphAtlasSRV = m_glyph_atlas_srv.RawPtr();
+    if (p.prepared) {
+        const auto& prepared = buffer.preparedGlyphs();
+        if (p.preparedGlyphCount == 0) return;
+        if (p.preparedGlyphOffset > prepared.size() ||
+            p.preparedGlyphCount > prepared.size() - p.preparedGlyphOffset ||
+            p.preparedGlyphCount > drawGlyphs.capacity() ||
+            !buffer.preparedGlyphAtlasSRV()) {
+            return;
         }
-    }
+        for (size_t index = 0; index < p.preparedGlyphCount; ++index) {
+            const auto& source = prepared[p.preparedGlyphOffset + index];
+            drawGlyphs.push_back({source.basePosition, source.offsetPosition,
+                                  source.offsetRotation, source.offsetScale,
+                                  source.offsetOpacity, source.rect});
+        }
+        glyphAtlasSRV = buffer.preparedGlyphAtlasSRV();
+    } else {
+        const TextStyle style = textStyleFromQFont(p.font);
+        const ParagraphStyle paragraph =
+            paragraphStyleFromRectAndAlignment(
+                p.rect, static_cast<Qt::Alignment>(p.alignment));
+        const auto glyphs = shapeGlyphsForRender(p.text, style, paragraph);
+        if (glyphs.empty()) return;
 
-    if (!updateGlyphAtlasTexture(m_device, ctx, m_glyph_atlas,
-                                 m_glyph_atlas_texture, m_glyph_atlas_srv)) {
-        return;
+        const size_t fontHash = resolvedGlyphFontHash(p.font);
+        for (const auto& glyph : glyphs) {
+            const auto& resolved = resolvedGlyphFont(
+                p.font, fontHash, glyph.charCode, glyph.renderMode,
+                glyph.shapedGlyphIndex, glyph.clusterText,
+                glyph.isEmojiSequence);
+            const GlyphRect glyphRect =
+                m_glyph_atlas.acquire(resolved.key, resolved.font);
+            if (glyphRect.valid) {
+                drawGlyphs.push_back({glyph.basePosition, glyph.offsetPosition,
+                                      glyph.offsetRotation, glyph.offsetScale,
+                                      glyph.offsetOpacity, glyphRect});
+            }
+        }
+
+        if (!updateGlyphAtlasTexture(m_device, ctx, m_glyph_atlas,
+                                     m_glyph_atlas_texture, m_glyph_atlas_srv)) {
+            return;
+        }
+        glyphAtlasSRV = m_glyph_atlas_srv.RawPtr();
     }
 
     if (m_currentPSO_ != m_draw_glyph_pso_and_srb.pPSO) {
@@ -2724,7 +2860,7 @@ void DiligentImmediateSubmitter::submitGlyphText(const GlyphTextPkt& p, IDeviceC
         ctx->SetPipelineState(m_draw_glyph_pso_and_srb.pPSO);
         m_currentPSO_ = m_draw_glyph_pso_and_srb.pPSO;
     }
-    if (m_var_glyph_gTexture_) m_var_glyph_gTexture_->Set(m_glyph_atlas_srv);
+    if (m_var_glyph_gTexture_) m_var_glyph_gTexture_->Set(glyphAtlasSRV);
     recordShaderResourceCommit(m_frameCostStats_);
     ctx->CommitShaderResources(m_draw_glyph_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     IBuffer* pBufs[] = { m_draw_sprite_vertex_buffer };
