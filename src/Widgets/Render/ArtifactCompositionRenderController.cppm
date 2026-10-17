@@ -42544,12 +42544,18 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
   const bool profileGpuFrame = gpuFrameProfilingEnabled();
 
   qint64 phaseNs = 0;
+  qint64 lastPhaseDurationNs = 0;
 
-  auto markPhaseMs = [&frameTimer, &phaseNs]() -> qint64 {
+  auto markPhaseMs = [&frameTimer, &phaseNs, &lastPhaseDurationNs,
+                      profileThisVideoPreviewSetup]() -> qint64 {
 
     const qint64 nowNs = frameTimer.nsecsElapsed();
 
-    const qint64 phaseMs = (nowNs - phaseNs) / 1000000;
+    const qint64 phaseDurationNs = nowNs - phaseNs;
+    lastPhaseDurationNs = profileThisVideoPreviewSetup
+        ? phaseDurationNs
+        : 0;
+    const qint64 phaseMs = phaseDurationNs / 1000000;
 
     phaseNs = nowNs;
 
@@ -44656,7 +44662,45 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     qint64 setupMs = markPhaseMs();
     markVideoPreviewSetupStage(8);
 
+    if (profileThisVideoPreviewSetup) {
+      phaseNs = videoPreviewSetupMarksNs[8];
+    }
+
+    const auto addProfileBoundary = [&](qint64& accumulatedNs) {
+      if (profileThisVideoPreviewSetup) {
+        accumulatedNs += lastPhaseDurationNs;
+      }
+    };
+
     qint64 basePassMs = 0;
+
+    qint64 profileBaseBoundaryNs = 0;
+
+    qint64 profileSurfaceBoundaryNs = 0;
+
+    qint64 profileMaskBoundaryNs = 0;
+
+    qint64 profileCompositeBoundaryNs = 0;
+
+    qint64 profileDirectLayerBoundaryNs = 0;
+
+    qint64 profilePostBoundaryNs = 0;
+
+    qint64 profileFinalizeNs = 0;
+
+    qint64 profileResolveExecuteNs = 0;
+
+    qint64 profileGiBlockNs = 0;
+
+    qint64 profileGiDispatchNs = 0;
+
+    qint64 profileGiApplyNs = 0;
+
+    qint64 profileFxaaNs = 0;
+
+    qint64 profileOverlayBoundaryNs = 0;
+
+    qint64 profilePresentBoundaryNs = 0;
 
     qint64 baseSetupNs = 0;
 
@@ -44901,6 +44945,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             }
 
             basePassMs = markPhaseMs();
+            addProfileBoundary(profileBaseBoundaryNs);
 
             return true;
 
@@ -44942,6 +44987,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             }
 
             surfacePassMs = markPhaseMs();
+            addProfileBoundary(profileSurfaceBoundaryNs);
 
             return true;
 
@@ -45367,6 +45413,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
 
       basePassMs = markPhaseMs();
+      addProfileBoundary(profileBaseBoundaryNs);
 
 
 
@@ -45860,6 +45907,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                 }
 
           surfacePassMs = markPhaseMs();
+          addProfileBoundary(profileSurfaceBoundaryNs);
 
           Diligent::ITextureView* preparedBlendSRV = layerSRV;
 
@@ -45889,6 +45937,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                     partialGpuRecomposeActive ? &gpuDamageRegion : nullptr);
 
           maskPassMs = markPhaseMs();
+          addProfileBoundary(profileMaskBoundaryNs);
 
           if (!preparedBlendSRV) {
             shared3DSceneDepthOpen = false;
@@ -45929,6 +45978,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                 tempUAV = passResources.tempUAV;
 
           compositePassMs = markPhaseMs();
+          addProfileBoundary(profileCompositeBoundaryNs);
 
           if (!blendResult.blended && !blendResult.directFallbackUsed) {
             shared3DSceneDepthOpen = false;
@@ -45979,12 +46029,18 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       }
 
       if (postPassMask.screenSpaceGi) {
+        const qint64 giBlockStartedNs = profileThisVideoPreviewSetup
+            ? frameTimer.nsecsElapsed()
+            : 0;
         renderer_->unbindColorTargetsForCompute();
         auto* depthSRV = renderer_->offscreenTextureShaderResourceView(
             previewRenderSlot.depthTargetView);
         const auto giInputs =
             renderPipeline.globalIlluminationInputs(depthSRV);
         auto context = renderer_->immediateContext();
+        const qint64 giDispatchStartedNs = profileThisVideoPreviewSetup
+            ? frameTimer.nsecsElapsed()
+            : 0;
         const bool dispatched = context &&
             renderPipeline.dispatchScreenSpaceGlobalIllumination(
                 context.RawPtr(), giInputs,
@@ -45993,14 +46049,25 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                 1.0f, 0.01f,
                 globalIlluminationSettings.temporalAccumulation,
                 globalIlluminationSettings.denoise);
+        if (profileThisVideoPreviewSetup) {
+          profileGiDispatchNs +=
+              frameTimer.nsecsElapsed() - giDispatchStartedNs;
+        }
         if (dispatched) {
           ++giDispatchedCount_;
           auto* aoMask = renderPipeline.screenSpaceGlobalIlluminationSRV();
+          const qint64 giApplyStartedNs = profileThisVideoPreviewSetup
+              ? frameTimer.nsecsElapsed()
+              : 0;
           if (aoMask && renderPipeline.applyScreenSpaceAmbientOcclusion(
                             context.RawPtr(), accumSRV, tempUAV, aoMask)) {
             renderPipeline.swapAccumAndTemp();
             accumSRV = renderPipeline.accumSRV();
             tempUAV = renderPipeline.tempUAV();
+          }
+          if (profileThisVideoPreviewSetup) {
+            profileGiApplyNs +=
+                frameTimer.nsecsElapsed() - giApplyStartedNs;
           }
         }
         if (!dispatched && compositionViewLog().isDebugEnabled()) {
@@ -46008,6 +46075,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               << "[CompositionView] SSGI dispatch skipped"
               << renderer_->globalIlluminationDebugState()
               << "inputs=" << giInputs.validForScreenSpace();
+        }
+        if (profileThisVideoPreviewSetup) {
+          profileGiBlockNs +=
+              frameTimer.nsecsElapsed() - giBlockStartedNs;
         }
       }
 
@@ -46160,12 +46231,20 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             // Geometry resolves into a single-sample composition target.
             // Apply FXAA only when the frame contains visible 3D, after AO and
             // motion blur, so 2D/text content keeps its exact pixels.
-            if (postPassMask.antiAliasingMode == 1 && hasVisible3DLayer && resources.pipeline &&
-                renderer_ &&
+            const qint64 fxaaStartedNs = profileThisVideoPreviewSetup
+                ? frameTimer.nsecsElapsed()
+                : 0;
+            const bool fxaaApplied =
+                postPassMask.antiAliasingMode == 1 && hasVisible3DLayer &&
+                resources.pipeline && renderer_ &&
                 renderer_->immediateContext() &&
                 resources.pipeline->applyFastApproximateAntiAliasing(
                     renderer_->immediateContext(), resources.accumSRV,
-                    resources.pipeline->tempUAV())) {
+                    resources.pipeline->tempUAV());
+            if (profileThisVideoPreviewSetup) {
+              profileFxaaNs += frameTimer.nsecsElapsed() - fxaaStartedNs;
+            }
+            if (fxaaApplied) {
               resources.pipeline->swapAccumAndTemp();
               resources.accumSRV = resources.pipeline->accumSRV();
               resources.tempUAV = resources.pipeline->tempUAV();
@@ -46173,6 +46252,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               tempUAV = resources.tempUAV;
             }
 
+            const qint64 finalizeStartedNs = profileThisVideoPreviewSetup
+                ? frameTimer.nsecsElapsed()
+                : 0;
             ramPreviewReadbackSRV = finalizeGpuRenderToViewport(
 
                 *resources.pipeline, resources.accumSRV,
@@ -46185,15 +46267,27 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                 bgColor, layerBgColor, origClearColor, backgroundMode,
 
                 layerToFloatConvertCount);
+            if (profileThisVideoPreviewSetup) {
+              profileFinalizeNs =
+                  frameTimer.nsecsElapsed() - finalizeStartedNs;
+            }
 
             return ramPreviewReadbackSRV != nullptr;
 
           });
 
+      const qint64 resolveExecuteStartedNs = profileThisVideoPreviewSetup
+          ? frameTimer.nsecsElapsed()
+          : 0;
       framePassesSucceeded = RenderPassExecutor::runWithRenderGraph(
           resolvePass, resolveContext, resolveResources) && framePassesSucceeded;
+      if (profileThisVideoPreviewSetup) {
+        profileResolveExecuteNs =
+            frameTimer.nsecsElapsed() - resolveExecuteStartedNs;
+      }
 
       postPassMs = markPhaseMs();
+      addProfileBoundary(profilePostBoundaryNs);
 
     } else {
 
@@ -46386,6 +46480,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           framePassesSucceeded;
 
       basePassMs = markPhaseMs();
+      addProfileBoundary(profileBaseBoundaryNs);
 
 
 
@@ -46677,6 +46772,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               framePassesSucceeded;
 
           surfacePassMs = markPhaseMs();
+          addProfileBoundary(profileDirectLayerBoundaryNs);
 
           maskPassMs = surfacePassMs;
 
@@ -46762,6 +46858,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       markVideoPreviewSetupStage(15);
 
       postPassMs = markPhaseMs();
+      addProfileBoundary(profilePostBoundaryNs);
 
 
 
@@ -48436,6 +48533,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
     markVideoPreviewSetupStage(13);
     overlayMs = markPhaseMs();
+    addProfileBoundary(profileOverlayBoundaryNs);
 
 
 
@@ -48657,6 +48755,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     }
 
     presentMs = markPhaseMs();
+    addProfileBoundary(profilePresentBoundaryNs);
     markVideoPreviewSetupStage(9);
 
     if (profileThisVideoPreviewSetup) {
@@ -48666,6 +48765,11 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                                    videoPreviewSetupMarksNs[begin]) /
                1000000.0;
       };
+      const qint64 profileBoundaryTotalNs =
+          profileBaseBoundaryNs + profileSurfaceBoundaryNs +
+          profileMaskBoundaryNs + profileCompositeBoundaryNs +
+          profileDirectLayerBoundaryNs + profilePostBoundaryNs +
+          profileOverlayBoundaryNs + profilePresentBoundaryNs;
       std::fprintf(
           stderr,
           "[VideoPreviewSetupProfile] frame=%llu layers=%zu "
@@ -48683,8 +48787,13 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           "depthClearMs=%.3f accumulationClearMs=%.3f "
           "partialRegionClearMs=%.3f fullTargetClearMs=%.3f "
           "computeUnbindMs=%.3f "
-          "surfaceMs=%lld maskMs=%lld compositeMs=%lld "
-          "postMs=%lld overlayMs=%lld flushMs=%lld presentMs=%lld\n",
+          "baseBoundaryMs=%.3f surfaceBoundaryMs=%.3f "
+          "maskBoundaryMs=%.3f compositeBoundaryMs=%.3f "
+          "directLayerBoundaryMs=%.3f postBoundaryMs=%.3f "
+          "giBlockMs=%.3f giDispatchMs=%.3f giApplyMs=%.3f fxaaMs=%.3f "
+          "resolveExecuteMs=%.3f finalizeMs=%.3f "
+          "overlayBoundaryMs=%.3f presentBoundaryMs=%.3f "
+          "boundarySumMs=%.3f flushMs=%lld\n",
           static_cast<unsigned long long>(renderFrameCounter_),
           static_cast<long long>(basePassMs),
           static_cast<double>(baseSetupNs) / 1000000.0,
@@ -48694,13 +48803,22 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           static_cast<double>(partialRegionClearNs) / 1000000.0,
           static_cast<double>(fullTargetClearNs) / 1000000.0,
           static_cast<double>(computeUnbindNs) / 1000000.0,
-          static_cast<long long>(std::max<qint64>(0, surfacePassMs - basePassMs)),
-          static_cast<long long>(std::max<qint64>(0, maskPassMs - surfacePassMs)),
-          static_cast<long long>(std::max<qint64>(0, compositePassMs - maskPassMs)),
-          static_cast<long long>(std::max<qint64>(0, postPassMs - compositePassMs)),
-          static_cast<long long>(overlayMs),
-          static_cast<long long>(flushMs),
-          static_cast<long long>(presentMs));
+          static_cast<double>(profileBaseBoundaryNs) / 1000000.0,
+          static_cast<double>(profileSurfaceBoundaryNs) / 1000000.0,
+          static_cast<double>(profileMaskBoundaryNs) / 1000000.0,
+          static_cast<double>(profileCompositeBoundaryNs) / 1000000.0,
+          static_cast<double>(profileDirectLayerBoundaryNs) / 1000000.0,
+          static_cast<double>(profilePostBoundaryNs) / 1000000.0,
+          static_cast<double>(profileGiBlockNs) / 1000000.0,
+          static_cast<double>(profileGiDispatchNs) / 1000000.0,
+          static_cast<double>(profileGiApplyNs) / 1000000.0,
+          static_cast<double>(profileFxaaNs) / 1000000.0,
+          static_cast<double>(profileResolveExecuteNs) / 1000000.0,
+          static_cast<double>(profileFinalizeNs) / 1000000.0,
+          static_cast<double>(profileOverlayBoundaryNs) / 1000000.0,
+          static_cast<double>(profilePresentBoundaryNs) / 1000000.0,
+          static_cast<double>(profileBoundaryTotalNs) / 1000000.0,
+          static_cast<long long>(flushMs));
       if (useRamPreviewFallback) {
         std::fprintf(stderr,
             "[VideoPreviewRamPassProfile] frame=%llu ramPassMs=%.3f betweenMs=%.3f overlayMs=%.3f tailPresentMs=%.3f\n",
