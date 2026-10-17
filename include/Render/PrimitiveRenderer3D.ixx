@@ -124,9 +124,20 @@ public:
                                ITextureView *targetDSV,
                                const QRectF &localRect,
                                const QMatrix4x4 &modelMatrix,
+                               const QMatrix4x4 &viewMatrix,
+                               const QMatrix4x4 &projectionMatrix,
                                const FloatColor &tint, float opacity,
                                bool writeDepth);
   bool hasActiveProjector() const;
+  void drawTexturedCardQuadWithContext(IDeviceContext *context,
+                                       ITextureView *targetRTV,
+                                       ITextureView *targetDSV,
+                                       const QRectF &localRect,
+                                       const QMatrix4x4 &modelMatrix,
+                                       const QMatrix4x4 &viewMatrix,
+                                       const QMatrix4x4 &projectionMatrix,
+                                       ITextureView *texture,
+                                       float opacity);
   void drawTexturedCardQuadImmediate(const QRectF &localRect,
                                      const QMatrix4x4 &modelMatrix,
                                      ITextureView *texture,

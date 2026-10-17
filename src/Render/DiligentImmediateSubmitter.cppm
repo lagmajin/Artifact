@@ -1148,7 +1148,8 @@ bool DiligentImmediateSubmitter::canRecordDeferred(
             !(m_primitiveRenderer3D_ &&
               m_deferredPrimitiveRendererOwnsState_ &&
               (std::holds_alternative<BillboardPkt>(packet) ||
-               std::holds_alternative<CardPkt>(packet)))) {
+               std::holds_alternative<CardPkt>(packet) ||
+               std::holds_alternative<TexturedCardPkt>(packet)))) {
             return false;
         }
         std::size_t packetWorkUnits = 1;
@@ -1695,9 +1696,17 @@ bool DiligentImmediateSubmitter::submitImpl(
                     if (m_primitiveRenderer3D_) {
                         m_primitiveRenderer3D_->drawCardQuadWithContext(
                             recordCtx, pRTV, p.depthDSV, p.localRect,
-                            p.modelMatrix,
+                            p.modelMatrix, p.viewMatrix, p.projectionMatrix,
                             FloatColor{p.tint.x, p.tint.y, p.tint.z, p.tint.w},
                             p.opacity, p.writeDepth);
+                    }
+                }
+                else if constexpr (std::is_same_v<T, TexturedCardPkt>) {
+                    if (m_primitiveRenderer3D_) {
+                        m_primitiveRenderer3D_->drawTexturedCardQuadWithContext(
+                            recordCtx, pRTV, p.depthDSV, p.localRect,
+                            p.modelMatrix, p.viewMatrix, p.projectionMatrix,
+                            p.pSRV, p.opacity);
                     }
                 }
                 else if constexpr (std::is_same_v<T, ParticlePkt>)        submitParticles(p, recordCtx, pRTV, p.depthDSV);

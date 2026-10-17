@@ -2025,17 +2025,44 @@ void PrimitiveRenderer3D::drawCardQuadImmediate(const QRectF& localRect,
 void PrimitiveRenderer3D::drawCardQuadWithContext(
     IDeviceContext* context, ITextureView* targetRTV, ITextureView* targetDSV,
     const QRectF& localRect, const QMatrix4x4& modelMatrix,
+    const QMatrix4x4& viewMatrix, const QMatrix4x4& projectionMatrix,
     const FloatColor& tint, float opacity, bool writeDepth)
 {
     if (!context || !targetRTV) return;
+    const auto savedViewMatrix = impl_->viewMatrix_;
+    const auto savedProjectionMatrix = impl_->projMatrix_;
+    impl_->viewMatrix_ = viewMatrix;
+    impl_->projMatrix_ = projectionMatrix;
     impl_->drawCardPass(localRect, modelMatrix,
                         impl_->defaultTextureSRV_.RawPtr(), tint, opacity,
                         writeDepth, 0.0f, context, targetRTV, targetDSV);
+    impl_->viewMatrix_ = savedViewMatrix;
+    impl_->projMatrix_ = savedProjectionMatrix;
 }
 
 bool PrimitiveRenderer3D::hasActiveProjector() const
 {
     return impl_->projectorEnabled_ && impl_->projectorTexture_ != nullptr;
+}
+
+void PrimitiveRenderer3D::drawTexturedCardQuadWithContext(
+    IDeviceContext* context, ITextureView* targetRTV, ITextureView* targetDSV,
+    const QRectF& localRect, const QMatrix4x4& modelMatrix,
+    const QMatrix4x4& viewMatrix, const QMatrix4x4& projectionMatrix,
+    ITextureView* texture, float opacity)
+{
+    if (!context || !targetRTV) return;
+    const auto savedViewMatrix = impl_->viewMatrix_;
+    const auto savedProjectionMatrix = impl_->projMatrix_;
+    impl_->viewMatrix_ = viewMatrix;
+    impl_->projMatrix_ = projectionMatrix;
+    const FloatColor tint{1.0f, 1.0f, 1.0f, 1.0f};
+    impl_->drawCardPass(localRect, modelMatrix, texture, tint, opacity, true,
+                        2.0f, context, targetRTV, targetDSV);
+    impl_->drawCardPass(localRect, modelMatrix, texture, tint, opacity, false,
+                        1.0f, context, targetRTV, targetDSV);
+    impl_->viewMatrix_ = savedViewMatrix;
+    impl_->projMatrix_ = savedProjectionMatrix;
 }
 
 void PrimitiveRenderer3D::drawTexturedCardQuadImmediate(

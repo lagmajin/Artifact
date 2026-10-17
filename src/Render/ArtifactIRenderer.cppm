@@ -2858,10 +2858,12 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
   void setViewMatrix(const QMatrix4x4& view) {
     primitiveRenderer_.setViewMatrix(view);
     primitiveRenderer3D_.setViewMatrix(view);
+    meshViewMatrix_ = view;
   }
   void setProjectionMatrix(const QMatrix4x4& proj) {
     primitiveRenderer_.setProjectionMatrix(proj);
     primitiveRenderer3D_.setProjectionMatrix(proj);
+    meshProjMatrix_ = proj;
   }
   void setUseExternalMatrices(bool use)  { primitiveRenderer_.setUseExternalMatrices(use); }
   void setGizmoCameraMatrices(const QMatrix4x4& view, const QMatrix4x4& proj) { primitiveRenderer3D_.setCameraMatrices(view, proj); }
@@ -7285,6 +7287,8 @@ void ArtifactIRenderer::draw3DCard(const QRectF& localRect,
   CardPkt packet;
   packet.localRect = localRect;
   packet.modelMatrix = modelMatrix;
+  packet.viewMatrix = impl_->meshViewMatrix_;
+  packet.projectionMatrix = impl_->meshProjMatrix_;
   packet.depthDSV = impl_->activeDepthView();
   packet.tint = {color.r(), color.g(), color.b(), color.a()};
   packet.opacity = opacity;
@@ -7304,9 +7308,23 @@ void ArtifactIRenderer::draw3DTexturedCard(
     const QRectF& localRect, const QMatrix4x4& modelMatrix,
     Diligent::ITextureView* texture, float opacity)
 {
- if (auto ctx = impl_->deviceManager_.immediateContext()) {
-  impl_->submitQueuedDraws(ctx.RawPtr());
+ auto ctx = impl_->deviceManager_.immediateContext();
+ if (ctx) impl_->submitQueuedDraws(ctx.RawPtr());
+ if (!impl_->primitiveRenderer3D_.hasActiveProjector()) {
+  TexturedCardPkt packet;
+  packet.localRect = localRect;
+  packet.modelMatrix = modelMatrix;
+  packet.viewMatrix = impl_->meshViewMatrix_;
+  packet.projectionMatrix = impl_->meshProjMatrix_;
+  packet.pSRV = texture;
+  packet.depthDSV = impl_->activeDepthView();
+  packet.opacity = opacity;
+  impl_->cmdBuf_.setTargetRTV(impl_->primitiveRenderer_.currentRTV());
+  if (impl_->cmdBuf_.tryAppend(std::move(packet))) return;
  }
+ // Projector state lives on the owner renderer and the bounded packet queue
+ // must not grow on the frame path, so these cases keep the historical barrier.
+ if (ctx) impl_->completeDeferredPacketRecording(ctx.RawPtr());
  impl_->primitiveRenderer3D_.setOverrideDSV(impl_->activeDepthView());
   impl_->primitiveRenderer3D_.drawTexturedCardQuadImmediate(
       localRect, modelMatrix, texture,
