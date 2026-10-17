@@ -1249,7 +1249,6 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
       return false;
     }
     deferredPacketRecordPending_ = true;
-    primitiveRenderer_.noteCommandBufferSubmitted();
     clonerGridOutputCursor_ = 0;
     ++clonerGridBatchGeneration_;
     ++flushCount_;

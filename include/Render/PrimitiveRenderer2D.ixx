@@ -49,6 +49,9 @@ public:
     void setContext(IDeviceContext* ctx, ISwapChain* swapChain);
     void setOverrideRTV(ITextureView* rtv);
     void setCommandBuffer(RenderCommandBuffer* cmdBuf);
+    void setBeforeTextureOverwriteCallback(bool (*callback)(void*),
+                                           void* userData);
+    void noteCommandBufferSubmitted();
     void destroy();
 
     void clear(IDeviceContext* ctx, const FloatColor& color);
@@ -140,7 +143,8 @@ public:
         float x, float y, float w, float h, const QMatrix4x4& baseTransform,
         const QMatrix4x4& cpuFallbackTransform,
         ITextureView* texture, float opacity, IBuffer* placementBuffer,
-        std::uint32_t placementIndex, bool applyPlacementRotation);
+        std::uint32_t placementIndex, bool applyPlacementRotation,
+        std::size_t placementDispatchPacketIndex);
     void drawTexturedTriangleTransformed(float2 p0, float2 p1, float2 p2,
                                          float2 uv0, float2 uv1, float2 uv2,
                                          const QMatrix4x4& transform,
@@ -159,7 +163,9 @@ public:
         const ArtifactCore::ImageF32x4_RGBA& image,
         const QUuid& videoLayerId, qint64 frameContentKey,
         const ArtifactCore::ImageUploadBuffer* preparedUpload,
-        bool residentOnly);
+        bool residentOnly,
+        bool (*beforeTextureOverwrite)(void*) = nullptr,
+        void* beforeTextureOverwriteUserData = nullptr);
     ITextureView* textureForImage(const QImage& image);
     void drawTextureLocal(float x, float y, float w, float h, ITextureView* pSRV, float opacity = 1.0f);
     void drawMaskedTextureLocal(float x, float y, float w, float h, ITextureView* sceneSRV, const QImage& maskImage, float opacity = 1.0f);

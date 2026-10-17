@@ -372,10 +372,19 @@ public:
         qint64 contentKey = 0;
         bool reusableVideoTexture = false;
         bool hasVideoContent = false;
+        // Queue epoch of the most recent queued or in-flight packet sampling
+        // this reusable slot.
+        quint64 lastOutstandingVideoUseEpoch = 0;
     };
     std::unordered_map<qint64, CachedTexture> m_spriteTexCache;
     std::unordered_map<qint64, CachedTexture> m_maskTexCache;
     quint64 m_textureAccessSequence = 0;
+    // Packet producers and the owner submitter share this monotonically
+    // advancing epoch so video slots can detect pending readers without
+    // scanning the whole command queue on each upload.
+    quint64 m_videoTextureQueueEpoch = 1;
+    qint64 m_lastResolvedVideoTextureCacheKey = 0;
+    RefCntAutoPtr<ITextureView> m_lastResolvedVideoTextureView;
     size_t m_cachedTextureBytes = 0;
     static constexpr size_t kTextureCacheEntryLimit = 50;
     static constexpr size_t kTextureCacheByteLimit = 512ull * 1024ull * 1024ull;
@@ -450,6 +459,30 @@ public:
         m_cachedTextureBytes += estimatedBytes;
     }
 
+    void markQueuedVideoTextureUse(ITextureView* view) {
+        if (!view || view != m_lastResolvedVideoTextureView.RawPtr()) {
+            return;
+        }
+        auto it = m_spriteTexCache.find(m_lastResolvedVideoTextureCacheKey);
+        if (it != m_spriteTexCache.end() &&
+            it->second.reusableVideoTexture &&
+            it->second.pTexture.RawPtr() == view->GetTexture()) {
+            it->second.lastOutstandingVideoUseEpoch = m_videoTextureQueueEpoch;
+        }
+    }
+
+    void noteCommandBufferSubmitted() {
+        ++m_videoTextureQueueEpoch;
+        if (m_videoTextureQueueEpoch == 0) {
+            m_videoTextureQueueEpoch = 1;
+            for (auto& [key, texture] : m_spriteTexCache) {
+                (void)key;
+                texture.lastOutstandingVideoUseEpoch = 0;
+            }
+        }
+        m_lastResolvedVideoTextureView.Release();
+    }
+
 
     ViewportTransformer viewport_;
     float devicePixelRatio_ = 1.0f;
@@ -460,6 +493,8 @@ public:
 
     ITextureView*        m_overrideRTV = nullptr;
     RenderCommandBuffer* cmdBuf_       = nullptr;
+    bool (*beforeTextureOverwrite_)(void*) = nullptr;
+    void* beforeTextureOverwriteUserData_ = nullptr;
 
     ITextureView* getCurrentRTV() const {
         if (m_overrideRTV) return m_overrideRTV;
@@ -494,6 +529,15 @@ public:
         const GlyphAtlasDirtyRegion dirtyRegion = pGlyphAtlas_->dirtyRegion();
         const bool fullUpload = createdTexture || dirtyRegion.fullUpload ||
                                 !dirtyRegion.isValid();
+        if (!createdTexture && fullUpload && cmdBuf_ && !cmdBuf_->empty()) {
+            // GlyphAtlas::clear() can relocate every glyph while earlier
+            // AtlasSprite packets still carry UVs for the old atlas contents.
+            // Submit those readers before replacing the full GPU image.
+            if (!beforeTextureOverwrite_ ||
+                !beforeTextureOverwrite_(beforeTextureOverwriteUserData_)) {
+                return false;
+            }
+        }
         const int updateX = fullUpload ? 0 : dirtyRegion.x;
         const int updateY = fullUpload ? 0 : dirtyRegion.y;
         const int updateWidth = fullUpload ? image.width() : dirtyRegion.width;
@@ -616,6 +660,18 @@ void PrimitiveRenderer2D::setOverrideRTV(ITextureView* rtv)
 void PrimitiveRenderer2D::setCommandBuffer(RenderCommandBuffer* cmdBuf)
 {
     impl_->cmdBuf_ = cmdBuf;
+}
+
+void PrimitiveRenderer2D::setBeforeTextureOverwriteCallback(
+    bool (*callback)(void*), void* userData)
+{
+    impl_->beforeTextureOverwrite_ = callback;
+    impl_->beforeTextureOverwriteUserData_ = userData;
+}
+
+void PrimitiveRenderer2D::noteCommandBufferSubmitted()
+{
+    impl_->noteCommandBufferSubmitted();
 }
 
 ITextureView* PrimitiveRenderer2D::currentRTV() const
@@ -1202,6 +1258,7 @@ void PrimitiveRenderer2D::drawSpriteLocal(float x, float y, float w, float h, co
     pkt.pSRV             = pSRV;
     pkt.opacity          = opacity;
     impl_->cmdBuf_->append(std::move(pkt));
+    impl_->markQueuedVideoTextureUse(pSRV);
 }
 
 void PrimitiveRenderer2D::drawText(const QRectF &rect, const QString &text,
@@ -1356,6 +1413,7 @@ void PrimitiveRenderer2D::drawMaskedTextureLocal(float x, float y, float w, floa
     pkt.maskSRV          = maskSRV;
     pkt.opacity          = opacity;
     impl_->cmdBuf_->append(std::move(pkt));
+    impl_->markQueuedVideoTextureUse(sceneSRV);
 }
 
 void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float h, const QTransform& transform, const QImage& image, float opacity)
@@ -1461,13 +1519,15 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
     pkt.pSRV = pSRV;
     pkt.opacity = opacity;
     impl_->cmdBuf_->append(std::move(pkt));
+    impl_->markQueuedVideoTextureUse(pSRV);
 }
 
 bool PrimitiveRenderer2D::drawSpriteTransformedClonerGrid(
     float x, float y, float w, float h, const QMatrix4x4& baseTransform,
     const QMatrix4x4& cpuFallbackTransform,
     ITextureView* texture, float opacity, IBuffer* placementBuffer,
-    std::uint32_t placementIndex, bool applyPlacementRotation)
+    std::uint32_t placementIndex, bool applyPlacementRotation,
+    std::size_t placementDispatchPacketIndex)
 {
     auto* placementSRV = placementBuffer
         ? placementBuffer->GetDefaultView(BUFFER_VIEW_SHADER_RESOURCE)
@@ -1534,7 +1594,10 @@ bool PrimitiveRenderer2D::drawSpriteTransformedClonerGrid(
     packet.localX = applyPlacementRotation ? x : 0.0f;
     packet.localY = applyPlacementRotation ? y : 0.0f;
     packet.opacity = opacity;
-    return impl_->cmdBuf_->tryAppend(std::move(packet));
+    packet.placementDispatchPacketIndex = placementDispatchPacketIndex;
+    if (!impl_->cmdBuf_->tryAppend(std::move(packet))) return false;
+    impl_->markQueuedVideoTextureUse(texture);
+    return true;
 }
 
 void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, ITextureView* pSRV, float opacity, const QRectF& uvRect)
@@ -1582,6 +1645,7 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
                   static_cast<float>(clampedUv.bottom())};
     pkt.color = {1.0f, 1.0f, 1.0f, opacity};
     impl_->cmdBuf_->append(std::move(pkt));
+    impl_->markQueuedVideoTextureUse(pSRV);
 }
 
 void PrimitiveRenderer2D::drawTexturedTriangleTransformed(
@@ -1615,6 +1679,7 @@ void PrimitiveRenderer2D::drawTexturedTriangleTransformed(
     pkt.pSRV = texture;
     pkt.color = {1.0f, 1.0f, 1.0f, opacity};
     impl_->cmdBuf_->append(std::move(pkt));
+    impl_->markQueuedVideoTextureUse(texture);
 }
 
 ITextureView* PrimitiveRenderer2D::textureForImage(
@@ -1702,7 +1767,10 @@ ITextureView* PrimitiveRenderer2D::textureForVideoFrame(
 ITextureView* PrimitiveRenderer2D::textureForVideoFrame(
     const ArtifactCore::ImageF32x4_RGBA& image, const QUuid& videoLayerId,
     qint64 frameContentKey,
-    const ArtifactCore::ImageUploadBuffer* preparedUpload, bool residentOnly) {
+    const ArtifactCore::ImageUploadBuffer* preparedUpload, bool residentOnly,
+    bool (*beforeTextureOverwrite)(void*),
+    void* beforeTextureOverwriteUserData) {
+    impl_->m_lastResolvedVideoTextureView.Release();
     if (image.isEmpty() || videoLayerId.isNull() || !impl_->pDevice_ ||
         !impl_->pContext_) {
         return nullptr;
@@ -1807,6 +1875,22 @@ ITextureView* PrimitiveRenderer2D::textureForVideoFrame(
     qint64 updateTextureMs = 0;
     if (!it->second.hasVideoContent ||
         it->second.contentKey != uploadContentKey) {
+        const auto beforeOverwrite = beforeTextureOverwrite
+            ? beforeTextureOverwrite
+            : impl_->beforeTextureOverwrite_;
+        void* const beforeOverwriteUserData = beforeTextureOverwrite
+            ? beforeTextureOverwriteUserData
+            : impl_->beforeTextureOverwriteUserData_;
+        // A packet samples the old pixels when its command list is executed.
+        // Drain only if this exact reusable slot still has a queued or
+        // in-flight reader.
+        if (it->second.lastOutstandingVideoUseEpoch ==
+                impl_->m_videoTextureQueueEpoch) {
+            if (!beforeOverwrite ||
+                !beforeOverwrite(beforeOverwriteUserData)) {
+                return nullptr;
+            }
+        }
         TextureSubResData subresource;
         subresource.pData = upload->bytes.data();
         subresource.Stride = upload->rowStride;
@@ -1834,9 +1918,14 @@ ITextureView* PrimitiveRenderer2D::textureForVideoFrame(
                      preparedUpload ? 1 : 0, image.width(), image.height());
     }
 
-    return it->second.pTexture
+    auto* view = it->second.pTexture
         ? it->second.pTexture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE)
         : nullptr;
+    if (view) {
+        impl_->m_lastResolvedVideoTextureCacheKey = cacheKey;
+        impl_->m_lastResolvedVideoTextureView = view;
+    }
+    return view;
 }
 
 ITextureView* PrimitiveRenderer2D::textureForImage(const QImage& image) {
