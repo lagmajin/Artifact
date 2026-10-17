@@ -48581,6 +48581,20 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           stageMs(0, 1), stageMs(1, 2), stageMs(2, 3), stageMs(3, 4),
           stageMs(4, 5), stageMs(5, 6), stageMs(6, 7), stageMs(7, 8),
           stageMs(8, 9));
+      std::fprintf(
+          stderr,
+          "[VideoPreviewRenderPassProfile] frame=%llu "
+          "baseMs=%lld surfaceMs=%lld maskMs=%lld compositeMs=%lld "
+          "postMs=%lld overlayMs=%lld flushMs=%lld presentMs=%lld\n",
+          static_cast<unsigned long long>(renderFrameCounter_),
+          static_cast<long long>(basePassMs),
+          static_cast<long long>(std::max<qint64>(0, surfacePassMs - basePassMs)),
+          static_cast<long long>(std::max<qint64>(0, maskPassMs - surfacePassMs)),
+          static_cast<long long>(std::max<qint64>(0, compositePassMs - maskPassMs)),
+          static_cast<long long>(std::max<qint64>(0, postPassMs - compositePassMs)),
+          static_cast<long long>(overlayMs),
+          static_cast<long long>(flushMs),
+          static_cast<long long>(presentMs));
       if (useRamPreviewFallback) {
         std::fprintf(stderr,
             "[VideoPreviewRamPassProfile] frame=%llu ramPassMs=%.3f betweenMs=%.3f overlayMs=%.3f tailPresentMs=%.3f\n",
