@@ -1670,6 +1670,14 @@ bool DiligentImmediateSubmitter::submitImpl(
         const auto listFinishedNs = sampleSubmitStages ? submitStageTimer.nsecsElapsed() : 0;
         if (recordOnly) {
             *outCommandList = std::move(pCmdList);
+            if (sampleSubmitStages) {
+                std::fprintf(stderr,
+                    "[VideoPreviewSubmitStageProfile] deferred=1 packets=%llu recordMs=%.3f finishListMs=%.3f executeMs=async finishFrameMs=async\n",
+                    static_cast<unsigned long long>(buf.packets().size()),
+                    recordNs / 1.0e6,
+                    (listFinishedNs - recordNs) / 1.0e6);
+                ++submitStageSamples;
+            }
             return outCommandList->RawPtr() != nullptr;
         }
         ICommandList* raw = pCmdList.RawPtr();
