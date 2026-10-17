@@ -14642,20 +14642,21 @@ public:
         viewportChannelDisplayMode_ == ViewportChannelDisplayMode::Green ||
         viewportChannelDisplayMode_ == ViewportChannelDisplayMode::Blue ||
         viewportChannelDisplayMode_ == ViewportChannelDisplayMode::Alpha;
+    bool channelDisplayReady = false;
     if (channelComponentSource && blendPipeline_) {
-      auto context = renderer_->immediateContext();
-      bool displayed = false;
       if (channelComponent <= 3) {
-        displayed = blendPipeline_->displayComponent(
-            context.RawPtr(), channelComponentSource, renderPipeline.tempUAV(),
-            channelComponent, renderPipeline.width(), renderPipeline.height());
+        channelDisplayReady = renderer_->displayTextureComponent(
+            blendPipeline_.get(), channelComponentSource,
+            renderPipeline.tempUAV(), channelComponent,
+            renderPipeline.width(), renderPipeline.height());
       } else {
         const Diligent::Uint32 mode = channelComponent == 4 ? 1u : channelComponent == 5 ? 2u : 3u;
-        displayed = blendPipeline_->displayComposite(
-            context.RawPtr(), channelComponentSource, renderPipeline.tempUAV(),
-            mode, 0u, 1u, renderPipeline.width(), renderPipeline.height());
+        channelDisplayReady = renderer_->displayCompositeChannel(
+            blendPipeline_.get(), channelComponentSource,
+            renderPipeline.tempUAV(), mode, 0u, 1u,
+            renderPipeline.width(), renderPipeline.height());
       }
-      if (displayed) {
+      if (channelDisplayReady) {
         viewportChannelDisplaySRV_ = renderPipeline.tempSRV();
       }
     }
@@ -14667,7 +14668,7 @@ public:
     Diligent::ITextureView* presentationSRV =
         exposedPresentSRV
             ? exposedPresentSRV
-            : (presentComponentAsPrimary && viewportChannelDisplaySRV_
+            : (channelDisplayReady && viewportChannelDisplaySRV_
                    ? viewportChannelDisplaySRV_.RawPtr()
                    : finalPresentSRV);
 
@@ -25041,6 +25042,14 @@ QImage CompositionRenderController::readbackPresentedFrameImage() const {
   return impl_->renderer_->readbackTextureViewToImage(
       impl_->lastPresentedReadbackSRV_,
       impl_->lastPresentedReadbackChannelOrder_);
+}
+
+QImage CompositionRenderController::readbackViewportChannelDisplayImage() const {
+  if (!impl_ || !impl_->renderer_ || !impl_->viewportChannelDisplaySRV_) {
+    return QImage();
+  }
+  return impl_->renderer_->readbackTextureViewToImage(
+      impl_->viewportChannelDisplaySRV_, ArtifactCore::SurfaceChannelOrder::RGBA);
 }
 
 bool CompositionRenderController::requestCurrentFrameImageAsync(

@@ -7547,6 +7547,30 @@ bool ArtifactIRenderer::convertBgraAccumulatorToStraightRgba(
          pipeline->convertBgraAccumulatorToStraightRgba(
              context.RawPtr(), sourceSRV, destinationUAV, width, height);
 }
+bool ArtifactIRenderer::displayTextureComponent(
+    ArtifactCore::LayerBlendPipeline *pipeline,
+    Diligent::ITextureView *sourceSRV,
+    Diligent::ITextureView *destinationUAV,
+    const Diligent::Uint32 component, const Diligent::Uint32 width,
+    const Diligent::Uint32 height) const {
+  const auto context = impl_->deviceManager_.immediateContext();
+  return pipeline && context && sourceSRV && destinationUAV &&
+         pipeline->displayComponent(context.RawPtr(), sourceSRV,
+                                    destinationUAV, component, width, height);
+}
+bool ArtifactIRenderer::displayCompositeChannel(
+    ArtifactCore::LayerBlendPipeline *pipeline,
+    Diligent::ITextureView *sourceSRV,
+    Diligent::ITextureView *destinationUAV,
+    const Diligent::Uint32 mode, const Diligent::Uint32 componentY,
+    const Diligent::Uint32 componentZ, const Diligent::Uint32 width,
+    const Diligent::Uint32 height) const {
+  const auto context = impl_->deviceManager_.immediateContext();
+  return pipeline && context && sourceSRV && destinationUAV &&
+         pipeline->displayComposite(context.RawPtr(), sourceSRV,
+                                   destinationUAV, mode, componentY,
+                                   componentZ, width, height);
+}
 bool ArtifactIRenderer::copyTextureOutsideRegion(
     Diligent::ITextureView *sourceSRV,
     Diligent::ITextureView *destinationUAV,

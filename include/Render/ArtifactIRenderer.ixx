@@ -731,6 +731,19 @@ public:
       Diligent::ITextureView *sourceSRV,
       Diligent::ITextureView *destinationUAV,
       Diligent::Uint32 width, Diligent::Uint32 height) const;
+  bool displayTextureComponent(
+      ArtifactCore::LayerBlendPipeline *pipeline,
+      Diligent::ITextureView *sourceSRV,
+      Diligent::ITextureView *destinationUAV,
+      Diligent::Uint32 component, Diligent::Uint32 width,
+      Diligent::Uint32 height) const;
+  bool displayCompositeChannel(
+      ArtifactCore::LayerBlendPipeline *pipeline,
+      Diligent::ITextureView *sourceSRV,
+      Diligent::ITextureView *destinationUAV,
+      Diligent::Uint32 mode, Diligent::Uint32 componentY,
+      Diligent::Uint32 componentZ, Diligent::Uint32 width,
+      Diligent::Uint32 height) const;
   bool copyTextureOutsideRegion(
       Diligent::ITextureView *sourceSRV,
       Diligent::ITextureView *destinationUAV,

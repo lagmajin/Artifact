@@ -580,6 +580,9 @@ bool isInteractiveRenderRegionDragActive() const;
   // Reads only the controller's completed GPU composition output. Unlike the
   // screenshot API above, it never falls back to capturing the desktop.
   QImage readbackPresentedFrameImage() const;
+  // Reads the display-only channel surface when channel inspection is active.
+  // This remains separate from the unmodified beauty-composite readback above.
+  QImage readbackViewportChannelDisplayImage() const;
   // Queues a bounded renderer readback. Returns false when the fixed readback
   // ring is busy; completion runs off the UI thread and carries the rendered
   // frame serial so consumers can reject stale results.
