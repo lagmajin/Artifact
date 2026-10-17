@@ -1088,8 +1088,9 @@ bool DiligentImmediateSubmitter::canRecordDeferred(
         m_primitiveRenderer3D_ || m_particleRenderer_) {
         return false;
     }
-    // Begin with a deliberately narrow lane. These packets use only this
-    // submitter's owned resources and have no external renderer/cache state.
+    // Accepted packets either use recorder-local state or carry retained
+    // references to every external GPU resource read while recording. Packet
+    // types that consult mutable renderer/cache state remain on the owner.
     for (const auto& packet : buf.packets()) {
         if (!std::holds_alternative<SolidRectPkt>(packet) &&
             !std::holds_alternative<SolidRectXformPkt>(packet) &&
@@ -1097,6 +1098,8 @@ bool DiligentImmediateSubmitter::canRecordDeferred(
             !std::holds_alternative<SpriteXformPkt>(packet) &&
             !std::holds_alternative<AtlasSpritePkt>(packet) &&
             !std::holds_alternative<AtlasSpriteXformPkt>(packet) &&
+            !std::holds_alternative<ClonerGridDispatchPkt>(packet) &&
+            !std::holds_alternative<ClonerSpriteXformPkt>(packet) &&
             !std::holds_alternative<LinePkt>(packet) &&
             !std::holds_alternative<QuadPkt>(packet) &&
             !std::holds_alternative<SolidTriPkt>(packet)) {
