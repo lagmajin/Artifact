@@ -535,7 +535,7 @@ float4 main(PS_INPUT input) : SV_TARGET
     gradientTransformShaders_.VS = retainShader(solidRectTransformShaders_.VS);
     gradientTransformShaders_.PS = retainShader(gradientShaders_.PS);
     createShaderOrWarn(spriteTransformVsInfo,     spriteTransformShaders_.VS);
-    createShaderOrWarn(spriteTransformVsInfo,     maskedSpriteShaders_.VS);
+    createShaderOrWarn(sprite2DVsInfo,             maskedSpriteShaders_.VS);
     createShaderOrWarn(maskedSpritePsInfo,        maskedSpriteShaders_.PS);
     createShaderOrWarn(glyphQuadPsInfo,           glyphQuadShaders_.PS);
     createShaderOrWarn(checkerboardPsInfo,        checkerboardShaders_.PS);
