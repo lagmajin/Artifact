@@ -1149,7 +1149,16 @@ bool DiligentImmediateSubmitter::canRecordDeferred(
               m_deferredPrimitiveRendererOwnsState_ &&
               (std::holds_alternative<BillboardPkt>(packet) ||
                std::holds_alternative<CardPkt>(packet) ||
-               std::holds_alternative<TexturedCardPkt>(packet)))) {
+               std::holds_alternative<TexturedCardPkt>(packet) ||
+               std::holds_alternative<ShapeTrianglesPkt>(packet)))) {
+            return false;
+        }
+        if (const auto* shape = std::get_if<ShapeTrianglesPkt>(&packet);
+            shape && shape->vertices.size() >
+                         PrimitiveRenderer3D::kInitialShapeVertexCapacity) {
+            // The recorder's shape VB is created with this fixed capacity at
+            // initialization. Larger geometry stays on the owner path rather
+            // than creating a GPU buffer from the recording worker.
             return false;
         }
         std::size_t packetWorkUnits = 1;
@@ -1707,6 +1716,15 @@ bool DiligentImmediateSubmitter::submitImpl(
                             recordCtx, pRTV, p.depthDSV, p.localRect,
                             p.modelMatrix, p.viewMatrix, p.projectionMatrix,
                             p.pSRV, p.opacity);
+                    }
+                }
+                else if constexpr (std::is_same_v<T, ShapeTrianglesPkt>) {
+                    if (m_primitiveRenderer3D_) {
+                        m_primitiveRenderer3D_->drawShapeTrianglesWithContext(
+                            recordCtx, pRTV, p.depthDSV, p.vertices,
+                            p.modelMatrix, p.viewMatrix, p.projectionMatrix,
+                            FloatColor{p.tint.x, p.tint.y, p.tint.z, p.tint.w},
+                            p.opacity, p.writeDepth);
                     }
                 }
                 else if constexpr (std::is_same_v<T, ParticlePkt>)        submitParticles(p, recordCtx, pRTV, p.depthDSV);

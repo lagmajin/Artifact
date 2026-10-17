@@ -30,6 +30,8 @@ using namespace ArtifactCore;
 
 class PrimitiveRenderer3D {
 public:
+  static constexpr Uint32 kInitialShapeVertexCapacity = 256;
+
   PrimitiveRenderer3D();
   ~PrimitiveRenderer3D();
 
@@ -138,6 +140,12 @@ public:
                                        const QMatrix4x4 &projectionMatrix,
                                        ITextureView *texture,
                                        float opacity);
+  void drawShapeTrianglesWithContext(
+      IDeviceContext *context, ITextureView *targetRTV,
+      ITextureView *targetDSV, const std::vector<QVector2D> &vertices,
+      const QMatrix4x4 &modelMatrix, const QMatrix4x4 &viewMatrix,
+      const QMatrix4x4 &projectionMatrix, const FloatColor &color,
+      float opacity, bool writeDepth);
   void drawTexturedCardQuadImmediate(const QRectF &localRect,
                                      const QMatrix4x4 &modelMatrix,
                                      ITextureView *texture,

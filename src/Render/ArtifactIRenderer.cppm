@@ -7370,8 +7370,25 @@ void ArtifactIRenderer::draw3DShape(
    vertices.emplace_back(point.x, point.y);
   }
  }
- if (auto ctx = impl_->deviceManager_.immediateContext()) {
+ auto ctx = impl_->deviceManager_.immediateContext();
+ if (ctx && !vertices.empty() &&
+     vertices.size() <= PrimitiveRenderer3D::kInitialShapeVertexCapacity) {
+  ShapeTrianglesPkt packet;
+  packet.vertices = std::move(vertices);
+  packet.modelMatrix = modelMatrix;
+  packet.viewMatrix = impl_->meshViewMatrix_;
+  packet.projectionMatrix = impl_->meshProjMatrix_;
+  packet.depthDSV = impl_->activeDepthView();
+  packet.tint = {color.r(), color.g(), color.b(), color.a()};
+  packet.opacity = opacity;
+  packet.writeDepth = writeDepth;
+  impl_->cmdBuf_.setTargetRTV(impl_->primitiveRenderer_.currentRTV());
+  if (impl_->cmdBuf_.tryAppend(std::move(packet))) return;
+  vertices = std::move(packet.vertices);
+ }
+ if (ctx) {
   impl_->submitQueuedDraws(ctx.RawPtr());
+  impl_->completeDeferredPacketRecording(ctx.RawPtr());
  }
  impl_->primitiveRenderer3D_.setOverrideDSV(impl_->activeDepthView());
  impl_->primitiveRenderer3D_.drawShapeTrianglesImmediate(

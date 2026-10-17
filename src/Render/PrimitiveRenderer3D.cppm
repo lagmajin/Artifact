@@ -559,10 +559,12 @@ public:
         shapeVBDesc.Usage = USAGE_DYNAMIC;
         shapeVBDesc.BindFlags = BIND_VERTEX_BUFFER;
         shapeVBDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
-        shapeVBDesc.Size = sizeof(ShapeCardVertex) * 256;
+        shapeVBDesc.Size = sizeof(ShapeCardVertex) *
+                           PrimitiveRenderer3D::kInitialShapeVertexCapacity;
         device_->CreateBuffer(shapeVBDesc, nullptr, &shapeVertexBuffer_);
         if (shapeVertexBuffer_) {
-            shapeVertexCapacity_ = 256;
+            shapeVertexCapacity_ =
+                PrimitiveRenderer3D::kInitialShapeVertexCapacity;
         }
 
         SamplerDesc samplerDesc;
@@ -1614,10 +1616,15 @@ public:
     void drawShapeTriangles(const std::vector<QVector2D>& vertices,
                             const QMatrix4x4& modelMatrix,
                             const FloatColor& color, float opacity,
-                            bool writeDepth)
+                            bool writeDepth,
+                            IDeviceContext* recordingContext = nullptr,
+                            ITextureView* recordingTargetRTV = nullptr,
+                            ITextureView* recordingTargetDSV = nullptr)
     {
-        if (vertices.empty() || vertices.size() % 3 != 0 || !ctx_ ||
-            !hasRenderTarget() || !cardConstantBuffer_ || !defaultTextureSRV_) {
+        auto* drawContext = recordingContext ? recordingContext : ctx_;
+        if (vertices.empty() || vertices.size() % 3 != 0 || !drawContext ||
+            (!recordingTargetRTV && !hasRenderTarget()) ||
+            !cardConstantBuffer_ || !defaultTextureSRV_) {
             return;
         }
         auto* pso = writeDepth ? shapeDepthWritePSO_.RawPtr()
@@ -1633,45 +1640,41 @@ public:
         if (!shapeVertexBuffer_) {
             return;
         }
-        std::vector<ShapeCardVertex> gpuVertices;
-        gpuVertices.reserve(vertices.size());
-        for (const auto& vertex : vertices) {
-            gpuVertices.push_back({{vertex.x(), vertex.y()}});
-        }
-
         void* vertexMapped = nullptr;
-        ctx_->MapBuffer(shapeVertexBuffer_, MAP_WRITE, MAP_FLAG_DISCARD,
-                        vertexMapped);
+        drawContext->MapBuffer(shapeVertexBuffer_, MAP_WRITE, MAP_FLAG_DISCARD,
+                                vertexMapped);
         if (!vertexMapped) {
-            ctx_->UnmapBuffer(shapeVertexBuffer_, MAP_WRITE);
+            drawContext->UnmapBuffer(shapeVertexBuffer_, MAP_WRITE);
             return;
         }
-        std::memcpy(vertexMapped, gpuVertices.data(),
-                    sizeof(ShapeCardVertex) * gpuVertices.size());
-        ctx_->UnmapBuffer(shapeVertexBuffer_, MAP_WRITE);
+        auto* gpuVertices = static_cast<ShapeCardVertex*>(vertexMapped);
+        for (std::size_t index = 0; index < vertices.size(); ++index) {
+            gpuVertices[index] = {{vertices[index].x(), vertices[index].y()}};
+        }
+        drawContext->UnmapBuffer(shapeVertexBuffer_, MAP_WRITE);
 
         setCardConstants(QRectF(), modelMatrix, color, opacity, 0.0f);
         void* constantsMapped = nullptr;
-        ctx_->MapBuffer(cardConstantBuffer_, MAP_WRITE, MAP_FLAG_DISCARD,
-                        constantsMapped);
+        drawContext->MapBuffer(cardConstantBuffer_, MAP_WRITE, MAP_FLAG_DISCARD,
+                               constantsMapped);
         if (!constantsMapped) {
-            ctx_->UnmapBuffer(cardConstantBuffer_, MAP_WRITE);
+            drawContext->UnmapBuffer(cardConstantBuffer_, MAP_WRITE);
             return;
         }
         std::memcpy(constantsMapped, &cardConstants_, sizeof(CardConstants));
-        ctx_->UnmapBuffer(cardConstantBuffer_, MAP_WRITE);
+        drawContext->UnmapBuffer(cardConstantBuffer_, MAP_WRITE);
 
-        auto* rtv = currentRTV();
-        auto* dsv = currentDSV();
-        ctx_->SetRenderTargets(1, &rtv, dsv,
-                               RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-        applyViewportState(ctx_);
-        ctx_->SetPipelineState(pso);
+        auto* rtv = recordingTargetRTV ? recordingTargetRTV : currentRTV();
+        auto* dsv = recordingContext ? recordingTargetDSV : currentDSV();
+        drawContext->SetRenderTargets(1, &rtv, dsv,
+                                      RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        applyViewportState(drawContext);
+        drawContext->SetPipelineState(pso);
         IBuffer* buffers[] = {shapeVertexBuffer_};
         Uint64 offsets[] = {0};
-        ctx_->SetVertexBuffers(0, 1, buffers, offsets,
-                               RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
-                               SET_VERTEX_BUFFERS_FLAG_RESET);
+        drawContext->SetVertexBuffers(0, 1, buffers, offsets,
+                                      RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
+                                      SET_VERTEX_BUFFERS_FLAG_RESET);
         if (auto* textureVar = srb->GetVariableByName(
                 SHADER_TYPE_PIXEL, "g_texture")) {
             textureVar->Set(defaultTextureSRV_.RawPtr());
@@ -1680,13 +1683,13 @@ public:
                 SHADER_TYPE_PIXEL, "g_projector")) {
             projectorVar->Set(defaultTextureSRV_.RawPtr());
         }
-        ctx_->CommitShaderResources(srb,
-                                    RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        drawContext->CommitShaderResources(
+            srb, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
         DrawAttribs drawAttrs;
         drawAttrs.NumVertices = vertexCount;
         drawAttrs.Flags = DRAW_FLAG_NONE;
-        ctx_->Draw(drawAttrs);
+        drawContext->Draw(drawAttrs);
     }
 };
 
@@ -2061,6 +2064,26 @@ void PrimitiveRenderer3D::drawTexturedCardQuadWithContext(
                         2.0f, context, targetRTV, targetDSV);
     impl_->drawCardPass(localRect, modelMatrix, texture, tint, opacity, false,
                         1.0f, context, targetRTV, targetDSV);
+    impl_->viewMatrix_ = savedViewMatrix;
+    impl_->projMatrix_ = savedProjectionMatrix;
+}
+
+void PrimitiveRenderer3D::drawShapeTrianglesWithContext(
+    IDeviceContext* context, ITextureView* targetRTV, ITextureView* targetDSV,
+    const std::vector<QVector2D>& vertices, const QMatrix4x4& modelMatrix,
+    const QMatrix4x4& viewMatrix, const QMatrix4x4& projectionMatrix,
+    const FloatColor& color, float opacity, bool writeDepth)
+{
+    if (!context || !targetRTV ||
+        vertices.size() > kInitialShapeVertexCapacity) {
+        return;
+    }
+    const auto savedViewMatrix = impl_->viewMatrix_;
+    const auto savedProjectionMatrix = impl_->projMatrix_;
+    impl_->viewMatrix_ = viewMatrix;
+    impl_->projMatrix_ = projectionMatrix;
+    impl_->drawShapeTriangles(vertices, modelMatrix, color, opacity,
+                              writeDepth, context, targetRTV, targetDSV);
     impl_->viewMatrix_ = savedViewMatrix;
     impl_->projMatrix_ = savedProjectionMatrix;
 }
