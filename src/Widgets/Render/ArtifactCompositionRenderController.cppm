@@ -11669,10 +11669,18 @@ public:
       Diligent::ITextureView *destination,
       int width,
       int height) {
-    return viewportColorPipeline_
-               ? viewportColorPipeline_->apply(renderer_->immediateContext(),
-                                               source, destination, width, height)
-               : source;
+    if (!viewportColorPipeline_ || !renderer_) return source;
+    const auto lutUpdate = viewportColorPipeline_->prepare();
+    if (lutUpdate.clear) renderer_->clearViewportDisplayLut();
+    if (lutUpdate.update) {
+      renderer_->updateViewportDisplayLut(
+          lutUpdate.data, lutUpdate.edge, lutUpdate.inputMin,
+          lutUpdate.inputMax);
+    }
+    return lutUpdate.active
+        ? renderer_->applyViewportDisplayTransform(
+              source, destination, width, height)
+        : source;
   }
 
   struct PrecompGpuOutputEntry {
@@ -19356,8 +19364,7 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
 
       std::make_unique<CompositionRenderer>(*impl_->renderer_);
 
-  impl_->viewportColorPipeline_ = std::make_unique<ViewportColorPipeline>(
-      impl_->renderer_->device(), impl_->renderer_->immediateContext());
+  impl_->viewportColorPipeline_ = std::make_unique<ViewportColorPipeline>();
 
   impl_->renderer_->setClearColor(impl_->viewportClearColor_);
 

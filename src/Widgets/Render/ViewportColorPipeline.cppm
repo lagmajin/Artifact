@@ -2,32 +2,22 @@ module;
 
 #include <QString>
 #include <QVector>
-#include <memory>
+#include <utility>
 
 module Artifact.Widgets.ViewportColorPipeline;
 
-import Artifact.Render.FinalPostProcess;
 import Artifact.Color.OCIOManager;
-import Graphics.GPUcomputeContext;
 
 namespace Artifact {
 
 class ViewportColorPipeline::Impl {
 public:
-  std::unique_ptr<ArtifactCore::GpuContext> gpuContext;
-  std::unique_ptr<ArtifactFinalPostProcess> postProcess;
   QString lutKey;
+  QVector<float> lut;
+  bool active = false;
 };
 
-ViewportColorPipeline::ViewportColorPipeline(Diligent::IRenderDevice* device,
-                                             Diligent::IDeviceContext* context)
-    : impl_(new Impl()) {
-  if (device && context) {
-    impl_->gpuContext = std::make_unique<ArtifactCore::GpuContext>(device, context);
-    impl_->postProcess =
-        std::make_unique<ArtifactFinalPostProcess>(*impl_->gpuContext);
-  }
-}
+ViewportColorPipeline::ViewportColorPipeline() : impl_(new Impl()) {}
 
 ViewportColorPipeline::~ViewportColorPipeline() {
   delete impl_;
@@ -35,22 +25,15 @@ ViewportColorPipeline::~ViewportColorPipeline() {
 }
 
 void ViewportColorPipeline::clear() {
-  if (impl_ && impl_->postProcess) {
-    impl_->postProcess->clearLUT();
-    impl_->postProcess->setViewTransformEnabled(false);
-  }
   if (impl_) {
     impl_->lutKey.clear();
+    impl_->lut.clear();
+    impl_->active = false;
   }
 }
 
-Diligent::ITextureView* ViewportColorPipeline::apply(
-    Diligent::IDeviceContext* context, Diligent::ITextureView* source,
-    Diligent::ITextureView* destination, int width, int height) {
-  if (!impl_ || !impl_->postProcess || !context || !source || !destination) {
-    return source;
-  }
-
+ViewportColorLutUpdate ViewportColorPipeline::prepare() {
+  if (!impl_) return {};
   auto* ocio = ArtifactOCIOManager::instance();
   const auto* config = ocio ? ocio->activeConfig() : nullptr;
   const QString key =
@@ -63,22 +46,21 @@ Diligent::ITextureView* ViewportColorPipeline::apply(
   if (config && !key.isEmpty() && key != impl_->lutKey) {
     QVector<float> lut;
     if (ocio->bakeViewTransformLUT(33, lut, 0.0f, 4.0f)) {
-      impl_->postProcess->updateFromColorLUT(lut.constData(), 33);
-      impl_->postProcess->setLUTInputDomain(0.0f, 4.0f);
-      impl_->postProcess->setViewTransformEnabled(true);
+      impl_->lut = std::move(lut);
       impl_->lutKey = key;
+      impl_->active = true;
+      return {impl_->lut.constData(), 33, 0.0f, 4.0f, true, false, true};
     } else {
+      const bool shouldClear = impl_->active;
       clear();
+      return {nullptr, 0, 0.0f, 4.0f, false, shouldClear, false};
     }
   } else if (!config || key.isEmpty()) {
+    const bool shouldClear = impl_->active;
     clear();
+    return {nullptr, 0, 0.0f, 4.0f, false, shouldClear, false};
   }
-  if (!impl_->postProcess->hasActiveLUT()) {
-    return source;
-  }
-  return impl_->postProcess->apply(context, source, destination, width, height)
-             ? destination
-             : source;
+  return {nullptr, 0, 0.0f, 4.0f, false, false, impl_->active};
 }
 
 } // namespace Artifact

@@ -195,6 +195,14 @@ public:
 
   void clear();
   void flush();
+  // Composition display transforms go through the renderer so UI-side code
+  // does not retain or pass the shared immediate context into a GPU pass.
+  void updateViewportDisplayLut(const float *data, int edge,
+                                float inputMin, float inputMax);
+  void clearViewportDisplayLut();
+  Diligent::ITextureView *applyViewportDisplayTransform(
+      Diligent::ITextureView *source,
+      Diligent::ITextureView *destination, int width, int height);
   // Flush queued packets after recording them on the bounded deferred worker.
   // The next immediate-render barrier or present executes the recorded batch;
   // unsupported packet mixes fall back to the synchronous flush path.

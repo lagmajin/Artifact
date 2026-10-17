@@ -1,24 +1,27 @@
 module;
 
 #include <wobjectdefs.h>
-#include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
-#include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
-#include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
 
 export module Artifact.Widgets.ViewportColorPipeline;
 
 export namespace Artifact {
 
+struct ViewportColorLutUpdate {
+  const float *data = nullptr;
+  int edge = 0;
+  float inputMin = 0.0f;
+  float inputMax = 4.0f;
+  bool update = false;
+  bool clear = false;
+  bool active = false;
+};
+
 class ViewportColorPipeline {
 public:
-  ViewportColorPipeline(Diligent::IRenderDevice* device,
-                        Diligent::IDeviceContext* context);
+  ViewportColorPipeline();
   ~ViewportColorPipeline();
 
-  Diligent::ITextureView* apply(Diligent::IDeviceContext* context,
-                                Diligent::ITextureView* source,
-                                Diligent::ITextureView* destination,
-                                int width, int height);
+  ViewportColorLutUpdate prepare();
   void clear();
 
 private:

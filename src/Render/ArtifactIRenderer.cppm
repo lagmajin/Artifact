@@ -89,6 +89,7 @@ import Artifact.Render.PrimitiveRenderer3D;
 import Artifact.Render.Config;
 import Graphics.ParticleRenderer;
 import Graphics.GPUcomputeContext;
+import Artifact.Render.FinalPostProcess;
 import Artifact.Render.DiligentImmediateSubmitter;
 import Artifact.Render.RenderCommandBuffer;
 import Core.Light;
@@ -880,6 +881,13 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
   std::unique_ptr<ArtifactCore::IRayTracingManager> rayTracingManager_;
   GlobalIlluminationSettings globalIlluminationSettings_;
   std::unique_ptr<ArtifactCore::GpuContext> gpuContext_;
+  std::unique_ptr<ArtifactFinalPostProcess> viewportDisplayPostProcess_;
+  QVector<float> viewportDisplayLut_;
+  int viewportDisplayLutEdge_ = 0;
+  float viewportDisplayLutInputMin_ = 0.0f;
+  float viewportDisplayLutInputMax_ = 4.0f;
+  bool viewportDisplayLutEnabled_ = false;
+  bool viewportDisplayLutNeedsUpload_ = false;
   std::unique_ptr<ArtifactCore::ParticleRenderer> particleRenderer_;
   QString lastParticleDebug_;
   bool lastParticleDrawQueued_ = false;
@@ -2692,6 +2700,13 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
       int width, int height, int adapterId,
       bool enableGpuClonerPlacement = false);
   bool initializeViewportExposure();
+  bool ensureViewportDisplayPostProcess();
+  void updateViewportDisplayLut(const float *data, int edge,
+                                float inputMin, float inputMax);
+  void clearViewportDisplayLut();
+  ITextureView *applyViewportDisplayTransform(ITextureView *source,
+                                              ITextureView *destination,
+                                              int width, int height);
   bool initializeClonerGridPlacement();
   QImage readbackToImage() const;
   ArtifactCore::ImageF32x4_RGBA readbackToImageF32() const;
@@ -3322,6 +3337,8 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
    clonerGridOutputCursor_ = 0;
    ++clonerGridBatchGeneration_;
    clonerGridReady_ = false;
+   viewportDisplayPostProcess_.reset();
+   viewportDisplayLutNeedsUpload_ = viewportDisplayLutEnabled_;
    gpuContext_.reset();
 
    {
@@ -3438,6 +3455,8 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
   clonerGridOutputCursor_ = 0;
   ++clonerGridBatchGeneration_;
   clonerGridReady_ = false;
+  viewportDisplayPostProcess_.reset();
+  viewportDisplayLutNeedsUpload_ = viewportDisplayLutEnabled_;
   gpuContext_.reset();
 
   if (adapterId >= 0) {
@@ -5070,6 +5089,8 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
   primitiveRenderer_.destroy();
   primitiveRenderer3D_.destroy();
   particleRenderer_.reset();
+  viewportDisplayPostProcess_.reset();
+  viewportDisplayLutNeedsUpload_ = viewportDisplayLutEnabled_;
   gpuContext_.reset();
   if (deviceLossTeardown_) {
    shaderManager_.abandonDeviceResources();
@@ -5272,6 +5293,21 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
 
   void ArtifactIRenderer::clear()        { impl_->clear(); }
   void ArtifactIRenderer::flush()        { impl_->flush(); }
+  void ArtifactIRenderer::updateViewportDisplayLut(
+      const float *data, const int edge, const float inputMin,
+      const float inputMax) {
+    impl_->updateViewportDisplayLut(data, edge, inputMin, inputMax);
+  }
+  void ArtifactIRenderer::clearViewportDisplayLut() {
+    impl_->clearViewportDisplayLut();
+  }
+  Diligent::ITextureView *ArtifactIRenderer::applyViewportDisplayTransform(
+      Diligent::ITextureView *source,
+      Diligent::ITextureView *destination, const int width,
+      const int height) {
+    return impl_->applyViewportDisplayTransform(source, destination, width,
+                                                 height);
+  }
   bool ArtifactIRenderer::flushDeferredPacketsAsync()
   { return impl_->flushDeferredPacketsAsync(); }
  void ArtifactIRenderer::flushAndWait(bool restoreRenderTarget) {
@@ -7917,6 +7953,84 @@ bool ArtifactIRenderer::Impl::initializeViewportExposure() {
   viewportExposureParams_ = std::move(paramsBuffer);
   viewportExposureReady_ = true;
   return true;
+}
+
+bool ArtifactIRenderer::Impl::ensureViewportDisplayPostProcess() {
+  if (!viewportDisplayLutEnabled_ || viewportDisplayLutEdge_ <= 1 ||
+      viewportDisplayLut_.isEmpty()) {
+    return false;
+  }
+
+  auto device = deviceManager_.device();
+  auto context = deviceManager_.immediateContext();
+  if (!device || !context) return false;
+
+  if (!gpuContext_) {
+    gpuContext_ = std::make_unique<ArtifactCore::GpuContext>(device, context);
+  }
+  if (!viewportDisplayPostProcess_) {
+    viewportDisplayPostProcess_ =
+        std::make_unique<ArtifactFinalPostProcess>(*gpuContext_);
+    viewportDisplayLutNeedsUpload_ = true;
+  }
+  if (viewportDisplayLutNeedsUpload_) {
+    viewportDisplayPostProcess_->updateFromColorLUT(
+        viewportDisplayLut_.constData(), viewportDisplayLutEdge_);
+    viewportDisplayPostProcess_->setLUTInputDomain(
+        viewportDisplayLutInputMin_, viewportDisplayLutInputMax_);
+    viewportDisplayPostProcess_->setViewTransformEnabled(true);
+    viewportDisplayLutNeedsUpload_ = false;
+  }
+  return viewportDisplayPostProcess_->hasActiveLUT();
+}
+
+void ArtifactIRenderer::Impl::updateViewportDisplayLut(
+    const float *data, const int edge, const float inputMin,
+    const float inputMax) {
+  constexpr int kMaximumViewportDisplayLutEdge = 65;
+  if (!data || edge <= 1 || edge > kMaximumViewportDisplayLutEdge ||
+      !std::isfinite(inputMin) || !std::isfinite(inputMax) ||
+      inputMax <= inputMin) {
+    clearViewportDisplayLut();
+    return;
+  }
+
+  const auto edgeSize = static_cast<std::size_t>(edge);
+  const auto valueCount = edgeSize * edgeSize * edgeSize * 3;
+  viewportDisplayLut_.resize(static_cast<qsizetype>(valueCount));
+  std::copy_n(data, valueCount, viewportDisplayLut_.begin());
+  viewportDisplayLutEdge_ = edge;
+  viewportDisplayLutInputMin_ = inputMin;
+  viewportDisplayLutInputMax_ = inputMax;
+  viewportDisplayLutEnabled_ = true;
+  viewportDisplayLutNeedsUpload_ = true;
+  (void)ensureViewportDisplayPostProcess();
+}
+
+void ArtifactIRenderer::Impl::clearViewportDisplayLut() {
+  viewportDisplayLut_.clear();
+  viewportDisplayLutEdge_ = 0;
+  viewportDisplayLutEnabled_ = false;
+  viewportDisplayLutNeedsUpload_ = false;
+  if (viewportDisplayPostProcess_) {
+    viewportDisplayPostProcess_->clearLUT();
+    viewportDisplayPostProcess_->setViewTransformEnabled(false);
+  }
+}
+
+ITextureView *ArtifactIRenderer::Impl::applyViewportDisplayTransform(
+    ITextureView *source, ITextureView *destination, const int width,
+    const int height) {
+  if (!source || !destination || width <= 0 || height <= 0 ||
+      !ensureViewportDisplayPostProcess()) {
+    return source;
+  }
+  auto context = deviceManager_.immediateContext();
+  if (!context) return source;
+  return viewportDisplayPostProcess_->apply(context.RawPtr(), source,
+                                             destination, width, height)
+      ? destination
+      : source;
 }
 
 bool ArtifactIRenderer::applyViewportExposure(
