@@ -1120,8 +1120,7 @@ public:
         }
 
         if (submissionFailure.isEmpty()) {
-            auto* dsv = currentDSV();
-            context->SetRenderTargets(1, &targetRTV, dsv,
+            context->SetRenderTargets(1, &targetRTV, nullptr,
                                       RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
             applyViewportState(context);
             IBuffer* buffers[] = {gizmoLineVertexBuffer_};
@@ -1165,7 +1164,7 @@ public:
 
         if (submissionFailure.isEmpty()) {
             const auto* diagnosticRTV = targetRTV;
-            const auto* diagnosticDSV = currentDSV();
+            const auto* diagnosticDSV = static_cast<ITextureView*>(nullptr);
             recordGizmoFlushDiagnostic(
                 QStringLiteral("submitted"),
                 QStringLiteral(
@@ -1489,8 +1488,8 @@ public:
         drawContext->UnmapBuffer(constantBuffer_, MAP_WRITE);
 
         auto* rtv = recordingTargetRTV ? recordingTargetRTV : currentRTV();
-        auto* dsv = currentDSV();
-        drawContext->SetRenderTargets(1, &rtv, dsv, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        drawContext->SetRenderTargets(1, &rtv, nullptr,
+                                      RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
         applyViewportState(drawContext);
         drawContext->SetPipelineState(pso_);
 
@@ -1724,10 +1723,30 @@ void PrimitiveRenderer3D::setRenderTargetFormat(TEXTURE_FORMAT rtvFormat)
     impl_->createPSO();
 }
 
-void PrimitiveRenderer3D::setPSOs(ShaderManager& shaderManager)
+void PrimitiveRenderer3D::setPSOs(ShaderManager& shaderManager,
+                                  bool createPrivateGizmoBindings)
 {
     impl_->gizmo3DPsoAndSrb_ = shaderManager.gizmo3DPsoAndSrb();
     impl_->gizmo3DTrianglePsoAndSrb_ = shaderManager.gizmo3DTrianglePsoAndSrb();
+    if (!createPrivateGizmoBindings) {
+        return;
+    }
+
+    const auto createPrivateBinding = [](PSOAndSRB& psoAndSrb) {
+        if (!psoAndSrb.pPSO) {
+            return;
+        }
+        IShaderResourceBinding* privateBinding = nullptr;
+        psoAndSrb.pPSO->CreateShaderResourceBinding(&privateBinding, true);
+        if (privateBinding) {
+            if (psoAndSrb.pSRB) {
+                psoAndSrb.pSRB->Release();
+            }
+            psoAndSrb.pSRB = privateBinding;
+        }
+    };
+    createPrivateBinding(impl_->gizmo3DPsoAndSrb_);
+    createPrivateBinding(impl_->gizmo3DTrianglePsoAndSrb_);
 }
 
 void PrimitiveRenderer3D::setContext(IDeviceContext* ctx)
@@ -2083,6 +2102,31 @@ void PrimitiveRenderer3D::flushGizmo3DWithContext(
 Uint32 PrimitiveRenderer3D::pendingGizmoVertexCount() const
 {
     return static_cast<Uint32>(impl_->pendingGizmoVerts_.size());
+}
+
+bool PrimitiveRenderer3D::hasGizmoPipelineBindings() const
+{
+    return impl_->gizmo3DPsoAndSrb_.pPSO &&
+           impl_->gizmo3DPsoAndSrb_.pSRB &&
+           impl_->gizmo3DTrianglePsoAndSrb_.pPSO &&
+           impl_->gizmo3DTrianglePsoAndSrb_.pSRB;
+}
+
+bool PrimitiveRenderer3D::prepareGizmoGeometryCapacity(Uint32 vertexCount)
+{
+    impl_->ensureGizmoLineCapacity(vertexCount);
+    return vertexCount <= impl_->gizmoLineVertexCapacity_ &&
+           impl_->gizmoLineVertexBuffer_ != nullptr;
+}
+
+void PrimitiveRenderer3D::swapPendingGizmoGeometry(
+    PrimitiveRenderer3D& other)
+{
+    if (&other == this) {
+        return;
+    }
+    impl_->pendingGizmoVerts_.swap(other.impl_->pendingGizmoVerts_);
+    impl_->pendingGizmoRuns_.swap(other.impl_->pendingGizmoRuns_);
 }
 
 } // namespace Artifact

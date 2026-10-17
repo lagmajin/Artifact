@@ -43,7 +43,8 @@ public:
     void setFrameCostStats(ArtifactCore::RenderCostStats* stats);
     void setDeferredContext(RefCntAutoPtr<IDeviceContext> deferred);
     void setViewportState(const RenderViewportState& state);
-    void setPrimitiveRenderer3D(PrimitiveRenderer3D* renderer);
+    void setPrimitiveRenderer3D(PrimitiveRenderer3D* renderer,
+                                bool recorderOwnsState = false);
     void setParticleRenderer(ArtifactCore::ParticleRenderer* renderer);
     bool clonerSpriteGpuReady() const noexcept;
     void beginFrameDebugCapture();
@@ -55,7 +56,8 @@ public:
     // state. Call submit() from one owner thread per instance; worker-local
     // command buffers do not make a shared submitter safe for concurrent use.
     void submit(RenderCommandBuffer& buf, IDeviceContext* ctx) override;
-    bool canRecordDeferred(const RenderCommandBuffer& buf) const noexcept;
+    bool canRecordDeferred(const RenderCommandBuffer& buf,
+                           Uint32 additionalGizmoVertexCount = 0) const noexcept;
     // Records an eligible packet buffer on this instance's dedicated deferred
     // context. Call this and finishDeferredFrame() on the same recorder thread;
     // retain buf until the immediate owner executes outCommandList. This API
@@ -137,6 +139,7 @@ private:
     std::vector<GlyphSubmission> m_glyph_submission_scratch_;
     ArtifactCore::RenderCostStats* m_frameCostStats_ = nullptr;
     PrimitiveRenderer3D* m_primitiveRenderer3D_ = nullptr;
+    bool m_deferredPrimitiveRendererOwnsState_ = false;
     ArtifactCore::ParticleRenderer* m_particleRenderer_ = nullptr;
     std::vector<ArtifactCore::FrameDebugPassRecord> m_currentFrameDebugPasses_;
     std::vector<ArtifactCore::FrameDebugPassRecord> m_lastFrameDebugPasses_;

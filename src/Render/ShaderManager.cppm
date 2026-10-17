@@ -1489,7 +1489,9 @@ void ShaderManager::Impl::createUtilityFamilyPSOs()
     auto& gizmoGP = gizmoInfo.GraphicsPipeline;
     gizmoGP.NumRenderTargets = 1;
     gizmoGP.RTVFormats[0] = rtvFormat_;
-    gizmoGP.DSVFormat = TEX_FORMAT_D32_FLOAT;
+    // Gizmo depth is disabled, so keep the overlay pipeline compatible with
+    // color-only composition targets as well as swapchain targets.
+    gizmoGP.DSVFormat = TEX_FORMAT_UNKNOWN;
     gizmoGP.PrimitiveTopology = PRIMITIVE_TOPOLOGY_LINE_LIST;
     gizmoGP.RasterizerDesc.CullMode = CULL_MODE_NONE;
     // Gizmos are an editor overlay. They must neither be rejected by scene

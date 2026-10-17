@@ -39,7 +39,8 @@ public:
   // Rebuild the small 3D primitive PSO set only when the active attachment
   // format changes (for example SDR swapchain <-> float composition target).
   void setRenderTargetFormat(TEXTURE_FORMAT rtvFormat);
-  void setPSOs(ShaderManager &shaderManager);
+  void setPSOs(ShaderManager &shaderManager,
+               bool createPrivateGizmoBindings = false);
   void setCommandBuffer(RenderCommandBuffer* cmdBuf);
   void setContext(IDeviceContext *ctx);
   void setContext(IDeviceContext *ctx, ISwapChain *swapChain);
@@ -153,6 +154,9 @@ public:
   void flushGizmo3DWithContext(IDeviceContext *context,
                               ITextureView *targetRTV = nullptr);
   Uint32 pendingGizmoVertexCount() const;
+  bool hasGizmoPipelineBindings() const;
+  bool prepareGizmoGeometryCapacity(Uint32 vertexCount);
+  void swapPendingGizmoGeometry(PrimitiveRenderer3D &other);
 
   // ImGuizmo 対応 追加関数
   void draw3DCircleArc(const QVector3D &center, const QVector3D &normal,

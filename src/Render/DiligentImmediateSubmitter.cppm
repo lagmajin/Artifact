@@ -6,6 +6,7 @@ module;
 #include <cstring>
 #include <algorithm>
 #include <array>
+#include <limits>
 #include <vector>
 #include <type_traits>
 #include <memory>
@@ -943,6 +944,7 @@ void DiligentImmediateSubmitter::destroy()
     m_draw_rect_outline_pso_and_srb         = {};
     m_frameCostStats_                       = nullptr;
     m_primitiveRenderer3D_                  = nullptr;
+    m_deferredPrimitiveRendererOwnsState_ = false;
     m_particleRenderer_                     = nullptr;
     m_sprite_unit_quad_vb_                  = nullptr;
     m_draw_solid_rect_unit_quad_vb_        = nullptr;
@@ -984,9 +986,12 @@ void DiligentImmediateSubmitter::setViewportState(
     }
 }
 
-void DiligentImmediateSubmitter::setPrimitiveRenderer3D(PrimitiveRenderer3D* renderer)
+void DiligentImmediateSubmitter::setPrimitiveRenderer3D(
+    PrimitiveRenderer3D* renderer, bool recorderOwnsState)
 {
     m_primitiveRenderer3D_ = renderer;
+    m_deferredPrimitiveRendererOwnsState_ =
+        renderer != nullptr && recorderOwnsState;
     if (m_primitiveRenderer3D_) {
         m_primitiveRenderer3D_->setViewportState(m_viewportState_);
     }
@@ -1082,12 +1087,24 @@ bool DiligentImmediateSubmitter::recordDeferred(
 }
 
 bool DiligentImmediateSubmitter::canRecordDeferred(
-    const RenderCommandBuffer& buf) const noexcept
+    const RenderCommandBuffer& buf,
+    Uint32 additionalGizmoVertexCount) const noexcept
 {
+    const Uint32 localGizmoVertexCount = m_primitiveRenderer3D_
+        ? m_primitiveRenderer3D_->pendingGizmoVertexCount()
+        : 0u;
+    if (additionalGizmoVertexCount >
+        std::numeric_limits<Uint32>::max() - localGizmoVertexCount) {
+        return false;
+    }
+    const Uint32 gizmoVertexCount = localGizmoVertexCount +
+                                    additionalGizmoVertexCount;
     if (!m_deferredCtx_ || m_frameDebugCaptureEnabled_ || m_frameCostStats_ ||
         !buf.targetRTV() ||
-        (m_primitiveRenderer3D_ &&
-         m_primitiveRenderer3D_->pendingGizmoVertexCount() != 0)) {
+        (gizmoVertexCount > 0 &&
+         (!m_primitiveRenderer3D_ ||
+          !m_deferredPrimitiveRendererOwnsState_ ||
+          !m_primitiveRenderer3D_->hasGizmoPipelineBindings()))) {
         return false;
     }
     // Accepted packets either use recorder-local state or carry retained
@@ -1100,7 +1117,12 @@ bool DiligentImmediateSubmitter::canRecordDeferred(
     // one UpdateBuffer can copy several megabytes before recording the draw.
     constexpr std::size_t kMinimumDeferredWorkUnits = 16;
     constexpr std::size_t kParticleVerticesPerDeferredWorkUnit = 4096;
+    constexpr std::size_t kGizmoVerticesPerDeferredWorkUnit = 256;
     std::size_t deferredWorkUnits = 0;
+    if (gizmoVertexCount > 0) {
+        deferredWorkUnits = gizmoVertexCount /
+                            kGizmoVerticesPerDeferredWorkUnit;
+    }
     for (const auto& packet : buf.packets()) {
         if (!std::holds_alternative<SolidRectPkt>(packet) &&
             !std::holds_alternative<SolidRectXformPkt>(packet) &&
@@ -1124,6 +1146,7 @@ bool DiligentImmediateSubmitter::canRecordDeferred(
             !std::holds_alternative<RectOutlinePkt>(packet) &&
             !std::holds_alternative<SolidTriPkt>(packet) &&
             !(m_primitiveRenderer3D_ &&
+              m_deferredPrimitiveRendererOwnsState_ &&
               std::holds_alternative<BillboardPkt>(packet))) {
             return false;
         }

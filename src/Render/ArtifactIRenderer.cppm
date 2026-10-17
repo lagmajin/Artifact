@@ -529,8 +529,8 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
 
       device_ = device;
       primitiveRenderer3D_.createBuffers(device, RenderConfig::MainRTVFormat);
-      primitiveRenderer3D_.setPSOs(shaderManager);
-      submitter_.setPrimitiveRenderer3D(&primitiveRenderer3D_);
+      primitiveRenderer3D_.setPSOs(shaderManager, true);
+      submitter_.setPrimitiveRenderer3D(&primitiveRenderer3D_, true);
       submitter_.createBuffers(device, RenderConfig::MainRTVFormat);
       submitter_.setPSOs(shaderManager);
       submitter_.setFrameCostStats(nullptr);
@@ -542,8 +542,10 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
       return true;
     }
 
-    bool canSubmit(const RenderCommandBuffer& buffer) const noexcept {
-      return initialized_ && submitter_.canRecordDeferred(buffer);
+    bool canSubmit(const RenderCommandBuffer& buffer,
+                   Uint32 additionalGizmoVertexCount = 0) const noexcept {
+      return initialized_ && submitter_.canRecordDeferred(
+                                 buffer, additionalGizmoVertexCount);
     }
 
     void setParticleRenderer(ArtifactCore::ParticleRenderer* renderer) {
@@ -554,14 +556,29 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
                         IDeviceContext* immediateContext,
                         const RenderViewportState& viewportState,
                         const QMatrix4x4& viewMatrix,
-                        const QMatrix4x4& projectionMatrix) {
-      if (!immediateContext || !canSubmit(buffer)) return false;
+                        const QMatrix4x4& projectionMatrix,
+                        PrimitiveRenderer3D* pendingGizmoSource = nullptr) {
+      const Uint32 pendingGizmoVertexCount = pendingGizmoSource
+          ? pendingGizmoSource->pendingGizmoVertexCount()
+          : 0u;
+      if (!immediateContext ||
+          !canSubmit(buffer, pendingGizmoVertexCount)) {
+        return false;
+      }
       QMutexLocker lock(&mutex_);
       if (active_ && !completed_) return false;
       if (active_) {
         commandList_ = nullptr;
         buffer_ = nullptr;
         active_ = false;
+      }
+      if (pendingGizmoVertexCount > 0) {
+        if (primitiveRenderer3D_.pendingGizmoVertexCount() != 0 ||
+            !primitiveRenderer3D_.prepareGizmoGeometryCapacity(
+                pendingGizmoVertexCount)) {
+          return false;
+        }
+        pendingGizmoSource->swapPendingGizmoGeometry(primitiveRenderer3D_);
       }
       active_ = true;
       warmupPending_ = false;
@@ -661,10 +678,23 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
     bool submit(RenderCommandBuffer& buffer, IDeviceContext* immediateContext,
                 const RenderViewportState& viewportState,
                 const QMatrix4x4& viewMatrix,
-                const QMatrix4x4& projectionMatrix) {
+                const QMatrix4x4& projectionMatrix,
+                PrimitiveRenderer3D* pendingGizmoSource = nullptr) {
       if (!startRecording(buffer, immediateContext, viewportState,
-                          viewMatrix, projectionMatrix)) return false;
+                          viewMatrix, projectionMatrix,
+                          pendingGizmoSource)) return false;
       return executeAndWait(immediateContext);
+    }
+
+    Uint32 pendingGizmoVertexCount() const {
+      return primitiveRenderer3D_.pendingGizmoVertexCount();
+    }
+
+    void flushPendingGizmo(IDeviceContext* context, ITextureView* targetRTV) {
+      if (context && targetRTV &&
+          primitiveRenderer3D_.pendingGizmoVertexCount() > 0) {
+        primitiveRenderer3D_.flushGizmo3DWithContext(context, targetRTV);
+      }
     }
 
     bool hasActiveJob() const {
@@ -1080,24 +1110,28 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
     // The submitter records pending gizmo topology runs after the 2D packets
     // on the same immediate or deferred context before executing the batch.
    const bool hadQueuedPackets = !cmdBuf_.empty();
-    // The worker recorder owns only the 2D packet stream. The main submitter
-    // also drains pending 3D gizmo geometry into the same ordered submission;
-    // keep those batches on the owner path so the overlay is not skipped.
-    const bool hasPendingGizmoVertices =
-        primitiveRenderer3D_.pendingGizmoVertexCount() > 0;
     // ParticleRenderer has mutable GPU buffers/PSO state. The owner thread is
     // synchronously blocked for this recording/execute handoff, so the same
     // instance can be used serially on the worker without creating a second
     // particle resource set or racing the immediate submitter.
     deferredPacketRecordWorker_.setParticleRenderer(particleRenderer_.get());
-    const bool workerRecorded = !hasPendingGizmoVertices &&
-        !m_frameCostCaptureActive_ &&
+    const bool workerRecorded = !m_frameCostCaptureActive_ &&
         !m_frameDebugCaptureActive_ &&
         deferredPacketRecordWorker_.submit(
             cmdBuf_, ctx, m_renderViewportState_, meshViewMatrix_,
-            meshProjMatrix_);
+            meshProjMatrix_, &primitiveRenderer3D_);
     if (!workerRecorded) {
+      const auto targetRTV = cmdBuf_.targetRTV();
+      const bool workerHasPendingGizmo =
+          deferredPacketRecordWorker_.pendingGizmoVertexCount() > 0;
+      if (workerHasPendingGizmo) {
+        submitter_.setPrimitiveRenderer3D(nullptr);
+      }
       submitter_.submit(cmdBuf_, ctx);
+      if (workerHasPendingGizmo) {
+        deferredPacketRecordWorker_.flushPendingGizmo(ctx, targetRTV);
+        submitter_.setPrimitiveRenderer3D(&primitiveRenderer3D_);
+      }
     } else {
       ++deferredWorkerSubmitCount_;
     }
@@ -1140,7 +1174,17 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
       // Recording can be rejected after the conservative preflight (for
       // example, a resource became unavailable). Preserve the packet batch by
       // submitting it on the owner context before releasing its references.
+      const auto targetRTV = deferredPacketRecordBuffer_.targetRTV();
+      const bool workerHasPendingGizmo =
+          deferredPacketRecordWorker_.pendingGizmoVertexCount() > 0;
+      if (workerHasPendingGizmo) {
+        submitter_.setPrimitiveRenderer3D(nullptr);
+      }
       submitter_.submit(deferredPacketRecordBuffer_, ctx);
+      if (workerHasPendingGizmo) {
+        deferredPacketRecordWorker_.flushPendingGizmo(ctx, targetRTV);
+        submitter_.setPrimitiveRenderer3D(&primitiveRenderer3D_);
+      }
     } else {
       ++deferredWorkerSubmitCount_;
     }
@@ -1166,11 +1210,12 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
     // canSubmit() inspects ParticlePkt eligibility, so provide the renderer
     // before preflight. Any earlier async job was joined above before reuse.
     deferredPacketRecordWorker_.setParticleRenderer(particleRenderer_.get());
-    const bool hasPendingGizmoVertices =
-        primitiveRenderer3D_.pendingGizmoVertexCount() > 0;
-    if (hasPendingGizmoVertices || m_frameCostCaptureActive_ ||
+    const auto pendingGizmoVertexCount =
+        primitiveRenderer3D_.pendingGizmoVertexCount();
+    if (m_frameCostCaptureActive_ ||
         m_frameDebugCaptureActive_ ||
-        !deferredPacketRecordWorker_.canSubmit(cmdBuf_)) {
+        !deferredPacketRecordWorker_.canSubmit(
+            cmdBuf_, pendingGizmoVertexCount)) {
       flush();
       return false;
     }
@@ -1179,7 +1224,7 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
     cmdBuf_.setTargetRTV(activeTarget);
     if (!deferredPacketRecordWorker_.startRecording(
             deferredPacketRecordBuffer_, ctx.RawPtr(), m_renderViewportState_,
-            meshViewMatrix_, meshProjMatrix_)) {
+            meshViewMatrix_, meshProjMatrix_, &primitiveRenderer3D_)) {
       deferredPacketRecordBuffer_.swapContents(cmdBuf_);
       cmdBuf_.setTargetRTV(activeTarget);
       flush();
