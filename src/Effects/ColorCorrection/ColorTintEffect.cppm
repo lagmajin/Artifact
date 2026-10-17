@@ -20,6 +20,8 @@ module ColorTintEffect;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
+import Image.GpuImageUpload;
+import Image.ImageSurfaceView;
 import Property.Abstract;
 import Utils.String.UniString;
 import Graphics.Compute;
@@ -64,23 +66,25 @@ public:
         const float wB = static_cast<float>(mapWhiteTo_.blueF());
         const float amt = amountToTint_;
 
-        ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
-            float* row = pixels + static_cast<size_t>(y) * static_cast<size_t>(width) * 4u;
+        ArtifactCore::withMutableColorFloat4View(dst.image().surfaceView(), pixels, [&](auto& view) {
+            ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
+            auto row = view.row(y);
             for (int x = 0; x < width; ++x) {
-                float* pixel = row + static_cast<size_t>(x) * 4u;
-                const float origR = pixel[0];
-                const float origG = pixel[1];
-                const float origB = pixel[2];
+                auto pixel = row[x];
+                const float origR = pixel.r;
+                const float origG = pixel.g;
+                const float origB = pixel.b;
 
                 const float luma = std::clamp(origR * kLumaR + origG * kLumaG + origB * kLumaB, 0.0f, 1.0f);
                 const float tintedR = lerp(bR, wR, luma);
                 const float tintedG = lerp(bG, wG, luma);
                 const float tintedB = lerp(bB, wB, luma);
 
-                pixel[0] = lerp(origR, tintedR, amt);
-                pixel[1] = lerp(origG, tintedG, amt);
-                pixel[2] = lerp(origB, tintedB, amt);
+                pixel.r = lerp(origR, tintedR, amt);
+                pixel.g = lerp(origG, tintedG, amt);
+                pixel.b = lerp(origB, tintedB, amt);
             }
+            });
         });
     }
 };
@@ -248,11 +252,11 @@ void main(uint3 dtid : SV_DispatchThreadID)
     g_OutputTexture.GetDimensions(width, height);
     if (dtid.x >= width || dtid.y >= height) return;
 
-    float4 c = g_InputTexture[dtid.xy];
+    float4 c = (g_InputTexture[dtid.xy]).bgra;
     float luma = saturate(c.r * 0.299f + c.g * 0.587f + c.b * 0.114f);
     float3 tinted = lerp(g_BlackColor.rgb, g_WhiteColor.rgb, luma);
     c.rgb = lerp(c.rgb, tinted, saturate(g_Amount));
-    g_OutputTexture[dtid.xy] = c;
+    g_OutputTexture[dtid.xy] = (c).bgra;
 }
 )";
 
@@ -268,8 +272,8 @@ void main(uint3 dtid : SV_DispatchThreadID)
         const int width = image.width();
         const int height = image.height();
         if (width <= 0 || height <= 0) return false;
-        const float* data = image.rgba32fData();
-        if (!data) return false;
+        const auto upload = ArtifactCore::makeGpuImageUploadBuffer(image.surfaceView(), ArtifactCore::GpuImageChannelOrder::Bgra);
+        if (!upload.isValid()) return false;
 
         Diligent::TextureDesc desc;
         desc.Type = Diligent::RESOURCE_DIM_TEX_2D;
@@ -284,8 +288,8 @@ void main(uint3 dtid : SV_DispatchThreadID)
         desc.Name = name;
 
         Diligent::TextureSubResData subres;
-        subres.pData = data;
-        subres.Stride = static_cast<Diligent::Uint32>(width * 4 * sizeof(float));
+        subres.pData = upload.data();
+        subres.Stride = static_cast<Diligent::Uint64>(upload.rowStride);
         Diligent::TextureData initData;
         initData.pSubResources = &subres;
         initData.NumSubresources = 1;
@@ -337,10 +341,11 @@ void main(uint3 dtid : SV_DispatchThreadID)
             ctx->UnmapTextureSubresource(staging, 0, 0);
             return false;
         }
-        cv::Mat temp(static_cast<int>(desc.Height), static_cast<int>(desc.Width), CV_32FC4, mapped.pData, mapped.Stride);
-        dst.image().setFromCVMat(temp, colorDescriptor);
+        const bool copied = dst.image().setFromGpuBGRA32F(
+            static_cast<const float*>(mapped.pData), static_cast<int>(desc.Width),
+            static_cast<int>(desc.Height), static_cast<std::size_t>(mapped.Stride), colorDescriptor);
         ctx->UnmapTextureSubresource(staging, 0, 0);
-        return true;
+        return copied;
     }
 };
 

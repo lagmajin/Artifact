@@ -247,7 +247,9 @@ QImage cpuVideoFrameToQImage(const ArtifactCore::CpuVideoFrame& frame)
         cv::Mat wrapped(frame.meta.height, frame.meta.width, CV_32FC4,
                         const_cast<std::uint8_t*>(frame.bytes.data()),
                         frame.strideBytes);
-        return ArtifactCore::CvUtils::cvMatToQImage(wrapped);
+        cv::Mat bgra;
+        cv::cvtColor(wrapped, bgra, cv::COLOR_RGBA2BGRA);
+        return ArtifactCore::CvUtils::cvMatToQImage(bgra);
     }
 
     if (frame.meta.pixelFormat == ArtifactCore::VideoFramePixelFormat::BGRA8) {

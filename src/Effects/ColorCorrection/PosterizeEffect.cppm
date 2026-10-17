@@ -19,6 +19,8 @@ module PosterizeEffect;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
+import Image.GpuImageUpload;
+import Image.ImageSurfaceView;
 import Property.Abstract;
 import Utils.String.UniString;
 import Graphics.Compute;
@@ -46,15 +48,17 @@ public:
         const float n = std::max(2.0f, levels_);
         const float denom = n - 1.0f;
 
-        ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
-            float* row = pixels + static_cast<size_t>(y) * static_cast<size_t>(width) * 4u;
+        ArtifactCore::withMutableColorFloat4View(dst.image().surfaceView(), pixels, [&](auto& view) {
+            ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
+            auto row = view.row(y);
             for (int x = 0; x < width; ++x) {
-                float* pixel = row + static_cast<size_t>(x) * 4u;
+                auto pixel = row[x];
                 // [0.0, 1.0] -> [0.0, n-1] -> floor+0.5 -> / (n-1)
-                pixel[0] = std::floor(pixel[0] * denom + 0.5f) / denom;
-                pixel[1] = std::floor(pixel[1] * denom + 0.5f) / denom;
-                pixel[2] = std::floor(pixel[2] * denom + 0.5f) / denom;
+                pixel.r = std::floor(pixel.r * denom + 0.5f) / denom;
+                pixel.g = std::floor(pixel.g * denom + 0.5f) / denom;
+                pixel.b = std::floor(pixel.b * denom + 0.5f) / denom;
             }
+            });
         });
     }
 };
@@ -208,10 +212,10 @@ void main(uint3 dtid : SV_DispatchThreadID)
     g_OutputTexture.GetDimensions(width, height);
     if (dtid.x >= width || dtid.y >= height) return;
 
-    float4 c = g_InputTexture[dtid.xy];
+    float4 c = (g_InputTexture[dtid.xy]).bgra;
     float denom = max(1.0f, g_Levels - 1.0f);
     c.rgb = floor(c.rgb * denom + 0.5f) / denom;
-    g_OutputTexture[dtid.xy] = c;
+    g_OutputTexture[dtid.xy] = (c).bgra;
 }
 )";
 
@@ -227,8 +231,8 @@ void main(uint3 dtid : SV_DispatchThreadID)
         const int width = image.width();
         const int height = image.height();
         if (width <= 0 || height <= 0) return false;
-        const float* data = image.rgba32fData();
-        if (!data) return false;
+        const auto upload = ArtifactCore::makeGpuImageUploadBuffer(image.surfaceView(), ArtifactCore::GpuImageChannelOrder::Bgra);
+        if (!upload.isValid()) return false;
 
         Diligent::TextureDesc desc;
         desc.Type = Diligent::RESOURCE_DIM_TEX_2D;
@@ -243,8 +247,8 @@ void main(uint3 dtid : SV_DispatchThreadID)
         desc.Name = name;
 
         Diligent::TextureSubResData subres;
-        subres.pData = data;
-        subres.Stride = static_cast<Diligent::Uint32>(width * 4 * sizeof(float));
+        subres.pData = upload.data();
+        subres.Stride = static_cast<Diligent::Uint64>(upload.rowStride);
         Diligent::TextureData initData;
         initData.pSubResources = &subres;
         initData.NumSubresources = 1;
@@ -296,10 +300,11 @@ void main(uint3 dtid : SV_DispatchThreadID)
             ctx->UnmapTextureSubresource(staging, 0, 0);
             return false;
         }
-        cv::Mat temp(static_cast<int>(desc.Height), static_cast<int>(desc.Width), CV_32FC4, mapped.pData, mapped.Stride);
-        dst.image().setFromCVMat(temp, colorDescriptor);
+        const bool copied = dst.image().setFromGpuBGRA32F(
+            static_cast<const float*>(mapped.pData), static_cast<int>(desc.Width),
+            static_cast<int>(desc.Height), static_cast<std::size_t>(mapped.Stride), colorDescriptor);
         ctx->UnmapTextureSubresource(staging, 0, 0);
-        return true;
+        return copied;
     }
 };
 

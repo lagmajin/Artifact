@@ -45,8 +45,8 @@ public:
                          cv::BORDER_REFLECT101);
 
         cv::Mat rgb, gray;
-        cv::cvtColor(input, rgb, cv::COLOR_RGBA2RGB);
-        cv::cvtColor(rgb, gray, cv::COLOR_RGB2GRAY);
+        cv::cvtColor(input, rgb, cv::COLOR_BGRA2BGR);
+        cv::cvtColor(rgb, gray, cv::COLOR_BGR2GRAY);
         const int gridWidth = std::max(16, width / 4);
         const int gridHeight = std::max(16, height / 4);
         cv::Mat seed;

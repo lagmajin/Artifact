@@ -847,7 +847,7 @@ bool composeToBuffer(const CompositeRequest& request,
 
  cv::Mat floatRgba;
  rgbaMat.convertTo(floatRgba, CV_32FC4, 1.0 / 255.0);
- output.setFromCVMat(floatRgba);
+ output.setFromRGBA32F(floatRgba.ptr<float>(), floatRgba.cols, floatRgba.rows);
  return !output.isEmpty();
 }
 

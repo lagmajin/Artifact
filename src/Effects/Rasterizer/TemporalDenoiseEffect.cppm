@@ -66,8 +66,8 @@ public:
             for (int y = 0; y < H; y += kSceneCutSampleStride) {
                 for (int x = 0; x < W; x += kSceneCutSampleStride) {
                     const size_t offset = (static_cast<size_t>(y) * W + x) * 4u;
-                    const float currentLuma = sd[offset] * 0.299f + sd[offset + 1] * 0.587f + sd[offset + 2] * 0.114f;
-                    const float referenceLuma = referencePixels[offset] * 0.299f + referencePixels[offset + 1] * 0.587f + referencePixels[offset + 2] * 0.114f;
+                    const float currentLuma = sd[offset] * 0.114f + sd[offset + 1] * 0.587f + sd[offset + 2] * 0.299f;
+                    const float referenceLuma = referencePixels[offset] * 0.114f + referencePixels[offset + 1] * 0.587f + referencePixels[offset + 2] * 0.299f;
                     differenceSum += std::abs(currentLuma - referenceLuma);
                     ++sampleCount;
                 }

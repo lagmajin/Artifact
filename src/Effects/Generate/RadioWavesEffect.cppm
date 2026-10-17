@@ -118,9 +118,9 @@ ArtifactCore::Parallel::ForPixels(0, H, W, H, [&](int y) {
                 if (outA < 1e-6f) {
                     px[0] = px[1] = px[2] = px[3] = 0.f;
                 } else {
-                    px[0] = (wr * srcA + px[0] * dstA * (1.0f - srcA)) / outA;
+                    px[0] = (wb * srcA + px[0] * dstA * (1.0f - srcA)) / outA;
                     px[1] = (wg * srcA + px[1] * dstA * (1.0f - srcA)) / outA;
-                    px[2] = (wb * srcA + px[2] * dstA * (1.0f - srcA)) / outA;
+                    px[2] = (wr * srcA + px[2] * dstA * (1.0f - srcA)) / outA;
                     px[3] = outA;
                 }
             }

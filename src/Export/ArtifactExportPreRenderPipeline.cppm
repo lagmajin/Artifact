@@ -40,7 +40,8 @@ public:
     QImage render(ArtifactAbstractLayer* layer, int frame) {
         if (!renderer_ || !layer) return {};
         renderer_->renderLayerFrame(FramePosition(frame), layer);
-        return renderer_->renderer()->readbackToImage();
+        return renderer_->renderer()->readbackToImage(
+            ArtifactCore::SurfaceChannelOrder::BGRA);
     }
 
 private:

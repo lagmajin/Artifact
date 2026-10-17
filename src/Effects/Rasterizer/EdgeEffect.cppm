@@ -55,7 +55,7 @@ Parallel::ForPixels(0, H, W, H,[&](int y){float* o=d+(size_t)y*W*4;int py=std::m
             // Spatial Sobel edge
             Parallel::ForPixels(1, H-1, W, H,[&](int y){float* o=d+(size_t)y*W*4;
                 for(int x=1;x<W-1;++x){
-                    auto L=[&](int ox,int oy)->float{const float*sp=sd+((size_t)(y+oy)*W+(x+ox))*4;return sp[0]*0.299f+sp[1]*0.587f+sp[2]*0.114f;};
+                    auto L=[&](int ox,int oy)->float{const float*sp=sd+((size_t)(y+oy)*W+(x+ox))*4;return sp[0]*0.114f+sp[1]*0.587f+sp[2]*0.299f;};
                     float gx=-L(-1,-1)-2*L(-1,0)-L(-1,1)+L(1,-1)+2*L(1,0)+L(1,1);
                     float gy=-L(-1,-1)-2*L(0,-1)-L(1,-1)+L(-1,1)+2*L(0,1)+L(1,1);
                     float e=std::sqrt(gx*gx+gy*gy)*it;
@@ -152,9 +152,9 @@ public:
                 }
 
                 const float light = std::clamp(rim * amount, 0.0f, 1.0f) * alpha;
-                output[index + 0] = source[index + 0] + colorR_ * light;
+                output[index + 0] = source[index + 0] + colorB_ * light;
                 output[index + 1] = source[index + 1] + colorG_ * light;
-                output[index + 2] = source[index + 2] + colorB_ * light;
+                output[index + 2] = source[index + 2] + colorR_ * light;
                 output[index + 3] = source[index + 3];
             }
         });

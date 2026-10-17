@@ -9,6 +9,7 @@ module;
 #include <QColor>
 #include <cmath>
 #include <cstring>
+#include <cstddef>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
@@ -18,6 +19,7 @@ module Artifact.Effect.Rasterizer.Bevel;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
+import Image.GpuImageUpload;
 import Property.Abstract;
 import Utils.String.UniString;
 import Core.Parallel;
@@ -59,7 +61,7 @@ public:
         {
             std::vector<cv::Mat> tmp;
             cv::split(color, tmp);
-            srcGray = tmp[0] * 0.299f + tmp[1] * 0.587f + tmp[2] * 0.114f;
+            srcGray = tmp[0] * 0.114f + tmp[1] * 0.587f + tmp[2] * 0.299f;
             if (!alpha.empty()) srcGray = srcGray.mul(alpha);
         }
 
@@ -131,13 +133,13 @@ public:
             if (!acquireSharedRenderDeviceForCurrentBackend(device_, context_)) { applyCPU(src, dst); return; }
             usingSharedDevice_ = true;
         }
-        const auto& image = src.image(); const float* pixels = image.rgba32fData();
-        if (!pixels || image.width() <= 0 || image.height() <= 0) { applyCPU(src, dst); return; }
+        const auto& image = src.image(); const auto upload = ArtifactCore::makeGpuImageUploadBuffer(image.surfaceView(), ArtifactCore::GpuImageChannelOrder::Bgra);
+        if (!upload.isValid() || image.width() <= 0 || image.height() <= 0) { applyCPU(src, dst); return; }
         Diligent::TextureDesc desc{}; desc.Name = "Bevel/Input"; desc.Type = Diligent::RESOURCE_DIM_TEX_2D;
         desc.Width = image.width(); desc.Height = image.height(); desc.Format = Diligent::TEX_FORMAT_RGBA32_FLOAT;
         desc.MipLevels = 1; desc.ArraySize = 1; desc.SampleCount = 1; desc.Usage = Diligent::USAGE_IMMUTABLE;
         desc.BindFlags = Diligent::BIND_SHADER_RESOURCE;
-        Diligent::TextureSubResData sub{}; sub.pData = pixels; sub.Stride = static_cast<Diligent::Uint64>(image.width()) * sizeof(float) * 4ull;
+        Diligent::TextureSubResData sub{}; sub.pData = upload.data(); sub.Stride = static_cast<Diligent::Uint64>(upload.rowStride);
         Diligent::TextureData init{}; init.pSubResources = &sub; init.NumSubresources = 1;
         Diligent::RefCntAutoPtr<Diligent::ITexture> input; device_->CreateTexture(desc, &init, &input);
         if (!input) { applyCPU(src, dst); return; }
@@ -182,7 +184,7 @@ public:
         context_->CopyTexture(Diligent::CopyTextureAttribs(output_, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION, staging_, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION)); context_->Flush(); context_->WaitForIdle();
         Diligent::MappedTextureSubresource read{}; context_->MapTextureSubresource(staging_, 0, 0, Diligent::MAP_READ, Diligent::MAP_FLAG_NONE, nullptr, read);
         if (!read.pData || !read.Stride) { applyCPU(src, dst); return; }
-        cv::Mat result(image.height(), image.width(), CV_32FC4, read.pData, read.Stride); dst.image().setFromCVMat(result, image.colorDescriptor()); context_->UnmapTextureSubresource(staging_, 0, 0);
+        const bool copied = dst.image().setFromGpuBGRA32F(static_cast<const float*>(read.pData), image.width(), image.height(), static_cast<std::size_t>(read.Stride), image.colorDescriptor()); context_->UnmapTextureSubresource(staging_, 0, 0); if (!copied) applyCPU(src, dst);
     }
 private:
     Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device_;
@@ -198,8 +200,8 @@ private:
     static constexpr const char* kHlsl = R"(
 Texture2D<float4> g_InputTexture:register(t0); RWTexture2D<float4> g_OutputTexture:register(u0);
 cbuffer BevelParams:register(b0){float g_Strength;float g_Softness;float g_EdgeMode;float g_Pad;float3 g_Highlight;float3 g_Shadow;}
-float lum(float4 p){return dot(p.rgb,float3(0.114,0.587,0.299))*p.a;} float4 atp(int2 p,uint w,uint h){return g_InputTexture[uint2(clamp(p.x,0,(int)w-1),clamp(p.y,0,(int)h-1))];}
-[numthreads(8,8,1)] void main(uint3 id:SV_DispatchThreadID){uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;int2 p=int2(id.xy);float c=lum(atp(p,w,h));float e=c-(lum(atp(p+int2(-1,0),w,h))+lum(atp(p+int2(1,0),w,h))+lum(atp(p+int2(0,-1),w,h))+lum(atp(p+int2(0,1),w,h)))*0.25;float hi=saturate(e*g_Strength*max(0.25,g_Softness)),sh=saturate(-e*g_Strength*max(0.25,g_Softness));float4 px=g_InputTexture[id.xy];px.rgb=max(0,px.rgb+g_Highlight*hi+g_Shadow*sh);g_OutputTexture[id.xy]=px;}
+float lum(float4 p){return dot(p.rgb,float3(0.299,0.587,0.114))*p.a;} float4 atp(int2 p,uint w,uint h){return (g_InputTexture[uint2(clamp(p.x,0,(int)w-1),clamp(p.y,0,(int)h-1))]).bgra;}
+[numthreads(8,8,1)] void main(uint3 id:SV_DispatchThreadID){uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;int2 p=int2(id.xy);float c=lum(atp(p,w,h));float e=c-(lum(atp(p+int2(-1,0),w,h))+lum(atp(p+int2(1,0),w,h))+lum(atp(p+int2(0,-1),w,h))+lum(atp(p+int2(0,1),w,h)))*0.25;float hi=saturate(e*g_Strength*max(0.25,g_Softness)),sh=saturate(-e*g_Strength*max(0.25,g_Softness));float4 px=(g_InputTexture[id.xy]).bgra;px.rgb=max(0,px.rgb+g_Highlight*hi+g_Shadow*sh);g_OutputTexture[id.xy]=(px).bgra;}
 )";
 public:
     BevelEffectCPUImpl cpuImpl_;

@@ -49,6 +49,7 @@ module Artifact.Effect.Keying.ChromaKey;
 import Artifact.Effect.ImplBase;
 import Image.ImageF32x4_RGBA;
 import Image.ImageF32x4RGBAWithCache;
+import Image.GpuImageUpload;
 import ImageProcessing;
 import Artifact.Effect.Abstract;
 import FloatRGBA;
@@ -95,7 +96,8 @@ void ChromaKeyEffectCPUImpl::applyCPU(const ArtifactCore::ImageF32x4RGBAWithCach
     params.lightWrapIntensity = lightWrapIntensity_;
     params.lightWrapWidth = lightWrapWidth_;
     const ArtifactCore::Keying::ChromaKeyBuffers buffers{
-        srcData, dstData, srcImage.width(), srcImage.height()};
+        srcData, dstData, srcImage.width(), srcImage.height(),
+        srcImage.colorDescriptor().channelOrder};
     if (!ArtifactCore::Keying::processChromaKey(buffers, params)) {
         dst = src;
         return;
@@ -122,7 +124,8 @@ public:
             return;
         }
         const ArtifactCore::Keying::ChromaKeyBuffers buffers{
-            srcData, dstData, srcImage.width(), srcImage.height()};
+            srcData, dstData, srcImage.width(), srcImage.height(),
+            srcImage.colorDescriptor().channelOrder};
         if (!ArtifactCore::Keying::processChromaKey(buffers, params_)) {
             dst = src;
             return;
@@ -301,16 +304,16 @@ float3 despillColor(float3 rgb, float alpha) {
 [numthreads(16,16,1)] void main(uint3 id : SV_DispatchThreadID) {
   uint w, h; OutputTexture.GetDimensions(w, h);
   if (id.x >= w || id.y >= h) return;
-  float4 stored = ForegroundTexture[id.xy];
+  float4 stored = (ForegroundTexture[id.xy]).bgra;
   float sourceAlpha = saturate(stored.a);
   float3 straight = sourceAlpha > 1e-6 ? stored.rgb / sourceAlpha : 0;
   float alpha = baseAlpha(straight);
   float3 color = despillColor(straight, alpha);
   // Diagnostic modes intentionally show the un-finished key, matching the
   // CPU contract. Matte choke/blur belongs to the final alpha only.
-  if (ViewMode == 1) { OutputTexture[id.xy] = float4(alpha, alpha, alpha, 1.0); return; }
-  if (ViewMode == 2) { OutputTexture[id.xy] = float4(color, 1.0); return; }
-  if (ViewMode == 3) { OutputTexture[id.xy] = float4(1.0 - alpha, alpha, 0.15 * (1.0 - abs(alpha * 2.0 - 1.0)), 1.0); return; }
+  if (ViewMode == 1) { OutputTexture[id.xy] = (float4(alpha, alpha, alpha, 1.0)).bgra; return; }
+  if (ViewMode == 2) { OutputTexture[id.xy] = (float4(color, 1.0)).bgra; return; }
+  if (ViewMode == 3) { OutputTexture[id.xy] = (float4(1.0 - alpha, alpha, 0.15 * (1.0 - abs(alpha * 2.0 - 1.0)), 1.0)).bgra; return; }
   // CPU finishing operates on the premultiplied source alpha. Preserve that
   // order so a translucent source has identical choke/blur behavior on both
   // backends.
@@ -323,7 +326,7 @@ float3 despillColor(float3 rgb, float alpha) {
       for (int dx = -3; dx <= 3; ++dx) {
         if (max(abs(dx), abs(dy)) > radius) continue;
         int2 q = clamp(int2(id.xy) + int2(dx, dy), int2(0, 0), int2(w, h) - 1);
-        float4 neighbor = ForegroundTexture[uint2(q)];
+        float4 neighbor = (ForegroundTexture[uint2(q)]).bgra;
         float neighborAlpha = saturate(neighbor.a);
         float3 neighborStraight = neighborAlpha > 1e-6 ? neighbor.rgb / neighborAlpha : 0;
         float s = baseAlpha(neighborStraight) * neighborAlpha;
@@ -337,7 +340,7 @@ float3 despillColor(float3 rgb, float alpha) {
     for (int dy = -1; dy <= 1; ++dy)
       for (int dx = -1; dx <= 1; ++dx) {
         int2 q = clamp(int2(id.xy) + int2(dx, dy), int2(0, 0), int2(w, h) - 1);
-        float4 neighbor = ForegroundTexture[uint2(q)];
+        float4 neighbor = (ForegroundTexture[uint2(q)]).bgra;
         float neighborAlpha = saturate(neighbor.a);
         float3 neighborStraight = neighborAlpha > 1e-6 ? neighbor.rgb / neighborAlpha : 0;
         float s = baseAlpha(neighborStraight) * neighborAlpha;
@@ -347,7 +350,7 @@ float3 despillColor(float3 rgb, float alpha) {
             for (int ex = -3; ex <= 3; ++ex) {
               if (max(abs(ex), abs(ey)) > radius) continue;
               int2 e = clamp(int2(q) + int2(ex, ey), int2(0, 0), int2(w, h) - 1);
-              float4 edgeNeighbor = ForegroundTexture[uint2(e)];
+              float4 edgeNeighbor = (ForegroundTexture[uint2(e)]).bgra;
               float edgeAlpha = saturate(edgeNeighbor.a);
               float3 edgeStraight = edgeAlpha > 1e-6 ? edgeNeighbor.rgb / edgeAlpha : 0;
               float t = baseAlpha(edgeStraight) * edgeAlpha;
@@ -367,7 +370,7 @@ float3 despillColor(float3 rgb, float alpha) {
     for (int wy = -wrapR; wy <= wrapR; wy += 2) {
       for (int wx = -wrapR; wx <= wrapR; wx += 2) {
         int2 wq = clamp(int2(id.xy) + int2(wx, wy), int2(0, 0), int2(w, h) - 1);
-        float4 nf = ForegroundTexture[uint2(wq)];
+        float4 nf = (ForegroundTexture[uint2(wq)]).bgra;
         float na = saturate(nf.a);
         amb += (na > 1e-6 ? nf.rgb / na : 0);
         cnt++;
@@ -378,7 +381,7 @@ float3 despillColor(float3 rgb, float alpha) {
       color = max(color + (amb - color) * edgeWeight, 0);
     }
   }
-  OutputTexture[id.xy] = float4(color * matte, matte);
+  OutputTexture[id.xy] = (float4(color * matte, matte)).bgra;
 })";
 
     static bool uploadTextureFromImage(const ImageF32x4RGBAWithCache& src,
@@ -387,8 +390,9 @@ float3 despillColor(float3 rgb, float alpha) {
                                        Diligent::RefCntAutoPtr<Diligent::ITexture>& texture,
                                        const char* name) {
         const auto& img = src.image();
-        const float* data = img.rgba32fData();
-        if (!device || !context || !data || img.width() <= 0 || img.height() <= 0) return false;
+        if (!device || !context || img.width() <= 0 || img.height() <= 0) return false;
+        const auto upload = ArtifactCore::makeGpuImageUploadBuffer(img.surfaceView(), ArtifactCore::GpuImageChannelOrder::Bgra);
+        if (!upload.isValid()) return false;
         Diligent::TextureDesc desc;
         desc.Type = Diligent::RESOURCE_DIM_TEX_2D;
         desc.Width = img.width();
@@ -401,8 +405,8 @@ float3 despillColor(float3 rgb, float alpha) {
         desc.BindFlags = Diligent::BIND_SHADER_RESOURCE;
         desc.Name = name;
         Diligent::TextureSubResData sub{};
-        sub.pData = data;
-        sub.Stride = static_cast<Diligent::Uint64>(img.width()) * sizeof(float) * 4ull;
+        sub.pData = upload.data();
+        sub.Stride = static_cast<Diligent::Uint64>(upload.rowStride);
         Diligent::TextureData init{};
         init.pSubResources = &sub;
         init.NumSubresources = 1;
@@ -459,11 +463,11 @@ float3 despillColor(float3 rgb, float alpha) {
         Diligent::MappedTextureSubresource mapped{};
         ctx->MapTextureSubresource(staging, 0, 0, Diligent::MAP_READ, Diligent::MAP_FLAG_NONE, nullptr, mapped);
         if (!mapped.pData || mapped.Stride == 0) return false;
-        cv::Mat temp(static_cast<int>(desc.Height), static_cast<int>(desc.Width),
-                     CV_32FC4, mapped.pData, mapped.Stride);
-        dst.image().setFromCVMat(temp, colorDescriptor);
+        const bool copied = dst.image().setFromGpuBGRA32F(
+            static_cast<const float*>(mapped.pData), static_cast<int>(desc.Width),
+            static_cast<int>(desc.Height), static_cast<std::size_t>(mapped.Stride), colorDescriptor);
         ctx->UnmapTextureSubresource(staging, 0, 0);
-        return true;
+        return copied;
     }
 };
 

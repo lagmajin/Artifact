@@ -31,14 +31,14 @@ namespace {
 // ピクセルの指定チャンネル値を取得 (0-1)
 inline float sampleChannel(const float* pixel4, DisplaceChannel ch) {
     switch (ch) {
-        case DisplaceChannel::Red:       return pixel4[0];
+        case DisplaceChannel::Red:       return pixel4[2];
         case DisplaceChannel::Green:     return pixel4[1];
-        case DisplaceChannel::Blue:      return pixel4[2];
+        case DisplaceChannel::Blue:      return pixel4[0];
         case DisplaceChannel::Alpha:     return pixel4[3];
         case DisplaceChannel::Luminance:
         default:
             // Rec.601 luma
-            return pixel4[0] * 0.299f + pixel4[1] * 0.587f + pixel4[2] * 0.114f;
+            return pixel4[0] * 0.114f + pixel4[1] * 0.587f + pixel4[2] * 0.299f;
     }
 }
 

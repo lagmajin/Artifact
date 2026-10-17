@@ -17,6 +17,8 @@ module InvertEffect;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
+import Image.ImageSurfaceView;
+import Image.GpuImageUpload;
 import Property.Abstract;
 import Utils.String.UniString;
 import Core.Parallel;
@@ -45,7 +47,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
     g_OutputTexture.GetDimensions(width, height);
     if (dtid.x >= width || dtid.y >= height) return;
 
-    float4 c = g_InputTexture[dtid.xy];
+    float4 c = (g_InputTexture[dtid.xy]).bgra;
     const float strength = saturate(g_Strength);
     const int channel = (int)(g_Channel + 0.5f);
     if (channel == 0) {
@@ -59,7 +61,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
     } else {
         c.a = lerp(c.a, 1.0f - c.a, strength);
     }
-    g_OutputTexture[dtid.xy] = c;
+    g_OutputTexture[dtid.xy] = (c).bgra;
 }
 
 [numthreads(256, 1, 1)]
@@ -71,7 +73,7 @@ void main1D(uint3 dtid : SV_DispatchThreadID)
     if (dtid.x >= pixelCount || width == 0) return;
 
     const uint2 pixel = uint2(dtid.x % width, dtid.x / width);
-    float4 c = g_InputTexture[pixel];
+    float4 c = (g_InputTexture[pixel]).bgra;
     const float strength = saturate(g_Strength);
     const int channel = (int)(g_Channel + 0.5f);
     if (channel == 0) {
@@ -85,7 +87,7 @@ void main1D(uint3 dtid : SV_DispatchThreadID)
     } else {
         c.a = lerp(c.a, 1.0f - c.a, strength);
     }
-    g_OutputTexture[pixel] = c;
+    g_OutputTexture[pixel] = (c).bgra;
 }
 )";
 } // namespace
@@ -109,26 +111,20 @@ public:
         const int channel = std::clamp(channel_, 0, 4);
         const float strength = std::clamp(strength_, 0.0f, 1.0f);
 
-        Parallel::ForPixels(0, height, width, height, [&](int y) {
-            for (int x = 0; x < width; ++x) {
-                float* pixel = pixels + (static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)) * 4u;
-                auto invertChannel = [strength](float v) {
-                    return std::lerp(v, 1.0f - v, strength);
-                };
-                if (channel == 0) {
-                    pixel[0] = invertChannel(pixel[0]);
-                    pixel[1] = invertChannel(pixel[1]);
-                    pixel[2] = invertChannel(pixel[2]);
-                } else if (channel == 1) {
-                    pixel[0] = invertChannel(pixel[0]);
-                } else if (channel == 2) {
-                    pixel[1] = invertChannel(pixel[1]);
-                } else if (channel == 3) {
-                    pixel[2] = invertChannel(pixel[2]);
-                } else {
-                    pixel[3] = invertChannel(pixel[3]);
+        ArtifactCore::withMutableColorFloat4View(dst.image().surfaceView(), pixels, [&](auto& view) {
+            Parallel::ForPixels(0, height, width, height, [&](int y) {
+                auto row = view.row(y);
+                for (int x = 0; x < width; ++x) {
+                    auto pixel = row[x];
+                    auto invertChannel = [strength](float value) {
+                        return std::lerp(value, 1.0f - value, strength);
+                    };
+                    if (channel == 0 || channel == 1) pixel.r = invertChannel(pixel.r);
+                    if (channel == 0 || channel == 2) pixel.g = invertChannel(pixel.g);
+                    if (channel == 0 || channel == 3) pixel.b = invertChannel(pixel.b);
+                    if (channel == 4) pixel.a = invertChannel(pixel.a);
                 }
-            }
+            });
         });
     }
 };
@@ -152,8 +148,9 @@ public:
         SharedRenderDeviceLease sharedDeviceLease;
         if (!sharedDeviceLease.acquire(device, context)) { applyCPU(src, dst); return; }
         const auto& image = src.image();
-        const float* pixels = image.rgba32fData();
-        if (!pixels || image.width() <= 0 || image.height() <= 0) { applyCPU(src, dst); return; }
+        if (image.width() <= 0 || image.height() <= 0) { applyCPU(src, dst); return; }
+        const auto upload = ArtifactCore::makeGpuImageUploadBuffer(image.surfaceView(), ArtifactCore::GpuImageChannelOrder::Bgra);
+        if (!upload.isValid()) { applyCPU(src, dst); return; }
 
         Diligent::TextureDesc desc{};
         desc.Name = "Invert/Input";
@@ -167,8 +164,8 @@ public:
         desc.Usage = Diligent::USAGE_IMMUTABLE;
         desc.BindFlags = Diligent::BIND_SHADER_RESOURCE;
         Diligent::TextureSubResData sub{};
-        sub.pData = pixels;
-        sub.Stride = static_cast<Diligent::Uint64>(image.width()) * sizeof(float) * 4ull;
+        sub.pData = upload.data();
+        sub.Stride = static_cast<Diligent::Uint64>(upload.rowStride);
         Diligent::TextureData init{};
         init.pSubResources = &sub;
         init.NumSubresources = 1;
@@ -298,9 +295,11 @@ public:
         Diligent::MappedTextureSubresource read{};
         context->MapTextureSubresource(stagingTex_, 0, 0, Diligent::MAP_READ, Diligent::MAP_FLAG_NONE, nullptr, read);
         if (!read.pData || !read.Stride) { applyCPU(src, dst); return; }
-        cv::Mat result(static_cast<int>(outDesc.Height), static_cast<int>(outDesc.Width), CV_32FC4, read.pData, read.Stride);
-        dst.image().setFromCVMat(result, image.colorDescriptor());
+        const bool copied = dst.image().setFromGpuBGRA32F(
+            static_cast<const float*>(read.pData), static_cast<int>(outDesc.Width),
+            static_cast<int>(outDesc.Height), static_cast<std::size_t>(read.Stride), image.colorDescriptor());
         context->UnmapTextureSubresource(stagingTex_, 0, 0);
+        if (!copied) { applyCPU(src, dst); return; }
     }
 
 private:

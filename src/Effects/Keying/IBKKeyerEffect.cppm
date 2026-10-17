@@ -15,6 +15,7 @@ import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import Image.ImageF32x4_RGBA;
 import Image.ImageF32x4RGBAWithCache;
+import Image.GpuImageUpload;
 import ImageProcessing;
 import Property.Abstract;
 import Utils.String.UniString;
@@ -66,7 +67,9 @@ void IBKKeyerEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src,
         return;
     }
     const ArtifactCore::Keying::IBKBuffers buffers{
-        foreground, cleanPlate, output, source.width(), source.height()};
+        foreground, cleanPlate, output, source.width(), source.height(),
+        source.colorDescriptor().channelOrder,
+        cleanPlate_.colorDescriptor().channelOrder};
     if (!ArtifactCore::Keying::processIBK(buffers, params_)) {
         dst = src;
         return;
@@ -100,15 +103,15 @@ public:
             applyCPU(src, dst);
             return;
         }
-        const float* plateData = cleanPlate_.rgba32fData();
-        if (!plateData) { applyCPU(src, dst); return; }
+        const auto foregroundUpload = ArtifactCore::makeGpuImageUploadBuffer(src.image().surfaceView(), ArtifactCore::GpuImageChannelOrder::Bgra);
+        const auto plateUpload = ArtifactCore::makeGpuImageUploadBuffer(cleanPlate_.surfaceView(), ArtifactCore::GpuImageChannelOrder::Bgra);
+        if (!foregroundUpload.isValid() || !plateUpload.isValid()) { applyCPU(src, dst); return; }
 
         Diligent::RefCntAutoPtr<Diligent::ITexture> foreground;
         Diligent::RefCntAutoPtr<Diligent::ITexture> plate;
-        if (!createTexture(src.image().rgba32fData(), src.image().width(),
-                           src.image().height(), device, &foreground,
-                           "IBK/Foreground") ||
-            !createTexture(plateData, cleanPlate_.width(), cleanPlate_.height(),
+        if (!createTexture(foregroundUpload, src.image().width(), src.image().height(),
+                           device, &foreground, "IBK/Foreground") ||
+            !createTexture(plateUpload, cleanPlate_.width(), cleanPlate_.height(),
                            device, &plate, "IBK/CleanPlate")) {
             applyCPU(src, dst);
             return;
@@ -176,10 +179,10 @@ public:
     }
 
 private:
-    static bool createTexture(const float* data, int width, int height,
-                              Diligent::IRenderDevice* device,
+    static bool createTexture(const ArtifactCore::GpuImageUploadBuffer& upload,
+                              int width, int height, Diligent::IRenderDevice* device,
                               Diligent::ITexture** output, const char* name) {
-        if (!data || width <= 0 || height <= 0 || !device || !output) return false;
+        if (!upload.isValid() || width <= 0 || height <= 0 || !device || !output) return false;
         Diligent::TextureDesc desc{};
         desc.Name = name;
         desc.Type = Diligent::RESOURCE_DIM_TEX_2D;
@@ -192,8 +195,8 @@ private:
         desc.Usage = Diligent::USAGE_IMMUTABLE;
         desc.BindFlags = Diligent::BIND_SHADER_RESOURCE;
         Diligent::TextureSubResData sub{};
-        sub.pData = data;
-        sub.Stride = static_cast<Diligent::Uint64>(width) * sizeof(float) * 4ull;
+        sub.pData = upload.data();
+        sub.Stride = static_cast<Diligent::Uint64>(upload.rowStride);
         Diligent::TextureData init{};
         init.pSubResources = &sub;
         init.NumSubresources = 1;
@@ -229,11 +232,11 @@ private:
             context->UnmapTextureSubresource(staging, 0, 0);
             return false;
         }
-        cv::Mat image(static_cast<int>(desc.Height), static_cast<int>(desc.Width),
-                      CV_32FC4, mapped.pData, mapped.Stride);
-        destination.image().setFromCVMat(image, descriptor);
+        const bool copied = destination.image().setFromGpuBGRA32F(
+            static_cast<const float*>(mapped.pData), static_cast<int>(desc.Width),
+            static_cast<int>(desc.Height), static_cast<std::size_t>(mapped.Stride), descriptor);
         context->UnmapTextureSubresource(staging, 0, 0);
-        return true;
+        return copied;
     }
 
     static constexpr const char* kShader = R"(
@@ -244,7 +247,7 @@ cbuffer Params : register(b0) { float ScreenCorrection; float CoreMatteClip;
 float EdgeMatteSoftness; float DespillStrength; float GarbageMatteGamma;
 float DetailRecovery; uint ErodePixels; uint DilatePixels; };
 float baseMatte(uint2 p) {
- float4 fg=ForegroundTexture[p], plate=CleanPlateTexture[p];
+ float4 fg=(ForegroundTexture[p]).bgra, plate=(CleanPlateTexture[p]).bgra;
  float3 corrected=max(fg.rgb*max(ScreenCorrection,0),0);
  float raw=1-exp(-length(corrected-plate.rgb)/0.25);
  float core=saturate(raw-saturate(CoreMatteClip));
@@ -273,11 +276,11 @@ float filteredMatte(uint2 p,uint2 size) {
 }
 [numthreads(16,16,1)] void main(uint3 id : SV_DispatchThreadID) {
  uint w,h; OutputTexture.GetDimensions(w,h); if(id.x>=w||id.y>=h)return;
- float4 fg=ForegroundTexture[id.xy], plate=CleanPlateTexture[id.xy];
+ float4 fg=(ForegroundTexture[id.xy]).bgra, plate=(CleanPlateTexture[id.xy]).bgra;
  float3 corrected=max(fg.rgb*max(ScreenCorrection,0),0);
  float alpha=filteredMatte(id.xy,uint2(w,h));
  float3 color=max(corrected-plate.rgb*saturate(DespillStrength),0);
- float a=saturate(alpha*fg.a); OutputTexture[id.xy]=float4(color*a,a);
+ float a=saturate(alpha*fg.a); OutputTexture[id.xy]=(float4(color*a,a)).bgra;
 })";
 };
 

@@ -7,6 +7,7 @@ module;
 #include <QString>
 #include <QVariant>
 #include <cstring>
+#include <cstddef>
 #include <cmath>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
@@ -17,6 +18,7 @@ module Artifact.Effect.Dithering;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
+import Image.GpuImageUpload;
 import Property.Abstract;
 import Utils.String.UniString;
 import Graphics.Compute;
@@ -58,9 +60,9 @@ void main(uint3 dtid : SV_DispatchThreadID)
     const float matrixValue = algorithm == 0 ? kBayer2x2[index] : kBayer4x4[index];
     const float threshold = (matrixValue / bayerEntryCount + 0.5f / bayerEntryCount - 0.5f) * (1.0f - g_P2) * 2.0f + 0.5f;
     const float levels = max(2.0f, sqrt(g_P1));
-    float4 pixel = g_InputTexture[dtid.xy];
+    float4 pixel = (g_InputTexture[dtid.xy]).bgra;
     pixel.rgb = saturate(floor(pixel.rgb * levels + threshold) / levels);
-    g_OutputTexture[dtid.xy] = pixel;
+    g_OutputTexture[dtid.xy] = (pixel).bgra;
 }
 )";
 } // namespace
@@ -322,7 +324,7 @@ void main(uint3 dtid : SV_DispatchThreadID) {
     uint w, h;
     g_OutputTexture.GetDimensions(w, h);
     if (dtid.x >= w || dtid.y >= h) return;
-    float4 color = g_InputTexture[dtid.xy];
+    float4 color = (g_InputTexture[dtid.xy]).bgra;
     float levels = max(2.0, sqrt(g_ColorCount));
     int algo = int(g_Algorithm);
     if (algo == 0 || algo == 1) {
@@ -338,14 +340,14 @@ void main(uint3 dtid : SV_DispatchThreadID) {
         color.g = floor(color.g * levels + threshold) / levels;
         color.b = floor(color.b * levels + threshold) / levels;
     }
-    g_OutputTexture[dtid.xy] = float4(saturate(color.rgb), color.a);
+    g_OutputTexture[dtid.xy] = (float4(saturate(color.rgb), color.a)).bgra;
 }
 )";
 
     static bool createTextureFromImage(const ImageF32x4RGBAWithCache& src, Diligent::IRenderDevice* device, Diligent::ITexture** outTex) {
         const auto& img = src.image();
-        const float* data = img.rgba32fData();
-        if (!device || !outTex || !data || img.width() <= 0 || img.height() <= 0) return false;
+        const auto upload = ArtifactCore::makeGpuImageUploadBuffer(img.surfaceView(), ArtifactCore::GpuImageChannelOrder::Bgra);
+        if (!device || !outTex || !upload.isValid() || img.width() <= 0 || img.height() <= 0) return false;
         Diligent::TextureDesc desc;
         desc.Type = Diligent::RESOURCE_DIM_TEX_2D;
         desc.Width = img.width();
@@ -358,8 +360,8 @@ void main(uint3 dtid : SV_DispatchThreadID) {
         desc.BindFlags = Diligent::BIND_SHADER_RESOURCE;
         desc.Name = "Dithering/InputTexture";
         Diligent::TextureSubResData sub{};
-        sub.pData = data;
-        sub.Stride = static_cast<Diligent::Uint64>(img.width()) * sizeof(float) * 4ull;
+        sub.pData = upload.data();
+        sub.Stride = static_cast<Diligent::Uint64>(upload.rowStride);
         Diligent::TextureData init{};
         init.pSubResources = &sub;
         init.NumSubresources = 1;
@@ -394,10 +396,9 @@ void main(uint3 dtid : SV_DispatchThreadID) {
         ctx->WaitForIdle();
         ctx->MapTextureSubresource(staging, 0, 0, Diligent::MAP_READ, Diligent::MAP_FLAG_NONE, nullptr, mapped);
         if (!mapped.pData || mapped.Stride == 0) return false;
-        cv::Mat temp(static_cast<int>(desc.Height), static_cast<int>(desc.Width), CV_32FC4, mapped.pData, mapped.Stride);
-        dst.image().setFromCVMat(temp, colorDescriptor);
+        const bool copied = dst.image().setFromGpuBGRA32F(static_cast<const float*>(mapped.pData), static_cast<int>(desc.Width), static_cast<int>(desc.Height), static_cast<std::size_t>(mapped.Stride), colorDescriptor);
         ctx->UnmapTextureSubresource(staging, 0, 0);
-        return true;
+        return copied;
     }
 };
 

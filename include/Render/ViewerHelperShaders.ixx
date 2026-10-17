@@ -96,7 +96,8 @@ export namespace Artifact
         g_ExposureDst.GetDimensions(outWidth, outHeight);
         if (id.x >= outWidth || id.y >= outHeight) return;
 
-        const float4 source = g_ExposureSrc[id.xy];
+        const float4 sourceBgra = g_ExposureSrc[id.xy];
+        const float4 source = sourceBgra.bgra;
         // The final composition accumulator is premultiplied. Apply display
         // transforms and clipping tests to straight linear RGB, then restore
         // premultiplication so transparent edges retain their coverage.
@@ -126,7 +127,8 @@ export namespace Artifact
                 c = float3(0.02, 0.08, 1.0);
         }
         // Preserve coverage and alpha while returning premultiplied RGB.
-        g_ExposureDst[id.xy] = float4(c * source.a, source.a);
+        const float4 outputRgba = float4(c * source.a, source.a);
+        g_ExposureDst[id.xy] = outputRgba.bgra;
     }
     )HLSL";
 }

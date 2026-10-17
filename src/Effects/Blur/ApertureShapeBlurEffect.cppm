@@ -266,8 +266,8 @@ void DepthBokehEffect::apply(const ImageF32x4RGBAWithCache& src,
             float* row = depth.ptr<float>(y);
             for (int x = 0; x < width; ++x) {
                 const std::size_t offset = (static_cast<std::size_t>(y) * width + x) * 4u;
-                row[x] = std::clamp(source[offset] * 0.2126f +
-                    source[offset + 1] * 0.7152f + source[offset + 2] * 0.0722f,
+                row[x] = std::clamp(source[offset] * 0.0722f +
+                    source[offset + 1] * 0.7152f + source[offset + 2] * 0.2126f,
                     0.0f, 1.0f);
             }
         }

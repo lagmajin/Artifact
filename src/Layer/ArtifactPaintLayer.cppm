@@ -33,6 +33,7 @@ QJsonObject frameBufferToJson(const ArtifactCore::ImageF32x4RGBAWithCache& buffe
     obj["frame"] = static_cast<qint64>(frame);
     obj["width"] = image.width();
     obj["height"] = image.height();
+    obj["channel_order"] = QStringLiteral("BGRA");
 
     const std::size_t byteCount = image.totalPixels() * 4u * sizeof(float);
     if (byteCount > 0 && image.rgba32fData()) {
@@ -74,7 +75,15 @@ bool frameBufferFromJson(const QJsonObject& obj, ArtifactCore::ImageF32x4RGBAWit
         return false;
     }
 
-    buffer.image().setFromRGBA32F(reinterpret_cast<const float*>(bytes.constData()), width, height);
+    const QString channelOrder = obj.value("channel_order").toString();
+    if (channelOrder == QStringLiteral("BGRA")) {
+        buffer.image().setFromBGRA32F(
+            reinterpret_cast<const float*>(bytes.constData()), width, height);
+    } else {
+        // Legacy frame payloads without channel_order contain RGBA values.
+        buffer.image().setFromRGBA32F(
+            reinterpret_cast<const float*>(bytes.constData()), width, height);
+    }
     float* pixels = buffer.image().rgba32fData();
     const std::size_t pixelCount = buffer.image().totalPixels();
     for (std::size_t index = 0; index < pixelCount * 4u; ++index) {
@@ -304,9 +313,10 @@ void ArtifactPaintLayer::applyStrokeAtFrame(const BrushStroke& stroke, const Fra
                         pixel[3] *= 1.0f - alpha;
                     } else {
                         const float invAlpha = 1.0f - alpha;
-                        pixel[0] = pixel[0] * invAlpha + color.r() * alpha;
+                        // Paint colors are logical RGBA; the image backing is BGRA.
+                        pixel[0] = pixel[0] * invAlpha + color.b() * alpha;
                         pixel[1] = pixel[1] * invAlpha + color.g() * alpha;
-                        pixel[2] = pixel[2] * invAlpha + color.b() * alpha;
+                        pixel[2] = pixel[2] * invAlpha + color.r() * alpha;
                         pixel[3] = pixel[3] * invAlpha + alpha;
                     }
                 }

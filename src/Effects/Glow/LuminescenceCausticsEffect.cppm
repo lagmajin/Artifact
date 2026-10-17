@@ -39,8 +39,8 @@ public:
 
         cv::Mat input(height, width, CV_32FC4, const_cast<float*>(pixels));
         cv::Mat rgb, gray, gradX, gradY, edge;
-        cv::cvtColor(input, rgb, cv::COLOR_RGBA2RGB);
-        cv::cvtColor(rgb, gray, cv::COLOR_RGB2GRAY);
+        cv::cvtColor(input, rgb, cv::COLOR_BGRA2BGR);
+        cv::cvtColor(rgb, gray, cv::COLOR_BGR2GRAY);
         cv::Sobel(gray, gradX, CV_32F, 1, 0, 3);
         cv::Sobel(gray, gradY, CV_32F, 0, 1, 3);
         cv::magnitude(gradX, gradY, edge);
@@ -102,7 +102,7 @@ float causticsGray(int2 p, uint w, uint h)
 {
     p.x = causticsReflect(p.x, (int)w);
     p.y = causticsReflect(p.y, (int)h);
-    float3 c = g_InputTexture[uint2(p)].rgb;
+    float3 c = (g_InputTexture[uint2(p)]).bgra.rgb;
     return dot(c, float3(0.299f, 0.587f, 0.114f));
 }
 
@@ -153,7 +153,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
     float edge = acc / max(sum, 0.0001f);
     float2 grad = causticsSobel(x, y, w, h);
     float gray = causticsGray(int2(x, y), w, h);
-    float4 src = g_InputTexture[dtid.xy];
+    float4 src = (g_InputTexture[dtid.xy]).bgra;
     float highlight = clamp((gray - g_P0) / max(0.001f, 1.0f - g_P0), 0.0f, 1.0f);
     float direction = atan2(grad.y, grad.x);
     float phase = g_P4 * 0.0174532925f;
@@ -167,7 +167,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
     float caustic = ridge * sourceMask * g_P3 * src.a;
     float warm = 1.0f - g_P5 * 0.25f;
     float3 result = src.rgb + float3(caustic * warm, caustic, caustic * (1.0f + g_P5 * 0.65f));
-    g_OutputTexture[dtid.xy] = float4(result, src.a);
+    g_OutputTexture[dtid.xy] = (float4(result, src.a)).bgra;
 }
 )";
 

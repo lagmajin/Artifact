@@ -8,6 +8,7 @@ module;
 #include <QVariant>
 #include <cmath>
 #include <cstring>
+#include <cstddef>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
@@ -17,6 +18,7 @@ module Artifact.Effect.Rasterizer.LinearWipe;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
+import Image.GpuImageUpload;
 import Property.Abstract;
 import Utils.String.UniString;
 import Core.Parallel;
@@ -61,9 +63,9 @@ void main(uint3 dispatchId : SV_DispatchThreadID)
     const float smoothEdge = edge * edge * (3.0 - 2.0 * edge);
     float alpha = 1.0 - smoothEdge;
     if (g_P2 > 0.0) alpha = saturate(alpha / max(0.00001, g_P2));
-    float4 color = g_InputTexture[dispatchId.xy];
+    float4 color = (g_InputTexture[dispatchId.xy]).bgra;
     color.a *= alpha;
-    g_OutputTexture[dispatchId.xy] = color;
+    g_OutputTexture[dispatchId.xy] = (color).bgra;
 }
 )";
 
@@ -130,18 +132,18 @@ public:
     }
     void applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
         Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device;Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context;if(!acquireSharedRenderDeviceForCurrentBackend(device,context)){applyCPU(src,dst);return;}
-        const auto& image=src.image();const float* pixels=image.rgba32fData();if(!pixels||image.width()<=0||image.height()<=0){applyCPU(src,dst);return;}
-        Diligent::TextureDesc desc{};desc.Name="LinearWipe/Input";desc.Type=Diligent::RESOURCE_DIM_TEX_2D;desc.Width=image.width();desc.Height=image.height();desc.Format=Diligent::TEX_FORMAT_RGBA32_FLOAT;desc.MipLevels=1;desc.ArraySize=1;desc.SampleCount=1;desc.Usage=Diligent::USAGE_IMMUTABLE;desc.BindFlags=Diligent::BIND_SHADER_RESOURCE;Diligent::TextureSubResData sub{};sub.pData=pixels;sub.Stride=static_cast<Diligent::Uint64>(image.width())*sizeof(float)*4ull;Diligent::TextureData init{};init.pSubResources=&sub;init.NumSubresources=1;Diligent::RefCntAutoPtr<Diligent::ITexture> input;device->CreateTexture(desc,&init,&input);if(!input){applyCPU(src,dst);return;}
+        const auto& image=src.image();const auto upload=ArtifactCore::makeGpuImageUploadBuffer(image.surfaceView(), ArtifactCore::GpuImageChannelOrder::Bgra);if(!upload.isValid()||image.width()<=0||image.height()<=0){applyCPU(src,dst);return;}
+        Diligent::TextureDesc desc{};desc.Name="LinearWipe/Input";desc.Type=Diligent::RESOURCE_DIM_TEX_2D;desc.Width=image.width();desc.Height=image.height();desc.Format=Diligent::TEX_FORMAT_RGBA32_FLOAT;desc.MipLevels=1;desc.ArraySize=1;desc.SampleCount=1;desc.Usage=Diligent::USAGE_IMMUTABLE;desc.BindFlags=Diligent::BIND_SHADER_RESOURCE;Diligent::TextureSubResData sub{};sub.pData=upload.data();sub.Stride=static_cast<Diligent::Uint64>(upload.rowStride);Diligent::TextureData init{};init.pSubResources=&sub;init.NumSubresources=1;Diligent::RefCntAutoPtr<Diligent::ITexture> input;device->CreateTexture(desc,&init,&input);if(!input){applyCPU(src,dst);return;}
         Diligent::TextureDesc outDesc=desc;outDesc.Name="LinearWipe/Output";outDesc.Usage=Diligent::USAGE_DEFAULT;outDesc.BindFlags=Diligent::BIND_SHADER_RESOURCE|Diligent::BIND_UNORDERED_ACCESS;Diligent::RefCntAutoPtr<Diligent::ITexture> output;device->CreateTexture(outDesc,nullptr,&output);if(!output){applyCPU(src,dst);return;}
         Diligent::BufferDesc cbDesc{};cbDesc.Name="LinearWipe/Params";cbDesc.Size=sizeof(Params);cbDesc.Usage=Diligent::USAGE_DYNAMIC;cbDesc.BindFlags=Diligent::BIND_UNIFORM_BUFFER;cbDesc.CPUAccessFlags=Diligent::CPU_ACCESS_WRITE;Diligent::RefCntAutoPtr<Diligent::IBuffer> params;device->CreateBuffer(cbDesc,nullptr,&params);if(!params){applyCPU(src,dst);return;}void* mapped=nullptr;context->MapBuffer(params,Diligent::MAP_WRITE,Diligent::MAP_FLAG_DISCARD,mapped);if(!mapped){applyCPU(src,dst);return;}Params values{angle_,softness_,feather_};std::memcpy(mapped,&values,sizeof(values));context->UnmapBuffer(params,Diligent::MAP_WRITE);
         static Diligent::ShaderResourceVariableDesc vars[]={{Diligent::SHADER_TYPE_COMPUTE,"LinearWipeParams",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},{Diligent::SHADER_TYPE_COMPUTE,"g_InputTexture",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},{Diligent::SHADER_TYPE_COMPUTE,"g_OutputTexture",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC}};ArtifactCore::GpuContext gpuContext{device,context};ArtifactCore::ComputeExecutor executor{gpuContext};ArtifactCore::ComputePipelineDesc pipeline{};pipeline.name="LinearWipe/PSO";pipeline.shaderSource=kHlsl;pipeline.entryPoint="main";pipeline.sourceLanguage=Diligent::SHADER_SOURCE_LANGUAGE_HLSL;pipeline.variables=vars;pipeline.variableCount=3;pipeline.defaultVariableType=Diligent::SHADER_RESOURCE_VARIABLE_TYPE_STATIC;if(!executor.build(pipeline)||!executor.createShaderResourceBinding(true)||!executor.setBuffer("LinearWipeParams",params)||!executor.setTextureView("g_InputTexture",input->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE))||!executor.setTextureView("g_OutputTexture",output->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))){applyCPU(src,dst);return;}executor.dispatch(context,ArtifactCore::ComputeExecutor::makeDispatchAttribs(outDesc.Width,outDesc.Height,1,8,8,1),Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-        Diligent::TextureDesc stagingDesc=outDesc;stagingDesc.Name="LinearWipe/Readback";stagingDesc.Usage=Diligent::USAGE_STAGING;stagingDesc.BindFlags=Diligent::BIND_NONE;stagingDesc.CPUAccessFlags=Diligent::CPU_ACCESS_READ;Diligent::RefCntAutoPtr<Diligent::ITexture> staging;device->CreateTexture(stagingDesc,nullptr,&staging);if(!staging){applyCPU(src,dst);return;}Diligent::CopyTextureAttribs copy(output,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,staging,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);context->CopyTexture(copy);context->Flush();context->WaitForIdle();Diligent::MappedTextureSubresource read{};context->MapTextureSubresource(staging,0,0,Diligent::MAP_READ,Diligent::MAP_FLAG_NONE,nullptr,read);if(!read.pData||!read.Stride){applyCPU(src,dst);return;}cv::Mat result(static_cast<int>(outDesc.Height),static_cast<int>(outDesc.Width),CV_32FC4,read.pData,read.Stride);dst.image().setFromCVMat(result,image.colorDescriptor());context->UnmapTextureSubresource(staging,0,0);
+        Diligent::TextureDesc stagingDesc=outDesc;stagingDesc.Name="LinearWipe/Readback";stagingDesc.Usage=Diligent::USAGE_STAGING;stagingDesc.BindFlags=Diligent::BIND_NONE;stagingDesc.CPUAccessFlags=Diligent::CPU_ACCESS_READ;Diligent::RefCntAutoPtr<Diligent::ITexture> staging;device->CreateTexture(stagingDesc,nullptr,&staging);if(!staging){applyCPU(src,dst);return;}Diligent::CopyTextureAttribs copy(output,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,staging,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);context->CopyTexture(copy);context->Flush();context->WaitForIdle();Diligent::MappedTextureSubresource read{};context->MapTextureSubresource(staging,0,0,Diligent::MAP_READ,Diligent::MAP_FLAG_NONE,nullptr,read);if(!read.pData||!read.Stride){applyCPU(src,dst);return;}const bool copied=dst.image().setFromGpuBGRA32F(static_cast<const float*>(read.pData),static_cast<int>(outDesc.Width),static_cast<int>(outDesc.Height),static_cast<std::size_t>(read.Stride),image.colorDescriptor());context->UnmapTextureSubresource(staging,0,0);if(!copied)applyCPU(src,dst);
     }
 private:
     struct Params{float angle,softness,feather,pad0=0.0f;};
     static constexpr const char* kHlsl=R"(
 Texture2D<float4> g_InputTexture:register(t0);RWTexture2D<float4> g_OutputTexture:register(u0);cbuffer LinearWipeParams:register(b0){float g_Angle;float g_Softness;float g_Feather;float g_Pad;}
-[numthreads(8,8,1)]void main(uint3 id:SV_DispatchThreadID){uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;float rad=g_Angle*3.14159265/180.0;float ca=cos(rad),sa=sin(rad);float proj=(float)id.x*ca+(float)id.y*sa;float minP=min(0.0,min((float)w*ca,(float)h*sa));float maxP=max(0.0,max((float)w*ca,(float)h*sa));float t=saturate((proj-minP)/max(0.00001,maxP-minP));float halfSoftness=max(0.00001,g_Softness*0.5);float edge=saturate((t-(0.5-halfSoftness))/max(0.00001,2.0*halfSoftness));float smoothEdge=edge*edge*(3.0-2.0*edge);float alpha=1.0-smoothEdge;if(g_Feather>0.0)alpha=saturate(alpha/max(0.00001,g_Feather));float4 c=g_InputTexture[id.xy];c.a*=alpha;g_OutputTexture[id.xy]=c;}
+[numthreads(8,8,1)]void main(uint3 id:SV_DispatchThreadID){uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;float rad=g_Angle*3.14159265/180.0;float ca=cos(rad),sa=sin(rad);float proj=(float)id.x*ca+(float)id.y*sa;float minP=min(0.0,min((float)w*ca,(float)h*sa));float maxP=max(0.0,max((float)w*ca,(float)h*sa));float t=saturate((proj-minP)/max(0.00001,maxP-minP));float halfSoftness=max(0.00001,g_Softness*0.5);float edge=saturate((t-(0.5-halfSoftness))/max(0.00001,2.0*halfSoftness));float smoothEdge=edge*edge*(3.0-2.0*edge);float alpha=1.0-smoothEdge;if(g_Feather>0.0)alpha=saturate(alpha/max(0.00001,g_Feather));float4 c=(g_InputTexture[id.xy]).bgra;c.a*=alpha;g_OutputTexture[id.xy]=(c).bgra;}
 )";
 };
 

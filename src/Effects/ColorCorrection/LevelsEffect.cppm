@@ -22,6 +22,8 @@ import Memory.SharedPtr;
 import Core.Parallel;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
+import Image.ImageSurfaceView;
+import Image.GpuImageUpload;
 import ImageProcessing.ColorTransform.LevelsCurves;
 import Image.ImageF32x4RGBAWithCache;
 import Property.Abstract;
@@ -71,11 +73,15 @@ public:
 
         const int width = dst.image().width();
         const int height = dst.image().height();
-        ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
-            for (int x = 0; x < width; ++x) {
-                float* pixel = pixels + (static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)) * 4u;
-                processor_.applyPixel(pixel[0], pixel[1], pixel[2]);
-            }
+        ArtifactCore::withMutableColorFloat4View(
+            dst.image().surfaceView(), pixels, [&](auto& view) {
+                ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
+                    auto row = view.row(y);
+                    for (int x = 0; x < width; ++x) {
+                        auto pixel = row[x];
+                        processor_.applyPixel(pixel.r, pixel.g, pixel.b);
+                    }
+                });
         });
     }
 };
@@ -103,11 +109,15 @@ public:
 
         const int width = dst.image().width();
         const int height = dst.image().height();
-        ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
-            for (int x = 0; x < width; ++x) {
-                float* pixel = pixels + (static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)) * 4u;
-                processor_.applyPixel(pixel[0], pixel[1], pixel[2]);
-            }
+        ArtifactCore::withMutableColorFloat4View(
+            dst.image().surfaceView(), pixels, [&](auto& view) {
+                ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
+                    auto row = view.row(y);
+                    for (int x = 0; x < width; ++x) {
+                        auto pixel = row[x];
+                        processor_.applyPixel(pixel.r, pixel.g, pixel.b);
+                    }
+                });
         });
     }
 
@@ -274,8 +284,8 @@ private:
             return false;
         }
         const auto& img = src.image();
-        const float* data = img.rgba32fData();
-        if (!data || img.width() <= 0 || img.height() <= 0) {
+        const auto upload = ArtifactCore::makeGpuImageUploadBuffer(img.surfaceView(), ArtifactCore::GpuImageChannelOrder::Bgra);
+        if (!upload.isValid() || img.width() <= 0 || img.height() <= 0) {
             return false;
         }
         Diligent::TextureDesc desc;
@@ -290,8 +300,8 @@ private:
         desc.BindFlags = Diligent::BIND_SHADER_RESOURCE;
         desc.Name = name;
         Diligent::TextureSubResData sub{};
-        sub.pData = data;
-        sub.Stride = static_cast<Diligent::Uint64>(img.width()) * sizeof(float) * 4ull;
+        sub.pData = upload.data();
+        sub.Stride = static_cast<Diligent::Uint64>(upload.rowStride);
         Diligent::TextureData init{};
         init.pSubResources = &sub;
         init.NumSubresources = 1;
@@ -336,10 +346,12 @@ private:
         if (!mapped.pData || mapped.Stride == 0) {
             return false;
         }
-        cv::Mat temp(static_cast<int>(desc.Height), static_cast<int>(desc.Width), CV_32FC4, mapped.pData, mapped.Stride);
-        dst.image().setFromCVMat(temp, colorDescriptor);
+        const bool copied = dst.image().setFromGpuBGRA32F(
+            static_cast<const float*>(mapped.pData), static_cast<int>(desc.Width),
+            static_cast<int>(desc.Height), static_cast<std::size_t>(mapped.Stride),
+            colorDescriptor);
         ctx->UnmapTextureSubresource(staging, 0, 0);
-        return true;
+        return copied;
     }
 
     static constexpr const char* kLevelsHlsl = R"(
@@ -366,11 +378,11 @@ void main(uint3 dtid : SV_DispatchThreadID)
     g_OutputTexture.GetDimensions(width, height);
     if (dtid.x >= width || dtid.y >= height) return;
 
-    float4 px = g_InputTexture[dtid.xy];
+    float4 px = (g_InputTexture[dtid.xy]).bgra;
     px.r = sampleLUT(px.r, 0);
     px.g = sampleLUT(px.g, 1);
     px.b = sampleLUT(px.b, 2);
-    g_OutputTexture[dtid.xy] = px;
+    g_OutputTexture[dtid.xy] = (px).bgra;
 }
 )";
 };

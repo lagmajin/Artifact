@@ -228,6 +228,7 @@ QJsonObject imageToJson(const ArtifactCore::SharedPtr<ImageF32x4_RGBA>& image)
 
     obj["width"] = image->width();
     obj["height"] = image->height();
+    obj["channel_order"] = QStringLiteral("BGRA");
     const std::size_t byteCount = image->totalPixels() * 4u * sizeof(float);
     if (byteCount == 0 || !image->rgba32fData()) {
         return obj;
@@ -257,7 +258,15 @@ ArtifactCore::SharedPtr<ImageF32x4_RGBA> imageFromJson(const QJsonObject& obj)
         const QByteArray bytes = QByteArray::fromBase64(pixelsB64.toLatin1());
         const std::size_t requiredBytes = static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4u * sizeof(float);
         if (bytes.size() >= static_cast<qsizetype>(requiredBytes)) {
-            image->setFromRGBA32F(reinterpret_cast<const float*>(bytes.constData()), width, height);
+            const QString channelOrder = obj.value(QStringLiteral("channel_order")).toString();
+            if (channelOrder == QStringLiteral("BGRA")) {
+                image->setFromBGRA32F(reinterpret_cast<const float*>(bytes.constData()),
+                                      width, height);
+            } else {
+                // Presets written before channel_order was added stored RGBA.
+                image->setFromRGBA32F(reinterpret_cast<const float*>(bytes.constData()),
+                                      width, height);
+            }
         }
     }
     return image;

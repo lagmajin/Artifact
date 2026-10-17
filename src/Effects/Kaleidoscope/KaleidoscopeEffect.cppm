@@ -8,6 +8,7 @@ module;
 #include <QVariant>
 #include <cstring>
 #include <cmath>
+#include <cstddef>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
@@ -17,6 +18,7 @@ module Artifact.Effect.Kaleidoscope;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
+import Image.GpuImageUpload;
 import Property.Abstract;
 import Utils.String.UniString;
 import Graphics.Compute;
@@ -90,14 +92,14 @@ public:
                     const float maxY = std::max(cy, static_cast<float>(h) - cy);
                     float maxR = std::sqrt(maxX * maxX + maxY * maxY);
                     float fade = 1.0f - std::clamp((edgeDist - maxR * (1.0f - feather_)) / std::max(maxR * feather_, 0.001f), 0.0f, 1.0f);
-                    dstPixels[dstIdx + 0] = dstPixels[dstIdx + 0] * (1.0f - fade) + sampled.r() * fade;
+                    dstPixels[dstIdx + 0] = dstPixels[dstIdx + 0] * (1.0f - fade) + sampled.b() * fade;
                     dstPixels[dstIdx + 1] = dstPixels[dstIdx + 1] * (1.0f - fade) + sampled.g() * fade;
-                    dstPixels[dstIdx + 2] = dstPixels[dstIdx + 2] * (1.0f - fade) + sampled.b() * fade;
+                    dstPixels[dstIdx + 2] = dstPixels[dstIdx + 2] * (1.0f - fade) + sampled.r() * fade;
                     dstPixels[dstIdx + 3] = sampled.a();
                 } else {
-                    dstPixels[dstIdx + 0] = sampled.r();
+                    dstPixels[dstIdx + 0] = sampled.b();
                     dstPixels[dstIdx + 1] = sampled.g();
-                    dstPixels[dstIdx + 2] = sampled.b();
+                    dstPixels[dstIdx + 2] = sampled.r();
                     dstPixels[dstIdx + 3] = sampled.a();
                 }
             }
@@ -209,10 +211,10 @@ float4 sampleBilinear(uint2 size, float2 uv) {
     p0 = clamp(p0, int2(0, 0), int2(size - 1));
     p1 = clamp(p1, int2(0, 0), int2(size - 1));
     float2 t = frac(f);
-    float4 c00 = g_InputTexture[p0];
-    float4 c10 = g_InputTexture[int2(p1.x, p0.y)];
-    float4 c01 = g_InputTexture[int2(p0.x, p1.y)];
-    float4 c11 = g_InputTexture[p1];
+    float4 c00 = (g_InputTexture[p0]).bgra;
+    float4 c10 = (g_InputTexture[int2(p1.x, p0.y)]).bgra;
+    float4 c01 = (g_InputTexture[int2(p0.x, p1.y)]).bgra;
+    float4 c11 = (g_InputTexture[p1]).bgra;
     return lerp(lerp(c00, c10, t.x), lerp(c01, c11, t.x), t.y);
 }
 [numthreads(8, 8, 1)]
@@ -246,17 +248,17 @@ void main(uint3 dtid : SV_DispatchThreadID) {
     if (g_Feather > 0.001) {
         float maxR = length(float2(max(cx, w - cx), max(cy, h - cy)));
         float fade = 1.0 - saturate((r - maxR * (1.0 - g_Feather)) / max(maxR * g_Feather, 0.001));
-        float4 orig = g_InputTexture[dtid.xy];
+        float4 orig = (g_InputTexture[dtid.xy]).bgra;
         color = lerp(orig, color, fade);
     }
-    g_OutputTexture[dtid.xy] = color;
+    g_OutputTexture[dtid.xy] = (color).bgra;
 }
 )";
 
     static bool createTextureFromImage(const ImageF32x4RGBAWithCache& src, Diligent::IRenderDevice* device, Diligent::ITexture** outTex) {
         const auto& img = src.image();
-        const float* data = img.rgba32fData();
-        if (!device || !outTex || !data || img.width() <= 0 || img.height() <= 0) return false;
+        const auto upload = ArtifactCore::makeGpuImageUploadBuffer(img.surfaceView(), ArtifactCore::GpuImageChannelOrder::Bgra);
+        if (!device || !outTex || !upload.isValid() || img.width() <= 0 || img.height() <= 0) return false;
         Diligent::TextureDesc desc;
         desc.Type = Diligent::RESOURCE_DIM_TEX_2D;
         desc.Width = img.width();
@@ -269,8 +271,8 @@ void main(uint3 dtid : SV_DispatchThreadID) {
         desc.BindFlags = Diligent::BIND_SHADER_RESOURCE;
         desc.Name = "Kaleidoscope/InputTexture";
         Diligent::TextureSubResData sub{};
-        sub.pData = data;
-        sub.Stride = static_cast<Diligent::Uint64>(img.width()) * sizeof(float) * 4ull;
+        sub.pData = upload.data();
+        sub.Stride = static_cast<Diligent::Uint64>(upload.rowStride);
         Diligent::TextureData init{};
         init.pSubResources = &sub;
         init.NumSubresources = 1;
@@ -303,10 +305,9 @@ void main(uint3 dtid : SV_DispatchThreadID) {
         ctx->WaitForIdle();
         ctx->MapTextureSubresource(staging, 0, 0, Diligent::MAP_READ, Diligent::MAP_FLAG_NONE, nullptr, mapped);
         if (!mapped.pData || mapped.Stride == 0) return false;
-        cv::Mat temp(static_cast<int>(desc.Height), static_cast<int>(desc.Width), CV_32FC4, mapped.pData, mapped.Stride);
-        dst.image().setFromCVMat(temp, colorDescriptor);
+        const bool copied = dst.image().setFromGpuBGRA32F(static_cast<const float*>(mapped.pData), static_cast<int>(desc.Width), static_cast<int>(desc.Height), static_cast<std::size_t>(mapped.Stride), colorDescriptor);
         ctx->UnmapTextureSubresource(staging, 0, 0);
-        return true;
+        return copied;
     }
 };
 

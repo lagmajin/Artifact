@@ -79,7 +79,7 @@ public:
                                 static_cast<int>(std::round(start.y + length)));
             const float alpha = opacity * (0.25f + 0.75f * depthScale);
             const int thickness = std::clamp(static_cast<int>(std::round(depthScale)), 1, 3);
-            cv::line(rain, start, end, cv::Scalar(0.72f, 0.82f, 0.92f, alpha),
+            cv::line(rain, start, end, cv::Scalar(0.92f, 0.82f, 0.72f, alpha),
                      thickness, cv::LINE_AA);
 
             if (splashAmount > 0.0f && end.y >= height - 4.0f &&
@@ -87,7 +87,7 @@ public:
                 const int radius = std::max(1, static_cast<int>(2.5f * depthScale));
                 cv::ellipse(rain, cv::Point(static_cast<int>(end.x), height - 2),
                             cv::Size(radius * 2, radius), 0.0, 195.0, 345.0,
-                            cv::Scalar(0.7f, 0.82f, 0.95f, alpha * 0.7f),
+                            cv::Scalar(0.95f, 0.82f, 0.7f, alpha * 0.7f),
                             1, cv::LINE_AA);
             }
         }

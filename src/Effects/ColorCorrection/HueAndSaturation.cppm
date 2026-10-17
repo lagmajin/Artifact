@@ -15,6 +15,7 @@ module HueAndSaturation;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
+import Image.GpuImageUpload;
 import Property.Abstract;
 import Utils.String.UniString;
 import Graphics.Compute;
@@ -34,13 +35,25 @@ public:
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
         auto& srcImage = src.image();
-        const float* srcData = srcImage.rgba32fData();
-        if (!srcData) {
+        dst = src.DeepCopy();
+        float* dstData = dst.image().rgba32fData();
+        if (!dstData) {
             dst = src;
             return;
         }
 
-        cv::Mat floatMat(srcImage.height(), srcImage.width(), CV_32FC4, const_cast<float*>(srcData));
+        const auto descriptor = srcImage.colorDescriptor();
+        const bool isRgba = descriptor.channelOrder ==
+            ArtifactCore::SurfaceChannelOrder::RGBA;
+        const bool isBgra = descriptor.channelOrder ==
+            ArtifactCore::SurfaceChannelOrder::BGRA;
+        if (!isRgba && !isBgra) {
+            dst = src;
+            return;
+        }
+
+        cv::Mat floatMat(dst.image().height(), dst.image().width(), CV_32FC4,
+                         dstData);
 
         cv::Mat alpha;
         cv::Mat bgr = floatMat.clone();
@@ -53,7 +66,7 @@ public:
         cv::merge(std::vector<cv::Mat>{channels[0], channels[1], channels[2]}, bgr);
 
         cv::Mat hsv;
-        cv::cvtColor(bgr, hsv, cv::COLOR_RGB2HSV);
+        cv::cvtColor(bgr, hsv, isBgra ? cv::COLOR_BGR2HSV : cv::COLOR_RGB2HSV);
 
         ArtifactCore::Parallel::ForPixels(0, hsv.rows, hsv.rows, hsv.cols, [&](int y) {
             cv::Vec3f* row = hsv.ptr<cv::Vec3f>(y);
@@ -71,11 +84,9 @@ public:
             }
         });
 
-        cv::cvtColor(hsv, bgr, cv::COLOR_HSV2RGB);
+        cv::cvtColor(hsv, bgr, isBgra ? cv::COLOR_HSV2BGR : cv::COLOR_HSV2RGB);
         cv::merge(std::vector<cv::Mat>{bgr, alpha}, floatMat);
-        dst.image().setFromRGBA32F(
-            floatMat.ptr<float>(), floatMat.cols, floatMat.rows,
-            src.image().colorDescriptor());
+        dst.image().setColorDescriptor(descriptor);
     }
 };
 
@@ -218,8 +229,9 @@ private:
     {
         if (!device || !outTex) return false;
         const auto& img = src.image();
-        const float* data = img.rgba32fData();
-        if (!data || img.width() <= 0 || img.height() <= 0) return false;
+        if (img.width() <= 0 || img.height() <= 0) return false;
+        const auto upload = ArtifactCore::makeGpuImageUploadBuffer(img.surfaceView(), ArtifactCore::GpuImageChannelOrder::Bgra);
+        if (!upload.isValid()) return false;
         Diligent::TextureDesc desc;
         desc.Type = Diligent::RESOURCE_DIM_TEX_2D;
         desc.Width = static_cast<Diligent::Uint32>(img.width());
@@ -232,8 +244,8 @@ private:
         desc.BindFlags = Diligent::BIND_SHADER_RESOURCE;
         desc.Name = name;
         Diligent::TextureSubResData sub{};
-        sub.pData = data;
-        sub.Stride = static_cast<Diligent::Uint64>(img.width()) * sizeof(float) * 4ull;
+        sub.pData = upload.data();
+        sub.Stride = static_cast<Diligent::Uint64>(upload.rowStride);
         Diligent::TextureData init{};
         init.pSubResources = &sub;
         init.NumSubresources = 1;
@@ -265,10 +277,11 @@ private:
         ctx->WaitForIdle();
         ctx->MapTextureSubresource(staging, 0, 0, Diligent::MAP_READ, Diligent::MAP_FLAG_NONE, nullptr, mapped);
         if (!mapped.pData || mapped.Stride == 0) return false;
-        cv::Mat temp(static_cast<int>(desc.Height), static_cast<int>(desc.Width), CV_32FC4, mapped.pData, mapped.Stride);
-        dst.image().setFromCVMat(temp, colorDescriptor);
+        const bool copied = dst.image().setFromGpuBGRA32F(
+            static_cast<const float*>(mapped.pData), static_cast<int>(desc.Width),
+            static_cast<int>(desc.Height), static_cast<std::size_t>(mapped.Stride), colorDescriptor);
         ctx->UnmapTextureSubresource(staging, 0, 0);
-        return true;
+        return copied;
     }
     Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device_;
     Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context_;
@@ -302,7 +315,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
     uint w, h;
     g_OutputTexture.GetDimensions(w, h);
     if (dtid.x >= w || dtid.y >= h) return;
-    float4 px = g_InputTexture[dtid.xy];
+    float4 px = (g_InputTexture[dtid.xy]).bgra;
     float3 hsv = rgb2hsv(px.rgb);
     if (g_Colorize > 0.5f) {
         hsv.x = frac((g_HueShift + 360.0f) / 360.0f);
@@ -313,7 +326,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
     }
     hsv.z = saturate(hsv.z + g_LightnessShift);
     px.rgb = hsv2rgb(hsv);
-    g_OutputTexture[dtid.xy] = px;
+    g_OutputTexture[dtid.xy] = (px).bgra;
 }
 )";
     HueAndSaturationCPUImpl cpuImpl_;

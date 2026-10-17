@@ -2,6 +2,7 @@ module;
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <cstddef>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -19,6 +20,7 @@ module Artifact.Effect.Rasterizer.Satin;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
+import Image.GpuImageUpload;
 import Property.Abstract;
 import Utils.String.UniString;
 import Core.Parallel;
@@ -101,7 +103,7 @@ public:
         cv::Mat satinAlpha = invert_ ? cv::Mat::ones(H, W, CV_32FC1) - shifted
                                      : shifted;
 
-        // ── 5. サテン色 RGBA マット生成 ─────────────────────────────────────
+        // ── 5. BGRA backing 向けのサテン色マット生成 ────────────────────────
         const float sr = satinColor_.redF();
         const float sg = satinColor_.greenF();
         const float sb = satinColor_.blueF();
@@ -114,8 +116,8 @@ public:
             cv::Vec4f*   lRow = satinLayer.ptr<cv::Vec4f>(y);
             for (int x = 0; x < W; ++x) {
                 const float a = std::clamp(aRow[x] * so * opac, 0.0f, 1.0f);
-                // ImageF32x4_RGBA is stored as RGBA, including its cv::Mat view.
-                lRow[x] = cv::Vec4f(sr, sg, sb, a);
+                // The image backing and cv::Mat view are BGRA.
+                lRow[x] = cv::Vec4f(sb, sg, sr, a);
             }
         });
 
@@ -167,8 +169,8 @@ public:
                   ImageF32x4RGBAWithCache&       dst) override {
         Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device; Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context;
         if (!acquireSharedRenderDeviceForCurrentBackend(device, context)) { applyCPU(src,dst); return; }
-        const auto& image=src.image(); const float* data=image.rgba32fData(); if(!data||image.width()<=0||image.height()<=0){applyCPU(src,dst);return;}
-        Diligent::TextureDesc d{};d.Name="Satin/Input";d.Type=Diligent::RESOURCE_DIM_TEX_2D;d.Width=image.width();d.Height=image.height();d.Format=Diligent::TEX_FORMAT_RGBA32_FLOAT;d.MipLevels=1;d.ArraySize=1;d.SampleCount=1;d.Usage=Diligent::USAGE_IMMUTABLE;d.BindFlags=Diligent::BIND_SHADER_RESOURCE;Diligent::TextureSubResData sub{};sub.pData=data;sub.Stride=static_cast<Diligent::Uint64>(image.width())*sizeof(float)*4ull;Diligent::TextureData init{};init.pSubResources=&sub;init.NumSubresources=1;Diligent::RefCntAutoPtr<Diligent::ITexture> input;device->CreateTexture(d,&init,&input);if(!input){applyCPU(src,dst);return;}
+        const auto& image=src.image(); const auto upload=ArtifactCore::makeGpuImageUploadBuffer(image.surfaceView(), ArtifactCore::GpuImageChannelOrder::Bgra); if(!upload.isValid()||image.width()<=0||image.height()<=0){applyCPU(src,dst);return;}
+        Diligent::TextureDesc d{};d.Name="Satin/Input";d.Type=Diligent::RESOURCE_DIM_TEX_2D;d.Width=image.width();d.Height=image.height();d.Format=Diligent::TEX_FORMAT_RGBA32_FLOAT;d.MipLevels=1;d.ArraySize=1;d.SampleCount=1;d.Usage=Diligent::USAGE_IMMUTABLE;d.BindFlags=Diligent::BIND_SHADER_RESOURCE;Diligent::TextureSubResData sub{};sub.pData=upload.data();sub.Stride=static_cast<Diligent::Uint64>(upload.rowStride);Diligent::TextureData init{};init.pSubResources=&sub;init.NumSubresources=1;Diligent::RefCntAutoPtr<Diligent::ITexture> input;device->CreateTexture(d,&init,&input);if(!input){applyCPU(src,dst);return;}
         auto od=d;od.Name="Satin/Output";od.Usage=Diligent::USAGE_DEFAULT;od.BindFlags=Diligent::BIND_SHADER_RESOURCE|Diligent::BIND_UNORDERED_ACCESS;Diligent::RefCntAutoPtr<Diligent::ITexture> output;device->CreateTexture(od,nullptr,&output);if(!output){applyCPU(src,dst);return;}
         struct Params{float distance,angle,softness,opacity;float invert,pad[3];float color[4];};
         Diligent::BufferDesc bd{};
@@ -203,13 +205,13 @@ public:
         std::memcpy(m, &p, sizeof(p));
         context->UnmapBuffer(params, Diligent::MAP_WRITE);
         static Diligent::ShaderResourceVariableDesc vars[]={{Diligent::SHADER_TYPE_COMPUTE,"SatinParams",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},{Diligent::SHADER_TYPE_COMPUTE,"g_InputTexture",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},{Diligent::SHADER_TYPE_COMPUTE,"g_OutputTexture",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC}};ArtifactCore::GpuContext gc{device,context};ArtifactCore::ComputeExecutor ex{gc};ArtifactCore::ComputePipelineDesc pd{};pd.name="Satin/PSO";pd.shaderSource=kHlsl;pd.entryPoint="main";pd.sourceLanguage=Diligent::SHADER_SOURCE_LANGUAGE_HLSL;pd.variables=vars;pd.variableCount=3;pd.defaultVariableType=Diligent::SHADER_RESOURCE_VARIABLE_TYPE_STATIC;if(!ex.build(pd)||!ex.createShaderResourceBinding(true)||!ex.setBuffer("SatinParams",params)||!ex.setTextureView("g_InputTexture",input->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE))||!ex.setTextureView("g_OutputTexture",output->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))){applyCPU(src,dst);return;}ex.dispatch(context,ArtifactCore::ComputeExecutor::makeDispatchAttribs(od.Width,od.Height,1,8,8,1),Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-        auto sd=od;sd.Name="Satin/Readback";sd.Usage=Diligent::USAGE_STAGING;sd.BindFlags=Diligent::BIND_NONE;sd.CPUAccessFlags=Diligent::CPU_ACCESS_READ;Diligent::RefCntAutoPtr<Diligent::ITexture> staging;device->CreateTexture(sd,nullptr,&staging);if(!staging){applyCPU(src,dst);return;}context->CopyTexture(Diligent::CopyTextureAttribs(output,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,staging,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION));context->Flush();context->WaitForIdle();Diligent::MappedTextureSubresource read{};context->MapTextureSubresource(staging,0,0,Diligent::MAP_READ,Diligent::MAP_FLAG_NONE,nullptr,read);if(!read.pData||!read.Stride){applyCPU(src,dst);return;}cv::Mat result(image.height(),image.width(),CV_32FC4,read.pData,read.Stride);dst.image().setFromCVMat(result,image.colorDescriptor());context->UnmapTextureSubresource(staging,0,0);
+        auto sd=od;sd.Name="Satin/Readback";sd.Usage=Diligent::USAGE_STAGING;sd.BindFlags=Diligent::BIND_NONE;sd.CPUAccessFlags=Diligent::CPU_ACCESS_READ;Diligent::RefCntAutoPtr<Diligent::ITexture> staging;device->CreateTexture(sd,nullptr,&staging);if(!staging){applyCPU(src,dst);return;}context->CopyTexture(Diligent::CopyTextureAttribs(output,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,staging,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION));context->Flush();context->WaitForIdle();Diligent::MappedTextureSubresource read{};context->MapTextureSubresource(staging,0,0,Diligent::MAP_READ,Diligent::MAP_FLAG_NONE,nullptr,read);if(!read.pData||!read.Stride){applyCPU(src,dst);return;}const bool copied=dst.image().setFromGpuBGRA32F(static_cast<const float*>(read.pData),image.width(),image.height(),static_cast<std::size_t>(read.Stride),image.colorDescriptor());context->UnmapTextureSubresource(staging,0,0);if(!copied)applyCPU(src,dst);
     }
 private:
     static constexpr const char* kHlsl=R"(
 Texture2D<float4> g_InputTexture:register(t0);RWTexture2D<float4> g_OutputTexture:register(u0);cbuffer SatinParams:register(b0){float g_Distance;float g_Angle;float g_Softness;float g_Opacity;float g_Invert;float4 g_Color;}
-float alphaAt(int2 p,uint w,uint h){if(p.x<0||p.y<0||p.x>=(int)w||p.y>=(int)h)return 0;return g_InputTexture[uint2(p)].a;}
-[numthreads(8,8,1)]void main(uint3 id:SV_DispatchThreadID){uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;float4 base=g_InputTexture[id.xy];float2 dir=float2(cos(g_Angle*0.0174532925),-sin(g_Angle*0.0174532925));float2 off=dir*g_Distance;float a=0;int n=max(1,(int)(g_Softness*2+1));for(int i=-n;i<=n;++i){float t=(float)i/max(1,n);a+=alphaAt(int2(float2(id.xy)+off+dir*t*g_Softness),w,h);}a/=2*n+1;if(g_Invert>0.5)a=1-a;float sa=saturate(a*g_Color.a*g_Opacity);float oa=base.a+sa*(1-base.a);float3 rgb=oa>0?(base.rgb*base.a+(base.rgb*g_Color.rgb)*sa*(1-base.a))/oa:0;g_OutputTexture[id.xy]=float4(rgb,oa);}
+float alphaAt(int2 p,uint w,uint h){if(p.x<0||p.y<0||p.x>=(int)w||p.y>=(int)h)return 0;return (g_InputTexture[uint2(p)]).bgra.a;}
+[numthreads(8,8,1)]void main(uint3 id:SV_DispatchThreadID){uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;float4 base=(g_InputTexture[id.xy]).bgra;float2 dir=float2(cos(g_Angle*0.0174532925),-sin(g_Angle*0.0174532925));float2 off=dir*g_Distance;float a=0;int n=max(1,(int)(g_Softness*2+1));for(int i=-n;i<=n;++i){float t=(float)i/max(1,n);a+=alphaAt(int2(float2(id.xy)+off+dir*t*g_Softness),w,h);}a/=2*n+1;if(g_Invert>0.5)a=1-a;float sa=saturate(a*g_Color.a*g_Opacity);float oa=base.a+sa*(1-base.a);float3 rgb=oa>0?(base.rgb*base.a+(base.rgb*g_Color.rgb)*sa*(1-base.a))/oa:0;g_OutputTexture[id.xy]=(float4(rgb,oa)).bgra;}
 )";
 };
 

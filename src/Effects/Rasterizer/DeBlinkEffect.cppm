@@ -19,6 +19,8 @@ import Artifact.Effect.Abstract;
 import Artifact.Effect.Context;
 import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
+import Image.ImageSurfaceView;
+import Image.GpuImageUpload;
 import Image.ImageF32x4_RGBA;
 import ImageProcessing;
 import Property.Abstract;
@@ -32,6 +34,26 @@ import Memory.SharedPtr;
 namespace Artifact {
 using namespace ArtifactCore;
 
+static double logicalFrameLuma(const ImageF32x4_RGBA& image) {
+    double total = 0.0;
+    std::size_t count = 0;
+    const bool valid = ArtifactCore::withColorFloat4View(
+        image.surfaceView(), [&](const auto& view) {
+            for (int y = 0; y < view.height(); y += 4) {
+                const auto row = view.row(y);
+                for (int x = 0; x < view.width(); x += 4) {
+                    const auto pixel = row[x];
+                    if (!std::isfinite(pixel.r) || !std::isfinite(pixel.g) ||
+                        !std::isfinite(pixel.b)) continue;
+                    total += pixel.r * 0.299 + pixel.g * 0.587 + pixel.b * 0.114;
+                    ++count;
+                }
+            }
+        });
+    if (!valid || count == 0) return std::numeric_limits<double>::quiet_NaN();
+    return total / static_cast<double>(count);
+}
+
 class DeBlinkCPUImpl : public ArtifactEffectImplBase {
 public:
     double threshold_=0.06, strength_=1.0, sceneCut_=0.25, maxGain_=4.0;
@@ -44,19 +66,17 @@ public:
             dst = src;
             return;
         }
-        const double curLuma = Repair::frameLuma(sd, W, H);
+        const double curLuma = logicalFrameLuma(si);
         double prevLuma = std::numeric_limits<double>::quiet_NaN();
         double nextLuma = std::numeric_limits<double>::quiet_NaN();
         if (context_.sampler) {
             ImageF32x4RGBAWithCache neighbor;
             if (context_.sampler->sampleCurrentLayerFrameRelative(-1, neighbor) &&
                 neighbor.image().rgba32fData())
-                prevLuma = Repair::frameLuma(neighbor.image().rgba32fData(),
-                                             neighbor.width(), neighbor.height());
+                prevLuma = logicalFrameLuma(neighbor.image());
             if (context_.sampler->sampleCurrentLayerFrameRelative(1, neighbor) &&
                 neighbor.image().rgba32fData())
-                nextLuma = Repair::frameLuma(neighbor.image().rgba32fData(),
-                                             neighbor.width(), neighbor.height());
+                nextLuma = logicalFrameLuma(neighbor.image());
         }
         Repair::DeBlinkParams params;
         params.threshold = threshold_;
@@ -110,19 +130,17 @@ public:
             dst = src;
             return;
         }
-        const double curLuma = Repair::frameLuma(sd, W, H);
+        const double curLuma = logicalFrameLuma(si);
         double prevLuma = std::numeric_limits<double>::quiet_NaN();
         double nextLuma = std::numeric_limits<double>::quiet_NaN();
         if (ArtifactEffectImplBase::context_.sampler) {
             ImageF32x4RGBAWithCache neighbor;
             if (ArtifactEffectImplBase::context_.sampler->sampleCurrentLayerFrameRelative(-1, neighbor) &&
                 neighbor.image().rgba32fData())
-                prevLuma = Repair::frameLuma(neighbor.image().rgba32fData(),
-                                             neighbor.width(), neighbor.height());
+                prevLuma = logicalFrameLuma(neighbor.image());
             if (ArtifactEffectImplBase::context_.sampler->sampleCurrentLayerFrameRelative(1, neighbor) &&
                 neighbor.image().rgba32fData())
-                nextLuma = Repair::frameLuma(neighbor.image().rgba32fData(),
-                                             neighbor.width(), neighbor.height());
+                nextLuma = logicalFrameLuma(neighbor.image());
         }
         Repair::DeBlinkParams params;
         params.threshold = threshold_;
@@ -251,16 +269,17 @@ cbuffer DeBlinkParams : register(b0) { float g_Gain; float3 Pad; };
 [numthreads(16,16,1)] void main(uint3 id : SV_DispatchThreadID) {
   uint w, h; g_OutputTexture.GetDimensions(w, h);
   if (id.x >= w || id.y >= h) return;
-  float4 px = g_InputTexture[id.xy];
-  g_OutputTexture[id.xy] = float4(saturate(px.rgb * g_Gain), px.a);
+  float4 px = (g_InputTexture[id.xy]).bgra;
+  g_OutputTexture[id.xy] = (float4(saturate(px.rgb * g_Gain), px.a)).bgra;
 })";
 
     static bool createTextureFromImage(const ImageF32x4RGBAWithCache& src,
                                        Diligent::IRenderDevice* device,
                                        Diligent::ITexture** outTex, const char* name) {
         const auto& img = src.image();
-        const float* data = img.rgba32fData();
-        if (!device || !outTex || !data || img.width() <= 0 || img.height() <= 0) return false;
+        if (!device || !outTex || img.width() <= 0 || img.height() <= 0) return false;
+        const auto upload = ArtifactCore::makeGpuImageUploadBuffer(img.surfaceView(), ArtifactCore::GpuImageChannelOrder::Bgra);
+        if (!upload.isValid()) return false;
         Diligent::TextureDesc desc;
         desc.Type = Diligent::RESOURCE_DIM_TEX_2D;
         desc.Width = img.width();
@@ -273,8 +292,8 @@ cbuffer DeBlinkParams : register(b0) { float g_Gain; float3 Pad; };
         desc.BindFlags = Diligent::BIND_SHADER_RESOURCE;
         desc.Name = name;
         Diligent::TextureSubResData sub{};
-        sub.pData = data;
-        sub.Stride = static_cast<Diligent::Uint64>(img.width()) * sizeof(float) * 4ull;
+        sub.pData = upload.data();
+        sub.Stride = static_cast<Diligent::Uint64>(upload.rowStride);
         Diligent::TextureData init{};
         init.pSubResources = &sub;
         init.NumSubresources = 1;
@@ -309,11 +328,11 @@ cbuffer DeBlinkParams : register(b0) { float g_Gain; float3 Pad; };
         Diligent::MappedTextureSubresource mapped{};
         ctx->MapTextureSubresource(staging, 0, 0, Diligent::MAP_READ, Diligent::MAP_FLAG_NONE, nullptr, mapped);
         if (!mapped.pData || mapped.Stride == 0) return false;
-        cv::Mat temp(static_cast<int>(desc.Height), static_cast<int>(desc.Width),
-                     CV_32FC4, mapped.pData, mapped.Stride);
-        dst.image().setFromCVMat(temp, colorDescriptor);
+        const bool copied = dst.image().setFromGpuBGRA32F(
+            static_cast<const float*>(mapped.pData), static_cast<int>(desc.Width),
+            static_cast<int>(desc.Height), static_cast<std::size_t>(mapped.Stride), colorDescriptor);
         ctx->UnmapTextureSubresource(staging, 0, 0);
-        return true;
+        return copied;
     }
 };
 

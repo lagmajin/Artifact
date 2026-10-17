@@ -7,6 +7,7 @@ module;
 #include <QString>
 #include <QVariant>
 #include <cstring>
+#include <cstddef>
 #include <cmath>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
@@ -17,6 +18,7 @@ module Artifact.Effect.Kuwahara;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
+import Image.GpuImageUpload;
 import Property.Abstract;
 import Utils.String.UniString;
 import Graphics.Compute;
@@ -214,7 +216,7 @@ KuwaharaStats kuwaharaQuadrant(uint2 pos, int2 off, int r, uint w, uint h) {
         if (y < 0 || y >= int(h)) continue;
         for (int x = pos.x + off.x; x != pos.x + off.x + r; ++x) {
             if (x < 0 || x >= int(w)) continue;
-            float4 pixel = g_InputTexture[uint2(x, y)];
+            float4 pixel = (g_InputTexture[uint2(x, y)]).bgra;
             sum += pixel;
             squaredRgbSum += dot(pixel.rgb, pixel.rgb);
             ++count;
@@ -254,14 +256,14 @@ void main(uint3 dtid : SV_DispatchThreadID) {
     float w3 = 1.0 / max(v3 + s, 0.0001);
     float ws = w0 + w1 + w2 + w3;
     w0 /= ws; w1 /= ws; w2 /= ws; w3 /= ws;
-    g_OutputTexture[dtid.xy] = m0 * w0 + m1 * w1 + m2 * w2 + m3 * w3;
+    g_OutputTexture[dtid.xy] = (m0 * w0 + m1 * w1 + m2 * w2 + m3 * w3).bgra;
 }
 )";
 
     static bool createTextureFromImage(const ImageF32x4RGBAWithCache& src, Diligent::IRenderDevice* device, Diligent::ITexture** outTex) {
         const auto& img = src.image();
-        const float* data = img.rgba32fData();
-        if (!device || !outTex || !data || img.width() <= 0 || img.height() <= 0) return false;
+        const auto upload = ArtifactCore::makeGpuImageUploadBuffer(img.surfaceView(), ArtifactCore::GpuImageChannelOrder::Bgra);
+        if (!device || !outTex || !upload.isValid() || img.width() <= 0 || img.height() <= 0) return false;
         Diligent::TextureDesc desc;
         desc.Type = Diligent::RESOURCE_DIM_TEX_2D;
         desc.Width = img.width();
@@ -274,8 +276,8 @@ void main(uint3 dtid : SV_DispatchThreadID) {
         desc.BindFlags = Diligent::BIND_SHADER_RESOURCE;
         desc.Name = "Kuwahara/InputTexture";
         Diligent::TextureSubResData sub{};
-        sub.pData = data;
-        sub.Stride = static_cast<Diligent::Uint64>(img.width()) * sizeof(float) * 4ull;
+        sub.pData = upload.data();
+        sub.Stride = static_cast<Diligent::Uint64>(upload.rowStride);
         Diligent::TextureData init{};
         init.pSubResources = &sub;
         init.NumSubresources = 1;
@@ -307,10 +309,9 @@ void main(uint3 dtid : SV_DispatchThreadID) {
         ctx->WaitForIdle();
         ctx->MapTextureSubresource(staging, 0, 0, Diligent::MAP_READ, Diligent::MAP_FLAG_NONE, nullptr, mapped);
         if (!mapped.pData || mapped.Stride == 0) return false;
-        cv::Mat temp(static_cast<int>(desc.Height), static_cast<int>(desc.Width), CV_32FC4, mapped.pData, mapped.Stride);
-        dst.image().setFromCVMat(temp, colorDescriptor);
+        const bool copied = dst.image().setFromGpuBGRA32F(static_cast<const float*>(mapped.pData), static_cast<int>(desc.Width), static_cast<int>(desc.Height), static_cast<std::size_t>(mapped.Stride), colorDescriptor);
         ctx->UnmapTextureSubresource(staging, 0, 0);
-        return true;
+        return copied;
     }
 };
 

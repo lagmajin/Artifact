@@ -190,7 +190,8 @@ namespace Artifact
     QImage OffscreenCompositionRenderer::renderToQImage(const FramePosition& position, ArtifactAbstractComposition* composition)
     {
         renderFrame(position, composition);
-        return renderer_->readbackToImage();
+        return renderer_->readbackToImage(
+            ArtifactCore::SurfaceChannelOrder::BGRA);
     }
 
     QImage OffscreenCompositionRenderer::renderLayerToQImage(
@@ -198,7 +199,10 @@ namespace Artifact
     {
         const int64_t previousFrame = layer ? layer->currentFrame() : 0;
         renderLayerFrame(position, layer);
-        const QImage image = renderer_ ? renderer_->readbackToImage() : QImage();
+        const QImage image = renderer_
+            ? renderer_->readbackToImage(
+                  ArtifactCore::SurfaceChannelOrder::BGRA)
+            : QImage();
         if (layer) {
             layer->goToFrame(previousFrame);
         }
@@ -252,7 +256,8 @@ namespace Artifact
             return {};
         }
         // readbackToImage() submits queued draws itself before copying.
-        return renderer_->readbackToImage();
+        return renderer_->readbackToImage(
+            ArtifactCore::SurfaceChannelOrder::BGRA);
     }
 
     bool OffscreenCompositionRenderer::saveFrame(const QString& path)
@@ -273,14 +278,19 @@ namespace Artifact
         ArtifactCore::Parallel::ForTiles(static_cast<int>(width_), static_cast<int>(height_), 32, 32,
             [&](int x0, int y0, int x1, int y1) {
             for (int y = y0; y < y1; ++y) {
-            QRgb* scan = reinterpret_cast<QRgb*>(qimg.scanLine(y));
+            auto* scan = qimg.scanLine(y);
             for (int x = x0; x < x1; ++x) {
                 const float* col = imagePixels +
                     (static_cast<size_t>(y) * width_ + x) * 4u;
-                scan[x] = qRgba(static_cast<int>(col[0] * 255),
-                                static_cast<int>(col[1] * 255),
-                                static_cast<int>(col[2] * 255),
-                                static_cast<int>(col[3] * 255));
+                const auto toByte = [](float value) {
+                    return static_cast<std::uint8_t>(std::clamp(
+                        value * 255.0f, 0.0f, 255.0f));
+                };
+                const size_t offset = static_cast<size_t>(x) * 4u;
+                scan[offset + 0] = toByte(col[2]);
+                scan[offset + 1] = toByte(col[1]);
+                scan[offset + 2] = toByte(col[0]);
+                scan[offset + 3] = toByte(col[3]);
             }
             }
         });

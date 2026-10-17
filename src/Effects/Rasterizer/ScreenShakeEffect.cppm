@@ -84,9 +84,10 @@ ArtifactCore::Parallel::ForPixels(0, H, W, H, [&](int y) {
                                               : clampCoord(static_cast<float>(y) + dy, H);
                 const FloatRGBA sampled = sampleBilinear(si, sx, sy);
                 const size_t offset = static_cast<size_t>(x) * 4u;
-                dstRow[offset + 0u] = sampled.r();
+                // tmp's image backing is BGRA; sampleBilinear returns logical RGBA.
+                dstRow[offset + 0u] = sampled.b();
                 dstRow[offset + 1u] = sampled.g();
-                dstRow[offset + 2u] = sampled.b();
+                dstRow[offset + 2u] = sampled.r();
                 dstRow[offset + 3u] = sampled.a();
             }
         });

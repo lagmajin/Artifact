@@ -50,11 +50,11 @@ float sampleCurve(float value, int channel) {
 }
 [numthreads(8,8,1)] void main(uint3 id : SV_DispatchThreadID) {
     if (id.x >= g_Width || id.y >= g_Height) return;
-    float4 pixel = g_InputTexture[id.xy];
-    if (g_P0 > 0.5 || pixel.a <= 0.0) {g_OutputTexture[id.xy]=pixel;return;}
+    float4 pixel = (g_InputTexture[id.xy]).bgra;
+    if (g_P0 > 0.5 || pixel.a <= 0.0) {g_OutputTexture[id.xy]=(pixel).bgra;return;}
     float3 color = pixel.rgb / pixel.a;
     color = float3(sampleCurve(color.r,0),sampleCurve(color.g,1),sampleCurve(color.b,2));
-    g_OutputTexture[id.xy] = float4(color * pixel.a, pixel.a);
+    g_OutputTexture[id.xy] = (float4(color * pixel.a, pixel.a)).bgra;
 }
 )";
 
@@ -276,7 +276,7 @@ private:
         const auto& img = src.image();
         // Normalize BGRA backing storage to RGBA before upload so the shader's
         // px.r/g/b references address the intended channels.
-        const auto upload = ArtifactCore::makeGpuImageUploadBuffer(img.surfaceView());
+        const auto upload = ArtifactCore::makeGpuImageUploadBuffer(img.surfaceView(), ArtifactCore::GpuImageChannelOrder::Bgra);
         if (!upload.isValid() || img.width() <= 0 || img.height() <= 0) {
             return false;
         }
@@ -292,7 +292,7 @@ private:
         desc.BindFlags = Diligent::BIND_SHADER_RESOURCE;
         desc.Name = name;
         Diligent::TextureSubResData sub{};
-        sub.pData = upload.bytes.data();
+        sub.pData = upload.data();
         sub.Stride = static_cast<Diligent::Uint64>(upload.rowStride);
         Diligent::TextureData init{};
         init.pSubResources = &sub;
@@ -338,18 +338,12 @@ private:
         if (!mapped.pData || mapped.Stride == 0) {
             return false;
         }
-        cv::Mat temp(static_cast<int>(desc.Height), static_cast<int>(desc.Width), CV_32FC4, mapped.pData, mapped.Stride);
-        dst.image().setFromCVMat(temp, colorDescriptor);
+        const bool copied = dst.image().setFromGpuBGRA32F(
+            static_cast<const float*>(mapped.pData), static_cast<int>(desc.Width),
+            static_cast<int>(desc.Height), static_cast<std::size_t>(mapped.Stride),
+            colorDescriptor);
         ctx->UnmapTextureSubresource(staging, 0, 0);
-        if (colorDescriptor.channelOrder == ArtifactCore::SurfaceChannelOrder::BGRA) {
-            float* pixels = dst.image().rgba32fData();
-            const int width = dst.width();
-            Parallel::ForPixels(0, dst.height(), width, dst.height(), [&](int y) {
-                float* row = pixels + static_cast<size_t>(y) * width * 4u;
-                for (int x = 0; x < width; ++x) std::swap(row[x * 4], row[x * 4 + 2]);
-            });
-        }
-        return true;
+        return copied;
     }
 
     static constexpr const char* kCurvesHlsl = R"(
@@ -377,13 +371,13 @@ void main(uint3 dtid : SV_DispatchThreadID)
     g_OutputTexture.GetDimensions(width, height);
     if (dtid.x >= width || dtid.y >= height) return;
 
-    float4 px = g_InputTexture[dtid.xy];
-    if (premultiplied > 0.5 && px.a <= 0.0) {g_OutputTexture[dtid.xy] = px;return;}
+    float4 px = (g_InputTexture[dtid.xy]).bgra;
+    if (premultiplied > 0.5 && px.a <= 0.0) {g_OutputTexture[dtid.xy] = (px).bgra;return;}
     float alphaScale = premultiplied > 0.5 ? px.a : 1.0;
     px.r = sampleLUT(px.r / alphaScale, 0) * alphaScale;
     px.g = sampleLUT(px.g / alphaScale, 1) * alphaScale;
     px.b = sampleLUT(px.b / alphaScale, 2) * alphaScale;
-    g_OutputTexture[dtid.xy] = px;
+    g_OutputTexture[dtid.xy] = (px).bgra;
 }
 )";
 };

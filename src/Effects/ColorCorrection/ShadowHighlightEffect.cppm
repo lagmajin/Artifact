@@ -13,6 +13,7 @@ import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import Core.Parallel;
 import Image.ImageF32x4RGBAWithCache;
+import Image.ImageSurfaceView;
 import Math.Vec;
 import Property.Abstract;
 import Utils.String.UniString;
@@ -91,13 +92,14 @@ public:
         const float whiteClipLuma = 1.0f - whiteClip;
         const float clipSpan = std::max(whiteClipLuma - blackClipLuma, 1e-4f);
 
-        Parallel::ForPixels(0, height, width, height, [&](int y) {
-            float* row = pixels + static_cast<size_t>(y) * static_cast<size_t>(width) * 4u;
+        ArtifactCore::withMutableColorFloat4View(dst.image().surfaceView(), pixels, [&](auto& view) {
+            Parallel::ForPixels(0, height, width, height, [&](int y) {
+            auto row = view.row(y);
             for (int x = 0; x < width; ++x) {
-                float* pixel = row + static_cast<size_t>(x) * 4u;
-                const float r = pixel[0];
-                const float g = pixel[1];
-                const float b = pixel[2];
+                auto pixel = row[x];
+                const float r = pixel.r;
+                const float g = pixel.g;
+                const float b = pixel.b;
                 const float luma = luminanceOf(r, g, b);
 
                 float outR = r;
@@ -151,10 +153,11 @@ public:
                     outB = (outB - blackClipLuma) / clipSpan;
                 }
 
-                pixel[0] = clamp01(outR);
-                pixel[1] = clamp01(outG);
-                pixel[2] = clamp01(outB);
+                pixel.r = clamp01(outR);
+                pixel.g = clamp01(outG);
+                pixel.b = clamp01(outB);
             }
+                });
         });
     }
 };

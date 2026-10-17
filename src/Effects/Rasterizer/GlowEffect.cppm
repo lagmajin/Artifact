@@ -33,8 +33,8 @@ RWTexture2D<float4> g_OutputTexture : register(u0);
 
 float4 glowSampleClamped(int2 position, uint width, uint height)
 {
-    return g_InputTexture[uint2(clamp(position, int2(0, 0),
-        int2(width - 1, height - 1)))];
+    return (g_InputTexture[uint2(clamp(position, int2(0, 0),
+        int2(width - 1, height - 1)))]).bgra;
 }
 
 [numthreads(8, 8, 1)]
@@ -44,7 +44,7 @@ void main(uint3 dispatchId : SV_DispatchThreadID)
     g_OutputTexture.GetDimensions(width, height);
     if (dispatchId.x >= width || dispatchId.y >= height) return;
 
-    const float4 base = g_InputTexture[dispatchId.xy];
+    const float4 base = (g_InputTexture[dispatchId.xy]).bgra;
     const int radius = clamp((int)g_P1, 1, 4);
     const float sigma = max(g_P1 * 0.3, 0.001);
     const float denominator = max(1.0 - g_P0, 0.0001);
@@ -65,7 +65,7 @@ void main(uint3 dispatchId : SV_DispatchThreadID)
     }
     const float3 result = saturate(base.rgb +
         blurredBright / max(totalWeight, 0.0001) * g_P2);
-    g_OutputTexture[dispatchId.xy] = float4(result, base.a);
+    g_OutputTexture[dispatchId.xy] = (float4(result, base.a)).bgra;
 }
 )";
 
@@ -84,7 +84,7 @@ public:
         cv::Mat srcM(H,W,CV_32FC4,(void*)sd);
         cv::Mat bright; srcM.copyTo(bright);
 Parallel::ForPixels(0, H, W, H,[&](int y){auto* r=bright.ptr<cv::Vec4f>(y);for(int x=0;x<W;++x){
-            float l=r[x][0]*0.299f+r[x][1]*0.587f+r[x][2]*0.114f;
+            float l=r[x][0]*0.114f+r[x][1]*0.587f+r[x][2]*0.299f;
             if(l<th)r[x]=cv::Vec4f(0,0,0,0);else{float m=(l-th)/(1.0f-th);r[x]*=m;}}});
         cv::Mat blur; int kr=std::min((int)rad,128);
         cv::GaussianBlur(bright,blur,cv::Size(kr*2+1,kr*2+1),rad*0.3f);

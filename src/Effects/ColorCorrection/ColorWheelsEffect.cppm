@@ -46,7 +46,7 @@ float wheelLuminance(float3 color) {
 [numthreads(8, 8, 1)]
 void main(uint3 id : SV_DispatchThreadID) {
     if (id.x >= g_Width || id.y >= g_Height) return;
-    float4 pixel = g_InputTexture[id.xy];
+    float4 pixel = (g_InputTexture[id.xy]).bgra;
     float3 lift = float3(g_P0, g_P1, g_P2);
     const bool threeWay = g_P3 > 2.5;
     float3 gamma = float3(g_P4, g_P5, g_P6) * g_P7;
@@ -55,7 +55,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     if (pixel.a <= 0.0 ||
         (all(lift == 0.0) && all(gamma == 1.0) &&
          all(gain == 1.0) && g_P11 == 1.0 && all(offset == 0.0))) {
-        g_OutputTexture[id.xy] = pixel;
+        g_OutputTexture[id.xy] = (pixel).bgra;
         return;
     }
     float3 color = pixel.rgb / pixel.a;
@@ -74,7 +74,7 @@ void main(uint3 id : SV_DispatchThreadID) {
         color *= gain + (g_P11 - 1.0) * wheelLuminance(color);
         if (g_P3 > 1.5) color += offset;
     }
-    g_OutputTexture[id.xy] = float4(saturate(color) * pixel.a, pixel.a);
+    g_OutputTexture[id.xy] = (float4(saturate(color) * pixel.a, pixel.a)).bgra;
 }
 )";
 
@@ -201,8 +201,8 @@ float lum(float3 c) { return dot(c,float3(0.2126,0.7152,0.0722)); }
 [numthreads(8,8,1)] void main(uint3 id:SV_DispatchThreadID) {
     uint w,h; g_OutputTexture.GetDimensions(w,h);
     if(id.x>=w||id.y>=h) return;
-    float4 px=g_InputTexture[id.xy];
-    if(premultiplied>0.5 && px.a<=0.0) { g_OutputTexture[id.xy]=px; return; }
+    float4 px=(g_InputTexture[id.xy]).bgra;
+    if(premultiplied>0.5 && px.a<=0.0) { g_OutputTexture[id.xy]=(px).bgra; return; }
     float alphaScale=premultiplied>0.5 ? px.a : 1.0;
     float3 c=px.rgb/alphaScale;
     c+=(lift+liftMaster)*(1.0-lum(c));
@@ -213,9 +213,9 @@ float lum(float3 c) { return dot(c,float3(0.2126,0.7152,0.0722)); }
     c*=gain+gainMaster*lum(c);
     if(offsetMode>0.5) c+=offset+offsetMaster;
     px.rgb=saturate(c)*alphaScale;
-    g_OutputTexture[id.xy]=px;
+    g_OutputTexture[id.xy]=(px).bgra;
 })";
-    bool createTexture(const ImageF32x4RGBAWithCache& src,Diligent::ITexture** out,const char* name){const auto&i=src.image();const auto upload=ArtifactCore::makeGpuImageUploadBuffer(i.surfaceView());if(!upload.isValid()||!out||i.width()<=0||i.height()<=0)return false;Diligent::TextureDesc d;d.Type=Diligent::RESOURCE_DIM_TEX_2D;d.Width=i.width();d.Height=i.height();d.Format=Diligent::TEX_FORMAT_RGBA32_FLOAT;d.ArraySize=1;d.MipLevels=1;d.SampleCount=1;d.Usage=Diligent::USAGE_IMMUTABLE;d.BindFlags=Diligent::BIND_SHADER_RESOURCE;d.Name=name;Diligent::TextureSubResData sub{};sub.pData=upload.bytes.data();sub.Stride=static_cast<Diligent::Uint64>(upload.rowStride);Diligent::TextureData init{};init.pSubResources=&sub;init.NumSubresources=1;device_->CreateTexture(d,&init,out);return *out!=nullptr;}
+    bool createTexture(const ImageF32x4RGBAWithCache& src,Diligent::ITexture** out,const char* name){const auto&i=src.image();const auto upload=ArtifactCore::makeGpuImageUploadBuffer(i.surfaceView(), ArtifactCore::GpuImageChannelOrder::Bgra);if(!upload.isValid()||!out||i.width()<=0||i.height()<=0)return false;Diligent::TextureDesc d;d.Type=Diligent::RESOURCE_DIM_TEX_2D;d.Width=i.width();d.Height=i.height();d.Format=Diligent::TEX_FORMAT_RGBA32_FLOAT;d.ArraySize=1;d.MipLevels=1;d.SampleCount=1;d.Usage=Diligent::USAGE_IMMUTABLE;d.BindFlags=Diligent::BIND_SHADER_RESOURCE;d.Name=name;Diligent::TextureSubResData sub{};sub.pData=upload.data();sub.Stride=static_cast<Diligent::Uint64>(upload.rowStride);Diligent::TextureData init{};init.pSubResources=&sub;init.NumSubresources=1;device_->CreateTexture(d,&init,out);return *out!=nullptr;}
     // applyConfigured restores the source descriptor. Restore its physical
     // channel order too, so a canonical GPU result is never relabelled BGRA.
     static bool readback(Diligent::IRenderDevice* dev, Diligent::IDeviceContext* ctx,
@@ -242,18 +242,12 @@ float lum(float3 c) { return dot(c,float3(0.2126,0.7152,0.0722)); }
                                   Diligent::MAP_FLAG_NONE, nullptr, m);
         if (!m.pData) return false;
         if (!m.Stride) { ctx->UnmapTextureSubresource(staging, 0, 0); return false; }
-        cv::Mat temp(static_cast<int>(d.Height), static_cast<int>(d.Width),
-                     CV_32FC4, m.pData, m.Stride);
-        dst.image().setFromCVMat(temp, descriptor);
+        const bool copied = dst.image().setFromGpuBGRA32F(
+            static_cast<const float*>(m.pData), static_cast<int>(d.Width),
+            static_cast<int>(d.Height), static_cast<std::size_t>(m.Stride),
+            descriptor);
         ctx->UnmapTextureSubresource(staging, 0, 0);
-        if (descriptor.channelOrder == ArtifactCore::SurfaceChannelOrder::BGRA) {
-            float* pixels = dst.image().rgba32fData();
-            Parallel::ForPixels(0, dst.height(), dst.width(), dst.height(), [&](int y) {
-                float* row = pixels + static_cast<size_t>(y) * dst.width() * 4u;
-                for (int x = 0; x < dst.width(); ++x) std::swap(row[x * 4], row[x * 4 + 2]);
-            });
-        }
-        return true;
+        return copied;
     }
 };
 

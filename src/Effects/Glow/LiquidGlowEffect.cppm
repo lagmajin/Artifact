@@ -156,8 +156,8 @@ float3 liquidGlowMasked(int2 p, uint w, uint h)
 {
     p.x = clamp(p.x, 0, (int)w - 1);
     p.y = clamp(p.y, 0, (int)h - 1);
-    float4 s = g_InputTexture[uint2(p)];
-    float lum = s.r * 0.114f + s.g * 0.587f + s.b * 0.299f;
+    float4 s = (g_InputTexture[uint2(p)]).bgra;
+    float lum = s.r * 0.299f + s.g * 0.587f + s.b * 0.114f;
     float bright = max(lum - g_P0, 0.0f);
     if (g_P0 < 0.999f) bright /= max(0.001f, 1.0f - g_P0);
     return s.rgb * bright;
@@ -206,9 +206,9 @@ void main(uint3 dtid : SV_DispatchThreadID)
         sum += wgt;
     }
     float3 flowed = (v0 * (1.0f - tx) + v1 * tx) / max(sum, 0.0001f);
-    float4 src = g_InputTexture[dtid.xy];
+    float4 src = (g_InputTexture[dtid.xy]).bgra;
     float3 result = min(src.rgb + flowed * g_P2, 1.0f);
-    g_OutputTexture[dtid.xy] = float4(result, src.a);
+    g_OutputTexture[dtid.xy] = (float4(result, src.a)).bgra;
 }
 )";
 

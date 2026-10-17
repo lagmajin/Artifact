@@ -174,13 +174,13 @@ void ArtifactSandSim2DLayer::draw(ArtifactIRenderer* renderer)
                 }
 
                 // Render GPU grid to image buffer
-                float* rgba = impl_->renderBuffer_.rgba32fData();
+                float* bgra = impl_->renderBuffer_.rgba32fData();
                 for (int i = 0; i < w * h; ++i) {
                     FloatRGBA c = materialColor(static_cast<SandMaterial>(gpuGrid[i]), 0, 80);
-                    rgba[i * 4 + 0] = c.r();
-                    rgba[i * 4 + 1] = c.g();
-                    rgba[i * 4 + 2] = c.b();
-                    rgba[i * 4 + 3] = c.a();
+                    bgra[i * 4 + 0] = c.b();
+                    bgra[i * 4 + 1] = c.g();
+                    bgra[i * 4 + 2] = c.r();
+                    bgra[i * 4 + 3] = c.a();
                 }
                 gpuSimulated = true;
             }
@@ -192,16 +192,16 @@ void ArtifactSandSim2DLayer::draw(ArtifactIRenderer* renderer)
         impl_->sim_.update(1);
 
         // Render CPU grid to image buffer
-        float* rgba = impl_->renderBuffer_.rgba32fData();
+        float* bgra = impl_->renderBuffer_.rgba32fData();
         const auto& grid = impl_->sim_.grid();
         const auto& lifetime = impl_->sim_.lifetime();
 
         for (int i = 0; i < w * h; ++i) {
             FloatRGBA c = materialColor(grid[i], lifetime[i], 80);
-            rgba[i * 4 + 0] = c.r();
-            rgba[i * 4 + 1] = c.g();
-            rgba[i * 4 + 2] = c.b();
-            rgba[i * 4 + 3] = c.a();
+            bgra[i * 4 + 0] = c.b();
+            bgra[i * 4 + 1] = c.g();
+            bgra[i * 4 + 2] = c.r();
+            bgra[i * 4 + 3] = c.a();
         }
     }
 

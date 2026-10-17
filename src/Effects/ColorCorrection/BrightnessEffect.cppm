@@ -17,6 +17,8 @@ module BrightnessEffect;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
+import Image.ImageSurfaceView;
+import Image.GpuImageUpload;
 import Property.Abstract;
 import Utils.String.UniString;
 import Graphics.Compute;
@@ -37,32 +39,27 @@ public:
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
         dst = src;
         float* pixels = dst.image().rgba32fData();
-        if (!pixels) {
-            return;
-        }
-
+        if (!pixels) return;
         const int width = dst.image().width();
         const int height = dst.image().height();
         const float contrastFactor = (contrast_ != 1.0f) ? (1.0f + contrast_) / (1.0f - contrast_) : 100.0f;
-
-        ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
-            for (int x = 0; x < width; ++x) {
-                float* pixel = pixels + (static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)) * 4u;
-                for (int c = 0; c < 3; ++c) {
-                    float val = pixel[c];
-                    val += brightness_;
-                    val = contrastFactor * (val - 0.5f) + 0.5f;
-                    if (val > 0.5f) {
-                        const float highlightWeight = (val - 0.5f) * 2.0f;
-                        val += highlights_ * highlightWeight * 0.5f;
-                    }
-                    if (val < 0.5f) {
-                        const float shadowWeight = (0.5f - val) * 2.0f;
-                        val += shadows_ * shadowWeight * 0.5f;
-                    }
-                    pixel[c] = std::clamp(val, 0.0f, 1.0f);
+        ArtifactCore::withMutableColorFloat4View(dst.image().surfaceView(), pixels, [&](auto& view) {
+            ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
+                auto row = view.row(y);
+                for (int x = 0; x < width; ++x) {
+                    auto pixel = row[x];
+                    auto adjust = [&](float value) {
+                        value += brightness_;
+                        value = contrastFactor * (value - 0.5f) + 0.5f;
+                        if (value > 0.5f) value += highlights_ * (value - 0.5f);
+                        if (value < 0.5f) value += shadows_ * (0.5f - value);
+                        return std::clamp(value, 0.0f, 1.0f);
+                    };
+                    pixel.r = adjust(pixel.r);
+                    pixel.g = adjust(pixel.g);
+                    pixel.b = adjust(pixel.b);
                 }
-            }
+            });
         });
     }
 };
@@ -219,8 +216,11 @@ private:
             return false;
         }
         const auto& img = src.image();
-        const float* data = img.rgba32fData();
-        if (!data || img.width() <= 0 || img.height() <= 0) {
+        if (img.width() <= 0 || img.height() <= 0) {
+            return false;
+        }
+        const auto upload = ArtifactCore::makeGpuImageUploadBuffer(img.surfaceView(), ArtifactCore::GpuImageChannelOrder::Bgra);
+        if (!upload.isValid()) {
             return false;
         }
         Diligent::TextureDesc desc;
@@ -235,8 +235,8 @@ private:
         desc.BindFlags = Diligent::BIND_SHADER_RESOURCE;
         desc.Name = name;
         Diligent::TextureSubResData sub{};
-        sub.pData = data;
-        sub.Stride = static_cast<Diligent::Uint64>(img.width()) * sizeof(float) * 4ull;
+        sub.pData = upload.data();
+        sub.Stride = static_cast<Diligent::Uint64>(upload.rowStride);
         Diligent::TextureData init{};
         init.pSubResources = &sub;
         init.NumSubresources = 1;
@@ -291,10 +291,11 @@ private:
             ctx->UnmapTextureSubresource(staging, 0, 0);
             return false;
         }
-        cv::Mat temp(static_cast<int>(desc.Height), static_cast<int>(desc.Width), CV_32FC4, mapped.pData, mapped.Stride);
-        dst.image().setFromCVMat(temp, colorDescriptor);
+        const bool copied = dst.image().setFromGpuBGRA32F(
+            static_cast<const float*>(mapped.pData), static_cast<int>(desc.Width),
+            static_cast<int>(desc.Height), static_cast<std::size_t>(mapped.Stride), colorDescriptor);
         ctx->UnmapTextureSubresource(staging, 0, 0);
-        return true;
+        return copied;
     }
 
     Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device_;
@@ -322,7 +323,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
     g_OutputTexture.GetDimensions(width, height);
     if (dtid.x >= width || dtid.y >= height) return;
 
-    float4 px = g_InputTexture[dtid.xy];
+    float4 px = (g_InputTexture[dtid.xy]).bgra;
     float contrastFactor = (abs(g_Contrast - 1.0f) > 0.0001f)
         ? (1.0f + g_Contrast) / max(0.0001f, 1.0f - g_Contrast)
         : 100.0f;
@@ -341,7 +342,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
         }
         px[c] = clamp(val, 0.0f, 1.0f);
     }
-    g_OutputTexture[dtid.xy] = px;
+    g_OutputTexture[dtid.xy] = (px).bgra;
 }
 )";
     BrightnessEffectCPUImpl cpuImpl_;

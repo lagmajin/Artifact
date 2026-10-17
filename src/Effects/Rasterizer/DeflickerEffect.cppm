@@ -43,7 +43,7 @@ public:
             double total = 0.0;
             for (int x = 0; x < W; x += 4) {
                 const float* p = row + static_cast<size_t>(x) * 4u;
-                total += p[0] * 0.299 + p[1] * 0.587 + p[2] * 0.114;
+                total += p[0] * 0.114 + p[1] * 0.587 + p[2] * 0.299;
             }
             rowLuma[static_cast<size_t>(sampleRow)] = total;
         });

@@ -8,6 +8,7 @@ module;
 #include <QStandardPaths>
 #include <QStringList>
 #include <cstring>
+#include <cstddef>
 #include <algorithm>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
@@ -18,6 +19,7 @@ module Artifact.Effect.Rasterizer.Blur;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
+import Image.GpuImageUpload;
 import Utils.String.UniString;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
@@ -96,10 +98,10 @@ void main(uint3 dtid : SV_DispatchThreadID)
         if (g_Horizontal > 0.5f) samplePos.x = clamp(samplePos.x + i, 0, int(width) - 1);
         else samplePos.y = clamp(samplePos.y + i, 0, int(height) - 1);
         const float w = gaussianWeight((float)i, sigma);
-        sum += decodePremultipliedSrgb(g_InputTexture[uint2(samplePos)]) * w;
+        sum += decodePremultipliedSrgb((g_InputTexture[uint2(samplePos)]).bgra) * w;
         weightSum += w;
     }
-    g_OutputTexture[dtid.xy] = encodePremultipliedSrgb(sum / max(weightSum, 0.0001f));
+    g_OutputTexture[dtid.xy] = (encodePremultipliedSrgb(sum / max(weightSum, 0.0001f))).bgra;
 }
 )";
 
@@ -171,10 +173,9 @@ static bool readbackTexture(Diligent::IDeviceContext* ctx, Diligent::ITexture* s
         ctx->UnmapTextureSubresource(staging, 0, 0);
         return false;
     }
-    cv::Mat temp(static_cast<int>(desc.Height), static_cast<int>(desc.Width), CV_32FC4, mapped.pData, mapped.Stride);
-    dst.image().setFromCVMat(temp, colorDescriptor);
+    const bool copied = dst.image().setFromGpuBGRA32F(static_cast<const float*>(mapped.pData), static_cast<int>(desc.Width), static_cast<int>(desc.Height), static_cast<std::size_t>(mapped.Stride), colorDescriptor);
     ctx->UnmapTextureSubresource(staging, 0, 0);
-    return true;
+    return copied;
 }
 
 }
@@ -390,8 +391,8 @@ public:
         const auto& image = src.image();
         const auto width = static_cast<Diligent::Uint32>(image.width());
         const auto height = static_cast<Diligent::Uint32>(image.height());
-        const float* data = image.rgba32fData();
-        if (!device_ || !context_ || !data || width == 0 || height == 0) {
+        const auto upload = ArtifactCore::makeGpuImageUploadBuffer(image.surfaceView(), ArtifactCore::GpuImageChannelOrder::Bgra);
+        if (!device_ || !context_ || !upload.isValid() || width == 0 || height == 0) {
             return false;
         }
 
@@ -436,8 +437,8 @@ public:
         }
 
         Diligent::TextureSubResData sub{};
-        sub.pData = data;
-        sub.Stride = static_cast<Diligent::Uint64>(width) * sizeof(float) * 4ull;
+        sub.pData = upload.data();
+        sub.Stride = static_cast<Diligent::Uint64>(upload.rowStride);
         const Diligent::Box box(0, width, 0, height, 0, 1);
         context_->UpdateTexture(inputTex_, 0, 0, box, sub,
                                 Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
@@ -556,12 +557,10 @@ public:
             iterationInput = outputTex_;
         }
 
-        // Compute textures are always written in canonical RGBA order.  The
-        // source image may use BGRA backing storage, so passing its descriptor
-        // here would swap red and blue on the GPU path (e.g. orange becomes
-        // blue after applying blur).
+        // The compute passes read logical RGBA from BGRA input and write BGRA
+        // values, matching the image-pipeline texture contract.
         auto outputDescriptor = src.image().colorDescriptor();
-        outputDescriptor.channelOrder = ArtifactCore::SurfaceChannelOrder::RGBA;
+        outputDescriptor.channelOrder = ArtifactCore::SurfaceChannelOrder::BGRA;
         if (!readbackTexture(ctx, outputTex_, stagingTex_, dst, outputDescriptor)) {
             applyCPU(src, dst);
             return;

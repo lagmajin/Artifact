@@ -13,6 +13,7 @@ module Artifact.Effect.Keying.LumaKey;
 import Artifact.Effect.ImplBase;
 import Image.ImageF32x4_RGBA;
 import Image.ImageF32x4RGBAWithCache;
+import Image.GpuImageUpload;
 import ImageProcessing;
 import Property.Abstract;
 import Utils.String.UniString;
@@ -37,16 +38,16 @@ RWTexture2D<float4> g_OutputTexture : register(u0);
 void main(uint3 dtid : SV_DispatchThreadID)
 {
   if (dtid.x >= g_Width || dtid.y >= g_Height) return;
-  float4 foreground = g_InputTexture[dtid.xy];
+  float4 foreground = (g_InputTexture[dtid.xy]).bgra;
   const float low = min(g_P0, g_P1);
   const float high = max(g_P0, g_P1);
   const float luma = dot(foreground.rgb, float3(0.2126f, 0.7152f, 0.0722f));
   const float softness = max(g_P2, 0.001f);
   const float matte = saturate(min((luma - low) / softness, (high - luma) / softness));
   if ((int)g_P5 == 1) {
-    g_OutputTexture[dtid.xy] = float4(matte, matte, matte, 1.0f);
+    g_OutputTexture[dtid.xy] = (float4(matte, matte, matte, 1.0f)).bgra;
   } else {
-    g_OutputTexture[dtid.xy] = float4(foreground.rgb, saturate(foreground.a * matte));
+    g_OutputTexture[dtid.xy] = (float4(foreground.rgb, saturate(foreground.a * matte))).bgra;
   }
 }
 )";
@@ -67,7 +68,8 @@ void LumaKeyEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src,
   params.choke = choke_;
   params.matteBlur = matteBlur_;
   params.viewMode = viewMode_;
-  const Keying::LumaKeyBuffers buffers{data, out, image.width(), image.height()};
+  const Keying::LumaKeyBuffers buffers{data, out, image.width(), image.height(),
+      image.colorDescriptor().channelOrder};
   if (!Keying::processLumaKey(buffers, params)) { dst = src; return; }
   dst = ImageF32x4RGBAWithCache(result);
 }
@@ -84,7 +86,8 @@ public:
     ImageF32x4_RGBA result = image;
     float* out = result.rgba32fData();
     if (!out) { dst = src; return; }
-    const Keying::LumaKeyBuffers buffers{data, out, image.width(), image.height()};
+    const Keying::LumaKeyBuffers buffers{data, out, image.width(), image.height(),
+        image.colorDescriptor().channelOrder};
     if (!Keying::processLumaKey(buffers, params_)) { dst = src; return; }
     dst = ImageF32x4RGBAWithCache(result);
   }
@@ -149,7 +152,9 @@ public:
       pipelineReady_ = true;
     }
     Diligent::RefCntAutoPtr<Diligent::ITexture> inputTex;
-    if (!createFloatTexture(srcImage.rgba32fData(), srcImage.width(), srcImage.height(),
+    const auto upload = ArtifactCore::makeGpuImageUploadBuffer(srcImage.surfaceView(), ArtifactCore::GpuImageChannelOrder::Bgra);
+    if (!upload.isValid()) { applyCPU(src, dst); return; }
+    if (!createFloatTexture(upload, srcImage.width(), srcImage.height(),
                             device_, &inputTex, "LumaKey/Input")) {
       applyCPU(src, dst);
       return;
@@ -220,18 +225,18 @@ cbuffer LumaParams : register(b0) { float Low; float High; float Softness; int V
 [numthreads(16,16,1)] void main(uint3 id : SV_DispatchThreadID) {
   uint w, h; OutputTexture.GetDimensions(w, h);
   if (id.x >= w || id.y >= h) return;
-  float4 fg = ForegroundTexture[id.xy];
+  float4 fg = (ForegroundTexture[id.xy]).bgra;
   float luma = dot(fg.rgb, float3(0.2126, 0.7152, 0.0722));
   float alpha = saturate(min((luma - Low) / max(Softness, 1e-4),
                              (High - luma) / max(Softness, 1e-4)));
-  if (ViewMode == 1) { OutputTexture[id.xy] = float4(alpha, alpha, alpha, 1.0); return; }
-  OutputTexture[id.xy] = float4(fg.rgb, saturate(fg.a * alpha));
+  if (ViewMode == 1) { OutputTexture[id.xy] = (float4(alpha, alpha, alpha, 1.0)).bgra; return; }
+  OutputTexture[id.xy] = (float4(fg.rgb, saturate(fg.a * alpha))).bgra;
 })";
 
-  static bool createFloatTexture(const float* data, int width, int height,
-                                 Diligent::IRenderDevice* device,
+  static bool createFloatTexture(const ArtifactCore::GpuImageUploadBuffer& upload,
+                                 int width, int height, Diligent::IRenderDevice* device,
                                  Diligent::ITexture** outTex, const char* name) {
-    if (!data || width <= 0 || height <= 0 || !device || !outTex) return false;
+    if (!upload.isValid() || width <= 0 || height <= 0 || !device || !outTex) return false;
     Diligent::TextureDesc desc;
     desc.Type = Diligent::RESOURCE_DIM_TEX_2D;
     desc.Width = width;
@@ -244,8 +249,8 @@ cbuffer LumaParams : register(b0) { float Low; float High; float Softness; int V
     desc.BindFlags = Diligent::BIND_SHADER_RESOURCE;
     desc.Name = name;
     Diligent::TextureSubResData sub{};
-    sub.pData = data;
-    sub.Stride = static_cast<Diligent::Uint64>(width) * sizeof(float) * 4ull;
+    sub.pData = upload.data();
+    sub.Stride = static_cast<Diligent::Uint64>(upload.rowStride);
     Diligent::TextureData init{};
     init.pSubResources = &sub;
     init.NumSubresources = 1;
@@ -280,11 +285,11 @@ cbuffer LumaParams : register(b0) { float Low; float High; float Softness; int V
     Diligent::MappedTextureSubresource mapped{};
     ctx->MapTextureSubresource(staging, 0, 0, Diligent::MAP_READ, Diligent::MAP_FLAG_NONE, nullptr, mapped);
     if (!mapped.pData || mapped.Stride == 0) return false;
-    cv::Mat temp(static_cast<int>(desc.Height), static_cast<int>(desc.Width),
-                 CV_32FC4, mapped.pData, mapped.Stride);
-    dst.image().setFromCVMat(temp, colorDescriptor);
+    const bool copied = dst.image().setFromGpuBGRA32F(
+        static_cast<const float*>(mapped.pData), static_cast<int>(desc.Width),
+        static_cast<int>(desc.Height), static_cast<std::size_t>(mapped.Stride), colorDescriptor);
     ctx->UnmapTextureSubresource(staging, 0, 0);
-    return true;
+    return copied;
   }
 };
 

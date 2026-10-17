@@ -1,8 +1,10 @@
 module;
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <vector>
 #include <QString>
@@ -10,6 +12,9 @@ module;
 #include <QColor>
 #include <QDebug>
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #endif
 #include <ofx/ofxCore.h>
@@ -19,6 +24,7 @@ export module Artifact.Effect.Ofx.Impl;
 
 import Image.ImageF32x4RGBAWithCache;
 import Image.ImageF32x4_RGBA;
+import Graphics.SurfaceColorContract;
 import Artifact.Effect.ImplBase;
 import Artifact.Effect.Abstract;
 import Property.Abstract;
@@ -124,21 +130,77 @@ public:
       dst = src.DeepCopy();
       return;
     }
-    const int rowBytes = static_cast<int>(w * 4 * sizeof(float));
-    const auto *srcData = reinterpret_cast<const unsigned char *>(srcImage.rgba32fData());
+    constexpr std::size_t channelsPerPixel = 4u;
+    if (static_cast<std::size_t>(w) >
+        static_cast<std::size_t>(std::numeric_limits<int>::max()) /
+            (channelsPerPixel * sizeof(float))) {
+      dst = src.DeepCopy();
+      return;
+    }
+    const std::size_t widthSize = static_cast<std::size_t>(w);
+    const std::size_t heightSize = static_cast<std::size_t>(h);
+    if (widthSize > std::numeric_limits<std::size_t>::max() / heightSize ||
+        widthSize * heightSize > std::numeric_limits<std::size_t>::max() /
+                                     channelsPerPixel) {
+      dst = src.DeepCopy();
+      return;
+    }
+    const int rowBytes = static_cast<int>(
+        widthSize * channelsPerPixel * sizeof(float));
+    const auto *srcData = srcImage.rgba32fData();
+    if (!srcData) {
+      dst = src.DeepCopy();
+      return;
+    }
+    const std::size_t pixelCount = widthSize * heightSize;
+    const std::size_t floatCount = pixelCount * channelsPerPixel;
+    const bool sourceIsRgba = srcImage.colorDescriptor().channelOrder ==
+                              SurfaceChannelOrder::RGBA;
+    const std::size_t sourceRedIndex = sourceIsRgba ? 0u : 2u;
+    const std::size_t sourceBlueIndex = sourceIsRgba ? 2u : 0u;
+    ofxSourceRgbaScratch_.resize(floatCount);
+    ofxDestinationRgbaScratch_.resize(floatCount);
+    for (std::size_t pixel = 0; pixel < pixelCount; ++pixel) {
+      const std::size_t offset = pixel * 4u;
+      ofxSourceRgbaScratch_[offset + 0] = srcData[offset + sourceRedIndex];
+      ofxSourceRgbaScratch_[offset + 1] = srcData[offset + 1];
+      ofxSourceRgbaScratch_[offset + 2] = srcData[offset + sourceBlueIndex];
+      ofxSourceRgbaScratch_[offset + 3] = srcData[offset + 3];
+      // OFX output starts from the logical source so partial writers keep
+      // the host's established pass-through behavior.
+      ofxDestinationRgbaScratch_[offset + 0] = ofxSourceRgbaScratch_[offset + 0];
+      ofxDestinationRgbaScratch_[offset + 1] = ofxSourceRgbaScratch_[offset + 1];
+      ofxDestinationRgbaScratch_[offset + 2] = ofxSourceRgbaScratch_[offset + 2];
+      ofxDestinationRgbaScratch_[offset + 3] = ofxSourceRgbaScratch_[offset + 3];
+    }
 
     // Blend into a scratch copy of the source so the mix control has both the
     // original and the plugin result available; the plugin must not write into
     // the host input buffer.
     ImageF32x4RGBAWithCache mixed = src.DeepCopy();
     auto &mixedImage = mixed.image();
-    auto *dstData = reinterpret_cast<unsigned char *>(mixedImage.rgba32fData());
+    const auto copyOfxOutputToImageOrder = [&]() {
+      float *destination = mixedImage.rgba32fData();
+      if (!destination) return false;
+      for (std::size_t pixel = 0; pixel < pixelCount; ++pixel) {
+        const std::size_t offset = pixel * 4u;
+        destination[offset + 0] = ofxDestinationRgbaScratch_[
+            offset + (sourceIsRgba ? 0u : 2u)];
+        destination[offset + 1] = ofxDestinationRgbaScratch_[offset + 1];
+        destination[offset + 2] = ofxDestinationRgbaScratch_[
+            offset + (sourceIsRgba ? 2u : 0u)];
+        destination[offset + 3] = ofxDestinationRgbaScratch_[offset + 3];
+      }
+      return true;
+    };
 
-    renderState_->renderFrame.srcPixelData = srcData;
+    renderState_->renderFrame.srcPixelData =
+        reinterpret_cast<const unsigned char *>(ofxSourceRgbaScratch_.data());
     renderState_->renderFrame.srcWidth = w;
     renderState_->renderFrame.srcHeight = h;
     renderState_->renderFrame.srcRowBytes = rowBytes;
-    renderState_->renderFrame.dstPixelData = dstData;
+    renderState_->renderFrame.dstPixelData =
+        reinterpret_cast<const unsigned char *>(ofxDestinationRgbaScratch_.data());
     renderState_->renderFrame.dstRowBytes = rowBytes;
     renderState_->renderFrame.currentTime = static_cast<double>(renderTimeSeconds());
 
@@ -151,6 +213,10 @@ public:
     // render call at all; the scratch buffer already holds the source copy.
     QString failureMessage;
     if (pluginActionIsIdentity(plugin, *renderState_, time, scale)) {
+      if (!copyOfxOutputToImageOrder()) {
+        dst = src.DeepCopy();
+        return;
+      }
       dst = mix_ >= 1.0 ? std::move(mixed) : blendWithSource(src, mixed, mix_);
       return;
     }
@@ -161,6 +227,11 @@ public:
       qWarning("[OFX] %s: %s",
                descriptor_.identifier.toQString().toUtf8().constData(),
                failureMessage.toUtf8().constData());
+    }
+
+    if (!copyOfxOutputToImageOrder()) {
+      dst = src.DeepCopy();
+      return;
     }
 
     // The mix control is a real blend, not just a bypass threshold.
@@ -200,6 +271,11 @@ public:
   }
 
 private:
+  // OFX advertises `OfxImageComponentRGBA`; retain that order in its ABI
+  // buffers while reusing capacity across frames. Host image order stays intact.
+  std::vector<float> ofxSourceRgbaScratch_;
+  std::vector<float> ofxDestinationRgbaScratch_;
+
   void addMetadataProperties(const OfxPluginDescriptor &descriptor) {
     AbstractProperty pathProp;
     pathProp.setName(QStringLiteral("ofx.plugin.path"));

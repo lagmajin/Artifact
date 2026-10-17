@@ -38,8 +38,8 @@ public:
         if (!pixels || width <= 0 || height <= 0) { dst = src; return; }
         cv::Mat input(height, width, CV_32FC4, const_cast<float*>(pixels));
         cv::Mat rgb, gray, gx, gy;
-        cv::cvtColor(input, rgb, cv::COLOR_RGBA2RGB);
-        cv::cvtColor(rgb, gray, cv::COLOR_RGB2GRAY);
+        cv::cvtColor(input, rgb, cv::COLOR_BGRA2BGR);
+        cv::cvtColor(rgb, gray, cv::COLOR_BGR2GRAY);
         if (edgeSoftness > 0.0f)
             cv::GaussianBlur(gray, gray, cv::Size(), edgeSoftness, edgeSoftness);
         cv::Sobel(gray, gx, CV_32F, 1, 0, 3);
@@ -65,9 +65,9 @@ public:
                     0.5f + (gxRow[x] * dirX + gyRow[x] * dirY) * reliefAmount,
                     0.0f, 1.5f);
                 cv::Vec4f styled = sourceRow[x];
-                styled[0] = input.ptr<cv::Vec4f>(redY)[redX][0] * (0.65f + relief * 0.7f);
+                styled[2] = input.ptr<cv::Vec4f>(redY)[redX][2] * (0.65f + relief * 0.7f);
                 styled[1] = sourceRow[x][1] * (0.72f + relief * 0.56f);
-                styled[2] = input.ptr<cv::Vec4f>(blueY)[blueX][2] * (0.8f + (1.0f - relief) * 0.45f);
+                styled[0] = input.ptr<cv::Vec4f>(blueY)[blueX][0] * (0.8f + (1.0f - relief) * 0.45f);
                 for (int c = 0; c < 3; ++c)
                     outputRow[x][c] = sourceRow[x][c] * (1.0f - mix) + styled[c] * mix;
                 outputRow[x][3] = sourceRow[x][3];

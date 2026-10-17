@@ -4928,7 +4928,8 @@ namespace Artifact
                     applyCompositionFinalEffectsToBuffer(comp.get(), frameBuffer);
                     frame = frameBuffer.toQImage();
                 } else {
-                    frame = gpuRenderer_->readbackToImage();
+                    frame = gpuRenderer_->readbackToImage(
+                        ArtifactCore::SurfaceChannelOrder::BGRA);
                     if (frame.isNull()) {
                         if (errorMessage) *errorMessage = QStringLiteral("GPU readback failed");
                         return false;
@@ -7382,7 +7383,8 @@ namespace Artifact
                 const bool hasCompositionEffects =
                     snap.composition->effectCount() > 0;
                 if (!hasCompositionEffects) {
-                    output.beauty = renderer->readbackToImage();
+                    output.beauty = renderer->readbackToImage(
+                        ArtifactCore::SurfaceChannelOrder::BGRA);
                     if (snap.job.regionMode != ArtifactRenderJob::RegionMode::Full) {
                         const QRect fullRect(0, 0, output.beauty.width(),
                                              output.beauty.height());
@@ -7411,7 +7413,8 @@ namespace Artifact
                             snap.composition.get(), beautyBuffer);
                         output.beauty = beautyBuffer.toQImage();
                     } else {
-                        output.beauty = renderer->readbackToImage();
+                        output.beauty = renderer->readbackToImage(
+                            ArtifactCore::SurfaceChannelOrder::BGRA);
                         if (snap.job.regionMode != ArtifactRenderJob::RegionMode::Full) {
                             const QRect crop = QRect(snap.job.cropX, snap.job.cropY,
                                                      snap.job.cropW, snap.job.cropH)

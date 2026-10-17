@@ -12,6 +12,7 @@ module LUTEffect;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
+import Image.ImageSurfaceView;
 import Property.Abstract;
 import Utils.String.UniString;
 import Color.LUT;
@@ -47,13 +48,14 @@ public:
         const float intensity = intensity_;
         const auto& lut = lut_;
 
-        ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
-            float* row = pixels + static_cast<size_t>(y) * static_cast<size_t>(width) * 4u;
+        ArtifactCore::withMutableColorFloat4View(dst.image().surfaceView(), pixels, [&](auto& view) {
+            ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
+            auto row = view.row(y);
             for (int x = 0; x < width; ++x) {
-                float* pixel = row + static_cast<size_t>(x) * 4u;
-                const float origR = pixel[0];
-                const float origG = pixel[1];
-                const float origB = pixel[2];
+                auto pixel = row[x];
+                const float origR = pixel.r;
+                const float origG = pixel.g;
+                const float origB = pixel.b;
 
                 float r = origR;
                 float g = origG;
@@ -61,15 +63,16 @@ public:
                 lut.apply(r, g, b);
 
                 if (intensity >= 0.9999f) {
-                    pixel[0] = r;
-                    pixel[1] = g;
-                    pixel[2] = b;
+                    pixel.r = r;
+                    pixel.g = g;
+                    pixel.b = b;
                 } else if (intensity > 0.0001f) {
-                    pixel[0] = lerp(origR, r, intensity);
-                    pixel[1] = lerp(origG, g, intensity);
-                    pixel[2] = lerp(origB, b, intensity);
+                    pixel.r = lerp(origR, r, intensity);
+                    pixel.g = lerp(origG, g, intensity);
+                    pixel.b = lerp(origB, b, intensity);
                 }
             }
+            });
         });
     }
 };

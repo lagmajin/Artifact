@@ -19,6 +19,7 @@ import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import ImageProcessing.ColorTransform.ColorBalance;
 import Image.ImageF32x4RGBAWithCache;
+import Image.GpuImageUpload;
 import Image.ImageSurfaceView;
 import Graphics.SurfaceColorContract;
 import Property.Abstract;
@@ -55,17 +56,17 @@ Texture2D<float4> g_InputTexture : register(t0);
 RWTexture2D<float4> g_OutputTexture : register(u0);
 [numthreads(8,8,1)] void main(uint3 id : SV_DispatchThreadID) {
     if (id.x >= g_Width || id.y >= g_Height) return;
-    float4 pixel = g_InputTexture[id.xy];
+    float4 pixel = (g_InputTexture[id.xy]).bgra;
     float3 shadow = float3(g_P0,g_P1,g_P2);
     float3 midtone = float3(g_P3,g_P4,g_P5);
     float3 highlight = float3(g_P6,g_P7,g_P8);
     if (pixel.a <= 0.0 || g_P11 <= 0.0 ||
         (all(shadow == 0.0) && all(midtone == 0.0) && all(highlight == 0.0))) {
-        g_OutputTexture[id.xy] = pixel; return;
+        g_OutputTexture[id.xy] = (pixel).bgra; return;
     }
     pixel.rgb = balanceColor(pixel.rgb/pixel.a,shadow,midtone,highlight,
                             g_P9,g_P10,g_P11,g_P12)*pixel.a;
-    g_OutputTexture[id.xy] = pixel;
+    g_OutputTexture[id.xy] = (pixel).bgra;
 }
 )";
 
@@ -273,14 +274,14 @@ cbuffer ColorBalanceParams : register(b0) {
 [numthreads(8,8,1)] void main(uint3 id : SV_DispatchThreadID) {
     uint width,height; g_OutputTexture.GetDimensions(width,height);
     if (id.x >= width || id.y >= height) return;
-    float4 pixel = g_InputTexture[id.xy];
-    if (g_Premultiplied > 0.5 && pixel.a <= 0.0) {g_OutputTexture[id.xy]=pixel;return;}
+    float4 pixel = (g_InputTexture[id.xy]).bgra;
+    if (g_Premultiplied > 0.5 && pixel.a <= 0.0) {g_OutputTexture[id.xy]=(pixel).bgra;return;}
     float alpha = g_Premultiplied > 0.5 ? pixel.a : 1.0;
     float3 color = (g_Bgra > 0.5 ? pixel.bgr : pixel.rgb)/alpha;
     color = balanceColor(color,g_Shadow,g_Midtone,g_Highlight,
                          g_ShadowRange,g_HighlightRange,g_MasterStrength,g_PreserveLuma)*alpha;
     pixel.rgb = g_Bgra > 0.5 ? color.bgr : color;
-    g_OutputTexture[id.xy] = pixel;
+    g_OutputTexture[id.xy] = (pixel).bgra;
 }
 )";
         return source;
@@ -296,8 +297,11 @@ cbuffer ColorBalanceParams : register(b0) {
         }
         const auto& img = src.image();
         // Preserve source storage order; the compatibility shader handles BGRA.
-        const float* data = img.rgba32fData();
-        if (!data || img.width() <= 0 || img.height() <= 0) {
+        if (img.width() <= 0 || img.height() <= 0) {
+            return false;
+        }
+        const auto upload = ArtifactCore::makeGpuImageUploadBuffer(img.surfaceView(), ArtifactCore::GpuImageChannelOrder::Bgra);
+        if (!upload.isValid()) {
             return false;
         }
         Diligent::TextureDesc desc;
@@ -312,8 +316,8 @@ cbuffer ColorBalanceParams : register(b0) {
         desc.BindFlags = Diligent::BIND_SHADER_RESOURCE;
         desc.Name = name;
         Diligent::TextureSubResData sub{};
-        sub.pData = data;
-        sub.Stride = static_cast<Diligent::Uint64>(img.width()) * sizeof(float) * 4ull;
+        sub.pData = upload.data();
+        sub.Stride = static_cast<Diligent::Uint64>(upload.rowStride);
         Diligent::TextureData init{};
         init.pSubResources = &sub;
         init.NumSubresources = 1;
@@ -366,10 +370,11 @@ cbuffer ColorBalanceParams : register(b0) {
             ctx->UnmapTextureSubresource(staging, 0, 0);
             return false;
         }
-        cv::Mat temp(static_cast<int>(desc.Height), static_cast<int>(desc.Width), CV_32FC4, mapped.pData, mapped.Stride);
-        dst.image().setFromCVMat(temp, colorDescriptor);
+        const bool copied = dst.image().setFromGpuBGRA32F(
+            static_cast<const float*>(mapped.pData), static_cast<int>(desc.Width),
+            static_cast<int>(desc.Height), static_cast<std::size_t>(mapped.Stride), colorDescriptor);
         ctx->UnmapTextureSubresource(staging, 0, 0);
-        return true;
+        return copied;
     }
 };
 

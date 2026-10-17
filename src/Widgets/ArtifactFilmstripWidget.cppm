@@ -153,7 +153,8 @@ class FilmstripWidget final : public QWidget {
         return;
       }
     }
-    descriptor.channelOrder = SurfaceChannelOrder::RGBA;
+    // setPixel() always writes canonical BGRA backing, so preserve that
+    // storage order while carrying the frame's color-space metadata forward.
     descriptor.alphaMode = SurfaceAlphaMode::Straight;
     previewPixels_.setColorDescriptor(descriptor);
     const float opacity = opacity_->value() / 100.0f;

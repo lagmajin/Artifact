@@ -20,6 +20,8 @@ module BlackAndWhiteEffect;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
+import Image.ImageSurfaceView;
+import Image.GpuImageUpload;
 import Property.Abstract;
 import Utils.String.UniString;
 import Graphics.Compute;
@@ -95,46 +97,32 @@ public:
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
         dst = src;
         float* pixels = dst.image().rgba32fData();
-        if (!pixels) {
-            return;
-        }
-
+        if (!pixels) return;
         const int width = dst.image().width();
         const int height = dst.image().height();
-        const float rW = reds_;
-        const float yW = yellows_;
-        const float gW = greens_;
-        const float cW = cyans_;
-        const float bW = blues_;
-        const float mW = magentas_;
+        const float rW = reds_, yW = yellows_, gW = greens_;
+        const float cW = cyans_, bW = blues_, mW = magentas_;
         const float tAmt = tintAmount_;
         const float tR = static_cast<float>(tintColor_.redF());
         const float tG = static_cast<float>(tintColor_.greenF());
         const float tB = static_cast<float>(tintColor_.blueF());
-
-        ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
-            float* row = pixels + static_cast<size_t>(y) * static_cast<size_t>(width) * 4u;
-            for (int x = 0; x < width; ++x) {
-                float* pixel = row + static_cast<size_t>(x) * 4u;
-                const float r = pixel[0];
-                const float g = pixel[1];
-                const float b = pixel[2];
-
-                const float luma = calculateBWLuma(r, g, b, rW, yW, gW, cW, bW, mW);
-
-                if (tAmt > 0.0001f) {
-                    const float tintedR = luma * tR;
-                    const float tintedG = luma * tG;
-                    const float tintedB = luma * tB;
-                    pixel[0] = luma + (tintedR - luma) * tAmt;
-                    pixel[1] = luma + (tintedG - luma) * tAmt;
-                    pixel[2] = luma + (tintedB - luma) * tAmt;
-                } else {
-                    pixel[0] = luma;
-                    pixel[1] = luma;
-                    pixel[2] = luma;
+        ArtifactCore::withMutableColorFloat4View(dst.image().surfaceView(), pixels, [&](auto& view) {
+            ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
+                auto row = view.row(y);
+                for (int x = 0; x < width; ++x) {
+                    auto pixel = row[x];
+                    const float luma = calculateBWLuma(pixel.r, pixel.g, pixel.b, rW, yW, gW, cW, bW, mW);
+                    if (tAmt > 0.0001f) {
+                        pixel.r = luma + (luma * tR - luma) * tAmt;
+                        pixel.g = luma + (luma * tG - luma) * tAmt;
+                        pixel.b = luma + (luma * tB - luma) * tAmt;
+                    } else {
+                        pixel.r = luma;
+                        pixel.g = luma;
+                        pixel.b = luma;
+                    }
                 }
-            }
+            });
         });
     }
 };
@@ -309,7 +297,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
     g_OutputTexture.GetDimensions(width, height);
     if (dtid.x >= width || dtid.y >= height) return;
 
-    float4 c = g_InputTexture[dtid.xy];
+    float4 c = (g_InputTexture[dtid.xy]).bgra;
     float maxVal = max(c.r, max(c.g, c.b));
     float minVal = min(c.r, min(c.g, c.b));
     float delta = maxVal - minVal;
@@ -350,7 +338,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
     } else {
         c.rgb = float3(luma, luma, luma);
     }
-    g_OutputTexture[dtid.xy] = c;
+    g_OutputTexture[dtid.xy] = (c).bgra;
 }
 )";
 
@@ -366,8 +354,8 @@ void main(uint3 dtid : SV_DispatchThreadID)
         const int width = image.width();
         const int height = image.height();
         if (width <= 0 || height <= 0) return false;
-        const float* data = image.rgba32fData();
-        if (!data) return false;
+        const auto upload = ArtifactCore::makeGpuImageUploadBuffer(image.surfaceView(), ArtifactCore::GpuImageChannelOrder::Bgra);
+        if (!upload.isValid()) return false;
 
         Diligent::TextureDesc desc;
         desc.Type = Diligent::RESOURCE_DIM_TEX_2D;
@@ -382,8 +370,8 @@ void main(uint3 dtid : SV_DispatchThreadID)
         desc.Name = name;
 
         Diligent::TextureSubResData subres;
-        subres.pData = data;
-        subres.Stride = static_cast<Diligent::Uint32>(width * 4 * sizeof(float));
+        subres.pData = upload.data();
+        subres.Stride = static_cast<Diligent::Uint64>(upload.rowStride);
         Diligent::TextureData initData;
         initData.pSubResources = &subres;
         initData.NumSubresources = 1;
@@ -435,10 +423,11 @@ void main(uint3 dtid : SV_DispatchThreadID)
             ctx->UnmapTextureSubresource(staging, 0, 0);
             return false;
         }
-        cv::Mat temp(static_cast<int>(desc.Height), static_cast<int>(desc.Width), CV_32FC4, mapped.pData, mapped.Stride);
-        dst.image().setFromCVMat(temp, colorDescriptor);
+        const bool copied = dst.image().setFromGpuBGRA32F(
+            static_cast<const float*>(mapped.pData), static_cast<int>(desc.Width),
+            static_cast<int>(desc.Height), static_cast<std::size_t>(mapped.Stride), colorDescriptor);
         ctx->UnmapTextureSubresource(staging, 0, 0);
-        return true;
+        return copied;
     }
 };
 

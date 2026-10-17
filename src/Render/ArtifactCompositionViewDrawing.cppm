@@ -2260,21 +2260,26 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
       }
       sceneLightLiftBaked = true;
       if (directProcessedBuffer && !directProcessedBuffer->isEmpty()) {
-        // Mutate in place so the cache entries written below keep pointing at
-        // the lifted buffer.
-        cv::Mat lit = directProcessedBuffer->toCanonicalRGBA32FC4();
-        for (int y = 0; y < lit.rows; ++y) {
-          auto* row = lit.ptr<cv::Vec4f>(y);
-          for (int x = 0; x < lit.cols; ++x) {
-            row[x][0] = std::clamp(
-                row[x][0] + (1.0f - row[x][0]) * sceneLightLift, 0.0f, 1.0f);
-            row[x][1] = std::clamp(
-                row[x][1] + (1.0f - row[x][1]) * sceneLightLift, 0.0f, 1.0f);
-            row[x][2] = std::clamp(
-                row[x][2] + (1.0f - row[x][2]) * sceneLightLift, 0.0f, 1.0f);
+        // The lift is channel-order invariant. Edit canonical BGRA backing
+        // directly so cached pixels keep their order without a full-frame swap.
+        float* pixels = directProcessedBuffer->rgba32fData();
+        const int width = directProcessedBuffer->width();
+        const int height = directProcessedBuffer->height();
+        if (!pixels || width <= 0 || height <= 0) {
+          return;
+        }
+        for (int y = 0; y < height; ++y) {
+          float* row = pixels + static_cast<std::size_t>(y) *
+                                    static_cast<std::size_t>(width) * 4u;
+          for (int x = 0; x < width; ++x) {
+            float* pixel = row + static_cast<std::size_t>(x) * 4u;
+            for (int channel = 0; channel < 3; ++channel) {
+              pixel[channel] = std::clamp(
+                  pixel[channel] + (1.0f - pixel[channel]) * sceneLightLift,
+                  0.0f, 1.0f);
+            }
           }
         }
-        directProcessedBuffer->setFromCVMat(lit);
         return;
       }
       if (surface.isNull()) {

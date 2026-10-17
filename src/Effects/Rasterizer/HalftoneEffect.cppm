@@ -39,7 +39,7 @@ public:
                 float cx=std::round(rx/ds)*ds,cy=std::round(ry/ds)*ds;
                 float dx=rx-cx,dy=ry-cy;
                 float dist=std::sqrt(dx*dx+dy*dy)/(ds*0.5f);
-                float luma=p[0]*0.299f+p[1]*0.587f+p[2]*0.114f;
+                float luma=p[0]*0.114f+p[1]*0.587f+p[2]*0.299f;
                 float sz=1.0f-luma*ct;sz=std::clamp(sz,0.0f,1.0f);
                 float v=dist<=sz?0.0f:1.0f;
                 p[0]=v;p[1]=v;p[2]=v;p[3]=1.0f;

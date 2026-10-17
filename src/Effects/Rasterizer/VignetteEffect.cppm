@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -17,6 +17,7 @@ import Artifact.Effect.Abstract;
 import Artifact.Effect.Context;
 import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
+import Image.GpuImageUpload;
 import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
@@ -69,16 +70,18 @@ public:
         Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device;
         Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context;
         if(!acquireSharedRenderDeviceForCurrentBackend(device,context)) { applyCPU(src,dst); return; }
-        const auto& image=src.image(); const float* pixels=image.rgba32fData();
-        if(!pixels||image.width()<=0||image.height()<=0) { applyCPU(src,dst); return; }
+        const auto& image=src.image();
+        if(image.width()<=0||image.height()<=0) { applyCPU(src,dst); return; }
+        const auto upload=ArtifactCore::makeGpuImageUploadBuffer(image.surfaceView(), ArtifactCore::GpuImageChannelOrder::Bgra);
+        if(!upload.isValid()) { applyCPU(src,dst); return; }
 
         Diligent::TextureDesc desc{};
         desc.Name="Vignette/Input"; desc.Type=Diligent::RESOURCE_DIM_TEX_2D;
         desc.Width=image.width(); desc.Height=image.height(); desc.Format=Diligent::TEX_FORMAT_RGBA32_FLOAT;
         desc.MipLevels=1; desc.ArraySize=1; desc.SampleCount=1;
         desc.Usage=Diligent::USAGE_IMMUTABLE; desc.BindFlags=Diligent::BIND_SHADER_RESOURCE;
-        Diligent::TextureSubResData sub{}; sub.pData=pixels;
-        sub.Stride=static_cast<Diligent::Uint64>(image.width())*sizeof(float)*4ull;
+        Diligent::TextureSubResData sub{}; sub.pData=upload.data();
+        sub.Stride=static_cast<Diligent::Uint64>(upload.rowStride);
         Diligent::TextureData init{}; init.pSubResources=&sub; init.NumSubresources=1;
         Diligent::RefCntAutoPtr<Diligent::ITexture> input; device->CreateTexture(desc,&init,&input);
         if(!input) { applyCPU(src,dst); return; }
@@ -124,8 +127,8 @@ public:
         Diligent::MappedTextureSubresource read{};
         context->MapTextureSubresource(staging,0,0,Diligent::MAP_READ,Diligent::MAP_FLAG_NONE,nullptr,read);
         if(!read.pData||!read.Stride) { applyCPU(src,dst); return; }
-        cv::Mat result(static_cast<int>(outDesc.Height),static_cast<int>(outDesc.Width),CV_32FC4,read.pData,read.Stride);
-        dst.image().setFromCVMat(result,image.colorDescriptor()); context->UnmapTextureSubresource(staging,0,0);
+        const bool copied=dst.image().setFromGpuBGRA32F(static_cast<const float*>(read.pData),static_cast<int>(outDesc.Width),static_cast<int>(outDesc.Height),static_cast<std::size_t>(read.Stride),image.colorDescriptor());
+        context->UnmapTextureSubresource(staging,0,0); if(!copied) applyCPU(src,dst);
     }
 
 private:
@@ -133,7 +136,7 @@ private:
     static constexpr const char* kHlsl=R"(
 Texture2D<float4> g_InputTexture:register(t0); RWTexture2D<float4> g_OutputTexture:register(u0);
 cbuffer VignetteParams:register(b0){float g_Amount;float g_Radius;float g_Feather;float g_Cx;float g_Cy;float3 g_Pad;}
-[numthreads(8,8,1)] void main(uint3 id:SV_DispatchThreadID){uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;float cx=g_Cx*w,cy=g_Cy*h;float maxX=max(cx,w-cx),maxY=max(cy,h-cy),maxD=sqrt(maxX*maxX+maxY*maxY)*g_Radius;float dx=(float)id.x-cx,dy=(float)id.y-cy;float dist=sqrt(dx*dx+dy*dy);float mask=1.0-saturate((dist-maxD*g_Feather)/(maxD*(1.0-g_Feather)+0.001))*g_Amount;float4 c=g_InputTexture[id.xy];g_OutputTexture[id.xy]=float4(c.rgb*mask,c.a);}
+[numthreads(8,8,1)] void main(uint3 id:SV_DispatchThreadID){uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;float cx=g_Cx*w,cy=g_Cy*h;float maxX=max(cx,w-cx),maxY=max(cy,h-cy),maxD=sqrt(maxX*maxX+maxY*maxY)*g_Radius;float dx=(float)id.x-cx,dy=(float)id.y-cy;float dist=sqrt(dx*dx+dy*dy);float mask=1.0-saturate((dist-maxD*g_Feather)/(maxD*(1.0-g_Feather)+0.001))*g_Amount;float4 c=(g_InputTexture[id.xy]).bgra;g_OutputTexture[id.xy]=(float4(c.rgb*mask,c.a)).bgra;}
 )";
 };
 

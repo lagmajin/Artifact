@@ -87,10 +87,10 @@ public:
             const cv::Point center(static_cast<int>(ArtifactCore::artifactRound(x + w * pivotX)),
                                    static_cast<int>(ArtifactCore::artifactRound(y + h * pivotY)));
             const cv::Scalar color = element.type == ArtifactCore::SurfaceFXElementType::Dirt
-                ? cv::Scalar(0.12f, 0.08f, 0.05f, alpha)
+                ? cv::Scalar(0.05f, 0.08f, 0.12f, alpha)
                 : element.type == ArtifactCore::SurfaceFXElementType::TextureDecal
-                    ? cv::Scalar(element.tintR, element.tintG, element.tintB, alpha)
-                    : cv::Scalar(0.82f, 0.9f, 1.0f, alpha);
+                    ? cv::Scalar(element.tintB, element.tintG, element.tintR, alpha)
+                    : cv::Scalar(1.0f, 0.9f, 0.82f, alpha);
             const int thickness = ArtifactCore::artifactMax(1, static_cast<int>(ArtifactCore::artifactRound(1.0f + element.roughness * 2.0f)));
             const std::uint8_t blendMode = element.blendMode == QStringLiteral("multiply") ? 1u
                 : element.blendMode == QStringLiteral("screen") ? 2u
@@ -141,9 +141,9 @@ public:
                             if (sampleAlpha <= 0.0f)
                                 continue;
                             overlayRow[dstX] = cv::Vec4f(
-                                sample[0] * element.tintR,
-                                sample[1] * element.tintG,
                                 sample[2] * element.tintB,
+                                sample[1] * element.tintG,
+                                sample[0] * element.tintR,
                                 sampleAlpha);
                             modeRow[dstX] = blendMode;
                         }
@@ -184,7 +184,7 @@ public:
                     }
                 }
                 if (element.type == ArtifactCore::SurfaceFXElementType::Droplet) {
-                    const cv::Scalar rim(0.08f, 0.12f, 0.18f, alpha * 0.55f);
+                    const cv::Scalar rim(0.18f, 0.12f, 0.08f, alpha * 0.55f);
                     cv::ellipse(overlay, center, radius, element.rotation, 0.0, 360.0,
                                 rim, thickness, cv::LINE_AA);
                     const cv::Point highlight(

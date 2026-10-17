@@ -103,8 +103,8 @@ public:
             cv::Vec4f*   sRow = shadowLayer.ptr<cv::Vec4f>(y);
             for (int x = 0; x < W; ++x) {
                 const float a = std::clamp(aRow[x] * so * opac, 0.0f, 1.0f);
-                // ImageF32x4_RGBA is stored as RGBA, including its cv::Mat view.
-                sRow[x] = cv::Vec4f(sr, sg, sb, a);
+                // The image backing and cv::Mat view are BGRA.
+                sRow[x] = cv::Vec4f(sb, sg, sr, a);
             }
         });
         
@@ -186,7 +186,7 @@ void main(uint3 dispatchId : SV_DispatchThreadID)
         }
     }
 
-    const float4 foreground = g_InputTexture[dispatchId.xy];
+    const float4 foreground = (g_InputTexture[dispatchId.xy]).bgra;
     const float shadowAlpha = clamp((sum / max(weightSum, 1.0e-4)) * g_P3, 0.0f, 1.0f);
     const float4 shadow = float4(g_P4, g_P5, g_P6, shadowAlpha);
     // The shadow only shows where the silhouette is opaque, and it replaces
@@ -200,7 +200,7 @@ void main(uint3 dispatchId : SV_DispatchThreadID)
                 / foreground.a,
             foreground.a);
     }
-    g_OutputTexture[dispatchId.xy] = result;
+    g_OutputTexture[dispatchId.xy] = (result).bgra;
 }
 )";
 

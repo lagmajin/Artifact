@@ -59,20 +59,20 @@ public:
             vx[by*vw+bx]=bdx*vScale_;vy[by*vw+bx]=bdy*vScale_;
         }});
 
-        const float r=0.299f,g=0.587f,b=0.114f;
+        constexpr float kBlueLuma=0.114f, kGreenLuma=0.587f, kRedLuma=0.299f;
 ArtifactCore::Parallel::ForPixels(0, H, W, H,[&](int y){int bvY=y/BS;float* o=d+(size_t)y*W*4;
             for(int x=0;x<W;++x){int bvX=x/BS;
                 float mx=vx[std::min(bvY,vh-1)*vw+std::min(bvX,vw-1)];
                 float my=vy[std::min(bvY,vh-1)*vw+std::min(bvX,vw-1)];
                 float* p=o+(size_t)x*4;
-                float luma=p[0]*r+p[1]*g+p[2]*b;
+                float luma=p[0]*kBlueLuma+p[1]*kGreenLuma+p[2]*kRedLuma;
                 if(luma>=lt&&(fabsf(mx)>0.5f||fabsf(my)>0.5f)){
                     float w=1.0f,totalW=1.0f,cr=p[0],cg=p[1],cb=p[2],ca=p[3];
                     for(int i=1;i<=trailLen_;++i){w*=decay_;if(w<0.001f)break;
                         int sx=(int)((float)x-mx*(float)i+0.5f),sy=(int)((float)y-my*(float)i+0.5f);
                         sx=std::clamp(sx,0,W-1);sy=std::clamp(sy,0,H-1);
                         const float*sp=sd+((size_t)sy*W+sx)*4;
-                        float sl=sp[0]*r+sp[1]*g+sp[2]*b;
+                        float sl=sp[0]*kBlueLuma+sp[1]*kGreenLuma+sp[2]*kRedLuma;
                         if(sl>=lt){cr+=sp[0]*w;cg+=sp[1]*w;cb+=sp[2]*w;ca+=sp[3]*w;totalW+=w;}
                     }
                     float inv=1.0f/totalW;

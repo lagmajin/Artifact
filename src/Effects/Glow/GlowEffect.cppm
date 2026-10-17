@@ -2,6 +2,7 @@ module;
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <cstddef>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -22,6 +23,7 @@ import Artifact.Render.DiligentDeviceManager;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
 import Image.ImageF32x4RGBAWithCache;
+import Image.GpuImageUpload;
 import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
@@ -134,11 +136,14 @@ int kernelSizeForRadius(float radius) {
     return std::max(3, (estimated * 2) + 1);
 }
 
-void writeGlowResultToDestination(const cv::Mat& rgba32f, ImageF32x4RGBAWithCache& dst) {
-    if (rgba32f.empty()) {
+void writeGlowResultToDestination(const cv::Mat& bgra32f,
+                                 const ArtifactCore::SurfaceColorDescriptor& descriptor,
+                                 ImageF32x4RGBAWithCache& dst) {
+    if (bgra32f.empty()) {
         return;
     }
-    dst.image().setFromRGBA32F(rgba32f.ptr<float>(), rgba32f.cols, rgba32f.rows);
+    dst.image().setFromBGRA32F(bgra32f.ptr<float>(), bgra32f.cols,
+                               bgra32f.rows, descriptor);
 }
 
 static constexpr const char* kGlowHlsl = R"(
@@ -162,7 +167,7 @@ float luminance(float3 c) {
 float4 sampleTex(Texture2D<float4> tex, int2 p, uint w, uint h) {
     p.x = clamp(p.x, 0, (int)w - 1);
     p.y = clamp(p.y, 0, (int)h - 1);
-    return tex[uint2(p)];
+    return (tex[uint2(p)]).bgra;
 }
 
 [numthreads(8,8,1)]
@@ -173,7 +178,7 @@ void main(uint3 dtid : SV_DispatchThreadID) {
         return;
     }
 
-    float4 center = g_InputTexture[dtid.xy];
+    float4 center = (g_InputTexture[dtid.xy]).bgra;
     float3 accum = 0.0f;
     float alphaSum = 0.0f;
     int layers = max(1, (int)g_LayerCount);
@@ -207,7 +212,7 @@ void main(uint3 dtid : SV_DispatchThreadID) {
 
     float3 contribution = accum / max(alphaSum, 0.0001f);
     float3 result = g_ContributionOnly > 0.5f ? contribution : center.rgb + contribution;
-    g_OutputTexture[dtid.xy] = float4(saturate(result), center.a);
+    g_OutputTexture[dtid.xy] = (float4(saturate(result), center.a)).bgra;
 }
 )";
 
@@ -237,7 +242,7 @@ float luminance(float3 c) {
 float4 sampleTex(Texture2D<float4> tex, int2 p, uint w, uint h) {
     p.x = clamp(p.x, 0, (int)w - 1);
     p.y = clamp(p.y, 0, (int)h - 1);
-    return tex[uint2(p)];
+    return (tex[uint2(p)]).bgra;
 }
 
 [numthreads(8,8,1)]
@@ -248,7 +253,7 @@ void main(uint3 dtid : SV_DispatchThreadID) {
         return;
     }
 
-    float4 center = g_InputTexture[dtid.xy];
+    float4 center = (g_InputTexture[dtid.xy]).bgra;
     float3 accum = 0.0f;
     float alphaSum = 0.0f;
     int layers = max(1, (int)g_P1);
@@ -282,7 +287,7 @@ void main(uint3 dtid : SV_DispatchThreadID) {
 
     float3 contribution = accum / max(alphaSum, 0.0001f);
     float3 result = g_P6 > 0.5f ? contribution : center.rgb + contribution;
-    g_OutputTexture[dtid.xy] = float4(saturate(result), center.a);
+    g_OutputTexture[dtid.xy] = (float4(saturate(result), center.a)).bgra;
 }
 )";
 
@@ -295,8 +300,8 @@ static bool createTextureFromImage(const ImageF32x4RGBAWithCache& src,
     }
 
     const auto& img = src.image();
-    const float* data = img.rgba32fData();
-    if (!data || img.width() <= 0 || img.height() <= 0) {
+    const auto upload = ArtifactCore::makeGpuImageUploadBuffer(img.surfaceView(), ArtifactCore::GpuImageChannelOrder::Bgra);
+    if (!upload.isValid() || img.width() <= 0 || img.height() <= 0) {
         return false;
     }
 
@@ -313,8 +318,8 @@ static bool createTextureFromImage(const ImageF32x4RGBAWithCache& src,
     desc.Name = name;
 
     Diligent::TextureSubResData sub{};
-    sub.pData = data;
-    sub.Stride = static_cast<Diligent::Uint64>(img.width()) * sizeof(float) * 4ull;
+    sub.pData = upload.data();
+    sub.Stride = static_cast<Diligent::Uint64>(upload.rowStride);
 
     Diligent::TextureData init{};
     init.pSubResources = &sub;
@@ -367,10 +372,9 @@ static bool readbackTexture(Diligent::IRenderDevice* device,
         return false;
     }
 
-    cv::Mat temp(static_cast<int>(desc.Height), static_cast<int>(desc.Width), CV_32FC4, mapped.pData, mapped.Stride);
-    dst.image().setFromCVMat(temp, colorDescriptor);
+    const bool copied = dst.image().setFromGpuBGRA32F(static_cast<const float*>(mapped.pData), static_cast<int>(desc.Width), static_cast<int>(desc.Height), static_cast<std::size_t>(mapped.Stride), colorDescriptor);
     ctx->UnmapTextureSubresource(staging, 0, 0);
-    return true;
+    return copied;
 }
 
 } // namespace
@@ -392,9 +396,9 @@ void GlowEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4R
     cv::Mat alpha = channels[3];
 
     cv::Mat glowAccum = cv::Mat::zeros(color.size(), color.type());
-    cv::Mat mask = channels[0] * 0.299f +
+    cv::Mat mask = channels[0] * 0.114f +
                    channels[1] * 0.587f +
-                   channels[2] * 0.114f;
+                   channels[2] * 0.299f;
     cv::threshold(mask, mask, 0.6, 0.0, cv::THRESH_TOZERO);
     if (glowGain_ > 0.0f) {
         mask *= glowGain_;
@@ -427,8 +431,7 @@ void GlowEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4R
     outChannels.push_back(alpha);
     cv::Mat out;
     cv::merge(outChannels, out);
-    writeGlowResultToDestination(out, dst);
-    dst.image().setColorDescriptor(srcImage.colorDescriptor());
+    writeGlowResultToDestination(out, srcImage.colorDescriptor(), dst);
 }
 
 void GlowEffectGPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) {
@@ -841,9 +844,9 @@ void OpticalGlowEffect::apply(const ImageF32x4RGBAWithCache& src,
         cv::Vec4f* highlightRow = highlights.ptr<cv::Vec4f>(y);
         for (int x = 0; x < width; ++x) {
             const cv::Vec4f pixel = sourceRow[x];
-            const float luminance = pixel[0] * 0.2126f +
+            const float luminance = pixel[0] * 0.0722f +
                                     pixel[1] * 0.7152f +
-                                    pixel[2] * 0.0722f;
+                                    pixel[2] * 0.2126f;
             const float soft = std::clamp((luminance - threshold + knee) /
                                               (2.0f * knee),
                                           0.0f, 1.0f);
@@ -883,7 +886,8 @@ void OpticalGlowEffect::apply(const ImageF32x4RGBAWithCache& src,
         for (int x = 0; x < width; ++x) {
             const std::size_t offset =
                 (static_cast<std::size_t>(y) * width + x) * 4u;
-            const float channelTint[3] = {warmR, warmG, warmB};
+            // Output rows retain BGRA order while warmth is defined as RGB.
+            const float channelTint[3] = {warmB, warmG, warmR};
             for (int channel = 0; channel < 3; ++channel) {
                 const float glow = primaryRow[x][channel] * impl_->intensity +
                     afterRow[x][channel] * impl_->afterglowIntensity +
@@ -980,7 +984,7 @@ float3 shineMasked(int2 p, uint w, uint h, float threshold)
 {
     p.x = clamp(p.x, 0, (int)w - 1);
     p.y = clamp(p.y, 0, (int)h - 1);
-    float4 s = g_InputTexture[uint2(p)];
+    float4 s = (g_InputTexture[uint2(p)]).bgra;
     float lum = dot(s.rgb, float3(0.299f, 0.587f, 0.114f));
     float selection = max(0.0f, lum - threshold) / max(lum, 0.0001f);
     return s.rgb * selection;
@@ -997,7 +1001,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
     int count = clamp((int)(g_P5 + 0.5f), 4, 128);
     float stepScale = g_P2 / (float)max(count, 1);
     float2 dir = (float2(dtid.xy) - float2(cx, cy)) * stepScale;
-    float4 src = g_InputTexture[dtid.xy];
+    float4 src = (g_InputTexture[dtid.xy]).bgra;
     float3 acc = 0.0f;
     float falloff = 1.0f;
     float2 pos = float2(dtid.xy);
@@ -1011,7 +1015,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
     }
     float3 tint = float3(1.0f + g_P7 * 0.2f, 1.0f, 1.0f - g_P7 * 0.35f);
     float3 result = src.rgb + (acc / (float)max(count, 1)) * tint;
-    g_OutputTexture[dtid.xy] = float4(result, src.a);
+    g_OutputTexture[dtid.xy] = (float4(result, src.a)).bgra;
 }
 )";
 
@@ -1062,8 +1066,8 @@ void VolumetricShineEffect::apply(const ImageF32x4RGBAWithCache& src,
     std::vector<ShinePixel> rays(image.totalPixels());
     for (std::size_t pixel = 0; pixel < rays.size(); ++pixel) {
         const std::size_t offset = pixel * 4u;
-        const float luminance = source[offset] * 0.2126f +
-            source[offset + 1] * 0.7152f + source[offset + 2] * 0.0722f;
+        const float luminance = source[offset] * 0.0722f +
+            source[offset + 1] * 0.7152f + source[offset + 2] * 0.2126f;
         const float selection = std::max(0.0f, luminance - impl_->threshold) /
                                 std::max(luminance, 0.0001f);
         rays[pixel] = ShinePixel{
@@ -1078,8 +1082,8 @@ void VolumetricShineEffect::apply(const ImageF32x4RGBAWithCache& src,
     settings.intensity = impl_->intensity;
     settings.decay = impl_->decay;
     settings.samples = impl_->samples;
-    settings.tint = {1.0f + impl_->warmth * 0.2f, 1.0f,
-                     1.0f - impl_->warmth * 0.35f, 1.0f};
+    settings.tint = {1.0f - impl_->warmth * 0.35f, 1.0f,
+                     1.0f + impl_->warmth * 0.2f, 1.0f};
     const auto selectedHighlights = rays;
     ArtifactCore::VolumetricShine shine;
     shine.process(rays.data(), width, height, settings);
@@ -1176,8 +1180,8 @@ void GlintStarFilterEffect::apply(const ImageF32x4RGBAWithCache& src,
         cv::Vec3f* row = highlights.ptr<cv::Vec3f>(y);
         for (int x = 0; x < width; ++x) {
             const std::size_t offset = (static_cast<std::size_t>(y) * width + x) * 4u;
-            const float lum = source[offset] * 0.2126f + source[offset + 1] * 0.7152f +
-                              source[offset + 2] * 0.0722f;
+            const float lum = source[offset] * 0.0722f + source[offset + 1] * 0.7152f +
+                              source[offset + 2] * 0.2126f;
             const float select = std::max(0.0f, lum - impl_->threshold) /
                                  std::max(lum, 0.0001f);
             row[x] = {source[offset] * select, source[offset + 1] * select,

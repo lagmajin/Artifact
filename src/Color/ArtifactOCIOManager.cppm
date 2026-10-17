@@ -505,9 +505,32 @@ void ArtifactOCIOManager::applyViewTransformToImage(ArtifactCore::ImageF32x4_RGB
                 processor = impl_->ocioConfig_->getProcessor(group);
             }
             const auto cpuProcessor = processor->getDefaultCPUProcessor();
+            const auto descriptor = image.colorDescriptor();
+            const bool bgra = descriptor.channelOrder !=
+                              ArtifactCore::SurfaceChannelOrder::RGBA;
+            float* data = image.rgba32fData();
+            if (bgra) {
+                for (std::size_t pixel = 0; pixel < image.totalPixels(); ++pixel) {
+                    std::swap(data[pixel * 4u], data[pixel * 4u + 2u]);
+                }
+            }
             OCIO::PackedImageDesc pixels(image.rgba32fData(), image.width(),
                                           image.height(), 4);
-            cpuProcessor->apply(pixels);
+            try {
+                cpuProcessor->apply(pixels);
+            } catch (...) {
+                if (bgra) {
+                    for (std::size_t pixel = 0; pixel < image.totalPixels(); ++pixel) {
+                        std::swap(data[pixel * 4u], data[pixel * 4u + 2u]);
+                    }
+                }
+                throw;
+            }
+            if (bgra) {
+                for (std::size_t pixel = 0; pixel < image.totalPixels(); ++pixel) {
+                    std::swap(data[pixel * 4u], data[pixel * 4u + 2u]);
+                }
+            }
             const float exposureScale = std::pow(2.0f, impl_->viewerExposure_);
             const float viewerGamma = impl_->viewerGamma_;
             if (std::abs(impl_->viewerExposure_) > 1.0e-6f ||
@@ -559,21 +582,25 @@ void ArtifactOCIOManager::applyViewTransformToImage(ArtifactCore::ImageF32x4_RGB
     const int w = image.width();
     const int h = image.height();
     float* data = image.rgba32fData();
+    const bool bgra = image.colorDescriptor().channelOrder !=
+                      ArtifactCore::SurfaceChannelOrder::RGBA;
+    const int redIndex = bgra ? 2 : 0;
+    const int blueIndex = bgra ? 0 : 2;
 ArtifactCore::Parallel::ForPixels(0, h, w, h, [&](int y) {
         float* row = data + static_cast<size_t>(y) * static_cast<size_t>(w) * 4u;
         for (int x = 0; x < w; ++x) {
             float* pixel = row + static_cast<size_t>(x) * 4u;
-            const float r = pixel[0];
+            const float r = pixel[redIndex];
             const float g = pixel[1];
-            const float b = pixel[2];
+            const float b = pixel[blueIndex];
             const float a = pixel[3];
 
             // Color transforms operate on RGB only. Keep alpha independent and
             // preserve scene-linear/HDR values until an explicit display/output
             // encoding stage performs tone mapping or range limiting.
-            pixel[0] = matrix(0, r, g, b);
+            pixel[redIndex] = matrix(0, r, g, b);
             pixel[1] = matrix(1, r, g, b);
-            pixel[2] = matrix(2, r, g, b);
+            pixel[blueIndex] = matrix(2, r, g, b);
             pixel[3] = a;
         }
     });

@@ -8,6 +8,7 @@ module;
 #include <QVariant>
 #include <QStringList>
 #include <cstring>
+#include <cstddef>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
@@ -20,6 +21,7 @@ import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
 import Image.ImageSurfaceView;
+import Image.GpuImageUpload;
 import Graphics.SurfaceColorContract;
 import Property.Abstract;
 import Utils.String.UniString;
@@ -51,9 +53,9 @@ float3 whiteBalanceKelvinToRgb(float kelvin)
 void main(uint3 dtid : SV_DispatchThreadID)
 {
     if (dtid.x >= g_Width || dtid.y >= g_Height) return;
-    float4 pixel = g_InputTexture[dtid.xy];
+    float4 pixel = (g_InputTexture[dtid.xy]).bgra;
     if (pixel.a <= 0.0 || (g_P0 == 6500.0 && g_P1 == 0.0 && g_P2 == 0.0)) {
-        g_OutputTexture[dtid.xy] = pixel; return;
+        g_OutputTexture[dtid.xy] = (pixel).bgra; return;
     }
     const float3 reference = whiteBalanceKelvinToRgb(6500.0f);
     const float3 target = whiteBalanceKelvinToRgb(g_P0);
@@ -64,7 +66,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
     pixel.r = saturate(pixel.r / pixel.a * correction.r * tintMagenta * brightness) * pixel.a;
     pixel.g = saturate(pixel.g / pixel.a * correction.g * tintGreen * brightness) * pixel.a;
     pixel.b = saturate(pixel.b / pixel.a * correction.b * tintMagenta * brightness) * pixel.a;
-    g_OutputTexture[dtid.xy] = pixel;
+    g_OutputTexture[dtid.xy] = (pixel).bgra;
 }
 )";
 } // namespace
@@ -161,39 +163,37 @@ public:
         if (!device_ && !deviceLease_.acquire(device_,context_)) {applyCPU(src,dst);return;}
         const auto& device = device_;
         const auto& context = context_;
-        const auto& image=src.image();const float* pixels=image.rgba32fData();if(!pixels||image.width()<=0||image.height()<=0){applyCPU(src,dst);return;}
+        const auto& image=src.image();const auto upload=ArtifactCore::makeGpuImageUploadBuffer(image.surfaceView(), ArtifactCore::GpuImageChannelOrder::Bgra);if(!upload.isValid()||image.width()<=0||image.height()<=0){applyCPU(src,dst);return;}
         float rr=1,rg=1,rb=1,tr=1,tg=1,tb=1;kelvinToRGB(6500,rr,rg,rb);kelvinToRGB(temperature_,tr,tg,tb);
         Params values{tr/std::max(rr,0.001f),tg/std::max(rg,0.001f),tb/std::max(rb,0.001f),1.0f+tint_*0.5f,1.0f-tint_*0.5f,std::pow(2.0f,brightness_)};
-        // This compatibility API uploads raw storage and returns the same order.
-        values.bgra = image.colorDescriptor().channelOrder == ArtifactCore::SurfaceChannelOrder::BGRA ? 1.0f : 0.0f;
         values.premultiplied = image.colorDescriptor().alphaMode == ArtifactCore::SurfaceAlphaMode::Premultiplied ? 1.0f : 0.0f;
-        Diligent::TextureDesc desc{};desc.Name="WhiteBalance/Input";desc.Type=Diligent::RESOURCE_DIM_TEX_2D;desc.Width=image.width();desc.Height=image.height();desc.Format=Diligent::TEX_FORMAT_RGBA32_FLOAT;desc.MipLevels=1;desc.ArraySize=1;desc.SampleCount=1;desc.Usage=Diligent::USAGE_IMMUTABLE;desc.BindFlags=Diligent::BIND_SHADER_RESOURCE;Diligent::TextureSubResData sub{};sub.pData=pixels;sub.Stride=static_cast<Diligent::Uint64>(image.width())*sizeof(float)*4ull;Diligent::TextureData init{};init.pSubResources=&sub;init.NumSubresources=1;Diligent::RefCntAutoPtr<Diligent::ITexture> input;device->CreateTexture(desc,&init,&input);if(!input){applyCPU(src,dst);return;}
+        Diligent::TextureDesc desc{};desc.Name="WhiteBalance/Input";desc.Type=Diligent::RESOURCE_DIM_TEX_2D;desc.Width=image.width();desc.Height=image.height();desc.Format=Diligent::TEX_FORMAT_RGBA32_FLOAT;desc.MipLevels=1;desc.ArraySize=1;desc.SampleCount=1;desc.Usage=Diligent::USAGE_IMMUTABLE;desc.BindFlags=Diligent::BIND_SHADER_RESOURCE;Diligent::TextureSubResData sub{};sub.pData=upload.data();sub.Stride=static_cast<Diligent::Uint64>(upload.rowStride);Diligent::TextureData init{};init.pSubResources=&sub;init.NumSubresources=1;Diligent::RefCntAutoPtr<Diligent::ITexture> input;device->CreateTexture(desc,&init,&input);if(!input){applyCPU(src,dst);return;}
         Diligent::TextureDesc outDesc=desc;outDesc.Name="WhiteBalance/Output";outDesc.Usage=Diligent::USAGE_DEFAULT;outDesc.BindFlags=Diligent::BIND_SHADER_RESOURCE|Diligent::BIND_UNORDERED_ACCESS;if(!outputTex_||outputTex_->GetDesc().Width!=outDesc.Width||outputTex_->GetDesc().Height!=outDesc.Height||outputTex_->GetDesc().Format!=outDesc.Format||outputTex_->GetDesc().BindFlags!=outDesc.BindFlags){outputTex_.Release();device->CreateTexture(outDesc,nullptr,&outputTex_);}if(!outputTex_){applyCPU(src,dst);return;}
         Diligent::BufferDesc cbDesc{};cbDesc.Name="WhiteBalance/Params";cbDesc.Size=sizeof(Params);cbDesc.Usage=Diligent::USAGE_DYNAMIC;cbDesc.BindFlags=Diligent::BIND_UNIFORM_BUFFER;cbDesc.CPUAccessFlags=Diligent::CPU_ACCESS_WRITE;Diligent::RefCntAutoPtr<Diligent::IBuffer> params;device->CreateBuffer(cbDesc,nullptr,&params);if(!params){applyCPU(src,dst);return;}void* mapped=nullptr;context->MapBuffer(params,Diligent::MAP_WRITE,Diligent::MAP_FLAG_DISCARD,mapped);if(!mapped){applyCPU(src,dst);return;}std::memcpy(mapped,&values,sizeof(values));context->UnmapBuffer(params,Diligent::MAP_WRITE);
         static Diligent::ShaderResourceVariableDesc vars[]={{Diligent::SHADER_TYPE_COMPUTE,"WhiteBalanceParams",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},{Diligent::SHADER_TYPE_COMPUTE,"g_InputTexture",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},{Diligent::SHADER_TYPE_COMPUTE,"g_OutputTexture",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC}};ArtifactCore::GpuContext gpuContext{device,context};ArtifactCore::ComputeExecutor executor{gpuContext};ArtifactCore::ComputePipelineDesc pipeline{};pipeline.name="WhiteBalance/PSO";pipeline.shaderSource=kHlsl;pipeline.entryPoint="main";pipeline.sourceLanguage=Diligent::SHADER_SOURCE_LANGUAGE_HLSL;pipeline.variables=vars;pipeline.variableCount=3;pipeline.defaultVariableType=Diligent::SHADER_RESOURCE_VARIABLE_TYPE_STATIC;if(!executor.build(pipeline)||!executor.createShaderResourceBinding(true)||!executor.setBuffer("WhiteBalanceParams",params)||!executor.setTextureView("g_InputTexture",input->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE))||!executor.setTextureView("g_OutputTexture",outputTex_->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))){applyCPU(src,dst);return;}executor.dispatch(context,ArtifactCore::ComputeExecutor::makeDispatchAttribs(outDesc.Width,outDesc.Height,1,8,8,1),Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-        Diligent::TextureDesc stagingDesc=outDesc;stagingDesc.Name="WhiteBalance/Readback";stagingDesc.Usage=Diligent::USAGE_STAGING;stagingDesc.BindFlags=Diligent::BIND_NONE;stagingDesc.CPUAccessFlags=Diligent::CPU_ACCESS_READ;if(!stagingTex_||stagingTex_->GetDesc().Width!=stagingDesc.Width||stagingTex_->GetDesc().Height!=stagingDesc.Height||stagingTex_->GetDesc().Format!=stagingDesc.Format){stagingTex_.Release();device->CreateTexture(stagingDesc,nullptr,&stagingTex_);}if(!stagingTex_){applyCPU(src,dst);return;}Diligent::CopyTextureAttribs copy(outputTex_,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,stagingTex_,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);context->CopyTexture(copy);context->Flush();context->WaitForIdle();Diligent::MappedTextureSubresource read{};context->MapTextureSubresource(stagingTex_,0,0,Diligent::MAP_READ,Diligent::MAP_FLAG_NONE,nullptr,read);if(!read.pData||!read.Stride){applyCPU(src,dst);return;}cv::Mat result(static_cast<int>(outDesc.Height),static_cast<int>(outDesc.Width),CV_32FC4,read.pData,read.Stride);dst.image().setFromCVMat(result,image.colorDescriptor());context->UnmapTextureSubresource(stagingTex_,0,0);
+        Diligent::TextureDesc stagingDesc=outDesc;stagingDesc.Name="WhiteBalance/Readback";stagingDesc.Usage=Diligent::USAGE_STAGING;stagingDesc.BindFlags=Diligent::BIND_NONE;stagingDesc.CPUAccessFlags=Diligent::CPU_ACCESS_READ;if(!stagingTex_||stagingTex_->GetDesc().Width!=stagingDesc.Width||stagingTex_->GetDesc().Height!=stagingDesc.Height||stagingTex_->GetDesc().Format!=stagingDesc.Format){stagingTex_.Release();device->CreateTexture(stagingDesc,nullptr,&stagingTex_);}if(!stagingTex_){applyCPU(src,dst);return;}Diligent::CopyTextureAttribs copy(outputTex_,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,stagingTex_,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);context->CopyTexture(copy);context->Flush();context->WaitForIdle();Diligent::MappedTextureSubresource read{};context->MapTextureSubresource(stagingTex_,0,0,Diligent::MAP_READ,Diligent::MAP_FLAG_NONE,nullptr,read);if(!read.pData||!read.Stride){applyCPU(src,dst);return;}const bool copied=dst.image().setFromGpuBGRA32F(static_cast<const float*>(read.pData),static_cast<int>(outDesc.Width),static_cast<int>(outDesc.Height),static_cast<std::size_t>(read.Stride),image.colorDescriptor());context->UnmapTextureSubresource(stagingTex_,0,0);if(!copied)applyCPU(src,dst);
     }
 
 private:
-    struct Params{float corrR,corrG,corrB,tintG,tintM,brightMul;float bgra=0.0f,premultiplied=0.0f;};
+    struct Params{float corrR,corrG,corrB,tintG,tintM,brightMul;float reserved=0.0f,premultiplied=0.0f;};
     static_assert(sizeof(Params) == 32);
     static constexpr const char* kHlsl=R"(
 Texture2D<float4> g_InputTexture:register(t0);
 RWTexture2D<float4> g_OutputTexture:register(u0);
 cbuffer WhiteBalanceParams:register(b0) {
     float g_CorrR; float g_CorrG; float g_CorrB; float g_TintG;
-    float g_TintM; float g_BrightMul; float g_Bgra; float g_Premultiplied;
+    float g_TintM; float g_BrightMul; float g_Reserved; float g_Premultiplied;
 }
 [numthreads(8,8,1)] void main(uint3 id:SV_DispatchThreadID) {
     uint w,h; g_OutputTexture.GetDimensions(w,h);
     if(id.x>=w||id.y>=h) return;
-    float4 p=g_InputTexture[id.xy];
-    if(g_Premultiplied>0.5 && p.a<=0.0) {g_OutputTexture[id.xy]=p;return;}
+    float4 p=(g_InputTexture[id.xy]).bgra;
+    if(g_Premultiplied>0.5 && p.a<=0.0) {g_OutputTexture[id.xy]=(p).bgra;return;}
     float alpha=g_Premultiplied>0.5 ? p.a : 1.0;
-    float3 c=(g_Bgra>0.5 ? p.bgr : p.rgb)/alpha;
+    float3 c=p.rgb/alpha;
     c=saturate(c*float3(g_CorrR*g_TintM,g_CorrG*g_TintG,g_CorrB*g_TintM)*g_BrightMul)*alpha;
-    p.rgb=g_Bgra>0.5 ? c.bgr : c;
-    g_OutputTexture[id.xy]=p;
+    p.rgb=c;
+    g_OutputTexture[id.xy]=(p).bgra;
 }
 )";
     WhiteBalanceCPUImpl cpuImpl_;

@@ -15,6 +15,8 @@ import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import ImageProcessing.ColorTransform.Colorama;
 import Image.ImageF32x4RGBAWithCache;
+import Image.GpuImageUpload;
+import Image.ImageSurfaceView;
 import Property.Abstract;
 import Utils.String.UniString;
 import Graphics.Compute;
@@ -93,7 +95,7 @@ float3 coloramaHslToRgb(float3 hsl)
 void main(uint3 dtid : SV_DispatchThreadID)
 {
     if (dtid.x >= g_Width || dtid.y >= g_Height) return;
-    float4 pixel = g_InputTexture[dtid.xy];
+    float4 pixel = (g_InputTexture[dtid.xy]).bgra;
     const float3 source = pixel.rgb;
     const float sourceLuma = coloramaLuma(source);
     const float3 sourceHsl = coloramaRgbToHsl(source);
@@ -109,7 +111,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
         if (outputLuma > 1.0e-6f) output = saturate(output * (sourceLuma / outputLuma));
     }
     pixel.rgb = saturate(output);
-    g_OutputTexture[dtid.xy] = pixel;
+    g_OutputTexture[dtid.xy] = (pixel).bgra;
 }
 )";
 } // namespace
@@ -126,12 +128,16 @@ public:
         }
         const int width = dst.image().width();
         const int height = dst.image().height();
-    ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
-            for (int x = 0; x < width; ++x) {
-                float* pixel = pixels + (static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)) * 4u;
-                processor_.applyPixel(pixel[0], pixel[1], pixel[2]);
-            }
-        });
+        ArtifactCore::withMutableColorFloat4View(
+            dst.image().surfaceView(), pixels, [&](auto& view) {
+                ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
+                    auto row = view.row(y);
+                    for (int x = 0; x < width; ++x) {
+                        auto pixel = row[x];
+                        processor_.applyPixel(pixel.r, pixel.g, pixel.b);
+                    }
+                });
+            });
     }
 };
 
@@ -154,12 +160,16 @@ public:
         }
         const int width = dst.image().width();
         const int height = dst.image().height();
-    ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
-            for (int x = 0; x < width; ++x) {
-                float* pixel = pixels + (static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)) * 4u;
-                processor_.applyPixel(pixel[0], pixel[1], pixel[2]);
-            }
-        });
+        ArtifactCore::withMutableColorFloat4View(
+            dst.image().surfaceView(), pixels, [&](auto& view) {
+                ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
+                    auto row = view.row(y);
+                    for (int x = 0; x < width; ++x) {
+                        auto pixel = row[x];
+                        processor_.applyPixel(pixel.r, pixel.g, pixel.b);
+                    }
+                });
+            });
     }
 
     void applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
@@ -196,10 +206,10 @@ float luma(float3 c){ return dot(c,float3(0.299f,0.587f,0.114f)); }
 float3 paletteColor(int palette, float t){ t = frac(t); if(palette==1) return lerp(float3(0.25,0.0,0.0), float3(1.0,0.92,0.25), t); if(palette==2) return lerp(float3(0.0,0.12,0.28), float3(0.20,0.78,1.0), t); if(palette==3) return lerp(float3(0.0,0.8,0.55), float3(1.0,0.15,0.9), t); if(palette==4) return lerp(float3(0.28,0.08,0.18), float3(1.0,0.86,0.60), t); return float3(t, frac(t+0.33), frac(t+0.66)); }
 float3 rgbToHsl(float3 c){ float maxc=max(c.r,max(c.g,c.b)); float minc=min(c.r,min(c.g,c.b)); float l=(maxc+minc)*0.5f; float d=maxc-minc; float s=(d<1e-5f)?0.0f:d/(1.0f-abs(2.0f*l-1.0f)); float h=0.0f; if(d>1e-5f){ if(maxc==c.r) h=fmod((c.g-c.b)/d,6.0f); else if(maxc==c.g) h=((c.b-c.r)/d)+2.0f; else h=((c.r-c.g)/d)+4.0f; h/=6.0f; if(h<0) h+=1.0f; } return float3(h,s,l); }
 float3 hslToRgb(float3 hsl){ float h=hsl.x, s=hsl.y, l=hsl.z; float c=(1.0f-abs(2.0f*l-1.0f))*s; float x=c*(1.0f-abs(fmod(h*6.0f,2.0f)-1.0f)); float m=l-c*0.5f; float3 rgb; if(h<1.0/6.0) rgb=float3(c,x,0); else if(h<2.0/6.0) rgb=float3(x,c,0); else if(h<3.0/6.0) rgb=float3(0,c,x); else if(h<4.0/6.0) rgb=float3(0,x,c); else if(h<5.0/6.0) rgb=float3(x,0,c); else rgb=float3(c,0,x); return rgb+m; }
-[numthreads(8,8,1)] void main(uint3 dtid:SV_DispatchThreadID){ uint w,h; g_OutputTexture.GetDimensions(w,h); if(dtid.x>=w||dtid.y>=h) return; float4 px=g_InputTexture[dtid.xy]; float3 c=px.rgb; float lum=luma(c); float3 hsl=rgbToHsl(c); float t=(g_SourceMode==0)?lum:hsl.x; float mapped=paletteColor(g_Palette, t*g_Spread + g_Phase).r; float3 paletteRGB=paletteColor(g_Palette, t*g_Spread + g_Phase); float3 outRgb = lerp(c, paletteRGB, saturate(g_Strength)); if(g_SourceMode==1){ hsl.x = frac(hsl.x + g_Phase); hsl.y = saturate(hsl.y * g_SaturationBoost); hsl.z = saturate(hsl.z * g_Contrast); outRgb = hslToRgb(hsl); outRgb = lerp(c, outRgb, saturate(g_Strength)); } if(g_PreserveLuma > 0.5f){ float outLum=luma(outRgb); outRgb += (lum-outLum).xxx; } px.rgb=saturate(outRgb); g_OutputTexture[dtid.xy]=px; }
+[numthreads(8,8,1)] void main(uint3 dtid:SV_DispatchThreadID){ uint w,h; g_OutputTexture.GetDimensions(w,h); if(dtid.x>=w||dtid.y>=h) return; float4 px=(g_InputTexture[dtid.xy]).bgra; float3 c=px.rgb; float lum=luma(c); float3 hsl=rgbToHsl(c); float t=(g_SourceMode==0)?lum:hsl.x; float mapped=paletteColor(g_Palette, t*g_Spread + g_Phase).r; float3 paletteRGB=paletteColor(g_Palette, t*g_Spread + g_Phase); float3 outRgb = lerp(c, paletteRGB, saturate(g_Strength)); if(g_SourceMode==1){ hsl.x = frac(hsl.x + g_Phase); hsl.y = saturate(hsl.y * g_SaturationBoost); hsl.z = saturate(hsl.z * g_Contrast); outRgb = hslToRgb(hsl); outRgb = lerp(c, outRgb, saturate(g_Strength)); } if(g_PreserveLuma > 0.5f){ float outLum=luma(outRgb); outRgb += (lum-outLum).xxx; } px.rgb=saturate(outRgb); g_OutputTexture[dtid.xy]=(px).bgra; }
 )";
-    static bool createTextureFromImage(const ImageF32x4RGBAWithCache& src, Diligent::IRenderDevice* device, Diligent::ITexture** outTex, const char* name){ const auto& img=src.image(); const float* data=img.rgba32fData(); if(!device||!outTex||!data||img.width()<=0||img.height()<=0) return false; Diligent::TextureDesc desc; desc.Type=Diligent::RESOURCE_DIM_TEX_2D; desc.Width=img.width(); desc.Height=img.height(); desc.Format=Diligent::TEX_FORMAT_RGBA32_FLOAT; desc.ArraySize=1; desc.MipLevels=1; desc.SampleCount=1; desc.Usage=Diligent::USAGE_IMMUTABLE; desc.BindFlags=Diligent::BIND_SHADER_RESOURCE; desc.Name=name; Diligent::TextureSubResData sub{}; sub.pData=data; sub.Stride=static_cast<Diligent::Uint64>(img.width())*sizeof(float)*4ull; Diligent::TextureData init{}; init.pSubResources=&sub; init.NumSubresources=1; device->CreateTexture(desc,&init,outTex); return *outTex!=nullptr; }
-    static bool readbackTexture(Diligent::IRenderDevice* device, Diligent::IDeviceContext* ctx, Diligent::ITexture* src, ImageF32x4RGBAWithCache& dst, const char* name, const auto& colorDescriptor){ if(!device||!ctx||!src) return false; const auto desc=src->GetDesc(); Diligent::TextureDesc stagingDesc; stagingDesc.Type=Diligent::RESOURCE_DIM_TEX_2D; stagingDesc.Width=desc.Width; stagingDesc.Height=desc.Height; stagingDesc.Format=desc.Format; stagingDesc.ArraySize=1; stagingDesc.MipLevels=1; stagingDesc.SampleCount=1; stagingDesc.Usage=Diligent::USAGE_STAGING; stagingDesc.CPUAccessFlags=Diligent::CPU_ACCESS_READ; stagingDesc.Name=name; Diligent::RefCntAutoPtr<Diligent::ITexture> staging; device->CreateTexture(stagingDesc,nullptr,&staging); if(!staging) return false; Diligent::CopyTextureAttribs copy(src,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,staging,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION); ctx->CopyTexture(copy); Diligent::MappedTextureSubresource mapped{}; ctx->Flush(); ctx->WaitForIdle(); ctx->MapTextureSubresource(staging,0,0,Diligent::MAP_READ,Diligent::MAP_FLAG_NONE,nullptr,mapped); if(!mapped.pData||mapped.Stride==0) return false; cv::Mat temp(static_cast<int>(desc.Height), static_cast<int>(desc.Width), CV_32FC4, mapped.pData, mapped.Stride); dst.image().setFromCVMat(temp,colorDescriptor); ctx->UnmapTextureSubresource(staging,0,0); return true; }
+    static bool createTextureFromImage(const ImageF32x4RGBAWithCache& src, Diligent::IRenderDevice* device, Diligent::ITexture** outTex, const char* name){ const auto& img=src.image(); if(!device||!outTex||img.width()<=0||img.height()<=0) return false; const auto upload=ArtifactCore::makeGpuImageUploadBuffer(img.surfaceView(), ArtifactCore::GpuImageChannelOrder::Bgra); if(!upload.isValid()) return false; Diligent::TextureDesc desc; desc.Type=Diligent::RESOURCE_DIM_TEX_2D; desc.Width=img.width(); desc.Height=img.height(); desc.Format=Diligent::TEX_FORMAT_RGBA32_FLOAT; desc.ArraySize=1; desc.MipLevels=1; desc.SampleCount=1; desc.Usage=Diligent::USAGE_IMMUTABLE; desc.BindFlags=Diligent::BIND_SHADER_RESOURCE; desc.Name=name; Diligent::TextureSubResData sub{}; sub.pData=upload.data(); sub.Stride=static_cast<Diligent::Uint64>(upload.rowStride); Diligent::TextureData init{}; init.pSubResources=&sub; init.NumSubresources=1; device->CreateTexture(desc,&init,outTex); return *outTex!=nullptr; }
+    static bool readbackTexture(Diligent::IRenderDevice* device, Diligent::IDeviceContext* ctx, Diligent::ITexture* src, ImageF32x4RGBAWithCache& dst, const char* name, const auto& colorDescriptor){ if(!device||!ctx||!src) return false; const auto desc=src->GetDesc(); Diligent::TextureDesc stagingDesc; stagingDesc.Type=Diligent::RESOURCE_DIM_TEX_2D; stagingDesc.Width=desc.Width; stagingDesc.Height=desc.Height; stagingDesc.Format=desc.Format; stagingDesc.ArraySize=1; stagingDesc.MipLevels=1; stagingDesc.SampleCount=1; stagingDesc.Usage=Diligent::USAGE_STAGING; stagingDesc.CPUAccessFlags=Diligent::CPU_ACCESS_READ; stagingDesc.Name=name; Diligent::RefCntAutoPtr<Diligent::ITexture> staging; device->CreateTexture(stagingDesc,nullptr,&staging); if(!staging) return false; Diligent::CopyTextureAttribs copy(src,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,staging,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION); ctx->CopyTexture(copy); Diligent::MappedTextureSubresource mapped{}; ctx->Flush(); ctx->WaitForIdle(); ctx->MapTextureSubresource(staging,0,0,Diligent::MAP_READ,Diligent::MAP_FLAG_NONE,nullptr,mapped); if(!mapped.pData||mapped.Stride==0) return false; const bool copied=dst.image().setFromGpuBGRA32F(static_cast<const float*>(mapped.pData),static_cast<int>(desc.Width),static_cast<int>(desc.Height),static_cast<std::size_t>(mapped.Stride),colorDescriptor); ctx->UnmapTextureSubresource(staging,0,0); return copied; }
 };
 
 ColoramaEffect::ColoramaEffect() {

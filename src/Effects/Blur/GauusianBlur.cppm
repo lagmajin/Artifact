@@ -132,7 +132,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
         if (g_Horizontal > 0.5f) samplePos.x = clamp(samplePos.x + i, 0, int(width) - 1);
         else samplePos.y = clamp(samplePos.y + i, 0, int(height) - 1);
         const float w = gaussianWeight((float)i, sigma);
-        const float4 sample = g_InputTexture[uint2(samplePos)];
+        const float4 sample = (g_InputTexture[uint2(samplePos)]).bgra;
         sum.rgb += sample.rgb * sample.a * w;
         sum.a += sample.a * w;
         weightSum += w;
@@ -140,7 +140,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
 
     sum /= max(weightSum, 0.0001f);
     if (sum.a > 1e-5f) sum.rgb /= sum.a;
-    g_OutputTexture[dtid.xy] = sum;
+    g_OutputTexture[dtid.xy] = (sum).bgra;
 }
 )";
 
@@ -153,7 +153,7 @@ static bool createTextureFromImage(const ImageF32x4RGBAWithCache& src,
         return false;
     }
     const auto& img = src.image();
-    const auto upload = ArtifactCore::makeGpuImageUploadBuffer(img.surfaceView());
+    const auto upload = ArtifactCore::makeGpuImageUploadBuffer(img.surfaceView(), ArtifactCore::GpuImageChannelOrder::Bgra);
     if (!upload.isValid() || img.width() <= 0 || img.height() <= 0) {
         return false;
     }
@@ -171,7 +171,7 @@ static bool createTextureFromImage(const ImageF32x4RGBAWithCache& src,
     desc.BindFlags = Diligent::BIND_SHADER_RESOURCE;
     desc.Name = name;
     Diligent::TextureSubResData sub{};
-    sub.pData = upload.bytes.data();
+    sub.pData = upload.data();
     sub.Stride = upload.rowStride;
     Diligent::TextureData init{};
     init.pSubResources = &sub;
@@ -242,15 +242,10 @@ void GaussianBlurCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x
         dst = src;
         return;
     }
-    cv::Mat source(srcImage.height(), srcImage.width(), CV_32FC4,
+    cv::Mat srcMat(srcImage.height(), srcImage.width(), CV_32FC4,
                    const_cast<float*>(srcData));
-    cv::Mat srcMat;
-    if (srcImage.colorDescriptor().channelOrder ==
-        ArtifactCore::SurfaceChannelOrder::BGRA) {
-        cv::cvtColor(source, srcMat, cv::COLOR_BGRA2RGBA);
-    } else {
-        srcMat = source;
-    }
+    // Gaussian blur treats the three color planes identically, so preserve the
+    // canonical BGRA backing directly through the CPU fallback.
     cv::Mat dstMat;
 
     // Blur RGB in premultiplied-alpha space to avoid transparent-edge color bleed.
@@ -291,9 +286,9 @@ void GaussianBlurCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x
     // 結果をdstに設定
     ImageF32x4_RGBA dstImage;
     auto outputDescriptor = srcImage.colorDescriptor();
-    outputDescriptor.channelOrder = ArtifactCore::SurfaceChannelOrder::RGBA;
-    dstImage.setFromRGBA32F(dstMat.ptr<float>(), dstMat.cols, dstMat.rows,
-                            outputDescriptor);
+    outputDescriptor.channelOrder = ArtifactCore::SurfaceChannelOrder::BGRA;
+    dstImage.setFromBGRA32F(dstMat.ptr<float>(), dstMat.cols, dstMat.rows,
+                             outputDescriptor);
     dst = ImageF32x4RGBAWithCache(dstImage);
 }
 
@@ -472,7 +467,7 @@ void GaussianBlurGPUImpl::applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x
                                  Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
     auto outputDescriptor = src.image().colorDescriptor();
-    outputDescriptor.channelOrder = ArtifactCore::SurfaceChannelOrder::RGBA;
+    outputDescriptor.channelOrder = ArtifactCore::SurfaceChannelOrder::BGRA;
     if (!readbackTexture(resources.device, resources.context, resources.outputTex,
                          resources.stagingTex, dst,
                          outputDescriptor,

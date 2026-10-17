@@ -55,23 +55,24 @@ public:
                 vals[0][vi]=rp[0];vals[1][vi]=rp[1];vals[2][vi]=rp[2];vals[3][vi]=rp[3];++vi;
             }
             float* p=d+px*4;
-            for(int c=0;c<4;++c){
-                std::sort(vals[c],vals[c]+rfCount);
-                float med=vals[c][rfCount/2];
-                p[c]=p[c]*(1.0f-bl)+med*bl;
-            }
             if(channel_>0&&channel_<=3){
-                // Only apply to single channel, restore others
-                int ch=channel_-1;
+                // UI channel ids are logical RGBA; backing storage is BGRA.
+                const int ch=channel_==1?2:(channel_==3?0:1);
                 std::sort(vals[ch],vals[ch]+rfCount);
                 p[ch]=p[ch]*(1.0f-bl)+vals[ch][rfCount/2]*bl;
             }else if(channel_==4){
                 // Luma only
-                float sl=p[0]*0.299f+p[1]*0.587f+p[2]*0.114f;
-                float lr[16];for(int i=0;i<rfCount;++i){const float*rp=refs[i].img.rgba32fData()+px*4;lr[i]=rp[0]*0.299f+rp[1]*0.587f+rp[2]*0.114f;}
+                float sl=p[0]*0.114f+p[1]*0.587f+p[2]*0.299f;
+                float lr[16];for(int i=0;i<rfCount;++i){const float*rp=refs[i].img.rgba32fData()+px*4;lr[i]=rp[0]*0.114f+rp[1]*0.587f+rp[2]*0.299f;}
                 std::sort(lr,lr+rfCount);float ml=lr[rfCount/2];
                 float ratio=ml/std::max(sl,0.001f);
                 p[0]=std::clamp(p[0]*ratio,0.0f,1.0f);p[1]=std::clamp(p[1]*ratio,0.0f,1.0f);p[2]=std::clamp(p[2]*ratio,0.0f,1.0f);
+            }else{
+                for(int c=0;c<4;++c){
+                    std::sort(vals[c],vals[c]+rfCount);
+                    const float med=vals[c][rfCount/2];
+                    p[c]=p[c]*(1.0f-bl)+med*bl;
+                }
             }
             }
         });

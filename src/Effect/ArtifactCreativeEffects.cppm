@@ -270,7 +270,7 @@ void ArtifactFilmGrungeEffect::apply(const ImageF32x4RGBAWithCache& src,
                 static_cast<std::size_t>(y) * width + x];
             for (int channel = 0; channel < 3; ++channel) {
                 const float chromaGrain = grain *
-                    (channel == 0 ? 1.05f : channel == 2 ? 0.92f : 1.0f);
+                    (channel == 2 ? 1.05f : channel == 0 ? 0.92f : 1.0f);
                 destination[offset + channel] =
                     shiftedRow[x][channel] * exposure * vignetteFactor * stainWave +
                     chromaGrain + damage;
@@ -417,8 +417,9 @@ void ArtifactHeatwaveEffect::apply(const ImageF32x4RGBAWithCache& src,
             const float dy = (detail * 0.45f + rising) * impl_->amount * 0.45f;
             const std::size_t offset =
                 (static_cast<std::size_t>(y) * width + x) * 4u;
+            // Physical channel 0 is blue and channel 2 is red.
             const float channelOffset[3] = {
-                impl_->dispersion, 0.0f, -impl_->dispersion};
+                -impl_->dispersion, 0.0f, impl_->dispersion};
             for (int channel = 0; channel < 3; ++channel) {
                 const float warped = sampleHeatwaveChannel(
                     source, width, height, x + dx + channelOffset[channel],
@@ -534,8 +535,8 @@ void ArtifactCinematicLensFlareEffect::apply(
             for (int x = 0; x < width; ++x) {
                 const std::size_t offset =
                     (static_cast<std::size_t>(y) * width + x) * 4u;
-                const float luminance = source[offset] * 0.2126f +
-                    source[offset + 1] * 0.7152f + source[offset + 2] * 0.0722f;
+                const float luminance = source[offset + 2] * 0.2126f +
+                    source[offset + 1] * 0.7152f + source[offset] * 0.0722f;
                 const float weight = std::max(0.0f, luminance - impl_->threshold);
                 weightedX += static_cast<double>(x) * weight;
                 weightedY += static_cast<double>(y) * weight;
@@ -615,8 +616,9 @@ void ArtifactCinematicLensFlareEffect::apply(
             const std::size_t offset =
                 (static_cast<std::size_t>(y) * width + x) * 4u;
             for (int channel = 0; channel < 3; ++channel) {
-                destination[offset + channel] =
-                    source[offset + channel] + flareColor[channel] * overall;
+                const int bgraIndex = 2 - channel;
+                destination[offset + bgraIndex] =
+                    source[offset + bgraIndex] + flareColor[channel] * overall;
             }
             destination[offset + 3] = source[offset + 3];
         }
@@ -756,11 +758,12 @@ void ArtifactTexturizeMotionEffect::apply(const ImageF32x4RGBAWithCache& src,
         const float tint[3] = {1.0f + impl_->warmth * 0.18f, 1.0f,
                                1.0f - impl_->warmth * 0.28f};
         for (int channel = 0; channel < 3; ++channel) {
-            const float separation = (channel - 1) * impl_->colorSeparation;
+            const int logicalChannel = 2 - channel;
+            const float separation = (logicalChannel - 1) * impl_->colorSeparation;
             const float warped = sampleHeatwaveChannel(source, width, height,
                 x + dx + separation, y + dy, channel);
             const float textured = warped * (1.0f + texture * impl_->opacity) +
-                                   std::max(0.0f, texture) * impl_->opacity * 0.08f * tint[channel];
+                                   std::max(0.0f, texture) * impl_->opacity * 0.08f * tint[logicalChannel];
             output[offset + channel] = std::lerp(source[offset + channel], textured, impl_->mix);
         }
         output[offset + 3] = source[offset + 3];
@@ -804,7 +807,7 @@ void ArtifactDebandEffect::apply(const ImageF32x4RGBAWithCache& src,ImageF32x4RG
     const auto& image=src.image();const int w=image.width(),h=image.height();const float* data=image.rgba32fData();if(!data||w<=0||h<=0){dst=src;return;}
     cv::Mat rgba(h,w,CV_32FC4,const_cast<float*>(data));std::vector<cv::Mat> c;cv::split(rgba,c);cv::Mat rgb;cv::merge(std::vector<cv::Mat>{c[0],c[1],c[2]},rgb);cv::Mat smooth=rgb.clone();
     for(int i=0;i<impl_->iterations;++i){cv::Mat next;cv::bilateralFilter(smooth,next,std::max(3,static_cast<int>(impl_->radius)*2+1),impl_->edgeThreshold*4.0f,impl_->radius);smooth=next;}
-    cv::Mat luma=c[0]*.2126f+c[1]*.7152f+c[2]*.0722f,gx,gy;cv::Sobel(luma,gx,CV_32F,1,0,3);cv::Sobel(luma,gy,CV_32F,0,1,3);
+    cv::Mat luma=c[2]*.2126f+c[1]*.7152f+c[0]*.0722f,gx,gy;cv::Sobel(luma,gx,CV_32F,1,0,3);cv::Sobel(luma,gy,CV_32F,0,1,3);
     auto result=image.DeepCopy();float* out=result.rgba32fData();for(int y=0;y<h;++y){const cv::Vec3f* sr=smooth.ptr<cv::Vec3f>(y);const float* xr=gx.ptr<float>(y);const float* yr=gy.ptr<float>(y);for(int x=0;x<w;++x){const float edge=std::sqrt(xr[x]*xr[x]+yr[x]*yr[x]);const float flat=1-std::clamp(edge/std::max(.0001f,impl_->edgeThreshold),0.0f,1.0f);const float amount=impl_->strength*flat*impl_->mix;const float noise=(creativeHash(x,y,731)-.5f)*2*impl_->grain;const size_t o=(static_cast<size_t>(y)*w+x)*4;for(int ch=0;ch<3;++ch)out[o+ch]=std::lerp(data[o+ch],sr[x][ch],amount)+noise;out[o+3]=data[o+3];}}
     result.setColorDescriptor(image.colorDescriptor());dst=ImageF32x4RGBAWithCache(result);
 }
@@ -815,7 +818,7 @@ EffectROIHint ArtifactDebandEffect::roiHint()const{return{.kind=EffectROIHintKin
 class ArtifactDeblockEffect::Impl { public:int blockSize=8;float strength=.65f,threshold=.08f,detailRecovery=.28f,mix=1;};
 ArtifactDeblockEffect::ArtifactDeblockEffect():impl_(new Impl()){setEffectID(ArtifactCore::UniString("builtin.deblock"));setDisplayName(ArtifactCore::UniString("Deblock"));setPipelineStage(EffectPipelineStage::Rasterizer);}
 ArtifactDeblockEffect::~ArtifactDeblockEffect(){delete impl_;impl_=nullptr;}
-void ArtifactDeblockEffect::apply(const ImageF32x4RGBAWithCache&src,ImageF32x4RGBAWithCache&dst){const auto&im=src.image();const int w=im.width(),h=im.height();const float*d=im.rgba32fData();if(!d||w<=0||h<=0){dst=src;return;}auto result=im.DeepCopy();float*out=result.rgba32fData();auto smoothPair=[&](int a,int b){float la=out[a]*.2126f+out[a+1]*.7152f+out[a+2]*.0722f,lb=out[b]*.2126f+out[b+1]*.7152f+out[b+2]*.0722f;if(std::abs(la-lb)>impl_->threshold)return;for(int c=0;c<3;++c){const float mean=(out[a+c]+out[b+c])*.5f;out[a+c]=std::lerp(out[a+c],mean,impl_->strength);out[b+c]=std::lerp(out[b+c],mean,impl_->strength);}};for(int x=impl_->blockSize;x<w;x+=impl_->blockSize)for(int y=0;y<h;++y)smoothPair(static_cast<int>((static_cast<size_t>(y)*w+x-1)*4),static_cast<int>((static_cast<size_t>(y)*w+x)*4));for(int y=impl_->blockSize;y<h;y+=impl_->blockSize)for(int x=0;x<w;++x)smoothPair(static_cast<int>((static_cast<size_t>(y-1)*w+x)*4),static_cast<int>((static_cast<size_t>(y)*w+x)*4));for(size_t p=0;p<im.totalPixels();++p)for(int c=0;c<3;++c){const float processed=out[p*4+c];const float recovered=processed+(d[p*4+c]-processed)*impl_->detailRecovery;out[p*4+c]=std::lerp(d[p*4+c],recovered,impl_->mix);}result.setColorDescriptor(im.colorDescriptor());dst=ImageF32x4RGBAWithCache(result);}
+void ArtifactDeblockEffect::apply(const ImageF32x4RGBAWithCache&src,ImageF32x4RGBAWithCache&dst){const auto&im=src.image();const int w=im.width(),h=im.height();const float*d=im.rgba32fData();if(!d||w<=0||h<=0){dst=src;return;}auto result=im.DeepCopy();float*out=result.rgba32fData();auto smoothPair=[&](int a,int b){float la=out[a+2]*.2126f+out[a+1]*.7152f+out[a]*.0722f,lb=out[b+2]*.2126f+out[b+1]*.7152f+out[b]*.0722f;if(std::abs(la-lb)>impl_->threshold)return;for(int c=0;c<3;++c){const float mean=(out[a+c]+out[b+c])*.5f;out[a+c]=std::lerp(out[a+c],mean,impl_->strength);out[b+c]=std::lerp(out[b+c],mean,impl_->strength);}};for(int x=impl_->blockSize;x<w;x+=impl_->blockSize)for(int y=0;y<h;++y)smoothPair(static_cast<int>((static_cast<size_t>(y)*w+x-1)*4),static_cast<int>((static_cast<size_t>(y)*w+x)*4));for(int y=impl_->blockSize;y<h;y+=impl_->blockSize)for(int x=0;x<w;++x)smoothPair(static_cast<int>((static_cast<size_t>(y-1)*w+x)*4),static_cast<int>((static_cast<size_t>(y)*w+x)*4));for(size_t p=0;p<im.totalPixels();++p)for(int c=0;c<3;++c){const float processed=out[p*4+c];const float recovered=processed+(d[p*4+c]-processed)*impl_->detailRecovery;out[p*4+c]=std::lerp(d[p*4+c],recovered,impl_->mix);}result.setColorDescriptor(im.colorDescriptor());dst=ImageF32x4RGBAWithCache(result);}
 std::vector<ArtifactCore::AbstractProperty> ArtifactDeblockEffect::getProperties()const{std::vector<ArtifactCore::AbstractProperty>p;auto&b=p.emplace_back();b.setName("blockSize");b.setDisplayLabel("Block Size");b.setType(ArtifactCore::PropertyType::Integer);b.setValue(impl_->blockSize);b.setDefaultValue(8);b.setHardRange(4,64);addCreativeFloat(p,"strength","Strength",impl_->strength,0,1);addCreativeFloat(p,"threshold","Boundary Threshold",impl_->threshold,0,.5f);addCreativeFloat(p,"detailRecovery","Detail Recovery",impl_->detailRecovery,0,1);addCreativeFloat(p,"mix","Mix",impl_->mix,0,1);return p;}
 void ArtifactDeblockEffect::setPropertyValue(const ArtifactCore::UniString&name,const QVariant&v){const QString k=name.toQString();const float raw=v.toFloat();const float n=std::isfinite(raw)?raw:0.0f;if(k=="blockSize")impl_->blockSize=std::clamp(v.toInt(),4,64);else if(k=="strength")impl_->strength=std::clamp(n,0.0f,1.0f);else if(k=="threshold")impl_->threshold=std::clamp(n,0.0f,.5f);else if(k=="detailRecovery")impl_->detailRecovery=std::clamp(n,0.0f,1.0f);else if(k=="mix")impl_->mix=std::clamp(n,0.0f,1.0f);else ArtifactAbstractEffect::setPropertyValue(name,v);}
 EffectROIHint ArtifactDeblockEffect::roiHint()const{return{.kind=EffectROIHintKind::Blur,.expansionPixels=2};}
@@ -842,12 +845,13 @@ ArtifactBeautyStudioEffect::~ArtifactBeautyStudioEffect(){delete impl_;impl_=nul
 
 void ArtifactBeautyStudioEffect::apply(const ImageF32x4RGBAWithCache&src,ImageF32x4RGBAWithCache&dst){
     const auto&im=src.image();const int w=im.width(),h=im.height();const float*d=im.rgba32fData();if(!d||w<=0||h<=0){dst=src;return;}
-    cv::Mat rgba(h,w,CV_32FC4,const_cast<float*>(d));std::vector<cv::Mat>ch;cv::split(rgba,ch);cv::Mat rgb;cv::merge(std::vector<cv::Mat>{ch[0],ch[1],ch[2]},rgb);
+    // Expose logical RGB to skin detection and keep the raw backing BGRA.
+    cv::Mat bgra(h,w,CV_32FC4,const_cast<float*>(d));std::vector<cv::Mat>ch;cv::split(bgra,ch);cv::Mat rgb;cv::merge(std::vector<cv::Mat>{ch[2],ch[1],ch[0]},rgb);
     cv::Mat smooth;const float sigmaColor=.04f+impl_->smoothing*.28f;const float sigmaSpace=2.0f+impl_->smoothing*14.0f;cv::bilateralFilter(rgb,smooth,-1,sigmaColor,sigmaSpace);
     cv::Mat baseBlur;cv::GaussianBlur(rgb,baseBlur,cv::Size(),1.0);cv::Mat matte(h,w,CV_32F);
     for(int y=0;y<h;++y){float*m=matte.ptr<float>(y);const cv::Vec3f*r=rgb.ptr<cv::Vec3f>(y);for(int x=0;x<w;++x){const float red=r[x][0],green=r[x][1],blue=r[x][2];const float mx=std::max({red,green,blue}),mn=std::min({red,green,blue}),delta=mx-mn;float hue=0;if(delta>.00001f){if(mx==red)hue=(green-blue)/delta/6.0f;else if(mx==green)hue=(2+(blue-red)/delta)/6.0f;else hue=(4+(red-green)/delta)/6.0f;if(hue<0)hue+=1;}const float saturation=mx>0?delta/mx:0;const float lum=red*.2126f+green*.7152f+blue*.0722f;float hd=std::abs(hue-impl_->skinHue);hd=std::min(hd,1-hd);const float hueScore=1-std::clamp(hd/std::max(.001f,impl_->skinTolerance),0.0f,1.0f);const float satScore=std::clamp((saturation-.06f)/.18f,0.0f,1.0f)*std::clamp((.95f-saturation)/.25f,0.0f,1.0f);const float lumScore=std::clamp((lum-.025f)/.16f,0.0f,1.0f);m[x]=hueScore*hueScore*satScore*lumScore;}}
     if(impl_->matteSoftness>0)cv::GaussianBlur(matte,matte,cv::Size(),impl_->matteSoftness);
-    auto result=im.DeepCopy();float*out=result.rgba32fData();for(int y=0;y<h;++y){const cv::Vec3f*original=rgb.ptr<cv::Vec3f>(y),*sm=smooth.ptr<cv::Vec3f>(y),*bb=baseBlur.ptr<cv::Vec3f>(y);const float*m=matte.ptr<float>(y);for(int x=0;x<w;++x){const size_t o=(static_cast<size_t>(y)*w+x)*4;if(impl_->mattePreview){out[o]=out[o+1]=out[o+2]=m[x];out[o+3]=d[o+3];continue;}for(int c=0;c<3;++c){const float texture=(original[x][c]-bb[x][c])*impl_->textureRecovery;const float cleaned=std::lerp(original[x][c],sm[x][c],impl_->blemishReduction)+texture;float toned=cleaned;if(c==0)toned+=impl_->warmth*.018f;else if(c==2)toned-=impl_->warmth*.012f;out[o+c]=std::lerp(d[o+c],toned,m[x]*impl_->smoothing*impl_->mix);}out[o+3]=d[o+3];}}
+    auto result=im.DeepCopy();float*out=result.rgba32fData();for(int y=0;y<h;++y){const cv::Vec3f*original=rgb.ptr<cv::Vec3f>(y),*sm=smooth.ptr<cv::Vec3f>(y),*bb=baseBlur.ptr<cv::Vec3f>(y);const float*m=matte.ptr<float>(y);for(int x=0;x<w;++x){const size_t o=(static_cast<size_t>(y)*w+x)*4;if(impl_->mattePreview){out[o]=out[o+1]=out[o+2]=m[x];out[o+3]=d[o+3];continue;}for(int c=0;c<3;++c){const float texture=(original[x][c]-bb[x][c])*impl_->textureRecovery;const float cleaned=std::lerp(original[x][c],sm[x][c],impl_->blemishReduction)+texture;float toned=cleaned;if(c==0)toned+=impl_->warmth*.018f;else if(c==2)toned-=impl_->warmth*.012f;const int bgraChannel=c==0?2:(c==2?0:1);out[o+bgraChannel]=std::lerp(d[o+bgraChannel],toned,m[x]*impl_->smoothing*impl_->mix);}out[o+3]=d[o+3];}}
     result.setColorDescriptor(im.colorDescriptor());dst=ImageF32x4RGBAWithCache(result);
 }
 std::vector<ArtifactCore::AbstractProperty> ArtifactBeautyStudioEffect::getProperties()const{std::vector<ArtifactCore::AbstractProperty>p;addCreativeFloat(p,"smoothing","Skin Smoothing",impl_->smoothing,0,1);addCreativeFloat(p,"skinHue","Skin Hue",impl_->skinHue,0,1);addCreativeFloat(p,"skinTolerance","Skin Range",impl_->skinTolerance,.01f,.5f);addCreativeFloat(p,"matteSoftness","Matte Softness",impl_->matteSoftness,0,32);addCreativeFloat(p,"textureRecovery","Texture Recovery",impl_->textureRecovery,0,1);addCreativeFloat(p,"blemishReduction","Blemish Reduction",impl_->blemishReduction,0,1);addCreativeFloat(p,"warmth","Skin Warmth",impl_->warmth,-1,1);addCreativeFloat(p,"mix","Mix",impl_->mix,0,1);auto&m=p.emplace_back();m.setName("mattePreview");m.setDisplayLabel("Matte Preview");m.setType(ArtifactCore::PropertyType::Boolean);m.setValue(impl_->mattePreview);m.setDefaultValue(false);return p;}
@@ -960,11 +964,12 @@ void ArtifactEnergyZapEffect::apply(const ImageF32x4RGBAWithCache& src,
                 (static_cast<std::size_t>(y) * width + x) * 4u;
             const float energy = (coreRow[x] * 1.8f + glowRow[x] * 2.6f) *
                                  impl_->intensity * flicker;
+            // Positive warmth boosts logical red; negative warmth boosts blue.
             output[offset] = source[offset] + energy *
-                (0.72f + std::max(0.0f, impl_->warmth) * 0.28f);
+                (0.72f + std::max(0.0f, -impl_->warmth) * 0.28f);
             output[offset + 1] = source[offset + 1] + energy * 0.88f;
             output[offset + 2] = source[offset + 2] + energy *
-                (1.15f + std::max(0.0f, -impl_->warmth) * 0.35f);
+                (1.15f + std::max(0.0f, impl_->warmth) * 0.35f);
             output[offset + 3] = source[offset + 3];
         }
     }
@@ -1134,8 +1139,8 @@ void ArtifactLightWrapProEffect::apply(const ImageF32x4RGBAWithCache& src,
             const float amount = std::clamp(edgeRow[x] * impl_->intensity *
                                             impl_->mix, 0.0f, 1.0f);
             const cv::Vec3f rawWrap = backgroundRow[x] * exposure;
-            const float wrapLuma = rawWrap[0] * 0.2126f + rawWrap[1] * 0.7152f +
-                                   rawWrap[2] * 0.0722f;
+            const float wrapLuma = rawWrap[2] * 0.2126f + rawWrap[1] * 0.7152f +
+                                   rawWrap[0] * 0.0722f;
             for (int channel = 0; channel < 3; ++channel) {
                 const float wrap = wrapLuma +
                     (rawWrap[channel] - wrapLuma) * impl_->saturation;
@@ -1269,12 +1274,12 @@ void ArtifactMatchGrainEffect::apply(const ImageF32x4RGBAWithCache& src,
             const int sampleX = (x + jitterX % width + width) % width;
             const std::size_t offset =
                 (static_cast<std::size_t>(y) * width + x) * 4u;
-            const float sourceLuma = source[offset] * 0.2126f +
+            const float sourceLuma = source[offset + 2] * 0.2126f +
                                      source[offset + 1] * 0.7152f +
-                                     source[offset + 2] * 0.0722f;
-            const float residualLuma = residualRows[0][sampleX] * 0.2126f +
+                                     source[offset] * 0.0722f;
+            const float residualLuma = residualRows[2][sampleX] * 0.2126f +
                                        residualRows[1][sampleX] * 0.7152f +
-                                       residualRows[2][sampleX] * 0.0722f;
+                                       residualRows[0][sampleX] * 0.0722f;
             const float response = std::max(0.0f,
                 1.0f + (1.0f - std::clamp(sourceLuma, 0.0f, 1.0f)) *
                     impl_->shadowResponse + std::clamp(sourceLuma, 0.0f, 1.0f) *
@@ -1799,7 +1804,7 @@ float4 bilinearFg(float2 p, uint w, uint h) {
   float2 f = c - (float2)p0;
   float4 t0 = lerp(ForegroundTexture[uint2(p0)], ForegroundTexture[uint2(p1.x, p0.y)], f.x);
   float4 t1 = lerp(ForegroundTexture[uint2(p0.x, p1.y)], ForegroundTexture[uint2(p1)], f.x);
-  return lerp(t0, t1, f.y);
+  return lerp(t0, t1, f.y).bgra;
 }
 [numthreads(16,16,1)] void main(uint3 id : SV_DispatchThreadID) {
   uint w, h; OutputTexture.GetDimensions(w, h);
@@ -1828,10 +1833,10 @@ float4 bilinearFg(float2 p, uint w, uint h) {
     float4 m = MaskTexture[id.xy];
     mask = max(mask, saturate(max(max(m.r, m.g), max(m.b, m.a))));
   }
-  float4 src = ForegroundTexture[id.xy];
+  float4 src = ForegroundTexture[id.xy].bgra;
   float3 fill;
   if (UseCleanTex != 0) {
-    fill = CleanTexture[id.xy].rgb;
+    fill = CleanTexture[id.xy].bgra.rgb;
   } else if (Method == 0) {
     float2 n = float2(-bestN.y, bestN.x);
     float side = innerR + FeatherPx + 2.0;
@@ -1842,7 +1847,7 @@ float4 bilinearFg(float2 p, uint w, uint h) {
   float amount = saturate(mask * Mix);
   float3 rgb = lerp(src.rgb, fill, amount);
   if (ViewMask != 0) { OutputTexture[id.xy] = float4(mask, mask, mask, 1.0); return; }
-  OutputTexture[id.xy] = float4(rgb, src.a);
+  OutputTexture[id.xy] = float4(rgb, src.a).bgra;
 })";
 
     static bool createFloatTexture(const float* data, int width, int height,
@@ -2095,7 +2100,9 @@ void ArtifactDepthRelightEffect::apply(const ImageF32x4RGBAWithCache& src,
         prepareAuxiliaryImage(depthImage, width, height, depthRgba)) {
         std::vector<cv::Mat> channels;
         cv::split(depthRgba, channels);
-        depth = channels[0].clone();
+        // A color depth input uses its logical red channel; prepareAuxiliaryImage
+        // returns the canonical BGRA backing order.
+        depth = channels[2].clone();
         hasDepth = true;
     } else if (impl_->useLumaFallback) {
         for (int y = 0; y < height; ++y) {
@@ -2103,9 +2110,9 @@ void ArtifactDepthRelightEffect::apply(const ImageF32x4RGBAWithCache& src,
             for (int x = 0; x < width; ++x) {
                 const std::size_t offset =
                     (static_cast<std::size_t>(y) * width + x) * 4u;
-                row[x] = source[offset] * 0.2126f +
+                row[x] = source[offset + 2] * 0.2126f +
                          source[offset + 1] * 0.7152f +
-                         source[offset + 2] * 0.0722f;
+                         source[offset] * 0.0722f;
             }
         }
         hasDepth = true;
@@ -2146,9 +2153,9 @@ void ArtifactDepthRelightEffect::apply(const ImageF32x4RGBAWithCache& src,
         for (int x = 0; x < width; ++x) {
             cv::Vec3f normal;
             if (hasNormalMap) {
-                normal = cv::Vec3f(normalRow[x][0] * 2.0f - 1.0f,
+                normal = cv::Vec3f(normalRow[x][2] * 2.0f - 1.0f,
                                    normalRow[x][1] * 2.0f - 1.0f,
-                                   normalRow[x][2] * 2.0f - 1.0f);
+                                   normalRow[x][0] * 2.0f - 1.0f);
             } else {
                 normal = cv::Vec3f(-gradientXRow[x] * impl_->normalStrength,
                                    -gradientYRow[x] * impl_->normalStrength,
@@ -2177,12 +2184,14 @@ void ArtifactDepthRelightEffect::apply(const ImageF32x4RGBAWithCache& src,
             const float diffuse = impl_->diffuse * ndotl * attenuation;
             const std::size_t offset =
                 (static_cast<std::size_t>(y) * width + x) * 4u;
+            constexpr int kBgraIndexForRgb[3] = {2, 1, 0};
             for (int channel = 0; channel < 3; ++channel) {
-                const float lit = source[offset + channel] *
+                const int bgraIndex = kBgraIndexForRgb[channel];
+                const float lit = source[offset + bgraIndex] *
                     (impl_->ambient + diffuse * lightColor[channel] + rim) +
                     specular * lightColor[channel];
-                output[offset + channel] = std::lerp(source[offset + channel],
-                                                     lit, impl_->mix);
+                output[offset + bgraIndex] = std::lerp(
+                    source[offset + bgraIndex], lit, impl_->mix);
             }
             output[offset + 3] = source[offset + 3];
         }
@@ -2463,8 +2472,9 @@ void ArtifactSpillKillerProEffect::apply(const ImageF32x4RGBAWithCache& src,
     const std::size_t pixels = image.totalPixels();
     for (std::size_t pixel = 0; pixel < pixels; ++pixel) {
         const std::size_t offset = pixel * 4u;
-        const float rgb[3] = {source[offset], source[offset + 1],
-                              source[offset + 2]};
+        // The effect math uses logical RGB while ImageF32x4RGBA stores BGRA.
+        const float rgb[3] = {source[offset + 2], source[offset + 1],
+                              source[offset]};
         const float opponent = std::max(rgb[firstOther], rgb[secondOther]);
         const float excess = rgb[keyChannel] - opponent - impl_->threshold;
         const float detection = smoothMask(excess /
@@ -2487,7 +2497,8 @@ void ArtifactSpillKillerProEffect::apply(const ImageF32x4RGBAWithCache& src,
         const float lumaRestore = (originalLuma - correctedLuma) *
                                   impl_->preserveLuma;
         for (int channel = 0; channel < 3; ++channel) {
-            output[offset + channel] = corrected[channel] + lumaRestore;
+            const int bgraIndex = 2 - channel;
+            output[offset + bgraIndex] = corrected[channel] + lumaRestore;
         }
         output[offset + 3] = source[offset + 3];
     }
@@ -2879,7 +2890,7 @@ float median9(float v[9]) {
 [numthreads(16,16,1)] void main(uint3 id : SV_DispatchThreadID) {
   uint w, h; OutputTexture.GetDimensions(w, h);
   if (id.x >= w || id.y >= h) return;
-  float4 src = ForegroundTexture[id.xy];
+  float4 src = ForegroundTexture[id.xy].bgra;
   float window[9];
   float3 med = 0;
   for (int c = 0; c < 3; ++c) {
@@ -2887,8 +2898,8 @@ float median9(float v[9]) {
     for (int dy = -1; dy <= 1; ++dy)
       for (int dx = -1; dx <= 1; ++dx) {
         int2 q = clamp(int2(id.xy) + int2(dx, dy), int2(0, 0), int2(w, h) - 1);
-        float4 s = ForegroundTexture[uint2(q)];
-        window[n++] = (c == 0) ? s.r : ((c == 1) ? s.g : s.b);
+        float3 logicalRgb = ForegroundTexture[uint2(q)].bgra.rgb;
+        window[n++] = logicalRgb[c];
       }
     float m = median9(window);
     med[c] = m;
@@ -2903,8 +2914,8 @@ float median9(float v[9]) {
     if (eligible)
       mask = max(mask, smooth01((abs(residual) - Threshold) / max(Softness, 1e-5)));
     if (TemporalDetect != 0 && UsePrev != 0 && UseNext != 0) {
-      float pl = lumaOf(PrevTexture[id.xy].rgb);
-      float nl = lumaOf(NextTexture[id.xy].rgb);
+      float pl = lumaOf(PrevTexture[id.xy].bgra.rgb);
+      float nl = lumaOf(NextTexture[id.xy].bgra.rgb);
       float toPrev = luma - pl, toNext = luma - nl;
       if (toPrev * toNext > 0) {
         float mag = min(abs(toPrev), abs(toNext));
@@ -2929,8 +2940,8 @@ float median9(float v[9]) {
   float3 fill = med;
   if (TemporalRepair != 0 && UsePrev != 0 && UseNext != 0 && TemporalDetect != 0 && MaskOnly == 0) {
     // Recompute the temporal weight to pick the neighbor fill.
-    float pl = lumaOf(PrevTexture[id.xy].rgb);
-    float nl = lumaOf(NextTexture[id.xy].rgb);
+    float pl = lumaOf(PrevTexture[id.xy].bgra.rgb);
+    float nl = lumaOf(NextTexture[id.xy].bgra.rgb);
     float toPrev = luma - pl, toNext = luma - nl;
     float tw = 0;
     if (toPrev * toNext > 0) {
@@ -2945,11 +2956,11 @@ float median9(float v[9]) {
         }
       }
     }
-    float3 navg = (PrevTexture[id.xy].rgb + NextTexture[id.xy].rgb) * 0.5;
+    float3 navg = (PrevTexture[id.xy].bgra.rgb + NextTexture[id.xy].bgra.rgb) * 0.5;
     fill = lerp(fill, navg, saturate(tw));
   }
   float blend = saturate(mask * Amount * Mix);
-  OutputTexture[id.xy] = float4(lerp(src.rgb, fill, blend), src.a);
+  OutputTexture[id.xy] = float4(lerp(src.rgb, fill, blend), src.a).bgra;
 })";
 
     static bool createFloatTexture(const float* data, int width, int height,
@@ -3168,9 +3179,10 @@ void ArtifactReflectionComposerEffect::apply(
                 source, width, height, sourceX, sourceY, 3) * fade,
                 0.0f, 1.0f);
             for (int channel = 0; channel < 3; ++channel) {
+                const int logicalChannel = 2 - channel;
                 row[x][channel] = sampleHeatwaveChannel(
                     source, width, height, sourceX, sourceY, channel) *
-                    tint[channel] * reflectedAlpha;
+                    tint[logicalChannel] * reflectedAlpha;
             }
             row[x][3] = reflectedAlpha;
         }
@@ -3315,7 +3327,9 @@ void ArtifactLensProfileMatcherEffect::apply(
             const std::size_t offset =
                 (static_cast<std::size_t>(y) * width + x) * 4u;
             for (int channel = 0; channel < 3; ++channel) {
-                const float colorOffset = (channel - 1) * impl_->chromatic *
+                // Reverse the physical index so aberration remains attached
+                // to logical red/blue after the BGRA backing migration.
+                const float colorOffset = (1 - channel) * impl_->chromatic *
                                           radius2 * 0.01f;
                 const float factor = baseFactor + colorOffset;
                 const float sourceX = centerX + nx * factor * radiusScale;
@@ -3437,7 +3451,8 @@ void ArtifactAtmosphericDepthEffect::apply(
         prepareAuxiliaryImage(depthImage, width, height, depthRgba)) {
         std::vector<cv::Mat> channels;
         cv::split(depthRgba, channels);
-        depth = channels[0].clone();
+        // A color depth input uses logical red; auxiliary images are BGRA.
+        depth = channels[2].clone();
         hasDepth = true;
     } else if (impl_->useLumaFallback) {
         for (int y = 0; y < height; ++y) {
@@ -3445,9 +3460,9 @@ void ArtifactAtmosphericDepthEffect::apply(
             for (int x = 0; x < width; ++x) {
                 const std::size_t offset =
                     (static_cast<std::size_t>(y) * width + x) * 4u;
-                row[x] = source[offset] * 0.2126f +
+                row[x] = source[offset + 2] * 0.2126f +
                          source[offset + 1] * 0.7152f +
-                         source[offset + 2] * 0.0722f;
+                         source[offset] * 0.0722f;
             }
         }
         hasDepth = true;
@@ -3469,9 +3484,9 @@ void ArtifactAtmosphericDepthEffect::apply(
         for (int x = 0; x < width; ++x) {
             const std::size_t offset =
                 (static_cast<std::size_t>(y) * width + x) * 4u;
-            const float luma = source[offset] * 0.2126f +
+            const float luma = source[offset + 2] * 0.2126f +
                                source[offset + 1] * 0.7152f +
-                               source[offset + 2] * 0.0722f;
+                               source[offset] * 0.0722f;
             row[x] = std::max(0.0f, luma - impl_->glowThreshold);
         }
     }
@@ -3494,10 +3509,11 @@ void ArtifactAtmosphericDepthEffect::apply(
             const std::size_t offset =
                 (static_cast<std::size_t>(y) * width + x) * 4u;
             for (int channel = 0; channel < 3; ++channel) {
+                const int bgraIndex = 2 - channel;
                 const float atmospheric = fogColor[channel] +
                     highlightRow[x] * impl_->glow;
-                output[offset + channel] = std::lerp(source[offset + channel],
-                                                     atmospheric, fog);
+                output[offset + bgraIndex] = std::lerp(
+                    source[offset + bgraIndex], atmospheric, fog);
             }
             output[offset + 3] = source[offset + 3];
         }
@@ -3650,13 +3666,13 @@ void ArtifactEdgeColorCompositeEffect::apply(
                 output[offset + 3] = 1.0f;
                 continue;
             }
-            const float sourceLuma = source[offset] * 0.2126f +
+            const float sourceLuma = source[offset + 2] * 0.2126f +
                                      source[offset + 1] * 0.7152f +
-                                     source[offset + 2] * 0.0722f;
+                                     source[offset] * 0.0722f;
             const cv::Vec3f backgroundColor = backgroundRow[x];
-            const float backgroundLuma = backgroundColor[0] * 0.2126f +
+            const float backgroundLuma = backgroundColor[2] * 0.2126f +
                                          backgroundColor[1] * 0.7152f +
-                                         backgroundColor[2] * 0.0722f;
+                                         backgroundColor[0] * 0.0722f;
             for (int channel = 0; channel < 3; ++channel) {
                 const float sourceChroma = source[offset + channel] - sourceLuma;
                 const float backgroundChroma = backgroundColor[channel] -
@@ -3755,7 +3771,8 @@ bool runCreativeCompute(const ImageF32x4RGBAWithCache& src,
     Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context;
     if (!acquireSharedRenderDeviceForCurrentBackend(device, context)) return false;
     const auto& image = src.image();
-    const auto upload = ArtifactCore::makeGpuImageUploadBuffer(image.surfaceView());
+    const auto upload = ArtifactCore::makeGpuImageUploadBuffer(
+        image.surfaceView(), ArtifactCore::GpuImageChannelOrder::Bgra);
     if (!upload.isValid() || image.width() <= 0 || image.height() <= 0) {
         releaseSharedRenderDevice();
         return false;
@@ -3776,7 +3793,7 @@ bool runCreativeCompute(const ImageF32x4RGBAWithCache& src,
     inputDesc.Usage = Diligent::USAGE_IMMUTABLE;
     inputDesc.BindFlags = Diligent::BIND_SHADER_RESOURCE;
     Diligent::TextureSubResData inputData{};
-    inputData.pData = upload.bytes.data();
+    inputData.pData = upload.data();
     inputData.Stride = upload.rowStride;
     Diligent::TextureData textureData{};
     textureData.pSubResources = &inputData;
@@ -3869,7 +3886,7 @@ bool runCreativeCompute(const ImageF32x4RGBAWithCache& src,
         }
         cv::Mat result(static_cast<int>(height), static_cast<int>(width), CV_32FC4, mapped.pData, mapped.Stride);
         auto outputDescriptor = image.colorDescriptor();
-        outputDescriptor.channelOrder = ArtifactCore::SurfaceChannelOrder::RGBA;
+        outputDescriptor.channelOrder = ArtifactCore::SurfaceChannelOrder::BGRA;
         dst.image().setFromCVMat(result, outputDescriptor);
         context->UnmapTextureSubresource(slot.staging, 0, 0);
         ok = true;
@@ -3882,17 +3899,17 @@ constexpr char kGlitchComputeHlsl[] = R"(
 Texture2D<float4> g_InputTexture : register(t0); RWTexture2D<float4> g_OutputTexture : register(u0);
 uint hash(uint v) { v ^= v >> 16; v *= 0x7feb352du; v ^= v >> 15; v *= 0x846ca68bu; return v ^ (v >> 16); }
 float random01(uint x, uint y, uint salt) { return (hash(x * 73856093u ^ y * 19349663u ^ salt) & 0x00ffffffu) / 16777215.0f; }
-[numthreads(8, 8, 1)] void main(uint3 id : SV_DispatchThreadID) { uint w,h; g_OutputTexture.GetDimensions(w,h); if(id.x>=w||id.y>=h)return; float rowOffset=(id.y%15u<4u)?(random01(0u,id.y,1u)*24.0f-12.0f):0.0f; float shift=3.0f+random01(0u,id.y,2u)*5.0f; int sx=clamp((int)id.x+(int)rowOffset,0,(int)w-1); int rx=clamp(sx+(int)shift,0,(int)w-1); int bx=clamp(sx-(int)shift,0,(int)w-1); float4 c=g_InputTexture[uint2(sx,id.y)]; g_OutputTexture[id.xy]=float4(g_InputTexture[uint2(rx,id.y)].r,c.g,g_InputTexture[uint2(bx,id.y)].b,c.a); })";
+[numthreads(8, 8, 1)] void main(uint3 id : SV_DispatchThreadID) { uint w,h; g_OutputTexture.GetDimensions(w,h); if(id.x>=w||id.y>=h)return; float rowOffset=(id.y%15u<4u)?(random01(0u,id.y,1u)*24.0f-12.0f):0.0f; float shift=3.0f+random01(0u,id.y,2u)*5.0f; int sx=clamp((int)id.x+(int)rowOffset,0,(int)w-1); int rx=clamp(sx+(int)shift,0,(int)w-1); int bx=clamp(sx-(int)shift,0,(int)w-1); float4 c=(g_InputTexture[uint2(sx,id.y)]).bgra; float r=(g_InputTexture[uint2(rx,id.y)]).bgra.r; float b=(g_InputTexture[uint2(bx,id.y)]).bgra.b; g_OutputTexture[id.xy]=(float4(r,c.g,b,c.a)).bgra; })";
 
 constexpr char kOldTVComputeHlsl[] = R"(
 Texture2D<float4> g_InputTexture : register(t0); RWTexture2D<float4> g_OutputTexture : register(u0);
 uint hash(uint v) { v ^= v >> 16; v *= 0x7feb352du; v ^= v >> 15; v *= 0x846ca68bu; return v ^ (v >> 16); }
 float random01(uint x,uint y,uint salt) { return (hash(x*73856093u ^ y*19349663u ^ salt) & 0x00ffffffu) / 16777215.0f; }
-[numthreads(8,8,1)] void main(uint3 id:SV_DispatchThreadID) { uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return; float scanline=(id.y%4u==0u)?0.7f:1.0f; float jitter=random01(0u,id.y,17u)<0.08f?(random01(0u,id.y,18u)*10.0f-5.0f):0.0f; int sx=clamp((int)id.x+(int)jitter,0,(int)w-1); float4 c=g_InputTexture[uint2(sx,id.y)]; float noise=(random01(id.x,id.y,19u)*2.0f-1.0f)*0.005f; g_OutputTexture[id.xy]=float4(saturate(c.rgb*scanline+noise),c.a); })";
+[numthreads(8,8,1)] void main(uint3 id:SV_DispatchThreadID) { uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return; float scanline=(id.y%4u==0u)?0.7f:1.0f; float jitter=random01(0u,id.y,17u)<0.08f?(random01(0u,id.y,18u)*10.0f-5.0f):0.0f; int sx=clamp((int)id.x+(int)jitter,0,(int)w-1); float4 c=(g_InputTexture[uint2(sx,id.y)]).bgra; float noise=(random01(id.x,id.y,19u)*2.0f-1.0f)*0.005f; g_OutputTexture[id.xy]=(float4(saturate(c.rgb*scanline+noise),c.a)).bgra; })";
 
 constexpr char kHalftoneComputeHlsl[] = R"(
 Texture2D<float4> g_InputTexture : register(t0); RWTexture2D<float4> g_OutputTexture : register(u0);
-[numthreads(8,8,1)] void main(uint3 id:SV_DispatchThreadID) { uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return; uint bx=(id.x/8u)*8u,by=(id.y/8u)*8u; float lum=0;uint count=0;[unroll]for(uint dy=0;dy<8u;++dy){[unroll]for(uint dx=0;dx<8u;++dx){uint x=bx+dx,y=by+dy;if(x<w&&y<h){float3 c=g_InputTexture[uint2(x,y)].rgb;lum+=(c.r+c.g+c.b)/3.0f;++count;}}}lum/=max(1u,count);float2 d=float2(id.xy)-float2(bx+4u,by+4u);float radius=4.0f*lum;float v=length(d)<radius?0.0f:1.0f;g_OutputTexture[id.xy]=float4(v,v,v,1); })";
+[numthreads(8,8,1)] void main(uint3 id:SV_DispatchThreadID) { uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return; uint bx=(id.x/8u)*8u,by=(id.y/8u)*8u; float lum=0;uint count=0;[unroll]for(uint dy=0;dy<8u;++dy){[unroll]for(uint dx=0;dx<8u;++dx){uint x=bx+dx,y=by+dy;if(x<w&&y<h){float3 c=(g_InputTexture[uint2(x,y)]).bgra.rgb;lum+=(c.r+c.g+c.b)/3.0f;++count;}}}lum/=max(1u,count);float2 d=float2(id.xy)-float2(bx+4u,by+4u);float radius=4.0f*lum;float v=length(d)<radius?0.0f:1.0f;g_OutputTexture[id.xy]=(float4(v,v,v,1)).bgra; })";
 
 } // namespace
 
@@ -3943,9 +3960,9 @@ void ArtifactGlitchEffect::apply(const ImageF32x4RGBAWithCache& src, ImageF32x4R
             const float* cb = srcPixels + (static_cast<size_t>(y) * w + bsx) * 4u;
             
             float* dst = dstPixels + (static_cast<size_t>(y) * w + x) * 4u;
-            dst[0] = cr[0];
+            dst[0] = cb[0];
             dst[1] = c[1];
-            dst[2] = cb[2];
+            dst[2] = cr[2];
             dst[3] = c[3];
         }
     });

@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <algorithm>
 #include <cmath>
 #include <numbers>
@@ -17,6 +17,7 @@ module Artifact.Effect.Rasterizer.Stripes;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
+import Image.GpuImageUpload;
 import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
@@ -61,9 +62,9 @@ public:
     void applyGPU(const ImageF32x4RGBAWithCache& src,ImageF32x4RGBAWithCache& dst) override {
         Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device; Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context;
         if(!acquireSharedRenderDeviceForCurrentBackend(device,context)){applyCPU(src,dst);return;}
-        const auto& image=src.image();const float* pixels=image.rgba32fData();if(!pixels||image.width()<=0||image.height()<=0){applyCPU(src,dst);return;}
+        const auto& image=src.image();if(image.width()<=0||image.height()<=0){applyCPU(src,dst);return;}const auto upload=ArtifactCore::makeGpuImageUploadBuffer(image.surfaceView(), ArtifactCore::GpuImageChannelOrder::Bgra);if(!upload.isValid()){applyCPU(src,dst);return;}
         Diligent::TextureDesc desc{};desc.Name="Stripes/Input";desc.Type=Diligent::RESOURCE_DIM_TEX_2D;desc.Width=image.width();desc.Height=image.height();desc.Format=Diligent::TEX_FORMAT_RGBA32_FLOAT;desc.MipLevels=1;desc.ArraySize=1;desc.SampleCount=1;desc.Usage=Diligent::USAGE_IMMUTABLE;desc.BindFlags=Diligent::BIND_SHADER_RESOURCE;
-        Diligent::TextureSubResData sub{};sub.pData=pixels;sub.Stride=static_cast<Diligent::Uint64>(image.width())*sizeof(float)*4ull;Diligent::TextureData init{};init.pSubResources=&sub;init.NumSubresources=1;
+        Diligent::TextureSubResData sub{};sub.pData=upload.data();sub.Stride=static_cast<Diligent::Uint64>(upload.rowStride);Diligent::TextureData init{};init.pSubResources=&sub;init.NumSubresources=1;
         Diligent::RefCntAutoPtr<Diligent::ITexture> input;device->CreateTexture(desc,&init,&input);if(!input){applyCPU(src,dst);return;}
         Diligent::TextureDesc outDesc=desc;outDesc.Name="Stripes/Output";outDesc.Usage=Diligent::USAGE_DEFAULT;outDesc.BindFlags=Diligent::BIND_SHADER_RESOURCE|Diligent::BIND_UNORDERED_ACCESS;if(!outputTex_||outputTex_->GetDesc().Width!=outDesc.Width||outputTex_->GetDesc().Height!=outDesc.Height||outputTex_->GetDesc().Format!=outDesc.Format||outputTex_->GetDesc().BindFlags!=outDesc.BindFlags){outputTex_.Release();device->CreateTexture(outDesc,nullptr,&outputTex_);}if(!outputTex_){applyCPU(src,dst);return;}
         Diligent::BufferDesc cbDesc{};cbDesc.Name="Stripes/Params";cbDesc.Size=sizeof(Params);cbDesc.Usage=Diligent::USAGE_DYNAMIC;cbDesc.BindFlags=Diligent::BIND_UNIFORM_BUFFER;cbDesc.CPUAccessFlags=Diligent::CPU_ACCESS_WRITE;Diligent::RefCntAutoPtr<Diligent::IBuffer> params;device->CreateBuffer(cbDesc,nullptr,&params);if(!params){applyCPU(src,dst);return;}
@@ -73,13 +74,13 @@ public:
         if(!executor.build(pipeline)||!executor.createShaderResourceBinding(true)||!executor.setBuffer("StripesParams",params)||!executor.setTextureView("g_InputTexture",input->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE))||!executor.setTextureView("g_OutputTexture",outputTex_->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))){applyCPU(src,dst);return;}
         executor.dispatch(context,ArtifactCore::ComputeExecutor::makeDispatchAttribs(outDesc.Width,outDesc.Height,1,8,8,1),Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
         Diligent::TextureDesc stagingDesc=outDesc;stagingDesc.Name="Stripes/Readback";stagingDesc.Usage=Diligent::USAGE_STAGING;stagingDesc.BindFlags=Diligent::BIND_NONE;stagingDesc.CPUAccessFlags=Diligent::CPU_ACCESS_READ;Diligent::RefCntAutoPtr<Diligent::ITexture> staging;device->CreateTexture(stagingDesc,nullptr,&staging);if(!staging){applyCPU(src,dst);return;}
-        Diligent::CopyTextureAttribs copy(outputTex_,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,staging,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);context->CopyTexture(copy);context->Flush();context->WaitForIdle();Diligent::MappedTextureSubresource read{};context->MapTextureSubresource(staging,0,0,Diligent::MAP_READ,Diligent::MAP_FLAG_NONE,nullptr,read);if(!read.pData||!read.Stride){applyCPU(src,dst);return;}cv::Mat result(static_cast<int>(outDesc.Height),static_cast<int>(outDesc.Width),CV_32FC4,read.pData,read.Stride);dst.image().setFromCVMat(result,image.colorDescriptor());context->UnmapTextureSubresource(staging,0,0);
+        Diligent::CopyTextureAttribs copy(outputTex_,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,staging,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);context->CopyTexture(copy);context->Flush();context->WaitForIdle();Diligent::MappedTextureSubresource read{};context->MapTextureSubresource(staging,0,0,Diligent::MAP_READ,Diligent::MAP_FLAG_NONE,nullptr,read);if(!read.pData||!read.Stride){applyCPU(src,dst);return;}const bool copied=dst.image().setFromGpuBGRA32F(static_cast<const float*>(read.pData),static_cast<int>(outDesc.Width),static_cast<int>(outDesc.Height),static_cast<std::size_t>(read.Stride),image.colorDescriptor());context->UnmapTextureSubresource(staging,0,0);if(!copied){applyCPU(src,dst);return;}
     }
 private:
     struct Params{float frequency,angle,thickness,offset;};
     static constexpr const char* kHlsl=R"(
 Texture2D<float4> g_InputTexture:register(t0);RWTexture2D<float4> g_OutputTexture:register(u0);cbuffer StripesParams:register(b0){float g_Frequency;float g_Angle;float g_Thickness;float g_Offset;}
-[numthreads(8,8,1)]void main(uint3 id:SV_DispatchThreadID){uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;float rad=g_Angle*3.14159265359/180.0;float cs=cos(rad),sn=sin(rad);float f=max(g_Frequency,0.5),th=saturate(g_Thickness);float proj=((float)id.x*cs+(float)id.y*sn)*f/(float)max(w,h)+g_Offset;float v=abs(proj-trunc(proj));v=v<th?1.0:0.0;g_OutputTexture[id.xy]=float4(v,v,v,1);}
+[numthreads(8,8,1)]void main(uint3 id:SV_DispatchThreadID){uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;float rad=g_Angle*3.14159265359/180.0;float cs=cos(rad),sn=sin(rad);float f=max(g_Frequency,0.5),th=saturate(g_Thickness);float proj=((float)id.x*cs+(float)id.y*sn)*f/(float)max(w,h)+g_Offset;float v=abs(proj-trunc(proj));v=v<th?1.0:0.0;g_OutputTexture[id.xy]=(float4(v,v,v,1)).bgra;}
 )";
 };
 

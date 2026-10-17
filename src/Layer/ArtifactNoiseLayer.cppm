@@ -740,9 +740,10 @@ ArtifactNoiseLayer::resolveLayerSourceOverride() const {
       const FloatColor& b = colorB;
       for (int i = 0; i < pixelCount; ++i) {
         const float v = std::clamp(pixels[i * 4], 0.0f, 1.0f);
-        pixels[i * 4 + 0] = a.r() + (b.r() - a.r()) * v;
+        // The generated image's raw backing is BGRA; color settings are logical RGBA.
+        pixels[i * 4 + 0] = a.b() + (b.b() - a.b()) * v;
         pixels[i * 4 + 1] = a.g() + (b.g() - a.g()) * v;
-        pixels[i * 4 + 2] = a.b() + (b.b() - a.b()) * v;
+        pixels[i * 4 + 2] = a.r() + (b.r() - a.r()) * v;
         pixels[i * 4 + 3] = a.a() + (b.a() - a.a()) * v;
       }
     }

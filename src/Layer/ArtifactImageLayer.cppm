@@ -746,7 +746,7 @@ struct LoadedImagePair {
 };
 
 constexpr quint32 kDerivedImageMagic = 0x41534449u; // ASDI
-constexpr quint32 kDerivedImageVersion = 2u;
+constexpr quint32 kDerivedImageVersion = 3u;
 
 QString derivedImageCachePath(const QFileInfo& sourceInfo, int subimageIndex)
 {
@@ -799,7 +799,7 @@ LoadedImagePair decodeDerivedImage(const QByteArray& bytes,
                            static_cast<std::size_t>(height));
     LoadedImagePair result;
     result.floatImage = ArtifactCore::makeShared<ArtifactCore::ImageF32x4_RGBA>();
-    result.floatImage->setFromRGBA32F(
+    result.floatImage->setFromBGRA32F(
         pixels.data(), width, height);
     if (result.floatImage->isEmpty()) return {};
     result.image = result.floatImage->toQImage();

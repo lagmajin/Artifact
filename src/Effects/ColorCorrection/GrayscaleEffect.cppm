@@ -15,6 +15,8 @@ import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import Color.TransferFunction;
 import Image.ImageF32x4RGBAWithCache;
+import Image.ImageSurfaceView;
+import Image.GpuImageUpload;
 import Property.Abstract;
 import Utils.String.UniString;
 import Core.Parallel;
@@ -72,7 +74,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
     g_OutputTexture.GetDimensions(width, height);
     if (dtid.x >= width || dtid.y >= height) return;
 
-    float4 c = g_InputTexture[dtid.xy];
+    float4 c = (g_InputTexture[dtid.xy]).bgra;
     float gray = 0.0f;
     if (g_Mode < 0.5f) {
         gray = dot(c.rgb, float3(0.299f, 0.587f, 0.114f));
@@ -84,7 +86,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
         gray = (max(c.r, max(c.g, c.b)) + min(c.r, min(c.g, c.b))) * 0.5f;
     }
     c.rgb = lerp(c.rgb, gray.xxx, saturate(g_Strength));
-    g_OutputTexture[dtid.xy] = c;
+    g_OutputTexture[dtid.xy] = (c).bgra;
 }
 )";
 } // namespace
@@ -121,14 +123,18 @@ public:
         const int height = dst.image().height();
         const float strength = std::clamp(strength_, 0.0f, 1.0f);
 
-        Parallel::ForPixels(0, height, width, height, [&](int y) {
-            for (int x = 0; x < width; ++x) {
-                float* pixel = pixels + (static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)) * 4u;
-                const float gray = grayscaleForPixel(pixel[0], pixel[1], pixel[2]);
-                pixel[0] = std::lerp(pixel[0], gray, strength);
-                pixel[1] = std::lerp(pixel[1], gray, strength);
-                pixel[2] = std::lerp(pixel[2], gray, strength);
-            }
+        ArtifactCore::withMutableColorFloat4View(
+            dst.image().surfaceView(), pixels, [&](auto& view) {
+                Parallel::ForPixels(0, height, width, height, [&](int y) {
+                    auto row = view.row(y);
+                    for (int x = 0; x < width; ++x) {
+                        auto pixel = row[x];
+                        const float gray = grayscaleForPixel(pixel.r, pixel.g, pixel.b);
+                        pixel.r = std::lerp(pixel.r, gray, strength);
+                        pixel.g = std::lerp(pixel.g, gray, strength);
+                        pixel.b = std::lerp(pixel.b, gray, strength);
+                    }
+                });
         });
     }
 };
@@ -149,12 +155,12 @@ public:
     void applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
         Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device;Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context;
         if(!acquireSharedRenderDeviceForCurrentBackend(device,context)){applyCPU(src,dst);return;}
-        const auto& image=src.image();const float* pixels=image.rgba32fData();if(!pixels||image.width()<=0||image.height()<=0){applyCPU(src,dst);return;}
-        Diligent::TextureDesc desc{};desc.Name="Grayscale/Input";desc.Type=Diligent::RESOURCE_DIM_TEX_2D;desc.Width=image.width();desc.Height=image.height();desc.Format=Diligent::TEX_FORMAT_RGBA32_FLOAT;desc.MipLevels=1;desc.ArraySize=1;desc.SampleCount=1;desc.Usage=Diligent::USAGE_IMMUTABLE;desc.BindFlags=Diligent::BIND_SHADER_RESOURCE;Diligent::TextureSubResData sub{};sub.pData=pixels;sub.Stride=static_cast<Diligent::Uint64>(image.width())*sizeof(float)*4ull;Diligent::TextureData init{};init.pSubResources=&sub;init.NumSubresources=1;Diligent::RefCntAutoPtr<Diligent::ITexture> input;device->CreateTexture(desc,&init,&input);if(!input){applyCPU(src,dst);return;}
+        const auto& image=src.image();if(image.width()<=0||image.height()<=0){applyCPU(src,dst);return;}const auto upload=ArtifactCore::makeGpuImageUploadBuffer(image.surfaceView(), ArtifactCore::GpuImageChannelOrder::Bgra);if(!upload.isValid()){applyCPU(src,dst);return;}
+        Diligent::TextureDesc desc{};desc.Name="Grayscale/Input";desc.Type=Diligent::RESOURCE_DIM_TEX_2D;desc.Width=image.width();desc.Height=image.height();desc.Format=Diligent::TEX_FORMAT_RGBA32_FLOAT;desc.MipLevels=1;desc.ArraySize=1;desc.SampleCount=1;desc.Usage=Diligent::USAGE_IMMUTABLE;desc.BindFlags=Diligent::BIND_SHADER_RESOURCE;Diligent::TextureSubResData sub{};sub.pData=upload.data();sub.Stride=static_cast<Diligent::Uint64>(upload.rowStride);Diligent::TextureData init{};init.pSubResources=&sub;init.NumSubresources=1;Diligent::RefCntAutoPtr<Diligent::ITexture> input;device->CreateTexture(desc,&init,&input);if(!input){applyCPU(src,dst);return;}
         Diligent::TextureDesc outDesc=desc;outDesc.Name="Grayscale/Output";outDesc.Usage=Diligent::USAGE_DEFAULT;outDesc.BindFlags=Diligent::BIND_SHADER_RESOURCE|Diligent::BIND_UNORDERED_ACCESS;if(!outputTex_||outputTex_->GetDesc().Width!=outDesc.Width||outputTex_->GetDesc().Height!=outDesc.Height||outputTex_->GetDesc().Format!=outDesc.Format||outputTex_->GetDesc().BindFlags!=outDesc.BindFlags){outputTex_.Release();device->CreateTexture(outDesc,nullptr,&outputTex_);}if(!outputTex_){applyCPU(src,dst);return;}
         Diligent::BufferDesc cbDesc{};cbDesc.Name="Grayscale/Params";cbDesc.Size=sizeof(Params);cbDesc.Usage=Diligent::USAGE_DYNAMIC;cbDesc.BindFlags=Diligent::BIND_UNIFORM_BUFFER;cbDesc.CPUAccessFlags=Diligent::CPU_ACCESS_WRITE;Diligent::RefCntAutoPtr<Diligent::IBuffer> params;device->CreateBuffer(cbDesc,nullptr,&params);if(!params){applyCPU(src,dst);return;}void* mapped=nullptr;context->MapBuffer(params,Diligent::MAP_WRITE,Diligent::MAP_FLAG_DISCARD,mapped);if(!mapped){applyCPU(src,dst);return;}Params values{strength_,static_cast<float>(mode_)};std::memcpy(mapped,&values,sizeof(values));context->UnmapBuffer(params,Diligent::MAP_WRITE);
         static Diligent::ShaderResourceVariableDesc vars[]={{Diligent::SHADER_TYPE_COMPUTE,"GrayscaleParams",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},{Diligent::SHADER_TYPE_COMPUTE,"g_InputTexture",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},{Diligent::SHADER_TYPE_COMPUTE,"g_OutputTexture",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC}};ArtifactCore::GpuContext gpuContext{device,context};ArtifactCore::ComputeExecutor executor{gpuContext};ArtifactCore::ComputePipelineDesc pipeline{};pipeline.name="Grayscale/PSO";pipeline.shaderSource=kGrayscaleHlsl;pipeline.entryPoint="main";pipeline.sourceLanguage=Diligent::SHADER_SOURCE_LANGUAGE_HLSL;pipeline.variables=vars;pipeline.variableCount=3;pipeline.defaultVariableType=Diligent::SHADER_RESOURCE_VARIABLE_TYPE_STATIC;if(!executor.build(pipeline)||!executor.createShaderResourceBinding(true)||!executor.setBuffer("GrayscaleParams",params)||!executor.setTextureView("g_InputTexture",input->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE))||!executor.setTextureView("g_OutputTexture",outputTex_->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))){applyCPU(src,dst);return;}executor.dispatch(context,ArtifactCore::ComputeExecutor::makeDispatchAttribs(outDesc.Width,outDesc.Height,1,8,8,1),Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-        Diligent::TextureDesc stagingDesc=outDesc;stagingDesc.Name="Grayscale/Readback";stagingDesc.Usage=Diligent::USAGE_STAGING;stagingDesc.BindFlags=Diligent::BIND_NONE;stagingDesc.CPUAccessFlags=Diligent::CPU_ACCESS_READ;if(!stagingTex_||stagingTex_->GetDesc().Width!=stagingDesc.Width||stagingTex_->GetDesc().Height!=stagingDesc.Height||stagingTex_->GetDesc().Format!=stagingDesc.Format){stagingTex_.Release();device->CreateTexture(stagingDesc,nullptr,&stagingTex_);}if(!stagingTex_){applyCPU(src,dst);return;}Diligent::CopyTextureAttribs copy(outputTex_,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,stagingTex_,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);context->CopyTexture(copy);context->Flush();context->WaitForIdle();Diligent::MappedTextureSubresource read{};context->MapTextureSubresource(stagingTex_,0,0,Diligent::MAP_READ,Diligent::MAP_FLAG_NONE,nullptr,read);if(!read.pData||!read.Stride){applyCPU(src,dst);return;}cv::Mat result(static_cast<int>(outDesc.Height),static_cast<int>(outDesc.Width),CV_32FC4,read.pData,read.Stride);dst.image().setFromCVMat(result,image.colorDescriptor());context->UnmapTextureSubresource(stagingTex_,0,0);
+        Diligent::TextureDesc stagingDesc=outDesc;stagingDesc.Name="Grayscale/Readback";stagingDesc.Usage=Diligent::USAGE_STAGING;stagingDesc.BindFlags=Diligent::BIND_NONE;stagingDesc.CPUAccessFlags=Diligent::CPU_ACCESS_READ;if(!stagingTex_||stagingTex_->GetDesc().Width!=stagingDesc.Width||stagingTex_->GetDesc().Height!=stagingDesc.Height||stagingTex_->GetDesc().Format!=stagingDesc.Format){stagingTex_.Release();device->CreateTexture(stagingDesc,nullptr,&stagingTex_);}if(!stagingTex_){applyCPU(src,dst);return;}Diligent::CopyTextureAttribs copy(outputTex_,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,stagingTex_,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);context->CopyTexture(copy);context->Flush();context->WaitForIdle();Diligent::MappedTextureSubresource read{};context->MapTextureSubresource(stagingTex_,0,0,Diligent::MAP_READ,Diligent::MAP_FLAG_NONE,nullptr,read);if(!read.pData||!read.Stride){applyCPU(src,dst);return;}const bool copied=dst.image().setFromGpuBGRA32F(static_cast<const float*>(read.pData),static_cast<int>(outDesc.Width),static_cast<int>(outDesc.Height),static_cast<std::size_t>(read.Stride),image.colorDescriptor());context->UnmapTextureSubresource(stagingTex_,0,0);if(!copied){applyCPU(src,dst);return;}
     }
 
 private:

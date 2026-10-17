@@ -31,13 +31,13 @@ namespace {
 
 inline float sampleChannel(const float* pixel4, const TimeDisplaceChannel channel) {
     switch (channel) {
-        case TimeDisplaceChannel::Red:       return pixel4[0];
+        case TimeDisplaceChannel::Red:       return pixel4[2];
         case TimeDisplaceChannel::Green:     return pixel4[1];
-        case TimeDisplaceChannel::Blue:      return pixel4[2];
+        case TimeDisplaceChannel::Blue:      return pixel4[0];
         case TimeDisplaceChannel::Alpha:     return pixel4[3];
         case TimeDisplaceChannel::Luminance:
         default:
-            return pixel4[0] * 0.299f + pixel4[1] * 0.587f + pixel4[2] * 0.114f;
+            return pixel4[0] * 0.114f + pixel4[1] * 0.587f + pixel4[2] * 0.299f;
     }
 }
 

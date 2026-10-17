@@ -15,6 +15,8 @@ import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import ImageProcessing.ColorTransform.SelectiveColor;
 import Image.ImageF32x4RGBAWithCache;
+import Image.GpuImageUpload;
+import Image.ImageSurfaceView;
 import Property.Abstract;
 import Utils.String.UniString;
 import Graphics.Compute;
@@ -38,12 +40,15 @@ public:
         }
         const int width = dst.image().width();
         const int height = dst.image().height();
-        ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
-            float* row = pixels + static_cast<size_t>(y) * static_cast<size_t>(width) * 4u;
-            for (int x = 0; x < width; ++x) {
-                float* pixel = row + static_cast<size_t>(x) * 4u;
-                processor_.applyPixel(pixel[0], pixel[1], pixel[2]);
-            }
+        ArtifactCore::withMutableColorFloat4View(
+            dst.image().surfaceView(), pixels, [&](auto& view) {
+                ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
+                    auto row = view.row(y);
+                    for (int x = 0; x < width; ++x) {
+                        auto pixel = row[x];
+                        processor_.applyPixel(pixel.r, pixel.g, pixel.b);
+                    }
+                });
         });
     }
 };
@@ -68,12 +73,15 @@ public:
         }
         const int width = dst.image().width();
         const int height = dst.image().height();
-        ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
-            float* row = pixels + static_cast<size_t>(y) * static_cast<size_t>(width) * 4u;
-            for (int x = 0; x < width; ++x) {
-                float* pixel = row + static_cast<size_t>(x) * 4u;
-                processor_.applyPixel(pixel[0], pixel[1], pixel[2]);
-            }
+        ArtifactCore::withMutableColorFloat4View(
+            dst.image().surfaceView(), pixels, [&](auto& view) {
+                ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
+                    auto row = view.row(y);
+                    for (int x = 0; x < width; ++x) {
+                        auto pixel = row[x];
+                        processor_.applyPixel(pixel.r, pixel.g, pixel.b);
+                    }
+                });
         });
     }
 
@@ -108,10 +116,10 @@ Texture2D<float4> g_InputTexture : register(t0); RWTexture2D<float4> g_OutputTex
 cbuffer SelectiveColorParams : register(b0){ float g_Strength; float g_RelativeMode; float g_PreserveLuma; float g_Pad0; float4 g_Groups[9]; };
 float luma(float3 c){ return dot(c,float3(0.299f,0.587f,0.114f)); }
 float3 adjustGroup(float3 c, float4 adj){ float3 rgb = c + adj.rgb * adj.a; return rgb; }
-[numthreads(8,8,1)] void main(uint3 dtid:SV_DispatchThreadID){ uint w,h; g_OutputTexture.GetDimensions(w,h); if(dtid.x>=w||dtid.y>=h) return; float4 px=g_InputTexture[dtid.xy]; float3 c=px.rgb; float lum=luma(c); int groupIdx=8; if(lum < 0.11f) groupIdx=8; else if(lum < 0.22f) groupIdx=0; else if(lum < 0.33f) groupIdx=1; else if(lum < 0.44f) groupIdx=2; else if(lum < 0.55f) groupIdx=3; else if(lum < 0.66f) groupIdx=4; else if(lum < 0.77f) groupIdx=5; else if(lum < 0.88f) groupIdx=6; else groupIdx=7; float4 adj = g_Groups[groupIdx]; float3 outRgb = c + adj.rgb * adj.a * g_Strength; if(g_PreserveLuma > 0.5f){ float outLum=luma(outRgb); outRgb += (lum-outLum).xxx; } px.rgb=saturate(outRgb); g_OutputTexture[dtid.xy]=px; }
+[numthreads(8,8,1)] void main(uint3 dtid:SV_DispatchThreadID){ uint w,h; g_OutputTexture.GetDimensions(w,h); if(dtid.x>=w||dtid.y>=h) return; float4 px=(g_InputTexture[dtid.xy]).bgra; float3 c=px.rgb; float lum=luma(c); int groupIdx=8; if(lum < 0.11f) groupIdx=8; else if(lum < 0.22f) groupIdx=0; else if(lum < 0.33f) groupIdx=1; else if(lum < 0.44f) groupIdx=2; else if(lum < 0.55f) groupIdx=3; else if(lum < 0.66f) groupIdx=4; else if(lum < 0.77f) groupIdx=5; else if(lum < 0.88f) groupIdx=6; else groupIdx=7; float4 adj = g_Groups[groupIdx]; float3 outRgb = c + adj.rgb * adj.a * g_Strength; if(g_PreserveLuma > 0.5f){ float outLum=luma(outRgb); outRgb += (lum-outLum).xxx; } px.rgb=saturate(outRgb); g_OutputTexture[dtid.xy]=(px).bgra; }
 )";
-    static bool createTextureFromImage(const ImageF32x4RGBAWithCache& src, Diligent::IRenderDevice* device, Diligent::ITexture** outTex, const char* name){ const auto& img=src.image(); const float* data=img.rgba32fData(); if(!device||!outTex||!data||img.width()<=0||img.height()<=0) return false; Diligent::TextureDesc desc; desc.Type=Diligent::RESOURCE_DIM_TEX_2D; desc.Width=img.width(); desc.Height=img.height(); desc.Format=Diligent::TEX_FORMAT_RGBA32_FLOAT; desc.ArraySize=1; desc.MipLevels=1; desc.SampleCount=1; desc.Usage=Diligent::USAGE_IMMUTABLE; desc.BindFlags=Diligent::BIND_SHADER_RESOURCE; desc.Name=name; Diligent::TextureSubResData sub{}; sub.pData=data; sub.Stride=static_cast<Diligent::Uint64>(img.width())*sizeof(float)*4ull; Diligent::TextureData init{}; init.pSubResources=&sub; init.NumSubresources=1; device->CreateTexture(desc,&init,outTex); return *outTex!=nullptr; }
-    static bool readbackTexture(Diligent::IRenderDevice* device, Diligent::IDeviceContext* ctx, Diligent::ITexture* src, ImageF32x4RGBAWithCache& dst, const char* name, const auto& colorDescriptor){ if(!device||!ctx||!src) return false; const auto desc=src->GetDesc(); Diligent::TextureDesc stagingDesc; stagingDesc.Type=Diligent::RESOURCE_DIM_TEX_2D; stagingDesc.Width=desc.Width; stagingDesc.Height=desc.Height; stagingDesc.Format=desc.Format; stagingDesc.ArraySize=1; stagingDesc.MipLevels=1; stagingDesc.SampleCount=1; stagingDesc.Usage=Diligent::USAGE_STAGING; stagingDesc.CPUAccessFlags=Diligent::CPU_ACCESS_READ; stagingDesc.Name=name; Diligent::RefCntAutoPtr<Diligent::ITexture> staging; device->CreateTexture(stagingDesc,nullptr,&staging); if(!staging) return false; Diligent::CopyTextureAttribs copy(src,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,staging,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION); ctx->CopyTexture(copy); Diligent::MappedTextureSubresource mapped{}; ctx->Flush(); ctx->WaitForIdle(); ctx->MapTextureSubresource(staging,0,0,Diligent::MAP_READ,Diligent::MAP_FLAG_NONE,nullptr,mapped); if(!mapped.pData||mapped.Stride==0) return false; cv::Mat temp(static_cast<int>(desc.Height), static_cast<int>(desc.Width), CV_32FC4, mapped.pData, mapped.Stride); dst.image().setFromCVMat(temp,colorDescriptor); ctx->UnmapTextureSubresource(staging,0,0); return true; }
+    static bool createTextureFromImage(const ImageF32x4RGBAWithCache& src, Diligent::IRenderDevice* device, Diligent::ITexture** outTex, const char* name){ const auto& img=src.image(); if(!device||!outTex||img.width()<=0||img.height()<=0) return false; const auto upload=ArtifactCore::makeGpuImageUploadBuffer(img.surfaceView(), ArtifactCore::GpuImageChannelOrder::Bgra); if(!upload.isValid()) return false; Diligent::TextureDesc desc; desc.Type=Diligent::RESOURCE_DIM_TEX_2D; desc.Width=img.width(); desc.Height=img.height(); desc.Format=Diligent::TEX_FORMAT_RGBA32_FLOAT; desc.ArraySize=1; desc.MipLevels=1; desc.SampleCount=1; desc.Usage=Diligent::USAGE_IMMUTABLE; desc.BindFlags=Diligent::BIND_SHADER_RESOURCE; desc.Name=name; Diligent::TextureSubResData sub{}; sub.pData=upload.data(); sub.Stride=static_cast<Diligent::Uint64>(upload.rowStride); Diligent::TextureData init{}; init.pSubResources=&sub; init.NumSubresources=1; device->CreateTexture(desc,&init,outTex); return *outTex!=nullptr; }
+    static bool readbackTexture(Diligent::IRenderDevice* device, Diligent::IDeviceContext* ctx, Diligent::ITexture* src, ImageF32x4RGBAWithCache& dst, const char* name, const auto& colorDescriptor){ if(!device||!ctx||!src) return false; const auto desc=src->GetDesc(); Diligent::TextureDesc stagingDesc; stagingDesc.Type=Diligent::RESOURCE_DIM_TEX_2D; stagingDesc.Width=desc.Width; stagingDesc.Height=desc.Height; stagingDesc.Format=desc.Format; stagingDesc.ArraySize=1; stagingDesc.MipLevels=1; stagingDesc.SampleCount=1; stagingDesc.Usage=Diligent::USAGE_STAGING; stagingDesc.CPUAccessFlags=Diligent::CPU_ACCESS_READ; stagingDesc.Name=name; Diligent::RefCntAutoPtr<Diligent::ITexture> staging; device->CreateTexture(stagingDesc,nullptr,&staging); if(!staging) return false; Diligent::CopyTextureAttribs copy(src,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,staging,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION); ctx->CopyTexture(copy); Diligent::MappedTextureSubresource mapped{}; ctx->Flush(); ctx->WaitForIdle(); ctx->MapTextureSubresource(staging,0,0,Diligent::MAP_READ,Diligent::MAP_FLAG_NONE,nullptr,mapped); if(!mapped.pData||mapped.Stride==0) return false; const bool copied=dst.image().setFromGpuBGRA32F(static_cast<const float*>(mapped.pData),static_cast<int>(desc.Width),static_cast<int>(desc.Height),static_cast<std::size_t>(mapped.Stride),colorDescriptor); ctx->UnmapTextureSubresource(staging,0,0); return copied; }
 };
 
 namespace {

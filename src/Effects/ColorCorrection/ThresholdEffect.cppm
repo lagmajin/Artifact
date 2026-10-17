@@ -19,6 +19,8 @@ module ThresholdEffect;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
+import Image.GpuImageUpload;
+import Image.ImageSurfaceView;
 import Property.Abstract;
 import Utils.String.UniString;
 import Graphics.Compute;
@@ -51,17 +53,20 @@ public:
         const int height = dst.image().height();
         const float th = threshold_;
 
-        ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
-            float* row = pixels + static_cast<size_t>(y) * static_cast<size_t>(width) * 4u;
-            for (int x = 0; x < width; ++x) {
-                float* pixel = row + static_cast<size_t>(x) * 4u;
-                const float luma = pixel[0] * kLumaR + pixel[1] * kLumaG + pixel[2] * kLumaB;
-                const float val = (luma >= th) ? 1.0f : 0.0f;
-                pixel[0] = val;
-                pixel[1] = val;
-                pixel[2] = val;
-                // アルファチャンネルはそのまま保持
-            }
+        ArtifactCore::withMutableColorFloat4View(
+            dst.image().surfaceView(), pixels, [&](auto& view) {
+                ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
+                    auto row = view.row(y);
+                    for (int x = 0; x < width; ++x) {
+                        auto pixel = row[x];
+                        const float luma = pixel.r * kLumaR + pixel.g * kLumaG +
+                                           pixel.b * kLumaB;
+                        const float value = (luma >= th) ? 1.0f : 0.0f;
+                        pixel.r = value;
+                        pixel.g = value;
+                        pixel.b = value;
+                    }
+                });
         });
     }
 };
@@ -215,11 +220,11 @@ void main(uint3 dtid : SV_DispatchThreadID)
     g_OutputTexture.GetDimensions(width, height);
     if (dtid.x >= width || dtid.y >= height) return;
 
-    float4 c = g_InputTexture[dtid.xy];
+    float4 c = (g_InputTexture[dtid.xy]).bgra;
     float luma = c.r * 0.299f + c.g * 0.587f + c.b * 0.114f;
     float val = (luma >= g_Threshold) ? 1.0f : 0.0f;
     c.rgb = float3(val, val, val);
-    g_OutputTexture[dtid.xy] = c;
+    g_OutputTexture[dtid.xy] = (c).bgra;
 }
 )";
 
@@ -235,8 +240,8 @@ void main(uint3 dtid : SV_DispatchThreadID)
         const int width = image.width();
         const int height = image.height();
         if (width <= 0 || height <= 0) return false;
-        const float* data = image.rgba32fData();
-        if (!data) return false;
+        const auto upload = ArtifactCore::makeGpuImageUploadBuffer(image.surfaceView(), ArtifactCore::GpuImageChannelOrder::Bgra);
+        if (!upload.isValid()) return false;
 
         Diligent::TextureDesc desc;
         desc.Type = Diligent::RESOURCE_DIM_TEX_2D;
@@ -251,8 +256,8 @@ void main(uint3 dtid : SV_DispatchThreadID)
         desc.Name = name;
 
         Diligent::TextureSubResData subres;
-        subres.pData = data;
-        subres.Stride = static_cast<Diligent::Uint32>(width * 4 * sizeof(float));
+        subres.pData = upload.data();
+        subres.Stride = static_cast<Diligent::Uint64>(upload.rowStride);
         Diligent::TextureData initData;
         initData.pSubResources = &subres;
         initData.NumSubresources = 1;
@@ -304,10 +309,11 @@ void main(uint3 dtid : SV_DispatchThreadID)
             ctx->UnmapTextureSubresource(staging, 0, 0);
             return false;
         }
-        cv::Mat temp(static_cast<int>(desc.Height), static_cast<int>(desc.Width), CV_32FC4, mapped.pData, mapped.Stride);
-        dst.image().setFromCVMat(temp, colorDescriptor);
+        const bool copied = dst.image().setFromGpuBGRA32F(
+            static_cast<const float*>(mapped.pData), static_cast<int>(desc.Width),
+            static_cast<int>(desc.Height), static_cast<std::size_t>(mapped.Stride), colorDescriptor);
         ctx->UnmapTextureSubresource(staging, 0, 0);
-        return true;
+        return copied;
     }
 };
 

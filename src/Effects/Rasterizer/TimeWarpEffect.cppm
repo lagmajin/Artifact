@@ -28,8 +28,8 @@ public:
     float maxOffset_=8, smoothness_=0.5f; int channel_=0;
 
     static float sampleCh(const float* p,int ch){
-        switch(ch){case 1:return p[0];case 2:return p[1];case 3:return p[2];case 4:return p[3];
-        default:return p[0]*0.299f+p[1]*0.587f+p[2]*0.114f;}
+        switch(ch){case 1:return p[2];case 2:return p[1];case 3:return p[0];case 4:return p[3];
+        default:return p[0]*0.114f+p[1]*0.587f+p[2]*0.299f;}
     }
 
     void applyCPU(const ImageF32x4RGBAWithCache& src,ImageF32x4RGBAWithCache& dst) override {

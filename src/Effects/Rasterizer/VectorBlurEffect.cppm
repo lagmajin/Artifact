@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -20,6 +20,7 @@ import Artifact.Effect.Abstract;
 import Artifact.Effect.Context;
 import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
+import Image.GpuImageUpload;
 import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
@@ -35,10 +36,12 @@ using namespace ArtifactCore;
 namespace {
 bool vbUp(const ImageF32x4RGBAWithCache& src,Diligent::IRenderDevice* d,Diligent::IDeviceContext* c,Diligent::ITexture** out){
     if(!d||!c||!out)return false;const auto& si=src.image();int W=si.width(),H=si.height();
-    if(W<=0||H<=0||!si.rgba32fData())return false;
+    if(W<=0||H<=0)return false;
+    const auto upload=ArtifactCore::makeGpuImageUploadBuffer(si.surfaceView(), ArtifactCore::GpuImageChannelOrder::Bgra);
+    if(!upload.isValid())return false;
     Diligent::TextureDesc td;td.Name="VB";td.Type=Diligent::RESOURCE_DIM_TEX_2D;td.Width=W;td.Height=H;td.Format=Diligent::TEX_FORMAT_RGBA32_FLOAT;td.MipLevels=1;td.ArraySize=1;td.SampleCount=1;td.Usage=Diligent::USAGE_DEFAULT;td.BindFlags=Diligent::BIND_SHADER_RESOURCE;
     Diligent::RefCntAutoPtr<Diligent::ITexture> t;d->CreateTexture(td,nullptr,&t);if(!t)return false;
-    Diligent::TextureSubResData sub;sub.pData=si.rgba32fData();sub.Stride=W*16;
+    Diligent::TextureSubResData sub;sub.pData=upload.data();sub.Stride=static_cast<Diligent::Uint64>(upload.rowStride);
     c->UpdateTexture(t,0,0,Diligent::Box{0,0,0,(Diligent::Uint32)W,(Diligent::Uint32)H,1},sub,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     *out=t.Detach();return true;
 }
@@ -47,7 +50,7 @@ bool vbDown(Diligent::IRenderDevice*d,Diligent::IDeviceContext*c,Diligent::IText
     Diligent::RefCntAutoPtr<Diligent::ITexture> sg;d->CreateTexture(st,nullptr,&sg);if(!sg)return false;
     Diligent::CopyTextureAttribs cp(s,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,sg,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);c->CopyTexture(cp);c->Flush();c->WaitForIdle();
     Diligent::MappedTextureSubresource m{};c->MapTextureSubresource(sg,0,0,Diligent::MAP_READ,Diligent::MAP_FLAG_NONE,nullptr,m);if(!m.pData||m.Stride==0)return false;
-    cv::Mat tmp((int)sd.Height,(int)sd.Width,CV_32FC4,m.pData,m.Stride);dst.image().setFromCVMat(tmp,colorDescriptor);c->UnmapTextureSubresource(sg,0,0);return true;}
+    const bool copied=dst.image().setFromGpuBGRA32F(static_cast<const float*>(m.pData),static_cast<int>(sd.Width),static_cast<int>(sd.Height),static_cast<std::size_t>(m.Stride),colorDescriptor);c->UnmapTextureSubresource(sg,0,0);return copied;}
 }
 
 class VectorBlurCPUImpl : public ArtifactEffectImplBase {
@@ -114,15 +117,15 @@ cbuffer VB:register(b0){float shutterAngle,exposureComp,samples,imageWidth,image
 Texture2D<float4> InTex:register(t0);Texture2D<float2> VelTex:register(t1);RWTexture2D<float4> OutTex:register(u0);
 [numthreads(8,8,1)]void main(uint3 id:SV_DispatchThreadID){
     if(id.x>=(uint)imageWidth||id.y>=(uint)imageHeight)return;
-    float4 cur=InTex[id.xy];OutTex[id.xy]=cur;
+    float4 cur=(InTex[id.xy]).bgra;OutTex[id.xy]=(cur).bgra;
     if(shutterAngle<=0.001||samples<2)return;
     int2 sz=int2((int)imageWidth,(int)imageHeight);
     float2 vel=float2(0,0);
     float4 acc=cur;float tw=1.0;int sc=(int)samples;
     for(int i=1;i<=sc;++i){float t=((float)i-0.5)/(float)sc;
         int2 sp=int2((float)id.x+vel.x*t+0.5,(float)id.y+vel.y*t+0.5);sp=clamp(sp,int2(0,0),sz-1);
-        acc+=InTex[sp];tw+=1.0;}
-    OutTex[id.xy]=acc/tw*exposureComp;
+        acc+=(InTex[sp]).bgra;tw+=1.0;}
+    OutTex[id.xy]=(acc/tw*exposureComp).bgra;
 }
 )";
 };

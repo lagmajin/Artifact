@@ -91,11 +91,15 @@ void RevealCS(uint3 id : SV_DispatchThreadID) {
   coverage *= support;
  }
  // Resident input is linear-premultiplied; scale all components together.
- float4 color = g_InputTexture[id.xy] * coverage;
+ float4 color = (g_InputTexture[id.xy]).bgra * coverage;
  // Export sprite PSO uses SRC_ALPHA, so its boundary explicitly requests
- // linear straight RGBA; viewport compositing keeps premultiplied RGBA.
-if (RowY.w > 0.5) color.rgb = color.a > 1e-6 ? color.rgb / color.a : float3(0,0,0);
+ // linear straight RGBA; viewport compositing keeps premultiplied BGRA.
+if (RowY.w > 0.5) {
+  color.rgb = color.a > 1e-6 ? color.rgb / color.a : float3(0,0,0);
   g_OutputTexture[id.xy] = color;
+} else {
+  g_OutputTexture[id.xy] = color.bgra;
+}
 }
 )";
 
@@ -305,11 +309,11 @@ void FastApproximateAntiAliasingCS(uint3 dispatchId : SV_DispatchThreadID)
 
     const int2 p = int2(dispatchId.xy);
     const int2 maxP = int2(width - 1, height - 1);
-    const float4 center = g_SourceColor.Load(int3(p, 0));
-    const float3 north = g_SourceColor.Load(int3(clamp(p + int2(0, -1), int2(0, 0), maxP), 0)).rgb;
-    const float3 south = g_SourceColor.Load(int3(clamp(p + int2(0,  1), int2(0, 0), maxP), 0)).rgb;
-    const float3 west  = g_SourceColor.Load(int3(clamp(p + int2(-1, 0), int2(0, 0), maxP), 0)).rgb;
-    const float3 east  = g_SourceColor.Load(int3(clamp(p + int2( 1, 0), int2(0, 0), maxP), 0)).rgb;
+    const float4 center = g_SourceColor.Load(int3(p, 0)).bgra;
+    const float3 north = g_SourceColor.Load(int3(clamp(p + int2(0, -1), int2(0, 0), maxP), 0)).bgra.rgb;
+    const float3 south = g_SourceColor.Load(int3(clamp(p + int2(0,  1), int2(0, 0), maxP), 0)).bgra.rgb;
+    const float3 west  = g_SourceColor.Load(int3(clamp(p + int2(-1, 0), int2(0, 0), maxP), 0)).bgra.rgb;
+    const float3 east  = g_SourceColor.Load(int3(clamp(p + int2( 1, 0), int2(0, 0), maxP), 0)).bgra.rgb;
     const float centerLuma = luma(center.rgb);
     const float minLuma = min(centerLuma, min(min(luma(north), luma(south)), min(luma(west), luma(east))));
     const float maxLuma = max(centerLuma, max(max(luma(north), luma(south)), max(luma(west), luma(east))));
@@ -318,7 +322,7 @@ void FastApproximateAntiAliasingCS(uint3 dispatchId : SV_DispatchThreadID)
     // raster edges. The cross filter is intentionally bounded to avoid blur.
     const float edge = saturate((contrast - 0.0312) / max(maxLuma * 0.125, 0.001));
     const float3 filtered = (north + south + west + east + center.rgb * 2.0) / 6.0;
-    g_DestinationColor[dispatchId.xy] = float4(lerp(center.rgb, filtered, edge * 0.55), center.a);
+    g_DestinationColor[dispatchId.xy] = float4(lerp(center.rgb, filtered, edge * 0.55), center.a).bgra;
 }
 )";
 
@@ -724,7 +728,7 @@ cbuffer ChromaticAberrationParams : register(b0)
 float4 sampleClamped(int2 p, uint width, uint height)
 {
     return g_InputTexture.Load(int3(clamp(p, int2(0, 0),
-        int2(width - 1, height - 1)), 0));
+        int2(width - 1, height - 1)), 0)).bgra;
 }
 
 [numthreads(8, 8, 1)]
@@ -745,10 +749,10 @@ void ChromaticAberrationCS(uint3 id : SV_DispatchThreadID)
     const float4 blue = sampleClamped(
         int2(position - direction * normalizedDistance * g_BlueShift + 0.5),
         width, height);
-    float4 output = g_InputTexture.Load(int3(id.xy, 0));
+    float4 output = g_InputTexture.Load(int3(id.xy, 0)).bgra;
     output.r = red.r;
     output.b = blue.b;
-    g_OutputTexture[id.xy] = output;
+    g_OutputTexture[id.xy] = output.bgra;
 }
 )";
 
@@ -914,7 +918,7 @@ void ChromaKeyCS(uint3 dispatchId : SV_DispatchThreadID)
     g_OutputTexture.GetDimensions(width, height);
     if (dispatchId.x >= width || dispatchId.y >= height) return;
 
-    const float4 stored = g_InputTexture.Load(int3(dispatchId.xy, 0));
+    const float4 stored = g_InputTexture.Load(int3(dispatchId.xy, 0)).bgra;
     const float sourceAlpha = saturate(stored.a);
     const float3 straight = sourceAlpha > 1.0e-6
         ? stored.rgb / sourceAlpha
@@ -923,23 +927,23 @@ void ChromaKeyCS(uint3 dispatchId : SV_DispatchThreadID)
     const float3 color = despillColor(straight, alpha);
     const int viewMode = (int)(g_ViewMode + 0.5);
     if (viewMode == 1) {
-        g_OutputTexture[dispatchId.xy] = float4(alpha, alpha, alpha, 1.0);
+        g_OutputTexture[dispatchId.xy] = float4(alpha, alpha, alpha, 1.0).bgra;
         return;
     }
     if (viewMode == 2) {
-        g_OutputTexture[dispatchId.xy] = float4(color, 1.0);
+        g_OutputTexture[dispatchId.xy] = float4(color, 1.0).bgra;
         return;
     }
     if (viewMode == 3) {
-        g_OutputTexture[dispatchId.xy] = float4(
+        g_OutputTexture[dispatchId.xy] = (float4(
             1.0 - alpha, alpha,
-            0.15 * (1.0 - abs(alpha * 2.0 - 1.0)), 1.0);
+            0.15 * (1.0 - abs(alpha * 2.0 - 1.0)), 1.0)).bgra;
         return;
     }
     const float matte = saturate(alpha * sourceAlpha);
-    // Keying/despill use straight color, but the resident surface remains
-    // linear-premultiplied RGBA at the effect boundary.
-    g_OutputTexture[dispatchId.xy] = float4(color * matte, matte);
+    // Keying/despill use logical straight RGB; the resident surface remains
+    // linear-premultiplied BGRA at the effect boundary.
+    g_OutputTexture[dispatchId.xy] = float4(color * matte, matte).bgra;
 }
 )";
 

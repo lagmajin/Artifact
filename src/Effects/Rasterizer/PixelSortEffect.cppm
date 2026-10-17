@@ -28,8 +28,8 @@ public:
     int sortLen_=16; float sortKey_=0,sortOrder_=1,blend_=0.5f;
 
     static float keyVal(const float* p,float k){
-        if(k<=0.5f)return p[0]*0.299f+p[1]*0.587f+p[2]*0.114f; // luma
-        else{float hue=std::atan2(p[1]-p[2],p[0]-p[1]);return hue;} // approximate hue
+        if(k<=0.5f)return p[0]*0.114f+p[1]*0.587f+p[2]*0.299f; // luma
+        else{float hue=std::atan2(p[1]-p[2],p[0]-p[1]);return hue;} // approximate hue in logical RGB (R=p[2], B=p[0])
     }
 
     void applyCPU(const ImageF32x4RGBAWithCache& src,ImageF32x4RGBAWithCache& dst) override {
@@ -167,16 +167,19 @@ namespace {
 
 float pixelSortProKey(const cv::Vec4f& pixel, float mode) {
     if (mode < 0.5f) {
-        return pixel[0] * 0.2126f + pixel[1] * 0.7152f + pixel[2] * 0.0722f;
+        return pixel[0] * 0.0722f + pixel[1] * 0.7152f + pixel[2] * 0.2126f;
     }
-    const float maximum = std::max({pixel[0], pixel[1], pixel[2]});
-    const float minimum = std::min({pixel[0], pixel[1], pixel[2]});
+    const float red = pixel[2];
+    const float green = pixel[1];
+    const float blue = pixel[0];
+    const float maximum = std::max({red, green, blue});
+    const float minimum = std::min({red, green, blue});
     const float delta = maximum - minimum;
     if (delta <= 0.00001f) return 0.0f;
     float hue = 0.0f;
-    if (maximum == pixel[0]) hue = (pixel[1] - pixel[2]) / delta;
-    else if (maximum == pixel[1]) hue = 2.0f + (pixel[2] - pixel[0]) / delta;
-    else hue = 4.0f + (pixel[0] - pixel[1]) / delta;
+    if (maximum == red) hue = (green - blue) / delta;
+    else if (maximum == green) hue = 2.0f + (blue - red) / delta;
+    else hue = 4.0f + (red - green) / delta;
     hue /= 6.0f;
     if (hue < 0.0f) hue += 1.0f;
     return hue;
@@ -258,7 +261,7 @@ void PixelSortProEffect::apply(const ImageF32x4RGBAWithCache& src,
     cv::warpAffine(sorted, restored, inverse, source.size(), cv::INTER_LINEAR,
                    cv::BORDER_REFLECT_101);
     auto result = image.DeepCopy();
-    result.setFromRGBA32F(restored.ptr<float>(), width, height);
+    result.setFromBGRA32F(restored.ptr<float>(), width, height);
     float* resultPixels = result.rgba32fData();
     if (resultPixels) {
         for (std::size_t pixel = 0; pixel < image.totalPixels(); ++pixel) {

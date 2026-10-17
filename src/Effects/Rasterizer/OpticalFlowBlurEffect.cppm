@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -20,6 +20,7 @@ import Artifact.Effect.Abstract;
 import Artifact.Effect.Context;
 import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
+import Image.GpuImageUpload;
 import Image.ImageF32x4_RGBA;
 import Property.Abstract;
 import Utils.String.UniString;
@@ -36,10 +37,12 @@ namespace {
 bool createTexFromImage(const ImageF32x4RGBAWithCache& src,Diligent::IRenderDevice* d,Diligent::IDeviceContext* c,Diligent::ITexture** out){
     if(!d||!out)return false;
     const auto& si=src.image();int W=si.width(),H=si.height();
-    if(W<=0||H<=0||!si.rgba32fData())return false;
+    if(W<=0||H<=0)return false;
+    const auto upload=ArtifactCore::makeGpuImageUploadBuffer(si.surfaceView(), ArtifactCore::GpuImageChannelOrder::Bgra);
+    if(!upload.isValid())return false;
     Diligent::TextureDesc td;td.Name="OFB/Src";td.Type=Diligent::RESOURCE_DIM_TEX_2D;td.Width=W;td.Height=H;td.Format=Diligent::TEX_FORMAT_RGBA32_FLOAT;td.MipLevels=1;td.ArraySize=1;td.SampleCount=1;td.Usage=Diligent::USAGE_DEFAULT;td.BindFlags=Diligent::BIND_SHADER_RESOURCE;
     Diligent::RefCntAutoPtr<Diligent::ITexture> t;d->CreateTexture(td,nullptr,&t);if(!t)return false;
-    Diligent::TextureSubResData sub;sub.pData=si.rgba32fData();sub.Stride=W*16;
+    Diligent::TextureSubResData sub;sub.pData=upload.data();sub.Stride=static_cast<Diligent::Uint64>(upload.rowStride);
     if(!c)return false;
     c->UpdateTexture(t,0,0,Diligent::Box{0,0,0,(Diligent::Uint32)W,(Diligent::Uint32)H,1},sub,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     *out=t.Detach();return true;
@@ -51,7 +54,7 @@ bool readbackTex(Diligent::IRenderDevice* d,Diligent::IDeviceContext* c,Diligent
     Diligent::RefCntAutoPtr<Diligent::ITexture> staging;d->CreateTexture(st,nullptr,&staging);if(!staging)return false;
     Diligent::CopyTextureAttribs cp(s,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,staging,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);c->CopyTexture(cp);c->Flush();c->WaitForIdle();
     Diligent::MappedTextureSubresource m{};c->MapTextureSubresource(staging,0,0,Diligent::MAP_READ,Diligent::MAP_FLAG_NONE,nullptr,m);if(!m.pData||m.Stride==0)return false;
-    cv::Mat tmp((int)sd.Height,(int)sd.Width,CV_32FC4,m.pData,m.Stride);dst.image().setFromCVMat(tmp,colorDescriptor);c->UnmapTextureSubresource(staging,0,0);return true;
+    const bool copied=dst.image().setFromGpuBGRA32F(static_cast<const float*>(m.pData),static_cast<int>(sd.Width),static_cast<int>(sd.Height),static_cast<std::size_t>(m.Stride),colorDescriptor);c->UnmapTextureSubresource(staging,0,0);return copied;
 }
 } // namespace
 
@@ -84,13 +87,13 @@ public:
                 int cx=x+dx,cy=y+dy,px=cx,py=cy;
                 if(cx>=W||cy>=H)continue;
                 const float* csp=sd+((size_t)cy*W+cx)*4;
-                float cl=csp[0]*0.299f+csp[1]*0.587f+csp[2]*0.114f;
+                float cl=csp[0]*0.114f+csp[1]*0.587f+csp[2]*0.299f;
 
                 float dxc=0,dyc=0;
-                if(x>0&&x<W-1){dxc=(sd[((size_t)cy*W+x+1)*4]*0.299f+sd[((size_t)cy*W+x+1)*4+1]*0.587f+sd[((size_t)cy*W+x+1)*4+2]*0.114f)-(sd[((size_t)cy*W+x-1)*4]*0.299f+sd[((size_t)cy*W+x-1)*4+1]*0.587f+sd[((size_t)cy*W+x-1)*4+2]*0.114f);dxc*=0.5f;}
-                if(y>0&&y<H-1){dyc=(sd[((size_t)(y+1)*W+x)*4]*0.299f+sd[((size_t)(y+1)*W+x)*4+1]*0.587f+sd[((size_t)(y+1)*W+x)*4+2]*0.114f)-(sd[((size_t)(y-1)*W+x)*4]*0.299f+sd[((size_t)(y-1)*W+x)*4+1]*0.587f+sd[((size_t)(y-1)*W+x)*4+2]*0.114f);dyc*=0.5f;}
+                if(x>0&&x<W-1){dxc=(sd[((size_t)cy*W+x+1)*4]*0.114f+sd[((size_t)cy*W+x+1)*4+1]*0.587f+sd[((size_t)cy*W+x+1)*4+2]*0.299f)-(sd[((size_t)cy*W+x-1)*4]*0.114f+sd[((size_t)cy*W+x-1)*4+1]*0.587f+sd[((size_t)cy*W+x-1)*4+2]*0.299f);dxc*=0.5f;}
+                if(y>0&&y<H-1){dyc=(sd[((size_t)(y+1)*W+x)*4]*0.114f+sd[((size_t)(y+1)*W+x)*4+1]*0.587f+sd[((size_t)(y+1)*W+x)*4+2]*0.299f)-(sd[((size_t)(y-1)*W+x)*4]*0.114f+sd[((size_t)(y-1)*W+x)*4+1]*0.587f+sd[((size_t)(y-1)*W+x)*4+2]*0.299f);dyc*=0.5f;}
 
-                float pl=0;if(cx>=0&&cx<pw&&cy>=0&&cy<ph){const float* pp=pd+((size_t)cy*pw+cx)*4;pl=pp[0]*0.299f+pp[1]*0.587f+pp[2]*0.114f;}
+                float pl=0;if(cx>=0&&cx<pw&&cy>=0&&cy<ph){const float* pp=pd+((size_t)cy*pw+cx)*4;pl=pp[0]*0.114f+pp[1]*0.587f+pp[2]*0.299f;}
                 Ix+=dxc;Iy+=dyc;It+=cl-pl;
                 Ixx+=dxc*dxc;Iyy+=dyc*dyc;Ixy+=dxc*dyc;Ixt+=dxc*It;Iyt+=dyc*It;
             }
@@ -252,17 +255,17 @@ float luma(float4 c){return c.r*0.299+c.g*0.587+c.b*0.114;}
 
 [numthreads(8,8,1)]void main(uint3 id:SV_DispatchThreadID){
     if(id.x>=(uint)imageWidth||id.y>=(uint)imageHeight)return;
-    float4 cur=InTex[id.xy];OutTex[id.xy]=cur;
+    float4 cur=(InTex[id.xy]).bgra;OutTex[id.xy]=(cur).bgra;
     if(blurAmount<=0.001||sampleCount<1||prevWidth<=0||prevHeight<=0)return;
     int2 sz=int2((int)imageWidth,(int)imageHeight);
     int2 psz=int2((int)prevWidth,(int)prevHeight);
     float fx=0,fxx=0,fxy=0,fyy=0,fxt=0,fyt=0;
     for(int dy=-2;dy<=2;++dy)for(int dx=-2;dx<=2;++dx){
         int2 cp=clamp(int2(id.xy)+int2(dx,dy),int2(0,0),sz-1);
-        float4 cc=InTex[cp];
-        float4 pc=PrevTex[clamp(cp,int2(0,0),psz-1)];
-        float lx=(luma(InTex[int2(min(cp.x+1,sz.x-1),cp.y)])-luma(InTex[int2(max(cp.x-1,0),cp.y)]))*0.5;
-        float ly=(luma(InTex[int2(cp.x,min(cp.y+1,sz.y-1))])-luma(InTex[int2(cp.x,max(cp.y-1,0))]))*0.5;
+        float4 cc=(InTex[cp]).bgra;
+        float4 pc=(PrevTex[clamp(cp,int2(0,0),psz-1)]).bgra;
+        float lx=(luma((InTex[int2(min(cp.x+1,sz.x-1),cp.y)]).bgra)-luma((InTex[int2(max(cp.x-1,0),cp.y)]).bgra))*0.5;
+        float ly=(luma((InTex[int2(cp.x,min(cp.y+1,sz.y-1))]).bgra)-luma((InTex[int2(cp.x,max(cp.y-1,0))]).bgra))*0.5;
         float lt=luma(cc)-luma(pc);
         fxx+=lx*lx;fyy+=ly*ly;fxy+=lx*ly;fxt+=lx*lt;fyt+=ly*lt;
     }
@@ -271,9 +274,9 @@ float luma(float4 c){return c.r*0.299+c.g*0.587+c.b*0.114;}
     float4 acc=cur;float tw=1.0;int sc=(int)sampleCount;
     for(int i=1;i<=sc;++i){float t=(float)i/(float)sc*blurAmount;
         int2 sp=int2((float)id.x+vx*t+0.5,(float)id.y+vy*t+0.5);sp=clamp(sp,int2(0,0),sz-1);
-        acc+=InTex[sp];tw+=1.0;
+        acc+=(InTex[sp]).bgra;tw+=1.0;
     }
-    OutTex[id.xy]=acc/tw;
+    OutTex[id.xy]=(acc/tw).bgra;
 }
 )";
 };

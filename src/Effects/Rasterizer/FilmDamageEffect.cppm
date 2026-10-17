@@ -107,7 +107,8 @@ public:
                 for (int c = 0; c < 3; ++c) {
                     float value = sourceRow[x][c] * flickerGain + grainNoise;
                     value = value * (1.0f - damageAlpha) + damageRow[x][c] * damageAlpha;
-                    if (c == 0) value += burn * 1.35f;
+                    // Burn color is warm red/orange; backing is BGRA.
+                    if (c == 2) value += burn * 1.35f;
                     else if (c == 1) value += burn * 0.48f;
                     else value += burn * 0.08f;
                     outputRow[x][c] = value;
