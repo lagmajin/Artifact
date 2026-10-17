@@ -1107,6 +1107,7 @@ bool DiligentImmediateSubmitter::canRecordDeferred(
             !std::holds_alternative<QuadPkt>(packet) &&
             !std::holds_alternative<GradientRectPkt>(packet) &&
             !std::holds_alternative<DotLinePkt>(packet) &&
+            !std::holds_alternative<MpmSurfacePkt>(packet) &&
             !std::holds_alternative<CheckerboardPkt>(packet) &&
             !std::holds_alternative<GridPkt>(packet) &&
             !std::holds_alternative<RectOutlinePkt>(packet) &&
