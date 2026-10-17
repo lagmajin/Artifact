@@ -12594,11 +12594,11 @@ public:
       ArtifactCore::ComputeRegion* outDamageRegion,
       bool* outPartialRecompose,
       QElapsedTimer* profileTimer = nullptr,
-      qint64* depthClearMs = nullptr,
-      qint64* accumulationClearMs = nullptr,
-      qint64* partialRegionClearMs = nullptr,
-      qint64* fullTargetClearMs = nullptr,
-      qint64* computeUnbindMs = nullptr) {
+      qint64* depthClearNs = nullptr,
+      qint64* accumulationClearNs = nullptr,
+      qint64* partialRegionClearNs = nullptr,
+      qint64* fullTargetClearNs = nullptr,
+      qint64* computeUnbindNs = nullptr) {
 
     GpuBasePassState state;
 
@@ -12701,9 +12701,9 @@ public:
           : 0;
       renderer_->clearDepthRenderTargetForColor(
           renderPipeline.accumRTV(), previewRenderSlot.depthTargetView);
-      if (profileTimer && depthClearMs) {
-        *depthClearMs +=
-            (profileTimer->nsecsElapsed() - clearStartedNs) / 1000000;
+      if (profileTimer && depthClearNs) {
+        *depthClearNs +=
+            profileTimer->nsecsElapsed() - clearStartedNs;
       }
     }
 
@@ -12715,19 +12715,18 @@ public:
           ? profileTimer->nsecsElapsed()
           : 0;
       renderer_->unbindColorTargetsForCompute();
-      if (profileTimer && computeUnbindMs) {
-        *computeUnbindMs +=
-            (profileTimer->nsecsElapsed() - unbindStartedNs) / 1000000;
+      if (profileTimer && computeUnbindNs) {
+        *computeUnbindNs +=
+            profileTimer->nsecsElapsed() - unbindStartedNs;
       }
       const qint64 partialClearStartedNs = profileTimer
           ? profileTimer->nsecsElapsed()
           : 0;
       canPreserveOutside = renderer_->clearTextureRegion(
           blendPipeline_.get(), renderPipeline.accumUAV(), damageRegion);
-      if (profileTimer && partialRegionClearMs) {
-        *partialRegionClearMs +=
-            (profileTimer->nsecsElapsed() - partialClearStartedNs) /
-            1000000;
+      if (profileTimer && partialRegionClearNs) {
+        *partialRegionClearNs +=
+            profileTimer->nsecsElapsed() - partialClearStartedNs;
       }
     }
 
@@ -12737,19 +12736,17 @@ public:
           : 0;
       renderer_->clearRenderTarget(renderPipeline.accumRTV(),
                                    FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
-      if (profileTimer && fullTargetClearMs) {
-        *fullTargetClearMs +=
-            (profileTimer->nsecsElapsed() - fullClearStartedNs) /
-            1000000;
+      if (profileTimer && fullTargetClearNs) {
+        *fullTargetClearNs +=
+            profileTimer->nsecsElapsed() - fullClearStartedNs;
       }
     } else {
       *outDamageRegion = damageRegion;
       *outPartialRecompose = true;
     }
-    if (profileTimer && accumulationClearMs) {
-      *accumulationClearMs +=
-          (profileTimer->nsecsElapsed() - accumulationClearStartedNs) /
-          1000000;
+    if (profileTimer && accumulationClearNs) {
+      *accumulationClearNs +=
+          profileTimer->nsecsElapsed() - accumulationClearStartedNs;
     }
 
 
@@ -44661,19 +44658,19 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
     qint64 basePassMs = 0;
 
-    qint64 baseSetupMs = 0;
+    qint64 baseSetupNs = 0;
 
-    qint64 backgroundSeedMs = 0;
+    qint64 backgroundSeedNs = 0;
 
-    qint64 depthClearMs = 0;
+    qint64 depthClearNs = 0;
 
-    qint64 accumulationClearMs = 0;
+    qint64 accumulationClearNs = 0;
 
-    qint64 partialRegionClearMs = 0;
+    qint64 partialRegionClearNs = 0;
 
-    qint64 fullTargetClearMs = 0;
+    qint64 fullTargetClearNs = 0;
 
-    qint64 computeUnbindMs = 0;
+    qint64 computeUnbindNs = 0;
 
     qint64 surfacePassMs = 0;
 
@@ -45182,14 +45179,14 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                     : nullptr,
                 &gpuDamageRegion, &partialGpuRecomposeActive,
                 profileThisVideoPreviewSetup ? &frameTimer : nullptr,
-                profileThisVideoPreviewSetup ? &depthClearMs : nullptr,
-                profileThisVideoPreviewSetup ? &accumulationClearMs : nullptr,
-                profileThisVideoPreviewSetup ? &partialRegionClearMs : nullptr,
-                profileThisVideoPreviewSetup ? &fullTargetClearMs : nullptr,
-                profileThisVideoPreviewSetup ? &computeUnbindMs : nullptr);
+                profileThisVideoPreviewSetup ? &depthClearNs : nullptr,
+                profileThisVideoPreviewSetup ? &accumulationClearNs : nullptr,
+                profileThisVideoPreviewSetup ? &partialRegionClearNs : nullptr,
+                profileThisVideoPreviewSetup ? &fullTargetClearNs : nullptr,
+                profileThisVideoPreviewSetup ? &computeUnbindNs : nullptr);
             if (profileThisVideoPreviewSetup) {
-              baseSetupMs = (frameTimer.nsecsElapsed() - baseSetupStartedNs) /
-                            1000000;
+              baseSetupNs =
+                  frameTimer.nsecsElapsed() - baseSetupStartedNs;
             }
             if (partialGpuRecomposeActive) {
               gpuDamageCanvasRect =
@@ -45234,9 +45231,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                 blendFailureCount, cw, ch, layerBgColor, backgroundMode, comp,
                 partialGpuRecomposeActive ? &gpuDamageRegion : nullptr);
             if (profileThisVideoPreviewSetup) {
-              backgroundSeedMs +=
-                  (frameTimer.nsecsElapsed() - backgroundSeedStartedNs) /
-                  1000000;
+              backgroundSeedNs +=
+                  frameTimer.nsecsElapsed() - backgroundSeedStartedNs;
             }
             if (!backgroundSeeded && partialGpuRecomposeActive) {
               partialGpuRecomposeActive = false;
@@ -45261,9 +45257,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                   blendFailureCount, cw, ch, layerBgColor, backgroundMode,
                   comp);
               if (profileThisVideoPreviewSetup) {
-                backgroundSeedMs +=
-                    (frameTimer.nsecsElapsed() - backgroundSeedStartedNs) /
-                    1000000;
+                backgroundSeedNs +=
+                    frameTimer.nsecsElapsed() - backgroundSeedStartedNs;
               }
             }
             if (!backgroundSeeded) {
@@ -48684,21 +48679,21 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       std::fprintf(
           stderr,
           "[VideoPreviewRenderPassProfile] frame=%llu "
-          "baseMs=%lld baseSetupMs=%lld backgroundSeedMs=%lld "
-          "depthClearMs=%lld accumulationClearMs=%lld "
-          "partialRegionClearMs=%lld fullTargetClearMs=%lld "
-          "computeUnbindMs=%lld "
+          "baseMs=%lld baseSetupMs=%.3f backgroundSeedMs=%.3f "
+          "depthClearMs=%.3f accumulationClearMs=%.3f "
+          "partialRegionClearMs=%.3f fullTargetClearMs=%.3f "
+          "computeUnbindMs=%.3f "
           "surfaceMs=%lld maskMs=%lld compositeMs=%lld "
           "postMs=%lld overlayMs=%lld flushMs=%lld presentMs=%lld\n",
           static_cast<unsigned long long>(renderFrameCounter_),
           static_cast<long long>(basePassMs),
-          static_cast<long long>(baseSetupMs),
-          static_cast<long long>(backgroundSeedMs),
-          static_cast<long long>(depthClearMs),
-          static_cast<long long>(accumulationClearMs),
-          static_cast<long long>(partialRegionClearMs),
-          static_cast<long long>(fullTargetClearMs),
-          static_cast<long long>(computeUnbindMs),
+          static_cast<double>(baseSetupNs) / 1000000.0,
+          static_cast<double>(backgroundSeedNs) / 1000000.0,
+          static_cast<double>(depthClearNs) / 1000000.0,
+          static_cast<double>(accumulationClearNs) / 1000000.0,
+          static_cast<double>(partialRegionClearNs) / 1000000.0,
+          static_cast<double>(fullTargetClearNs) / 1000000.0,
+          static_cast<double>(computeUnbindNs) / 1000000.0,
           static_cast<long long>(std::max<qint64>(0, surfacePassMs - basePassMs)),
           static_cast<long long>(std::max<qint64>(0, maskPassMs - surfacePassMs)),
           static_cast<long long>(std::max<qint64>(0, compositePassMs - maskPassMs)),
