@@ -50823,7 +50823,8 @@ QImage CompositionRenderController::Impl::composeViewportChannelOverlayImage() c
     return out;
   };
 
-  const auto pseudoColorGray = [](const QImage &grayImage, bool invert = false) {
+  const auto pseudoColorGray = [](const QImage &grayImage, bool invert = false,
+                                  bool transparentBlack = false) {
     if (grayImage.isNull()) {
       return QImage{};
     }
@@ -50844,7 +50845,7 @@ QImage CompositionRenderController::Impl::composeViewportChannelOverlayImage() c
           dst[x * 4 + 0] = static_cast<uchar>(r);
           dst[x * 4 + 1] = static_cast<uchar>(g);
           dst[x * 4 + 2] = static_cast<uchar>(b);
-          dst[x * 4 + 3] = 255;
+          dst[x * 4 + 3] = transparentBlack && src[x] == 0 ? 0 : 255;
         }
       }
     };
@@ -50921,7 +50922,7 @@ QImage CompositionRenderController::Impl::composeViewportChannelOverlayImage() c
     return {};
   case ViewportChannelDisplayMode::Depth:
     return pseudoColorGray(
-        readChannel(ArtifactIRenderer::ChannelType::Depth), true);
+        readChannel(ArtifactIRenderer::ChannelType::Depth), true, true);
   case ViewportChannelDisplayMode::Emission:
     return readChannel(ArtifactIRenderer::ChannelType::Emission);
   case ViewportChannelDisplayMode::ObjectId:
