@@ -238,6 +238,9 @@ export namespace Artifact
   bool applyScreenSpaceAmbientOcclusion(
       IDeviceContext* ctx, ITextureView* sourceColor,
       ITextureView* destinationColor, ITextureView* aoMask);
+  // Build the FXAA compute state on the owner context before a deferred
+  // context records a frame. This keeps resource creation off the worker.
+  bool prepareFastApproximateAntiAliasing(IDeviceContext* ctx);
   // Lightweight post-resolve anti-aliasing for geometry rendered into the
   // single-sample composition targets.
   bool applyFastApproximateAntiAliasing(

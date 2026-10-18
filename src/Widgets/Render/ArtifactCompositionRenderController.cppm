@@ -44870,6 +44870,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
 
     Diligent::ITextureView* ramPreviewReadbackSRV = nullptr;
+    bool shadowMapRenderedBeforeFinalize = false;
 
     lastPresentedReadbackSRV_ = nullptr;
 
@@ -46234,13 +46235,61 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             const qint64 fxaaStartedNs = profileThisVideoPreviewSetup
                 ? frameTimer.nsecsElapsed()
                 : 0;
-            const bool fxaaApplied =
+            bool fxaaApplied = false;
+            const bool fxaaRequested =
                 postPassMask.antiAliasingMode == 1 && hasVisible3DLayer &&
                 resources.pipeline && renderer_ &&
-                renderer_->immediateContext() &&
-                resources.pipeline->applyFastApproximateAntiAliasing(
-                    renderer_->immediateContext(), resources.accumSRV,
-                    resources.pipeline->tempUAV());
+                renderer_->immediateContext();
+            bool fxaaPrepared = false;
+            bool deferredRecordingStarted = false;
+            if (fxaaRequested) {
+              struct DeferredFxaaRequest {
+                RenderPipeline* pipeline = nullptr;
+                Diligent::ITextureView* source = nullptr;
+                Diligent::ITextureView* destination = nullptr;
+              } request{resources.pipeline, resources.accumSRV,
+                        resources.pipeline->tempUAV()};
+              const auto recordFxaa = +[](void* opaque,
+                                          Diligent::IDeviceContext* context) {
+                auto* deferredRequest =
+                    static_cast<DeferredFxaaRequest*>(opaque);
+                return deferredRequest && deferredRequest->pipeline && context &&
+                       deferredRequest->pipeline->applyFastApproximateAntiAliasing(
+                           context, deferredRequest->source,
+                           deferredRequest->destination);
+              };
+              fxaaPrepared =
+                  resources.pipeline->prepareFastApproximateAntiAliasing(
+                      renderer_->immediateContext());
+              deferredRecordingStarted = fxaaPrepared &&
+                  renderer_->startDeferredContextWork(&request, recordFxaa);
+              if (deferredRecordingStarted) {
+                // Every visible layer has been collected by Resolve. The
+                // shadow prepass touches separate targets and can run on the
+                // owner context while the deferred worker records FXAA.
+                renderer_->renderShadowMapFrame();
+                shadowMapRenderedBeforeFinalize = true;
+                fxaaApplied = renderer_->executeDeferredContextWork();
+              }
+              if (!fxaaApplied) {
+                fxaaApplied =
+                    resources.pipeline->applyFastApproximateAntiAliasing(
+                        renderer_->immediateContext(), resources.accumSRV,
+                        resources.pipeline->tempUAV());
+              }
+            }
+            static thread_local unsigned int deferredFxaaDecisionSamples = 0;
+            if (profileThisVideoPreviewSetup &&
+                deferredFxaaDecisionSamples < 64) {
+              std::fprintf(stderr,
+                  "[VideoPreviewDeferredFxaa] requested=%d mode=%d visible3D=%d "
+                  "pipeline=%d renderer=%d prepared=%d workerStarted=%d applied=%d\n",
+                  fxaaRequested ? 1 : 0, postPassMask.antiAliasingMode,
+                  hasVisible3DLayer ? 1 : 0, resources.pipeline ? 1 : 0,
+                  renderer_ ? 1 : 0, fxaaPrepared ? 1 : 0,
+                  deferredRecordingStarted ? 1 : 0, fxaaApplied ? 1 : 0);
+              ++deferredFxaaDecisionSamples;
+            }
             if (profileThisVideoPreviewSetup) {
               profileFxaaNs += frameTimer.nsecsElapsed() - fxaaStartedNs;
             }
@@ -46839,7 +46888,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       // any intervening immediate-render barrier drains this batch first, and
       // present executes it before the overlays.
       markVideoPreviewSetupStage(14);
-      renderer_->renderShadowMapFrame();
+      if (!shadowMapRenderedBeforeFinalize) {
+        renderer_->renderShadowMapFrame();
+      }
       const auto flushContextBeforeUs = profileThisVideoPreviewSetup
           ? renderer_->flushContextTimeUs() : 0;
       const auto flushStartedNs = profileThisVideoPreviewSetup

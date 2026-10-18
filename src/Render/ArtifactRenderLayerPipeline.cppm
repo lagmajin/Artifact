@@ -3270,12 +3270,9 @@ bool RenderPipeline::applyScreenSpaceAmbientOcclusion(
      RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
  return true;
 }
-bool RenderPipeline::applyFastApproximateAntiAliasing(
-    IDeviceContext* ctx, ITextureView* sourceColor,
-    ITextureView* destinationColor)
+bool RenderPipeline::prepareFastApproximateAntiAliasing(IDeviceContext* ctx)
 {
- if (!ctx || !impl_->device_ || !sourceColor || !destinationColor ||
-     sourceColor == destinationColor || impl_->width_ == 0 || impl_->height_ == 0) {
+ if (!ctx || !impl_->device_ || impl_->width_ == 0 || impl_->height_ == 0) {
   return false;
  }
  if (!impl_->fastApproximateAntiAliasingExecutor_) {
@@ -3301,6 +3298,17 @@ bool RenderPipeline::applyFastApproximateAntiAliasing(
    impl_->fastApproximateAntiAliasingExecutor_.reset();
    return false;
   }
+ }
+ return impl_->fastApproximateAntiAliasingExecutor_ != nullptr;
+}
+
+bool RenderPipeline::applyFastApproximateAntiAliasing(
+    IDeviceContext* ctx, ITextureView* sourceColor,
+    ITextureView* destinationColor)
+{
+ if (!ctx || !sourceColor || !destinationColor || sourceColor == destinationColor ||
+     !prepareFastApproximateAntiAliasing(ctx)) {
+  return false;
  }
  auto& executor = *impl_->fastApproximateAntiAliasingExecutor_;
  if (!executor.setTextureView("g_SourceColor", sourceColor) ||

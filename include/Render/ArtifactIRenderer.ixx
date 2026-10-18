@@ -175,6 +175,8 @@ export struct ClonerGridPlacementRange {
 export class ArtifactIRenderer {
 public:
   class Impl;
+  using DeferredContextWorkRecorder = bool (*)(
+      void *userData, Diligent::IDeviceContext *deferredContext);
 
   ArtifactIRenderer();
   explicit ArtifactIRenderer(
@@ -207,6 +209,11 @@ public:
   // The next immediate-render barrier or present executes the recorded batch;
   // unsupported packet mixes fall back to the synchronous flush path.
   bool flushDeferredPacketsAsync();
+  // userData must remain alive until executeDeferredContextWork returns.
+  // Referenced resources must remain alive and unchanged until that call ends.
+  bool startDeferredContextWork(void *userData,
+                               DeferredContextWorkRecorder recorder);
+  bool executeDeferredContextWork();
   void flushAndWait(bool restoreRenderTarget = true);
   // Reserve total packet capacity on the renderer owner thread before worker
   // recording. Completed worker buffers merge in slot order without growth.
@@ -249,6 +256,8 @@ public:
   quint64 presentFailureCount() const;
   quint64 presentSkippedCount() const;
   quint64 deferredWorkerSubmitCount() const;
+  quint64 deferredContextWorkCount() const;
+  QString deferredContextWorkDebugState() const;
   QString lastPresentStatus() const;
   void beginFrameCostCapture();
   void endFrameCostCapture();

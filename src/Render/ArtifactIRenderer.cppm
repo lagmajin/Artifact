@@ -515,6 +515,9 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
  public:
   class DeferredPacketRecordWorker final : public QRunnable {
   public:
+    using ContextWorkRecorder = ArtifactIRenderer::DeferredContextWorkRecorder;
+    enum class JobKind : std::uint8_t { None, PacketBuffer, ContextWork };
+
     DeferredPacketRecordWorker() {
       setAutoDelete(false);
       pool_.setMaxThreadCount(1);
@@ -585,6 +588,9 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
         pendingGizmoSource->swapPendingGizmoGeometry(primitiveRenderer3D_);
       }
       active_ = true;
+      jobKind_ = JobKind::PacketBuffer;
+      contextWorkRecorder_ = nullptr;
+      contextWorkUserData_ = nullptr;
       warmupPending_ = false;
       buffer_ = &buffer;
       packetCount_ = buffer.packets().size();
@@ -593,6 +599,37 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
       projectionMatrix_ = projectionMatrix;
       immediateContextId_ = immediateContext->GetDesc().ContextId;
       minimumWorkUnits_ = minimumWorkUnits;
+      recordReady_ = false;
+      executeAcknowledged_ = false;
+      executeSucceeded_ = false;
+      completed_ = false;
+      recorded_ = false;
+      commandList_ = nullptr;
+      pool_.start(this);
+      return true;
+    }
+
+    bool startContextWork(void *userData, ContextWorkRecorder recorder,
+                          IDeviceContext *immediateContext) {
+      if (!initialized_ || !userData || !recorder || !immediateContext ||
+          !deferredWorkContext_) {
+        return false;
+      }
+      QMutexLocker lock(&mutex_);
+      if (active_ && !completed_) return false;
+      if (active_) {
+        commandList_ = nullptr;
+        buffer_ = nullptr;
+        active_ = false;
+      }
+      active_ = true;
+      jobKind_ = JobKind::ContextWork;
+      contextWorkRecorder_ = recorder;
+      contextWorkUserData_ = userData;
+      warmupPending_ = false;
+      immediateContextId_ = immediateContext->GetDesc().ContextId;
+      packetCount_ = 0;
+      minimumWorkUnits_ = 0;
       recordReady_ = false;
       executeAcknowledged_ = false;
       executeSucceeded_ = false;
@@ -624,6 +661,9 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
       commandList_ = nullptr;
       buffer_ = nullptr;
       active_ = false;
+      jobKind_ = JobKind::None;
+      contextWorkRecorder_ = nullptr;
+      contextWorkUserData_ = nullptr;
       lock.unlock();
       if (recorded && buffer) buffer->reset();
       return recorded;
@@ -680,6 +720,9 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
         commandList_ = nullptr;
         buffer_ = nullptr;
         active_ = false;
+        jobKind_ = JobKind::None;
+        contextWorkRecorder_ = nullptr;
+        contextWorkUserData_ = nullptr;
         lock.unlock();
         return false;
       }
@@ -719,6 +762,14 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
       return active_ && !warmupPending_;
     }
 
+    bool waitForPacketJobCompletion() {
+      QMutexLocker lock(&mutex_);
+      if (!active_) return true;
+      if (jobKind_ != JobKind::PacketBuffer || warmupPending_) return false;
+      while (!completed_) done_.wait(&mutex_);
+      return true;
+    }
+
     void shutdown() {
       cancelAndWait();
       pool_.waitForDone();
@@ -726,6 +777,7 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
       submitter_.setPrimitiveRenderer3D(nullptr);
       submitter_.destroy();
       primitiveRenderer3D_.destroy();
+      deferredWorkContext_ = nullptr;
       device_ = nullptr;
       initialized_ = false;
     }
@@ -744,6 +796,9 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
       commandList_ = nullptr;
       buffer_ = nullptr;
       active_ = false;
+      jobKind_ = JobKind::None;
+      contextWorkRecorder_ = nullptr;
+      contextWorkUserData_ = nullptr;
       lock.unlock();
       if (buffer) buffer->reset();
     }
@@ -753,10 +808,14 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
       if (warmupPending_) {
         warmupPending_ = false;
         RefCntAutoPtr<IDeviceContext> deferredContext;
+        RefCntAutoPtr<IDeviceContext> deferredWorkContext;
         if (device_) device_->CreateDeferredContext(&deferredContext);
-        warmupSuccess_ = deferredContext != nullptr;
+        if (device_) device_->CreateDeferredContext(&deferredWorkContext);
+        warmupSuccess_ = deferredContext != nullptr &&
+                         deferredWorkContext != nullptr;
         if (warmupSuccess_) {
           submitter_.setDeferredContext(std::move(deferredContext));
+          deferredWorkContext_ = std::move(deferredWorkContext);
         }
         completed_ = true;
         done_.wakeAll();
@@ -767,6 +826,9 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
       const auto packetCount = packetCount_;
       const Uint32 contextId = immediateContextId_;
       const Uint32 minimumWorkUnits = minimumWorkUnits_;
+      const JobKind jobKind = jobKind_;
+      const ContextWorkRecorder contextWorkRecorder = contextWorkRecorder_;
+      void *const contextWorkUserData = contextWorkUserData_;
       const RenderViewportState viewportState = viewportState_;
       const QMatrix4x4 viewMatrix = viewMatrix_;
       const QMatrix4x4 projectionMatrix = projectionMatrix_;
@@ -775,14 +837,25 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
       RefCntAutoPtr<ICommandList> recordedCommandList;
       bool recorded = false;
       try {
-        if (buffer) {
+        if (jobKind == JobKind::PacketBuffer && buffer) {
           primitiveRenderer3D_.setCameraMatrices(viewMatrix, projectionMatrix);
           submitter_.setViewportState(viewportState);
           recorded = submitter_.recordDeferred(
               *buffer, contextId, recordedCommandList, minimumWorkUnits);
+        } else if (jobKind == JobKind::ContextWork && contextWorkRecorder &&
+                   contextWorkUserData && deferredWorkContext_) {
+          deferredWorkContext_->Begin(contextId);
+          recorded = contextWorkRecorder(contextWorkUserData,
+                                          deferredWorkContext_.RawPtr());
+          deferredWorkContext_->FinishCommandList(&recordedCommandList);
+          recorded = recorded && recordedCommandList != nullptr;
         }
       } catch (...) {
         recorded = false;
+        if (jobKind == JobKind::ContextWork && deferredWorkContext_) {
+          RefCntAutoPtr<ICommandList> discardedCommandList;
+          deferredWorkContext_->FinishCommandList(&discardedCommandList);
+        }
       }
 
       lock.relock();
@@ -792,8 +865,9 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
       ready_.wakeAll();
       while (!executeAcknowledged_) ready_.wait(&mutex_);
       const bool finishRecordedFrame = recorded && executeSucceeded_;
+      const bool finishPacketFrame = jobKind == JobKind::PacketBuffer;
       lock.unlock();
-      if (finishRecordedFrame) {
+      if (finishRecordedFrame && finishPacketFrame) {
         static const bool profileDeferredWorkerFinish = [] {
           return qEnvironmentVariableIsSet("ARTIFACT_VIDEO_PREVIEW_PROFILE_SETUP") &&
                  qEnvironmentVariable("ARTIFACT_VIDEO_PREVIEW_PROFILE_SETUP") !=
@@ -833,6 +907,7 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
 
     DiligentImmediateSubmitter submitter_;
     PrimitiveRenderer3D primitiveRenderer3D_;
+    RefCntAutoPtr<IDeviceContext> deferredWorkContext_;
     mutable QMutex mutex_;
     QWaitCondition ready_;
     QWaitCondition done_;
@@ -846,6 +921,9 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
     QMatrix4x4 projectionMatrix_;
     Uint32 immediateContextId_ = 0;
     Uint32 minimumWorkUnits_ = 16;
+    JobKind jobKind_ = JobKind::None;
+    ContextWorkRecorder contextWorkRecorder_ = nullptr;
+    void *contextWorkUserData_ = nullptr;
     bool initialized_ = false;
     bool active_ = false;
     bool warmupPending_ = false;
@@ -916,6 +994,8 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
   bool parallelGeometryRecordingReady_ = false;
   std::size_t parallelGeometryWorkerCount_ = 0;
   mutable quint64 deferredWorkerSubmitCount_ = 0;
+  quint64 deferredContextWorkCount_ = 0;
+  quint8 deferredContextWorkStatus_ = 0;
   ArtifactCore::RenderCostStats m_lastFrameCostStats_;
   ArtifactCore::RenderCostStats m_currentFrameCostStats_;
   bool m_frameCostCaptureActive_ = false;
@@ -1315,6 +1395,49 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
     ++clonerGridBatchGeneration_;
     ++flushCount_;
     return true;
+  }
+
+  bool startDeferredContextWork(
+      void *userData, ArtifactIRenderer::DeferredContextWorkRecorder recorder) {
+    if (!userData || !recorder || m_frameCostCaptureActive_ ||
+        m_frameDebugCaptureActive_) {
+      deferredContextWorkStatus_ = 1;
+      return false;
+    }
+    auto context = deviceManager_.immediateContext();
+    if (!context) {
+      deferredContextWorkStatus_ = 2;
+      return false;
+    }
+    if (deferredPacketRecordPending_) {
+      completeDeferredPacketRecording(context.RawPtr());
+    }
+    if (!deferredPacketRecordWorker_.waitForPacketJobCompletion()) {
+      deferredContextWorkStatus_ = 3;
+      return false;
+    }
+    const bool started = deferredPacketRecordWorker_.startContextWork(
+        userData, recorder, context.RawPtr());
+    deferredContextWorkStatus_ = started ? 5 : 4;
+    return started;
+  }
+
+  bool executeDeferredContextWork() {
+    auto context = deviceManager_.immediateContext();
+    if (!context) {
+      deferredContextWorkStatus_ = 6;
+      deferredPacketRecordWorker_.cancelAndWait();
+      return false;
+    }
+    const bool executed =
+        deferredPacketRecordWorker_.executeAndWait(context.RawPtr());
+    if (executed) {
+      ++deferredContextWorkCount_;
+      deferredContextWorkStatus_ = 8;
+    } else {
+      deferredContextWorkStatus_ = 7;
+    }
+    return executed;
   }
   static bool submitQueuedDrawsBeforeTextureOverwrite(void* userData)
   {
@@ -2791,6 +2914,22 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
   quint64 presentSkippedCount() const { return presentSkippedCount_; }
   quint64 deferredWorkerSubmitCount() const {
     return deferredWorkerSubmitCount_;
+  }
+  quint64 deferredContextWorkCount() const {
+    return deferredContextWorkCount_;
+  }
+  QString deferredContextWorkDebugState() const {
+    switch (deferredContextWorkStatus_) {
+    case 1: return QStringLiteral("rejected-invalid-request-or-capture");
+    case 2: return QStringLiteral("rejected-no-immediate-context");
+    case 3: return QStringLiteral("rejected-worker-not-idle");
+    case 4: return QStringLiteral("rejected-worker-start");
+    case 5: return QStringLiteral("recording-started");
+    case 6: return QStringLiteral("execute-no-immediate-context");
+    case 7: return QStringLiteral("recording-or-command-list-failed");
+    case 8: return QStringLiteral("executed");
+    default: return QStringLiteral("not-attempted");
+    }
   }
   QString lastPresentStatus() const { return lastPresentStatus_; }
   QString gpuAdapterRecoveryDebugState() const {
@@ -5364,6 +5503,13 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
   }
   bool ArtifactIRenderer::flushDeferredPacketsAsync()
   { return impl_->flushDeferredPacketsAsync(); }
+  bool ArtifactIRenderer::startDeferredContextWork(
+      void *userData, DeferredContextWorkRecorder recorder) {
+    return impl_->startDeferredContextWork(userData, recorder);
+  }
+  bool ArtifactIRenderer::executeDeferredContextWork() {
+    return impl_->executeDeferredContextWork();
+  }
  void ArtifactIRenderer::flushAndWait(bool restoreRenderTarget) {
   impl_->flushAndWait(restoreRenderTarget);
  }
@@ -5452,6 +5598,10 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
  quint64 ArtifactIRenderer::presentSkippedCount() const { return impl_->presentSkippedCount(); }
  quint64 ArtifactIRenderer::deferredWorkerSubmitCount() const
  { return impl_->deferredWorkerSubmitCount(); }
+ quint64 ArtifactIRenderer::deferredContextWorkCount() const
+ { return impl_->deferredContextWorkCount(); }
+ QString ArtifactIRenderer::deferredContextWorkDebugState() const
+ { return impl_->deferredContextWorkDebugState(); }
  QString ArtifactIRenderer::lastPresentStatus() const { return impl_->lastPresentStatus(); }
  void ArtifactIRenderer::beginFrameCostCapture() { impl_->beginFrameCostCapture(); }
  void ArtifactIRenderer::endFrameCostCapture() { impl_->endFrameCostCapture(); }
