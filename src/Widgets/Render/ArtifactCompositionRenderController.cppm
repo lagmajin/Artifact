@@ -356,6 +356,7 @@ import Artifact.Render.CompositionRenderPassPlan;
 import Artifact.Render.CompositionRenderPassContext;
 import Artifact.Render.CompositionPassExecutor;
 import Artifact.Widgets.CompositionMotionPathCommands;
+import Artifact.Widgets.CompositionOnionSkinHistory;
 import Artifact.Widgets.CompositionRigUndoCommands;
 import Artifact.Widgets.CompositionTextPuppetUndoCommands;
 import Artifact.Widgets.CompositionLayerUndoCommands;
@@ -15364,31 +15365,9 @@ public:
   int onionSkinFrameCount_ = 2;
 
   int onionSkinOpacity_ = 30;
+  CompositionOnionSkinHistory onionSkinHistory_;
 
-  struct OnionSkinFrame {
-    QImage image;
-    QString compositionId;
-    qint64 frame = -1;
-  };
-
-  QVector<OnionSkinFrame> onionSkinFrames_;
-
-  bool onionSkinCapturePending_ = false;
-
-  QMutex onionSkinMutex_;
-
-  quint64 onionSkinGeneration_ = 0;
-  QString onionSkinLastQueuedCompositionId_;
-  qint64 onionSkinLastQueuedFrame_ = std::numeric_limits<qint64>::min();
-
-  void resetOnionSkinHistory() {
-    QMutexLocker locker(&onionSkinMutex_);
-    ++onionSkinGeneration_;
-    onionSkinFrames_.clear();
-    onionSkinCapturePending_ = false;
-    onionSkinLastQueuedCompositionId_.clear();
-    onionSkinLastQueuedFrame_ = std::numeric_limits<qint64>::min();
-  }
+  void resetOnionSkinHistory() { onionSkinHistory_.reset(); }
 
   std::array<bool, lineDebugKindCount()> lineDebugVisibility_ = {
 
@@ -22122,12 +22101,7 @@ bool CompositionRenderController::isShowAudioSpectrumOverlay() const {
 void CompositionRenderController::setOnionSkinFrameCount(int count) {
 
   impl_->onionSkinFrameCount_ = std::clamp(count, 1, 5);
-  {
-    QMutexLocker locker(&impl_->onionSkinMutex_);
-    while (impl_->onionSkinFrames_.size() > impl_->onionSkinFrameCount_) {
-      impl_->onionSkinFrames_.removeLast();
-    }
-  }
+  impl_->onionSkinHistory_.trim(impl_->onionSkinFrameCount_);
   markRenderDirty();
 
 }
@@ -51022,45 +50996,17 @@ void CompositionRenderController::Impl::drawOnionSkinOverlay(
 
   }
 
-  if (!compositionHasOnionSkinAnimation(composition, currentFrame)) {
+  if (!composition) {
     resetOnionSkinHistory();
     return;
   }
 
-  QVector<OnionSkinFrame> frames;
-  {
-    QMutexLocker locker(&onionSkinMutex_);
-    const QString compositionId = composition->id().toString();
-    const qint64 frameNumber = currentFrame.framePosition();
-    for (const auto &entry : onionSkinFrames_) {
-      if (entry.compositionId == compositionId && entry.frame != frameNumber &&
-          !entry.image.isNull()) {
-        frames.push_back(entry);
-      }
-    }
-  }
-
-  if (frames.isEmpty()) {
-    return;
-  }
-
-  const int frameCount = std::clamp(onionSkinFrameCount_, 1, 5);
-  const int drawCount = std::min(frameCount, static_cast<int>(frames.size()));
-  const float baseOpacity = std::clamp(onionSkinOpacity_ / 100.0f, 0.05f, 0.80f);
-
-  for (int i = 0; i < drawCount; ++i) {
-    const int index = frames.size() - 1 - i;
-    const QImage &frameImage = frames.at(index).image;
-    if (frameImage.isNull()) {
-      continue;
-    }
-    const float ageFactor = 1.0f - (static_cast<float>(i) /
-                                    std::max(1.0f, static_cast<float>(drawCount)));
-    const float opacity = std::clamp(baseOpacity * (0.45f + 0.55f * ageFactor),
-                                     0.05f, 0.85f);
-    renderer_->drawSprite(0.0f, 0.0f, canvasWidth, canvasHeight, frameImage,
-                          opacity);
-  }
+  const bool hasAnimatedContent =
+      compositionHasOnionSkinAnimation(composition, currentFrame);
+  onionSkinHistory_.draw(
+      renderer_.get(), true, hasAnimatedContent, composition->id().toString(),
+      currentFrame.framePosition(), canvasWidth, canvasHeight,
+      onionSkinFrameCount_, onionSkinOpacity_);
 }
 
 bool CompositionRenderController::Impl::hasCalculatedOnionSkinSource(
@@ -51092,62 +51038,11 @@ void CompositionRenderController::Impl::queueOnionSkinCapture(
     return;
   }
 
-  if (!compositionHasOnionSkinAnimation(composition, currentFrame)) {
-    resetOnionSkinHistory();
-    return;
-  }
-
-  const QString compositionId = composition->id().toString();
-  const qint64 frameNumber = currentFrame.framePosition();
-  quint64 captureGeneration = 0;
-
-  {
-    QMutexLocker locker(&onionSkinMutex_);
-    if (onionSkinCapturePending_ ||
-        (onionSkinLastQueuedCompositionId_ == compositionId &&
-         onionSkinLastQueuedFrame_ == frameNumber)) {
-      return;
-    }
-    onionSkinCapturePending_ = true;
-    onionSkinLastQueuedCompositionId_ = compositionId;
-    onionSkinLastQueuedFrame_ = frameNumber;
-    captureGeneration = onionSkinGeneration_;
-  }
-
-  QPointer<CompositionRenderController> ownerGuard(owner);
-  const bool accepted = renderer_->readbackToImageAsync(
-      [this, ownerGuard, compositionId, frameNumber,
-       captureGeneration](const QImage &capturedFrame) {
-        if (!ownerGuard) {
-          return;
-        }
-        const QImage capturedCopy = capturedFrame.copy();
-        QMetaObject::invokeMethod(
-            ownerGuard.data(),
-            [this, capturedCopy, compositionId, frameNumber,
-             captureGeneration]() mutable {
-              QMutexLocker locker(&onionSkinMutex_);
-              if (captureGeneration != onionSkinGeneration_) {
-                return;
-              }
-              onionSkinCapturePending_ = false;
-              if (!showOnionSkin_ || capturedCopy.isNull()) {
-                return;
-              }
-              onionSkinFrames_.prepend(
-                  OnionSkinFrame{capturedCopy, compositionId, frameNumber});
-              while (onionSkinFrames_.size() > 5) {
-                onionSkinFrames_.removeLast();
-              }
-            },
-            Qt::QueuedConnection);
-      });
-  if (!accepted) {
-    QMutexLocker locker(&onionSkinMutex_);
-    if (captureGeneration == onionSkinGeneration_) {
-      onionSkinCapturePending_ = false;
-    }
-  }
+  const bool hasAnimatedContent =
+      compositionHasOnionSkinAnimation(composition, currentFrame);
+  onionSkinHistory_.queueCapture(
+      owner, renderer_.get(), true, hasAnimatedContent,
+      composition->id().toString(), currentFrame.framePosition());
 }
 
 void CompositionRenderController::Impl::syncViewportChannelReadbackConfiguration() {
