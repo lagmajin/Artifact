@@ -595,6 +595,11 @@ public:
                        const FloatColor &color);
   void drawSolidTriangleLocal(Detail::float2 p0, Detail::float2 p1,
                               Detail::float2 p2, const FloatColor &color);
+  void drawGradientTriangleLocal(Detail::float2 p0, Detail::float2 p1,
+                                 Detail::float2 p2,
+                                 const FloatColor &color0,
+                                 const FloatColor &color1,
+                                 const FloatColor &color2);
   void drawSolidPolygonLocal(const std::vector<Detail::float2> &points,
                              const FloatColor &color);
   void drawTexturedTriangleTransformed(Detail::float2 p0, Detail::float2 p1,

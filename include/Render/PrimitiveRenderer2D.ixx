@@ -109,6 +109,10 @@ public:
     void drawBezierLocal(float2 p0, float2 p1, float2 p2, float thickness, const FloatColor& color);
     void drawBezierLocal(float2 p0, float2 p1, float2 p2, float2 p3, float thickness, const FloatColor& color);
     void drawSolidTriangleLocal(float2 p0, float2 p1, float2 p2, const FloatColor& color);
+    void drawGradientTriangleLocal(float2 p0, float2 p1, float2 p2,
+                                   const FloatColor& color0,
+                                   const FloatColor& color1,
+                                   const FloatColor& color2);
     bool acquireMpmSurfaceBuffer(ArtifactArray<MpmSurfaceVertex>& vertices,
                                  std::size_t minimumCapacity);
     bool drawMpmSurface(ArtifactArray<MpmSurfaceVertex>& vertices,

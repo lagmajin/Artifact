@@ -526,6 +526,9 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
       const QVector3D mappedVelocityY =
           baseTransform.map(QVector3D(0.0f, 1.0f, 0.0f)) -
           mappedVelocityOrigin;
+      // Layer color properties are stored in sRGB space; the main render
+      // target is sRGB, so feed linear values to the GPU output path.
+      const FloatColor linearLiquidColor = impl_->liquidColor_.toLinear();
       const float containerImpactScale = static_cast<float>(
           std::min(localBounds().width(), localBounds().height())) *
           std::max(0.0001f, std::min(mappedVelocityX.length(),
@@ -547,9 +550,9 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
         particle.vx = mappedVelocity.x();
         particle.vy = mappedVelocity.y();
         particle.vz = mappedVelocity.z();
-        particle.r = impl_->liquidColor_.r();
-        particle.g = impl_->liquidColor_.g();
-        particle.b = impl_->liquidColor_.b();
+        particle.r = linearLiquidColor.r();
+        particle.g = linearLiquidColor.g();
+        particle.b = linearLiquidColor.b();
         particle.a *= impl_->liquidColor_.a();
         particle.a *= std::clamp(opacityScale, 0.0f, 1.0f);
       }
@@ -567,9 +570,9 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
         particle.vx = spill.vx;
         particle.vy = spill.vy;
         particle.vz = 0.0f;
-        particle.r = impl_->liquidColor_.r();
-        particle.g = impl_->liquidColor_.g();
-        particle.b = impl_->liquidColor_.b();
+        particle.r = linearLiquidColor.r();
+        particle.g = linearLiquidColor.g();
+        particle.b = linearLiquidColor.b();
         particle.a = 0.82f * impl_->liquidColor_.a() *
             std::clamp(opacityScale, 0.0f, 1.0f);
         particle.size = spill.size;
@@ -583,20 +586,51 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
       if (renderData.particles.size() > maximumLiquidDetailParticles) {
         renderData.particles.resize(maximumLiquidDetailParticles);
       }
-      NamedVector<ArtifactCore::LiquidSurfaceSample2D> surfaceSamples{
-          ContainerName{"Layer.LiquidSurfaceSamples"}};
-      surfaceSamples.reserve(renderData.particles.size());
+      auto& surfaceSamples = impl_->fluidRuntime_.liquidSurfaceSamples_;
+      surfaceSamples.clear();
+      if (surfaceSamples.capacity() < renderData.particles.size()) {
+        surfaceSamples.reserve(renderData.particles.size());
+      }
       for (std::size_t particleIndex = 0;
            particleIndex < renderData.particles.size(); ++particleIndex) {
         const auto& particle = renderData.particles[particleIndex];
         if (particle.a <= 0.0f || particle.size <= 0.0f) continue;
-        const float foamBias =
+        float foamBias =
             (particleIndex < containerParticleCount ? 0.45f : 1.0f) *
             impl_->liquidFoamAmount_;
+        float foamOffsetY = 0.0f;
         float collisionImpact = 0.0f;
         if (particleIndex < containerParticleCount) {
           const auto& containerParticles = liquid.particles();
           if (particleIndex < containerParticles.size()) {
+            // For a rectangular pour, place falling-stream foam at the
+            // nominal liquid surface while leaving its density sample in the
+            // original position. This avoids a detached foam halo and keeps
+            // the liquid mesh unchanged.
+            if (!hasPolygonLiquidContainer) {
+              const float nominalSurfaceY =
+                  1.0f - impl_->liquidFillAmount_;
+              const float particleY = containerParticles[particleIndex].y;
+              const float foamReach = std::max(
+                  0.55f, liquid.particleSpacing() * 8.0f);
+              if (particleY < nominalSurfaceY - foamReach) {
+                foamBias = 0.0f;
+              } else if (particleY < nominalSurfaceY) {
+                foamBias = std::max(
+                    foamBias, impl_->liquidFoamAmount_ * 0.85f);
+                const QRectF bounds = localBounds();
+                const QVector3D foamSurfacePoint = baseTransform.map(
+                    QVector3D(
+                        static_cast<float>(bounds.left()) +
+                            containerParticles[particleIndex].x *
+                                static_cast<float>(bounds.width()),
+                        static_cast<float>(bounds.top()) +
+                            nominalSurfaceY *
+                                static_cast<float>(bounds.height()),
+                        0.0f));
+                foamOffsetY = foamSurfacePoint.y() - particle.py;
+              }
+            }
             collisionImpact =
                 containerParticles[particleIndex].collisionImpact *
                 containerImpactScale;
@@ -609,87 +643,530 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
                 impl_->fluidRuntime_.liquidSpillParticles_[spillIndex].collisionImpact;
           }
         }
-        surfaceSamples.push_back({particle.px, particle.py, particle.size,
+        surfaceSamples.push_back({particle.px, particle.py, foamOffsetY,
+                                  particle.size,
                                   particle.vx, particle.vy, foamBias,
                                   collisionImpact});
       }
       if (impl_->fluidRuntime_.liquidSurfaceFrame_ != frame) {
-        impl_->fluidRuntime_.liquidSurfaceSnapshot_ =
-            ArtifactCore::LiquidSolver2D::buildSurfaceSnapshot(surfaceSamples);
+        ArtifactCore::LiquidSolver2D::buildSurfaceSnapshotInto(
+            surfaceSamples,
+            impl_->fluidRuntime_.liquidSurfaceSnapshot_,
+            impl_->fluidRuntime_.liquidSurfaceWorkspace_);
         impl_->fluidRuntime_.liquidSurfaceFrame_ = frame;
       }
       const auto& surface = impl_->fluidRuntime_.liquidSurfaceSnapshot_;
+      const std::size_t foamCapacity =
+          100000 - std::min<std::size_t>(renderData.particles.size(), 100000);
+      const std::size_t foamCount =
+          std::min(foamCapacity, surface.foamPoints.size());
+      float surfaceMinimumX = std::numeric_limits<float>::max();
+      float surfaceMinimumY = std::numeric_limits<float>::max();
+      float surfaceMaximumX = std::numeric_limits<float>::lowest();
+      float surfaceMaximumY = std::numeric_limits<float>::lowest();
+      const float velocityXLength = std::hypot(
+          mappedVelocityX.x(), mappedVelocityX.y());
+      const float velocityYLength = std::hypot(
+          mappedVelocityY.x(), mappedVelocityY.y());
+      const float liquidAxisXx = velocityXLength > 1.0e-6f
+          ? mappedVelocityX.x() / velocityXLength : 1.0f;
+      const float liquidAxisXy = velocityXLength > 1.0e-6f
+          ? mappedVelocityX.y() / velocityXLength : 0.0f;
+      const float liquidAxisYx = velocityYLength > 1.0e-6f
+          ? mappedVelocityY.x() / velocityYLength : 0.0f;
+      const float liquidAxisYy = velocityYLength > 1.0e-6f
+          ? mappedVelocityY.y() / velocityYLength : 1.0f;
+      float surfaceMinimumAxisX = std::numeric_limits<float>::max();
+      float surfaceMinimumAxisY = std::numeric_limits<float>::max();
+      float surfaceMaximumAxisX = std::numeric_limits<float>::lowest();
+      float surfaceMaximumAxisY = std::numeric_limits<float>::lowest();
+      const auto includeSurfacePoint = [&](float x, float y) {
+        const float relativeX = x - mappedVelocityOrigin.x();
+        const float relativeY = y - mappedVelocityOrigin.y();
+        const float axisX = relativeX * liquidAxisXx +
+                            relativeY * liquidAxisXy;
+        const float axisY = relativeX * liquidAxisYx +
+                            relativeY * liquidAxisYy;
+        surfaceMinimumAxisX = std::min(surfaceMinimumAxisX, axisX);
+        surfaceMaximumAxisX = std::max(surfaceMaximumAxisX, axisX);
+        surfaceMinimumAxisY = std::min(surfaceMinimumAxisY, axisY);
+        surfaceMaximumAxisY = std::max(surfaceMaximumAxisY, axisY);
+      };
+      for (const auto& triangle : surface.triangles) {
+        surfaceMinimumX = std::min(
+            surfaceMinimumX,
+            std::min({triangle.a.x, triangle.b.x, triangle.c.x}));
+        surfaceMinimumY = std::min(
+            surfaceMinimumY,
+            std::min({triangle.a.y, triangle.b.y, triangle.c.y}));
+        surfaceMaximumX = std::max(
+            surfaceMaximumX,
+            std::max({triangle.a.x, triangle.b.x, triangle.c.x}));
+        surfaceMaximumY = std::max(
+            surfaceMaximumY,
+            std::max({triangle.a.y, triangle.b.y, triangle.c.y}));
+        includeSurfacePoint(triangle.a.x, triangle.a.y);
+        includeSurfacePoint(triangle.b.x, triangle.b.y);
+        includeSurfacePoint(triangle.c.x, triangle.c.y);
+      }
+      float reflectionCenterX =
+          (surfaceMinimumAxisX + surfaceMaximumAxisX) * 0.5f;
+      float reflectionCenterY =
+          surfaceMinimumAxisY +
+          (surfaceMaximumAxisY - surfaceMinimumAxisY) * 0.45f;
+      float reflectionWeightSum = 0.0f;
+      float weightedReflectionX = 0.0f;
+      float weightedReflectionY = 0.0f;
+      const float reflectionSurfaceHeight = std::max(
+          1.0f, surfaceMaximumAxisY - surfaceMinimumAxisY);
+      float reflectionAnchorY = reflectionCenterY;
+      float reflectionTolerance = reflectionSurfaceHeight * 0.14f;
+      if (!hasPolygonLiquidContainer) {
+        const QRectF bounds = localBounds();
+        const float nominalSurfaceY =
+            static_cast<float>(bounds.top()) +
+            (1.0f - impl_->liquidFillAmount_) *
+                static_cast<float>(bounds.height());
+        const QVector3D nominalSurfacePoint = baseTransform.map(
+            QVector3D(static_cast<float>(bounds.left()), nominalSurfaceY,
+                      0.0f));
+        const float anchorRelativeX =
+            nominalSurfacePoint.x() - mappedVelocityOrigin.x();
+        const float anchorRelativeY =
+            nominalSurfacePoint.y() - mappedVelocityOrigin.y();
+        reflectionAnchorY = anchorRelativeX * liquidAxisYx +
+                            anchorRelativeY * liquidAxisYy;
+        reflectionTolerance = std::max(
+            6.0f, velocityYLength * static_cast<float>(bounds.height()) *
+                      0.14f);
+      }
+      for (const auto& segment : surface.contourSegments) {
+        const float segmentX = segment.b.x - segment.a.x;
+        const float segmentY = segment.b.y - segment.a.y;
+        const float dx = std::abs(segmentX * liquidAxisXx +
+                                  segmentY * liquidAxisXy);
+        const float dy = std::abs(segmentX * liquidAxisYx +
+                                  segmentY * liquidAxisYy);
+        if (dx <= 1.0f || dy >= dx * 0.34f) continue;
+        const float midpointX = (segment.a.x + segment.b.x) * 0.5f -
+                                mappedVelocityOrigin.x();
+        const float midpointY = (segment.a.y + segment.b.y) * 0.5f -
+                                mappedVelocityOrigin.y();
+        const float projectedMidpointX =
+            midpointX * liquidAxisXx + midpointY * liquidAxisXy;
+        const float projectedMidpointY =
+            midpointX * liquidAxisYx + midpointY * liquidAxisYy;
+        const float anchorDistance =
+            std::abs(projectedMidpointY - reflectionAnchorY);
+        if (anchorDistance > reflectionTolerance) continue;
+        const float weight = dx * std::max(
+            0.05f, 1.0f - anchorDistance / reflectionTolerance);
+        weightedReflectionX += projectedMidpointX * weight;
+        weightedReflectionY += projectedMidpointY * weight;
+        reflectionWeightSum += weight;
+      }
+      if (reflectionWeightSum > 1.0e-4f) {
+        reflectionCenterX = weightedReflectionX / reflectionWeightSum;
+        reflectionCenterY = weightedReflectionY / reflectionWeightSum;
+      }
+      const bool drawSurface = impl_->liquidSurfaceOpacity_ > 0.0f;
+      const bool drawEdge = impl_->liquidEdgeOpacity_ > 0.0f;
+      const QRectF liquidClipBounds = localBounds();
+      bool inverseLiquidTransformValid = false;
+      const QMatrix4x4 compositionToLiquid = baseTransform.inverted(
+          &inverseLiquidTransformValid);
+      const bool clipToRectangularContainer =
+          !hasPolygonLiquidContainer && liquidClipBounds.isValid() &&
+          liquidClipBounds.width() > 0.0 &&
+          liquidClipBounds.height() > 0.0 &&
+          inverseLiquidTransformValid;
+      if ((drawSurface || drawEdge) && !surface.triangles.empty()) {
+        for (std::size_t particleIndex = 0;
+             particleIndex < containerParticleCount; ++particleIndex) {
+          auto& particle = renderData.particles[particleIndex];
+          particle.a = 0.0f;
+        }
+      }
+      if (!renderData.particles.empty()) {
+        renderer->drawParticles(std::move(renderData));
+      }
       if (!surface.triangles.empty()) {
         const float layerAlpha = std::clamp(opacityScale, 0.0f, 1.0f);
-        const bool drawSurface = impl_->liquidSurfaceOpacity_ > 0.0f;
-        const bool drawEdge = impl_->liquidEdgeOpacity_ > 0.0f;
         if (drawSurface) {
+          const FloatColor linearSurfaceFoamColor =
+              impl_->liquidFoamColor_.toLinear();
+          const float surfaceWidth = std::max(
+              1.0f, surfaceMaximumAxisX - surfaceMinimumAxisX);
+          const auto smoothBand = [](float distance, float halfWidth) {
+            const float t = std::clamp(1.0f - distance / halfWidth,
+                                       0.0f, 1.0f);
+            return t * t * (3.0f - 2.0f * t);
+          };
+          const auto shadeLiquidVertex = [&](float x, float y,
+                                             float coverage) {
+            const float relativeX = x - mappedVelocityOrigin.x();
+            const float relativeY = y - mappedVelocityOrigin.y();
+            const float projectedX = relativeX * liquidAxisXx +
+                                     relativeY * liquidAxisXy;
+            const float projectedY = relativeX * liquidAxisYx +
+                                     relativeY * liquidAxisYy;
+            const float v = std::clamp(
+                (projectedY - surfaceMinimumAxisY) /
+                    reflectionSurfaceHeight,
+                0.0f, 1.0f);
+            const float directional = 0.48f + (1.0f - v) * 0.52f;
+            const float opticalDepth = std::clamp(
+                (coverage - 0.34f) * 0.5f, 0.0f, 1.0f);
+            const float absorption = 1.0f - opticalDepth * 0.28f;
+            // A broad, low-amplitude contact reflection keeps the highlight
+            // coherent across the triangle mesh instead of exposing facets.
+            const float contactBand =
+                smoothBand(std::abs(projectedY - reflectionCenterY),
+                           reflectionSurfaceHeight * 0.12f) *
+                smoothBand(std::abs(projectedX - reflectionCenterX),
+                           surfaceWidth * 0.40f) *
+                0.21f;
+            const float glintPhase =
+                projectedX * 0.018f + projectedY * 0.012f +
+                static_cast<float>(frame) * 0.004f;
+            const float glintCycle = glintPhase - std::floor(glintPhase);
+            const float glintWave =
+                1.0f - std::abs(glintCycle * 2.0f - 1.0f);
+            const float glintDistance = 1.0f - glintWave;
+            const float glintRamp = std::clamp(
+                1.0f - glintDistance / 0.38f, 0.0f, 1.0f);
+            const float glint =
+                glintRamp * glintRamp * (3.0f - 2.0f * glintRamp);
+            const float upperSurfaceRamp = std::clamp(
+                (v - 0.12f) / 0.45f, 0.0f, 1.0f);
+            const float upperSurfaceMask =
+                1.0f - upperSurfaceRamp * upperSurfaceRamp *
+                    (3.0f - 2.0f * upperSurfaceRamp);
+            const float movingGlint = glint * upperSurfaceMask * 0.25f;
+            const float reflection = contactBand + movingGlint;
+            const float baseRed =
+                linearLiquidColor.r() * directional * absorption;
+            const float baseGreen =
+                linearLiquidColor.g() * directional * absorption;
+            const float baseBlue =
+                linearLiquidColor.b() * directional * absorption;
+            return FloatColor(
+                std::clamp(baseRed +
+                               (linearSurfaceFoamColor.r() - baseRed) *
+                                   reflection,
+                           0.0f, 1.0f),
+                std::clamp(baseGreen +
+                               (linearSurfaceFoamColor.g() - baseGreen) *
+                                   reflection,
+                           0.0f, 1.0f),
+                std::clamp(baseBlue +
+                               (linearSurfaceFoamColor.b() - baseBlue) *
+                                   reflection,
+                           0.0f, 1.0f),
+                impl_->liquidColor_.a() * impl_->liquidSurfaceOpacity_ *
+                    layerAlpha * 0.96f);
+          };
+          struct ClippedLiquidVertex {
+            QVector3D position;
+            FloatColor color;
+          };
+          const auto drawClippedLiquidTriangle =
+              [&](const ArtifactCore::LiquidSurfaceTriangle2D& triangle) {
+            if (!clipToRectangularContainer) {
+              renderer->drawGradientTriangleLocal(
+                  {triangle.a.x, triangle.a.y},
+                  {triangle.b.x, triangle.b.y},
+                  {triangle.c.x, triangle.c.y},
+                  shadeLiquidVertex(triangle.a.x, triangle.a.y,
+                                    triangle.coverageA),
+                  shadeLiquidVertex(triangle.b.x, triangle.b.y,
+                                    triangle.coverageB),
+                  shadeLiquidVertex(triangle.c.x, triangle.c.y,
+                                    triangle.coverageC));
+              return;
+            }
+            ClippedLiquidVertex polygon[8] = {
+                {compositionToLiquid.map(
+                     QVector3D(triangle.a.x, triangle.a.y, 0.0f)),
+                 shadeLiquidVertex(triangle.a.x, triangle.a.y,
+                                   triangle.coverageA)},
+                {compositionToLiquid.map(
+                     QVector3D(triangle.b.x, triangle.b.y, 0.0f)),
+                 shadeLiquidVertex(triangle.b.x, triangle.b.y,
+                                   triangle.coverageB)},
+                {compositionToLiquid.map(
+                     QVector3D(triangle.c.x, triangle.c.y, 0.0f)),
+                 shadeLiquidVertex(triangle.c.x, triangle.c.y,
+                                   triangle.coverageC)}};
+            std::size_t polygonCount = 3;
+            const auto clipAxis = [&](bool useX, float boundary,
+                                      bool keepGreater) {
+              ClippedLiquidVertex clipped[8]{};
+              std::size_t clippedCount = 0;
+              const auto coordinate = [useX](const QVector3D& point) {
+                return useX ? point.x() : point.y();
+              };
+              const auto inside = [&](float value) {
+                return keepGreater ? value >= boundary : value <= boundary;
+              };
+              for (std::size_t index = 0; index < polygonCount; ++index) {
+                const auto& current = polygon[index];
+                const auto& previous = polygon[
+                    (index + polygonCount - 1) % polygonCount];
+                const float currentCoordinate = coordinate(current.position);
+                const float previousCoordinate = coordinate(previous.position);
+                const bool currentInside = inside(currentCoordinate);
+                const bool previousInside = inside(previousCoordinate);
+                if (currentInside != previousInside && clippedCount < 8) {
+                  const float denominator =
+                      currentCoordinate - previousCoordinate;
+                  const float t = std::abs(denominator) > 1.0e-8f
+                      ? std::clamp((boundary - previousCoordinate) /
+                                       denominator,
+                                   0.0f, 1.0f)
+                      : 0.5f;
+                  clipped[clippedCount++] = {
+                      previous.position +
+                          (current.position - previous.position) * t,
+                      FloatColor(
+                          previous.color.r() +
+                              (current.color.r() - previous.color.r()) * t,
+                          previous.color.g() +
+                              (current.color.g() - previous.color.g()) * t,
+                          previous.color.b() +
+                              (current.color.b() - previous.color.b()) * t,
+                          previous.color.a() +
+                              (current.color.a() - previous.color.a()) * t)};
+                }
+                if (currentInside && clippedCount < 8) {
+                  clipped[clippedCount++] = current;
+                }
+              }
+              polygonCount = clippedCount;
+              for (std::size_t index = 0; index < polygonCount; ++index) {
+                polygon[index] = clipped[index];
+              }
+            };
+            clipAxis(true, static_cast<float>(liquidClipBounds.left()), true);
+            clipAxis(true, static_cast<float>(liquidClipBounds.right()), false);
+            // The rectangular liquid container is open at the top. Keep
+            // stream geometry above it, while clipping the side walls and
+            // closed bottom to the exact container interior.
+            clipAxis(false, static_cast<float>(liquidClipBounds.bottom()),
+                     false);
+            for (std::size_t index = 1; index + 1 < polygonCount; ++index) {
+              const auto p0 = baseTransform.map(polygon[0].position);
+              const auto p1 = baseTransform.map(polygon[index].position);
+              const auto p2 = baseTransform.map(polygon[index + 1].position);
+              renderer->drawGradientTriangleLocal(
+                  {p0.x(), p0.y()}, {p1.x(), p1.y()}, {p2.x(), p2.y()},
+                  polygon[0].color, polygon[index].color,
+                  polygon[index + 1].color);
+            }
+          };
           for (const auto& triangle : surface.triangles) {
-            const float thickness =
-                std::clamp(triangle.thickness, 0.0f, 1.0f);
-            const float lighten = (1.0f - thickness) * 0.10f;
-            const float darken = 1.0f - thickness * 0.18f;
-            const FloatColor surfaceColor(
-                std::clamp(impl_->liquidColor_.r() * darken + lighten,
-                           0.0f, 1.0f),
-                std::clamp(impl_->liquidColor_.g() * darken + lighten,
-                           0.0f, 1.0f),
-                std::clamp(impl_->liquidColor_.b() * darken + lighten,
-                           0.0f, 1.0f),
-                impl_->liquidColor_.a() *
-                    impl_->liquidSurfaceOpacity_ * layerAlpha *
-                    (0.38f + thickness * 0.62f));
-            renderer->drawSolidTriangleLocal(
-                {triangle.a.x, triangle.a.y},
-                {triangle.b.x, triangle.b.y},
-                {triangle.c.x, triangle.c.y}, surfaceColor);
+            drawClippedLiquidTriangle(triangle);
           }
         }
         if (drawEdge) {
+          const FloatColor linearFoamColor =
+              impl_->liquidFoamColor_.toLinear();
           const FloatColor surfaceEdgeColor(
-              impl_->liquidColor_.r() +
-                  (1.0f - impl_->liquidColor_.r()) * 0.62f,
-              impl_->liquidColor_.g() +
-                  (1.0f - impl_->liquidColor_.g()) * 0.62f,
-              impl_->liquidColor_.b() +
-                  (1.0f - impl_->liquidColor_.b()) * 0.62f,
+              linearLiquidColor.r() +
+                  (1.0f - linearLiquidColor.r()) * 0.30f,
+              linearLiquidColor.g() +
+                  (1.0f - linearLiquidColor.g()) * 0.30f,
+              linearLiquidColor.b() +
+                  (1.0f - linearLiquidColor.b()) * 0.30f,
               impl_->liquidColor_.a() *
-                  impl_->liquidEdgeOpacity_ * layerAlpha);
+              impl_->liquidEdgeOpacity_ * layerAlpha * 0.32f);
+          const FloatColor upperSurfaceSheenColor(
+              linearLiquidColor.r() * 0.30f +
+                  linearFoamColor.r() * 0.70f,
+              linearLiquidColor.g() * 0.30f +
+                  linearFoamColor.g() * 0.70f,
+              linearLiquidColor.b() * 0.30f +
+                  linearFoamColor.b() * 0.70f,
+              impl_->liquidColor_.a() * impl_->liquidEdgeOpacity_ *
+                  layerAlpha * 0.48f * impl_->liquidFoamAmount_);
+          const float surfaceHeight = std::max(
+              1.0f, surfaceMaximumY - surfaceMinimumY);
+          const auto clipContourSegment = [&](QPointF& a, QPointF& b) {
+            if (!clipToRectangularContainer) return true;
+            const QVector3D localA = compositionToLiquid.map(
+                QVector3D(static_cast<float>(a.x()),
+                          static_cast<float>(a.y()), 0.0f));
+            const QVector3D localB = compositionToLiquid.map(
+                QVector3D(static_cast<float>(b.x()),
+                          static_cast<float>(b.y()), 0.0f));
+            const float left =
+                static_cast<float>(liquidClipBounds.left()) + 1.25f;
+            const float right =
+                static_cast<float>(liquidClipBounds.right()) - 1.25f;
+            const float bottom =
+                static_cast<float>(liquidClipBounds.bottom()) - 1.25f;
+            float tMinimum = 0.0f;
+            float tMaximum = 1.0f;
+            const auto clipPlane = [&](float from, float to,
+                                       float boundary, bool keepGreater) {
+              const float delta = to - from;
+              if (std::abs(delta) <= 1.0e-8f) {
+                return keepGreater ? from >= boundary : from <= boundary;
+              }
+              const float crossing = (boundary - from) / delta;
+              if (keepGreater) {
+                if (delta > 0.0f) {
+                  tMinimum = std::max(tMinimum, crossing);
+                } else {
+                  tMaximum = std::min(tMaximum, crossing);
+                }
+              } else if (delta > 0.0f) {
+                tMaximum = std::min(tMaximum, crossing);
+              } else {
+                tMinimum = std::max(tMinimum, crossing);
+              }
+              return tMinimum <= tMaximum;
+            };
+            if (!clipPlane(localA.x(), localB.x(), left, true) ||
+                !clipPlane(localA.x(), localB.x(), right, false) ||
+                !clipPlane(localA.y(), localB.y(), bottom, false)) {
+              return false;
+            }
+            const QVector3D localDelta = localB - localA;
+            const QVector3D clippedA = baseTransform.map(
+                localA + localDelta * tMinimum);
+            const QVector3D clippedB = baseTransform.map(
+                localA + localDelta * tMaximum);
+            a = QPointF(clippedA.x(), clippedA.y());
+            b = QPointF(clippedB.x(), clippedB.y());
+            return true;
+          };
           for (const auto& segment : surface.contourSegments) {
+            QPointF clippedA(segment.a.x, segment.a.y);
+            QPointF clippedB(segment.b.x, segment.b.y);
+            if (!clipContourSegment(clippedA, clippedB)) continue;
             renderer->drawThickLineLocal(
-                {segment.a.x, segment.a.y},
-                {segment.b.x, segment.b.y}, 1.35f, surfaceEdgeColor);
+                {static_cast<float>(clippedA.x()),
+                 static_cast<float>(clippedA.y())},
+                {static_cast<float>(clippedB.x()),
+                 static_cast<float>(clippedB.y())},
+                0.72f, surfaceEdgeColor);
+            const float dx = std::abs(segment.b.x - segment.a.x);
+            const float dy = std::abs(segment.b.y - segment.a.y);
+            const float midpointY =
+                (segment.a.y + segment.b.y) * 0.5f;
+            const float relativeHeight =
+                (midpointY - surfaceMinimumY) / surfaceHeight;
+            if (impl_->liquidFoamAmount_ > 0.0f &&
+                dx > 1.0f && dy < dx * 0.34f &&
+                relativeHeight >= 0.25f && relativeHeight <= 0.58f) {
+              renderer->drawThickLineLocal(
+                  {static_cast<float>(clippedA.x()),
+                   static_cast<float>(clippedA.y())},
+                  {static_cast<float>(clippedB.x()),
+                   static_cast<float>(clippedB.y())},
+                  1.6f + impl_->liquidFoamAmount_ * 2.4f,
+                  upperSurfaceSheenColor);
+            }
           }
         }
-        if (drawSurface || drawEdge) {
-          for (auto& particle : renderData.particles) {
-            particle.a *= 0.32f;
-            particle.size *= 0.72f;
-          }
-        }
-        const std::size_t foamCapacity =
-            100000 - std::min<std::size_t>(renderData.particles.size(), 100000);
-        const std::size_t foamCount =
-            std::min(foamCapacity, surface.foamPoints.size());
-        renderData.particles.reserve(renderData.particles.size() + foamCount);
+        ArtifactCore::ParticleRenderData foamRenderData;
+        foamRenderData.frameNumber = frame;
+        foamRenderData.options.blend =
+            ArtifactCore::ParticleBlendPolicy::Alpha;
+        foamRenderData.options.billboard =
+            ArtifactCore::ParticleBillboardPolicy::VelocityAligned;
+        constexpr std::size_t maximumCremaBubbles = 4096;
+        const std::size_t cremaCapacity = std::min(
+            maximumCremaBubbles, foamCapacity - foamCount);
+        foamRenderData.particles.reserve(foamCount + cremaCapacity);
+        const FloatColor linearFoamColor =
+            impl_->liquidFoamColor_.toLinear();
         for (std::size_t foamIndex = 0; foamIndex < foamCount; ++foamIndex) {
           const auto& foam = surface.foamPoints[foamIndex];
           ArtifactCore::ParticleVertex particle{};
           particle.px = foam.position.x;
           particle.py = foam.position.y;
           particle.pz = 0.0f;
+          particle.vx = foam.vx;
+          particle.vy = foam.vy;
           particle.ppx = particle.px;
           particle.ppy = particle.py;
           particle.ppz = particle.pz;
-          particle.r = impl_->liquidFoamColor_.r();
-          particle.g = impl_->liquidFoamColor_.g();
-          particle.b = impl_->liquidFoamColor_.b();
-          particle.a = foam.alpha * impl_->liquidFoamColor_.a() *
+          particle.r = linearFoamColor.r();
+          particle.g = linearFoamColor.g();
+          particle.b = linearFoamColor.b();
+          particle.a = foam.alpha * impl_->liquidFoamColor_.a() * 0.48f *
               std::clamp(opacityScale, 0.0f, 1.0f);
-          particle.size = foam.size;
-          particle.stretch = 1.0f;
+          particle.size = foam.size * 0.42f;
+          particle.stretch = 1.6f;
           particle.lifetime = 1.0f;
-          renderData.particles.push_back(particle);
+          foamRenderData.particles.push_back(particle);
+        }
+        // Add a restrained crema bead along the reconstructed liquid surface.
+        // The particle solver only emits foam for fast or recently impacted
+        // particles, so a settled coffee pool otherwise loses its visible
+        // surface foam even when the Foam Amount control is non-zero.
+        if (impl_->liquidFoamAmount_ > 0.0f && cremaCapacity > 0 &&
+            !hasPolygonLiquidContainer) {
+          std::size_t cremaCount = 0;
+          for (const auto& segment : surface.contourSegments) {
+            const float segmentX = segment.b.x - segment.a.x;
+            const float segmentY = segment.b.y - segment.a.y;
+            const float axisX = std::abs(
+                segmentX * liquidAxisXx + segmentY * liquidAxisXy);
+            const float axisY = std::abs(
+                segmentX * liquidAxisYx + segmentY * liquidAxisYy);
+            if (axisX <= 1.0f || axisY >= axisX * 0.34f) continue;
+            const float midpointX =
+                (segment.a.x + segment.b.x) * 0.5f -
+                mappedVelocityOrigin.x();
+            const float midpointY =
+                (segment.a.y + segment.b.y) * 0.5f -
+                mappedVelocityOrigin.y();
+            const float projectedX =
+                midpointX * liquidAxisXx + midpointY * liquidAxisXy;
+            const float projectedY =
+                midpointX * liquidAxisYx + midpointY * liquidAxisYy;
+            if (std::abs(projectedY - reflectionAnchorY) >
+                reflectionTolerance) {
+              continue;
+            }
+            const auto cellX = static_cast<std::uint32_t>(
+                static_cast<std::int32_t>(std::floor(projectedX * 0.37f)));
+            const auto cellY = static_cast<std::uint32_t>(
+                static_cast<std::int32_t>(std::floor(projectedY * 0.37f)));
+            std::uint32_t beadHash = cellX * 73856093u ^ cellY * 19349663u;
+            beadHash ^= beadHash >> 13;
+            beadHash *= 1274126177u;
+            beadHash ^= beadHash >> 16;
+            if (beadHash % 100u >= 16u) continue;
+            if (cremaCount >= cremaCapacity) break;
+            const float beadVariation =
+                static_cast<float>(beadHash & 0xffffu) / 65535.0f;
+            ArtifactCore::ParticleVertex bubble{};
+            bubble.px = midpointX + mappedVelocityOrigin.x();
+            bubble.py = midpointY + mappedVelocityOrigin.y();
+            bubble.pz = 0.0f;
+            bubble.ppx = bubble.px;
+            bubble.ppy = bubble.py;
+            bubble.ppz = bubble.pz;
+            bubble.r = linearFoamColor.r();
+            bubble.g = linearFoamColor.g();
+            bubble.b = linearFoamColor.b();
+            bubble.a = (0.20f + beadVariation * 0.22f) *
+                impl_->liquidFoamAmount_ *
+                impl_->liquidFoamColor_.a() *
+                std::clamp(opacityScale, 0.0f, 1.0f);
+            bubble.size = 0.28f + beadVariation * 0.36f;
+            bubble.stretch = 1.0f;
+            bubble.lifetime = 1.0f;
+            foamRenderData.particles.push_back(bubble);
+            ++cremaCount;
+          }
+        }
+        if (!foamRenderData.particles.empty()) {
+          renderer->drawParticles(std::move(foamRenderData));
         }
       }
       if (impl_->liquidContainerOpacity_ > 0.0f &&
@@ -730,9 +1207,6 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
                 impl_->liquidContainerWidth_, containerColor);
           }
         }
-      }
-      if (!renderData.particles.empty()) {
-        renderer->drawParticles(std::move(renderData));
       }
     } else {
       if (impl_->fluidRuntime_.liquidSolver_ || !impl_->fluidRuntime_.liquidCheckpoints_.empty()) {

@@ -19,13 +19,17 @@ set(_qt_bin_debug "${VCPKG_INSTALLED}/debug/bin")
 if(CONFIG STREQUAL "Debug")
     set(_deploy_mode "debug")
     set(ENV{PATH} "${_qt_bin_debug};${_qt_bin_release};$ENV{PATH}")
+    set(_qtpaths_debug "${VCPKG_INSTALLED}/tools/Qt6/bin/qtpaths.debug.bat")
+    if(EXISTS "${_qtpaths_debug}")
+        list(APPEND _deploy_args --qtpaths "${_qtpaths_debug}")
+    endif()
 else()
     set(_deploy_mode "release")
     set(ENV{PATH} "${_qt_bin_release};${_qt_bin_debug};$ENV{PATH}")
 endif()
 
 execute_process(
-    COMMAND "${WINDEPLOYQT_EXECUTABLE}" "--${_deploy_mode}" --no-translations "${TARGET_FILE}"
+    COMMAND "${WINDEPLOYQT_EXECUTABLE}" "--${_deploy_mode}" ${_deploy_args} --no-translations "${TARGET_FILE}"
     RESULT_VARIABLE _deploy_result
     OUTPUT_VARIABLE _deploy_out
     ERROR_VARIABLE _deploy_err

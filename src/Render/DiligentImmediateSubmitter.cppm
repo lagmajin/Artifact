@@ -1262,6 +1262,7 @@ bool DiligentImmediateSubmitter::canRecordDeferred(
             !std::holds_alternative<GridPkt>(packet) &&
             !std::holds_alternative<RectOutlinePkt>(packet) &&
             !std::holds_alternative<SolidTriPkt>(packet) &&
+            !std::holds_alternative<GradientTriPkt>(packet) &&
             !std::holds_alternative<GlyphTextPkt>(packet) &&
             !std::holds_alternative<GlyphTextXformPkt>(packet) &&
             !(m_primitiveRenderer3D_ &&
@@ -1658,7 +1659,8 @@ bool DiligentImmediateSubmitter::submitImpl(
                 flushLineBatch();
                 flushTriBatch();
                 flushSpriteBatch();
-            } else if constexpr (std::is_same_v<T, SolidTriPkt>) {
+            } else if constexpr (std::is_same_v<T, SolidTriPkt> ||
+                                 std::is_same_v<T, GradientTriPkt>) {
                 flushLineBatch();
                 flushQuadBatch();
                 flushSpriteBatch();
@@ -1781,16 +1783,23 @@ bool DiligentImmediateSubmitter::submitImpl(
                         }
                     }
                 }
-                else if constexpr (std::is_same_v<T, SolidTriPkt>) {
+                else if constexpr (std::is_same_v<T, SolidTriPkt> ||
+                                   std::is_same_v<T, GradientTriPkt>) {
                     if (!m_batchTriActive_ || !xformsEqual(m_batchTriXform_, p.xform) ||
                         m_batchTriVerts_.size() + 3 > k_batch_prim_verts) {
                         flushTriBatch();
                         m_batchTriXform_ = p.xform;
                         m_batchTriActive_ = true;
                     }
-                    m_batchTriVerts_.push_back(RectVertex{p.p0, p.color});
-                    m_batchTriVerts_.push_back(RectVertex{p.p1, p.color});
-                    m_batchTriVerts_.push_back(RectVertex{p.p2, p.color});
+                    if constexpr (std::is_same_v<T, SolidTriPkt>) {
+                        m_batchTriVerts_.push_back(RectVertex{p.p0, p.color});
+                        m_batchTriVerts_.push_back(RectVertex{p.p1, p.color});
+                        m_batchTriVerts_.push_back(RectVertex{p.p2, p.color});
+                    } else {
+                        m_batchTriVerts_.push_back(RectVertex{p.p0, p.c0});
+                        m_batchTriVerts_.push_back(RectVertex{p.p1, p.c1});
+                        m_batchTriVerts_.push_back(RectVertex{p.p2, p.c2});
+                    }
                 }
                 else if constexpr (std::is_same_v<T, SolidCirclePkt>)     submitSolidCircle(p, recordCtx, pRTV);
                 else if constexpr (std::is_same_v<T, CheckerboardPkt>)    submitCheckerboard(p, recordCtx, pRTV);

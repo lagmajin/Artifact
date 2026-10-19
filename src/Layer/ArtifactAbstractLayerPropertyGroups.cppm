@@ -63,6 +63,7 @@ import Artifact.Layer.Matte;
 import Artifact.Layer.MaskMatteState;
 import Artifact.Layer.Serialization;
 import Artifact.Layer.ThumbnailSupport;
+import Color.Bridge;
 import Color.Float;
 import Geometry.Fracture;
 import Physics.Fluid;
@@ -1166,6 +1167,101 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactAbstractLayer::getComponentProp
   componentGroup.addProperty(makeProp(QStringLiteral("component.particleEmitter.enabled"), PropertyType::Boolean, impl_->particleEmitterComponentEnabled_, -87));
   componentGroup.addProperty(makeProp(QStringLiteral("component.fluid.enabled"), PropertyType::Boolean, impl_->fluidComponentEnabled_, -86));
   groups.push_back(std::move(componentGroup));
+
+  PropertyGroup fluidGroup(QStringLiteral("Fluid"));
+  auto fluidMode = makeProp(QStringLiteral("component.fluid.mode"),
+                            PropertyType::Integer, impl_->fluidMode_, 0);
+  fluidMode->setHardRange(0, 1);
+  fluidMode->setTooltip(QStringLiteral("0 = Smoke / Ink, 1 = Liquid Container"));
+  fluidGroup.addProperty(fluidMode);
+  auto fluidGridWidth = makeProp(QStringLiteral("component.fluid.gridWidth"),
+                                 PropertyType::Integer, impl_->fluidGridWidth_, 1);
+  fluidGridWidth->setHardRange(8, 4096);
+  fluidGroup.addProperty(fluidGridWidth);
+  auto fluidGridHeight = makeProp(QStringLiteral("component.fluid.gridHeight"),
+                                  PropertyType::Integer, impl_->fluidGridHeight_, 2);
+  fluidGridHeight->setHardRange(8, 4096);
+  fluidGroup.addProperty(fluidGridHeight);
+  auto fluidViscosity = makeProp(QStringLiteral("component.fluid.viscosity"),
+                                 PropertyType::Float,
+                                 static_cast<double>(impl_->fluidViscosity_), 3);
+  fluidViscosity->setHardRange(0.0, 1.0);
+  fluidGroup.addProperty(fluidViscosity);
+  auto fluidDiffusion = makeProp(QStringLiteral("component.fluid.diffusion"),
+                                 PropertyType::Float,
+                                 static_cast<double>(impl_->fluidDiffusion_), 4);
+  fluidDiffusion->setHardRange(0.0, 1.0);
+  fluidGroup.addProperty(fluidDiffusion);
+  auto fluidBuoyancy = makeProp(QStringLiteral("component.fluid.buoyancy"),
+                                PropertyType::Float,
+                                static_cast<double>(impl_->fluidBuoyancy_), 5);
+  fluidBuoyancy->setHardRange(-2.0, 2.0);
+  fluidGroup.addProperty(fluidBuoyancy);
+  auto fluidVorticity = makeProp(QStringLiteral("component.fluid.vorticity"),
+                                 PropertyType::Float,
+                                 static_cast<double>(impl_->fluidVorticity_), 6);
+  fluidVorticity->setHardRange(0.0, 10.0);
+  fluidGroup.addProperty(fluidVorticity);
+  auto fluidIterations = makeProp(
+      QStringLiteral("component.fluid.solverIterations"), PropertyType::Integer,
+      impl_->fluidSolverIterations_, 7);
+  fluidIterations->setHardRange(1, 256);
+  fluidGroup.addProperty(fluidIterations);
+  groups.push_back(std::move(fluidGroup));
+
+  PropertyGroup liquidGroup(QStringLiteral("Liquid"));
+  auto addLiquidFloat = [&](const QString& path, const float value,
+                            const int priority, const double minimum,
+                            const double maximum) {
+    auto property = makeProp(path, PropertyType::Float,
+                             static_cast<double>(value), priority);
+    property->setHardRange(minimum, maximum);
+    liquidGroup.addProperty(property);
+  };
+  addLiquidFloat(QStringLiteral("component.fluid.liquidFillAmount"),
+                 impl_->liquidFillAmount_, 0, 0.0, 1.0);
+  addLiquidFloat(QStringLiteral("component.fluid.liquidInflowRate"),
+                 impl_->liquidInflowRate_, 1, 0.0, 10000.0);
+  addLiquidFloat(QStringLiteral("component.fluid.liquidInflowWidth"),
+                 impl_->liquidInflowWidth_, 2, 0.0, 1.0);
+  addLiquidFloat(QStringLiteral("component.fluid.liquidInflowSpeed"),
+                 impl_->liquidInflowSpeed_, 3, 0.0, 20.0);
+  addLiquidFloat(QStringLiteral("component.fluid.liquidInflowPosition"),
+                 impl_->liquidInflowPosition_, 4, 0.0, 1.0);
+  auto liquidOpeningEdge = makeProp(
+      QStringLiteral("component.fluid.liquidOpeningEdge"), PropertyType::Integer,
+      impl_->liquidOpeningEdge_, 5);
+  liquidOpeningEdge->setHardRange(-1, 511);
+  liquidGroup.addProperty(liquidOpeningEdge);
+  addLiquidFloat(QStringLiteral("component.fluid.liquidSpillCullMargin"),
+                 impl_->liquidSpillCullMargin_, 6, 0.0, 1000000.0);
+  addLiquidFloat(QStringLiteral("component.fluid.liquidGravity"),
+                 impl_->liquidGravity_, 7, 0.0, 20.0);
+  addLiquidFloat(QStringLiteral("component.fluid.liquidSurfaceTension"),
+                 impl_->liquidSurfaceTension_, 8, 0.0, 1.0);
+  addLiquidFloat(QStringLiteral("component.fluid.liquidParticleSpacing"),
+                 impl_->liquidParticleSpacing_, 9, 0.025, 0.2);
+  auto liquidSubsteps = makeProp(QStringLiteral("component.fluid.liquidSubsteps"),
+                                 PropertyType::Integer, impl_->liquidSubsteps_, 10);
+  liquidSubsteps->setHardRange(1, 8);
+  liquidGroup.addProperty(liquidSubsteps);
+  addLiquidFloat(QStringLiteral("component.fluid.liquidSurfaceOpacity"),
+                 impl_->liquidSurfaceOpacity_, 11, 0.0, 1.0);
+  addLiquidFloat(QStringLiteral("component.fluid.liquidEdgeOpacity"),
+                 impl_->liquidEdgeOpacity_, 12, 0.0, 1.0);
+  addLiquidFloat(QStringLiteral("component.fluid.liquidFoamAmount"),
+                 impl_->liquidFoamAmount_, 13, 0.0, 1.0);
+  addLiquidFloat(QStringLiteral("component.fluid.liquidContainerOpacity"),
+                 impl_->liquidContainerOpacity_, 14, 0.0, 1.0);
+  addLiquidFloat(QStringLiteral("component.fluid.liquidContainerWidth"),
+                 impl_->liquidContainerWidth_, 15, 0.0, 64.0);
+  liquidGroup.addProperty(makeProp(QStringLiteral("component.fluid.liquidColor"),
+                                   PropertyType::Color,
+                                   ArtifactCore::toQColor(impl_->liquidColor_), 16));
+  liquidGroup.addProperty(makeProp(
+      QStringLiteral("component.fluid.liquidFoamColor"), PropertyType::Color,
+      ArtifactCore::toQColor(impl_->liquidFoamColor_), 17));
+  groups.push_back(std::move(liquidGroup));
 
   // Pyro component. Unlike the fluid component, the pyro settings are exposed
   // here as well: a PyroSimulation with default settings is an inert volume, so

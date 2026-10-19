@@ -70,6 +70,7 @@ import Artifact.Layer.Matte;
 import Artifact.Layer.MaskMatteState;
 import Artifact.Layer.Serialization;
 import Artifact.Layer.ThumbnailSupport;
+import Color.Bridge;
 import Color.Float;
 import Geometry.Fracture;
 import Physics.Fluid;
@@ -606,6 +607,88 @@ const QHash<QString, RoutedPropertyMeta>& routedPropertyMetaTable() {
        {PropertyType::Boolean, -86,
         [](const ArtifactAbstractLayerImpl& i) {
           return QVariant(i.fluidComponentEnabled_);
+        }}},
+      {QStringLiteral("component.fluid.mode"),
+       {PropertyType::Integer, 0,
+        [](const ArtifactAbstractLayerImpl& i) { return QVariant(i.fluidMode_); }}},
+      {QStringLiteral("component.fluid.gridWidth"),
+       {PropertyType::Integer, 1,
+        [](const ArtifactAbstractLayerImpl& i) { return QVariant(i.fluidGridWidth_); }}},
+      {QStringLiteral("component.fluid.gridHeight"),
+       {PropertyType::Integer, 2,
+        [](const ArtifactAbstractLayerImpl& i) { return QVariant(i.fluidGridHeight_); }}},
+      {QStringLiteral("component.fluid.viscosity"),
+       {PropertyType::Float, 3,
+        [](const ArtifactAbstractLayerImpl& i) { return QVariant(static_cast<double>(i.fluidViscosity_)); }}},
+      {QStringLiteral("component.fluid.diffusion"),
+       {PropertyType::Float, 4,
+        [](const ArtifactAbstractLayerImpl& i) { return QVariant(static_cast<double>(i.fluidDiffusion_)); }}},
+      {QStringLiteral("component.fluid.buoyancy"),
+       {PropertyType::Float, 5,
+        [](const ArtifactAbstractLayerImpl& i) { return QVariant(static_cast<double>(i.fluidBuoyancy_)); }}},
+      {QStringLiteral("component.fluid.vorticity"),
+       {PropertyType::Float, 6,
+        [](const ArtifactAbstractLayerImpl& i) { return QVariant(static_cast<double>(i.fluidVorticity_)); }}},
+      {QStringLiteral("component.fluid.solverIterations"),
+       {PropertyType::Integer, 7,
+        [](const ArtifactAbstractLayerImpl& i) { return QVariant(i.fluidSolverIterations_); }}},
+      {QStringLiteral("component.fluid.liquidFillAmount"),
+       {PropertyType::Float, 0,
+        [](const ArtifactAbstractLayerImpl& i) { return QVariant(static_cast<double>(i.liquidFillAmount_)); }}},
+      {QStringLiteral("component.fluid.liquidInflowRate"),
+       {PropertyType::Float, 1,
+        [](const ArtifactAbstractLayerImpl& i) { return QVariant(static_cast<double>(i.liquidInflowRate_)); }}},
+      {QStringLiteral("component.fluid.liquidInflowWidth"),
+       {PropertyType::Float, 2,
+        [](const ArtifactAbstractLayerImpl& i) { return QVariant(static_cast<double>(i.liquidInflowWidth_)); }}},
+      {QStringLiteral("component.fluid.liquidInflowSpeed"),
+       {PropertyType::Float, 3,
+        [](const ArtifactAbstractLayerImpl& i) { return QVariant(static_cast<double>(i.liquidInflowSpeed_)); }}},
+      {QStringLiteral("component.fluid.liquidInflowPosition"),
+       {PropertyType::Float, 4,
+        [](const ArtifactAbstractLayerImpl& i) { return QVariant(static_cast<double>(i.liquidInflowPosition_)); }}},
+      {QStringLiteral("component.fluid.liquidOpeningEdge"),
+       {PropertyType::Integer, 5,
+        [](const ArtifactAbstractLayerImpl& i) { return QVariant(i.liquidOpeningEdge_); }}},
+      {QStringLiteral("component.fluid.liquidSpillCullMargin"),
+       {PropertyType::Float, 6,
+        [](const ArtifactAbstractLayerImpl& i) { return QVariant(static_cast<double>(i.liquidSpillCullMargin_)); }}},
+      {QStringLiteral("component.fluid.liquidGravity"),
+       {PropertyType::Float, 7,
+        [](const ArtifactAbstractLayerImpl& i) { return QVariant(static_cast<double>(i.liquidGravity_)); }}},
+      {QStringLiteral("component.fluid.liquidSurfaceTension"),
+       {PropertyType::Float, 8,
+        [](const ArtifactAbstractLayerImpl& i) { return QVariant(static_cast<double>(i.liquidSurfaceTension_)); }}},
+      {QStringLiteral("component.fluid.liquidParticleSpacing"),
+       {PropertyType::Float, 9,
+        [](const ArtifactAbstractLayerImpl& i) { return QVariant(static_cast<double>(i.liquidParticleSpacing_)); }}},
+      {QStringLiteral("component.fluid.liquidSubsteps"),
+       {PropertyType::Integer, 10,
+        [](const ArtifactAbstractLayerImpl& i) { return QVariant(i.liquidSubsteps_); }}},
+      {QStringLiteral("component.fluid.liquidSurfaceOpacity"),
+       {PropertyType::Float, 11,
+        [](const ArtifactAbstractLayerImpl& i) { return QVariant(static_cast<double>(i.liquidSurfaceOpacity_)); }}},
+      {QStringLiteral("component.fluid.liquidEdgeOpacity"),
+       {PropertyType::Float, 12,
+        [](const ArtifactAbstractLayerImpl& i) { return QVariant(static_cast<double>(i.liquidEdgeOpacity_)); }}},
+      {QStringLiteral("component.fluid.liquidFoamAmount"),
+       {PropertyType::Float, 13,
+        [](const ArtifactAbstractLayerImpl& i) { return QVariant(static_cast<double>(i.liquidFoamAmount_)); }}},
+      {QStringLiteral("component.fluid.liquidContainerOpacity"),
+       {PropertyType::Float, 14,
+        [](const ArtifactAbstractLayerImpl& i) { return QVariant(static_cast<double>(i.liquidContainerOpacity_)); }}},
+      {QStringLiteral("component.fluid.liquidContainerWidth"),
+       {PropertyType::Float, 15,
+        [](const ArtifactAbstractLayerImpl& i) { return QVariant(static_cast<double>(i.liquidContainerWidth_)); }}},
+      {QStringLiteral("component.fluid.liquidColor"),
+       {PropertyType::Color, 16,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(ArtifactCore::toQColor(i.liquidColor_));
+        }}},
+      {QStringLiteral("component.fluid.liquidFoamColor"),
+       {PropertyType::Color, 17,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(ArtifactCore::toQColor(i.liquidFoamColor_));
         }}},
       // --- Pyro group ---
       {QStringLiteral("component.pyro.enabled"),
@@ -1776,9 +1859,13 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
   }
 
   if (propertyPath.startsWith(QStringLiteral("component."))) {
-    return setComponentDescriptorPropertyValue(propertyPath, value) ||
-           setComponentPhysicsPropertyValue(propertyPath, value) ||
-           setComponentLayoutPropertyValue(propertyPath, value);
+    const bool handled = setComponentDescriptorPropertyValue(propertyPath, value) ||
+                         setComponentPhysicsPropertyValue(propertyPath, value) ||
+                         setComponentLayoutPropertyValue(propertyPath, value);
+    if (handled) {
+      syncRoutedPropertyCache(propertyPath);
+    }
+    return handled;
   }
   return setTransformTimeSourcePropertyValue(propertyPath, value);
 }

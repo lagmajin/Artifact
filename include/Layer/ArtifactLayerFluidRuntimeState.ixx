@@ -52,6 +52,10 @@ public:
       ArtifactCore::ContainerName{"Layer.LiquidSpillParticles"}};
   double liquidInflowCarry_ = 0.0;
   ArtifactCore::LiquidSurfaceSnapshot2D liquidSurfaceSnapshot_;
+  ArtifactCore::LiquidSurfaceWorkspace2D liquidSurfaceWorkspace_;
+  ArtifactCore::NamedVector<ArtifactCore::LiquidSurfaceSample2D>
+      liquidSurfaceSamples_{
+          ArtifactCore::ContainerName{"Layer.LiquidSurfaceSamples"}};
   std::int64_t liquidSurfaceFrame_ =
       std::numeric_limits<std::int64_t>::min();
   double liquidCheckpointFps_ = 0.0;

@@ -1439,7 +1439,7 @@ void ShaderManager::Impl::createUtilityFamilyPSOs()
         { SHADER_TYPE_PIXEL,  "ViewerHelperCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC }
     };
     static const LayoutElement checkerLayoutElems[] = {
-        LayoutElement{0, 0, 2, VT_FLOAT32, false}
+        LayoutElement{0, 0, 2, VT_FLOAT32, false, 0, 6 * sizeof(float)}
     };
 
     GraphicsPipelineStateCreateInfo checkerInfo;
@@ -1467,6 +1467,15 @@ void ShaderManager::Impl::createUtilityFamilyPSOs()
     gridInfo.PSODesc.Name = "Grid PSO";
     gridInfo.pPSOCache = psoCache_.RawPtr();
     gridInfo.pPS = gridShaders_.PS;
+    auto& gridBlend = gridInfo.GraphicsPipeline.BlendDesc.RenderTargets[0];
+    gridBlend.BlendEnable = True;
+    gridBlend.SrcBlend = BLEND_FACTOR_SRC_ALPHA;
+    gridBlend.DestBlend = BLEND_FACTOR_INV_SRC_ALPHA;
+    gridBlend.BlendOp = BLEND_OPERATION_ADD;
+    gridBlend.SrcBlendAlpha = BLEND_FACTOR_ONE;
+    gridBlend.DestBlendAlpha = BLEND_FACTOR_INV_SRC_ALPHA;
+    gridBlend.BlendOpAlpha = BLEND_OPERATION_ADD;
+    gridBlend.RenderTargetWriteMask = COLOR_MASK_ALL;
     device_->CreateGraphicsPipelineState(gridInfo, &gridPsoAndSrb_.pPSO);
     if (gridPsoAndSrb_.pPSO) {
         gridPsoAndSrb_.pPSO->CreateShaderResourceBinding(&gridPsoAndSrb_.pSRB, true);

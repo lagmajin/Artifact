@@ -582,7 +582,6 @@ import Undo.UndoManager;
 import EnvironmentVariable;
 import Core.TaskSystem;
 import Core.Localization;
-import Artifact.Widgets.UndoHistoryWidget;
 import Artifact.Widgets.RecoveryWorkspace;
 import Artifact.Widgets.PythonHookManagerWidget;
 import Artifact.Widgets.ProjectManagerWidget;

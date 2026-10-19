@@ -27,6 +27,8 @@ void LayerFluidRuntimeState::invalidateLiquidSimulation() {
   liquidSolver_.reset();
   liquidCheckpoints_.clear();
   liquidSpillParticles_.clear();
+  liquidSurfaceWorkspace_.validSamples.clear();
+  liquidSurfaceSamples_.clear();
   liquidInflowCarry_ = 0.0;
   invalidateLiquidSurface();
   liquidCheckpointFps_ = 0.0;

@@ -3475,6 +3475,11 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
   { primitiveRenderer_.drawBezierLocal(p0, p1, p2, p3, thickness, color); }
   void drawSolidTriangleLocal(float2 p0, float2 p1, float2 p2, const FloatColor& color)
   { primitiveRenderer_.drawSolidTriangleLocal(p0, p1, p2, color); }
+  void drawGradientTriangleLocal(float2 p0, float2 p1, float2 p2,
+                                const FloatColor& color0,
+                                const FloatColor& color1,
+                                const FloatColor& color2)
+  { primitiveRenderer_.drawGradientTriangleLocal(p0, p1, p2, color0, color1, color2); }
   bool acquireMpmSurfaceBuffer(ArtifactArray<MpmSurfaceVertex>& vertices,
                                std::size_t minimumCapacity)
   { return primitiveRenderer_.acquireMpmSurfaceBuffer(vertices, minimumCapacity); }
@@ -7321,6 +7326,15 @@ void ArtifactIRenderer::drawSolidTriangleLocal(Detail::float2 p0, Detail::float2
                                                 Detail::float2 p2, const FloatColor& color)
 { impl_->drawSolidTriangleLocal(toDiligentFloat2(p0), toDiligentFloat2(p1),
                                  toDiligentFloat2(p2), color); }
+void ArtifactIRenderer::drawGradientTriangleLocal(
+    Detail::float2 p0, Detail::float2 p1, Detail::float2 p2,
+    const FloatColor& color0, const FloatColor& color1,
+    const FloatColor& color2)
+{
+  impl_->drawGradientTriangleLocal(
+      toDiligentFloat2(p0), toDiligentFloat2(p1), toDiligentFloat2(p2),
+      color0, color1, color2);
+}
 void ArtifactIRenderer::drawSolidPolygonLocal(const std::vector<Detail::float2>& points,
                                               const FloatColor& color)
 {

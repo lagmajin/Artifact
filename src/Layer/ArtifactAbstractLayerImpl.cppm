@@ -304,11 +304,11 @@ public:
     int liquidSubsteps_ = 3;
     float liquidSurfaceOpacity_ = 0.64f;
     float liquidEdgeOpacity_ = 0.42f;
-    float liquidFoamAmount_ = 1.0f;
+    float liquidFoamAmount_ = 0.35f;
     float liquidContainerOpacity_ = 0.58f;
     float liquidContainerWidth_ = 2.5f;
     FloatColor liquidColor_ = FloatColor(0.10f, 0.50f, 0.98f, 1.0f);
-    FloatColor liquidFoamColor_ = FloatColor(0.78f, 0.93f, 1.0f, 1.0f);
+    FloatColor liquidFoamColor_ = FloatColor(0.90f, 0.94f, 0.98f, 1.0f);
     LayerFluidRuntimeState fluidRuntime_;
 
     // Pyro component. The defaults mirror ArtifactCore PyroSimulationSettings

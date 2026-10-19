@@ -1190,6 +1190,27 @@ void PrimitiveRenderer2D::drawSolidTriangleLocal(float2 p0, float2 p1, float2 p2
     impl_->cmdBuf_->append(std::move(pkt));
 }
 
+void PrimitiveRenderer2D::drawGradientTriangleLocal(
+    float2 p0, float2 p1, float2 p2, const FloatColor& color0,
+    const FloatColor& color1, const FloatColor& color2)
+{
+    if (!impl_->cmdBuf_) return;
+    const auto viewportCB = impl_->viewport_.GetViewportCB();
+    const float zoom = std::max(viewportCB.zoom, 0.001f);
+
+    GradientTriPkt pkt;
+    pkt.xform.offset = viewportCB.offset;
+    pkt.xform.scale = {zoom, zoom};
+    pkt.xform.screenSize = viewportCB.screenSize;
+    pkt.p0 = p0;
+    pkt.p1 = p1;
+    pkt.p2 = p2;
+    pkt.c0 = {color0.r(), color0.g(), color0.b(), color0.a()};
+    pkt.c1 = {color1.r(), color1.g(), color1.b(), color1.a()};
+    pkt.c2 = {color2.r(), color2.g(), color2.b(), color2.a()};
+    impl_->cmdBuf_->append(std::move(pkt));
+}
+
 bool PrimitiveRenderer2D::acquireMpmSurfaceBuffer(
     ArtifactArray<MpmSurfaceVertex>& vertices, std::size_t minimumCapacity) {
     if (vertices.capacity() >= minimumCapacity) return true;

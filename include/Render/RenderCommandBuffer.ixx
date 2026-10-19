@@ -118,6 +118,12 @@ struct SolidTriPkt {
     float4 color;
 };
 
+struct GradientTriPkt {
+    RenderSolidTransform2D xform;
+    float2 p0, p1, p2;
+    float4 c0, c1, c2;
+};
+
 struct MpmSurfaceVertex {
     float x = 0.0f;
     float y = 0.0f;
@@ -394,7 +400,8 @@ struct PreparedGlyphSubmission {
 
 using DrawPacket = std::variant<
     SolidRectPkt, SolidRectXformPkt, GradientRectPkt,
-    LinePkt, QuadPkt, DotLinePkt, SolidTriPkt, MpmSurfacePkt, SolidCirclePkt,
+    LinePkt, QuadPkt, DotLinePkt, SolidTriPkt, GradientTriPkt,
+    MpmSurfacePkt, SolidCirclePkt,
     CheckerboardPkt, GridPkt, RectOutlinePkt,
     SpritePkt, SpriteXformPkt, ClonerGridDispatchPkt, ClonerSpriteXformPkt,
     MaskedSpritePkt,
