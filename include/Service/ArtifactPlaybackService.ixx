@@ -45,6 +45,7 @@ import Frame.Range;
 import Frame.Debug;
 import Image.ImageF32x4_RGBA;
 import Image.UploadConversion;
+import Memory.SharedPtr;
 import Playback.State;
 import Artifact.Composition.PlaybackController;
 import Artifact.Composition.Abstract;
@@ -94,6 +95,15 @@ struct ArtifactRamPreviewSummary {
   QString currentPriorityBand;
   QString currentPriorityReason;
   float hitRate = 0.0f;
+};
+
+// Retains prepared upload bytes across RAM-preview cache eviction or replacement.
+// The payload owns no QObject and can be handed to bounded render work.
+struct ArtifactRamPreviewFrameUploadSnapshot final {
+  ArtifactCore::SharedPtr<const ArtifactCore::ImageUploadBuffer> upload;
+  std::uint64_t contentRevision = 0;
+  int width = 0;
+  int height = 0;
 };
 
 struct ArtifactRamPreviewPriorityState {
@@ -271,6 +281,10 @@ public:
   const ArtifactCore::ImageF32x4_RGBA *borrowRamPreviewFrameImage(int64_t frame) const;
   const ArtifactCore::ImageUploadBuffer *borrowRamPreviewFrameUpload(
       int64_t frame, std::uint64_t &contentRevision) const;
+  // Captured on the service thread; the shared immutable upload remains valid
+  // after the cache entry is evicted or replaced.
+  ArtifactRamPreviewFrameUploadSnapshot pinRamPreviewFrameUpload(
+      int64_t frame) const;
   // UI thumbnail boundary: sample into caller-owned, pre-sized storage.
   // Does not copy or resize the full-resolution cached frame.
   bool sampleRamPreviewThumbnail(int64_t frame,

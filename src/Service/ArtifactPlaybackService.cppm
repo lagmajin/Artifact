@@ -68,6 +68,7 @@ import Diagnostics.Logger;
 import Image.ImageF32x4RGBAWithCache;
 import FloatRGBA;
 import Graphics.SurfaceColorContract;
+import Memory.SharedPtr;
 import Artifact.Composition.PlaybackController;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
@@ -206,7 +207,7 @@ public:
   std::vector<ArtifactRamPreviewFrameCacheState> frameCacheStates_;
   struct RamPreviewImageEntry {
     ArtifactCore::ImageF32x4RGBAWithCache storage;
-    ArtifactCore::ImageUploadBuffer upload;
+    ArtifactCore::SharedPtr<ArtifactCore::ImageUploadBuffer> upload;
     std::uint64_t revision = 0;
     ArtifactCore::ImageF32x4_RGBA &image() const { return storage.image(); }
   };
@@ -1135,15 +1136,19 @@ public:
   void eraseRamPreviewImage(const int64_t frame) {
     const auto it = ramPreviewImageCache_.find(frame);
     if (it == ramPreviewImageCache_.end()) return;
-    ramPreviewUploadBytes_ -= std::min(ramPreviewUploadBytes_, it->second.upload.bytes.size());
+    const std::size_t uploadBytes = it->second.upload
+        ? it->second.upload->bytes.size() : 0;
+    ramPreviewUploadBytes_ -= std::min(ramPreviewUploadBytes_, uploadBytes);
     ramPreviewImageCache_.erase(it);
   }
 
   void storeRamPreviewImageData(const int64_t frame,
                                const ArtifactCore::ImageF32x4_RGBA &image) {
     auto &entry = ramPreviewImageCache_[frame];
-    ramPreviewUploadBytes_ -= std::min(ramPreviewUploadBytes_, entry.upload.bytes.size());
-    entry.upload = ArtifactCore::ImageUploadBuffer{};
+    const std::size_t previousUploadBytes = entry.upload
+        ? entry.upload->bytes.size() : 0;
+    ramPreviewUploadBytes_ -= std::min(ramPreviewUploadBytes_, previousUploadBytes);
+    entry.upload.reset();
     entry.storage.SetCpuImage(image);
     entry.revision = ++ramPreviewUploadRevision_;
     // Cold stopped-build preparation only. Live capture does not gain an
@@ -1153,9 +1158,15 @@ public:
     const auto bytes = static_cast<std::size_t>(image.width()) * image.height() * 4u;
     if ((!engine_ || !engine_->isPlaying()) && bytes <= perFrameBudget &&
         bytes <= totalBudget - std::min(totalBudget, ramPreviewUploadBytes_)) {
+      auto preparedUpload =
+          ArtifactCore::makeShared<ArtifactCore::ImageUploadBuffer>();
       ArtifactCore::convertImageForUploadInto(
-          image, ArtifactCore::ImageUploadTarget::Rgba8SrgbStraight, entry.upload);
-      ramPreviewUploadBytes_ += entry.upload.bytes.size();
+          image, ArtifactCore::ImageUploadTarget::Rgba8SrgbStraight,
+          *preparedUpload);
+      if (preparedUpload->isValid()) {
+        ramPreviewUploadBytes_ += preparedUpload->bytes.size();
+        entry.upload = std::move(preparedUpload);
+      }
     }
   }
 
@@ -3919,12 +3930,30 @@ ArtifactPlaybackService::borrowRamPreviewFrameImage(const int64_t frame) const {
 const ArtifactCore::ImageUploadBuffer *
 ArtifactPlaybackService::borrowRamPreviewFrameUpload(
     const int64_t frame, std::uint64_t &contentRevision) const {
-  contentRevision = 0;
-  if (!borrowRamPreviewFrameImage(frame)) return nullptr;
+  const auto snapshot = pinRamPreviewFrameUpload(frame);
+  contentRevision = snapshot.contentRevision;
+  return snapshot.upload.get();
+}
+
+ArtifactRamPreviewFrameUploadSnapshot
+ArtifactPlaybackService::pinRamPreviewFrameUpload(const int64_t frame) const {
+  ArtifactRamPreviewFrameUploadSnapshot snapshot;
+  if (!impl_ || QThread::currentThread() != thread() ||
+      !impl_->isValidFrameIndex(frame)) {
+    return snapshot;
+  }
+  const auto &state = impl_->frameCacheStates_[static_cast<size_t>(frame)];
+  if (!state.ready || !state.inRam || state.failed) return snapshot;
   const auto it = impl_->ramPreviewImageCache_.find(frame);
-  if (it == impl_->ramPreviewImageCache_.end() || !it->second.upload.isValid()) return nullptr;
-  contentRevision = it->second.revision;
-  return &it->second.upload;
+  if (it == impl_->ramPreviewImageCache_.end() || !it->second.upload ||
+      !it->second.upload->isValid()) {
+    return snapshot;
+  }
+  snapshot.upload = it->second.upload;
+  snapshot.contentRevision = it->second.revision;
+  snapshot.width = it->second.upload->width;
+  snapshot.height = it->second.upload->height;
+  return snapshot;
 }
 
 bool ArtifactPlaybackService::sampleRamPreviewThumbnail(

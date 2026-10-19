@@ -1260,6 +1260,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
       "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionCleanup.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/CompositionEmptyOverlay.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/CompositionTextEditor.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionHostFrameSnapshot.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionRenderController.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Render/CompositionChangeDetector.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionRenderOverlay.cppm"
