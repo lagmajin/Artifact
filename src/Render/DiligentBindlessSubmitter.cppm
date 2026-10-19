@@ -8,6 +8,7 @@
 #include <QString>
 #include <Common/interface/BasicMath.hpp>
 #include <Buffer.h>
+#include <DiligentCore/Graphics/GraphicsEngine/interface/CommandList.h>
 #include <DeviceContext.h>
 #include <PipelineState.h>
 #include <RenderDevice.h>
@@ -110,6 +111,7 @@ bool mapWriteDiscard(IDeviceContext* ctx, IBuffer* buf, const void* data, size_t
     void* mapped = nullptr;
     ctx->MapBuffer(buf, MAP_WRITE, MAP_FLAG_DISCARD, mapped);
     if (!mapped) {
+        ctx->UnmapBuffer(buf, MAP_WRITE);
         return false;
     }
     std::memcpy(mapped, data, size);
@@ -139,6 +141,8 @@ void DiligentBindlessSubmitter::destroy()
     fallback_.destroy();
     spritePso_ = nullptr;
     spriteSrb_ = nullptr;
+    deferredCtx_ = nullptr;
+    primitiveRenderer3D_ = nullptr;
     spriteVertexBuffer_ = nullptr;
     spriteTransformBuffer_ = nullptr;
     spriteTexturesVar_ = nullptr;
@@ -160,11 +164,13 @@ void DiligentBindlessSubmitter::setFrameCostStats(ArtifactCore::RenderCostStats*
 
 void DiligentBindlessSubmitter::setDeferredContext(RefCntAutoPtr<IDeviceContext> deferred)
 {
+    deferredCtx_ = deferred;
     fallback_.setDeferredContext(std::move(deferred));
 }
 
 void DiligentBindlessSubmitter::setPrimitiveRenderer3D(PrimitiveRenderer3D* renderer)
 {
+    primitiveRenderer3D_ = renderer;
     fallback_.setPrimitiveRenderer3D(renderer);
 }
 
@@ -197,7 +203,20 @@ void DiligentBindlessSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext*
         return;
     }
     ++stats_.attempted;
-    if (!supported_ || !ctx || buf.empty() || !buf.targetRTV() || !spritePso_ || !spriteSrb_) {
+    if (!supported_ || !ctx || buf.empty() || !buf.targetRTV() || !spritePso_ ||
+        !spriteSrb_ || !spriteTexturesVar_ || !spriteVertexBuffer_ ||
+        !spriteTransformBuffer_) {
+        ++stats_.rejected;
+        ++stats_.fallback;
+        fallback_.submit(buf, ctx);
+        return;
+    }
+
+    // The bindless fast path records only the 2D sprite packets. If gizmo
+    // geometry is pending, use the fallback submitter so it records the
+    // sprites and gizmo runs together in the established overlay order.
+    if (primitiveRenderer3D_ &&
+        primitiveRenderer3D_->pendingGizmoVertexCount() > 0) {
         ++stats_.rejected;
         ++stats_.fallback;
         fallback_.submit(buf, ctx);
@@ -217,24 +236,144 @@ void DiligentBindlessSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext*
         return;
     }
 
+    // When failure fallback is enabled, submit only batches that can remain
+    // buffered until the final draw. If this batch had already flushed one run,
+    // replaying the whole buffer through fallback_ could draw those packets a
+    // second time after a later MapBuffer failure.
+    if (fallbackOnFailure_) {
+        const auto& packets = buf.packets();
+        bool singleBatch = packets.size() <= kMaxSpriteBatch;
+        bool haveFirstPacket = false;
+        bool usesNdc = false;
+        float2 screenSize{};
+        ITextureView* uniqueTextures[kMaxBindlessTextures]{};
+        Uint32 uniqueTextureCount = 0;
+
+        for (const auto& packet : packets) {
+            if (!singleBatch) {
+                break;
+            }
+            const auto* sprite = std::get_if<SpritePkt>(&packet);
+            const auto* spriteXform = std::get_if<SpriteXformPkt>(&packet);
+            auto* texture = sprite ? sprite->pSRV
+                                   : spriteXform ? spriteXform->pSRV : nullptr;
+            if (!texture) {
+                singleBatch = false;
+                break;
+            }
+
+            const bool packetUsesNdc = spriteXform != nullptr;
+            const float2 packetScreenSize = sprite
+                ? sprite->xform.screenSize
+                : float2{2.0f, 2.0f};
+            if (!haveFirstPacket) {
+                haveFirstPacket = true;
+                usesNdc = packetUsesNdc;
+                screenSize = packetScreenSize;
+            } else if (usesNdc != packetUsesNdc ||
+                       screenSize.x != packetScreenSize.x ||
+                       screenSize.y != packetScreenSize.y) {
+                singleBatch = false;
+                break;
+            }
+
+            bool knownTexture = false;
+            for (Uint32 index = 0; index < uniqueTextureCount; ++index) {
+                if (uniqueTextures[index] == texture) {
+                    knownTexture = true;
+                    break;
+                }
+            }
+            if (!knownTexture) {
+                if (uniqueTextureCount == kMaxBindlessTextures) {
+                    singleBatch = false;
+                    break;
+                }
+                uniqueTextures[uniqueTextureCount++] = texture;
+            }
+        }
+
+        if (!singleBatch) {
+            ++stats_.rejected;
+            ++stats_.fallback;
+            fallback_.submit(buf, ctx);
+            return;
+        }
+    }
+
+    constexpr std::size_t kMinimumDeferredPackets = 16;
+    const bool useDeferredContext = fallbackOnFailure_ && deferredCtx_ &&
+        buf.packets().size() >= kMinimumDeferredPackets;
+    IDeviceContext* recordCtx = ctx;
+    if (useDeferredContext) {
+        deferredCtx_->Begin(ctx->GetDesc().ContextId);
+        recordCtx = deferredCtx_.RawPtr();
+    }
+    RefCntAutoPtr<ICommandList> submittedCommandList;
+    const auto discardDeferredCommands = [&]() {
+        if (!useDeferredContext) {
+            return;
+        }
+        RefCntAutoPtr<ICommandList> discarded;
+        deferredCtx_->FinishCommandList(&discarded);
+        deferredCtx_->FinishFrame();
+    };
+    const auto executeDeferredCommands = [&]() {
+        if (!useDeferredContext) {
+            return true;
+        }
+        deferredCtx_->FinishCommandList(&submittedCommandList);
+        if (submittedCommandList) {
+            ICommandList* raw = submittedCommandList.RawPtr();
+            ctx->ExecuteCommandLists(1, &raw);
+        }
+        deferredCtx_->FinishFrame();
+        return static_cast<bool>(submittedCommandList);
+    };
+
     for (const auto& packet : buf.packets()) {
         const auto* sprite = std::get_if<SpritePkt>(&packet);
         const auto* spriteXform = std::get_if<SpriteXformPkt>(&packet);
-        if (!((sprite && submitSprite(*sprite, ctx, rtv)) ||
-              (spriteXform && submitSpriteXform(*spriteXform, ctx, rtv)))) {
+        if (!((sprite && submitSprite(*sprite, recordCtx, rtv)) ||
+              (spriteXform && submitSpriteXform(*spriteXform, recordCtx, rtv)))) {
             ++stats_.rejected;
-            flushSpriteBatch(ctx, rtv);
             if (fallbackOnFailure_) {
                 ++stats_.fallback;
+                spriteVertices_.clear();
+                spriteBatchScreenSize_ = {0.0f, 0.0f};
+                spriteBatchUsesNdc_ = false;
+                resetTextureTable();
+                discardDeferredCommands();
                 fallback_.submit(buf, ctx);
             } else {
+                flushSpriteBatch(recordCtx, rtv);
                 buf.reset();
             }
             return;
         }
     }
 
-    flushSpriteBatch(ctx, rtv);
+    if (!flushSpriteBatch(recordCtx, rtv)) {
+        ++stats_.rejected;
+        if (fallbackOnFailure_) {
+            ++stats_.fallback;
+            discardDeferredCommands();
+            fallback_.submit(buf, ctx);
+        } else {
+            buf.reset();
+        }
+        return;
+    }
+    if (!executeDeferredCommands()) {
+        ++stats_.rejected;
+        if (fallbackOnFailure_) {
+            ++stats_.fallback;
+            fallback_.submit(buf, ctx);
+        } else {
+            buf.reset();
+        }
+        return;
+    }
     ++stats_.accepted;
     buf.reset();
 }
@@ -386,19 +525,31 @@ bool DiligentBindlessSubmitter::submitSprite(const SpritePkt& pkt, IDeviceContex
         return false;
     }
     if (!spriteVertices_.empty() && spriteBatchUsesNdc_) {
+        if (fallbackOnFailure_) {
+            return false;
+        }
         flushSpriteBatch(ctx, rtv);
     }
     if (!spriteVertices_.empty() &&
         (spriteBatchScreenSize_.x != pkt.xform.screenSize.x ||
          spriteBatchScreenSize_.y != pkt.xform.screenSize.y)) {
+        if (fallbackOnFailure_) {
+            return false;
+        }
         flushSpriteBatch(ctx, rtv);
     }
     if (spriteVertices_.size() + 6 > kMaxSpriteBatch * 6) {
+        if (fallbackOnFailure_) {
+            return false;
+        }
         flushSpriteBatch(ctx, rtv);
     }
 
     Uint32 textureIndex = 0;
     if (!ensureTextureIndex(pkt.pSRV, textureIndex)) {
+        if (fallbackOnFailure_) {
+            return false;
+        }
         flushSpriteBatch(ctx, rtv);
         resetTextureTable();
         if (!ensureTextureIndex(pkt.pSRV, textureIndex)) {
@@ -455,14 +606,23 @@ bool DiligentBindlessSubmitter::submitSpriteXform(const SpriteXformPkt& pkt, IDe
     if (!spriteVertices_.empty() &&
         (!spriteBatchUsesNdc_ || spriteBatchScreenSize_.x != 2.0f ||
          spriteBatchScreenSize_.y != 2.0f)) {
+        if (fallbackOnFailure_) {
+            return false;
+        }
         flushSpriteBatch(ctx, rtv);
     }
     if (spriteVertices_.size() + 6 > kMaxSpriteBatch * 6) {
+        if (fallbackOnFailure_) {
+            return false;
+        }
         flushSpriteBatch(ctx, rtv);
     }
 
     Uint32 textureIndex = 0;
     if (!ensureTextureIndex(pkt.pSRV, textureIndex)) {
+        if (fallbackOnFailure_) {
+            return false;
+        }
         flushSpriteBatch(ctx, rtv);
         resetTextureTable();
         if (!ensureTextureIndex(pkt.pSRV, textureIndex)) {
@@ -516,14 +676,21 @@ bool DiligentBindlessSubmitter::submitSpriteXform(const SpriteXformPkt& pkt, IDe
     return true;
 }
 
-void DiligentBindlessSubmitter::flushSpriteBatch(IDeviceContext* ctx, ITextureView* rtv)
+bool DiligentBindlessSubmitter::flushSpriteBatch(IDeviceContext* ctx, ITextureView* rtv)
 {
-    if (spriteVertices_.empty() || !ctx || !rtv || !spriteTexturesVar_ || !spriteSrb_ || !spritePso_) {
+    if (spriteVertices_.empty()) {
+        spriteBatchScreenSize_ = {0.0f, 0.0f};
+        spriteBatchUsesNdc_ = false;
+        resetTextureTable();
+        return true;
+    }
+    if (!ctx || !rtv || !spriteTexturesVar_ || !spriteSrb_ || !spritePso_ ||
+        !spriteVertexBuffer_) {
         spriteVertices_.clear();
         spriteBatchScreenSize_ = {0.0f, 0.0f};
         spriteBatchUsesNdc_ = false;
         resetTextureTable();
-        return;
+        return false;
     }
 
     if (!mapWriteDiscard(ctx, spriteVertexBuffer_, spriteVertices_.data(),
@@ -532,7 +699,7 @@ void DiligentBindlessSubmitter::flushSpriteBatch(IDeviceContext* ctx, ITextureVi
         spriteBatchScreenSize_ = {0.0f, 0.0f};
         spriteBatchUsesNdc_ = false;
         resetTextureTable();
-        return;
+        return false;
     }
     if (frameCostStats_) {
         ++frameCostStats_->bufferUpdates;
@@ -559,6 +726,7 @@ void DiligentBindlessSubmitter::flushSpriteBatch(IDeviceContext* ctx, ITextureVi
     spriteBatchScreenSize_ = {0.0f, 0.0f};
     spriteBatchUsesNdc_ = false;
     resetTextureTable();
+    return true;
 }
 
 } // namespace Artifact

@@ -35,6 +35,7 @@ import Settings.Accessibility;
 import Artifact.Layer.Camera;
 import Math.Vec;
 import Artifact.Layer.Video;
+import Artifact.Layer.Text;
 import Artifact.Layer.Shape;
 import Artifact.Layer.Paint;
 import Artifact.Layer.CloneEffectSupport;
@@ -2535,4 +2536,687 @@ void drawPaintLayerOnionSkinOverlay(ArtifactIRenderer *renderer,
             frameImage, alpha * fade);
     }
 }
+static bool densityLayerEffectivelyVisible(const ArtifactAbstractLayerPtr& layer) {
+  auto current = layer;
+  int guard = 0;
+  while (current && guard < 64) {
+    if (!current->isVisible()) return false;
+    current = current->parentLayer();
+    ++guard;
+  }
+  return static_cast<bool>(layer);
+}
+
+static double clamp01(double value) {
+  return std::clamp(value, 0.0, 1.0);
+}
+
+static QString densityWarningForDominantAxis(const QString& axis, double score) {
+  if (score < 0.55) return QStringLiteral("density is readable");
+  if (axis == QStringLiteral("visual")) return QStringLiteral("visual density is high");
+  if (axis == QStringLiteral("information")) return QStringLiteral("information density is high");
+  if (axis == QStringLiteral("luminance")) return QStringLiteral("luminance density is high");
+  if (axis == QStringLiteral("motion")) return QStringLiteral("motion density is high");
+  return QStringLiteral("density is high");
+}
+
+static QString densityNextActionForAxis(const QString& axis) {
+  if (axis == QStringLiteral("visual")) return QStringLiteral("collapse repeated regions or add spacing");
+  if (axis == QStringLiteral("information")) return QStringLiteral("reduce labels or move notes into debugger");
+  if (axis == QStringLiteral("luminance")) return QStringLiteral("soften bright clusters or separate highlights");
+  if (axis == QStringLiteral("motion")) return QStringLiteral("spread key activity or add rest frames");
+  return QStringLiteral("reduce the busiest region");
+}
+static FloatColor densityHeatmapColor(float normalized)
+
+{
+
+  const float t = std::clamp(normalized, 0.0f, 1.0f);
+
+  const FloatColor cool{0.18f, 0.76f, 1.0f, 1.0f};
+
+  const FloatColor mid{1.0f, 0.76f, 0.24f, 1.0f};
+
+  const FloatColor hot{1.0f, 0.24f, 0.22f, 1.0f};
+
+  if (t < 0.5f) {
+
+    const float u = t / 0.5f;
+
+    return FloatColor{
+
+        cool.r() + (mid.r() - cool.r()) * u,
+
+        cool.g() + (mid.g() - cool.g()) * u,
+
+        cool.b() + (mid.b() - cool.b()) * u,
+
+        1.0f};
+
+  }
+
+  const float u = (t - 0.5f) / 0.5f;
+
+  return FloatColor{
+
+      mid.r() + (hot.r() - mid.r()) * u,
+
+      mid.g() + (hot.g() - mid.g()) * u,
+
+      mid.b() + (hot.b() - mid.b()) * u,
+
+      1.0f};
+
+}
+
+
+
+static QString densityAxisDisplayName(const QString &axis)
+
+{
+
+  if (axis == QStringLiteral("visual")) {
+
+    return QStringLiteral("visual");
+
+  }
+
+  if (axis == QStringLiteral("information")) {
+
+    return QStringLiteral("info");
+
+  }
+
+  if (axis == QStringLiteral("luminance")) {
+
+    return QStringLiteral("luma");
+
+  }
+
+  if (axis == QStringLiteral("motion")) {
+
+    return QStringLiteral("motion");
+
+  }
+
+  return QStringLiteral("density");
+
+}
+
+
+
+static QString densityWarningForDominantAxis(const QString &axis, double score);
+
+static QString densityNextActionForAxis(const QString &axis);
+
+
+
+static FloatColor densityAxisColor(const QString &axis)
+
+{
+
+  if (axis == QStringLiteral("visual")) {
+
+    return FloatColor{0.18f, 0.76f, 1.0f, 1.0f};
+
+  }
+
+  if (axis == QStringLiteral("information")) {
+
+    return FloatColor{1.0f, 0.76f, 0.24f, 1.0f};
+
+  }
+
+  if (axis == QStringLiteral("luminance")) {
+
+    return FloatColor{0.92f, 0.94f, 0.98f, 1.0f};
+
+  }
+
+  if (axis == QStringLiteral("motion")) {
+
+    return FloatColor{1.0f, 0.24f, 0.22f, 1.0f};
+
+  }
+
+  return FloatColor{0.72f, 0.80f, 0.88f, 1.0f};
+
+}
+
+
+
+void drawVisualDensityOverlay(ArtifactIRenderer *renderer,
+
+                              const ArtifactCompositionPtr &comp,
+
+                              const ArtifactAbstractLayerPtr &selectedLayer,
+
+                              const FramePosition &currentFrame)
+
+{
+
+  if (!renderer || !comp) {
+
+    return;
+
+  }
+
+  const auto activeMatteCount = [](const ArtifactAbstractLayerPtr& layer) {
+    return (layer ? layer->enabledExternalMatteReferenceCount() : 0);
+  };
+
+
+
+  const QSize compSize = comp->settings().compositionSize();
+
+  const float canvasW = static_cast<float>(compSize.width() > 0 ? compSize.width() : 1920);
+
+  const float canvasH = static_cast<float>(compSize.height() > 0 ? compSize.height() : 1080);
+
+  if (canvasW <= 0.0f || canvasH <= 0.0f) {
+
+    return;
+
+  }
+
+
+
+  constexpr int kColumns = 12;
+
+  constexpr int kRows = 8;
+
+  std::array<float, kColumns * kRows> density{};
+
+  float peakDensity = 0.0f;
+
+
+
+  const QRectF canvasRect(0.0, 0.0, canvasW, canvasH);
+
+  const float cellW = canvasW / static_cast<float>(kColumns);
+
+  const float cellH = canvasH / static_cast<float>(kRows);
+
+  const float cellArea = std::max(1.0f, cellW * cellH);
+
+
+
+  const auto &layers = comp->allLayerRef();
+
+  int visibleLayerCount = 0;
+
+  int textLayerCount = 0;
+
+  int videoLayerCount = 0;
+
+  int particleLayerCount = 0;
+
+  for (const auto &layer : layers) {
+
+    if (!layer || !densityLayerEffectivelyVisible(layer) ||
+
+        !layer->isActiveAt(currentFrame)) {
+
+      continue;
+
+    }
+
+
+
+    ++visibleLayerCount;
+
+    if (dynamic_cast<ArtifactTextLayer *>(layer.get())) {
+
+      ++textLayerCount;
+
+    }
+
+    if (dynamic_cast<ArtifactVideoLayer *>(layer.get())) {
+
+      ++videoLayerCount;
+
+    }
+
+    if (layer->isParticleLayer()) {
+
+      ++particleLayerCount;
+
+    }
+
+
+
+    const QRectF layerBounds = layer->transformedBoundingBox().normalized();
+
+    if (!layerBounds.isValid() || layerBounds.width() <= 0.0 ||
+
+        layerBounds.height() <= 0.0) {
+
+      continue;
+
+    }
+
+
+
+    const QRectF clippedBounds = layerBounds.intersected(canvasRect);
+
+    if (clippedBounds.isEmpty()) {
+
+      continue;
+
+    }
+
+
+
+    float weight = 1.0f;
+
+    if (dynamic_cast<ArtifactTextLayer *>(layer.get())) {
+
+      weight += 0.35f;
+
+    }
+
+    weight += std::min(0.65f, static_cast<float>(layer->maskCount()) * 0.10f);
+
+    weight += std::min(0.70f, static_cast<float>(layer->effectCount()) * 0.08f);
+
+    weight += std::min(0.45f,
+                       static_cast<float>(activeMatteCount(layer)) * 0.12f);
+
+    if (selectedLayer && selectedLayer->id() == layer->id()) {
+
+      weight += 0.35f;
+
+    }
+
+
+
+    const int minCol = std::clamp(
+
+        static_cast<int>(std::floor(clippedBounds.left() / cellW)), 0,
+
+        kColumns - 1);
+
+    const int maxCol = std::clamp(
+
+        static_cast<int>(std::floor((clippedBounds.right() - 1.0) / cellW)), 0,
+
+        kColumns - 1);
+
+    const int minRow = std::clamp(
+
+        static_cast<int>(std::floor(clippedBounds.top() / cellH)), 0,
+
+        kRows - 1);
+
+    const int maxRow = std::clamp(
+
+        static_cast<int>(std::floor((clippedBounds.bottom() - 1.0) / cellH)), 0,
+
+        kRows - 1);
+
+
+
+    for (int row = minRow; row <= maxRow; ++row) {
+
+      for (int col = minCol; col <= maxCol; ++col) {
+
+        const QRectF cellRect(static_cast<float>(col) * cellW,
+
+                              static_cast<float>(row) * cellH, cellW, cellH);
+
+        const QRectF overlap = cellRect.intersected(clippedBounds);
+
+        if (overlap.isEmpty()) {
+
+          continue;
+
+        }
+
+        const float coverage =
+
+            static_cast<float>((overlap.width() * overlap.height()) / cellArea);
+
+        const int index = row * kColumns + col;
+
+        density[static_cast<std::size_t>(index)] += weight * coverage;
+
+        peakDensity = std::max(peakDensity, density[static_cast<std::size_t>(index)]);
+
+      }
+
+    }
+
+  }
+
+
+
+  const double visualScore =
+
+      clamp01(visibleLayerCount * 0.05 + textLayerCount * 0.03 +
+
+              (selectedLayer ? 0.08 : 0.0) +
+
+              (selectedLayer ? static_cast<double>(selectedLayer->effectCount()) * 0.04
+
+                             : 0.0) +
+
+              (selectedLayer ? static_cast<double>(selectedLayer->maskCount()) * 0.05
+
+                             : 0.0) +
+
+              (selectedLayer ? static_cast<double>(activeMatteCount(selectedLayer)) * 0.05
+
+                             : 0.0));
+
+  const double informationScore =
+
+      clamp01(textLayerCount * 0.06 + layers.size() * 0.02 +
+
+              (visibleLayerCount > 12 ? 0.08 : 0.0));
+
+  const double luminanceScore =
+
+      clamp01(textLayerCount * 0.07 + (selectedLayer ? 0.10 : 0.0));
+
+  const double motionScore =
+
+      clamp01(videoLayerCount * 0.08 + particleLayerCount * 0.10 +
+
+              std::min(1.0, static_cast<double>(layers.size()) / 20.0) * 0.15);
+
+  const std::array<std::pair<const char *, double>, 4> densityScores{{
+
+      {"visual", visualScore},
+
+      {"information", informationScore},
+
+      {"luminance", luminanceScore},
+
+      {"motion", motionScore},
+
+  }};
+
+  const auto dominantIt = std::max_element(
+
+      densityScores.begin(), densityScores.end(),
+
+      [](const auto &a, const auto &b) { return a.second < b.second; });
+
+  const QString dominantAxis = QString::fromLatin1(dominantIt->first);
+
+  const double dominantScore = dominantIt->second;
+
+
+
+  if (peakDensity <= 0.0f) {
+
+    return;
+
+  }
+
+
+
+  const float panelW = canvasW > 260.0f
+
+                           ? std::min(310.0f, std::max(220.0f, canvasW * 0.28f))
+
+                           : std::max(140.0f, canvasW - 24.0f);
+
+  const float panelH = canvasH > 140.0f ? 126.0f : std::max(92.0f, canvasH - 24.0f);
+
+  const float panelX = std::max(12.0f, canvasW - panelW - 12.0f);
+
+  const float panelY = 12.0f;
+
+
+
+  renderer->drawOverlayPanel(panelX, panelY, panelW, panelH,
+
+                             FloatColor{0.05f, 0.07f, 0.11f, 0.90f},
+
+                             FloatColor{0.34f, 0.54f, 0.76f, 0.92f});
+
+
+
+  QFont titleFont = QApplication::font();
+
+  titleFont.setPointSizeF(std::max(10.0, static_cast<double>(titleFont.pointSizeF()) + 1.0));
+
+  titleFont.setWeight(QFont::DemiBold);
+
+  QFont detailFont = QApplication::font();
+
+  detailFont.setPointSizeF(std::max(8.5, static_cast<double>(detailFont.pointSizeF())));
+
+
+
+  renderer->drawText(QRectF(panelX + 12.0f, panelY + 8.0f, panelW - 24.0f, 18.0f),
+
+                     QStringLiteral("Visual Density Heatmap"), titleFont,
+
+                     FloatColor{0.94f, 0.97f, 1.0f, 1.0f},
+
+                     Qt::AlignLeft | Qt::AlignVCenter);
+
+  renderer->drawText(
+
+      QRectF(panelX + 12.0f, panelY + 26.0f, panelW - 24.0f, 15.0f),
+
+      QStringLiteral("%1 layers  |  dominant: %2 (%3)")
+
+          .arg(static_cast<int>(layers.size()))
+
+          .arg(densityAxisDisplayName(dominantAxis))
+
+          .arg(QString::number(dominantScore * 100.0, 'f', 0)),
+
+      detailFont, FloatColor{0.70f, 0.78f, 0.86f, 1.0f},
+
+      Qt::AlignLeft | Qt::AlignVCenter);
+
+  renderer->drawText(
+
+      QRectF(panelX + 12.0f, panelY + 41.0f, panelW - 24.0f, 13.0f),
+
+      QStringLiteral("warn: %1 | next: %2")
+
+          .arg(densityWarningForDominantAxis(dominantAxis, dominantScore),
+
+               densityNextActionForAxis(dominantAxis)),
+
+      detailFont, FloatColor{0.62f, 0.72f, 0.82f, 1.0f},
+
+      Qt::AlignLeft | Qt::AlignVCenter);
+
+  if (selectedLayer) {
+
+    renderer->drawText(
+
+        QRectF(panelX + 12.0f, panelY + 55.0f, panelW - 24.0f, 13.0f),
+
+        QStringLiteral("focus: %1  |  masks %2  effects %3  mattes %4")
+
+            .arg(selectedLayer->layerName().trimmed().isEmpty()
+
+                     ? QStringLiteral("<selected>")
+
+                     : selectedLayer->layerName().trimmed())
+
+            .arg(selectedLayer->maskCount())
+
+            .arg(selectedLayer->effectCount())
+
+            .arg(activeMatteCount(selectedLayer)),
+
+        detailFont, FloatColor{0.62f, 0.72f, 0.82f, 1.0f},
+
+        Qt::AlignLeft | Qt::AlignVCenter);
+
+  }
+
+
+
+  const float heatTop = panelY + (selectedLayer ? 72.0f : 58.0f);
+
+  const float heatLeft = panelX + 12.0f;
+
+  const float heatWidth = panelW - 24.0f;
+
+  const float heatHeight = std::max(18.0f, panelH - (selectedLayer ? 92.0f : 78.0f));
+
+  const float legendCellW = heatWidth / static_cast<float>(kColumns);
+
+  const float legendCellH = heatHeight / static_cast<float>(kRows);
+
+  for (int row = 0; row < kRows; ++row) {
+
+    for (int col = 0; col < kColumns; ++col) {
+
+      const int index = row * kColumns + col;
+
+      const float value = density[static_cast<std::size_t>(index)];
+
+      if (value <= 0.0f) {
+
+        continue;
+
+      }
+
+      const float normalized = std::clamp(value / peakDensity, 0.0f, 1.0f);
+
+      const FloatColor color = densityHeatmapColor(normalized);
+
+      const float alpha = 0.05f + normalized * 0.30f;
+
+      renderer->drawSolidRect(
+
+          heatLeft + static_cast<float>(col) * legendCellW,
+
+          heatTop + static_cast<float>(row) * legendCellH, legendCellW + 0.5f,
+
+          legendCellH + 0.5f,
+
+          FloatColor{color.r(), color.g(), color.b(), alpha}, 1.0f);
+
+    }
+
+  }
+
+
+
+  if (selectedLayer) {
+
+    const QRectF selectedBounds = selectedLayer->transformedBoundingBox().normalized();
+
+    const QRectF clippedSelected = selectedBounds.intersected(canvasRect);
+
+    if (clippedSelected.isValid() && clippedSelected.width() > 0.0 &&
+
+        clippedSelected.height() > 0.0) {
+
+      const FloatColor focusColor =
+
+          selectedLayer->maskCount() > 0
+
+              ? FloatColor{1.0f, 0.78f, 0.24f, 0.96f}
+
+              : FloatColor{0.96f, 0.96f, 0.98f, 0.92f};
+
+      renderer->drawRectOutline(static_cast<float>(clippedSelected.left()),
+
+                                static_cast<float>(clippedSelected.top()),
+
+                                static_cast<float>(clippedSelected.width()),
+
+                                static_cast<float>(clippedSelected.height()),
+
+                                focusColor);
+
+      renderer->drawSolidRect(
+
+          static_cast<float>(clippedSelected.left()),
+
+          static_cast<float>(clippedSelected.top()),
+
+          static_cast<float>(clippedSelected.width()),
+
+          static_cast<float>(clippedSelected.height()),
+
+          FloatColor{focusColor.r(), focusColor.g(), focusColor.b(), 0.05f}, 1.0f);
+
+    }
+
+  }
+
+
+
+  const float barY = heatTop + heatHeight + 6.0f;
+
+  const float barX = panelX + 12.0f;
+
+  const float barW = panelW - 24.0f;
+
+  const float barH = 10.0f;
+
+  const float labelW = 54.0f;
+
+  const float meterW = std::max(18.0f, barW - labelW - 6.0f);
+
+  const std::array<std::pair<const char *, double>, 4> densityMeters{{
+
+      {"visual", visualScore},
+
+      {"info", informationScore},
+
+      {"luma", luminanceScore},
+
+      {"motion", motionScore},
+
+  }};
+
+  for (std::size_t i = 0; i < densityMeters.size(); ++i) {
+
+    const QString axis = QString::fromLatin1(densityMeters[i].first);
+
+    const double score = densityMeters[i].second;
+
+    const FloatColor axisColor = densityAxisColor(axis);
+
+    const float y = barY + static_cast<float>(i) * 12.0f;
+
+    renderer->drawText(QRectF(barX, y - 1.0f, labelW, 11.0f), axis,
+
+                       detailFont, FloatColor{0.72f, 0.81f, 0.90f, 1.0f},
+
+                       Qt::AlignLeft | Qt::AlignVCenter);
+
+    renderer->drawSolidRect(barX + labelW, y, meterW, barH,
+
+                            FloatColor{0.10f, 0.14f, 0.19f, 0.88f}, 1.0f);
+
+    renderer->drawSolidRect(barX + labelW, y, meterW * static_cast<float>(score),
+
+                            barH, FloatColor{axisColor.r(), axisColor.g(),
+
+                                             axisColor.b(), 0.78f},
+
+                            1.0f);
+
+    if (axis == densityAxisDisplayName(dominantAxis)) {
+
+      renderer->drawRectOutline(barX + labelW, y, meterW, barH,
+
+                                FloatColor{axisColor.r(), axisColor.g(),
+
+                                           axisColor.b(), 0.96f});
+
+    }
+
+  }
+
+}
+
+
+
+
 } // namespace Artifact

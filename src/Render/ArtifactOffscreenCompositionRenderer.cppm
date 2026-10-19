@@ -58,6 +58,9 @@ namespace Artifact
 
         // レンダラーへのアクセス
         ArtifactIRenderer* renderer() { return renderer_.get(); }
+        // Borrowed view; remains valid for the OffscreenCompositionRenderer
+        // lifetime and can be sampled by another renderer on the same device.
+        Diligent::ITextureView* renderTargetShaderResourceView() const;
 
         // QImageとして取得
         QImage renderToQImage(const FramePosition& position, ArtifactAbstractComposition* composition);
@@ -105,6 +108,15 @@ namespace Artifact
         renderer_->setViewportSize((float)width_, (float)height_);
         initializeResources();
     }
+
+    Diligent::ITextureView*
+    OffscreenCompositionRenderer::renderTargetShaderResourceView() const
+    {
+        return pRenderTarget_
+            ? pRenderTarget_->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE)
+            : nullptr;
+    }
+
     void OffscreenCompositionRenderer::initializeResources()
     {
         TextureDesc TexDesc;
@@ -125,11 +137,18 @@ namespace Artifact
 
         ITextureView* pRTV = pRenderTarget_->GetDefaultView(TEXTURE_VIEW_RENDER_TARGET);
         renderer_->setOverrideRTV(pRTV);
+        ITextureView* pDSV = renderer_->liveDepthStencilView();
+        renderer_->setOverrideDSV(pDSV);
         const auto bgColor = composition->backgroundColor();
         float ClearColor[] = { bgColor.r(), bgColor.g(), bgColor.b(), bgColor.a() };
-        
-        pContext_->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+        pContext_->SetRenderTargets(1, &pRTV, pDSV,
+                                    RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
         pContext_->ClearRenderTarget(pRTV, ClearColor, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        if (pDSV) {
+            pContext_->ClearDepthStencil(pDSV, CLEAR_DEPTH_FLAG, 1.0f, 0,
+                                         RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        }
 
         // レイヤーリストを取得
         const auto& layers = composition->allLayerRef();

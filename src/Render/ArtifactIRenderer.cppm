@@ -21,6 +21,7 @@ module;
 #include <optional>
 #include <mutex>
 #include <functional>
+#include <exception>
 #include <span>
 #include <QImage>
 #include <QByteArray>
@@ -513,6 +514,118 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
  class ArtifactIRenderer::Impl
  {
  public:
+  class ImmediateContextPassWorker final : public QRunnable {
+  public:
+    using Pass = bool (*)(void *);
+
+    ImmediateContextPassWorker() {
+      setAutoDelete(false);
+      pool_.setMaxThreadCount(1);
+      pool_.setExpiryTimeout(-1);
+    }
+
+    ~ImmediateContextPassWorker() override { shutdown(); }
+
+    bool execute(void *userData, Pass pass) {
+      if (!userData || !pass) return false;
+      QMutexLocker lock(&mutex_);
+      if (stopping_) return false;
+      if (!started_) {
+        started_ = true;
+        pool_.start(this);
+        while (!workerReady_ && !stopping_) ready_.wait(&mutex_);
+      }
+      if (stopping_) return false;
+      while (jobPending_ || jobRunning_ || jobComplete_) {
+        done_.wait(&mutex_);
+      }
+      callback_ = pass;
+      userData_ = userData;
+      jobComplete_ = false;
+      jobPending_ = true;
+      exception_ = nullptr;
+      workReady_.wakeOne();
+      while (!jobComplete_ && !stopping_) done_.wait(&mutex_);
+      const bool succeeded = jobComplete_ && passResult_ && !exception_;
+      const auto error = exception_;
+      callback_ = nullptr;
+      userData_ = nullptr;
+      jobComplete_ = false;
+      done_.wakeAll();
+      lock.unlock();
+      if (error) std::rethrow_exception(error);
+      return succeeded;
+    }
+
+    quintptr lastExecutionThreadId() const noexcept {
+      return lastExecutionThreadId_.load(std::memory_order_acquire);
+    }
+
+    void shutdown() {
+      {
+        QMutexLocker lock(&mutex_);
+        if (!stopping_) {
+          stopping_ = true;
+          workReady_.wakeAll();
+          ready_.wakeAll();
+          done_.wakeAll();
+        }
+      }
+      pool_.waitForDone();
+    }
+
+    void run() override {
+      QMutexLocker lock(&mutex_);
+      workerReady_ = true;
+      ready_.wakeAll();
+      while (!stopping_) {
+        while (!stopping_ && !jobPending_) workReady_.wait(&mutex_);
+        if (stopping_) break;
+        const auto callback = callback_;
+        void *const userData = userData_;
+        jobPending_ = false;
+        jobRunning_ = true;
+        lastExecutionThreadId_.store(
+            reinterpret_cast<quintptr>(QThread::currentThreadId()),
+            std::memory_order_release);
+        lock.unlock();
+        std::exception_ptr error;
+        bool passResult = false;
+        try {
+          passResult = callback && callback(userData);
+        } catch (...) {
+          error = std::current_exception();
+        }
+        lock.relock();
+        jobRunning_ = false;
+        passResult_ = passResult;
+        exception_ = error;
+        jobComplete_ = true;
+        done_.wakeAll();
+      }
+      workerReady_ = false;
+      done_.wakeAll();
+    }
+
+  private:
+    QMutex mutex_;
+    QWaitCondition workReady_;
+    QWaitCondition ready_;
+    QWaitCondition done_;
+    QThreadPool pool_;
+    Pass callback_ = nullptr;
+    void *userData_ = nullptr;
+    std::exception_ptr exception_;
+    std::atomic<quintptr> lastExecutionThreadId_{0};
+    bool passResult_ = false;
+    bool started_ = false;
+    bool workerReady_ = false;
+    bool jobPending_ = false;
+    bool jobRunning_ = false;
+    bool jobComplete_ = false;
+    bool stopping_ = false;
+  };
+
   class DeferredPacketRecordWorker final : public QRunnable {
   public:
     using ContextWorkRecorder = ArtifactIRenderer::DeferredContextWorkRecorder;
@@ -552,6 +665,13 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
       return initialized_ && submitter_.canRecordDeferred(
                                  buffer, additionalGizmoVertexCount,
                                  minimumWorkUnits);
+    }
+
+    bool contextWorkInProgress() const {
+      return contextWorkActive_.load(std::memory_order_acquire);
+    }
+    quint64 contextWorkStartCount() const {
+      return contextWorkStartCount_.load(std::memory_order_acquire);
     }
 
     void setParticleRenderer(ArtifactCore::ParticleRenderer* renderer) {
@@ -624,6 +744,7 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
       }
       active_ = true;
       jobKind_ = JobKind::ContextWork;
+      contextWorkActive_.store(false, std::memory_order_release);
       contextWorkRecorder_ = recorder;
       contextWorkUserData_ = userData;
       warmupPending_ = false;
@@ -834,6 +955,10 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
       const QMatrix4x4 projectionMatrix = projectionMatrix_;
       lock.unlock();
 
+      if (jobKind == JobKind::ContextWork) {
+        contextWorkActive_.store(true, std::memory_order_release);
+        contextWorkStartCount_.fetch_add(1, std::memory_order_release);
+      }
       RefCntAutoPtr<ICommandList> recordedCommandList;
       bool recorded = false;
       try {
@@ -856,6 +981,9 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
           RefCntAutoPtr<ICommandList> discardedCommandList;
           deferredWorkContext_->FinishCommandList(&discardedCommandList);
         }
+      }
+      if (jobKind == JobKind::ContextWork) {
+        contextWorkActive_.store(false, std::memory_order_release);
       }
 
       lock.relock();
@@ -933,6 +1061,8 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
     bool completed_ = false;
     bool recorded_ = false;
     bool warmupSuccess_ = false;
+    std::atomic<bool> contextWorkActive_{false};
+    std::atomic<quint64> contextWorkStartCount_{0};
   };
 
   // Reusable fixed worker slots and owner-queue headroom for bounded parallel
@@ -986,6 +1116,7 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
   float lastParticleViewportHeight_ = 0.0f;
 
   mutable DiligentImmediateSubmitter submitter_;
+  ImmediateContextPassWorker shadowMapPassWorker_;
   mutable DeferredPacketRecordWorker deferredPacketRecordWorker_;
   mutable RenderCommandBuffer cmdBuf_;
   mutable RenderCommandBuffer deferredPacketRecordBuffer_;
@@ -994,6 +1125,7 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
   bool parallelGeometryRecordingReady_ = false;
   std::size_t parallelGeometryWorkerCount_ = 0;
   mutable quint64 deferredWorkerSubmitCount_ = 0;
+  quint64 deferredWorkerShadowMapOverlapCount_ = 0;
   quint64 deferredContextWorkCount_ = 0;
   quint8 deferredContextWorkStatus_ = 0;
   ArtifactCore::RenderCostStats m_lastFrameCostStats_;
@@ -1481,8 +1613,43 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
     m_shadowCasters.clear();
   }
 
-  void renderShadowMapFrame()
+  static bool runShadowMapPass(void *opaque) {
+    auto *const self = static_cast<Impl *>(opaque);
+    if (!self) return false;
+    self->renderShadowMapFrameInline();
+    return true;
+  }
+
+  void renderShadowMapFrame() {
+    if (!shadowMapPassWorker_.execute(this, &Impl::runShadowMapPass)) {
+      renderShadowMapFrameInline();
+    }
+  }
+
+  quintptr lastShadowMapExecutionThreadId() const noexcept {
+    return shadowMapPassWorker_.lastExecutionThreadId();
+  }
+
+  void renderShadowMapFrameInline()
   {
+    static const bool profileDeferredOverlap = [] {
+      return qEnvironmentVariableIsSet("ARTIFACT_VIDEO_PREVIEW_PROFILE_SETUP") &&
+             qEnvironmentVariable("ARTIFACT_VIDEO_PREVIEW_PROFILE_SETUP") !=
+                 QStringLiteral("0");
+    }();
+    static thread_local unsigned int deferredOverlapSamples = 0;
+    const bool sampleDeferredOverlap =
+        profileDeferredOverlap && deferredOverlapSamples < 256;
+    const bool contextWorkActiveAtShadowMapEntry =
+        deferredPacketRecordWorker_.contextWorkInProgress();
+    const quint64 contextWorkStartsAtShadowMapEntry =
+        deferredPacketRecordWorker_.contextWorkStartCount();
+    if (sampleDeferredOverlap) {
+      std::fprintf(stderr,
+                   "[VideoPreviewShadowMap] enabled=%d casters=%zu\n",
+                   m_shadowMapEnabled ? 1 : 0, m_shadowCasters.size());
+      ++deferredOverlapSamples;
+    }
     if (!m_shadowMapEnabled || m_shadowCasters.empty()) {
       return;
     }
@@ -1492,7 +1659,9 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
       return;
     }
     // Composition can reach the shadow pass with layer packets still queued.
-    // Submit them before changing the immediate context to the shadow target.
+    // Preserve the packet-before-target-switch barrier. The packet batch's
+    // deferred resource state is not yet proven independent of the immediate
+    // shadow-map pass; only standalone context work can overlap below.
     submitQueuedDraws(context.RawPtr());
     if (!m_shadowMapTex) {
       TextureDesc desc;
@@ -1563,6 +1732,21 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
       restoreViewport.MinDepth = 0.0f;
       restoreViewport.MaxDepth = 1.0f;
       context->SetViewports(1, &restoreViewport, restoreWidth, restoreHeight);
+    }
+    const bool contextWorkStartedDuringShadowMap =
+        deferredPacketRecordWorker_.contextWorkStartCount() >
+        contextWorkStartsAtShadowMapEntry;
+    if (contextWorkActiveAtShadowMapEntry ||
+        contextWorkStartedDuringShadowMap) {
+      ++deferredWorkerShadowMapOverlapCount_;
+      if (sampleDeferredOverlap) {
+        std::fprintf(stderr,
+                     "[VideoPreviewDeferredOverlap] deferred-context-work=1 "
+                     "shadow-map=1 active-at-entry=%d started-during=%d "
+                     "packet-drain=preserved\n",
+                     contextWorkActiveAtShadowMapEntry ? 1 : 0,
+                     contextWorkStartedDuringShadowMap ? 1 : 0);
+      }
     }
   }
 
@@ -2651,6 +2835,11 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
         meshPositionOnlyPass_ ? 9 :
         meshUvOnlyPass_ ? 10
                             : std::clamp(shadingMode, 1, 8);
+    const bool auxiliaryMeshPass =
+        meshEmissionOnlyPass_ || meshIdPassChannel_ == ArtifactIRenderer::ChannelType::ObjectId ||
+        meshIdPassChannel_ == ArtifactIRenderer::ChannelType::MaterialId || meshNormalOnlyPass_ ||
+        meshVelocityOnlyPass_ || meshAlbedoOnlyPass_ || meshPositionOnlyPass_ ||
+        meshUvOnlyPass_;
     const auto needsTransparentMaterialPass =
         [&](float instanceOpacity) {
           if (!usesMaterialSlots) {
@@ -2826,9 +3015,11 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
       renderer->setRenderTargetFormat(colorView->GetDesc().Format);
     }
     bool meshShaderDrawn = false;
-    // The mesh-shader path shades a single instance; instanced draws stay on
-    // the indexed path which honors per-instance matrices.
-    if (wantedInstances == 1 && renderer->meshShaderReady()) {
+    // The mesh-shader path currently shades only the beauty output; AOV and
+    // diagnostic passes must use the indexed path that honors the selected
+    // effectiveShadingMode.
+    if (wantedInstances == 1 && renderer->meshShaderReady() &&
+        !auxiliaryMeshPass) {
       const QVector3D boundsMin = mesh.boundingBoxMin();
       const QVector3D boundsMax = mesh.boundingBoxMax();
       const QVector3D boundsCenter = (boundsMin + boundsMax) * 0.5f;
@@ -2871,6 +3062,10 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
   ~Impl();
 
   void initialize(QWidget* parent);
+  void initializeRendererResources();
+  void initializeOnRenderThread(HWND renderHwnd, int physicalWidth,
+                                int physicalHeight, bool independentDevice,
+                                int adapterId);
   void initializeHeadless(int width, int height,
                           bool enableGpuClonerPlacement = false);
   void initializeHeadlessWithAdapter(
@@ -2914,6 +3109,9 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
   quint64 presentSkippedCount() const { return presentSkippedCount_; }
   quint64 deferredWorkerSubmitCount() const {
     return deferredWorkerSubmitCount_;
+  }
+  quint64 deferredWorkerShadowMapOverlapCount() const {
+    return deferredWorkerShadowMapOverlapCount_;
   }
   quint64 deferredContextWorkCount() const {
     return deferredContextWorkCount_;
@@ -3545,6 +3743,12 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
     return;
    }
 
+  initializeRendererResources();
+ }
+
+
+ void ArtifactIRenderer::Impl::initializeRendererResources()
+ {
   shaderManager_.initialize(deviceManager_.device(), RenderConfig::MainRTVFormat);
   shaderManager_.setClonerGpuPlacementEnabled(
       clonerGpuPlacementStartupEnabled());
@@ -3620,6 +3824,56 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
   const auto startupReport = StartupProfiler::instance().generateReport();
   qInfo().noquote() << QString::fromUtf8(
       startupReport.data(), static_cast<int>(startupReport.length()));
+
+ }
+ void ArtifactIRenderer::Impl::initializeOnRenderThread(
+     HWND renderHwnd, int physicalWidth, int physicalHeight,
+     bool independentDevice, int adapterId)
+ {
+  if (auto context = deviceManager_.immediateContext()) {
+   completeDeferredPacketRecording(context.RawPtr());
+  }
+  deferredPacketRecordWorker_.shutdown();
+  ScopedStartupTimer totalTimer("ArtifactIRenderer::initializeOnRenderThread",
+                                StartupPhase::TotalStartup);
+  widget_ = nullptr;
+  m_offlineWidth = physicalWidth;
+  m_offlineHeight = physicalHeight;
+  meshRenderers_.clear();
+  meshRendererGeometry_.clear();
+  materialRangeCache_.clear();
+  viewportExposureExecutor_.reset();
+  viewportExposureParams_.Release();
+  viewportExposureReady_ = false;
+  clonerGridExecutor_.reset();
+  clonerGridParams_.Release();
+  clonerGridOutput_.Release();
+  clonerGridOutputCursor_ = 0;
+  ++clonerGridBatchGeneration_;
+  clonerGridReady_ = false;
+  viewportDisplayPostProcess_.reset();
+  viewportDisplayLutNeedsUpload_ = viewportDisplayLutEnabled_;
+  gpuContext_.reset();
+  {
+   ScopedStartupTimer t("DeviceManager::initializeOnRenderThread",
+                        StartupPhase::DeviceCreation);
+   if (independentDevice) {
+    deviceManager_.initializeIndependentOnRenderThread(
+        renderHwnd, physicalWidth, physicalHeight,
+        QStringLiteral("ArtifactIRenderer"), adapterId);
+   } else {
+    deviceManager_.initializeOnRenderThread(
+        renderHwnd, physicalWidth, physicalHeight,
+        QStringLiteral("ArtifactIRenderer"));
+   }
+  }
+  if (!deviceManager_.isInitialized()) {
+   qWarning() << "[ArtifactIRenderer] render-thread initialization failed"
+              << "renderHwnd=" << renderHwnd
+              << "size=" << QSize(physicalWidth, physicalHeight);
+   return;
+  }
+  initializeRendererResources();
  }
 
  void ArtifactIRenderer::Impl::initializeHeadless(
@@ -5465,6 +5719,21 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
    impl_->initialize(widget);
    if (impl_->isInitialized()) (void)impl_->prepareParallelGeometryRecording();
  }
+ void ArtifactIRenderer::initializeOnRenderThread(HWND renderHwnd,
+                                                  int physicalWidth,
+                                                  int physicalHeight)
+ {
+   impl_->initializeOnRenderThread(renderHwnd, physicalWidth, physicalHeight,
+                                   false, -1);
+   if (impl_->isInitialized()) (void)impl_->prepareParallelGeometryRecording();
+ }
+ void ArtifactIRenderer::initializeIndependentOnRenderThread(
+     HWND renderHwnd, int physicalWidth, int physicalHeight, int adapterId)
+ {
+   impl_->initializeOnRenderThread(renderHwnd, physicalWidth, physicalHeight,
+                                   true, adapterId);
+   if (impl_->isInitialized()) (void)impl_->prepareParallelGeometryRecording();
+ }
  void ArtifactIRenderer::initializeHeadless(int w, int h)
  {
    impl_->initializeHeadless(w, h);
@@ -5598,6 +5867,10 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
  quint64 ArtifactIRenderer::presentSkippedCount() const { return impl_->presentSkippedCount(); }
  quint64 ArtifactIRenderer::deferredWorkerSubmitCount() const
  { return impl_->deferredWorkerSubmitCount(); }
+ quint64 ArtifactIRenderer::deferredWorkerShadowMapOverlapCount() const
+ { return impl_->deferredWorkerShadowMapOverlapCount(); }
+quintptr ArtifactIRenderer::lastShadowMapExecutionThreadId() const noexcept
+{ return impl_->lastShadowMapExecutionThreadId(); }
  quint64 ArtifactIRenderer::deferredContextWorkCount() const
  { return impl_->deferredContextWorkCount(); }
  QString ArtifactIRenderer::deferredContextWorkDebugState() const
@@ -7148,6 +7421,17 @@ Diligent::ITextureView* ArtifactIRenderer::textureForVideoFrame(
     const ArtifactCore::ImageUploadBuffer* preparedUpload, bool residentOnly) {
   return impl_->primitiveRenderer_.textureForVideoFrame(
       image, videoLayerId, frameContentKey, preparedUpload, residentOnly,
+      &Impl::submitQueuedDrawsBeforeTextureOverwrite, impl_.get());
+}
+
+Diligent::ITextureView* ArtifactIRenderer::textureForVideoFrame(
+    const int width, const int height, const QUuid& videoLayerId,
+    const qint64 frameContentKey, const quint64 contentRevision,
+    const ArtifactCore::ImageUploadBuffer& preparedUpload,
+    const bool residentOnly) {
+  return impl_->primitiveRenderer_.textureForVideoFrame(
+      width, height, videoLayerId, frameContentKey, contentRevision,
+      preparedUpload, residentOnly,
       &Impl::submitQueuedDrawsBeforeTextureOverwrite, impl_.get());
 }
 

@@ -166,6 +166,13 @@ public:
         bool residentOnly,
         bool (*beforeTextureOverwrite)(void*) = nullptr,
         void* beforeTextureOverwriteUserData = nullptr);
+    ITextureView* textureForVideoFrame(
+        int width, int height, const QUuid& videoLayerId,
+        qint64 frameContentKey, quint64 contentRevision,
+        const ArtifactCore::ImageUploadBuffer& preparedUpload,
+        bool residentOnly,
+        bool (*beforeTextureOverwrite)(void*) = nullptr,
+        void* beforeTextureOverwriteUserData = nullptr);
     ITextureView* textureForImage(const QImage& image);
     void drawTextureLocal(float x, float y, float w, float h, ITextureView* pSRV, float opacity = 1.0f);
     void drawMaskedTextureLocal(float x, float y, float w, float h, ITextureView* sceneSRV, const QImage& maskImage, float opacity = 1.0f);

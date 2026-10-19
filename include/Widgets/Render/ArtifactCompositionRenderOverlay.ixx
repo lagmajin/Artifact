@@ -21,9 +21,15 @@ import Artifact.Render.IRenderer;
 import Color.Float;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
+import Frame.Position;
 import Artifact.Widgets.PieMenu;
 
 export namespace Artifact {
+
+void drawVisualDensityOverlay(ArtifactIRenderer *renderer,
+                              const ArtifactCompositionPtr &comp,
+                              const ArtifactAbstractLayerPtr &selectedLayer,
+                              const ArtifactCore::FramePosition &currentFrame);
 
 void drawCompositionRegionOverlay(ArtifactIRenderer *renderer,
                                   const ArtifactCompositionPtr &comp);

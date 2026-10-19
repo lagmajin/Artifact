@@ -18,6 +18,7 @@ module;
 #include <QTransform>
 #include <QUuid>
 #include <QWidget>
+#include <windows.h>
 #include <QtGlobal>
 #include <RefCntAutoPtr.hpp>
 #include <RenderDevice.h>
@@ -186,6 +187,15 @@ public:
   ~ArtifactIRenderer();
 
   void initialize(QWidget *widget);
+  // GUI creates and owns the native render HWND, then passes its handle and
+  // physical size; this path acquires the app's shared device/context.
+  void initializeOnRenderThread(HWND renderHwnd, int physicalWidth,
+                                int physicalHeight);
+  // Creates a separate device/context for a dedicated drawing owner. GPU
+  // resources from the app's shared device must not be passed to this renderer.
+  void initializeIndependentOnRenderThread(HWND renderHwnd, int physicalWidth,
+                                          int physicalHeight,
+                                          int adapterId = -1);
   void initializeHeadless(int width, int height);
   // Opt in to the production Cloner GPU placement and sprite pipelines for
   // headless renderer contract tests. The existing overload remains disabled.
@@ -256,6 +266,8 @@ public:
   quint64 presentFailureCount() const;
   quint64 presentSkippedCount() const;
   quint64 deferredWorkerSubmitCount() const;
+  quint64 deferredWorkerShadowMapOverlapCount() const;
+  quintptr lastShadowMapExecutionThreadId() const noexcept;
   quint64 deferredContextWorkCount() const;
   QString deferredContextWorkDebugState() const;
   QString lastPresentStatus() const;
@@ -606,6 +618,13 @@ public:
       const QUuid& videoLayerId, qint64 frameContentKey,
       const ArtifactCore::ImageUploadBuffer* preparedUpload,
         bool residentOnly);
+  // Resolve a prepared frame from plain dimensions and immutable upload data.
+  // This path does not access the QObject-backed CPU image cache.
+  Diligent::ITextureView* textureForVideoFrame(
+      int width, int height, const QUuid& videoLayerId,
+      qint64 frameContentKey, quint64 contentRevision,
+      const ArtifactCore::ImageUploadBuffer& preparedUpload,
+      bool residentOnly);
   Diligent::ITextureView* textureForImage(const QImage& image);
 
   // Gizmo specialized APIs

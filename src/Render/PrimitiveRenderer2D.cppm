@@ -554,10 +554,179 @@ public:
         pGlyphAtlas_->clearDirty();
         return true;
     }
+    ITextureView* resolveVideoFrameTexture(
+        const ArtifactCore::ImageF32x4_RGBA* image, int width, int height,
+        const QUuid& videoLayerId, qint64 uploadContentKey,
+        const ArtifactCore::ImageUploadBuffer* preparedUpload,
+        bool residentOnly,
+        bool (*beforeTextureOverwrite)(void*) = nullptr,
+        void* beforeTextureOverwriteUserData = nullptr);
+
     bool hasRenderTarget() const {
         return cmdBuf_ != nullptr && (m_overrideRTV != nullptr || pSwapChain_ != nullptr);
     }
 };
+
+ITextureView* PrimitiveRenderer2D::Impl::resolveVideoFrameTexture(
+    const ArtifactCore::ImageF32x4_RGBA* image, const int width,
+    const int height, const QUuid& videoLayerId,
+    const qint64 uploadContentKey,
+    const ArtifactCore::ImageUploadBuffer* preparedUpload,
+    const bool residentOnly,
+    bool (*beforeTextureOverwrite)(void*),
+    void* beforeTextureOverwriteUserData) {
+    m_lastResolvedVideoTextureView.Release();
+    if (width <= 0 || height <= 0 || videoLayerId.isNull() || !pDevice_ ||
+        !pContext_ || (!image && !preparedUpload)) {
+        return nullptr;
+    }
+
+    static const bool profileVideoTexturePool = [] {
+        return qEnvironmentVariableIsSet(
+                   "ARTIFACT_VIDEO_PREVIEW_PROFILE_UPLOAD") &&
+               qEnvironmentVariable(
+                   "ARTIFACT_VIDEO_PREVIEW_PROFILE_UPLOAD") !=
+                   QStringLiteral("0");
+    }();
+    static int videoTexturePoolProfileSamples = 0;
+    static int preparedTexturePoolProfileSamples = 0;
+    const bool profileThisUpload =
+        profileVideoTexturePool &&
+        (preparedUpload ? preparedTexturePoolProfileSamples++ < 2048
+                        : videoTexturePoolProfileSamples++ < 24);
+    QElapsedTimer profileTimer;
+    if (profileThisUpload) profileTimer.start();
+
+    ++m_textureAccessSequence;
+    const qint64 cacheKey = static_cast<qint64>(qHashMulti(
+        quint64{0x564944454f544558ull}, videoLayerId, width, height));
+    auto it = m_spriteTexCache.find(cacheKey);
+    if (it != m_spriteTexCache.end() &&
+        !it->second.reusableVideoTexture) {
+        it = m_spriteTexCache.end();
+    }
+    const bool poolHit = it != m_spriteTexCache.end();
+    // Resident playback never allocates, converts, or uploads on a miss.
+    // The caller keeps the existing streaming upload path as its fallback.
+    if (residentOnly && (!poolHit || !it->second.hasVideoContent ||
+                         it->second.contentKey != uploadContentKey)) {
+        return nullptr;
+    }
+
+    // Reuse a bounded render-thread upload allocation across video frames.
+    // Oversized frames use a one-shot buffer and cannot grow the retained slot.
+    static thread_local ArtifactCore::ImageUploadBuffer videoUploadBuffer;
+    ArtifactCore::ImageUploadBuffer oversizedUpload;
+    constexpr std::size_t kVideoUploadPoolMaxBytes = 64u * 1024u * 1024u;
+    const std::size_t uploadBytes =
+        static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4u;
+    const bool usePooledUpload = uploadBytes <= kVideoUploadPoolMaxBytes;
+    const ArtifactCore::ImageUploadBuffer* upload = preparedUpload;
+    if (it == m_spriteTexCache.end() || !it->second.hasVideoContent ||
+        it->second.contentKey != uploadContentKey) {
+        if (!upload) {
+            if (!image) return nullptr;
+            ArtifactCore::ImageUploadBuffer& scratch =
+                usePooledUpload ? videoUploadBuffer : oversizedUpload;
+            ArtifactCore::convertImageForUploadInto(
+                *image, ArtifactCore::ImageUploadTarget::Rgba8SrgbStraight,
+                scratch);
+            upload = &scratch;
+        }
+        if (!upload->isValid() || upload->width != width ||
+            upload->height != height) {
+            return nullptr;
+        }
+    }
+    const qint64 convertMs = profileThisUpload
+        ? profileTimer.nsecsElapsed() / 1000000
+        : 0;
+
+    qint64 createTextureMs = 0;
+    if (it == m_spriteTexCache.end()) {
+        TextureDesc desc;
+        desc.Name = "Artifact.VideoPreviewTexturePoolSlot";
+        desc.Type = RESOURCE_DIM_TEX_2D;
+        desc.Width = static_cast<Uint32>(width);
+        desc.Height = static_cast<Uint32>(height);
+        desc.Format = TEX_FORMAT_RGBA8_UNORM_SRGB;
+        desc.MipLevels = 1;
+        desc.Usage = USAGE_DEFAULT;
+        desc.BindFlags = BIND_SHADER_RESOURCE;
+        desc.CPUAccessFlags = CPU_ACCESS_NONE;
+        RefCntAutoPtr<ITexture> texture;
+        if (profileThisUpload) profileTimer.restart();
+        pDevice_->CreateTexture(desc, nullptr, &texture);
+        createTextureMs = profileThisUpload
+            ? profileTimer.nsecsElapsed() / 1000000
+            : 0;
+        if (!texture) {
+            return nullptr;
+        }
+        cacheTexture(m_spriteTexCache, cacheKey, texture);
+        it = m_spriteTexCache.find(cacheKey);
+        if (it == m_spriteTexCache.end()) {
+            return nullptr;
+        }
+        it->second.reusableVideoTexture = true;
+    }
+
+    it->second.lastUsedAccess = m_textureAccessSequence;
+    qint64 updateTextureMs = 0;
+    if (!it->second.hasVideoContent ||
+        it->second.contentKey != uploadContentKey) {
+        const auto beforeOverwrite = beforeTextureOverwrite
+            ? beforeTextureOverwrite
+            : beforeTextureOverwrite_;
+        void* const beforeOverwriteUserData = beforeTextureOverwrite
+            ? beforeTextureOverwriteUserData
+            : beforeTextureOverwriteUserData_;
+        // A packet samples the old pixels when its command list is executed.
+        // Drain only if this exact reusable slot still has a queued or
+        // in-flight reader.
+        if (it->second.lastOutstandingVideoUseEpoch ==
+                m_videoTextureQueueEpoch) {
+            if (!beforeOverwrite ||
+                !beforeOverwrite(beforeOverwriteUserData)) {
+                return nullptr;
+            }
+        }
+        TextureSubResData subresource;
+        subresource.pData = upload->bytes.data();
+        subresource.Stride = upload->rowStride;
+        const Box updateBox(0, upload->width, 0, upload->height, 0, 1);
+        if (profileThisUpload) profileTimer.restart();
+        pContext_->UpdateTexture(
+            it->second.pTexture, 0, 0, updateBox, subresource,
+            RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
+            RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        updateTextureMs = profileThisUpload
+            ? profileTimer.nsecsElapsed() / 1000000
+            : 0;
+        it->second.contentKey = uploadContentKey;
+        it->second.hasVideoContent = true;
+    }
+
+    if (profileThisUpload) {
+        std::fprintf(stderr,
+                     "[VideoPreviewTexturePoolProfile] convertMs=%lld "
+                     "createTextureMs=%lld updateTextureMs=%lld poolHit=%d "
+                     "prepared=%d size=%dx%d\n",
+                     static_cast<long long>(convertMs),
+                     static_cast<long long>(createTextureMs),
+                     static_cast<long long>(updateTextureMs), poolHit ? 1 : 0,
+                     preparedUpload ? 1 : 0, width, height);
+    }
+
+    auto* view = it->second.pTexture
+        ? it->second.pTexture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE)
+        : nullptr;
+    if (view) {
+        m_lastResolvedVideoTextureCacheKey = cacheKey;
+        m_lastResolvedVideoTextureView = view;
+    }
+    return view;
+}
 
 PrimitiveRenderer2D::PrimitiveRenderer2D()
     : impl_(new Impl())
@@ -1771,162 +1940,32 @@ ITextureView* PrimitiveRenderer2D::textureForVideoFrame(
     const ArtifactCore::ImageUploadBuffer* preparedUpload, bool residentOnly,
     bool (*beforeTextureOverwrite)(void*),
     void* beforeTextureOverwriteUserData) {
-    impl_->m_lastResolvedVideoTextureView.Release();
     if (image.isEmpty() || videoLayerId.isNull() || !impl_->pDevice_ ||
         !impl_->pContext_) {
+        impl_->m_lastResolvedVideoTextureView.Release();
         return nullptr;
     }
-
-    static const bool profileVideoTexturePool = [] {
-        return qEnvironmentVariableIsSet(
-                   "ARTIFACT_VIDEO_PREVIEW_PROFILE_UPLOAD") &&
-               qEnvironmentVariable(
-                   "ARTIFACT_VIDEO_PREVIEW_PROFILE_UPLOAD") !=
-                   QStringLiteral("0");
-    }();
-    static int videoTexturePoolProfileSamples = 0;
-    static int preparedTexturePoolProfileSamples = 0;
-    const bool profileThisUpload =
-        profileVideoTexturePool &&
-        (preparedUpload ? preparedTexturePoolProfileSamples++ < 2048
-                        : videoTexturePoolProfileSamples++ < 24);
-    QElapsedTimer profileTimer;
-    if (profileThisUpload) profileTimer.start();
-
-    ++impl_->m_textureAccessSequence;
     const qint64 uploadContentKey = static_cast<qint64>(qHashMulti(
         quint64{0x564944454f46524dull}, frameContentKey,
         computeImageContentKey(image)));
-    const qint64 cacheKey = static_cast<qint64>(qHashMulti(
-        quint64{0x564944454f544558ull}, videoLayerId, image.width(),
-        image.height()));
-    auto it = impl_->m_spriteTexCache.find(cacheKey);
-    if (it != impl_->m_spriteTexCache.end() &&
-        !it->second.reusableVideoTexture) {
-        it = impl_->m_spriteTexCache.end();
-    }
-    const bool poolHit = it != impl_->m_spriteTexCache.end();
-    // Resident playback never allocates, converts, or uploads on a miss.
-    // The caller keeps the existing streaming upload path as its fallback.
-    if (residentOnly && (!poolHit || !it->second.hasVideoContent ||
-                         it->second.contentKey != uploadContentKey)) {
-        return nullptr;
-    }
+    return impl_->resolveVideoFrameTexture(
+        &image, image.width(), image.height(), videoLayerId, uploadContentKey,
+        preparedUpload, residentOnly, beforeTextureOverwrite,
+        beforeTextureOverwriteUserData);
+}
 
-    // Reuse a bounded render-thread upload allocation across video frames.
-    // Oversized frames use a one-shot buffer and cannot grow the retained slot.
-    static thread_local ArtifactCore::ImageUploadBuffer videoUploadBuffer;
-    ArtifactCore::ImageUploadBuffer oversizedUpload;
-    constexpr std::size_t kVideoUploadPoolMaxBytes = 64u * 1024u * 1024u;
-    const std::size_t uploadBytes =
-        static_cast<std::size_t>(image.width()) *
-        static_cast<std::size_t>(image.height()) * 4u;
-    const bool usePooledUpload = uploadBytes <= kVideoUploadPoolMaxBytes;
-    const ArtifactCore::ImageUploadBuffer* upload = preparedUpload;
-    if (it == impl_->m_spriteTexCache.end() ||
-        !it->second.hasVideoContent ||
-        it->second.contentKey != uploadContentKey) {
-        if (!upload) {
-            ArtifactCore::ImageUploadBuffer& scratch =
-                usePooledUpload ? videoUploadBuffer : oversizedUpload;
-            ArtifactCore::convertImageForUploadInto(
-                image, ArtifactCore::ImageUploadTarget::Rgba8SrgbStraight,
-                scratch);
-            upload = &scratch;
-        }
-        if (!upload->isValid() || upload->width != image.width() ||
-            upload->height != image.height()) {
-            return nullptr;
-        }
-    }
-    const qint64 convertMs = profileThisUpload
-        ? profileTimer.nsecsElapsed() / 1000000
-        : 0;
-
-    qint64 createTextureMs = 0;
-    if (it == impl_->m_spriteTexCache.end()) {
-        TextureDesc desc;
-        desc.Name = "Artifact.VideoPreviewTexturePoolSlot";
-        desc.Type = RESOURCE_DIM_TEX_2D;
-        desc.Width = static_cast<Uint32>(image.width());
-        desc.Height = static_cast<Uint32>(image.height());
-        desc.Format = TEX_FORMAT_RGBA8_UNORM_SRGB;
-        desc.MipLevels = 1;
-        desc.Usage = USAGE_DEFAULT;
-        desc.BindFlags = BIND_SHADER_RESOURCE;
-        desc.CPUAccessFlags = CPU_ACCESS_NONE;
-        RefCntAutoPtr<ITexture> texture;
-        if (profileThisUpload) profileTimer.restart();
-        impl_->pDevice_->CreateTexture(desc, nullptr, &texture);
-        createTextureMs = profileThisUpload
-            ? profileTimer.nsecsElapsed() / 1000000
-            : 0;
-        if (!texture) {
-            return nullptr;
-        }
-        impl_->cacheTexture(impl_->m_spriteTexCache, cacheKey, texture);
-        it = impl_->m_spriteTexCache.find(cacheKey);
-        if (it == impl_->m_spriteTexCache.end()) {
-            return nullptr;
-        }
-        it->second.reusableVideoTexture = true;
-    }
-
-    it->second.lastUsedAccess = impl_->m_textureAccessSequence;
-    qint64 updateTextureMs = 0;
-    if (!it->second.hasVideoContent ||
-        it->second.contentKey != uploadContentKey) {
-        const auto beforeOverwrite = beforeTextureOverwrite
-            ? beforeTextureOverwrite
-            : impl_->beforeTextureOverwrite_;
-        void* const beforeOverwriteUserData = beforeTextureOverwrite
-            ? beforeTextureOverwriteUserData
-            : impl_->beforeTextureOverwriteUserData_;
-        // A packet samples the old pixels when its command list is executed.
-        // Drain only if this exact reusable slot still has a queued or
-        // in-flight reader.
-        if (it->second.lastOutstandingVideoUseEpoch ==
-                impl_->m_videoTextureQueueEpoch) {
-            if (!beforeOverwrite ||
-                !beforeOverwrite(beforeOverwriteUserData)) {
-                return nullptr;
-            }
-        }
-        TextureSubResData subresource;
-        subresource.pData = upload->bytes.data();
-        subresource.Stride = upload->rowStride;
-        const Box updateBox(0, upload->width, 0, upload->height, 0, 1);
-        if (profileThisUpload) profileTimer.restart();
-        impl_->pContext_->UpdateTexture(
-            it->second.pTexture, 0, 0, updateBox, subresource,
-            RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
-            RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-        updateTextureMs = profileThisUpload
-            ? profileTimer.nsecsElapsed() / 1000000
-            : 0;
-        it->second.contentKey = uploadContentKey;
-        it->second.hasVideoContent = true;
-    }
-
-    if (profileThisUpload) {
-        std::fprintf(stderr,
-                     "[VideoPreviewTexturePoolProfile] convertMs=%lld "
-                     "createTextureMs=%lld updateTextureMs=%lld poolHit=%d "
-                     "prepared=%d size=%dx%d\n",
-                     static_cast<long long>(convertMs),
-                     static_cast<long long>(createTextureMs),
-                     static_cast<long long>(updateTextureMs), poolHit ? 1 : 0,
-                     preparedUpload ? 1 : 0, image.width(), image.height());
-    }
-
-    auto* view = it->second.pTexture
-        ? it->second.pTexture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE)
-        : nullptr;
-    if (view) {
-        impl_->m_lastResolvedVideoTextureCacheKey = cacheKey;
-        impl_->m_lastResolvedVideoTextureView = view;
-    }
-    return view;
+ITextureView* PrimitiveRenderer2D::textureForVideoFrame(
+    const int width, const int height, const QUuid& videoLayerId,
+    const qint64 frameContentKey, const quint64 contentRevision,
+    const ArtifactCore::ImageUploadBuffer& preparedUpload,
+    const bool residentOnly,
+    bool (*beforeTextureOverwrite)(void*),
+    void* beforeTextureOverwriteUserData) {
+    const qint64 uploadContentKey = static_cast<qint64>(qHashMulti(
+        quint64{0x52414d5052455655ull}, frameContentKey, contentRevision));
+    return impl_->resolveVideoFrameTexture(
+        nullptr, width, height, videoLayerId, uploadContentKey, &preparedUpload,
+        residentOnly, beforeTextureOverwrite, beforeTextureOverwriteUserData);
 }
 
 ITextureView* PrimitiveRenderer2D::textureForImage(const QImage& image) {

@@ -589,6 +589,9 @@ bool isInteractiveRenderRegionDragActive() const;
   bool requestCurrentFrameImageAsync(
       std::function<void(QImage, quint64)> completion) const;
   quint64 currentFrameSerial() const;
+  // Native thread id that last entered the production Composition frame body.
+  // Intended for renderer ownership diagnostics and integration contracts.
+  quintptr lastFrameExecutionThreadId() const noexcept;
   // Metadata-only sampling avoids GPU readback during playback.
   ArtifactCore::FrameDebugSnapshot frameDebugSnapshot(bool includePreviews = true) const;
   ArtifactCore::FrameDebugSnapshot frameDebugCounters() const;

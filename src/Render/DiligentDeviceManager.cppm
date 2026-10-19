@@ -4,6 +4,7 @@ module;
 #include <limits>
 #include <iterator>
 #include <QWidget>
+#include <QThread>
 #include <QDebug>
 #include <QSize>
 #include <QString>
@@ -222,6 +223,8 @@ namespace {
         bool trimCallbackRegistered = false;
 #endif
     };
+
+    thread_local ScopedRenderDeviceBinding* currentRenderDeviceBinding = nullptr;
 
 #if D3D12_SDK_VERSION >= 619
     void __stdcall onD3D12TrimNotification(
@@ -1149,6 +1152,16 @@ bool acquireSharedRenderDeviceForCurrentBackend(
     RefCntAutoPtr<IRenderDevice>& outDevice,
     RefCntAutoPtr<IDeviceContext>& outImmediateContext)
 {
+    if (currentRenderDeviceBinding &&
+        currentRenderDeviceBinding->active_ &&
+        currentRenderDeviceBinding->device_ &&
+        currentRenderDeviceBinding->immediateContext_) {
+        ++currentRenderDeviceBinding->activeAcquisitionCount_;
+        outDevice = currentRenderDeviceBinding->device_;
+        outImmediateContext = currentRenderDeviceBinding->immediateContext_;
+        return true;
+    }
+
     auto& shared = sharedRenderDeviceState();
     std::lock_guard<std::mutex> lock(shared.mutex);
 
@@ -1209,6 +1222,35 @@ bool acquireSharedRenderDeviceForCurrentBackend(
     return true;
 }
 
+ScopedRenderDeviceBinding::ScopedRenderDeviceBinding(
+    RefCntAutoPtr<IRenderDevice> device,
+    RefCntAutoPtr<IDeviceContext> immediateContext)
+    : device_(std::move(device)),
+      immediateContext_(std::move(immediateContext))
+{
+    if (!device_ || !immediateContext_ || currentRenderDeviceBinding) {
+        return;
+    }
+    active_ = true;
+    currentRenderDeviceBinding = this;
+}
+
+ScopedRenderDeviceBinding::~ScopedRenderDeviceBinding()
+{
+    if (!active_) {
+        return;
+    }
+    if (activeAcquisitionCount_ != 0) {
+        qWarning() << "[DiligentDeviceManager] render-device binding ended with"
+                   << activeAcquisitionCount_
+                   << "unreleased thread-local device acquisitions";
+    }
+    if (currentRenderDeviceBinding == this) {
+        currentRenderDeviceBinding = nullptr;
+    }
+    active_ = false;
+}
+
 SharedRenderDeviceLease::~SharedRenderDeviceLease()
 {
     if (active_) {
@@ -1230,6 +1272,12 @@ bool SharedRenderDeviceLease::acquire(
 
 void releaseSharedRenderDevice()
 {
+    if (currentRenderDeviceBinding &&
+        currentRenderDeviceBinding->activeAcquisitionCount_ > 0) {
+        --currentRenderDeviceBinding->activeAcquisitionCount_;
+        return;
+    }
+
     auto& shared = sharedRenderDeviceState();
     std::lock_guard<std::mutex> lock(shared.mutex);
 
@@ -1411,6 +1459,7 @@ public:
     bool initialized_ = false;
     bool deviceLost_ = false;
     bool usingSharedDevice_ = false;
+    bool ownsRenderHwnd_ = true;
     int currentPhysicalWidth_ = 0;
     int currentPhysicalHeight_ = 0;
     qreal currentDevicePixelRatio_ = 1.0;
@@ -1435,12 +1484,19 @@ public:
     }
 
     void initialize(QWidget* widget);
+    void initializeOnRenderThread(HWND renderHwnd, int physicalWidth,
+                                  int physicalHeight, const QString& owner);
+    void initializeIndependentOnRenderThread(
+        HWND renderHwnd, int physicalWidth, int physicalHeight,
+        const QString& owner, int adapterId);
     void initializeHeadless();
     void initializeHeadlessWithAdapter(int adapterId);
     void createSwapChain(QWidget* widget);
     void recreateSwapChain(QWidget* widget);
     void destroy();
     bool ensureRenderChildWindow(QWidget* widget, int width, int height,
+                                 const char* reason);
+    bool ensureRenderChildWindow(HWND parentHwnd, int width, int height,
                                  const char* reason);
     bool createSwapChainForBackend(HWND hwnd, int width, int height);
 };
@@ -1543,6 +1599,138 @@ void DiligentDeviceManager::Impl::initialize(QWidget* widget)
     VP.TopLeftX = 0.0f;
     VP.TopLeftY = 0.0f;
     immediateContext_->SetViewports(1, &VP, currentPhysicalWidth_, currentPhysicalHeight_);
+}
+
+void DiligentDeviceManager::Impl::initializeOnRenderThread(
+    const HWND renderHwnd, const int physicalWidth, const int physicalHeight,
+    const QString& owner)
+{
+    if (!renderHwnd || physicalWidth <= 0 || physicalHeight <= 0 ||
+        initialized_ || device_) {
+        qWarning() << "[DiligentDeviceManager] render-thread initialization rejected"
+                   << "renderHwnd=" << reinterpret_cast<quintptr>(renderHwnd)
+                   << "size=" << physicalWidth << "x" << physicalHeight
+                   << "initialized=" << initialized_;
+        return;
+    }
+
+    if (!acquireSharedRenderDeviceForCurrentBackend(device_,
+                                                     immediateContext_)) {
+        return;
+    }
+    usingSharedDevice_ = true;
+    if (!device_ || !immediateContext_) {
+        device_.Release();
+        immediateContext_.Release();
+        releaseSharedRenderDevice();
+        usingSharedDevice_ = false;
+        return;
+    }
+    device_->CreateDeferredContext(&deferredContext_);
+    rtSupported_ = device_->GetDeviceInfo().Features.RayTracing !=
+                   DEVICE_FEATURE_STATE_DISABLED;
+    agilityCapabilities_ = queryD3D12AgilityCapabilities(device_);
+    currentPhysicalWidth_ = physicalWidth;
+    currentPhysicalHeight_ = physicalHeight;
+    currentDevicePixelRatio_ = 1.0;
+    renderHwnd_ = renderHwnd;
+    renderParentHwnd_ = GetParent(renderHwnd);
+    ownsRenderHwnd_ = false;
+
+    if (!createSwapChainForBackend(renderHwnd_, physicalWidth, physicalHeight)) {
+        qWarning() << "[DiligentDeviceManager] render-thread swapchain creation failed"
+                   << "owner=" << owner
+                   << "renderHwnd=" << reinterpret_cast<quintptr>(renderHwnd)
+                   << "child=" << reinterpret_cast<quintptr>(renderHwnd_)
+                   << "size=" << physicalWidth << "x" << physicalHeight;
+        destroy();
+        return;
+    }
+
+    initialized_ = true;
+    Diligent::Viewport viewport;
+    viewport.Width = static_cast<float>(physicalWidth);
+    viewport.Height = static_cast<float>(physicalHeight);
+    viewport.MinDepth = 0.0f;
+    viewport.MaxDepth = 1.0f;
+    viewport.TopLeftX = 0.0f;
+    viewport.TopLeftY = 0.0f;
+    immediateContext_->SetViewports(1, &viewport, physicalWidth, physicalHeight);
+    qInfo() << "[DiligentDeviceManager] render-thread device initialized"
+            << "owner=" << owner
+            << "type=" << deviceTypeName(device_->GetDeviceInfo().Type)
+            << "thread=" << QThread::currentThreadId()
+            << "renderHwnd=" << reinterpret_cast<quintptr>(renderHwnd)
+            << "surface=" << reinterpret_cast<quintptr>(renderHwnd_)
+            << "size=" << physicalWidth << "x" << physicalHeight;
+}
+
+void DiligentDeviceManager::Impl::initializeIndependentOnRenderThread(
+    const HWND renderHwnd, const int physicalWidth, const int physicalHeight,
+    const QString& owner, const int adapterId)
+{
+    if (!renderHwnd || physicalWidth <= 0 || physicalHeight <= 0 ||
+        initialized_ || device_) {
+        qWarning() << "[DiligentDeviceManager] independent render-thread initialization rejected"
+                   << "renderHwnd=" << reinterpret_cast<quintptr>(renderHwnd)
+                   << "size=" << physicalWidth << "x" << physicalHeight
+                   << "initialized=" << initialized_;
+        return;
+    }
+
+    if (sharedRenderDeviceType() == RENDER_DEVICE_TYPE_VULKAN) {
+        qWarning() << "[DiligentDeviceManager] independent Vulkan renderer rejected while the app shared Vulkan device is active"
+                   << "owner=" << owner;
+        return;
+    }
+
+    IndependentRenderDevice independentDevice;
+    if (!createIndependentRenderDevice(owner, adapterId, independentDevice)) {
+        return;
+    }
+    device_ = independentDevice.device;
+    immediateContext_ = independentDevice.immediateContext;
+    rtSupported_ = device_->GetDeviceInfo().Features.RayTracing !=
+                   DEVICE_FEATURE_STATE_DISABLED;
+    agilityCapabilities_ = queryD3D12AgilityCapabilities(device_);
+    device_->CreateDeferredContext(&deferredContext_);
+    if (!deferredContext_) {
+        device_.Release();
+        immediateContext_.Release();
+        agilityCapabilities_ = {};
+        return;
+    }
+
+    currentPhysicalWidth_ = physicalWidth;
+    currentPhysicalHeight_ = physicalHeight;
+    currentDevicePixelRatio_ = 1.0;
+    renderHwnd_ = renderHwnd;
+    renderParentHwnd_ = GetParent(renderHwnd);
+    ownsRenderHwnd_ = false;
+    if (!createSwapChainForBackend(renderHwnd_, physicalWidth, physicalHeight)) {
+        qWarning() << "[DiligentDeviceManager] independent render-thread swapchain creation failed"
+                   << "owner=" << owner
+                   << "renderHwnd=" << reinterpret_cast<quintptr>(renderHwnd)
+                   << "size=" << physicalWidth << "x" << physicalHeight;
+        destroy();
+        return;
+    }
+
+    initialized_ = true;
+    Diligent::Viewport viewport;
+    viewport.Width = static_cast<float>(physicalWidth);
+    viewport.Height = static_cast<float>(physicalHeight);
+    viewport.MinDepth = 0.0f;
+    viewport.MaxDepth = 1.0f;
+    viewport.TopLeftX = 0.0f;
+    viewport.TopLeftY = 0.0f;
+    immediateContext_->SetViewports(1, &viewport, physicalWidth, physicalHeight);
+    qInfo() << "[DiligentDeviceManager] independent render-thread device initialized"
+            << "owner=" << owner
+            << "type=" << deviceTypeName(device_->GetDeviceInfo().Type)
+            << "thread=" << QThread::currentThreadId()
+            << "renderHwnd=" << reinterpret_cast<quintptr>(renderHwnd)
+            << "size=" << physicalWidth << "x" << physicalHeight;
 }
 
 void DiligentDeviceManager::Impl::initializeHeadless()
@@ -1711,6 +1899,18 @@ bool DiligentDeviceManager::Impl::ensureRenderChildWindow(
         return false;
     }
 
+    return ensureRenderChildWindow(parentHwnd, width, height, reason);
+}
+
+bool DiligentDeviceManager::Impl::ensureRenderChildWindow(
+    const HWND parentHwnd, int width, int height, const char* reason)
+{
+    if (!parentHwnd) {
+        qWarning() << "[DiligentDeviceManager] render HWND parent missing"
+                   << "reason=" << reason;
+        return false;
+    }
+
     const int safeWidth = (std::max)(width, 1);
     const int safeHeight = (std::max)(height, 1);
     if (!renderHwnd_) {
@@ -1723,6 +1923,7 @@ bool DiligentDeviceManager::Impl::ensureRenderChildWindow(
             0, 0, safeWidth, safeHeight,
             parentHwnd, nullptr, GetModuleHandle(nullptr), nullptr);
         renderParentHwnd_ = parentHwnd;
+        ownsRenderHwnd_ = renderHwnd_ != nullptr;
         qInfo() << "[DiligentDeviceManager] render child HWND created"
                 << "reason=" << reason << "parent="
                 << reinterpret_cast<quintptr>(parentHwnd)
@@ -1818,11 +2019,12 @@ void DiligentDeviceManager::Impl::destroy()
 
     swapChain_.Release();
 
-    if (renderHwnd_) {
+    if (renderHwnd_ && ownsRenderHwnd_) {
         DestroyWindow(renderHwnd_);
-        renderHwnd_ = nullptr;
     }
+    renderHwnd_ = nullptr;
     renderParentHwnd_ = nullptr;
+    ownsRenderHwnd_ = true;
 
     deferredContext_.Release();
     immediateContext_.Release();
@@ -1855,6 +2057,26 @@ DiligentDeviceManager::~DiligentDeviceManager()
 void DiligentDeviceManager::initialize(QWidget* widget)
 {
     impl_->initialize(widget);
+    qInfo().noquote() << "[DiligentDeviceManager][Agility]"
+                      << d3d12AgilityDebugState();
+}
+
+void DiligentDeviceManager::initializeOnRenderThread(
+    const HWND renderHwnd, const int physicalWidth, const int physicalHeight,
+    const QString& owner)
+{
+    impl_->initializeOnRenderThread(renderHwnd, physicalWidth, physicalHeight,
+                                    owner);
+    qInfo().noquote() << "[DiligentDeviceManager][Agility]"
+                      << d3d12AgilityDebugState();
+}
+
+void DiligentDeviceManager::initializeIndependentOnRenderThread(
+    const HWND renderHwnd, const int physicalWidth, const int physicalHeight,
+    const QString& owner, const int adapterId)
+{
+    impl_->initializeIndependentOnRenderThread(
+        renderHwnd, physicalWidth, physicalHeight, owner, adapterId);
     qInfo().noquote() << "[DiligentDeviceManager][Agility]"
                       << d3d12AgilityDebugState();
 }

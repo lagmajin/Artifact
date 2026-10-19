@@ -72,12 +72,14 @@ private:
     void createSpriteResources(TEXTURE_FORMAT rtvFormat);
     void resetTextureTable();
     bool ensureTextureIndex(ITextureView* srv, Uint32& index);
-    void flushSpriteBatch(IDeviceContext* ctx, ITextureView* rtv);
+    bool flushSpriteBatch(IDeviceContext* ctx, ITextureView* rtv);
     bool submitSprite(const SpritePkt& pkt, IDeviceContext* ctx, ITextureView* rtv);
     bool submitSpriteXform(const SpriteXformPkt& pkt, IDeviceContext* ctx, ITextureView* rtv);
 
     DiligentImmediateSubmitter fallback_;
+    PrimitiveRenderer3D* primitiveRenderer3D_ = nullptr;
     RefCntAutoPtr<IRenderDevice> device_;
+    RefCntAutoPtr<IDeviceContext> deferredCtx_;
     RefCntAutoPtr<IPipelineState> spritePso_;
     RefCntAutoPtr<IShaderResourceBinding> spriteSrb_;
     RefCntAutoPtr<IBuffer> spriteVertexBuffer_;

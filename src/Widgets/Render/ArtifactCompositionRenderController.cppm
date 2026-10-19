@@ -33,6 +33,7 @@ module;
 #include <QDir>
 #include <QSaveFile>
 #include <QStandardPaths>
+#include <QThread>
 
 #include <QFuture>
 
@@ -258,6 +259,7 @@ import Tracking.MotionTracker;
 
 import Artifact.Render.OffscreenComposition;
 import Artifact.Render.PointwiseEffectFusion;
+import Artifact.Widgets.CompositionHostFrameSnapshot;
 
 import ExposureEffect;
 import HueAndSaturation;
@@ -2305,50 +2307,6 @@ double clamp01(double value);
 
 
 
-FloatColor densityHeatmapColor(float normalized)
-
-{
-
-  const float t = std::clamp(normalized, 0.0f, 1.0f);
-
-  const FloatColor cool{0.18f, 0.76f, 1.0f, 1.0f};
-
-  const FloatColor mid{1.0f, 0.76f, 0.24f, 1.0f};
-
-  const FloatColor hot{1.0f, 0.24f, 0.22f, 1.0f};
-
-  if (t < 0.5f) {
-
-    const float u = t / 0.5f;
-
-    return FloatColor{
-
-        cool.r() + (mid.r() - cool.r()) * u,
-
-        cool.g() + (mid.g() - cool.g()) * u,
-
-        cool.b() + (mid.b() - cool.b()) * u,
-
-        1.0f};
-
-  }
-
-  const float u = (t - 0.5f) / 0.5f;
-
-  return FloatColor{
-
-      mid.r() + (hot.r() - mid.r()) * u,
-
-      mid.g() + (hot.g() - mid.g()) * u,
-
-      mid.b() + (hot.b() - mid.b()) * u,
-
-      1.0f};
-
-}
-
-
-
 QString densityAxisDisplayName(const QString &axis)
 
 {
@@ -2386,573 +2344,6 @@ QString densityAxisDisplayName(const QString &axis)
 QString densityWarningForDominantAxis(const QString &axis, double score);
 
 QString densityNextActionForAxis(const QString &axis);
-
-
-
-FloatColor densityAxisColor(const QString &axis)
-
-{
-
-  if (axis == QStringLiteral("visual")) {
-
-    return FloatColor{0.18f, 0.76f, 1.0f, 1.0f};
-
-  }
-
-  if (axis == QStringLiteral("information")) {
-
-    return FloatColor{1.0f, 0.76f, 0.24f, 1.0f};
-
-  }
-
-  if (axis == QStringLiteral("luminance")) {
-
-    return FloatColor{0.92f, 0.94f, 0.98f, 1.0f};
-
-  }
-
-  if (axis == QStringLiteral("motion")) {
-
-    return FloatColor{1.0f, 0.24f, 0.22f, 1.0f};
-
-  }
-
-  return FloatColor{0.72f, 0.80f, 0.88f, 1.0f};
-
-}
-
-
-
-void drawVisualDensityOverlay(ArtifactIRenderer *renderer,
-
-                              const ArtifactCompositionPtr &comp,
-
-                              const ArtifactAbstractLayerPtr &selectedLayer,
-
-                              const FramePosition &currentFrame)
-
-{
-
-  if (!renderer || !comp) {
-
-    return;
-
-  }
-
-  const auto activeMatteCount = [](const ArtifactAbstractLayerPtr& layer) {
-    return layerActiveMatteReferenceCount(layer.get());
-  };
-
-
-
-  const QSize compSize = comp->settings().compositionSize();
-
-  const float canvasW = static_cast<float>(compSize.width() > 0 ? compSize.width() : 1920);
-
-  const float canvasH = static_cast<float>(compSize.height() > 0 ? compSize.height() : 1080);
-
-  if (canvasW <= 0.0f || canvasH <= 0.0f) {
-
-    return;
-
-  }
-
-
-
-  constexpr int kColumns = 12;
-
-  constexpr int kRows = 8;
-
-  std::array<float, kColumns * kRows> density{};
-
-  float peakDensity = 0.0f;
-
-
-
-  const QRectF canvasRect(0.0, 0.0, canvasW, canvasH);
-
-  const float cellW = canvasW / static_cast<float>(kColumns);
-
-  const float cellH = canvasH / static_cast<float>(kRows);
-
-  const float cellArea = std::max(1.0f, cellW * cellH);
-
-
-
-  const auto &layers = comp->allLayerRef();
-
-  int visibleLayerCount = 0;
-
-  int textLayerCount = 0;
-
-  int videoLayerCount = 0;
-
-  int particleLayerCount = 0;
-
-  for (const auto &layer : layers) {
-
-    if (!layer || !isLayerEffectivelyVisible(layer) ||
-
-        !layer->isActiveAt(currentFrame)) {
-
-      continue;
-
-    }
-
-
-
-    ++visibleLayerCount;
-
-    if (dynamic_cast<ArtifactTextLayer *>(layer.get())) {
-
-      ++textLayerCount;
-
-    }
-
-    if (dynamic_cast<ArtifactVideoLayer *>(layer.get())) {
-
-      ++videoLayerCount;
-
-    }
-
-    if (layer->isParticleLayer()) {
-
-      ++particleLayerCount;
-
-    }
-
-
-
-    const QRectF layerBounds = layer->transformedBoundingBox().normalized();
-
-    if (!layerBounds.isValid() || layerBounds.width() <= 0.0 ||
-
-        layerBounds.height() <= 0.0) {
-
-      continue;
-
-    }
-
-
-
-    const QRectF clippedBounds = layerBounds.intersected(canvasRect);
-
-    if (clippedBounds.isEmpty()) {
-
-      continue;
-
-    }
-
-
-
-    float weight = 1.0f;
-
-    if (dynamic_cast<ArtifactTextLayer *>(layer.get())) {
-
-      weight += 0.35f;
-
-    }
-
-    weight += std::min(0.65f, static_cast<float>(layer->maskCount()) * 0.10f);
-
-    weight += std::min(0.70f, static_cast<float>(layer->effectCount()) * 0.08f);
-
-    weight += std::min(0.45f,
-                       static_cast<float>(activeMatteCount(layer)) * 0.12f);
-
-    if (selectedLayer && selectedLayer->id() == layer->id()) {
-
-      weight += 0.35f;
-
-    }
-
-
-
-    const int minCol = std::clamp(
-
-        static_cast<int>(std::floor(clippedBounds.left() / cellW)), 0,
-
-        kColumns - 1);
-
-    const int maxCol = std::clamp(
-
-        static_cast<int>(std::floor((clippedBounds.right() - 1.0) / cellW)), 0,
-
-        kColumns - 1);
-
-    const int minRow = std::clamp(
-
-        static_cast<int>(std::floor(clippedBounds.top() / cellH)), 0,
-
-        kRows - 1);
-
-    const int maxRow = std::clamp(
-
-        static_cast<int>(std::floor((clippedBounds.bottom() - 1.0) / cellH)), 0,
-
-        kRows - 1);
-
-
-
-    for (int row = minRow; row <= maxRow; ++row) {
-
-      for (int col = minCol; col <= maxCol; ++col) {
-
-        const QRectF cellRect(static_cast<float>(col) * cellW,
-
-                              static_cast<float>(row) * cellH, cellW, cellH);
-
-        const QRectF overlap = cellRect.intersected(clippedBounds);
-
-        if (overlap.isEmpty()) {
-
-          continue;
-
-        }
-
-        const float coverage =
-
-            static_cast<float>((overlap.width() * overlap.height()) / cellArea);
-
-        const int index = row * kColumns + col;
-
-        density[static_cast<std::size_t>(index)] += weight * coverage;
-
-        peakDensity = std::max(peakDensity, density[static_cast<std::size_t>(index)]);
-
-      }
-
-    }
-
-  }
-
-
-
-  const double visualScore =
-
-      clamp01(visibleLayerCount * 0.05 + textLayerCount * 0.03 +
-
-              (selectedLayer ? 0.08 : 0.0) +
-
-              (selectedLayer ? static_cast<double>(selectedLayer->effectCount()) * 0.04
-
-                             : 0.0) +
-
-              (selectedLayer ? static_cast<double>(selectedLayer->maskCount()) * 0.05
-
-                             : 0.0) +
-
-              (selectedLayer ? static_cast<double>(activeMatteCount(selectedLayer)) * 0.05
-
-                             : 0.0));
-
-  const double informationScore =
-
-      clamp01(textLayerCount * 0.06 + layers.size() * 0.02 +
-
-              (visibleLayerCount > 12 ? 0.08 : 0.0));
-
-  const double luminanceScore =
-
-      clamp01(textLayerCount * 0.07 + (selectedLayer ? 0.10 : 0.0));
-
-  const double motionScore =
-
-      clamp01(videoLayerCount * 0.08 + particleLayerCount * 0.10 +
-
-              std::min(1.0, static_cast<double>(layers.size()) / 20.0) * 0.15);
-
-  const std::array<std::pair<const char *, double>, 4> densityScores{{
-
-      {"visual", visualScore},
-
-      {"information", informationScore},
-
-      {"luminance", luminanceScore},
-
-      {"motion", motionScore},
-
-  }};
-
-  const auto dominantIt = std::max_element(
-
-      densityScores.begin(), densityScores.end(),
-
-      [](const auto &a, const auto &b) { return a.second < b.second; });
-
-  const QString dominantAxis = QString::fromLatin1(dominantIt->first);
-
-  const double dominantScore = dominantIt->second;
-
-
-
-  if (peakDensity <= 0.0f) {
-
-    return;
-
-  }
-
-
-
-  const float panelW = canvasW > 260.0f
-
-                           ? std::min(310.0f, std::max(220.0f, canvasW * 0.28f))
-
-                           : std::max(140.0f, canvasW - 24.0f);
-
-  const float panelH = canvasH > 140.0f ? 126.0f : std::max(92.0f, canvasH - 24.0f);
-
-  const float panelX = std::max(12.0f, canvasW - panelW - 12.0f);
-
-  const float panelY = 12.0f;
-
-
-
-  renderer->drawOverlayPanel(panelX, panelY, panelW, panelH,
-
-                             FloatColor{0.05f, 0.07f, 0.11f, 0.90f},
-
-                             FloatColor{0.34f, 0.54f, 0.76f, 0.92f});
-
-
-
-  QFont titleFont = QApplication::font();
-
-  titleFont.setPointSizeF(std::max(10.0, static_cast<double>(titleFont.pointSizeF()) + 1.0));
-
-  titleFont.setWeight(QFont::DemiBold);
-
-  QFont detailFont = QApplication::font();
-
-  detailFont.setPointSizeF(std::max(8.5, static_cast<double>(detailFont.pointSizeF())));
-
-
-
-  renderer->drawText(QRectF(panelX + 12.0f, panelY + 8.0f, panelW - 24.0f, 18.0f),
-
-                     QStringLiteral("Visual Density Heatmap"), titleFont,
-
-                     FloatColor{0.94f, 0.97f, 1.0f, 1.0f},
-
-                     Qt::AlignLeft | Qt::AlignVCenter);
-
-  renderer->drawText(
-
-      QRectF(panelX + 12.0f, panelY + 26.0f, panelW - 24.0f, 15.0f),
-
-      QStringLiteral("%1 layers  |  dominant: %2 (%3)")
-
-          .arg(static_cast<int>(layers.size()))
-
-          .arg(densityAxisDisplayName(dominantAxis))
-
-          .arg(QString::number(dominantScore * 100.0, 'f', 0)),
-
-      detailFont, FloatColor{0.70f, 0.78f, 0.86f, 1.0f},
-
-      Qt::AlignLeft | Qt::AlignVCenter);
-
-  renderer->drawText(
-
-      QRectF(panelX + 12.0f, panelY + 41.0f, panelW - 24.0f, 13.0f),
-
-      QStringLiteral("warn: %1 | next: %2")
-
-          .arg(densityWarningForDominantAxis(dominantAxis, dominantScore),
-
-               densityNextActionForAxis(dominantAxis)),
-
-      detailFont, FloatColor{0.62f, 0.72f, 0.82f, 1.0f},
-
-      Qt::AlignLeft | Qt::AlignVCenter);
-
-  if (selectedLayer) {
-
-    renderer->drawText(
-
-        QRectF(panelX + 12.0f, panelY + 55.0f, panelW - 24.0f, 13.0f),
-
-        QStringLiteral("focus: %1  |  masks %2  effects %3  mattes %4")
-
-            .arg(selectedLayer->layerName().trimmed().isEmpty()
-
-                     ? QStringLiteral("<selected>")
-
-                     : selectedLayer->layerName().trimmed())
-
-            .arg(selectedLayer->maskCount())
-
-            .arg(selectedLayer->effectCount())
-
-            .arg(activeMatteCount(selectedLayer)),
-
-        detailFont, FloatColor{0.62f, 0.72f, 0.82f, 1.0f},
-
-        Qt::AlignLeft | Qt::AlignVCenter);
-
-  }
-
-
-
-  const float heatTop = panelY + (selectedLayer ? 72.0f : 58.0f);
-
-  const float heatLeft = panelX + 12.0f;
-
-  const float heatWidth = panelW - 24.0f;
-
-  const float heatHeight = std::max(18.0f, panelH - (selectedLayer ? 92.0f : 78.0f));
-
-  const float legendCellW = heatWidth / static_cast<float>(kColumns);
-
-  const float legendCellH = heatHeight / static_cast<float>(kRows);
-
-  for (int row = 0; row < kRows; ++row) {
-
-    for (int col = 0; col < kColumns; ++col) {
-
-      const int index = row * kColumns + col;
-
-      const float value = density[static_cast<std::size_t>(index)];
-
-      if (value <= 0.0f) {
-
-        continue;
-
-      }
-
-      const float normalized = std::clamp(value / peakDensity, 0.0f, 1.0f);
-
-      const FloatColor color = densityHeatmapColor(normalized);
-
-      const float alpha = 0.05f + normalized * 0.30f;
-
-      renderer->drawSolidRect(
-
-          heatLeft + static_cast<float>(col) * legendCellW,
-
-          heatTop + static_cast<float>(row) * legendCellH, legendCellW + 0.5f,
-
-          legendCellH + 0.5f,
-
-          FloatColor{color.r(), color.g(), color.b(), alpha}, 1.0f);
-
-    }
-
-  }
-
-
-
-  if (selectedLayer) {
-
-    const QRectF selectedBounds = selectedLayer->transformedBoundingBox().normalized();
-
-    const QRectF clippedSelected = selectedBounds.intersected(canvasRect);
-
-    if (clippedSelected.isValid() && clippedSelected.width() > 0.0 &&
-
-        clippedSelected.height() > 0.0) {
-
-      const FloatColor focusColor =
-
-          selectedLayer->maskCount() > 0
-
-              ? FloatColor{1.0f, 0.78f, 0.24f, 0.96f}
-
-              : FloatColor{0.96f, 0.96f, 0.98f, 0.92f};
-
-      renderer->drawRectOutline(static_cast<float>(clippedSelected.left()),
-
-                                static_cast<float>(clippedSelected.top()),
-
-                                static_cast<float>(clippedSelected.width()),
-
-                                static_cast<float>(clippedSelected.height()),
-
-                                focusColor);
-
-      renderer->drawSolidRect(
-
-          static_cast<float>(clippedSelected.left()),
-
-          static_cast<float>(clippedSelected.top()),
-
-          static_cast<float>(clippedSelected.width()),
-
-          static_cast<float>(clippedSelected.height()),
-
-          FloatColor{focusColor.r(), focusColor.g(), focusColor.b(), 0.05f}, 1.0f);
-
-    }
-
-  }
-
-
-
-  const float barY = heatTop + heatHeight + 6.0f;
-
-  const float barX = panelX + 12.0f;
-
-  const float barW = panelW - 24.0f;
-
-  const float barH = 10.0f;
-
-  const float labelW = 54.0f;
-
-  const float meterW = std::max(18.0f, barW - labelW - 6.0f);
-
-  const std::array<std::pair<const char *, double>, 4> densityMeters{{
-
-      {"visual", visualScore},
-
-      {"info", informationScore},
-
-      {"luma", luminanceScore},
-
-      {"motion", motionScore},
-
-  }};
-
-  for (std::size_t i = 0; i < densityMeters.size(); ++i) {
-
-    const QString axis = QString::fromLatin1(densityMeters[i].first);
-
-    const double score = densityMeters[i].second;
-
-    const FloatColor axisColor = densityAxisColor(axis);
-
-    const float y = barY + static_cast<float>(i) * 12.0f;
-
-    renderer->drawText(QRectF(barX, y - 1.0f, labelW, 11.0f), axis,
-
-                       detailFont, FloatColor{0.72f, 0.81f, 0.90f, 1.0f},
-
-                       Qt::AlignLeft | Qt::AlignVCenter);
-
-    renderer->drawSolidRect(barX + labelW, y, meterW, barH,
-
-                            FloatColor{0.10f, 0.14f, 0.19f, 0.88f}, 1.0f);
-
-    renderer->drawSolidRect(barX + labelW, y, meterW * static_cast<float>(score),
-
-                            barH, FloatColor{axisColor.r(), axisColor.g(),
-
-                                             axisColor.b(), 0.78f},
-
-                            1.0f);
-
-    if (axis == densityAxisDisplayName(dominantAxis)) {
-
-      renderer->drawRectOutline(barX + labelW, y, meterW, barH,
-
-                                FloatColor{axisColor.r(), axisColor.g(),
-
-                                           axisColor.b(), 0.96f});
-
-    }
-
-  }
-
-}
 
 
 
@@ -14749,6 +14140,33 @@ public:
         ArtifactPlaybackService::instance() && ArtifactPlaybackService::instance()->isPlaying();
     const auto presentStarted = samplePresentStages
         ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    static const bool captureRamPreviewBeforePresent = [] {
+      return qEnvironmentVariableIsSet(
+                 "ARTIFACT_VIDEO_PREVIEW_PROFILE_SETUP") &&
+             qEnvironmentVariable(
+                 "ARTIFACT_VIDEO_PREVIEW_PROFILE_SETUP") !=
+                 QStringLiteral("0");
+    }();
+    if (captureRamPreviewBeforePresent && useRamPreviewFallback) {
+      renderer_->flushAndWait();
+      const QImage diagnosticFrame = renderer_->readbackToImage();
+      const QString captureDirectory = qEnvironmentVariable(
+          "ARTIFACT_MODEL3D_LIGHT_CAPTURE_DIR");
+      if (!diagnosticFrame.isNull() && !captureDirectory.isEmpty()) {
+        QDir().mkpath(captureDirectory);
+        const QString capturePath = QDir(captureDirectory).filePath(
+            QStringLiteral("composition_controller_ram_preview_before_present.png"));
+        if (!diagnosticFrame.save(capturePath, "PNG")) {
+          std::fprintf(stderr,
+              "[VideoPreviewFallbackCapture] save-failed path=%s\n",
+              capturePath.toUtf8().constData());
+        }
+      } else {
+        std::fprintf(stderr,
+            "[VideoPreviewFallbackCapture] readback-failed size=%dx%d\n",
+            diagnosticFrame.width(), diagnosticFrame.height());
+      }
+    }
     renderer_->present();
     const auto presentFinished = samplePresentStages
         ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
@@ -16621,6 +16039,8 @@ public:
   // Render tick infrastructure
 
   bool renderInProgress_ = false;  // Guards against concurrent renderOneFrameImpl() calls
+  std::atomic<quintptr> lastFrameExecutionThreadId_{0};
+  std::atomic<quint64> sceneMutationGeneration_{1};
 
   QElapsedTimer gizmoDragRenderTimer_;  // Throttles render frequency during gizmo drag
 
@@ -18267,6 +17687,9 @@ public:
 
                 }
 
+                sceneMutationGeneration_.fetch_add(
+                    1, std::memory_order_acq_rel);
+
                 resetOnionSkinHistory();
 
                 applyCompositionState(composition);
@@ -18524,7 +17947,9 @@ public:
 
 
 
-  void drawViewportGhostOverlay(CompositionRenderController *owner,
+  using HostFrameSnapshot = CompositionHostFrameSnapshot;
+
+  void drawViewportGhostOverlay(const HostFrameSnapshot &hostSnapshot,
 
                                 const ArtifactCompositionPtr &comp,
 
@@ -18557,7 +17982,7 @@ public:
   void updateContextMenuOverlayMousePos(
       ArtifactCore::Coordinates::ScreenPhysicalPoint2 viewportPos);
 
-  void drawViewportOverlayPass(CompositionRenderController *owner,
+  void drawViewportOverlayPass(const HostFrameSnapshot &hostSnapshot,
 
                                const ArtifactCompositionPtr &comp,
 
@@ -18575,7 +18000,8 @@ public:
 
                                const QMatrix4x4 &cameraProjMatrix);
 
-  void drawViewportCanvasOverlay(float cw, float ch);
+  void drawViewportCanvasOverlay(const HostFrameSnapshot &hostSnapshot,
+                                 float cw, float ch);
   void drawThreeDimensionalGroundGrid();
 
   void drawReferenceOverlayImage(float canvasWidth, float canvasHeight);
@@ -18609,7 +18035,8 @@ public:
 
                                 float ch);
 
-  void drawViewportInteractionOverlay(CompositionRenderController *owner,
+  void drawViewportInteractionOverlay(
+                                      const HostFrameSnapshot &hostSnapshot,
 
                                       const FramePosition &currentFrame,
 
@@ -18617,7 +18044,7 @@ public:
 
   void drawSelectionEditingOverlay(
 
-      CompositionRenderController *owner,
+      const HostFrameSnapshot &hostSnapshot,
 
       const ArtifactCompositionPtr &comp,
 
@@ -18649,22 +18076,8 @@ public:
 
 
 
-  struct HostFrameSnapshot {
-    bool hasHost = false;
-    bool visible = true;
-    bool cancelInvalidGizmoSession = false;
-    bool showDebugProbeLines = false;
-    bool showMaskPathLines = false;
-    bool showMaskHandleLines = false;
-    bool showBoundsLines = false;
-    QSize logicalSize;
-    qreal devicePixelRatio = 1.0;
-    quintptr windowId = 0;
-    bool windowIdCaptured = false;
-  };
-
   HostFrameSnapshot captureHostFrameSnapshot(
-      const CompositionRenderController *owner) const;
+      CompositionRenderController *owner);
   bool prepareHostFrame(CompositionRenderController *owner,
                         const HostFrameSnapshot &snapshot);
   void renderOneFrameImpl(CompositionRenderController *owner,
@@ -18913,6 +18326,14 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
 
                 return;
 
+              }
+
+              // FrameReady changes decoded-resource availability, not the
+              // authored scene snapshot. Keep that invalidation on its own
+              // path so playback does not force full-scene packet recapture.
+              if (event.changeType != LayerChangedEvent::ChangeType::FrameReady) {
+                impl_->sceneMutationGeneration_.fetch_add(
+                    1, std::memory_order_acq_rel);
               }
 
               if (event.changeType == LayerChangedEvent::ChangeType::FrameReady) {
@@ -24484,8 +23905,8 @@ void CompositionRenderController::setInteractiveRenderRegionResolutionScale(
   if (!impl_) {
     return;
   }
-  impl_->interactiveRenderRegionResolutionScale_ =
-      std::clamp(scale, 0.25f, 1.0f);
+  impl_->interactiveRenderRegionResolutionScale_ = std::isnan(scale)
+      ? 1.0f : std::clamp(scale, 0.25f, 1.0f);
   markRenderDirty();
 }
 
@@ -41935,6 +41356,12 @@ void CompositionRenderController::renderOneFrame() {
 
 }
 
+quintptr CompositionRenderController::lastFrameExecutionThreadId() const noexcept {
+  return impl_ ? impl_->lastFrameExecutionThreadId_.load(
+                     std::memory_order_acquire)
+               : 0;
+}
+
 
 
 void CompositionRenderController::markRenderDirty() {
@@ -42239,8 +41666,14 @@ bool CompositionRenderController::Impl::removeLastPendingShapePathVertex() {
 
 CompositionRenderController::Impl::HostFrameSnapshot
 CompositionRenderController::Impl::captureHostFrameSnapshot(
-    const CompositionRenderController *owner) const {
+    CompositionRenderController *owner) {
   HostFrameSnapshot snapshot;
+  auto *host = hostWidget_.data();
+  snapshot.viewportInteracting = viewportInteracting_;
+  snapshot.interactiveRenderRegionActive = interactiveRenderRegionActive_;
+  snapshot.interactiveRenderRegionRect = interactiveRenderRegionRect_;
+  snapshot.interactiveRenderRegionResolutionScale =
+      interactiveRenderRegionResolutionScale_;
   if (owner) {
     snapshot.cancelInvalidGizmoSession =
         !gizmoSessionEnding_ && !gizmoSessionValid();
@@ -42252,8 +41685,95 @@ CompositionRenderController::Impl::captureHostFrameSnapshot(
         owner->isLineDebugKindVisible(LineDebugKind::MaskHandle);
     snapshot.showBoundsLines =
         owner->isLineDebugKindVisible(LineDebugKind::Bounds);
+    snapshot.showSelectionRectLines =
+        owner->isLineDebugKindVisible(LineDebugKind::SelectionRect);
   }
-  if (auto *host = hostWidget_.data()) {
+  const Qt::KeyboardModifiers modifiers = QGuiApplication::keyboardModifiers();
+  snapshot.shiftModifierActive = modifiers.testFlag(Qt::ShiftModifier);
+  snapshot.altModifierActive = modifiers.testFlag(Qt::AltModifier);
+  snapshot.controlModifierActive = modifiers.testFlag(Qt::ControlModifier);
+
+  const auto *app = ArtifactApplicationManager::instance();
+  const auto *toolManager = app ? app->toolManager() : nullptr;
+  const ToolType activeTool = toolManager
+      ? toolManager->activeTool() : ToolType::Selection;
+  snapshot.activeToolLabel = toolTypeToOverlayLabel(activeTool);
+  snapshot.trackerToolActive = activeTool == ToolType::TrackPoint;
+  switch (activeTool) {
+  case ToolType::TrackPoint:
+    snapshot.activeToolKind = CompositionHostToolKind::TrackPoint;
+    break;
+  case ToolType::RigSelect:
+    snapshot.activeToolKind = CompositionHostToolKind::RigSelect;
+    break;
+  case ToolType::RigWeight:
+    snapshot.activeToolKind = CompositionHostToolKind::RigWeight;
+    break;
+  case ToolType::Clone:
+    snapshot.activeToolKind = CompositionHostToolKind::Clone;
+    break;
+  case ToolType::Pen:
+    snapshot.activeToolKind = CompositionHostToolKind::Pen;
+    break;
+  case ToolType::Rectangle:
+    snapshot.activeToolKind = CompositionHostToolKind::Rectangle;
+    break;
+  default:
+    snapshot.activeToolKind = CompositionHostToolKind::Other;
+    break;
+  }
+  if (app) {
+    if (auto *selectionManager = app->layerSelectionManager()) {
+      snapshot.selectedLayerCount = static_cast<int>(
+          selectionManager->selectedLayers().size());
+    }
+  }
+
+  auto composition = previewPipeline_.composition();
+  // Resolve a missing editor binding while capturing the request on the GUI
+  // owner. The render body should consume an established Composition rather
+  // than query ProjectService and mutate the pipeline during GPU submission.
+  if (!composition && owner && initialized_ && running_ &&
+      (!host || host->isVisible())) {
+    if (auto *service = ArtifactProjectService::instance()) {
+      composition = resolvePreferredComposition(service);
+      if (composition) {
+        // Use the controller's normal binding path so project state,
+        // playback ownership, layer subscriptions, and renderer caches are
+        // synchronized before the frame packet is captured.
+        owner->setComposition(composition);
+        qCDebug(compositionViewLog)
+            << "[CompositionView] frame capture resolved missing composition"
+            << "id=" << composition->id().toString()
+            << "layers=" << composition->allLayerRef().size();
+      }
+    }
+  }
+  if (composition) {
+    snapshot.compositionRevision = composition->revision();
+    snapshot.sceneMutationGeneration =
+        sceneMutationGeneration_.load(std::memory_order_acquire);
+    snapshot.compositionSize = composition->effectiveCompositionSize();
+    snapshot.compositionSizeCaptured = true;
+    snapshot.compositionFramePosition =
+        composition->framePosition().framePosition();
+    snapshot.compositionFrameCaptured = true;
+
+  }
+  if (const auto *playback = ArtifactPlaybackService::instance()) {
+    if (QThread::currentThread() == playback->thread()) {
+      snapshot.playbackRunning = playback->isPlaying();
+      (void)captureCompositionPlaybackFrameSnapshot(
+          snapshot, composition, playback);
+    }
+  }
+  if (renderer_) {
+    snapshot.viewportZoom = renderer_->getZoom();
+    renderer_->getPan(snapshot.viewportPanX, snapshot.viewportPanY);
+    snapshot.viewportTransformCaptured = true;
+  }
+
+  if (host) {
     snapshot.hasHost = true;
     snapshot.visible = host->isVisible();
     snapshot.logicalSize = host->size();
@@ -42266,6 +41786,7 @@ CompositionRenderController::Impl::captureHostFrameSnapshot(
       snapshot.windowIdCaptured = true;
     }
   }
+  (void)captureCompositionViewportCamera(snapshot);
   return snapshot;
 }
 
@@ -42325,6 +41846,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     const HostFrameSnapshot &hostSnapshot,
     bool forceRender) {
 
+  lastFrameExecutionThreadId_.store(
+      reinterpret_cast<quintptr>(QThread::currentThreadId()),
+      std::memory_order_release);
+
   renderCrashTrace("render-enter", renderFrameCounter_);
 
   if (!owner || !initialized_ || !renderer_ || !running_) {
@@ -42376,10 +41901,17 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
   // and updateScissorROI() in one shot; calling them explicitly earlier
   // would double the work.
   {
-    const float liveZoom = std::max(0.001f, renderer_->getZoom());
-    float livePanX = 0.0f;
-    float livePanY = 0.0f;
-    renderer_->getPan(livePanX, livePanY);
+    const float liveZoom = std::max(
+        0.001f, hostSnapshot.viewportTransformCaptured
+                     ? hostSnapshot.viewportZoom
+                     : renderer_->getZoom());
+    float livePanX = hostSnapshot.viewportTransformCaptured
+        ? hostSnapshot.viewportPanX : 0.0f;
+    float livePanY = hostSnapshot.viewportTransformCaptured
+        ? hostSnapshot.viewportPanY : 0.0f;
+    if (!hostSnapshot.viewportTransformCaptured) {
+      renderer_->getPan(livePanX, livePanY);
+    }
     const auto composition = previewPipeline_.composition();
     const QSize compositionSize = composition
         ? composition->effectiveCompositionSize()
@@ -42397,18 +41929,18 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     // forced Preview preset (decision doc D4). Otherwise the renderer's
     // RenderModeSettings (useScissorTest/useROICache) would revert to the
     // Final-mode defaults that disable ROI handling.
-    renderContext_.setMode(interactiveRenderRegionActive_
+    renderContext_.setMode(hostSnapshot.interactiveRenderRegionActive
                                ? RenderMode::Preview
                                : RenderMode::Editor);
     renderContext_.setResolutionScale(
-        interactiveRenderRegionActive_
-            ? interactiveRenderRegionResolutionScale_
+        hostSnapshot.interactiveRenderRegionActive
+            ? hostSnapshot.interactiveRenderRegionResolutionScale
             : 1.0f);
-    if (interactiveRenderRegionActive_) {
+    if (hostSnapshot.interactiveRenderRegionActive) {
       // setROI() runs updateViewportROI() and updateScissorROI()
       // internally; an empty input produces empty outputs which the
       // downstream renderer treats as full-frame.
-      renderContext_.setROI(RenderROI(interactiveRenderRegionRect_));
+      renderContext_.setROI(RenderROI(hostSnapshot.interactiveRenderRegionRect));
     } else {
       renderContext_.setROI(RenderROI());
     }
@@ -42495,10 +42027,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
            qEnvironmentVariable("ARTIFACT_VIDEO_PREVIEW_PROFILE_SETUP") !=
                QStringLiteral("0");
   }();
-  const auto* setupPlayback = profileVideoPreviewSetup
-      ? ArtifactPlaybackService::instance() : nullptr;
-  const bool profilePlaybackSetup = profileVideoPreviewSetup && setupPlayback &&
-      setupPlayback->isPlaying() && playbackSetupProfileCount_ < 64;
+  const bool profilePlaybackSetup = profileVideoPreviewSetup &&
+      hostSnapshot.playbackRunning && playbackSetupProfileCount_ < 64;
   if (profilePlaybackSetup) ++playbackSetupProfileCount_;
   const bool profileThisVideoPreviewSetup = profileVideoPreviewSetup &&
       (renderFrameCounter_ < 32 || profilePlaybackSetup);
@@ -42594,24 +42124,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
 
 
-  auto comp = previewPipeline_.composition();
-
-  // setComposition() is the authority for an editor-bound controller. Do not
-  // replace a valid binding from inside the render loop: ProjectService and
-  // ActiveContextService can briefly point at different compositions while a
-  // layer is being added. Resolve a fallback only for an unbound controller.
-  if (!comp) {
-    if (auto *service = ArtifactProjectService::instance()) {
-      comp = resolvePreferredComposition(service);
-      if (comp) {
-        previewPipeline_.setComposition(comp);
-        qCDebug(compositionViewLog)
-            << "[CompositionView] renderOneFrame resolved missing composition"
-            << "id=" << comp->id().toString()
-            << "layers=" << comp->allLayerRef().size();
-      }
-    }
-  }
+  const auto comp = previewPipeline_.composition();
 
   if (!comp) {
 
@@ -42632,24 +42145,17 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
   }
 
-  // P0-3b.2: apply the IRR scissor when an Interactive Render Region is
-  // active. RenderContext::scissorROI is updated by the sync block at the
-  // top of this function and is in screen coordinates (origin = top-left,
-  // Y-down). An empty scissorROI means "no IRR" and we leave the
-  // viewport/scissor at the values established earlier in the frame.
-  // The restore to the full-frame viewport happens just before present()
-  // below, so subsequent frames or non-Composition paths always see a
-  // full-frame viewport.
   bool irrScissorApplied = false;
-  if (interactiveRenderRegionActive_ &&
+  if (hostSnapshot.interactiveRenderRegionActive &&
       !renderContext_.scissorROI.isEmpty()) {
-    const RenderROI &s = renderContext_.scissorROI;
-    const float targetW = std::max(1.0f, static_cast<float>(hostWidth_));
-    const float targetH = std::max(1.0f, static_cast<float>(hostHeight_));
-    renderer_->setViewportRect(s.x(), s.y(),
-                               std::max(1.0f, s.width()),
-                               std::max(1.0f, s.height()),
-                               targetW, targetH);
+    const RenderROI &scissor = renderContext_.scissorROI;
+    const float targetWidth =
+        std::max(1.0f, static_cast<float>(hostWidth_));
+    const float targetHeight =
+        std::max(1.0f, static_cast<float>(hostHeight_));
+    renderer_->setViewportRect(
+        scissor.x(), scissor.y(), std::max(1.0f, scissor.width()),
+        std::max(1.0f, scissor.height()), targetWidth, targetHeight);
     irrScissorApplied = true;
   }
 
@@ -42715,11 +42221,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
   {
 
-    bool isPlayback = false;
-
-    if (auto *pb = ArtifactPlaybackService::instance())
-
-      isPlayback = pb->isPlaying();
+    const bool isPlayback = hostSnapshot.playbackRunning;
 
     ArtifactCore::Profiler::instance().beginFrame(
 
@@ -42851,7 +42353,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
   const int effectivePreviewDownsample =
 
-      viewportInteracting_
+      hostSnapshot.viewportInteracting
 
           ? std::max(previewDownsample_, interactivePreviewDownsampleFloor_)
 
@@ -42859,7 +42361,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
   const bool draftRendering =
 
-      viewportInteracting_ &&
+      hostSnapshot.viewportInteracting &&
 
       effectivePreviewDownsample > 1;
 
@@ -42904,14 +42406,19 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
   const auto &layers = comp->allLayerRef();
 
-  const FramePosition currentFrame = currentFrameForComposition(comp);
+  const bool capturedPlaybackFrameMatchesComposition =
+      hostSnapshot.playbackFrameCaptured &&
+      hostSnapshot.playbackCompositionId == comp->id().toString();
+  const FramePosition currentFrame = capturedPlaybackFrameMatchesComposition
+      ? FramePosition(hostSnapshot.playbackFramePosition)
+      : comp->framePosition();
 
   // Crowd and clone collision are owned by a composition-wide fixed-step
   // session. The layer-local code remains only as a fallback for isolated
   // layer previews that do not have a composition owner.
   const qint64 componentSimulationStartNs =
       profileThisVideoPreviewSetup ? frameTimer.nsecsElapsed() : 0;
-  comp->evaluateLayerComponentSimulation(currentFrame, viewportInteracting_);
+  comp->evaluateLayerComponentSimulation(currentFrame, hostSnapshot.viewportInteracting);
   if (profileThisVideoPreviewSetup) {
     std::fprintf(stderr,
                  "[VideoPreviewSetupProfile] frame=%llu componentSimulationMs=%.2f\n",
@@ -43293,10 +42800,17 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
     const float orientationViewportW = std::max(1.0f, hostWidth_);
     const float orientationViewportH = std::max(1.0f, hostHeight_);
-    const float orientationZoom = std::max(0.001f, renderer_->getZoom());
-    float orientationPanX = 0.0f;
-    float orientationPanY = 0.0f;
-    renderer_->getPan(orientationPanX, orientationPanY);
+    const float orientationZoom = std::max(
+        0.001f, hostSnapshot.viewportTransformCaptured
+                     ? hostSnapshot.viewportZoom
+                     : renderer_->getZoom());
+    float orientationPanX = hostSnapshot.viewportTransformCaptured
+        ? hostSnapshot.viewportPanX : 0.0f;
+    float orientationPanY = hostSnapshot.viewportTransformCaptured
+        ? hostSnapshot.viewportPanY : 0.0f;
+    if (!hostSnapshot.viewportTransformCaptured) {
+      renderer_->getPan(orientationPanX, orientationPanY);
+    }
 
     constexpr float orientationFovDegrees = 45.0f;
     constexpr float degreesToRadians =
@@ -43382,11 +42896,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
        (effectiveEndFrame > 0 && framePos >= effectiveEndFrame));
   markVideoPreviewSetupStage(4);
 
-  const ArtifactCore::ImageF32x4_RGBA *ramPreviewFrameImage = nullptr;
+  Diligent::ITextureView* ramPreviewTexture = nullptr;
   // A retained video frame is valid for live presentation, but must not be
   // published as the completed composite for a different timeline frame.
   bool videoFramesReadyForRamPreview = true;
-
   bool useRamPreviewFallback = false;
 
   // RGB inspection must use the transparent composite before viewport
@@ -43397,89 +42910,46 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       viewportChannelDisplayMode_ == ViewportChannelDisplayMode::Blue;
 
   QString ramPreviewFallbackReason = QStringLiteral("no-playback-service");
-
   bool playbackSameComposition = false;
-
   ArtifactRamPreviewFrameCacheState playbackPreviewState;
-
   bool playbackPreviewStateValid = false;
-
   bool playbackPreviewPendingBuild = false;
-
   bool playbackAllowsRamFallbackWhilePlaying = false;
-
   bool playbackPlaying = false;
 
-  if (auto *playback = ArtifactPlaybackService::instance()) {
+  const bool snapshotMatchesComposition =
+      hostSnapshot.ramPreviewStateCaptured &&
+      hostSnapshot.playbackCompositionId == comp->id().toString();
+  if (snapshotMatchesComposition) {
+    playbackSameComposition = true;
+    playbackPreviewState = hostSnapshot.ramPreviewFrameState;
+    playbackPreviewStateValid = true;
+    playbackPreviewPendingBuild = hostSnapshot.ramPreviewPendingBuild;
+    playbackAllowsRamFallbackWhilePlaying =
+        hostSnapshot.ramPreviewFallbackWhilePlaying;
+    playbackPlaying = hostSnapshot.playbackRunning;
 
-    const auto playbackComp = playback->currentComposition();
-
-    const bool sameComposition =
-
-        playbackComp && playbackComp->id() == comp->id();
-
-    playbackSameComposition = sameComposition;
-
-    if (!sameComposition) {
-
-      ramPreviewFallbackReason = QStringLiteral("composition-mismatch");
-
+    if (frameOutOfRange) {
+      ramPreviewFallbackReason = QStringLiteral("frame-out-of-range");
+    } else if (!playbackPreviewState.ready) {
+      ramPreviewFallbackReason = ramPreviewNotReadyReason(playbackPreviewState);
+    } else if (!playbackPreviewState.imageAvailable) {
+      ramPreviewFallbackReason = QStringLiteral("ready-missing-image");
+    } else if (!hostSnapshot.ramPreviewUpload.upload ||
+               hostSnapshot.ramPreviewUpload.width <= 0 ||
+               hostSnapshot.ramPreviewUpload.height <= 0) {
+      ramPreviewFallbackReason = QStringLiteral("ready-missing-upload");
+    } else if (hostSnapshot.viewportInteracting) {
+      ramPreviewFallbackReason = QStringLiteral("viewport-interacting");
+    } else if (playbackPlaying && !playbackAllowsRamFallbackWhilePlaying) {
+      ramPreviewFallbackReason = QStringLiteral("playing-policy-disabled");
     } else {
-
-      playbackPreviewState = playback->ramPreviewFrameState(framePos);
-
-      playbackPreviewStateValid = true;
-
-      playbackPreviewPendingBuild =
-
-          playback->isRamPreviewFramePendingBuild(framePos);
-
-      playbackAllowsRamFallbackWhilePlaying =
-
-          playback->ramPreviewPlaybackFallbackWhilePlaying();
-
-      playbackPlaying = playback->isPlaying();
-
-      if (frameOutOfRange) {
-
-        ramPreviewFallbackReason = QStringLiteral("frame-out-of-range");
-
-      } else if (!playbackPreviewState.ready) {
-
-        ramPreviewFallbackReason =
-
-            ramPreviewNotReadyReason(playbackPreviewState);
-
-      } else if (!playbackPreviewState.imageAvailable) {
-
-        ramPreviewFallbackReason = QStringLiteral("ready-missing-image");
-
-      } else if (!(ramPreviewFrameImage = playback->borrowRamPreviewFrameImage(framePos))) {
-
-        ramPreviewFallbackReason = QStringLiteral("ready-missing-image");
-
-      } else if (viewportInteracting_) {
-
-        ramPreviewFallbackReason = QStringLiteral("viewport-interacting");
-
-      } else if (playbackPlaying && !playbackAllowsRamFallbackWhilePlaying) {
-
-        ramPreviewFallbackReason = QStringLiteral("playing-policy-disabled");
-
-      } else {
-
-        useRamPreviewFallback = true;
-
-        ramPreviewFallbackReason =
-
-            playbackPlaying ? QStringLiteral("ready-playing")
-
-                            : QStringLiteral("ready");
-
-      }
-
+      useRamPreviewFallback = true;
+      ramPreviewFallbackReason = playbackPlaying
+          ? QStringLiteral("ready-playing") : QStringLiteral("ready");
     }
-
+  } else {
+    ramPreviewFallbackReason = QStringLiteral("composition-mismatch");
   }
 
   static thread_local int64_t lastPlaybackDiagnosticFrame =
@@ -43503,7 +42973,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                << "pendingBuild=" << playbackPreviewPendingBuild
                << "ramPreviewFallback=" << useRamPreviewFallback
                << "fallbackReason=" << ramPreviewFallbackReason
-               << "viewportInteracting=" << viewportInteracting_;
+               << "viewportInteracting=" << hostSnapshot.viewportInteracting;
       lastPlaybackDiagnosticFrame = framePos;
       lastPlaybackDiagnosticReason = ramPreviewFallbackReason;
     }
@@ -43514,33 +42984,63 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
   markVideoPreviewSetupStage(5);
 
-  float panX = 0.0f;
-
-  float panY = 0.0f;
-
-  renderer_->getPan(panX, panY);
-
-  const float zoom = renderer_->getZoom();
-
+  const float panX = hostSnapshot.viewportTransformCaptured
+      ? hostSnapshot.viewportPanX : 0.0f;
+  const float panY = hostSnapshot.viewportTransformCaptured
+      ? hostSnapshot.viewportPanY : 0.0f;
+  const float zoom = hostSnapshot.viewportTransformCaptured
+      ? hostSnapshot.viewportZoom : renderer_->getZoom();
   const bool viewportTransformChangedSinceLastFrame =
-
       std::abs(lastRenderKeyState_.zoom - zoom) > 0.0001f ||
-
       std::abs(lastRenderKeyState_.panX - panX) > 0.5f ||
-
       std::abs(lastRenderKeyState_.panY - panY) > 0.5f;
 
   if (useRamPreviewFallback && viewportRgbChannelRequested) {
     useRamPreviewFallback = false;
     ramPreviewFallbackReason = QStringLiteral("rgb-channel-requires-live-composite");
   }
-
   if (useRamPreviewFallback && viewportTransformChangedSinceLastFrame) {
-
     useRamPreviewFallback = false;
-
     ramPreviewFallbackReason = QStringLiteral("viewport-transform-changing");
+  }
 
+  if (profileThisVideoPreviewSetup) {
+    std::fprintf(stderr,
+        "[VideoPreviewFallbackDecision] frame=%lld playbackMatch=%d "
+        "stateValid=%d ready=%d image=%d upload=%d pending=%d "
+        "interacting=%d playing=%d viewportTransformChanged=%d "
+        "fallback=%d reason=%s\n",
+        static_cast<long long>(framePos), playbackSameComposition ? 1 : 0,
+        playbackPreviewStateValid ? 1 : 0,
+        playbackPreviewState.ready ? 1 : 0,
+        playbackPreviewState.imageAvailable ? 1 : 0,
+        hostSnapshot.ramPreviewUpload.upload ? 1 : 0,
+        playbackPreviewPendingBuild ? 1 : 0,
+        hostSnapshot.viewportInteracting ? 1 : 0, playbackPlaying ? 1 : 0,
+        viewportTransformChangedSinceLastFrame ? 1 : 0,
+        useRamPreviewFallback ? 1 : 0,
+        ramPreviewFallbackReason.toUtf8().constData());
+  }
+
+  if (useRamPreviewFallback) {
+    const auto& uploadSnapshot = hostSnapshot.ramPreviewUpload;
+    const auto frameKey = static_cast<qint64>(uploadSnapshot.contentRevision);
+    const auto residentSlot = static_cast<std::uint64_t>(framePos) %
+        ramPreviewResidentOwners_.size();
+    ramPreviewTexture = renderer_->textureForVideoFrame(
+        uploadSnapshot.width, uploadSnapshot.height,
+        ramPreviewResidentOwners_[residentSlot], frameKey,
+        uploadSnapshot.contentRevision, *uploadSnapshot.upload, true);
+    if (!ramPreviewTexture) {
+      ramPreviewTexture = renderer_->textureForVideoFrame(
+          uploadSnapshot.width, uploadSnapshot.height,
+          ramPreviewTextureOwner_, frameKey,
+          uploadSnapshot.contentRevision, *uploadSnapshot.upload, false);
+    }
+    if (!ramPreviewTexture) {
+      useRamPreviewFallback = false;
+      ramPreviewFallbackReason = QStringLiteral("upload-texture-unavailable");
+    }
   }
 
   if (useRamPreviewFallback) {
@@ -43549,8 +43049,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     for (const auto& layer : layers) {
       if (layer && isLayerEffectivelyVisible(layer) && layer->isActiveAt(currentFrame)) {
         if (auto* video = dynamic_cast<ArtifactVideoLayer*>(layer.get())) {
-          video->markFrameCompositionCacheReady(layer->currentFrame(), false);
-          video->markFrameRenderQueued(layer->currentFrame());
+          video->markFrameCompositionCacheReady(video->currentFrame(), false);
+          video->markFrameRenderQueued(video->currentFrame());
         }
       }
     }
@@ -43686,7 +43186,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
       static_cast<uint8_t>(showIsolationOverlay_ ? 1 : 0),
 
-      static_cast<uint8_t>(viewportInteracting_ ? 1 : 0),
+      static_cast<uint8_t>(hostSnapshot.viewportInteracting ? 1 : 0),
 
       static_cast<int32_t>(viewportChannelDisplayMode_),
 
@@ -44938,27 +44438,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
             QMatrix4x4 identity;
 
-            std::uint64_t contentRevision = 0;
-            const auto* playback = ArtifactPlaybackService::instance();
-            const auto* prepared = playback
-                ? playback->borrowRamPreviewFrameUpload(framePos, contentRevision) : nullptr;
-            const auto residentSlot = static_cast<std::uint64_t>(framePos) %
-                ramPreviewResidentOwners_.size();
-            auto* texture = prepared
-                ? context.renderer->textureForVideoFrame(*ramPreviewFrameImage,
-                    ramPreviewResidentOwners_[residentSlot],
-                    static_cast<qint64>(contentRevision), prepared, true)
-                : nullptr;
-            if (!texture && prepared) {
-              texture = context.renderer->textureForVideoFrame(*ramPreviewFrameImage,
-                  ramPreviewTextureOwner_, static_cast<qint64>(contentRevision), prepared);
-            }
-            if (texture) {
+            if (ramPreviewTexture) {
               context.renderer->drawSpriteTransformed(
-                  0.0f, 0.0f, cw, ch, identity, texture, 1.0f);
-            } else {
-              context.renderer->drawSpriteTransformed(
-                  0.0f, 0.0f, cw, ch, identity, *ramPreviewFrameImage, 1.0f);
+                  0.0f, 0.0f, cw, ch, identity, ramPreviewTexture, 1.0f);
             }
 
             surfacePassMs = markPhaseMs();
@@ -46893,7 +46375,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           << "[CompositionView] overlay ran before composite finalize";
     }
 
-    drawSelectionEditingOverlay(owner, comp, layers, selectedIds,
+    drawSelectionEditingOverlay(hostSnapshot, comp, layers, selectedIds,
 
                                 currentFrame, cw, ch, has3DCamera,
 
@@ -47166,14 +46648,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         // Tracker Gizmo overlay (independent of selection)
 
         {
-
-          const auto* tm = ArtifactApplicationManager::instance()
-
-                               ? ArtifactApplicationManager::instance()->toolManager()
-
-                               : nullptr;
-
-          if (trackerGizmo_ && tm && tm->activeTool() == ToolType::TrackPoint) {
+          if (trackerGizmo_ && hostSnapshot.trackerToolActive) {
 
             ArtifactCore::ProfileScope _profTracker(
 
@@ -48535,13 +48010,13 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                 << "[CompositionView] overlay ran before composite finalize";
           }
 
-          drawViewportCanvasOverlay(cw, ch);
+          drawViewportCanvasOverlay(hostSnapshot, cw, ch);
 
-          drawViewportInteractionOverlay(owner, currentFrame, cw, ch);
+          drawViewportInteractionOverlay(hostSnapshot, currentFrame, cw, ch);
 
           drawViewportGuideOverlay(comp, cw, ch);
 
-          drawViewportOverlayPass(owner, comp, activeCamera, layers,
+          drawViewportOverlayPass(hostSnapshot, comp, activeCamera, layers,
 
                                   selectedIds, currentFrame, cw, ch,
 
@@ -48661,28 +48136,22 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
     }
 
-  // P0-3b.2: restore the full-frame viewport when the IRR scissor was
-  // applied earlier. Doing this after present() keeps the visible
-  // rendering consistent while ensuring the next frame starts from a
-  // clean viewport. setViewportRect() (the 2-arg form) is sufficient for
-  // the restore; the render target dimensions match hostWidth_/hostHeight_.
+  // Restore the full-frame viewport after the Interactive Render Region pass.
   if (irrScissorApplied) {
     renderer_->setViewportRect(hostWidth_, hostHeight_);
-    irrScissorApplied = false;
   }
 
+    if (auto *playback = ArtifactPlaybackService::instance();
+        playback && snapshotMatchesComposition) {
 
-
-    if (auto *playback = ArtifactPlaybackService::instance()) {
-
-      const auto previewSummary = playback->ramPreviewSummary();
+      const auto& previewSummary = hostSnapshot.ramPreviewSummary;
 
       const bool shouldCaptureRamPreview =
-          playback->isRamPreviewEnabled() && playbackPreviewStateValid &&
+          hostSnapshot.ramPreviewEnabled && playbackPreviewStateValid &&
 
           playbackSameComposition &&
 
-          !viewportInteracting_ && !frameOutOfRange &&
+          !hostSnapshot.viewportInteracting && !frameOutOfRange &&
 
           !playbackPreviewState.ready && playbackPreviewPendingBuild;
 
@@ -48980,13 +48449,13 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     // re-uses the IRR scissor applied earlier in this frame; this keeps
     // the partial render inside the rectangle without disturbing the
     // surrounding framebuffer contents.
-    if (interactiveRenderRegionActive_ && !interactiveRenderRegionRect_.isEmpty()) {
-      const float scale = interactiveRenderRegionResolutionScale_;
+    if (hostSnapshot.interactiveRenderRegionActive && !hostSnapshot.interactiveRenderRegionRect.isEmpty()) {
+      const float scale = hostSnapshot.interactiveRenderRegionResolutionScale;
       const RenderQuality quality = scale <= 0.34f
           ? RenderQuality::Draft
           : (scale <= 0.67f ? RenderQuality::Preview : RenderQuality::Final);
       renderPartialRegion(owner, quality,
-                          RenderROI(interactiveRenderRegionRect_));
+                          RenderROI(hostSnapshot.interactiveRenderRegionRect));
     }
 
     ++renderFrameCounter_;
@@ -49045,7 +48514,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
     const qint64 layerPassMs = std::max<qint64>(0, postPassMs - basePassMs);
 
-    if (interactionPerfEnabled_ && viewportInteracting_ && interactionPerfAction_ != 0 &&
+    if (interactionPerfEnabled_ && hostSnapshot.viewportInteracting && interactionPerfAction_ != 0 &&
         interactionPerfFiles_ < 64) {
       if (!interactionPerfTimer_.isValid()) interactionPerfTimer_.start();
       if (!interactionPerfWrite_.isRunning() && interactionPerf_.count < interactionPerf_.samples.size()) {
@@ -49174,7 +48643,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
             .arg(effectivePreviewDownsample)
 
-            .arg(viewportInteracting_)
+            .arg(hostSnapshot.viewportInteracting)
 
             .arg(textureCacheStats.entryCount)
 
@@ -49282,7 +48751,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
             .arg(forceContinuousRedraw ? 1 : 0)
 
-            .arg(viewportInteracting_ ? 1 : 0)
+            .arg(hostSnapshot.viewportInteracting ? 1 : 0)
 
             .arg(layerToFloatConvertCount)
 
@@ -49478,7 +48947,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
             << "effectivePreviewDownsample=" << effectivePreviewDownsample
 
-            << "viewportInteracting=" << viewportInteracting_
+            << "viewportInteracting=" << hostSnapshot.viewportInteracting
 
             << "setupMs=" << setupMs << "basePassMs=" << basePassMs
 
@@ -50000,7 +49469,7 @@ void CompositionRenderController::Impl::drawPieMenuOverlay() {
 
 void CompositionRenderController::Impl::drawViewportOverlayPass(
 
-    CompositionRenderController *owner, const ArtifactCompositionPtr &comp,
+    const HostFrameSnapshot &hostSnapshot, const ArtifactCompositionPtr &comp,
 
     ArtifactCameraLayer *activeCamera,
 
@@ -50377,7 +49846,7 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
         shapeState.showSegmentInsert =
             hoveredShapePathSegment_ >= 0 &&
             hoveredShapePathVertex_ < 0 &&
-            QGuiApplication::keyboardModifiers().testFlag(Qt::ShiftModifier);
+            hostSnapshot.shiftModifierActive;
         shapeState.selectedVertices = selectedShapePathVertices_;
         shapeState.hoveredParam = hoveredShapeParam_;
         shapeState.draggingParam = shapeParamDragMode_;
@@ -50481,13 +49950,13 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
 
   }
 
-  drawSelectionEditingOverlay(owner, comp, layers, selectedIds, currentFrame,
+  drawSelectionEditingOverlay(hostSnapshot, comp, layers, selectedIds, currentFrame,
 
                               cw, ch, has3DCamera, cameraViewMatrix,
 
                               cameraProjMatrix);
 
-  drawViewportGhostOverlay(owner, comp, selectedLayer, currentFrame);
+  drawViewportGhostOverlay(hostSnapshot, comp, selectedLayer, currentFrame);
 
   drawViewportUiOverlay();
 
@@ -51813,7 +51282,9 @@ void CompositionRenderController::Impl::drawThreeDimensionalGroundGrid() {
   renderer_->resetGizmoCameraMatrices();
 }
 
-void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
+void CompositionRenderController::Impl::drawViewportCanvasOverlay(
+                                                                  const HostFrameSnapshot &hostSnapshot,
+                                                                  float cw,
 
                                                                   float ch) {
 
@@ -51859,12 +51330,9 @@ void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
 
   // Rig tools opt into the overlay automatically; the public flag also lets
   // a future rig panel keep the skeleton visible without owning a tool.
-  const auto *toolManager = ArtifactApplicationManager::instance()
-                                ? ArtifactApplicationManager::instance()->toolManager()
-                                : nullptr;
-  const bool rigToolActive = toolManager &&
-      (toolManager->activeTool() == ToolType::RigSelect ||
-       toolManager->activeTool() == ToolType::RigWeight);
+  const bool rigToolActive =
+      hostSnapshot.activeToolKind == CompositionHostToolKind::RigSelect ||
+      hostSnapshot.activeToolKind == CompositionHostToolKind::RigWeight;
   if ((showRigOverlay_ || rigToolActive) && !selectedLayerId_.isNil()) {
     if (const auto comp = previewPipeline_.composition()) {
       if (const auto layer = comp->layerById(selectedLayerId_)) {
@@ -51936,8 +51404,8 @@ void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
                 }
               }
             }
-            const QString modeText = toolManager &&
-                toolManager->activeTool() == ToolType::RigWeight
+            const QString modeText =
+                hostSnapshot.activeToolKind == CompositionHostToolKind::RigWeight
                 ? QStringLiteral("WEIGHT") : QStringLiteral("SELECT");
             const QString poseState = rigPoseClipboardValid_
                 ? QStringLiteral("  POSE:READY") : QString();
@@ -52036,7 +51504,7 @@ void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
           if (showRigSkin && rig.skinMesh()) {
             drawRigSkinWireframe(renderer_.get(), rig.skinMesh(), layerTx,
                                  meshColor);
-            if (rigToolActive && toolManager->activeTool() == ToolType::RigWeight) {
+            if (hostSnapshot.activeToolKind == CompositionHostToolKind::RigWeight) {
               const auto &bones = rig.bones();
               int selectedBoneIndex = 0;
               if (!selectedRigBoneId_.isNil()) {
@@ -52071,13 +51539,12 @@ void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
               }
             }
           }
-          if (rigToolActive && toolManager->activeTool() == ToolType::RigWeight) {
+          if (hostSnapshot.activeToolKind == CompositionHostToolKind::RigWeight) {
             const QPointF brushPosition = layerTx.map(
                 ArtifactCore::Coordinates::toQPointF(
                     rigWeightLastLocalPoint_));
             const float brushRadius = rigWeightRadius_ * rigZoom;
-            const bool subtract = QGuiApplication::keyboardModifiers().testFlag(
-                Qt::ControlModifier);
+              const bool subtract = hostSnapshot.controlModifierActive;
             const FloatColor brushColor = subtract
                 ? FloatColor(1.0f, 0.28f, 0.28f, 0.85f)
                 : FloatColor(0.25f, 0.85f, 1.0f, 0.85f);
@@ -52565,7 +52032,7 @@ void CompositionRenderController::Impl::drawViewportCanvasOverlay(float cw,
 
 void CompositionRenderController::Impl::drawViewportInteractionOverlay(
 
-    CompositionRenderController *owner, const FramePosition &currentFrame,
+    const HostFrameSnapshot &hostSnapshot, const FramePosition &currentFrame,
 
     float cw, float ch) {
 
@@ -52642,9 +52109,7 @@ void CompositionRenderController::Impl::drawViewportInteractionOverlay(
 
                                {0.25f, 0.55f, 1.0f, 0.14f}, 1.0f);
 
-      const bool showSelectionRect =
-
-          owner->isLineDebugKindVisible(LineDebugKind::SelectionRect);
+      const bool showSelectionRect = hostSnapshot.showSelectionRectLines;
 
       drawTaggedRectOutline(renderer_.get(), rubberBandRect,
 
@@ -52820,10 +52285,7 @@ void CompositionRenderController::Impl::drawViewportInteractionOverlay(
   }
 
   if (renderer_ && cloneStampSourceSet_) {
-    const auto *toolManager = ArtifactApplicationManager::instance()
-                                  ? ArtifactApplicationManager::instance()->toolManager()
-                                  : nullptr;
-    if (toolManager && toolManager->activeTool() == ToolType::Clone) {
+    if (hostSnapshot.activeToolKind == CompositionHostToolKind::Clone) {
       const float sourceCrossSize =
           std::clamp(12.0f / std::max(0.001f, renderer_->getZoom()), 6.0f, 28.0f);
       renderer_->drawCrosshair(
@@ -53128,7 +52590,7 @@ void CompositionRenderController::Impl::drawViewportInteractionOverlay(
 
 void CompositionRenderController::Impl::drawSelectionEditingOverlay(
 
-    CompositionRenderController *owner, const ArtifactCompositionPtr &comp,
+    const HostFrameSnapshot &hostSnapshot, const ArtifactCompositionPtr &comp,
 
     const QList<ArtifactAbstractLayerPtr> &layers,
 
@@ -53321,13 +52783,9 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
 
         syncGizmo3DFromLayer(selectedLayer);
 
-        const auto *app = ArtifactApplicationManager::instance();
-        const auto *toolManager = app ? app->toolManager() : nullptr;
-        const ToolType activeTool =
-            toolManager ? toolManager->activeTool() : ToolType::Selection;
         const bool maskToolActive =
-            activeTool == ToolType::Pen ||
-            (activeTool == ToolType::Rectangle &&
+            hostSnapshot.activeToolKind == CompositionHostToolKind::Pen ||
+            (hostSnapshot.activeToolKind == CompositionHostToolKind::Rectangle &&
              rectangleToolMode_ == RectangleToolMode::Mask);
         gizmo3D_->setDepthEnabled(selectedLayer->is3D() && !maskToolActive);
 
@@ -53431,13 +52889,7 @@ void CompositionRenderController::Impl::drawSelectionEditingOverlay(
 
       {
 
-        const auto *tm = ArtifactApplicationManager::instance()
-
-                             ? ArtifactApplicationManager::instance()->toolManager()
-
-                             : nullptr;
-
-        if (trackerGizmo_ && tm && tm->activeTool() == ToolType::TrackPoint) {
+        if (trackerGizmo_ && hostSnapshot.trackerToolActive) {
 
           ArtifactCore::ProfileScope _profTracker(
 
@@ -54317,13 +53769,11 @@ void CompositionRenderController::Impl::drawViewportUiOverlay() {
 
 void CompositionRenderController::Impl::drawViewportGhostOverlay(
 
-    CompositionRenderController *owner, const ArtifactCompositionPtr &comp,
+    const HostFrameSnapshot &hostSnapshot, const ArtifactCompositionPtr &comp,
 
     const ArtifactAbstractLayerPtr &selectedLayer,
 
     const FramePosition &currentFrame) {
-
-  Q_UNUSED(owner);
 
   Q_UNUSED(currentFrame);
 
@@ -54441,25 +53891,7 @@ void CompositionRenderController::Impl::drawViewportGhostOverlay(
 
   {
 
-    auto *appManager = ArtifactApplicationManager::instance();
-
-    auto *toolManager =
-
-        appManager != nullptr ? appManager->toolManager() : nullptr;
-
-    auto *selectionManager = appManager != nullptr
-
-                                 ? appManager->layerSelectionManager()
-
-                                 : nullptr;
-
-    const ToolType activeTool = toolManager != nullptr
-
-                                    ? toolManager->activeTool()
-
-                                    : ToolType::Selection;
-
-    const QString toolLabel = toolTypeToOverlayLabel(activeTool);
+    const QString &toolLabel = hostSnapshot.activeToolLabel;
 
     const float zoom = renderer_ != nullptr ? renderer_->getZoom() : 1.0f;
 
@@ -54471,11 +53903,9 @@ void CompositionRenderController::Impl::drawViewportGhostOverlay(
 
                        .arg(zoom * 100.0f, 0, 'f', zoom < 10.0f ? 1 : 0);
 
-    if (selectionManager != nullptr) {
+    if (hostSnapshot.selectedLayerCount > 0) {
 
-      const int selectedCount =
-
-          static_cast<int>(selectionManager->selectedLayers().size());
+      const int selectedCount = hostSnapshot.selectedLayerCount;
 
       if (selectedCount > 0) {
 
@@ -54519,9 +53949,7 @@ void CompositionRenderController::Impl::drawViewportGhostOverlay(
 
   if (snapHintActive) {
 
-    const bool snapBypassed =
-
-        QGuiApplication::keyboardModifiers().testFlag(Qt::AltModifier);
+    const bool snapBypassed = hostSnapshot.altModifierActive;
 
     QString snapTitle =
 

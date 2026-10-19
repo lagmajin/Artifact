@@ -38,6 +38,38 @@ private:
     bool active_ = false;
 };
 
+// Temporarily redirects the legacy shared-device acquisition API on the
+// current thread to a render-owner device/context pair. This lets existing
+// GPU effects created for the shared-device path resolve resources against a
+// worker-owned renderer without crossing device identities. The binding is
+// thread-local and must outlive every acquisition made through it; all such
+// acquisitions must be released on the same thread before the binding ends.
+// Binding a shared Vulkan context does not serialize other users of that
+// context; callers must provide exclusive scheduling in that case.
+class ScopedRenderDeviceBinding final {
+public:
+    ScopedRenderDeviceBinding(RefCntAutoPtr<IRenderDevice> device,
+                              RefCntAutoPtr<IDeviceContext> immediateContext);
+    ~ScopedRenderDeviceBinding();
+    ScopedRenderDeviceBinding(const ScopedRenderDeviceBinding&) = delete;
+    ScopedRenderDeviceBinding& operator=(const ScopedRenderDeviceBinding&) = delete;
+    ScopedRenderDeviceBinding(ScopedRenderDeviceBinding&&) = delete;
+    ScopedRenderDeviceBinding& operator=(ScopedRenderDeviceBinding&&) = delete;
+
+    bool isActive() const noexcept { return active_; }
+
+private:
+    friend bool acquireSharedRenderDeviceForCurrentBackend(
+        RefCntAutoPtr<IRenderDevice>&,
+        RefCntAutoPtr<IDeviceContext>&);
+    friend void releaseSharedRenderDevice();
+
+    RefCntAutoPtr<IRenderDevice> device_;
+    RefCntAutoPtr<IDeviceContext> immediateContext_;
+    Uint32 activeAcquisitionCount_ = 0;
+    bool active_ = false;
+};
+
 bool invalidateSharedRenderDeviceIfExclusive(IRenderDevice* expectedDevice);
 RENDER_DEVICE_TYPE sharedRenderDeviceType();
 
@@ -139,6 +171,19 @@ public:
     ~DiligentDeviceManager();
 
     void initialize(QWidget* widget);
+    // Acquires the app's shared device/context and creates its swapchain on the
+    // calling render-owner thread. The HWND is created by its owning GUI thread;
+    // this method does not access a QWidget or take ownership of renderHwnd.
+    void initializeOnRenderThread(HWND renderHwnd, int physicalWidth,
+                                  int physicalHeight, const QString& owner);
+    // Creates a worker-owned device/context and swapchain on the calling
+    // render-owner thread. No shared render-device context or GUI QWidget is
+    // accessed; resources cannot be shared with the app's shared device. A
+    // second Vulkan device is rejected while the shared Vulkan device is live
+    // because Diligent uses process-global Vulkan function pointers.
+    void initializeIndependentOnRenderThread(
+        HWND renderHwnd, int physicalWidth, int physicalHeight,
+        const QString& owner, int adapterId = -1);
     void initializeHeadless();
     void initializeHeadlessWithAdapter(int adapterId);
     void createSwapChain(QWidget* widget);
