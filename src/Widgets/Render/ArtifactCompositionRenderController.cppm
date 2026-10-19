@@ -29972,16 +29972,6 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
           impl_->selectedMotionPathFrames_.push_back(hitSample.framePosition);
       }
 
-      // Keep the viewport and timeline in sync when a motion-path key is
-      // picked.  The existing playback service owns the authoritative CTI;
-      // using it here also refreshes all layer evaluations consistently.
-      if (auto *playback = ArtifactPlaybackService::instance()) {
-        playback->setCurrentFrame(
-            FramePosition(static_cast<int>(hitSample.framePosition)));
-      } else {
-        comp->goToFrame(hitSample.framePosition);
-      }
-
       const auto &t3d = selectedLayer->transform3D();
 
       const auto time = gizmoTransformTime(selectedLayer, hitSample.framePosition);
