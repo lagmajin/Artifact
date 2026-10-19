@@ -27,6 +27,7 @@ module;
 
 // #include <pybind11/pybind11.h>
 #include <QAbstractButton>
+#include <QAbstractSocket>
 #include <QAbstractScrollArea>
 #include <QApplication>
 #include <QByteArray>
@@ -39,6 +40,7 @@ module;
 #include <QDebug>
 #include <QDesktopServices>
 #include <QDialogButtonBox>
+#include <QDialog>
 #include <QCoreApplication>
 #include <QDir>
 #include <QElapsedTimer>
@@ -57,6 +59,7 @@ module;
 #include <QRunnable>
 #include <atomic>
 #include <QImageReader>
+#include <QLabel>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -74,6 +77,7 @@ module;
 #include <QSizePolicy>
 #include <QSize>
 #include <QEvent>
+#include <QEnterEvent>
 #include <QSettings>
 #include <QSortFilterProxyModel>
 #include <QStandardPaths>
@@ -167,6 +171,382 @@ namespace {
 class StartupParallelismControl {
 public:
   explicit StartupParallelismControl(unsigned int) {}
+};
+
+
+
+// Test-only MCP endpoint. It polls Qt's already event-driven TCP objects from
+// a low-frequency QObject timer so UI events stay on the GUI thread without
+// adding signal/slot connections to the application.
+class ArtifactUiTestMcpServer final : public QObject {
+public:
+  ArtifactUiTestMcpServer(QWidget* root, quint16 port)
+      : root_(root), cursor_(new QLabel(root)) {
+    cursor_->setObjectName(QStringLiteral("artifactVirtualMouseCursor"));
+    cursor_->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    cursor_->setAttribute(Qt::WA_NoSystemBackground, true);
+    cursor_->setPixmap(QIcon(QStringLiteral(
+        ":/icons/Studio/ai_virtual_mouse_cursor.png"))
+                           .pixmap(QSize(32, 32)));
+    cursor_->setFixedSize(32, 32);
+    cursor_->hide();
+
+    if (!root_ || !server_.listen(QHostAddress::LocalHost, port)) {
+      error_ = root_ ? server_.errorString()
+                     : QStringLiteral("UI test root window is unavailable");
+      return;
+    }
+    // The test-only control endpoint needs at most one poll per display frame.
+    timerId_ = startTimer(16, Qt::CoarseTimer);
+    qInfo() << "[UiTestMcp] MCP endpoint listening on localhost:" << port;
+  }
+
+  ~ArtifactUiTestMcpServer() override {
+    if (timerId_ != 0) {
+      killTimer(timerId_);
+    }
+    if (client_) {
+      client_->abort();
+    }
+  }
+
+  [[nodiscard]] bool isListening() const { return server_.isListening(); }
+  [[nodiscard]] QString errorString() const { return error_; }
+
+protected:
+  void timerEvent(QTimerEvent* event) override {
+    if (event->timerId() != timerId_) {
+      QObject::timerEvent(event);
+      return;
+    }
+    if (!client_ && server_.hasPendingConnections()) {
+      client_ = server_.nextPendingConnection();
+      if (client_) {
+        client_->setParent(this);
+        input_.clear();
+      }
+    }
+    if (!client_) {
+      return;
+    }
+    if (client_->state() == QAbstractSocket::UnconnectedState) {
+      client_->deleteLater();
+      client_ = nullptr;
+      input_.clear();
+      return;
+    }
+    if (client_->bytesAvailable() > 0) {
+      input_.append(client_->readAll());
+      constexpr qsizetype kMaximumInputBytes = 1024 * 1024;
+      if (input_.size() > kMaximumInputBytes) {
+        client_->disconnectFromHost();
+        input_.clear();
+        return;
+      }
+      QJsonObject request;
+      int processedFrames = 0;
+      while (client_ && processedFrames < 8 &&
+             ArtifactCore::McpBridge::tryPopFrame(&input_, &request)) {
+        const QJsonObject response = handleRequest(request);
+        if (!response.isEmpty()) {
+          client_->write(ArtifactCore::McpBridge::encodeFrame(response));
+        }
+        ++processedFrames;
+      }
+      if (client_) {
+        client_->flush();
+      }
+    }
+  }
+
+private:
+  static QJsonObject textResult(const QString& text, bool isError = false) {
+    return QJsonObject{
+        {QStringLiteral("content"), QJsonArray{QJsonObject{
+             {QStringLiteral("type"), QStringLiteral("text")},
+             {QStringLiteral("text"), text}}}},
+        {QStringLiteral("isError"), isError}};
+  }
+
+  static QJsonObject tool(QString name, QString description,
+                          QJsonObject properties, QJsonArray required = {}) {
+    return QJsonObject{
+        {QStringLiteral("name"), std::move(name)},
+        {QStringLiteral("description"), std::move(description)},
+        {QStringLiteral("inputSchema"), QJsonObject{
+             {QStringLiteral("type"), QStringLiteral("object")},
+             {QStringLiteral("properties"), std::move(properties)},
+             {QStringLiteral("required"), std::move(required)}}}};
+  }
+
+  QJsonObject makeResponse(const QJsonValue& id, const QJsonObject& result) const {
+    QJsonObject response{{QStringLiteral("jsonrpc"), QStringLiteral("2.0")},
+                         {QStringLiteral("result"), result}};
+    if (!id.isUndefined() && !id.isNull()) {
+      response.insert(QStringLiteral("id"), id);
+    }
+    return response;
+  }
+
+  QJsonObject makeError(const QJsonValue& id, int code,
+                        const QString& message) const {
+    QJsonObject response{{QStringLiteral("jsonrpc"), QStringLiteral("2.0")},
+                         {QStringLiteral("error"), QJsonObject{
+                              {QStringLiteral("code"), code},
+                              {QStringLiteral("message"), message}}}};
+    if (!id.isUndefined() && !id.isNull()) {
+      response.insert(QStringLiteral("id"), id);
+    }
+    return response;
+  }
+
+  QJsonObject handleRequest(const QJsonObject& request) {
+    const QJsonValue id = request.value(QStringLiteral("id"));
+    const QString method = request.value(QStringLiteral("method")).toString();
+    const QJsonObject params = request.value(QStringLiteral("params")).toObject();
+    if (method == QStringLiteral("notifications/initialized") ||
+        method == QStringLiteral("notifications/cancelled")) {
+      return {};
+    }
+    if (method == QStringLiteral("initialize")) {
+      return makeResponse(id, QJsonObject{
+          {QStringLiteral("protocolVersion"), QStringLiteral("2024-11-05")},
+          {QStringLiteral("serverInfo"), QJsonObject{
+               {QStringLiteral("name"), QStringLiteral("ArtifactUiTest")},
+               {QStringLiteral("version"), QStringLiteral("1.0.0")}}},
+          {QStringLiteral("capabilities"), QJsonObject{
+               {QStringLiteral("tools"), QJsonObject{}}}}});
+    }
+    if (method == QStringLiteral("ping")) {
+      return makeResponse(id, QJsonObject{});
+    }
+    if (method == QStringLiteral("tools/list")) {
+      const QJsonObject targetSchema{
+          {QStringLiteral("target"), QJsonObject{
+               {QStringLiteral("type"), QStringLiteral("string")},
+               {QStringLiteral("description"), QStringLiteral("visible widget objectName")}}},
+          {QStringLiteral("x"), QJsonObject{{QStringLiteral("type"), QStringLiteral("number")}}},
+          {QStringLiteral("y"), QJsonObject{{QStringLiteral("type"), QStringLiteral("number")}}}};
+      const QJsonObject buttonSchema{
+          {QStringLiteral("type"), QStringLiteral("string")},
+          {QStringLiteral("enum"), QJsonArray{QStringLiteral("left"),
+                                               QStringLiteral("right"),
+                                               QStringLiteral("middle")}}};
+      const QJsonObject clickSchema{
+          {QStringLiteral("target"), targetSchema.value(QStringLiteral("target"))},
+          {QStringLiteral("x"), targetSchema.value(QStringLiteral("x"))},
+          {QStringLiteral("y"), targetSchema.value(QStringLiteral("y"))},
+          {QStringLiteral("button"), buttonSchema}};
+      return makeResponse(id, QJsonObject{{QStringLiteral("tools"), QJsonArray{
+          tool(QStringLiteral("ui.listWidgets"),
+               QStringLiteral("List visible named widgets in the UI test window"), {}),
+          tool(QStringLiteral("ui.mouseMove"),
+               QStringLiteral("Move the in-app virtual pointer and send hover/move events"),
+               targetSchema),
+          tool(QStringLiteral("ui.mouseClick"),
+               QStringLiteral("Send a mouse press and release to a named widget or window coordinate"),
+               clickSchema, QJsonArray{QStringLiteral("button")}),
+          tool(QStringLiteral("ui.hideCursor"),
+               QStringLiteral("Hide the in-app virtual pointer"), {})}}});
+    }
+    if (method != QStringLiteral("tools/call")) {
+      return makeError(id, -32601, QStringLiteral("Method not found"));
+    }
+
+    const QString name = params.value(QStringLiteral("name")).toString();
+    const QJsonObject arguments = params.value(QStringLiteral("arguments")).toObject();
+    QString error;
+    QJsonObject result;
+    if (name == QStringLiteral("ui.listWidgets")) {
+      QJsonArray widgets;
+      if (root_) {
+        QList<QWidget*> candidates{root_};
+        candidates.append(root_->findChildren<QWidget*>(QString(), Qt::FindChildrenRecursively));
+        int included = 0;
+        for (QWidget* widget : candidates) {
+          if (!widget || !widget->isVisible() || widget->objectName().isEmpty() ||
+              included >= 200) {
+            continue;
+          }
+          const QPoint windowPosition = widget->mapTo(root_, QPoint(0, 0));
+          widgets.append(QJsonObject{
+              {QStringLiteral("objectName"), widget->objectName()},
+              {QStringLiteral("className"), QString::fromLatin1(widget->metaObject()->className())},
+              {QStringLiteral("windowX"), windowPosition.x()},
+              {QStringLiteral("windowY"), windowPosition.y()},
+              {QStringLiteral("width"), widget->width()},
+              {QStringLiteral("height"), widget->height()}});
+          ++included;
+        }
+      }
+      result.insert(QStringLiteral("widgets"), widgets);
+      result.insert(QStringLiteral("count"), widgets.size());
+    } else if (name == QStringLiteral("ui.mouseMove") ||
+               name == QStringLiteral("ui.mouseClick")) {
+      QWidget* target = resolveTarget(arguments, &error);
+      QPoint local;
+      if (error.isEmpty() && target) {
+        if (arguments.value(QStringLiteral("target")).toString().isEmpty()) {
+          const QPoint rootPoint(arguments.value(QStringLiteral("x")).toInt(),
+                                 arguments.value(QStringLiteral("y")).toInt());
+          local = target->mapFrom(root_, rootPoint);
+          if (!target->rect().contains(local)) {
+            error = QStringLiteral("Resolved widget does not contain the requested window point");
+          }
+        } else {
+          local = resolvePosition(target, arguments, &error);
+        }
+      }
+      const QString buttonName = arguments.value(QStringLiteral("button"))
+                                     .toString(QStringLiteral("left"));
+      if (error.isEmpty() && name == QStringLiteral("ui.mouseClick") &&
+          buttonName != QStringLiteral("left") &&
+          buttonName != QStringLiteral("right") &&
+          buttonName != QStringLiteral("middle")) {
+        error = QStringLiteral("button must be left, right, or middle");
+      }
+      if (error.isEmpty() && target) {
+        movePointer(target, local);
+        if (name == QStringLiteral("ui.mouseClick")) {
+          const Qt::MouseButton button = buttonName == QStringLiteral("right")
+                                             ? Qt::RightButton
+                                         : buttonName == QStringLiteral("middle")
+                                             ? Qt::MiddleButton
+                                             : Qt::LeftButton;
+          sendMouseEvent(target, local, QEvent::MouseButtonPress, button, button);
+          sendMouseEvent(target, local, QEvent::MouseButtonRelease, button, Qt::NoButton);
+        }
+        result.insert(QStringLiteral("target"), target->objectName().isEmpty()
+                                                   ? QString::fromLatin1(target->metaObject()->className())
+                                                   : target->objectName());
+        result.insert(QStringLiteral("x"), local.x());
+        result.insert(QStringLiteral("y"), local.y());
+        result.insert(QStringLiteral("action"), name == QStringLiteral("ui.mouseClick")
+                                                    ? QStringLiteral("click")
+                                                    : QStringLiteral("move"));
+      }
+    } else if (name == QStringLiteral("ui.hideCursor")) {
+      if (cursor_) {
+        cursor_->hide();
+      }
+      result.insert(QStringLiteral("visible"), false);
+    } else {
+      error = QStringLiteral("Unknown UI test tool: %1").arg(name);
+    }
+
+    QJsonObject toolResult = textResult(
+        error.isEmpty() ? QString::fromUtf8(QJsonDocument(result).toJson(QJsonDocument::Compact))
+                        : error,
+        !error.isEmpty());
+    if (error.isEmpty()) {
+      toolResult.insert(QStringLiteral("structuredContent"), result);
+    }
+    return makeResponse(id, toolResult);
+  }
+
+  QWidget* resolveTarget(const QJsonObject& arguments, QString* error) const {
+    if (!root_) {
+      *error = QStringLiteral("UI test window is unavailable");
+      return nullptr;
+    }
+    const QString name = arguments.value(QStringLiteral("target")).toString();
+    if (!name.isEmpty()) {
+      QWidget* match = nullptr;
+      QList<QWidget*> candidates{root_};
+      candidates.append(root_->findChildren<QWidget*>(name, Qt::FindChildrenRecursively));
+      for (QWidget* widget : candidates) {
+        if (widget && widget->objectName() == name && widget->window() == root_.data() &&
+            widget->isVisible() && widget->isEnabled()) {
+          if (match) {
+            *error = QStringLiteral("Widget objectName is ambiguous: %1").arg(name);
+            return nullptr;
+          }
+          match = widget;
+        }
+      }
+      if (!match) {
+        *error = QStringLiteral("Visible enabled widget not found: %1").arg(name);
+      }
+      return match;
+    }
+    if (!arguments.value(QStringLiteral("x")).isDouble() ||
+        !arguments.value(QStringLiteral("y")).isDouble()) {
+      *error = QStringLiteral("Provide target or both x and y coordinates");
+      return nullptr;
+    }
+    const QPoint rootPoint(arguments.value(QStringLiteral("x")).toInt(),
+                           arguments.value(QStringLiteral("y")).toInt());
+    if (!root_->rect().contains(rootPoint)) {
+      *error = QStringLiteral("Window coordinates are outside the UI test window");
+      return nullptr;
+    }
+    QWidget* target = root_->childAt(rootPoint);
+    target = target ? target : root_.data();
+    if (!target->isEnabled()) {
+      *error = QStringLiteral("The widget at the requested point is disabled");
+      return nullptr;
+    }
+    return target;
+  }
+
+  static QPoint resolvePosition(QWidget* target, const QJsonObject& arguments,
+                                QString* error) {
+    const bool hasX = arguments.value(QStringLiteral("x")).isDouble();
+    const bool hasY = arguments.value(QStringLiteral("y")).isDouble();
+    if (hasX != hasY) {
+      *error = QStringLiteral("Coordinates require both x and y");
+      return {};
+    }
+    const QPoint point = hasX
+                             ? QPoint(arguments.value(QStringLiteral("x")).toInt(),
+                                      arguments.value(QStringLiteral("y")).toInt())
+                             : target->rect().center();
+    if (!target->rect().contains(point)) {
+      *error = QStringLiteral("Coordinates are outside the target widget");
+      return {};
+    }
+    return point;
+  }
+
+  void movePointer(QWidget* target, const QPoint& local) {
+    if (!target || !root_) {
+      return;
+    }
+    if (hovered_ && hovered_ != target) {
+      QEvent leaveEvent(QEvent::Leave);
+      QApplication::sendEvent(hovered_, &leaveEvent);
+    }
+    const QPointF localF(local);
+    const QPointF globalF(target->mapToGlobal(local));
+    if (hovered_ != target) {
+      const QPointF windowF(target->mapTo(root_, local));
+      QEnterEvent enterEvent(localF, windowF, globalF);
+      QApplication::sendEvent(target, &enterEvent);
+      hovered_ = target;
+    }
+    sendMouseEvent(target, local, QEvent::MouseMove, Qt::NoButton, Qt::NoButton);
+    cursor_->move(root_->mapFromGlobal(globalF.toPoint()) - QPoint(2, 2));
+    cursor_->raise();
+    cursor_->show();
+  }
+
+  static void sendMouseEvent(QWidget* target, const QPoint& local,
+                             QEvent::Type type, Qt::MouseButton button,
+                             Qt::MouseButtons buttons) {
+    const QPointF localF(local);
+    const QPointF globalF(target->mapToGlobal(local));
+    QMouseEvent mouseEvent(type, localF, globalF, button, buttons, Qt::NoModifier);
+    QApplication::sendEvent(target, &mouseEvent);
+  }
+
+  QPointer<QWidget> root_;
+  QLabel* cursor_ = nullptr;
+  QTcpServer server_;
+  QTcpSocket* client_ = nullptr;
+  QByteArray input_;
+  QPointer<QWidget> hovered_;
+  QString error_;
+  int timerId_ = 0;
 };
 }
 
@@ -1840,6 +2220,73 @@ class DialogLatencyEventFilter final : public QObject {
 
  protected:
   bool eventFilter(QObject* watched, QEvent* event) override {
+    auto* watchedWidget = qobject_cast<QWidget*>(watched);
+    auto* button = qobject_cast<QAbstractButton*>(watched);
+    const auto* keyEvent = event && event->type() == QEvent::KeyRelease
+                               ? static_cast<QKeyEvent*>(event)
+                               : nullptr;
+    const auto* keyPressEvent = event && event->type() == QEvent::KeyPress
+                                    ? static_cast<QKeyEvent*>(event)
+                                    : nullptr;
+    const bool confirmKeyPress =
+        keyPressEvent && (keyPressEvent->key() == Qt::Key_Return ||
+                          keyPressEvent->key() == Qt::Key_Enter);
+    const bool confirmKeyRelease =
+        keyEvent && keyEvent->key() == Qt::Key_Space && button;
+    if (watchedWidget && event &&
+        (event->type() == QEvent::MouseButtonRelease ||
+         confirmKeyRelease || confirmKeyPress)) {
+      auto* dialog = qobject_cast<QDialog*>(watchedWidget->window());
+      QAbstractButton* confirmButton = button;
+      if (confirmKeyPress && dialog) {
+        const auto defaultButtons = dialog->findChildren<QPushButton*>();
+        for (auto* candidate : defaultButtons) {
+          if (candidate->isDefault()) {
+            confirmButton = candidate;
+            break;
+          }
+        }
+      }
+      auto* pushButton = qobject_cast<QPushButton*>(confirmButton);
+      bool isConfirmButton = pushButton && pushButton->isDefault();
+      for (QWidget* ancestor = confirmButton ? confirmButton->parentWidget()
+                                            : nullptr;
+           ancestor && dialog;
+           ancestor = ancestor->parentWidget()) {
+        if (auto* buttonBox = qobject_cast<QDialogButtonBox*>(ancestor)) {
+          const auto role = buttonBox->buttonRole(confirmButton);
+          isConfirmButton = role == QDialogButtonBox::AcceptRole ||
+                            role == QDialogButtonBox::YesRole ||
+                            role == QDialogButtonBox::ApplyRole ||
+                            role == QDialogButtonBox::DestructiveRole;
+          break;
+        }
+        if (ancestor == dialog) {
+          break;
+        }
+      }
+
+      if (dialog && isConfirmButton) {
+        constexpr auto kConfirmRepeatGuardMs = 500;
+        constexpr auto guardProperty = "artifactConfirmRepeatGuard";
+        if (dialog->property(guardProperty).toBool()) {
+          if (confirmButton && event->type() == QEvent::MouseButtonRelease) {
+            confirmButton->setDown(false);
+          }
+          return true;
+        }
+
+        dialog->setProperty(guardProperty, true);
+        QPointer<QDialog> guardedDialog(dialog);
+        QTimer::singleShot(kConfirmRepeatGuardMs, this, [guardedDialog,
+                                                        guardProperty]() {
+          if (guardedDialog) {
+            guardedDialog->setProperty(guardProperty, false);
+          }
+        });
+      }
+    }
+
     if (!event || (event->type() != QEvent::Polish &&
                    event->type() != QEvent::Show &&
                    event->type() != QEvent::Paint &&
@@ -4856,8 +5303,27 @@ int Artifact::runApplication(int argc, char *argv[]) {
   for (int i = 0; i < argc; ++i) {
     appArgs << QString::fromLocal8Bit(argv[i]);
   }
+  QStringList commandLineArgs = appArgs;
+  quint16 uiTestMcpPort = 0;
+  if (uiTestExecutable) {
+    const int optionIndex = appArgs.indexOf(QStringLiteral("--ui-mcp-port"));
+    if (optionIndex >= 0) {
+      bool portOk = false;
+      const int requestedPort = optionIndex + 1 < appArgs.size()
+                                    ? appArgs[optionIndex + 1].toInt(&portOk)
+                                    : 0;
+      if (!portOk || requestedPort <= 0 || requestedPort > 65535 ||
+          appArgs.lastIndexOf(QStringLiteral("--ui-mcp-port")) != optionIndex) {
+        fprintf(stderr, "Invalid --ui-mcp-port value for ArtifactUiTest\n");
+        return 2;
+      }
+      uiTestMcpPort = static_cast<quint16>(requestedPort);
+      commandLineArgs.removeAt(optionIndex + 1);
+      commandLineArgs.removeAt(optionIndex);
+    }
+  }
   const Artifact::CommandLine parsedCommandLine =
-      Artifact::parseCommandLine(appArgs);
+      Artifact::parseCommandLine(commandLineArgs);
   if (parsedCommandLine.type != Artifact::CommandType::Gui) {
     configureWindowsCliConsole();
   }
@@ -8445,6 +8911,15 @@ int Artifact::runApplication(int argc, char *argv[]) {
   QTimer::singleShot(0, mw, [mw]() {
     mw->show();
   });
+  std::unique_ptr<ArtifactUiTestMcpServer> uiTestMcpServer;
+  if (uiTestMcpPort > 0) {
+    uiTestMcpServer = std::make_unique<ArtifactUiTestMcpServer>(
+        mw, uiTestMcpPort);
+    if (!uiTestMcpServer->isListening()) {
+      qCritical() << "[UiTestMcp] Failed to start UI test MCP endpoint:"
+                  << uiTestMcpServer->errorString();
+    }
+  }
   const int exitCode = a.exec();
   appendShutdownDiagnostic(
       QStringLiteral("event loop returned exitCode=%1").arg(exitCode));

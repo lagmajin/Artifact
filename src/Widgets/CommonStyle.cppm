@@ -720,8 +720,10 @@ QSize ArtifactCommonStyle::sizeFromContents(ContentsType type,
       const int textHeight = fm.height();
       const int iconWidth = menuItem->icon.isNull() ? 0 : 19;
       const int spacing = menuItem->icon.isNull() ? 0 : 5;
-      return QSize(std::max(contentsSize.width(), textWidth + iconWidth + spacing + 9),
-                   std::max(contentsSize.height(), textHeight + 7));
+      // Give top-level menus enough horizontal breathing room to read as
+      // deliberate navigation items instead of tightly packed labels.
+      return QSize(std::max(contentsSize.width(), textWidth + iconWidth + spacing + 18),
+                   std::max(contentsSize.height(), textHeight + 10));
     }
   }
 
@@ -967,15 +969,25 @@ void ArtifactCommonStyle::drawControl(ControlElement element, const QStyleOption
       painter->save();
       painter->setRenderHint(QPainter::Antialiasing, true);
 
-      const QRect itemRect = menuItem->rect.adjusted(1, 2, -1, -2);
+      const QRect itemRect = menuItem->rect.adjusted(2, 2, -2, -2);
       const bool enabled = menuItem->state.testFlag(State_Enabled);
+      const bool active = enabled &&
+          (menuItem->state.testFlag(State_Selected) ||
+           menuItem->state.testFlag(State_Sunken));
       const QColor disabledText = QColor(theme.disabledTextColor.isEmpty()
           ? theme.textColor : theme.disabledTextColor).darker(110);
-      if (enabled && (menuItem->state.testFlag(State_Selected) ||
-          menuItem->state.testFlag(State_Sunken))) {
+      if (active) {
         painter->setPen(Qt::NoPen);
-        painter->setBrush(menuHover);
-        painter->drawRoundedRect(itemRect, 4.0, 4.0);
+        QColor hoverSurface = menuHover;
+        hoverSurface.setAlpha(150);
+        painter->setBrush(hoverSurface);
+        painter->drawRoundedRect(itemRect, 3.0, 3.0);
+        QColor activeAccent(theme.accentColor);
+        activeAccent.setAlpha(230);
+        painter->setBrush(activeAccent);
+        painter->drawRoundedRect(
+            QRectF(itemRect.left() + 9, itemRect.bottom() - 2,
+                   std::max(8, itemRect.width() - 18), 2), 1.0, 1.0);
       }
 
       const QFontMetrics& fm = menuItem->fontMetrics;
@@ -993,7 +1005,9 @@ void ArtifactCommonStyle::drawControl(ControlElement element, const QStyleOption
         x += iconSize + spacing;
       }
 
-      painter->setPen(enabled ? menuText : disabledText);
+      QColor itemText = enabled ? menuText : disabledText;
+      if (active) itemText = QColor(theme.accentColor).lighter(118);
+      painter->setPen(itemText);
       painter->drawText(QRect(x, itemRect.top(), textWidth, itemRect.height()),
                         Qt::AlignVCenter | Qt::TextShowMnemonic, menuItem->text);
       painter->restore();

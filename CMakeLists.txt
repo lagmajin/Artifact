@@ -624,9 +624,6 @@ target_sources(ArtifactRenderSupport
     PRIVATE ${ARTIFACT_RENDER_SUPPORT_IMPL}
     PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_RENDER_SUPPORT_MODULES}
 )
-set_property(SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactHDRMonitor.cppm" APPEND PROPERTY COMPILE_OPTIONS
-    "/reference;Event.Bus=${CMAKE_CURRENT_BINARY_DIR}/../ArtifactCore/CMakeFiles/ArtifactCoreEvent.dir/Event.Bus.ifc"
-    "/reference;Memory.SharedPtr=${CMAKE_CURRENT_BINARY_DIR}/../ArtifactCore/CMakeFiles/ArtifactCore.dir/Memory.SharedPtr.ifc")
 
 if(TARGET __CMAKE::CXX23)
     set_property(TARGET ArtifactRenderSupport PROPERTY CXX_MODULE_STD ON)
@@ -642,7 +639,7 @@ target_include_directories(ArtifactRenderSupport PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/verdigris/src"
 )
-target_link_libraries(ArtifactRenderSupport PUBLIC ArtifactCore ArtifactCoreAudio ArtifactCoreThread)
+target_link_libraries(ArtifactRenderSupport PUBLIC ArtifactCore ArtifactCoreAudio ArtifactCoreEvent ArtifactCoreThread)
 
 add_library(ArtifactRenderSupportContracts STATIC)
 set_target_properties(ArtifactRenderSupportContracts PROPERTIES
@@ -890,6 +887,7 @@ set(ARTIFACT_DOCK_FOUNDATION_MODULES
 )
 
 set(ARTIFACT_RENDER_MODULES
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ArtifactFrameCache.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ArtifactTextGlyphSubmitter.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ArtifactTextGlyphPipelineAdapter.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ShaderManager.ixx"
@@ -911,6 +909,7 @@ set(ARTIFACT_RENDER_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/Render/ViewportOverlay.ixx"
 )
 set(ARTIFACT_RENDER_IMPL
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactFrameCache.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactTextGlyphPipelineAdapter.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ShaderManager.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/RenderCommandBuffer.cppm"
@@ -1287,11 +1286,13 @@ list(REMOVE_ITEM APP_IMPL ${ARTIFACT_EFFECTS_IMPL})
 # ColorCorrection interfaces without a cppm implementation remain outside
 # this target and are intentionally not added here.
 set(ARTIFACT_EFFECTS_COLOR_MODULES
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/ColorCorrection/BlackAndWhiteEffect.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/ColorCorrection/BrightnessEffect.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/ColorCorrection/ChannelMixerEffect.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/ColorCorrection/ColoramaEffect.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/ColorCorrection/ColorBalanceEffect.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/ColorCorrection/ColorWheelsEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/ColorCorrection/ColorTintEffect.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/ColorCorrection/CurvesEffect.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/ColorCorrection/ExposureEffect.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/ColorCorrection/FillEffect.ixx"
@@ -1301,18 +1302,23 @@ set(ARTIFACT_EFFECTS_COLOR_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/ColorCorrection/InvertEffect.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/ColorCorrection/LevelsEffect.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/ColorCorrection/PhotoFilterEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/ColorCorrection/PosterizeEffect.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/ColorCorrection/SelectiveColorEffect.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/ColorCorrection/ShadowHighlightEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/ColorCorrection/ThresholdEffect.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/ColorCorrection/TritoneEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/ColorCorrection/VibranceEffect.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/WhiteBalanceEffect.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/LiftGammaGainEffect.ixx"
 )
 set(ARTIFACT_EFFECTS_COLOR_IMPL
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/BlackAndWhiteEffect.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/BrightnessEffect.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/ChannelMixerEffect.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/ColoramaEffect.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/ColorBalanceEffect.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/ColorWheelsEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/ColorTintEffect.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/CurvesEffect.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/ExposureEffect.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/FillEffect.cppm"
@@ -1322,9 +1328,12 @@ set(ARTIFACT_EFFECTS_COLOR_IMPL
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/InvertEffect.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/LevelsEffect.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/PhotoFilterEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/PosterizeEffect.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/SelectiveColorEffect.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/ShadowHighlightEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/ThresholdEffect.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/TritoneEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/VibranceEffect.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/WhiteBalanceEffect.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/LiftGammaGainEffect.cppm"
 )
@@ -3689,3 +3698,32 @@ else()
 endif()
 
 set_target_properties(ArtifactUiTest PROPERTIES FOLDER "Artifact/Testing")
+
+# MSBuild defaults .cppm files to module-interface compilation. Implementation
+# units paired with public .ixx interfaces must compile as ordinary C++ while
+# CMake scans their `module X;` declarations and orders the primary IFC.
+if(MSVC)
+    get_cmake_property(_artifact_cmake_variables VARIABLES)
+    set(_artifact_module_implementation_sources)
+    foreach(_artifact_variable IN LISTS _artifact_cmake_variables)
+        if(_artifact_variable MATCHES "_IMPL$")
+            foreach(_artifact_source IN LISTS ${_artifact_variable})
+                if(_artifact_source MATCHES
+                        "^${CMAKE_CURRENT_SOURCE_DIR}/.*[.]cppm$")
+                    file(STRINGS "${_artifact_source}" _artifact_export_module
+                        REGEX "^[ \t]*export[ \t]+module[ \t]+")
+                    if(NOT _artifact_export_module)
+                        list(APPEND _artifact_module_implementation_sources
+                            "${_artifact_source}")
+                    endif()
+                endif()
+            endforeach()
+        endif()
+    endforeach()
+    list(REMOVE_DUPLICATES _artifact_module_implementation_sources)
+    foreach(_artifact_source IN LISTS
+            _artifact_module_implementation_sources)
+        set_property(SOURCE "${_artifact_source}" APPEND PROPERTY
+            VS_SETTINGS "CompileAs=CompileAsCpp")
+    endforeach()
+endif()

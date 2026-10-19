@@ -2404,9 +2404,9 @@ void ArtifactProjectService::Impl::addLayerToCurrentComposition(
                 item[QStringLiteral("id")] = solidSourceItemId;
                 item[QStringLiteral("type")] = QStringLiteral("solid");
                 item[QStringLiteral("name")] = params.name().toQString();
-                item[QStringLiteral("color")] = result.layer->toJson().value(
-                    QStringLiteral("solidColor")).toObject();
                 const auto solidJson = result.layer->toJson();
+                item[QStringLiteral("color")] = solidJson.value(
+                    QStringLiteral("solidColor")).toObject();
                 item[QStringLiteral("width")] = solidJson.value(QStringLiteral("solidWidth"));
                 item[QStringLiteral("height")] = solidJson.value(QStringLiteral("solidHeight"));
                 item[QStringLiteral("pixelAspectRatio")] = solidJson.value(

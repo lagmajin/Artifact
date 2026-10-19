@@ -1140,8 +1140,8 @@ PSInput main(VSInput input, uint instanceId : SV_InstanceID)
     }
     float angleRadians = placement.RotationDegrees *
                          0.017453292519943295;
-    float2 localPosition = float2(LocalX + input.pos.x * LocalWidth,
-                                  LocalY + input.pos.y * LocalHeight);
+    float2 localPosition = float2(input.pos.x * LocalWidth,
+                                  input.pos.y * LocalHeight);
     float2 rotatedPosition = localPosition * placement.LocalScale;
     if (placement.RotationDegrees != 0.0)
     {
@@ -1157,16 +1157,16 @@ PSInput main(VSInput input, uint instanceId : SV_InstanceID)
     {
         localPos = float4(
             input.pos.x * LocalWidth * placement.LocalScale.x +
-                placement.Offset.x,
+                LocalX + placement.Offset.x,
             input.pos.y * LocalHeight * placement.LocalScale.y +
-                placement.Offset.y,
+                LocalY + placement.Offset.y,
             placement.Offset.z, 1.0);
     }
     else
     {
         localPos = float4(
-            rotatedPosition.x + placement.Offset.x,
-            rotatedPosition.y + placement.Offset.y,
+            LocalX + rotatedPosition.x + placement.Offset.x,
+            LocalY + rotatedPosition.y + placement.Offset.y,
             placement.Offset.z, 1.0);
     }
     output.pos = float4(dot(localPos, row0), dot(localPos, row1),

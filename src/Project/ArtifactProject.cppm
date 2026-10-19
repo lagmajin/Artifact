@@ -1944,9 +1944,6 @@ void ArtifactProject::setExtensionData(const QJsonObject& data)
   ArtifactLayerResult ArtifactProject::createLayerAndAddToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params)
   {
   auto result = impl_->createLayerAndAddToComposition(compositionId, params);
-  if (result.success && result.layer) {
-   publishLayerChangedEvent(compositionId, result.layer->id(), LayerChangedEvent::ChangeType::Created);
-  }
   return result;
   }
 

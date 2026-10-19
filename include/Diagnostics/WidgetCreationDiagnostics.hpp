@@ -118,7 +118,11 @@ inline void record(QObject *widget, const QString &label,
                << "label=" << label;
     return;
   }
-  if (outcome != QStringLiteral("created") || totalMs >= 50.0) {
+  // Lifecycle phase measurements are recorded on the UI thread. Flushing each
+  // successful phase turns routine object creation into synchronous disk I/O;
+  // keep those records buffered and flush only exceptional outcomes.
+  if (outcome != QStringLiteral("created") &&
+      outcome != QStringLiteral("measured")) {
     state.file.flush();
   }
 
