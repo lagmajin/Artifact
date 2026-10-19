@@ -125,6 +125,18 @@ public:
   std::function<bool()> interactionStateProvider_;
   std::chrono::steady_clock::time_point lastMouseMoveSnapshot_{};
 
+  static bool submitQueuedDrawsBeforeTextureOverwrite(void* userData)
+  {
+    auto* self = static_cast<Impl*>(userData);
+    if (!self) return false;
+    if (self->commandBuffer_.empty()) return true;
+    if (!self->immediateContext_) return false;
+    self->submitter_.submit(self->commandBuffer_, self->immediateContext_);
+    if (!self->commandBuffer_.empty()) return false;
+    self->commandBuffer_.setTargetRTV(self->primitiveRenderer_.currentRTV());
+    return true;
+  }
+
   static FloatColor toFloatColor(const QColor& color)
   {
     const auto srgbToLinear = [](const float channel) {
@@ -231,6 +243,8 @@ public:
     primitiveRenderer_.setPSOs(shaderManager_);
     primitiveRenderer_.setContext(immediateContext_, swapChain_);
     primitiveRenderer_.setCommandBuffer(&commandBuffer_);
+    primitiveRenderer_.setBeforeTextureOverwriteCallback(
+        &Impl::submitQueuedDrawsBeforeTextureOverwrite, this);
     submitter_.createBuffers(device_, swapChainDesc.ColorBufferFormat);
     submitter_.setPSOs(shaderManager_);
     gpuReady_ = true;
