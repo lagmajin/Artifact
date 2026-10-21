@@ -45,6 +45,7 @@ module;
 #include <numeric>
 #include <regex>
 #include <random>
+#endif // Q_MOC_RUN
 module Artifact.Widgets.ColorPaletteWidget;
 
 
