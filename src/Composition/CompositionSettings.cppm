@@ -1,6 +1,7 @@
 ﻿module;
 
 #include <string>
+#include <QSize>
 
 // composition settings are a tiny value object; keep the implementation local to this module.
 // The public declarations live in include/Composition/CompositionSettings.ixx.

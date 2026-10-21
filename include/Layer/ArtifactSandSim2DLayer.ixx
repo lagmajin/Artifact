@@ -2,6 +2,10 @@ module;
 #include <memory>
 #include <vector>
 #include <cstdint>
+#include <QString>
+#include <QVariant>
+#include <QImage>
+#include <QJsonObject>
 
 export module Artifact.Layer.SandSim2D;
 

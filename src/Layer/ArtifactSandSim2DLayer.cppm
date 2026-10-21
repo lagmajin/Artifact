@@ -14,6 +14,7 @@ module;
 module Artifact.Layer.SandSim2D;
 
 import Artifact.Layer.Abstract;
+import Size;
 import Artifact.Render.IRenderer;
 import Artifact.Render.DiligentDeviceManager;
 import Physics.SandSim2D;

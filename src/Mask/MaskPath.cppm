@@ -50,6 +50,7 @@ module Artifact.Mask.Path;
 import Utils.String.UniString;
 import Math.Vec;
 import Shape.Path;
+import Shape.Types;
 
 namespace Artifact {
 

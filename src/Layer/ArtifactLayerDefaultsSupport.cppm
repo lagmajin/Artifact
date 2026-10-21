@@ -1,6 +1,7 @@
+module;
 #include <QString>
 
-import Artifact.Layer.Abstract;
+module Artifact.Layer.Abstract;
 
 namespace Artifact {
 

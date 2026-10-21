@@ -12,6 +12,7 @@ import Artifact.Layers.Abstract._2D;
 import Artifact.Render.IRenderer;
 import Color.Float;
 import Property.Group;
+import Size;
 import Property;
 
 namespace Artifact {

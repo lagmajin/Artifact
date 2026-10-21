@@ -23,6 +23,8 @@ import Artifact.Layer.Abstract;
 
 
 import Utils;
+import Utils.Size.Like;
+import Utils.String.Like;
 import Memory.SharedPtr;
 import Composition.Settings;
 

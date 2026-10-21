@@ -50,6 +50,7 @@ import Utils.String.UniString;
 import Core.Parallel;
 import Image.ImageF32x4RGBAWithCache;
 import Image.ImageF32x4_RGBA;
+import FloatRGBA;
 import Artifact.Layer.Image;
 
 namespace Artifact

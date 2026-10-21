@@ -10,6 +10,8 @@ module;
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
 
 module Artifact.Effect.Keying.IBKKeyer;
+import Graphics.SurfaceColorContract;
+import Memory.SharedPtr;
 
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;

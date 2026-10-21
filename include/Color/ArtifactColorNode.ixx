@@ -48,7 +48,6 @@ export namespace Artifact {
 // Forward declarations
 // ============================================================
 class ColorNode;
-class ColorNodeGraph;
 
 // ============================================================
 // NodePort — input/output connection point on a node

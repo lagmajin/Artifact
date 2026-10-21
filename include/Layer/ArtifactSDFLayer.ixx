@@ -11,6 +11,8 @@ module;
 export module Artifact.Layer.SDF;
 
 import Artifact.Layer.Abstract;
+import Artifact.Render.IRenderer;
+import Utils.String.UniString;
 import Property.Group;
 import Color.Float;
 import Memory.SharedPtr;

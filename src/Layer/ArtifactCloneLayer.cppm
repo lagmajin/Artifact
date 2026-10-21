@@ -15,6 +15,7 @@ module;
 #include <memory>
 #include <algorithm>
 #include <random>
+#include <Graphics/InstanceData.h>
 
 module Artifact.Layer.Clone;
 
@@ -32,9 +33,10 @@ import Artifact.Render.IRenderer;
 import Property.Abstract;
 import Utils.Id;
 import Core.Parallel;
+import Size;
+import Mesh;
 
 // Mesh instancing (Phase 2) - convert CloneData to InstanceData
-import Graphics;
 import Math.Random;
 import Math.Interpolate;
 

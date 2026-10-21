@@ -65,6 +65,7 @@ module;
 #include <DiligentCore/Common/interface/Float16.hpp>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Common/interface/BasicMath.hpp>
+#include <Graphics/InstanceData.h>
 
 module Artifact.Render.IRenderer;
 

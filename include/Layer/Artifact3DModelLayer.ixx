@@ -13,6 +13,8 @@ module;
 export module Artifact.Layers.Model3D;
 
 import Artifact.Layer.Abstract;
+import Artifact.Render.IRenderer;
+import Utils.String.UniString;
 import Material.Material;
 import Mesh;
 import AssetType;

@@ -1,5 +1,6 @@
 module;
 #include <QString>
+#include <QVector3D>
 
 module Composition3D;
 import Core.ArtifactMath;

@@ -2,6 +2,9 @@ module;
 #include <algorithm>
 #include <cmath>
 #include <memory>
+#include <vector>
+#include <QVariant>
+#include <QString>
 
 module Artifact.Effect.Rasterizer.PinchBulge;
 

@@ -11,6 +11,8 @@ import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
 import Memory.SharedPtr;
+import Property.Abstract;
+import Utils.String.UniString;
 
 export namespace Artifact {
 

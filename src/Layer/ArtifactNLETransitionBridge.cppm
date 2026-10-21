@@ -22,6 +22,7 @@ import Video.VideoFrame;
 import Image.ImageF32x4_RGBA;
 import Artifact.Composition.Abstract;
 import NLE.OTIO;
+import Frame.Range;
 
 // M0: Video.ixx で漏れていた3実装をブリッジから import して静的登録を強制する。
 // (Video.ixx を変更せず、実装ファイル側で登録漏れを解消する方針)

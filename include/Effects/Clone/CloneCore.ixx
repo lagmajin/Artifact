@@ -76,7 +76,7 @@ export namespace Artifact {
     // EffectorBlendMode
     // エフェクター同士の合成方法
     // ─────────────────────────────────────────────────────────
-    export enum class EffectorBlendMode {
+    enum class EffectorBlendMode {
         Add = 0,
         Subtract,
         Multiply,
@@ -109,7 +109,7 @@ export namespace Artifact {
     // 使用を推奨。回転・スケールを合成したい場合は各 Effector の
     // applyToClones で明示的に行うこと。
     // ─────────────────────────────────────────────────────────
-    export inline void blendCloneData(
+    inline void blendCloneData(
         CloneData& base,
         const CloneData& effector,
         EffectorBlendMode mode,

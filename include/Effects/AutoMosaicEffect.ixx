@@ -10,6 +10,7 @@ module;
 #include <cmath>
 #include <vector>
 export module Artifact.Effect.AutoMosaic;
+import Image.ImageF32x4RGBAWithCache;
 
 import Artifact.Effect.Abstract;
 import ArtifactCore.ImageProcessing.FaceDetection;

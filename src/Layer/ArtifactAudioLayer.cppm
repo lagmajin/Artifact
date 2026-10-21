@@ -407,7 +407,7 @@ bool ArtifactAudioLayer::loadFromPath(const QString& path)
   }
   if (templatePath.isEmpty()) {
     ArtifactCore::AssetManager::instance().releaseSource(impl_->sourceAssetId_);
-    impl_->sourceAssetId_ = {};
+    impl_->sourceAssetId_ = QUuid{};
     impl_->cachedSourceVersion_ = 0;
     impl_->isLoaded_ = false;
     impl_->sourcePath_.clear();

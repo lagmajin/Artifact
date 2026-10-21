@@ -3,6 +3,7 @@ module;
 export module Artifact.Layer.EnvironmentMapInitParams;
 
 import Artifact.Layer.InitParams;
+import Artifact.Layer.Abstract;
 
 export namespace Artifact {
 

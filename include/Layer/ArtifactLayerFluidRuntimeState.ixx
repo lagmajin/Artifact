@@ -10,6 +10,7 @@ module;
 export module Artifact.Layer.FluidRuntimeState;
 
 import Container.NamedVector;
+import Container.Debug;
 import Artifact.Render.IRenderer;
 import Graphics.ParticleData;
 import Physics.Fluid;

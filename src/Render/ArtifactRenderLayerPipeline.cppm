@@ -1502,6 +1502,14 @@ bool RenderPipeline::prepareReveal(IDeviceContext* ctx) {
 bool RenderPipeline::initialize(IRenderDevice* device,
                                 Uint32 width,
                                 Uint32 height,
+                                TEXTURE_FORMAT format)
+{
+ return initialize(device, width, height, format, AuxiliaryTargetRequest{});
+}
+
+bool RenderPipeline::initialize(IRenderDevice* device,
+                                Uint32 width,
+                                Uint32 height,
                                 TEXTURE_FORMAT format,
                                 AuxiliaryTargetRequest auxiliaryTargets)
  {

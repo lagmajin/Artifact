@@ -14,6 +14,8 @@ module;
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
 
 module Artifact.Effect.Kaleidoscope;
+import Graphics.SurfaceColorContract;
+import FloatRGBA;
 
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;

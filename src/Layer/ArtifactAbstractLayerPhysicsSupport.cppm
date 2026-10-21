@@ -1,6 +1,7 @@
+module;
 #include <cstddef>
 
-import Artifact.Layer.Abstract;
+module Artifact.Layer.Abstract;
 import Artifact.Layer.PhysicsBridge;
 
 namespace Artifact {

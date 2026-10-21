@@ -2,6 +2,7 @@
 #include <utility>
 #include <algorithm>
 #include <cmath>
+#include <QString>
 
 
 module Artifact.Layer.InitParams;

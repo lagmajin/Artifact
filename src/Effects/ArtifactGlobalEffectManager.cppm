@@ -36,6 +36,7 @@
 #include <regex>
 #include <random>
 module Artifact.Effects.Manager;
+import Core.ArtifactString;
 
 import Container.MultiIndex;
 import ArtifactCore.Plugin.Registry;

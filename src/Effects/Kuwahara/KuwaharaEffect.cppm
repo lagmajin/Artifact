@@ -14,6 +14,7 @@ module;
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
 
 module Artifact.Effect.Kuwahara;
+import Graphics.SurfaceColorContract;
 
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;

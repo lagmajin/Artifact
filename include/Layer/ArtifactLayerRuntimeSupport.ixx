@@ -9,6 +9,7 @@ module;
 export module Artifact.Layer.RuntimeSupport;
 
 import Container.NamedVector;
+import Container.Debug;
 
 export namespace Artifact {
 

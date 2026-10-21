@@ -6,6 +6,7 @@ module;
 
 export module LevelsEffect;
 
+import Artifact.Render.PointwiseEffectFusion;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import ImageProcessing.ColorTransform.LevelsCurves;

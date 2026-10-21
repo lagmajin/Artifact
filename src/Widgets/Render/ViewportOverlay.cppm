@@ -8,6 +8,7 @@ module;
 
 module Artifact.Widgets.ViewportOverlay;
 import Artifact.Render.IRenderer;
+import Color.Float;
 
 namespace Artifact::ViewportOverlay {
 

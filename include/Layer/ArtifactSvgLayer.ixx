@@ -38,6 +38,8 @@ module;
 export module Artifact.Layer.Svg;
 
 import Artifact.Layers.Abstract._2D;
+import Artifact.Render.IRenderer;
+import Property.Group;
 import Image.ImageF32x4_RGBA;
 
 export namespace Artifact {

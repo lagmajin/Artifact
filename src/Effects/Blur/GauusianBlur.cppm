@@ -39,6 +39,7 @@ module;
 #include <regex>
 #include <random>
 module Artifact.Effect.GauusianBlur;
+import Graphics.SurfaceColorContract;
 
 
 

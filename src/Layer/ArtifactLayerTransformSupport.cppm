@@ -1,3 +1,4 @@
+module;
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -10,8 +11,9 @@
 
 #include <DiligentCore/Common/interface/BasicMath.hpp>
 
-import Artifact.Layer.Abstract;
+module Artifact.Layer.Abstract;
 import Container.NamedVector;
+import Container.Debug;
 import Time.Rational;
 import Transform.Hlper;
 

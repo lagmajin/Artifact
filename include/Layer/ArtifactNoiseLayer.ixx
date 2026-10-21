@@ -8,6 +8,8 @@ export module Artifact.Layers.Noise;
 import Color.Float;
 import Artifact.Layer.InitParams;
 import Artifact.Layers.Abstract._2D;
+import Artifact.Render.IRenderer;
+import Property.Group;
 import Image.ImageF32x4_RGBA;
 import ImageProcessing.ProceduralTexture;
 import Artifact.Source.Noise;

@@ -10,7 +10,7 @@ import Generator.Clone;
 export namespace Artifact
 {
 
-export class GeneratorManager {
+class GeneratorManager {
 public:
     GeneratorManager() = default;
     GeneratorManager(const GeneratorManager&) = delete;

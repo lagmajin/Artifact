@@ -8,6 +8,8 @@ module Artifact.Project.CreationDefaults;
 
 import Serialization.Registry;
 import Serialization.SchemaMigration;
+import Color.Float;
+import Artifact.Layer.Abstract;
 
 
 namespace Artifact {

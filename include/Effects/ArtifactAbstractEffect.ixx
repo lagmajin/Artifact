@@ -1,4 +1,5 @@
 module;
+#include <QVariant>
 #include "../../../ArtifactCore/include/Define/DllExportMacro.hpp"
 #include <iostream>
 #include <vector>
@@ -31,6 +32,7 @@ module;
 #include <regex>
 #include <random>
 #include <QString>
+#include <QRectF>
 
 export module Artifact.Effect.Abstract;
 

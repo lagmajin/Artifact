@@ -8,6 +8,7 @@ export module Artifact.Layer.CompositionBackground;
 
 import Artifact.Layers.Abstract._2D;
 import Artifact.Render.IRenderer;
+import Property.Group;
 
 export namespace Artifact {
 

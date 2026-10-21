@@ -66,8 +66,10 @@ export namespace Artifact
   };
 
   bool initialize(IRenderDevice* device, Uint32 width, Uint32 height,
+                  TEXTURE_FORMAT format);
+  bool initialize(IRenderDevice* device, Uint32 width, Uint32 height,
                   TEXTURE_FORMAT format,
-                  AuxiliaryTargetRequest auxiliaryTargets = {});
+                  AuxiliaryTargetRequest auxiliaryTargets);
   void resize(Uint32 width, Uint32 height);
   void destroy();
 

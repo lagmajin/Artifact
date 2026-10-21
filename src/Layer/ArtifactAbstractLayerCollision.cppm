@@ -1,10 +1,14 @@
 #include <compare>
 #include <cstddef>
+#include <QString>
+#include <QPointF>
+#include <QRectF>
 
 import Artifact.Layer.Abstract;
 import Physics.Fluid;
 import Core.ArtifactMath;
 import Container.NamedVector;
+import Container.Debug;
 
 // QString is provided by Artifact.Layer.Abstract's public surface, but
 // preprocessor macros do not cross an IFC boundary.

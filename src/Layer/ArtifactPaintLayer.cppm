@@ -18,6 +18,8 @@ module Artifact.Layer.Paint;
 
 import Artifact.Composition.Abstract;
 import Artifact.Render.IRenderer;
+import Artifact.Layer.Abstract;
+import Property.Abstract;
 import Image.ImageF32x4RGBAWithCache;
 import Image.ImageF32x4_RGBA;
 import FloatRGBA;

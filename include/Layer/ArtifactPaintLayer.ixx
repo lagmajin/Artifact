@@ -16,6 +16,7 @@ import Artifact.Render.IRenderer;
 import FloatRGBA;
 import Frame.Position;
 import Image.ImageF32x4_RGBA;
+import Property.Group;
 
 export namespace Artifact {
 

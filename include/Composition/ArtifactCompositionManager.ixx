@@ -10,10 +10,10 @@ import Utils;
 import Artifact.Composition.Abstract;
 import Artifact.Composition.InitParams;
 import Artifact.Composition.Result;
+import Artifact.Composition.FindQuery;
 
 export namespace Artifact {
 
-class ArtifactFindCompositionQuery;
 
 class ArtifactCompositionManager : public QObject {
 private:

@@ -38,7 +38,7 @@ import Audio.IAudioDevice;
 export namespace Artifact {
 
 // WASAPI device uses Pimpl to keep implementation private
-export class WASAPIDevice : public IAudioDevice {
+class WASAPIDevice : public IAudioDevice {
 private:
     class Impl;
     Impl* impl_;

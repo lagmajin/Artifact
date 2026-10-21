@@ -34,8 +34,6 @@ import Memory.SharedPtr;
 
 export namespace Artifact {
 
-class ArtifactAbstractLayer;
-
 struct CloneRenderInstance {
     QMatrix4x4 transform;
     float weight = 1.0f;
@@ -768,7 +766,7 @@ inline bool applyAuthoritativeComponentState(
     return true;
 }
 
-export std::vector<CloneRenderInstance> fragmentCloneRenderInstances(
+std::vector<CloneRenderInstance> fragmentCloneRenderInstances(
     const ArtifactAbstractLayer* layer, const QMatrix4x4& baseTransform)
 {
     std::vector<CloneRenderInstance> instances;
@@ -791,7 +789,7 @@ export std::vector<CloneRenderInstance> fragmentCloneRenderInstances(
     return instances;
 }
 
-export std::vector<FragmentRenderInstance> fragmentRenderInstances(
+std::vector<FragmentRenderInstance> fragmentRenderInstances(
     const ArtifactAbstractLayer* layer, const QMatrix4x4& baseTransform)
 {
     std::vector<FragmentRenderInstance> instances;
@@ -924,7 +922,7 @@ inline std::vector<CloneRenderInstance> cloneRenderInstancesImpl(
     return instances;
 }
 
-export std::vector<CloneRenderInstance> cloneRenderInstances(
+std::vector<CloneRenderInstance> cloneRenderInstances(
     const ArtifactAbstractLayer* layer, const QMatrix4x4& baseTransform,
     CloneGridPlacementObserver placementObserver = nullptr,
     void* placementObserverContext = nullptr)
@@ -934,13 +932,13 @@ export std::vector<CloneRenderInstance> cloneRenderInstances(
                                     placementObserverContext);
 }
 
-export std::vector<CloneRenderInstance> cloneRenderInstancesForSimulation(
+std::vector<CloneRenderInstance> cloneRenderInstancesForSimulation(
     const ArtifactAbstractLayer* layer, const QMatrix4x4& baseTransform)
 {
     return cloneRenderInstancesImpl(layer, baseTransform, false, false);
 }
 
-export void drawWithClonerEffect(const ArtifactAbstractLayer* layer,
+void drawWithClonerEffect(const ArtifactAbstractLayer* layer,
                                  const QMatrix4x4& baseTransform,
                                  const std::function<void(const QMatrix4x4&, float)>& drawFn,
                                  CloneGridPlacementObserver placementObserver = nullptr,
@@ -953,7 +951,7 @@ export void drawWithClonerEffect(const ArtifactAbstractLayer* layer,
     }
 }
 
-export void drawWithClonerEffectIndexed(
+void drawWithClonerEffectIndexed(
     const ArtifactAbstractLayer* layer, const QMatrix4x4& baseTransform,
     const std::function<void(const QMatrix4x4&, float, int)>& drawFn,
     CloneGridPlacementObserver placementObserver = nullptr,
@@ -983,7 +981,7 @@ inline bool gpuCompatiblePlainModifierTransform(
     float& translationX, float& translationY, float& translationZ,
     float& rotationDegrees, float& scaleX, float& scaleY);
 
-export bool drawWithGpuEligibleClonerGridIndexed(
+bool drawWithGpuEligibleClonerGridIndexed(
     const ArtifactAbstractLayer* layer, const QMatrix4x4& baseTransform,
     const std::function<void(const QMatrix4x4&, float, int)>& drawFn,
     CloneGridPlacementObserver placementObserver,
@@ -1350,7 +1348,7 @@ export bool drawWithGpuEligibleClonerGridIndexed(
     return true;
 }
 
-export std::vector<ArtifactCore::InstanceData> cloneRenderInstanceData(
+std::vector<ArtifactCore::InstanceData> cloneRenderInstanceData(
     const ArtifactAbstractLayer* layer,
     const QMatrix4x4& baseTransform)
 {

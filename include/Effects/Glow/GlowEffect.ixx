@@ -43,7 +43,10 @@ export module Artifact.Effect.Glow;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import Artifact.Render.DiligentDeviceManager;
+import Artifact.Render.ROI;
 import Image.ImageF32x4RGBAWithCache;
+import Property.Abstract;
+import Utils.String.UniString;
 
 export namespace Artifact {
 

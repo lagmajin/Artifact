@@ -33,7 +33,6 @@ import Container.MultiIndex;
 import Composition.Context;
 import Artifact.Composition.Access;
 import Artifact.Composition.InitParams;
-import Artifact.Composition.Result;
 import Composition.Settings;
 import Audio.Analyze;
 import Audio.Segment;
@@ -52,6 +51,20 @@ import Artifact.Effect.Abstract;
 export namespace Artifact {
 
  using namespace ArtifactCore;
+ enum class AppendLayerToCompositionError {
+  None = 0,
+  CompositionNotFound,
+  LayerNotFound,
+  LayerTypeMismatch,
+  UnknownError,
+  LayerInitializationFailed
+ };
+ struct AppendLayerToCompositionResult {
+  bool success = false;
+  Status status{};
+  AppendLayerToCompositionError error = AppendLayerToCompositionError::None;
+  UniString message;
+ };
  class ArtifactAbstractComposition;
  using ArtifactCompositionPtr = ArtifactCore::SharedPtr<ArtifactAbstractComposition>;
  using ArtifactCompositionWeakPtr = ArtifactCore::WeakPtr<ArtifactAbstractComposition>;

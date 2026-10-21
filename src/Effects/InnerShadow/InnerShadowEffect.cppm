@@ -12,6 +12,7 @@ module;
 #include <opencv2/opencv.hpp>
 
 module Artifact.Effect.Rasterizer.InnerShadow;
+import Image.ImageF32x4_RGBA;
 
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;

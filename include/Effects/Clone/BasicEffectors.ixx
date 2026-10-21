@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <cmath>
 
 #include <iostream>
@@ -35,6 +35,7 @@
 #include <QMatrix4x4>
 #include <QColor>
 export module Artifact.Effect.Clone.Basic;
+import Utils.String.UniString;
 
 
 

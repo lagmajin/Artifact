@@ -14,6 +14,7 @@ module;
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
 
 module LevelsEffect;
+import Graphics.SurfaceColorContract;
 
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;

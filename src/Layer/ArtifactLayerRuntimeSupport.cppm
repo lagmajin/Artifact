@@ -1,6 +1,7 @@
 module;
 
 #include <QStringList>
+#include <QVector3D>
 
 module Artifact.Layer.RuntimeSupport;
 

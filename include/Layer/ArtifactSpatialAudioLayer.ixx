@@ -9,6 +9,8 @@ module;
 export module Artifact.Layer.SpatialAudio;
 
 import Artifact.Layer.Abstract;
+import Artifact.Render.IRenderer;
+import Utils.String.UniString;
 import Artifact.Layer.Audio;
 import Audio.Segment;
 import Frame.Position;

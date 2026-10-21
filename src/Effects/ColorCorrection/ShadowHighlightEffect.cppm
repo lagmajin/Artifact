@@ -8,6 +8,7 @@ module;
 #include <QVariant>
 
 module ShadowHighlightEffect;
+import Memory.SharedPtr;
 
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;

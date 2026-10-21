@@ -11,6 +11,8 @@ module;
 export module Artifact.Layer.Switch;
 
 import Artifact.Layers.Abstract._2D;
+import Artifact.Layer.Abstract;
+import Artifact.Render.IRenderer;
 import Audio.LipSyncTrack;
 import FloatRGBA;
 import Frame.Position;

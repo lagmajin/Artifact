@@ -3,6 +3,8 @@ module;
 #include <algorithm>
 #include <cmath>
 #include <vector>
+#include <QVariant>
+#include <QString>
 
 module Artifact.Effect.Rasterizer.OpticsCompensation;
 

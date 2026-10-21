@@ -44,6 +44,7 @@ module;
 #include <regex>
 #include <random>
 module Artifact.Project.PresetManager;
+import Memory.SharedPtr;
 
 
 

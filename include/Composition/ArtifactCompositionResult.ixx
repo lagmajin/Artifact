@@ -7,11 +7,11 @@ import Utils;
 import Utils.Result;
 import Utils.String.UniString;
 import Memory.SharedPtr;
+export import Artifact.Composition.Abstract;
 
 export namespace Artifact {
 
 using namespace ArtifactCore;
-class ArtifactAbstractComposition;
 
 struct CreateCompositionResult {
   CompositionID id{};
@@ -30,22 +30,6 @@ struct FindCompositionResult {
   bool success = false;
   Status status{};
   WeakPtr<ArtifactAbstractComposition> ptr;
-};
-
-enum class AppendLayerToCompositionError {
-  None = 0,
-  CompositionNotFound,
-  LayerNotFound,
-  LayerTypeMismatch,
-  UnknownError,
-  LayerInitializationFailed
-};
-
-struct AppendLayerToCompositionResult {
-  bool success = false;
-  Status status{};
-  AppendLayerToCompositionError error = AppendLayerToCompositionError::None;
-  UniString message;
 };
 
 struct AllCompositionResult {

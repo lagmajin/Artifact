@@ -1,4 +1,5 @@
 module;
+#include <QVariant>
 #include <vector>
 #include <cmath>
 

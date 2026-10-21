@@ -1,6 +1,7 @@
 module;
 #include <utility>
 #include <vector>
+#include <QJsonObject>
 
 #include <QImage>
 #include <QString>
@@ -8,6 +9,9 @@ export module Artifact.Layers.SolidImage;
 import Color.Float;
 import Artifact.Layer.InitParams;
 import Artifact.Layers.Abstract._2D;
+import Artifact.Render.IRenderer;
+import Property.Group;
+import Image.ImageF32x4_RGBA;
 
 export namespace Artifact {
 using namespace ArtifactCore;

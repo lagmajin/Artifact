@@ -42,6 +42,9 @@ import Utils;
 import Artifact.Layer.Abstract;
 import Property.ExposedPropertyRegistry;
 import Artifact.Composition.Abstract;
+import Memory.SharedPtr;
+import Artifact.Layer.Modifier;
+import Artifact.Render.IRenderer;
 
 export namespace Artifact {
 using namespace ArtifactCore;

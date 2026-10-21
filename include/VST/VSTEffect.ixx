@@ -30,6 +30,7 @@
 #include <regex>
 #include <random>
 #include <QString>
+#include <QJsonObject>
 #include <QtGlobal>
 export module Artifact.VST.Effect;
 
@@ -68,6 +69,8 @@ public:
     // ArtifactCore::AudioEffect インターフェース — CLAP 側と同じ経路。
     // シリアライズと latencySamples()/tailSamples() 集約が UI に依らず機能する。
     std::vector<ArtifactCore::EffectParameter> getParameters() const override;
+    QJsonObject toJson() const override;
+    void fromJson(const QJsonObject& obj) override;
     void setParameterValue(const ArtifactCore::String& id, float value) override;
     float getParameterValue(const ArtifactCore::String& id) const override;
     ArtifactCore::String effectType() const override;

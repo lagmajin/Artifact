@@ -15,6 +15,7 @@ module;
 #include <opencv2/opencv.hpp>
 
 module Artifact.Effect.Rasterizer.OpticalFlowBlur;
+import Graphics.SurfaceColorContract;
 
 import Artifact.Effect.Abstract;
 import Artifact.Effect.Context;

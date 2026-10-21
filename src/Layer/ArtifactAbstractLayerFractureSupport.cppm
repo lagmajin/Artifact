@@ -1,3 +1,4 @@
+module;
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -12,7 +13,8 @@
 #include <QVector3D>
 #include <QVariant>
 
-import Artifact.Layer.Abstract;
+module Artifact.Layer.Abstract;
+import Artifact.Layer.Component.System;
 import Geometry.Fracture;
 import Property.Abstract;
 

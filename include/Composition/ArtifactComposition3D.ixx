@@ -39,6 +39,8 @@ export module Composition3D;
 
 
 import Artifact.Composition.Abstract;
+import Artifact.Composition.InitParams;
+import Utils.Id;
 
 export namespace Artifact {
 

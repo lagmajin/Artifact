@@ -7,6 +7,8 @@ module;
 export module Artifact.Effect.Rasterizer.Sharpen;
 
 import Artifact.Effect.Abstract;
+import Artifact.Render.ROI;
+import Image.ImageF32x4RGBAWithCache;
 import Property.Abstract;
 import Utils.String.UniString;
 

@@ -47,8 +47,6 @@ import Artifact.Effect.Clone.Core;
 export namespace Artifact
 {
 
-export class SimpleSpline;
-
  class CloneGenerator
  {
  private:

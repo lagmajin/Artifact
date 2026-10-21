@@ -3,6 +3,10 @@ module;
 #include <cmath>
 #include <memory>
 #include <utility>
+#include <vector>
+#include <QColor>
+#include <QRectF>
+#include <QString>
 
 module Artifact.Render.Controller;
 

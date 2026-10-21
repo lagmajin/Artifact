@@ -7,6 +7,7 @@ module;
 #include <QVariant>
 
 export module Artifact.Effect.Rasterizer.Blur;
+import Artifact.Render.ROI;
 
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;

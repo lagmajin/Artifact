@@ -8,6 +8,7 @@ module;
 module Artifact.Audio.Effects.Manager;
 
 import Memory.SharedPtr;
+import Core.ArtifactString;
 
 namespace Artifact {
 

@@ -1,3 +1,4 @@
+module;
 #include <algorithm>
 #include <cmath>
 
@@ -6,8 +7,9 @@
 #include <QJsonValue>
 #include <QString>
 
-import Artifact.Layer.Abstract;
+module Artifact.Layer.Abstract;
 import Animation.Transform3D;
+import Math.Interpolate;
 import Frame.Rate;
 import Property.Abstract;
 import Property.SerializationBridge;

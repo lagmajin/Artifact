@@ -1,79 +1,40 @@
 module;
-#include <QVector>
-#include <iostream>
-#include <vector>
-#include <string>
-#include <map>
-#include <unordered_map>
-#include <set>
-#include <unordered_set>
 #include <memory>
 #include <algorithm>
 #include <cmath>
-#include <functional>
-#include <optional>
 #include <utility>
-#include <array>
-#include <mutex>
-#include <thread>
-#include <chrono>
-#include <filesystem>
-#include <fstream>
-#include <sstream>
-#include <stdexcept>
-#include <type_traits>
-#include <variant>
-#include <any>
-#include <atomic>
-#include <condition_variable>
-#include <queue>
-#include <deque>
-#include <list>
-#include <tuple>
-#include <numeric>
-#include <regex>
-#include <random>
 #include <QImage>
 #include <QColor>
-#include <QPainter>
 #include <QPointF>
 #include <QMatrix4x4>
 #include <QVector4D>
 #include <QSize>
-#include <QSizeF>
 #include <QRectF>
 #include <QTransform>
-#include <QDebug>
 #include <QLoggingCategory>
 #include <QString>
-#include <opencv2/opencv.hpp>
 module Artifact.Preview.Pipeline;
 
 import Artifact.Layer.CloneEffectSupport;
-import Memory.SharedPtr;
-
-
-
-
+import Artifact.Layer.Clone;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
-import Artifact.Layer.Clone;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.Context;
 import Artifact.Layer.Image;
-import Artifact.Layer.Svg;
-import Artifact.Layer.Solid2D;
 import Artifact.Layer.Text;
 import Artifact.Layer.Video;
-import Artifact.Layer.FormParticle;
-import Image.ImageF32x4_RGBA;
+import Artifact.Layer.Solid2D;
 import Artifact.Layers.SolidImage;
 import Artifact.Render.IRenderer;
 import Artifact.Render.Context;
 import Color.Float;
-import Frame.Position;
 import CvUtils;
 import ArtifactCore.Crowd.Boids;
+import Image.ImageF32x4_RGBA;
+import Image.ImageF32x4RGBAWithCache;
+import Artifact.Layer.Svg;
+import Artifact.Layer.FormParticle;
 
 namespace Artifact
 {

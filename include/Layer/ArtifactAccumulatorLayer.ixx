@@ -8,6 +8,7 @@ module;
 export module Artifact.Layer.Accumulator;
 
 import Artifact.Layer.Abstract;
+import Artifact.Render.IRenderer;
 import Layer.Blend;
 
 export namespace Artifact {

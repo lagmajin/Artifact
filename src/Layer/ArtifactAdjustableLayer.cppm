@@ -6,6 +6,7 @@ module Artifact.Layer.AdjustableLayer;
 
 import Size;
 import Artifact.Layers.Abstract._2D;
+import Artifact.Layer.Abstract;
 import Artifact.Composition.Abstract;
 
 namespace Artifact

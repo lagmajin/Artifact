@@ -20,6 +20,9 @@ module Artifact.Layers.Noise;
 import Artifact.Layer.CloneEffectSupport;
 import Artifact.Composition.Access;
 import Time.Rational;
+import Frame.Position;
+import Size;
+import Artifact.Layer.Abstract;
 
 import Artifact.Layers.Abstract._2D;
 import Artifact.Render.IRenderer;

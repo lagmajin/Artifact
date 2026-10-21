@@ -10,7 +10,9 @@ module;
 export module Artifact.Layer.Construction;
 
 import Artifact.Layers.Abstract._2D;
+import Artifact.Layer.Abstract;
 import Artifact.Render.IRenderer;
+import Property.Group;
 import Core.ArtifactArray;
 
 export namespace Artifact {

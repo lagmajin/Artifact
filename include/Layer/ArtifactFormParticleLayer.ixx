@@ -15,6 +15,7 @@ module;
 export module Artifact.Layer.FormParticle;
 
 import Artifact.Layer.Abstract;
+import Artifact.Render.IRenderer;
 import Memory.SharedPtr;
 import Size;
 

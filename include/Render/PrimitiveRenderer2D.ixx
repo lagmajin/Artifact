@@ -33,6 +33,7 @@ import Utils.String.UniString;
 import Artifact.Render.ShaderManager;
 import Artifact.Render.RenderCommandBuffer;
 import Core.ArtifactArray;
+import Artifact.Grid.System;
 
 export namespace Artifact {
 
@@ -224,5 +225,25 @@ private:
     class Impl;
     Impl* impl_;
 };
+
+namespace Grid {
+
+/** Draws a generated grid through the 2D render path. */
+class GridRenderer {
+public:
+    explicit GridRenderer(PrimitiveRenderer2D* renderer = nullptr);
+
+    void setRenderer(PrimitiveRenderer2D* renderer);
+    PrimitiveRenderer2D* renderer() const;
+    void draw(const GridSystem& grid,
+              const GridSystem::GridLines& lines);
+    void drawLabels(const GridSystem& grid,
+                    const GridSystem::GridLines& lines);
+
+private:
+    PrimitiveRenderer2D* renderer_ = nullptr;
+};
+
+} // namespace Grid
 
 }

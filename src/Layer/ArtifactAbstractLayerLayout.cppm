@@ -1,3 +1,4 @@
+module;
 #include <algorithm>
 
 #include <QPointF>
@@ -6,7 +7,7 @@
 #include <QString>
 #include <QVariant>
 
-import Artifact.Layer.Abstract;
+module Artifact.Layer.Abstract;
 
 import Artifact.Composition.Abstract;
 import Property.Abstract;

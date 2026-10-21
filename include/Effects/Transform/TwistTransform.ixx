@@ -1,4 +1,5 @@
-﻿module;
+module;
+#include <QVariant>
 #include <iostream>
 #include <vector>
 #include <string>
@@ -31,6 +32,8 @@
 #include <random>
 #include <QString>
 export module Artifact.Effect.Transform.Twist;
+import Image.ImageF32x4RGBAWithCache;
+import Property.Abstract;
 
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;

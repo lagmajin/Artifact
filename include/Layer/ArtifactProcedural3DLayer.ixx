@@ -12,6 +12,7 @@ module;
 export module Artifact.Layer.Procedural3D;
 
 import Artifact.Layer.Abstract;
+import Artifact.Render.IRenderer;
 import Memory.SharedPtr;
 
 export namespace Artifact {

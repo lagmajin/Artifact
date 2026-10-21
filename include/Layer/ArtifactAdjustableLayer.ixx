@@ -7,6 +7,7 @@ module;
 export module Artifact.Layer.AdjustableLayer;
 
 import Artifact.Layers.Abstract._2D;
+import Artifact.Render.IRenderer;
 
 export namespace Artifact
 {

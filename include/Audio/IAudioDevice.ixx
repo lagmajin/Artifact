@@ -43,7 +43,7 @@ enum class AudioDeviceState {
 };
 
 // Minimal audio device abstraction. Implementations must inherit and implement virtual methods.
-export class IAudioDevice {
+class IAudioDevice {
 private:
     class Impl;
     Impl* impl_;

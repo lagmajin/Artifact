@@ -4,6 +4,7 @@ module;
 #include <DeviceContext.h>
 #include <Buffer.h>
 #include <vector>
+#include <span>
 #include <cstring>
 module Artifact.Render.ThreeDPrimitiveSubmitter.Contract;
 

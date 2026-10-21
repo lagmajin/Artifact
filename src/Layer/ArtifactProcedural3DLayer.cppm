@@ -40,6 +40,7 @@ import Geometry.MeshDeform;
 import Image.ImageF32x4_RGBA;
 import Procedural3DGenerators;
 import Size;
+import Frame.Position;
 import Time.Rational;
 import Utils.Id;
 import Memory.SharedPtr;

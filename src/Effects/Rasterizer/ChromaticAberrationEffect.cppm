@@ -12,6 +12,7 @@ module;
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
 
 module Artifact.Effect.Rasterizer.ChromaticAberration;
+import Graphics.SurfaceColorContract;
 
 import Artifact.Effect.Abstract;
 import Artifact.Effect.Context;

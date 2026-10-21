@@ -1,10 +1,17 @@
 module;
+#include <vector>
+#include <QString>
+#include <QVariant>
+#include <QImage>
+#include <QJsonObject>
 #include <utility>
 
 export module Artifact.Layer.Null;
 
 import Artifact.Layers;
 import Artifact.Layer.Abstract;
+import Artifact.Render.IRenderer;
+import Property.Group;
 import Memory.SharedPtr;
 
 export namespace Artifact {

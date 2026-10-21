@@ -4,13 +4,16 @@ module;
 #include <unordered_map>
 #include <algorithm>
 #include <vector>
+#include <QString>
 
 module Artifact.Engine.DAG.CompositionGraphBuilder;
 
 import Artifact.Composition.Abstract;
 import Artifact.Engine.DAG.Node;
 import Artifact.Engine.DAG.Port;
+import Artifact.Effect.Abstract;
 import Memory.SharedPtr;
+import Utils.String.UniString;
 
 namespace Artifact {
 

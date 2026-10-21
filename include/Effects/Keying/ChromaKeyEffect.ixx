@@ -29,6 +29,7 @@ module;
 #include <numeric>
 #include <regex>
 #include <random>
+#include <QVariant>
 export module Artifact.Effect.Keying.ChromaKey;
 
 
@@ -39,6 +40,8 @@ import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
 import FloatRGBA;
 import Memory.SharedPtr;
+import Property.Abstract;
+import Utils.String.UniString;
 
 export namespace Artifact {
 

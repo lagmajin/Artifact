@@ -22,6 +22,7 @@ import Artifact.Layer.CloneEffectSupport;
 
 import Core.Parallel;
 import Artifact.Layers.Abstract._2D;
+import Artifact.Layer.Abstract;
 import Thread.Helper;
 import CvUtils;
 import Property.Abstract;

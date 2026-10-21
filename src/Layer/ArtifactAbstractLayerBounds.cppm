@@ -1,7 +1,8 @@
+module;
 #include <QRectF>
 #include <QString>
 
-import Artifact.Layer.Abstract;
+module Artifact.Layer.Abstract;
 
 import Artifact.Effect.Abstract;
 import Artifact.Render.ROI;

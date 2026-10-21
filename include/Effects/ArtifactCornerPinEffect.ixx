@@ -1,9 +1,12 @@
 module;
+#include <QVariant>
 #include <utility>
 #include <vector>
 #include <QString>
 
 export module Artifact.Effect.CornerPin;
+import Image.ImageF32x4RGBAWithCache;
+import Utils.String.UniString;
 
 import Artifact.Effect.Abstract;
 import Property.Abstract;

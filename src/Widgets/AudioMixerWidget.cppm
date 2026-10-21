@@ -161,8 +161,7 @@ clap_window clapWindowForNativeHandle(void* nativeHandle) {
 }
 
 clap::Host& clapPluginHost() {
-    static clap::Host host;
-    return host;
+    return clap::Host::getInstance();
 }
 
 bool resizePluginEditorContainer(void* context, int width, int height) {
@@ -1202,6 +1201,7 @@ void AudioMixerWidget::refreshBuses() {
 }
 
 void AudioMixerWidget::updateAllMeters() {
+    clapPluginHost().dispatchMainThreadCallbacks();
     for (auto* strip : strips_) {
         strip->updateMeters();
     }

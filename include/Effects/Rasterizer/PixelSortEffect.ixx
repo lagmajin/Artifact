@@ -5,6 +5,8 @@ module;
 #include <QVariant>
 
 export module Artifact.Effect.Rasterizer.PixelSort;
+import Artifact.Render.ROI;
+import Image.ImageF32x4RGBAWithCache;
 
 import Artifact.Effect.Abstract;
 import Utils.String.UniString;

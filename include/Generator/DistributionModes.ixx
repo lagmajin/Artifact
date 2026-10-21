@@ -31,7 +31,7 @@ enum class TransformSpace
 };
 
 // Spline — Catmull-Rom 補間クラス
-export class SimpleSpline
+class SimpleSpline
 {
 public:
     struct Point

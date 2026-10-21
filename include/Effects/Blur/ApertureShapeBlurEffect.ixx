@@ -6,6 +6,9 @@ module;
 export module Artifact.Effect.Rasterizer.ApertureShapeBlur;
 
 import Artifact.Effect.Abstract;
+import Artifact.Effect.Context;
+import Artifact.Render.ROI;
+import Image.ImageF32x4RGBAWithCache;
 import Property.Abstract;
 import Utils.String.UniString;
 

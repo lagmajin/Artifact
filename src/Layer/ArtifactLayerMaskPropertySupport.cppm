@@ -1,7 +1,8 @@
+module;
 #include <QString>
 #include <QVariant>
 
-import Artifact.Layer.Abstract;
+module Artifact.Layer.Abstract;
 import Artifact.Layer.RuntimeSupport;
 import Artifact.Mask.LayerMask;
 import Artifact.Mask.Path;

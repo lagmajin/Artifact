@@ -12,6 +12,8 @@ module;
 export module Artifact.Layer.EnvironmentMap;
 
 import Artifact.Layer.Abstract;
+import Artifact.Render.IRenderer;
+import Utils.String.UniString;
 import Property.Group;
 import Memory.SharedPtr;
 

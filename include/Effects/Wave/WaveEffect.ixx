@@ -1,4 +1,5 @@
-﻿module;
+module;
+#include <QVariant>
 #include <iostream>
 #include <vector>
 #include <string>
@@ -30,6 +31,8 @@
 #include <regex>
 #include <random>
 export module Artifact.Effect.Wave;
+import Utils.String.UniString;
+import Property.Abstract;
 
 
 

@@ -43,6 +43,7 @@
 #include <regex>
 #include <random>
 module Artifact.Effect.LensDistortion;
+import FloatRGBA;
 
 import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;

@@ -4,6 +4,7 @@ module;
 #include <memory>
 #include <vector>
 #include <algorithm>
+#include <QtTypes>
 module Artifact.Audio.Effects.Limiter;
 
 import Audio.Segment;

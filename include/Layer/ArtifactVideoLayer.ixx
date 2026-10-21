@@ -43,6 +43,9 @@ export module Artifact.Layer.Video;
 
 
 import Artifact.Layer.Abstract;
+import Artifact.Render.IRenderer;
+import Frame.Position;
+import Audio.Segment;
 import Image.ImageF32x4_RGBA;
 import Image.UploadConversion;
 import Memory.SharedPtr;

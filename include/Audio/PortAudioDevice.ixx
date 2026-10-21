@@ -38,7 +38,7 @@ import Audio.IAudioDevice;
 export namespace Artifact {
 
 // Forward-declared PortAudio-based device implementation interface
-export class PortAudioDevice : public IAudioDevice {
+class PortAudioDevice : public IAudioDevice {
 public:
     PortAudioDevice();
     ~PortAudioDevice();

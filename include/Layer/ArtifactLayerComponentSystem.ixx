@@ -18,6 +18,7 @@ export module Artifact.Layer.Component.System;
 
 import Utils.Optional;
 import Container.NamedVector;
+import Container.Debug;
 
 export namespace Artifact {
 

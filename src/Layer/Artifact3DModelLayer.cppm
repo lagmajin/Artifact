@@ -1,5 +1,6 @@
 module;
 #include <QFileDialog>
+#include <Graphics/InstanceData.h>
 #include <QFileInfo>
 #include <QDir>
 #include <QColor>
@@ -29,6 +30,7 @@ import Artifact.Layer.Abstract;
 import Color.Float;
 import Mesh;
 import Time.Rational;
+import Size;
 import MeshImporter;
 import Utils.String.UniString;
 import Material.Material;

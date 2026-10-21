@@ -8,6 +8,7 @@ module;
 
 export module ExposureEffect;
 
+import Artifact.Render.PointwiseEffectFusion;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;

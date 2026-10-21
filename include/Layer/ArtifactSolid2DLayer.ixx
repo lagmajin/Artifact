@@ -31,6 +31,7 @@
 #include <regex>
 #include <random>
 #include <QString>
+#include <QJsonObject>
 export module Artifact.Layer.Solid2D;
 
 
@@ -39,6 +40,8 @@ export module Artifact.Layer.Solid2D;
 import Color.Float;
 import Artifact.Layer.InitParams;
 import Artifact.Layers.Abstract._2D;
+import Artifact.Render.IRenderer;
+import Property.Group;
 
 export namespace Artifact
 {

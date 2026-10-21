@@ -7,6 +7,7 @@ module;
 #include <QJsonObject>
 
 module Artifact.Effect.Distort.ImageMorph;
+import Memory.SharedPtr;
 
 import Image.ImageF32x4RGBAWithCache;
 import ImageProcessing.Distortion;

@@ -12,6 +12,7 @@ module;
 module Artifact.Layer.Camera;
 
 import Artifact.Layer.Abstract;
+import Color.Float;
 import Math.Vec;
 import Artifact.Composition.Abstract;
 import Artifact.Render.IRenderer;

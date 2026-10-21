@@ -1,3 +1,4 @@
+module;
 #include <QColor>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -6,11 +7,12 @@
 #include <QString>
 #include <QVariant>
 
-import Artifact.Layer.Abstract;
+module Artifact.Layer.Abstract;
 import Artifact.Effect.Abstract;
 import Artifact.Service.Effect;
 import Memory.SharedPtr;
 import Property.SerializationBridge;
+import Utils.String.UniString;
 
 // Qt preprocessor macros are not carried by an imported IFC.
 #undef QStringLiteral

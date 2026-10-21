@@ -15,6 +15,7 @@ export module Artifact.Layer.Clone;
 import Artifact.Layers;
 import Artifact.Effect.Clone.Core;
 import Artifact.Effect.Abstract;
+import Artifact.Render.IRenderer;
 import Memory.SharedPtr;
 import Utils.String.UniString;
 import Utils.Id;

@@ -3,6 +3,8 @@ module;
 #include <QString>
 
 module NoiseEffect;
+import Artifact.Effect.Abstract;
+import Utils.String.UniString;
 
 namespace Artifact
 {

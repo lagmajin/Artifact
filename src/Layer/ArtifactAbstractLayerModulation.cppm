@@ -11,7 +11,9 @@
 import Artifact.Layer.Abstract;
 
 import Audio.Modulation.Router;
+import Audio.Modulation.Modulator;
 import Container.NamedVector;
+import Container.Debug;
 
 namespace Artifact {
 using namespace ArtifactCore;

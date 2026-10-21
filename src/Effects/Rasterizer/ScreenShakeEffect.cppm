@@ -7,6 +7,7 @@ module;
 #include <QVariant>
 
 module Artifact.Effect.Rasterizer.ScreenShake;
+import FloatRGBA;
 
 import Artifact.Effect.Abstract;
 import Artifact.Effect.Context;

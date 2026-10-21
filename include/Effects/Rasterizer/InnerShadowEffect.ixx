@@ -7,6 +7,7 @@ module;
 #include <QVariant>
 #include <vector>
 export module Artifact.Effect.Rasterizer.InnerShadow;
+import Artifact.Render.ROI;
 import Artifact.Effect.Abstract;
 import Property.Abstract;
 import Utils.String.UniString;

@@ -13,6 +13,8 @@ export module Artifact.Layer.ParametricComposition;
 
 import Artifact.Layer.Abstract;
 import Artifact.Composition.Abstract;
+import Artifact.Render.IRenderer;
+import Utils.Id;
 import Memory.SharedPtr;
 import Composition.ParametricComposition;
 

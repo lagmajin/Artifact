@@ -1,4 +1,5 @@
 module;
+#include <QVariant>
 #include <iostream>
 #include <vector>
 #include <string>
@@ -30,6 +31,8 @@ module;
 #include <regex>
 #include <random>
 export module Artifact.Effect.GauusianBlur;
+import Artifact.Render.ROI;
+import Utils.String.UniString;
 
 
 

@@ -119,6 +119,7 @@ endfunction()
 
 set(ARTIFACT_COMPILER_MSVC_CL OFF)
 set(ARTIFACT_COMPILER_CLANG_CL OFF)
+set(ARTIFACT_COMPILER_CLANG_GNU OFF)
 set(ARTIFACT_COMPILER_INTELLLVM_CL OFF)
 set(ARTIFACT_COMPILER_INTELLLVM_GNU OFF)
 set(ARTIFACT_FRONTEND_MSVC OFF)
@@ -136,6 +137,9 @@ elseif(CMAKE_CXX_COMPILER_ID STREQUAL "IntelLLVM" AND
     set(ARTIFACT_FRONTEND_MSVC ON)
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL "IntelLLVM")
     set(ARTIFACT_COMPILER_INTELLLVM_GNU ON)
+elseif(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND
+       CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "GNU" AND WIN32)
+    set(ARTIFACT_COMPILER_CLANG_GNU ON)
 endif()
 
 if(NOT TARGET ArtifactCore)
@@ -3702,7 +3706,7 @@ set_target_properties(ArtifactUiTest PROPERTIES FOLDER "Artifact/Testing")
 # MSBuild defaults .cppm files to module-interface compilation. Implementation
 # units paired with public .ixx interfaces must compile as ordinary C++ while
 # CMake scans their `module X;` declarations and orders the primary IFC.
-if(MSVC)
+if(MSVC OR ARTIFACT_COMPILER_CLANG_GNU)
     get_cmake_property(_artifact_cmake_variables VARIABLES)
     set(_artifact_module_implementation_sources)
     foreach(_artifact_variable IN LISTS _artifact_cmake_variables)
@@ -3723,7 +3727,17 @@ if(MSVC)
     list(REMOVE_DUPLICATES _artifact_module_implementation_sources)
     foreach(_artifact_source IN LISTS
             _artifact_module_implementation_sources)
-        set_property(SOURCE "${_artifact_source}" APPEND PROPERTY
-            VS_SETTINGS "CompileAs=CompileAsCpp")
+        if(MSVC)
+            set_property(SOURCE "${_artifact_source}" APPEND PROPERTY
+                VS_SETTINGS "CompileAs=CompileAsCpp")
+        elseif(ARTIFACT_COMPILER_CLANG_GNU)
+            # The GNU driver treats .cppm as a module interface by default.
+            # These units attach to the .ixx interface and need normal C++
+            # compilation with CMake's P1689 dependency scan retained.
+            set_source_files_properties("${_artifact_source}" PROPERTIES
+                CXX_SCAN_FOR_MODULES ON)
+            set_property(SOURCE "${_artifact_source}" APPEND PROPERTY
+                COMPILE_OPTIONS -x c++)
+        endif()
     endforeach()
 endif()

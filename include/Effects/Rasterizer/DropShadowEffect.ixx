@@ -1,4 +1,5 @@
-﻿module;
+module;
+#include <QVariant>
 #include <iostream>
 #include <vector>
 #include <string>
@@ -32,6 +33,7 @@
 #include <QString>
 #include <QColor>
 export module Artifact.Effect.Rasterizer.DropShadow;
+import Artifact.Render.ROI;
 
 
 

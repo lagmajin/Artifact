@@ -113,8 +113,8 @@ private:
     std::vector<SharedPtr<ArtifactLayerModifier>> modifiers_;
 };
 
-export QJsonObject serializeLayerModifier(const ArtifactLayerModifier& modifier);
-export SharedPtr<ArtifactLayerModifier> deserializeLayerModifier(const QJsonObject& obj);
+QJsonObject serializeLayerModifier(const ArtifactLayerModifier& modifier);
+SharedPtr<ArtifactLayerModifier> deserializeLayerModifier(const QJsonObject& obj);
 
 inline ArtifactLayerModifier::ArtifactLayerModifier() = default;
 inline ArtifactLayerModifier::~ArtifactLayerModifier() = default;

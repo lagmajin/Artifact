@@ -72,9 +72,9 @@ import Core.ArtifactArray;
 export namespace Artifact {
 using namespace ArtifactCore;
 
-export enum class PolylineCap { Flat = 0, Round = 1, Square = 2 };
-export enum class PolylineJoin { Miter = 0, Round = 1, Bevel = 2 };
-export struct PolylineStyle {
+enum class PolylineCap { Flat = 0, Round = 1, Square = 2 };
+enum class PolylineJoin { Miter = 0, Round = 1, Bevel = 2 };
+struct PolylineStyle {
   float thickness = 1.0f;
   PolylineCap cap = PolylineCap::Flat;
   PolylineJoin join = PolylineJoin::Miter;
@@ -89,22 +89,22 @@ export struct PolylineStyle {
   FloatColor gradientEnd = FloatColor(1.0f, 1.0f, 1.0f, 1.0f);
 };
 
-export namespace Detail {
-export struct RenderShaderPair {
+namespace Detail {
+struct RenderShaderPair {
   void *VS = nullptr;
   void *PS = nullptr;
 };
 
-export struct PSOAndSRB {
+struct PSOAndSRB {
   void *pPSO = nullptr;
   void *pSRB = nullptr;
 };
 
-export using float2 = ::ArtifactRendererFloat2;
-export using float3 = ::ArtifactRendererFloat3;
+using float2 = ::ArtifactRendererFloat2;
+using float3 = ::ArtifactRendererFloat3;
 } // namespace Detail
 
-export enum class GlobalIlluminationMode {
+enum class GlobalIlluminationMode {
   Off,
   Auto,
   SSGI,
@@ -112,13 +112,13 @@ export enum class GlobalIlluminationMode {
   Hybrid
 };
 
-export enum class GlobalIlluminationQuality {
+enum class GlobalIlluminationQuality {
   Performance,
   Balanced,
   Quality
 };
 
-export struct GlobalIlluminationSettings {
+struct GlobalIlluminationSettings {
   // AO remains opt-in until the full 3D AOV path has runtime acceptance
   // coverage. This prevents auxiliary-target state from affecting the normal
   // viewport when no explicit lighting-quality mode has been selected.
@@ -135,7 +135,7 @@ export struct GlobalIlluminationSettings {
   unsigned int ddgiProbeUpdateBudget = 128;
 };
 
-export struct GlobalIlluminationState {
+struct GlobalIlluminationState {
   GlobalIlluminationMode requestedMode = GlobalIlluminationMode::Off;
   GlobalIlluminationMode selectedMode = GlobalIlluminationMode::Off;
   GlobalIlluminationQuality quality = GlobalIlluminationQuality::Balanced;
@@ -145,7 +145,7 @@ export struct GlobalIlluminationState {
 
 // GPU Cloner placement ABI consumed by the sprite vertex shader. A group
 // contains slot 0 for the base clone followed by stable generator-order slots.
-export struct ClonerGridPlacementRecord {
+struct ClonerGridPlacementRecord {
   float offsetX = 0.0f;
   float offsetY = 0.0f;
   float offsetZ = 0.0f;
@@ -162,7 +162,7 @@ static_assert(offsetof(ClonerGridPlacementRecord, rotationDegrees) == 20);
 static_assert(offsetof(ClonerGridPlacementRecord, localScaleX) == 24);
 static_assert(offsetof(ClonerGridPlacementRecord, localScaleY) == 28);
 
-export struct ClonerGridPlacementRange {
+struct ClonerGridPlacementRange {
   Diligent::IBuffer *buffer = nullptr;
   std::uint32_t firstIndex = 0;
   std::uint32_t count = 0;
@@ -173,7 +173,7 @@ export struct ClonerGridPlacementRange {
   bool rotationAware = false;
 };
 
-export class ArtifactIRenderer {
+class ArtifactIRenderer {
 public:
   class Impl;
   using DeferredContextWorkRecorder = bool (*)(

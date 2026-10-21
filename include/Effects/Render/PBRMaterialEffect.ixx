@@ -38,6 +38,7 @@ export module Artifact.Effect.Render.PBRMaterial;
 
 
 import Artifact.Effect.Abstract;
+import Property.Abstract;
 import Utils.String.UniString;
 import Material.Material;
 

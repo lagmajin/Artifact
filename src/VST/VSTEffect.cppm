@@ -1,6 +1,7 @@
 module;
 #include <cstring>
 #include <algorithm>
+#include <cstdint>
 
 #include <iostream>
 #include <vector>
@@ -36,6 +37,11 @@ module;
 #include <numeric>
 #include <regex>
 #include <random>
+#include <limits>
+#include <QByteArray>
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QString>
 
 #include <QList>
 #include <QString>
@@ -94,8 +100,14 @@ public:
     bool isLoaded = false;
     bool isVST3 = false;
     std::unique_ptr<Steinberg::Vst::VST3EffectHost> vst3Host;
-    std::array<std::vector<float>, 2> vst3InputScratch;
-    std::array<std::vector<float>, 2> vst3OutputScratch;
+    std::vector<std::vector<float>> vst3InputScratch;
+    std::vector<std::vector<float>> vst3OutputScratch;
+    std::vector<Steinberg::Sample32*> vst3InputPointers;
+    std::vector<Steinberg::Sample32*> vst3OutputPointers;
+    std::vector<int> vst3InputBusStarts;
+    std::vector<int> vst3OutputBusStarts;
+    int vst3MainInputBus = -1;
+    int vst3MainOutputBus = -1;
 
     // パラメータ管理
     std::map<std::string, float> parameters;
@@ -201,12 +213,56 @@ bool VSTEffect::loadPlugin(const std::string& path) {
             return false;
         }
         try {
-            for (auto& channel : impl_->vst3InputScratch) {
-                channel.resize(static_cast<size_t>(impl_->blockSize));
+            const int inputChannels = vst3->inputChannelCount();
+            const int outputChannels = vst3->outputChannelCount();
+            if (inputChannels <= 0 || inputChannels > 64 ||
+                outputChannels <= 0 || outputChannels > 64) return false;
+            impl_->vst3InputScratch.resize(static_cast<size_t>(inputChannels));
+            impl_->vst3OutputScratch.resize(static_cast<size_t>(outputChannels));
+            impl_->vst3InputPointers.resize(static_cast<size_t>(inputChannels));
+            impl_->vst3OutputPointers.resize(static_cast<size_t>(outputChannels));
+            impl_->vst3InputBusStarts.resize(
+                static_cast<size_t>(vst3->inputBusCount() + 1), 0);
+            impl_->vst3OutputBusStarts.resize(
+                static_cast<size_t>(vst3->outputBusCount() + 1), 0);
+            for (int bus = 0; bus < vst3->inputBusCount(); ++bus) {
+                const int channels = vst3->inputBusChannelCount(bus);
+                const int start = impl_->vst3InputBusStarts[static_cast<size_t>(bus)];
+                if (channels < 0 || channels > 64 || start + channels > inputChannels)
+                    return false;
+                impl_->vst3InputBusStarts[static_cast<size_t>(bus + 1)] = start + channels;
+                if (impl_->vst3MainInputBus < 0 &&
+                    vst3->inputBusType(bus) == Steinberg::Vst::kMain)
+                    impl_->vst3MainInputBus = bus;
             }
-            for (auto& channel : impl_->vst3OutputScratch) {
-                channel.resize(static_cast<size_t>(impl_->blockSize));
+            for (int bus = 0; bus < vst3->outputBusCount(); ++bus) {
+                const int channels = vst3->outputBusChannelCount(bus);
+                const int start = impl_->vst3OutputBusStarts[static_cast<size_t>(bus)];
+                if (channels < 0 || channels > 64 || start + channels > outputChannels)
+                    return false;
+                impl_->vst3OutputBusStarts[static_cast<size_t>(bus + 1)] = start + channels;
+                if (impl_->vst3MainOutputBus < 0 &&
+                    vst3->outputBusType(bus) == Steinberg::Vst::kMain)
+                    impl_->vst3MainOutputBus = bus;
             }
+            if (impl_->vst3MainInputBus < 0 && vst3->inputBusCount() > 0)
+                impl_->vst3MainInputBus = 0;
+            if (impl_->vst3MainOutputBus < 0 && vst3->outputBusCount() > 0)
+                impl_->vst3MainOutputBus = 0;
+            const int mainInputChannels = impl_->vst3MainInputBus >= 0
+                ? vst3->inputBusChannelCount(impl_->vst3MainInputBus) : 0;
+            const int mainOutputChannels = impl_->vst3MainOutputBus >= 0
+                ? vst3->outputBusChannelCount(impl_->vst3MainOutputBus) : 0;
+            if (mainInputChannels < 1 || mainInputChannels > 2 ||
+                mainOutputChannels < 1 || mainOutputChannels > 2) return false;
+            for (auto& channel : impl_->vst3InputScratch)
+                channel.resize(static_cast<size_t>(impl_->blockSize));
+            for (auto& channel : impl_->vst3OutputScratch)
+                channel.resize(static_cast<size_t>(impl_->blockSize));
+            for (size_t channel = 0; channel < impl_->vst3InputPointers.size(); ++channel)
+                impl_->vst3InputPointers[channel] = impl_->vst3InputScratch[channel].data();
+            for (size_t channel = 0; channel < impl_->vst3OutputPointers.size(); ++channel)
+                impl_->vst3OutputPointers[channel] = impl_->vst3OutputScratch[channel].data();
         } catch (...) {
             return false;
         }
@@ -242,8 +298,14 @@ void VSTEffect::unloadPlugin() {
         impl_->vst3Host->setActive(false);
         impl_->vst3Host->unload();
         impl_->vst3Host.reset();
-        for (auto& channel : impl_->vst3InputScratch) channel.clear();
-        for (auto& channel : impl_->vst3OutputScratch) channel.clear();
+        impl_->vst3InputScratch.clear();
+        impl_->vst3OutputScratch.clear();
+        impl_->vst3InputPointers.clear();
+        impl_->vst3OutputPointers.clear();
+        impl_->vst3InputBusStarts.clear();
+        impl_->vst3OutputBusStarts.clear();
+        impl_->vst3MainInputBus = -1;
+        impl_->vst3MainOutputBus = -1;
     } else {
         auto& host = VSTHost::getInstance();
         if (impl_->pluginId >= 0) host.unloadPlugin(impl_->pluginId);
@@ -265,6 +327,55 @@ bool VSTEffect::isPluginLoaded() const {
     return impl_->isLoaded;
 }
 
+QJsonObject VSTEffect::toJson() const {
+    QJsonObject obj = ArtifactCore::AudioEffect::toJson();
+    obj["pluginPath"] = QString::fromStdString(impl_->pluginPath);
+    QJsonArray parameterValues;
+    for (const auto& parameter : getParameters()) {
+        QJsonObject value;
+        value["id"] = ArtifactCore::toStdString(parameter.id).c_str();
+        value["value"] = parameter.value;
+        parameterValues.append(value);
+    }
+    obj["parameters"] = parameterValues;
+    if (impl_->vst3Host) {
+        std::vector<uint8_t> state;
+        if (impl_->vst3Host->saveState(state) &&
+            state.size() <= static_cast<size_t>(std::numeric_limits<int>::max())) {
+            const QByteArray bytes(reinterpret_cast<const char*>(state.data()),
+                                   static_cast<int>(state.size()));
+            obj["pluginState"] = QString::fromLatin1(bytes.toBase64());
+        }
+    }
+    return obj;
+}
+
+void VSTEffect::fromJson(const QJsonObject& obj) {
+    ArtifactCore::AudioEffect::fromJson(obj);
+    const std::string path = obj.value("pluginPath").toString().toStdString();
+    if (path.empty() || !loadPlugin(path)) return;
+
+    if (impl_->vst3Host) {
+        const QByteArray encoded = obj.value("pluginState").toString().toLatin1();
+        if (!encoded.isEmpty()) {
+            const QByteArray bytes = QByteArray::fromBase64(encoded);
+            const auto* first = reinterpret_cast<const uint8_t*>(bytes.constData());
+            std::vector<uint8_t> state(first, first + bytes.size());
+            (void)impl_->vst3Host->loadState(state);
+        }
+    }
+    const QJsonArray parameterValues = obj.value("parameters").toArray();
+    for (const QJsonValue& entry : parameterValues) {
+        if (!entry.isObject()) continue;
+        const QJsonObject parameter = entry.toObject();
+        if (!parameter.value("id").isString() ||
+            !parameter.value("value").isDouble()) continue;
+        setParameterValue(ArtifactCore::String(
+                              parameter.value("id").toString().toStdString()),
+                          static_cast<float>(parameter.value("value").toDouble()));
+    }
+}
+
 void VSTEffect::process(ArtifactCore::AudioSegment& segment, const ArtifactCore::AudioSegment* sideChain) {
     if (!impl_->isLoaded) {
         return;
@@ -272,12 +383,12 @@ void VSTEffect::process(ArtifactCore::AudioSegment& segment, const ArtifactCore:
     
     if (impl_->vst3Host) {
         const int requiredInputChannels = impl_->vst3Host->inputChannelCount();
-        const int outputChannels = impl_->vst3Host->outputChannelCount();
+        const int requiredOutputChannels = impl_->vst3Host->outputChannelCount();
         const int frameCount = segment.frameCount();
         const int hostChannels = segment.channelCount();
         if ((hostChannels != 1 && hostChannels != 2) ||
-            requiredInputChannels < 1 || requiredInputChannels > 2 ||
-            outputChannels < 1 || outputChannels > 2 || frameCount <= 0 ||
+            requiredInputChannels < 1 || requiredInputChannels > 64 ||
+            requiredOutputChannels < 1 || requiredOutputChannels > 64 || frameCount <= 0 ||
             frameCount > impl_->blockSize ||
             segment.channelData.size() < hostChannels) {
             return;
@@ -285,49 +396,71 @@ void VSTEffect::process(ArtifactCore::AudioSegment& segment, const ArtifactCore:
         for (int channel = 0; channel < hostChannels; ++channel) {
             if (segment.channelData[channel].size() < frameCount) return;
         }
-        std::array<float*, 2> inputSources{nullptr, nullptr};
-        std::array<float*, 2> outputTargets{nullptr, nullptr};
-        if (requiredInputChannels == hostChannels) {
-            for (int channel = 0; channel < requiredInputChannels; ++channel) {
-                inputSources[channel] = const_cast<float*>(
-                    segment.channelData[channel].constData());
-            }
-        } else if (requiredInputChannels == 1) {
-            const auto& left = segment.channelData[0];
-            const auto& right = segment.channelData[1];
-            float* mono = impl_->vst3InputScratch[0].data();
-            for (int frame = 0; frame < frameCount; ++frame) {
-                mono[frame] = 0.5f * left[frame] + 0.5f * right[frame];
-            }
-            inputSources[0] = mono;
-        } else {
-            const float* mono = segment.channelData[0].constData();
-            for (int channel = 0; channel < 2; ++channel) {
-                float* stereo = impl_->vst3InputScratch[channel].data();
-                std::copy_n(mono, frameCount, stereo);
-                inputSources[channel] = stereo;
+        if (impl_->vst3InputScratch.size() != static_cast<size_t>(requiredInputChannels) ||
+            impl_->vst3OutputScratch.size() != static_cast<size_t>(requiredOutputChannels))
+            return;
+        const bool validSideChain = sideChain &&
+            sideChain->frameCount() == frameCount &&
+            (sideChain->channelCount() == 1 || sideChain->channelCount() == 2) &&
+            sideChain->channelData.size() >= sideChain->channelCount() &&
+            sideChain->channelData[0].size() >= frameCount &&
+            (sideChain->channelCount() == 1 ||
+             sideChain->channelData[1].size() >= frameCount);
+        for (int bus = 0; bus < impl_->vst3Host->inputBusCount(); ++bus) {
+            const int start = impl_->vst3InputBusStarts[static_cast<size_t>(bus)];
+            const int count = impl_->vst3Host->inputBusChannelCount(bus);
+            const bool mainBus = bus == impl_->vst3MainInputBus;
+            for (int channel = 0; channel < count; ++channel) {
+                float* destination = impl_->vst3InputScratch[
+                    static_cast<size_t>(start + channel)].data();
+                if (mainBus) {
+                    if (count == 1 && hostChannels == 2) {
+                        const auto& left = segment.channelData[0];
+                        const auto& right = segment.channelData[1];
+                        for (int frame = 0; frame < frameCount; ++frame)
+                            destination[frame] = 0.5f * (left[frame] + right[frame]);
+                    } else {
+                        const int sourceChannel = std::min(channel, hostChannels - 1);
+                        std::copy_n(segment.channelData[sourceChannel].constData(),
+                                    frameCount, destination);
+                    }
+                } else if (validSideChain && channel < 2) {
+                    const int sourceChannel = sideChain->channelCount() == 1
+                        ? 0 : channel;
+                    std::copy_n(sideChain->channelData[sourceChannel].constData(),
+                                frameCount, destination);
+                } else {
+                    std::fill_n(destination, frameCount, 0.0f);
+                }
             }
         }
-        for (int channel = 0; channel < outputChannels; ++channel) {
-            outputTargets[channel] = impl_->vst3OutputScratch[channel].data();
-        }
+        for (auto& channel : impl_->vst3OutputScratch)
+            std::fill_n(channel.data(), frameCount, 0.0f);
         if (impl_->vst3Host->processFloat(
-                inputSources.data(), requiredInputChannels,
-                outputTargets.data(), outputChannels, frameCount)) {
-            if (outputChannels == hostChannels) {
+                impl_->vst3InputPointers.data(), requiredInputChannels,
+                impl_->vst3OutputPointers.data(), requiredOutputChannels, frameCount)) {
+            const int outputStart = impl_->vst3OutputBusStarts[
+                static_cast<size_t>(impl_->vst3MainOutputBus)];
+            const int mainOutputChannels = impl_->vst3Host->outputBusChannelCount(
+                impl_->vst3MainOutputBus);
+            if (mainOutputChannels == hostChannels) {
                 for (int channel = 0; channel < hostChannels; ++channel) {
-                    std::copy_n(impl_->vst3OutputScratch[channel].data(),
+                    std::copy_n(impl_->vst3OutputScratch[
+                                    static_cast<size_t>(outputStart + channel)].data(),
                                 frameCount, segment.channelData[channel].data());
                 }
-            } else if (outputChannels == 1) {
-                const float* mono = impl_->vst3OutputScratch[0].data();
+            } else if (mainOutputChannels == 1) {
+                const float* mono = impl_->vst3OutputScratch[
+                    static_cast<size_t>(outputStart)].data();
                 for (int channel = 0; channel < hostChannels; ++channel) {
                     std::copy_n(mono, frameCount,
                                 segment.channelData[channel].data());
                 }
             } else {
-                const float* left = impl_->vst3OutputScratch[0].data();
-                const float* right = impl_->vst3OutputScratch[1].data();
+                const float* left = impl_->vst3OutputScratch[
+                    static_cast<size_t>(outputStart)].data();
+                const float* right = impl_->vst3OutputScratch[
+                    static_cast<size_t>(outputStart + 1)].data();
                 float* mono = segment.channelData[0].data();
                 for (int frame = 0; frame < frameCount; ++frame) {
                     mono[frame] = 0.5f * left[frame] + 0.5f * right[frame];

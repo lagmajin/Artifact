@@ -9,6 +9,8 @@ module;
 export module Artifact.Effect.Keying.DifferenceKey;
 
 import Artifact.Effect.Abstract;
+import Property.Abstract;
+import Utils.String.UniString;
 import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
 import FloatRGBA;

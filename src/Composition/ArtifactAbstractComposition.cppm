@@ -47,6 +47,7 @@ module;
 #include <map>
 #include <optional>
 #include <vector>
+#include <memory>
 
 module Artifact.Composition.Abstract;
 
@@ -98,6 +99,7 @@ import Artifact.Layer.PhysicsBridge;
 import Artifact.Acoustic.System;
 import Script.ArtifactScript;
 import Composition.Registry;
+import CLAP.Host;
 import Script.Expression.Evaluator;
 
 //import Playback.Clock;
@@ -5499,6 +5501,19 @@ void ArtifactAbstractComposition::ensureAudioMixer()
         // as an empty bus.
         impl_->audioMixer_->setEffectFactoryHook(
             [](const QString& effectType, const QJsonObject& payload) {
+                if (effectType == QStringLiteral("clap")) {
+                    auto clapEffect = clap::Host::getInstance().createEffect(nullptr);
+                    clapEffect->fromJson(payload);
+                    const QJsonObject restored = clapEffect->toJson();
+                    if (restored.value(QStringLiteral("pluginId")) !=
+                        payload.value(QStringLiteral("pluginId"))) {
+                        return ArtifactCore::SharedPtr<ArtifactCore::AudioEffect>{};
+                    }
+                    std::shared_ptr<ArtifactCore::AudioEffect> sharedEffect(
+                        std::move(clapEffect));
+                    return ArtifactCore::SharedPtr<ArtifactCore::AudioEffect>(
+                        std::move(sharedEffect));
+                }
                 auto effect = Artifact::ArtifactAudioEffectManager::instance()
                                   .createEffect(ArtifactCore::String(
                                       effectType.toUtf8().constData()));

@@ -10,12 +10,14 @@
 #include <QVariant>
 #include <QUuid>
 #include <wobjectimpl.h>
+#include <opencv2/core/mat.hpp>
 export module Artifact.Layer.Image;
 
 
  import Artifact.Layers.Abstract._2D;
+ import Artifact.Render.IRenderer;
+ import Property.Group;
 
- import Image;
  import Image.ImageF32x4_RGBA;
  import Mesh;
  import Image.DepthMap;

@@ -2,12 +2,14 @@ module;
 #include <utility>
 #include <QImage>
 #include <QSize>
+#include <QJsonObject>
 #include <algorithm>
 #include <vector>
 
 
 module Artifact.Layer.Null;
 import Artifact.Layer.Abstract;
+import Size;
 import Memory.SharedPtr;
 
 

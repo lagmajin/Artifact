@@ -44,6 +44,7 @@ export module Artifact.Layer.Particle;
 
 
 import Artifact.Layer.Abstract;
+import Artifact.Render.IRenderer;
 import Memory.SharedPtr;
 import Artifact.Composition.PlaybackController;
 import Playback.State;

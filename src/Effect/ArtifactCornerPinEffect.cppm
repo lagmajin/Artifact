@@ -9,6 +9,7 @@
 #include <opencv2/imgproc.hpp>
 
 module Artifact.Effect.CornerPin;
+import Image.ImageF32x4_RGBA;
 
 import Artifact.Effect.Abstract;
 import Property.Abstract;

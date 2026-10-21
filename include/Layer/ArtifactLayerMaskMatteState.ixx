@@ -7,6 +7,7 @@ export module Artifact.Layer.MaskMatteState;
 import Artifact.Layer.Matte;
 import Artifact.Mask.LayerMask;
 import Container.NamedVector;
+import Container.Debug;
 
 export namespace Artifact {
 

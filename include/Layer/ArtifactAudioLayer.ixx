@@ -36,13 +36,14 @@ module;
 #include <QUuid>
 export module Artifact.Layer.Audio;
 
-namespace Artifact { class ArtifactSwitchLayer; }
-
 import Audio.Volume;
 import Audio.Segment;
 import Audio.LipSyncTrack;
 import Artifact.Audio.Waveform;
 import Artifact.Layer.Abstract;
+import Artifact.Render.IRenderer;
+import Frame.Position;
+import Artifact.Layer.Switch;
 
 export namespace Artifact
 {

@@ -3,6 +3,7 @@ module;
 #include <memory>
 #include <vector>
 #include <QVariant>
+#include <QColor>
 #include <cstring>
 #include <opencv2/opencv.hpp>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
@@ -22,6 +23,7 @@ import Utils.String.UniString;
 import Core.Parallel;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
+import Graphics.SurfaceColorContract;
 import Artifact.Render.DiligentDeviceManager;
 import Memory.SharedPtr;
 

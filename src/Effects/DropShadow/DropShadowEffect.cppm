@@ -16,6 +16,7 @@ module;
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
 
 module Artifact.Effect.Rasterizer.DropShadow;
+import Image.ImageF32x4_RGBA;
 
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;

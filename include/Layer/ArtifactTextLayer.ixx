@@ -44,6 +44,7 @@ export module Artifact.Layer.Text;
 import Shape.Types;
 
 import Artifact.Layers.Abstract._2D;
+import Artifact.Render.IRenderer;
 import Artifact.Mask.Path;
 import Artifact.Mask.LayerMask;
 import Utils.String.UniString;

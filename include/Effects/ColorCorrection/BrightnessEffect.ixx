@@ -7,6 +7,7 @@ module;
 
 export module BrightnessEffect;
 
+import Artifact.Render.PointwiseEffectFusion;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;

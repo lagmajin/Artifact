@@ -1,5 +1,6 @@
 module;
 #include <memory>
+#include <string>
 
 export module Artifact.Audio.Effects.Init;
 
@@ -29,8 +30,13 @@ import Artifact.Audio.Effects.TapeSaturation;
 import Artifact.Audio.Effects.TransientShaper;
 import Artifact.Audio.Effects.Tremolo;
 import Artifact.Audio.Effects.Vibrato;
+import Artifact.VST.Effect;
 
 namespace Artifact {
+
+std::unique_ptr<ArtifactAbstractAudioEffect> createUnloadedVSTEffect() {
+    return createVSTEffect(std::string{});
+}
 
 struct AudioEffectsInitializer {
     AudioEffectsInitializer() {
@@ -59,6 +65,8 @@ struct AudioEffectsInitializer {
         manager.registerEffectFactory("transient_shaper", &createTransientShaperEffect);
         manager.registerEffectFactory("tremolo", &createTremoloEffect);
         manager.registerEffectFactory("vibrato", &createVibratoEffect);
+        manager.registerEffectFactory("vst2", &createUnloadedVSTEffect);
+        manager.registerEffectFactory("vst3", &createUnloadedVSTEffect);
     }
 };
 

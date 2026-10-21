@@ -6,8 +6,12 @@ module;
 #include <QVariant>
 
 export module Artifact.Effect.Creative;
+import Artifact.Render.ROI;
+import Utils.String.UniString;
+import Property.Abstract;
 
 import Artifact.Effect.Abstract;
+import Artifact.Effect.Context;
 import Image.ImageF32x4RGBAWithCache;
 import Graphics.Effect.Creative;
 import Memory.SharedPtr;

@@ -48,6 +48,7 @@ import Artifact.Layer.Matte;
 import Artifact.Layer.Component.System;
 import Artifact.Layer.Modifier;
 import Container.NamedVector;
+import Container.Debug;
 import Geometry.Fracture;
 import Physics.Collider2DEdit;
 import Layer.Matte;

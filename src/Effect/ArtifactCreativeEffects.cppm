@@ -21,6 +21,9 @@
 module Artifact.Effect.Creative;
 
 import Artifact.Effect.Abstract;
+import Artifact.Effect.ImplBase;
+import Image.ImageF32x4_RGBA;
+import Graphics.SurfaceColorContract;
 import Image.ImageF32x4RGBAWithCache;
 import Image.MultiChannelImage;
 import Graphics.Effect.Creative.Factory;

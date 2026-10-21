@@ -10,6 +10,8 @@ module;
 export module Artifact.Effect.Keying.IBKKeyer;
 
 import Artifact.Effect.Abstract;
+import Property.Abstract;
+import Utils.String.UniString;
 import Artifact.Effect.ImplBase;
 import Image.ImageF32x4_RGBA;
 import Image.ImageF32x4RGBAWithCache;

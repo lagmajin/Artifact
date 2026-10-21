@@ -6,6 +6,7 @@ module;
 #include <PipelineStateCache.h>
 #include <Sampler.h>
 #include <RefCntAutoPtr.hpp>
+#include <QString>
 
 export module Artifact.Render.ShaderManager;
 

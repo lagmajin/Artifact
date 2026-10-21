@@ -1,12 +1,14 @@
+module;
 #include <QString>
 #include <QVariant>
 
 #include <utility>
 #include <vector>
 
-import Artifact.Layer.Abstract;
+module Artifact.Layer.Abstract;
 import Artifact.Layer.RuntimeSupport;
 import Animation.Transform2D;
+import Animation.Transform3D;
 import Artifact.Mask.LayerMask;
 import Artifact.Mask.Path;
 import Property.Abstract;

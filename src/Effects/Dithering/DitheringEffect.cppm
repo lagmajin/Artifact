@@ -14,6 +14,7 @@ module;
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
 
 module Artifact.Effect.Dithering;
+import Graphics.SurfaceColorContract;
 
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;

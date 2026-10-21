@@ -1,3 +1,4 @@
+module;
 #include <algorithm>
 
 #include <QJsonArray>
@@ -5,7 +6,7 @@
 #include <QString>
 #include <QVector>
 
-import Artifact.Layer.Abstract;
+module Artifact.Layer.Abstract;
 
 namespace Artifact {
 
