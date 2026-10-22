@@ -1134,7 +1134,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/AIChatWidget.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactAlignmentWidget.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactAnchorPointTool.cppm"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactClipBufferModel.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactClipBufferModel.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactClipBufferWidget.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactColorPaletteWidget.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactCompositionAudioMixerWidget.cppm"
