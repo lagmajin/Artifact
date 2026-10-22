@@ -801,6 +801,13 @@ TransformGizmo* gizmo() const;
   ArtifactCore::Units::Pixels zoom{};
  };
  CameraFrustumVisual cameraFrustumVisual() const;
+ struct ViewportCullingStats {
+  int tested3DLayers = 0;
+  int culled3DLayers = 0;
+  int drawn3DLayers = 0;
+ };
+ // Diagnostics for the most recent frame's view-frustum culling decision.
+ ViewportCullingStats viewportCullingStats() const;
 void setViewportOrientation(ArtifactCore::ViewOrientationHotspot hotspot);
 void clearViewportOrientation();
 ArtifactCore::ViewOrientationHotspot viewportOrientation() const;

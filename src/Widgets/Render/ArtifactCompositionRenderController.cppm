@@ -8655,6 +8655,81 @@ static QMatrix4x4 resolveProjectorViewMatrix(
 static QMatrix4x4 resolveProjectorProjMatrix(
     ArtifactAbstractLayer* sourceLayer);
 
+struct ModelLayerFrustumCullingDecision {
+  bool tested = false;
+  bool culled = false;
+};
+
+// Conservative view-frustum rejection for single-mesh, unskinned model layers.
+// Side planes plus the behind-camera case are enough for viewport culling and
+// avoid depending on whether the projection uses [-1,1] or [0,1] depth.
+static ModelLayerFrustumCullingDecision classifyModelLayerFrustum(
+    const Artifact3DLayer& layer, const QMatrix4x4& view,
+    const QMatrix4x4& proj) {
+  ModelLayerFrustumCullingDecision decision;
+  const auto& mesh = layer.mesh();
+  if (mesh.vertexCount() <= 0 || !mesh.skinBones().isEmpty()) {
+    return decision;
+  }
+  // Instance-local transforms are not baked into the combined mesh bounds.
+  if (layer.meshMaterials().size() > 1 ||
+      layer.meshLocalTransforms().size() > 1) {
+    return decision;
+  }
+  const QVector3D minB = mesh.boundingBoxMin();
+  const QVector3D maxB = mesh.boundingBoxMax();
+  if (!std::isfinite(minB.x()) || !std::isfinite(minB.y()) ||
+      !std::isfinite(minB.z()) || !std::isfinite(maxB.x()) ||
+      !std::isfinite(maxB.y()) || !std::isfinite(maxB.z())) {
+    return decision;
+  }
+  if (minB.x() > maxB.x() || minB.y() > maxB.y() || minB.z() > maxB.z()) {
+    return decision;
+  }
+
+  const QMatrix4x4 mvp = proj * view * layer.getGlobalTransform4x4();
+  const std::array<QVector3D, 8> corners{{
+      {minB.x(), minB.y(), minB.z()},
+      {maxB.x(), minB.y(), minB.z()},
+      {minB.x(), maxB.y(), minB.z()},
+      {maxB.x(), maxB.y(), minB.z()},
+      {minB.x(), minB.y(), maxB.z()},
+      {maxB.x(), minB.y(), maxB.z()},
+      {minB.x(), maxB.y(), maxB.z()},
+      {maxB.x(), maxB.y(), maxB.z()}}};
+
+  bool allOutsideLeft = true;
+  bool allOutsideRight = true;
+  bool allOutsideTop = true;
+  bool allOutsideBottom = true;
+  bool allBehindCamera = true;
+  for (const QVector3D& corner : corners) {
+    const QVector4D clip = mvp * QVector4D(corner, 1.0f);
+    const float w = clip.w();
+    if (!std::isfinite(w) || !std::isfinite(clip.x()) ||
+        !std::isfinite(clip.y())) {
+      return decision;
+    }
+    allBehindCamera &= w <= 0.0f;
+    if (w <= 0.0f) {
+      allOutsideLeft = false;
+      allOutsideRight = false;
+      allOutsideTop = false;
+      allOutsideBottom = false;
+      continue;
+    }
+    allOutsideLeft &= clip.x() < -w;
+    allOutsideRight &= clip.x() > w;
+    allOutsideTop &= clip.y() > w;
+    allOutsideBottom &= clip.y() < -w;
+  }
+
+  decision.tested = true;
+  decision.culled = allBehindCamera || allOutsideLeft || allOutsideRight ||
+                    allOutsideTop || allOutsideBottom;
+  return decision;
+}
+
 void drawLayerForCompositionView(
 
     ArtifactAbstractLayer *layer, ArtifactIRenderer *renderer,
@@ -8692,7 +8767,8 @@ void drawLayerForCompositionView(
                                                 int64_t, const QSize&)>*
         precompGpuResolver = nullptr,
     bool deferRasterizerEffectsToGpu = false,
-    SolidPointwisePreviewCache* solidPointwiseCache = nullptr) {
+    SolidPointwisePreviewCache* solidPointwiseCache = nullptr,
+    CompositionRenderController::ViewportCullingStats* cullingStats = nullptr) {
 
   if (!layer || !renderer) {
 
@@ -9042,6 +9118,24 @@ void drawLayerForCompositionView(
     std::vector<ArtifactCore::Light> filteredLights;
 
     const auto *modelLayer = dynamic_cast<Artifact3DLayer *>(layer);
+
+    if (modelLayer && cameraView && cameraProj) {
+      const auto culling =
+          classifyModelLayerFrustum(*modelLayer, *cameraView, *cameraProj);
+      if (culling.tested) {
+        if (cullingStats) {
+          ++cullingStats->tested3DLayers;
+          if (culling.culled) {
+            ++cullingStats->culled3DLayers;
+          } else {
+            ++cullingStats->drawn3DLayers;
+          }
+        }
+        if (culling.culled) {
+          return;
+        }
+      }
+    }
 
     if (modelLayer && sceneLights) {
 
@@ -12827,7 +12921,7 @@ public:
 
                     usesSpatialViewportOrientation(), surfaceGeneration(layer),
         &precompGpuResolver, deferRasterizerEffectsToGpu,
-        &solidPointwiseCache_);
+        &solidPointwiseCache_, &viewportCullingStats_);
 
     renderer_->flush();
 
@@ -14683,6 +14777,8 @@ public:
   bool showOriginOverlay_ = false;
 
   bool showCameraFrustumOverlay_ = false;
+
+  CompositionRenderController::ViewportCullingStats viewportCullingStats_;
 
   QImage referenceOverlayImage_;
 
@@ -40711,6 +40807,12 @@ CompositionRenderController::cameraFrustumVisual() const {
 
 }
 
+CompositionRenderController::ViewportCullingStats
+CompositionRenderController::viewportCullingStats() const {
+  return impl_ ? impl_->viewportCullingStats_
+               : CompositionRenderController::ViewportCullingStats{};
+}
+
 void CompositionRenderController::clearViewportOrientation() {
   if (!impl_) {
     return;
@@ -41844,6 +41946,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
   precompFastPathSkipCount_ = 0;
   adjustmentFallbackCount_ = 0;
   compositeFinalizedThisFrame_ = false;
+  viewportCullingStats_ = CompositionRenderController::ViewportCullingStats{};
 
 
 
@@ -46231,7 +46334,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                     &sceneLights, draftRendering,
                     usesSpatialViewportOrientation(),
 
-                    surfaceGeneration(layer.get()));
+                    surfaceGeneration(layer.get()), nullptr, false, nullptr,
+                    &viewportCullingStats_));
 
                 return true;
 
