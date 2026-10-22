@@ -1255,7 +1255,7 @@ set(ARTIFACT_EFFECTS_IMPL
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Blur/ReactionDiffusionBlurEffect.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/PhysicalHalationEffect.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/LuminescenceCausticsEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/NoiseEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/NoiseEffect.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/ChromaticReliefEffect.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/DeBlinkEffect.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/DeflickerEffect.cppm"
@@ -1864,7 +1864,7 @@ set(ARTIFACT_EFFECTS_NOISE_MODULES
 )
 set(ARTIFACT_EFFECTS_NOISE_IMPL
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/AddNoise/AddNoiseEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/NoiseEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/NoiseEffect.cpp"
 )
 
 add_library(ArtifactEffectsNoise STATIC)

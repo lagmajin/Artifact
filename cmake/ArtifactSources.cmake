@@ -869,7 +869,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Effects/Glow/GlowEffect.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Effects/Glow/LiquidGlowEffect.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Effects/Glow/LuminescenceCausticsEffect.cppm"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Effects/Glow/NoiseEffect.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Effects/Glow/NoiseEffect.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Effects/Glow/PhysicalHalationEffect.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Effects/Glow/ReactiveGlowEffect.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Effects/Glow/ResidualGlowEffect.cppm"
