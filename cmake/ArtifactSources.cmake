@@ -1298,7 +1298,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/LayerEditorModalTransformController.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/LayerEditorModePresentation.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/LayerEditorReleaseController.cppm"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/LayerEditorRenderScheduler.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/LayerEditorRenderScheduler.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/LayerEditorShapeOverlay.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/LayerEditorShapePressController.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/LayerEditorShapePressInteractionController.cppm"

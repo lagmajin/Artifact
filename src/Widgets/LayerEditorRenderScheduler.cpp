@@ -1,6 +1,8 @@
 module;
 
 #include <QTimer>
+#include <atomic>
+#include <functional>
 
 #include <utility>
 
