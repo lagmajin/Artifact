@@ -720,7 +720,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactInspectorEffectRackPresentation.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactTimelinePresentation.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactProjectItemPresentation.cppm"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactProjectViewHoverPopup.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactProjectViewHoverPopup.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactProjectManagerControls.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactAudioMixerControls.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactPropertyPresentation.cppm"
