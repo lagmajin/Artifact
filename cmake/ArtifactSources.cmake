@@ -1066,7 +1066,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Project/ArtifactProjectHookBridge.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Project/ArtifactProjectImporter.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Project/ArtifactProjectInitParams.cppm"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Project/ArtifactProjectItems.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Project/ArtifactProjectItems.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Project/ArtifactProjectManager.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Project/ArtifactProjectModel.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Project/ArtifactProjectPackager.cppm"
