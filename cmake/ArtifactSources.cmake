@@ -1230,7 +1230,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Menu/ArtifactFileMenu.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Menu/ArtifactHelpMenu.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Menu/ArtifactLayerMenu.cppm"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Menu/ArtifactOptionMenu.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Menu/ArtifactOptionMenu.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Menu/ArtifactRenderMenu.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Menu/ArtifactScriptMenu.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Menu/ArtifactTestMenu.cppm"
