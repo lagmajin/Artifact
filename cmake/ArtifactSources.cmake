@@ -1045,7 +1045,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Layer/ArtifactSwitchLayer.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Layer/ArtifactTextLayer.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Layer/ArtifactVideoLayer.cppm"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Localization/Localization.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Localization/Localization.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/LOD/ArtifactLODManager.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Mask/LayerMask.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Mask/MaskPath.cppm"
