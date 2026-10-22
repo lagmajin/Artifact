@@ -1162,7 +1162,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactProjectMemoWidget.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactPropertyWidget.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactPropertyWidgetShared.cppm"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactPythonHookManagerWidget.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactPythonHookManagerWidget.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactQuickToolBox.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactSecondaryPreviewWindow.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactSplashScreen.cppm"
