@@ -16,13 +16,12 @@ module;
 #include <QWidget>
 
 
-export module Artifact.Widgets.ProjectViewHoverPopup;
+module Artifact.Widgets.ProjectManagerWidget;
 
 import Core.ArtifactMath;
-import Artifact.Widgets.ProjectManagerWidget;
 import Widgets.Utils.CSS;
 
-export namespace Artifact {
+namespace Artifact {
 
 // --- Hover Popup ---
 class HoverThumbnailPopupWidget::Impl {
