@@ -1201,7 +1201,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Diagnostics/ProfilerPanelWidget.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Diagnostics/TraceTimelineWidget.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Dialog/ApplicationSettingDialog.cppm"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Dialog/ArtifactDialogButtons.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Dialog/ArtifactDialogButtons.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Dialog/ArtifactCompositionDialogShell.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Dialog/ArtifactCreateCompositionDialog.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Dialog/ArtifactImportAssetsDialog.cppm"
