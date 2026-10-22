@@ -142,6 +142,7 @@ import Artifact.Layer.Construction;
 import Artifact.Widgets.CompositionConstructionUndoCommand;
 
 import Artifact.Render.IRenderer;
+import Graphics.RayTracingManager;
 import Graphics.SurfaceColorContract;
 import Material.Material;
 import Artifact.Widgets.ViewportOverlay;
@@ -8655,6 +8656,132 @@ static QMatrix4x4 resolveProjectorViewMatrix(
 static QMatrix4x4 resolveProjectorProjMatrix(
     ArtifactAbstractLayer* sourceLayer);
 
+struct ModelLayerFrustumCullingDecision {
+  bool tested = false;
+  bool culled = false;
+};
+
+// Conservative view-frustum rejection for model layers. Side planes plus the
+// behind-camera case are enough for viewport culling and avoid depending on
+// whether the projection uses [-1,1] or [0,1] depth, or on reversed-Z.
+// Skinned and blend-shape meshes are classified after the caller has advanced
+// the pose, so the mesh bounds already describe the vertices that will draw.
+enum class BoxFrustumClass { Intersects, Outside, Unknown };
+
+static BoxFrustumClass classifyBoxFrustum(const QMatrix4x4& mvp,
+                                          const QVector3D& minB,
+                                          const QVector3D& maxB) {
+  const std::array<QVector3D, 8> corners{{
+      {minB.x(), minB.y(), minB.z()},
+      {maxB.x(), minB.y(), minB.z()},
+      {minB.x(), maxB.y(), minB.z()},
+      {maxB.x(), maxB.y(), minB.z()},
+      {minB.x(), minB.y(), maxB.z()},
+      {maxB.x(), minB.y(), maxB.z()},
+      {minB.x(), maxB.y(), maxB.z()},
+      {maxB.x(), maxB.y(), maxB.z()}}};
+
+  bool allOutsideLeft = true;
+  bool allOutsideRight = true;
+  bool allOutsideTop = true;
+  bool allOutsideBottom = true;
+  bool allBehindCamera = true;
+  for (const QVector3D& corner : corners) {
+    const QVector4D clip = mvp * QVector4D(corner, 1.0f);
+    const float w = clip.w();
+    if (!std::isfinite(w) || !std::isfinite(clip.x()) ||
+        !std::isfinite(clip.y())) {
+      return BoxFrustumClass::Unknown;
+    }
+    allBehindCamera &= w <= 0.0f;
+    if (w <= 0.0f) {
+      allOutsideLeft = false;
+      allOutsideRight = false;
+      allOutsideTop = false;
+      allOutsideBottom = false;
+      continue;
+    }
+    allOutsideLeft &= clip.x() < -w;
+    allOutsideRight &= clip.x() > w;
+    allOutsideTop &= clip.y() > w;
+    allOutsideBottom &= clip.y() < -w;
+  }
+  if (allBehindCamera || allOutsideLeft || allOutsideRight ||
+      allOutsideTop || allOutsideBottom) {
+    return BoxFrustumClass::Outside;
+  }
+  return BoxFrustumClass::Intersects;
+}
+
+static ModelLayerFrustumCullingDecision classifyModelLayerFrustum(
+    const Artifact3DLayer& layer, const QMatrix4x4& view,
+    const QMatrix4x4& proj) {
+  ModelLayerFrustumCullingDecision decision;
+  const auto& mesh = layer.mesh();
+  if (mesh.vertexCount() <= 0) {
+    return decision;
+  }
+  const QVector3D minB = mesh.boundingBoxMin();
+  const QVector3D maxB = mesh.boundingBoxMax();
+  if (!std::isfinite(minB.x()) || !std::isfinite(minB.y()) ||
+      !std::isfinite(minB.z()) || !std::isfinite(maxB.x()) ||
+      !std::isfinite(maxB.y()) || !std::isfinite(maxB.z())) {
+    return decision;
+  }
+  if (minB.x() > maxB.x() || minB.y() > maxB.y() || minB.z() > maxB.z()) {
+    return decision;
+  }
+
+  // Artifact3DLayer::draw() applies only this layer's own transform (the
+  // parent chain is not composed into the model matrix) and samples it at the
+  // layer's current frame, not the global composition frame. Rebuild the same
+  // matrix so culling matches animated/time-remapped layers.
+  const double compositionFps = std::isfinite(layer.compositionFrameRate()) &&
+                                        layer.compositionFrameRate() > 0.0
+                                    ? layer.compositionFrameRate()
+                                    : 30.0;
+  const RationalTime modelTime(layer.currentFrame(), compositionFps);
+  const auto transformSnapshot = layer.transform3D().snapshotAt(modelTime);
+  QMatrix4x4 modelMatrix;
+  modelMatrix.setToIdentity();
+  modelMatrix.translate(transformSnapshot.positionX,
+                        transformSnapshot.positionY,
+                        transformSnapshot.positionZ);
+  modelMatrix.rotate(transformSnapshot.rotationX, 1.0f, 0.0f, 0.0f);
+  modelMatrix.rotate(transformSnapshot.rotationY, 0.0f, 1.0f, 0.0f);
+  modelMatrix.rotate(transformSnapshot.rotationZ, 0.0f, 0.0f, 1.0f);
+  modelMatrix.scale(transformSnapshot.scaleX, transformSnapshot.scaleY,
+                    transformSnapshot.scaleZ);
+  modelMatrix.translate(-transformSnapshot.anchorX, -transformSnapshot.anchorY,
+                        -transformSnapshot.anchorZ);
+  const QMatrix4x4 baseMvp = proj * view * modelMatrix;
+  // The combined mesh bounds cover the single-instance paths (including the
+  // single-instance-per-material-slot import case).
+  BoxFrustumClass baseClass = classifyBoxFrustum(baseMvp, minB, maxB);
+  if (baseClass == BoxFrustumClass::Unknown) {
+    return decision;
+  }
+  bool anyInstanceIntersects = baseClass == BoxFrustumClass::Intersects;
+  if (!anyInstanceIntersects) {
+    // Multi-primitive sources concatenate their geometry into mesh() and place
+    // each material span with a hierarchy-local transform. Test the combined
+    // bounds under every transform that the draw path can apply; keeping the
+    // layer if any box intersects stays conservative for both instance modes.
+    for (const QMatrix4x4& local : layer.meshLocalTransforms()) {
+      const BoxFrustumClass instanceClass = classifyBoxFrustum(
+          baseMvp * local, minB, maxB);
+      if (instanceClass != BoxFrustumClass::Outside) {
+        anyInstanceIntersects = true;
+        break;
+      }
+    }
+  }
+
+  decision.tested = true;
+  decision.culled = !anyInstanceIntersects;
+  return decision;
+}
+
 void drawLayerForCompositionView(
 
     ArtifactAbstractLayer *layer, ArtifactIRenderer *renderer,
@@ -8692,7 +8819,8 @@ void drawLayerForCompositionView(
                                                 int64_t, const QSize&)>*
         precompGpuResolver = nullptr,
     bool deferRasterizerEffectsToGpu = false,
-    SolidPointwisePreviewCache* solidPointwiseCache = nullptr) {
+    SolidPointwisePreviewCache* solidPointwiseCache = nullptr,
+    CompositionRenderController::ViewportCullingStats* cullingStats = nullptr) {
 
   if (!layer || !renderer) {
 
@@ -9042,6 +9170,34 @@ void drawLayerForCompositionView(
     std::vector<ArtifactCore::Light> filteredLights;
 
     const auto *modelLayer = dynamic_cast<Artifact3DLayer *>(layer);
+
+    // drawMesh() also registers/re-activates the mesh in the ray tracing scene.
+    // Skipping a culled layer would leave stale or missing BLAS/TLAS instances,
+    // so keep the full draw path whenever ray tracing owns that state.
+    const bool rayTracingSceneTracking =
+        renderer && renderer->rayTracingManager() &&
+        renderer->rayTracingManager()->isSupported();
+
+    if (modelLayer && cameraView && cameraProj && !rayTracingSceneTracking) {
+      // draw() would advance the skin pose; do it first so the bounds used for
+      // culling match the vertices that would be drawn.
+      modelLayer->evaluateSkinAnimation();
+      const auto culling =
+          classifyModelLayerFrustum(*modelLayer, *cameraView, *cameraProj);
+      if (culling.tested) {
+        if (cullingStats) {
+          ++cullingStats->tested3DLayers;
+          if (culling.culled) {
+            ++cullingStats->culled3DLayers;
+          } else {
+            ++cullingStats->drawn3DLayers;
+          }
+        }
+        if (culling.culled) {
+          return;
+        }
+      }
+    }
 
     if (modelLayer && sceneLights) {
 
@@ -12827,7 +12983,7 @@ public:
 
                     usesSpatialViewportOrientation(), surfaceGeneration(layer),
         &precompGpuResolver, deferRasterizerEffectsToGpu,
-        &solidPointwiseCache_);
+        &solidPointwiseCache_, &viewportCullingStats_);
 
     renderer_->flush();
 
@@ -14683,6 +14839,8 @@ public:
   bool showOriginOverlay_ = false;
 
   bool showCameraFrustumOverlay_ = false;
+
+  CompositionRenderController::ViewportCullingStats viewportCullingStats_;
 
   QImage referenceOverlayImage_;
 
@@ -40711,6 +40869,12 @@ CompositionRenderController::cameraFrustumVisual() const {
 
 }
 
+CompositionRenderController::ViewportCullingStats
+CompositionRenderController::viewportCullingStats() const {
+  return impl_ ? impl_->viewportCullingStats_
+               : CompositionRenderController::ViewportCullingStats{};
+}
+
 void CompositionRenderController::clearViewportOrientation() {
   if (!impl_) {
     return;
@@ -41844,6 +42008,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
   precompFastPathSkipCount_ = 0;
   adjustmentFallbackCount_ = 0;
   compositeFinalizedThisFrame_ = false;
+  viewportCullingStats_ = CompositionRenderController::ViewportCullingStats{};
 
 
 
@@ -46231,7 +46396,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                     &sceneLights, draftRendering,
                     usesSpatialViewportOrientation(),
 
-                    surfaceGeneration(layer.get()));
+                    surfaceGeneration(layer.get()), nullptr, false, nullptr,
+                    &viewportCullingStats_));
 
                 return true;
 

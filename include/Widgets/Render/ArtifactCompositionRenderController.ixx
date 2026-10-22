@@ -801,6 +801,15 @@ TransformGizmo* gizmo() const;
   ArtifactCore::Units::Pixels zoom{};
  };
  CameraFrustumVisual cameraFrustumVisual() const;
+ struct ViewportCullingStats {
+  int tested3DLayers = 0;
+  int culled3DLayers = 0;
+  int drawn3DLayers = 0;
+ };
+ // Per-frame counts of 3D layer culling decisions. A layer can contribute more
+ // than one decision when a frame draws it through multiple passes. Culling is
+ // skipped while ray tracing scene tracking is active, so all counts stay 0.
+ ViewportCullingStats viewportCullingStats() const;
 void setViewportOrientation(ArtifactCore::ViewOrientationHotspot hotspot);
 void clearViewportOrientation();
 ArtifactCore::ViewOrientationHotspot viewportOrientation() const;
