@@ -1,5 +1,7 @@
 module;
 #include <QMutexLocker>
+#include <QSet>
+#include <QString>
 
 module Artifact.Render.CompositionChangeDetector;
 

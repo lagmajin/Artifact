@@ -1266,7 +1266,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionSpaceGpuCache.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Render/ArtifactCompositionRevealPreparation.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionRenderController.cppm"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Render/CompositionChangeDetector.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Render/CompositionChangeDetector.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionRenderOverlay.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionRenderWidget.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionViewerFooter.cppm"
