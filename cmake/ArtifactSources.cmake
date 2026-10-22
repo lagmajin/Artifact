@@ -1242,7 +1242,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/PropertyEditor/ArtifactPropertyEditor.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/PropertyEditor/ArtifactPropertyEditorAbstract.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/PropertyEditor/ArtifactPropertyEditorAnimatorCount.cppm"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/PropertyEditor/ArtifactPropertyEditorBool.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/PropertyEditor/ArtifactPropertyEditorBool.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/PropertyEditor/ArtifactPropertyEditorColor.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/PropertyEditor/ArtifactPropertyEditorDashPattern.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/PropertyEditor/ArtifactPropertyEditorEnum.cppm"
