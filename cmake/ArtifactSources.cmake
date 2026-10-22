@@ -1073,7 +1073,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Project/ArtifactProjectSetting.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Project/ArtifactProjectStatistics.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Project/ArtifactRevisionService.cppm"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Project/TreeFilterProxyModel.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Project/TreeFilterProxyModel.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Render/ArtifactBatchRenderer.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Render/ArtifactFinalPostProcess.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Render/ArtifactFrameCache.cppm"
