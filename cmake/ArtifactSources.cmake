@@ -1056,7 +1056,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Plugin/PluginSandbox.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Preview/ArtifactPreviewCompositionPipeline.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Preview/ArtifactPreviewController.cppm"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Preview/ArtifactPreviewWorker.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Preview/ArtifactPreviewWorker.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Project/ArtifactCreationDefaults.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Project/ArtifactPresetManager.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Project/ArtifactProject.cppm"
