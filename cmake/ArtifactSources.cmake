@@ -747,7 +747,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
       "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactInspectorEffectPicker.cppm"
       "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactInspectorInteraction.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/AI/AIClient.cppm"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Animation/ArtifactLayerEffectEnvelope.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Animation/ArtifactLayerEffectEnvelope.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Application/ActiveContextService.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Application/ArtifactApplicationManager.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Application/ArtifactCommandLine.cppm"
