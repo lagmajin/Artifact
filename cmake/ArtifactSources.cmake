@@ -1246,7 +1246,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/PropertyEditor/ArtifactPropertyEditorColor.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/PropertyEditor/ArtifactPropertyEditorDashPattern.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/PropertyEditor/ArtifactPropertyEditorEnum.cpp"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/PropertyEditor/ArtifactPropertyEditorNumeric.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/PropertyEditor/ArtifactPropertyEditorNumeric.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/PropertyEditor/ArtifactPropertyEditorObjectRef.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/PropertyEditor/ArtifactPropertyEditorPath.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/PropertyEditor/ArtifactPropertyEditorRotation.cpp"
