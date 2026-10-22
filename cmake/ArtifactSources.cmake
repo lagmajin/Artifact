@@ -1251,7 +1251,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/PropertyEditor/ArtifactPropertyEditorPath.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/PropertyEditor/ArtifactPropertyEditorRotation.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/PropertyEditor/ArtifactPropertyEditorShared.cppm"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/PropertyEditor/ArtifactPropertyEditorString.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/PropertyEditor/ArtifactPropertyEditorString.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/PropertyEditor/ArtifactPropertyEditorTextAnimatorColor.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ReactiveEventEditorWindow.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/Artifact3DGizmo.cppm"
