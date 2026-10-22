@@ -1085,7 +1085,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Render/ArtifactRamPreviewController.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Render/ArtifactRenderCompisitonPipeline.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Render/ArtifactRenderController.cppm"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Render/ArtifactRenderElement.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Render/ArtifactRenderElement.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Render/ArtifactRenderLayerPipeline.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Render/ArtifactAccumulatorPass.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Render/ArtifactRenderManager.cppm"
