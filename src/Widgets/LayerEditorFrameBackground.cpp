@@ -1,6 +1,7 @@
 module;
 
 #include <compare>
+#include <QImage>
 
 module Artifact.Widgets.LayerEditor.FrameBackground;
 
