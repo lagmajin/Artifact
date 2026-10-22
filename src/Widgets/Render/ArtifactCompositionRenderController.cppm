@@ -142,6 +142,7 @@ import Artifact.Layer.Construction;
 import Artifact.Widgets.CompositionConstructionUndoCommand;
 
 import Artifact.Render.IRenderer;
+import Graphics.RayTracingManager;
 import Graphics.SurfaceColorContract;
 import Material.Material;
 import Artifact.Widgets.ViewportOverlay;
@@ -8731,7 +8732,29 @@ static ModelLayerFrustumCullingDecision classifyModelLayerFrustum(
     return decision;
   }
 
-  const QMatrix4x4 baseMvp = proj * view * layer.getGlobalTransform4x4();
+  // Artifact3DLayer::draw() applies only this layer's own transform (the
+  // parent chain is not composed into the model matrix) and samples it at the
+  // layer's current frame, not the global composition frame. Rebuild the same
+  // matrix so culling matches animated/time-remapped layers.
+  const double compositionFps = std::isfinite(layer.compositionFrameRate()) &&
+                                        layer.compositionFrameRate() > 0.0
+                                    ? layer.compositionFrameRate()
+                                    : 30.0;
+  const RationalTime modelTime(layer.currentFrame(), compositionFps);
+  const auto transformSnapshot = layer.transform3D().snapshotAt(modelTime);
+  QMatrix4x4 modelMatrix;
+  modelMatrix.setToIdentity();
+  modelMatrix.translate(transformSnapshot.positionX,
+                        transformSnapshot.positionY,
+                        transformSnapshot.positionZ);
+  modelMatrix.rotate(transformSnapshot.rotationX, 1.0f, 0.0f, 0.0f);
+  modelMatrix.rotate(transformSnapshot.rotationY, 0.0f, 1.0f, 0.0f);
+  modelMatrix.rotate(transformSnapshot.rotationZ, 0.0f, 0.0f, 1.0f);
+  modelMatrix.scale(transformSnapshot.scaleX, transformSnapshot.scaleY,
+                    transformSnapshot.scaleZ);
+  modelMatrix.translate(-transformSnapshot.anchorX, -transformSnapshot.anchorY,
+                        -transformSnapshot.anchorZ);
+  const QMatrix4x4 baseMvp = proj * view * modelMatrix;
   // The combined mesh bounds cover the single-instance paths (including the
   // single-instance-per-material-slot import case).
   BoxFrustumClass baseClass = classifyBoxFrustum(baseMvp, minB, maxB);
@@ -9148,7 +9171,14 @@ void drawLayerForCompositionView(
 
     const auto *modelLayer = dynamic_cast<Artifact3DLayer *>(layer);
 
-    if (modelLayer && cameraView && cameraProj) {
+    // drawMesh() also registers/re-activates the mesh in the ray tracing scene.
+    // Skipping a culled layer would leave stale or missing BLAS/TLAS instances,
+    // so keep the full draw path whenever ray tracing owns that state.
+    const bool rayTracingSceneTracking =
+        renderer && renderer->rayTracingManager() &&
+        renderer->rayTracingManager()->isSupported();
+
+    if (modelLayer && cameraView && cameraProj && !rayTracingSceneTracking) {
       // draw() would advance the skin pose; do it first so the bounds used for
       // culling match the vertices that would be drawn.
       modelLayer->evaluateSkinAnimation();
