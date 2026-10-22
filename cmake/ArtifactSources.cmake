@@ -1315,7 +1315,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/LayerEditorViewMoveController.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/LayerEditorViewKeyInputController.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/LayerEditorViewPressController.cppm"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/LayerEditorViewWheelController.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/LayerEditorViewWheelController.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/LayerEditorShapeCommands.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/LayerEditorShapeDragController.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/LayerEditorShapeDeleteController.cppm"
