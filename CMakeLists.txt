@@ -421,9 +421,9 @@ list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/ArtifactRecov
 if(_recovery_workspace_module_idx EQUAL -1)
     list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/ArtifactRecoveryWorkspaceWidget.ixx")
 endif()
-list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/ArtifactRecoveryWorkspaceWidget.cppm" _recovery_workspace_impl_idx)
+list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/ArtifactRecoveryWorkspaceWidget.cpp" _recovery_workspace_impl_idx)
 if(_recovery_workspace_impl_idx EQUAL -1)
-    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/ArtifactRecoveryWorkspaceWidget.cppm")
+    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/ArtifactRecoveryWorkspaceWidget.cpp")
 endif()
 
 # Composition settings shell and inspector tab surfaces are imported from
