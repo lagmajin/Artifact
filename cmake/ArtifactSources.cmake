@@ -965,7 +965,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Generator/CloneGenerator.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Generator/GeneratorManager.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Generator/ParticleEmitterDescription.cppm"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/GUI/ArtifactGuiManager.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/GUI/ArtifactGuiManager.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/GUI/WindowPluginManager.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/IO/AsyncAssetReadScheduler.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/IO/DirectStorageReader.cppm"
