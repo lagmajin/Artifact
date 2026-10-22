@@ -3704,21 +3704,34 @@ endif()
 set_target_properties(ArtifactUiTest PROPERTIES FOLDER "Artifact/Testing")
 
 # MSBuild defaults .cppm files to module-interface compilation. Implementation
-# units paired with public .ixx interfaces must compile as ordinary C++ while
-# CMake scans their `module X;` declarations and orders the primary IFC.
-if(MSVC OR ARTIFACT_COMPILER_CLANG_GNU)
+# units paired with public .ixx interfaces compile as ordinary C++ while CMake
+# scans named module declarations and orders their primary interface.
+if(MSVC OR ARTIFACT_COMPILER_CLANG_GNU OR ARTIFACT_COMPILER_CLANG_CL)
     get_cmake_property(_artifact_cmake_variables VARIABLES)
     set(_artifact_module_implementation_sources)
     foreach(_artifact_variable IN LISTS _artifact_cmake_variables)
         if(_artifact_variable MATCHES "_IMPL$")
             foreach(_artifact_source IN LISTS ${_artifact_variable})
                 if(_artifact_source MATCHES
-                        "^${CMAKE_CURRENT_SOURCE_DIR}/.*[.]cppm$")
+                        "^${CMAKE_CURRENT_SOURCE_DIR}/.*[.](cppm|cpp)$")
                     file(STRINGS "${_artifact_source}" _artifact_export_module
                         REGEX "^[ \t]*export[ \t]+module[ \t]+")
                     if(NOT _artifact_export_module)
-                        list(APPEND _artifact_module_implementation_sources
-                            "${_artifact_source}")
+                        if(_artifact_source MATCHES "[.]cppm$")
+                            # Keep module-free .cppm implementation files in
+                            # this list so compiler-specific extension handling
+                            # remains explicit.
+                            list(APPEND _artifact_module_implementation_sources
+                                "${_artifact_source}")
+                        else()
+                            file(STRINGS "${_artifact_source}"
+                                _artifact_named_module_declaration
+                                REGEX "^[ \t]*module[ \t]+[A-Za-z_][A-Za-z0-9_.]*[ \t]*;")
+                            if(_artifact_named_module_declaration)
+                                list(APPEND _artifact_module_implementation_sources
+                                    "${_artifact_source}")
+                            endif()
+                        endif()
                     endif()
                 endif()
             endforeach()
@@ -3727,17 +3740,24 @@ if(MSVC OR ARTIFACT_COMPILER_CLANG_GNU)
     list(REMOVE_DUPLICATES _artifact_module_implementation_sources)
     foreach(_artifact_source IN LISTS
             _artifact_module_implementation_sources)
-        if(MSVC)
+        if(MSVC AND _artifact_source MATCHES "[.]cppm$")
             set_property(SOURCE "${_artifact_source}" APPEND PROPERTY
                 VS_SETTINGS "CompileAs=CompileAsCpp")
-        elseif(ARTIFACT_COMPILER_CLANG_GNU)
+        endif()
+
+        if(ARTIFACT_COMPILER_CLANG_GNU)
             # The GNU driver treats .cppm as a module interface by default.
-            # These units attach to the .ixx interface and need normal C++
-            # compilation with CMake's P1689 dependency scan retained.
+            # .cpp units already use the C++ driver language and only need the
+            # P1689 scan that orders their imported primary interface.
             set_source_files_properties("${_artifact_source}" PROPERTIES
                 CXX_SCAN_FOR_MODULES ON)
-            set_property(SOURCE "${_artifact_source}" APPEND PROPERTY
-                COMPILE_OPTIONS -x c++)
+            if(_artifact_source MATCHES "[.]cppm$")
+                set_property(SOURCE "${_artifact_source}" APPEND PROPERTY
+                    COMPILE_OPTIONS -x c++)
+            endif()
+        elseif(ARTIFACT_COMPILER_CLANG_CL)
+            set_source_files_properties("${_artifact_source}" PROPERTIES
+                CXX_SCAN_FOR_MODULES ON)
         endif()
     endforeach()
 endif()
