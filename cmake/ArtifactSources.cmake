@@ -824,7 +824,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Effect/ArtifactTransition.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Effects/AddNoise/AddNoiseEffect.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Effects/ArtifactAbstractEffect.cppm"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Effects/ArtifactAbstractField.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Effects/ArtifactAbstractField.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Effects/ArtifactEffectFrameSampler.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Effects/ArtifactGlobalEffectManager.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Effects/AutoMosaicEffect.cppm"

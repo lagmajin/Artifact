@@ -1023,7 +1023,7 @@ set(ARTIFACT_EFFECT_CONTRACT_MODULES
 )
 set(ARTIFACT_EFFECT_CONTRACT_IMPL
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ArtifactAbstractEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ArtifactAbstractField.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ArtifactAbstractField.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ArtifactEffectFrameSampler.cppm"
 )
 
