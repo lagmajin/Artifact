@@ -808,7 +808,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Composition/ArtifactCompositionSetting.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Composition/ArtifactInOutPoints.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Composition/ArtifactParametricCompositionResolver.cppm"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Composition/CompositionSettings.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Composition/CompositionSettings.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Composition/MetadataVectorizer.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Controller/TimelineViewProvider.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Core/ArtifactWorkspaceManager.cppm"
