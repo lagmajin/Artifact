@@ -5,6 +5,8 @@
 .gitattributes text eol=lf
 *.cppm text eol=lf
 *.ixx text eol=lf
+*.cpp text eol=lf
+*.cmake text eol=lf
 *.json text eol=lf
 
 ###############################################################################
