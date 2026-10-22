@@ -1320,7 +1320,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/LayerEditorShapeDragController.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/LayerEditorShapeDeleteController.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/LayerEditorShapeHoverController.cppm"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ProjectFilterProxyModel.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ProjectFilterProxyModel.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/InspectorEffectCatalog.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Render/ArtifactRenderQueueEncoder.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Layer/ArtifactLayerRuntimeRenderSupport.cppm"
