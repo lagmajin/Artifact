@@ -60,6 +60,7 @@ import Layer.Blend;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Matte;
 import Artifact.Mask.LayerMask;
+import Memory.SharedPtr;
 import Geometry.ResolutionRemap;
 import Image.ImageF32x4_RGBA;
 import Color.Float;

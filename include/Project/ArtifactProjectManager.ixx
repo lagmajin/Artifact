@@ -27,8 +27,6 @@ import Artifact.Layer.Result;
 
 namespace pybind11 {}//dummy
 namespace folly {}//dummy
-W_REGISTER_ARGTYPE(ArtifactCore::LayerID)
-W_REGISTER_ARGTYPE(ArtifactCore::CompositionID)
 
 export namespace Artifact {
 

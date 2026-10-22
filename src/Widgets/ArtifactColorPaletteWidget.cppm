@@ -321,4 +321,3 @@ void ArtifactColorPaletteWidget::onSavePalettes() {
 }
 
 } // namespace Artifact
-#endif // Q_MOC_RUN

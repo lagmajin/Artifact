@@ -333,8 +333,5 @@ public: // signals
 
 } // namespace Artifact
 
-W_REGISTER_ARGTYPE(ArtifactCore::PlaybackState)
-W_REGISTER_ARGTYPE(ArtifactCore::FramePosition)
-W_REGISTER_ARGTYPE(ArtifactCore::FrameRange)
 W_REGISTER_ARGTYPE(Artifact::PlaybackRangeMode)
 W_REGISTER_ARGTYPE(Artifact::PlaybackSkipMode)

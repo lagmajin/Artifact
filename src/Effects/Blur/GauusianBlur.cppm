@@ -3,6 +3,8 @@ module;
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
+#include <QString>
+#include <QVariant>
 
 #include <iostream>
 #include <vector>

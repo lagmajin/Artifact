@@ -43,7 +43,6 @@ import Frame.Range;
 import Artifact.Composition.InOutPoints;
 import Playback.State;
 
-W_REGISTER_ARGTYPE(ArtifactCore::FramePosition)
 W_REGISTER_ARGTYPE(ArtifactCore::FrameRange)
 W_REGISTER_ARGTYPE(ArtifactCore::FrameRate)
 
@@ -128,5 +127,3 @@ public:
 };
 
 } // namespace Artifact
-
-W_REGISTER_ARGTYPE(ArtifactCore::PlaybackState)

@@ -54,9 +54,6 @@ export module Artifact.Playback.Engine;
  import Artifact.Composition.InOutPoints;
 
 W_REGISTER_ARGTYPE(QImage)
-W_REGISTER_ARGTYPE(ArtifactCore::FramePosition)
-W_REGISTER_ARGTYPE(ArtifactCore::FrameRange)
-W_REGISTER_ARGTYPE(ArtifactCore::FrameRate)
 
 export namespace Artifact {
 

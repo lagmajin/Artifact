@@ -39,6 +39,7 @@ export module Artifact.VST.Effect;
 
 import Audio.Segment;
 import Audio.Effect;
+import Core.ArtifactString;
 import Artifact.Audio.Effects.Base;
 
 export namespace Artifact {

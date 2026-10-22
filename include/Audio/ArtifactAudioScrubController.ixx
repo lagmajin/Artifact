@@ -9,8 +9,6 @@ import Frame.Position;
 import Artifact.Composition.Abstract;
 import Core.Diagnostics.ProjectDiagnostic;
 
-W_REGISTER_ARGTYPE(ArtifactCore::FramePosition)
-
 export namespace Artifact
 {
     using namespace ArtifactCore;
