@@ -1365,7 +1365,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Timeline/EasingLabWidget.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Timeline/KeyframeIconHelper.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Timeline/KeyPatternDialog.cppm"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Timeline/LayerLockIndicator.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Timeline/LayerLockIndicator.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Timeline/TimelineScaleWidget.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/TimingEventView.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Viewer/ArtifactContentsViewer.cppm"
