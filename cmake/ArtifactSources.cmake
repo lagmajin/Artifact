@@ -773,7 +773,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Audio/Effects/NoiseGateEffect.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Audio/Effects/BassTrebleEffect.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Audio/Effects/BitCrusherEffect.cppm"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Audio/Effects/DCBlockerEffect.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Audio/Effects/DCBlockerEffect.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Audio/Effects/DeEsserEffect.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Audio/Effects/ExpanderEffect.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Audio/Effects/PhaserEffect.cppm"
