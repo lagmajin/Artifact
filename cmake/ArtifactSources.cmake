@@ -1287,7 +1287,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/LayerEditorBackgroundCache.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/LayerEditorEventSubscriptions.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/LayerEditorFrameBackground.cpp"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/LayerEditorFrameViewState.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/LayerEditorFrameViewState.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/LayerEditorMaskEditSession.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/LayerEditorMaskDragController.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/LayerEditorMaskHoverController.cppm"

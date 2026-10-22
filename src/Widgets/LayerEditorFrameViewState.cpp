@@ -2,6 +2,7 @@ module;
 
 
 #include <QWidget>
+#include <QSize>
 
 module Artifact.Widgets.LayerEditor.FrameViewState;
 
