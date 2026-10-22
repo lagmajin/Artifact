@@ -1063,7 +1063,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Project/ArtifactProjectCleanupTool.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Project/ArtifactProjectExporter.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Project/ArtifactProjectHealthChecker.cppm"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Project/ArtifactProjectHookBridge.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Project/ArtifactProjectHookBridge.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Project/ArtifactProjectImporter.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Project/ArtifactProjectInitParams.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Project/ArtifactProjectItems.cppm"
