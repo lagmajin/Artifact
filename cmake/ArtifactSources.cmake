@@ -1109,7 +1109,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Script/ArtifactPythonHookManager.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Service/ApplicationService.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Service/ArtifactAudioService.cppm"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Service/ArtifactClipboardService.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Service/ArtifactClipboardService.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Service/ArtifactDetachedTaskService.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Service/ArtifactEffectService.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Service/ArtifactPlaybackService.cppm"
