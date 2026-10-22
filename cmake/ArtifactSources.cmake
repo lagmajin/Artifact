@@ -814,7 +814,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Core/ArtifactWorkspaceManager.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Core/ArtifactWorkspaceModes.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Core/Guides/ArtifactSmartGuidesManager.cppm"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Core/SystemStats.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Core/SystemStats.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Diagnostics/AppValidationRules.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Effect/ArtifactCornerPinEffect.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Effect/ArtifactCreativeEffects.cppm"
