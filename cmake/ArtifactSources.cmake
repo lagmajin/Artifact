@@ -959,7 +959,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/FxStudio/ArtifactFxSerialization.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/FxStudio/ArtifactFxStudioSession.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/FxStudio/ArtifactFxViewportModel.cppm"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Generator/AbstractGenerator.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Generator/AbstractGenerator.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Generator/AbstractGeneratorEffector.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Generator/ArtifactParticleGenerator.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Generator/CloneGenerator.cppm"
