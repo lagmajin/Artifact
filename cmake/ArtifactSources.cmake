@@ -799,7 +799,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Color/ArtifactOCIOManager.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Color/ColorPaletteManager.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Composition/ArtifactAbstractComposition.cppm"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Composition/ArtifactComposition2D.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Composition/ArtifactComposition2D.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Composition/ArtifactComposition3D.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Composition/ArtifactCompositionInitParams.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Composition/ArtifactCompositionNodes.cppm"
