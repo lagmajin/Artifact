@@ -1220,7 +1220,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Dock/DockGlowStyle.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Dock/DockStyleManager.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Effect/ArtifactEffectPalette.cppm"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/FxStudio/ArtifactFxStudioDialog.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/FxStudio/ArtifactFxStudioDialog.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Inspector/ArtifactComponentTabSurface.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Inspector/ArtifactEffectTabSurface.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Menu/ArtifactAnimationMenu.cppm"
