@@ -1158,7 +1158,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactObjectReferenceWidget.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactProblemViewWidget.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactProjectManagerWidget.cppm"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactProjectMemoModel.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactProjectMemoModel.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactProjectMemoWidget.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactPropertyWidget.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactPropertyWidgetShared.cppm"
