@@ -1237,7 +1237,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Menu/ArtifactTimeMenu.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Menu/ArtifactViewMenu.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Menu/Test/ArtifactImageProcessingTestMenu.cppm"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Native/NativeHelper.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Native/NativeHelper.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/PowerShellWidget.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/PropertyEditor/ArtifactPropertyEditor.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/PropertyEditor/ArtifactPropertyEditorAbstract.cpp"
