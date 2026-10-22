@@ -1011,7 +1011,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Layer/ArtifactCompositionBackgroundLayer.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Layer/ArtifactCompositionLayer.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Layer/ArtifactCompositionLayerFactory.cpp"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Layer/ArtifactCompositionLayerResolver.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Layer/ArtifactCompositionLayerResolver.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Layer/ArtifactConstructionLayer.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Layer/ArtifactEnvironmentMapLayer.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Layer/ArtifactFormParticleLayer.cppm"
