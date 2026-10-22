@@ -8660,34 +8660,16 @@ struct ModelLayerFrustumCullingDecision {
   bool culled = false;
 };
 
-// Conservative view-frustum rejection for single-mesh, unskinned model layers.
-// Side planes plus the behind-camera case are enough for viewport culling and
-// avoid depending on whether the projection uses [-1,1] or [0,1] depth.
-static ModelLayerFrustumCullingDecision classifyModelLayerFrustum(
-    const Artifact3DLayer& layer, const QMatrix4x4& view,
-    const QMatrix4x4& proj) {
-  ModelLayerFrustumCullingDecision decision;
-  const auto& mesh = layer.mesh();
-  if (mesh.vertexCount() <= 0 || !mesh.skinBones().isEmpty()) {
-    return decision;
-  }
-  // Instance-local transforms are not baked into the combined mesh bounds.
-  if (layer.meshMaterials().size() > 1 ||
-      layer.meshLocalTransforms().size() > 1) {
-    return decision;
-  }
-  const QVector3D minB = mesh.boundingBoxMin();
-  const QVector3D maxB = mesh.boundingBoxMax();
-  if (!std::isfinite(minB.x()) || !std::isfinite(minB.y()) ||
-      !std::isfinite(minB.z()) || !std::isfinite(maxB.x()) ||
-      !std::isfinite(maxB.y()) || !std::isfinite(maxB.z())) {
-    return decision;
-  }
-  if (minB.x() > maxB.x() || minB.y() > maxB.y() || minB.z() > maxB.z()) {
-    return decision;
-  }
+// Conservative view-frustum rejection for model layers. Side planes plus the
+// behind-camera case are enough for viewport culling and avoid depending on
+// whether the projection uses [-1,1] or [0,1] depth, or on reversed-Z.
+// Skinned and blend-shape meshes are classified after the caller has advanced
+// the pose, so the mesh bounds already describe the vertices that will draw.
+enum class BoxFrustumClass { Intersects, Outside, Unknown };
 
-  const QMatrix4x4 mvp = proj * view * layer.getGlobalTransform4x4();
+static BoxFrustumClass classifyBoxFrustum(const QMatrix4x4& mvp,
+                                          const QVector3D& minB,
+                                          const QVector3D& maxB) {
   const std::array<QVector3D, 8> corners{{
       {minB.x(), minB.y(), minB.z()},
       {maxB.x(), minB.y(), minB.z()},
@@ -8708,7 +8690,7 @@ static ModelLayerFrustumCullingDecision classifyModelLayerFrustum(
     const float w = clip.w();
     if (!std::isfinite(w) || !std::isfinite(clip.x()) ||
         !std::isfinite(clip.y())) {
-      return decision;
+      return BoxFrustumClass::Unknown;
     }
     allBehindCamera &= w <= 0.0f;
     if (w <= 0.0f) {
@@ -8723,10 +8705,57 @@ static ModelLayerFrustumCullingDecision classifyModelLayerFrustum(
     allOutsideTop &= clip.y() > w;
     allOutsideBottom &= clip.y() < -w;
   }
+  if (allBehindCamera || allOutsideLeft || allOutsideRight ||
+      allOutsideTop || allOutsideBottom) {
+    return BoxFrustumClass::Outside;
+  }
+  return BoxFrustumClass::Intersects;
+}
+
+static ModelLayerFrustumCullingDecision classifyModelLayerFrustum(
+    const Artifact3DLayer& layer, const QMatrix4x4& view,
+    const QMatrix4x4& proj) {
+  ModelLayerFrustumCullingDecision decision;
+  const auto& mesh = layer.mesh();
+  if (mesh.vertexCount() <= 0) {
+    return decision;
+  }
+  const QVector3D minB = mesh.boundingBoxMin();
+  const QVector3D maxB = mesh.boundingBoxMax();
+  if (!std::isfinite(minB.x()) || !std::isfinite(minB.y()) ||
+      !std::isfinite(minB.z()) || !std::isfinite(maxB.x()) ||
+      !std::isfinite(maxB.y()) || !std::isfinite(maxB.z())) {
+    return decision;
+  }
+  if (minB.x() > maxB.x() || minB.y() > maxB.y() || minB.z() > maxB.z()) {
+    return decision;
+  }
+
+  const QMatrix4x4 baseMvp = proj * view * layer.getGlobalTransform4x4();
+  // The combined mesh bounds cover the single-instance paths (including the
+  // single-instance-per-material-slot import case).
+  BoxFrustumClass baseClass = classifyBoxFrustum(baseMvp, minB, maxB);
+  if (baseClass == BoxFrustumClass::Unknown) {
+    return decision;
+  }
+  bool anyInstanceIntersects = baseClass == BoxFrustumClass::Intersects;
+  if (!anyInstanceIntersects) {
+    // Multi-primitive sources concatenate their geometry into mesh() and place
+    // each material span with a hierarchy-local transform. Test the combined
+    // bounds under every transform that the draw path can apply; keeping the
+    // layer if any box intersects stays conservative for both instance modes.
+    for (const QMatrix4x4& local : layer.meshLocalTransforms()) {
+      const BoxFrustumClass instanceClass = classifyBoxFrustum(
+          baseMvp * local, minB, maxB);
+      if (instanceClass != BoxFrustumClass::Outside) {
+        anyInstanceIntersects = true;
+        break;
+      }
+    }
+  }
 
   decision.tested = true;
-  decision.culled = allBehindCamera || allOutsideLeft || allOutsideRight ||
-                    allOutsideTop || allOutsideBottom;
+  decision.culled = !anyInstanceIntersects;
   return decision;
 }
 
@@ -9120,6 +9149,9 @@ void drawLayerForCompositionView(
     const auto *modelLayer = dynamic_cast<Artifact3DLayer *>(layer);
 
     if (modelLayer && cameraView && cameraProj) {
+      // draw() would advance the skin pose; do it first so the bounds used for
+      // culling match the vertices that would be drawn.
+      modelLayer->evaluateSkinAnimation();
       const auto culling =
           classifyModelLayerFrustum(*modelLayer, *cameraView, *cameraProj);
       if (culling.tested) {
