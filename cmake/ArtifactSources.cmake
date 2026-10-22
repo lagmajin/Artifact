@@ -999,7 +999,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Layer/ArtifactLayerMaskMatteState.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Layer/ArtifactLayerSerialization.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Layer/ArtifactLayerThumbnailSupport.cppm"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Layer/ArtifactLayerDefaultsSupport.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Layer/ArtifactLayerDefaultsSupport.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Layer/ArtifactLayerMaskPropertySupport.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Layer/ArtifactLayerTimelineSupport.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Layer/ArtifactLayerTransformSupport.cppm"
