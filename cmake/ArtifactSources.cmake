@@ -1140,7 +1140,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactCompositionAudioMixerWidget.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactCompositionAudioMixerPresentation.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactCompositionGraphWidget.cppm"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactContextShortcutHelperWidget.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactContextShortcutHelperWidget.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactContextShortcutProvider.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactCrowdSettingsWidget.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactCurveEditorWidget.cppm"
