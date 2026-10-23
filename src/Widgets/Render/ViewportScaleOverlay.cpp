@@ -3,6 +3,8 @@ module;
 #include <cmath>
 #include <limits>
 #include <QString>
+#include <QPointF>
+#include <QSizeF>
 
 module Artifact.Widgets.Render.ViewportScaleOverlay;
 

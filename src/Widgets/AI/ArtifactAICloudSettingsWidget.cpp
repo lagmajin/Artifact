@@ -1,5 +1,7 @@
 module;
+#include <QComboBox>
 #include <QGroupBox>
+#include <QLineEdit>
 #include <QFormLayout>
 #include <QMessageBox>
 #include <QSettings>

@@ -9,20 +9,20 @@ export import Widgets.ToolBar;
 
 export namespace Artifact {
 
-export struct WorkspaceModeInfo {
+struct WorkspaceModeInfo {
   WorkspaceMode mode;
   QString key;
   QString label;
   QString iconPath;
 };
 
-export WorkspaceMode workspaceModeFromText(const QString &text);
-export QString workspaceModeText(WorkspaceMode mode);
-export QStringList workspaceModeLabels();
-export QList<WorkspaceModeInfo> workspaceModeInfos();
-export WorkspaceModeInfo workspaceModeInfo(WorkspaceMode mode);
-export WorkspaceModeInfo workspaceModeInfoForKey(const QString &key);
-export WorkspaceModeInfo workspaceModeInfoForLabel(const QString &label);
-export WorkspaceModeInfo workspaceModeInfoForText(const QString &text);
+WorkspaceMode workspaceModeFromText(const QString &text);
+QString workspaceModeText(WorkspaceMode mode);
+QStringList workspaceModeLabels();
+QList<WorkspaceModeInfo> workspaceModeInfos();
+WorkspaceModeInfo workspaceModeInfo(WorkspaceMode mode);
+WorkspaceModeInfo workspaceModeInfoForKey(const QString &key);
+WorkspaceModeInfo workspaceModeInfoForLabel(const QString &label);
+WorkspaceModeInfo workspaceModeInfoForText(const QString &text);
 
 } // namespace Artifact

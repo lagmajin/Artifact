@@ -87,7 +87,7 @@ void ArtifactEffectPalette::refreshEffects() {
         !info.id.toString().contains(filter, Qt::CaseInsensitive)) continue;
     auto* item = new QListWidgetItem(info.displayName, impl_->list);
     item->setData(Qt::UserRole, info.id.toString());
-    item->setIcon(QIcon(resolveIconPath(QStringLiteral("Studio/effect_ops_generate.svg"))));
+    item->setIcon(QIcon(ArtifactCore::resolveIconPath(QStringLiteral("Studio/effect_ops_generate.svg"))));
     item->setToolTip(info.id.toString());
   }
 }

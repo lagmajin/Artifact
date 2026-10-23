@@ -1,12 +1,22 @@
 cmake_minimum_required(VERSION 3.30)
 
-# The experimental gate token changed in CMake 4.2. Keep the 3.30-era
-# value for the project's minimum supported CMake version.
-if(CMAKE_VERSION VERSION_GREATER_EQUAL "4.2")
-    set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "451f2fe2-a8a2-47c3-bc32-94786d8fc91b" CACHE STRING "Required for import std" FORCE)
+# The experimental import-std gate UUID is version-specific.
+if(CMAKE_VERSION VERSION_GREATER_EQUAL "4.4.0")
+    set(_artifact_import_std_uuid "f35a9ac6-8463-4d38-8eec-5d6008153e7d")
+elseif(CMAKE_VERSION VERSION_GREATER_EQUAL "4.3.0")
+    set(_artifact_import_std_uuid "451f2fe2-a8a2-47c3-bc32-94786d8fc91b")
+elseif(CMAKE_VERSION VERSION_GREATER_EQUAL "4.0.3")
+    set(_artifact_import_std_uuid "d0edc3af-4c50-42ea-a356-e2862fe7a444")
+elseif(CMAKE_VERSION VERSION_GREATER_EQUAL "4.0.0")
+    set(_artifact_import_std_uuid "a9e1cf81-9932-4810-974b-6eccaf14e457")
+elseif(CMAKE_VERSION VERSION_GREATER_EQUAL "3.31.8")
+    set(_artifact_import_std_uuid "d0edc3af-4c50-42ea-a356-e2862fe7a444")
 else()
-    set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "d0edc3af-4c50-42ea-a356-e2862fe7a444" CACHE STRING "Required for import std" FORCE)
+    set(_artifact_import_std_uuid "0e5b6991-d74f-4b3d-a41c-cf096e0b2508")
 endif()
+set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "${_artifact_import_std_uuid}")
+set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "${_artifact_import_std_uuid}" CACHE STRING
+    "Version-specific gate for import std (CMake 3.30+)" FORCE)
 set(CMAKE_CXX_MODULE_STD OFF CACHE BOOL "Keep import std opt-in during toolchain detection" FORCE)
 set(CMAKE_CXX_STANDARD 23 CACHE STRING "Required for import std detection" FORCE)
 set(CMAKE_CXX_STANDARD_REQUIRED ON CACHE BOOL "" FORCE)
@@ -286,7 +296,7 @@ set(_artifact_export_modules
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Export/ArtifactExportSession.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Export/ArtifactExportUnityUxmlWriter.ixx")
 set(_artifact_export_impls
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Export/ArtifactExportDialog.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Export/ArtifactExportDialog.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Export/ArtifactExportGamefaceWriter.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Export/ArtifactExportLottieWriter.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Export/ArtifactExportNoesisXamlWriter.cppm"
@@ -317,9 +327,9 @@ if(_app_debugger_widget_idx EQUAL -1)
 endif()
 
 # CompositionManager は module/legacy 混在の影響で自動収集から漏れることがあるため固定する。
-list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Composition/ArtifactCompositionManager.cppm" _composition_manager_idx)
+list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Composition/ArtifactCompositionManager.cpp" _composition_manager_idx)
 if(_composition_manager_idx EQUAL -1)
-    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Composition/ArtifactCompositionManager.cppm")
+    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Composition/ArtifactCompositionManager.cpp")
 endif()
 
 # SwitchLayer はインターフェースと同名の実装 module を持つため、
@@ -342,9 +352,9 @@ list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Layer/ArtifactMateria
 if(_material_container_module_idx EQUAL -1)
     list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Layer/ArtifactMaterialContainerLayer.ixx")
 endif()
-list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactMaterialContainerLayer.cppm" _material_container_impl_idx)
+list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactMaterialContainerLayer.cpp" _material_container_impl_idx)
 if(_material_container_impl_idx EQUAL -1)
-    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactMaterialContainerLayer.cppm")
+    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactMaterialContainerLayer.cpp")
 endif()
 
 # SandSim2DLayer - 2D falling-sand cellular automaton layer
@@ -399,10 +409,13 @@ list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactPaintLayer.cpp
 if(_paint_layer_impl_idx EQUAL -1)
     list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactPaintLayer.cppm")
 endif()
-list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactEnvironmentMapLayer.cppm" _environment_map_layer_impl_idx)
+list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactEnvironmentMapLayer.cpp" _environment_map_layer_impl_idx)
 if(_environment_map_layer_impl_idx EQUAL -1)
-    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactEnvironmentMapLayer.cppm")
+    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactEnvironmentMapLayer.cpp")
 endif()
+set_source_files_properties(
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactEnvironmentMapLayer.cpp"
+    PROPERTIES CXX_SCAN_FOR_MODULES OFF)
 
 # DopeSheetWidget is imported from AppMain and should be pinned explicitly so
 # module discovery does not depend on the recursive glob scan.
@@ -433,9 +446,9 @@ list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/Dialog/Artifa
 if(_composition_dialog_shell_module_idx EQUAL -1)
     list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/Dialog/ArtifactCompositionDialogShell.ixx")
 endif()
-list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Dialog/ArtifactCompositionDialogShell.cppm" _composition_dialog_shell_impl_idx)
+list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Dialog/ArtifactCompositionDialogShell.cpp" _composition_dialog_shell_impl_idx)
 if(_composition_dialog_shell_impl_idx EQUAL -1)
-    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Dialog/ArtifactCompositionDialogShell.cppm")
+    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Dialog/ArtifactCompositionDialogShell.cpp")
 endif()
 # PSD layer import dialog. Only reachable from File > Import PSD Layers, so it is
 # pinned explicitly rather than left to the glob scan / module detection order.
@@ -443,9 +456,9 @@ list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/ArtifactImpor
 if(_import_psd_dialog_module_idx EQUAL -1)
     list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/ArtifactImportPsdDialog.ixx")
 endif()
-list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Dialog/ArtifactImportPsdDialog.cppm" _import_psd_dialog_impl_idx)
+list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Dialog/ArtifactImportPsdDialog.cpp" _import_psd_dialog_impl_idx)
 if(_import_psd_dialog_impl_idx EQUAL -1)
-    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Dialog/ArtifactImportPsdDialog.cppm")
+    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Dialog/ArtifactImportPsdDialog.cpp")
 endif()
 list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/Inspector/ArtifactEffectTabSurface.ixx" _effect_tab_surface_module_idx)
 if(_effect_tab_surface_module_idx EQUAL -1)
@@ -459,9 +472,9 @@ list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/Inspector/Art
 if(_component_tab_surface_module_idx EQUAL -1)
     list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/Inspector/ArtifactComponentTabSurface.ixx")
 endif()
-list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Inspector/ArtifactComponentTabSurface.cppm" _component_tab_surface_impl_idx)
+list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Inspector/ArtifactComponentTabSurface.cpp" _component_tab_surface_impl_idx)
 if(_component_tab_surface_impl_idx EQUAL -1)
-    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Inspector/ArtifactComponentTabSurface.cppm")
+    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Inspector/ArtifactComponentTabSurface.cpp")
 endif()
 
 # Procedural3DLayer owns the Terrain / Path Tube authoring and renderer bridge.
@@ -557,9 +570,9 @@ list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/Render/Viewpo
 if(_viewport_color_module_idx EQUAL -1)
     list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/Render/ViewportColorPipeline.ixx")
 endif()
-list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Render/ViewportColorPipeline.cppm" _viewport_color_impl_idx)
+list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Render/ViewportColorPipeline.cpp" _viewport_color_impl_idx)
 if(_viewport_color_impl_idx EQUAL -1)
-    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Render/ViewportColorPipeline.cppm")
+    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Render/ViewportColorPipeline.cpp")
 endif()
 
 # ViewportMath is imported by the composition controller; pin both units so
@@ -569,9 +582,9 @@ list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/Render/Viewpo
 if(_viewport_math_module_idx EQUAL -1)
     list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/Render/ViewportMath.ixx")
 endif()
-list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Render/ViewportMath.cppm" _viewport_math_impl_idx)
+list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Render/ViewportMath.cpp" _viewport_math_impl_idx)
 if(_viewport_math_impl_idx EQUAL -1)
-    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Render/ViewportMath.cppm")
+    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Render/ViewportMath.cpp")
 endif()
 
 # ViewportOverlay owns the low-dependency Safe Area / Origin overlay drawing
@@ -599,9 +612,9 @@ set(ARTIFACT_RENDER_SUPPORT_MODULES
 set(ARTIFACT_RENDER_SUPPORT_IMPL
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactHDRMonitor.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactRamPreviewController.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactRenderController.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactRenderController.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactRenderScheduler.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactRenderQueuePresets.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactRenderQueuePresets.cpp"
 )
 
 set(ARTIFACT_RENDER_SUPPORT_CONTRACT_MODULES
@@ -629,7 +642,7 @@ target_sources(ArtifactRenderSupport
     PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_RENDER_SUPPORT_MODULES}
 )
 
-if(TARGET __CMAKE::CXX23)
+if(ARTIFACT_CXX23_MODULE_STD_AVAILABLE AND TARGET __CMAKE::CXX23)
     set_property(TARGET ArtifactRenderSupport PROPERTY CXX_MODULE_STD ON)
 else()
     set_property(TARGET ArtifactRenderSupport PROPERTY CXX_MODULE_STD OFF)
@@ -655,7 +668,7 @@ target_sources(ArtifactRenderSupportContracts
     PRIVATE ${ARTIFACT_RENDER_SUPPORT_CONTRACT_IMPL}
     PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_RENDER_SUPPORT_CONTRACT_MODULES}
 )
-if(TARGET __CMAKE::CXX23)
+if(ARTIFACT_CXX23_MODULE_STD_AVAILABLE AND TARGET __CMAKE::CXX23)
     set_property(TARGET ArtifactRenderSupportContracts PROPERTY CXX_MODULE_STD ON)
 else()
     set_property(TARGET ArtifactRenderSupportContracts PROPERTY CXX_MODULE_STD OFF)
@@ -674,7 +687,7 @@ set(ARTIFACT_ASSET_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Asset/ArtifactAssetIntegrationSettings.ixx"
 )
 set(ARTIFACT_ASSET_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Asset/AssetMenuModel.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Asset/AssetMenuModel.cpp"
 )
 list(REMOVE_ITEM APP_MODULES ${ARTIFACT_ASSET_MODULES})
 list(REMOVE_ITEM APP_IMPL ${ARTIFACT_ASSET_IMPL})
@@ -698,7 +711,7 @@ target_sources(ArtifactAsset
     PRIVATE ${ARTIFACT_ASSET_IMPL}
     PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_ASSET_MODULES}
 )
-if(TARGET __CMAKE::CXX23)
+if(ARTIFACT_CXX23_MODULE_STD_AVAILABLE AND TARGET __CMAKE::CXX23)
     set_property(TARGET ArtifactAsset PROPERTY CXX_MODULE_STD ON)
 else()
     set_property(TARGET ArtifactAsset PROPERTY CXX_MODULE_STD OFF)
@@ -725,9 +738,9 @@ set(ARTIFACT_COLOR_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Color/ArtifactColorGradingEngine.ixx"
 )
 set(ARTIFACT_COLOR_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ColorPaletteManager.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ColorPaletteManager.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactOCIOManager.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactColorSettings.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactColorSettings.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactColorScienceManager.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactColorNodeGraph.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactColorNode.cppm"
@@ -739,7 +752,7 @@ set(ARTIFACT_COLOR_PALETTE_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Color/ColorPaletteManager.ixx"
 )
 set(ARTIFACT_COLOR_PALETTE_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ColorPaletteManager.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ColorPaletteManager.cpp"
 )
 set(ARTIFACT_COLOR_NODE_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Color/ArtifactColorNode.ixx"
@@ -753,7 +766,7 @@ set(ARTIFACT_COLOR_SETTINGS_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Color/ArtifactColorSettings.ixx"
 )
 set(ARTIFACT_COLOR_SETTINGS_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactColorSettings.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactColorSettings.cpp"
 )
 set(ARTIFACT_COLOR_SCIENCE_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Color/ArtifactColorScienceManager.ixx"
@@ -820,7 +833,7 @@ target_link_libraries(ArtifactColor INTERFACE
 add_library(ArtifactColorPalette STATIC)
 set_target_properties(ArtifactColorPalette PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON FOLDER "Artifact/Libraries")
 target_sources(ArtifactColorPalette PRIVATE ${ARTIFACT_COLOR_PALETTE_IMPL} PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_COLOR_PALETTE_MODULES})
-if(TARGET __CMAKE::CXX23)
+if(ARTIFACT_CXX23_MODULE_STD_AVAILABLE AND TARGET __CMAKE::CXX23)
     set_property(TARGET ArtifactColorPalette PROPERTY CXX_MODULE_STD ON)
 else()
     set_property(TARGET ArtifactColorPalette PROPERTY CXX_MODULE_STD OFF)
@@ -831,7 +844,7 @@ target_link_libraries(ArtifactColorPalette PUBLIC ArtifactCore)
 add_library(ArtifactColorNode STATIC)
 set_target_properties(ArtifactColorNode PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON FOLDER "Artifact/Libraries")
 target_sources(ArtifactColorNode PRIVATE ${ARTIFACT_COLOR_NODE_IMPL} PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_COLOR_NODE_MODULES})
-if(TARGET __CMAKE::CXX23)
+if(ARTIFACT_CXX23_MODULE_STD_AVAILABLE AND TARGET __CMAKE::CXX23)
     set_property(TARGET ArtifactColorNode PROPERTY CXX_MODULE_STD ON)
 else()
     set_property(TARGET ArtifactColorNode PROPERTY CXX_MODULE_STD OFF)
@@ -842,7 +855,7 @@ target_link_libraries(ArtifactColorNode PUBLIC ArtifactCore)
 add_library(ArtifactColorSettings STATIC)
 set_target_properties(ArtifactColorSettings PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON FOLDER "Artifact/Libraries")
 target_sources(ArtifactColorSettings PRIVATE ${ARTIFACT_COLOR_SETTINGS_IMPL} PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_COLOR_SETTINGS_MODULES})
-if(TARGET __CMAKE::CXX23)
+if(ARTIFACT_CXX23_MODULE_STD_AVAILABLE AND TARGET __CMAKE::CXX23)
     set_property(TARGET ArtifactColorSettings PROPERTY CXX_MODULE_STD ON)
 else()
     set_property(TARGET ArtifactColorSettings PROPERTY CXX_MODULE_STD OFF)
@@ -853,7 +866,7 @@ target_link_libraries(ArtifactColorSettings PUBLIC ArtifactCore)
 add_library(ArtifactColorManagement STATIC)
 set_target_properties(ArtifactColorManagement PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON FOLDER "Artifact/Libraries")
 target_sources(ArtifactColorManagement PRIVATE ${ARTIFACT_COLOR_MANAGEMENT_IMPL} PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_COLOR_MANAGEMENT_MODULES})
-if(TARGET __CMAKE::CXX23)
+if(ARTIFACT_CXX23_MODULE_STD_AVAILABLE AND TARGET __CMAKE::CXX23)
     set_property(TARGET ArtifactColorManagement PROPERTY CXX_MODULE_STD ON)
 else()
     set_property(TARGET ArtifactColorManagement PROPERTY CXX_MODULE_STD OFF)
@@ -864,7 +877,7 @@ target_link_libraries(ArtifactColorManagement PUBLIC ArtifactCore)
 add_library(ArtifactColorGrading STATIC)
 set_target_properties(ArtifactColorGrading PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON FOLDER "Artifact/Libraries")
 target_sources(ArtifactColorGrading PRIVATE ${ARTIFACT_COLOR_GRADING_IMPL} PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_COLOR_GRADING_MODULES})
-if(TARGET __CMAKE::CXX23)
+if(ARTIFACT_CXX23_MODULE_STD_AVAILABLE AND TARGET __CMAKE::CXX23)
     set_property(TARGET ArtifactColorGrading PROPERTY CXX_MODULE_STD ON)
 else()
     set_property(TARGET ArtifactColorGrading PROPERTY CXX_MODULE_STD OFF)
@@ -914,9 +927,9 @@ set(ARTIFACT_RENDER_MODULES
 )
 set(ARTIFACT_RENDER_IMPL
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactFrameCache.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactTextGlyphPipelineAdapter.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactTextGlyphPipelineAdapter.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ShaderManager.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/RenderCommandBuffer.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/RenderCommandBuffer.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/PrimitiveRenderer2D.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/PrimitiveRenderer3D.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/DiligentImmediateSubmitter.cppm"
@@ -928,7 +941,7 @@ set(ARTIFACT_RENDER_IMPL
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactDepthOfFieldPass.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/GPUTextureCacheManager.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/DiligentUploadCoordinator.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/LOD/ArtifactLODManager.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/LOD/ArtifactLODManager.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Render/ViewportOverlay.cppm"
 )
 
@@ -956,7 +969,7 @@ target_sources(ArtifactRender
     PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_RENDER_MODULES}
 )
 
-if(TARGET __CMAKE::CXX23)
+if(ARTIFACT_CXX23_MODULE_STD_AVAILABLE AND TARGET __CMAKE::CXX23)
     set_property(TARGET ArtifactRender PROPERTY CXX_MODULE_STD ON)
 else()
     set_property(TARGET ArtifactRender PROPERTY CXX_MODULE_STD OFF)
@@ -1044,7 +1057,7 @@ target_sources(ArtifactEffectContract
     PRIVATE ${ARTIFACT_EFFECT_CONTRACT_IMPL}
     PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_EFFECT_CONTRACT_MODULES}
 )
-if(TARGET __CMAKE::CXX23)
+if(ARTIFACT_CXX23_MODULE_STD_AVAILABLE AND TARGET __CMAKE::CXX23)
     set_property(TARGET ArtifactEffectContract PROPERTY CXX_MODULE_STD ON)
 else()
     set_property(TARGET ArtifactEffectContract PROPERTY CXX_MODULE_STD OFF)
@@ -1356,7 +1369,7 @@ target_sources(ArtifactEffectsColor
     PRIVATE ${ARTIFACT_EFFECTS_COLOR_IMPL}
     PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_EFFECTS_COLOR_MODULES}
 )
-if(TARGET __CMAKE::CXX23)
+if(ARTIFACT_CXX23_MODULE_STD_AVAILABLE AND TARGET __CMAKE::CXX23)
     set_property(TARGET ArtifactEffectsColor PROPERTY CXX_MODULE_STD ON)
 else()
     set_property(TARGET ArtifactEffectsColor PROPERTY CXX_MODULE_STD OFF)
@@ -1427,7 +1440,7 @@ target_sources(ArtifactEffectsTemporal
     PRIVATE ${ARTIFACT_EFFECTS_TEMPORAL_IMPL}
     PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_EFFECTS_TEMPORAL_MODULES}
 )
-if(TARGET __CMAKE::CXX23)
+if(ARTIFACT_CXX23_MODULE_STD_AVAILABLE AND TARGET __CMAKE::CXX23)
     set_property(TARGET ArtifactEffectsTemporal PROPERTY CXX_MODULE_STD ON)
 else()
     set_property(TARGET ArtifactEffectsTemporal PROPERTY CXX_MODULE_STD OFF)
@@ -1472,7 +1485,7 @@ target_sources(ArtifactEffectsKeying
     PRIVATE ${ARTIFACT_EFFECTS_KEYING_IMPL}
     PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_EFFECTS_KEYING_MODULES}
 )
-if(TARGET __CMAKE::CXX23)
+if(ARTIFACT_CXX23_MODULE_STD_AVAILABLE AND TARGET __CMAKE::CXX23)
     set_property(TARGET ArtifactEffectsKeying PROPERTY CXX_MODULE_STD ON)
 else()
     set_property(TARGET ArtifactEffectsKeying PROPERTY CXX_MODULE_STD OFF)
@@ -1516,7 +1529,7 @@ target_sources(ArtifactEffectsBlur
     PRIVATE ${ARTIFACT_EFFECTS_BLUR_IMPL}
     PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_EFFECTS_BLUR_MODULES}
 )
-if(TARGET __CMAKE::CXX23)
+if(ARTIFACT_CXX23_MODULE_STD_AVAILABLE AND TARGET __CMAKE::CXX23)
     set_property(TARGET ArtifactEffectsBlur PROPERTY CXX_MODULE_STD ON)
 else()
     set_property(TARGET ArtifactEffectsBlur PROPERTY CXX_MODULE_STD OFF)
@@ -1557,7 +1570,7 @@ target_sources(ArtifactEffectsGenerate
     PRIVATE ${ARTIFACT_EFFECTS_GENERATE_IMPL}
     PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_EFFECTS_GENERATE_MODULES}
 )
-if(TARGET __CMAKE::CXX23)
+if(ARTIFACT_CXX23_MODULE_STD_AVAILABLE AND TARGET __CMAKE::CXX23)
     set_property(TARGET ArtifactEffectsGenerate PROPERTY CXX_MODULE_STD ON)
 else()
     set_property(TARGET ArtifactEffectsGenerate PROPERTY CXX_MODULE_STD OFF)
@@ -1608,7 +1621,7 @@ target_sources(ArtifactEffectsDistort
     PRIVATE ${ARTIFACT_EFFECTS_DISTORT_IMPL}
     PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_EFFECTS_DISTORT_MODULES}
 )
-if(TARGET __CMAKE::CXX23)
+if(ARTIFACT_CXX23_MODULE_STD_AVAILABLE AND TARGET __CMAKE::CXX23)
     set_property(TARGET ArtifactEffectsDistort PROPERTY CXX_MODULE_STD ON)
 else()
     set_property(TARGET ArtifactEffectsDistort PROPERTY CXX_MODULE_STD OFF)
@@ -1653,7 +1666,7 @@ target_sources(ArtifactEffectsStylize
     PRIVATE ${ARTIFACT_EFFECTS_STYLIZE_IMPL}
     PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_EFFECTS_STYLIZE_MODULES}
 )
-if(TARGET __CMAKE::CXX23)
+if(ARTIFACT_CXX23_MODULE_STD_AVAILABLE AND TARGET __CMAKE::CXX23)
     set_property(TARGET ArtifactEffectsStylize PROPERTY CXX_MODULE_STD ON)
 else()
     set_property(TARGET ArtifactEffectsStylize PROPERTY CXX_MODULE_STD OFF)
@@ -1708,7 +1721,7 @@ target_sources(ArtifactEffectsGlow
     PRIVATE ${ARTIFACT_EFFECTS_GLOW_IMPL}
     PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_EFFECTS_GLOW_MODULES}
 )
-if(TARGET __CMAKE::CXX23)
+if(ARTIFACT_CXX23_MODULE_STD_AVAILABLE AND TARGET __CMAKE::CXX23)
     set_property(TARGET ArtifactEffectsGlow PROPERTY CXX_MODULE_STD ON)
 else()
     set_property(TARGET ArtifactEffectsGlow PROPERTY CXX_MODULE_STD OFF)
@@ -1749,7 +1762,7 @@ target_sources(ArtifactEffectsOptics
     PRIVATE ${ARTIFACT_EFFECTS_OPTICS_IMPL}
     PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_EFFECTS_OPTICS_MODULES}
 )
-if(TARGET __CMAKE::CXX23)
+if(ARTIFACT_CXX23_MODULE_STD_AVAILABLE AND TARGET __CMAKE::CXX23)
     set_property(TARGET ArtifactEffectsOptics PROPERTY CXX_MODULE_STD ON)
 else()
     set_property(TARGET ArtifactEffectsOptics PROPERTY CXX_MODULE_STD OFF)
@@ -1788,7 +1801,7 @@ target_sources(ArtifactEffectsWave
     PRIVATE ${ARTIFACT_EFFECTS_WAVE_IMPL}
     PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_EFFECTS_WAVE_MODULES}
 )
-if(TARGET __CMAKE::CXX23)
+if(ARTIFACT_CXX23_MODULE_STD_AVAILABLE AND TARGET __CMAKE::CXX23)
     set_property(TARGET ArtifactEffectsWave PROPERTY CXX_MODULE_STD ON)
 else()
     set_property(TARGET ArtifactEffectsWave PROPERTY CXX_MODULE_STD OFF)
@@ -1837,7 +1850,7 @@ target_sources(ArtifactEffectsFilters
     PRIVATE ${ARTIFACT_EFFECTS_FILTERS_IMPL}
     PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_EFFECTS_FILTERS_MODULES}
 )
-if(TARGET __CMAKE::CXX23)
+if(ARTIFACT_CXX23_MODULE_STD_AVAILABLE AND TARGET __CMAKE::CXX23)
     set_property(TARGET ArtifactEffectsFilters PROPERTY CXX_MODULE_STD ON)
 else()
     set_property(TARGET ArtifactEffectsFilters PROPERTY CXX_MODULE_STD OFF)
@@ -1877,7 +1890,7 @@ target_sources(ArtifactEffectsNoise
     PRIVATE ${ARTIFACT_EFFECTS_NOISE_IMPL}
     PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_EFFECTS_NOISE_MODULES}
 )
-if(TARGET __CMAKE::CXX23)
+if(ARTIFACT_CXX23_MODULE_STD_AVAILABLE AND TARGET __CMAKE::CXX23)
     set_property(TARGET ArtifactEffectsNoise PROPERTY CXX_MODULE_STD ON)
 else()
     set_property(TARGET ArtifactEffectsNoise PROPERTY CXX_MODULE_STD OFF)
@@ -1916,7 +1929,7 @@ target_sources(ArtifactEffectsSurfaceFX
     PRIVATE ${ARTIFACT_EFFECTS_SURFACEFX_IMPL}
     PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_EFFECTS_SURFACEFX_MODULES}
 )
-if(TARGET __CMAKE::CXX23)
+if(ARTIFACT_CXX23_MODULE_STD_AVAILABLE AND TARGET __CMAKE::CXX23)
     set_property(TARGET ArtifactEffectsSurfaceFX PROPERTY CXX_MODULE_STD ON)
 else()
     set_property(TARGET ArtifactEffectsSurfaceFX PROPERTY CXX_MODULE_STD OFF)
@@ -1960,7 +1973,7 @@ target_sources(ArtifactEffectsAutoMosaic
     PRIVATE ${ARTIFACT_EFFECTS_AUTO_MOSAIC_IMPL}
     PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_EFFECTS_AUTO_MOSAIC_MODULES}
 )
-if(TARGET __CMAKE::CXX23)
+if(ARTIFACT_CXX23_MODULE_STD_AVAILABLE AND TARGET __CMAKE::CXX23)
     set_property(TARGET ArtifactEffectsAutoMosaic PROPERTY CXX_MODULE_STD ON)
 else()
     set_property(TARGET ArtifactEffectsAutoMosaic PROPERTY CXX_MODULE_STD OFF)
@@ -2007,7 +2020,7 @@ target_sources(ArtifactEffectsMotion
     PRIVATE ${ARTIFACT_EFFECTS_MOTION_IMPL}
     PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_EFFECTS_MOTION_MODULES}
 )
-if(TARGET __CMAKE::CXX23)
+if(ARTIFACT_CXX23_MODULE_STD_AVAILABLE AND TARGET __CMAKE::CXX23)
     set_property(TARGET ArtifactEffectsMotion PROPERTY CXX_MODULE_STD ON)
 else()
     set_property(TARGET ArtifactEffectsMotion PROPERTY CXX_MODULE_STD OFF)
@@ -2054,7 +2067,7 @@ target_sources(ArtifactEffectsDigital
     PRIVATE ${ARTIFACT_EFFECTS_DIGITAL_IMPL}
     PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_EFFECTS_DIGITAL_MODULES}
 )
-if(TARGET __CMAKE::CXX23)
+if(ARTIFACT_CXX23_MODULE_STD_AVAILABLE AND TARGET __CMAKE::CXX23)
     set_property(TARGET ArtifactEffectsDigital PROPERTY CXX_MODULE_STD ON)
 else()
     set_property(TARGET ArtifactEffectsDigital PROPERTY CXX_MODULE_STD OFF)
@@ -2101,7 +2114,7 @@ target_sources(ArtifactEffectsPatterns
     PRIVATE ${ARTIFACT_EFFECTS_PATTERNS_IMPL}
     PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_EFFECTS_PATTERNS_MODULES}
 )
-if(TARGET __CMAKE::CXX23)
+if(ARTIFACT_CXX23_MODULE_STD_AVAILABLE AND TARGET __CMAKE::CXX23)
     set_property(TARGET ArtifactEffectsPatterns PROPERTY CXX_MODULE_STD ON)
 else()
     set_property(TARGET ArtifactEffectsPatterns PROPERTY CXX_MODULE_STD OFF)
@@ -2142,7 +2155,7 @@ target_sources(ArtifactEffectsChromatic
     PRIVATE ${ARTIFACT_EFFECTS_CHROMATIC_IMPL}
     PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_EFFECTS_CHROMATIC_MODULES}
 )
-if(TARGET __CMAKE::CXX23)
+if(ARTIFACT_CXX23_MODULE_STD_AVAILABLE AND TARGET __CMAKE::CXX23)
     set_property(TARGET ArtifactEffectsChromatic PROPERTY CXX_MODULE_STD ON)
 else()
     set_property(TARGET ArtifactEffectsChromatic PROPERTY CXX_MODULE_STD OFF)
@@ -2185,7 +2198,7 @@ target_sources(ArtifactEffectsShadows
     PRIVATE ${ARTIFACT_EFFECTS_SHADOWS_IMPL}
     PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_EFFECTS_SHADOWS_MODULES}
 )
-if(TARGET __CMAKE::CXX23)
+if(ARTIFACT_CXX23_MODULE_STD_AVAILABLE AND TARGET __CMAKE::CXX23)
     set_property(TARGET ArtifactEffectsShadows PROPERTY CXX_MODULE_STD ON)
 else()
     set_property(TARGET ArtifactEffectsShadows PROPERTY CXX_MODULE_STD OFF)
@@ -2230,7 +2243,7 @@ target_sources(ArtifactEffectsContextual
     PRIVATE ${ARTIFACT_EFFECTS_CONTEXTUAL_IMPL}
     PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_EFFECTS_CONTEXTUAL_MODULES}
 )
-if(TARGET __CMAKE::CXX23)
+if(ARTIFACT_CXX23_MODULE_STD_AVAILABLE AND TARGET __CMAKE::CXX23)
     set_property(TARGET ArtifactEffectsContextual PROPERTY CXX_MODULE_STD ON)
 else()
     set_property(TARGET ArtifactEffectsContextual PROPERTY CXX_MODULE_STD OFF)
@@ -2271,7 +2284,7 @@ target_sources(ArtifactEffectsTemporalContext
     PRIVATE ${ARTIFACT_EFFECTS_TEMPORAL_CONTEXT_IMPL}
     PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_EFFECTS_TEMPORAL_CONTEXT_MODULES}
 )
-if(TARGET __CMAKE::CXX23)
+if(ARTIFACT_CXX23_MODULE_STD_AVAILABLE AND TARGET __CMAKE::CXX23)
     set_property(TARGET ArtifactEffectsTemporalContext PROPERTY CXX_MODULE_STD ON)
 else()
     set_property(TARGET ArtifactEffectsTemporalContext PROPERTY CXX_MODULE_STD OFF)
@@ -2316,7 +2329,7 @@ target_sources(ArtifactEffectsFinishing
     PRIVATE ${ARTIFACT_EFFECTS_FINISHING_IMPL}
     PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_EFFECTS_FINISHING_MODULES}
 )
-if(TARGET __CMAKE::CXX23)
+if(ARTIFACT_CXX23_MODULE_STD_AVAILABLE AND TARGET __CMAKE::CXX23)
     set_property(TARGET ArtifactEffectsFinishing PROPERTY CXX_MODULE_STD ON)
 else()
     set_property(TARGET ArtifactEffectsFinishing PROPERTY CXX_MODULE_STD OFF)
@@ -2703,7 +2716,7 @@ set_source_files_properties(
     PROPERTIES COMPILE_DEFINITIONS "${ARTIFACT_APPMAIN_BUILD_METADATA_DEFINITIONS}"
 )
 set_source_files_properties(
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Service/ApplicationService.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Service/ApplicationService.cpp"
     PROPERTIES COMPILE_DEFINITIONS "ARTIFACT_VERSION_STRING=\"${ARTIFACT_VERSION}\""
 )
 
@@ -2711,7 +2724,7 @@ if(ARTIFACT_FEATURE_COMMAND_PALETTE)
     target_compile_definitions(Artifact PRIVATE ARTIFACT_FEATURE_COMMAND_PALETTE=1)
 endif()
 
-if(TARGET __CMAKE::CXX23)
+if(ARTIFACT_CXX23_MODULE_STD_AVAILABLE AND TARGET __CMAKE::CXX23)
     set_property(TARGET ArtifactAppRuntime PROPERTY CXX_MODULE_STD ON)
 else()
     set_property(TARGET ArtifactAppRuntime PROPERTY CXX_MODULE_STD OFF)
@@ -2867,7 +2880,7 @@ target_sources(ArtifactGpuFoundation
     PRIVATE ${ARTIFACT_GPU_FOUNDATION_IMPL}
     PUBLIC FILE_SET CXX_MODULES FILES ${ARTIFACT_GPU_FOUNDATION_MODULES}
 )
-if(TARGET __CMAKE::CXX23)
+if(ARTIFACT_CXX23_MODULE_STD_AVAILABLE AND TARGET __CMAKE::CXX23)
     set_property(TARGET ArtifactGpuFoundation PROPERTY CXX_MODULE_STD ON)
 else()
     set_property(TARGET ArtifactGpuFoundation PROPERTY CXX_MODULE_STD OFF)
@@ -2933,10 +2946,10 @@ set(ARTIFACT_RENDER_TEXT_IMPL
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactTextGlyphShaderSources.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/DiligentDeviceManager.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ShaderManager.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/RenderCommandBuffer.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/RenderCommandBuffer.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/PrimitiveRenderer2D.cppm"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/PrimitiveRenderer3D.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/LOD/ArtifactLODManager.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/LOD/ArtifactLODManager.cpp"
 )
 
 # The production render implementation units remain owned by ArtifactRender.
@@ -3658,7 +3671,7 @@ endif()
 # producer, falling back to CMake's native provider on other configurations.
 # The std.ifc reference itself is attached per source by the top-level project;
 # applying it to the whole target breaks modules that use textual STL headers.
-if(TARGET ArtifactStdModule OR TARGET __CMAKE::CXX23)
+if(TARGET ArtifactStdModule OR (ARTIFACT_CXX23_MODULE_STD_AVAILABLE AND TARGET __CMAKE::CXX23))
     get_property(_artifact_local_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
     foreach(_artifact_target IN LISTS _artifact_local_targets)
         if(_artifact_target MATCHES "^Artifact")

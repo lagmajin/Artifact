@@ -1,6 +1,8 @@
 module;
 
 #include <QPointF>
+#include <QRectF>
+#include <QTransform>
 
 #include <vector>
 

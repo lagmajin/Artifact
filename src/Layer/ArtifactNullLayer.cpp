@@ -3,6 +3,7 @@ module;
 #include <QImage>
 #include <QSize>
 #include <QJsonObject>
+#include <QVariant>
 #include <algorithm>
 #include <vector>
 

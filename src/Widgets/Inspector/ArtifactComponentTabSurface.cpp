@@ -1,7 +1,13 @@
 module;
+#include <QColor>
 #include <QFont>
+#include <QPaintEvent>
 #include <QPainter>
+#include <QPalette>
+#include <QRect>
+#include <QSize>
 #include <QVBoxLayout>
+#include <QWidget>
 
 module Artifact.Widgets.Inspector.ComponentTabSurface;
 

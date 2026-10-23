@@ -12,8 +12,6 @@ import Artifact.Widgets.Timeline;
 export namespace Artifact {
 using namespace ArtifactCore;
 
-class ArtifactTimelineWidget;
-
 /**
  * @brief Manage and provide timeline widgets for compositions.
  */

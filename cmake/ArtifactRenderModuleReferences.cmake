@@ -8,7 +8,7 @@ set(ARTIFACT_RENDER_IMPLEMENTATION_MODULE_REFERENCES
     "src/Render/Artifact3DPrimitiveSubmitter.cppm|Artifact.Render.ThreeDPrimitiveSubmitter|include/Render/Artifact3DPrimitiveSubmitter.ixx"
     "src/Render/DiligentDeviceManager.cppm|Artifact.Render.DiligentDeviceManager|include/Render/DiligentDeviceManager.ixx"
     "src/Render/ShaderManager.cppm|Artifact.Render.ShaderManager|include/Render/ShaderManager.ixx"
-    "src/Render/RenderCommandBuffer.cppm|Artifact.Render.RenderCommandBuffer|include/Render/RenderCommandBuffer.ixx"
+    "src/Render/RenderCommandBuffer.cpp|Artifact.Render.RenderCommandBuffer|include/Render/RenderCommandBuffer.ixx"
     "src/Render/PrimitiveRenderer2D.cppm|Artifact.Render.PrimitiveRenderer2D|include/Render/PrimitiveRenderer2D.ixx"
     "src/Render/PrimitiveRenderer3D.cppm|Artifact.Render.PrimitiveRenderer3D|include/Render/PrimitiveRenderer3D.ixx"
     "src/Render/DiligentImmediateSubmitter.cppm|Artifact.Render.DiligentImmediateSubmitter|include/Render/DiligentImmediateSubmitter.ixx"

@@ -8,6 +8,7 @@ module;
 #include <QFont>
 #include <QLabel>
 #include <QMessageBox>
+#include <QTreeWidget>
 #include <wobjectimpl.h>
 
 module Artifact.Widgets.TemplateLockEditor;

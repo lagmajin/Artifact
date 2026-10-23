@@ -1,5 +1,9 @@
 module;
 
+#include <QPointF>
+#include <QRectF>
+#include <QTransform>
+
 #include <algorithm>
 #include <cmath>
 #include <vector>
