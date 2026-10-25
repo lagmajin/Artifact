@@ -1310,7 +1310,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/CompositionEmptyOverlay.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/CompositionTextEditor.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionTrackerSessionUndoCommands.cppm"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionConstructionUndoCommand.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionConstructionUndoCommand.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionHostFrameSnapshot.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionSpaceGpuCache.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Render/ArtifactCompositionRevealPreparation.cpp"
