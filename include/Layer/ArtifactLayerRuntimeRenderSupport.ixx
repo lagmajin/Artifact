@@ -21,6 +21,7 @@ import Color.Float;
 import Geometry.Fracture;
 import Graphics.ParticleData;
 import Physics.Fluid;
+import Container.Debug;
 import Container.NamedVector;
 
 export namespace Artifact {

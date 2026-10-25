@@ -48,7 +48,7 @@ export namespace Artifact {
   enum class ArrangeAlignMode { Left, CenterH, Right, Top, CenterV, Bottom };
   enum class ArrangeDistributeAxis { Horizontal, Vertical };
 
- export class TransformGizmo {
+ class TransformGizmo {
  public:
   enum class Mode {
    All,

@@ -5,6 +5,7 @@ module;
 module Artifact.Layer.Composition.Resolver;
 
 import Artifact.Composition.Abstract;
+import Utils.Id;
 import Artifact.Service.Project;
 import Memory.SharedPtr;
 

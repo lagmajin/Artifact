@@ -157,3 +157,7 @@ inline void ArtifactProject::createComposition(NameT name, SizeT size)
  typedef WeakPtr<ArtifactProject> ArtifactProjectWeakPtr;
 
 }
+
+namespace Artifact {
+ArtifactLayerResult createProjectLayer(ArtifactLayerInitParams& params);
+}

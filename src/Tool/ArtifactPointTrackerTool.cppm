@@ -15,6 +15,7 @@ export module Artifact.Tool.PointTracker;
 
 export import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
+import Memory.SharedPtr;
 import Artifact.Layer.Factory;
 import Artifact.Layer.InitParams;
 import Tracking.MotionTracker;

@@ -33,6 +33,7 @@ module;
 #include <QImage>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QFont>
 #include <QString>
 #include <QPointF>
 #include <QRectF>
@@ -229,4 +230,17 @@ public:
     void draw(ArtifactIRenderer* renderer) override;
 };
 
+}
+
+namespace Artifact {
+std::int64_t effectiveTextTimelineFrame(const ArtifactTextLayer* layer);
+std::int64_t effectiveTextTimelineFps(const ArtifactTextLayer* layer);
+bool isAnimatorPropertyAnimatable(const QString& suffix);
+QFont makeTextFont(const ArtifactCore::TextStyle& style,
+                   const QString& sampleText);
+QJsonObject serializedAnimatorProperties(const ArtifactTextLayer* layer,
+                                         int animatorIndex);
+void restoreAnimatorProperties(ArtifactTextLayer* layer, int animatorIndex,
+                               const QJsonObject& serializedProperties,
+                               int removedAnimatorIndex = -1);
 }

@@ -210,7 +210,7 @@ void drawViewportWorkCursorOverlay(ArtifactIRenderer *renderer,
                                    const QPointF &canvasPos,
                                    const QString &label = QString());
 
-export inline void drawViewportCommandPaletteOverlay(ArtifactIRenderer *renderer,
+inline void drawViewportCommandPaletteOverlay(ArtifactIRenderer *renderer,
                                                      float overlayWf,
                                                      float overlayHf,
                                                      const QRectF &panel,
@@ -264,7 +264,7 @@ export inline void drawViewportCommandPaletteOverlay(ArtifactIRenderer *renderer
   }
 }
 
-export inline void drawViewportContextMenuOverlay(ArtifactIRenderer *renderer,
+inline void drawViewportContextMenuOverlay(ArtifactIRenderer *renderer,
                                                   float /*overlayW*/,
                                                   float /*overlayH*/,
                                                   const QRectF &panel,
@@ -341,7 +341,7 @@ export inline void drawViewportContextMenuOverlay(ArtifactIRenderer *renderer,
   }
 }
 
-export inline void drawViewportPieMenuOverlay(ArtifactIRenderer *renderer,
+inline void drawViewportPieMenuOverlay(ArtifactIRenderer *renderer,
                                               float overlayWf,
                                               float overlayHf,
                                               const QRectF &rect,
@@ -446,7 +446,7 @@ export inline void drawViewportPieMenuOverlay(ArtifactIRenderer *renderer,
   renderer->setPan(prevPanX, prevPanY);
 }
 
-export inline void drawViewportWorkCursorOverlay(ArtifactIRenderer *renderer,
+inline void drawViewportWorkCursorOverlay(ArtifactIRenderer *renderer,
                                                  const QPointF &canvasPos,
                                                  const QString &label)
 {

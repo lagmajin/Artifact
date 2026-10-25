@@ -1,0 +1,957 @@
+module;
+#include <utility>
+#include <QTime>
+#include <QWidget>
+#include <QDialog>
+#include <QTabBar>
+#include <QDialogButtonBox>
+#include <QBoxLayout>
+#include <QHBoxLayout>
+#include <QEvent>
+#include <QKeyEvent>
+#include <QPaintEvent>
+#include <QLineEdit>
+#include <QMouseEvent>
+#include <QPropertyAnimation>
+#include <wobjectimpl.h>
+#include <QFormLayout>
+#include <QLabel>
+#include <QComboBox>
+#include <QPushButton>
+#include <QToolButton>
+#include <QDoubleSpinBox>
+#include <QButtonGroup>
+#include <QGridLayout>
+#include <QSizePolicy>
+#include <QPointF>
+#include <QIcon>
+#include <QPixmap>
+#include <QPainter>
+#include <QPen>
+#include <QLinearGradient>
+#include <QSignalBlocker>
+#include <QGuiApplication>
+#include <QScreen>
+#include <QFontDatabase>
+#include <QCoreApplication>
+#include <QDir>
+#include <QFileInfo>
+#include <QElapsedTimer>
+#include <QTimer>
+#include <QDebug>
+#include <QFrame>
+#include <QPalette>
+#include <QAbstractSpinBox>
+#include <QStyleFactory>
+#include <QProxyStyle>
+#include <QStyleOption>
+#include <QSet>
+#include <QScrollArea>
+#include <algorithm>
+#include <cmath>
+#include <limits>
+
+module Dialog.Composition;
+
+import Widgets.Utils.CSS;
+import Widgets.EditableLabel;
+import DragSpinBox;
+import Application.AppSettings;
+import Color.Float;
+import Core.AspectRatio;
+import Utils.String.UniString;
+import FloatColorPickerDialog;
+import Artifact.Widgets.Dialog.FloatColorPickerHooks;
+
+namespace Artifact {
+
+ using namespace ArtifactCore;
+ using namespace ArtifactWidgets;
+
+QSet<QString> occupiedCompositionNames();
+
+namespace {
+
+enum class CompositionAnchorPreset {
+  TopLeft,
+  TopCenter,
+  TopRight,
+  MiddleLeft,
+  Center,
+  MiddleRight,
+  BottomLeft,
+  BottomCenter,
+  BottomRight
+};
+
+int indexForFrameRate(QComboBox *combo, double fps)
+{
+  if (!combo) {
+    return -1;
+  }
+  for (int i = 0; i < combo->count(); ++i) {
+    if (std::abs(combo->itemData(i).toDouble() - fps) < 0.001) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+int indexForSize(QComboBox *combo, const QSize &size)
+{
+  if (!combo || !size.isValid()) {
+    return -1;
+  }
+  for (int i = 0; i < combo->count(); ++i) {
+    const QSize itemSize = combo->itemData(i).toSize();
+    if (itemSize == size) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+QString makeUniqueSequentialName(QString baseName, const QSet<QString>& occupied)
+{
+ baseName = baseName.trimmed();
+ if (baseName.isEmpty()) {
+  baseName = QStringLiteral("Comp1");
+ }
+ if (!occupied.contains(baseName)) {
+  return baseName;
+ }
+
+ QString prefix = baseName;
+ int startNumber = 2;
+ int end = baseName.size();
+ while (end > 0 && baseName.at(end - 1).isDigit()) {
+  --end;
+ }
+ if (end < baseName.size()) {
+  int start = end;
+  while (start > 0 && baseName.at(start - 1).isSpace()) {
+   --start;
+  }
+  bool ok = false;
+  const int current = baseName.mid(end).toInt(&ok);
+  if (ok) {
+   prefix = baseName.left(start);
+   startNumber = current + 1;
+  }
+ }
+ if (prefix == baseName && !prefix.endsWith(QLatin1Char(' '))) {
+  prefix += QLatin1Char(' ');
+ }
+ for (int index = startNumber; index < 10000; ++index) {
+  const QString candidate = prefix + QString::number(index);
+  if (!occupied.contains(candidate)) {
+   return candidate;
+  }
+ }
+ return baseName;
+}
+
+QString uniqueCompositionName(const QString& baseName)
+{
+ return makeUniqueSequentialName(baseName, occupiedCompositionNames());
+}
+
+QString compositionDialogIllustrationPath(const QString& relativePath)
+{
+  const QString appDir = QCoreApplication::applicationDirPath();
+  const QString appRelative = QDir(appDir).filePath(QStringLiteral("Illustration/%1").arg(relativePath));
+  if (QFileInfo::exists(appRelative)) {
+    return appRelative;
+  }
+  const QString workspaceRelative = QDir(QDir::currentPath()).filePath(QStringLiteral("Artifact/App/Illustration/%1").arg(relativePath));
+  if (QFileInfo::exists(workspaceRelative)) {
+    return workspaceRelative;
+  }
+  const QString sourceRelative = QDir(appDir).filePath(QStringLiteral("../Artifact/App/Illustration/%1").arg(relativePath));
+  if (QFileInfo::exists(sourceRelative)) {
+    return QDir::cleanPath(sourceRelative);
+  }
+  return {};
+}
+
+class CompositionDialogStyle final : public QProxyStyle {
+public:
+  CompositionDialogStyle() : QProxyStyle(QStyleFactory::create(QStringLiteral("Fusion"))) {}
+  void drawPrimitive(PrimitiveElement element, const QStyleOption* option,
+                     QPainter* painter, const QWidget* widget = nullptr) const override {
+    if (element == PE_FrameTabWidget) return;
+    if (element == PE_PanelButtonCommand && widget &&
+        (widget->property("compositionPrimary").toBool() || (option->state & State_On))) {
+      painter->save();
+      const QColor blue = option->state & State_Sunken ? QColor(39,91,183) : QColor(52,116,227);
+      painter->setPen(QColor(80,139,244));
+      painter->setBrush(blue);
+      painter->drawRoundedRect(QRectF(option->rect).adjusted(0.5,0.5,-0.5,-0.5),4,4);
+      painter->restore();
+      return;
+    }
+    QProxyStyle::drawPrimitive(element,option,painter,widget);
+  }
+};
+
+QFrame* compositionSectionDivider() {
+  auto* line = new QFrame;
+  line->setFrameShape(QFrame::HLine);
+  line->setFrameShadow(QFrame::Plain);
+  line->setFixedHeight(12);
+  return line;
+}
+
+class CompositionDialogHeader final : public QWidget
+{
+public:
+  explicit CompositionDialogHeader(QWidget* parent = nullptr)
+      : QWidget(parent),
+        banner_(compositionDialogIllustrationPath(QStringLiteral("Studio/composition_dialog_header.png")))
+  {
+    setFixedHeight(82);
+    setAutoFillBackground(false);
+  }
+
+protected:
+  void paintEvent(QPaintEvent*) override
+  {
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.fillRect(rect(), QColor(0x24, 0x24, 0x24));
+
+    QFont titleFont = font();
+    titleFont.setPointSize(std::max(12, titleFont.pointSize() + 2));
+    titleFont.setBold(true);
+    painter.setFont(titleFont);
+    painter.setPen(QColor(238, 242, 248));
+    painter.drawText(rect().adjusted(22, 12, -22, -34),
+                     Qt::AlignLeft | Qt::AlignVCenter,
+                     QStringLiteral("Composition Settings"));
+
+    QFont subFont = font();
+    subFont.setPointSize(10);
+    painter.setFont(subFont);
+    painter.setPen(QColor(180, 183, 190));
+    painter.drawText(rect().adjusted(22, 44, -22, -12),
+                     Qt::AlignLeft | Qt::AlignVCenter,
+                     QStringLiteral("Create a composition with resolution, timing, color, and anchor defaults."));
+
+    painter.setPen(QColor(255, 255, 255, 28));
+    painter.drawLine(rect().bottomLeft(), rect().bottomRight());
+  }
+
+private:
+  QPixmap banner_;
+};
+
+void updateColorButtonPreview(QPushButton* button, const QColor& color)
+{
+ if (!button) {
+  return;
+ }
+ QPixmap pix(QSize(48, 22));
+ pix.fill(Qt::transparent);
+ {
+  QPainter painter(&pix);
+  painter.setRenderHint(QPainter::Antialiasing);
+  painter.setPen(QPen(QColor(85, 85, 85), 1));
+  painter.setBrush(color);
+  painter.drawRoundedRect(pix.rect().adjusted(1, 1, -2, -2), 3, 3);
+ }
+ button->setIcon(QIcon(pix));
+ button->setIconSize(pix.size());
+ button->setToolTip(QStringLiteral("Background Color: %1").arg(color.name(QColor::HexArgb)));
+ button->setText(color.name(QColor::HexRgb).toUpper());
+}
+
+QColor normalizedCompositionBackgroundDefault(const QColor &storedColor)
+{
+  if (!storedColor.isValid()) {
+    return QColor(0, 0, 0, 255);
+  }
+
+  const auto &theme = ArtifactCore::currentDCCTheme();
+  const QColor accent(theme.accentColor);
+  const QColor selection(theme.selectionColor);
+  const auto sameRgb = [](const QColor &a, const QColor &b) {
+    return b.isValid() && a.red() == b.red() && a.green() == b.green() &&
+           a.blue() == b.blue();
+  };
+
+  // Legacy defaults should not inherit the theme accent blue as comp background.
+  if (sameRgb(storedColor, accent) || sameRgb(storedColor, selection)) {
+    return QColor(0, 0, 0, 255);
+  }
+
+  return QColor(storedColor.red(), storedColor.green(), storedColor.blue(),
+                storedColor.alpha());
+}
+
+QColor& sessionCompositionBackgroundColor()
+{
+  static QColor color;
+  return color;
+}
+
+QPointF anchorPointForPreset(const CompositionAnchorPreset preset)
+{
+  switch (preset) {
+  case CompositionAnchorPreset::TopLeft:
+    return QPointF(0.0, 0.0);
+  case CompositionAnchorPreset::TopCenter:
+    return QPointF(0.5, 0.0);
+  case CompositionAnchorPreset::TopRight:
+    return QPointF(1.0, 0.0);
+  case CompositionAnchorPreset::MiddleLeft:
+    return QPointF(0.0, 0.5);
+  case CompositionAnchorPreset::Center:
+    return QPointF(0.5, 0.5);
+  case CompositionAnchorPreset::MiddleRight:
+    return QPointF(1.0, 0.5);
+  case CompositionAnchorPreset::BottomLeft:
+    return QPointF(0.0, 1.0);
+  case CompositionAnchorPreset::BottomCenter:
+    return QPointF(0.5, 1.0);
+  case CompositionAnchorPreset::BottomRight:
+    return QPointF(1.0, 1.0);
+  }
+  return QPointF(0.5, 0.5);
+}
+
+CompositionAnchorPreset nearestAnchorPreset(const QPointF &value)
+{
+  struct Candidate {
+    CompositionAnchorPreset preset;
+    QPointF point;
+  };
+  const Candidate candidates[] = {
+      {CompositionAnchorPreset::TopLeft, QPointF(0.0, 0.0)},
+      {CompositionAnchorPreset::TopCenter, QPointF(0.5, 0.0)},
+      {CompositionAnchorPreset::TopRight, QPointF(1.0, 0.0)},
+      {CompositionAnchorPreset::MiddleLeft, QPointF(0.0, 0.5)},
+      {CompositionAnchorPreset::Center, QPointF(0.5, 0.5)},
+      {CompositionAnchorPreset::MiddleRight, QPointF(1.0, 0.5)},
+      {CompositionAnchorPreset::BottomLeft, QPointF(0.0, 1.0)},
+      {CompositionAnchorPreset::BottomCenter, QPointF(0.5, 1.0)},
+      {CompositionAnchorPreset::BottomRight, QPointF(1.0, 1.0)},
+  };
+
+  qreal bestDistance = std::numeric_limits<qreal>::max();
+  CompositionAnchorPreset bestPreset = CompositionAnchorPreset::Center;
+  for (const auto &candidate : candidates) {
+    const qreal dx = candidate.point.x() - value.x();
+    const qreal dy = candidate.point.y() - value.y();
+    const qreal distance = dx * dx + dy * dy;
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestPreset = candidate.preset;
+    }
+  }
+  return bestPreset;
+}
+
+} // namespace
+	
+ class CompositionSettingPage::Impl
+ {
+ public:
+  Impl();
+  QComboBox* resolutionCombobox_ = nullptr;
+  QComboBox* fpsCombo_ = nullptr;
+  QComboBox* pixelAspectCombo_ = nullptr;
+  DragSpinBox* widthSpinBox = nullptr;
+  DragSpinBox* heightSpinBox = nullptr;
+ QToolButton* aspectLockButton_ = nullptr;
+  QDoubleSpinBox* anchorXSpinBox = nullptr;
+  QDoubleSpinBox* anchorYSpinBox = nullptr;
+  QButtonGroup* anchorPresetGroup = nullptr;
+  QPushButton* anchorPresetButtons[3][3] = {};
+  DoubleDragSpinBox* durationSpinBox = nullptr;
+  QLineEdit* startTimecodeEdit = nullptr;
+  QPushButton* bgColorButton = nullptr;
+  QColor bgColor = QColor(0, 0, 0, 255);
+  bool aspectRatioLocked_ = false;
+  double lockedAspectRatio_ = 16.0 / 9.0;
+  bool updatingAnchorControls_ = false;
+ };
+
+ CompositionSettingPage::Impl::Impl() {}
+
+ CompositionSettingPage::CompositionSettingPage(QWidget* parent) : QWidget(parent), impl_(new Impl)
+ {
+  QElapsedTimer ctorTimer;
+  ctorTimer.start();
+  auto mainLayout = new QVBoxLayout(this);
+  mainLayout->setContentsMargins(4, 8, 4, 4);
+  mainLayout->setSpacing(6);
+
+  auto formLayout = new QFormLayout();
+  formLayout->setLabelAlignment(Qt::AlignRight);
+  formLayout->setVerticalSpacing(8);
+  formLayout->setHorizontalSpacing(20);
+
+  impl_->widthSpinBox = new DragSpinBox();
+  impl_->widthSpinBox->setRange(1, 16384);
+  impl_->widthSpinBox->setAccessibleName(QStringLiteral("Composition width"));
+  impl_->widthSpinBox->setAccessibleDescription(QStringLiteral("Composition width in pixels"));
+  impl_->heightSpinBox = new DragSpinBox();
+  impl_->heightSpinBox->setRange(1, 16384);
+  impl_->heightSpinBox->setAccessibleName(QStringLiteral("Composition height"));
+  impl_->heightSpinBox->setAccessibleDescription(QStringLiteral("Composition height in pixels"));
+  
+  impl_->resolutionCombobox_ = new QComboBox();
+  impl_->resolutionCombobox_->setAccessibleName(QStringLiteral("Composition resolution preset"));
+  impl_->resolutionCombobox_->setAccessibleDescription(QStringLiteral("Choose a standard or custom composition resolution"));
+  impl_->resolutionCombobox_->addItem("HD 1080p (1920x1080)", QVariant::fromValue(QSize(1920, 1080)));
+  impl_->resolutionCombobox_->addItem("HD 720p (1280x720)", QVariant::fromValue(QSize(1280, 720)));
+  impl_->resolutionCombobox_->addItem("4K UHD (3840x2160)", QVariant::fromValue(QSize(3840, 2160)));
+  impl_->resolutionCombobox_->addItem("4K DCI (4096x2160)", QVariant::fromValue(QSize(4096, 2160)));
+  impl_->resolutionCombobox_->addItem("2K DCI (2048x1080)", QVariant::fromValue(QSize(2048, 1080)));
+  impl_->resolutionCombobox_->insertSeparator(impl_->resolutionCombobox_->count());
+  impl_->resolutionCombobox_->addItem("Instagram/TikTok (1080x1920)", QVariant::fromValue(QSize(1080, 1920)));
+  impl_->resolutionCombobox_->addItem("Instagram Square (1080x1080)", QVariant::fromValue(QSize(1080, 1080)));
+  impl_->resolutionCombobox_->insertSeparator(impl_->resolutionCombobox_->count());
+  impl_->resolutionCombobox_->addItem("SD PAL (720x576)", QVariant::fromValue(QSize(720, 576)));
+  impl_->resolutionCombobox_->addItem("SD NTSC (720x480)", QVariant::fromValue(QSize(720, 480)));
+  impl_->resolutionCombobox_->insertSeparator(impl_->resolutionCombobox_->count());
+  impl_->resolutionCombobox_->addItem("Custom...", QVariant::fromValue(QSize(-1, -1)));
+
+  const QSize initialResolution = impl_->resolutionCombobox_->currentData().toSize();
+  if (initialResolution.width() > 0 && initialResolution.height() > 0) {
+    impl_->widthSpinBox->setValue(initialResolution.width());
+    impl_->heightSpinBox->setValue(initialResolution.height());
+  }
+
+  auto sizeWidget = new QWidget();
+  auto sizeHBox = new QHBoxLayout(sizeWidget);
+  sizeHBox->setContentsMargins(0, 0, 0, 0);
+  sizeHBox->addWidget(impl_->widthSpinBox);
+  sizeHBox->addWidget(new QLabel("x"));
+  impl_->aspectLockButton_ = new QToolButton();
+  impl_->aspectLockButton_->setCheckable(true);
+  impl_->aspectLockButton_->setAutoRaise(true);
+  impl_->aspectLockButton_->setToolTip(QStringLiteral("Lock aspect ratio"));
+  impl_->aspectLockButton_->setText(QStringLiteral("🔓"));
+  impl_->aspectLockButton_->setAccessibleName(QStringLiteral("Lock aspect ratio"));
+  impl_->aspectLockButton_->setAccessibleDescription(QStringLiteral("Keep composition width and height proportional"));
+  sizeHBox->addWidget(impl_->aspectLockButton_);
+  sizeHBox->addWidget(impl_->heightSpinBox);
+  sizeHBox->addWidget(new QLabel("px"));
+
+  impl_->pixelAspectCombo_ = new QComboBox();
+  impl_->pixelAspectCombo_->setAccessibleName(QStringLiteral("Pixel aspect ratio"));
+  impl_->pixelAspectCombo_->setAccessibleDescription(QStringLiteral("Choose the composition pixel aspect ratio"));
+  impl_->pixelAspectCombo_->addItem("Square Pixels (1.0)", QVariant::fromValue(1.0));
+  impl_->pixelAspectCombo_->addItem("D1/DV NTSC (0.91)", QVariant::fromValue(0.9091));
+  impl_->pixelAspectCombo_->addItem("D1/DV PAL (1.09)", QVariant::fromValue(1.0940));
+
+  impl_->fpsCombo_ = new QComboBox();
+  impl_->fpsCombo_->setAccessibleName(QStringLiteral("Frame rate"));
+  impl_->fpsCombo_->setAccessibleDescription(QStringLiteral("Choose the composition frame rate"));
+  impl_->fpsCombo_->addItem("23.976 fps", QVariant::fromValue(23.976));
+  impl_->fpsCombo_->addItem("24 fps", QVariant::fromValue(24.0));
+  impl_->fpsCombo_->addItem("25 fps", QVariant::fromValue(25.0));
+  impl_->fpsCombo_->addItem("29.97 fps", QVariant::fromValue(29.97));
+  impl_->fpsCombo_->addItem("30 fps", QVariant::fromValue(30.0));
+  impl_->fpsCombo_->addItem("60 fps", QVariant::fromValue(60.0));
+  impl_->fpsCombo_->setCurrentIndex(4); 
+
+  impl_->startTimecodeEdit = new QLineEdit("00:00:00:00");
+  impl_->startTimecodeEdit->setAccessibleName(QStringLiteral("Start timecode"));
+  impl_->startTimecodeEdit->setAccessibleDescription(QStringLiteral("Starting timecode of the composition"));
+  
+  impl_->durationSpinBox = new DoubleDragSpinBox();
+  impl_->durationSpinBox->setRange(0.1, 3600.0);
+  impl_->durationSpinBox->setValue(10.0);
+  impl_->durationSpinBox->setAccessibleName(QStringLiteral("Composition duration"));
+  impl_->durationSpinBox->setAccessibleDescription(QStringLiteral("Composition duration in seconds"));
+
+  impl_->bgColorButton = new QPushButton("Pick Color");
+  impl_->bgColorButton->setAccessibleName(QStringLiteral("Background color"));
+  impl_->bgColorButton->setAccessibleDescription(QStringLiteral("Choose the composition background color"));
+  impl_->bgColorButton->setFixedSize(154, 32);
+  updateColorButtonPreview(impl_->bgColorButton, impl_->bgColor);
+  
+  formLayout->addRow("Preset:", impl_->resolutionCombobox_);
+  formLayout->addRow("Resolution:", sizeWidget);
+  formLayout->addRow("Pixel Aspect:", impl_->pixelAspectCombo_);
+  formLayout->addRow("Frame Rate:", impl_->fpsCombo_);
+  formLayout->addRow(compositionSectionDivider());
+  formLayout->addRow("Start Time:", impl_->startTimecodeEdit);
+  formLayout->addRow("Duration (s):", impl_->durationSpinBox);
+  formLayout->addRow(compositionSectionDivider());
+  formLayout->addRow("Background Color:", impl_->bgColorButton);
+  
+  mainLayout->addLayout(formLayout);
+  mainLayout->addStretch();
+
+  QObject::connect(impl_->resolutionCombobox_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) {
+    QSize sz = impl_->resolutionCombobox_->currentData().toSize();
+    if (sz.width() > 0 && sz.height() > 0) {
+      const QSignalBlocker widthBlock(impl_->widthSpinBox);
+      const QSignalBlocker heightBlock(impl_->heightSpinBox);
+      impl_->widthSpinBox->setValue(sz.width());
+      impl_->heightSpinBox->setValue(sz.height());
+      if (sz.height() > 0) {
+        impl_->lockedAspectRatio_ = static_cast<double>(sz.width()) / static_cast<double>(sz.height());
+      }
+    }
+  });
+
+  auto forceCustom = [this]() {
+      if (impl_->resolutionCombobox_->currentData().toSize().width() != -1) {
+          impl_->resolutionCombobox_->blockSignals(true);
+          impl_->resolutionCombobox_->setCurrentIndex(impl_->resolutionCombobox_->count() - 1);
+          impl_->resolutionCombobox_->blockSignals(false);
+      }
+  };
+
+  auto updateHeightFromWidth = [this](int width) {
+      if (!impl_->aspectRatioLocked_ || !impl_->heightSpinBox) {
+          return;
+      }
+      const double ratio = impl_->lockedAspectRatio_ > 0.0 ? impl_->lockedAspectRatio_ : 1.0;
+      const int newHeight = std::max(1, static_cast<int>(std::round(static_cast<double>(width) / ratio)));
+      const QSignalBlocker block(impl_->heightSpinBox);
+      impl_->heightSpinBox->setValue(newHeight);
+  };
+
+  auto updateWidthFromHeight = [this](int height) {
+      if (!impl_->aspectRatioLocked_ || !impl_->widthSpinBox) {
+          return;
+      }
+      const double ratio = impl_->lockedAspectRatio_ > 0.0 ? impl_->lockedAspectRatio_ : 1.0;
+      const int newWidth = std::max(1, static_cast<int>(std::round(static_cast<double>(height) * ratio)));
+      const QSignalBlocker block(impl_->widthSpinBox);
+      impl_->widthSpinBox->setValue(newWidth);
+  };
+
+  QObject::connect(impl_->widthSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, [this, forceCustom, updateHeightFromWidth](int value) {
+      forceCustom();
+      updateHeightFromWidth(value);
+  });
+  QObject::connect(impl_->heightSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, [this, forceCustom, updateWidthFromHeight](int value) {
+      forceCustom();
+      updateWidthFromHeight(value);
+  });
+
+  QObject::connect(impl_->aspectLockButton_, &QToolButton::toggled, this, [this](bool locked) {
+      impl_->aspectRatioLocked_ = locked;
+      if (locked) {
+          const int width = std::max(1, impl_->widthSpinBox ? impl_->widthSpinBox->value() : 1);
+          const int height = std::max(1, impl_->heightSpinBox ? impl_->heightSpinBox->value() : 1);
+          impl_->lockedAspectRatio_ = static_cast<double>(width) / static_cast<double>(height);
+      }
+      if (impl_->aspectLockButton_) {
+          impl_->aspectLockButton_->setText(locked ? QStringLiteral("🔒") : QStringLiteral("🔓"));
+      }
+  });
+
+  QObject::connect(impl_->bgColorButton, &QPushButton::clicked, this, [this]() {
+      ArtifactWidgets::FloatColorPicker picker(this);
+      picker.setWindowTitle(QStringLiteral("Background Color"));
+      picker.setInitialColor(FloatColor(impl_->bgColor.redF(),
+                                        impl_->bgColor.greenF(),
+                                        impl_->bgColor.blueF(),
+                                        1.0f));
+      if (auto* tabBar = picker.findChild<QTabBar*>()) {
+          tabBar->setCurrentIndex(1);
+      }
+      Artifact::configureFloatColorPicker(&picker, Artifact::ColorSelectionPurpose::Creation);
+      if (picker.exec() != QDialog::Accepted) {
+          return;
+      }
+
+      const FloatColor picked = picker.getColor();
+      QColor c = QColor::fromRgbF(picked.r(), picked.g(), picked.b(), picked.a());
+      if (c.isValid()) {
+          impl_->bgColor = c;
+          sessionCompositionBackgroundColor() = c;
+          updateColorButtonPreview(impl_->bgColorButton, c);
+      }
+  });
+
+  if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+    const int defaultWidth = settings->projectDefaultCompositionWidth();
+    const int defaultHeight = settings->projectDefaultCompositionHeight();
+    const QSize defaultSize(defaultWidth, defaultHeight);
+    const int presetIndex = indexForSize(impl_->resolutionCombobox_, defaultSize);
+    if (presetIndex >= 0) {
+      impl_->resolutionCombobox_->setCurrentIndex(presetIndex);
+    }
+    if (defaultWidth > 0) {
+      impl_->widthSpinBox->setValue(defaultWidth);
+    }
+    if (defaultHeight > 0) {
+      impl_->heightSpinBox->setValue(defaultHeight);
+    }
+    const int fpsIndex =
+        indexForFrameRate(impl_->fpsCombo_, settings->projectDefaultCompositionFrameRate());
+    if (fpsIndex >= 0) {
+      impl_->fpsCombo_->setCurrentIndex(fpsIndex);
+    }
+    const QColor defaultBg(
+        settings->projectDefaultCompositionBackgroundColor());
+  impl_->bgColor = normalizedCompositionBackgroundDefault(defaultBg);
+  if (sessionCompositionBackgroundColor().isValid()) {
+    impl_->bgColor = sessionCompositionBackgroundColor();
+  }
+  updateColorButtonPreview(impl_->bgColorButton, impl_->bgColor);
+  }
+
+  auto anchorLabel = new QLabel(QStringLiteral("Anchor Point:"), this);
+  auto* anchorWidget = new QWidget(this);
+  auto* anchorRootLayout = new QHBoxLayout(anchorWidget);
+  anchorRootLayout->setContentsMargins(0, 0, 0, 0);
+  anchorRootLayout->setSpacing(14);
+
+  auto* anchorPresetHost = new QWidget(anchorWidget);
+  anchorPresetHost->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+  auto* anchorGrid = new QGridLayout(anchorPresetHost);
+  anchorGrid->setContentsMargins(0, 0, 0, 0);
+  anchorGrid->setHorizontalSpacing(4);
+  anchorGrid->setVerticalSpacing(4);
+  impl_->anchorPresetGroup = new QButtonGroup(anchorPresetHost);
+  impl_->anchorPresetGroup->setExclusive(true);
+
+  const QString anchorLabels[3][3] = {
+      {QStringLiteral("↖"), QStringLiteral("↑"), QStringLiteral("↗")},
+      {QStringLiteral("←"), QStringLiteral("◎"), QStringLiteral("→")},
+      {QStringLiteral("↙"), QStringLiteral("↓"), QStringLiteral("↘")},
+  };
+  const QString anchorTooltips[3][3] = {
+      {QStringLiteral("Top Left"), QStringLiteral("Top Center"), QStringLiteral("Top Right")},
+      {QStringLiteral("Middle Left"), QStringLiteral("Center"), QStringLiteral("Middle Right")},
+      {QStringLiteral("Bottom Left"), QStringLiteral("Bottom Center"), QStringLiteral("Bottom Right")},
+  };
+  const CompositionAnchorPreset anchorPresets[3][3] = {
+      {CompositionAnchorPreset::TopLeft, CompositionAnchorPreset::TopCenter, CompositionAnchorPreset::TopRight},
+      {CompositionAnchorPreset::MiddleLeft, CompositionAnchorPreset::Center, CompositionAnchorPreset::MiddleRight},
+      {CompositionAnchorPreset::BottomLeft, CompositionAnchorPreset::BottomCenter, CompositionAnchorPreset::BottomRight},
+  };
+
+  for (int row = 0; row < 3; ++row) {
+    for (int col = 0; col < 3; ++col) {
+      auto* button = new QPushButton(anchorLabels[row][col], anchorPresetHost);
+      button->setCheckable(true);
+      button->setToolTip(anchorTooltips[row][col]);
+      button->setFixedSize(34, 34);
+      button->setFont(QFont(QStringLiteral("Segoe UI Symbol"), 13));
+      impl_->anchorPresetButtons[row][col] = button;
+      impl_->anchorPresetGroup->addButton(button, static_cast<int>(anchorPresets[row][col]));
+      anchorGrid->addWidget(button, row, col);
+    }
+  }
+
+  auto* anchorValueHost = new QWidget(anchorWidget);
+  auto* anchorValueLayout = new QFormLayout(anchorValueHost);
+  anchorValueLayout->setContentsMargins(0, 0, 0, 0);
+  anchorValueLayout->setHorizontalSpacing(10);
+  anchorValueLayout->setVerticalSpacing(6);
+  impl_->anchorXSpinBox = new QDoubleSpinBox(anchorValueHost);
+  impl_->anchorYSpinBox = new QDoubleSpinBox(anchorValueHost);
+  for (auto* spin : {impl_->anchorXSpinBox, impl_->anchorYSpinBox}) {
+    spin->setRange(0.0, 1.0);
+    spin->setSingleStep(0.05);
+    spin->setDecimals(3);
+    spin->setMinimumWidth(96);
+    spin->setMinimumHeight(32);
+  }
+  impl_->anchorXSpinBox->setValue(0.5);
+  impl_->anchorYSpinBox->setValue(0.5);
+  anchorValueLayout->addRow(QStringLiteral("X"), impl_->anchorXSpinBox);
+  anchorValueLayout->addRow(QStringLiteral("Y"), impl_->anchorYSpinBox);
+
+  anchorRootLayout->addWidget(anchorPresetHost, 0, Qt::AlignTop);
+  anchorRootLayout->addWidget(anchorValueHost, 1);
+
+  formLayout->addRow(anchorLabel, anchorWidget);
+
+  const auto syncAnchorPresetFromSpinBoxes = [this]() {
+    if (!impl_ || !impl_->anchorPresetGroup || !impl_->anchorXSpinBox || !impl_->anchorYSpinBox) {
+      return;
+    }
+    if (impl_->updatingAnchorControls_) {
+      return;
+    }
+    impl_->updatingAnchorControls_ = true;
+    const CompositionAnchorPreset preset = nearestAnchorPreset(
+        QPointF(impl_->anchorXSpinBox->value(), impl_->anchorYSpinBox->value()));
+    if (auto* button = impl_->anchorPresetGroup->button(static_cast<int>(preset))) {
+      button->setChecked(true);
+    }
+    impl_->updatingAnchorControls_ = false;
+  };
+
+  QObject::connect(impl_->anchorPresetGroup, &QButtonGroup::idClicked, this, [this](int id) {
+    if (!impl_ || !impl_->anchorXSpinBox || !impl_->anchorYSpinBox || impl_->updatingAnchorControls_) {
+      return;
+    }
+    impl_->updatingAnchorControls_ = true;
+    const QPointF point = anchorPointForPreset(static_cast<CompositionAnchorPreset>(id));
+    impl_->anchorXSpinBox->setValue(point.x());
+    impl_->anchorYSpinBox->setValue(point.y());
+    impl_->updatingAnchorControls_ = false;
+  });
+  QObject::connect(impl_->anchorXSpinBox, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
+                   [syncAnchorPresetFromSpinBoxes](double) { syncAnchorPresetFromSpinBoxes(); });
+  QObject::connect(impl_->anchorYSpinBox, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
+                   [syncAnchorPresetFromSpinBoxes](double) { syncAnchorPresetFromSpinBoxes(); });
+  syncAnchorPresetFromSpinBoxes();
+
+  qInfo() << "[CreateCompositionDialog][Ctor] CompositionSettingPage ms="
+          << ctorTimer.elapsed();
+
+ }
+
+ CompositionSettingPage::~CompositionSettingPage() {}
+
+ ArtifactCompositionInitParams CompositionSettingPage::getInitParams(const QString& name) const
+ {
+     ArtifactCompositionInitParams params;
+     UniString u;
+     u.setQString(name);
+     params.setCompositionName(u);
+     params.setResolution(impl_->widthSpinBox->value(), impl_->heightSpinBox->value());
+     params.setFrameRate(impl_->fpsCombo_->currentData().toDouble());
+     double aspect = impl_->pixelAspectCombo_->currentData().toDouble();
+     params.setPixelAspectRatio(AspectRatio(static_cast<int>(aspect * 10000), 10000));
+     params.setDurationSeconds(impl_->durationSpinBox->value());
+     QColor c = impl_->bgColor;
+     sessionCompositionBackgroundColor() = c;
+     params.setBackgroundColor(FloatColor(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
+     params.setCompositionAnchorPoint(QPointF(
+         impl_->anchorXSpinBox ? impl_->anchorXSpinBox->value() : 0.5,
+         impl_->anchorYSpinBox ? impl_->anchorYSpinBox->value() : 0.5));
+     return params;
+ }
+
+ CompositionExtendSettingPage::CompositionExtendSettingPage(QWidget* parent) : QWidget(parent) {}
+ CompositionExtendSettingPage::~CompositionExtendSettingPage() {}
+
+ class CreateCompositionDialog::Impl {
+ public:
+  Impl(CreateCompositionDialog* pDialog = nullptr);
+  CompositionSettingPage* compositionSettingPage_ = nullptr;
+  QPoint m_dragPosition;
+  bool m_isDragging = false;
+  bool okCalled_ = false;
+  QPropertyAnimation* m_showAnimation = nullptr;
+  EditableLabel* compositionNameEdit_ = nullptr;
+  ArtifactCompositionInitParams acceptedParams_;
+  bool accepted_ = false;
+
+  void ok(QDialog* dialog);
+  void cancel(QDialog* dialog);
+ };
+
+ CreateCompositionDialog::Impl::Impl(CreateCompositionDialog* pDialog) {}
+
+ void CreateCompositionDialog::Impl::ok(QDialog* dialog)
+ {
+  if (okCalled_) return;
+  okCalled_ = true;
+ if (compositionNameEdit_) compositionNameEdit_->finishEdit();
+  QString name = compositionNameEdit_ ? compositionNameEdit_->text().trimmed() : QString();
+  if (name.isEmpty()) {
+    name = uniqueCompositionName(QStringLiteral("Comp1"));
+  }
+  if (compositionSettingPage_) {
+    acceptedParams_ = compositionSettingPage_->getInitParams(name);
+    accepted_ = true;
+  }
+  dialog->accept();
+ }
+
+ void CreateCompositionDialog::Impl::cancel(QDialog* dialog) { dialog->reject(); }
+
+ W_OBJECT_IMPL(CreateCompositionDialog)
+
+ CreateCompositionDialog::CreateCompositionDialog(QWidget* parent) : QDialog(parent), impl_(new Impl(this))
+ {
+  QElapsedTimer ctorTimer;
+  ctorTimer.start();
+  setWindowTitle("Composition Settings");
+  setAccessibleName(QStringLiteral("Create Composition Dialog"));
+  setAccessibleDescription(QStringLiteral("Configure a new composition's name, resolution, timing, and background"));
+  setWindowFlags(Qt::FramelessWindowHint | Qt::Dialog);
+  
+  auto mainLayout = new QVBoxLayout(this);
+  mainLayout->setContentsMargins(0, 0, 0, 0);
+  mainLayout->setSpacing(0);
+
+  auto* header = new CompositionDialogHeader(this);
+  mainLayout->addWidget(header);
+
+  // Keep the action footer visible when the form grows at high DPI or with a
+  // larger system font.  The Basic page used to be nested in a hidden-tab
+  // widget, whose viewport could clip the Anchor Point controls.
+  auto* contentScrollArea = new QScrollArea(this);
+  contentScrollArea->setWidgetResizable(true);
+  contentScrollArea->setFrameShape(QFrame::NoFrame);
+  contentScrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  contentScrollArea->setAccessibleName(QStringLiteral("Composition settings content"));
+  auto* contentHost = new QWidget(contentScrollArea);
+  auto content = new QVBoxLayout(contentHost);
+  content->setContentsMargins(20, 12, 20, 6);
+  content->setSpacing(8);
+
+  auto nameRow = new QHBoxLayout();
+  auto nameLbl = new QLabel("Name:");
+  nameLbl->setFixedWidth(60);
+  impl_->compositionNameEdit_ = new EditableLabel();
+  impl_->compositionNameEdit_->setText(uniqueCompositionName(QStringLiteral("Comp1")));
+  impl_->compositionNameEdit_->setAccessibleName(QStringLiteral("Composition name"));
+  impl_->compositionNameEdit_->setAccessibleDescription(QStringLiteral("Name of the new composition"));
+  nameRow->addWidget(nameLbl);
+  nameRow->addWidget(impl_->compositionNameEdit_);
+  content->addLayout(nameRow);
+
+  impl_->compositionSettingPage_ = new CompositionSettingPage(contentHost);
+  auto* basicHeading = new QLabel(QStringLiteral("Basic"));
+  QFont sectionFont = font(); sectionFont.setBold(true);
+  basicHeading->setFont(sectionFont);
+  content->addWidget(basicHeading);
+  impl_->compositionSettingPage_->setMinimumWidth(520);
+  content->addWidget(impl_->compositionSettingPage_);
+  contentScrollArea->setWidget(contentHost);
+  mainLayout->addWidget(contentScrollArea, 1);
+
+  // Footer / Buttons
+  auto footer = new QWidget();
+  auto fLayout = new QHBoxLayout(footer);
+  fLayout->setContentsMargins(15, 10, 15, 10);
+  auto okBtn = new QPushButton("Create");
+  okBtn->setProperty("compositionPrimary", true);
+  okBtn->setDefault(true);
+  okBtn->setAccessibleName(QStringLiteral("Create composition"));
+  okBtn->setAccessibleDescription(QStringLiteral("Create the composition with the selected settings"));
+  okBtn->setFixedSize(104, 34);
+  auto cancelBtn = new QPushButton("Cancel");
+  cancelBtn->setAccessibleName(QStringLiteral("Cancel composition creation"));
+  cancelBtn->setAccessibleDescription(QStringLiteral("Close without creating a composition"));
+  cancelBtn->setFixedSize(104, 34);
+  fLayout->addStretch();
+#ifdef _WIN32
+  fLayout->addWidget(okBtn);
+  fLayout->addWidget(cancelBtn);
+  QWidget::setTabOrder(okBtn, cancelBtn);
+#else
+  fLayout->addWidget(cancelBtn);
+  fLayout->addWidget(okBtn);
+#endif
+  mainLayout->addWidget(footer);
+
+  QObject::connect(okBtn, &QPushButton::clicked, this, [this]() { impl_->ok(this); });
+  QObject::connect(cancelBtn, &QPushButton::clicked, this, [this]() { impl_->cancel(this); });
+
+  auto* studioStyle = new CompositionDialogStyle;
+  studioStyle->setParent(this);
+  QPalette studioPalette = palette();
+  studioPalette.setColor(QPalette::Window, QColor(43,44,47));
+  studioPalette.setColor(QPalette::Base, QColor(34,35,38));
+  studioPalette.setColor(QPalette::Button, QColor(47,48,52));
+  studioPalette.setColor(QPalette::Text, QColor(236,237,240));
+  studioPalette.setColor(QPalette::WindowText, QColor(218,220,225));
+  studioPalette.setColor(QPalette::ButtonText, QColor(236,237,240));
+  studioPalette.setColor(QPalette::Mid, QColor(67,69,74));
+  studioPalette.setColor(QPalette::Highlight, QColor(52,116,227));
+  studioPalette.setColor(QPalette::HighlightedText, Qt::white);
+  studioPalette.setColor(QPalette::Disabled, QPalette::Text, QColor(131,134,141));
+  setPalette(studioPalette);
+  setAutoFillBackground(true);
+  QFont bodyFont(QStringLiteral("Segoe UI"), 10);
+  setFont(bodyFont);
+  setStyle(studioStyle);
+  for (auto* widget : findChildren<QWidget*>()) {
+    widget->setStyle(studioStyle);
+    QPalette fieldPalette = studioPalette;
+    const bool number = qobject_cast<QAbstractSpinBox*>(widget) ||
+        qobject_cast<QAbstractSpinBox*>(widget->parentWidget()) ||
+        widget->accessibleName() == QStringLiteral("Start timecode");
+    if (number) {
+      fieldPalette.setColor(QPalette::Text,QColor(246,198,111));
+      QFont fixedFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+      fixedFont.setPointSize(11);
+      widget->setFont(fixedFont);
+    }
+    // Preserve the actual color of the background swatch.
+    if (widget->accessibleName() != QStringLiteral("Background color")) widget->setPalette(fieldPalette);
+    if (qobject_cast<QAbstractSpinBox*>(widget) || qobject_cast<QComboBox*>(widget) ||
+        (qobject_cast<QLineEdit*>(widget) && !qobject_cast<QAbstractSpinBox*>(widget->parentWidget())))
+      widget->setMinimumHeight(32);
+  }
+  resize(620, 720);
+  setMinimumSize(620, 720);
+
+  qInfo() << "[CreateCompositionDialog][Ctor] total ms=" << ctorTimer.elapsed();
+
+ }
+
+ CreateCompositionDialog::~CreateCompositionDialog() { delete impl_; }
+
+ void CreateCompositionDialog::setCompositionName(const QString& name) { if (impl_->compositionNameEdit_) impl_->compositionNameEdit_->setText(name); }
+ QString CreateCompositionDialog::compositionName() const { return impl_->compositionNameEdit_ ? impl_->compositionNameEdit_->text() : ""; }
+ ArtifactCompositionInitParams CreateCompositionDialog::acceptedInitParams() const
+ {
+  return impl_ ? impl_->acceptedParams_ : ArtifactCompositionInitParams();
+ }
+
+ void CreateCompositionDialog::keyPressEvent(QKeyEvent* event)
+ {
+  if (event->key() == Qt::Key_Escape) close();
+  QDialog::keyPressEvent(event);
+ }
+
+ void CreateCompositionDialog::mousePressEvent(QMouseEvent* event)
+ {
+  if (event->button() == Qt::LeftButton) {
+   impl_->m_dragPosition = event->globalPosition().toPoint() - frameGeometry().topLeft();
+   impl_->m_isDragging = true;
+   event->accept();
+  } else QDialog::mousePressEvent(event);
+ }
+
+ void CreateCompositionDialog::mouseReleaseEvent(QMouseEvent* event)
+ {
+  if (impl_->m_isDragging && event->button() == Qt::LeftButton) {
+   impl_->m_isDragging = false;
+   event->accept();
+  } else QDialog::mouseReleaseEvent(event);
+ }
+
+ void CreateCompositionDialog::mouseMoveEvent(QMouseEvent* event)
+ {
+  if (impl_->m_isDragging && event->buttons() & Qt::LeftButton) {
+   move(event->globalPosition().toPoint() - impl_->m_dragPosition);
+   event->accept();
+  } else QDialog::mouseMoveEvent(event);
+ }
+
+ void CreateCompositionDialog::showAnimated() { show(); } // Animation logic simplified for robustness
+
+ void CreateCompositionDialog::showEvent(QShowEvent* event)
+ {
+  QDialog::showEvent(event);
+  QPoint endPos;
+  if (parentWidget()) {
+   endPos = parentWidget()->mapToGlobal(parentWidget()->rect().center())
+            - QPoint(width() / 2, height() / 2);
+  } else {
+   endPos = QGuiApplication::primaryScreen()->availableGeometry().center()
+            - QPoint(width() / 2, height() / 2);
+  }
+  move(endPos);
+ }
+
+ void CreateCompositionDialog::closeEvent(QCloseEvent* event) { QDialog::closeEvent(event); }
+ void CreateCompositionDialog::setDefaultFocus()
+ {
+  if (!impl_ || !impl_->compositionNameEdit_) {
+   return;
+  }
+  impl_->compositionNameEdit_->setFocus(Qt::OtherFocusReason);
+  impl_->compositionNameEdit_->startEdit();
+ }
+}

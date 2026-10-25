@@ -40,7 +40,7 @@ struct CommandAction : Action {
 };
 
 // Value variant (supports all property types)
-export using Value = std::variant<
+using Value = std::variant<
     bool,
     std::int64_t,
     double,
@@ -243,14 +243,14 @@ struct DSLScript {
 };
 
 // Parse result
-export struct ParseResult {
+struct ParseResult {
     DSLScript script;
     std::string error;
     bool success() const { return error.empty() && !script.hasError; }
 };
 
 // DSL interface
-export class AIDSLInterpreter {
+class AIDSLInterpreter {
 public:
     AIDSLInterpreter();
     ~AIDSLInterpreter();

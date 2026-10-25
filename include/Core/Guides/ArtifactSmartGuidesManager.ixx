@@ -25,7 +25,7 @@ struct GuideSettings {
     QColor colorForType(GuideType type) const;
     bool isTypeEnabled(GuideType type) const;
 };
-export class SmartGuidesManager {
+class SmartGuidesManager {
 public:
     static SmartGuidesManager* instance();
     const GuideSettings& settings() const;

@@ -14,6 +14,7 @@ import Core.AI.Describable;
 import Material.Material;
 import Artifact.Service.Project;
 import Artifact.Layers.Model3D;
+import Utils.Id;
 
 export namespace Artifact {
 

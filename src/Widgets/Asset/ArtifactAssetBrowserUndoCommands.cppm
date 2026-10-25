@@ -20,6 +20,7 @@ export module Artifact.Widgets.AssetBrowserUndoCommands;
 
 import Artifact.Layer.Abstract;
 import Artifact.Project;
+import Artifact.Project.Items;
 import Artifact.Service.Project;
 import Undo.UndoManager;
 

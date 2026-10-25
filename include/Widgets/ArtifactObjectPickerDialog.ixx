@@ -4,15 +4,14 @@
 #include <wobjectdefs.h>
 #include <QDialog>
 #include <QString>
-export module Artifact.Widgets.ObjectPicker;
-
-
-import Utils.Id;
 
 class QTreeWidgetItem;
 class QTreeWidget;
 class QLineEdit;
-class QPushButton;
+
+export module Artifact.Widgets.ObjectPicker;
+
+import Utils.Id;
 
 export namespace Artifact {
 

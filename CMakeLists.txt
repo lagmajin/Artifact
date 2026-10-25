@@ -297,13 +297,13 @@ set(_artifact_export_modules
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Export/ArtifactExportUnityUxmlWriter.ixx")
 set(_artifact_export_impls
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Export/ArtifactExportDialog.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Export/ArtifactExportGamefaceWriter.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Export/ArtifactExportLottieWriter.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Export/ArtifactExportNoesisXamlWriter.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Export/ArtifactExportPreRenderPipeline.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Export/ArtifactExportRmlUiWriter.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Export/ArtifactExportSession.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Export/ArtifactExportUnityUxmlWriter.cppm")
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Export/ArtifactExportGamefaceWriter.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Export/ArtifactExportLottieWriter.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Export/ArtifactExportNoesisXamlWriter.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Export/ArtifactExportPreRenderPipeline.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Export/ArtifactExportRmlUiWriter.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Export/ArtifactExportSession.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Export/ArtifactExportUnityUxmlWriter.cpp")
 foreach(_artifact_export_module IN LISTS _artifact_export_modules)
     list(FIND APP_MODULES "${_artifact_export_module}" _artifact_export_module_idx)
     if(_artifact_export_module_idx EQUAL -1)
@@ -321,9 +321,9 @@ endforeach()
 
 # CMake の module 自動分類で AppDebuggerWidget.cppm が link 対象から漏れるケースがあるため、
 # 明示的に private source として固定する。
-list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Diagnostics/AppDebuggerWidget.cppm" _app_debugger_widget_idx)
+list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Diagnostics/AppDebuggerWidget.cpp" _app_debugger_widget_idx)
 if(_app_debugger_widget_idx EQUAL -1)
-    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Diagnostics/AppDebuggerWidget.cppm")
+    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Diagnostics/AppDebuggerWidget.cpp")
 endif()
 
 # CompositionManager は module/legacy 混在の影響で自動収集から漏れることがあるため固定する。
@@ -334,9 +334,9 @@ endif()
 
 # SwitchLayer はインターフェースと同名の実装 module を持つため、
 # 自動分類や古い生成結果に依存せず実装を必ずターゲットへ含める。
-list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactSwitchLayer.cppm" _switch_layer_impl_idx)
+list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactSwitchLayer.cpp" _switch_layer_impl_idx)
 if(_switch_layer_impl_idx EQUAL -1)
-    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactSwitchLayer.cppm")
+    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactSwitchLayer.cpp")
 endif()
 
 # OffscreenCompositionRenderer は他モジュールから import される公開モジュールなので、
@@ -368,13 +368,13 @@ list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Layer/ArtifactMpmSand
 if(_mpm_sand_2d_layer_module_idx EQUAL -1)
     list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Layer/ArtifactMpmSand2DLayer.ixx")
 endif()
-list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactMpmSand2DLayer.cppm" _mpm_sand_2d_layer_impl_idx)
+list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactMpmSand2DLayer.cpp" _mpm_sand_2d_layer_impl_idx)
 if(_mpm_sand_2d_layer_impl_idx EQUAL -1)
-    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactMpmSand2DLayer.cppm")
+    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactMpmSand2DLayer.cpp")
 endif()
-list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactSandSim2DLayer.cppm" _sand_sim_2d_layer_impl_idx)
+list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactSandSim2DLayer.cpp" _sand_sim_2d_layer_impl_idx)
 if(_sand_sim_2d_layer_impl_idx EQUAL -1)
-    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactSandSim2DLayer.cppm")
+    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactSandSim2DLayer.cpp")
 endif()
 
 # FormParticleLayer is imported from multiple modules and should also be pinned
@@ -383,9 +383,9 @@ list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Layer/ArtifactFormPar
 if(_form_particle_module_idx EQUAL -1)
     list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Layer/ArtifactFormParticleLayer.ixx")
 endif()
-list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactFormParticleLayer.cppm" _form_particle_impl_idx)
+list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactFormParticleLayer.cpp" _form_particle_impl_idx)
 if(_form_particle_impl_idx EQUAL -1)
-    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactFormParticleLayer.cppm")
+    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactFormParticleLayer.cpp")
 endif()
 
 # Environment map layer is imported by the factory and should be pinned
@@ -405,9 +405,9 @@ list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Layer/ArtifactPaintLa
 if(_paint_layer_module_idx EQUAL -1)
     list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Layer/ArtifactPaintLayer.ixx")
 endif()
-list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactPaintLayer.cppm" _paint_layer_impl_idx)
+list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactPaintLayer.cpp" _paint_layer_impl_idx)
 if(_paint_layer_impl_idx EQUAL -1)
-    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactPaintLayer.cppm")
+    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactPaintLayer.cpp")
 endif()
 list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactEnvironmentMapLayer.cpp" _environment_map_layer_impl_idx)
 if(_environment_map_layer_impl_idx EQUAL -1)
@@ -423,9 +423,9 @@ list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/ArtifactDopeS
 if(_dope_sheet_widget_module_idx EQUAL -1)
     list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/ArtifactDopeSheetWidget.ixx")
 endif()
-list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/ArtifactDopeSheetWidget.cppm" _dope_sheet_widget_impl_idx)
+list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/ArtifactDopeSheetWidget.cpp" _dope_sheet_widget_impl_idx)
 if(_dope_sheet_widget_impl_idx EQUAL -1)
-    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/ArtifactDopeSheetWidget.cppm")
+    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/ArtifactDopeSheetWidget.cpp")
 endif()
 
 # Recovery workspace is imported from AppMain and must be pinned explicitly so
@@ -464,9 +464,9 @@ list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/Inspector/Art
 if(_effect_tab_surface_module_idx EQUAL -1)
     list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/Inspector/ArtifactEffectTabSurface.ixx")
 endif()
-list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Inspector/ArtifactEffectTabSurface.cppm" _effect_tab_surface_impl_idx)
+list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Inspector/ArtifactEffectTabSurface.cpp" _effect_tab_surface_impl_idx)
 if(_effect_tab_surface_impl_idx EQUAL -1)
-    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Inspector/ArtifactEffectTabSurface.cppm")
+    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Inspector/ArtifactEffectTabSurface.cpp")
 endif()
 list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/Inspector/ArtifactComponentTabSurface.ixx" _component_tab_surface_module_idx)
 if(_component_tab_surface_module_idx EQUAL -1)
@@ -482,9 +482,9 @@ list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Layer/ArtifactProcedu
 if(_procedural_3d_layer_module_idx EQUAL -1)
     list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Layer/ArtifactProcedural3DLayer.ixx")
 endif()
-list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactProcedural3DLayer.cppm" _procedural_3d_layer_impl_idx)
+list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactProcedural3DLayer.cpp" _procedural_3d_layer_impl_idx)
 if(_procedural_3d_layer_impl_idx EQUAL -1)
-    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactProcedural3DLayer.cppm")
+    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactProcedural3DLayer.cpp")
 endif()
 
 # Layer component contracts are imported by the layer implementation and by
@@ -509,9 +509,9 @@ foreach(glow_variant IN ITEMS LiquidGlow ResidualGlow)
     if(_glow_variant_module_idx EQUAL -1)
         list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Glow/${glow_variant}Effect.ixx")
     endif()
-    list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/${glow_variant}Effect.cppm" _glow_variant_impl_idx)
+    list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/${glow_variant}Effect.cpp" _glow_variant_impl_idx)
     if(_glow_variant_impl_idx EQUAL -1)
-        list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/${glow_variant}Effect.cppm")
+        list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/${glow_variant}Effect.cpp")
     endif()
 endforeach()
 
@@ -521,9 +521,9 @@ foreach(_new_effect IN ITEMS Kaleidoscope Dithering Kuwahara)
     if(_new_effect_module_idx EQUAL -1)
         list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/${_new_effect}/${_new_effect}Effect.ixx")
     endif()
-    list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/${_new_effect}/${_new_effect}Effect.cppm" _new_effect_impl_idx)
+    list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/${_new_effect}/${_new_effect}Effect.cpp" _new_effect_impl_idx)
     if(_new_effect_impl_idx EQUAL -1)
-        list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/${_new_effect}/${_new_effect}Effect.cppm")
+        list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/${_new_effect}/${_new_effect}Effect.cpp")
     endif()
 endforeach()
 
@@ -541,9 +541,9 @@ foreach(_service_effect IN ITEMS
     if(_service_effect_module_idx EQUAL -1)
         list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/${_service_effect}.ixx")
     endif()
-    list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/${_service_effect}.cppm" _service_effect_impl_idx)
+    list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/${_service_effect}.cpp" _service_effect_impl_idx)
     if(_service_effect_impl_idx EQUAL -1)
-        list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/${_service_effect}.cppm")
+        list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/${_service_effect}.cpp")
     endif()
 endforeach()
 
@@ -554,9 +554,9 @@ foreach(_distort_effect IN ITEMS TimeDisplacement ImageMorph)
     if(_distort_effect_module_idx EQUAL -1)
         list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Distort/${_distort_effect}Effect.ixx")
     endif()
-    list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/${_distort_effect}/${_distort_effect}Effect.cppm" _distort_effect_impl_idx)
+    list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/${_distort_effect}/${_distort_effect}Effect.cpp" _distort_effect_impl_idx)
     if(_distort_effect_impl_idx EQUAL -1)
-        list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/${_distort_effect}/${_distort_effect}Effect.cppm")
+        list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/${_distort_effect}/${_distort_effect}Effect.cpp")
     endif()
 endforeach()
 
@@ -577,7 +577,7 @@ endif()
 
 # ViewportMath is imported by the composition controller; pin both units so
 # the module mapper sees the coordinate conversion contract before scanning
-# ArtifactCompositionRenderController.cppm.
+# ArtifactCompositionRenderController.cpp.
 list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/Render/ViewportMath.ixx" _viewport_math_module_idx)
 if(_viewport_math_module_idx EQUAL -1)
     list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/Render/ViewportMath.ixx")
@@ -593,9 +593,9 @@ list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/Render/Viewpo
 if(_viewport_overlay_module_idx EQUAL -1)
     list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/Render/ViewportOverlay.ixx")
 endif()
-list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Render/ViewportOverlay.cppm" _viewport_overlay_impl_idx)
+list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Render/ViewportOverlay.cpp" _viewport_overlay_impl_idx)
 if(_viewport_overlay_impl_idx EQUAL -1)
-    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Render/ViewportOverlay.cppm")
+    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Render/ViewportOverlay.cpp")
 endif()
 
 set(ARTIFACT_RENDER_SUPPORT_MODULES
@@ -610,10 +610,10 @@ set(ARTIFACT_RENDER_SUPPORT_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ArtifactPerformanceMonitor.ixx"
 )
 set(ARTIFACT_RENDER_SUPPORT_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactHDRMonitor.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactRamPreviewController.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactHDRMonitor.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactRamPreviewController.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactRenderController.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactRenderScheduler.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactRenderScheduler.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactRenderQueuePresets.cpp"
 )
 
@@ -739,13 +739,13 @@ set(ARTIFACT_COLOR_MODULES
 )
 set(ARTIFACT_COLOR_IMPL
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ColorPaletteManager.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactOCIOManager.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactOCIOManager.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactColorSettings.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactColorScienceManager.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactColorNodeGraph.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactColorNode.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactColorManagement.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactColorGradingEngine.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactColorScienceManager.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactColorNodeGraph.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactColorNode.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactColorManagement.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactColorGradingEngine.cpp"
 )
 
 set(ARTIFACT_COLOR_PALETTE_MODULES
@@ -759,8 +759,8 @@ set(ARTIFACT_COLOR_NODE_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Color/ArtifactColorNodeGraph.ixx"
 )
 set(ARTIFACT_COLOR_NODE_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactColorNode.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactColorNodeGraph.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactColorNode.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactColorNodeGraph.cpp"
 )
 set(ARTIFACT_COLOR_SETTINGS_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Color/ArtifactColorSettings.ixx"
@@ -772,19 +772,19 @@ set(ARTIFACT_COLOR_SCIENCE_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Color/ArtifactColorScienceManager.ixx"
 )
 set(ARTIFACT_COLOR_SCIENCE_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactColorScienceManager.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactColorScienceManager.cpp"
 )
 set(ARTIFACT_COLOR_MANAGEMENT_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Color/ArtifactColorManagement.ixx"
 )
 set(ARTIFACT_COLOR_MANAGEMENT_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactColorManagement.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactColorManagement.cpp"
 )
 set(ARTIFACT_COLOR_GRADING_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Color/ArtifactColorGradingEngine.ixx"
 )
 set(ARTIFACT_COLOR_GRADING_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactColorGradingEngine.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactColorGradingEngine.cpp"
 )
 list(REMOVE_ITEM ARTIFACT_COLOR_MODULES ${ARTIFACT_COLOR_PALETTE_MODULES} ${ARTIFACT_COLOR_NODE_MODULES} ${ARTIFACT_COLOR_SETTINGS_MODULES} ${ARTIFACT_COLOR_SCIENCE_MODULES} ${ARTIFACT_COLOR_MANAGEMENT_MODULES} ${ARTIFACT_COLOR_GRADING_MODULES})
 list(REMOVE_ITEM ARTIFACT_COLOR_IMPL ${ARTIFACT_COLOR_PALETTE_IMPL} ${ARTIFACT_COLOR_NODE_IMPL} ${ARTIFACT_COLOR_SETTINGS_IMPL} ${ARTIFACT_COLOR_SCIENCE_IMPL} ${ARTIFACT_COLOR_MANAGEMENT_IMPL} ${ARTIFACT_COLOR_GRADING_IMPL})
@@ -811,11 +811,11 @@ set(ARTIFACT_COLOR_SCIENCE_IMPL)
 list(REMOVE_ITEM ARTIFACT_COLOR_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Color/ArtifactOCIOManager.ixx")
 list(REMOVE_ITEM ARTIFACT_COLOR_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactOCIOManager.cppm")
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactOCIOManager.cpp")
 list(APPEND APP_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Color/ArtifactOCIOManager.ixx")
 list(APPEND APP_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactOCIOManager.cppm")
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Color/ArtifactOCIOManager.cpp")
 
 # The concrete color modules are now owned by their focused targets or by the
 # aggregate Artifact target when they publish Artifact-level events.  Retain
@@ -891,7 +891,7 @@ set(ARTIFACT_GPU_FOUNDATION_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/DiligentDeviceManager.ixx"
 )
 set(ARTIFACT_GPU_FOUNDATION_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/DiligentDeviceManager.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/DiligentDeviceManager.cpp"
 )
 
 # Public module sources owned by DockFoundation; the independent CMake
@@ -926,23 +926,23 @@ set(ARTIFACT_RENDER_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/Render/ViewportOverlay.ixx"
 )
 set(ARTIFACT_RENDER_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactFrameCache.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactFrameCache.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactTextGlyphPipelineAdapter.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ShaderManager.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ShaderManager.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/RenderCommandBuffer.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/PrimitiveRenderer2D.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/PrimitiveRenderer3D.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/DiligentImmediateSubmitter.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/DiligentBindlessSubmitter.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactFinalPostProcess.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactOffscreenRenderer2D.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactIRenderer.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactMotionBlurPass.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactDepthOfFieldPass.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/GPUTextureCacheManager.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/DiligentUploadCoordinator.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/PrimitiveRenderer2D.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/PrimitiveRenderer3D.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/DiligentImmediateSubmitter.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/DiligentBindlessSubmitter.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactFinalPostProcess.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactOffscreenRenderer2D.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactIRenderer.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactMotionBlurPass.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactDepthOfFieldPass.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/GPUTextureCacheManager.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/DiligentUploadCoordinator.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/LOD/ArtifactLODManager.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Render/ViewportOverlay.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Render/ViewportOverlay.cpp"
 )
 
 # Keep the first render split deliberately small.  Device and shader modules
@@ -956,7 +956,7 @@ list(REMOVE_ITEM APP_IMPL ${ARTIFACT_RENDER_IMPL})
 list(REMOVE_ITEM APP_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/Render/ViewportOverlay.ixx")
 list(REMOVE_ITEM APP_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Render/ViewportOverlay.cppm")
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Render/ViewportOverlay.cpp")
 
 add_library(ArtifactRender STATIC)
 set_target_properties(ArtifactRender PROPERTIES
@@ -1024,7 +1024,7 @@ target_include_directories(ArtifactRenderTextSmoke PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../libs/DiligentEngine"
 )
 if(ARTIFACT_FRONTEND_MSVC)
-    target_compile_options(ArtifactRenderTextSmoke PRIVATE /std:c++latest /permissive-)
+    target_compile_options(ArtifactRenderTextSmoke PRIVATE $<$<BOOL:${ARTIFACT_COMPILER_MSVC_CL}>:/std:c++latest> /permissive-)
 endif()
 
 set(ARTIFACT_EFFECT_CONTRACT_MODULES
@@ -1035,9 +1035,9 @@ set(ARTIFACT_EFFECT_CONTRACT_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/ArtifactEffectFrameSampler.ixx"
 )
 set(ARTIFACT_EFFECT_CONTRACT_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ArtifactAbstractEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ArtifactAbstractEffect.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ArtifactAbstractField.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ArtifactEffectFrameSampler.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ArtifactEffectFrameSampler.cpp"
 )
 
 list(REMOVE_ITEM APP_MODULES ${ARTIFACT_EFFECT_CONTRACT_MODULES})
@@ -1188,112 +1188,112 @@ set(ARTIFACT_EFFECTS_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/VoronoiEffect.ixx"
 )
 set(ARTIFACT_EFFECTS_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/AutoMosaicEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/DataMoshEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/GlowEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/KaleidoscopeEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/RadialBlurEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/InvertEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/BrightnessEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/GrayscaleEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/FillEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/ExposureEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/LevelsEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/HueAndSaturation.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/SelectiveColorEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/ColorBalanceEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/ColoramaEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/PhotoFilterEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/TritoneEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/CurvesEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/GradientRampEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/WhiteBalanceEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Kaleidoscope/KaleidoscopeEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Dithering/DitheringEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Kuwahara/KuwaharaEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/ChannelMixerEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/ColorWheelsEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/VignetteEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/StripesEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/HexGridEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/ChromaticAberrationEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/TemporalSmearEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/GlowEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/EdgeBloomEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/ChromaticGlowEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/ReactiveGlowEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/DropShadow/DropShadowEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/DirectionalGlowEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Satin/SatinEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Bevel/BevelEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Keying/LumaKeyEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Keying/ChromaKeyEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Keying/DifferenceKeyEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Keying/IBKKeyerEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/LinearWipe/LinearWipeEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Liquify/LiquifyEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Mosaic/MosaicEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Spherize/SpherizeEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Sharpen/SharpenEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/FindEdges/FindEdgesEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/OpticalFlowBlurEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Stroke/StrokeEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/VectorBlurEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/VectorFlowGlitchEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/DisplacementMap/DisplacementMapEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/TimeDisplacement/TimeDisplacementEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Distort/RippleEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Distort/MagnifyEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Distort/PinchBulgeEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Distort/PolarCoordinatesEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/TurbulentDisplace/TurbulentDisplaceEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Generate/SimpleRainEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Generate/RadioWavesEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/LensDistortion/LensDistortionEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/OpticsCompensation/OpticsCompensationEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/BricksEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/EdgeEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/EchoEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/GlitchEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/HalftoneEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/PosterizeTimeEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/RadialShadow/RadialShadowEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/InnerShadow/InnerShadowEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/LiquidGlowEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/ResidualGlowEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/LiftGammaGainEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/AddNoise/AddNoiseEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Blur/AnisotropicFlowBlurEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Blur/ApertureShapeBlurEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Blur/ReactionDiffusionBlurEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/PhysicalHalationEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/LuminescenceCausticsEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/AutoMosaicEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/DataMoshEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/GlowEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/KaleidoscopeEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/RadialBlurEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/InvertEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/BrightnessEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/GrayscaleEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/FillEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/ExposureEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/LevelsEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/HueAndSaturation.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/SelectiveColorEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/ColorBalanceEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/ColoramaEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/PhotoFilterEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/TritoneEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/CurvesEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/GradientRampEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/WhiteBalanceEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Kaleidoscope/KaleidoscopeEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Dithering/DitheringEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Kuwahara/KuwaharaEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/ChannelMixerEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/ColorWheelsEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/VignetteEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/StripesEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/HexGridEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/ChromaticAberrationEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/TemporalSmearEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/GlowEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/EdgeBloomEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/ChromaticGlowEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/ReactiveGlowEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/DropShadow/DropShadowEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/DirectionalGlowEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Satin/SatinEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Bevel/BevelEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Keying/LumaKeyEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Keying/ChromaKeyEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Keying/DifferenceKeyEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Keying/IBKKeyerEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/LinearWipe/LinearWipeEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Liquify/LiquifyEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Mosaic/MosaicEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Spherize/SpherizeEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Sharpen/SharpenEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/FindEdges/FindEdgesEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/OpticalFlowBlurEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Stroke/StrokeEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/VectorBlurEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/VectorFlowGlitchEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/DisplacementMap/DisplacementMapEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/TimeDisplacement/TimeDisplacementEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Distort/RippleEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Distort/MagnifyEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Distort/PinchBulgeEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Distort/PolarCoordinatesEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/TurbulentDisplace/TurbulentDisplaceEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Generate/SimpleRainEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Generate/RadioWavesEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/LensDistortion/LensDistortionEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/OpticsCompensation/OpticsCompensationEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/BricksEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/EdgeEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/EchoEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/GlitchEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/HalftoneEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/PosterizeTimeEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/RadialShadow/RadialShadowEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/InnerShadow/InnerShadowEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/LiquidGlowEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/ResidualGlowEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/LiftGammaGainEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/AddNoise/AddNoiseEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Blur/AnisotropicFlowBlurEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Blur/ApertureShapeBlurEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Blur/ReactionDiffusionBlurEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/PhysicalHalationEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/LuminescenceCausticsEffect.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/NoiseEffect.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/ChromaticReliefEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/DeBlinkEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/DeflickerEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/DifferenceMatteEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/FeedbackEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/FilmDamageEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/FrameBlendEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/FrameAverageEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/FrameAccumulationEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/FreezeFrameEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/TemporalDenoiseEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/TemporalMedianEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/TimeBlurEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/TimeWarpEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/TrailFadeEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/SlitScanEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/ScreenShakeEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/StrobeEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/SurfaceFX/SurfaceFXEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Wave/WaveEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/GhostEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/LightTrailsEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/MotionTrailEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/PixelSortEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/VoronoiEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/ChromaticReliefEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/DeBlinkEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/DeflickerEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/DifferenceMatteEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/FeedbackEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/FilmDamageEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/FrameBlendEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/FrameAverageEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/FrameAccumulationEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/FreezeFrameEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/TemporalDenoiseEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/TemporalMedianEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/TimeBlurEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/TimeWarpEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/TrailFadeEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/SlitScanEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/ScreenShakeEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/StrobeEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/SurfaceFX/SurfaceFXEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Wave/WaveEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/GhostEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/LightTrailsEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/MotionTrailEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/PixelSortEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/VoronoiEffect.cpp"
 )
 list(REMOVE_ITEM APP_MODULES ${ARTIFACT_EFFECTS_MODULES})
 list(REMOVE_ITEM APP_IMPL ${ARTIFACT_EFFECTS_IMPL})
@@ -1329,30 +1329,30 @@ set(ARTIFACT_EFFECTS_COLOR_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/LiftGammaGainEffect.ixx"
 )
 set(ARTIFACT_EFFECTS_COLOR_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/BlackAndWhiteEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/BrightnessEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/ChannelMixerEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/ColoramaEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/ColorBalanceEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/ColorWheelsEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/ColorTintEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/CurvesEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/ExposureEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/FillEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/GradientRampEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/GrayscaleEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/HueAndSaturation.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/InvertEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/LevelsEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/PhotoFilterEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/PosterizeEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/SelectiveColorEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/ShadowHighlightEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/ThresholdEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/TritoneEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/VibranceEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/WhiteBalanceEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/LiftGammaGainEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/BlackAndWhiteEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/BrightnessEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/ChannelMixerEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/ColoramaEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/ColorBalanceEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/ColorWheelsEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/ColorTintEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/CurvesEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/ExposureEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/FillEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/GradientRampEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/GrayscaleEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/HueAndSaturation.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/InvertEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/LevelsEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/PhotoFilterEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/PosterizeEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/SelectiveColorEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/ShadowHighlightEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/ThresholdEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/TritoneEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/ColorCorrection/VibranceEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/WhiteBalanceEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/LiftGammaGainEffect.cpp"
 )
 list(REMOVE_ITEM ARTIFACT_EFFECTS_MODULES ${ARTIFACT_EFFECTS_COLOR_MODULES})
 list(REMOVE_ITEM ARTIFACT_EFFECTS_IMPL ${ARTIFACT_EFFECTS_COLOR_IMPL})
@@ -1410,20 +1410,20 @@ set(ARTIFACT_EFFECTS_TEMPORAL_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/StrobeEffect.ixx"
 )
 set(ARTIFACT_EFFECTS_TEMPORAL_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/EchoEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/FeedbackEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/FrameBlendEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/FrameAverageEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/FrameAccumulationEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/FreezeFrameEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/TemporalDenoiseEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/TemporalMedianEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/TemporalSmearEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/TimeBlurEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/TimeWarpEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/TrailFadeEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/SlitScanEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/StrobeEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/EchoEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/FeedbackEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/FrameBlendEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/FrameAverageEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/FrameAccumulationEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/FreezeFrameEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/TemporalDenoiseEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/TemporalMedianEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/TemporalSmearEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/TimeBlurEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/TimeWarpEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/TrailFadeEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/SlitScanEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/StrobeEffect.cpp"
 )
 list(REMOVE_ITEM ARTIFACT_EFFECTS_MODULES ${ARTIFACT_EFFECTS_TEMPORAL_MODULES})
 list(REMOVE_ITEM ARTIFACT_EFFECTS_IMPL ${ARTIFACT_EFFECTS_TEMPORAL_IMPL})
@@ -1470,10 +1470,10 @@ set(ARTIFACT_EFFECTS_KEYING_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Keying/IBKKeyerEffect.ixx"
 )
 set(ARTIFACT_EFFECTS_KEYING_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Keying/LumaKeyEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Keying/ChromaKeyEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Keying/DifferenceKeyEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Keying/IBKKeyerEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Keying/LumaKeyEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Keying/ChromaKeyEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Keying/DifferenceKeyEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Keying/IBKKeyerEffect.cpp"
 )
 add_library(ArtifactEffectsKeying STATIC)
 set_target_properties(ArtifactEffectsKeying PROPERTIES
@@ -1514,9 +1514,9 @@ set(ARTIFACT_EFFECTS_BLUR_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Blur/ReactionDiffusionBlurEffect.ixx"
 )
 set(ARTIFACT_EFFECTS_BLUR_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Blur/AnisotropicFlowBlurEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Blur/ApertureShapeBlurEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Blur/ReactionDiffusionBlurEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Blur/AnisotropicFlowBlurEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Blur/ApertureShapeBlurEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Blur/ReactionDiffusionBlurEffect.cpp"
 )
 
 add_library(ArtifactEffectsBlur STATIC)
@@ -1556,8 +1556,8 @@ set(ARTIFACT_EFFECTS_GENERATE_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Generate/RadioWavesEffect.ixx"
 )
 set(ARTIFACT_EFFECTS_GENERATE_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Generate/SimpleRainEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Generate/RadioWavesEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Generate/SimpleRainEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Generate/RadioWavesEffect.cpp"
 )
 
 add_library(ArtifactEffectsGenerate STATIC)
@@ -1602,13 +1602,13 @@ set(ARTIFACT_EFFECTS_DISTORT_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Distort/PolarCoordinatesEffect.ixx"
 )
 set(ARTIFACT_EFFECTS_DISTORT_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/DisplacementMap/DisplacementMapEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/TurbulentDisplace/TurbulentDisplaceEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/TimeDisplacement/TimeDisplacementEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Distort/RippleEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Distort/MagnifyEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Distort/PinchBulgeEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Distort/PolarCoordinatesEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/DisplacementMap/DisplacementMapEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/TurbulentDisplace/TurbulentDisplaceEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/TimeDisplacement/TimeDisplacementEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Distort/RippleEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Distort/MagnifyEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Distort/PinchBulgeEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Distort/PolarCoordinatesEffect.cpp"
 )
 
 add_library(ArtifactEffectsDistort STATIC)
@@ -1650,10 +1650,10 @@ set(ARTIFACT_EFFECTS_STYLIZE_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Bevel/BevelEffect.ixx"
 )
 set(ARTIFACT_EFFECTS_STYLIZE_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Kaleidoscope/KaleidoscopeEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Dithering/DitheringEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Kuwahara/KuwaharaEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Bevel/BevelEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Kaleidoscope/KaleidoscopeEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Dithering/DitheringEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Kuwahara/KuwaharaEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Bevel/BevelEffect.cpp"
 )
 
 add_library(ArtifactEffectsStylize STATIC)
@@ -1700,15 +1700,15 @@ set(ARTIFACT_EFFECTS_GLOW_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Glow/LuminescenceCausticsEffect.ixx"
 )
 set(ARTIFACT_EFFECTS_GLOW_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/DirectionalGlowEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/GlowEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/EdgeBloomEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/ChromaticGlowEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/ReactiveGlowEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/LiquidGlowEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/ResidualGlowEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/PhysicalHalationEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/LuminescenceCausticsEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/DirectionalGlowEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/GlowEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/EdgeBloomEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/ChromaticGlowEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/ReactiveGlowEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/LiquidGlowEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/ResidualGlowEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/PhysicalHalationEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/LuminescenceCausticsEffect.cpp"
 )
 
 add_library(ArtifactEffectsGlow STATIC)
@@ -1748,8 +1748,8 @@ set(ARTIFACT_EFFECTS_OPTICS_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/OpticsCompensation/OpticsCompensationEffect.ixx"
 )
 set(ARTIFACT_EFFECTS_OPTICS_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/LensDistortion/LensDistortionEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/OpticsCompensation/OpticsCompensationEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/LensDistortion/LensDistortionEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/OpticsCompensation/OpticsCompensationEffect.cpp"
 )
 
 add_library(ArtifactEffectsOptics STATIC)
@@ -1788,7 +1788,7 @@ set(ARTIFACT_EFFECTS_WAVE_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Wave/WaveEffect.ixx"
 )
 set(ARTIFACT_EFFECTS_WAVE_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Wave/WaveEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Wave/WaveEffect.cpp"
 )
 
 add_library(ArtifactEffectsWave STATIC)
@@ -1832,12 +1832,12 @@ set(ARTIFACT_EFFECTS_FILTERS_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/FindEdges/FindEdgesEffect.ixx"
 )
 set(ARTIFACT_EFFECTS_FILTERS_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/LinearWipe/LinearWipeEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Liquify/LiquifyEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Mosaic/MosaicEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Spherize/SpherizeEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Sharpen/SharpenEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/FindEdges/FindEdgesEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/LinearWipe/LinearWipeEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Liquify/LiquifyEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Mosaic/MosaicEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Spherize/SpherizeEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Sharpen/SharpenEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/FindEdges/FindEdgesEffect.cpp"
 )
 
 add_library(ArtifactEffectsFilters STATIC)
@@ -1876,7 +1876,7 @@ set(ARTIFACT_EFFECTS_NOISE_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Noise/NoiseEffect.ixx"
 )
 set(ARTIFACT_EFFECTS_NOISE_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/AddNoise/AddNoiseEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/AddNoise/AddNoiseEffect.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/NoiseEffect.cpp"
 )
 
@@ -1916,7 +1916,7 @@ set(ARTIFACT_EFFECTS_SURFACEFX_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/SurfaceFX/SurfaceFXEffect.ixx"
 )
 set(ARTIFACT_EFFECTS_SURFACEFX_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/SurfaceFX/SurfaceFXEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/SurfaceFX/SurfaceFXEffect.cpp"
 )
 
 add_library(ArtifactEffectsSurfaceFX STATIC)
@@ -1960,7 +1960,7 @@ set(ARTIFACT_EFFECTS_AUTO_MOSAIC_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/AutoMosaicEffect.ixx"
 )
 set(ARTIFACT_EFFECTS_AUTO_MOSAIC_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/AutoMosaicEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/AutoMosaicEffect.cpp"
 )
 
 add_library(ArtifactEffectsAutoMosaic STATIC)
@@ -2003,11 +2003,11 @@ set(ARTIFACT_EFFECTS_MOTION_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/MotionTrailEffect.ixx"
 )
 set(ARTIFACT_EFFECTS_MOTION_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/OpticalFlowBlurEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/VectorBlurEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/VectorFlowGlitchEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/LightTrailsEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/MotionTrailEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/OpticalFlowBlurEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/VectorBlurEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/VectorFlowGlitchEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/LightTrailsEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/MotionTrailEffect.cpp"
 )
 
 add_library(ArtifactEffectsMotion STATIC)
@@ -2050,11 +2050,11 @@ set(ARTIFACT_EFFECTS_DIGITAL_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/DeflickerEffect.ixx"
 )
 set(ARTIFACT_EFFECTS_DIGITAL_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/DataMoshEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/GlitchEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/FilmDamageEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/DeBlinkEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/DeflickerEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/DataMoshEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/GlitchEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/FilmDamageEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/DeBlinkEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/DeflickerEffect.cpp"
 )
 
 add_library(ArtifactEffectsDigital STATIC)
@@ -2097,11 +2097,11 @@ set(ARTIFACT_EFFECTS_PATTERNS_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/VoronoiEffect.ixx"
 )
 set(ARTIFACT_EFFECTS_PATTERNS_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/BricksEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/HexGridEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/HalftoneEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/StripesEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/VoronoiEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/BricksEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/HexGridEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/HalftoneEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/StripesEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/VoronoiEffect.cpp"
 )
 
 add_library(ArtifactEffectsPatterns STATIC)
@@ -2141,8 +2141,8 @@ set(ARTIFACT_EFFECTS_CHROMATIC_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/ChromaticReliefEffect.ixx"
 )
 set(ARTIFACT_EFFECTS_CHROMATIC_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/ChromaticAberrationEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/ChromaticReliefEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/ChromaticAberrationEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/ChromaticReliefEffect.cpp"
 )
 
 add_library(ArtifactEffectsChromatic STATIC)
@@ -2183,9 +2183,9 @@ set(ARTIFACT_EFFECTS_SHADOWS_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/RadialShadow/RadialShadowEffect.ixx"
 )
 set(ARTIFACT_EFFECTS_SHADOWS_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/DropShadow/DropShadowEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/InnerShadow/InnerShadowEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/RadialShadow/RadialShadowEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/DropShadow/DropShadowEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/InnerShadow/InnerShadowEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/RadialShadow/RadialShadowEffect.cpp"
 )
 
 add_library(ArtifactEffectsShadows STATIC)
@@ -2227,10 +2227,10 @@ set(ARTIFACT_EFFECTS_CONTEXTUAL_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/PixelSortEffect.ixx"
 )
 set(ARTIFACT_EFFECTS_CONTEXTUAL_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/DifferenceMatteEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/EdgeEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/GhostEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/PixelSortEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/DifferenceMatteEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/EdgeEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/GhostEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/PixelSortEffect.cpp"
 )
 
 add_library(ArtifactEffectsContextual STATIC)
@@ -2270,8 +2270,8 @@ set(ARTIFACT_EFFECTS_TEMPORAL_CONTEXT_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/ScreenShakeEffect.ixx"
 )
 set(ARTIFACT_EFFECTS_TEMPORAL_CONTEXT_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/PosterizeTimeEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/ScreenShakeEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/PosterizeTimeEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/ScreenShakeEffect.cpp"
 )
 
 add_library(ArtifactEffectsTemporalContext STATIC)
@@ -2313,10 +2313,10 @@ set(ARTIFACT_EFFECTS_FINISHING_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/VignetteEffect.ixx"
 )
 set(ARTIFACT_EFFECTS_FINISHING_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/RadialBlurEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Satin/SatinEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Stroke/StrokeEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/VignetteEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/RadialBlurEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Satin/SatinEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Stroke/StrokeEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/VignetteEffect.cpp"
 )
 
 add_library(ArtifactEffectsFinishing STATIC)
@@ -2389,40 +2389,40 @@ set(ARTIFACT_EFFECTS_SPATIAL_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/AutoMosaicEffect.ixx"
 )
 set(ARTIFACT_EFFECTS_SPATIAL_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/DirectionalGlowEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/GlowEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/EdgeBloomEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/ChromaticGlowEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/ReactiveGlowEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/LiquidGlowEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/ResidualGlowEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/PhysicalHalationEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/LuminescenceCausticsEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Keying/LumaKeyEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Keying/ChromaKeyEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Keying/DifferenceKeyEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Keying/IBKKeyerEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Blur/AnisotropicFlowBlurEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Blur/ApertureShapeBlurEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Blur/ReactionDiffusionBlurEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Kaleidoscope/KaleidoscopeEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Dithering/DitheringEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Kuwahara/KuwaharaEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Bevel/BevelEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/LinearWipe/LinearWipeEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Liquify/LiquifyEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Mosaic/MosaicEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Spherize/SpherizeEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Sharpen/SharpenEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/FindEdges/FindEdgesEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/DisplacementMap/DisplacementMapEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/TurbulentDisplace/TurbulentDisplaceEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Generate/SimpleRainEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Generate/RadioWavesEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/LensDistortion/LensDistortionEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Wave/WaveEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/AddNoise/AddNoiseEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/AutoMosaicEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/DirectionalGlowEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/GlowEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/EdgeBloomEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/ChromaticGlowEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/ReactiveGlowEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/LiquidGlowEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/ResidualGlowEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/PhysicalHalationEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/LuminescenceCausticsEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Keying/LumaKeyEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Keying/ChromaKeyEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Keying/DifferenceKeyEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Keying/IBKKeyerEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Blur/AnisotropicFlowBlurEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Blur/ApertureShapeBlurEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Blur/ReactionDiffusionBlurEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Kaleidoscope/KaleidoscopeEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Dithering/DitheringEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Kuwahara/KuwaharaEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Bevel/BevelEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/LinearWipe/LinearWipeEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Liquify/LiquifyEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Mosaic/MosaicEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Spherize/SpherizeEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Sharpen/SharpenEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/FindEdges/FindEdgesEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/DisplacementMap/DisplacementMapEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/TurbulentDisplace/TurbulentDisplaceEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Generate/SimpleRainEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Generate/RadioWavesEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/LensDistortion/LensDistortionEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Wave/WaveEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/AddNoise/AddNoiseEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/AutoMosaicEffect.cpp"
 )
 list(REMOVE_ITEM ARTIFACT_EFFECTS_SPATIAL_MODULES ${ARTIFACT_EFFECTS_KEYING_MODULES})
 list(REMOVE_ITEM ARTIFACT_EFFECTS_SPATIAL_IMPL ${ARTIFACT_EFFECTS_KEYING_IMPL})
@@ -2508,37 +2508,37 @@ set(ARTIFACT_EFFECTS_RASTERIZER_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/VoronoiEffect.ixx"
 )
 set(ARTIFACT_EFFECTS_RASTERIZER_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/BricksEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/ChromaticAberrationEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/ChromaticReliefEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/DataMoshEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/DeBlinkEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/DeflickerEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/DifferenceMatteEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/DropShadow/DropShadowEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/EdgeEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/FilmDamageEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/GhostEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/GlitchEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/GlowEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/HalftoneEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/HexGridEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/InnerShadow/InnerShadowEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/KaleidoscopeEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/LightTrailsEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/MotionTrailEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/OpticalFlowBlurEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/PixelSortEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/PosterizeTimeEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/RadialBlurEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Satin/SatinEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/ScreenShakeEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/StripesEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Stroke/StrokeEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/VectorBlurEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/VectorFlowGlitchEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/VignetteEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/VoronoiEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/BricksEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/ChromaticAberrationEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/ChromaticReliefEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/DataMoshEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/DeBlinkEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/DeflickerEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/DifferenceMatteEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/DropShadow/DropShadowEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/EdgeEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/FilmDamageEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/GhostEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/GlitchEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/GlowEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/HalftoneEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/HexGridEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/InnerShadow/InnerShadowEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/KaleidoscopeEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/LightTrailsEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/MotionTrailEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/OpticalFlowBlurEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/PixelSortEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/PosterizeTimeEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/RadialBlurEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Satin/SatinEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/ScreenShakeEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/StripesEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Stroke/StrokeEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/VectorBlurEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/VectorFlowGlitchEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/VignetteEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/VoronoiEffect.cpp"
 )
 list(REMOVE_ITEM ARTIFACT_EFFECTS_RASTERIZER_MODULES ${ARTIFACT_EFFECTS_MOTION_MODULES})
 list(REMOVE_ITEM ARTIFACT_EFFECTS_RASTERIZER_IMPL ${ARTIFACT_EFFECTS_MOTION_IMPL})
@@ -2566,9 +2566,9 @@ list(REMOVE_ITEM ARTIFACT_EFFECTS_RASTERIZER_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Rasterizer/RadialBlurEffect.ixx"
 )
 list(REMOVE_ITEM ARTIFACT_EFFECTS_RASTERIZER_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/GlowEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/KaleidoscopeEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/RadialBlurEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/GlowEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/KaleidoscopeEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/RadialBlurEffect.cpp"
 )
 # Remove every focused pack explicitly from the residual lists.  The source
 # family variables above are narrowed before the generic Spatial/Rasterizer
@@ -2620,9 +2620,9 @@ list(REMOVE_ITEM ARTIFACT_EFFECTS_IMPL
     ${ARTIFACT_EFFECTS_TEMPORAL_CONTEXT_IMPL}
     ${ARTIFACT_EFFECTS_FINISHING_IMPL}
     ${ARTIFACT_EFFECTS_SURFACEFX_IMPL}
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/GlowEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/KaleidoscopeEffect.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/RadialBlurEffect.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/GlowEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/KaleidoscopeEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Rasterizer/RadialBlurEffect.cpp"
 )
 list(REMOVE_ITEM ARTIFACT_EFFECTS_MODULES ${ARTIFACT_EFFECTS_RASTERIZER_MODULES})
 list(REMOVE_ITEM ARTIFACT_EFFECTS_IMPL ${ARTIFACT_EFFECTS_RASTERIZER_IMPL})
@@ -2712,7 +2712,7 @@ set(ARTIFACT_APPMAIN_BUILD_METADATA_DEFINITIONS
     ARTIFACT_BUILD_DIRTY="${ARTIFACT_BUILD_DIRTY}"
 )
 set_source_files_properties(
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/AppMain.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/AppMain.cpp"
     PROPERTIES COMPILE_DEFINITIONS "${ARTIFACT_APPMAIN_BUILD_METADATA_DEFINITIONS}"
 )
 set_source_files_properties(
@@ -2722,6 +2722,12 @@ set_source_files_properties(
 
 if(ARTIFACT_FEATURE_COMMAND_PALETTE)
     target_compile_definitions(Artifact PRIVATE ARTIFACT_FEATURE_COMMAND_PALETTE=1)
+    target_compile_definitions(ArtifactAppRuntime PRIVATE ARTIFACT_FEATURE_COMMAND_PALETTE=1)
+else()
+    list(REMOVE_ITEM APP_MODULES
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/Widgets/CommandPalette/ArtifactCommandPaletteWidget.ixx")
+    list(REMOVE_ITEM APP_IMPL
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/CommandPalette/ArtifactCommandPaletteWidget.cpp")
 endif()
 
 if(ARTIFACT_CXX23_MODULE_STD_AVAILABLE AND TARGET __CMAKE::CXX23)
@@ -2943,12 +2949,12 @@ set(ARTIFACT_RENDER_TEXT_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/LOD/ArtifactLODManager.ixx"
 )
 set(ARTIFACT_RENDER_TEXT_IMPL
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactTextGlyphShaderSources.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/DiligentDeviceManager.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ShaderManager.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactTextGlyphShaderSources.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/DiligentDeviceManager.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ShaderManager.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/RenderCommandBuffer.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/PrimitiveRenderer2D.cppm"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/PrimitiveRenderer3D.cppm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/PrimitiveRenderer2D.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/PrimitiveRenderer3D.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/LOD/ArtifactLODManager.cpp"
 )
 
@@ -2983,8 +2989,8 @@ target_link_libraries(ArtifactTextRenderTargetRuntime PUBLIC
 # target prevents the contract from acquiring ArtifactIRenderer dependencies.
 add_library(ArtifactTextGlyphSubmitterRuntime STATIC EXCLUDE_FROM_ALL)
 target_sources(ArtifactTextGlyphSubmitterRuntime
-    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactTextGlyphShaderSources.cppm"
-            "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactTextGlyphSubmitter.cppm"
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactTextGlyphShaderSources.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactTextGlyphSubmitter.cpp"
     PUBLIC FILE_SET CXX_MODULES FILES
         "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ArtifactTextGlyphSubmitter.ixx"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ArtifactTextGlyphShaderSources.ixx"
@@ -3007,8 +3013,8 @@ add_executable(ArtifactTextGlyphSmoke EXCLUDE_FROM_ALL
     "${CMAKE_CURRENT_SOURCE_DIR}/../experiments/TextAnimatorLab/artifact_text_glyph_smoke.cpp")
 target_compile_features(ArtifactTextGlyphSmoke PRIVATE cxx_std_23)
 target_sources(ArtifactTextGlyphSmoke
-    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactTextGlyphShaderSources.cppm"
-            "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactTextGlyphSubmitter.cppm"
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactTextGlyphShaderSources.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactTextGlyphSubmitter.cpp"
     PUBLIC FILE_SET CXX_MODULES FILES
         "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ArtifactTextGpuDevice.ixx"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/Render/ArtifactTextRenderTarget.ixx"
@@ -3351,7 +3357,7 @@ if(ARTIFACT_FEATURE_FARM_WORKER)
     )
     target_sources(ArtifactWorker
         PRIVATE
-            "${CMAKE_CURRENT_SOURCE_DIR}/src/Worker/FarmWorkerMain.cppm"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/Worker/FarmWorkerMain.cpp"
     )
 target_link_libraries(ArtifactWorker PRIVATE ArtifactCore ArtifactCoreAudio ArtifactCoreNetwork Qt6::Core Qt6::Network)
 endif()
@@ -3718,7 +3724,7 @@ set_target_properties(ArtifactUiTest PROPERTIES FOLDER "Artifact/Testing")
 
 # MSBuild defaults .cppm files to module-interface compilation. Implementation
 # units paired with public .ixx interfaces compile as ordinary C++ while CMake
-# scans named module declarations and orders their primary interface.
+# scans named module declarations/imports and orders their primary interface.
 if(MSVC OR ARTIFACT_COMPILER_CLANG_GNU OR ARTIFACT_COMPILER_CLANG_CL)
     get_cmake_property(_artifact_cmake_variables VARIABLES)
     set(_artifact_module_implementation_sources)
@@ -3740,7 +3746,11 @@ if(MSVC OR ARTIFACT_COMPILER_CLANG_GNU OR ARTIFACT_COMPILER_CLANG_CL)
                             file(STRINGS "${_artifact_source}"
                                 _artifact_named_module_declaration
                                 REGEX "^[ \t]*module[ \t]+[A-Za-z_][A-Za-z0-9_.]*[ \t]*;")
-                            if(_artifact_named_module_declaration)
+                            file(STRINGS "${_artifact_source}"
+                                _artifact_module_import_declarations
+                                REGEX "^[ \t]*import[ \t]+")
+                            if(_artifact_named_module_declaration OR
+                               _artifact_module_import_declarations)
                                 list(APPEND _artifact_module_implementation_sources
                                     "${_artifact_source}")
                             endif()
@@ -3750,6 +3760,13 @@ if(MSVC OR ARTIFACT_COMPILER_CLANG_GNU OR ARTIFACT_COMPILER_CLANG_CL)
             endforeach()
         endif()
     endforeach()
+    # These sources are registered directly by dedicated targets rather
+    # than through ArtifactSources.cmake. Include them explicitly so Clang
+    # performs P1689 dependency scanning for their .cpp imports.
+    list(APPEND _artifact_module_implementation_sources
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/AppMainEntry.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactTextGlyphSubmitter.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/Worker/FarmWorkerMain.cpp")
     list(REMOVE_DUPLICATES _artifact_module_implementation_sources)
     foreach(_artifact_source IN LISTS
             _artifact_module_implementation_sources)

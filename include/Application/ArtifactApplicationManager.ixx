@@ -1,21 +1,21 @@
 module;
 #include <utility>
 #include <entt/entt.hpp>
-#include <QString>
-#include <QApplication>
 export  module Artifact.Application.Manager;
 
-import Artifact.Project.Manager;
-import Artifact.Service.Project;
-import Artifact.Test.ProjectManager;
-import Artifact.Effects.Manager;
-import Artifact.Service.ActiveContext;
-import Artifact.Layers.Selection.Manager;
-import Artifact.Tool.Manager;
-import Artifact.Tool.MotionSketchTool;
-import Artifact.Tool.PuppetTool;
-import Artifact.Tool.Brush;
-import Artifact.Composition.Manager;
+namespace Artifact {
+ class ArtifactProjectManager;
+ class ArtifactProjectService;
+ class ArtifactTestProjectManager;
+ class ArtifactGlobalEffectManager;
+ class ArtifactActiveContextService;
+ class ArtifactLayerSelectionManager;
+ class ArtifactToolManager;
+ class ArtifactMotionSketchTool;
+ class ArtifactPuppetTool;
+ class ArtifactBrushTool;
+ class ArtifactCompositionManager;
+}
 
 export namespace Artifact {
 

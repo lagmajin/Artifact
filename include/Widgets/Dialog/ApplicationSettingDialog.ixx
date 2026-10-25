@@ -10,8 +10,6 @@ module;
 #include <wobjectdefs.h>
 export module ApplicationSettingDialog;
 
-class QEvent;
-
 export namespace ArtifactCore {
 
 struct SettingItemInfo {

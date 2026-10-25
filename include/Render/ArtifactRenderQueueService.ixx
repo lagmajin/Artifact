@@ -1,41 +1,16 @@
 module;
 
+#include <QImage>
 #include <QJsonArray>
 #include <QJsonObject>
-#include <QMetaType>
+#include <QList>
 #include <QObject>
-#include <QVariantMap>
+#include <QMetaType>
+#include <QString>
 #include <QStringList>
-#include <algorithm>
-#include <any>
-#include <array>
-#include <atomic>
-#include <chrono>
-#include <cmath>
-#include <deque>
-#include <filesystem>
-#include <fstream>
+#include <QVariantMap>
 #include <functional>
-#include <iostream>
-#include <list>
-#include <map>
-#include <memory>
-#include <numeric>
-#include <optional>
-#include <queue>
-#include <random>
-#include <regex>
-#include <set>
-#include <sstream>
-#include <stdexcept>
-#include <string>
-#include <tuple>
-#include <type_traits>
-#include <unordered_map>
-#include <unordered_set>
-#include <utility>
-#include <variant>
-#include <vector>
+#include <QVector>
 #include <wobjectdefs.h>
 
 export module Artifact.Render.Queue.Service;

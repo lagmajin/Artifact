@@ -38,6 +38,7 @@ module;
 #include <QString>
 #include <QJsonObject>
 #include <QRectF>
+#include <QMatrix4x4>
 export module Artifact.Layer.Video;
 
 
@@ -328,3 +329,13 @@ private:
 };
 
 } // namespace Artifact
+
+namespace Artifact {
+void publishVideoLayerModified(ArtifactVideoLayer* layer,
+                               bool frameReady = false);
+void drawVideoFrameWithClonerEffect(
+    ArtifactVideoLayer* layer, ArtifactIRenderer* renderer,
+    const QMatrix4x4& transform,
+    const ArtifactCore::ImageF32x4_RGBA& frameBuffer,
+    const QRectF& drawRect, const QRectF& uvRect);
+}

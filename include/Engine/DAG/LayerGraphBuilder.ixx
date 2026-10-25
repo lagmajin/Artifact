@@ -1,34 +1,5 @@
-﻿module;
-#include <iostream>
+module;
 #include <vector>
-#include <string>
-#include <map>
-#include <unordered_map>
-#include <set>
-#include <unordered_set>
-#include <memory>
-#include <algorithm>
-#include <cmath>
-#include <functional>
-#include <optional>
-#include <utility>
-#include <array>
-#include <chrono>
-#include <filesystem>
-#include <fstream>
-#include <sstream>
-#include <stdexcept>
-#include <type_traits>
-#include <variant>
-#include <any>
-#include <atomic>
-#include <queue>
-#include <deque>
-#include <list>
-#include <tuple>
-#include <numeric>
-#include <regex>
-#include <random>
 #include <QString>
 export module Artifact.Engine.DAG.LayerGraphBuilder;
 
@@ -37,9 +8,6 @@ export module Artifact.Engine.DAG.LayerGraphBuilder;
 
 import Utils.Id;
 import Utils.String.UniString;
-import Artifact.Engine.DAG.Port;
-import Artifact.Engine.DAG.Node;
-import Artifact.Engine.DAG.Connection;
 import Artifact.Engine.DAG.Graph;
 import Artifact.Effect.Abstract;
 import Memory.SharedPtr;
@@ -72,64 +40,9 @@ export namespace Artifact {
         /// - ビルダーが EffectPipelineStage 順にソートして DAG を組み立てる
         /// - 同一ステージ内のエフェクトはチェーン（直列）接続される
         /// - ステージ間は自動で入出力をワイヤリングする
-        static EffectGraph build(const UniString& layerName,
-                                 const std::vector<ArtifactAbstractEffectPtr>& effects) {
-            EffectGraph graph(layerName);
-
-            // ステージ別にグルーピング
-            constexpr int stageCount = 6;
-            std::array<std::vector<ArtifactAbstractEffectPtr>, stageCount> stageEffects;
-            for (const auto& e : effects) {
-                if (!e) continue;
-                int idx = static_cast<int>(e->pipelineStage());
-                if (idx >= 0 && idx < stageCount) {
-                    stageEffects[idx].push_back(e);
-                }
-            }
-
-            // 各ステージのノードを生成
-            std::array<std::vector<EffectNodePtr>, stageCount> stageNodes;
-            int nodeCounter = 0;
-            for (int s = 0; s < stageCount; ++s) {
-                auto stage = static_cast<EffectPipelineStage>(s);
-                for (const auto& effect : stageEffects[s]) {
-                    auto nodeId = NodeID(QString("node_%1").arg(nodeCounter++));
-                    auto node = ArtifactCore::makeShared<EffectNode>(
-                        nodeId, effect->displayName(), stage, effect
-                    );
-                    graph.addNode(node);
-                    stageNodes[s].push_back(node);
-                }
-            }
-
-            // ステージ内チェーン接続
-            for (int s = 0; s < stageCount; ++s) {
-                auto& nodes = stageNodes[s];
-                for (size_t i = 1; i < nodes.size(); ++i) {
-                    // 前のノードの output[0] → 次のノードの input[0]
-                    graph.connect(nodes[i-1]->id(), 0, nodes[i]->id(), 0);
-                }
-            }
-
-            // ステージ間接続: 前ステージの最後のノード → 次ステージの最初のノード
-            EffectNodePtr lastNode = nullptr;
-            for (int s = 0; s < stageCount; ++s) {
-                auto& nodes = stageNodes[s];
-                if (nodes.empty()) continue;
-
-                if (lastNode) {
-                    // 型が合わない場合でもフレキシブル接続を試みる
-                    // (Port::isCompatibleWith が Any を許容するため)
-                    graph.connect(lastNode->id(), 0, nodes.front()->id(), 0);
-                }
-                lastNode = nodes.back();
-            }
-
-            // トポロジカルソートでコンパイル
-            graph.compile();
-
-            return graph;
-        }
+        static EffectGraph build(
+            const UniString& layerName,
+            const std::vector<ArtifactAbstractEffectPtr>& effects);
     };
 
 }

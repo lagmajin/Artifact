@@ -15,7 +15,7 @@ export namespace Artifact {
 
  class ArtifactRenderTestMenuPrivate;
 
- export class ArtifactRenderTestMenu :public QMenu {
+ class ArtifactRenderTestMenu :public QMenu {
  private:
 
  public:
@@ -28,7 +28,7 @@ export namespace Artifact {
 
  class ArtifactEffectTestMenuPrivate;
 
- export class ArtifactEffectTestMenu {
+ class ArtifactEffectTestMenu {
   private:
 
  public:
@@ -37,7 +37,7 @@ export namespace Artifact {
 
  class ArtifactMediaTestMenuPrivate;
 
- export class ArtifactMediaTestMenu :public QMenu {
+ class ArtifactMediaTestMenu :public QMenu {
  private:
 
  public:

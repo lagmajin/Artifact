@@ -29,7 +29,6 @@ import Translation.Manager;
 import Event.Bus;
 import Artifact.Event.Types;
 import Artifact.Service.Effect;
-import Artifact.Service.Project;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.Ofx.Host;
 import Artifact.Widgets.FxStudio.Dialog;
@@ -41,6 +40,11 @@ import UI.ShortcutBindings;
 
 namespace Artifact
 {
+bool effectMenuEventMatchesComposition(const QString& compositionId);
+ArtifactAbstractLayerPtr currentEffectMenuLayer(
+    const ArtifactCore::LayerID& layerId);
+bool effectMenuHasCurrentComposition();
+
 namespace {
 QIcon menuIcon(const QString& path)
 {
@@ -386,13 +390,8 @@ ArtifactEffectMenu::Impl::Impl(ArtifactEffectMenu* menu) : menu_(menu)
           [this](const LayerSelectionChangedEvent& event) {
               const ArtifactCore::LayerID layerId(event.layerId);
               if (!event.compositionId.isEmpty()) {
-                  auto* service = ArtifactProjectService::instance();
-                  if (service) {
-                      if (const auto comp = service->currentComposition().lock()) {
-                          if (comp->id().toString() != event.compositionId) {
-                              return;
-                          }
-                      }
+                  if (!effectMenuEventMatchesComposition(event.compositionId)) {
+                      return;
                   }
               }
               selectedLayerId_ = layerId;
@@ -403,13 +402,8 @@ ArtifactEffectMenu::Impl::Impl(ArtifactEffectMenu* menu) : menu_(menu)
           [this](const LayerChangedEvent& event) {
             if (event.changeType == LayerChangedEvent::ChangeType::FrameReady) return;
               if (!event.compositionId.isEmpty()) {
-                  auto* service = ArtifactProjectService::instance();
-                  if (service) {
-                      if (const auto comp = service->currentComposition().lock()) {
-                          if (comp->id().toString() != event.compositionId) {
-                              return;
-                          }
-                      }
+                  if (!effectMenuEventMatchesComposition(event.compositionId)) {
+                      return;
                   }
               }
               if (event.changeType == LayerChangedEvent::ChangeType::Removed &&
@@ -507,13 +501,11 @@ void ArtifactEffectMenu::Impl::handleAddEffect(const EffectInfo& info)
 void ArtifactEffectMenu::Impl::handleRemoveAllEffects()
 {
   auto* effectService = ArtifactEffectService::instance();
-  auto* projectService = ArtifactProjectService::instance();
   const auto layerId = currentTargetLayerId();
-  if (!effectService || !projectService || layerId.isNil()) {
+  if (!effectService || layerId.isNil()) {
     return;
   }
-  auto comp = projectService->currentComposition().lock();
-  auto layer = comp ? comp->layerById(layerId) : ArtifactAbstractLayerPtr{};
+  auto layer = currentEffectMenuLayer(layerId);
   if (!layer) {
     return;
   }
@@ -532,9 +524,7 @@ void ArtifactEffectMenu::Impl::handleRemoveAllEffects()
 
 void ArtifactEffectMenu::Impl::refreshEnabledState()
 {
-  auto* service = ArtifactProjectService::instance();
-  const bool hasLayer = service && service->hasProject() &&
-      static_cast<bool>(service->currentComposition().lock()) &&
+  const bool hasLayer = effectMenuHasCurrentComposition() &&
       !currentTargetLayerId().isNil();
 
   inspectorAction_->setEnabled(hasLayer);

@@ -22,6 +22,7 @@ export module Artifact.Widgets.ProjectManagerControls;
 
 import FloatColorPickerDialog;
 import Artifact.Widgets.Dialog.FloatColorPickerHooks;
+import Color.Float;
 
 export namespace Artifact {
 

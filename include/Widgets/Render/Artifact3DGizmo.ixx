@@ -67,7 +67,7 @@ struct WorldRay {
     ArtifactCore::Coordinates::WorldVector3 direction;
 };
 
-export class Artifact3DGizmo : public QObject {
+class Artifact3DGizmo : public QObject {
     W_OBJECT(Artifact3DGizmo)
 public:
     explicit Artifact3DGizmo(QObject* parent = nullptr);

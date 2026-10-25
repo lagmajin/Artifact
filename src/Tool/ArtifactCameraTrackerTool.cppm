@@ -18,6 +18,7 @@ import Artifact.Layer.Abstract;
 import Artifact.Layer.Video;
 import Artifact.Layer.Camera;
 import Artifact.Layer.Factory;
+import Artifact.Layer.InitParams;
 import Tracking.CameraTracker;
 import Frame.Position;
 import Frame.Range;

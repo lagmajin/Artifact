@@ -19,8 +19,6 @@ import Translation.Manager;
 
 import Event.Bus;
 import Artifact.Event.Types;
-import Artifact.Service.Project;
-import Artifact.Render.Queue.Service;
 import Artifact.Widgets.RenderCenterWindow;
 import Artifact.Widget.Dialog.RenderOutputSetting;
 import Utils.Path;
@@ -29,6 +27,31 @@ import UI.ShortcutBindings;
 
 namespace Artifact {
 using namespace ArtifactCore;
+
+struct RenderMenuQueueSnapshot {
+ bool hasQueueService = false;
+ bool hasJobs = false;
+};
+struct RenderMenuCompositionSnapshot {
+ bool hasComposition = false;
+ double frameRate = 0.0;
+ QString compositionId;
+ QString compositionName;
+};
+struct RenderMenuPreflightSnapshot {
+ QString summary;
+ QStringList details;
+};
+RenderMenuQueueSnapshot renderMenuQueueSnapshot();
+RenderMenuCompositionSnapshot renderMenuCompositionSnapshot();
+RenderMenuPreflightSnapshot renderMenuPreflightSnapshot();
+bool addRenderMenuCompositionToQueue(const QString& compositionId,
+                                    const QString& compositionName);
+int addAllCompositionsToRenderQueue();
+void startAllRenderJobs();
+void pauseAllRenderJobs();
+void cancelAllRenderJobs();
+void clearAllRenderQueues();
 
 namespace {
 QDockWidget* findDockByTitle(QWidget* window, const QString& title)
@@ -259,16 +282,11 @@ void ArtifactRenderMenu::Impl::showScrollPoC()
 
 void ArtifactRenderMenu::Impl::addCurrentToQueue()
 {
- auto* projectService = ArtifactProjectService::instance();
- auto currentComp = projectService->currentComposition().lock();
- if (!currentComp) {
+ const auto composition = renderMenuCompositionSnapshot();
+ if (!composition.hasComposition || !addRenderMenuCompositionToQueue(
+         composition.compositionId, composition.compositionName)) {
   QMessageBox::information(mainWindow_ ? mainWindow_ : menu_, "Render", TranslationManager::instance().tr(QStringLiteral("dialog.render.no_active_composition"), QStringLiteral("アクティブなコンポジションがありません。")));
   return;
- }
-
- auto* queueService = ArtifactRenderQueueService::instance();
- if (queueService) {
-  queueService->addRenderQueueForComposition(currentComp->id(), currentComp->settings().compositionName().toQString());
  }
  
  showQueue();
@@ -276,10 +294,8 @@ void ArtifactRenderMenu::Impl::addCurrentToQueue()
 
 void ArtifactRenderMenu::Impl::addAllCompositions()
 {
- auto* queueService = ArtifactRenderQueueService::instance();
- if (!queueService) return;
-
- const int added = queueService->addAllCompositions();
+ const int added = addAllCompositionsToRenderQueue();
+ if (added < 0) return;
  if (added > 0) {
   QMessageBox::information(mainWindow_ ? mainWindow_ : menu_, "Render",
    TranslationManager::instance().tr(QStringLiteral("dialog.render.added_to_queue"), QStringLiteral("%1 個のコンポジションをキューに追加しました。")).arg(added));
@@ -314,50 +330,38 @@ void ArtifactRenderMenu::Impl::showRenderSettings()
 {
  ArtifactRenderOutputSettingDialog dialog(mainWindow_ ? mainWindow_ : menu_);
  dialog.setWindowTitle(QStringLiteral("Render Output Settings"));
- if (auto* projectService = ArtifactProjectService::instance()) {
-  if (auto current = projectService->currentComposition().lock()) {
-   dialog.setCompositionFrameRate(current->frameRate().framerate());
-   dialog.setFrameRate(current->frameRate().framerate());
-  }
+ const auto composition = renderMenuCompositionSnapshot();
+ if (composition.hasComposition) {
+  dialog.setCompositionFrameRate(composition.frameRate);
+  dialog.setFrameRate(composition.frameRate);
  }
- if (auto* queueService = ArtifactRenderQueueService::instance()) {
-  const auto preflight = queueService->preflightAllRenderQueues();
-  dialog.setPreflightSummary(ArtifactRenderQueueService::formatPreflightSummary(preflight));
-  dialog.setPreflightDetails(ArtifactRenderQueueService::formatPreflightDetails(preflight));
+ const auto queue = renderMenuQueueSnapshot();
+ if (queue.hasQueueService) {
+  const auto preflight = renderMenuPreflightSnapshot();
+  dialog.setPreflightSummary(preflight.summary);
+  dialog.setPreflightDetails(preflight.details);
  }
  dialog.exec();
 }
 
 void ArtifactRenderMenu::Impl::startRender()
 {
- auto* queueService = ArtifactRenderQueueService::instance();
- if (queueService) {
-  queueService->startAllJobs();
- }
+ startAllRenderJobs();
 }
 
 void ArtifactRenderMenu::Impl::pauseRender()
 {
- auto* queueService = ArtifactRenderQueueService::instance();
- if (queueService) {
-  queueService->pauseAllJobs();
- }
+ pauseAllRenderJobs();
 }
 
 void ArtifactRenderMenu::Impl::cancelRender()
 {
- auto* queueService = ArtifactRenderQueueService::instance();
- if (queueService) {
-  queueService->cancelAllJobs();
- }
+ cancelAllRenderJobs();
 }
 
 void ArtifactRenderMenu::Impl::clearAll()
 {
- auto* queueService = ArtifactRenderQueueService::instance();
- if (queueService) {
-  queueService->removeAllRenderQueues();
- }
+ clearAllRenderQueues();
 }
 
 ArtifactRenderMenu::ArtifactRenderMenu(QWidget* mainWindow, QWidget* parent)
@@ -376,11 +380,11 @@ ArtifactRenderMenu::~ArtifactRenderMenu()
 void ArtifactRenderMenu::rebuildMenu()
 {
  if (!impl_) return;
- auto* projectService = ArtifactProjectService::instance();
- const bool hasComp = projectService && !projectService->currentComposition().expired();
- impl_->addCurrentToQueueAction->setEnabled(hasComp);
+ const auto composition = renderMenuCompositionSnapshot();
+ const auto queue = renderMenuQueueSnapshot();
+ impl_->addCurrentToQueueAction->setEnabled(composition.hasComposition);
  if (impl_->addAllCompositionsAction) {
-  impl_->addAllCompositionsAction->setEnabled(ArtifactRenderQueueService::instance() != nullptr);
+  impl_->addAllCompositionsAction->setEnabled(queue.hasQueueService);
  }
  if (impl_->showQueueAction) {
   impl_->showQueueAction->setEnabled(true);
@@ -392,12 +396,10 @@ void ArtifactRenderMenu::rebuildMenu()
   impl_->renderSettingsAction->setEnabled(true);
  }
  
- auto* queueService = ArtifactRenderQueueService::instance();
- const bool hasJobs = queueService && queueService->jobCount() > 0;
- impl_->startRenderAction->setEnabled(hasJobs);
- impl_->pauseRenderAction->setEnabled(hasJobs);
- impl_->cancelRenderAction->setEnabled(hasJobs);
- impl_->clearAllAction->setEnabled(hasJobs);
+ impl_->startRenderAction->setEnabled(queue.hasJobs);
+ impl_->pauseRenderAction->setEnabled(queue.hasJobs);
+ impl_->cancelRenderAction->setEnabled(queue.hasJobs);
+ impl_->clearAllAction->setEnabled(queue.hasJobs);
  if (impl_->scrollPoCAction) {
   impl_->scrollPoCAction->setEnabled(static_cast<bool>(impl_->mainWindow_));
  }

@@ -63,9 +63,9 @@ import Memory.SharedPtr;
 namespace Artifact {
 namespace Ofx {
 
-struct OfxPluginDescriptor;
+export struct OfxPluginDescriptor;
 export struct ImageEffectState;
-class ArtifactOfxHost;
+export class ArtifactOfxHost;
 
 using namespace ArtifactCore;
 

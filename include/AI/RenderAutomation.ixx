@@ -11,6 +11,7 @@ export module Artifact.AI.RenderAutomation;
 import Core.ArtifactMath;
 import Core.AI.Describable;
 import Artifact.Service.Project;
+import Utils.Id;
 
 export namespace Artifact {
 

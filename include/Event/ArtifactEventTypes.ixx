@@ -2,6 +2,7 @@ module;
 #include <utility>
 #include <QString>
 #include <QStringList>
+#include <QObject>
 #include <QVariant>
 
 export module Artifact.Event.Types;
@@ -10,8 +11,6 @@ import Playback.State;
 import Math.Interpolate;
 
 export namespace Artifact {
-
-class Artifact3DModelViewer;
 
 struct ProjectChangedEvent {
     QString projectId;
@@ -122,7 +121,7 @@ struct PreviewQualityPresetChangedEvent {
 };
 
 struct ModelViewerDisplayModeChangedEvent {
-    Artifact3DModelViewer* source = nullptr;
+    QObject* source = nullptr;
     int mode = 0;
 };
 

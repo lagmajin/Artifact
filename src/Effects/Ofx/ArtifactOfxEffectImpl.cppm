@@ -26,6 +26,7 @@ import Image.ImageF32x4RGBAWithCache;
 import Image.ImageF32x4_RGBA;
 import Graphics.SurfaceColorContract;
 import Artifact.Effect.ImplBase;
+import Artifact.Effect.Context;
 import Artifact.Effect.Abstract;
 import Property.Abstract;
 import Utils.String.UniString;

@@ -57,3 +57,7 @@ export namespace Artifact
  };
 
 };
+
+namespace Artifact {
+QWidget* createAudioPlaybackProfilerWidget(QWidget* parent);
+}
