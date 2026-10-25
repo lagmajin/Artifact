@@ -727,7 +727,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactPropertyPresentation.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactStartupScreenshot.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Asset/ArtifactAssetBrowserUndoCommands.cppm"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Asset/ArtifactAssetBrowserPresentation.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Asset/ArtifactAssetBrowserPresentation.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactRenderQueuePresentation.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactViewOrientationWidget.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionMotionPathCommands.cppm"
