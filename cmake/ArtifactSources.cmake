@@ -1312,7 +1312,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionTrackerSessionUndoCommands.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionConstructionUndoCommand.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionHostFrameSnapshot.cpp"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionSpaceGpuCache.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionSpaceGpuCache.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Render/ArtifactCompositionRevealPreparation.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionRenderController.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Render/CompositionChangeDetector.cpp"
