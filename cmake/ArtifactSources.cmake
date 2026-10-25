@@ -706,7 +706,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Test/ArtifactTestAIToolBridge.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Test/ArtifactTestCommandLine.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Test/ArtifactTestLayerGroup.cpp"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Test/ArtifactTestPreCompose.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Test/ArtifactTestPreCompose.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Test/ArtifactTestPropertyKeyframe.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Test/ArtifactTestShapePath.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Test/ArtifactTestSolidLayer.cpp"
