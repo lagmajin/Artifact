@@ -718,7 +718,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactProjectHealthDashboard.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactProjectHealthSummary.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactProjectResponsiveLayout.cpp"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactInspectorRasterizerSettings.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactInspectorRasterizerSettings.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactInspectorEffectRackPresentation.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactTimelinePresentation.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactProjectItemPresentation.cppm"
