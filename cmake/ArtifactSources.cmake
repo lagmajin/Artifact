@@ -699,7 +699,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Application/ArtifactProjectBundleIpc.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Effects/Ofx/ArtifactOfxEffectImpl.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Effects/Ofx/ArtifactOfxHost.cpp"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Render/ArtifactCompositionViewDrawing.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Render/ArtifactCompositionViewDrawing.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Render/ArtifactOffscreenCompositionRenderer.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Test.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Test/ArtifactTestAdjustmentLayer.cpp"
