@@ -16,17 +16,20 @@ module;
 
 module Artifact.Widgets.AudioMiniWidget;
 
-import Artifact.Audio.Waveform;
-import Artifact.Composition.Abstract;
 import Artifact.Composition.InOutPoints;
 import Artifact.Event.Types;
-import Artifact.Layer.Audio;
-import Artifact.Service.Project;
 import Event.Bus;
 import Undo.UndoManager;
 import Widgets.Utils.CSS;
 
 namespace Artifact {
+
+void* acquireAudioMiniWidgetComposition(const ArtifactCore::CompositionID& compositionId);
+void releaseAudioMiniWidgetComposition(void* compositionHandle);
+ArtifactInOutPoints* audioMiniWidgetInOutPoints(void* compositionHandle);
+bool extractAudioMiniWidgetData(void* compositionHandle, QString& sourceName,
+                                QVector<float>& peaks, qint64& begin,
+                                qint64& duration, double& framesPerSecond);
 
 namespace {
 QVector<qint64> transientFrames(const QVector<float>& peaks, qint64 begin, qint64 duration) {
@@ -129,13 +132,15 @@ QVector<qint64> analyzeSections(const QVector<float>& peaks, qint64 begin, qint6
 
 class ArtifactAudioMiniWidget::Impl {
 public:
+  ~Impl() { releaseAudioMiniWidgetComposition(compositionHandle); }
+
   ArtifactCore::CompositionID compositionId;
   QString sourceName;
   QVector<float> peaks;
   QVector<qint64> transients;
   QVector<qint64> beats;
   QVector<qint64> sections;
-  ArtifactCompositionPtr composition;
+  void* compositionHandle = nullptr;
   double bpm = 0.0;
   qint64 begin = 0;
   qint64 duration = 1;
@@ -177,31 +182,21 @@ void ArtifactAudioMiniWidget::refresh() {
   impl_->beats.clear();
   impl_->sections.clear();
   impl_->sourceName.clear();
-  impl_->composition.reset();
+  releaseAudioMiniWidgetComposition(impl_->compositionHandle);
+  impl_->compositionHandle = nullptr;
   impl_->bpm = 0.0;
-  auto* service = ArtifactProjectService::instance();
-  const auto result = service ? service->findComposition(impl_->compositionId) : FindCompositionResult{};
-  const auto composition = result.success ? result.ptr.lock() : ArtifactCompositionPtr{};
-  if (composition) {
-    impl_->composition = composition;
-    for (const auto& layer : composition->allLayer()) {
-      const auto audio = ArtifactCore::dynamicPointerCast<ArtifactAudioLayer>(layer);
-      if (!audio || !audio->isLoaded()) continue;
-      const auto waveform = audio->buildWaveformData(512);
-      if (waveform.peaks.isEmpty()) continue;
-      impl_->sourceName = audio->layerName();
-      impl_->peaks = waveform.peaks;
-      impl_->begin = audio->inPoint().framePosition();
-      impl_->duration = std::max<qint64>(1, audio->outPoint().framePosition() - impl_->begin);
+  impl_->compositionHandle = acquireAudioMiniWidgetComposition(impl_->compositionId);
+  if (impl_->compositionHandle) {
+    double framesPerSecond = 0.0;
+    if (extractAudioMiniWidgetData(impl_->compositionHandle, impl_->sourceName, impl_->peaks,
+                                   impl_->begin, impl_->duration, framesPerSecond)) {
       impl_->transients = transientFrames(impl_->peaks, impl_->begin, impl_->duration);
       const BeatAnalysis analysis = analyzeBeats(
           impl_->peaks, impl_->begin, impl_->duration,
-          std::max<double>(1.0,
-                           static_cast<double>(composition->frameRate().framerate())));
+          std::max<double>(1.0, framesPerSecond));
       impl_->beats = analysis.frames;
       impl_->bpm = analysis.bpm;
       impl_->sections = analyzeSections(impl_->peaks, impl_->begin, impl_->duration);
-      break;
     }
   }
   update();
@@ -302,8 +297,8 @@ void ArtifactAudioMiniWidget::seekBeat(bool next) {
 }
 
 bool ArtifactAudioMiniWidget::addGuideMarkers(bool everyFourBeats) {
-  if (!impl_ || !impl_->composition) return false;
-  auto* points = impl_->composition->inOutPoints();
+  if (!impl_ || !impl_->compositionHandle) return false;
+  auto* points = audioMiniWidgetInOutPoints(impl_->compositionHandle);
   if (!points) return false;
   const QVector<qint64>& candidates = everyFourBeats ? impl_->beats : impl_->transients;
   if (candidates.isEmpty()) return false;

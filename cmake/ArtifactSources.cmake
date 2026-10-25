@@ -1395,6 +1395,8 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/SpectrumAnalyzerWidget.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactAnimationTimelineWidget.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactAudioMiniWidget.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactAudioMiniWidgetProjectAccess.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactAudioMiniWidgetAudioAccess.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactHistoryTimelineWidget.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/StyleSurface.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Tasks/ArtifactDetachedTaskTray.cpp"
