@@ -24,7 +24,6 @@ module;
 module Artifact.Render.Queue.Encoder;
 
 import Artifact.Render.Queue.Job;
-import Render.Queue.Manager;
 import Encoder.FFmpegEncoder;
 import Core.Diagnostics.Recorder;
 import Core.Diagnostics.Snapshot;
