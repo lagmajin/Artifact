@@ -697,7 +697,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../include/Widgets/WebUI/ArtifactWebUIHost.ixx"
     "${CMAKE_CURRENT_LIST_DIR}/../src/AI/CommandIRExecutor.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Application/ArtifactProjectBundleIpc.cpp"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Effects/Ofx/ArtifactOfxEffectImpl.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Effects/Ofx/ArtifactOfxEffectImpl.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Effects/Ofx/ArtifactOfxHost.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Render/ArtifactCompositionViewDrawing.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Render/ArtifactOffscreenCompositionRenderer.cppm"
