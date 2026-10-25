@@ -729,7 +729,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Asset/ArtifactAssetBrowserUndoCommands.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Asset/ArtifactAssetBrowserPresentation.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactRenderQueuePresentation.cpp"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactViewOrientationWidget.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactViewOrientationWidget.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionMotionPathCommands.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionOnionSkinHistory.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionRigUndoCommands.cpp"
