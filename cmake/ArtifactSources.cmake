@@ -712,7 +712,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Test/ArtifactTestSolidLayer.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Test/ArtifactTestTimingEventView.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Tool/AIDSL/include/AIToolDSL/DSLTypes.ixx"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Tool/ArtifactCameraTrackerTool.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Tool/ArtifactCameraTrackerTool.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Tool/ArtifactPointTrackerTool.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactPerformanceProfilerWidget.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactProjectHealthDashboard.cpp"
