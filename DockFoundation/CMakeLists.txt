@@ -39,7 +39,7 @@ target_link_libraries(ArtifactDockFoundation PUBLIC
     Qt6::Widgets
 )
 
-if(MSVC)
+if(MSVC AND CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
     target_compile_options(ArtifactDockFoundation PRIVATE
         /Zf
         /Zc:__cplusplus
