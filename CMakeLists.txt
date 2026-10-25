@@ -3762,9 +3762,11 @@ if(MSVC OR ARTIFACT_COMPILER_CLANG_GNU OR ARTIFACT_COMPILER_CLANG_CL)
     endforeach()
     # These sources are registered directly by dedicated targets rather
     # than through ArtifactSources.cmake. Include them explicitly so Clang
-    # performs P1689 dependency scanning for their .cpp imports.
+    # performs P1689 dependency scanning for their .cpp module declarations
+    # and imports.
     list(APPEND _artifact_module_implementation_sources
         "${CMAKE_CURRENT_SOURCE_DIR}/src/AppMainEntry.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactTextGlyphShaderSources.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactTextGlyphSubmitter.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/Worker/FarmWorkerMain.cpp")
     list(REMOVE_DUPLICATES _artifact_module_implementation_sources)
