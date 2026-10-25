@@ -7,16 +7,7 @@ module Artifact.Application.Manager;
 
 
 
-import EnvironmentVariable;
-import Artifact.Effects.Manager;
-import Artifact.Test.ProjectManager;
-import Artifact.Project.Manager;
-import Artifact.Service.ActiveContext;
-import Artifact.Tool.Manager;
-import Artifact.Tool.MotionSketchTool;
-import Artifact.Tool.PuppetTool;
-import Artifact.Layers.Selection.Manager;
-import Artifact.Tool.Brush;
+import Artifact.Application.Manager.Access;
 
 namespace Artifact
 {
@@ -24,14 +15,29 @@ namespace Artifact
  class ArtifactApplicationManager::Impl
  {
  private:
-  ArtifactGlobalEffectManager effectManager_;
-  ArtifactTestProjectManager testProjectManager_;
-  ArtifactToolManager toolManager_;
-  ArtifactMotionSketchTool motionSketchTool_;
-  ArtifactPuppetTool puppetTool_;
-  ArtifactBrushTool brushTool_;
-  EnvironmentVariableManager manager_;
-  ArtifactCompositionManager compositionManager_;
+  class OwnedAccess
+  {
+  public:
+    void* value;
+    void (*destroy)(void*);
+
+    OwnedAccess(void* accessValue, void (*destroyValue)(void*))
+      : value(accessValue), destroy(destroyValue) {}
+    ~OwnedAccess()
+    {
+      if (value && destroy) destroy(value);
+    }
+    OwnedAccess(const OwnedAccess&) = delete;
+    OwnedAccess& operator=(const OwnedAccess&) = delete;
+  };
+  OwnedAccess effectManager_;
+  OwnedAccess testProjectManager_;
+  OwnedAccess toolManager_;
+  OwnedAccess motionSketchTool_;
+  OwnedAccess puppetTool_;
+  OwnedAccess brushTool_;
+  OwnedAccess manager_;
+  OwnedAccess compositionManager_;
 
   entt::registry registry_;
   entt::dispatcher dispather_;
@@ -42,7 +48,7 @@ namespace Artifact
   entt::registry& registry();
 ArtifactProjectManager* projectManager() const;
   ArtifactGlobalEffectManager* const effectManager();
-  ArtifactActiveContextService* activeContext_=new ArtifactActiveContextService();
+  void* activeContext_;
   ArtifactLayerSelectionManager* layerSelectionManager();
   ArtifactToolManager* toolManager();
   ArtifactMotionSketchTool* motionSketchTool();
@@ -52,6 +58,15 @@ ArtifactProjectManager* projectManager() const;
  };
 
 ArtifactApplicationManager::Impl::Impl()
+  : effectManager_(createApplicationGlobalEffectManager(), destroyApplicationGlobalEffectManager)
+  , testProjectManager_(createApplicationTestProjectManager(), destroyApplicationTestProjectManager)
+  , toolManager_(createApplicationToolManager(), destroyApplicationToolManager)
+  , motionSketchTool_(createApplicationMotionSketchTool(), destroyApplicationMotionSketchTool)
+  , puppetTool_(createApplicationPuppetTool(), destroyApplicationPuppetTool)
+  , brushTool_(createApplicationBrushTool(), destroyApplicationBrushTool)
+  , manager_(createApplicationEnvironmentVariableManager(), destroyApplicationEnvironmentVariableManager)
+  , compositionManager_(createApplicationCompositionManager(), destroyApplicationCompositionManager)
+  , activeContext_(createApplicationActiveContextService())
 {
 }
 
@@ -60,7 +75,7 @@ ArtifactApplicationManager::Impl::Impl()
   // Playback is shut down explicitly by AppMain before static destruction.
   // Do not access function-local service singletons from another singleton's
   // destructor: their destruction order is not a valid lifetime contract.
-  delete activeContext_;
+  destroyApplicationActiveContextService(activeContext_);
  }
 
  entt::registry& ArtifactApplicationManager::Impl::registry()
@@ -70,43 +85,42 @@ ArtifactApplicationManager::Impl::Impl()
 
 ArtifactGlobalEffectManager* const ArtifactApplicationManager::Impl::effectManager()
 {
-  return &effectManager_;
+  return reinterpret_cast<ArtifactGlobalEffectManager*>(effectManager_.value);
 }
 
 ArtifactProjectManager* ArtifactApplicationManager::Impl::projectManager() const
  {
-  static ArtifactProjectManager manager;
-  return &manager;
+  return reinterpret_cast<ArtifactProjectManager*>(applicationProjectManagerOpaque());
  }
 
 ArtifactLayerSelectionManager* ArtifactApplicationManager::Impl::layerSelectionManager()
  {
-  return ArtifactLayerSelectionManager::instance();
+  return reinterpret_cast<ArtifactLayerSelectionManager*>(applicationLayerSelectionManagerOpaque());
  }
 
  ArtifactToolManager* ArtifactApplicationManager::Impl::toolManager()
  {
-  return &toolManager_;
+  return reinterpret_cast<ArtifactToolManager*>(toolManager_.value);
  }
 
  ArtifactMotionSketchTool* ArtifactApplicationManager::Impl::motionSketchTool()
  {
-  return &motionSketchTool_;
+  return reinterpret_cast<ArtifactMotionSketchTool*>(motionSketchTool_.value);
  }
 
  ArtifactCompositionManager* ArtifactApplicationManager::Impl::compositionManager()
  {
-  return &compositionManager_;
+  return reinterpret_cast<ArtifactCompositionManager*>(compositionManager_.value);
  }
 
  ArtifactPuppetTool* ArtifactApplicationManager::Impl::puppetTool()
  {
-  return &puppetTool_;
+  return reinterpret_cast<ArtifactPuppetTool*>(puppetTool_.value);
  }
 
  ArtifactBrushTool* ArtifactApplicationManager::Impl::brushTool()
  {
-  return &brushTool_;
+  return reinterpret_cast<ArtifactBrushTool*>(brushTool_.value);
  }
 
  ArtifactApplicationManager::ArtifactApplicationManager() :impl_(new Impl())
@@ -127,6 +141,10 @@ ArtifactLayerSelectionManager* ArtifactApplicationManager::Impl::layerSelectionM
 
 
 
+ArtifactProjectService* ArtifactApplicationManager::projectService() const
+{
+  return reinterpret_cast<ArtifactProjectService*>(applicationProjectServiceOpaque());
+}
 ArtifactGlobalEffectManager* const ArtifactApplicationManager::effectManager()
 {
   return impl_->effectManager();
@@ -134,7 +152,7 @@ ArtifactGlobalEffectManager* const ArtifactApplicationManager::effectManager()
 
 ArtifactActiveContextService* ArtifactApplicationManager::activeContextService()
 {
-  return impl_->activeContext_;
+  return reinterpret_cast<ArtifactActiveContextService*>(impl_->activeContext_);
 }
 
  ArtifactLayerSelectionManager* ArtifactApplicationManager::layerSelectionManager() const
