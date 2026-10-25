@@ -341,9 +341,9 @@ endif()
 
 # OffscreenCompositionRenderer は他モジュールから import される公開モジュールなので、
 # 自動分類の漏れを防ぐため明示的に CXX_MODULES に含める。
-list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactOffscreenCompositionRenderer.cppm" _offscreen_composition_module_idx)
+list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactOffscreenCompositionRenderer.cpp" _offscreen_composition_module_idx)
 if(_offscreen_composition_module_idx EQUAL -1)
-    list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactOffscreenCompositionRenderer.cppm")
+    list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactOffscreenCompositionRenderer.cpp")
 endif()
 
 # MaterialContainerLayer is a public layer module. Keep it explicitly registered
