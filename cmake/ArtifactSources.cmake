@@ -720,7 +720,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactProjectResponsiveLayout.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactInspectorRasterizerSettings.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactInspectorEffectRackPresentation.cpp"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactTimelinePresentation.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactTimelinePresentation.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactProjectItemPresentation.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactProjectManagerControls.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/ArtifactAudioMixerControls.cpp"
