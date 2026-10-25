@@ -21,6 +21,7 @@ import ArtifactCore.Crowd.Boids;
 import Frame.Position;
 import Memory.SharedPtr;
 import Particle;
+import Utils.Id;
 
 namespace Artifact
 {

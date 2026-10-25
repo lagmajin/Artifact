@@ -13,6 +13,7 @@ import Artifact.Layers.SolidImage;
 import Artifact.Layer.Abstract;
 import Artifact.Composition.Abstract;
 import Color.Float;
+import Utils.Id;
 
 namespace Artifact
 {

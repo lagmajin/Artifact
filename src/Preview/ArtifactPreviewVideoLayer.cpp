@@ -9,6 +9,7 @@ import Image.ImageF32x4_RGBA;
 import Artifact.Layer.Abstract;
 import Artifact.Composition.Abstract;
 import Color.Float;
+import Utils.Id;
 
 namespace Artifact
 {

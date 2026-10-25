@@ -10,6 +10,7 @@ import Artifact.Layer.Text;
 import Artifact.Layer.Abstract;
 import Artifact.Composition.Abstract;
 import Color.Float;
+import Utils.Id;
 
 namespace Artifact
 {
