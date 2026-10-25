@@ -734,7 +734,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionOnionSkinHistory.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionRigUndoCommands.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionTextPuppetUndoCommands.cppm"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionLayerUndoCommands.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionLayerUndoCommands.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionEditUndoCommands.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Render/ArtifactCompositionGizmoUndoCommands.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Widgets/Menu/ArtifactLayerMenuTransformFieldUndoCommands.cpp"
