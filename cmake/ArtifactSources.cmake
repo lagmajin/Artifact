@@ -703,7 +703,7 @@ set(ARTIFACT_APP_MODULE_SOURCES
     "${CMAKE_CURRENT_LIST_DIR}/../src/Render/ArtifactOffscreenCompositionRenderer.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Test.cppm"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Test/ArtifactTestAdjustmentLayer.cpp"
-    "${CMAKE_CURRENT_LIST_DIR}/../src/Test/ArtifactTestAIToolBridge.cppm"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/Test/ArtifactTestAIToolBridge.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Test/ArtifactTestCommandLine.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Test/ArtifactTestLayerGroup.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../src/Test/ArtifactTestPreCompose.cpp"
