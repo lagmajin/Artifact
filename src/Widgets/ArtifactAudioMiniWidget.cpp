@@ -16,6 +16,7 @@ module;
 
 module Artifact.Widgets.AudioMiniWidget;
 
+import Utils.Id;
 import Artifact.Composition.InOutPoints;
 import Artifact.Event.Types;
 import Event.Bus;
