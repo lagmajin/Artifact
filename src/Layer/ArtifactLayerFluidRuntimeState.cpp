@@ -22,6 +22,7 @@ constexpr int kSmokeMaximumAdaptiveSolverIterations = 28;
 constexpr std::int64_t kSmokeCheckpointInterval = 8;
 constexpr std::int64_t kSmokeMaximumSeekReplayFrames = 120;
 constexpr std::size_t kSmokeCheckpointMemoryBudget = 8U * 1024U * 1024U;
+constexpr std::size_t kFluidSnapshotScalarArrayCount = 9;
 
 std::uint64_t smokeCheckpointSettingsHash(
     const LayerSmokeRuntimeSettings& settings, const double framesPerSecond) {
@@ -74,7 +75,8 @@ void storeSmokeCheckpoint(LayerFluidRuntimeState& state,
       (!force && frame % kSmokeCheckpointInterval != 0)) return;
   const std::size_t bytes =
       state.fluidSolver_->width() * static_cast<std::size_t>(
-          state.fluidSolver_->height()) * sizeof(float) * 7;
+          state.fluidSolver_->height()) * sizeof(float) *
+      kFluidSnapshotScalarArrayCount;
   if (bytes > kSmokeCheckpointMemoryBudget) return;
   for (std::size_t index = 0; index < state.smokeCheckpoints_.size(); ++index) {
     if (state.smokeCheckpoints_[index].frame == frame) return;
@@ -91,7 +93,8 @@ void storeSmokeCheckpoint(LayerFluidRuntimeState& state,
          state.smokeCheckpoints_.size() > 1) {
     state.smokeCheckpointBytes_ -= std::min(
         state.smokeCheckpointBytes_,
-        state.smokeCheckpoints_[0].solver.density.size() * sizeof(float) * 7);
+        state.smokeCheckpoints_[0].solver.density.size() * sizeof(float) *
+            kFluidSnapshotScalarArrayCount);
     state.smokeCheckpoints_.removeFirst();
   }
 }
@@ -311,7 +314,8 @@ void advanceLayerSmokeRuntime(
               state.smokeCheckpoints_[state.smokeCheckpoints_.size() - 1];
           state.smokeCheckpointBytes_ -= std::min(
               state.smokeCheckpointBytes_,
-              removed.solver.density.size() * sizeof(float) * 7);
+              removed.solver.density.size() * sizeof(float) *
+                  kFluidSnapshotScalarArrayCount);
           state.smokeCheckpoints_.removeAt(
               state.smokeCheckpoints_.size() - 1);
         }
