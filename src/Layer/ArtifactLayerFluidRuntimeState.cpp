@@ -59,6 +59,9 @@ std::uint64_t smokeCheckpointSettingsHash(
   mix(static_cast<std::uint32_t>(settings.stirRevision));
   mix(static_cast<std::uint32_t>(settings.stirRevision >> 32U));
   mixFloat(settings.densityDissipationPerSecond);
+  mixFloat(settings.emitterTemperature);
+  mixFloat(settings.thermalBuoyancy);
+  mixFloat(settings.temperatureDissipationPerSecond);
   mix(static_cast<std::uint32_t>(settings.simulationStartFrame));
   mix(static_cast<std::uint32_t>(
       static_cast<std::uint64_t>(settings.simulationStartFrame) >> 32U));
@@ -199,6 +202,9 @@ void advanceLayerSmokeRuntime(
   state.fluidSolver_->setViscosity(settings.viscosity);
   state.fluidSolver_->setDiffusion(settings.diffusion);
   state.fluidSolver_->setBuoyancy(settings.buoyancy);
+  state.fluidSolver_->setThermalBuoyancy(settings.thermalBuoyancy);
+  state.fluidSolver_->setTemperatureDissipationPerSecond(
+      settings.temperatureDissipationPerSecond);
   state.fluidSolver_->setVorticity(settings.vorticity);
   const int baseSolverIterations = std::max(1, settings.solverIterations);
   state.fluidSolver_->setSolverIterations(baseSolverIterations);
@@ -244,13 +250,15 @@ void advanceLayerSmokeRuntime(
         sourceX += std::cos(angle) * offset;
         sourceY += std::sin(angle) * offset;
       }
-      const ArtifactCore::SmokeEmitter2D emitter{
+      // The emitter's independent heat field drives buoyancy and the fire tint.
+      const ArtifactCore::SmokeEmitter2D thermalEmitter{
           sourceX, sourceY, sourceRadius,
           settings.emitterDensity * emissionTimeScale,
           settings.emitterVelocityX +
               std::sin(swayPhase) * kSmokeEmitterSway,
-          settings.emitterVelocityY, settings.emitterSwirl};
-      injectSmokeEmitter2D(*state.fluidSolver_, emitter, 1.0f);
+          settings.emitterVelocityY, settings.emitterSwirl,
+          settings.emitterTemperature * emissionTimeScale};
+      injectSmokeEmitter2D(*state.fluidSolver_, thermalEmitter, 1.0f);
     }
     if (settings.stirActive) {
       injectSmokeStir2D(*state.fluidSolver_,
@@ -403,8 +411,8 @@ const ArtifactCore::ParticleRenderData& prepareLayerSmokeRenderDataImpl(
         static_cast<float>(std::max(1, sampleCountY - 1));
     const float sampleSpacing = std::max(sampleSpacingX, sampleSpacingY);
     const auto sampleSmokeFieldBilinear = [&](const float gridX,
-        const float gridY, float& density, float& velocityX,
-        float& velocityY) {
+        const float gridY, float& density, float& temperature,
+        float& velocityX, float& velocityY) {
       const float clampedX = std::clamp(
           gridX, 0.0f, static_cast<float>(settings.gridWidth - 1));
       const float clampedY = std::clamp(
@@ -425,6 +433,12 @@ const ArtifactCore::ParticleRenderData& prepareLayerSmokeRenderDataImpl(
                          std::lerp(value01, value11, tx), ty);
       };
       density = bilinear(density00, density10, density01, density11);
+      const float temperature00 = state.fluidSolver_->getTemperature(x0, y0);
+      const float temperature10 = state.fluidSolver_->getTemperature(x1, y0);
+      const float temperature01 = state.fluidSolver_->getTemperature(x0, y1);
+      const float temperature11 = state.fluidSolver_->getTemperature(x1, y1);
+      temperature = bilinear(
+          temperature00, temperature10, temperature01, temperature11);
       if (sampleVelocity) {
         float velocityX00 = 0.0f;
         float velocityY00 = 0.0f;
@@ -475,10 +489,11 @@ const ArtifactCore::ParticleRenderData& prepareLayerSmokeRenderDataImpl(
             baseGridY + jitterY * sampleStepY * kSmokeSampleJitter,
             0.0f, static_cast<float>(settings.gridHeight - 1));
         float density = 0.0f;
+        float temperature = 0.0f;
         float vx = 0.0f;
         float vy = 0.0f;
         sampleSmokeFieldBilinear(
-            sampleGridX, sampleGridY, density, vx, vy);
+            sampleGridX, sampleGridY, density, temperature, vx, vy);
         if (density < 0.025f) continue;
         ArtifactCore::ParticleVertex particle{};
         const float u = sampleGridX /
@@ -494,9 +509,15 @@ const ArtifactCore::ParticleRenderData& prepareLayerSmokeRenderDataImpl(
         particle.vx = vx * 24.0f;
         particle.vy = vy * 24.0f;
         particle.vz = 0.0f;
-        particle.r = settings.colorR;
-        particle.g = settings.colorG;
-        particle.b = settings.colorB;
+        const float fireMix = std::clamp(temperature * 0.5f, 0.0f, 1.0f);
+        const float fireRed = 1.0f;
+        const float fireGreen = std::clamp(0.16f + temperature * 0.24f,
+                                           0.16f, 0.72f);
+        const float fireBlue = std::clamp(0.015f + temperature * 0.035f,
+                                          0.015f, 0.12f);
+        particle.r = std::lerp(settings.colorR, fireRed, fireMix);
+        particle.g = std::lerp(settings.colorG, fireGreen, fireMix);
+        particle.b = std::lerp(settings.colorB, fireBlue, fireMix);
         particle.a = std::clamp(
             std::sqrt(density) * 0.18f, 0.01f, 0.18f) * 0.79f * 1.42f;
         particle.size = sampleSpacing *

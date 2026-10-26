@@ -292,6 +292,9 @@ public:
     float fluidVorticity_ = 0.1f;
     int fluidSolverIterations_ = 20;
     float fluidSmokeDensityDissipationPerSecond_ = 2.5f;
+    float fluidSmokeEmitterTemperature_ = 0.0f;
+    float fluidThermalBuoyancy_ = 0.0f;
+    float fluidTemperatureDissipationPerSecond_ = 1.5f;
     float fluidSmokeEmitterX_ = 0.5f;
     float fluidSmokeEmitterY_ = 0.9f;
     float fluidSmokeEmitterRadius_ = 0.04f;

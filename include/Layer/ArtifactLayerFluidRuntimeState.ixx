@@ -106,6 +106,9 @@ struct LayerSmokeRuntimeSettings {
   std::uint64_t stirRevision = 0;
   float densityDissipationPerSecond = 2.5f;
   std::int64_t simulationStartFrame = 0;
+  float emitterTemperature = 0.0f;
+  float thermalBuoyancy = 0.0f;
+  float temperatureDissipationPerSecond = 1.5f;
 };
 
 void advanceLayerSmokeRuntime(LayerFluidRuntimeState& state,

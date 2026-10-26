@@ -193,7 +193,9 @@ void ArtifactAbstractLayer::advanceFluidSmokeSimulation(
           impl_->fluidSmokeStirStrength_,
           impl_->fluidSmokeStirRevision_,
           impl_->fluidSmokeDensityDissipationPerSecond_,
-          effectiveSimulationStart});
+          effectiveSimulationStart,
+          impl_->fluidSmokeEmitterTemperature_, impl_->fluidThermalBuoyancy_,
+          impl_->fluidTemperatureDissipationPerSecond_});
 }
 
 void ArtifactAbstractLayer::resetFluidSmokeSimulation() {
@@ -227,7 +229,9 @@ void ArtifactAbstractLayer::drawFluidSmokeOverlay(
           impl_->fluidSmokeStirY_, impl_->fluidSmokeStirRadius_,
           impl_->fluidSmokeStirVelocityX_, impl_->fluidSmokeStirVelocityY_,
           impl_->fluidSmokeStirStrength_, impl_->fluidSmokeStirRevision_,
-          impl_->fluidSmokeDensityDissipationPerSecond_});
+          impl_->fluidSmokeDensityDissipationPerSecond_, 0,
+          impl_->fluidSmokeEmitterTemperature_, impl_->fluidThermalBuoyancy_,
+          impl_->fluidTemperatureDissipationPerSecond_});
 }
 
 void ArtifactAbstractLayer::compositeFluidSmokeSoftwareSurface(
@@ -253,7 +257,9 @@ void ArtifactAbstractLayer::compositeFluidSmokeSoftwareSurface(
       impl_->fluidSmokeStirY_, impl_->fluidSmokeStirRadius_,
       impl_->fluidSmokeStirVelocityX_, impl_->fluidSmokeStirVelocityY_,
       impl_->fluidSmokeStirStrength_, impl_->fluidSmokeStirRevision_,
-      impl_->fluidSmokeDensityDissipationPerSecond_};
+      impl_->fluidSmokeDensityDissipationPerSecond_, 0,
+      impl_->fluidSmokeEmitterTemperature_, impl_->fluidThermalBuoyancy_,
+      impl_->fluidTemperatureDissipationPerSecond_};
   advanceLayerSmokeRuntime(impl_->fluidRuntime_, frame, fps, settings);
 
   QMatrix4x4 identity;

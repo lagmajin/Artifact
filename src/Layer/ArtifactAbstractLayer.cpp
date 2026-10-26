@@ -393,6 +393,12 @@ void ArtifactAbstractLayerImpl::syncBuiltinComponentDescriptors() {
   fluid.settings[QStringLiteral("solverIterations")] = fluidSolverIterations_;
   fluid.settings[QStringLiteral("densityDissipationPerSecond")] =
       fluidSmokeDensityDissipationPerSecond_;
+  fluid.settings[QStringLiteral("emitterTemperature")] =
+      fluidSmokeEmitterTemperature_;
+  fluid.settings[QStringLiteral("thermalBuoyancy")] =
+      fluidThermalBuoyancy_;
+  fluid.settings[QStringLiteral("temperatureDissipationPerSecond")] =
+      fluidTemperatureDissipationPerSecond_;
   fluid.settings[QStringLiteral("emitterX")] = fluidSmokeEmitterX_;
   fluid.settings[QStringLiteral("emitterY")] = fluidSmokeEmitterY_;
   fluid.settings[QStringLiteral("emitterRadius")] = fluidSmokeEmitterRadius_;

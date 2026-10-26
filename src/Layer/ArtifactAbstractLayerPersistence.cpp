@@ -494,6 +494,12 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   componentsObj["fluidSolverIterations"] = impl_->fluidSolverIterations_;
   componentsObj["fluidSmokeDensityDissipationPerSecond"] =
       static_cast<double>(impl_->fluidSmokeDensityDissipationPerSecond_);
+  componentsObj["fluidSmokeEmitterTemperature"] =
+      static_cast<double>(impl_->fluidSmokeEmitterTemperature_);
+  componentsObj["fluidThermalBuoyancy"] =
+      static_cast<double>(impl_->fluidThermalBuoyancy_);
+  componentsObj["fluidTemperatureDissipationPerSecond"] =
+      static_cast<double>(impl_->fluidTemperatureDissipationPerSecond_);
   componentsObj["fluidSmokeEmitterX"] = static_cast<double>(impl_->fluidSmokeEmitterX_);
   componentsObj["fluidSmokeEmitterY"] = static_cast<double>(impl_->fluidSmokeEmitterY_);
   componentsObj["fluidSmokeEmitterRadius"] = static_cast<double>(impl_->fluidSmokeEmitterRadius_);
@@ -1313,6 +1319,18 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
             componentsObj.value(QStringLiteral("fluidSmokeDensityDissipationPerSecond"))
                 .toDouble(2.5),
             2.5, 0.0, 10.0));
+        impl_->fluidSmokeEmitterTemperature_ = static_cast<float>(finiteClamped(
+            componentsObj.value(QStringLiteral("fluidSmokeEmitterTemperature"))
+                .toDouble(0.0),
+            0.0, 0.0, 10.0));
+        impl_->fluidThermalBuoyancy_ = static_cast<float>(finiteClamped(
+            componentsObj.value(QStringLiteral("fluidThermalBuoyancy"))
+                .toDouble(0.0),
+            0.0, 0.0, 2.0));
+        impl_->fluidTemperatureDissipationPerSecond_ = static_cast<float>(finiteClamped(
+            componentsObj.value(QStringLiteral("fluidTemperatureDissipationPerSecond"))
+                .toDouble(1.5),
+            1.5, 0.0, 10.0));
         impl_->fluidSmokeEmitterX_ = static_cast<float>(finiteClamped(componentsObj.value(QStringLiteral("fluidSmokeEmitterX")).toDouble(0.5), 0.5, 0.0, 1.0));
         impl_->fluidSmokeEmitterY_ = static_cast<float>(finiteClamped(componentsObj.value(QStringLiteral("fluidSmokeEmitterY")).toDouble(0.9), 0.9, 0.0, 1.0));
         impl_->fluidSmokeEmitterRadius_ = static_cast<float>(finiteClamped(componentsObj.value(QStringLiteral("fluidSmokeEmitterRadius")).toDouble(0.04), 0.04, 0.0, 0.5));
