@@ -18,7 +18,7 @@ namespace Artifact {
 namespace {
 constexpr int kSmokeRenderSamplesPerAxis = 64;
 constexpr int kSmokeSolverAdaptiveThresholdCells = 4608;
-constexpr int kSmokeMaximumAdaptiveSolverIterations = 40;
+constexpr int kSmokeMaximumAdaptiveSolverIterations = 28;
 constexpr std::int64_t kSmokeCheckpointInterval = 8;
 constexpr std::int64_t kSmokeMaximumSeekReplayFrames = 120;
 constexpr std::size_t kSmokeCheckpointMemoryBudget = 8U * 1024U * 1024U;
