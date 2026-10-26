@@ -141,7 +141,7 @@ void advanceLayerSmokeRuntime(
           settings.emitterVelocityX +
               std::sin(swayPhase) * kSmokeEmitterSway,
           settings.emitterVelocityY, settings.emitterSwirl};
-      injectSmokeEmitter2D(*state.fluidSolver_, emitter, emissionTimeScale);
+      injectSmokeEmitter2D(*state.fluidSolver_, emitter, 1.0f);
     }
     if (settings.stirActive) {
       injectSmokeStir2D(*state.fluidSolver_,
