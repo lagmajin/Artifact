@@ -1207,6 +1207,31 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactAbstractLayer::getComponentProp
       impl_->fluidSolverIterations_, 7);
   fluidIterations->setHardRange(1, 256);
   fluidGroup.addProperty(fluidIterations);
+  auto addSmokeFloat = [&](const QString& path, const float value,
+                           const int priority, const double minimum,
+                           const double maximum) {
+    auto property = makeProp(path, PropertyType::Float,
+                             static_cast<double>(value), priority);
+    property->setHardRange(minimum, maximum);
+    fluidGroup.addProperty(property);
+  };
+  addSmokeFloat(QStringLiteral("component.fluid.densityDissipationPerSecond"),
+                impl_->fluidSmokeDensityDissipationPerSecond_, 8, 0.0, 10.0);
+  addSmokeFloat(QStringLiteral("component.fluid.emitterX"), impl_->fluidSmokeEmitterX_, 9, 0.0, 1.0);
+  addSmokeFloat(QStringLiteral("component.fluid.emitterY"), impl_->fluidSmokeEmitterY_, 10, 0.0, 1.0);
+  addSmokeFloat(QStringLiteral("component.fluid.emitterRadius"), impl_->fluidSmokeEmitterRadius_, 11, 0.0, 0.5);
+  auto smokeEmitterCount = makeProp(
+      QStringLiteral("component.fluid.emitterCount"), PropertyType::Integer,
+      impl_->fluidSmokeEmitterCount_, 12);
+  smokeEmitterCount->setHardRange(1, 64);
+  fluidGroup.addProperty(smokeEmitterCount);
+  addSmokeFloat(QStringLiteral("component.fluid.emitterDensity"), impl_->fluidSmokeEmitterDensity_, 13, 0.0, 20.0);
+  addSmokeFloat(QStringLiteral("component.fluid.emitterVelocityX"), impl_->fluidSmokeEmitterVelocityX_, 14, -20.0, 20.0);
+  addSmokeFloat(QStringLiteral("component.fluid.emitterVelocityY"), impl_->fluidSmokeEmitterVelocityY_, 15, -20.0, 20.0);
+  fluidGroup.addProperty(makeProp(QStringLiteral("component.fluid.smokeColor"),
+                                 PropertyType::Color,
+                                 ArtifactCore::toQColor(impl_->fluidSmokeColor_),
+                                 16));
   groups.push_back(std::move(fluidGroup));
 
   PropertyGroup liquidGroup(QStringLiteral("Liquid"));

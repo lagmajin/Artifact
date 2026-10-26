@@ -1,5 +1,8 @@
 module;
+#include <algorithm>
 #include <cstddef>
+#include <compare>
+#include <cmath>
 
 module Artifact.Layer.Abstract;
 import Artifact.Layer.PhysicsBridge;

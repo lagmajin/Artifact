@@ -1,5 +1,6 @@
 module;
 #include <utility>
+#include <compare>
 #include <memory>
 #include <typeindex>
 #include <vector>
@@ -22,7 +23,10 @@ module;
 #include <QString>
 #include <QTransform>
 #include <QMatrix4x4>
+#include <TextureView.h>
+#define DILIGENT_BASICMATH_DISABLE_HASH_SUPPORT
 #include <DiligentCore/Common/interface/BasicMath.hpp>
+#undef DILIGENT_BASICMATH_DISABLE_HASH_SUPPORT
 
 export module Artifact.Layer.Abstract;
 
@@ -501,6 +505,18 @@ public:
    bool hasCloth3DPhysics() const;
    ClothDeformationMesh3D cloth3DDeformationMesh() const;
    bool hasRigidBodyPhysics() const;
+  bool hasFluidSmokeComponent() const;
+  void resetFluidSmokeSimulation();
+  void advanceFluidSmokeSimulation(std::int64_t frame,
+                                   double framesPerSecond);
+  void drawFluidSmokeOverlay(ArtifactIRenderer* renderer,
+                             const QMatrix4x4& baseTransform,
+                             const QSizeF& sourceSize,
+                             float opacityScale);
+  void compositeFluidSmokeSoftwareSurface(QImage& surface);
+  void setFluidSmokeStirInput(bool active, float x, float y,
+                              float velocityX, float velocityY,
+                              float radius, float strength);
    void enableSoftBodyPhysics();
    void enableSoftBodyPhysicsGrid(int columns = 6, int rows = 6, float stiffness = 1.0f);
    void disableSoftBodyPhysics();

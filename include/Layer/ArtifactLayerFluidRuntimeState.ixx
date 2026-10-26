@@ -61,11 +61,10 @@ public:
       std::numeric_limits<std::int64_t>::min();
   double liquidCheckpointFps_ = 0.0;
   std::uint64_t liquidCheckpointCompositionRevision_ = 0;
-  ArtifactCore::NamedVector<ArtifactCore::ParticleVertex>
-      fluidPreviewParticles_{
-          ArtifactCore::ContainerName{"Layer.FluidPreviewParticles"}};
+  ArtifactCore::ParticleRenderData fluidRenderData_;
   std::int64_t fluidLastFrame_ =
       std::numeric_limits<std::int64_t>::min();
+  std::uint64_t smokeStirRevision_ = 0;
 };
 
 struct LayerSmokeRuntimeSettings {
@@ -76,10 +75,36 @@ struct LayerSmokeRuntimeSettings {
   float buoyancy = 0.05f;
   float vorticity = 0.1f;
   int solverIterations = 20;
-  int emitterCount = 16;
-  float emitterSpeed = 120.0f;
+  float emitterX = 0.5f;
+  float emitterY = 0.9f;
+  float emitterRadius = 0.04f;
+  int emitterCount = 1;
+  float emitterDensity = 1.0f;
+  float emitterVelocityX = 0.0f;
+  float emitterVelocityY = -1.0f;
+  float emitterSwirl = 0.0f;
+  float colorR = 0.42f;
+  float colorG = 0.72f;
+  float colorB = 1.0f;
+  bool stirActive = false;
+  float stirX = 0.5f;
+  float stirY = 0.5f;
+  float stirRadius = 0.035f;
+  float stirVelocityX = 0.0f;
+  float stirVelocityY = 0.0f;
+  float stirStrength = 1.0f;
+  std::uint64_t stirRevision = 0;
+  float densityDissipationPerSecond = 2.5f;
 };
 
+void advanceLayerSmokeRuntime(LayerFluidRuntimeState& state,
+                              std::int64_t frame,
+                              double framesPerSecond,
+                              const LayerSmokeRuntimeSettings& settings);
+const ArtifactCore::ParticleRenderData& prepareLayerSmokeRenderData(
+    LayerFluidRuntimeState& state, const QRectF& localBounds,
+    const QMatrix4x4& baseTransform, float opacityScale,
+    std::int64_t frame, const LayerSmokeRuntimeSettings& settings);
 void renderLayerSmokeRuntime(LayerFluidRuntimeState& state,
                              ArtifactIRenderer* renderer,
                              const QRectF& localBounds,

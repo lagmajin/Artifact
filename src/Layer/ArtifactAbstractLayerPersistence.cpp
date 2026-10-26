@@ -492,6 +492,21 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   componentsObj["fluidBuoyancy"] = static_cast<double>(impl_->fluidBuoyancy_);
   componentsObj["fluidVorticity"] = static_cast<double>(impl_->fluidVorticity_);
   componentsObj["fluidSolverIterations"] = impl_->fluidSolverIterations_;
+  componentsObj["fluidSmokeDensityDissipationPerSecond"] =
+      static_cast<double>(impl_->fluidSmokeDensityDissipationPerSecond_);
+  componentsObj["fluidSmokeEmitterX"] = static_cast<double>(impl_->fluidSmokeEmitterX_);
+  componentsObj["fluidSmokeEmitterY"] = static_cast<double>(impl_->fluidSmokeEmitterY_);
+  componentsObj["fluidSmokeEmitterRadius"] = static_cast<double>(impl_->fluidSmokeEmitterRadius_);
+  componentsObj["fluidSmokeEmitterCount"] = impl_->fluidSmokeEmitterCount_;
+  componentsObj["fluidSmokeEmitterDensity"] = static_cast<double>(impl_->fluidSmokeEmitterDensity_);
+  componentsObj["fluidSmokeEmitterVelocityX"] = static_cast<double>(impl_->fluidSmokeEmitterVelocityX_);
+  componentsObj["fluidSmokeEmitterVelocityY"] = static_cast<double>(impl_->fluidSmokeEmitterVelocityY_);
+  QJsonObject fluidSmokeColorObj;
+  fluidSmokeColorObj["r"] = impl_->fluidSmokeColor_.r();
+  fluidSmokeColorObj["g"] = impl_->fluidSmokeColor_.g();
+  fluidSmokeColorObj["b"] = impl_->fluidSmokeColor_.b();
+  fluidSmokeColorObj["a"] = impl_->fluidSmokeColor_.a();
+  componentsObj["fluidSmokeColor"] = fluidSmokeColorObj;
   componentsObj["liquidFillAmount"] =
       static_cast<double>(impl_->liquidFillAmount_);
   componentsObj["liquidInflowRate"] =
@@ -1294,6 +1309,17 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
         impl_->fluidSolverIterations_ = std::clamp(
             componentsObj.value(QStringLiteral("fluidSolverIterations")).toInt(20),
             1, 256);
+        impl_->fluidSmokeDensityDissipationPerSecond_ = static_cast<float>(finiteClamped(
+            componentsObj.value(QStringLiteral("fluidSmokeDensityDissipationPerSecond"))
+                .toDouble(2.5),
+            2.5, 0.0, 10.0));
+        impl_->fluidSmokeEmitterX_ = static_cast<float>(finiteClamped(componentsObj.value(QStringLiteral("fluidSmokeEmitterX")).toDouble(0.5), 0.5, 0.0, 1.0));
+        impl_->fluidSmokeEmitterY_ = static_cast<float>(finiteClamped(componentsObj.value(QStringLiteral("fluidSmokeEmitterY")).toDouble(0.9), 0.9, 0.0, 1.0));
+        impl_->fluidSmokeEmitterRadius_ = static_cast<float>(finiteClamped(componentsObj.value(QStringLiteral("fluidSmokeEmitterRadius")).toDouble(0.04), 0.04, 0.0, 0.5));
+        impl_->fluidSmokeEmitterCount_ = std::clamp(componentsObj.value(QStringLiteral("fluidSmokeEmitterCount")).toInt(1), 1, 64);
+        impl_->fluidSmokeEmitterDensity_ = static_cast<float>(finiteClamped(componentsObj.value(QStringLiteral("fluidSmokeEmitterDensity")).toDouble(1.0), 1.0, 0.0, 20.0));
+        impl_->fluidSmokeEmitterVelocityX_ = static_cast<float>(finiteClamped(componentsObj.value(QStringLiteral("fluidSmokeEmitterVelocityX")).toDouble(0.0), 0.0, -20.0, 20.0));
+        impl_->fluidSmokeEmitterVelocityY_ = static_cast<float>(finiteClamped(componentsObj.value(QStringLiteral("fluidSmokeEmitterVelocityY")).toDouble(-1.0), -1.0, -20.0, 20.0));
         impl_->liquidFillAmount_ = static_cast<float>(finiteClamped(
             componentsObj.value(QStringLiteral("liquidFillAmount")).toDouble(0.55),
             0.55, 0.0, 1.0));
@@ -1367,6 +1393,9 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
                   color.value(QStringLiteral("a")).toDouble(fallback.a()),
                   fallback.a(), 0.0, 1.0)));
         };
+        impl_->fluidSmokeColor_ = restoreLiquidColor(
+            QStringLiteral("fluidSmokeColor"),
+            FloatColor(0.42f, 0.72f, 1.0f, 1.0f));
         impl_->liquidColor_ = restoreLiquidColor(
             QStringLiteral("liquidColor"),
             FloatColor(0.10f, 0.50f, 0.98f, 1.0f));

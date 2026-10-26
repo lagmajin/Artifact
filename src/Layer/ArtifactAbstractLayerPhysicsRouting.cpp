@@ -602,6 +602,67 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
                           LayerDirtyReason::PropertyChanged);
       return true;
     }
+    if (propertyPath == QStringLiteral("component.fluid.densityDissipationPerSecond")) {
+      impl_->fluidSmokeDensityDissipationPerSecond_ = finiteClampedValue(
+          value.toDouble(), impl_->fluidSmokeDensityDissipationPerSecond_,
+          0.0, 10.0);
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.fluid.emitterX")) {
+      impl_->fluidSmokeEmitterX_ = finiteClampedValue(value.toDouble(), impl_->fluidSmokeEmitterX_, 0.0, 1.0);
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect, LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.fluid.emitterY")) {
+      impl_->fluidSmokeEmitterY_ = finiteClampedValue(value.toDouble(), impl_->fluidSmokeEmitterY_, 0.0, 1.0);
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect, LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.fluid.emitterRadius")) {
+      impl_->fluidSmokeEmitterRadius_ = finiteClampedValue(value.toDouble(), impl_->fluidSmokeEmitterRadius_, 0.0, 0.5);
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect, LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.fluid.emitterCount")) {
+      impl_->fluidSmokeEmitterCount_ = std::clamp(value.toInt(), 1, 64);
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect, LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.fluid.emitterDensity")) {
+      impl_->fluidSmokeEmitterDensity_ = finiteClampedValue(value.toDouble(), impl_->fluidSmokeEmitterDensity_, 0.0, 20.0);
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect, LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.fluid.emitterVelocityX")) {
+      impl_->fluidSmokeEmitterVelocityX_ = finiteClampedValue(value.toDouble(), impl_->fluidSmokeEmitterVelocityX_, -20.0, 20.0);
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect, LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.fluid.emitterVelocityY")) {
+      impl_->fluidSmokeEmitterVelocityY_ = finiteClampedValue(value.toDouble(), impl_->fluidSmokeEmitterVelocityY_, -20.0, 20.0);
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect, LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.fluid.smokeColor")) {
+      const QColor color = value.value<QColor>();
+      if (!color.isValid()) return false;
+      impl_->fluidSmokeColor_ = FloatColor(
+          color.redF(), color.greenF(), color.blueF(), color.alphaF());
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
     if (propertyPath == QStringLiteral("component.fluid.liquidFillAmount")) {
       impl_->liquidFillAmount_ = finiteClampedValue(
           value.toDouble(), impl_->liquidFillAmount_, 0.0, 1.0);

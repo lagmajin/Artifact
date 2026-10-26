@@ -157,6 +157,191 @@ const LayerEvaluationState& ArtifactAbstractLayer::layerEvaluationState() const 
   return impl_->componentEvaluationState_;
 }
 
+void ArtifactAbstractLayer::advanceFluidSmokeSimulation(
+    const std::int64_t frame, const double framesPerSecond) {
+  if (!impl_) return;
+  if (!hasFluidSmokeComponent() || !isActiveAt(FramePosition(frame))) {
+    impl_->fluidRuntime_.invalidateSmokeSimulation();
+    return;
+  }
+  advanceLayerSmokeRuntime(
+      impl_->fluidRuntime_, frame, framesPerSecond,
+      LayerSmokeRuntimeSettings{
+          impl_->fluidGridWidth_, impl_->fluidGridHeight_,
+          impl_->fluidViscosity_, impl_->fluidDiffusion_,
+          impl_->fluidBuoyancy_, impl_->fluidVorticity_,
+          impl_->fluidSolverIterations_, impl_->fluidSmokeEmitterX_,
+          impl_->fluidSmokeEmitterY_, impl_->fluidSmokeEmitterRadius_,
+          impl_->fluidSmokeEmitterCount_,
+          impl_->fluidSmokeEmitterDensity_,
+          impl_->fluidSmokeEmitterVelocityX_,
+          impl_->fluidSmokeEmitterVelocityY_, 0.0f,
+          impl_->fluidSmokeColor_.r(),
+          impl_->fluidSmokeColor_.g(), impl_->fluidSmokeColor_.b(),
+          impl_->fluidSmokeStirActive_, impl_->fluidSmokeStirX_,
+          impl_->fluidSmokeStirY_, impl_->fluidSmokeStirRadius_,
+          impl_->fluidSmokeStirVelocityX_,
+          impl_->fluidSmokeStirVelocityY_,
+          impl_->fluidSmokeStirStrength_,
+          impl_->fluidSmokeStirRevision_,
+          impl_->fluidSmokeDensityDissipationPerSecond_});
+}
+
+void ArtifactAbstractLayer::resetFluidSmokeSimulation() {
+  if (!impl_) return;
+  impl_->fluidRuntime_.invalidateSmokeSimulation();
+}
+
+void ArtifactAbstractLayer::drawFluidSmokeOverlay(
+    ArtifactIRenderer* renderer, const QMatrix4x4& baseTransform,
+    const QSizeF& sourceSize, const float opacityScale) {
+  if (!renderer || !impl_ || !hasFluidSmokeComponent()) return;
+  Q_UNUSED(sourceSize);
+  const std::int64_t frame = currentTimelineFrame(this);
+  const double fps = std::max(1.0, effectiveLayerFrameRate(this));
+  renderLayerSmokeRuntime(
+      impl_->fluidRuntime_, renderer, localBounds(), baseTransform,
+      opacityScale, frame, fps,
+      LayerSmokeRuntimeSettings{
+          impl_->fluidGridWidth_, impl_->fluidGridHeight_,
+          impl_->fluidViscosity_, impl_->fluidDiffusion_,
+          impl_->fluidBuoyancy_, impl_->fluidVorticity_,
+          impl_->fluidSolverIterations_, impl_->fluidSmokeEmitterX_,
+          impl_->fluidSmokeEmitterY_, impl_->fluidSmokeEmitterRadius_,
+          impl_->fluidSmokeEmitterCount_,
+          impl_->fluidSmokeEmitterDensity_,
+          impl_->fluidSmokeEmitterVelocityX_,
+          impl_->fluidSmokeEmitterVelocityY_, 0.0f,
+          impl_->fluidSmokeColor_.r(),
+          impl_->fluidSmokeColor_.g(), impl_->fluidSmokeColor_.b(),
+          impl_->fluidSmokeStirActive_, impl_->fluidSmokeStirX_,
+          impl_->fluidSmokeStirY_, impl_->fluidSmokeStirRadius_,
+          impl_->fluidSmokeStirVelocityX_, impl_->fluidSmokeStirVelocityY_,
+          impl_->fluidSmokeStirStrength_, impl_->fluidSmokeStirRevision_,
+          impl_->fluidSmokeDensityDissipationPerSecond_});
+}
+
+void ArtifactAbstractLayer::compositeFluidSmokeSoftwareSurface(
+    QImage& surface) {
+  if (!impl_ || !hasFluidSmokeComponent() || surface.isNull() ||
+      surface.format() != QImage::Format_ARGB32_Premultiplied) {
+    return;
+  }
+  const std::int64_t frame = currentTimelineFrame(this);
+  const double fps = std::max(1.0, effectiveLayerFrameRate(this));
+  const LayerSmokeRuntimeSettings settings{
+      impl_->fluidGridWidth_, impl_->fluidGridHeight_,
+      impl_->fluidViscosity_, impl_->fluidDiffusion_,
+      impl_->fluidBuoyancy_, impl_->fluidVorticity_,
+      impl_->fluidSolverIterations_, impl_->fluidSmokeEmitterX_,
+      impl_->fluidSmokeEmitterY_, impl_->fluidSmokeEmitterRadius_,
+      impl_->fluidSmokeEmitterCount_,
+      impl_->fluidSmokeEmitterDensity_, impl_->fluidSmokeEmitterVelocityX_,
+      impl_->fluidSmokeEmitterVelocityY_, 0.0f,
+      impl_->fluidSmokeColor_.r(),
+      impl_->fluidSmokeColor_.g(), impl_->fluidSmokeColor_.b(),
+      impl_->fluidSmokeStirActive_, impl_->fluidSmokeStirX_,
+      impl_->fluidSmokeStirY_, impl_->fluidSmokeStirRadius_,
+      impl_->fluidSmokeStirVelocityX_, impl_->fluidSmokeStirVelocityY_,
+      impl_->fluidSmokeStirStrength_, impl_->fluidSmokeStirRevision_,
+      impl_->fluidSmokeDensityDissipationPerSecond_};
+  advanceLayerSmokeRuntime(impl_->fluidRuntime_, frame, fps, settings);
+
+  QMatrix4x4 identity;
+  identity.setToIdentity();
+  const QRectF localBounds(0.0, 0.0, surface.width(), surface.height());
+  const auto& renderData = prepareLayerSmokeRenderData(
+      impl_->fluidRuntime_, localBounds, identity, 1.0f, frame, settings);
+  constexpr float kDegreesToRadians = 0.01745329251994329577f;
+  const int imageWidth = surface.width();
+  const int imageHeight = surface.height();
+  for (const auto& particle : renderData.particles) {
+    if (!std::isfinite(particle.px) || !std::isfinite(particle.py) ||
+        !std::isfinite(particle.size) || !std::isfinite(particle.stretch) ||
+        !std::isfinite(particle.rotation) || !std::isfinite(particle.vx) ||
+        !std::isfinite(particle.vy)) {
+      continue;
+    }
+    const float halfWidth = std::clamp(particle.size * 10.0f, 0.375f,
+        static_cast<float>(std::max(imageWidth, imageHeight) * 2));
+    const float stretch = std::max(1.0f, particle.stretch);
+    const float halfHeight = halfWidth * stretch;
+    const float rotation = particle.rotation * kDegreesToRadians +
+                          std::atan2(particle.vy, particle.vx);
+    const float cosine = std::cos(rotation);
+    const float sine = std::sin(rotation);
+    const float extentX = std::sqrt(
+        halfWidth * halfWidth * cosine * cosine +
+        halfHeight * halfHeight * sine * sine);
+    const float extentY = std::sqrt(
+        halfWidth * halfWidth * sine * sine +
+        halfHeight * halfHeight * cosine * cosine);
+    const int minX = std::max(0, static_cast<int>(
+        std::floor(particle.px - extentX - 1.0f)));
+    const int maxX = std::min(imageWidth - 1, static_cast<int>(
+        std::ceil(particle.px + extentX + 1.0f)));
+    const int minY = std::max(0, static_cast<int>(
+        std::floor(particle.py - extentY - 1.0f)));
+    const int maxY = std::min(imageHeight - 1, static_cast<int>(
+        std::ceil(particle.py + extentY + 1.0f)));
+    if (minX > maxX || minY > maxY) continue;
+
+    for (int y = minY; y <= maxY; ++y) {
+      auto* row = reinterpret_cast<QRgb*>(surface.scanLine(y));
+      for (int x = minX; x <= maxX; ++x) {
+        const float dx = static_cast<float>(x) + 0.5f - particle.px;
+        const float dy = static_cast<float>(y) + 0.5f - particle.py;
+        const float localX = dx * cosine + dy * sine;
+        const float localY = -dx * sine + dy * cosine;
+        const float uvX = localX / (2.0f * halfWidth) + 0.5f;
+        const float uvY = localY / (2.0f * halfHeight) + 0.5f;
+        float coverage = 0.0f;
+        if (stretch > 1.05f) {
+          const float qx = std::abs(localX);
+          const float qy = std::abs(localY) - (halfHeight - halfWidth);
+          const float outsideX = std::max(qx, 0.0f);
+          const float outsideY = std::max(qy, 0.0f);
+          const float distance = std::sqrt(
+              outsideX * outsideX + outsideY * outsideY) - halfWidth;
+          if (distance > 0.0f) continue;
+          if (uvY < 0.15f) {
+            coverage = std::clamp(uvY / 0.15f, 0.0f, 1.0f);
+          } else if (uvY > 0.85f) {
+            coverage = std::clamp((1.0f - uvY) / 0.15f, 0.0f, 1.0f);
+          } else {
+            coverage = 1.0f;
+          }
+        } else {
+          const float centeredX = uvX - 0.5f;
+          const float centeredY = uvY - 0.5f;
+          const float distance = std::sqrt(
+              centeredX * centeredX + centeredY * centeredY);
+          if (distance >= 0.5f) continue;
+          const float t = std::clamp((distance - 0.4f) / 0.1f, 0.0f, 1.0f);
+          const float smooth = t * t * (3.0f - 2.0f * t);
+          coverage = 1.0f - smooth;
+        }
+        const float sourceAlpha = std::clamp(particle.a * coverage, 0.0f, 1.0f);
+        if (sourceAlpha <= 0.0f) continue;
+        const QRgb destination = row[x];
+        const float inverseAlpha = 1.0f - sourceAlpha;
+        const int red = std::clamp(static_cast<int>(std::lround(
+            particle.r * sourceAlpha * 255.0f + qRed(destination) * inverseAlpha)),
+            0, 255);
+        const int green = std::clamp(static_cast<int>(std::lround(
+            particle.g * sourceAlpha * 255.0f + qGreen(destination) * inverseAlpha)),
+            0, 255);
+        const int blue = std::clamp(static_cast<int>(std::lround(
+            particle.b * sourceAlpha * 255.0f + qBlue(destination) * inverseAlpha)),
+            0, 255);
+        const int alpha = std::clamp(static_cast<int>(std::lround(
+            sourceAlpha * 255.0f + qAlpha(destination) * inverseAlpha)), 0, 255);
+        row[x] = qRgba(red, green, blue, alpha);
+      }
+    }
+  }
+}
+
 void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
                                                 const QMatrix4x4& baseTransform,
                                                 const QSizeF& sourceSize,
@@ -258,7 +443,7 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
         impl_->fluidRuntime_.liquidSurfaceFrame_ = std::numeric_limits<int64_t>::min();
         impl_->fluidRuntime_.liquidCheckpointFps_ = fps;
         impl_->fluidRuntime_.liquidCheckpointCompositionRevision_ = compositionRevision;
-        impl_->fluidRuntime_.fluidPreviewParticles_.clear();
+        impl_->fluidRuntime_.fluidRenderData_.particles.clear();
       }
       auto& liquid = *impl_->fluidRuntime_.liquidSolver_;
       NamedVector<QPointF> liquidContainerPoints{
@@ -1212,15 +1397,7 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
       if (impl_->fluidRuntime_.liquidSolver_ || !impl_->fluidRuntime_.liquidCheckpoints_.empty()) {
         impl_->fluidRuntime_.invalidateLiquidSimulation();
       }
-      renderLayerSmokeRuntime(
-          impl_->fluidRuntime_, renderer, localBounds(), baseTransform,
-          opacityScale, frame, fps,
-          LayerSmokeRuntimeSettings{
-              impl_->fluidGridWidth_, impl_->fluidGridHeight_,
-              impl_->fluidViscosity_, impl_->fluidDiffusion_,
-              impl_->fluidBuoyancy_, impl_->fluidVorticity_,
-              impl_->fluidSolverIterations_, impl_->particleEmitterCount_,
-              impl_->particleEmitterSpeed_});
+      drawFluidSmokeOverlay(renderer, baseTransform, sourceSize, opacityScale);
     }
   } else {
     impl_->fluidRuntime_.invalidateSmokeSimulation();

@@ -110,6 +110,31 @@ import Script.ArtifactScript;
 
 namespace Artifact {
 
+bool ArtifactAbstractLayer::hasFluidSmokeComponent() const {
+  return impl_ && impl_->fluidComponentEnabled_ && impl_->fluidMode_ == 0;
+}
+
+void ArtifactAbstractLayer::setFluidSmokeStirInput(
+    const bool active, const float x, const float y,
+    const float velocityX, const float velocityY,
+    const float radius, const float strength) {
+  if (!impl_) return;
+  impl_->fluidSmokeStirActive_ = active && hasFluidSmokeComponent();
+  impl_->fluidSmokeStirX_ = std::clamp(std::isfinite(x) ? x : 0.5f,
+                                      0.0f, 1.0f);
+  impl_->fluidSmokeStirY_ = std::clamp(std::isfinite(y) ? y : 0.5f,
+                                      0.0f, 1.0f);
+  impl_->fluidSmokeStirVelocityX_ = std::clamp(
+      std::isfinite(velocityX) ? velocityX : 0.0f, -8.0f, 8.0f);
+  impl_->fluidSmokeStirVelocityY_ = std::clamp(
+      std::isfinite(velocityY) ? velocityY : 0.0f, -8.0f, 8.0f);
+  impl_->fluidSmokeStirRadius_ = std::clamp(
+      std::isfinite(radius) ? radius : 0.035f, 0.005f, 0.25f);
+  impl_->fluidSmokeStirStrength_ = std::clamp(
+      std::isfinite(strength) ? strength : 1.0f, 0.0f, 4.0f);
+  ++impl_->fluidSmokeStirRevision_;
+}
+
 using namespace ArtifactCore;
 using LayerAbstractUtilities::finiteClampedValue;
 using namespace LayerAbstractUtilities;
@@ -366,6 +391,21 @@ void ArtifactAbstractLayerImpl::syncBuiltinComponentDescriptors() {
   fluid.settings[QStringLiteral("vorticity")] =
       static_cast<double>(fluidVorticity_);
   fluid.settings[QStringLiteral("solverIterations")] = fluidSolverIterations_;
+  fluid.settings[QStringLiteral("densityDissipationPerSecond")] =
+      fluidSmokeDensityDissipationPerSecond_;
+  fluid.settings[QStringLiteral("emitterX")] = fluidSmokeEmitterX_;
+  fluid.settings[QStringLiteral("emitterY")] = fluidSmokeEmitterY_;
+  fluid.settings[QStringLiteral("emitterRadius")] = fluidSmokeEmitterRadius_;
+  fluid.settings[QStringLiteral("emitterCount")] = fluidSmokeEmitterCount_;
+  fluid.settings[QStringLiteral("emitterDensity")] = fluidSmokeEmitterDensity_;
+  fluid.settings[QStringLiteral("emitterVelocityX")] = fluidSmokeEmitterVelocityX_;
+  fluid.settings[QStringLiteral("emitterVelocityY")] = fluidSmokeEmitterVelocityY_;
+  QJsonObject descriptorSmokeColor;
+  descriptorSmokeColor[QStringLiteral("r")] = fluidSmokeColor_.r();
+  descriptorSmokeColor[QStringLiteral("g")] = fluidSmokeColor_.g();
+  descriptorSmokeColor[QStringLiteral("b")] = fluidSmokeColor_.b();
+  descriptorSmokeColor[QStringLiteral("a")] = fluidSmokeColor_.a();
+  fluid.settings[QStringLiteral("smokeColor")] = descriptorSmokeColor;
   fluid.settings[QStringLiteral("liquidFillAmount")] =
       static_cast<double>(liquidFillAmount_);
   fluid.settings[QStringLiteral("liquidInflowRate")] =
