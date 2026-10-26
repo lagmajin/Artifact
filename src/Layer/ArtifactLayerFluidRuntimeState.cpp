@@ -150,6 +150,7 @@ void LayerFluidRuntimeState::invalidateLiquidSimulation() {
   liquidCheckpointFps_ = 0.0;
   liquidCheckpointCompositionRevision_ = 0;
   fluidRenderData_.particles.clear();
+  fluidFireRenderData_.particles.clear();
   fluidLastFrame_ = std::numeric_limits<std::int64_t>::min();
 }
 
@@ -159,6 +160,7 @@ void LayerFluidRuntimeState::invalidateSmokeSimulation() {
   smokeCheckpointBytes_ = 0;
   smokeCheckpointSettingsHash_ = 0;
   fluidRenderData_.particles.clear();
+  fluidFireRenderData_.particles.clear();
   fluidLastFrame_ = std::numeric_limits<std::int64_t>::min();
   smokeStirRevision_ = 0;
 }
@@ -179,12 +181,16 @@ void advanceLayerSmokeRuntime(
     state.fluidRenderData_.particles.reserve(
         static_cast<std::size_t>(samplesX) *
         static_cast<std::size_t>(samplesY));
+    state.fluidFireRenderData_.particles.reserve(
+        static_cast<std::size_t>(samplesX) *
+        static_cast<std::size_t>(samplesY));
     state.fluidLastFrame_ = std::numeric_limits<std::int64_t>::min();
     state.smokeStirRevision_ = 0;
     state.smokeCheckpoints_.clear();
     state.smokeCheckpointBytes_ = 0;
     state.smokeCheckpointSettingsHash_ = 0;
     state.fluidRenderData_.particles.clear();
+    state.fluidFireRenderData_.particles.clear();
   }
   if (!state.fluidSolver_) return;
 
@@ -386,12 +392,20 @@ const ArtifactCore::ParticleRenderData& prepareLayerSmokeRenderDataImpl(
     const std::int64_t frame, const LayerSmokeRuntimeSettings& settings,
     const bool sampleVelocity) {
   auto& renderData = state.fluidRenderData_;
+  auto& fireRenderData = state.fluidFireRenderData_;
   renderData.particles.clear();
   renderData.frameNumber = frame;
   renderData.options.blend = ArtifactCore::ParticleBlendPolicy::Alpha;
   renderData.options.billboard =
       ArtifactCore::ParticleBillboardPolicy::ScreenAligned;
   renderData.options.falloff =
+      ArtifactCore::ParticleFalloffMode::GaussianDensity;
+  fireRenderData.particles.clear();
+  fireRenderData.frameNumber = frame;
+  fireRenderData.options.blend = ArtifactCore::ParticleBlendPolicy::Alpha;
+  fireRenderData.options.billboard =
+      ArtifactCore::ParticleBillboardPolicy::ScreenAligned;
+  fireRenderData.options.falloff =
       ArtifactCore::ParticleFalloffMode::GaussianDensity;
   if (state.fluidSolver_ && bounds.isValid() && bounds.width() > 0.0 &&
       bounds.height() > 0.0) {
@@ -509,15 +523,9 @@ const ArtifactCore::ParticleRenderData& prepareLayerSmokeRenderDataImpl(
         particle.vx = vx * 24.0f;
         particle.vy = vy * 24.0f;
         particle.vz = 0.0f;
-        const float fireMix = std::clamp(temperature * 0.5f, 0.0f, 1.0f);
-        const float fireRed = 1.0f;
-        const float fireGreen = std::clamp(0.16f + temperature * 0.24f,
-                                           0.16f, 0.72f);
-        const float fireBlue = std::clamp(0.015f + temperature * 0.035f,
-                                          0.015f, 0.12f);
-        particle.r = std::lerp(settings.colorR, fireRed, fireMix);
-        particle.g = std::lerp(settings.colorG, fireGreen, fireMix);
-        particle.b = std::lerp(settings.colorB, fireBlue, fireMix);
+        particle.r = settings.colorR;
+        particle.g = settings.colorG;
+        particle.b = settings.colorB;
         particle.a = std::clamp(
             std::sqrt(density) * 0.18f, 0.01f, 0.18f) * 0.79f * 1.42f;
         particle.size = sampleSpacing *
@@ -538,6 +546,19 @@ const ArtifactCore::ParticleRenderData& prepareLayerSmokeRenderDataImpl(
         particle.ppz = mappedPrev.z();
         particle.a *= std::clamp(opacityScale, 0.0f, 1.0f);
         renderData.particles.push_back(particle);
+
+        const float fireMask = std::clamp(
+            (temperature - 0.35f) * 0.6f, 0.0f, 1.0f);
+        if (fireMask > 0.0f) {
+          const float fireHeat = std::clamp(temperature * 0.25f, 0.0f, 1.0f);
+          auto fireParticle = particle;
+          fireParticle.r = 1.0f;
+          fireParticle.g = std::lerp(0.035f, 0.78f, fireHeat);
+          fireParticle.b = std::lerp(0.002f, 0.12f, fireHeat);
+          fireParticle.a *= fireMask * 0.42f;
+          fireParticle.size *= 0.82f;
+          fireRenderData.particles.push_back(fireParticle);
+        }
       }
     }
   }
@@ -554,6 +575,15 @@ const ArtifactCore::ParticleRenderData& prepareLayerSmokeRenderData(
       state, bounds, baseTransform, opacityScale, frame, settings, true);
 }
 
+const ArtifactCore::ParticleRenderData& prepareLayerFireRenderData(
+    LayerFluidRuntimeState& state, const QRectF& bounds,
+    const QMatrix4x4& baseTransform, const float opacityScale,
+    const std::int64_t frame, const LayerSmokeRuntimeSettings& settings) {
+  prepareLayerSmokeRenderDataImpl(
+      state, bounds, baseTransform, opacityScale, frame, settings, true);
+  return state.fluidFireRenderData_;
+}
+
 void renderLayerSmokeRuntime(LayerFluidRuntimeState& state,
                              ArtifactIRenderer* renderer,
                              const QRectF& bounds,
@@ -568,6 +598,8 @@ void renderLayerSmokeRuntime(LayerFluidRuntimeState& state,
       state, bounds, baseTransform, opacityScale, frame, settings, false);
   if (renderData.particles.empty()) return;
   renderer->drawParticles(std::move(state.fluidRenderData_));
+  if (!state.fluidFireRenderData_.particles.empty())
+    renderer->drawParticles(std::move(state.fluidFireRenderData_));
 }
 
 } // namespace Artifact

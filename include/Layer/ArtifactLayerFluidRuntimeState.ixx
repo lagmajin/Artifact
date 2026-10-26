@@ -70,6 +70,7 @@ public:
   double liquidCheckpointFps_ = 0.0;
   std::uint64_t liquidCheckpointCompositionRevision_ = 0;
   ArtifactCore::ParticleRenderData fluidRenderData_;
+  ArtifactCore::ParticleRenderData fluidFireRenderData_;
   std::int64_t fluidLastFrame_ =
       std::numeric_limits<std::int64_t>::min();
   std::uint64_t smokeStirRevision_ = 0;
@@ -116,6 +117,10 @@ void advanceLayerSmokeRuntime(LayerFluidRuntimeState& state,
                               double framesPerSecond,
                               const LayerSmokeRuntimeSettings& settings);
 const ArtifactCore::ParticleRenderData& prepareLayerSmokeRenderData(
+    LayerFluidRuntimeState& state, const QRectF& localBounds,
+    const QMatrix4x4& baseTransform, float opacityScale,
+    std::int64_t frame, const LayerSmokeRuntimeSettings& settings);
+const ArtifactCore::ParticleRenderData& prepareLayerFireRenderData(
     LayerFluidRuntimeState& state, const QRectF& localBounds,
     const QMatrix4x4& baseTransform, float opacityScale,
     std::int64_t frame, const LayerSmokeRuntimeSettings& settings);
