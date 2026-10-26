@@ -17,6 +17,8 @@ namespace Artifact {
 
 namespace {
 constexpr int kSmokeRenderSamplesPerAxis = 64;
+constexpr int kSmokeSolverAdaptiveThresholdCells = 4608;
+constexpr int kSmokeMaximumAdaptiveSolverIterations = 40;
 constexpr std::int64_t kSmokeCheckpointInterval = 8;
 constexpr std::int64_t kSmokeMaximumSeekReplayFrames = 120;
 constexpr std::size_t kSmokeCheckpointMemoryBudget = 8U * 1024U * 1024U;
@@ -195,7 +197,13 @@ void advanceLayerSmokeRuntime(
   state.fluidSolver_->setDiffusion(settings.diffusion);
   state.fluidSolver_->setBuoyancy(settings.buoyancy);
   state.fluidSolver_->setVorticity(settings.vorticity);
-  state.fluidSolver_->setSolverIterations(settings.solverIterations);
+  const int baseSolverIterations = std::max(1, settings.solverIterations);
+  state.fluidSolver_->setSolverIterations(baseSolverIterations);
+  state.fluidSolver_->setAdaptiveIterations(true);
+  state.fluidSolver_->setHighResThresholdCells(
+      kSmokeSolverAdaptiveThresholdCells);
+  state.fluidSolver_->setMaxAdaptiveIterations(std::max(
+      kSmokeMaximumAdaptiveSolverIterations, baseSolverIterations));
 
   const float dt = 1.0f / static_cast<float>(std::max(1.0, framesPerSecond));
   const int solverSubstepCount = std::max(1, static_cast<int>(
