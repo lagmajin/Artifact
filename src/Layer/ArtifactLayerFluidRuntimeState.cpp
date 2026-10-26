@@ -15,7 +15,31 @@ module Artifact.Layer.FluidRuntimeState;
 namespace Artifact {
 
 namespace {
-constexpr int kSmokeRenderSamplesPerAxis = 40;
+constexpr int kSmokeRenderSamplesPerAxis = 64;
+
+std::pair<int, int> smokeRenderSampleCounts(
+    const int width, const int height) {
+  const int safeWidth = std::max(1, width);
+  const int safeHeight = std::max(1, height);
+  const int longestAxis = std::max(safeWidth, safeHeight);
+  if (longestAxis <= kSmokeRenderSamplesPerAxis) {
+    return {safeWidth, safeHeight};
+  }
+
+  const float scale = static_cast<float>(kSmokeRenderSamplesPerAxis - 1) /
+      static_cast<float>(longestAxis - 1);
+  const int sampleCountX = safeWidth <= kSmokeRenderSamplesPerAxis
+      ? safeWidth
+      : std::clamp(static_cast<int>(std::round(
+            static_cast<float>(safeWidth - 1) * scale)) + 1,
+            1, kSmokeRenderSamplesPerAxis);
+  const int sampleCountY = safeHeight <= kSmokeRenderSamplesPerAxis
+      ? safeHeight
+      : std::clamp(static_cast<int>(std::round(
+            static_cast<float>(safeHeight - 1) * scale)) + 1,
+            1, kSmokeRenderSamplesPerAxis);
+  return {sampleCountX, sampleCountY};
+}
 }
 
 LayerFluidRuntimeState::LayerFluidRuntimeState() {
@@ -61,11 +85,11 @@ void advanceLayerSmokeRuntime(
   if (solverMismatch) {
     state.fluidSolver_ = std::make_unique<ArtifactCore::FluidSolver2D>(
         settings.gridWidth, settings.gridHeight);
-    const std::size_t samplesX = static_cast<std::size_t>(std::clamp(
-        settings.gridWidth, 1, kSmokeRenderSamplesPerAxis));
-    const std::size_t samplesY = static_cast<std::size_t>(std::clamp(
-        settings.gridHeight, 1, kSmokeRenderSamplesPerAxis));
-    state.fluidRenderData_.particles.reserve(samplesX * samplesY);
+    const auto [samplesX, samplesY] = smokeRenderSampleCounts(
+        settings.gridWidth, settings.gridHeight);
+    state.fluidRenderData_.particles.reserve(
+        static_cast<std::size_t>(samplesX) *
+        static_cast<std::size_t>(samplesY));
     state.fluidLastFrame_ = std::numeric_limits<std::int64_t>::min();
     state.smokeStirRevision_ = 0;
     state.fluidRenderData_.particles.clear();
@@ -171,12 +195,12 @@ const ArtifactCore::ParticleRenderData& prepareLayerSmokeRenderDataImpl(
   renderData.options.blend = ArtifactCore::ParticleBlendPolicy::Alpha;
   renderData.options.billboard =
       ArtifactCore::ParticleBillboardPolicy::ScreenAligned;
+  renderData.options.falloff =
+      ArtifactCore::ParticleFalloffMode::GaussianDensity;
   if (state.fluidSolver_ && bounds.isValid() && bounds.width() > 0.0 &&
       bounds.height() > 0.0) {
-    const int sampleCountX = std::clamp(
-        settings.gridWidth, 1, kSmokeRenderSamplesPerAxis);
-    const int sampleCountY = std::clamp(
-        settings.gridHeight, 1, kSmokeRenderSamplesPerAxis);
+    const auto [sampleCountX, sampleCountY] = smokeRenderSampleCounts(
+        settings.gridWidth, settings.gridHeight);
     const float sampleStepX = static_cast<float>(
         std::max(1, settings.gridWidth - 1)) /
         static_cast<float>(std::max(1, sampleCountX - 1));
@@ -286,7 +310,7 @@ const ArtifactCore::ParticleRenderData& prepareLayerSmokeRenderDataImpl(
         particle.g = settings.colorG;
         particle.b = settings.colorB;
         particle.a = std::clamp(
-            std::sqrt(density) * 0.18f, 0.01f, 0.18f) * 0.79f;
+            std::sqrt(density) * 0.18f, 0.01f, 0.18f) * 0.79f * 1.42f;
         particle.size = sampleSpacing *
             (0.118f + density * 0.02f) * 1.125f;
         particle.stretch = 1.0f;
