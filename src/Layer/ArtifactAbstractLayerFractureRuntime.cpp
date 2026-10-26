@@ -158,11 +158,19 @@ const LayerEvaluationState& ArtifactAbstractLayer::layerEvaluationState() const 
 }
 
 void ArtifactAbstractLayer::advanceFluidSmokeSimulation(
-    const std::int64_t frame, const double framesPerSecond) {
+    const std::int64_t frame, const double framesPerSecond,
+    const std::int64_t simulationStartFrame) {
   if (!impl_) return;
   if (!hasFluidSmokeComponent() || !isActiveAt(FramePosition(frame))) {
     impl_->fluidRuntime_.invalidateSmokeSimulation();
     return;
+  }
+  std::int64_t effectiveSimulationStart =
+      std::max(simulationStartFrame, inPoint().framePosition());
+  if (const auto composition =
+          dynamic_cast<const ArtifactAbstractComposition*>(compositionObject())) {
+    effectiveSimulationStart = std::max(
+        effectiveSimulationStart, composition->frameRange().start());
   }
   advanceLayerSmokeRuntime(
       impl_->fluidRuntime_, frame, framesPerSecond,
@@ -184,7 +192,8 @@ void ArtifactAbstractLayer::advanceFluidSmokeSimulation(
           impl_->fluidSmokeStirVelocityY_,
           impl_->fluidSmokeStirStrength_,
           impl_->fluidSmokeStirRevision_,
-          impl_->fluidSmokeDensityDissipationPerSecond_});
+          impl_->fluidSmokeDensityDissipationPerSecond_,
+          effectiveSimulationStart});
 }
 
 void ArtifactAbstractLayer::resetFluidSmokeSimulation() {

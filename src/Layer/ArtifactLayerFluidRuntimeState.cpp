@@ -2,6 +2,7 @@ module;
 
 #include <limits>
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -16,6 +17,82 @@ namespace Artifact {
 
 namespace {
 constexpr int kSmokeRenderSamplesPerAxis = 64;
+constexpr std::int64_t kSmokeCheckpointInterval = 8;
+constexpr std::int64_t kSmokeMaximumSeekReplayFrames = 120;
+constexpr std::size_t kSmokeCheckpointMemoryBudget = 8U * 1024U * 1024U;
+
+std::uint64_t smokeCheckpointSettingsHash(
+    const LayerSmokeRuntimeSettings& settings, const double framesPerSecond) {
+  std::uint64_t hash = 1469598103934665603ULL;
+  const auto mix = [&hash](const std::uint32_t value) {
+    hash ^= value;
+    hash *= 1099511628211ULL;
+  };
+  const auto mixFloat = [&mix](const float value) {
+    mix(std::bit_cast<std::uint32_t>(value));
+  };
+  mix(static_cast<std::uint32_t>(settings.gridWidth));
+  mix(static_cast<std::uint32_t>(settings.gridHeight));
+  mixFloat(settings.viscosity);
+  mixFloat(settings.diffusion);
+  mixFloat(settings.buoyancy);
+  mixFloat(settings.vorticity);
+  mix(static_cast<std::uint32_t>(settings.solverIterations));
+  mixFloat(settings.emitterX);
+  mixFloat(settings.emitterY);
+  mixFloat(settings.emitterRadius);
+  mix(static_cast<std::uint32_t>(settings.emitterCount));
+  mixFloat(settings.emitterDensity);
+  mixFloat(settings.emitterVelocityX);
+  mixFloat(settings.emitterVelocityY);
+  mixFloat(settings.emitterSwirl);
+  mix(static_cast<std::uint32_t>(settings.stirActive));
+  mixFloat(settings.stirX);
+  mixFloat(settings.stirY);
+  mixFloat(settings.stirRadius);
+  mixFloat(settings.stirVelocityX);
+  mixFloat(settings.stirVelocityY);
+  mixFloat(settings.stirStrength);
+  mix(static_cast<std::uint32_t>(settings.stirRevision));
+  mix(static_cast<std::uint32_t>(settings.stirRevision >> 32U));
+  mixFloat(settings.densityDissipationPerSecond);
+  mix(static_cast<std::uint32_t>(settings.simulationStartFrame));
+  mix(static_cast<std::uint32_t>(
+      static_cast<std::uint64_t>(settings.simulationStartFrame) >> 32U));
+  mix(static_cast<std::uint32_t>(std::bit_cast<std::uint64_t>(framesPerSecond)));
+  mix(static_cast<std::uint32_t>(
+      std::bit_cast<std::uint64_t>(framesPerSecond) >> 32U));
+  return hash == 0 ? 1 : hash;
+}
+
+void storeSmokeCheckpoint(LayerFluidRuntimeState& state,
+                          const std::int64_t frame,
+                          const bool force = false) {
+  if (!state.fluidSolver_ ||
+      (!force && frame % kSmokeCheckpointInterval != 0)) return;
+  const std::size_t bytes =
+      state.fluidSolver_->width() * static_cast<std::size_t>(
+          state.fluidSolver_->height()) * sizeof(float) * 7;
+  if (bytes > kSmokeCheckpointMemoryBudget) return;
+  for (std::size_t index = 0; index < state.smokeCheckpoints_.size(); ++index) {
+    if (state.smokeCheckpoints_[index].frame == frame) return;
+  }
+  // This full solver-state copy is the bounded exception that lets a later
+  // seek reproduce sequential output. It runs every 8 simulation frames, is
+  // capped at 8 MiB per layer, and currently allocates the snapshot payload.
+  LayerFluidRuntimeState::SmokeLayerCheckpoint checkpoint;
+  checkpoint.frame = frame;
+  checkpoint.solver = state.fluidSolver_->snapshot();
+  state.smokeCheckpointBytes_ += bytes;
+  state.smokeCheckpoints_.push_back(std::move(checkpoint));
+  while (state.smokeCheckpointBytes_ > kSmokeCheckpointMemoryBudget &&
+         state.smokeCheckpoints_.size() > 1) {
+    state.smokeCheckpointBytes_ -= std::min(
+        state.smokeCheckpointBytes_,
+        state.smokeCheckpoints_[0].solver.density.size() * sizeof(float) * 7);
+    state.smokeCheckpoints_.removeFirst();
+  }
+}
 
 std::pair<int, int> smokeRenderSampleCounts(
     const int width, const int height) {
@@ -44,6 +121,7 @@ std::pair<int, int> smokeRenderSampleCounts(
 
 LayerFluidRuntimeState::LayerFluidRuntimeState() {
   liquidCheckpoints_.reserve(256);
+  smokeCheckpoints_.reserve(64);
 }
 
 LayerFluidRuntimeState::~LayerFluidRuntimeState() = default;
@@ -69,6 +147,9 @@ void LayerFluidRuntimeState::invalidateLiquidSimulation() {
 
 void LayerFluidRuntimeState::invalidateSmokeSimulation() {
   fluidSolver_.reset();
+  smokeCheckpoints_.clear();
+  smokeCheckpointBytes_ = 0;
+  smokeCheckpointSettingsHash_ = 0;
   fluidRenderData_.particles.clear();
   fluidLastFrame_ = std::numeric_limits<std::int64_t>::min();
   smokeStirRevision_ = 0;
@@ -92,9 +173,23 @@ void advanceLayerSmokeRuntime(
         static_cast<std::size_t>(samplesY));
     state.fluidLastFrame_ = std::numeric_limits<std::int64_t>::min();
     state.smokeStirRevision_ = 0;
+    state.smokeCheckpoints_.clear();
+    state.smokeCheckpointBytes_ = 0;
+    state.smokeCheckpointSettingsHash_ = 0;
     state.fluidRenderData_.particles.clear();
   }
   if (!state.fluidSolver_) return;
+
+  const std::uint64_t checkpointSettingsHash =
+      smokeCheckpointSettingsHash(settings, framesPerSecond);
+  const bool checkpointSettingsChanged =
+      state.smokeCheckpointSettingsHash_ != 0 &&
+      state.smokeCheckpointSettingsHash_ != checkpointSettingsHash;
+  if (checkpointSettingsChanged) {
+    state.smokeCheckpoints_.clear();
+    state.smokeCheckpointBytes_ = 0;
+  }
+  state.smokeCheckpointSettingsHash_ = checkpointSettingsHash;
 
   state.fluidSolver_->setViscosity(settings.viscosity);
   state.fluidSolver_->setDiffusion(settings.diffusion);
@@ -160,20 +255,92 @@ void advanceLayerSmokeRuntime(
   };
 
   bool steppedThisCall = false;
-  if (state.fluidLastFrame_ == std::numeric_limits<std::int64_t>::min() ||
-      frame < state.fluidLastFrame_ || frame - state.fluidLastFrame_ > 10) {
+  const bool uninitialized =
+      state.fluidLastFrame_ == std::numeric_limits<std::int64_t>::min();
+  const bool discontinuous = !uninitialized &&
+      (frame < state.fluidLastFrame_ || frame - state.fluidLastFrame_ > 8);
+  if (uninitialized) {
     state.fluidSolver_->reset();
-    state.fluidLastFrame_ = frame;
-    advanceSmoke(frame);
+    const bool canReplayFromStart = frame >= settings.simulationStartFrame &&
+        frame - settings.simulationStartFrame <=
+            kSmokeMaximumSeekReplayFrames;
+    const std::int64_t firstFrame = canReplayFromStart
+        ? settings.simulationStartFrame
+        : frame;
+    state.fluidLastFrame_ = firstFrame - 1;
+    for (std::int64_t replayFrame = firstFrame;
+         replayFrame <= frame; ++replayFrame) {
+      advanceSmoke(replayFrame);
+      state.fluidLastFrame_ = replayFrame;
+      storeSmokeCheckpoint(state, replayFrame);
+    }
     steppedThisCall = true;
-  } else if (frame > state.fluidLastFrame_) {
-    const int stepCount = static_cast<int>(std::min<std::int64_t>(
-        frame - state.fluidLastFrame_, 8));
-    for (int step = 0; step < stepCount; ++step) {
-      advanceSmoke(state.fluidLastFrame_ + step + 1);
+  } else if (discontinuous) {
+    const std::int64_t previousFrame = state.fluidLastFrame_;
+    std::size_t nearestCheckpointIndex = state.smokeCheckpoints_.size();
+    std::int64_t nearestCheckpointFrame =
+        std::numeric_limits<std::int64_t>::min();
+    for (std::size_t index = 0; index < state.smokeCheckpoints_.size(); ++index) {
+      const auto checkpointFrame = state.smokeCheckpoints_[index].frame;
+      if (checkpointFrame <= frame && checkpointFrame > nearestCheckpointFrame) {
+        nearestCheckpointFrame = checkpointFrame;
+        nearestCheckpointIndex = index;
+      }
+    }
+    bool restoredCheckpoint = false;
+    if (nearestCheckpointIndex < state.smokeCheckpoints_.size() &&
+        frame - nearestCheckpointFrame <= kSmokeMaximumSeekReplayFrames) {
+      const auto& checkpoint = state.smokeCheckpoints_[nearestCheckpointIndex];
+      restoredCheckpoint =
+          state.fluidSolver_->restoreSnapshot(checkpoint.solver);
+      if (restoredCheckpoint) state.fluidLastFrame_ = checkpoint.frame;
+    }
+    if (restoredCheckpoint) {
+      if (frame < previousFrame) {
+        while (!state.smokeCheckpoints_.empty() &&
+               state.smokeCheckpoints_[state.smokeCheckpoints_.size() - 1].frame > frame) {
+          const auto& removed =
+              state.smokeCheckpoints_[state.smokeCheckpoints_.size() - 1];
+          state.smokeCheckpointBytes_ -= std::min(
+              state.smokeCheckpointBytes_,
+              removed.solver.density.size() * sizeof(float) * 7);
+          state.smokeCheckpoints_.removeAt(
+              state.smokeCheckpoints_.size() - 1);
+        }
+      }
+      for (std::int64_t replayFrame = state.fluidLastFrame_ + 1;
+           replayFrame <= frame; ++replayFrame) {
+        advanceSmoke(replayFrame);
+        state.fluidLastFrame_ = replayFrame;
+        storeSmokeCheckpoint(state, replayFrame);
+        steppedThisCall = true;
+      }
+    } else if (frame > state.fluidLastFrame_ &&
+               frame - state.fluidLastFrame_ <=
+                   kSmokeMaximumSeekReplayFrames) {
+      for (std::int64_t replayFrame = state.fluidLastFrame_ + 1;
+           replayFrame <= frame; ++replayFrame) {
+        advanceSmoke(replayFrame);
+        state.fluidLastFrame_ = replayFrame;
+        storeSmokeCheckpoint(state, replayFrame);
+        steppedThisCall = true;
+      }
+    } else {
+      state.fluidSolver_->reset();
+      state.smokeCheckpoints_.clear();
+      state.smokeCheckpointBytes_ = 0;
+      state.fluidLastFrame_ = frame;
+      advanceSmoke(frame);
       steppedThisCall = true;
     }
-    state.fluidLastFrame_ = frame;
+  } else if (frame > state.fluidLastFrame_) {
+    for (std::int64_t replayFrame = state.fluidLastFrame_ + 1;
+         replayFrame <= frame; ++replayFrame) {
+      advanceSmoke(replayFrame);
+      state.fluidLastFrame_ = replayFrame;
+      storeSmokeCheckpoint(state, replayFrame);
+      steppedThisCall = true;
+    }
   }
 
   const bool newStirSample = settings.stirActive &&
@@ -188,6 +355,8 @@ void advanceLayerSmokeRuntime(
     }
   }
   state.smokeStirRevision_ = settings.stirRevision;
+  storeSmokeCheckpoint(
+      state, state.fluidLastFrame_, checkpointSettingsChanged);
 }
 
 namespace {

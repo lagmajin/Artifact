@@ -1,6 +1,7 @@
 module;
 
 #include <cstdint>
+#include <cstddef>
 #include <limits>
 #include <memory>
 
@@ -33,6 +34,11 @@ public:
     LiquidLayerCheckpoint checkpoint;
   };
 
+  struct SmokeLayerCheckpoint {
+    std::int64_t frame = 0;
+    ArtifactCore::FluidSnapshot2D solver;
+  };
+
   LayerFluidRuntimeState();
   ~LayerFluidRuntimeState();
 
@@ -49,6 +55,8 @@ public:
   std::unique_ptr<ArtifactCore::LiquidSolver2D> liquidSolver_;
   ArtifactCore::NamedVector<LiquidLayerCheckpointEntry> liquidCheckpoints_{
       ArtifactCore::ContainerName{"Layer.LiquidCheckpoints"}};
+  ArtifactCore::NamedVector<SmokeLayerCheckpoint> smokeCheckpoints_{
+      ArtifactCore::ContainerName{"Layer.SmokeCheckpoints"}};
   ArtifactCore::NamedVector<LiquidSpillParticle> liquidSpillParticles_{
       ArtifactCore::ContainerName{"Layer.LiquidSpillParticles"}};
   double liquidInflowCarry_ = 0.0;
@@ -65,6 +73,8 @@ public:
   std::int64_t fluidLastFrame_ =
       std::numeric_limits<std::int64_t>::min();
   std::uint64_t smokeStirRevision_ = 0;
+  std::size_t smokeCheckpointBytes_ = 0;
+  std::uint64_t smokeCheckpointSettingsHash_ = 0;
 };
 
 struct LayerSmokeRuntimeSettings {
@@ -95,6 +105,7 @@ struct LayerSmokeRuntimeSettings {
   float stirStrength = 1.0f;
   std::uint64_t stirRevision = 0;
   float densityDissipationPerSecond = 2.5f;
+  std::int64_t simulationStartFrame = 0;
 };
 
 void advanceLayerSmokeRuntime(LayerFluidRuntimeState& state,

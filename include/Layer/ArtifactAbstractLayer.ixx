@@ -508,7 +508,8 @@ public:
   bool hasFluidSmokeComponent() const;
   void resetFluidSmokeSimulation();
   void advanceFluidSmokeSimulation(std::int64_t frame,
-                                   double framesPerSecond);
+                                   double framesPerSecond,
+                                   std::int64_t simulationStartFrame = 0);
   void drawFluidSmokeOverlay(ArtifactIRenderer* renderer,
                              const QMatrix4x4& baseTransform,
                              const QSizeF& sourceSize,
