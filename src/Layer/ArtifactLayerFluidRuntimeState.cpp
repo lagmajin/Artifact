@@ -103,6 +103,9 @@ void advanceLayerSmokeRuntime(
   state.fluidSolver_->setSolverIterations(settings.solverIterations);
 
   const float dt = 1.0f / static_cast<float>(std::max(1.0, framesPerSecond));
+  const int solverSubstepCount = std::max(1, static_cast<int>(
+      std::ceil(dt / 0.05f)));
+  const float solverSubstepDt = dt / static_cast<float>(solverSubstepCount);
   const float densityDissipationPerSecond = std::isfinite(
       settings.densityDissipationPerSecond)
       ? std::clamp(settings.densityDissipationPerSecond, 0.0f, 10.0f)
@@ -150,7 +153,9 @@ void advanceLayerSmokeRuntime(
               settings.stirVelocityY,
               settings.stirStrength * emissionTimeScale});
     }
-    state.fluidSolver_->update(dt);
+    for (int substep = 0; substep < solverSubstepCount; ++substep) {
+      state.fluidSolver_->update(solverSubstepDt);
+    }
     state.fluidSolver_->scaleDensity(densityRetention);
   };
 
@@ -178,7 +183,9 @@ void advanceLayerSmokeRuntime(
         ArtifactCore::SmokeStir2D{settings.stirX, settings.stirY,
             settings.stirRadius, settings.stirVelocityX,
             settings.stirVelocityY, settings.stirStrength});
-    state.fluidSolver_->update(dt);
+    for (int substep = 0; substep < solverSubstepCount; ++substep) {
+      state.fluidSolver_->update(solverSubstepDt);
+    }
   }
   state.smokeStirRevision_ = settings.stirRevision;
 }
