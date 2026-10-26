@@ -97,7 +97,8 @@ void ChromaKeyEffectCPUImpl::applyCPU(const ArtifactCore::ImageF32x4RGBAWithCach
     params.lightWrapWidth = lightWrapWidth_;
     const ArtifactCore::Keying::ChromaKeyBuffers buffers{
         srcData, dstData, srcImage.width(), srcImage.height(),
-        srcImage.colorDescriptor().channelOrder};
+        srcImage.colorDescriptor().channelOrder,
+        srcImage.colorDescriptor().alphaMode};
     if (!ArtifactCore::Keying::processChromaKey(buffers, params)) {
         dst = src;
         return;
@@ -125,7 +126,8 @@ public:
         }
         const ArtifactCore::Keying::ChromaKeyBuffers buffers{
             srcData, dstData, srcImage.width(), srcImage.height(),
-            srcImage.colorDescriptor().channelOrder};
+            srcImage.colorDescriptor().channelOrder,
+            srcImage.colorDescriptor().alphaMode};
         if (!ArtifactCore::Keying::processChromaKey(buffers, params_)) {
             dst = src;
             return;
@@ -215,7 +217,8 @@ public:
             applyCPU(src, dst);
             return;
         }
-        const auto gpuParams = ArtifactCore::Keying::ChromaKeyGpuParams::fromParams(params_);
+        const auto gpuParams = ArtifactCore::Keying::ChromaKeyGpuParams::fromParams(
+            params_, src.image().colorDescriptor().alphaMode);
         std::memcpy(mapped, &gpuParams, sizeof(gpuParams));
         context_->UnmapBuffer(paramsCB_, Diligent::MAP_WRITE);
         if (!executor_->setTextureView("ForegroundTexture",
@@ -259,7 +262,7 @@ float3 rgbToYCbCr(float3 c) {
   return float3(y, (c.b - y) * 0.564, (c.r - y) * 0.713);
 }
 float baseAlpha(float3 rgb) {
-  float3 pix = rgbToYCbCr(max(rgb, 0));
+  float3 pix = rgbToYCbCr(rgb);
   float3 key = rgbToYCbCr(max(KeyColor.rgb, 0));
   float chroma = length(pix.yz - key.yz);
   float luma = abs(pix.x - key.x);
@@ -273,7 +276,7 @@ float baseAlpha(float3 rgb) {
   return clipped;
 }
 float3 despillColor(float3 rgb, float alpha) {
-  if (DespillMode <= 0 || DespillStrength <= 0 || alpha >= 0.999) return max(rgb, 0);
+  if (DespillMode <= 0 || DespillStrength <= 0 || alpha >= 0.999) return rgb;
   float spill = (1.0 - alpha) * saturate(DespillStrength);
   if (DespillMode == 1) {
     if (KeyColor.g >= KeyColor.r && KeyColor.g >= KeyColor.b)
@@ -306,7 +309,9 @@ float3 despillColor(float3 rgb, float alpha) {
   if (id.x >= w || id.y >= h) return;
   float4 stored = (ForegroundTexture[id.xy]).bgra;
   float sourceAlpha = saturate(stored.a);
-  float3 straight = sourceAlpha > 1e-6 ? stored.rgb / sourceAlpha : 0;
+  float3 straight = KeyColor.w > 0.5
+      ? (sourceAlpha > 1e-6 ? stored.rgb / sourceAlpha : 0)
+      : stored.rgb;
   float alpha = baseAlpha(straight);
   float3 color = despillColor(straight, alpha);
   // Diagnostic modes intentionally show the un-finished key, matching the
@@ -328,7 +333,9 @@ float3 despillColor(float3 rgb, float alpha) {
         int2 q = clamp(int2(id.xy) + int2(dx, dy), int2(0, 0), int2(w, h) - 1);
         float4 neighbor = (ForegroundTexture[uint2(q)]).bgra;
         float neighborAlpha = saturate(neighbor.a);
-        float3 neighborStraight = neighborAlpha > 1e-6 ? neighbor.rgb / neighborAlpha : 0;
+        float3 neighborStraight = KeyColor.w > 0.5
+            ? (neighborAlpha > 1e-6 ? neighbor.rgb / neighborAlpha : 0)
+            : neighbor.rgb;
         float s = baseAlpha(neighborStraight) * neighborAlpha;
         v = (Choke > 0) ? min(v, s) : max(v, s);
       }
@@ -342,7 +349,9 @@ float3 despillColor(float3 rgb, float alpha) {
         int2 q = clamp(int2(id.xy) + int2(dx, dy), int2(0, 0), int2(w, h) - 1);
         float4 neighbor = (ForegroundTexture[uint2(q)]).bgra;
         float neighborAlpha = saturate(neighbor.a);
-        float3 neighborStraight = neighborAlpha > 1e-6 ? neighbor.rgb / neighborAlpha : 0;
+        float3 neighborStraight = KeyColor.w > 0.5
+            ? (neighborAlpha > 1e-6 ? neighbor.rgb / neighborAlpha : 0)
+            : neighbor.rgb;
         float s = baseAlpha(neighborStraight) * neighborAlpha;
         if (radius > 0) {
           float v = (Choke > 0) ? 1.0 : 0.0;
@@ -352,7 +361,9 @@ float3 despillColor(float3 rgb, float alpha) {
               int2 e = clamp(int2(q) + int2(ex, ey), int2(0, 0), int2(w, h) - 1);
               float4 edgeNeighbor = (ForegroundTexture[uint2(e)]).bgra;
               float edgeAlpha = saturate(edgeNeighbor.a);
-              float3 edgeStraight = edgeAlpha > 1e-6 ? edgeNeighbor.rgb / edgeAlpha : 0;
+              float3 edgeStraight = KeyColor.w > 0.5
+                  ? (edgeAlpha > 1e-6 ? edgeNeighbor.rgb / edgeAlpha : 0)
+                  : edgeNeighbor.rgb;
               float t = baseAlpha(edgeStraight) * edgeAlpha;
               v = (Choke > 0) ? min(v, t) : max(v, t);
             }
@@ -372,7 +383,9 @@ float3 despillColor(float3 rgb, float alpha) {
         int2 wq = clamp(int2(id.xy) + int2(wx, wy), int2(0, 0), int2(w, h) - 1);
         float4 nf = (ForegroundTexture[uint2(wq)]).bgra;
         float na = saturate(nf.a);
-        amb += (na > 1e-6 ? nf.rgb / na : 0);
+        amb += KeyColor.w > 0.5
+            ? (na > 1e-6 ? nf.rgb / na : 0)
+            : nf.rgb;
         cnt++;
       }
     }
@@ -381,7 +394,8 @@ float3 despillColor(float3 rgb, float alpha) {
       color = max(color + (amb - color) * edgeWeight, 0);
     }
   }
-  OutputTexture[id.xy] = (float4(color * matte, matte)).bgra;
+  float3 outputColor = KeyColor.w > 0.5 ? color * matte : color;
+  OutputTexture[id.xy] = (float4(outputColor, matte)).bgra;
 })";
 
     static bool uploadTextureFromImage(const ImageF32x4RGBAWithCache& src,

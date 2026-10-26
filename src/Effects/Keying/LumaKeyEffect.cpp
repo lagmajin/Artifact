@@ -39,15 +39,20 @@ void main(uint3 dtid : SV_DispatchThreadID)
 {
   if (dtid.x >= g_Width || dtid.y >= g_Height) return;
   float4 foreground = (g_InputTexture[dtid.xy]).bgra;
+  const float sourceAlpha = saturate(foreground.a);
+  const float3 straight = sourceAlpha > 1e-6f
+      ? foreground.rgb / sourceAlpha
+      : float3(0.0f, 0.0f, 0.0f);
   const float low = min(g_P0, g_P1);
   const float high = max(g_P0, g_P1);
-  const float luma = dot(foreground.rgb, float3(0.2126f, 0.7152f, 0.0722f));
+  const float luma = dot(straight, float3(0.2126f, 0.7152f, 0.0722f));
   const float softness = max(g_P2, 0.001f);
   const float matte = saturate(min((luma - low) / softness, (high - luma) / softness));
   if ((int)g_P5 == 1) {
     g_OutputTexture[dtid.xy] = (float4(matte, matte, matte, 1.0f)).bgra;
   } else {
-    g_OutputTexture[dtid.xy] = (float4(foreground.rgb, saturate(foreground.a * matte))).bgra;
+    const float outputAlpha = saturate(sourceAlpha * matte);
+    g_OutputTexture[dtid.xy] = (float4(straight * outputAlpha, outputAlpha)).bgra;
   }
 }
 )";
@@ -69,7 +74,7 @@ void LumaKeyEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src,
   params.matteBlur = matteBlur_;
   params.viewMode = viewMode_;
   const Keying::LumaKeyBuffers buffers{data, out, image.width(), image.height(),
-      image.colorDescriptor().channelOrder};
+      image.colorDescriptor().channelOrder, image.colorDescriptor().alphaMode};
   if (!Keying::processLumaKey(buffers, params)) { dst = src; return; }
   dst = ImageF32x4RGBAWithCache(result);
 }
@@ -87,7 +92,7 @@ public:
     float* out = result.rgba32fData();
     if (!out) { dst = src; return; }
     const Keying::LumaKeyBuffers buffers{data, out, image.width(), image.height(),
-        image.colorDescriptor().channelOrder};
+        image.colorDescriptor().channelOrder, image.colorDescriptor().alphaMode};
     if (!Keying::processLumaKey(buffers, params_)) { dst = src; return; }
     dst = ImageF32x4RGBAWithCache(result);
   }
@@ -183,6 +188,8 @@ public:
     cb.high = std::max(params_.low, params_.high);
     cb.softness = std::max(params_.softness, 1.0e-4f);
     cb.viewMode = params_.viewMode;
+    cb.sourcePremultiplied = srcImage.colorDescriptor().alphaMode ==
+        ArtifactCore::SurfaceAlphaMode::Premultiplied ? 1.0f : 0.0f;
     std::memcpy(mapped, &cb, sizeof(cb));
     context_->UnmapBuffer(paramsCB_, Diligent::MAP_WRITE);
     if (!executor_->setTextureView("ForegroundTexture",
@@ -216,21 +223,40 @@ private:
     float high = 0.85f;
     float softness = 0.08f;
     int viewMode = 0;
+    float sourcePremultiplied = 0.0f;
+    float padding[3]{};
   };
+  static_assert(sizeof(ParamsCB) == 32);
 
   static constexpr const char* kShader = R"(
 Texture2D<float4> ForegroundTexture : register(t0);
 RWTexture2D<float4> OutputTexture : register(u0);
-cbuffer LumaParams : register(b0) { float Low; float High; float Softness; int ViewMode; };
+cbuffer LumaParams : register(b0) {
+  float Low; float High; float Softness; int ViewMode;
+  float SourcePremultiplied; float3 Padding;
+};
 [numthreads(16,16,1)] void main(uint3 id : SV_DispatchThreadID) {
   uint w, h; OutputTexture.GetDimensions(w, h);
   if (id.x >= w || id.y >= h) return;
   float4 fg = (ForegroundTexture[id.xy]).bgra;
-  float luma = dot(fg.rgb, float3(0.2126, 0.7152, 0.0722));
-  float alpha = saturate(min((luma - Low) / max(Softness, 1e-4),
-                             (High - luma) / max(Softness, 1e-4)));
+  bool validAlpha = isfinite(fg.a);
+  float sourceAlpha = validAlpha ? saturate(fg.a) : 0.0;
+  bool validColor = all(isfinite(fg.rgb));
+  float3 storedColor = validColor ? fg.rgb : 0.0;
+  float3 straight = SourcePremultiplied > 0.5
+      ? (sourceAlpha > 1e-6 ? storedColor / sourceAlpha : 0)
+      : storedColor;
+  float luma = dot(straight, float3(0.2126, 0.7152, 0.0722));
+  float alpha = validColor && validAlpha
+      ? saturate(min((luma - Low) / max(Softness, 1e-4),
+                     (High - luma) / max(Softness, 1e-4)))
+      : 0.0;
   if (ViewMode == 1) { OutputTexture[id.xy] = (float4(alpha, alpha, alpha, 1.0)).bgra; return; }
-  OutputTexture[id.xy] = (float4(fg.rgb, saturate(fg.a * alpha))).bgra;
+  float outputAlpha = sourceAlpha * alpha;
+  float3 outputColor = SourcePremultiplied > 0.5
+      ? straight * outputAlpha
+      : storedColor;
+  OutputTexture[id.xy] = (float4(outputColor, outputAlpha)).bgra;
 })";
 
   static bool createFloatTexture(const ArtifactCore::GpuImageUploadBuffer& upload,

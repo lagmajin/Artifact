@@ -3,6 +3,7 @@ module;
 #include <cmath>
 #include <cstring>
 #include <memory>
+#include <QString>
 #include <QVariant>
 #include <opencv2/opencv.hpp>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
@@ -56,7 +57,7 @@ void IBKKeyerEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src,
     const auto& source = src.image();
     const float* foreground = source.rgba32fData();
     const float* cleanPlate = cleanPlate_.rgba32fData();
-    if (!foreground || !cleanPlate || source.width() != cleanPlate_.width() ||
+    if (!foreground || !cleanPlateAvailable_ || !cleanPlate || source.width() != cleanPlate_.width() ||
         source.height() != cleanPlate_.height()) {
         dst = src;
         return;
@@ -84,22 +85,31 @@ class IBKKeyerEffectGPUImpl final : public ArtifactEffectImplBase {
 public:
     ArtifactCore::Keying::IBKParams params_{};
     ArtifactCore::ImageF32x4_RGBA cleanPlate_;
+    bool cleanPlateAvailable_ = false;
     int previewMode_ = 0;
 
     void applyCPU(const ImageF32x4RGBAWithCache& src,
                   ImageF32x4RGBAWithCache& dst) override {
         IBKKeyerEffectCPUImpl fallback;
         fallback.setParams(params_);
-        fallback.setCleanPlate(cleanPlate_);
+        if (cleanPlateAvailable_) fallback.setCleanPlate(cleanPlate_);
+        else fallback.clearCleanPlate();
         fallback.setPreviewMode(previewMode_);
         fallback.applyCPU(src, dst);
     }
 
     void applyGPU(const ImageF32x4RGBAWithCache& src,
                   ImageF32x4RGBAWithCache& dst) override {
+        // The shader samples a fixed 17x17 window. Keep the full CPU radius
+        // range available and use the CPU implementation when it cannot match.
+        if (!ArtifactCore::Keying::IBKGpuParams::hasGpuSupportedMorphologyRadius(params_)) {
+            applyCPU(src, dst);
+            return;
+        }
         Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device;
         Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context;
         if (!acquireSharedRenderDeviceForCurrentBackend(device, context) ||
+            !cleanPlateAvailable_ || !cleanPlate_.rgba32fData() ||
             cleanPlate_.width() != src.image().width() ||
             cleanPlate_.height() != src.image().height()) {
             applyCPU(src, dst);
@@ -302,49 +312,69 @@ IBKKeyerEffect::IBKKeyerEffect()
 std::vector<AbstractProperty> IBKKeyerEffect::getProperties() const {
     const auto& p = typedCpuImpl_->params();
     std::vector<AbstractProperty> result;
-    const auto addFloat = [&result](const char* name, float value, double min, double max) {
+    const auto addFloat = [&result](const char* name, const char* label, float value,
+                                    double min, double max, const char* tooltip) {
         auto& property = result.emplace_back();
         property.setName(name);
+        property.setDisplayLabel(QString::fromUtf8(label));
         property.setType(PropertyType::Float);
         property.setSoftRange(min, max);
         property.setHardRange(min, max);
+        property.setStep(0.01);
         property.setDefaultValue(QVariant(static_cast<double>(value)));
         property.setValue(QVariant(static_cast<double>(value)));
+        property.setTooltip(QString::fromUtf8(tooltip));
     };
-    addFloat("screenCorrection", p.screenCorrection, 0.0, 4.0);
-    addFloat("coreMatteClip", p.coreMatteClip, 0.0, 1.0);
-    addFloat("edgeMatteSoftness", p.edgeMatteSoftness, 0.00001, 1.0);
-    addFloat("despillStrength", p.despillStrength, 0.0, 1.0);
-    addFloat("garbageMatteGamma", p.garbageMatteGamma, 0.00001, 4.0);
-    addFloat("detailRecovery", p.detailRecovery, 0.0, 1.0);
-    const auto addInteger = [&result](const char* name, int value, int minimum, int maximum) {
+    addFloat("screenCorrection", "Screen Correction", p.screenCorrection, 0.0, 4.0,
+             "Scales the foreground before it is compared with the clean plate.");
+    addFloat("coreMatteClip", "Core Matte Clip", p.coreMatteClip, 0.0, 1.0,
+             "Sets the opaque core threshold of the matte.");
+    addFloat("edgeMatteSoftness", "Edge Matte Softness", p.edgeMatteSoftness,
+             0.00001, 1.0, "Softens the transition around the matte edge.");
+    addFloat("despillStrength", "Despill Strength", p.despillStrength, 0.0, 1.0,
+             "Reduces clean-plate color in retained foreground pixels.");
+    addFloat("garbageMatteGamma", "Matte Gamma", p.garbageMatteGamma,
+             0.00001, 4.0, "Shapes the generated alpha matte with a gamma curve.");
+    addFloat("detailRecovery", "Detail Recovery", p.detailRecovery, 0.0, 1.0,
+             "Restores partial coverage around fine foreground edges.");
+    const auto addInteger = [&result](const char* name, const char* label, int value,
+                                      int minimum, int maximum, const char* tooltip) {
         auto& property = result.emplace_back();
         property.setName(name);
+        property.setDisplayLabel(QString::fromUtf8(label));
         property.setType(PropertyType::Integer);
         property.setSoftRange(minimum, maximum);
         property.setHardRange(minimum, maximum);
+        property.setMinValue(QVariant(minimum));
+        property.setMaxValue(QVariant(maximum));
         property.setDefaultValue(QVariant(value));
         property.setValue(QVariant(value));
+        property.setTooltip(QString::fromUtf8(tooltip));
     };
-    addInteger("erodePixels", p.erodePixels, 0, 64);
-    addInteger("dilatePixels", p.dilatePixels, 0, 64);
+    addInteger("erodePixels", "Matte Erode Radius", p.erodePixels, 0, 64,
+               "Shrinks the opaque matte before dilation.");
+    addInteger("dilatePixels", "Matte Dilate Radius", p.dilatePixels, 0, 64,
+               "Expands the eroded matte to restore edge coverage.");
     auto& preview = result.emplace_back();
     preview.setName("previewMode");
+    preview.setDisplayLabel(QStringLiteral("Matte View"));
     preview.setType(PropertyType::Integer);
     preview.setSoftRange(0, 2);
     preview.setHardRange(0, 2);
+    preview.setMinValue(QVariant(0));
+    preview.setMaxValue(QVariant(2));
     preview.setDefaultValue(QVariant(0));
     preview.setValue(QVariant(previewMode_));
+    preview.setTooltip(QStringLiteral(
+        "0=Final, 1=Matte, 2=Premultiplied RGB"));
     auto& cleanPlate = result.emplace_back();
     cleanPlate.setName("cleanPlatePath");
+    cleanPlate.setDisplayLabel(QStringLiteral("Clean Plate"));
     cleanPlate.setType(PropertyType::String);
     cleanPlate.setDefaultValue(QVariant(QString()));
     cleanPlate.setValue(cleanPlatePath_);
-    auto& cleanPlateLoaded = result.emplace_back();
-    cleanPlateLoaded.setName("cleanPlateLoaded");
-    cleanPlateLoaded.setType(PropertyType::Boolean);
-    cleanPlateLoaded.setDefaultValue(QVariant(false));
-    cleanPlateLoaded.setValue(QVariant(typedCpuImpl_->hasCleanPlate()));
+    cleanPlate.setTooltip(QStringLiteral(
+        "Image of the screen without the foreground subject."));
     return result;
 }
 
@@ -380,8 +410,10 @@ void IBKKeyerEffect::setPropertyValue(const UniString& name, const QVariant& val
         const QString path = value.toString().trimmed();
         if (typedCpuImpl_->setCleanPlatePath(path)) {
             cleanPlatePath_ = path;
-            if (auto* gpu = dynamic_cast<IBKKeyerEffectGPUImpl*>(gpuImpl().get()))
+            if (auto* gpu = dynamic_cast<IBKKeyerEffectGPUImpl*>(gpuImpl().get())) {
                 gpu->cleanPlate_ = typedCpuImpl_->cleanPlate();
+                gpu->cleanPlateAvailable_ = typedCpuImpl_->hasCleanPlate();
+            }
         }
         return;
     }
@@ -394,8 +426,10 @@ void IBKKeyerEffect::setPropertyValue(const UniString& name, const QVariant& val
 void IBKKeyerEffect::setCleanPlate(const ImageF32x4_RGBA& image) {
     typedCpuImpl_->setCleanPlate(image);
     cleanPlatePath_.clear();
-    if (auto* gpu = dynamic_cast<IBKKeyerEffectGPUImpl*>(gpuImpl().get()))
+    if (auto* gpu = dynamic_cast<IBKKeyerEffectGPUImpl*>(gpuImpl().get())) {
         gpu->cleanPlate_ = image;
+        gpu->cleanPlateAvailable_ = typedCpuImpl_->hasCleanPlate();
+    }
 }
 
 } // namespace Artifact

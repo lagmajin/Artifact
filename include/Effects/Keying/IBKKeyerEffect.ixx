@@ -23,6 +23,7 @@ export namespace Artifact {
 class IBKKeyerEffectCPUImpl final : public ArtifactEffectImplBase {
     ArtifactCore::Keying::IBKParams params_{};
     ArtifactCore::ImageF32x4_RGBA cleanPlate_;
+    bool cleanPlateAvailable_ = false;
     int previewMode_ = 0;
 public:
     const ArtifactCore::Keying::IBKParams& params() const { return params_; }
@@ -43,14 +44,26 @@ public:
         params_.erodePixels = std::clamp(params_.erodePixels, 0, 64);
         params_.dilatePixels = std::clamp(params_.dilatePixels, 0, 64);
     }
-    void setCleanPlate(const ArtifactCore::ImageF32x4_RGBA& image) { cleanPlate_ = image; }
+    void setCleanPlate(const ArtifactCore::ImageF32x4_RGBA& image) {
+        cleanPlate_ = image;
+        cleanPlateAvailable_ = !image.isEmpty();
+    }
+    void clearCleanPlate() {
+        cleanPlate_ = ArtifactCore::ImageF32x4_RGBA{};
+        cleanPlateAvailable_ = false;
+    }
     bool setCleanPlatePath(const QString& path) {
+        if (path.trimmed().isEmpty()) {
+            clearCleanPlate();
+            return true;
+        }
         ArtifactCore::ImageF32x4_RGBA image;
-        if (path.trimmed().isEmpty() || !image.load(path)) return false;
+        if (!image.load(path)) return false;
         cleanPlate_ = std::move(image);
+        cleanPlateAvailable_ = true;
         return true;
     }
-    bool hasCleanPlate() const { return cleanPlate_.width() > 0 && cleanPlate_.height() > 0; }
+    bool hasCleanPlate() const { return cleanPlateAvailable_; }
     const ArtifactCore::ImageF32x4_RGBA& cleanPlate() const { return cleanPlate_; }
     void setPreviewMode(int mode) { previewMode_ = std::clamp(mode, 0, 2); }
     int previewMode() const { return previewMode_; }
