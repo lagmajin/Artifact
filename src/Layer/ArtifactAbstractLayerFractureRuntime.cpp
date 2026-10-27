@@ -1020,6 +1020,10 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
             const float absorption = 1.0f - opticalDepth * 0.28f;
             // A broad, low-amplitude contact reflection keeps the highlight
             // coherent across the triangle mesh instead of exposing facets.
+            const float edgeCoverage = std::clamp(
+                (coverage - 0.34f) / 0.16f, 0.0f, 1.0f);
+            const float edgeAlpha = edgeCoverage * edgeCoverage *
+                                    (3.0f - 2.0f * edgeCoverage);
             const float contactBand =
                 smoothBand(std::abs(projectedY - reflectionCenterY),
                            reflectionSurfaceHeight * 0.12f) *
@@ -1064,7 +1068,7 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
                                    reflection,
                            0.0f, 1.0f),
                 impl_->liquidColor_.a() * impl_->liquidSurfaceOpacity_ *
-                    layerAlpha * 0.96f);
+                    layerAlpha * 0.96f * edgeAlpha);
           };
           struct ClippedLiquidVertex {
             QVector3D position;
