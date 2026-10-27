@@ -1267,6 +1267,7 @@ ArtifactCurveEditorWidget::~ArtifactCurveEditorWidget() {
 
 void ArtifactCurveEditorWidget::setTracks(const std::vector<CurveTrack>& tracks) {
  impl_->tracks_ = tracks;
+ impl_->clearKeySelection();
  update();
 }
 
