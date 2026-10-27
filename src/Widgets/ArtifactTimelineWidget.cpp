@@ -3612,14 +3612,14 @@ CurveEditorPayload collectCurveEditorSpeedPayload(
           return lhs.time.rescaledTo(displayFps) < rhs.time.rescaledTo(displayFps);
         });
         for (const auto& keyframe : orderedKeyframes) {
-          const QVariant value = keyframe.value;
-          if (!value.canConvert<double>()) {
+          double numericValue = 0.0;
+          if (!propertyValueAsCurveNumber(*property, keyframe.value, numericValue)) {
             supported = false;
             break;
           }
           frames.push_back(static_cast<double>(
               keyframe.time.rescaledTo(displayFps)));
-          values.push_back(value.toDouble());
+          values.push_back(numericValue);
           seconds.push_back(keyframe.time.toSeconds());
           interpolations.push_back(keyframe.interpolation);
         }
@@ -3760,26 +3760,33 @@ bool applyCurveEditorSpeedMove(
   auto& start = ordered[static_cast<size_t>(keyIndex)];
   auto& end = ordered[static_cast<size_t>(keyIndex + 1)];
   const auto& originalStart = baselineKeyframes[static_cast<size_t>(keyIndex)];
-  if (!originalStart.value.canConvert<double>()) return false;
+  double originalStartValue = 0.0;
+  if (!propertyValueAsCurveNumber(*property, originalStart.value, originalStartValue)) {
+    return false;
+  }
+  double ignoredNumericValue = 0.0;
   if (start.interpolation == ArtifactCore::InterpolationType::Constant ||
-      !start.value.canConvert<double>() || !end.value.canConvert<double>()) return false;
+      !propertyValueAsCurveNumber(*property, start.value, ignoredNumericValue) ||
+      !propertyValueAsCurveNumber(*property, end.value, ignoredNumericValue)) return false;
   const double intervalSeconds = end.time.toSeconds() - start.time.toSeconds();
   if (!std::isfinite(intervalSeconds) || intervalSeconds <= 0.0) return false;
 
   const auto& previousEnd = baselineKeyframes[static_cast<size_t>(keyIndex + 1)];
-  if (!previousEnd.value.canConvert<double>()) return false;
-  const double desiredEnd = originalStart.value.toDouble() +
+  double previousEndValue = 0.0;
+  if (!propertyValueAsCurveNumber(*property, previousEnd.value, previousEndValue)) return false;
+  const double desiredEnd = originalStartValue +
       static_cast<double>(newSpeed) * intervalSeconds;
-  const double valueDelta = desiredEnd - previousEnd.value.toDouble();
+  const double valueDelta = desiredEnd - previousEndValue;
   if (!std::isfinite(desiredEnd) || !std::isfinite(valueDelta)) return false;
   QVector<QVariant> convertedValues;
   convertedValues.reserve(static_cast<int>(ordered.size()) - keyIndex);
   for (size_t i = static_cast<size_t>(keyIndex + 1); i < ordered.size(); ++i) {
     const auto& baseline = baselineKeyframes[i];
-    if (!baseline.value.canConvert<double>()) return false;
+    double baselineValue = 0.0;
+    if (!propertyValueAsCurveNumber(*property, baseline.value, baselineValue)) return false;
     const double nextValue = i == static_cast<size_t>(keyIndex + 1)
                                  ? desiredEnd
-                                 : baseline.value.toDouble() + valueDelta;
+                                 : baselineValue + valueDelta;
     if (!std::isfinite(nextValue)) return false;
     QVariant converted = nextValue;
     if (!converted.convert(baseline.value.metaType())) return false;
