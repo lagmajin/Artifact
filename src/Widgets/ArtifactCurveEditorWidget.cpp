@@ -149,7 +149,7 @@ CurveTrack sampleSpeedGraph(const QVector<TimeRemapKeyframe>& keyframes,
   const auto& sample = samples[i];
   CurveKey key;
   key.frame = sample.frame;
-  key.value = sample.editable ? clampSpeedPercent(sample.speed) : sample.speed;
+  key.value = clampSpeedPercent(sample.speed);
   key.smooth = true;
   key.editable = sample.editable;
   if (i > 0) {
