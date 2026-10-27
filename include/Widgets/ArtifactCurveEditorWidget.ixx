@@ -22,6 +22,7 @@ export namespace ArtifactCore {
   float outTangent = 0.0f;  // outgoing slope
   bool smooth = false;      // continuous tangent
   bool constant = false;    // step/constant interpolation to the next key
+  bool editable = true;
   int64_t inHandleFrame = 0;   // bezier in-handle frame offset from key
   int64_t outHandleFrame = 0;  // bezier out-handle frame offset from key
   float inHandleValue = 0.0f;  // bezier in-handle value offset from key
@@ -68,6 +69,8 @@ export namespace ArtifactCore {
   void focusTrack(int trackIndex);
   void setHandleEditingEnabled(bool enabled);
   void setKeyEditingEnabled(bool enabled);
+  void setKeyStructureEditingEnabled(bool enabled);
+  void setFrameEditingEnabled(bool enabled);
   bool setSelectedKeyAutoTangents();
   bool setSelectedKeyFlatTangents();
   bool setSelectedKeyLinearTangents();

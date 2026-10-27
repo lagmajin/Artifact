@@ -3395,6 +3395,7 @@ CurveEditorPayload collectCurveEditorPayload(
 
   const double fps = timelineFrameRateFallback(composition);
 
+
   const auto layers = selectedTimelineLayers(selectionManager);
   if (layers.isEmpty()) {
     payload.summary = QStringLiteral("Select a layer to continue");
@@ -3559,11 +3560,17 @@ CurveEditorPayload collectCurveEditorSpeedPayload(
     return payload;
   }
 
-  const double fps = timelineFrameRateFallback(composition);
+  const int64_t displayFps = std::max<int64_t>(
+      1, static_cast<int64_t>(std::llround(timelineFrameRateFallback(composition))));
 
   const auto layers = selectedTimelineLayers(selectionManager);
   if (layers.isEmpty()) {
     payload.summary = QStringLiteral("Select a layer to continue");
+    return payload;
+  }
+
+  if (layers.size() != 1) {
+    payload.summary = QStringLiteral("Select one layer and one numeric property to edit its speed graph");
     return payload;
   }
 
@@ -3584,7 +3591,6 @@ CurveEditorPayload collectCurveEditorSpeedPayload(
         if (!timelinePropertyMatchesChannel(property->getName(), filter)) continue;
         if (!selectedPropertyPaths.isEmpty() &&
             !selectedPropertyPaths.contains(property->getName())) continue;
-
         const auto keyframes = property->getKeyFrames();
         if (keyframes.size() < 2) {
           continue;
@@ -3592,21 +3598,29 @@ CurveEditorPayload collectCurveEditorSpeedPayload(
 
         QVector<double> frames;
         QVector<double> values;
+        QVector<double> seconds;
         QVector<ArtifactCore::InterpolationType> interpolations;
         frames.reserve(static_cast<int>(keyframes.size()));
         values.reserve(static_cast<int>(keyframes.size()));
+        seconds.reserve(static_cast<int>(keyframes.size()));
         interpolations.reserve(static_cast<int>(keyframes.size()));
 
         bool supported = true;
-        for (const auto& keyframe : keyframes) {
+        std::vector<ArtifactCore::KeyFrame> orderedKeyframes(keyframes.begin(), keyframes.end());
+        std::sort(orderedKeyframes.begin(), orderedKeyframes.end(),
+                  [displayFps](const auto& lhs, const auto& rhs) {
+          return lhs.time.rescaledTo(displayFps) < rhs.time.rescaledTo(displayFps);
+        });
+        for (const auto& keyframe : orderedKeyframes) {
           const QVariant value = keyframe.value;
           if (!value.canConvert<double>()) {
             supported = false;
             break;
           }
           frames.push_back(static_cast<double>(
-              keyframe.time.rescaledTo(static_cast<int64_t>(std::round(fps)))));
+              keyframe.time.rescaledTo(displayFps)));
           values.push_back(value.toDouble());
+          seconds.push_back(keyframe.time.toSeconds());
           interpolations.push_back(keyframe.interpolation);
         }
 
@@ -3628,35 +3642,25 @@ CurveEditorPayload collectCurveEditorSpeedPayload(
           const double frame = frames[i];
           const double value = values[i];
           const auto interpolation = interpolations[i];
-
-          double speedSum = 0.0;
-          int speedSamples = 0;
-
-          if (interpolation != ArtifactCore::InterpolationType::Constant && i > 0) {
-            const double prevFrame = frames[i - 1];
-            const double prevValue = values[i - 1];
-            const double deltaFrame = std::max(1.0, frame - prevFrame);
-            speedSum += std::abs((value - prevValue) / deltaFrame) * fps;
-            ++speedSamples;
-          }
-          if (interpolation != ArtifactCore::InterpolationType::Constant &&
-              i + 1 < frames.size()) {
-            const double nextFrame = frames[i + 1];
-            const double nextValue = values[i + 1];
-            const double deltaFrame = std::max(1.0, nextFrame - frame);
-            speedSum += std::abs((nextValue - value) / deltaFrame) * fps;
-            ++speedSamples;
-          }
+          const bool hasOutgoingInterval = i + 1 < frames.size();
+          const double deltaSeconds = hasOutgoingInterval
+              ? seconds[i + 1] - seconds[i] : 0.0;
+          const bool constantInterval = interpolation ==
+              ArtifactCore::InterpolationType::Constant;
+          const double speed = hasOutgoingInterval && !constantInterval
+              && deltaSeconds > 0.0
+              ? (values[i + 1] - value) / deltaSeconds : 0.0;
 
           CurveKey curveKey;
           curveKey.frame = static_cast<int64_t>(std::llround(frame));
-          curveKey.value =
-              static_cast<float>(speedSamples > 0 ? speedSum / speedSamples : 0.0);
+          curveKey.value = static_cast<float>(speed);
           curveKey.inHandleFrame = 0;
           curveKey.outHandleFrame = 0;
           curveKey.inHandleValue = 0.0f;
           curveKey.outHandleValue = 0.0f;
           track.keys.push_back(curveKey);
+          track.keys.back().editable = hasOutgoingInterval && !constantInterval &&
+                                       selectedPropertyPaths.size() == 1;
           signatureParts.push_back(
               QStringLiteral("%1:%2:speed:%3:%4:%5")
                   .arg(layer->id().toString(), property->getName(),
@@ -3671,8 +3675,8 @@ CurveEditorPayload collectCurveEditorSpeedPayload(
             continue;
           }
           const double currentFrame = static_cast<double>(key.frame);
-          const double prevFrame = (i > 0) ? static_cast<double>(track.keys[i - 1].frame)
-                                           : currentFrame;
+          const double prevFrame = (i > 0)
+              ? static_cast<double>(track.keys[i - 1].frame) : currentFrame;
           const double nextFrame = (i + 1 < track.keys.size())
                                        ? static_cast<double>(track.keys[i + 1].frame)
                                        : currentFrame;
@@ -3715,6 +3719,87 @@ CurveEditorPayload collectCurveEditorSpeedPayload(
                 .arg(formatCurveTrackCountSummary(static_cast<int>(payload.tracks.size())))
                 .arg(formatKeyframeCountSummary(totalKeyCount));
   return payload;
+}
+
+bool applyCurveEditorSpeedMove(
+    const ArtifactCompositionPtr& composition,
+    const CurveTrackBinding& binding,
+    const CurveTrack& track,
+    const int keyIndex,
+    const float newSpeed,
+    const QVector<KeyframePropertySnapshot>& baselineSnapshots)
+{
+  if (!composition || keyIndex < 0 || keyIndex + 1 >= static_cast<int>(track.keys.size()) ||
+      !track.keys[static_cast<size_t>(keyIndex)].editable) return false;
+  auto layer = composition->layerById(binding.layerId);
+  if (!layer) return false;
+  const auto property = findLayerPropertyByPath(layer, binding.propertyPath);
+  if (!property || !timelinePropertyAllowedByKeyingSet(binding.propertyPath)) return false;
+
+  const int64_t fpsInt = std::max<int64_t>(
+      1, static_cast<int64_t>(std::llround(timelineFrameRateFallback(composition))));
+  const auto baselineIt = std::find_if(
+      baselineSnapshots.cbegin(), baselineSnapshots.cend(),
+      [&binding](const auto& snapshot) {
+        return snapshot.layerId == binding.layerId &&
+               snapshot.propertyPath == binding.propertyPath;
+      });
+  if (baselineIt == baselineSnapshots.cend()) return false;
+  auto baselineKeyframes = baselineIt->keyframes;
+  std::sort(baselineKeyframes.begin(), baselineKeyframes.end(),
+            [fpsInt](const auto& lhs, const auto& rhs) {
+    return lhs.time.rescaledTo(fpsInt) < rhs.time.rescaledTo(fpsInt);
+  });
+  auto ordered = baselineKeyframes;
+  if (ordered.size() != track.keys.size()) return false;
+  for (size_t i = 0; i < ordered.size(); ++i) {
+    if (ordered[i].time.rescaledTo(fpsInt) != track.keys[i].frame) return false;
+  }
+  if (keyIndex + 1 >= static_cast<int>(ordered.size())) return false;
+
+  auto& start = ordered[static_cast<size_t>(keyIndex)];
+  auto& end = ordered[static_cast<size_t>(keyIndex + 1)];
+  const auto& originalStart = baselineKeyframes[static_cast<size_t>(keyIndex)];
+  if (!originalStart.value.canConvert<double>()) return false;
+  if (start.interpolation == ArtifactCore::InterpolationType::Constant ||
+      !start.value.canConvert<double>() || !end.value.canConvert<double>()) return false;
+  const double intervalSeconds = end.time.toSeconds() - start.time.toSeconds();
+  if (!std::isfinite(intervalSeconds) || intervalSeconds <= 0.0) return false;
+
+  const auto& previousEnd = baselineKeyframes[static_cast<size_t>(keyIndex + 1)];
+  if (!previousEnd.value.canConvert<double>()) return false;
+  const double desiredEnd = originalStart.value.toDouble() +
+      static_cast<double>(newSpeed) * intervalSeconds;
+  const double valueDelta = desiredEnd - previousEnd.value.toDouble();
+  if (!std::isfinite(desiredEnd) || !std::isfinite(valueDelta)) return false;
+  QVector<QVariant> convertedValues;
+  convertedValues.reserve(static_cast<int>(ordered.size()) - keyIndex);
+  for (size_t i = static_cast<size_t>(keyIndex + 1); i < ordered.size(); ++i) {
+    const auto& baseline = baselineKeyframes[i];
+    if (!baseline.value.canConvert<double>()) return false;
+    const double nextValue = i == static_cast<size_t>(keyIndex + 1)
+                                 ? desiredEnd
+                                 : baseline.value.toDouble() + valueDelta;
+    if (!std::isfinite(nextValue)) return false;
+    QVariant converted = nextValue;
+    if (!converted.convert(baseline.value.metaType())) return false;
+    convertedValues.push_back(converted);
+  }
+  for (int i = 0; i < convertedValues.size(); ++i) {
+    ordered[static_cast<size_t>(keyIndex + 1 + i)].value = convertedValues[i];
+  }
+  for (const auto& keyframe : baselineKeyframes) property->removeKeyFrame(keyframe.time);
+  for (const auto& keyframe : ordered) {
+    property->addKeyFrame(keyframe.time, keyframe.value, keyframe.interpolation,
+                          keyframe.cp1_x, keyframe.cp1_y, keyframe.cp2_x,
+                          keyframe.cp2_y, keyframe.roving);
+    property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
+    property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
+    property->setKeyFrameSoftAt(keyframe.time, keyframe.soft);
+  }
+  layer->setDirty(LayerDirtyFlag::Property);
+  layer->changed();
+  return true;
 }
 
 bool applyCurveEditorMove(
@@ -4948,7 +5033,11 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
 
   const bool editableValueGraph =
       impl_->curveEditorGraphMode_ == CurveEditorGraphMode::Value;
-  impl_->curveEditor_->setKeyEditingEnabled(editableValueGraph);
+  const bool speedGraph = impl_->curveEditorGraphMode_ == CurveEditorGraphMode::Speed;
+  const bool editableGraph = editableValueGraph || speedGraph;
+  impl_->curveEditor_->setKeyEditingEnabled(editableGraph);
+  impl_->curveEditor_->setKeyStructureEditingEnabled(editableValueGraph);
+  impl_->curveEditor_->setFrameEditingEnabled(editableValueGraph);
   impl_->curveEditor_->setHandleEditingEnabled(editableValueGraph &&
                                                impl_->curveHandleEditingEnabled_);
 
@@ -4965,29 +5054,6 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
   const auto channelFilter = impl_->painterTrackView_
                                   ? impl_->painterTrackView_->propertyChannelFilter()
                                   : ArtifactTimelineTrackPainterView::PropertyChannelFilter::All;
-  const auto payload = (impl_->curveEditorGraphMode_ == CurveEditorGraphMode::Speed)
-                           ? collectCurveEditorSpeedPayload(composition, selectionManager, channelFilter,
-                                                            impl_->selectedPropertyPaths_)
-                           : collectCurveEditorPayload(composition, selectionManager, channelFilter,
-                                                       impl_->selectedPropertyPaths_);
-  const QString modeTag = (impl_->curveEditorGraphMode_ == CurveEditorGraphMode::Speed)
-                              ? QStringLiteral("speed")
-                              : QStringLiteral("value");
-  const QString combinedSignature =
-      payload.signature + QLatin1Char('|') + modeTag;
-  const bool signatureChanged = combinedSignature != impl_->curveEditorSignature_;
-  if (signatureChanged) {
-    impl_->curveEditorSignature_ = combinedSignature;
-    impl_->curveTracks_ = payload.tracks;
-    impl_->curveBindings_ = payload.bindings;
-    qDebug() << "[CurveEditor] refresh"
-             << "mode=" << modeTag
-             << "tracks=" << payload.tracks.size()
-             << "bindings=" << payload.bindings.size()
-             << "summary=" << payload.summary;
-    impl_->curveEditor_->setTracks(payload.tracks);
-  }
-
   const auto markers = impl_->painterTrackView_
                            ? impl_->painterTrackView_->selectedKeyframeMarkers()
                            : QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>();
@@ -5022,6 +5088,44 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
     impl_->focusedCurveTrackIndex_ = -1;
   }
 
+  auto payload = (speedGraph)
+                           ? collectCurveEditorSpeedPayload(composition, selectionManager, channelFilter,
+                                                            impl_->selectedPropertyPaths_)
+                           : collectCurveEditorPayload(composition, selectionManager, channelFilter,
+                                                       impl_->selectedPropertyPaths_);
+  if (speedGraph && impl_->selectedPropertyPaths_.isEmpty()) {
+    for (int trackIndex = 0; trackIndex < payload.tracks.size(); ++trackIndex) {
+      if (trackIndex != impl_->focusedCurveTrackIndex_ ||
+          impl_->focusedCurveTrackIndex_ >= payload.tracks.size()) {
+        for (auto& key : payload.tracks[trackIndex].keys) key.editable = false;
+      }
+    }
+  }
+  const QString modeTag = (impl_->curveEditorGraphMode_ == CurveEditorGraphMode::Speed)
+                              ? QStringLiteral("speed")
+                              : QStringLiteral("value");
+  const QString combinedSignature =
+      payload.signature + QLatin1Char('|') + modeTag +
+      QLatin1Char('|') + QString::number(impl_->selectedPropertyPaths_.size()) +
+      QLatin1Char('|') + (speedGraph
+                              ? QString::number(impl_->focusedCurveTrackIndex_)
+                              : QString()) +
+      QLatin1Char('|') + (impl_->selectedPropertyPaths_.isEmpty()
+                              ? QString()
+                              : *impl_->selectedPropertyPaths_.cbegin());
+  const bool signatureChanged = combinedSignature != impl_->curveEditorSignature_;
+  if (signatureChanged) {
+    impl_->curveEditorSignature_ = combinedSignature;
+    impl_->curveTracks_ = payload.tracks;
+    impl_->curveBindings_ = payload.bindings;
+    qDebug() << "[CurveEditor] refresh"
+             << "mode=" << modeTag
+             << "tracks=" << payload.tracks.size()
+             << "bindings=" << payload.bindings.size()
+             << "summary=" << payload.summary;
+    impl_->curveEditor_->setTracks(payload.tracks);
+  }
+
   if (impl_->curveEditorSummaryLabel_) {
     const QString detailSummary =
         signatureChanged ? payload.summary
@@ -5039,6 +5143,12 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
       impl_->curveEditorValueButton_->setText(singleKey
           ? QStringLiteral("Value  %1...").arg(selectedMarkers.front().value.toDouble(), 0, 'g', 6)
           : QStringLiteral("Value..."));
+    }
+    if (impl_->curveEditorFrameButton_) {
+      impl_->curveEditorFrameButton_->setEnabled(editableValueGraph);
+    }
+    if (impl_->curveEditorValueButton_) {
+      impl_->curveEditorValueButton_->setEnabled(editableValueGraph);
     }
     if (impl_->curveKeyEditHint_) {
       impl_->curveKeyEditHint_->setVisible(selectedMarkers.isEmpty());
@@ -5093,7 +5203,7 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
                                                  : QStringLiteral("Handles Off")));
     impl_->curveEditorHandleButton_->setToolTip(
         !editableValueGraph
-            ? QStringLiteral("Speed Graph is read-only")
+            ? QStringLiteral("Switch to Value Graph to edit Bezier handles")
             : impl_->curveHandleEditingEnabled_
             ? QStringLiteral("Bezier handle editing is enabled")
             : QStringLiteral("Bezier handle editing is disabled for safer graph edits"));
@@ -5104,7 +5214,7 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
     impl_->curveEditorValueButton_->setEnabled(editableValueGraph && hasSelection);
     impl_->curveEditorValueButton_->setToolTip(
         !editableValueGraph
-            ? QStringLiteral("Speed Graph is read-only")
+            ? QStringLiteral("Switch to Value Graph to edit key values")
             : (hasSelection
                    ? QStringLiteral("Set the numeric value of selected keyframes")
                    : QStringLiteral("Select one or more keyframes to set their value")));
@@ -5114,6 +5224,10 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
     const bool hasSelection =
         impl_->painterTrackView_ && impl_->painterTrackView_->hasNumericSelectedKeyframes();
     impl_->curveEditorFrameButton_->setEnabled(editableValueGraph && hasSelection);
+    impl_->curveEditorFrameButton_->setToolTip(
+        editableValueGraph
+            ? QStringLiteral("Set the frame of selected keyframes")
+            : QStringLiteral("Switch to Value Graph to edit key frames"));
     impl_->curveEditorFrameButton_->setVisible(true);
   }
   for (auto *button : {impl_->curveEditorAutoTangentButton_,
@@ -6985,6 +7099,9 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
       impl_->curveFocusPinned_ =
           impl_->focusedCurveTrackIndex_ >= 0;
       impl_->curveShowAllChannels_ = false;
+      if (impl_->curveEditorGraphMode_ == CurveEditorGraphMode::Speed) {
+        refreshCurveEditorTracks();
+      }
       impl_->curveEditor_->focusTrack(impl_->focusedCurveTrackIndex_);
                      updateCurvePropertyList();
                      impl_->curveEditor_->setFocus(Qt::MouseFocusReason);
@@ -7003,6 +7120,9 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                      impl_->curveFocusPinned_ =
                          impl_->focusedCurveTrackIndex_ >= 0;
                      impl_->curveShowAllChannels_ = false;
+                     if (impl_->curveEditorGraphMode_ == CurveEditorGraphMode::Speed) {
+                       refreshCurveEditorTracks();
+                     }
                      impl_->curveEditor_->focusTrack(impl_->focusedCurveTrackIndex_);
                      updateCurvePropertyList();
                      impl_->curveEditor_->setFocus(Qt::MouseFocusReason);
@@ -7308,6 +7428,9 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                      }
                      if (impl_->curveEditor_) {
                        impl_->curveEditor_->focusTrack(impl_->focusedCurveTrackIndex_);
+                     if (impl_->curveEditorGraphMode_ == CurveEditorGraphMode::Speed) {
+                       refreshCurveEditorTracks();
+                     }
                      }
                      refreshCurveEditorTracks();
                    });
@@ -7957,6 +8080,9 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                      impl_->curveFocusPinned_ =
                          impl_->focusedCurveTrackIndex_ >= 0;
                      impl_->curveShowAllChannels_ = false;
+                     if (impl_->curveEditorGraphMode_ == CurveEditorGraphMode::Speed) {
+                       refreshCurveEditorTracks();
+                     }
                      updateCurvePropertyList();
                      if (event.trackIndex >= 0 &&
                          event.trackIndex < impl_->curvePropertyList_->count()) {
@@ -8079,15 +8205,31 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
 
                      const auto& binding = impl_->curveBindings_[trackIndex];
                      const auto& track = impl_->curveTracks_[trackIndex];
-                     if (!applyCurveEditorMove(composition, binding, track, keyIndex,
-                                               newFrame, newValue)) {
+                     const bool speedGraph = impl_->curveEditorGraphMode_ ==
+                         CurveEditorGraphMode::Speed;
+                     const auto& sourceTrack = speedGraph &&
+                             trackIndex < static_cast<int>(impl_->curveEditor_->tracks().size())
+                         ? impl_->curveEditor_->tracks()[static_cast<size_t>(trackIndex)] : track;
+                     if (speedGraph &&
+                         (trackIndex != impl_->focusedCurveTrackIndex_ || keyIndex < 0 ||
+                          keyIndex + 1 >= static_cast<int>(sourceTrack.keys.size()))) {
+                       return;
+                     }
+                     if (speedGraph
+                             ? !applyCurveEditorSpeedMove(composition, binding, sourceTrack,
+                                                          keyIndex, newValue,
+                                                          impl_->curveEditorUndoBeforeSnapshots_)
+                             : !applyCurveEditorMove(composition, binding, track, keyIndex,
+                                                     newFrame, newValue)) {
                        return;
                      }
 
                      auto& cachedTrack = impl_->curveTracks_[trackIndex];
                      if (keyIndex >= 0 && keyIndex < static_cast<int>(cachedTrack.keys.size())) {
-                       cachedTrack.keys[keyIndex].frame = newFrame;
-                       cachedTrack.keys[keyIndex].value = newValue;
+                       if (!speedGraph) {
+                         cachedTrack.keys[keyIndex].frame = newFrame;
+                         cachedTrack.keys[keyIndex].value = newValue;
+                       }
                      }
                      if (impl_->curveEditorRefreshTimer_) {
                        impl_->curveEditorRefreshTimer_->start(180);

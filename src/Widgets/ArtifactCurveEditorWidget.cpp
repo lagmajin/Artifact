@@ -25,9 +25,12 @@ module;
 #include <QFontDatabase>
 #include <QPainterPath>
 #include <QVector>
+#include <QApplication>
 #include <wobjectimpl.h>
 
 module Widget.CurveEditor;
+
+import Property.Abstract;
 
 import Frame.Rate;
 import Time.TimeRemap;
@@ -51,7 +54,6 @@ CurveTrack sampleSpeedGraph(const QVector<TimeRemapKeyframe>& keyframes,
  track.name = QStringLiteral("Speed (%)");
  track.color = QColor(96, 196, 255);
  track.visible = true;
-
  float fps = frameRate.framerate();
  if (fps <= 0.0f) {
   fps = 30.0f;
@@ -69,8 +71,10 @@ CurveTrack sampleSpeedGraph(const QVector<TimeRemapKeyframe>& keyframes,
   CurveKey left;
   left.frame = startFrame;
   left.value = 100.0f;
+  left.editable = startFrame < endFrame;
   CurveKey right = left;
   right.frame = endFrame;
+  right.editable = false;
   track.keys.push_back(left);
   track.keys.push_back(right);
   return track;
@@ -87,6 +91,7 @@ CurveTrack sampleSpeedGraph(const QVector<TimeRemapKeyframe>& keyframes,
  struct SamplePoint {
   int64_t frame = 0;
   float speed = 100.0f;
+  bool editable = false;
  };
 
  std::vector<SamplePoint> samples;
@@ -95,47 +100,48 @@ CurveTrack sampleSpeedGraph(const QVector<TimeRemapKeyframe>& keyframes,
  auto appendSample = [&](int64_t frame, float speed) {
   if (!samples.empty() && samples.back().frame == frame) {
    samples.back().speed = speed;
+   samples.back().editable = false;
    return;
   }
-  samples.push_back({frame, speed});
+  samples.push_back({frame, speed, false});
  };
 
- const TimeRemapKeyframe* prev = nullptr;
- float lastSpeed = 100.0f;
- for (const auto& key : sorted) {
-  if (prev) {
-   const double dt = key.outputTime - prev->outputTime;
-   const double ds = key.sourceTime - prev->sourceTime;
-   if (std::abs(dt) > 1e-9) {
-    lastSpeed = clampSpeedPercent(static_cast<float>((ds / dt) * 100.0));
-   }
-  }
-
-  appendSample(frameFromTime(key.outputTime), lastSpeed);
-  prev = &key;
+ const TimeRemapKeyframe* next = nullptr;
+ for (size_t i = 0; i < static_cast<size_t>(sorted.size()); ++i) {
+  const auto& key = sorted[static_cast<int>(i)];
+  next = i + 1 < static_cast<size_t>(sorted.size())
+      ? &sorted[static_cast<int>(i + 1)] : nullptr;
+  const float keySpeed = next && key.interpolation != TimeRemapKeyframe::Interpolation::Hold
+      && std::abs(next->outputTime - key.outputTime) > 1e-9
+      ? static_cast<float>((next->sourceTime - key.sourceTime) /
+                           (next->outputTime - key.outputTime) * 100.0)
+      : 0.0f;
+  const bool editable = next &&
+      key.interpolation != TimeRemapKeyframe::Interpolation::Hold &&
+      std::abs(next->outputTime - key.outputTime) > 1e-9;
+  appendSample(frameFromTime(key.outputTime), keySpeed);
+  samples.back().editable = editable;
  }
-
  if (samples.empty()) {
   CurveKey point;
   point.frame = startFrame;
   point.value = 100.0f;
+  point.editable = startFrame < endFrame;
   track.keys.push_back(point);
   point.frame = endFrame;
+  point.editable = false;
   track.keys.push_back(point);
   return track;
  }
 
  if (samples.front().frame > startFrame) {
-  samples.insert(samples.begin(), {startFrame, samples.front().speed});
+  samples.insert(samples.begin(), {startFrame, samples.front().speed, false});
  }
  if (samples.back().frame < endFrame) {
-  samples.push_back({endFrame, samples.back().speed});
+  samples.push_back({endFrame, samples.back().speed, false});
  }
 
- std::sort(samples.begin(), samples.end(), [](const SamplePoint& a, const SamplePoint& b) {
-  if (a.frame == b.frame) {
-   return a.speed < b.speed;
-  }
+ std::stable_sort(samples.begin(), samples.end(), [](const SamplePoint& a, const SamplePoint& b) {
   return a.frame < b.frame;
  });
 
@@ -143,8 +149,9 @@ CurveTrack sampleSpeedGraph(const QVector<TimeRemapKeyframe>& keyframes,
   const auto& sample = samples[i];
   CurveKey key;
   key.frame = sample.frame;
-  key.value = sample.speed;
+  key.value = sample.editable ? clampSpeedPercent(sample.speed) : sample.speed;
   key.smooth = true;
+  key.editable = sample.editable;
   if (i > 0) {
    const auto& prevSample = samples[i - 1];
    const float df = static_cast<float>(std::max<int64_t>(1, sample.frame - prevSample.frame));
@@ -222,6 +229,8 @@ public:
  QRectF marqueeRectData_;  // data-space rect while DragMode::Marquee
  bool handlesInteractive_ = true;
   bool keyEditingEnabled_ = true;
+  bool keyStructureEditingEnabled_ = true;
+ bool frameEditingEnabled_ = true;
  QSpinBox* selectedFrameEditor_ = nullptr;
  QDoubleSpinBox* selectedValueEditor_ = nullptr;
 
@@ -246,7 +255,7 @@ public:
   selectedValueEditor_->hide();
   QObject::connect(selectedFrameEditor_, &QSpinBox::valueChanged, owner_,
                    [this](int frame) {
-                     if (!keyEditingEnabled_ || selectedTrack_ < 0 ||
+                     if (!keyEditingEnabled_ || !frameEditingEnabled_ || selectedTrack_ < 0 ||
                          selectedKey_ < 0 || selectedTrack_ >= static_cast<int>(tracks_.size()) ||
                          selectedKey_ >= static_cast<int>(tracks_[selectedTrack_].keys.size())) return;
                      const float value = tracks_[selectedTrack_].keys[selectedKey_].value;
@@ -258,7 +267,7 @@ public:
                    });
   QObject::connect(selectedValueEditor_, &QDoubleSpinBox::valueChanged, owner_,
                    [this](double value) {
-                     if (!keyEditingEnabled_ || selectedTrack_ < 0 ||
+                     if (!keyEditingEnabled_ || !frameEditingEnabled_ || selectedTrack_ < 0 ||
                          selectedKey_ < 0 || selectedTrack_ >= static_cast<int>(tracks_.size()) ||
                          selectedKey_ >= static_cast<int>(tracks_[selectedTrack_].keys.size())) return;
                      const int64_t frame = tracks_[selectedTrack_].keys[selectedKey_].frame;
@@ -271,6 +280,15 @@ public:
  }
 
  void syncSelectedEditors() {
+  if (!keyEditingEnabled_ || !frameEditingEnabled_ ||
+      (selectedTrack_ >= 0 && selectedTrack_ < static_cast<int>(tracks_.size()) &&
+       selectedKey_ >= 0 && selectedKey_ <
+           static_cast<int>(tracks_[selectedTrack_].keys.size()) &&
+       !tracks_[selectedTrack_].keys[static_cast<size_t>(selectedKey_)].editable)) {
+   selectedFrameEditor_->hide();
+   selectedValueEditor_->hide();
+   return;
+  }
   const bool valid = selectedTrack_ >= 0 && selectedKey_ >= 0 &&
                      selectedTrack_ < static_cast<int>(tracks_.size()) &&
                      selectedKey_ < static_cast<int>(tracks_[selectedTrack_].keys.size());
@@ -714,9 +732,10 @@ public:
    const auto& key = keys[i];
    QPointF kp = trackToPixel(track, static_cast<float>(key.frame), key.value);
 
-   // Draw tangent handles
+   // Draw tangent handles for editable keys only.
    const bool isSelected = isKeySelected(trackIndex, i);
-   if (i > 0 && isSelected) {
+   const bool editable = key.editable;
+   if (editable && i > 0 && isSelected) {
     float cp1F = static_cast<float>(key.frame + key.inHandleFrame);
     float cp1V = key.value + key.inHandleValue;
     QPointF hp = trackToPixel(track, cp1F, cp1V);
@@ -727,7 +746,7 @@ public:
     p.drawEllipse(hp, HANDLE_RADIUS + 1, HANDLE_RADIUS + 1);
    }
 
-   if (i < n - 1 && isSelected) {
+   if (editable && i < n - 1 && isSelected) {
     float cp0F = static_cast<float>(key.frame + key.outHandleFrame);
     float cp0V = key.value + key.outHandleValue;
     QPointF hp = trackToPixel(track, cp0F, cp0V);
@@ -739,8 +758,11 @@ public:
    }
 
    // Draw keyframe diamond
-   QColor keyColor = isSelected ? QColor(255, 250, 170) : track.color;
-   QColor fillColor = isSelected ? QColor(255, 236, 128, 235) : track.color.darker(150);
+   QColor keyColor = !editable ? track.color.darker(115)
+                               : (isSelected ? QColor(255, 250, 170) : track.color);
+   QColor fillColor = !editable ? track.color.darker(190)
+                               : (isSelected ? QColor(255, 236, 128, 235)
+                                             : track.color.darker(150));
    p.setPen(QPen(keyColor, isSelected ? 3 : 1));
    p.setBrush(fillColor);
 
@@ -789,16 +811,29 @@ public:
   for (int ti = 0; ti < static_cast<int>(tracks_.size()); ++ti) {
    if (!tracks_[ti].visible) continue;
    const auto& keys = tracks_[ti].keys;
+   const float bestDistBeforeTrack = bestDist;
+   int nearestBoundaryKey = -1;
+   float nearestBoundaryDist = bestDistBeforeTrack;
    for (int ki = 0; ki < static_cast<int>(keys.size()); ++ki) {
+    const bool editable = keys[ki].editable;
     QPointF kp = dataToPixel(static_cast<float>(keys[ki].frame), keys[ki].value);
     float dx = static_cast<float>(pixel.x() - kp.x());
     float dy = static_cast<float>(pixel.y() - kp.y());
     float dist = dx*dx + dy*dy;
-    if (dist < bestDist) {
+    if (editable && dist < bestDist) {
      bestDist = dist;
      outTrackIndex = ti;
      outKeyIndex = ki;
     }
+    if (!editable && dist < nearestBoundaryDist) {
+     nearestBoundaryDist = dist;
+     nearestBoundaryKey = ki;
+    }
+   }
+   if (outTrackIndex < 0 && nearestBoundaryKey >= 0 &&
+       nearestBoundaryDist <= bestDistBeforeTrack) {
+    outTrackIndex = ti;
+    outKeyIndex = nearestBoundaryKey;
    }
   }
   return outTrackIndex >= 0 ? 0 : -1;
@@ -1327,6 +1362,7 @@ void ArtifactCurveEditorWidget::setSpeedGraph(
  tracks.push_back(
      ArtifactCore::sampleSpeedGraph(keyframes, startFrame, endFrame, frameRate));
  setTracks(tracks);
+ setFrameEditingEnabled(false);
  fitToContent();
 }
 
@@ -1336,6 +1372,7 @@ void ArtifactCurveEditorWidget::setHandleEditingEnabled(bool enabled) {
 
 void ArtifactCurveEditorWidget::setKeyEditingEnabled(bool enabled) {
  impl_->keyEditingEnabled_ = enabled;
+ impl_->syncSelectedEditors();
  if (!enabled && impl_->dragMode_ != Impl::DragMode::ScrubPlayhead &&
      impl_->dragMode_ != Impl::DragMode::Pan) {
   impl_->dragMode_ = Impl::DragMode::None;
@@ -1343,10 +1380,20 @@ void ArtifactCurveEditorWidget::setKeyEditingEnabled(bool enabled) {
  update();
 }
 
+void ArtifactCurveEditorWidget::setKeyStructureEditingEnabled(bool enabled) {
+ impl_->keyStructureEditingEnabled_ = enabled;
+}
+
+void ArtifactCurveEditorWidget::setFrameEditingEnabled(bool enabled) {
+ impl_->frameEditingEnabled_ = enabled;
+ impl_->syncSelectedEditors();
+}
+
 bool ArtifactCurveEditorWidget::setSelectedKeyAutoTangents() {
- if (!impl_) {
+ if (!impl_ || !impl_->keyEditingEnabled_ || !impl_->keyStructureEditingEnabled_) {
   return false;
  }
+ impl_->captureBufferCurve();
  interactionStarted();
  if (!impl_->applyTangentOperationToSelection(
          [impl = impl_]() { return impl->setSelectedTangentsAuto(); })) {
@@ -1359,9 +1406,10 @@ bool ArtifactCurveEditorWidget::setSelectedKeyAutoTangents() {
 }
 
 bool ArtifactCurveEditorWidget::setSelectedKeyFlatTangents() {
- if (!impl_) {
+ if (!impl_ || !impl_->keyEditingEnabled_ || !impl_->keyStructureEditingEnabled_) {
   return false;
  }
+ impl_->captureBufferCurve();
  interactionStarted();
  if (!impl_->applyTangentOperationToSelection(
          [impl = impl_]() { return impl->setSelectedTangentsFlat(); })) {
@@ -1374,9 +1422,10 @@ bool ArtifactCurveEditorWidget::setSelectedKeyFlatTangents() {
 }
 
 bool ArtifactCurveEditorWidget::setSelectedKeyLinearTangents() {
- if (!impl_) {
+ if (!impl_ || !impl_->keyEditingEnabled_ || !impl_->keyStructureEditingEnabled_) {
   return false;
  }
+ impl_->captureBufferCurve();
  interactionStarted();
  if (!impl_->applyTangentOperationToSelection(
          [impl = impl_]() { return impl->setSelectedTangentsLinear(); })) {
@@ -1389,9 +1438,10 @@ bool ArtifactCurveEditorWidget::setSelectedKeyLinearTangents() {
 }
 
 bool ArtifactCurveEditorWidget::setSelectedKeyBrokenTangents() {
- if (!impl_) {
+ if (!impl_ || !impl_->keyEditingEnabled_ || !impl_->keyStructureEditingEnabled_) {
   return false;
  }
+ impl_->captureBufferCurve();
  interactionStarted();
  if (!impl_->setSelectedTangentsBroken()) {
   interactionFinished();
@@ -1403,9 +1453,10 @@ bool ArtifactCurveEditorWidget::setSelectedKeyBrokenTangents() {
 }
 
 bool ArtifactCurveEditorWidget::setSelectedKeyUnifiedTangents() {
- if (!impl_) {
+ if (!impl_ || !impl_->keyEditingEnabled_ || !impl_->keyStructureEditingEnabled_) {
   return false;
  }
+ impl_->captureBufferCurve();
  interactionStarted();
  if (!impl_->setSelectedTangentsUnified()) {
   interactionFinished();
@@ -1417,7 +1468,8 @@ bool ArtifactCurveEditorWidget::setSelectedKeyUnifiedTangents() {
 }
 
 bool ArtifactCurveEditorWidget::setSelectedKeyConstant() {
- if (!impl_) return false;
+ if (!impl_ || !impl_->keyEditingEnabled_ || !impl_->keyStructureEditingEnabled_) return false;
+ impl_->captureBufferCurve();
  interactionStarted();
  if (!impl_->setSelectedConstant(true)) {
   interactionFinished();
@@ -1429,7 +1481,8 @@ bool ArtifactCurveEditorWidget::setSelectedKeyConstant() {
 }
 
 bool ArtifactCurveEditorWidget::setSelectedKeyBezier() {
- if (!impl_) return false;
+ if (!impl_ || !impl_->keyEditingEnabled_ || !impl_->keyStructureEditingEnabled_) return false;
+ impl_->captureBufferCurve();
  interactionStarted();
  if (!impl_->setSelectedConstant(false)) {
   interactionFinished();
@@ -1441,7 +1494,7 @@ bool ArtifactCurveEditorWidget::setSelectedKeyBezier() {
 }
 
 bool ArtifactCurveEditorWidget::promptSetSelectedKeyValue() {
- if (!impl_ || !impl_->keyEditingEnabled_) {
+ if (!impl_ || !impl_->keyEditingEnabled_ || !impl_->frameEditingEnabled_) {
   return false;
  }
 
@@ -1492,7 +1545,7 @@ bool ArtifactCurveEditorWidget::promptSetSelectedKeyValue() {
 }
 
 bool ArtifactCurveEditorWidget::promptSetSelectedKeyFrame() {
- if (!impl_ || !impl_->keyEditingEnabled_) {
+ if (!impl_ || !impl_->keyEditingEnabled_ || !impl_->frameEditingEnabled_) {
   return false;
  }
  const int trackIndex = impl_->selectedTrack_;
@@ -1693,7 +1746,9 @@ void ArtifactCurveEditorWidget::mousePressEvent(QMouseEvent* event) {
  }
 
  // CE-5: Ctrl+Click inserts a key at the click position (Blender style).
- if ((event->modifiers() & Qt::ControlModifier) && impl_->keyEditingEnabled_) {
+ if ((event->modifiers() & Qt::ControlModifier) && impl_->keyEditingEnabled_ &&
+     impl_->keyStructureEditingEnabled_ &&
+     impl_->frameEditingEnabled_) {
   const QPointF data = impl_->pixelToData(pos);
   interactionStarted();
   impl_->insertKeyAt(data);
@@ -1704,6 +1759,13 @@ void ArtifactCurveEditorWidget::mousePressEvent(QMouseEvent* event) {
 
  // Check for handle hit first
  if (!impl_->keyEditingEnabled_) {
+  int boundaryTrack = -1;
+  int boundaryKey = -1;
+  if (impl_->hitTestKey(pos, boundaryTrack, boundaryKey) == 0 &&
+      boundaryTrack >= 0 && boundaryKey >= 0) {
+   impl_->setPrimaryKeySelection(boundaryTrack, boundaryKey);
+   keySelected(boundaryTrack, boundaryKey);
+  }
   impl_->dragMode_ = Impl::DragMode::Pan;
   impl_->dragStart_ = pos.toPoint();
   impl_->dragStartXMin_ = impl_->xMin_;
@@ -1738,6 +1800,12 @@ void ArtifactCurveEditorWidget::mousePressEvent(QMouseEvent* event) {
  // Check for key hit
  int tk, kk;
  if (impl_->hitTestKey(pos, tk, kk) == 0) {
+  if (!impl_->tracks_[tk].keys[static_cast<size_t>(kk)].editable) {
+   impl_->setPrimaryKeySelection(tk, kk);
+   keySelected(tk, kk);
+   update();
+   return;
+  }
   if (event->modifiers() & Qt::ShiftModifier) {
    // CE-3: shift-click toggles membership in the multi-selection.
    const std::pair<int, int> sel{tk, kk};
@@ -1839,7 +1907,7 @@ void ArtifactCurveEditorWidget::mouseMoveEvent(QMouseEvent* event) {
    // CE-12: frame movement is already quantized to integer frames below.
    // Ctrl enables a predictable value-grid snap without adding another
    // shortcut or changing the normal free-form curve editing path.
-   if (event->modifiers().testFlag(Qt::ControlModifier)) {
+   if (event->modifiers().testFlag(Qt::ControlModifier) && impl_->frameEditingEnabled_) {
     valueDelta = std::round(valueDelta);
    }
 
@@ -1851,8 +1919,11 @@ void ArtifactCurveEditorWidget::mouseMoveEvent(QMouseEvent* event) {
     if (dragged.track < 0 || dragged.track >= static_cast<int>(impl_->tracks_.size())) continue;
     auto& keys = impl_->tracks_[dragged.track].keys;
     if (dragged.key < 0 || dragged.key >= static_cast<int>(keys.size())) continue;
-    int64_t newFrame = dragged.frame + static_cast<int64_t>(std::llround(frameDelta));
-    if (event->modifiers().testFlag(Qt::ControlModifier)) {
+    int64_t newFrame = impl_->frameEditingEnabled_
+        ? dragged.frame + static_cast<int64_t>(std::llround(frameDelta))
+        : dragged.frame;
+    if (event->modifiers().testFlag(Qt::ControlModifier) &&
+        impl_->frameEditingEnabled_) {
      const auto& candidateKeys = impl_->tracks_[dragged.track].keys;
      for (int candidateIndex = 0;
           candidateIndex < static_cast<int>(candidateKeys.size()); ++candidateIndex) {
@@ -2072,7 +2143,7 @@ void ArtifactCurveEditorWidget::keyPressEvent(QKeyEvent* event) {
 
  if (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace ||
      event->key() == Qt::Key_X) {
-  if (!impl_->keyEditingEnabled_) {
+  if (!impl_->keyEditingEnabled_ || !impl_->keyStructureEditingEnabled_) {
    event->accept();
    return;
   }
@@ -2088,14 +2159,16 @@ void ArtifactCurveEditorWidget::keyPressEvent(QKeyEvent* event) {
   }
  }
 
- if (event->key() == Qt::Key_C && impl_->keyEditingEnabled_) {
+ if (event->key() == Qt::Key_C && impl_->keyEditingEnabled_ &&
+     impl_->keyStructureEditingEnabled_) {
   if (impl_->copySelectedKeys()) {
    event->accept();
    return;
   }
  }
 
- if (event->key() == Qt::Key_V && impl_->keyEditingEnabled_) {
+ if (event->key() == Qt::Key_V && impl_->keyEditingEnabled_ &&
+     impl_->keyStructureEditingEnabled_) {
   if (!impl_->copiedKeys_.empty() &&
       impl_->selectedTrack_ >= 0 &&
       impl_->selectedTrack_ < static_cast<int>(impl_->tracks_.size())) {
@@ -2111,7 +2184,7 @@ void ArtifactCurveEditorWidget::keyPressEvent(QKeyEvent* event) {
 
  if (event->key() == Qt::Key_D &&
      event->modifiers().testFlag(Qt::ShiftModifier) &&
-     impl_->keyEditingEnabled_) {
+     impl_->keyEditingEnabled_ && impl_->keyStructureEditingEnabled_) {
   if (!impl_->selectedKeys_.empty()) {
    interactionStarted();
    const bool cloned = impl_->cloneSelectedKeys();
