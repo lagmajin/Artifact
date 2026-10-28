@@ -5,6 +5,7 @@ module Artifact.Layer.PhysicsBridge;
 
 import Physics.System;
 import Physics.Mpm2D;
+import Core.Simulation.Pyro;
 
 namespace Artifact::LayerPhysicsBridge {
 
@@ -103,6 +104,20 @@ void removeCloth3D(const LayerID& layerId) {
 void setCloth3DWind(const LayerID& layerId, float x, float y, float z,
                     float strength) {
   PhysicsSystem::instance().setCloth3DWind(layerId, x, y, z, strength);
+}
+
+SharedPtr<PyroSimulation> pyro(const LayerID& layerId) {
+  return PhysicsSystem::instance().getPyroSimulation(layerId);
+}
+
+SharedPtr<PyroSimulation> ensurePyro(const LayerID& layerId) {
+  auto simulation = pyro(layerId);
+  return simulation ? simulation
+                    : PhysicsSystem::instance().createPyroSimulation(layerId);
+}
+
+void removePyro(const LayerID& layerId) {
+  PhysicsSystem::instance().unregisterPyroSimulation(layerId);
 }
 
 bool createMaterialGrid(const LayerID& layerId, float left, float top,

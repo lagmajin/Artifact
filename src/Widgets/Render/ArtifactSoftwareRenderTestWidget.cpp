@@ -29,6 +29,8 @@ import Artifact.Render.SoftwareCompositor;
 import Layer.Blend;
 import Artifact.Service.Project;
 import Artifact.Application.Manager;
+import Artifact.Layers.Selection.Manager;
+import Artifact.Layer.Abstract;
 
 namespace Artifact {
 

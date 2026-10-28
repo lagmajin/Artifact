@@ -42,6 +42,8 @@ import Translation.Manager;
 import Artifact.Service.Project;
 import Artifact.Service.Playback;
 import Artifact.Application.Manager;
+import Artifact.Layers.Selection.Manager;
+import Artifact.Layer.Abstract;
 import Artifact.MainWindow;
 import Artifact.Widgets.CompositionEditor;
 import Artifact.Widgets.CompositionRenderController;

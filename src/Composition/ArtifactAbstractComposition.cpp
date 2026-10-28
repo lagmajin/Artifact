@@ -3579,6 +3579,13 @@ void ArtifactAbstractComposition::Impl::evaluateLayerComponentSimulation(
         .count();
   };
   const int64_t frameNumber = frame.framePosition();
+  const double smokeFrameRate = std::max(
+      1.0, static_cast<double>(frameRate_.framerate()));
+  for (const auto& layer : layerMultiIndex_) {
+    if (!layer || !layer->hasFluidSmokeComponent()) continue;
+    layer->goToFrame(frameNumber);
+    layer->advanceFluidSmokeSimulation(frameNumber, smokeFrameRate);
+  }
   if (componentSimulation_.valid &&
       (componentSimulation_.snapshotInterval <= 1 ||
        componentSimulation_.frame % componentSimulation_.snapshotInterval == 0)) {

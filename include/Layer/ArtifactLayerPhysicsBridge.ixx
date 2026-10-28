@@ -10,6 +10,7 @@ import Physics2D;
 import Physics.Mpm2D;
 import Physics.SoftBody;
 import Physics.Cloth3D;
+import Core.Simulation.Pyro;
 
 export namespace Artifact::LayerPhysicsBridge {
 
@@ -57,6 +58,12 @@ ArtifactCore::SharedPtr<ArtifactCore::ClothSolver3D> createCloth3DGrid(
 void removeCloth3D(const ArtifactCore::LayerID& layerId);
 void setCloth3DWind(const ArtifactCore::LayerID& layerId, float x, float y,
                     float z, float strength);
+
+ArtifactCore::SharedPtr<ArtifactCore::PyroSimulation>
+pyro(const ArtifactCore::LayerID& layerId);
+ArtifactCore::SharedPtr<ArtifactCore::PyroSimulation>
+ensurePyro(const ArtifactCore::LayerID& layerId);
+void removePyro(const ArtifactCore::LayerID& layerId);
 
 bool createMaterialGrid(const ArtifactCore::LayerID& layerId, float left,
                         float top, float width, float height, int columns,

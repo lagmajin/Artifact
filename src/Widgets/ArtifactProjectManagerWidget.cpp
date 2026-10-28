@@ -161,7 +161,6 @@ import Input.Operator;
 import Artifact.Composition.Abstract;
 import Artifact.Widgets.ProjectResponsiveLayout;
 import Artifact.Widgets.ProjectItemPresentation;
-import Artifact.Widgets.ProjectViewHoverPopup;
 import Artifact.Widgets.ProjectManagerControls;
 import Artifact.Layer.Video;
 import Memory.SharedPtr;

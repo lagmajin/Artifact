@@ -395,6 +395,8 @@ void ArtifactAbstractLayerImpl::syncBuiltinComponentDescriptors() {
       fluidSmokeDensityDissipationPerSecond_;
   fluid.settings[QStringLiteral("emitterTemperature")] =
       fluidSmokeEmitterTemperature_;
+  fluid.settings[QStringLiteral("flameLifetimeSeconds")] =
+      fluidFlameLifetimeSeconds_;
   fluid.settings[QStringLiteral("thermalBuoyancy")] =
       fluidThermalBuoyancy_;
   fluid.settings[QStringLiteral("temperatureDissipationPerSecond")] =
@@ -2121,7 +2123,7 @@ void ArtifactAbstractLayer::clearParent() {
   if (impl_->parentLayerId_.isNil()) {
     return;
   }
-  impl_->parentLayerId_ = LayerID();
+  impl_->parentLayerId_ = LayerID(Id::Nil());
   if (auto *composition = dynamic_cast<ArtifactAbstractComposition *>(impl_->composition_.data())) {
     composition->nodeStore().setParent(this->id().toString(), QString{});
   }

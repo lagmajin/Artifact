@@ -32,6 +32,7 @@ module Widgets.ToolOptionsBar;
 
 import Font.FreeFont;
 import Artifact.Application.Manager;
+import Artifact.Tool.Brush;
 import Artifact.Tool.MotionSketchTool;
 import Artifact.Layer.Shape;
 import Artifact.Layer.Abstract.Utilities;

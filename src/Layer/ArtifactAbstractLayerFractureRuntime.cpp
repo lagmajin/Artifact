@@ -157,6 +157,19 @@ const LayerEvaluationState& ArtifactAbstractLayer::layerEvaluationState() const 
   return impl_->componentEvaluationState_;
 }
 
+static std::int64_t smokeSimulationStartFrame(
+    const ArtifactAbstractLayer* layer, std::int64_t requestedStart) {
+  auto start = std::max(requestedStart, layer->inPoint().framePosition());
+  if (const auto composition =
+          dynamic_cast<const ArtifactAbstractComposition*>(layer->compositionObject())) {
+    start = std::max(start, composition->frameRange().start());
+  }
+  return start;
+}
+
+constexpr float kSmokeRuntimeTopOutflowRatePerSecond = 100.0f;
+constexpr float kSmokeRuntimeTopOutflowBandFraction = 0.35f;
+
 void ArtifactAbstractLayer::advanceFluidSmokeSimulation(
     const std::int64_t frame, const double framesPerSecond,
     const std::int64_t simulationStartFrame) {
@@ -165,13 +178,7 @@ void ArtifactAbstractLayer::advanceFluidSmokeSimulation(
     impl_->fluidRuntime_.invalidateSmokeSimulation();
     return;
   }
-  std::int64_t effectiveSimulationStart =
-      std::max(simulationStartFrame, inPoint().framePosition());
-  if (const auto composition =
-          dynamic_cast<const ArtifactAbstractComposition*>(compositionObject())) {
-    effectiveSimulationStart = std::max(
-        effectiveSimulationStart, composition->frameRange().start());
-  }
+  const auto effectiveSimulationStart = smokeSimulationStartFrame(this, simulationStartFrame);
   advanceLayerSmokeRuntime(
       impl_->fluidRuntime_, frame, framesPerSecond,
       LayerSmokeRuntimeSettings{
@@ -195,7 +202,10 @@ void ArtifactAbstractLayer::advanceFluidSmokeSimulation(
           impl_->fluidSmokeDensityDissipationPerSecond_,
           effectiveSimulationStart,
           impl_->fluidSmokeEmitterTemperature_, impl_->fluidThermalBuoyancy_,
-          impl_->fluidTemperatureDissipationPerSecond_});
+          impl_->fluidTemperatureDissipationPerSecond_,
+          impl_->fluidFlameLifetimeSeconds_,
+          kSmokeRuntimeTopOutflowRatePerSecond,
+          kSmokeRuntimeTopOutflowBandFraction});
 }
 
 void ArtifactAbstractLayer::resetFluidSmokeSimulation() {
@@ -210,6 +220,9 @@ void ArtifactAbstractLayer::drawFluidSmokeOverlay(
   Q_UNUSED(sourceSize);
   const std::int64_t frame = currentTimelineFrame(this);
   const double fps = std::max(1.0, effectiveLayerFrameRate(this));
+  const auto simulationStart = impl_->fluidRuntime_.fluidSolver_
+      ? impl_->fluidRuntime_.smokeSimulationStartFrame_
+      : smokeSimulationStartFrame(this, 0);
   renderLayerSmokeRuntime(
       impl_->fluidRuntime_, renderer, localBounds(), baseTransform,
       opacityScale, frame, fps,
@@ -229,9 +242,13 @@ void ArtifactAbstractLayer::drawFluidSmokeOverlay(
           impl_->fluidSmokeStirY_, impl_->fluidSmokeStirRadius_,
           impl_->fluidSmokeStirVelocityX_, impl_->fluidSmokeStirVelocityY_,
           impl_->fluidSmokeStirStrength_, impl_->fluidSmokeStirRevision_,
-          impl_->fluidSmokeDensityDissipationPerSecond_, 0,
+          impl_->fluidSmokeDensityDissipationPerSecond_, simulationStart,
           impl_->fluidSmokeEmitterTemperature_, impl_->fluidThermalBuoyancy_,
-          impl_->fluidTemperatureDissipationPerSecond_});
+          impl_->fluidTemperatureDissipationPerSecond_,
+          impl_->fluidFlameLifetimeSeconds_,
+          kSmokeRuntimeTopOutflowRatePerSecond,
+          kSmokeRuntimeTopOutflowBandFraction,
+          0.9f}); // Low-frequency shading only; density distribution is unchanged.
 }
 
 void ArtifactAbstractLayer::compositeFluidSmokeSoftwareSurface(
@@ -242,6 +259,9 @@ void ArtifactAbstractLayer::compositeFluidSmokeSoftwareSurface(
   }
   const std::int64_t frame = currentTimelineFrame(this);
   const double fps = std::max(1.0, effectiveLayerFrameRate(this));
+  const auto simulationStart = impl_->fluidRuntime_.fluidSolver_
+      ? impl_->fluidRuntime_.smokeSimulationStartFrame_
+      : smokeSimulationStartFrame(this, 0);
   const LayerSmokeRuntimeSettings settings{
       impl_->fluidGridWidth_, impl_->fluidGridHeight_,
       impl_->fluidViscosity_, impl_->fluidDiffusion_,
@@ -257,9 +277,12 @@ void ArtifactAbstractLayer::compositeFluidSmokeSoftwareSurface(
       impl_->fluidSmokeStirY_, impl_->fluidSmokeStirRadius_,
       impl_->fluidSmokeStirVelocityX_, impl_->fluidSmokeStirVelocityY_,
       impl_->fluidSmokeStirStrength_, impl_->fluidSmokeStirRevision_,
-      impl_->fluidSmokeDensityDissipationPerSecond_, 0,
+      impl_->fluidSmokeDensityDissipationPerSecond_, simulationStart,
       impl_->fluidSmokeEmitterTemperature_, impl_->fluidThermalBuoyancy_,
-      impl_->fluidTemperatureDissipationPerSecond_};
+      impl_->fluidTemperatureDissipationPerSecond_,
+      impl_->fluidFlameLifetimeSeconds_,
+      kSmokeRuntimeTopOutflowRatePerSecond,
+      kSmokeRuntimeTopOutflowBandFraction};
   advanceLayerSmokeRuntime(impl_->fluidRuntime_, frame, fps, settings);
 
   QMatrix4x4 identity;
@@ -1018,12 +1041,12 @@ void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
             const float opticalDepth = std::clamp(
                 (coverage - 0.34f) * 0.5f, 0.0f, 1.0f);
             const float absorption = 1.0f - opticalDepth * 0.28f;
-            // A broad, low-amplitude contact reflection keeps the highlight
-            // coherent across the triangle mesh instead of exposing facets.
             const float edgeCoverage = std::clamp(
                 (coverage - 0.34f) / 0.16f, 0.0f, 1.0f);
             const float edgeAlpha = edgeCoverage * edgeCoverage *
                                     (3.0f - 2.0f * edgeCoverage);
+            // A broad, low-amplitude contact reflection keeps the highlight
+            // coherent across the triangle mesh instead of exposing facets.
             const float contactBand =
                 smoothBand(std::abs(projectedY - reflectionCenterY),
                            reflectionSurfaceHeight * 0.12f) *

@@ -136,6 +136,7 @@ import Artifact.Effect.Rasterizer.ScreenShake;
 import Artifact.Effect.Generate.SimpleRain;
 import Artifact.Effect.Rasterizer.ChromaticRelief;
 import Artifact.Effect.Rasterizer.FilmDamage;
+import Artifact.Effect.Rasterizer.VHSTape;
 import Artifact.Effect.Rasterizer.Vignette;
 import Artifact.Effect.Rasterizer.Stripes;
 import Artifact.Effect.Rasterizer.Voronoi;
@@ -1098,6 +1099,13 @@ W_OBJECT_IMPL(ArtifactEffectService)
    effect->setDisplayName(QStringLiteral("Film Damage"));
    return effect;
   }
+  if (effectId == QStringLiteral("vhs_tape") ||
+      effectId == QStringLiteral("effect.stylize.vhstape")) {
+   auto effect = std::make_unique<VHSTapeEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("VHS Tape"));
+   return effect;
+  }
   if (effectId == QStringLiteral("vignette")) {
    auto effect = std::make_unique<VignetteEffect>();
    effect->setEffectID(UniString::fromQString(effectId));
@@ -1337,6 +1345,7 @@ W_OBJECT_IMPL(ArtifactEffectService)
   effects.push_back({EffectID("simple_rain"), "Simple Rain"});
   effects.push_back({EffectID("chromatic_relief"), "Chromatic Relief"});
   effects.push_back({EffectID("film_damage"), "Film Damage"});
+  effects.push_back({EffectID("vhs_tape"), "VHS Tape"});
   effects.push_back({EffectID("vignette"), "Vignette"});
   effects.push_back({EffectID("stripes"), "Stripes"});
   effects.push_back({EffectID("voronoi"), "Voronoi"});

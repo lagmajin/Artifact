@@ -2084,18 +2084,62 @@ QImage renderParticleSurfaceGPU(ArtifactIRenderer* renderer,
       FramePosition(targetFrame), layer, surfaceSize, surfaceMap);
 }
 
-void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
-                                 ArtifactIRenderer *renderer,
-                                 float opacityOverride,
-                                 QString* videoDebugOut,
-                                 QHash<QString, LayerSurfaceCacheEntry>* surfaceCache,
-                                 GPUTextureCacheManager* gpuTextureCacheManager,
-                                 int64_t cacheFrameNumber,
-                                 bool offlineRender,
-                                 DetailLevel lod,
-                                 const std::vector<ArtifactCore::Light>* sceneLights,
-                                 const QHash<ArtifactCore::Id, QImage>* matteSourceImages)
+// Nested precomp compositions are rendered into their own target at the mapped
+// child frame instead of reusing a frame-independent layer thumbnail (which has
+// no transform and no time). One offscreen renderer is cached per precomp layer
+// so the target survives across frames.
+struct PrecompGpuRenderHelper {
+  const void* device = nullptr;
+  QSize size;
+  std::shared_ptr<OffscreenCompositionRenderer> renderer;
+};
+
+QImage renderPrecompCompositionGPU(ArtifactIRenderer* renderer,
+                                   const QString& cacheKey,
+                                   ArtifactAbstractComposition* composition,
+                                   int64_t frameNumber,
+                                   const QSize& size)
 {
+  if (!renderer || !composition || cacheKey.isEmpty() ||
+      size.width() <= 0 || size.height() <= 0) {
+    return {};
+  }
+  const auto deviceHolder = renderer->device();
+  const void* deviceKey = deviceHolder.RawPtr();
+  if (!deviceKey) {
+    return {};
+  }
+  static QMutex mutex;
+  static QHash<QString, PrecompGpuRenderHelper> helpers;
+  QMutexLocker lock(&mutex);
+  if (helpers.size() > 16) {
+    helpers.clear();
+  }
+  auto it = helpers.find(cacheKey);
+  if (it == helpers.end() || it->device != deviceKey || it->size != size) {
+    PrecompGpuRenderHelper entry;
+    entry.device = deviceKey;
+    entry.size = size;
+    entry.renderer = std::make_shared<OffscreenCompositionRenderer>(
+        deviceHolder, renderer->immediateContext(),
+        static_cast<Diligent::Uint32>(size.width()),
+        static_cast<Diligent::Uint32>(size.height()));
+    it = helpers.insert(cacheKey, std::move(entry));
+  }
+  return it->renderer->renderToQImage(FramePosition(frameNumber), composition);
+}
+
+static void drawLayerForCompositionViewImpl(
+    ArtifactAbstractLayer* layer, ArtifactIRenderer* renderer,
+    float opacityOverride, QString* videoDebugOut,
+    QHash<QString, LayerSurfaceCacheEntry>* surfaceCache,
+    GPUTextureCacheManager* gpuTextureCacheManager,
+    int64_t cacheFrameNumber, bool offlineRender, DetailLevel lod,
+    const std::vector<ArtifactCore::Light>* sceneLights,
+    const QHash<ArtifactCore::Id, QImage>* matteSourceImages,
+    bool* outLayerDrawHandlesOverlay)
+{
+  if (outLayerDrawHandlesOverlay) *outLayerDrawHandlesOverlay = false;
   if (!layer || !renderer) {
     return;
   }
@@ -3022,6 +3066,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
         }
       }
     } else {
+      if (outLayerDrawHandlesOverlay) *outLayerDrawHandlesOverlay = true;
       shapeLayer->draw(renderer);
       return;
     }
@@ -3088,6 +3133,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
               applySurfaceAndDraw(svgImage, localRect, true, nullptr, true);
               return;
             }
+            if (outLayerDrawHandlesOverlay) *outLayerDrawHandlesOverlay = true;
             svgLayer->draw(renderer);
             return;
           }
@@ -3097,6 +3143,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
           applySurfaceAndDraw(svgImage, localRect, hasRasterizerWork,
                               nullptr, true);
         } else {
+          if (outLayerDrawHandlesOverlay) *outLayerDrawHandlesOverlay = true;
           svgLayer->draw(renderer);
         }
       }
@@ -3300,6 +3347,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
   if (auto* textLayer = dynamic_cast<ArtifactTextLayer*>(layer)) {
     const bool hasRasterizerWork = hasRasterizerEffectsOrMasks(layer);
     if (!hasRasterizerWork) {
+      if (outLayerDrawHandlesOverlay) *outLayerDrawHandlesOverlay = true;
       textLayer->draw(renderer);
       return;
     }
@@ -3435,26 +3483,37 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
       const double mappedFrameD =
           compLayer->getSourceFrameAtCompFrame(parentFrame);
       const int64_t childFrame = static_cast<int64_t>(std::llround(mappedFrameD));
-      static QMutex precompThumbnailDiagnosticMutex;
-      static QSet<QString> reportedPrecompThumbnails;
       const QString precompId = layer->id().toString();
-      bool reportPrecompThumbnail = false;
-      {
-        QMutexLocker lock(&precompThumbnailDiagnosticMutex);
-        if (!reportedPrecompThumbnails.contains(precompId)) {
-          if (reportedPrecompThumbnails.size() >= 512) {
-            reportedPrecompThumbnails.clear();
+      QImage childImage;
+      if (offlineRender) {
+        // Offline/queue rendering has a device, so draw the child composition
+        // for real at the mapped frame (transforms, timeline and keyframes).
+        childImage = renderPrecompCompositionGPU(
+            renderer, precompId, childComp.get(), childFrame, childSize);
+      }
+      if (childImage.isNull()) {
+        // Without a nested target (interactive thumbnail path) keep the
+        // previous approximation, but say so once per layer.
+        static QMutex precompThumbnailDiagnosticMutex;
+        static QSet<QString> reportedPrecompThumbnails;
+        bool reportPrecompThumbnail = false;
+        {
+          QMutexLocker lock(&precompThumbnailDiagnosticMutex);
+          if (!reportedPrecompThumbnails.contains(precompId)) {
+            if (reportedPrecompThumbnails.size() >= 512) {
+              reportedPrecompThumbnails.clear();
+            }
+            reportedPrecompThumbnails.insert(precompId);
+            reportPrecompThumbnail = true;
           }
-          reportedPrecompThumbnails.insert(precompId);
-          reportPrecompThumbnail = true;
         }
+        if (reportPrecompThumbnail) {
+          qWarning() << "[CompositionView][PrecompDiagnostics] child composition"
+                     << "sampled through QImage thumbnail; layerId=" << precompId;
+        }
+        childImage = childComp->getThumbnailAtFrame(
+            childFrame, childSize.width(), childSize.height());
       }
-      if (reportPrecompThumbnail) {
-        qWarning() << "[CompositionView][PrecompDiagnostics] child composition"
-                   << "sampled through QImage thumbnail; layerId=" << precompId;
-      }
-      QImage childImage = childComp->getThumbnailAtFrame(
-          childFrame, childSize.width(), childSize.height());
 
       if (!childImage.isNull()) {
         applySurfaceAndDraw(childImage, localRect, hasRasterizerEffectsOrMasks(layer));
@@ -3521,6 +3580,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
     if (renderer && renderer->isInitialized()) {
       particleLayer->goToFrame(targetFrame);
       if (!hasRasterizer) {
+        if (outLayerDrawHandlesOverlay) *outLayerDrawHandlesOverlay = true;
         particleLayer->draw(renderer);
         return;
       }
@@ -3575,6 +3635,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
 
   if (auto* formParticleLayer = dynamic_cast<ArtifactFormParticleLayer*>(layer)) {
     if (renderer && renderer->isInitialized()) {
+      if (outLayerDrawHandlesOverlay) *outLayerDrawHandlesOverlay = true;
       formParticleLayer->draw(renderer);
     }
     return;
@@ -3609,7 +3670,47 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
     return;
   }
 
+  if (outLayerDrawHandlesOverlay) *outLayerDrawHandlesOverlay = true;
   layer->draw(renderer);
+}
+
+void drawLayerForCompositionView(
+    ArtifactAbstractLayer* layer, ArtifactIRenderer* renderer,
+    float opacityOverride, QString* videoDebugOut,
+    QHash<QString, LayerSurfaceCacheEntry>* surfaceCache,
+    GPUTextureCacheManager* gpuTextureCacheManager,
+    int64_t cacheFrameNumber, bool offlineRender, DetailLevel lod,
+    const std::vector<ArtifactCore::Light>* sceneLights,
+    const QHash<ArtifactCore::Id, QImage>* matteSourceImages) {
+  if (!layer || !renderer ||
+      (offlineRender && !layer->shouldIncludeInFinalRender())) {
+    return;
+  }
+  const QRectF localRect = layer->localBounds();
+  if (!localRect.isValid() || localRect.width() <= 0.0 ||
+      localRect.height() <= 0.0) {
+    return;
+  }
+
+  bool overlayHandledByLayerDraw = false;
+  drawLayerForCompositionViewImpl(
+      layer, renderer, opacityOverride, videoDebugOut, surfaceCache,
+      gpuTextureCacheManager, cacheFrameNumber, offlineRender, lod,
+      sceneLights, matteSourceImages, &overlayHandledByLayerDraw);
+
+  if (overlayHandledByLayerDraw || !layer->hasFluidSmokeComponent()) return;
+  const QMatrix4x4 baseTransform = layer->getGlobalTransform4x4();
+  const float baseOpacity = opacityOverride >= 0.0f
+      ? opacityOverride
+      : layer->opacity();
+  drawWithClonerEffect(
+      layer, baseTransform,
+      [layer, renderer, sourceSize = localRect.size(), baseOpacity](
+          const QMatrix4x4& instanceTransform, const float instanceWeight) {
+        layer->drawFluidSmokeOverlay(
+            renderer, instanceTransform, sourceSize,
+            baseOpacity * instanceWeight);
+      });
 }
 
 } // namespace Artifact

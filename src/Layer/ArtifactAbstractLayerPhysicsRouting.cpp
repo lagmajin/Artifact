@@ -619,6 +619,14 @@ impl_->jointAngleLimitEnabled_ = value.toBool();
                           LayerDirtyReason::PropertyChanged);
       return true;
     }
+    if (propertyPath == QStringLiteral("component.fluid.flameLifetimeSeconds")) {
+      impl_->fluidFlameLifetimeSeconds_ = finiteClampedValue(
+          value.toDouble(), impl_->fluidFlameLifetimeSeconds_, 0.05, 10.0);
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
     if (propertyPath == QStringLiteral("component.fluid.thermalBuoyancy")) {
       impl_->fluidThermalBuoyancy_ = finiteClampedValue(
           value.toDouble(), impl_->fluidThermalBuoyancy_, 0.0, 2.0);

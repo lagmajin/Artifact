@@ -36,6 +36,8 @@ module;
 #include <QStyle>
 #include <QLocale>
 #include <QColor>
+#include <QComboBox>
+#include <QContextMenuEvent>
 #include <QString>
 #include <QCommandLineOption>
 #include <QDateTime>
@@ -51,6 +53,7 @@ module;
 #include <QFileInfo>
 #include <QFileInfoList>
 #include <QFont>
+#include <QGroupBox>
 #include <QIcon>
 #include <QKeyEvent>
 #include <QKeySequence>
@@ -69,10 +72,12 @@ module;
 #include <QCryptographicHash>
 #include <QLoggingCategory>
 #include <QLayout>
+#include <QLineEdit>
 #include <QMessageBox>
 #include <QMainWindow>
 #include <QMenu>
 #include <QMetaType>
+#include <QPair>
 #include <QPointer>
 #include <QPainter>
 #include <QPixmap>
@@ -235,6 +240,8 @@ public:
   [[nodiscard]] QWidget* root() const { return root_.data(); }
   [[nodiscard]] bool isInjecting() const { return injectionDepth_ > 0; }
   [[nodiscard]] int deliveredEvents() const { return deliveredEvents_; }
+  [[nodiscard]] QPoint windowPosition() const { return windowPosition_; }
+  [[nodiscard]] Qt::MouseButtons pressedButtons() const { return pressedButtons_; }
 
   void noteDelivered(QObject* receiver) {
     ++deliveredEvents_;
@@ -258,6 +265,7 @@ public:
     if (!resolvePointer(windowPosition, &receiver, error)) {
       return false;
     }
+    windowPosition_ = windowPosition;
     if (!isPointerCaptured()) {
       updateHover(receiver, windowPosition);
     }
@@ -296,6 +304,7 @@ public:
     if (!resolvePointer(windowPosition, &receiver, error)) {
       return false;
     }
+    windowPosition_ = windowPosition;
     pressedButtons_.setFlag(button, false);
     sendPointer(receiver, windowPosition, QEvent::MouseButtonRelease, button,
                 pressedButtons_, modifiers);
@@ -429,6 +438,24 @@ public:
                              characterText, false);
       QApplication::sendEvent(receiver, &releaseEvent);
     }
+    return true;
+  }
+
+  // Qt builds ContextMenu events in the platform layer, so a synthesized right
+  // click never produces one. Callers that want a context menu ask for it.
+  bool contextMenu(const QPoint& windowPosition, QString* error) {
+    [[maybe_unused]] ScopedInjection injection(this);
+    if (!moveTo(windowPosition, Qt::NoModifier, error)) {
+      return false;
+    }
+    QWidget* receiver = nullptr;
+    if (!resolvePointer(windowPosition, &receiver, error)) {
+      return false;
+    }
+    const QPoint local = receiver->mapFrom(root_.data(), windowPosition);
+    QContextMenuEvent event(QContextMenuEvent::Mouse, local,
+                            receiver->mapToGlobal(local));
+    QApplication::sendEvent(receiver, &event);
     return true;
   }
 
@@ -573,6 +600,7 @@ private:
   QPointer<QWidget> hovered_;
   QPointer<QWidget> pressedWidget_;
   QLabel* cursor_ = nullptr;
+  QPoint windowPosition_;
   Qt::MouseButtons pressedButtons_ = Qt::NoButton;
   QPointer<QObject> lastReceiver_;
   int injectionDepth_ = 0;
@@ -660,6 +688,16 @@ protected:
       QObject::timerEvent(event);
       return;
     }
+    // A widget opened by an injected click can start a nested event loop
+    // (QMenu::exec, modal dialogs). Servicing requests from that loop is what
+    // lets the caller drive the menu, but unbounded nesting is not.
+    if (dispatchDepth_ > 8) {
+      return;
+    }
+    // Queued input runs before this tick's socket reads. Its response was
+    // already flushed on a previous tick, so a widget that blocks here cannot
+    // stall the caller.
+    runPendingInputs();
     if (!client_ && server_.hasPendingConnections()) {
       client_ = server_.nextPendingConnection();
       if (client_) {
@@ -686,14 +724,19 @@ protected:
       }
       QJsonObject request;
       int processedFrames = 0;
+      ++dispatchDepth_;
       while (client_ && processedFrames < 8 &&
              ArtifactCore::McpBridge::tryPopFrame(&inputBuffer_, &request)) {
+        // handleRequest can run a nested event loop and tear the connection
+        // down through a re-entrant call, so keep our own handle to the socket.
+        QPointer<QTcpSocket> socket = client_;
         const QJsonObject response = handleRequest(request);
-        if (!response.isEmpty()) {
-          client_->write(ArtifactCore::McpBridge::encodeFrame(response));
+        if (socket && !response.isEmpty()) {
+          socket->write(ArtifactCore::McpBridge::encodeFrame(response));
         }
         ++processedFrames;
       }
+      --dispatchDepth_;
       if (client_) {
         client_->flush();
       }
@@ -847,13 +890,15 @@ private:
           {QStringLiteral("nameFilter"), QJsonObject{
                {QStringLiteral("type"), QStringLiteral("string")},
                {QStringLiteral("description"), QStringLiteral(
-                    "case-insensitive objectName substring")}}},
+                    "case-insensitive objectName or text substring")}}},
           {QStringLiteral("limit"), numberSchema}};
       const QJsonObject actionListSchema{
           {QStringLiteral("menu"), QJsonObject{
                {QStringLiteral("type"), QStringLiteral("string")},
                {QStringLiteral("description"), QStringLiteral(
                     "optional menu objectName or title substring")}}}};
+      const QJsonObject targetOnlySchema{
+          {QStringLiteral("target"), targetSchema}};
       return makeResponse(id, QJsonObject{{QStringLiteral("tools"), QJsonArray{
           tool(QStringLiteral("ui.listWidgets"),
                QStringLiteral("List visible named widgets, including open menus and dialogs"),
@@ -861,6 +906,15 @@ private:
           tool(QStringLiteral("ui.listActions"),
                QStringLiteral("List items of open menus with window coordinates"),
                actionListSchema),
+          tool(QStringLiteral("ui.state"),
+               QStringLiteral("Report the virtual pointer, buttons, focus and open dialogs"),
+               {}),
+          tool(QStringLiteral("ui.focus"),
+               QStringLiteral("Give keyboard focus to a named widget"),
+               targetOnlySchema, QJsonArray{QStringLiteral("target")}),
+          tool(QStringLiteral("ui.contextMenu"),
+               QStringLiteral("Send a context menu event; right clicks alone do not open menus"),
+               pointSchema),
           tool(QStringLiteral("ui.mouseMove"),
                QStringLiteral("Move the in-app virtual pointer and send hover/move events"),
                pointSchema),
@@ -918,33 +972,47 @@ private:
       for (QWidget* widget : QApplication::topLevelWidgets()) {
         candidates.insert(widget);
       }
-      QList<QWidget*> ordered;
+      QList<QPair<QWidget*, QString>> ordered;
       ordered.reserve(candidates.size());
       for (QWidget* widget : candidates) {
-        if (!widget || !widget->isVisible() || widget->objectName().isEmpty()) {
+        if (!widget || !widget->isVisible()) {
           continue;
         }
         if (widget->testAttribute(Qt::WA_TransparentForMouseEvents)) {
           continue;
         }
-        if (!filter.isEmpty() &&
-            !widget->objectName().contains(filter, Qt::CaseInsensitive)) {
+        const QString text = widgetText(widget);
+        // A widget with neither a name nor a visible label cannot be targeted
+        // by anything the caller can see.
+        if (widget->objectName().isEmpty() && text.isEmpty()) {
           continue;
         }
-        ordered.append(widget);
+        if (!filter.isEmpty() &&
+            !widget->objectName().contains(filter, Qt::CaseInsensitive) &&
+            !text.contains(filter, Qt::CaseInsensitive)) {
+          continue;
+        }
+        ordered.append(qMakePair(widget, text));
       }
-      std::sort(ordered.begin(), ordered.end(), [](QWidget* left, QWidget* right) {
-        return left->objectName() < right->objectName();
-      });
+      std::sort(ordered.begin(), ordered.end(),
+                [](const QPair<QWidget*, QString>& left,
+                   const QPair<QWidget*, QString>& right) {
+                  if (left.first->objectName() != right.first->objectName()) {
+                    return left.first->objectName() < right.first->objectName();
+                  }
+                  return left.second < right.second;
+                });
       QJsonArray widgets;
-      for (QWidget* widget : ordered) {
+      for (const auto& entry : ordered) {
         if (widgets.size() >= limit) {
           break;
         }
+        QWidget* widget = entry.first;
         const QPoint windowPosition = widget->mapTo(root_, QPoint(0, 0));
         widgets.append(QJsonObject{
             {QStringLiteral("objectName"), widget->objectName()},
             {QStringLiteral("className"), QString::fromLatin1(widget->metaObject()->className())},
+            {QStringLiteral("text"), entry.second},
             {QStringLiteral("windowX"), windowPosition.x()},
             {QStringLiteral("windowY"), windowPosition.y()},
             {QStringLiteral("width"), widget->width()},
@@ -958,62 +1026,109 @@ private:
       result.insert(QStringLiteral("truncated"), ordered.size() > widgets.size());
     } else if (name == QStringLiteral("ui.listActions")) {
       result = listMenuActions(arguments);
-    } else if (name == QStringLiteral("ui.mouseMove") ||
-               name == QStringLiteral("ui.mouseClick")) {
+    } else if (name == QStringLiteral("ui.state")) {
+      result = stateSnapshot();
+    } else if (name == QStringLiteral("ui.focus")) {
+      QWidget* target = resolveTarget(arguments, &error);
+      if (target) {
+        target->setFocus(Qt::OtherFocusReason);
+        result = widgetInfo(target);
+        result.insert(QStringLiteral("focused"),
+                      QApplication::focusWidget() == target);
+      }
+    } else if (name == QStringLiteral("ui.mouseMove")) {
       QPoint point;
       const Qt::KeyboardModifiers modifiers = modifiersFor(arguments, &error);
-      if (error.isEmpty() && windowPointFor(arguments, &point, &error)) {
-        if (name == QStringLiteral("ui.mouseClick")) {
-          Qt::MouseButton button = Qt::LeftButton;
-          if (error.isEmpty()) {
-            button = mouseButtonFor(
-                arguments.value(QStringLiteral("button")).toString(QStringLiteral("left")),
-                &error);
-          }
-          const int count =
-              std::clamp(arguments.value(QStringLiteral("count")).toInt(1), 1, 2);
-          if (error.isEmpty()) {
-            if (count == 2) {
-              virtualInput_.doubleClick(point, button, modifiers, &error);
-            } else if (virtualInput_.press(point, button, modifiers, &error)) {
-              virtualInput_.release(point, button, modifiers, &error);
-            }
-          }
-        } else {
-          virtualInput_.moveTo(point, modifiers, &error);
-        }
-      }
       if (error.isEmpty()) {
+        windowPointFor(arguments, &point, &error);
+      }
+      if (error.isEmpty() && virtualInput_.moveTo(point, modifiers, &error)) {
         result.insert(QStringLiteral("target"), virtualInput_.lastReceiverName());
         result.insert(QStringLiteral("windowX"), point.x());
         result.insert(QStringLiteral("windowY"), point.y());
-        result.insert(QStringLiteral("action"), name == QStringLiteral("ui.mouseClick")
-                                                    ? QStringLiteral("click")
-                                                    : QStringLiteral("move"));
+        result.insert(QStringLiteral("action"), QStringLiteral("move"));
+      }
+    } else if (name == QStringLiteral("ui.mouseClick")) {
+      QPoint point;
+      const Qt::KeyboardModifiers modifiers = modifiersFor(arguments, &error);
+      if (error.isEmpty()) {
+        windowPointFor(arguments, &point, &error);
+      }
+      Qt::MouseButton button = Qt::LeftButton;
+      if (error.isEmpty()) {
+        button = mouseButtonFor(
+            arguments.value(QStringLiteral("button")).toString(QStringLiteral("left")),
+            &error);
+      }
+      const int count =
+          std::clamp(arguments.value(QStringLiteral("count")).toInt(1), 1, 2);
+      if (error.isEmpty()) {
+        enqueueInput([this, point, button, modifiers, count]() {
+          const int before = virtualInput_.deliveredEvents();
+          QString failure;
+          if (count == 2) {
+            virtualInput_.doubleClick(point, button, modifiers, &failure);
+          } else if (virtualInput_.press(point, button, modifiers, &failure)) {
+            virtualInput_.release(point, button, modifiers, &failure);
+          }
+          recordInput(QStringLiteral("ui.mouseClick"), before, failure);
+        });
+        result.insert(QStringLiteral("queued"), true);
+        result.insert(QStringLiteral("windowX"), point.x());
+        result.insert(QStringLiteral("windowY"), point.y());
+        result.insert(QStringLiteral("action"), count == 2
+                                                    ? QStringLiteral("doubleClick")
+                                                    : QStringLiteral("click"));
+      }
+    } else if (name == QStringLiteral("ui.contextMenu")) {
+      QPoint point;
+      if (error.isEmpty()) {
+        windowPointFor(arguments, &point, &error);
+      }
+      if (error.isEmpty()) {
+        enqueueInput([this, point]() {
+          const int before = virtualInput_.deliveredEvents();
+          QString failure;
+          virtualInput_.contextMenu(point, &failure);
+          recordInput(QStringLiteral("ui.contextMenu"), before, failure);
+        });
+        result.insert(QStringLiteral("queued"), true);
+        result.insert(QStringLiteral("windowX"), point.x());
+        result.insert(QStringLiteral("windowY"), point.y());
+        result.insert(QStringLiteral("action"), QStringLiteral("contextMenu"));
       }
     } else if (name == QStringLiteral("ui.mouseButton")) {
       QPoint point;
       const Qt::KeyboardModifiers modifiers = modifiersFor(arguments, &error);
-      if (error.isEmpty() && windowPointFor(arguments, &point, &error)) {
-        Qt::MouseButton button = Qt::LeftButton;
-        if (error.isEmpty()) {
-          button = mouseButtonFor(
-              arguments.value(QStringLiteral("button")).toString(QStringLiteral("left")),
-              &error);
-        }
-        const QString action = arguments.value(QStringLiteral("action")).toString();
-        if (error.isEmpty() && action == QStringLiteral("press")) {
-          virtualInput_.press(point, button, modifiers, &error);
-        } else if (error.isEmpty() && action == QStringLiteral("release")) {
-          virtualInput_.release(point, button, modifiers, &error);
-        } else if (error.isEmpty()) {
-          error = QStringLiteral("action must be press or release");
-        }
+      if (error.isEmpty()) {
+        windowPointFor(arguments, &point, &error);
+      }
+      Qt::MouseButton button = Qt::LeftButton;
+      if (error.isEmpty()) {
+        button = mouseButtonFor(
+            arguments.value(QStringLiteral("button")).toString(QStringLiteral("left")),
+            &error);
+      }
+      const QString action = arguments.value(QStringLiteral("action")).toString();
+      if (error.isEmpty() && action != QStringLiteral("press") &&
+          action != QStringLiteral("release")) {
+        error = QStringLiteral("action must be press or release");
       }
       if (error.isEmpty()) {
-        result.insert(QStringLiteral("target"), virtualInput_.lastReceiverName());
-        result.insert(QStringLiteral("action"),
-                      arguments.value(QStringLiteral("action")).toString());
+        enqueueInput([this, point, button, modifiers, action]() {
+          const int before = virtualInput_.deliveredEvents();
+          QString failure;
+          if (action == QStringLiteral("press")) {
+            virtualInput_.press(point, button, modifiers, &failure);
+          } else {
+            virtualInput_.release(point, button, modifiers, &failure);
+          }
+          recordInput(QStringLiteral("ui.mouseButton"), before, failure);
+        });
+        result.insert(QStringLiteral("queued"), true);
+        result.insert(QStringLiteral("action"), action);
+        result.insert(QStringLiteral("windowX"), point.x());
+        result.insert(QStringLiteral("windowY"), point.y());
       }
     } else if (name == QStringLiteral("ui.mouseDrag")) {
       const QString targetName = arguments.value(QStringLiteral("target")).toString();
@@ -1040,9 +1155,14 @@ private:
         modifiers = modifiersFor(arguments, &error);
       }
       const int steps = arguments.value(QStringLiteral("steps")).toInt(8);
-      if (error.isEmpty() &&
-          virtualInput_.drag(from, to, steps, button, modifiers, &error)) {
-        result.insert(QStringLiteral("target"), virtualInput_.lastReceiverName());
+      if (error.isEmpty()) {
+        enqueueInput([this, from, to, steps, button, modifiers]() {
+          const int before = virtualInput_.deliveredEvents();
+          QString failure;
+          virtualInput_.drag(from, to, steps, button, modifiers, &failure);
+          recordInput(QStringLiteral("ui.mouseDrag"), before, failure);
+        });
+        result.insert(QStringLiteral("queued"), true);
         result.insert(QStringLiteral("windowFromX"), from.x());
         result.insert(QStringLiteral("windowFromY"), from.y());
         result.insert(QStringLiteral("windowToX"), to.x());
@@ -1052,38 +1172,55 @@ private:
     } else if (name == QStringLiteral("ui.mouseWheel")) {
       QPoint point;
       const Qt::KeyboardModifiers modifiers = modifiersFor(arguments, &error);
-      if (error.isEmpty() && windowPointFor(arguments, &point, &error)) {
-        const int deltaY = arguments.value(QStringLiteral("deltaY")).toInt(120);
-        const int deltaX = arguments.value(QStringLiteral("deltaX")).toInt(0);
-        if (virtualInput_.wheel(point, deltaY, deltaX, modifiers, &error)) {
-          result.insert(QStringLiteral("target"), virtualInput_.lastReceiverName());
-          result.insert(QStringLiteral("deltaY"), deltaY);
-          result.insert(QStringLiteral("deltaX"), deltaX);
-        }
+      if (error.isEmpty()) {
+        windowPointFor(arguments, &point, &error);
+      }
+      const int deltaY = arguments.value(QStringLiteral("deltaY")).toInt(120);
+      const int deltaX = arguments.value(QStringLiteral("deltaX")).toInt(0);
+      if (error.isEmpty()) {
+        enqueueInput([this, point, deltaY, deltaX, modifiers]() {
+          const int before = virtualInput_.deliveredEvents();
+          QString failure;
+          virtualInput_.wheel(point, deltaY, deltaX, modifiers, &failure);
+          recordInput(QStringLiteral("ui.mouseWheel"), before, failure);
+        });
+        result.insert(QStringLiteral("queued"), true);
+        result.insert(QStringLiteral("deltaY"), deltaY);
+        result.insert(QStringLiteral("deltaX"), deltaX);
       }
     } else if (name == QStringLiteral("ui.keyPress")) {
-      QWidget* target = nullptr;
+      QPointer<QWidget> target;
       if (!arguments.value(QStringLiteral("target")).toString().isEmpty()) {
         target = resolveTarget(arguments, &error);
       }
       const QString sequence =
           arguments.value(QStringLiteral("sequence")).toString();
-      if (error.isEmpty() &&
-          virtualInput_.keyPress(sequence,
-                                 arguments.value(QStringLiteral("text")).toString(),
-                                 target, &error)) {
-        result.insert(QStringLiteral("target"), virtualInput_.lastReceiverName());
+      const QString text = arguments.value(QStringLiteral("text")).toString();
+      if (error.isEmpty()) {
+        enqueueInput([this, sequence, text, target]() {
+          const int before = virtualInput_.deliveredEvents();
+          QString failure;
+          virtualInput_.keyPress(sequence, text, target.data(), &failure);
+          recordInput(QStringLiteral("ui.keyPress"), before, failure);
+        });
+        result.insert(QStringLiteral("queued"), true);
         result.insert(QStringLiteral("sequence"), sequence);
       }
     } else if (name == QStringLiteral("ui.typeText")) {
-      QWidget* target = nullptr;
+      QPointer<QWidget> target;
       if (!arguments.value(QStringLiteral("target")).toString().isEmpty()) {
         target = resolveTarget(arguments, &error);
       }
       const Qt::KeyboardModifiers modifiers = modifiersFor(arguments, &error);
       const QString text = arguments.value(QStringLiteral("text")).toString();
-      if (error.isEmpty() && virtualInput_.typeText(text, target, modifiers, &error)) {
-        result.insert(QStringLiteral("target"), virtualInput_.lastReceiverName());
+      if (error.isEmpty()) {
+        enqueueInput([this, text, target, modifiers]() {
+          const int before = virtualInput_.deliveredEvents();
+          QString failure;
+          virtualInput_.typeText(text, target.data(), modifiers, &failure);
+          recordInput(QStringLiteral("ui.typeText"), before, failure);
+        });
+        result.insert(QStringLiteral("queued"), true);
         result.insert(QStringLiteral("characters"), text.size());
       }
     } else if (name == QStringLiteral("ui.screenshot")) {
@@ -1103,7 +1240,7 @@ private:
     } else {
       error = QStringLiteral("Unknown UI control tool: %1").arg(name);
     }
-    if (error.isEmpty()) {
+    if (error.isEmpty() && !result.contains(QStringLiteral("queued"))) {
       result.insert(QStringLiteral("deliveredEvents"),
                     virtualInput_.deliveredEvents() - deliveredBefore);
     }
@@ -1122,6 +1259,128 @@ private:
       toolResult.insert(QStringLiteral("structuredContent"), result);
     }
     return makeResponse(id, toolResult);
+  }
+
+  // Synthesized input is queued rather than delivered inside the request: a
+  // widget can answer a click by running QMenu::exec or a modal dialog, and
+  // blocking there would keep the caller waiting for its own response.
+  void enqueueInput(std::function<void()> action) {
+    pendingInputs_.append(std::move(action));
+  }
+
+  void runPendingInputs() {
+    if (pendingInputs_.isEmpty()) {
+      return;
+    }
+    // Swap first: an action can enter a nested event loop that re-enters here.
+    QList<std::function<void()>> actions;
+    actions.swap(pendingInputs_);
+    for (const auto& action : actions) {
+      action();
+    }
+  }
+
+  void recordInput(const QString& tool, int deliveredBefore,
+                   const QString& error) {
+    lastInput_.tool = tool;
+    lastInput_.delivered = virtualInput_.deliveredEvents() - deliveredBefore;
+    lastInput_.receiver = virtualInput_.lastReceiverName();
+    lastInput_.error = error;
+  }
+
+  // Visible label of a widget. Many controls have no objectName, so this is
+  // what an external caller has to identify them by instead.
+  static QString widgetText(QWidget* widget) {
+    if (!widget) {
+      return {};
+    }
+    QString text;
+    if (auto* button = qobject_cast<QAbstractButton*>(widget)) {
+      text = button->text();
+    } else if (auto* label = qobject_cast<QLabel*>(widget)) {
+      text = label->text();
+    } else if (auto* lineEdit = qobject_cast<QLineEdit*>(widget)) {
+      text = lineEdit->text();
+    } else if (auto* combo = qobject_cast<QComboBox*>(widget)) {
+      text = combo->currentText();
+    } else if (auto* group = qobject_cast<QGroupBox*>(widget)) {
+      text = group->title();
+    } else if (auto* menu = qobject_cast<QMenu*>(widget)) {
+      text = menu->title();
+    } else if (widget->isWindow()) {
+      text = widget->windowTitle();
+    }
+    return text.left(160);
+  }
+
+  static QJsonObject widgetInfo(QWidget* widget) {
+    if (!widget) {
+      return {};
+    }
+    QJsonObject info{
+        {QStringLiteral("objectName"), widget->objectName()},
+        {QStringLiteral("className"),
+         QString::fromLatin1(widget->metaObject()->className())}};
+    if (widget->isWindow()) {
+      info.insert(QStringLiteral("windowTitle"), widget->windowTitle());
+    }
+    return info;
+  }
+
+  static QString buttonSummary(Qt::MouseButtons buttons) {
+    QStringList names;
+    if (buttons & Qt::LeftButton) {
+      names.append(QStringLiteral("left"));
+    }
+    if (buttons & Qt::RightButton) {
+      names.append(QStringLiteral("right"));
+    }
+    if (buttons & Qt::MiddleButton) {
+      names.append(QStringLiteral("middle"));
+    }
+    return names.join(QChar('+'));
+  }
+
+  QJsonObject stateSnapshot() const {
+    const QPoint pointer = virtualInput_.windowPosition();
+    QJsonObject result{
+        {QStringLiteral("pointerX"), pointer.x()},
+        {QStringLiteral("pointerY"), pointer.y()},
+        {QStringLiteral("buttons"), buttonSummary(virtualInput_.pressedButtons())}};
+    if (QWidget* focus = QApplication::focusWidget()) {
+      result.insert(QStringLiteral("focus"), widgetInfo(focus));
+    }
+    if (QWidget* popup = QApplication::activePopupWidget()) {
+      result.insert(QStringLiteral("activePopup"), widgetInfo(popup));
+    }
+    QJsonArray dialogs;
+    for (QWidget* top : QApplication::topLevelWidgets()) {
+      auto* dialog = qobject_cast<QDialog*>(top);
+      if (dialog && dialog->isVisible()) {
+        dialogs.append(widgetInfo(dialog));
+      }
+    }
+    result.insert(QStringLiteral("dialogs"), dialogs);
+    if (!lastInput_.tool.isEmpty()) {
+      result.insert(QStringLiteral("lastInput"),
+                    QJsonObject{
+                        {QStringLiteral("tool"), lastInput_.tool},
+                        {QStringLiteral("receiver"), lastInput_.receiver},
+                        {QStringLiteral("deliveredEvents"), lastInput_.delivered},
+                        {QStringLiteral("error"), lastInput_.error}});
+    }
+    if (!pendingInputs_.isEmpty()) {
+      result.insert(QStringLiteral("pendingInputs"), pendingInputs_.size());
+    }
+    if (root_) {
+      result.insert(QStringLiteral("window"),
+                    QJsonObject{
+                        {QStringLiteral("width"), root_->width()},
+                        {QStringLiteral("height"), root_->height()},
+                        {QStringLiteral("devicePixelRatio"),
+                         root_->devicePixelRatioF()}});
+    }
+    return result;
   }
 
   // Menu entries are QActions rather than widgets, so they need their own
@@ -1329,6 +1588,7 @@ private:
              : target->objectName()},
         {QStringLiteral("width"), image.width()},
         {QStringLiteral("height"), image.height()},
+        {QStringLiteral("devicePixelRatio"), image.devicePixelRatio()},
         {QStringLiteral("byteCount"), static_cast<qint64>(png.size())},
         {QStringLiteral("format"), QStringLiteral("png")},
         {QStringLiteral("imageBase64"), QString::fromLatin1(png.toBase64())}};
@@ -1401,11 +1661,20 @@ private:
 
   QPointer<QWidget> root_;
   ArtifactVirtualInput virtualInput_;
+  struct InputOutcome {
+    QString tool;
+    QString receiver;
+    QString error;
+    int delivered = 0;
+  };
+  InputOutcome lastInput_;
+  QList<std::function<void()>> pendingInputs_;
   QTcpServer server_;
   QTcpSocket* client_ = nullptr;
   QByteArray inputBuffer_;
   QString error_;
   int timerId_ = 0;
+  int dispatchDepth_ = 0;
 };
 }
 

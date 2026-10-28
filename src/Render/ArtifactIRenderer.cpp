@@ -1143,6 +1143,31 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
   Diligent::RefCntAutoPtr<Diligent::IBuffer> viewportExposureParams_;
   mutable bool viewportExposureReady_ = false;
 
+  // The output ring keeps queued transformed-sprite packets from observing a
+  // volume texture overwritten by a later layer in the same render batch.
+  struct SmokeVolumeOutputSlot {
+    RefCntAutoPtr<ITexture> texture;
+    RefCntAutoPtr<ITextureView> srv;
+    RefCntAutoPtr<ITextureView> uav;
+    Uint32 width = 0;
+    Uint32 height = 0;
+  };
+  static constexpr Uint32 kSmokeVolumeOutputSlotCount = 4;
+  static constexpr Uint32 kSmokeVolumeMaximumOutputDimension = 1024;
+  std::unique_ptr<ArtifactCore::ComputeExecutor> smokeVolumeExecutor_;
+  RefCntAutoPtr<IBuffer> smokeVolumeParams_;
+  RefCntAutoPtr<ITexture> smokeVolumeDensityTexture_;
+  RefCntAutoPtr<ITextureView> smokeVolumeDensitySRV_;
+  RefCntAutoPtr<ITexture> smokeVolumeFlameTexture_;
+  RefCntAutoPtr<ITextureView> smokeVolumeFlameSRV_;
+  RefCntAutoPtr<ISampler> smokeVolumeSampler_;
+  std::array<SmokeVolumeOutputSlot, kSmokeVolumeOutputSlotCount>
+      smokeVolumeOutputs_;
+  Uint32 smokeVolumeFieldWidth_ = 0;
+  Uint32 smokeVolumeFieldHeight_ = 0;
+  Uint32 smokeVolumeOutputCursor_ = 0;
+  bool smokeVolumeInitializationFailed_ = false;
+
   // Cloner GPU-1 resources are opt-in. Its bounded output arena is partitioned
   // in recording order and recycled after the corresponding submit batch.
   std::unique_ptr<ArtifactCore::ComputeExecutor> clonerGridExecutor_;
@@ -3032,10 +3057,9 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
       const float projectedRadiusPixels =
           boundsRadius * std::abs(meshProjMatrix_(1, 1)) *
           std::max(1.0f, m_viewportHeight) / (2.0f * clipW);
-      const size_t lodIndex = renderer->chooseMeshletLOD(projectedRadiusPixels);
-      renderer->prepareMeshShader(ctx.RawPtr(), lodIndex);
-      renderer->drawMeshlets(ctx.RawPtr(), lodIndex);
-      meshShaderDrawn = true;
+      meshShaderDrawn = renderer->prepareMeshShaderForProjectedSize(
+                            ctx.RawPtr(), projectedRadiusPixels) &&
+                        renderer->drawMeshletsGpuDriven(ctx.RawPtr());
     }
     if (!meshShaderDrawn) {
       renderer->prepare(ctx.RawPtr());
@@ -3080,6 +3104,18 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
   ITextureView *applyViewportDisplayTransform(ITextureView *source,
                                               ITextureView *destination,
                                               int width, int height);
+  bool drawSmokeVolumeField(const float *densityField,
+                            const float *flameLifetimeField,
+                            int fieldWidth, int fieldHeight,
+                            const QRectF &localBounds,
+                            const QMatrix4x4 &transform,
+                            const FloatColor &smokeColor,
+                            float opacity,
+                            float temporalPhaseSeconds,
+                            float detailStrength,
+                            const SmokeVolumeLook& look);
+  bool initializeSmokeVolumePass();
+  void resetSmokeVolumePass();
   bool initializeClonerGridPlacement();
   QImage readbackToImage() const;
   ArtifactCore::ImageF32x4_RGBA readbackToImageF32() const;
@@ -3725,6 +3761,7 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
    meshRenderers_.clear();
    meshRendererGeometry_.clear();
    materialRangeCache_.clear();
+   resetSmokeVolumePass();
    viewportExposureExecutor_.reset();
    viewportExposureParams_.Release();
    viewportExposureReady_ = false;
@@ -3848,6 +3885,7 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
   meshRenderers_.clear();
   meshRendererGeometry_.clear();
   materialRangeCache_.clear();
+  resetSmokeVolumePass();
   viewportExposureExecutor_.reset();
   viewportExposureParams_.Release();
   viewportExposureReady_ = false;
@@ -3899,6 +3937,7 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
   meshRenderers_.clear();
   meshRendererGeometry_.clear();
   materialRangeCache_.clear();
+  resetSmokeVolumePass();
   viewportExposureExecutor_.reset();
   viewportExposureParams_.Release();
   viewportExposureReady_ = false;
@@ -5530,6 +5569,7 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
   m_hasGpuFrameTiming = false;
   m_activeFrameQueryExecutionId = 0;
   m_lastGpuFrameTimingExecutionId = 0;
+  resetSmokeVolumePass();
   viewportExposureExecutor_.reset();
   viewportExposureParams_.Release();
   viewportExposureReady_ = false;
@@ -7235,6 +7275,18 @@ void ArtifactIRenderer::drawSprite(float x, float y, float w, float h, const QIm
  {
   impl_->primitiveRenderer_.drawSpriteTransformed(x, y, w, h, transform, texture, opacity);
  }
+bool ArtifactIRenderer::drawSmokeVolumeField(
+    const float *densityField, const float *flameLifetimeField,
+    const int fieldWidth, const int fieldHeight,
+    const QRectF &localBounds, const QMatrix4x4 &transform,
+    const FloatColor &smokeColor, const float opacity,
+    const float temporalPhaseSeconds, const float detailStrength,
+    const SmokeVolumeLook& look) {
+  return impl_->drawSmokeVolumeField(
+      densityField, flameLifetimeField, fieldWidth, fieldHeight,
+      localBounds, transform, smokeColor, opacity,
+      temporalPhaseSeconds, detailStrength, look);
+}
  void ArtifactIRenderer::drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, Diligent::ITextureView* texture, float opacity, const QRectF& uvRect)
  {
   impl_->primitiveRenderer_.drawSpriteTransformed(x, y, w, h, transform, texture, opacity, uvRect);
@@ -8372,6 +8424,208 @@ const ShaderResourceVariableDesc *viewportExposureVariables(Uint32 &count) {
   count = 3;
   return vars;
 }
+
+struct alignas(16) SmokeVolumeParams {
+  Uint32 width;
+  Uint32 height;
+  Uint32 fieldWidth;
+  Uint32 fieldHeight;
+  float densityScale;
+  float extinction;
+  float flameScale;
+  float flameGamma;
+  float smokeR;
+  float smokeG;
+  float smokeB;
+  float opacity;
+  float ambientFill;
+  float lightX;
+  float lightY;
+  float lightZ;
+  float temporalPhaseSeconds;
+  float detailStrength;
+  float detailFrequency;
+  float detailContrast;
+  float denseR;
+  float denseG;
+  float denseB;
+  float densityRampStart;
+  float densityRampEnd;
+  float densityRampStrength;
+  float scatteringBrightness;
+  float shadowDensity;
+};
+static_assert(sizeof(SmokeVolumeParams) == 112);
+
+constexpr char kSmokeVolumeRaymarchHlsl[] = R"(
+Texture2D<float> g_Density : register(t0);
+Texture2D<float> g_Flame : register(t1);
+RWTexture2D<float4> g_Output : register(u0);
+SamplerState g_Sampler : register(s0);
+
+cbuffer g_Params : register(b0) {
+    uint Width;
+    uint Height;
+    uint FieldWidth;
+    uint FieldHeight;
+    float DensityScale;
+    float Extinction;
+    float FlameScale;
+    float FlameGamma;
+    float SmokeR;
+    float SmokeG;
+    float SmokeB;
+    float Opacity;
+    float AmbientFill;
+    float LightX;
+    float LightY;
+    float LightZ;
+    float TemporalPhaseSeconds;
+    float DetailStrength;
+    float DetailFrequency;
+    float DetailContrast;
+    float DenseR;
+    float DenseG;
+    float DenseB;
+    float DensityRampStart;
+    float DensityRampEnd;
+    float DensityRampStrength;
+    float ScatteringBrightness;
+    float ShadowDensity;
+};
+
+float hashValueNoise(float3 p) {
+    p = frac(p * 0.1031);
+    p += dot(p, p.yzx + 33.33);
+    return frac((p.x + p.y) * p.z);
+}
+
+float valueNoise2(float2 p) {
+    float2 cell = floor(p);
+    float2 blend = frac(p);
+    blend = blend * blend * (3.0 - 2.0 * blend);
+    float a = hashValueNoise(float3(cell, 0.371));
+    float b = hashValueNoise(float3(cell + float2(1.0, 0.0), 0.371));
+    float c = hashValueNoise(float3(cell + float2(0.0, 1.0), 0.371));
+    float d = hashValueNoise(float3(cell + 1.0, 0.371));
+    return lerp(lerp(a, b, blend.x), lerp(c, d, blend.x), blend.y);
+}
+
+float2 warpedFieldUv(float3 position) {
+    float zNorm = position.z * 2.0 - 1.0;
+    float2 fieldCell = position.xy * (float2(FieldWidth, FieldHeight) - 1.0);
+    float2 broad = float2(
+        valueNoise2(0.13 * fieldCell + float2(4.0, -2.0) * zNorm + 7.0),
+        valueNoise2(0.13 * fieldCell + float2(-2.0, 4.0) * zNorm + 21.0));
+    float2 fine = float2(
+        valueNoise2(0.4 * fieldCell + float2(-7.0, 3.0) * zNorm),
+        valueNoise2(0.4 * fieldCell + float2(3.0, -7.0) * zNorm));
+    float2 warp = (broad - 0.5) * 5.0 + (fine - 0.5) * 1.6;
+    return position.xy + warp / max(float2(FieldWidth, FieldHeight) - 1.0, 1.0);
+}
+
+float depthEnvelope(float z) {
+    float zNorm = z * 2.0 - 1.0;
+    return exp(-2.5 * zNorm * zNorm);
+}
+
+float sampleDensity(float3 position, out float rawFieldDensity) {
+    float2 fieldUv = warpedFieldUv(position);
+    float baseDensity = g_Density.SampleLevel(g_Sampler, fieldUv, 0);
+    rawFieldDensity = baseDensity;
+    float detailMultiplier = 1.0;
+    if (DetailStrength > 0.0001) {
+        float zNorm = position.z * 2.0 - 1.0;
+        float2 fieldCell = fieldUv * (float2(FieldWidth, FieldHeight) - 1.0);
+        float2 detailCoord = fieldCell * DetailFrequency +
+            float2(zNorm * 4.7 + TemporalPhaseSeconds * 0.31,
+                   -zNorm * 3.9 - TemporalPhaseSeconds * 0.23);
+        float detailNoise = valueNoise2(detailCoord);
+        float detailShape = saturate(
+            (detailNoise - 0.5) * (1.0 + DetailContrast * 4.0) + 0.5);
+        detailMultiplier = lerp(
+            1.0, lerp(0.35, 1.65, detailShape), saturate(DetailStrength));
+    }
+    return baseDensity * detailMultiplier * depthEnvelope(position.z) / 0.55;
+}
+
+float sampleFlame(float3 position) {
+    return g_Flame.SampleLevel(g_Sampler, warpedFieldUv(position), 0) *
+           depthEnvelope(position.z);
+}
+
+[numthreads(8, 8, 1)]
+void CSMain(uint3 id : SV_DispatchThreadID) {
+    if (id.x >= Width || id.y >= Height) return;
+    float2 uv = (float2(id.xy) + 0.5) / float2(Width, Height);
+    float3 lightDir = normalize(float3(LightX, LightY, LightZ));
+    float transmittance = 1.0;
+    float flameTransmittance = 1.0;
+    float3 radiance = 0.0;
+    // The source field is 2D, so depth samples also provide the parallax
+    // structure that keeps the volume from reading as a flat sprite. Use
+    // enough slices to resolve the depth-dependent warp at viewport size.
+    const uint depthSteps = 32;
+    const uint shadowSteps = 4;
+    const float rayStep = 1.0 / float(depthSteps);
+    [loop]
+    for (uint step = 0; step < depthSteps; ++step) {
+        float z = (float(step) + 0.5) * rayStep;
+        float3 position = float3(uv, z);
+        float rawFieldDensity = 0.0;
+        float density = sampleDensity(position, rawFieldDensity) * DensityScale;
+        float flame = pow(saturate(sampleFlame(position)),
+                          max(0.1, FlameGamma)) * FlameScale;
+        float flameAlpha = 1.0 - exp(-flame * rayStep);
+        radiance += transmittance * flameAlpha *
+                    float3(1.0, 0.24, 0.025) * 2.5;
+        flameTransmittance *= 1.0 - flameAlpha;
+        if (density > 1.0e-5) {
+            float opticalDepth = 0.0;
+            [unroll]
+            for (uint shadowStep = 1; shadowStep <= shadowSteps;
+                 ++shadowStep) {
+                float3 shadowPosition = position + lightDir *
+                    (float(shadowStep) * 0.055);
+                if (any(shadowPosition < 0.0) ||
+                    any(shadowPosition > 1.0)) break;
+                float shadowFieldDensity = 0.0;
+                opticalDepth += sampleDensity(shadowPosition,
+                    shadowFieldDensity) * ShadowDensity * 0.055;
+            }
+            float lightTransmittance = exp(-opticalDepth);
+            float illumination = AmbientFill +
+                (1.0 - AmbientFill) * lightTransmittance;
+            float alpha = 1.0 - exp(-density * Extinction * rayStep);
+            float rampRange = max(1.0e-4,
+                DensityRampEnd - DensityRampStart);
+            float denseMix = saturate((rawFieldDensity - DensityRampStart) /
+                rampRange) * saturate(DensityRampStrength);
+            float3 smokeTint = lerp(float3(SmokeR, SmokeG, SmokeB),
+                float3(DenseR, DenseG, DenseB), denseMix);
+            radiance += transmittance * alpha * illumination *
+                        smokeTint * ScatteringBrightness;
+            transmittance *= 1.0 - alpha;
+        }
+    }
+    float alpha = (1.0 - transmittance * flameTransmittance) * Opacity;
+    float3 straightColor = alpha > 1.0e-5
+        ? radiance / max(1.0e-5, 1.0 - transmittance * flameTransmittance)
+        : 0.0;
+    g_Output[id.xy] = float4(straightColor, alpha);
+}
+)";
+
+const ShaderResourceVariableDesc *smokeVolumeVariables(Uint32 &count) {
+  static ShaderResourceVariableDesc vars[] = {
+      {SHADER_TYPE_COMPUTE, "g_Params", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+      {SHADER_TYPE_COMPUTE, "g_Density", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+      {SHADER_TYPE_COMPUTE, "g_Flame", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+      {SHADER_TYPE_COMPUTE, "g_Output", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+      {SHADER_TYPE_COMPUTE, "g_Sampler", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC}};
+  count = 5;
+  return vars;
+}
 } // namespace
 
 bool ArtifactIRenderer::Impl::initializeClonerGridPlacement() {
@@ -8489,6 +8743,241 @@ bool ArtifactIRenderer::Impl::initializeViewportExposure() {
   viewportExposureExecutor_ = std::move(executor);
   viewportExposureParams_ = std::move(paramsBuffer);
   viewportExposureReady_ = true;
+  return true;
+}
+
+void ArtifactIRenderer::Impl::resetSmokeVolumePass() {
+  smokeVolumeExecutor_.reset();
+  smokeVolumeParams_.Release();
+  smokeVolumeDensitySRV_.Release();
+  smokeVolumeDensityTexture_.Release();
+  smokeVolumeFlameSRV_.Release();
+  smokeVolumeFlameTexture_.Release();
+  smokeVolumeSampler_.Release();
+  for (auto &slot : smokeVolumeOutputs_) slot = SmokeVolumeOutputSlot{};
+  smokeVolumeFieldWidth_ = 0;
+  smokeVolumeFieldHeight_ = 0;
+  smokeVolumeOutputCursor_ = 0;
+  smokeVolumeInitializationFailed_ = false;
+}
+
+bool ArtifactIRenderer::Impl::initializeSmokeVolumePass() {
+  if (smokeVolumeExecutor_ && smokeVolumeParams_ && smokeVolumeSampler_)
+    return true;
+  if (smokeVolumeInitializationFailed_) return false;
+  auto device = deviceManager_.device();
+  if (!device || !gpuContext_) return false;
+
+  Uint32 variableCount = 0;
+  auto *variables = smokeVolumeVariables(variableCount);
+  ArtifactCore::ComputePipelineDesc desc;
+  desc.name = "Layer Smoke 2.5D Volume PSO";
+  desc.shaderSource = kSmokeVolumeRaymarchHlsl;
+  desc.entryPoint = "CSMain";
+  desc.sourceLanguage = SHADER_SOURCE_LANGUAGE_HLSL;
+  desc.variables = variables;
+  desc.variableCount = variableCount;
+  desc.defaultVariableType = SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
+  auto executor = std::make_unique<ArtifactCore::ComputeExecutor>(*gpuContext_);
+  if (!executor->build(desc) || !executor->createShaderResourceBinding(true)) {
+    smokeVolumeInitializationFailed_ = true;
+    qWarning() << "[ArtifactIRenderer] smoke volume PSO build failed;"
+                  " particle rendering remains active";
+    return false;
+  }
+
+  BufferDesc paramsDesc;
+  paramsDesc.Name = "Layer Smoke 2.5D Volume/Params";
+  paramsDesc.Size = sizeof(SmokeVolumeParams);
+  paramsDesc.Usage = USAGE_DYNAMIC;
+  paramsDesc.BindFlags = BIND_UNIFORM_BUFFER;
+  paramsDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
+  RefCntAutoPtr<IBuffer> params;
+  device->CreateBuffer(paramsDesc, nullptr, &params);
+  if (!params) {
+    smokeVolumeInitializationFailed_ = true;
+    qWarning() << "[ArtifactIRenderer] smoke volume parameter buffer creation failed;"
+                  " particle rendering remains active";
+    return false;
+  }
+
+  SamplerDesc samplerDesc;
+  samplerDesc.MinFilter = FILTER_TYPE_LINEAR;
+  samplerDesc.MagFilter = FILTER_TYPE_LINEAR;
+  samplerDesc.MipFilter = FILTER_TYPE_LINEAR;
+  samplerDesc.AddressU = TEXTURE_ADDRESS_CLAMP;
+  samplerDesc.AddressV = TEXTURE_ADDRESS_CLAMP;
+  samplerDesc.AddressW = TEXTURE_ADDRESS_CLAMP;
+  RefCntAutoPtr<ISampler> sampler;
+  device->CreateSampler(samplerDesc, &sampler);
+  if (!sampler || !executor->setBuffer("g_Params", params) ||
+      !executor->setSampler("g_Sampler", sampler)) {
+    smokeVolumeInitializationFailed_ = true;
+    qWarning() << "[ArtifactIRenderer] smoke volume sampler setup failed;"
+                  " particle rendering remains active";
+    return false;
+  }
+
+  smokeVolumeExecutor_ = std::move(executor);
+  smokeVolumeParams_ = std::move(params);
+  smokeVolumeSampler_ = std::move(sampler);
+  return true;
+}
+
+bool ArtifactIRenderer::Impl::drawSmokeVolumeField(
+    const float *densityField, const float *flameLifetimeField,
+    const int fieldWidth, const int fieldHeight,
+    const QRectF &localBounds, const QMatrix4x4 &transform,
+    const FloatColor &smokeColor, const float opacity,
+    const float temporalPhaseSeconds, const float detailStrength,
+    const SmokeVolumeLook& look) {
+  if (!densityField || !flameLifetimeField ||
+      fieldWidth <= 1 || fieldHeight <= 1 ||
+      fieldWidth > 4096 || fieldHeight > 4096 || !localBounds.isValid() ||
+      localBounds.width() <= 0.0 || localBounds.height() <= 0.0 ||
+      !std::isfinite(opacity) || opacity <= 0.0f ||
+      !std::isfinite(temporalPhaseSeconds) ||
+      !std::isfinite(detailStrength) ||
+      !std::isfinite(look.denseColor.r()) ||
+      !std::isfinite(look.denseColor.g()) ||
+      !std::isfinite(look.denseColor.b()) ||
+      !std::isfinite(look.densityRampStart) ||
+      !std::isfinite(look.densityRampEnd) ||
+      !std::isfinite(look.densityRampStrength) ||
+      !std::isfinite(look.scatteringBrightness) ||
+      !std::isfinite(look.shadowDensity) ||
+      !std::isfinite(look.detailFrequency) ||
+        !std::isfinite(look.detailContrast) ||
+      deferredPacketRecordWorker_.contextWorkInProgress()) {
+    return false;
+  }
+  if (!initializeSmokeVolumePass()) return false;
+  auto device = deviceManager_.device();
+  auto context = deviceManager_.immediateContext();
+  if (!device || !context) return false;
+
+  const Uint32 safeFieldWidth = static_cast<Uint32>(fieldWidth);
+  const Uint32 safeFieldHeight = static_cast<Uint32>(fieldHeight);
+  if (!smokeVolumeDensityTexture_ || !smokeVolumeFlameTexture_ ||
+      smokeVolumeFieldWidth_ != safeFieldWidth ||
+      smokeVolumeFieldHeight_ != safeFieldHeight) {
+    TextureDesc fieldDesc;
+    fieldDesc.Name = "Layer Smoke 2.5D Volume/Source Field";
+    fieldDesc.Type = RESOURCE_DIM_TEX_2D;
+    fieldDesc.Width = safeFieldWidth;
+    fieldDesc.Height = safeFieldHeight;
+    fieldDesc.MipLevels = 1;
+    fieldDesc.Format = TEX_FORMAT_R32_FLOAT;
+    fieldDesc.Usage = USAGE_DEFAULT;
+    fieldDesc.BindFlags = BIND_SHADER_RESOURCE;
+    RefCntAutoPtr<ITexture> densityTexture;
+    RefCntAutoPtr<ITexture> flameTexture;
+    device->CreateTexture(fieldDesc, nullptr, &densityTexture);
+    device->CreateTexture(fieldDesc, nullptr, &flameTexture);
+    if (!densityTexture || !flameTexture) return false;
+    smokeVolumeDensitySRV_ = densityTexture->GetDefaultView(
+        TEXTURE_VIEW_SHADER_RESOURCE);
+    smokeVolumeFlameSRV_ = flameTexture->GetDefaultView(
+        TEXTURE_VIEW_SHADER_RESOURCE);
+    if (!smokeVolumeDensitySRV_ || !smokeVolumeFlameSRV_) return false;
+    smokeVolumeDensityTexture_ = std::move(densityTexture);
+    smokeVolumeFlameTexture_ = std::move(flameTexture);
+    smokeVolumeFieldWidth_ = safeFieldWidth;
+    smokeVolumeFieldHeight_ = safeFieldHeight;
+  }
+
+  const auto outputDimension = [](const double value) {
+    return static_cast<Uint32>(std::clamp(
+        std::ceil(value), 1.0,
+        static_cast<double>(kSmokeVolumeMaximumOutputDimension)));
+  };
+  const Uint32 outputWidth = outputDimension(localBounds.width());
+  const Uint32 outputHeight = outputDimension(localBounds.height());
+  if (smokeVolumeOutputCursor_ >= kSmokeVolumeOutputSlotCount) {
+    if (!submitQueuedDrawsBeforeTextureOverwrite(this)) return false;
+    smokeVolumeOutputCursor_ = 0;
+  }
+  auto &slot = smokeVolumeOutputs_[smokeVolumeOutputCursor_++];
+  if (!slot.texture || slot.width != outputWidth ||
+      slot.height != outputHeight) {
+    if (!submitQueuedDrawsBeforeTextureOverwrite(this)) return false;
+    TextureDesc outputDesc;
+    outputDesc.Name = "Layer Smoke 2.5D Volume/Output";
+    outputDesc.Type = RESOURCE_DIM_TEX_2D;
+    outputDesc.Width = outputWidth;
+    outputDesc.Height = outputHeight;
+    outputDesc.MipLevels = 1;
+    outputDesc.Format = TEX_FORMAT_RGBA16_FLOAT;
+    outputDesc.Usage = USAGE_DEFAULT;
+    outputDesc.BindFlags = BIND_UNORDERED_ACCESS | BIND_SHADER_RESOURCE;
+    RefCntAutoPtr<ITexture> texture;
+    device->CreateTexture(outputDesc, nullptr, &texture);
+    if (!texture) return false;
+    auto *uav = texture->GetDefaultView(TEXTURE_VIEW_UNORDERED_ACCESS);
+    auto *srv = texture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
+    if (!uav || !srv) return false;
+    slot.texture = std::move(texture);
+    slot.uav = uav;
+    slot.srv = srv;
+    slot.width = outputWidth;
+    slot.height = outputHeight;
+  }
+
+  const Box fieldBox(0, safeFieldWidth, 0, safeFieldHeight, 0, 1);
+  TextureSubResData densityData;
+  densityData.pData = const_cast<float *>(densityField);
+  densityData.Stride = safeFieldWidth * sizeof(float);
+  context->UpdateTexture(
+      smokeVolumeDensityTexture_.RawPtr(), 0, 0, fieldBox, densityData,
+      RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
+      RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+  TextureSubResData flameData;
+  flameData.pData = const_cast<float *>(flameLifetimeField);
+  flameData.Stride = safeFieldWidth * sizeof(float);
+  context->UpdateTexture(
+      smokeVolumeFlameTexture_.RawPtr(), 0, 0, fieldBox, flameData,
+      RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
+      RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+  SmokeVolumeParams params{
+      outputWidth, outputHeight, safeFieldWidth, safeFieldHeight,
+      6.0f, 1.7f, 3.0f, 1.4f,
+      smokeColor.r(), smokeColor.g(), smokeColor.b(),
+      std::clamp(opacity, 0.0f, 1.0f),
+      0.3f, -0.42f, 0.62f, 0.66f,
+      temporalPhaseSeconds, std::clamp(detailStrength, 0.0f, 1.0f),
+      std::clamp(look.detailFrequency, 0.1f, 2.0f),
+      std::clamp(look.detailContrast, 0.0f, 1.0f),
+      look.denseColor.r(), look.denseColor.g(), look.denseColor.b(),
+      look.densityRampStart, look.densityRampEnd,
+      std::clamp(look.densityRampStrength, 0.0f, 1.0f),
+      std::clamp(look.scatteringBrightness, 0.0f, 8.0f),
+      std::clamp(look.shadowDensity, 0.0f, 8.0f)};
+  void *mapped = nullptr;
+  context->MapBuffer(
+      smokeVolumeParams_.RawPtr(), MAP_WRITE, MAP_FLAG_DISCARD, mapped);
+  if (!mapped) return false;
+  std::memcpy(mapped, &params, sizeof(params));
+  context->UnmapBuffer(smokeVolumeParams_.RawPtr(), MAP_WRITE);
+  auto *outputUav = slot.uav.RawPtr();
+  if (!smokeVolumeExecutor_->setBuffer(
+          "g_Params", smokeVolumeParams_.RawPtr()) ||
+      !smokeVolumeExecutor_->setTextureView(
+          "g_Density", smokeVolumeDensitySRV_) ||
+      !smokeVolumeExecutor_->setTextureView("g_Flame", smokeVolumeFlameSRV_) ||
+      !smokeVolumeExecutor_->setTextureView("g_Output", outputUav)) {
+    return false;
+  }
+  smokeVolumeExecutor_->dispatch(
+      context.RawPtr(), ArtifactCore::ComputeExecutor::makeDispatchAttribs(
+          outputWidth, outputHeight, 1, 8, 8, 1),
+      RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+  primitiveRenderer_.drawSpriteTransformed(
+      static_cast<float>(localBounds.x()),
+      static_cast<float>(localBounds.y()),
+      static_cast<float>(localBounds.width()),
+      static_cast<float>(localBounds.height()), transform,
+      slot.srv.RawPtr(), 1.0f);
   return true;
 }
 

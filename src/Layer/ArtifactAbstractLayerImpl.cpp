@@ -137,7 +137,10 @@ public:
   QString layerNote_;
   QPointer<QObject> composition_;
   mutable std::mutex compositionMutex_;
-  LayerID parentLayerId_;
+  // A layer without a parent must hold a nil id: a default-constructed Id
+  // generates a random UUID, which made every new layer look parented and
+  // produced a dangling parentId in saved projects.
+  LayerID parentLayerId_ = LayerID(Id::Nil());
   LAYER_BLEND_TYPE blendMode_ = LAYER_BLEND_TYPE::BLEND_NORMAL;
   LayerState state_;
   FramePosition inPoint_ = FramePosition(0);
@@ -292,16 +295,17 @@ public:
     float fluidVorticity_ = 0.1f;
     int fluidSolverIterations_ = 20;
     float fluidSmokeDensityDissipationPerSecond_ = 2.5f;
-    float fluidSmokeEmitterTemperature_ = 0.0f;
+    float fluidSmokeEmitterTemperature_ = 1.0f;
+    float fluidFlameLifetimeSeconds_ = 0.65f;
     float fluidThermalBuoyancy_ = 0.0f;
     float fluidTemperatureDissipationPerSecond_ = 1.5f;
     float fluidSmokeEmitterX_ = 0.5f;
     float fluidSmokeEmitterY_ = 0.9f;
-    float fluidSmokeEmitterRadius_ = 0.04f;
-    int fluidSmokeEmitterCount_ = 1;
-    float fluidSmokeEmitterDensity_ = 1.0f;
+    float fluidSmokeEmitterRadius_ = 0.20f;
+    int fluidSmokeEmitterCount_ = 7;
+    float fluidSmokeEmitterDensity_ = 0.04f;
     float fluidSmokeEmitterVelocityX_ = 0.0f;
-    float fluidSmokeEmitterVelocityY_ = -1.0f;
+    float fluidSmokeEmitterVelocityY_ = -0.75f;
     FloatColor fluidSmokeColor_ = FloatColor(0.42f, 0.72f, 1.0f, 1.0f);
     bool fluidSmokeStirActive_ = false;
     float fluidSmokeStirX_ = 0.5f;

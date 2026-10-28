@@ -208,9 +208,25 @@ namespace Artifact
 
     QImage OffscreenCompositionRenderer::renderToQImage(const FramePosition& position, ArtifactAbstractComposition* composition)
     {
+        if (!composition) {
+            return {};
+        }
+        // Seek the composition so each layer evaluates its animated state at the
+        // requested frame, then restore the caller's playhead afterwards.
+        const int64_t previousFrame = composition->framePosition().framePosition();
+        const int64_t targetFrame = position.framePosition();
+        if (previousFrame != targetFrame) {
+            composition->goToFrame(targetFrame);
+        }
         renderFrame(position, composition);
-        return renderer_->readbackToImage(
-            ArtifactCore::SurfaceChannelOrder::BGRA);
+        const QImage image = renderer_
+            ? renderer_->readbackToImage(
+                  ArtifactCore::SurfaceChannelOrder::BGRA)
+            : QImage();
+        if (previousFrame != targetFrame) {
+            composition->goToFrame(previousFrame);
+        }
+        return image;
     }
 
     QImage OffscreenCompositionRenderer::renderLayerToQImage(

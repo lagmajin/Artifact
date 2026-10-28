@@ -89,6 +89,7 @@ module;
 #include <QVector4D>
 
 #include <QVector>
+#include <opencv2/opencv.hpp>
 #include <Layer/ArtifactSolidGradientUtil.hpp>
 
 #include <deque>
@@ -350,7 +351,6 @@ import Color.Float;
 
 import Image;
 
-import CvUtils;
 import ArtifactCore.ImageProcessing.OpenCV.RotoBrushEngine;
 
 import ArtifactCore.Utils.PerformanceProfiler;
@@ -380,6 +380,38 @@ W_OBJECT_IMPL(CompositionRenderController)
 
 bool isLayerEffectivelyVisible(const ArtifactAbstractLayerPtr &layer);
 namespace {
+cv::Mat compositionQImageToCvMat(const QImage& image,
+                                const bool cloneData = true) {
+  QImage converted;
+  const QImage* source = &image;
+  switch (image.format()) {
+    case QImage::Format_ARGB32:
+    case QImage::Format_ARGB32_Premultiplied:
+    case QImage::Format_RGB32:
+      break;
+    case QImage::Format_RGB888: {
+      cv::Mat rgb(image.height(), image.width(), CV_8UC3,
+                  const_cast<uchar*>(image.constBits()), image.bytesPerLine());
+      cv::Mat bgr;
+      cv::cvtColor(rgb, bgr, cv::COLOR_RGB2BGR);
+      return bgr;
+    }
+    case QImage::Format_Grayscale8:
+    case QImage::Format_Indexed8: {
+      cv::Mat gray(image.height(), image.width(), CV_8UC1,
+                   const_cast<uchar*>(image.constBits()), image.bytesPerLine());
+      return cloneData ? gray.clone() : gray;
+    }
+    default:
+      converted = image.convertToFormat(QImage::Format_ARGB32);
+      source = &converted;
+      break;
+  }
+  cv::Mat bgra(source->height(), source->width(), CV_8UC4,
+               const_cast<uchar*>(source->constBits()), source->bytesPerLine());
+  return cloneData ? bgra.clone() : bgra;
+}
+
 QFont fixedWidthFont(const int pointSize) {
   QFont font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
   font.setPointSize(pointSize);
@@ -3896,7 +3928,7 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer *targetLayer,
 
 
 
-  cv::Mat mat = ArtifactCore::CvUtils::qImageToCvMat(surface, true);
+  cv::Mat mat = compositionQImageToCvMat(surface, true);
 
   // Keep the legacy QImage boundary in the same internal layout as the
   // float-image path. qImageToCvMat() returns BGRA for ARGB32 on Windows and
@@ -9169,7 +9201,7 @@ void drawLayerForCompositionView(
 
     std::vector<ArtifactCore::Light> filteredLights;
 
-    const auto *modelLayer = dynamic_cast<Artifact3DLayer *>(layer);
+    auto *modelLayer = dynamic_cast<Artifact3DLayer *>(layer);
 
     // drawMesh() also registers/re-activates the mesh in the ray tracing scene.
     // Skipping a culled layer would leave stale or missing BLAS/TLAS instances,
@@ -34243,7 +34275,7 @@ void CompositionRenderController::handleMouseRelease() {
           if (auto *imageLayer = dynamic_cast<ArtifactImageLayer *>(layer.get())) {
             const QImage source = imageLayer->toQImage();
             if (!source.isNull()) {
-              cv::Mat sourceMat = ArtifactCore::CvUtils::qImageToCvMat(source, true);
+              cv::Mat sourceMat = compositionQImageToCvMat(source, true);
               const QRectF bounds = imageLayer->localBounds();
               const auto &points = brushTool->lastStrokePoints();
               ArtifactCore::RotoBrushStroke stroke;
@@ -38575,7 +38607,7 @@ bool CompositionRenderController::propagateRotoBrushToCurrentFrame() {
   if (frame == impl_->rotoBrushFrame_) return false;
   const QImage current = imageLayer->toQImage();
   if (current.isNull()) return false;
-  cv::Mat currentMat = ArtifactCore::CvUtils::qImageToCvMat(current, true);
+  cv::Mat currentMat = compositionQImageToCvMat(current, true);
   if (currentMat.empty() || currentMat.size() != impl_->rotoBrushSource_.size()) {
     return false;
   }
@@ -46397,7 +46429,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                     usesSpatialViewportOrientation(),
 
                     surfaceGeneration(layer.get()), nullptr, false, nullptr,
-                    &viewportCullingStats_));
+                    &viewportCullingStats_);
 
                 return true;
 

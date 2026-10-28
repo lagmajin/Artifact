@@ -114,6 +114,8 @@ public:
     int cloneTimeOffset() const { return cloneTimeOffset_; }
 
 private:
+    void updateFluidSmokeStir(const QPointF& canvasPos);
+
     float radius_ = 10.0f;
     float opacity_ = 1.0f;
     float flow_ = 1.0f;
@@ -143,6 +145,9 @@ private:
     bool cloneAligned_ = true;
     int cloneTimeOffset_ = 0;
     bool dragging_ = false;
+    bool fluidSmokeStirDragging_ = false;
+    ArtifactAbstractLayerPtr fluidSmokeStirLayer_;
+    QPointF previousFluidSmokeStirCanvasPos_;
     bool undoRecorded_ = false;
     BrushStroke currentStroke_;
     std::vector<QPointF> previewStrokePoints_;

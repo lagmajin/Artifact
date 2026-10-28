@@ -1,4 +1,5 @@
 module;
+#include <compare>
 
 module Artifact.Widgets.CompositionFooter;
 

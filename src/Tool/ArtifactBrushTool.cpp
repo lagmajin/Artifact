@@ -1,6 +1,9 @@
 module;
+#include <algorithm>
 #include <wobjectimpl.h>
 #include <QLineF>
+#include <QRectF>
+#include <QTransform>
 #include <cmath>
 module Artifact.Tool.Brush;
 
@@ -15,6 +18,52 @@ constexpr float kRadiansToDegrees = 57.29577951308232f;
 bool isFinitePoint(const QPointF& point) {
     return std::isfinite(point.x()) && std::isfinite(point.y());
 }
+
+QPointF normalizedSourcePoint(const ArtifactAbstractLayerPtr& layer,
+                              const QPointF& canvasPos,
+                              const QPointF& fallback = QPointF(0.5, 0.5)) {
+    if (!layer) return fallback;
+    const QRectF bounds = layer->sourceBounds();
+    if (!bounds.isValid() || bounds.width() <= 0.0 ||
+        bounds.height() <= 0.0) {
+        return fallback;
+    }
+    bool invertible = false;
+    const QTransform inverse = layer->getGlobalTransform().inverted(&invertible);
+    if (!invertible) return fallback;
+    const QPointF local = inverse.map(canvasPos);
+    return QPointF(std::clamp((local.x() - bounds.left()) / bounds.width(),
+                              0.0, 1.0),
+                   std::clamp((local.y() - bounds.top()) / bounds.height(),
+                              0.0, 1.0));
+}
+}
+
+void ArtifactBrushTool::updateFluidSmokeStir(const QPointF& canvasPos) {
+    if (!fluidSmokeStirLayer_ || !isFinitePoint(canvasPos)) return;
+    const auto layer = fluidSmokeStirLayer_;
+    const QRectF bounds = layer->sourceBounds();
+    if (!bounds.isValid() || bounds.width() <= 0.0 ||
+        bounds.height() <= 0.0) {
+        return;
+    }
+    const QPointF current = normalizedSourcePoint(layer, canvasPos);
+    const QPointF previous = normalizedSourcePoint(
+        layer, previousFluidSmokeStirCanvasPos_, current);
+    constexpr float kVelocityScale = 64.0f;
+    const float velocityX = static_cast<float>(current.x() - previous.x()) *
+                            kVelocityScale;
+    const float velocityY = static_cast<float>(current.y() - previous.y()) *
+                            kVelocityScale;
+    const float sourceExtent = static_cast<float>(
+        std::min(bounds.width(), bounds.height()));
+    const float radius = std::max(0.025f,
+        static_cast<float>(radius_) / std::max(1.0f, sourceExtent));
+    layer->setFluidSmokeStirInput(true,
+        static_cast<float>(current.x()), static_cast<float>(current.y()),
+        velocityX, velocityY, radius,
+        flow_ * (pressureAffectsFlow_ ? pressure_ : 1.0f));
+    previousFluidSmokeStirCanvasPos_ = canvasPos;
 }
 
 ArtifactBrushTool::ArtifactBrushTool(QObject* parent)
@@ -25,7 +74,18 @@ bool ArtifactBrushTool::mousePressEvent(
     const ArtifactAbstractLayerPtr& layer, const QPointF& canvasPos)
 {
     auto* paintLayer = dynamic_cast<ArtifactPaintLayer*>(layer.get());
-    if ((!paintLayer && !rotoInputMode_) || !isFinitePoint(canvasPos)) return false;
+    const bool fluidSmoke = layer && layer->hasFluidSmokeComponent();
+    if ((!paintLayer && !rotoInputMode_ && !fluidSmoke) ||
+        !isFinitePoint(canvasPos)) return false;
+
+    if (fluidSmoke) {
+        dragging_ = true;
+        fluidSmokeStirDragging_ = true;
+        fluidSmokeStirLayer_ = layer;
+        previousFluidSmokeStirCanvasPos_ = canvasPos;
+        updateFluidSmokeStir(canvasPos);
+        return true;
+    }
 
     dragging_ = true;
     undoRecorded_ = false;
@@ -72,6 +132,21 @@ bool ArtifactBrushTool::mouseMoveEvent(
 {
     if (!dragging_) return false;
     if (!isFinitePoint(canvasPos)) return true;
+    if (fluidSmokeStirDragging_) {
+        if (!layer || layer.get() != fluidSmokeStirLayer_.get() ||
+            !fluidSmokeStirLayer_->hasFluidSmokeComponent()) {
+            if (fluidSmokeStirLayer_) {
+                fluidSmokeStirLayer_->setFluidSmokeStirInput(
+                    false, 0.5f, 0.5f, 0.0f, 0.0f, 0.035f, 0.0f);
+            }
+            fluidSmokeStirLayer_.reset();
+            fluidSmokeStirDragging_ = false;
+            dragging_ = false;
+            return false;
+        }
+        updateFluidSmokeStir(canvasPos);
+        return true;
+    }
     auto* paintLayer = dynamic_cast<ArtifactPaintLayer*>(layer.get());
     if (!paintLayer && !rotoInputMode_) {
         cancelStroke(layer);
@@ -133,6 +208,17 @@ bool ArtifactBrushTool::mouseReleaseEvent(
     const ArtifactAbstractLayerPtr& layer, const QPointF& canvasPos)
 {
     if (!dragging_) return false;
+    if (fluidSmokeStirDragging_) {
+        if (fluidSmokeStirLayer_) {
+            updateFluidSmokeStir(canvasPos);
+            fluidSmokeStirLayer_->setFluidSmokeStirInput(
+                false, 0.5f, 0.5f, 0.0f, 0.0f, 0.035f, 0.0f);
+        }
+        fluidSmokeStirLayer_.reset();
+        fluidSmokeStirDragging_ = false;
+        dragging_ = false;
+        return true;
+    }
     dragging_ = false;
 
     auto* paintLayer = dynamic_cast<ArtifactPaintLayer*>(layer.get());
@@ -182,6 +268,12 @@ bool ArtifactBrushTool::mouseReleaseEvent(
 
 void ArtifactBrushTool::cancelStroke(const ArtifactAbstractLayerPtr& layer)
 {
+    if (fluidSmokeStirDragging_ && fluidSmokeStirLayer_) {
+        fluidSmokeStirLayer_->setFluidSmokeStirInput(
+            false, 0.5f, 0.5f, 0.0f, 0.0f, 0.035f, 0.0f);
+    }
+    fluidSmokeStirLayer_.reset();
+    fluidSmokeStirDragging_ = false;
     if (undoRecorded_) {
         if (auto *paintLayer = dynamic_cast<ArtifactPaintLayer*>(layer.get())) {
             paintLayer->undoLastStroke();

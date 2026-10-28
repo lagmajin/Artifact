@@ -37,6 +37,9 @@ public:
   struct SmokeLayerCheckpoint {
     std::int64_t frame = 0;
     ArtifactCore::FluidSnapshot2D solver;
+    ArtifactCore::NamedVector<float> flameLifetime{
+        ArtifactCore::ContainerName{"Layer.SmokeCheckpointFlameLifetime"}};
+    bool flameLifetimeActive = false;
   };
 
   LayerFluidRuntimeState();
@@ -57,6 +60,11 @@ public:
       ArtifactCore::ContainerName{"Layer.LiquidCheckpoints"}};
   ArtifactCore::NamedVector<SmokeLayerCheckpoint> smokeCheckpoints_{
       ArtifactCore::ContainerName{"Layer.SmokeCheckpoints"}};
+  ArtifactCore::NamedVector<float> flameLifetime_{
+      ArtifactCore::ContainerName{"Layer.SmokeFlameLifetime"}};
+  ArtifactCore::NamedVector<float> flameLifetimeScratch_{
+      ArtifactCore::ContainerName{"Layer.SmokeFlameLifetimeScratch"}};
+  bool flameLifetimeActive_ = false;
   ArtifactCore::NamedVector<LiquidSpillParticle> liquidSpillParticles_{
       ArtifactCore::ContainerName{"Layer.LiquidSpillParticles"}};
   double liquidInflowCarry_ = 0.0;
@@ -73,6 +81,7 @@ public:
   ArtifactCore::ParticleRenderData fluidFireRenderData_;
   std::int64_t fluidLastFrame_ =
       std::numeric_limits<std::int64_t>::min();
+  std::int64_t smokeSimulationStartFrame_ = 0;
   std::uint64_t smokeStirRevision_ = 0;
   std::size_t smokeCheckpointBytes_ = 0;
   std::uint64_t smokeCheckpointSettingsHash_ = 0;
@@ -88,9 +97,9 @@ struct LayerSmokeRuntimeSettings {
   int solverIterations = 20;
   float emitterX = 0.5f;
   float emitterY = 0.9f;
-  float emitterRadius = 0.04f;
-  int emitterCount = 1;
-  float emitterDensity = 1.0f;
+  float emitterRadius = 0.10f;
+  int emitterCount = 7;
+  float emitterDensity = 0.16f;
   float emitterVelocityX = 0.0f;
   float emitterVelocityY = -1.0f;
   float emitterSwirl = 0.0f;
@@ -110,6 +119,26 @@ struct LayerSmokeRuntimeSettings {
   float emitterTemperature = 0.0f;
   float thermalBuoyancy = 0.0f;
   float temperatureDissipationPerSecond = 1.5f;
+  float flameLifetimeSeconds = 0.65f;
+  float topOutflowRatePerSecond = 100.0f;
+  float topOutflowBandFraction = 0.35f;
+  float volumeDetailStrength = 0.0f;
+  float smokeTurbulence = 0.0f;
+  float flameTurbulence = 0.0f;
+  float smokeTurbulenceScale = 18.0f;
+  float flameTurbulenceScale = 7.0f;
+  int smokeTurbulenceOctaves = 1;
+  bool highOrderDensityAdvection = false;
+  float smokeDenseColorR = 0.20f;
+  float smokeDenseColorG = 0.24f;
+  float smokeDenseColorB = 0.29f;
+  float smokeDensityRampStart = 0.12f;
+  float smokeDensityRampEnd = 0.45f;
+  float smokeDensityRampStrength = 0.0f;
+  float smokeScatteringBrightness = 1.0f;
+  float smokeShadowDensity = 0.8f;
+  float smokeVolumeDetailFrequency = 0.42f;
+  float smokeVolumeDetailContrast = 0.55f;
 };
 
 void advanceLayerSmokeRuntime(LayerFluidRuntimeState& state,

@@ -143,6 +143,19 @@ struct GlobalIlluminationState {
   bool usingFallback = false;
 };
 
+// View-only controls for the 2.5D smoke volume. Defaults preserve the
+// existing output and never modify the simulated fields.
+struct SmokeVolumeLook {
+  FloatColor denseColor = FloatColor(0.42f, 0.72f, 1.0f, 1.0f);
+  float densityRampStart = 0.12f;
+  float densityRampEnd = 0.45f;
+  float densityRampStrength = 0.0f;
+  float scatteringBrightness = 1.0f;
+  float shadowDensity = 0.8f;
+  float detailFrequency = 0.42f;
+  float detailContrast = 0.55f;
+};
+
 // GPU Cloner placement ABI consumed by the sprite vertex shader. A group
 // contains slot 0 for the base clone followed by stable generator-order slots.
 struct ClonerGridPlacementRecord {
@@ -549,6 +562,19 @@ public:
                              const QMatrix4x4 &transform,
                              Diligent::ITextureView *texture, float opacity,
                              const QRectF &uvRect);
+  // Draw authoritative 2D smoke/flame fields through the bounded Diligent
+  // volume path. Field pointers are read only during this call; false means
+  // the caller should use its existing renderer fallback.
+  bool drawSmokeVolumeField(const float *densityField,
+                            const float *flameLifetimeField,
+                            int fieldWidth, int fieldHeight,
+                            const QRectF &localBounds,
+                            const QMatrix4x4 &transform,
+                            const FloatColor &smokeColor,
+                            float opacity,
+                            float temporalPhaseSeconds,
+                            float detailStrength,
+                            const SmokeVolumeLook& look = {});
   bool drawSpriteTransformedClonerGrid(
       float x, float y, float w, float h, const QMatrix4x4 &baseTransform,
       const QMatrix4x4 &cpuFallbackTransform,

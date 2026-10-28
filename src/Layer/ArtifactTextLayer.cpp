@@ -84,6 +84,7 @@ import Property.Abstract;
 import Property.Group;
 import Script.Expression.Evaluator;
 import Text.Style;
+import Font.FreeFont;
 import Text.LayoutContract;
 import Text.GlyphLayout;
 import Text.ShapingBackend;

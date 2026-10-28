@@ -4310,44 +4310,53 @@ namespace Artifact
             }
             const QSize layerSize = safeLayerSize(layer);
             if (outLocalBounds) *outLocalBounds = {};
+            const auto includeFluidSmoke = [&layer](QImage surface) {
+                if (!surface.isNull() && layer->hasFluidSmokeComponent()) {
+                    layer->compositeFluidSmokeSoftwareSurface(surface);
+                }
+                return surface;
+            };
             if (const auto imageLayer = ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(layer)) {
                 const QImage image = imageLayer->toQImage();
                 if (!image.isNull()) {
-                    return image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+                    return includeFluidSmoke(
+                        image.convertToFormat(QImage::Format_ARGB32_Premultiplied));
                 }
             }
 
             if (const auto svgLayer = ArtifactCore::dynamicPointerCast<ArtifactSvgLayer>(layer)) {
                 const QImage image = svgLayer->toQImage();
                 if (!image.isNull()) {
-                    return image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+                    return includeFluidSmoke(
+                        image.convertToFormat(QImage::Format_ARGB32_Premultiplied));
                 }
             }
 
             if (const auto solidLayer = ArtifactCore::dynamicPointerCast<ArtifactSolidImageLayer>(layer)) {
                 QImage image(layerSize, QImage::Format_ARGB32_Premultiplied);
                 image.fill(toQColor(solidLayer->color()));
-                return image;
+                return includeFluidSmoke(std::move(image));
             }
 
             if (const auto solid2DLayer = ArtifactCore::dynamicPointerCast<ArtifactSolid2DLayer>(layer)) {
                 QImage image(layerSize, QImage::Format_ARGB32_Premultiplied);
                 image.fill(toQColor(solid2DLayer->color()));
-                return image;
+                return includeFluidSmoke(std::move(image));
             }
 
             if (const auto textLayer = ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(layer)) {
-                return renderTextLayerSurface(textLayer, layerSize);
+                return includeFluidSmoke(renderTextLayerSurface(textLayer, layerSize));
             }
 
             if (const auto videoLayer = ArtifactCore::dynamicPointerCast<ArtifactVideoLayer>(layer)) {
-                return renderVideoLayerSurface(videoLayer, layerSize);
+                return includeFluidSmoke(renderVideoLayerSurface(videoLayer, layerSize));
             }
 
             if (const auto shapeLayer = ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(layer)) {
                 const QImage image = shapeLayer->toQImage();
                 if (!image.isNull()) {
-                    return image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+                    return includeFluidSmoke(
+                        image.convertToFormat(QImage::Format_ARGB32_Premultiplied));
                 }
             }
 
@@ -4375,8 +4384,8 @@ namespace Artifact
                         *outLocalBounds = QRectF(
                             0.0, 0.0, surface.width(), surface.height());
                     }
-                    return surface.convertToFormat(
-                        QImage::Format_ARGB32_Premultiplied);
+                    return includeFluidSmoke(surface.convertToFormat(
+                        QImage::Format_ARGB32_Premultiplied));
                 }
             }
 
@@ -4407,7 +4416,7 @@ namespace Artifact
                     request.opacity = 1.0f;
                     const QImage raster = SoftwareRender::rasterizeFlatMesh(request);
                     if (!raster.isNull()) {
-                        return raster;
+                        return includeFluidSmoke(raster);
                     }
                 }
             }
@@ -4416,12 +4425,13 @@ namespace Artifact
                     ArtifactCore::dynamicPointerCast<ArtifactMpmSand2DLayer>(layer)) {
                 const QImage surface = mpmSandLayer->getSoftwareRenderSurface(
                     layerSize.width(), layerSize.height(), outLocalBounds);
-                if (!surface.isNull()) return surface;
+                if (!surface.isNull()) return includeFluidSmoke(surface);
             }
 
             QImage fallback = layer->getThumbnail(layerSize.width(), layerSize.height());
             if (!fallback.isNull()) {
-                return fallback.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+                return includeFluidSmoke(
+                    fallback.convertToFormat(QImage::Format_ARGB32_Premultiplied));
             }
 
             return {};
@@ -7467,9 +7477,15 @@ namespace Artifact
         const QString& ext,
         std::atomic<bool>& success,
         QString& failureReason) {
-        const bool usesComponentSimulation =
-            compositionForRender &&
-            compositionForRender->usesLayerComponentSimulation();
+        const bool usesSmokeSimulation = compositionForRender &&
+            std::any_of(compositionForRender->allLayerRef().begin(),
+                        compositionForRender->allLayerRef().end(),
+                        [](const auto& layer) {
+                            return layer && layer->hasFluidSmokeComponent();
+                        });
+        const bool usesComponentSimulation = compositionForRender &&
+            (compositionForRender->usesLayerComponentSimulation() ||
+             usesSmokeSimulation);
         if (usesComponentSimulation) {
             // The queue clone owns an isolated deterministic simulation
             // session. Warm it from the composition start so sub-range renders
@@ -7480,7 +7496,18 @@ namespace Artifact
             int64_t replayFrame = warmupStart;
             bool seededFromBake = false;
             bool seededAtRenderStart = false;
-            if (warmupTarget >= warmupStart) {
+            if (usesSmokeSimulation) {
+                // Smoke solver buffers are not part of the persisted component
+                // bake. Start from a known empty state and replay sequentially
+                // so a frame-range job does not depend on an old viewport or
+                // queue session's in-memory solver state.
+                for (const auto& layer : compositionForRender->allLayerRef()) {
+                    if (layer && layer->hasFluidSmokeComponent()) {
+                        layer->resetFluidSmokeSimulation();
+                    }
+                }
+                compositionForRender->resetLayerComponentSimulation();
+            } else if (warmupTarget >= warmupStart) {
                 const auto checkpoint = compositionForRender
                     ->layerComponentSimulationSnapshotAtOrBefore(warmupTarget);
                 if (checkpoint && *checkpoint >= warmupStart) {
@@ -7543,7 +7570,8 @@ namespace Artifact
 
         // CPU MFR workers and multi-GPU workers each receive an independent
         // composition snapshot. The legacy single-GPU path remains serialized.
-        bool useMfr = !useGpuBackend && totalFrames > 1;
+        bool useMfr = !useGpuBackend && !usesComponentSimulation &&
+            totalFrames > 1;
         int numWorkers = useMfr
             ? std::max(1, std::min(maxInFlightFrames_, totalFrames))
             : 1;

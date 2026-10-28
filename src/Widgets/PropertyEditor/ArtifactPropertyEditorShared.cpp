@@ -442,6 +442,8 @@ QString fileDialogFilterForProperty(const QString &propertyName) {
         "Audio Files (*.wav *.mp3 *.flac *.ogg *.m4a);;All Files (*.*)");
   }
   if (propertyName.contains(QStringLiteral("image"), Qt::CaseInsensitive) ||
+      propertyName.compare(QStringLiteral("cleanPlatePath"),
+                           Qt::CaseInsensitive) == 0 ||
       propertyName.endsWith(QStringLiteral("sourcePath"),
                             Qt::CaseInsensitive)) {
     return QStringLiteral("Image Files (*.png *.jpg *.jpeg *.bmp *.gif *.tga *.tif *.tiff *.dpx "
@@ -464,6 +466,8 @@ bool isPathProperty(const ArtifactCore::AbstractProperty &property) {
          name.compare(QStringLiteral("video.sourcePath"),
                       Qt::CaseInsensitive) == 0 ||
          name.compare(QStringLiteral("model.sourcePath"),
+                      Qt::CaseInsensitive) == 0 ||
+         name.compare(QStringLiteral("cleanPlatePath"),
                       Qt::CaseInsensitive) == 0 ||
          name.endsWith(QStringLiteral(".sourcePath"), Qt::CaseInsensitive) ||
          name.compare(QStringLiteral("sourcePath"), Qt::CaseInsensitive) == 0;

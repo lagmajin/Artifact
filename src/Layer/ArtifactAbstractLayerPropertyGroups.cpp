@@ -1219,25 +1219,27 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactAbstractLayer::getComponentProp
                 impl_->fluidSmokeDensityDissipationPerSecond_, 8, 0.0, 10.0);
   addSmokeFloat(QStringLiteral("component.fluid.emitterTemperature"),
                 impl_->fluidSmokeEmitterTemperature_, 9, 0.0, 10.0);
+  addSmokeFloat(QStringLiteral("component.fluid.flameLifetimeSeconds"),
+                impl_->fluidFlameLifetimeSeconds_, 10, 0.05, 10.0);
   addSmokeFloat(QStringLiteral("component.fluid.thermalBuoyancy"),
-                impl_->fluidThermalBuoyancy_, 10, 0.0, 2.0);
+                impl_->fluidThermalBuoyancy_, 11, 0.0, 2.0);
   addSmokeFloat(QStringLiteral("component.fluid.temperatureDissipationPerSecond"),
-                impl_->fluidTemperatureDissipationPerSecond_, 11, 0.0, 10.0);
-  addSmokeFloat(QStringLiteral("component.fluid.emitterX"), impl_->fluidSmokeEmitterX_, 12, 0.0, 1.0);
-  addSmokeFloat(QStringLiteral("component.fluid.emitterY"), impl_->fluidSmokeEmitterY_, 13, 0.0, 1.0);
-  addSmokeFloat(QStringLiteral("component.fluid.emitterRadius"), impl_->fluidSmokeEmitterRadius_, 14, 0.0, 0.5);
+                impl_->fluidTemperatureDissipationPerSecond_, 12, 0.0, 10.0);
+  addSmokeFloat(QStringLiteral("component.fluid.emitterX"), impl_->fluidSmokeEmitterX_, 13, 0.0, 1.0);
+  addSmokeFloat(QStringLiteral("component.fluid.emitterY"), impl_->fluidSmokeEmitterY_, 14, 0.0, 1.0);
+  addSmokeFloat(QStringLiteral("component.fluid.emitterRadius"), impl_->fluidSmokeEmitterRadius_, 15, 0.0, 0.5);
   auto smokeEmitterCount = makeProp(
       QStringLiteral("component.fluid.emitterCount"), PropertyType::Integer,
-      impl_->fluidSmokeEmitterCount_, 15);
+      impl_->fluidSmokeEmitterCount_, 16);
   smokeEmitterCount->setHardRange(1, 64);
   fluidGroup.addProperty(smokeEmitterCount);
-  addSmokeFloat(QStringLiteral("component.fluid.emitterDensity"), impl_->fluidSmokeEmitterDensity_, 16, 0.0, 20.0);
-  addSmokeFloat(QStringLiteral("component.fluid.emitterVelocityX"), impl_->fluidSmokeEmitterVelocityX_, 17, -20.0, 20.0);
-  addSmokeFloat(QStringLiteral("component.fluid.emitterVelocityY"), impl_->fluidSmokeEmitterVelocityY_, 18, -20.0, 20.0);
+  addSmokeFloat(QStringLiteral("component.fluid.emitterDensity"), impl_->fluidSmokeEmitterDensity_, 17, 0.0, 20.0);
+  addSmokeFloat(QStringLiteral("component.fluid.emitterVelocityX"), impl_->fluidSmokeEmitterVelocityX_, 18, -20.0, 20.0);
+  addSmokeFloat(QStringLiteral("component.fluid.emitterVelocityY"), impl_->fluidSmokeEmitterVelocityY_, 19, -20.0, 20.0);
   fluidGroup.addProperty(makeProp(QStringLiteral("component.fluid.smokeColor"),
                                  PropertyType::Color,
                                  ArtifactCore::toQColor(impl_->fluidSmokeColor_),
-                                 19));
+                                 20));
   groups.push_back(std::move(fluidGroup));
 
   PropertyGroup liquidGroup(QStringLiteral("Liquid"));

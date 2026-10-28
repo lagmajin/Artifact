@@ -16,6 +16,30 @@ import Utils.Id;
 
 namespace Artifact {
 
+ArtifactCore::SharedPtr<ArtifactCore::AudioMixer> resolveCurrentProjectAudioMixer()
+{
+    auto* projectService = ArtifactProjectService::instance();
+    const auto composition = projectService
+        ? projectService->currentComposition().lock()
+        : ArtifactCompositionPtr{};
+    if (!composition) {
+        return {};
+    }
+    composition->ensureAudioMixer();
+    return composition->getAudioMixer();
+}
+
+ArtifactAbstractLayerPtr resolveCurrentProjectAudioLayer(
+    const ArtifactCore::LayerID& layerId)
+{
+    auto* projectService = ArtifactProjectService::instance();
+    const auto composition = projectService
+        ? projectService->currentComposition().lock()
+        : ArtifactCompositionPtr{};
+    return composition ? composition->layerById(layerId)
+                       : ArtifactAbstractLayerPtr{};
+}
+
 bool compositionLayerAudioMuted(const ArtifactAbstractLayerPtr& layer,
                                 bool* hasAudioMute);
 

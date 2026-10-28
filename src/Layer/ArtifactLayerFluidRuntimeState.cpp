@@ -16,13 +16,33 @@ module Artifact.Layer.FluidRuntimeState;
 namespace Artifact {
 
 namespace {
-constexpr int kSmokeRenderSamplesPerAxis = 64;
+constexpr int kSmokeRenderSamplesPerAxis = 128;
 constexpr int kSmokeSolverAdaptiveThresholdCells = 4608;
 constexpr int kSmokeMaximumAdaptiveSolverIterations = 28;
+constexpr int kSmokeSolverAdaptiveMaxExtraIterationsPerThresholdBlock = 4;
 constexpr std::int64_t kSmokeCheckpointInterval = 8;
 constexpr std::int64_t kSmokeMaximumSeekReplayFrames = 120;
 constexpr std::size_t kSmokeCheckpointMemoryBudget = 8U * 1024U * 1024U;
 constexpr std::size_t kFluidSnapshotScalarArrayCount = 9;
+constexpr float kSmokeFlameSourceTemperatureThreshold = 0.35f;
+
+float sampleSmokeScalarField(
+    const ArtifactCore::NamedVector<float>& field, const int width,
+    const int height, const float gridX, const float gridY) {
+  const float x = std::clamp(gridX, 0.0f, static_cast<float>(width - 1));
+  const float y = std::clamp(gridY, 0.0f, static_cast<float>(height - 1));
+  const int x0 = static_cast<int>(std::floor(x));
+  const int y0 = static_cast<int>(std::floor(y));
+  const int x1 = std::min(x0 + 1, width - 1);
+  const int y1 = std::min(y0 + 1, height - 1);
+  const float tx = x - static_cast<float>(x0);
+  const float ty = y - static_cast<float>(y0);
+  const auto at = [&](const int px, const int py) {
+    return field[static_cast<std::size_t>(py * width + px)];
+  };
+  return std::lerp(std::lerp(at(x0, y0), at(x1, y0), tx),
+                   std::lerp(at(x0, y1), at(x1, y1), tx), ty);
+}
 
 std::uint64_t smokeCheckpointSettingsHash(
     const LayerSmokeRuntimeSettings& settings, const double framesPerSecond) {
@@ -62,6 +82,15 @@ std::uint64_t smokeCheckpointSettingsHash(
   mixFloat(settings.emitterTemperature);
   mixFloat(settings.thermalBuoyancy);
   mixFloat(settings.temperatureDissipationPerSecond);
+  mixFloat(settings.flameLifetimeSeconds);
+  mixFloat(settings.topOutflowRatePerSecond);
+  mixFloat(settings.topOutflowBandFraction);
+  mixFloat(settings.smokeTurbulence);
+  mixFloat(settings.flameTurbulence);
+  mixFloat(settings.smokeTurbulenceScale);
+  mixFloat(settings.flameTurbulenceScale);
+  mix(static_cast<std::uint32_t>(settings.smokeTurbulenceOctaves));
+  mix(static_cast<std::uint32_t>(settings.highOrderDensityAdvection));
   mix(static_cast<std::uint32_t>(settings.simulationStartFrame));
   mix(static_cast<std::uint32_t>(
       static_cast<std::uint64_t>(settings.simulationStartFrame) >> 32U));
@@ -79,17 +108,19 @@ void storeSmokeCheckpoint(LayerFluidRuntimeState& state,
   const std::size_t bytes =
       state.fluidSolver_->width() * static_cast<std::size_t>(
           state.fluidSolver_->height()) * sizeof(float) *
-      kFluidSnapshotScalarArrayCount;
+      (kFluidSnapshotScalarArrayCount + 1U);
   if (bytes > kSmokeCheckpointMemoryBudget) return;
   for (std::size_t index = 0; index < state.smokeCheckpoints_.size(); ++index) {
     if (state.smokeCheckpoints_[index].frame == frame) return;
   }
-  // This full solver-state copy is the bounded exception that lets a later
-  // seek reproduce sequential output. It runs every 8 simulation frames, is
-  // capped at 8 MiB per layer, and currently allocates the snapshot payload.
+  // These solver and flame-state copies are the bounded exception that lets a
+  // later seek reproduce sequential output. They run every 8 simulation
+  // frames, are capped at 8 MiB per layer, and allocate checkpoint payloads.
   LayerFluidRuntimeState::SmokeLayerCheckpoint checkpoint;
   checkpoint.frame = frame;
   checkpoint.solver = state.fluidSolver_->snapshot();
+  checkpoint.flameLifetime = state.flameLifetime_;
+  checkpoint.flameLifetimeActive = state.flameLifetimeActive_;
   state.smokeCheckpointBytes_ += bytes;
   state.smokeCheckpoints_.push_back(std::move(checkpoint));
   while (state.smokeCheckpointBytes_ > kSmokeCheckpointMemoryBudget &&
@@ -97,7 +128,7 @@ void storeSmokeCheckpoint(LayerFluidRuntimeState& state,
     state.smokeCheckpointBytes_ -= std::min(
         state.smokeCheckpointBytes_,
         state.smokeCheckpoints_[0].solver.density.size() * sizeof(float) *
-            kFluidSnapshotScalarArrayCount);
+            (kFluidSnapshotScalarArrayCount + 1U));
     state.smokeCheckpoints_.removeFirst();
   }
 }
@@ -159,16 +190,21 @@ void LayerFluidRuntimeState::invalidateSmokeSimulation() {
   smokeCheckpoints_.clear();
   smokeCheckpointBytes_ = 0;
   smokeCheckpointSettingsHash_ = 0;
+  flameLifetime_.clear();
+  flameLifetimeScratch_.clear();
+  flameLifetimeActive_ = false;
   fluidRenderData_.particles.clear();
   fluidFireRenderData_.particles.clear();
   fluidLastFrame_ = std::numeric_limits<std::int64_t>::min();
   smokeStirRevision_ = 0;
+  smokeSimulationStartFrame_ = 0;
 }
 
 void advanceLayerSmokeRuntime(
     LayerFluidRuntimeState& state, const std::int64_t frame,
     const double framesPerSecond,
     const LayerSmokeRuntimeSettings& settings) {
+  state.smokeSimulationStartFrame_ = settings.simulationStartFrame;
   const bool solverMismatch =
       !state.fluidSolver_ ||
       state.fluidSolver_->width() != settings.gridWidth ||
@@ -176,6 +212,15 @@ void advanceLayerSmokeRuntime(
   if (solverMismatch) {
     state.fluidSolver_ = std::make_unique<ArtifactCore::FluidSolver2D>(
         settings.gridWidth, settings.gridHeight);
+    const std::size_t fieldCellCount =
+        static_cast<std::size_t>(settings.gridWidth) *
+        static_cast<std::size_t>(settings.gridHeight);
+    state.flameLifetime_.resize(fieldCellCount);
+    state.flameLifetimeScratch_.resize(fieldCellCount);
+    std::fill(state.flameLifetime_.begin(), state.flameLifetime_.end(), 0.0f);
+    std::fill(state.flameLifetimeScratch_.begin(),
+              state.flameLifetimeScratch_.end(), 0.0f);
+    state.flameLifetimeActive_ = false;
     const auto [samplesX, samplesY] = smokeRenderSampleCounts(
         settings.gridWidth, settings.gridHeight);
     state.fluidRenderData_.particles.reserve(
@@ -212,6 +257,11 @@ void advanceLayerSmokeRuntime(
   state.fluidSolver_->setTemperatureDissipationPerSecond(
       settings.temperatureDissipationPerSecond);
   state.fluidSolver_->setVorticity(settings.vorticity);
+  state.fluidSolver_->setCurlNoise(settings.smokeTurbulence,
+      settings.flameTurbulence, settings.smokeTurbulenceScale,
+      settings.flameTurbulenceScale, settings.smokeTurbulenceOctaves);
+  state.fluidSolver_->setHighOrderDensityAdvection(
+      settings.highOrderDensityAdvection);
   const int baseSolverIterations = std::max(1, settings.solverIterations);
   state.fluidSolver_->setSolverIterations(baseSolverIterations);
   state.fluidSolver_->setAdaptiveIterations(true);
@@ -229,6 +279,21 @@ void advanceLayerSmokeRuntime(
       ? std::clamp(settings.densityDissipationPerSecond, 0.0f, 10.0f)
       : 2.5f;
   const float densityRetention = std::exp(-densityDissipationPerSecond * dt);
+  const float flameLifetimeSeconds = std::isfinite(
+      settings.flameLifetimeSeconds)
+      ? std::clamp(settings.flameLifetimeSeconds, 0.05f, 10.0f)
+      : 0.65f;
+  const float topOutflowRatePerSecond = std::isfinite(
+      settings.topOutflowRatePerSecond)
+      ? std::clamp(settings.topOutflowRatePerSecond, 0.0f, 100.0f)
+      : 30.0f;
+  const float topOutflowBandFraction = std::isfinite(
+      settings.topOutflowBandFraction)
+      ? std::clamp(settings.topOutflowBandFraction, 0.01f, 0.5f)
+      : 0.2f;
+  const int topOutflowRows = std::clamp(static_cast<int>(std::ceil(
+      topOutflowBandFraction * static_cast<float>(settings.gridHeight))),
+      1, std::max(1, settings.gridHeight / 2));
   constexpr float kSmokeReferenceFrameRate = 30.0f;
   const float emissionTimeScale = dt * kSmokeReferenceFrameRate;
   constexpr float kSmokeEmitterSway = 0.04f;
@@ -256,7 +321,7 @@ void advanceLayerSmokeRuntime(
         sourceX += std::cos(angle) * offset;
         sourceY += std::sin(angle) * offset;
       }
-      // The emitter's independent heat field drives buoyancy and the fire tint.
+      // Heat drives buoyancy, fire coloration, and the flame lifetime source.
       const ArtifactCore::SmokeEmitter2D thermalEmitter{
           sourceX, sourceY, sourceRadius,
           settings.emitterDensity * emissionTimeScale,
@@ -275,8 +340,111 @@ void advanceLayerSmokeRuntime(
     }
     for (int substep = 0; substep < solverSubstepCount; ++substep) {
       state.fluidSolver_->update(solverSubstepDt);
+      if (state.flameLifetimeActive_) {
+        std::fill(state.flameLifetimeScratch_.begin(),
+                  state.flameLifetimeScratch_.end(), 0.0f);
+        const float decay = std::max(0.0f, solverSubstepDt) /
+            flameLifetimeSeconds;
+        bool advectedFlameActive = false;
+        for (int y = 1; y < settings.gridHeight - 1; ++y) {
+          for (int x = 1; x < settings.gridWidth - 1; ++x) {
+            float velocityX = 0.0f;
+            float velocityY = 0.0f;
+            state.fluidSolver_->getVelocity(x, y, velocityX, velocityY);
+            const float backX = static_cast<float>(x) - solverSubstepDt *
+                static_cast<float>(settings.gridWidth - 2) * velocityX;
+            const float backY = static_cast<float>(y) - solverSubstepDt *
+                static_cast<float>(settings.gridHeight - 2) * velocityY;
+            const auto index = static_cast<std::size_t>(
+                y * settings.gridWidth + x);
+            const float lifetime = std::max(
+                0.0f, sampleSmokeScalarField(state.flameLifetime_,
+                    settings.gridWidth, settings.gridHeight, backX, backY) -
+                    decay);
+            state.flameLifetimeScratch_[index] = lifetime;
+            advectedFlameActive |= lifetime > 0.0f;
+          }
+        }
+        std::copy(state.flameLifetimeScratch_.begin(),
+                  state.flameLifetimeScratch_.end(),
+                  state.flameLifetime_.begin());
+        state.flameLifetimeActive_ = advectedFlameActive;
+      }
+      // FluidSolver2D closes the velocity boundary on every edge. Smoke uses
+      // an absorbent top band so buoyant density leaves the visible domain
+      // instead of collecting against that closed ceiling. The fixed band
+      // and per-cell work stay bounded by half the simulation height.
+      if (topOutflowRatePerSecond > 0.0f) {
+        for (int y = 1; y <= topOutflowRows; ++y) {
+          const float heightWeight = 1.0f -
+              static_cast<float>(y - 1) /
+                  static_cast<float>(topOutflowRows);
+          const float retention = std::exp(
+              -topOutflowRatePerSecond * heightWeight * solverSubstepDt);
+          for (int x = 1; x < settings.gridWidth - 1; ++x) {
+            const float density = state.fluidSolver_->getDensity(x, y);
+            if (density > 0.0f) {
+              state.fluidSolver_->addDensity(
+                  x, y, density * (retention - 1.0f));
+            }
+            const auto index = static_cast<std::size_t>(
+                y * settings.gridWidth + x);
+            state.flameLifetime_[index] *= retention;
+          }
+        }
+      }
     }
     state.fluidSolver_->scaleDensity(densityRetention);
+    const float flameSource = std::clamp(
+        (settings.emitterTemperature - kSmokeFlameSourceTemperatureThreshold) *
+            0.6f,
+        0.0f, 1.0f);
+    if (flameSource > 0.0f) {
+      for (int source = 0; source < emitterCount; ++source) {
+        float sourceX = settings.emitterX;
+        float sourceY = settings.emitterY;
+        if (emitterCount > 1) {
+          const float radialFraction = std::sqrt(
+              (static_cast<float>(source) + 0.5f) /
+              static_cast<float>(emitterCount));
+          const float angle = static_cast<float>(source) * kGoldenAngle;
+          const float offset = placementRadius * radialFraction;
+          sourceX += std::cos(angle) * offset;
+          sourceY += std::sin(angle) * offset;
+        }
+        sourceX = std::clamp(sourceX, 0.0f, 1.0f);
+        sourceY = std::clamp(sourceY, 0.0f, 1.0f);
+        const int centerX = 1 + static_cast<int>(std::round(
+            sourceX * static_cast<float>(settings.gridWidth - 3)));
+        const int centerY = 1 + static_cast<int>(std::round(
+            sourceY * static_cast<float>(settings.gridHeight - 3)));
+        const float radiusX = sourceRadius *
+            static_cast<float>(settings.gridWidth - 2);
+        const float radiusY = sourceRadius *
+            static_cast<float>(settings.gridHeight - 2);
+        const int extentX = static_cast<int>(std::ceil(radiusX));
+        const int extentY = static_cast<int>(std::ceil(radiusY));
+        for (int dy = -extentY; dy <= extentY; ++dy) {
+          for (int dx = -extentX; dx <= extentX; ++dx) {
+            const int x = centerX + dx;
+            const int y = centerY + dy;
+            if (x <= 0 || x >= settings.gridWidth - 1 ||
+                y <= 0 || y >= settings.gridHeight - 1) continue;
+            const float nx = static_cast<float>(dx) /
+                std::max(0.5f, radiusX);
+            const float ny = static_cast<float>(dy) /
+                std::max(0.5f, radiusY);
+            const float sourceValue = flameSource * std::clamp(
+                1.0f - nx * nx - ny * ny, 0.0f, 1.0f);
+            const auto index = static_cast<std::size_t>(
+                y * settings.gridWidth + x);
+            state.flameLifetime_[index] = std::max(
+                state.flameLifetime_[index], sourceValue);
+            state.flameLifetimeActive_ |= sourceValue > 0.0f;
+          }
+        }
+      }
+    }
   };
 
   bool steppedThisCall = false;
@@ -286,6 +454,10 @@ void advanceLayerSmokeRuntime(
       (frame < state.fluidLastFrame_ || frame - state.fluidLastFrame_ > 8);
   if (uninitialized) {
     state.fluidSolver_->reset();
+    std::fill(state.flameLifetime_.begin(), state.flameLifetime_.end(), 0.0f);
+    std::fill(state.flameLifetimeScratch_.begin(),
+              state.flameLifetimeScratch_.end(), 0.0f);
+    state.flameLifetimeActive_ = false;
     const bool canReplayFromStart = frame >= settings.simulationStartFrame &&
         frame - settings.simulationStartFrame <=
             kSmokeMaximumSeekReplayFrames;
@@ -316,9 +488,18 @@ void advanceLayerSmokeRuntime(
     if (nearestCheckpointIndex < state.smokeCheckpoints_.size() &&
         frame - nearestCheckpointFrame <= kSmokeMaximumSeekReplayFrames) {
       const auto& checkpoint = state.smokeCheckpoints_[nearestCheckpointIndex];
-      restoredCheckpoint =
+      restoredCheckpoint = checkpoint.flameLifetime.size() ==
+              state.flameLifetime_.size() &&
           state.fluidSolver_->restoreSnapshot(checkpoint.solver);
-      if (restoredCheckpoint) state.fluidLastFrame_ = checkpoint.frame;
+      if (restoredCheckpoint) {
+        std::copy(checkpoint.flameLifetime.begin(),
+                  checkpoint.flameLifetime.end(),
+                  state.flameLifetime_.begin());
+        state.flameLifetimeActive_ = checkpoint.flameLifetimeActive;
+        state.fluidLastFrame_ = checkpoint.frame;
+      } else {
+        restoredCheckpoint = false;
+      }
     }
     if (restoredCheckpoint) {
       if (frame < previousFrame) {
@@ -329,7 +510,7 @@ void advanceLayerSmokeRuntime(
           state.smokeCheckpointBytes_ -= std::min(
               state.smokeCheckpointBytes_,
               removed.solver.density.size() * sizeof(float) *
-                  kFluidSnapshotScalarArrayCount);
+                  (kFluidSnapshotScalarArrayCount + 1U));
           state.smokeCheckpoints_.removeAt(
               state.smokeCheckpoints_.size() - 1);
         }
@@ -353,6 +534,11 @@ void advanceLayerSmokeRuntime(
       }
     } else {
       state.fluidSolver_->reset();
+      std::fill(state.flameLifetime_.begin(),
+                state.flameLifetime_.end(), 0.0f);
+      std::fill(state.flameLifetimeScratch_.begin(),
+                state.flameLifetimeScratch_.end(), 0.0f);
+      state.flameLifetimeActive_ = false;
       state.smokeCheckpoints_.clear();
       state.smokeCheckpointBytes_ = 0;
       state.fluidLastFrame_ = frame;
@@ -426,6 +612,7 @@ const ArtifactCore::ParticleRenderData& prepareLayerSmokeRenderDataImpl(
     const float sampleSpacing = std::max(sampleSpacingX, sampleSpacingY);
     const auto sampleSmokeFieldBilinear = [&](const float gridX,
         const float gridY, float& density, float& temperature,
+        float& flameLifetime,
         float& velocityX, float& velocityY) {
       const float clampedX = std::clamp(
           gridX, 0.0f, static_cast<float>(settings.gridWidth - 1));
@@ -453,6 +640,8 @@ const ArtifactCore::ParticleRenderData& prepareLayerSmokeRenderDataImpl(
       const float temperature11 = state.fluidSolver_->getTemperature(x1, y1);
       temperature = bilinear(
           temperature00, temperature10, temperature01, temperature11);
+      flameLifetime = sampleSmokeScalarField(state.flameLifetime_,
+          settings.gridWidth, settings.gridHeight, clampedX, clampedY);
       if (sampleVelocity) {
         float velocityX00 = 0.0f;
         float velocityY00 = 0.0f;
@@ -504,11 +693,17 @@ const ArtifactCore::ParticleRenderData& prepareLayerSmokeRenderDataImpl(
             0.0f, static_cast<float>(settings.gridHeight - 1));
         float density = 0.0f;
         float temperature = 0.0f;
+        float flameLifetime = 0.0f;
         float vx = 0.0f;
         float vy = 0.0f;
         sampleSmokeFieldBilinear(
-            sampleGridX, sampleGridY, density, temperature, vx, vy);
-        if (density < 0.025f) continue;
+            sampleGridX, sampleGridY, density, temperature,
+            flameLifetime, vx, vy);
+        const bool hasSmoke = density >= 0.025f;
+        const float fireMask = std::clamp(
+            (flameLifetime - 0.035f) / 0.75f, 0.0f, 1.0f);
+        const bool hasFire = fireMask > 0.0f;
+        if (!hasSmoke && !hasFire) continue;
         ArtifactCore::ParticleVertex particle{};
         const float u = sampleGridX /
                         static_cast<float>(std::max(1, settings.gridWidth - 1));
@@ -545,17 +740,17 @@ const ArtifactCore::ParticleRenderData& prepareLayerSmokeRenderDataImpl(
         particle.ppy = mappedPrev.y();
         particle.ppz = mappedPrev.z();
         particle.a *= std::clamp(opacityScale, 0.0f, 1.0f);
-        renderData.particles.push_back(particle);
+        if (hasSmoke) renderData.particles.push_back(particle);
 
-        const float fireMask = std::clamp(
-            (temperature - 0.35f) * 0.6f, 0.0f, 1.0f);
-        if (fireMask > 0.0f) {
+        if (hasFire) {
           const float fireHeat = std::clamp(temperature * 0.25f, 0.0f, 1.0f);
           auto fireParticle = particle;
           fireParticle.r = 1.0f;
           fireParticle.g = std::lerp(0.035f, 0.78f, fireHeat);
           fireParticle.b = std::lerp(0.002f, 0.12f, fireHeat);
-          fireParticle.a *= fireMask * 0.42f;
+          fireParticle.a = std::clamp(
+              std::sqrt(flameLifetime) * 0.18f, 0.01f, 0.18f) *
+              fireMask * 0.42f * std::clamp(opacityScale, 0.0f, 1.0f);
           fireParticle.size *= 0.82f;
           fireRenderData.particles.push_back(fireParticle);
         }
@@ -594,10 +789,33 @@ void renderLayerSmokeRuntime(LayerFluidRuntimeState& state,
                              const LayerSmokeRuntimeSettings& settings) {
   advanceLayerSmokeRuntime(state, frame, framesPerSecond, settings);
   if (!renderer || !state.fluidSolver_) return;
+  const auto *densityField = state.fluidSolver_->densityFieldData();
+  const auto *flameLifetimeField = state.flameLifetime_.constData();
+  if (renderer->drawSmokeVolumeField(
+          densityField, flameLifetimeField, settings.gridWidth,
+          settings.gridHeight, bounds, baseTransform,
+          ArtifactCore::FloatColor(settings.colorR, settings.colorG,
+                                   settings.colorB, 1.0f),
+          opacityScale,
+          static_cast<float>(frame) /
+              static_cast<float>(std::max(1.0, framesPerSecond)),
+          std::clamp(settings.volumeDetailStrength, 0.0f, 1.0f),
+          SmokeVolumeLook{ArtifactCore::FloatColor(settings.smokeDenseColorR,
+                                                   settings.smokeDenseColorG,
+                                                   settings.smokeDenseColorB, 1.0f),
+                          settings.smokeDensityRampStart,
+                          settings.smokeDensityRampEnd,
+                          settings.smokeDensityRampStrength,
+                          settings.smokeScatteringBrightness,
+                          settings.smokeShadowDensity,
+                          settings.smokeVolumeDetailFrequency,
+                          settings.smokeVolumeDetailContrast})) {
+    return;
+  }
   const auto& renderData = prepareLayerSmokeRenderDataImpl(
       state, bounds, baseTransform, opacityScale, frame, settings, false);
-  if (renderData.particles.empty()) return;
-  renderer->drawParticles(std::move(state.fluidRenderData_));
+  if (!renderData.particles.empty())
+    renderer->drawParticles(std::move(state.fluidRenderData_));
   if (!state.fluidFireRenderData_.particles.empty())
     renderer->drawParticles(std::move(state.fluidFireRenderData_));
 }

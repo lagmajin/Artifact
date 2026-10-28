@@ -150,6 +150,8 @@ import Artifact.Layers.SolidImage;
 import Artifact.Layers.Noise;
 import Artifact.Application.Manager;
 import Artifact.Layers.Selection.Manager;
+import Artifact.Tool.Brush;
+import Artifact.Tool.MotionSketchTool;
 import Artifact.Service.ActiveContext;
 import Artifact.Service.Project;
 import Artifact.Template.Document;

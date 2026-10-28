@@ -530,29 +530,52 @@ void ArtifactCinematicLensFlareEffect::apply(
     float flareY = impl_->positionY * std::max(1, height - 1);
     float sourceEnergy = 1.0f;
     if (impl_->autoPosition) {
-        double weightedX = 0.0;
-        double weightedY = 0.0;
-        double weightSum = 0.0;
         float peak = impl_->threshold;
+        int peakX = 0;
+        int peakY = 0;
         for (int y = 0; y < height; ++y) {
             for (int x = 0; x < width; ++x) {
                 const std::size_t offset =
                     (static_cast<std::size_t>(y) * width + x) * 4u;
                 const float luminance = source[offset + 2] * 0.2126f +
                     source[offset + 1] * 0.7152f + source[offset] * 0.0722f;
-                const float weight = std::max(0.0f, luminance - impl_->threshold);
-                weightedX += static_cast<double>(x) * weight;
-                weightedY += static_cast<double>(y) * weight;
-                weightSum += weight;
-                peak = std::max(peak, luminance);
+                if (luminance > peak) {
+                    peak = luminance;
+                    peakX = x;
+                    peakY = y;
+                }
             }
         }
-        if (weightSum <= 0.000001) {
+        if (peak <= impl_->threshold) {
             dst = src;
             return;
         }
-        flareX = static_cast<float>(weightedX / weightSum);
-        flareY = static_cast<float>(weightedY / weightSum);
+        const float coreThreshold = std::max(impl_->threshold, peak * 0.65f);
+        double weightedX = 0.0;
+        double weightedY = 0.0;
+        double weightSum = 0.0;
+        const int regionLeft = std::max(0, peakX - 24);
+        const int regionRight = std::min(width - 1, peakX + 24);
+        const int regionTop = std::max(0, peakY - 24);
+        const int regionBottom = std::min(height - 1, peakY + 24);
+        for (int y = regionTop; y <= regionBottom; ++y) {
+            for (int x = regionLeft; x <= regionRight; ++x) {
+                const std::size_t offset =
+                    (static_cast<std::size_t>(y) * width + x) * 4u;
+                const float luminance = source[offset + 2] * 0.2126f +
+                    source[offset + 1] * 0.7152f + source[offset] * 0.0722f;
+                const float weight = std::max(0.0f, luminance - coreThreshold);
+                weightedX += static_cast<double>(x) * weight;
+                weightedY += static_cast<double>(y) * weight;
+                weightSum += weight;
+            }
+        }
+        flareX = weightSum > 0.000001
+            ? static_cast<float>(weightedX / weightSum)
+            : static_cast<float>(peakX);
+        flareY = weightSum > 0.000001
+            ? static_cast<float>(weightedY / weightSum)
+            : static_cast<float>(peakY);
         sourceEnergy = std::max(0.0f, peak - impl_->threshold);
     }
 

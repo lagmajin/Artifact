@@ -114,6 +114,8 @@ import Widgets.Utils.CSS;
 import Artifact.Service.Project;
 import Artifact.Project;
 import Artifact.Application.Manager;
+import Artifact.Layers.Selection.Manager;
+import Artifact.Layer.Abstract;
 import Artifact.Service.FootageInterpret;
 import Widgets.Dialog.InterpretFootage;
 import Artifact.Event.Types;

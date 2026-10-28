@@ -1,6 +1,7 @@
 module;
 
 #include <array>
+#include <QString>
 
 module Artifact.Engine.DAG.LayerGraphBuilder;
 
