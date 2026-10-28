@@ -51,6 +51,7 @@ module;
 #include <QFont>
 #include <QIcon>
 #include <QKeyEvent>
+#include <QKeySequence>
 #include <QList>
 #include <QListWidget>
 #include <QMouseEvent>
@@ -92,6 +93,7 @@ module;
 #include <QHostAddress>
 #include <QUrl>
 #include <QUuid>
+#include <QWheelEvent>
 #include <QWidget>
 #include <QtCore/QtGlobal>
 #include <filesystem>
@@ -175,13 +177,21 @@ public:
 
 
 
-// Test-only MCP endpoint. It polls Qt's already event-driven TCP objects from
-// a low-frequency QObject timer so UI events stay on the GUI thread without
-// adding signal/slot connections to the application.
-class ArtifactUiTestMcpServer final : public QObject {
+// Virtual input injection for the in-app UI control endpoint.
+//
+// Every event stays inside Qt: the OS pointer, the keyboard focus and the
+// desktop are never touched. This service owns the virtual pointer so widgets
+// that keep hover or drag state see the same sequence a real mouse produces:
+// Leave/Enter when the pointer crosses a widget, a move before every press,
+// moves while a button is held, and a release delivered to the widget that
+// received the press.
+class ArtifactVirtualInput final {
 public:
-  ArtifactUiTestMcpServer(QWidget* root, quint16 port)
-      : root_(root), cursor_(new QLabel(root)) {
+  explicit ArtifactVirtualInput(QWidget* root) : root_(root) {
+    if (!root_) {
+      return;
+    }
+    cursor_ = new QLabel(root_);
     cursor_->setObjectName(QStringLiteral("artifactVirtualMouseCursor"));
     cursor_->setAttribute(Qt::WA_TransparentForMouseEvents, true);
     cursor_->setAttribute(Qt::WA_NoSystemBackground, true);
@@ -190,18 +200,344 @@ public:
                            .pixmap(QSize(32, 32)));
     cursor_->setFixedSize(32, 32);
     cursor_->hide();
-
-    if (!root_ || !server_.listen(QHostAddress::LocalHost, port)) {
-      error_ = root_ ? server_.errorString()
-                     : QStringLiteral("UI test root window is unavailable");
-      return;
-    }
-    // The test-only control endpoint needs at most one poll per display frame.
-    timerId_ = startTimer(16, Qt::CoarseTimer);
-    qInfo() << "[UiTestMcp] MCP endpoint listening on localhost:" << port;
+    active_ = this;
   }
 
-  ~ArtifactUiTestMcpServer() override {
+  ~ArtifactVirtualInput() {
+    if (active_ == this) {
+      active_ = nullptr;
+    }
+  }
+
+  ArtifactVirtualInput(const ArtifactVirtualInput&) = delete;
+  ArtifactVirtualInput& operator=(const ArtifactVirtualInput&) = delete;
+
+  // Marks the events produced by this service so ArtifactApplication::notify()
+  // can tell injected input apart from real OS input.
+  class ScopedInjection final {
+  public:
+    explicit ScopedInjection(ArtifactVirtualInput* owner) : owner_(owner) {
+      ++owner_->injectionDepth_;
+    }
+    ~ScopedInjection() { --owner_->injectionDepth_; }
+    ScopedInjection(const ScopedInjection&) = delete;
+    ScopedInjection& operator=(const ScopedInjection&) = delete;
+
+  private:
+    ArtifactVirtualInput* owner_;
+  };
+
+  [[nodiscard]] static ArtifactVirtualInput* active() { return active_; }
+  [[nodiscard]] QWidget* root() const { return root_.data(); }
+  [[nodiscard]] bool isInjecting() const { return injectionDepth_ > 0; }
+  [[nodiscard]] int deliveredEvents() const { return deliveredEvents_; }
+
+  void noteDelivered(QObject* receiver) {
+    ++deliveredEvents_;
+    lastReceiver_ = receiver;
+  }
+
+  [[nodiscard]] QString lastReceiverName() const {
+    auto* widget = qobject_cast<QWidget*>(lastReceiver_.data());
+    if (!widget) {
+      return {};
+    }
+    return widget->objectName().isEmpty()
+               ? QString::fromLatin1(widget->metaObject()->className())
+               : widget->objectName();
+  }
+
+  bool moveTo(const QPoint& windowPosition, QString* error) {
+    [[maybe_unused]] ScopedInjection injection(this);
+    QWidget* receiver = nullptr;
+    if (!resolvePointer(windowPosition, &receiver, error)) {
+      return false;
+    }
+    if (!isPointerCaptured()) {
+      updateHover(receiver, windowPosition);
+    }
+    sendPointer(receiver, windowPosition, QEvent::MouseMove, Qt::NoButton,
+                pressedButtons_, Qt::NoModifier);
+    updateCursorLabel(windowPosition);
+    return true;
+  }
+
+  bool press(const QPoint& windowPosition, Qt::MouseButton button,
+             QString* error) {
+    [[maybe_unused]] ScopedInjection injection(this);
+    if (!moveTo(windowPosition, error)) {
+      return false;
+    }
+    QWidget* receiver = nullptr;
+    if (!resolvePointer(windowPosition, &receiver, error)) {
+      return false;
+    }
+    // Qt's platform layer gives the pressed widget an implicit grab; the same
+    // must be emulated here because sendEvent() does not create one.
+    if (!pressedWidget_) {
+      pressedWidget_ = receiver;
+    }
+    pressedButtons_ |= button;
+    sendPointer(receiver, windowPosition, QEvent::MouseButtonPress, button,
+                pressedButtons_, Qt::NoModifier);
+    updateCursorLabel(windowPosition);
+    return true;
+  }
+
+  bool release(const QPoint& windowPosition, Qt::MouseButton button,
+               QString* error) {
+    [[maybe_unused]] ScopedInjection injection(this);
+    QWidget* receiver = nullptr;
+    if (!resolvePointer(windowPosition, &receiver, error)) {
+      return false;
+    }
+    pressedButtons_.setFlag(button, false);
+    sendPointer(receiver, windowPosition, QEvent::MouseButtonRelease, button,
+                pressedButtons_, Qt::NoModifier);
+    if (pressedButtons_ == Qt::NoButton) {
+      pressedWidget_ = nullptr;
+      QWidget* under = nullptr;
+      QString ignored;
+      if (resolvePointer(windowPosition, &under, &ignored)) {
+        updateHover(under, windowPosition);
+      }
+    }
+    updateCursorLabel(windowPosition);
+    return true;
+  }
+
+  bool drag(const QPoint& from, const QPoint& to, int steps,
+            Qt::MouseButton button, QString* error) {
+    if (!press(from, button, error)) {
+      return false;
+    }
+    const int count = std::clamp(steps <= 0 ? 8 : steps, 1, 256);
+    for (int step = 1; step <= count; ++step) {
+      const double ratio =
+          static_cast<double>(step) / static_cast<double>(count);
+      const QPoint point(
+          qRound(from.x() + (to.x() - from.x()) * ratio),
+          qRound(from.y() + (to.y() - from.y()) * ratio));
+      if (!moveTo(point, error)) {
+        QString ignored;
+        release(point, button, &ignored);
+        return false;
+      }
+    }
+    return release(to, button, error);
+  }
+
+  bool wheel(const QPoint& windowPosition, int angleDeltaY, int angleDeltaX,
+             Qt::KeyboardModifiers modifiers, QString* error) {
+    [[maybe_unused]] ScopedInjection injection(this);
+    if (!moveTo(windowPosition, error)) {
+      return false;
+    }
+    QWidget* receiver = nullptr;
+    if (!resolvePointer(windowPosition, &receiver, error)) {
+      return false;
+    }
+    const QPoint local = receiver->mapFrom(root_.data(), windowPosition);
+    const QPointF localF(local);
+    const QPointF globalF(receiver->mapToGlobal(local));
+    QWheelEvent event(localF, globalF, QPoint(0, 0),
+                      QPoint(angleDeltaX, angleDeltaY), pressedButtons_,
+                      modifiers, Qt::NoScrollPhase, false);
+    QApplication::sendEvent(receiver, &event);
+    return true;
+  }
+
+  bool keyPress(const QString& sequence, const QString& text, QWidget* target,
+                QString* error) {
+    const QKeySequence parsed =
+        QKeySequence::fromString(sequence, QKeySequence::PortableText);
+    if (parsed.isEmpty()) {
+      *error = QStringLiteral("Unrecognised key sequence: %1").arg(sequence);
+      return false;
+    }
+    QWidget* receiver = target ? target : QApplication::focusWidget();
+    if (!receiver) {
+      receiver = root_.data();
+    }
+    if (!receiver) {
+      *error = QStringLiteral("UI window is unavailable");
+      return false;
+    }
+    const QKeyCombination combination = parsed[0];
+    [[maybe_unused]] ScopedInjection injection(this);
+    QKeyEvent pressEvent(QEvent::KeyPress, combination.key(),
+                         combination.keyboardModifiers(), text, false);
+    QApplication::sendEvent(receiver, &pressEvent);
+    QKeyEvent releaseEvent(QEvent::KeyRelease, combination.key(),
+                           combination.keyboardModifiers(), text, false);
+    QApplication::sendEvent(receiver, &releaseEvent);
+    return true;
+  }
+
+  void hideCursor() {
+    if (cursor_) {
+      cursor_->hide();
+    }
+  }
+
+private:
+  // A real press creates an implicit grab, and widgets may also call
+  // grabMouse(); both must keep receiving moves after the pointer leaves them.
+  [[nodiscard]] bool isPointerCaptured() const {
+    if (pressedButtons_ != Qt::NoButton || pressedWidget_) {
+      return true;
+    }
+    auto* grabber = QWidget::mouseGrabber();
+    return grabber && grabber->window() == root_.data();
+  }
+
+  bool resolvePointer(const QPoint& windowPosition, QWidget** receiver,
+                      QString* error) const {
+    if (!root_) {
+      *error = QStringLiteral("UI window is unavailable");
+      return false;
+    }
+    if (!root_->rect().contains(windowPosition)) {
+      *error = QStringLiteral("Point is outside the UI window");
+      return false;
+    }
+    auto* grabber = QWidget::mouseGrabber();
+    if (grabber && grabber->window() == root_.data()) {
+      *receiver = grabber;
+      return true;
+    }
+    if (pressedWidget_ && pressedWidget_->window() == root_.data()) {
+      *receiver = pressedWidget_.data();
+      return true;
+    }
+    QWidget* hit = root_->childAt(windowPosition);
+    if (!hit) {
+      hit = root_.data();
+    }
+    // Qt never delivers real input to a disabled widget, so an injected press
+    // there would report success without doing anything.
+    if (!hit->isEnabled()) {
+      *error = QStringLiteral("The widget at the requested point is disabled");
+      return false;
+    }
+    *receiver = hit;
+    return true;
+  }
+
+  void updateHover(QWidget* receiver, const QPoint& windowPosition) {
+    if (hovered_ == receiver) {
+      return;
+    }
+    if (hovered_) {
+      QEvent leaveEvent(QEvent::Leave);
+      QApplication::sendEvent(hovered_, &leaveEvent);
+    }
+    if (receiver && root_) {
+      const QPoint local = receiver->mapFrom(root_.data(), windowPosition);
+      QEnterEvent enterEvent(QPointF(local), QPointF(windowPosition),
+                             QPointF(receiver->mapToGlobal(local)));
+      QApplication::sendEvent(receiver, &enterEvent);
+    }
+    hovered_ = receiver;
+  }
+
+  void sendPointer(QWidget* receiver, const QPoint& windowPosition,
+                   QEvent::Type type, Qt::MouseButton button,
+                   Qt::MouseButtons buttons, Qt::KeyboardModifiers modifiers) {
+    if (!receiver || !root_) {
+      return;
+    }
+    const QPoint local = receiver->mapFrom(root_.data(), windowPosition);
+    QMouseEvent event(type, QPointF(local),
+                      QPointF(receiver->mapToGlobal(local)), button, buttons,
+                      modifiers);
+    QApplication::sendEvent(receiver, &event);
+  }
+
+  void updateCursorLabel(const QPoint& windowPosition) {
+    if (!cursor_ || !root_) {
+      return;
+    }
+    cursor_->move(windowPosition - QPoint(2, 2));
+    cursor_->raise();
+    cursor_->show();
+  }
+
+  static inline ArtifactVirtualInput* active_ = nullptr;
+  QPointer<QWidget> root_;
+  QPointer<QWidget> hovered_;
+  QPointer<QWidget> pressedWidget_;
+  QLabel* cursor_ = nullptr;
+  Qt::MouseButtons pressedButtons_ = Qt::NoButton;
+  QPointer<QObject> lastReceiver_;
+  int injectionDepth_ = 0;
+  int deliveredEvents_ = 0;
+};
+
+// Application object that gives injected input one central chokepoint.
+//
+// Widgets that call grabMouse() take over delivery for real input at the
+// platform layer; QApplication::sendEvent() does not reproduce that, so any
+// injected pointer event aimed at another widget is redirected to the grabber
+// here. Real OS input is never touched: the redirect is gated on the injection
+// scope owned by ArtifactVirtualInput.
+class ArtifactApplication final : public QApplication {
+public:
+  ArtifactApplication(int& argc, char** argv) : QApplication(argc, argv) {}
+
+  bool notify(QObject* receiver, QEvent* event) override {
+    ArtifactVirtualInput* input = ArtifactVirtualInput::active();
+    if (!input || !event || !input->isInjecting()) {
+      return QApplication::notify(receiver, event);
+    }
+    auto* widget = qobject_cast<QWidget*>(receiver);
+    QWidget* grabber = QWidget::mouseGrabber();
+    const bool pointerEvent = event->type() == QEvent::MouseMove ||
+                              event->type() == QEvent::MouseButtonPress ||
+                              event->type() == QEvent::MouseButtonRelease ||
+                              event->type() == QEvent::MouseButtonDblClick;
+    if (widget && grabber && grabber != widget &&
+        grabber->window() == input->root() && pointerEvent) {
+      auto* mouse = static_cast<QMouseEvent*>(event);
+      QWidget* rootWidget = input->root();
+      const QPoint windowPosition =
+          widget->mapTo(rootWidget, mouse->position().toPoint());
+      const QPoint local = grabber->mapFrom(rootWidget, windowPosition);
+      QMouseEvent redirected(mouse->type(), QPointF(local),
+                             QPointF(grabber->mapToGlobal(local)),
+                             mouse->button(), mouse->buttons(),
+                             mouse->modifiers());
+      const bool handled = QApplication::notify(grabber, &redirected);
+      event->setAccepted(redirected.isAccepted());
+      input->noteDelivered(grabber);
+      return handled;
+    }
+    const bool handled = QApplication::notify(receiver, event);
+    input->noteDelivered(receiver);
+    return handled;
+  }
+};
+
+// MCP endpoint for driving the running application.
+//
+// It polls Qt's already event-driven TCP objects from a low-frequency QObject
+// timer so UI events stay on the GUI thread without adding signal/slot
+// connections to the application.
+class ArtifactUiControlMcpServer final : public QObject {
+public:
+  ArtifactUiControlMcpServer(QWidget* root, quint16 port)
+      : root_(root), virtualInput_(root) {
+    if (!root_ || !server_.listen(QHostAddress::LocalHost, port)) {
+      error_ = root_ ? server_.errorString()
+                     : QStringLiteral("UI control root window is unavailable");
+      return;
+    }
+    // An input-injection endpoint needs at most one poll per display frame.
+    timerId_ = startTimer(16, Qt::CoarseTimer);
+    qInfo() << "[UiMcp] MCP endpoint listening on localhost:" << port;
+  }
+
+  ~ArtifactUiControlMcpServer() override {
     if (timerId_ != 0) {
       killTimer(timerId_);
     }
@@ -223,7 +559,7 @@ protected:
       client_ = server_.nextPendingConnection();
       if (client_) {
         client_->setParent(this);
-        input_.clear();
+        inputBuffer_.clear();
       }
     }
     if (!client_) {
@@ -232,21 +568,21 @@ protected:
     if (client_->state() == QAbstractSocket::UnconnectedState) {
       client_->deleteLater();
       client_ = nullptr;
-      input_.clear();
+      inputBuffer_.clear();
       return;
     }
     if (client_->bytesAvailable() > 0) {
-      input_.append(client_->readAll());
+      inputBuffer_.append(client_->readAll());
       constexpr qsizetype kMaximumInputBytes = 1024 * 1024;
-      if (input_.size() > kMaximumInputBytes) {
+      if (inputBuffer_.size() > kMaximumInputBytes) {
         client_->disconnectFromHost();
-        input_.clear();
+        inputBuffer_.clear();
         return;
       }
       QJsonObject request;
       int processedFrames = 0;
       while (client_ && processedFrames < 8 &&
-             ArtifactCore::McpBridge::tryPopFrame(&input_, &request)) {
+             ArtifactCore::McpBridge::tryPopFrame(&inputBuffer_, &request)) {
         const QJsonObject response = handleRequest(request);
         if (!response.isEmpty()) {
           client_->write(ArtifactCore::McpBridge::encodeFrame(response));
@@ -312,7 +648,7 @@ private:
       return makeResponse(id, QJsonObject{
           {QStringLiteral("protocolVersion"), QStringLiteral("2024-11-05")},
           {QStringLiteral("serverInfo"), QJsonObject{
-               {QStringLiteral("name"), QStringLiteral("ArtifactUiTest")},
+               {QStringLiteral("name"), QStringLiteral("ArtifactUiControl")},
                {QStringLiteral("version"), QStringLiteral("1.0.0")}}},
           {QStringLiteral("capabilities"), QJsonObject{
                {QStringLiteral("tools"), QJsonObject{}}}}});
@@ -321,31 +657,80 @@ private:
       return makeResponse(id, QJsonObject{});
     }
     if (method == QStringLiteral("tools/list")) {
+      const QJsonObject numberSchema{
+          {QStringLiteral("type"), QStringLiteral("number")}};
       const QJsonObject targetSchema{
-          {QStringLiteral("target"), QJsonObject{
-               {QStringLiteral("type"), QStringLiteral("string")},
-               {QStringLiteral("description"), QStringLiteral("visible widget objectName")}}},
-          {QStringLiteral("x"), QJsonObject{{QStringLiteral("type"), QStringLiteral("number")}}},
-          {QStringLiteral("y"), QJsonObject{{QStringLiteral("type"), QStringLiteral("number")}}}};
+          {QStringLiteral("type"), QStringLiteral("string")},
+          {QStringLiteral("description"), QStringLiteral(
+               "visible widget objectName; x/y are then widget-local")}};
+      const QJsonObject pointSchema{
+          {QStringLiteral("target"), targetSchema},
+          {QStringLiteral("x"), numberSchema},
+          {QStringLiteral("y"), numberSchema}};
       const QJsonObject buttonSchema{
           {QStringLiteral("type"), QStringLiteral("string")},
           {QStringLiteral("enum"), QJsonArray{QStringLiteral("left"),
                                                QStringLiteral("right"),
                                                QStringLiteral("middle")}}};
       const QJsonObject clickSchema{
-          {QStringLiteral("target"), targetSchema.value(QStringLiteral("target"))},
-          {QStringLiteral("x"), targetSchema.value(QStringLiteral("x"))},
-          {QStringLiteral("y"), targetSchema.value(QStringLiteral("y"))},
+          {QStringLiteral("target"), targetSchema},
+          {QStringLiteral("x"), numberSchema},
+          {QStringLiteral("y"), numberSchema},
           {QStringLiteral("button"), buttonSchema}};
+      const QJsonObject buttonActionSchema{
+          {QStringLiteral("target"), targetSchema},
+          {QStringLiteral("x"), numberSchema},
+          {QStringLiteral("y"), numberSchema},
+          {QStringLiteral("button"), buttonSchema},
+          {QStringLiteral("action"), QJsonObject{
+               {QStringLiteral("type"), QStringLiteral("string")},
+               {QStringLiteral("enum"), QJsonArray{QStringLiteral("press"),
+                                                    QStringLiteral("release")}}}}};
+      const QJsonObject dragSchema{
+          {QStringLiteral("target"), targetSchema},
+          {QStringLiteral("fromX"), numberSchema},
+          {QStringLiteral("fromY"), numberSchema},
+          {QStringLiteral("toX"), numberSchema},
+          {QStringLiteral("toY"), numberSchema},
+          {QStringLiteral("steps"), numberSchema},
+          {QStringLiteral("button"), buttonSchema}};
+      const QJsonObject wheelSchema{
+          {QStringLiteral("target"), targetSchema},
+          {QStringLiteral("x"), numberSchema},
+          {QStringLiteral("y"), numberSchema},
+          {QStringLiteral("deltaY"), numberSchema},
+          {QStringLiteral("deltaX"), numberSchema}};
+      const QJsonObject keySchema{
+          {QStringLiteral("sequence"), QJsonObject{
+               {QStringLiteral("type"), QStringLiteral("string")},
+               {QStringLiteral("description"), QStringLiteral(
+                    "portable key sequence, for example \"S\" or \"Ctrl+Shift+Z\"")}}},
+          {QStringLiteral("target"), targetSchema},
+          {QStringLiteral("text"), QJsonObject{
+               {QStringLiteral("type"), QStringLiteral("string")}}}};
       return makeResponse(id, QJsonObject{{QStringLiteral("tools"), QJsonArray{
           tool(QStringLiteral("ui.listWidgets"),
-               QStringLiteral("List visible named widgets in the UI test window"), {}),
+               QStringLiteral("List visible named widgets in the UI window"), {}),
           tool(QStringLiteral("ui.mouseMove"),
                QStringLiteral("Move the in-app virtual pointer and send hover/move events"),
-               targetSchema),
+               pointSchema),
           tool(QStringLiteral("ui.mouseClick"),
                QStringLiteral("Send a mouse press and release to a named widget or window coordinate"),
                clickSchema, QJsonArray{QStringLiteral("button")}),
+          tool(QStringLiteral("ui.mouseButton"),
+               QStringLiteral("Press or release one mouse button and keep the state between calls"),
+               buttonActionSchema, QJsonArray{QStringLiteral("action")}),
+          tool(QStringLiteral("ui.mouseDrag"),
+               QStringLiteral("Drag with a held button; coordinates are window points unless target is given"),
+               dragSchema,
+               QJsonArray{QStringLiteral("fromX"), QStringLiteral("fromY"),
+                          QStringLiteral("toX"), QStringLiteral("toY")}),
+          tool(QStringLiteral("ui.mouseWheel"),
+               QStringLiteral("Send a wheel event to the widget under the virtual pointer"),
+               wheelSchema, QJsonArray{QStringLiteral("deltaY")}),
+          tool(QStringLiteral("ui.keyPress"),
+               QStringLiteral("Send a key press and release to the focused or named widget"),
+               keySchema, QJsonArray{QStringLiteral("sequence")}),
           tool(QStringLiteral("ui.hideCursor"),
                QStringLiteral("Hide the in-app virtual pointer"), {})}}});
     }
@@ -357,6 +742,7 @@ private:
     const QJsonObject arguments = params.value(QStringLiteral("arguments")).toObject();
     QString error;
     QJsonObject result;
+    const int deliveredBefore = virtualInput_.deliveredEvents();
     if (name == QStringLiteral("ui.listWidgets")) {
       QJsonArray widgets;
       if (root_) {
@@ -383,55 +769,116 @@ private:
       result.insert(QStringLiteral("count"), widgets.size());
     } else if (name == QStringLiteral("ui.mouseMove") ||
                name == QStringLiteral("ui.mouseClick")) {
-      QWidget* target = resolveTarget(arguments, &error);
-      QPoint local;
-      if (error.isEmpty() && target) {
-        if (arguments.value(QStringLiteral("target")).toString().isEmpty()) {
-          const QPoint rootPoint(arguments.value(QStringLiteral("x")).toInt(),
-                                 arguments.value(QStringLiteral("y")).toInt());
-          local = target->mapFrom(root_, rootPoint);
-          if (!target->rect().contains(local)) {
-            error = QStringLiteral("Resolved widget does not contain the requested window point");
+      QPoint point;
+      if (windowPointFor(arguments, &point, &error)) {
+        if (name == QStringLiteral("ui.mouseClick")) {
+          Qt::MouseButton button = Qt::LeftButton;
+          if (error.isEmpty()) {
+            button = mouseButtonFor(
+                arguments.value(QStringLiteral("button")).toString(QStringLiteral("left")),
+                &error);
+          }
+          if (error.isEmpty() && virtualInput_.press(point, button, &error)) {
+            virtualInput_.release(point, button, &error);
           }
         } else {
-          local = resolvePosition(target, arguments, &error);
+          virtualInput_.moveTo(point, &error);
         }
       }
-      const QString buttonName = arguments.value(QStringLiteral("button"))
-                                     .toString(QStringLiteral("left"));
-      if (error.isEmpty() && name == QStringLiteral("ui.mouseClick") &&
-          buttonName != QStringLiteral("left") &&
-          buttonName != QStringLiteral("right") &&
-          buttonName != QStringLiteral("middle")) {
-        error = QStringLiteral("button must be left, right, or middle");
-      }
-      if (error.isEmpty() && target) {
-        movePointer(target, local);
-        if (name == QStringLiteral("ui.mouseClick")) {
-          const Qt::MouseButton button = buttonName == QStringLiteral("right")
-                                             ? Qt::RightButton
-                                         : buttonName == QStringLiteral("middle")
-                                             ? Qt::MiddleButton
-                                             : Qt::LeftButton;
-          sendMouseEvent(target, local, QEvent::MouseButtonPress, button, button);
-          sendMouseEvent(target, local, QEvent::MouseButtonRelease, button, Qt::NoButton);
-        }
-        result.insert(QStringLiteral("target"), target->objectName().isEmpty()
-                                                   ? QString::fromLatin1(target->metaObject()->className())
-                                                   : target->objectName());
-        result.insert(QStringLiteral("x"), local.x());
-        result.insert(QStringLiteral("y"), local.y());
+      if (error.isEmpty()) {
+        result.insert(QStringLiteral("target"), virtualInput_.lastReceiverName());
+        result.insert(QStringLiteral("windowX"), point.x());
+        result.insert(QStringLiteral("windowY"), point.y());
         result.insert(QStringLiteral("action"), name == QStringLiteral("ui.mouseClick")
                                                     ? QStringLiteral("click")
                                                     : QStringLiteral("move"));
       }
-    } else if (name == QStringLiteral("ui.hideCursor")) {
-      if (cursor_) {
-        cursor_->hide();
+    } else if (name == QStringLiteral("ui.mouseButton")) {
+      QPoint point;
+      if (windowPointFor(arguments, &point, &error)) {
+        Qt::MouseButton button = Qt::LeftButton;
+        if (error.isEmpty()) {
+          button = mouseButtonFor(
+              arguments.value(QStringLiteral("button")).toString(QStringLiteral("left")),
+              &error);
+        }
+        const QString action = arguments.value(QStringLiteral("action")).toString();
+        if (error.isEmpty() && action == QStringLiteral("press")) {
+          virtualInput_.press(point, button, &error);
+        } else if (error.isEmpty() && action == QStringLiteral("release")) {
+          virtualInput_.release(point, button, &error);
+        } else if (error.isEmpty()) {
+          error = QStringLiteral("action must be press or release");
+        }
       }
+      if (error.isEmpty()) {
+        result.insert(QStringLiteral("target"), virtualInput_.lastReceiverName());
+        result.insert(QStringLiteral("action"),
+                      arguments.value(QStringLiteral("action")).toString());
+      }
+    } else if (name == QStringLiteral("ui.mouseDrag")) {
+      const QString targetName = arguments.value(QStringLiteral("target")).toString();
+      QWidget* localTarget =
+          targetName.isEmpty() ? nullptr : resolveTarget(arguments, &error);
+      QPoint from;
+      QPoint to;
+      if (error.isEmpty()) {
+        windowPointFrom(arguments, QStringLiteral("fromX"), QStringLiteral("fromY"),
+                        localTarget, &from, &error);
+      }
+      if (error.isEmpty()) {
+        windowPointFrom(arguments, QStringLiteral("toX"), QStringLiteral("toY"),
+                        localTarget, &to, &error);
+      }
+      Qt::MouseButton button = Qt::LeftButton;
+      if (error.isEmpty()) {
+        button = mouseButtonFor(
+            arguments.value(QStringLiteral("button")).toString(QStringLiteral("left")),
+            &error);
+      }
+      const int steps = arguments.value(QStringLiteral("steps")).toInt(8);
+      if (error.isEmpty() && virtualInput_.drag(from, to, steps, button, &error)) {
+        result.insert(QStringLiteral("target"), virtualInput_.lastReceiverName());
+        result.insert(QStringLiteral("windowFromX"), from.x());
+        result.insert(QStringLiteral("windowFromY"), from.y());
+        result.insert(QStringLiteral("windowToX"), to.x());
+        result.insert(QStringLiteral("windowToY"), to.y());
+        result.insert(QStringLiteral("steps"), steps);
+      }
+    } else if (name == QStringLiteral("ui.mouseWheel")) {
+      QPoint point;
+      if (windowPointFor(arguments, &point, &error)) {
+        const int deltaY = arguments.value(QStringLiteral("deltaY")).toInt(120);
+        const int deltaX = arguments.value(QStringLiteral("deltaX")).toInt(0);
+        if (virtualInput_.wheel(point, deltaY, deltaX, Qt::NoModifier, &error)) {
+          result.insert(QStringLiteral("target"), virtualInput_.lastReceiverName());
+          result.insert(QStringLiteral("deltaY"), deltaY);
+          result.insert(QStringLiteral("deltaX"), deltaX);
+        }
+      }
+    } else if (name == QStringLiteral("ui.keyPress")) {
+      QWidget* target = nullptr;
+      if (!arguments.value(QStringLiteral("target")).toString().isEmpty()) {
+        target = resolveTarget(arguments, &error);
+      }
+      const QString sequence =
+          arguments.value(QStringLiteral("sequence")).toString();
+      if (error.isEmpty() &&
+          virtualInput_.keyPress(sequence,
+                          arguments.value(QStringLiteral("text")).toString(),
+                          target, &error)) {
+        result.insert(QStringLiteral("target"), virtualInput_.lastReceiverName());
+        result.insert(QStringLiteral("sequence"), sequence);
+      }
+    } else if (name == QStringLiteral("ui.hideCursor")) {
+      virtualInput_.hideCursor();
       result.insert(QStringLiteral("visible"), false);
     } else {
-      error = QStringLiteral("Unknown UI test tool: %1").arg(name);
+      error = QStringLiteral("Unknown UI control tool: %1").arg(name);
+    }
+    if (error.isEmpty()) {
+      result.insert(QStringLiteral("deliveredEvents"),
+                    virtualInput_.deliveredEvents() - deliveredBefore);
     }
 
     QJsonObject toolResult = textResult(
@@ -446,7 +893,7 @@ private:
 
   QWidget* resolveTarget(const QJsonObject& arguments, QString* error) const {
     if (!root_) {
-      *error = QStringLiteral("UI test window is unavailable");
+      *error = QStringLiteral("UI window is unavailable");
       return nullptr;
     }
     const QString name = arguments.value(QStringLiteral("target")).toString();
@@ -477,7 +924,7 @@ private:
     const QPoint rootPoint(arguments.value(QStringLiteral("x")).toInt(),
                            arguments.value(QStringLiteral("y")).toInt());
     if (!root_->rect().contains(rootPoint)) {
-      *error = QStringLiteral("Window coordinates are outside the UI test window");
+      *error = QStringLiteral("Window coordinates are outside the UI window");
       return nullptr;
     }
     QWidget* target = root_->childAt(rootPoint);
@@ -508,43 +955,75 @@ private:
     return point;
   }
 
-  void movePointer(QWidget* target, const QPoint& local) {
-    if (!target || !root_) {
-      return;
+  static Qt::MouseButton mouseButtonFor(const QString& name, QString* error) {
+    if (name == QStringLiteral("left")) {
+      return Qt::LeftButton;
     }
-    if (hovered_ && hovered_ != target) {
-      QEvent leaveEvent(QEvent::Leave);
-      QApplication::sendEvent(hovered_, &leaveEvent);
+    if (name == QStringLiteral("right")) {
+      return Qt::RightButton;
     }
-    const QPointF localF(local);
-    const QPointF globalF(target->mapToGlobal(local));
-    if (hovered_ != target) {
-      const QPointF windowF(target->mapTo(root_, local));
-      QEnterEvent enterEvent(localF, windowF, globalF);
-      QApplication::sendEvent(target, &enterEvent);
-      hovered_ = target;
+    if (name == QStringLiteral("middle")) {
+      return Qt::MiddleButton;
     }
-    sendMouseEvent(target, local, QEvent::MouseMove, Qt::NoButton, Qt::NoButton);
-    cursor_->move(root_->mapFromGlobal(globalF.toPoint()) - QPoint(2, 2));
-    cursor_->raise();
-    cursor_->show();
+    *error = QStringLiteral("button must be left, right, or middle");
+    return Qt::LeftButton;
   }
 
-  static void sendMouseEvent(QWidget* target, const QPoint& local,
-                             QEvent::Type type, Qt::MouseButton button,
-                             Qt::MouseButtons buttons) {
-    const QPointF localF(local);
-    const QPointF globalF(target->mapToGlobal(local));
-    QMouseEvent mouseEvent(type, localF, globalF, button, buttons, Qt::NoModifier);
-    QApplication::sendEvent(target, &mouseEvent);
+  // Resolves the window point a tool should act on. Coordinates are widget
+  // local when "target" is given and window local otherwise.
+  bool windowPointFor(const QJsonObject& arguments, QPoint* point,
+                      QString* error) const {
+    if (!root_) {
+      *error = QStringLiteral("UI window is unavailable");
+      return false;
+    }
+    if (!arguments.value(QStringLiteral("target")).toString().isEmpty()) {
+      QWidget* target = resolveTarget(arguments, error);
+      if (!target) {
+        return false;
+      }
+      const QPoint local = resolvePosition(target, arguments, error);
+      if (!error->isEmpty()) {
+        return false;
+      }
+      *point = target->mapTo(root_, local);
+      return true;
+    }
+    return windowPointFrom(arguments, QStringLiteral("x"), QStringLiteral("y"),
+                           nullptr, point, error);
+  }
+
+  bool windowPointFrom(const QJsonObject& arguments, const QString& xKey,
+                       const QString& yKey, QWidget* localTarget, QPoint* point,
+                       QString* error) const {
+    if (!arguments.value(xKey).isDouble() || !arguments.value(yKey).isDouble()) {
+      *error = QStringLiteral("%1 and %2 are required").arg(xKey, yKey);
+      return false;
+    }
+    const QPoint requested(arguments.value(xKey).toInt(),
+                           arguments.value(yKey).toInt());
+    if (localTarget) {
+      if (!localTarget->rect().contains(requested)) {
+        *error = QStringLiteral("%1/%2 are outside the target widget")
+                     .arg(xKey, yKey);
+        return false;
+      }
+      *point = localTarget->mapTo(root_, requested);
+      return true;
+    }
+    if (!root_ || !root_->rect().contains(requested)) {
+      *error = QStringLiteral("%1/%2 are outside the UI window").arg(xKey, yKey);
+      return false;
+    }
+    *point = requested;
+    return true;
   }
 
   QPointer<QWidget> root_;
-  QLabel* cursor_ = nullptr;
+  ArtifactVirtualInput virtualInput_;
   QTcpServer server_;
   QTcpSocket* client_ = nullptr;
-  QByteArray input_;
-  QPointer<QWidget> hovered_;
+  QByteArray inputBuffer_;
   QString error_;
   int timerId_ = 0;
 };
@@ -559,6 +1038,7 @@ import Widgets.CommonStyle;
 import IO.ImageExporter;
 import ArtifactStatusBar;
 import Artifact.Application.Manager;
+import Artifact.Service.ActiveContext;
 import Artifact.Tool.PuppetTool;
 import Artifact.Application.CommandLine;
 import Artifact.Application.InteractiveShell;
@@ -5303,8 +5783,8 @@ int Artifact::runApplication(int argc, char *argv[]) {
     appArgs << QString::fromLocal8Bit(argv[i]);
   }
   QStringList commandLineArgs = appArgs;
-  quint16 uiTestMcpPort = 0;
-  if (uiTestExecutable) {
+  quint16 uiControlMcpPort = 0;
+  {
     const int optionIndex = appArgs.indexOf(QStringLiteral("--ui-mcp-port"));
     if (optionIndex >= 0) {
       bool portOk = false;
@@ -5313,10 +5793,10 @@ int Artifact::runApplication(int argc, char *argv[]) {
                                     : 0;
       if (!portOk || requestedPort <= 0 || requestedPort > 65535 ||
           appArgs.lastIndexOf(QStringLiteral("--ui-mcp-port")) != optionIndex) {
-        fprintf(stderr, "Invalid --ui-mcp-port value for ArtifactUiTest\n");
+        fprintf(stderr, "Invalid --ui-mcp-port value\n");
         return 2;
       }
-      uiTestMcpPort = static_cast<quint16>(requestedPort);
+      uiControlMcpPort = static_cast<quint16>(requestedPort);
       commandLineArgs.removeAt(optionIndex + 1);
       commandLineArgs.removeAt(optionIndex);
     }
@@ -5362,6 +5842,7 @@ int Artifact::runApplication(int argc, char *argv[]) {
     printf("  --mcp-server        Run in MCP (Model Context Protocol) server mode\n");
     printf("  --mcp-debug         Run in MCP debug server mode (stdio unless --mcp-port is set)\n");
     printf("  --mcp-port <port>   Listen on localhost TCP for MCP debug requests\n");
+    printf("  --ui-mcp-port <port> Listen on localhost TCP for in-app UI control (virtual input)\n");
     printf("  --plugin-list       List all registered plugins and exit\n");
     printf("  --plugin-info <id>  Show details for a specific plugin and exit\n");
     printf("\nEnvironment:\n");
@@ -5484,7 +5965,7 @@ int Artifact::runApplication(int argc, char *argv[]) {
   }
 
   QApplication::setAttribute(Qt::AA_DontShowIconsInMenus, false);
-  QApplication a(argc, argv);
+  ArtifactApplication a(argc, argv);
   if (uiTestExecutable) {
     QCoreApplication::setApplicationName(
         QStringLiteral("ArtifactStudioUiTest"));
@@ -8910,13 +9391,13 @@ int Artifact::runApplication(int argc, char *argv[]) {
   QTimer::singleShot(0, mw, [mw]() {
     mw->show();
   });
-  std::unique_ptr<ArtifactUiTestMcpServer> uiTestMcpServer;
-  if (uiTestMcpPort > 0) {
-    uiTestMcpServer = std::make_unique<ArtifactUiTestMcpServer>(
-        mw, uiTestMcpPort);
-    if (!uiTestMcpServer->isListening()) {
-      qCritical() << "[UiTestMcp] Failed to start UI test MCP endpoint:"
-                  << uiTestMcpServer->errorString();
+  std::unique_ptr<ArtifactUiControlMcpServer> uiControlMcpServer;
+  if (uiControlMcpPort > 0) {
+    uiControlMcpServer = std::make_unique<ArtifactUiControlMcpServer>(
+        mw, uiControlMcpPort);
+    if (!uiControlMcpServer->isListening()) {
+      qCritical() << "[UiMcp] Failed to start UI control MCP endpoint:"
+                  << uiControlMcpServer->errorString();
     }
   }
   const int exitCode = a.exec();
