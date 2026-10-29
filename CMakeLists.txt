@@ -2687,6 +2687,10 @@ if(WIN32)
     target_sources(Artifact PRIVATE App/ArtifactAppIcon.rc)
 endif()
 add_library(ArtifactAppRuntime OBJECT)
+if(ARTIFACT_BUILD_TESTS)
+    target_compile_definitions(ArtifactAppRuntime PRIVATE
+        ARTIFACT_RENDER_QUEUE_ENABLE_TEST_HOOKS=1)
+endif()
 if(WIN32 AND ARTIFACT_AGILITY_SDK_DIR)
     target_compile_definitions(ArtifactAppRuntime PRIVATE
         ARTIFACT_HAS_AGILITY_SDK=1)

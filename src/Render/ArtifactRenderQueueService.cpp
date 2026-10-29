@@ -7620,6 +7620,22 @@ namespace Artifact
             tileRenderMode_ != TileRenderMode::Tiled &&
             !isHtmlPlayer && !job.multiChannelExportEnabled &&
             !job.deepExportEnabled;
+#if defined(ARTIFACT_RENDER_QUEUE_ENABLE_TEST_HOOKS)
+        int xpuInjectedGpuFailureFrame = -1;
+        if (xpuMixedEligibleForJob) {
+            bool validFrame = false;
+            const int requestedFrame =
+                qgetenv("ARTIFACT_XPU_TEST_FAIL_GPU_FRAME")
+                    .toInt(&validFrame);
+            if (validFrame && requestedFrame >= startF &&
+                requestedFrame < endF) {
+                xpuInjectedGpuFailureFrame = requestedFrame;
+                qWarning() << "[RenderQueue] XPU test failure injection enabled"
+                           << "lane=gpu" << "frame="
+                           << xpuInjectedGpuFailureFrame;
+            }
+        }
+#endif
         if (xpuMixedRequestedForJob) {
             QStringList xpuMixedUnavailableReasons;
             if (!useGpuBackend) {
@@ -8023,6 +8039,18 @@ namespace Artifact
                     << "frame=" << f
                     << "adapterId=" << gpuWorker->adapterId;
             }
+#if defined(ARTIFACT_RENDER_QUEUE_ENABLE_TEST_HOOKS)
+            const bool injectGpuFailure =
+                xpuMixedEligibleForJob && !forceCpuPath &&
+                xpuInjectedGpuFailureFrame == f &&
+                (gpuWorker || useGpuBackend);
+            if (injectGpuFailure) {
+                frameError = QStringLiteral(
+                    "Injected XPU GPU worker failure for contract test");
+                qWarning() << "[RenderQueue] XPU test failure injection fired"
+                           << "lane=gpu" << "frame=" << f;
+            } else
+#endif
             try {
                 // Keep the job-local surface cache alive across frames. Its
                 // signatures already include animated effect, crop, sequence,
