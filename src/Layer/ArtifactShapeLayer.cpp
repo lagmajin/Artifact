@@ -4487,15 +4487,23 @@ bool ArtifactShapeLayer::moveShapeContent(int fromIndex, int toIndex) {
   }
   auto content = std::move(impl_->shapeContents_[static_cast<size_t>(fromIndex)]);
   impl_->shapeContents_.erase(impl_->shapeContents_.begin() + fromIndex);
-  const int dest = toIndex > fromIndex ? toIndex - 1 : toIndex;
   impl_->shapeContents_.insert(
-      impl_->shapeContents_.begin() + dest, std::move(content));
+      impl_->shapeContents_.begin() + toIndex, std::move(content));
   for (auto& node : impl_->shapeStackNodes_) {
    if (node.type == Artifact::ShapeStackNodeType::Operator) continue;
    const int oldIndex = node.contentIndex;
-   if (oldIndex == fromIndex) node.contentIndex = dest;
-   else if (fromIndex < dest && oldIndex > fromIndex && oldIndex <= dest) --node.contentIndex;
-   else if (dest < fromIndex && oldIndex >= dest && oldIndex < fromIndex) ++node.contentIndex;
+   if (oldIndex == fromIndex) node.contentIndex = toIndex;
+   else if (fromIndex < toIndex && oldIndex > fromIndex && oldIndex <= toIndex) --node.contentIndex;
+   else if (toIndex < fromIndex && oldIndex >= toIndex && oldIndex < fromIndex) ++node.contentIndex;
+  }
+  if (impl_->activeContentIndex_ == fromIndex) {
+    impl_->activeContentIndex_ = toIndex;
+  } else if (fromIndex < toIndex && impl_->activeContentIndex_ > fromIndex &&
+             impl_->activeContentIndex_ <= toIndex) {
+    --impl_->activeContentIndex_;
+  } else if (toIndex < fromIndex && impl_->activeContentIndex_ >= toIndex &&
+             impl_->activeContentIndex_ < fromIndex) {
+    ++impl_->activeContentIndex_;
   }
   impl_->markDirty();
   impl_->localBoundsCacheDirty_ = true;

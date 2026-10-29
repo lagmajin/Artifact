@@ -354,7 +354,7 @@ public:
    };
   ShapeContentProxy activeContent();
 
-  // Content management: duplicate, insert, reorder, swap.
+  // Content management: duplicate, insert at, move to a final index, and swap.
   int duplicateShapeContent(int index);
   bool moveShapeContent(int fromIndex, int toIndex);
   bool insertShapeContent(int index, const ShapeContent& content);
