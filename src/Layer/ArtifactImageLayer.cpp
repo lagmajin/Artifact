@@ -373,19 +373,29 @@ void diagnoseIccProfileFallback(const OIIO::ImageSpec& spec,
 {
     const OIIO::ParamValue* icc =
         spec.find_attribute("ICCProfile", OIIO::TypeDesc::UINT8);
-    if (!icc || icc->datasize() == 0 ||
-        !imageSpecStringAttribute(spec, "oiio:ColorSpace").isEmpty() ||
-        !imageSpecStringAttribute(spec, "Colorspace").isEmpty()) {
+    if (!icc || icc->datasize() == 0) {
         return;
     }
+
+    const QString colorSpace = imageSpecStringAttribute(spec, "oiio:ColorSpace");
+    const QString alternateColorSpace =
+        imageSpecStringAttribute(spec, "Colorspace");
+    const bool hasNamedColorSpace =
+        !colorSpace.isEmpty() || !alternateColorSpace.isEmpty();
     ArtifactCore::FallbackTracker::instance()->record(
         ArtifactCore::FallbackCategory::Image,
         ArtifactCore::FallbackAction::Warning,
-        path, "icc-profile-retained",
-        QStringLiteral(
-            "Embedded ICC profile was retained as source metadata, but no "
-            "named working-space mapping is available; using source values "
-            "without profile conversion"));
+        path,
+        hasNamedColorSpace ? "icc-profile-unconverted-named-space"
+                           : "icc-profile-unconverted-unmapped",
+        hasNamedColorSpace
+            ? QStringLiteral(
+                  "Embedded ICC profile is not applied; source color-space "
+                  "metadata is used instead")
+            : QStringLiteral(
+                  "Embedded ICC profile is retained as source metadata, but "
+                  "no named source color space is available; source values "
+                  "are used without profile conversion"));
 }
 
 std::array<int, 4> rgbaChannelOrder(const OIIO::ImageSpec& spec)

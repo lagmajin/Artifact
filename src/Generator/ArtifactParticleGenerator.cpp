@@ -1179,7 +1179,14 @@ void ParticleEmitter::updateParticle(Particle& p, float deltaTime)
     }
     
     // Interpolate properties based on life
-    float t = remapParticleLife(1.0f - p.life, params_.lifeCurve);
+    const float normalizedLife = 1.0f - p.life;
+    const float sharedLife = remapParticleLife(normalizedLife, params_.lifeCurve);
+    const auto channelLife = [&](int overrideMode) {
+        return overrideMode >= 1 && overrideMode <= 5
+            ? remapParticleLife(normalizedLife,
+                static_cast<ParticleLifeCurve>(overrideMode - 1))
+            : sharedLife;
+    };
     
     // Scale interpolation
     p.scale = evaluateTriStageLinear(
@@ -1187,7 +1194,7 @@ void ParticleEmitter::updateParticle(Particle& p, float deltaTime)
         p.customData[0],
         p.scaleEnd,
         params_.scaleMidPosition,
-        t);
+        channelLife(params_.scaleLifeCurve));
     
     // Color interpolation
     p.color = evaluateTriStageColor(
@@ -1195,7 +1202,7 @@ void ParticleEmitter::updateParticle(Particle& p, float deltaTime)
         p.colorMid,
         p.colorEnd,
         params_.colorMidPosition,
-        t);
+        channelLife(params_.colorLifeCurve));
     
     // Opacity interpolation
     p.opacity = evaluateTriStageLinear(
@@ -1203,7 +1210,7 @@ void ParticleEmitter::updateParticle(Particle& p, float deltaTime)
         p.customData[1],
         p.opacityEnd,
         params_.opacityMidPosition,
-        t);
+        channelLife(params_.opacityLifeCurve));
     p.scale = std::isfinite(p.scale)
         ? std::clamp(p.scale, 0.0f, 1000000.0f)
         : 0.0f;

@@ -1,4 +1,5 @@
 module;
+#include <cstdint>
 #include <utility>
 #include <vector>
 
@@ -41,6 +42,21 @@ export namespace ArtifactCore {
                              int64_t endFrame,
                              const FrameRate& frameRate);
 
+ // CE-14: the derived Speed graph is the average absolute slope (in value
+ // units per second) of the neighbouring non-constant segments. Both the
+ // display payload and the write-back solver use these two functions so the
+ // number the user drags is exactly the number the solver targets.
+ float curveSpeedAt(const std::vector<CurveKey>& keys, int index,
+                    double framesPerSecond);
+
+ // Solve for the value of keys[index] that produces targetSpeed while the
+ // neighbouring keys, their frames and the constant flags stay fixed.
+ // Returns false when the target is unreachable (negative, below the minimum
+ // the neighbours allow, or degenerate equal spans with a differing target).
+ bool solveCurveKeyValueForSpeed(const std::vector<CurveKey>& keys, int index,
+                                 float targetSpeed, double framesPerSecond,
+                                 float& outValue);
+
  class ArtifactCurveEditorWidget : public QWidget {
   W_OBJECT(ArtifactCurveEditorWidget)
  private:
@@ -60,14 +76,33 @@ export namespace ArtifactCore {
   QPointF visualPoint(int trackIndex, float frame, float value) const;
   bool visualKeySelected(int trackIndex, int keyIndex) const;
   int visualSelectedTrack() const;
+  int visualSelectedKey() const;
+  int visualSelectedKeyCount() const;
+  bool visualNormalizedView() const;
+  bool visualBufferCurveVisible() const;
+  bool visualKeyEditingEnabled() const;
+  bool visualHandleEditingEnabled() const;
   void setSpeedGraph(const QVector<TimeRemapKeyframe>& keyframes,
                      int64_t startFrame,
                      int64_t endFrame,
                      const FrameRate& frameRate);
   void fitToContent();
+  // Fit the view to the selected keys (all visible keys when nothing is
+  // selected). In the normalized view the y range stays -1.2..1.2.
+  void frameSelection();
+  // Visibility and view fit only. The timeline calls this on every refresh, so
+  // it must not move the primary key or the selection set.
   void focusTrack(int trackIndex);
   void setHandleEditingEnabled(bool enabled);
   void setKeyEditingEnabled(bool enabled);
+  // CE-14: a derived graph (the Speed graph) is computed from other data, so
+  // only key moves are allowed. Structural edits (insert/delete/copy/paste/
+  // clone) and tangent edits are rejected instead of silently corrupting the
+  // source property with derived values.
+  void setDerivedGraphMode(bool derived);
+  bool derivedGraphMode() const;
+  void setNormalizedView(bool normalized);
+  void setBufferCurveVisible(bool visible);
   bool setSelectedKeyAutoTangents();
   bool setSelectedKeyFlatTangents();
   bool setSelectedKeyLinearTangents();

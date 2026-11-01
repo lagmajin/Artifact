@@ -171,6 +171,137 @@ CurveTrack sampleSpeedGraph(const QVector<TimeRemapKeyframe>& keyframes,
  return track;
 }
 
+float curveSpeedAt(const std::vector<CurveKey>& keys, int index,
+                   double framesPerSecond) {
+ if (index < 0 || index >= static_cast<int>(keys.size()) ||
+     framesPerSecond <= 0.0) {
+  return 0.0f;
+ }
+ double sum = 0.0;
+ int samples = 0;
+ const auto addSegment = [&](int from, int to) {
+  const double frameSpan = std::max(
+      1.0, static_cast<double>(keys[to].frame - keys[from].frame));
+  sum += std::abs(static_cast<double>(keys[to].value - keys[from].value) /
+                  frameSpan) * framesPerSecond;
+  ++samples;
+ };
+ if (index > 0 && !keys[index - 1].constant) {
+  addSegment(index - 1, index);
+ }
+ if (index + 1 < static_cast<int>(keys.size()) && !keys[index].constant) {
+  addSegment(index, index + 1);
+ }
+ if (samples == 0) {
+  return 0.0f;
+ }
+ return static_cast<float>(sum / static_cast<double>(samples));
+}
+
+bool solveCurveKeyValueForSpeed(const std::vector<CurveKey>& keys, int index,
+                                float targetSpeed, double framesPerSecond,
+                                float& outValue) {
+ if (index < 0 || index >= static_cast<int>(keys.size()) ||
+     framesPerSecond <= 0.0 || !std::isfinite(targetSpeed) ||
+     targetSpeed < 0.0f) {
+  return false;
+ }
+
+ const bool hasPrev = index > 0 && !keys[index - 1].constant;
+ const bool hasNext = index + 1 < static_cast<int>(keys.size()) &&
+                      !keys[index].constant;
+ if (!hasPrev && !hasNext) {
+  return false;
+ }
+
+ const double current = static_cast<double>(keys[index].value);
+ const double targetPerFrame =
+     static_cast<double>(targetSpeed) / framesPerSecond;
+
+ // One active segment: the solution is unique up to direction. Preserve the
+ // current sign so a drag never flips the curve's slope unintentionally.
+ if (hasPrev != hasNext) {
+  const double neighbour = hasPrev
+      ? static_cast<double>(keys[index - 1].value)
+      : static_cast<double>(keys[index + 1].value);
+  const double span = hasPrev
+      ? std::max(1.0, static_cast<double>(keys[index].frame -
+                                          keys[index - 1].frame))
+      : std::max(1.0, static_cast<double>(keys[index + 1].frame -
+                                          keys[index].frame));
+  const double distance = targetPerFrame * span;
+  outValue = static_cast<float>(current >= neighbour ? neighbour + distance
+                                                     : neighbour - distance);
+  return std::isfinite(outValue);
+ }
+
+ const double prevValue = static_cast<double>(keys[index - 1].value);
+ const double nextValue = static_cast<double>(keys[index + 1].value);
+ const double prevSpan = std::max(
+     1.0, static_cast<double>(keys[index].frame - keys[index - 1].frame));
+ const double nextSpan = std::max(
+     1.0, static_cast<double>(keys[index + 1].frame - keys[index].frame));
+ const double targetSum = 2.0 * targetPerFrame;
+
+ const auto evaluate = [&](double value) {
+  return std::abs(value - prevValue) / prevSpan +
+         std::abs(nextValue - value) / nextSpan;
+ };
+
+ const double outerDenominator = 1.0 / prevSpan + 1.0 / nextSpan;
+ const double outerRiseNumerator =
+     targetSum + prevValue / prevSpan + nextValue / nextSpan;
+ const double outerFallNumerator =
+     prevValue / prevSpan + nextValue / nextSpan - targetSum;
+
+ std::vector<double> candidates;
+ candidates.push_back(outerFallNumerator / outerDenominator);
+ candidates.push_back(outerRiseNumerator / outerDenominator);
+
+ const double increasingMiddleDenominator = 1.0 / prevSpan - 1.0 / nextSpan;
+ if (std::abs(increasingMiddleDenominator) > 1e-9) {
+  candidates.push_back(
+      (targetSum + prevValue / prevSpan - nextValue / nextSpan) /
+      increasingMiddleDenominator);
+  candidates.push_back(
+      (targetSum - prevValue / prevSpan + nextValue / nextSpan) /
+      -increasingMiddleDenominator);
+ }
+
+ const double tolerance = 1e-4 * std::max(1.0, std::abs(targetSum));
+
+ // Equal spans make the whole [prevValue, nextValue] plateau solve for the
+ // same average. Keeping the current value avoids a jump to an endpoint when
+ // the user has not actually changed the speed.
+ if (std::abs(evaluate(current) - targetSum) <= tolerance) {
+  outValue = static_cast<float>(current);
+  return true;
+ }
+
+ bool found = false;
+ double bestValue = 0.0;
+ double bestDistance = std::numeric_limits<double>::max();
+ for (const double candidate : candidates) {
+  if (!std::isfinite(candidate)) {
+   continue;
+  }
+  if (std::abs(evaluate(candidate) - targetSum) > tolerance) {
+   continue;
+  }
+  const double distance = std::abs(candidate - current);
+  if (distance < bestDistance) {
+   bestDistance = distance;
+   bestValue = candidate;
+   found = true;
+  }
+ }
+ if (!found) {
+  return false;
+ }
+ outValue = static_cast<float>(bestValue);
+ return std::isfinite(outValue);
+}
+
 W_OBJECT_IMPL(ArtifactCurveEditorWidget)
 
 class ArtifactCurveEditorWidget::Impl {
@@ -222,6 +353,11 @@ public:
  QRectF marqueeRectData_;  // data-space rect while DragMode::Marquee
  bool handlesInteractive_ = true;
   bool keyEditingEnabled_ = true;
+  // CE-14: the Speed graph is derived from the value curve. Key moves are
+  // meaningful there (they retime/retarget the source keyframe), but inserts,
+  // deletes, copy/paste, clones and tangent edits would write derived numbers
+  // back into the source property.
+  bool derivedGraphMode_ = false;
  QSpinBox* selectedFrameEditor_ = nullptr;
  QDoubleSpinBox* selectedValueEditor_ = nullptr;
 
@@ -246,7 +382,8 @@ public:
   selectedValueEditor_->hide();
   QObject::connect(selectedFrameEditor_, &QSpinBox::valueChanged, owner_,
                    [this](int frame) {
-                     if (!keyEditingEnabled_ || selectedTrack_ < 0 ||
+                     if (!keyEditingEnabled_ || derivedGraphMode_ ||
+                         selectedTrack_ < 0 ||
                          selectedKey_ < 0 || selectedTrack_ >= static_cast<int>(tracks_.size()) ||
                          selectedKey_ >= static_cast<int>(tracks_[selectedTrack_].keys.size())) return;
                      const float value = tracks_[selectedTrack_].keys[selectedKey_].value;
@@ -258,7 +395,8 @@ public:
                    });
   QObject::connect(selectedValueEditor_, &QDoubleSpinBox::valueChanged, owner_,
                    [this](double value) {
-                     if (!keyEditingEnabled_ || selectedTrack_ < 0 ||
+                     if (!keyEditingEnabled_ || derivedGraphMode_ ||
+                         selectedTrack_ < 0 ||
                          selectedKey_ < 0 || selectedTrack_ >= static_cast<int>(tracks_.size()) ||
                          selectedKey_ >= static_cast<int>(tracks_[selectedTrack_].keys.size())) return;
                      const int64_t frame = tracks_[selectedTrack_].keys[selectedKey_].frame;
@@ -271,7 +409,8 @@ public:
  }
 
  void syncSelectedEditors() {
-  const bool valid = selectedTrack_ >= 0 && selectedKey_ >= 0 &&
+  const bool valid = !derivedGraphMode_ && selectedTrack_ >= 0 &&
+                     selectedKey_ >= 0 &&
                      selectedTrack_ < static_cast<int>(tracks_.size()) &&
                      selectedKey_ < static_cast<int>(tracks_[selectedTrack_].keys.size());
   if (!valid) {
@@ -525,9 +664,11 @@ public:
    const auto& last = keys.back();
    const float inFrameSpan = static_cast<float>(second.frame - first.frame);
    const float outFrameSpan = static_cast<float>(last.frame - penultimate.frame);
-   const float inSlope = std::abs(inFrameSpan) > 0.0001f
+   // A constant first/penultimate key holds its value, so the infinity preview
+   // must not extrapolate the jump segment's slope outside the keyed range.
+   const float inSlope = (!first.constant && std::abs(inFrameSpan) > 0.0001f)
        ? (second.value - first.value) / inFrameSpan : 0.0f;
-   const float outSlope = std::abs(outFrameSpan) > 0.0001f
+   const float outSlope = (!penultimate.constant && std::abs(outFrameSpan) > 0.0001f)
        ? (last.value - penultimate.value) / outFrameSpan : 0.0f;
    const float preFrame = std::min(xMin_, static_cast<float>(first.frame));
    const float postFrame = std::max(xMax_, static_cast<float>(last.frame));
@@ -580,6 +721,10 @@ public:
     }
    }
   }
+  // The area fill above switches the pen to NoPen. The infinity/cycle block
+  // restores it, but a buffer track skips that block — without this, the
+  // buffer curve was only a translucent fill and never stroked.
+  p.setPen(QPen(curveColor, focusedTrack ? 3 : 2));
   p.drawPath(path);
   p.restore();
  }
@@ -592,6 +737,7 @@ public:
  }
 
  bool copySelectedKeys() {
+  if (derivedGraphMode_) return false;
   copiedKeys_.clear();
   copiedSourceTrack_ = selectedTrack_;
   if (copiedSourceTrack_ < 0) return false;
@@ -613,13 +759,22 @@ public:
  }
 
  bool pasteCopiedKeys() {
-  if (copiedKeys_.empty() || selectedTrack_ < 0 ||
-      selectedTrack_ >= static_cast<int>(tracks_.size())) return false;
-  const int64_t anchorFrame = selectedKey_ >= 0 &&
-      selectedKey_ < static_cast<int>(tracks_[selectedTrack_].keys.size())
-      ? tracks_[selectedTrack_].keys[selectedKey_].frame : copiedKeys_.front().frame;
+  if (derivedGraphMode_ || copiedKeys_.empty()) return false;
+  // The destination is the selected track, or the track the keys were copied
+  // from when nothing is selected. Without a selected key the paste anchors on
+  // the playhead (AE-style) instead of the source key's frame.
+  int target = selectedTrack_;
+  if (target < 0 || target >= static_cast<int>(tracks_.size())) {
+   target = copiedSourceTrack_;
+  }
+  if (target < 0 || target >= static_cast<int>(tracks_.size())) return false;
+  auto& targetKeys = tracks_[target].keys;
+  int64_t anchorFrame = currentFrame_;
+  if (selectedTrack_ == target && selectedKey_ >= 0 &&
+      selectedKey_ < static_cast<int>(targetKeys.size())) {
+   anchorFrame = targetKeys[selectedKey_].frame;
+  }
   const int64_t frameOffset = anchorFrame - copiedKeys_.front().frame;
-  auto& targetKeys = tracks_[selectedTrack_].keys;
   std::set<int64_t> pastedFrames;
   for (const auto& sourceKey : copiedKeys_) {
    CurveKey pasted = sourceKey;
@@ -638,14 +793,16 @@ public:
   selectedKeys_.clear();
   for (int index = 0; index < static_cast<int>(targetKeys.size()); ++index) {
    if (pastedFrames.count(targetKeys[index].frame)) {
-    selectedKeys_.insert({selectedTrack_, index});
+    selectedKeys_.insert({target, index});
    }
   }
+  selectedTrack_ = target;
   selectedKey_ = selectedKeys_.empty() ? -1 : selectedKeys_.begin()->second;
   return !selectedKeys_.empty();
  }
 
  bool cloneSelectedKeys() {
+  if (derivedGraphMode_) return false;
   if (selectedTrack_ < 0 || selectedTrack_ >= static_cast<int>(tracks_.size()) ||
       selectedKeys_.empty()) {
    return false;
@@ -714,9 +871,18 @@ public:
    const auto& key = keys[i];
    QPointF kp = trackToPixel(track, static_cast<float>(key.frame), key.value);
 
-   // Draw tangent handles
+   // Draw tangent handles. A derived graph (Speed) reports handles but they
+   // are computed from the source curve and cannot be grabbed, so painting
+   // them would advertise an interaction the widget rejects.
    const bool isSelected = isKeySelected(trackIndex, i);
-   if (i > 0 && isSelected) {
+   const bool drawTangents = !derivedGraphMode_;
+   // Zero-length handles sit on the key itself; painting them would look like
+   // a second, grabbable control that the hit test deliberately ignores.
+   const bool hasInHandle = drawTangents &&
+       (key.inHandleFrame != 0 || std::abs(key.inHandleValue) > 1e-6f);
+   const bool hasOutHandle = drawTangents &&
+       (key.outHandleFrame != 0 || std::abs(key.outHandleValue) > 1e-6f);
+   if (i > 0 && isSelected && hasInHandle) {
     float cp1F = static_cast<float>(key.frame + key.inHandleFrame);
     float cp1V = key.value + key.inHandleValue;
     QPointF hp = trackToPixel(track, cp1F, cp1V);
@@ -727,7 +893,7 @@ public:
     p.drawEllipse(hp, HANDLE_RADIUS + 1, HANDLE_RADIUS + 1);
    }
 
-   if (i < n - 1 && isSelected) {
+   if (i < n - 1 && isSelected && hasOutHandle) {
     float cp0F = static_cast<float>(key.frame + key.outHandleFrame);
     float cp0V = key.value + key.outHandleValue;
     QPointF hp = trackToPixel(track, cp0F, cp0V);
@@ -790,7 +956,10 @@ public:
    if (!tracks_[ti].visible) continue;
    const auto& keys = tracks_[ti].keys;
    for (int ki = 0; ki < static_cast<int>(keys.size()); ++ki) {
-    QPointF kp = dataToPixel(static_cast<float>(keys[ki].frame), keys[ki].value);
+    // Normalized view renders keys through displayValue(); the hit test has to
+    // use the same mapping or keys become unclickable in that mode.
+    QPointF kp = trackToPixel(tracks_[ti], static_cast<float>(keys[ki].frame),
+                              keys[ki].value);
     float dx = static_cast<float>(pixel.x() - kp.x());
     float dy = static_cast<float>(pixel.y() - kp.y());
     float dist = dx*dx + dy*dy;
@@ -806,7 +975,7 @@ public:
 
  // Hit test for tangent handles
  int hitTestHandle(QPointF pixel, int& outTrackIndex, int& outKeyIndex, bool& outInHandle) const {
-  if (!handlesInteractive_) {
+  if (!handlesInteractive_ || derivedGraphMode_) {
    outTrackIndex = -1;
    outKeyIndex = -1;
    outInHandle = false;
@@ -824,34 +993,48 @@ public:
    const auto& keys = tracks_[ti].keys;
    for (int ki = 0; ki < static_cast<int>(keys.size()); ++ki) {
     if (selectedTrack_ == ti && selectedKey_ == ki) {
+     // A zero-length handle is painted on top of its own key. It must not win
+     // the press: otherwise clicking an already-selected composite/synthetic
+     // key starts a tangent drag (MoveHandleIn) instead of moving the key.
+     const QPointF keyPixel = trackToPixel(
+         tracks_[ti], static_cast<float>(keys[ki].frame), keys[ki].value);
+     const auto handleIsDistinct = [&keyPixel](const QPointF& handlePixel) {
+      const QPointF delta = handlePixel - keyPixel;
+      return delta.x() * delta.x() + delta.y() * delta.y() >=
+             KEY_RADIUS * KEY_RADIUS;
+     };
      // Check in-handle
      if (ki > 0) {
       float hF = static_cast<float>(keys[ki].frame + keys[ki].inHandleFrame);
       float hV = keys[ki].value + keys[ki].inHandleValue;
-      QPointF hp = dataToPixel(hF, hV);
-      float dx = static_cast<float>(pixel.x() - hp.x());
-      float dy = static_cast<float>(pixel.y() - hp.y());
-      float dist = dx*dx + dy*dy;
-      if (dist < bestDist) {
-       bestDist = dist;
-       outTrackIndex = ti;
-       outKeyIndex = ki;
-       outInHandle = true;
+      QPointF hp = trackToPixel(tracks_[ti], hF, hV);
+      if (handleIsDistinct(hp)) {
+       float dx = static_cast<float>(pixel.x() - hp.x());
+       float dy = static_cast<float>(pixel.y() - hp.y());
+       float dist = dx*dx + dy*dy;
+       if (dist < bestDist) {
+        bestDist = dist;
+        outTrackIndex = ti;
+        outKeyIndex = ki;
+        outInHandle = true;
+       }
       }
      }
      // Check out-handle
      if (ki < static_cast<int>(keys.size()) - 1) {
       float hF = static_cast<float>(keys[ki].frame + keys[ki].outHandleFrame);
       float hV = keys[ki].value + keys[ki].outHandleValue;
-      QPointF hp = dataToPixel(hF, hV);
-      float dx = static_cast<float>(pixel.x() - hp.x());
-      float dy = static_cast<float>(pixel.y() - hp.y());
-      float dist = dx*dx + dy*dy;
-      if (dist < bestDist) {
-       bestDist = dist;
-       outTrackIndex = ti;
-       outKeyIndex = ki;
-       outInHandle = false;
+      QPointF hp = trackToPixel(tracks_[ti], hF, hV);
+      if (handleIsDistinct(hp)) {
+       float dx = static_cast<float>(pixel.x() - hp.x());
+       float dy = static_cast<float>(pixel.y() - hp.y());
+       float dist = dx*dx + dy*dy;
+       if (dist < bestDist) {
+        bestDist = dist;
+        outTrackIndex = ti;
+        outKeyIndex = ki;
+        outInHandle = false;
+       }
       }
      }
     }
@@ -877,6 +1060,40 @@ public:
   selectedKeys_.insert({trackIndex, keyIndex});
  }
 
+ // Track data can be replaced wholesale (timeline refresh, speed graph
+ // rebuild). Keeping selection indices that no longer exist makes the primary
+ // key and the selection set disagree, so drop only the invalid entries and
+ // re-anchor the primary key inside what remains.
+ void pruneSelection() {
+  std::set<std::pair<int, int>> pruned;
+  for (const auto& selection : selectedKeys_) {
+   if (selection.first < 0 ||
+       selection.first >= static_cast<int>(tracks_.size()) ||
+       selection.second < 0 ||
+       selection.second >= static_cast<int>(tracks_[selection.first].keys.size())) {
+    continue;
+   }
+   pruned.insert(selection);
+  }
+  selectedKeys_ = std::move(pruned);
+  const bool primaryValid =
+      selectedTrack_ >= 0 && selectedTrack_ < static_cast<int>(tracks_.size()) &&
+      selectedKey_ >= 0 &&
+      selectedKey_ < static_cast<int>(tracks_[selectedTrack_].keys.size());
+  if (!primaryValid) {
+   if (!selectedKeys_.empty()) {
+    const auto& first = *selectedKeys_.begin();
+    selectedTrack_ = first.first;
+    selectedKey_ = first.second;
+   } else {
+    selectedTrack_ = -1;
+    selectedKey_ = -1;
+   }
+  } else if (selectedKeys_.empty()) {
+   selectedKeys_.insert({selectedTrack_, selectedKey_});
+  }
+ }
+
  void collectDraggedKeys() {
   draggedKeys_.clear();
   for (const auto& sel : selectedKeys_) {
@@ -895,6 +1112,7 @@ public:
  // selected one when valid, otherwise the track whose curve passes nearest
  // to the insert position, otherwise the first visible track.
  bool insertKeyAt(const QPointF& dataPos) {
+  if (derivedGraphMode_) return false;
   int target = -1;
   if (selectedTrack_ >= 0 && selectedTrack_ < static_cast<int>(tracks_.size()) &&
       tracks_[selectedTrack_].visible) {
@@ -965,7 +1183,7 @@ public:
 
  // CE-3: delete every selected key. Returns true when anything was removed.
  bool deleteSelectedKeys() {
-  if (selectedKeys_.empty()) {
+  if (derivedGraphMode_ || selectedKeys_.empty()) {
    return false;
   }
   std::map<int, std::vector<int>> perTrack;
@@ -1003,7 +1221,8 @@ public:
    for (int ki = 0; ki < static_cast<int>(tracks_[ti].keys.size()); ++ki) {
     const auto& key = tracks_[ti].keys[ki];
     const float kf = static_cast<float>(key.frame);
-    if (kf >= x1 && kf <= x2 && key.value >= y1 && key.value <= y2) {
+    const float kv = displayValue(tracks_[ti], key.value);
+    if (kf >= x1 && kf <= x2 && kv >= y1 && kv <= y2) {
      selectedKeys_.insert({ti, ki});
     }
    }
@@ -1267,6 +1486,7 @@ ArtifactCurveEditorWidget::~ArtifactCurveEditorWidget() {
 
 void ArtifactCurveEditorWidget::setTracks(const std::vector<CurveTrack>& tracks) {
  impl_->tracks_ = tracks;
+ impl_->pruneSelection();
  update();
 }
 
@@ -1317,6 +1537,30 @@ int ArtifactCurveEditorWidget::visualSelectedTrack() const {
  return impl_->selectedTrack_;
 }
 
+int ArtifactCurveEditorWidget::visualSelectedKey() const {
+ return impl_->selectedKey_;
+}
+
+int ArtifactCurveEditorWidget::visualSelectedKeyCount() const {
+ return static_cast<int>(impl_->selectedKeys_.size());
+}
+
+bool ArtifactCurveEditorWidget::visualNormalizedView() const {
+ return impl_->normalizedView_;
+}
+
+bool ArtifactCurveEditorWidget::visualBufferCurveVisible() const {
+ return impl_->bufferCurveVisible_;
+}
+
+bool ArtifactCurveEditorWidget::visualKeyEditingEnabled() const {
+ return impl_->keyEditingEnabled_;
+}
+
+bool ArtifactCurveEditorWidget::visualHandleEditingEnabled() const {
+ return impl_->handlesInteractive_;
+}
+
 void ArtifactCurveEditorWidget::setSpeedGraph(
     const QVector<TimeRemapKeyframe>& keyframes,
     int64_t startFrame,
@@ -1342,8 +1586,43 @@ void ArtifactCurveEditorWidget::setKeyEditingEnabled(bool enabled) {
  update();
 }
 
+void ArtifactCurveEditorWidget::setDerivedGraphMode(bool derived) {
+ if (!impl_) return;
+ impl_->derivedGraphMode_ = derived;
+ if (derived && impl_->dragMode_ != Impl::DragMode::ScrubPlayhead &&
+     impl_->dragMode_ != Impl::DragMode::Pan) {
+  impl_->dragMode_ = Impl::DragMode::None;
+ }
+ update();
+}
+
+bool ArtifactCurveEditorWidget::derivedGraphMode() const {
+ return impl_ && impl_->derivedGraphMode_;
+}
+
+void ArtifactCurveEditorWidget::setNormalizedView(bool normalized) {
+ if (!impl_) return;
+ impl_->normalizedView_ = normalized;
+ if (normalized) {
+  impl_->yMin_ = -1.2f;
+  impl_->yMax_ = 1.2f;
+ } else {
+  fitToContent();
+ }
+ update();
+}
+
+void ArtifactCurveEditorWidget::setBufferCurveVisible(bool visible) {
+ if (!impl_) return;
+ if (visible) {
+  impl_->captureBufferCurve();
+ }
+ impl_->bufferCurveVisible_ = visible;
+ update();
+}
+
 bool ArtifactCurveEditorWidget::setSelectedKeyAutoTangents() {
- if (!impl_) {
+ if (!impl_ || !impl_->keyEditingEnabled_ || impl_->derivedGraphMode_) {
   return false;
  }
  interactionStarted();
@@ -1358,7 +1637,7 @@ bool ArtifactCurveEditorWidget::setSelectedKeyAutoTangents() {
 }
 
 bool ArtifactCurveEditorWidget::setSelectedKeyFlatTangents() {
- if (!impl_) {
+ if (!impl_ || !impl_->keyEditingEnabled_ || impl_->derivedGraphMode_) {
   return false;
  }
  interactionStarted();
@@ -1373,7 +1652,7 @@ bool ArtifactCurveEditorWidget::setSelectedKeyFlatTangents() {
 }
 
 bool ArtifactCurveEditorWidget::setSelectedKeyLinearTangents() {
- if (!impl_) {
+ if (!impl_ || !impl_->keyEditingEnabled_ || impl_->derivedGraphMode_) {
   return false;
  }
  interactionStarted();
@@ -1388,7 +1667,7 @@ bool ArtifactCurveEditorWidget::setSelectedKeyLinearTangents() {
 }
 
 bool ArtifactCurveEditorWidget::setSelectedKeyBrokenTangents() {
- if (!impl_) {
+ if (!impl_ || !impl_->keyEditingEnabled_ || impl_->derivedGraphMode_) {
   return false;
  }
  interactionStarted();
@@ -1402,7 +1681,7 @@ bool ArtifactCurveEditorWidget::setSelectedKeyBrokenTangents() {
 }
 
 bool ArtifactCurveEditorWidget::setSelectedKeyUnifiedTangents() {
- if (!impl_) {
+ if (!impl_ || !impl_->keyEditingEnabled_ || impl_->derivedGraphMode_) {
   return false;
  }
  interactionStarted();
@@ -1416,7 +1695,9 @@ bool ArtifactCurveEditorWidget::setSelectedKeyUnifiedTangents() {
 }
 
 bool ArtifactCurveEditorWidget::setSelectedKeyConstant() {
- if (!impl_) return false;
+ if (!impl_ || !impl_->keyEditingEnabled_ || impl_->derivedGraphMode_) {
+  return false;
+ }
  interactionStarted();
  if (!impl_->setSelectedConstant(true)) {
   interactionFinished();
@@ -1428,7 +1709,9 @@ bool ArtifactCurveEditorWidget::setSelectedKeyConstant() {
 }
 
 bool ArtifactCurveEditorWidget::setSelectedKeyBezier() {
- if (!impl_) return false;
+ if (!impl_ || !impl_->keyEditingEnabled_ || impl_->derivedGraphMode_) {
+  return false;
+ }
  interactionStarted();
  if (!impl_->setSelectedConstant(false)) {
   interactionFinished();
@@ -1440,7 +1723,7 @@ bool ArtifactCurveEditorWidget::setSelectedKeyBezier() {
 }
 
 bool ArtifactCurveEditorWidget::promptSetSelectedKeyValue() {
- if (!impl_ || !impl_->keyEditingEnabled_) {
+ if (!impl_ || !impl_->keyEditingEnabled_ || impl_->derivedGraphMode_) {
   return false;
  }
 
@@ -1559,7 +1842,11 @@ void ArtifactCurveEditorWidget::fitToContent() {
   qDebug() << "[CurveEditor] fitToContent"
            << "no keys"
            << "fallbackRange=0..100,-10..110";
-  setViewRange(0, 100, -10, 110);
+  if (impl_->normalizedView_) {
+   setViewRange(0, 100, -1.2f, 1.2f);
+  } else {
+   setViewRange(0, 100, -10, 110);
+  }
   return;
  }
 
@@ -1568,17 +1855,76 @@ void ArtifactCurveEditorWidget::fitToContent() {
  qDebug() << "[CurveEditor] fitToContent"
           << "frameRange=" << minF << ".." << maxF
           << "valueRange=" << minV << ".." << maxV
-          << "margin=" << marginF << marginV;
+          << "margin=" << marginF << marginV
+          << "normalized=" << impl_->normalizedView_;
+ // The normalized view always spans -1..1; fitting must not overwrite that
+ // with raw value bounds or the normalized curves collapse into the middle.
+ if (impl_->normalizedView_) {
+  setViewRange(minF - marginF, maxF + marginF, -1.2f, 1.2f);
+  return;
+ }
+ setViewRange(minF - marginF, maxF + marginF, minV - marginV, maxV + marginV);
+}
+
+void ArtifactCurveEditorWidget::frameSelection() {
+ if (!impl_) return;
+ float minF = 1e30f, maxF = -1e30f;
+ float minV = 1e30f, maxV = -1e30f;
+ bool hasBounds = false;
+ const auto consider = [&](int trackIndex, int keyIndex) {
+  if (trackIndex < 0 || trackIndex >= static_cast<int>(impl_->tracks_.size())) return;
+  const auto& track = impl_->tracks_[trackIndex];
+  if (!track.visible) return;
+  if (keyIndex < 0 || keyIndex >= static_cast<int>(track.keys.size())) return;
+  const auto& key = track.keys[keyIndex];
+  const float frame = static_cast<float>(key.frame);
+  const float value = impl_->normalizedView_
+      ? impl_->displayValue(track, key.value) : key.value;
+  minF = std::min(minF, frame);
+  maxF = std::max(maxF, frame);
+  minV = std::min(minV, value);
+  maxV = std::max(maxV, value);
+  hasBounds = true;
+ };
+ for (const auto& selection : impl_->selectedKeys_) {
+  consider(selection.first, selection.second);
+ }
+ if (!hasBounds) {
+  // Nothing selected (or the selection lives on hidden tracks): frame every
+  // visible key, which matches the previous F behaviour.
+  for (int trackIndex = 0;
+       trackIndex < static_cast<int>(impl_->tracks_.size()); ++trackIndex) {
+   for (int keyIndex = 0;
+        keyIndex < static_cast<int>(impl_->tracks_[trackIndex].keys.size());
+        ++keyIndex) {
+    consider(trackIndex, keyIndex);
+   }
+  }
+ }
+ if (!hasBounds) {
+  fitToContent();
+  return;
+ }
+
+ const float marginF = std::max((maxF - minF) * 0.1f, 5.0f);
+ const float marginV = std::max((maxV - minV) * 0.1f, 5.0f);
+ if (impl_->normalizedView_) {
+  setViewRange(minF - marginF, maxF + marginF, -1.2f, 1.2f);
+  return;
+ }
  setViewRange(minF - marginF, maxF + marginF, minV - marginV, maxV + marginV);
 }
 
 void ArtifactCurveEditorWidget::focusTrack(int trackIndex) {
+ // focusTrack() owns visibility and the view fit only. Selection belongs to
+ // the explicit selection gestures: the timeline calls this on every refresh,
+ // and resetting the primary key here silently discarded the key the user was
+ // editing (the selection set survived, so tangent edits went to a different
+ // key than the inline editors showed).
  if (trackIndex < 0 || trackIndex >= static_cast<int>(impl_->tracks_.size())) {
   for (auto &track : impl_->tracks_) {
    track.visible = true;
   }
-  impl_->selectedTrack_ = -1;
-  impl_->selectedKey_ = -1;
   fitToContent();
   return;
  }
@@ -1586,8 +1932,6 @@ void ArtifactCurveEditorWidget::focusTrack(int trackIndex) {
  for (int i = 0; i < static_cast<int>(impl_->tracks_.size()); ++i) {
   impl_->tracks_[i].visible = (i == trackIndex);
  }
- impl_->selectedTrack_ = trackIndex;
- impl_->selectedKey_ = impl_->tracks_[trackIndex].keys.empty() ? -1 : 0;
 
  float minF = 1e30f, maxF = -1e30f;
  float minV = 1e30f, maxV = -1e30f;
@@ -1608,6 +1952,10 @@ void ArtifactCurveEditorWidget::focusTrack(int trackIndex) {
 
  const float marginF = std::max((maxF - minF) * 0.12f, 5.0f);
  const float marginV = std::max((maxV - minV) * 0.15f, 5.0f);
+ if (impl_->normalizedView_) {
+  setViewRange(minF - marginF, maxF + marginF, -1.2f, 1.2f);
+  return;
+ }
  setViewRange(minF - marginF, maxF + marginF, minV - marginV, maxV + marginV);
 }
 
@@ -1692,7 +2040,9 @@ void ArtifactCurveEditorWidget::mousePressEvent(QMouseEvent* event) {
  }
 
  // CE-5: Ctrl+Click inserts a key at the click position (Blender style).
- if ((event->modifiers() & Qt::ControlModifier) && impl_->keyEditingEnabled_) {
+ // A derived graph (Speed) has no independent keys to insert.
+ if ((event->modifiers() & Qt::ControlModifier) && impl_->keyEditingEnabled_ &&
+     !impl_->derivedGraphMode_) {
   const QPointF data = impl_->pixelToData(pos);
   interactionStarted();
   impl_->insertKeyAt(data);
@@ -1781,9 +2131,11 @@ void ArtifactCurveEditorWidget::mousePressEvent(QMouseEvent* event) {
  }
 
  // CE-3: shift+drag on empty space starts a marquee (box) selection.
+ // Shift is the additive modifier everywhere else in the editor, so the box
+ // adds to the existing selection; Escape first to replace it.
  if (event->modifiers() & Qt::ShiftModifier) {
   impl_->dragMode_ = Impl::DragMode::Marquee;
-  impl_->marqueeAdditive_ = false;
+  impl_->marqueeAdditive_ = true;
   const QPointF data = impl_->pixelToData(pos);
   impl_->marqueeRectData_ = QRectF(data, data);
   impl_->dragStart_ = pos.toPoint();
@@ -1865,8 +2217,14 @@ void ArtifactCurveEditorWidget::mouseMoveEvent(QMouseEvent* event) {
       }
      }
     }
-    const float newValue = dragged.value +
+    float newValue = dragged.value +
         impl_->displayDeltaToValue(impl_->tracks_[dragged.track], valueDelta);
+    if (impl_->derivedGraphMode_) {
+     // A derived track carries a speed; negative speed has no meaning and the
+     // write-back solver rejects it, so clamp instead of letting the drag
+     // bounce back after release.
+     newValue = std::max(0.0f, newValue);
+    }
     keys[dragged.key].frame = newFrame;
     keys[dragged.key].value = newValue;
     dragged.finalFrame = newFrame;
@@ -2071,7 +2429,7 @@ void ArtifactCurveEditorWidget::keyPressEvent(QKeyEvent* event) {
 
  if (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace ||
      event->key() == Qt::Key_X) {
-  if (!impl_->keyEditingEnabled_) {
+  if (!impl_->keyEditingEnabled_ || impl_->derivedGraphMode_) {
    event->accept();
    return;
   }
@@ -2087,30 +2445,32 @@ void ArtifactCurveEditorWidget::keyPressEvent(QKeyEvent* event) {
   }
  }
 
- if (event->key() == Qt::Key_C && impl_->keyEditingEnabled_) {
+ if (event->key() == Qt::Key_C && impl_->keyEditingEnabled_ &&
+     !impl_->derivedGraphMode_) {
   if (impl_->copySelectedKeys()) {
    event->accept();
    return;
   }
  }
 
- if (event->key() == Qt::Key_V && impl_->keyEditingEnabled_) {
-  if (!impl_->copiedKeys_.empty() &&
-      impl_->selectedTrack_ >= 0 &&
-      impl_->selectedTrack_ < static_cast<int>(impl_->tracks_.size())) {
+ if (event->key() == Qt::Key_V && impl_->keyEditingEnabled_ &&
+     !impl_->derivedGraphMode_) {
+  if (!impl_->copiedKeys_.empty()) {
+   // pasteCopiedKeys() picks the destination and the playhead anchor itself.
    interactionStarted();
-   if (impl_->pasteCopiedKeys()) {
+   const bool pasted = impl_->pasteCopiedKeys();
    interactionFinished();
-   update();
-   event->accept();
-   return;
+   if (pasted) {
+    update();
+    event->accept();
+    return;
    }
   }
  }
 
  if (event->key() == Qt::Key_D &&
      event->modifiers().testFlag(Qt::ShiftModifier) &&
-     impl_->keyEditingEnabled_) {
+     impl_->keyEditingEnabled_ && !impl_->derivedGraphMode_) {
   if (!impl_->selectedKeys_.empty()) {
    interactionStarted();
    const bool cloned = impl_->cloneSelectedKeys();
@@ -2124,34 +2484,20 @@ void ArtifactCurveEditorWidget::keyPressEvent(QKeyEvent* event) {
  }
 
  if (event->key() == Qt::Key_B) {
-  if (impl_->bufferTracks_.empty()) {
-   impl_->bufferTracks_ = impl_->tracks_;
-  }
-  impl_->bufferCurveVisible_ = !impl_->bufferCurveVisible_;
-  update();
+  setBufferCurveVisible(!impl_->bufferCurveVisible_);
   event->accept();
   return;
  }
 
  if (event->key() == Qt::Key_N) {
-  impl_->normalizedView_ = !impl_->normalizedView_;
-  if (impl_->normalizedView_) {
-   impl_->yMin_ = -1.2f;
-   impl_->yMax_ = 1.2f;
-  } else {
-   fitToContent();
-  }
-  update();
+  setNormalizedView(!impl_->normalizedView_);
   event->accept();
   return;
  }
 
  if (event->key() == Qt::Key_F) {
-  if (impl_->selectedTrack_ >= 0) {
-   focusTrack(impl_->selectedTrack_);
-  } else {
-   fitToContent();
-  }
+  // Frame the selected keys; with no selection this fits every visible key.
+  frameSelection();
   event->accept();
   return;
  }

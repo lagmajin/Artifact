@@ -180,7 +180,10 @@ ArtifactCore::ParticleRenderData transformParticleRenderData(
         ? std::clamp(opacity, 0.0f, 1.0f)
         : 0.0f;
     const auto safeColor = [](float value) {
-        return std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 0.0f;
+        // Colors may already be in the OCIO working space.  That conversion
+        // can legitimately produce negative or greater-than-one components;
+        // clipping here loses gamut and HDR information before GPU rendering.
+        return std::isfinite(value) ? value : 0.0f;
     };
     const auto safeCoordinate = [](double value, float fallback) {
         return std::isfinite(value)
@@ -222,10 +225,19 @@ ArtifactCore::ParticleRenderData transformParticleRenderData(
             safeCoordinate(mappedVelocity.x(), 0.0f);
         const float transformedVelocityY =
             safeCoordinate(mappedVelocity.y(), 0.0f);
+        // VelocityAligned derives its angle from the already transformed
+        // velocity in the shader. Adding the layer rotation here as well
+        // would rotate moving particles twice. For a stationary particle the
+        // shader uses its own rotation, so it still needs the layer offset.
+        const bool alignedToVelocity =
+            source.options.billboard == ArtifactCore::ParticleBillboardPolicy::VelocityAligned &&
+            (static_cast<double>(transformedVelocityX) * transformedVelocityX +
+             static_cast<double>(transformedVelocityY) * transformedVelocityY) > 0.000001;
+        const float appliedRotationOffset = alignedToVelocity ? 0.0f : rotationOffsetDegrees;
         const float transformedRotation = std::isfinite(sourceRotation)
-            ? std::clamp(sourceRotation + rotationOffsetDegrees,
+            ? std::clamp(sourceRotation + appliedRotationOffset,
                          -1000000.0f, 1000000.0f)
-            : rotationOffsetDegrees;
+            : appliedRotationOffset;
         const float transformedAlpha = std::isfinite(sourceAlpha)
             ? std::clamp(sourceAlpha * safeOpacity, 0.0f, 1.0f)
             : 0.0f;
@@ -270,7 +282,9 @@ ArtifactCore::ParticleRenderData transformParticleRenderData(
 }
 
 ArtifactCore::ParticleRenderData toCoreParticleRenderData(
-    const ParticleRenderData& source)
+    const ParticleRenderData& source, float colorIntensity = 1.0f,
+    float ringInnerRadius = 0.6f, bool animateRingInnerRadius = false,
+    float ringInnerRadiusEnd = 0.6f)
 {
     ArtifactCore::ParticleRenderData converted;
     converted.frameNumber = source.frameNumber;
@@ -278,6 +292,12 @@ ArtifactCore::ParticleRenderData toCoreParticleRenderData(
     const bool convertGeneratedColors =
         colorManager->generatedColorPolicy() ==
         GeneratedColorPolicy::ConvertToWorkingSpace;
+    const float safeIntensity = std::isfinite(colorIntensity)
+        ? std::clamp(colorIntensity, 0.0f, 16.0f) : 1.0f;
+    const float safeRingInnerRadius = std::isfinite(ringInnerRadius)
+        ? std::clamp(ringInnerRadius, 0.0f, 0.98f) : 0.6f;
+    const float safeRingInnerRadiusEnd = std::isfinite(ringInnerRadiusEnd)
+        ? std::clamp(ringInnerRadiusEnd, 0.0f, 0.98f) : 0.6f;
     const auto finiteClamped = [](float value, float fallback,
                                   float minimum, float maximum) {
         return std::isfinite(value)
@@ -299,9 +319,21 @@ ArtifactCore::ParticleRenderData toCoreParticleRenderData(
         vertex.vx = finiteClamped(particle.vx, 0.0f, -1000000.0f, 1000000.0f);
         vertex.vy = finiteClamped(particle.vy, 0.0f, -1000000.0f, 1000000.0f);
         vertex.vz = finiteClamped(particle.vz, 0.0f, -1000000.0f, 1000000.0f);
+        float ringLife = 0.0f;
+        if (animateRingInnerRadius && std::isfinite(particle.age) &&
+            std::isfinite(particle.lifetime) && particle.lifetime > 0.0f) {
+            ringLife = std::clamp(particle.age / particle.lifetime, 0.0f, 1.0f);
+        }
+        vertex.pad1 = safeRingInnerRadius +
+            (safeRingInnerRadiusEnd - safeRingInnerRadius) * ringLife;
         vertex.r = finiteClamped(particle.r, 0.0f, 0.0f, 1.0f);
         vertex.g = finiteClamped(particle.g, 0.0f, 0.0f, 1.0f);
         vertex.b = finiteClamped(particle.b, 0.0f, 0.0f, 1.0f);
+        if (!convertGeneratedColors) {
+            vertex.r *= safeIntensity;
+            vertex.g *= safeIntensity;
+            vertex.b *= safeIntensity;
+        }
         vertex.a = finiteClamped(particle.a, 0.0f, 0.0f, 1.0f);
         // App scale is the particle radius in composition units. Core's
         // legacy billboard shader multiplies size by ten; compensate here
@@ -323,9 +355,9 @@ ArtifactCore::ParticleRenderData toCoreParticleRenderData(
         for (auto& vertex : converted.particles) {
             const FloatColor renderColor = colorManager->generatedSrgbToWorkingColor(
                 FloatColor(vertex.r, vertex.g, vertex.b, vertex.a));
-            vertex.r = renderColor.r();
-            vertex.g = renderColor.g();
-            vertex.b = renderColor.b();
+            vertex.r = renderColor.r() * safeIntensity;
+            vertex.g = renderColor.g() * safeIntensity;
+            vertex.b = renderColor.b() * safeIntensity;
             vertex.a = renderColor.a();
         }
     }
@@ -361,6 +393,21 @@ ArtifactCore::ParticleRenderOptions coreRenderOptionsFromSettings(
         options.billboard = ArtifactCore::ParticleBillboardPolicy::ViewPlane; break;
     case ParticleRenderSettings::BillboardMode::VelocityAligned:
         options.billboard = ArtifactCore::ParticleBillboardPolicy::VelocityAligned; break;
+    }
+    switch (settings.falloffMode) {
+    case ParticleRenderSettings::FalloffMode::GaussianDensity:
+        options.falloff = ArtifactCore::ParticleFalloffMode::GaussianDensity; break;
+    case ParticleRenderSettings::FalloffMode::HardCircle:
+        options.falloff = ArtifactCore::ParticleFalloffMode::HardCircle; break;
+    case ParticleRenderSettings::FalloffMode::Ring:
+        options.falloff = ArtifactCore::ParticleFalloffMode::Ring; break;
+    case ParticleRenderSettings::FalloffMode::Diamond:
+        options.falloff = ArtifactCore::ParticleFalloffMode::Diamond; break;
+    case ParticleRenderSettings::FalloffMode::Cross:
+        options.falloff = ArtifactCore::ParticleFalloffMode::Cross; break;
+    case ParticleRenderSettings::FalloffMode::SoftCircle:
+    default:
+        options.falloff = ArtifactCore::ParticleFalloffMode::SoftCircle; break;
     }
     options.depthTest = settings.depthTest;
     options.depthWrite = settings.depthWrite;
@@ -659,14 +706,19 @@ void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
     // Diligent 経路が使える場合は billboard 描画を優先し、ここではソフト描画へ落とさない
     if (rendererReady && !useImageFlipbookPath) {
         const auto sourceData = impl_->particleSystem->captureRenderData();
-        auto coreData = toCoreParticleRenderData(sourceData);
+        auto coreData = toCoreParticleRenderData(
+            sourceData, impl_->particleSystem->renderSettings().colorIntensity,
+            impl_->particleSystem->renderSettings().ringInnerRadius,
+            impl_->particleSystem->renderSettings().animateRingInnerRadius,
+            impl_->particleSystem->renderSettings().ringInnerRadiusEnd);
         coreData.options = coreRenderOptionsFromSettings(
             impl_->particleSystem->renderSettings());
         const QTransform globalTransform = getGlobalTransform();
         const float screenScale = std::max(std::hypot(globalTransform.m11(), globalTransform.m21()),
                                            std::hypot(globalTransform.m12(), globalTransform.m22()));
-        auto lodData = applyParticleRenderLOD(
-            std::move(coreData), screenScale);
+        auto lodData = impl_->particleSystem->renderSettings().fullParticleDensity
+            ? std::move(coreData)
+            : applyParticleRenderLOD(std::move(coreData), screenScale);
         // GPU path parity: captureRenderData() is emitter-ordered, so apply
         // the layer SortMode here like the software path does. Depth-aware
         // soft particles need a scene-depth SRV and stay software-only;
@@ -795,12 +847,18 @@ bool ArtifactParticleLayer::drawSurfaceGPU(ArtifactIRenderer* renderer,
     impl_->lastTime = simulatedFrameTime;
 
     const auto sourceData = impl_->particleSystem->captureRenderData();
-    auto coreData = toCoreParticleRenderData(sourceData);
+    auto coreData = toCoreParticleRenderData(
+        sourceData, impl_->particleSystem->renderSettings().colorIntensity,
+        impl_->particleSystem->renderSettings().ringInnerRadius,
+        impl_->particleSystem->renderSettings().animateRingInnerRadius,
+        impl_->particleSystem->renderSettings().ringInnerRadiusEnd);
     coreData.options = coreRenderOptionsFromSettings(
         impl_->particleSystem->renderSettings());
     const float surfaceScale = std::max(std::hypot(surfaceMap.m11(), surfaceMap.m21()),
                                         std::hypot(surfaceMap.m12(), surfaceMap.m22()));
-    auto lodData = applyParticleRenderLOD(std::move(coreData), surfaceScale);
+    auto lodData = impl_->particleSystem->renderSettings().fullParticleDensity
+        ? std::move(coreData)
+        : applyParticleRenderLOD(std::move(coreData), surfaceScale);
     sortCoreParticleRenderData(
         lodData,
         impl_->particleSystem->renderSettings().sortMode,
@@ -887,6 +945,15 @@ QJsonObject ArtifactParticleLayer::toJson() const
     QJsonObject renderJson;
     renderJson["blendMode"] = safeBlendMode;
     renderJson["billboardMode"] = safeBillboardMode;
+    renderJson["falloffMode"] = std::clamp(static_cast<int>(rs.falloffMode), 0, 5);
+    renderJson["ringInnerRadius"] = safeRenderValue(rs.ringInnerRadius, 0.6, 0.0, 0.98);
+    renderJson["animateRingInnerRadius"] = rs.animateRingInnerRadius;
+    renderJson["ringInnerRadiusEnd"] = safeRenderValue(rs.ringInnerRadiusEnd, 0.6, 0.0, 0.98);
+    renderJson["colorIntensity"] = safeRenderValue(rs.colorIntensity, 1.0, 0.0, 16.0);
+    renderJson["fullParticleDensity"] = rs.fullParticleDensity;
+    renderJson["trailEnabled"] = rs.trailEnabled;
+    renderJson["trailWidth"] = safeRenderValue(rs.trailWidth, 1.0, 0.1, 1000000.0);
+    renderJson["trailFade"] = safeRenderValue(rs.trailFade, 0.5, 0.0, 1.0);
     renderJson["sortMode"] = safeSortMode;
     renderJson["depthTest"] = rs.depthTest;
     renderJson["depthWrite"] = rs.depthWrite;
@@ -1012,6 +1079,9 @@ QJsonObject ArtifactParticleLayer::toJson() const
             params.colorMidPosition, 0.5, 0.0, 1.0);
         emitterJson["lifeCurve"] = std::clamp(
             static_cast<int>(params.lifeCurve), 0, 4);
+        emitterJson["scaleLifeCurve"] = std::clamp(params.scaleLifeCurve, 0, 5);
+        emitterJson["colorLifeCurve"] = std::clamp(params.colorLifeCurve, 0, 5);
+        emitterJson["opacityLifeCurve"] = std::clamp(params.opacityLifeCurve, 0, 5);
         emitterJson["colorVariation"] = safeEmitterValue(
             params.colorVariation, 0.0, 0.0, 1.0);
         
@@ -1234,6 +1304,26 @@ void ArtifactParticleLayer::applyPropertiesFromJson(const QJsonObject& obj)
             rs.billboardMode = static_cast<ParticleRenderSettings::BillboardMode>(
                 std::clamp(renderJson["billboardMode"].toInt(), 0, 3));
         }
+        rs.falloffMode = static_cast<ParticleRenderSettings::FalloffMode>(
+            std::clamp(renderJson["falloffMode"].toInt(0), 0, 5));
+        const double ringRadius = renderJson["ringInnerRadius"].toDouble(0.6);
+        rs.ringInnerRadius = std::isfinite(ringRadius)
+            ? static_cast<float>(std::clamp(ringRadius, 0.0, 0.98)) : 0.6f;
+        rs.animateRingInnerRadius = renderJson["animateRingInnerRadius"].toBool(false);
+        const double ringRadiusEnd = renderJson["ringInnerRadiusEnd"].toDouble(0.6);
+        rs.ringInnerRadiusEnd = std::isfinite(ringRadiusEnd)
+            ? static_cast<float>(std::clamp(ringRadiusEnd, 0.0, 0.98)) : 0.6f;
+        const double intensity = renderJson["colorIntensity"].toDouble(1.0);
+        rs.colorIntensity = std::isfinite(intensity)
+            ? static_cast<float>(std::clamp(intensity, 0.0, 16.0)) : 1.0f;
+        rs.fullParticleDensity = renderJson["fullParticleDensity"].toBool(false);
+        rs.trailEnabled = renderJson["trailEnabled"].toBool(false);
+        const double trailWidth = renderJson["trailWidth"].toDouble(1.0);
+        rs.trailWidth = std::isfinite(trailWidth)
+            ? static_cast<float>(std::clamp(trailWidth, 0.1, 1000000.0)) : 1.0f;
+        const double trailFade = renderJson["trailFade"].toDouble(0.5);
+        rs.trailFade = std::isfinite(trailFade)
+            ? static_cast<float>(std::clamp(trailFade, 0.0, 1.0)) : 0.5f;
         if (renderJson.contains("sortMode")) {
             rs.sortMode = static_cast<ParticleRenderSettings::SortMode>(
                 std::clamp(renderJson["sortMode"].toInt(), 0, 3));
@@ -1425,6 +1515,12 @@ void ArtifactParticleLayer::applyPropertiesFromJson(const QJsonObject& obj)
                 params.lifeCurve = static_cast<ParticleLifeCurve>(std::clamp(
                     emitterJson["lifeCurve"].toInt(), 0, 4));
             }
+            params.scaleLifeCurve = std::clamp(
+                emitterJson["scaleLifeCurve"].toInt(0), 0, 5);
+            params.colorLifeCurve = std::clamp(
+                emitterJson["colorLifeCurve"].toInt(0), 0, 5);
+            params.opacityLifeCurve = std::clamp(
+                emitterJson["opacityLifeCurve"].toInt(0), 0, 5);
             if (emitterJson.contains("colorVariation")) {
                 params.colorVariation = emitterJson["colorVariation"].toDouble();
             }
@@ -2496,6 +2592,80 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactParticleLayer::getLayerProperty
     billboardModeProp->setHardRange(0, 3);
     billboardModeProp->setTooltip(QStringLiteral("0=None, 1=ScreenAligned, 2=ViewPlane, 3=VelocityAligned"));
     particleGroup.addProperty(billboardModeProp);
+    auto falloffModeProp = makeProp(QStringLiteral("particle.render.falloffMode"),
+                                    ArtifactCore::PropertyType::Integer,
+                                    static_cast<int>(rs.falloffMode), -75);
+    falloffModeProp->setDisplayLabel(QStringLiteral("Particle Shape"));
+    falloffModeProp->setHardRange(0, 5);
+    falloffModeProp->setTooltip(QStringLiteral(
+        "GPU procedural particles: 0=Soft Circle, 1=Gaussian Density, "
+        "2=Hard Circle, 3=Ring, 4=Diamond, 5=Cross. "
+        "Hard Circle, Ring, Diamond and Cross support stretch; "
+        "textured particles use their existing appearance."));
+    particleGroup.addProperty(falloffModeProp);
+    auto ringRadiusProp = makeProp(QStringLiteral("particle.render.ringInnerRadius"),
+                                   ArtifactCore::PropertyType::Float, rs.ringInnerRadius, -74);
+    ringRadiusProp->setDisplayLabel(QStringLiteral("Ring Inner Radius"));
+    ringRadiusProp->setHardRange(0.0, 0.98);
+    ringRadiusProp->setSoftRange(0.0, 0.95);
+    ringRadiusProp->setStep(0.01);
+    ringRadiusProp->setTooltip(QStringLiteral(
+        "Ring inner radius relative to its outer radius; applies to GPU Ring particles."));
+    particleGroup.addProperty(ringRadiusProp);
+    auto animateRingProp = makeProp(QStringLiteral("particle.render.animateRingInnerRadius"),
+                                    ArtifactCore::PropertyType::Boolean,
+                                    rs.animateRingInnerRadius, -74);
+    animateRingProp->setDisplayLabel(QStringLiteral("Animate Ring Radius"));
+    animateRingProp->setTooltip(QStringLiteral(
+        "Interpolate ring inner radius from its start value to its end value over particle life."));
+    particleGroup.addProperty(animateRingProp);
+    auto ringRadiusEndProp = makeProp(QStringLiteral("particle.render.ringInnerRadiusEnd"),
+                                      ArtifactCore::PropertyType::Float, rs.ringInnerRadiusEnd, -74);
+    ringRadiusEndProp->setDisplayLabel(QStringLiteral("Ring Inner Radius End"));
+    ringRadiusEndProp->setHardRange(0.0, 0.98);
+    ringRadiusEndProp->setSoftRange(0.0, 0.95);
+    ringRadiusEndProp->setStep(0.01);
+    particleGroup.addProperty(ringRadiusEndProp);
+    auto intensityProp = makeProp(QStringLiteral("particle.render.colorIntensity"),
+                                  ArtifactCore::PropertyType::Float, rs.colorIntensity, -74);
+    intensityProp->setDisplayLabel(QStringLiteral("Color Intensity"));
+    intensityProp->setHardRange(0.0, 16.0);
+    intensityProp->setSoftRange(0.0, 4.0);
+    intensityProp->setStep(0.05);
+    intensityProp->setTooltip(QStringLiteral(
+        "GPU procedural particle RGB multiplier in the working color space. "
+        "Output range depends on the render target; textured particles use the image path."));
+    particleGroup.addProperty(intensityProp);
+    auto fullDensityProp = makeProp(QStringLiteral("particle.render.fullParticleDensity"),
+                                    ArtifactCore::PropertyType::Boolean,
+                                    rs.fullParticleDensity, -73);
+    fullDensityProp->setDisplayLabel(QStringLiteral("Disable Density LOD"));
+    fullDensityProp->setTooltip(QStringLiteral(
+        "Disable scale-based GPU particle thinning for preview and offscreen rendering. "
+        "GPU particle capacity still applies; this may increase rendering cost."));
+    particleGroup.addProperty(fullDensityProp);
+    auto trailEnabledProp = makeProp(QStringLiteral("particle.render.trailEnabled"),
+                                     ArtifactCore::PropertyType::Boolean, rs.trailEnabled, -36);
+    trailEnabledProp->setDisplayLabel(QStringLiteral("Particle Trail"));
+    trailEnabledProp->setTooltip(QStringLiteral(
+        "2D particle trail: draw from the previous simulation position to the current position. "
+        "This is a single segment, not a multi-frame trail."));
+    particleGroup.addProperty(trailEnabledProp);
+    auto trailWidthProp = makeProp(QStringLiteral("particle.render.trailWidth"),
+                                   ArtifactCore::PropertyType::Float, rs.trailWidth, -35);
+    trailWidthProp->setDisplayLabel(QStringLiteral("Trail Width"));
+    trailWidthProp->setUnit(QStringLiteral("px"));
+    trailWidthProp->setHardRange(0.1, 1000000.0);
+    trailWidthProp->setSoftRange(0.1, 100.0);
+    trailWidthProp->setStep(0.1);
+    particleGroup.addProperty(trailWidthProp);
+    auto trailFadeProp = makeProp(QStringLiteral("particle.render.trailFade"),
+                                  ArtifactCore::PropertyType::Float, rs.trailFade, -34);
+    trailFadeProp->setDisplayLabel(QStringLiteral("Trail Opacity"));
+    trailFadeProp->setHardRange(0.0, 1.0);
+    trailFadeProp->setSoftRange(0.0, 1.0);
+    trailFadeProp->setStep(0.01);
+    particleGroup.addProperty(trailFadeProp);
     auto sortModeProp = makeProp(QStringLiteral("particle.render.sortMode"), ArtifactCore::PropertyType::Integer, static_cast<int>(rs.sortMode), -70);
     sortModeProp->setHardRange(0, 3);
     sortModeProp->setTooltip(QStringLiteral("0=None, 1=Distance, 2=OldestFirst, 3=YoungestFirst"));
@@ -3049,6 +3219,21 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactParticleLayer::getLayerProperty
     lifeCurveProp->setTooltip(QStringLiteral(
         "0=Linear, 1=Ease In, 2=Ease Out, 3=Smooth, 4=Pulse"));
     particleLookGroup.addProperty(lifeCurveProp);
+    const auto addChannelLifeCurve = [&](const QString& path, const QString& label,
+                                         int mode, int order) {
+        auto property = makeProp(path, ArtifactCore::PropertyType::Integer, mode, order);
+        property->setDisplayLabel(label);
+        property->setHardRange(0, 5);
+        property->setTooltip(QStringLiteral(
+            "0=Use Life Curve, 1=Linear, 2=Ease In, 3=Ease Out, 4=Smooth, 5=Pulse"));
+        particleLookGroup.addProperty(property);
+    };
+    addChannelLifeCurve(QStringLiteral("particle.particle.scaleLifeCurve"),
+                        QStringLiteral("Size Curve"), emitter.scaleLifeCurve, -210);
+    addChannelLifeCurve(QStringLiteral("particle.particle.colorLifeCurve"),
+                        QStringLiteral("Color Curve"), emitter.colorLifeCurve, -209);
+    addChannelLifeCurve(QStringLiteral("particle.particle.opacityLifeCurve"),
+                        QStringLiteral("Opacity Curve"), emitter.opacityLifeCurve, -208);
     auto resetLifeCurveProp = makeProp(
         QStringLiteral("particle.particle.resetLifeCurve"),
         ArtifactCore::PropertyType::Boolean, false, -210);
@@ -3337,6 +3522,9 @@ bool ArtifactParticleLayer::setLayerPropertyValue(const QString& propertyPath, c
             params.colorMidPosition = defaults.colorMidPosition;
             params.colorEnd = defaults.colorEnd;
             params.lifeCurve = defaults.lifeCurve;
+            params.scaleLifeCurve = defaults.scaleLifeCurve;
+            params.colorLifeCurve = defaults.colorLifeCurve;
+            params.opacityLifeCurve = defaults.opacityLifeCurve;
         });
     }
 
@@ -3407,6 +3595,70 @@ bool ArtifactParticleLayer::setLayerPropertyValue(const QString& propertyPath, c
         auto rs = renderSettings();
         rs.billboardMode = static_cast<ParticleRenderSettings::BillboardMode>(
             std::clamp(value.toInt(), 0, 3));
+        setRenderSettings(rs);
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("particle.render.falloffMode")) {
+        auto rs = renderSettings();
+        rs.falloffMode = static_cast<ParticleRenderSettings::FalloffMode>(
+            std::clamp(value.toInt(), 0, 5));
+        setRenderSettings(rs);
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("particle.render.colorIntensity")) {
+        auto rs = renderSettings();
+        rs.colorIntensity = safeParticleFloat(value, 1.0f, 0.0f, 16.0f);
+        setRenderSettings(rs);
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("particle.render.ringInnerRadius")) {
+        auto rs = renderSettings();
+        rs.ringInnerRadius = safeParticleFloat(value, 0.6f, 0.0f, 0.98f);
+        setRenderSettings(rs);
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("particle.render.animateRingInnerRadius")) {
+        auto rs = renderSettings();
+        rs.animateRingInnerRadius = value.toBool();
+        setRenderSettings(rs);
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("particle.render.ringInnerRadiusEnd")) {
+        auto rs = renderSettings();
+        rs.ringInnerRadiusEnd = safeParticleFloat(value, 0.6f, 0.0f, 0.98f);
+        setRenderSettings(rs);
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("particle.render.fullParticleDensity")) {
+        auto rs = renderSettings();
+        rs.fullParticleDensity = value.toBool();
+        setRenderSettings(rs);
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("particle.render.trailEnabled")) {
+        auto rs = renderSettings();
+        rs.trailEnabled = value.toBool();
+        setRenderSettings(rs);
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("particle.render.trailWidth")) {
+        auto rs = renderSettings();
+        rs.trailWidth = safeParticleFloat(value, 1.0f, 0.1f, 1000000.0f);
+        setRenderSettings(rs);
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("particle.render.trailFade")) {
+        auto rs = renderSettings();
+        rs.trailFade = safeParticleFloat(value, 0.5f, 0.0f, 1.0f);
         setRenderSettings(rs);
         Q_EMIT changed();
         return true;
@@ -3916,6 +4168,19 @@ bool ArtifactParticleLayer::setLayerPropertyValue(const QString& propertyPath, c
         return applyPrimaryEmitterValue([&](EmitterParams& params) {
             params.lifeCurve = static_cast<ParticleLifeCurve>(
                 std::clamp(value.toInt(), 0, 4));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.particle.scaleLifeCurve") ||
+        propertyPath == QStringLiteral("particle.particle.colorLifeCurve") ||
+        propertyPath == QStringLiteral("particle.particle.opacityLifeCurve")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            const int mode = std::clamp(value.toInt(), 0, 5);
+            if (propertyPath == QStringLiteral("particle.particle.scaleLifeCurve"))
+                params.scaleLifeCurve = mode;
+            else if (propertyPath == QStringLiteral("particle.particle.colorLifeCurve"))
+                params.colorLifeCurve = mode;
+            else
+                params.opacityLifeCurve = mode;
         });
     }
     if (propertyPath == QStringLiteral("particle.emitter.colorEnd") ||

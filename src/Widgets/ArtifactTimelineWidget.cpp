@@ -66,6 +66,7 @@ module;
 #include <limits>
 #include <cmath>
 #include <utility>
+#include <vector>
 #include <qtmetamacros.h>
 #include <wobjectdefs.h>
 #include <wobjectimpl.h>
@@ -3624,34 +3625,23 @@ CurveEditorPayload collectCurveEditorSpeedPayload(
                                             property->getName() + QStringLiteral("/speed"));
         track.visible = true;
 
+        // CE-14: the same curveSpeedAt() the write-back solver uses, so the
+        // number shown is exactly the number a drag solves for.
+        std::vector<CurveKey> speedSourceKeys;
+        speedSourceKeys.reserve(static_cast<size_t>(frames.size()));
         for (int i = 0; i < frames.size(); ++i) {
-          const double frame = frames[i];
-          const double value = values[i];
-          const auto interpolation = interpolations[i];
+          CurveKey sourceKey;
+          sourceKey.frame = static_cast<int64_t>(std::llround(frames[i]));
+          sourceKey.value = static_cast<float>(values[i]);
+          sourceKey.constant =
+              interpolations[i] == ArtifactCore::InterpolationType::Constant;
+          speedSourceKeys.push_back(sourceKey);
+        }
 
-          double speedSum = 0.0;
-          int speedSamples = 0;
-
-          if (interpolation != ArtifactCore::InterpolationType::Constant && i > 0) {
-            const double prevFrame = frames[i - 1];
-            const double prevValue = values[i - 1];
-            const double deltaFrame = std::max(1.0, frame - prevFrame);
-            speedSum += std::abs((value - prevValue) / deltaFrame) * fps;
-            ++speedSamples;
-          }
-          if (interpolation != ArtifactCore::InterpolationType::Constant &&
-              i + 1 < frames.size()) {
-            const double nextFrame = frames[i + 1];
-            const double nextValue = values[i + 1];
-            const double deltaFrame = std::max(1.0, nextFrame - frame);
-            speedSum += std::abs((nextValue - value) / deltaFrame) * fps;
-            ++speedSamples;
-          }
-
+        for (int i = 0; i < frames.size(); ++i) {
           CurveKey curveKey;
-          curveKey.frame = static_cast<int64_t>(std::llround(frame));
-          curveKey.value =
-              static_cast<float>(speedSamples > 0 ? speedSum / speedSamples : 0.0);
+          curveKey.frame = speedSourceKeys[static_cast<size_t>(i)].frame;
+          curveKey.value = curveSpeedAt(speedSourceKeys, i, fps);
           curveKey.inHandleFrame = 0;
           curveKey.outHandleFrame = 0;
           curveKey.inHandleValue = 0.0f;
@@ -3662,7 +3652,7 @@ CurveEditorPayload collectCurveEditorSpeedPayload(
                   .arg(layer->id().toString(), property->getName(),
                        QString::number(curveKey.frame),
                        QString::number(curveKey.value, 'f', 6),
-                       QString::number(static_cast<int>(interpolation))));
+                       QString::number(static_cast<int>(interpolations[i]))));
         }
 
         for (int i = 0; i < track.keys.size(); ++i) {
@@ -3787,6 +3777,80 @@ bool applyCurveEditorMove(
   layer->setDirty(LayerDirtyFlag::Property);
   layer->changed();
   return true;
+}
+
+// CE-14: a Speed-graph key drag carries a target speed, not a property value.
+// Solve the source keyframe value that reproduces that speed with the
+// neighbouring keys fixed, then reuse the value-graph move path so the
+// collision check, the undo snapshot and the property write stay identical.
+bool applyCurveEditorSpeedMove(
+    const ArtifactCompositionPtr& composition,
+    const CurveTrackBinding& binding,
+    const CurveTrack& speedTrack,
+    const int keyIndex,
+    const int64_t newFrame,
+    const float targetSpeed)
+{
+  if (!composition || binding.layerId.isNil() || keyIndex < 0 ||
+      keyIndex >= static_cast<int>(speedTrack.keys.size())) {
+    return false;
+  }
+
+  auto layer = composition->layerById(binding.layerId);
+  if (!layer) {
+    return false;
+  }
+  const auto property = findLayerPropertyByPath(layer, binding.propertyPath);
+  if (!property) {
+    return false;
+  }
+  if (!timelinePropertyAllowedByKeyingSet(binding.propertyPath)) {
+    return false;
+  }
+
+  const auto keyframes = property->getKeyFrames();
+  if (keyframes.size() != speedTrack.keys.size()) {
+    return false;
+  }
+
+  const double fps = timelineFrameRateFallback(composition);
+  const int64_t fpsInt =
+      std::max<int64_t>(1, static_cast<int64_t>(std::llround(fps)));
+
+  std::vector<CurveKey> valueKeys;
+  valueKeys.reserve(keyframes.size());
+  for (const auto& keyframe : keyframes) {
+    const QVariant value = keyframe.value;
+    if (!value.canConvert<double>()) {
+      return false;
+    }
+    CurveKey valueKey;
+    valueKey.frame = keyframe.time.rescaledTo(fpsInt);
+    valueKey.value = static_cast<float>(value.toDouble());
+    valueKey.constant =
+        keyframe.interpolation == ArtifactCore::InterpolationType::Constant;
+    valueKeys.push_back(valueKey);
+  }
+
+  // Solve against the post-move frame layout so a horizontal drag keeps the
+  // speed the user is holding while the key retimes.
+  std::vector<CurveKey> solveKeys = valueKeys;
+  solveKeys[static_cast<size_t>(keyIndex)].frame = newFrame;
+  float solvedValue = 0.0f;
+  if (!solveCurveKeyValueForSpeed(solveKeys, keyIndex, targetSpeed, fps,
+                                  solvedValue)) {
+    return false;
+  }
+
+  CurveTrack valueTrack;
+  valueTrack.name = speedTrack.name;
+  valueTrack.color = speedTrack.color;
+  valueTrack.visible = true;
+  // Original frames: applyCurveEditorMove locates the property keyframe by
+  // the pre-move frame while writing the new frame/value.
+  valueTrack.keys = valueKeys;
+  return applyCurveEditorMove(composition, binding, valueTrack, keyIndex,
+                              newFrame, solvedValue);
 }
 
 bool applyCurveEditorTrackToProperty(
@@ -4946,10 +5010,14 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
     return;
   }
 
-  const bool editableValueGraph =
-      impl_->curveEditorGraphMode_ == CurveEditorGraphMode::Value;
-  impl_->curveEditor_->setKeyEditingEnabled(editableValueGraph);
-  impl_->curveEditor_->setHandleEditingEnabled(editableValueGraph &&
+  const bool speedGraph =
+      impl_->curveEditorGraphMode_ == CurveEditorGraphMode::Speed;
+  // CE-14: the Speed graph is editable by key moves only. The widget's derived
+  // mode rejects inserts/deletes/copy/paste/clones and tangent edits, which
+  // would otherwise write derived numbers into the source property.
+  impl_->curveEditor_->setDerivedGraphMode(speedGraph);
+  impl_->curveEditor_->setKeyEditingEnabled(true);
+  impl_->curveEditor_->setHandleEditingEnabled(!speedGraph &&
                                                impl_->curveHandleEditingEnabled_);
 
   ArtifactCompositionPtr composition;
@@ -5072,7 +5140,7 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
 
   impl_->curveEditor_->setCurrentFrame(
       static_cast<int64_t>(std::llround(std::max(0.0, impl_->currentFrame_))));
-  impl_->curveEditor_->setHandleEditingEnabled(editableValueGraph &&
+  impl_->curveEditor_->setHandleEditingEnabled(!speedGraph &&
                                                impl_->curveHandleEditingEnabled_);
   if (impl_->graphEditorVisible_ && impl_->curveEditor_) {
     impl_->curveEditor_->focusTrack(impl_->focusedCurveTrackIndex_);
@@ -5083,17 +5151,18 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
   }
   if (impl_->curveEditorHandleButton_) {
     const QSignalBlocker blocker(impl_->curveEditorHandleButton_);
-    impl_->curveEditorHandleButton_->setEnabled(editableValueGraph);
-    impl_->curveEditorHandleButton_->setChecked(editableValueGraph &&
+    impl_->curveEditorHandleButton_->setEnabled(!speedGraph);
+    impl_->curveEditorHandleButton_->setChecked(!speedGraph &&
                                                 impl_->curveHandleEditingEnabled_);
     impl_->curveEditorHandleButton_->setText(
-        !editableValueGraph
+        speedGraph
             ? QStringLiteral("Handles N/A")
             : (impl_->curveHandleEditingEnabled_ ? QStringLiteral("Handles On")
                                                  : QStringLiteral("Handles Off")));
     impl_->curveEditorHandleButton_->setToolTip(
-        !editableValueGraph
-            ? QStringLiteral("Speed Graph is read-only")
+        speedGraph
+            ? QStringLiteral("Speed graph uses the averaged segment slope; "
+                             "handles are derived, not editable")
             : impl_->curveHandleEditingEnabled_
             ? QStringLiteral("Bezier handle editing is enabled")
             : QStringLiteral("Bezier handle editing is disabled for safer graph edits"));
@@ -5101,10 +5170,10 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
   if (impl_->curveEditorValueButton_) {
     const bool hasSelection =
         impl_->painterTrackView_ && impl_->painterTrackView_->hasNumericSelectedKeyframes();
-    impl_->curveEditorValueButton_->setEnabled(editableValueGraph && hasSelection);
+    impl_->curveEditorValueButton_->setEnabled(!speedGraph && hasSelection);
     impl_->curveEditorValueButton_->setToolTip(
-        !editableValueGraph
-            ? QStringLiteral("Speed Graph is read-only")
+        speedGraph
+            ? QStringLiteral("Speed graph keys are edited by dragging; the value is derived")
             : (hasSelection
                    ? QStringLiteral("Set the numeric value of selected keyframes")
                    : QStringLiteral("Select one or more keyframes to set their value")));
@@ -5113,7 +5182,11 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
   if (impl_->curveEditorFrameButton_) {
     const bool hasSelection =
         impl_->painterTrackView_ && impl_->painterTrackView_->hasNumericSelectedKeyframes();
-    impl_->curveEditorFrameButton_->setEnabled(editableValueGraph && hasSelection);
+    impl_->curveEditorFrameButton_->setEnabled(hasSelection);
+    impl_->curveEditorFrameButton_->setToolTip(
+        speedGraph
+            ? QStringLiteral("Retime the selected keyframes; the current speed is preserved")
+            : QStringLiteral("Set the frame of selected keyframes"));
     impl_->curveEditorFrameButton_->setVisible(true);
   }
   for (auto *button : {impl_->curveEditorAutoTangentButton_,
@@ -5124,7 +5197,7 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
                        impl_->curveEditorConstantButton_,
                        impl_->curveEditorBezierButton_}) {
     if (button) {
-      button->setEnabled(editableValueGraph);
+      button->setEnabled(!speedGraph);
     }
   }
   if (impl_->curveEditorPinButton_) {
@@ -7979,7 +8052,13 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                      if (composition && impl_->curveEditorUndoPending_) {
                        // CE-1: persist widget-local tangent/handle edits so the
                        // after snapshot covers them in the same undo command.
-                       if (impl_->curveEditor_) {
+                       // CE-14: the Speed graph holds derived numbers, so its
+                       // widget tracks must never be written back verbatim —
+                       // applyCurveEditorSpeedMove already wrote the source
+                       // values during the drag.
+                       if (impl_->curveEditor_ &&
+                           impl_->curveEditorGraphMode_ !=
+                               CurveEditorGraphMode::Speed) {
                          writeBackCurveEditorStructureDiffs(
                              composition, impl_->curveBindings_, impl_->curveTracks_,
                              impl_->curveEditor_->tracks());
@@ -8079,8 +8158,16 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
 
                      const auto& binding = impl_->curveBindings_[trackIndex];
                      const auto& track = impl_->curveTracks_[trackIndex];
-                     if (!applyCurveEditorMove(composition, binding, track, keyIndex,
-                                               newFrame, newValue)) {
+                     // CE-14: in Speed mode the dragged number is a speed, so
+                     // solve the source value instead of writing it verbatim.
+                     const bool speedMode =
+                         impl_->curveEditorGraphMode_ == CurveEditorGraphMode::Speed;
+                     const bool applied = speedMode
+                         ? applyCurveEditorSpeedMove(composition, binding, track,
+                                                     keyIndex, newFrame, newValue)
+                         : applyCurveEditorMove(composition, binding, track, keyIndex,
+                                                newFrame, newValue);
+                     if (!applied) {
                        return;
                      }
 
@@ -11324,9 +11411,15 @@ void ArtifactTimelineWidget::buildGpuCurveSnapshot()
           {QPointF(keyPoint.x(), keyPoint.y() - radius),
            QPointF(keyPoint.x(), keyPoint.y() + radius),
            QPointF(keyPoint.x() - radius, keyPoint.y()), keyColor});
-      if (selected) {
+      // CE-14 / parity with the widget: a derived graph has computed handles
+      // and zero-length handles sit on the key, so neither is drawn.
+      if (selected && !editor->derivedGraphMode()) {
         const QColor handleColor(245, 245, 240, 220);
-        if (keyIndex > 0) {
+        const bool hasInHandle =
+            key.inHandleFrame != 0 || std::abs(key.inHandleValue) > 1e-6f;
+        const bool hasOutHandle =
+            key.outHandleFrame != 0 || std::abs(key.outHandleValue) > 1e-6f;
+        if (keyIndex > 0 && hasInHandle) {
           const QPointF handle = clampToPlot(editor->visualPoint(
               trackIndex, static_cast<float>(key.frame + key.inHandleFrame),
               key.value + key.inHandleValue));
@@ -11335,7 +11428,7 @@ void ArtifactTimelineWidget::buildGpuCurveSnapshot()
               {QRectF(handle.x() - 3.0, handle.y() - 3.0, 6.0, 6.0),
                QColor(236, 177, 71)});
         }
-        if (keyIndex + 1 < static_cast<int>(track.keys.size())) {
+        if (keyIndex + 1 < static_cast<int>(track.keys.size()) && hasOutHandle) {
           const QPointF handle = clampToPlot(editor->visualPoint(
               trackIndex, static_cast<float>(key.frame + key.outHandleFrame),
               key.value + key.outHandleValue));

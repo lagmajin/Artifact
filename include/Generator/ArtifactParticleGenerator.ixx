@@ -240,6 +240,12 @@ public:
     QColor colorEnd = QColor(255, 255, 255, 0);
     float colorMidPosition = 0.5f;
     ParticleLifeCurve lifeCurve = ParticleLifeCurve::Linear;
+    // 0 inherits lifeCurve; 1..5 select ParticleLifeCurve values 0..4.
+    // Inheritance preserves the appearance of projects saved before these
+    // independent controls existed.
+    int scaleLifeCurve = 0;
+    int colorLifeCurve = 0;
+    int opacityLifeCurve = 0;
     float colorVariation = 0.0f;
     
     // Opacity
@@ -492,6 +498,11 @@ public:
             std::clamp(static_cast<int>(params_.mode), 0, 2));
         params_.auxTrigger = static_cast<AuxTriggerMode>(
             std::clamp(static_cast<int>(params_.auxTrigger), 0, 2));
+        params_.lifeCurve = static_cast<ParticleLifeCurve>(
+            std::clamp(static_cast<int>(params_.lifeCurve), 0, 4));
+        params_.scaleLifeCurve = std::clamp(params_.scaleLifeCurve, 0, 5);
+        params_.colorLifeCurve = std::clamp(params_.colorLifeCurve, 0, 5);
+        params_.opacityLifeCurve = std::clamp(params_.opacityLifeCurve, 0, 5);
         const auto safeNonNegative = [](float value, float fallback = 0.0f) {
             return std::isfinite(value)
                 ? std::clamp(value, 0.0f, 1000000.0f)
@@ -663,6 +674,18 @@ public:
         VelocityAligned // Velocity direction
     };
     BillboardMode billboardMode = BillboardMode::ScreenAligned;
+
+    // GPU procedural particles. HardCircle, Ring, Diamond and Cross support stretch;
+    // textured particles use their existing appearance path.
+    enum class FalloffMode { SoftCircle, GaussianDensity, HardCircle, Ring, Diamond, Cross };
+    FalloffMode falloffMode = FalloffMode::SoftCircle;
+    float ringInnerRadius = 0.6f; // fraction of outer radius
+    bool animateRingInnerRadius = false;
+    float ringInnerRadiusEnd = 0.6f;
+    // Multiplier applied to procedural GPU particle RGB in working space.
+    float colorIntensity = 1.0f;
+    // Opt out of scale-based GPU particle thinning for quality-critical work.
+    bool fullParticleDensity = false;
     
     // Sorting
     enum class SortMode {
@@ -734,6 +757,12 @@ public:
             std::clamp(static_cast<int>(renderSettings_.blendMode), 0, 4));
         renderSettings_.billboardMode = static_cast<ParticleRenderSettings::BillboardMode>(
             std::clamp(static_cast<int>(renderSettings_.billboardMode), 0, 3));
+        renderSettings_.falloffMode = static_cast<ParticleRenderSettings::FalloffMode>(
+            std::clamp(static_cast<int>(renderSettings_.falloffMode), 0, 5));
+        renderSettings_.ringInnerRadius = std::isfinite(renderSettings_.ringInnerRadius)
+            ? std::clamp(renderSettings_.ringInnerRadius, 0.0f, 0.98f) : 0.6f;
+        renderSettings_.ringInnerRadiusEnd = std::isfinite(renderSettings_.ringInnerRadiusEnd)
+            ? std::clamp(renderSettings_.ringInnerRadiusEnd, 0.0f, 0.98f) : 0.6f;
         renderSettings_.sortMode = static_cast<ParticleRenderSettings::SortMode>(
             std::clamp(static_cast<int>(renderSettings_.sortMode), 0, 3));
         const auto safeNonNegative = [](float value, float fallback = 0.0f) {
@@ -744,6 +773,8 @@ public:
         renderSettings_.softParticleDistance =
             safeNonNegative(renderSettings_.softParticleDistance);
         renderSettings_.stretchFactor = safeNonNegative(renderSettings_.stretchFactor, 1.0f);
+        renderSettings_.colorIntensity = std::isfinite(renderSettings_.colorIntensity)
+            ? std::clamp(renderSettings_.colorIntensity, 0.0f, 16.0f) : 1.0f;
         renderSettings_.minLength = safeNonNegative(renderSettings_.minLength);
         renderSettings_.trailLength = std::clamp(renderSettings_.trailLength, 1, 1024);
         renderSettings_.trailWidth = std::isfinite(renderSettings_.trailWidth)
