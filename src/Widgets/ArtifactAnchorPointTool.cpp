@@ -23,6 +23,9 @@ import Undo.UndoManager;
 
 namespace Artifact {
 
+// Resolves the current time from the layer's composition frame rate.
+ArtifactCore::RationalTime currentTimelineTime(const ArtifactAbstractLayer* layer);
+
 W_OBJECT_IMPL(ArtifactAnchorPointTool)
 
 class ArtifactAnchorPointTool::Impl {
@@ -163,7 +166,8 @@ void ArtifactAnchorPointTool::moveAnchorPoint(ArtifactAbstractLayerPtr layer, An
     if (!layer) return;
 
     auto& transform = layer->transform3D();
-    const ArtifactCore::RationalTime time(layer->currentFrame(), 24);
+    // 24fps 固定だと非 24fps コンポジションでキーが別の時刻に入る。
+    const ArtifactCore::RationalTime time = currentTimelineTime(layer.get());
     auto bounds = layer->localBounds();
 
     if (!bounds.isValid() || bounds.isEmpty()) return;

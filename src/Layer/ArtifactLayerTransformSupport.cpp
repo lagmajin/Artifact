@@ -15,9 +15,12 @@ module Artifact.Layer.Abstract;
 import Container.NamedVector;
 import Container.Debug;
 import Time.Rational;
+import Frame.Rate;
 import Transform.Hlper;
 
 namespace Artifact {
+
+double effectiveLayerFrameRate(const ArtifactAbstractLayer* layer);
 
 QPointF parentAutoLayoutOffset(const ArtifactAbstractLayer* layer,
                                const ArtifactAbstractLayerPtr& parent);
@@ -106,15 +109,40 @@ QMatrix4x4 ArtifactAbstractLayer::getGlobalTransform4x4() const {
 
 QMatrix4x4 ArtifactAbstractLayer::getLocalTransform4x4At(
     const RationalTime& time) const {
+  if (is3D()) {
+    const auto snapshot = transform3D().snapshotAt(time);
+    QMatrix4x4 result;
+    result.setToIdentity();
+    result.translate(snapshot.positionX, snapshot.positionY, snapshot.positionZ);
+    result.rotate(snapshot.rotationX, 1.0f, 0.0f, 0.0f);
+    result.rotate(snapshot.rotationY, 0.0f, 1.0f, 0.0f);
+    result.rotate(snapshot.rotationZ, 0.0f, 0.0f, 1.0f);
+    result.scale(snapshot.scaleX, snapshot.scaleY, snapshot.scaleZ);
+    result.translate(-snapshot.anchorX, -snapshot.anchorY, -snapshot.anchorZ);
+    return result;
+  }
+
+  // 2D layers mirror getLocalTransform4x4(): the evaluated 2D matrix plus the
+  // depth component. Applying rotationX/Y here made the time-varying path
+  // disagree with the current-time path for layers that are not 3D.
+  const int64_t frame = time.toFrameCount(
+      ArtifactCore::FrameRate::storageScaleForFps(effectiveLayerFrameRate(this)));
+  const QTransform local2D = getLocalTransformAt(frame);
+  const QMatrix4x4 planar(
+      static_cast<float>(local2D.m11()), static_cast<float>(local2D.m21()), 0.0f,
+      static_cast<float>(local2D.m31()),
+      static_cast<float>(local2D.m12()), static_cast<float>(local2D.m22()), 0.0f,
+      static_cast<float>(local2D.m32()),
+      0.0f, 0.0f, 1.0f, 0.0f,
+      static_cast<float>(local2D.m13()), static_cast<float>(local2D.m23()), 0.0f,
+      static_cast<float>(local2D.m33()));
   const auto snapshot = transform3D().snapshotAt(time);
-  QMatrix4x4 result;
-  result.setToIdentity();
-  result.translate(snapshot.positionX, snapshot.positionY, snapshot.positionZ);
-  result.rotate(snapshot.rotationX, 1.0f, 0.0f, 0.0f);
-  result.rotate(snapshot.rotationY, 0.0f, 1.0f, 0.0f);
-  result.rotate(snapshot.rotationZ, 0.0f, 0.0f, 1.0f);
-  result.scale(snapshot.scaleX, snapshot.scaleY, snapshot.scaleZ);
-  result.translate(-snapshot.anchorX, -snapshot.anchorY, -snapshot.anchorZ);
+  const float depth = snapshot.positionZ - snapshot.anchorZ;
+  if (depth == 0.0f) {
+    return planar;
+  }
+  QMatrix4x4 result = planar;
+  result.translate(0.0f, 0.0f, depth);
   return result;
 }
 
