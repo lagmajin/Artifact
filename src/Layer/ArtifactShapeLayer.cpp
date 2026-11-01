@@ -1384,7 +1384,6 @@ static ArtifactCore::ShapePath buildContentShapePath(const Artifact::ShapeConten
     const auto& t = content.transform;
     QTransform matrix;
     matrix.translate(t.position.x(), t.position.y());
-    matrix.translate(t.anchor.x(), t.anchor.y());
     matrix.rotate(t.rotation);
     matrix.shear(std::tan(t.skew * 0.017453292519943295), 0.0);
     matrix.rotate(-t.skewAxis);
@@ -1400,7 +1399,6 @@ static ArtifactCore::ShapePath buildContentShapePath(const Artifact::ShapeConten
     const auto& t = content.transform;
     QTransform matrix;
     matrix.translate(t.position.x(), t.position.y());
-    matrix.translate(t.anchor.x(), t.anchor.y());
     matrix.rotate(t.rotation);
     matrix.shear(std::tan(t.skew * 0.017453292519943295), 0.0);
     matrix.rotate(-t.skewAxis);
@@ -1418,7 +1416,6 @@ static ArtifactCore::ShapePath buildContentShapePath(const Artifact::ShapeConten
   const auto& t = content.transform;
   QTransform matrix;
   matrix.translate(t.position.x(), t.position.y());
-  matrix.translate(t.anchor.x(), t.anchor.y());
   matrix.rotate(t.rotation);
   matrix.shear(std::tan(t.skew * 0.017453292519943295), 0.0);
   matrix.rotate(-t.skewAxis);

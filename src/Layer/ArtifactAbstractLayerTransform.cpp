@@ -918,10 +918,13 @@ QMatrix4x4 ArtifactAbstractLayer::getLocalTransform4x4() const {
                            anchorX, anchorY),
       localBounds(), time.toDouble());
 
-  Q_UNUSED(anchorZ);
+  // The 2D matrix carries X/Y only, so the depth component of the same
+  // T(position) * R * S * T(-anchor) order is applied here. Dropping anchorZ made
+  // this path disagree with getLocalTransform4x4At(), which applies it.
   QMatrix4x4 result = matrixFromTransform2D(local2D);
-  if (positionZ != 0.0) {
-    result.translate(0.0f, 0.0f, static_cast<float>(positionZ));
+  const float depth = static_cast<float>(positionZ - anchorZ);
+  if (depth != 0.0f) {
+    result.translate(0.0f, 0.0f, depth);
   }
   return result;
 }

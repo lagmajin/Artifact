@@ -1,4 +1,5 @@
 module;
+#include <cmath>
 #include <memory>
 #include <wobjectimpl.h>
 #include <QWidget>
@@ -217,12 +218,23 @@ void ArtifactAnchorPointTool::moveAnchorPoint(ArtifactAbstractLayerPtr layer, An
     }
 
     if (impl_->maintainVisualPosition) {
-        // 見た目位置を維持: アンカー変更分をPositionで補正
-        float deltaX = newAnchorX - currentAnchorX;
-        float deltaY = newAnchorY - currentAnchorY;
+        // 見た目位置を維持: アンカー変更分を R*S で回してから Position へ足す。
+        // 生の差分を足すと回転・スケール時にコンテンツがずれる（ギズモ側は R*S 補正）。
+        const double deltaX = static_cast<double>(newAnchorX) - currentAnchorX;
+        const double deltaY = static_cast<double>(newAnchorY) - currentAnchorY;
+        constexpr double kDegreesToRadians = 3.14159265358979323846 / 180.0;
+        const double radians = static_cast<double>(transform.rotation()) * kDegreesToRadians;
+        const double cosine = std::cos(radians);
+        const double sine = std::sin(radians);
+        const double scaledX = deltaX * transform.scaleX();
+        const double scaledY = deltaY * transform.scaleY();
+        const double offsetX = scaledX * cosine - scaledY * sine;
+        const double offsetY = scaledX * sine + scaledY * cosine;
 
         transform.setAnchor(time, newAnchorX, newAnchorY, transform.anchorZ());
-        transform.setPosition(time, transform.positionX() + deltaX, transform.positionY() + deltaY);
+        transform.setPosition(time,
+                              transform.positionX() + static_cast<float>(offsetX),
+                              transform.positionY() + static_cast<float>(offsetY));
     } else {
         // アンカーポイントのみ変更（位置が動く）
         transform.setAnchor(time, newAnchorX, newAnchorY, transform.anchorZ());
