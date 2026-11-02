@@ -196,7 +196,8 @@ public:
 // received the press.
 class ArtifactVirtualInput final {
 public:
-  explicit ArtifactVirtualInput(QWidget* root) : root_(root) {
+  explicit ArtifactVirtualInput(QWidget* root, bool showCursor = true)
+      : root_(root), showCursor_(showCursor) {
     if (!root_) {
       return;
     }
@@ -243,13 +244,27 @@ public:
   [[nodiscard]] QPoint windowPosition() const { return windowPosition_; }
   [[nodiscard]] Qt::MouseButtons pressedButtons() const { return pressedButtons_; }
 
-  void noteDelivered(QObject* receiver) {
+  void noteDelivered(QObject* receiver, QEvent::Type eventType) {
     ++deliveredEvents_;
     lastReceiver_ = receiver;
+    if (eventType == QEvent::MouseButtonPress ||
+        eventType == QEvent::MouseButtonRelease) {
+      lastButtonReceiver_ = receiver;
+    }
   }
 
   [[nodiscard]] QString lastReceiverName() const {
     auto* widget = qobject_cast<QWidget*>(lastReceiver_.data());
+    if (!widget) {
+      return {};
+    }
+    return widget->objectName().isEmpty()
+               ? QString::fromLatin1(widget->metaObject()->className())
+               : widget->objectName();
+  }
+
+  [[nodiscard]] QString lastButtonReceiverName() const {
+    auto* widget = qobject_cast<QWidget*>(lastButtonReceiver_.data());
     if (!widget) {
       return {};
     }
@@ -494,9 +509,18 @@ private:
     }
     const QPoint globalPosition = root_->mapToGlobal(windowPosition);
     QWidget* target = nullptr;
+    // A widget subtree can itself be the input surface (for example, an
+    // isolated editor fixture). Keep its hit testing local so an unrelated
+    // floating window beneath the hidden dock does not intercept the event.
+    if (!root_->isWindow() && root_->rect().contains(windowPosition)) {
+      target = root_->childAt(windowPosition);
+      if (!target) {
+        target = root_.data();
+      }
+    }
     if (QWidget* popup = QApplication::activePopupWidget()) {
       const QPoint popupLocal = popup->mapFromGlobal(globalPosition);
-      if (popup->isVisible() && popup->rect().contains(popupLocal)) {
+      if (!target && popup->isVisible() && popup->rect().contains(popupLocal)) {
         target = popup->childAt(popupLocal);
         if (!target) {
           target = popup;
@@ -587,7 +611,7 @@ private:
   }
 
   void updateCursorLabel(const QPoint& windowPosition) {
-    if (!cursor_ || !root_) {
+    if (!showCursor_ || !cursor_ || !root_) {
       return;
     }
     cursor_->move(windowPosition - QPoint(2, 2));
@@ -600,9 +624,11 @@ private:
   QPointer<QWidget> hovered_;
   QPointer<QWidget> pressedWidget_;
   QLabel* cursor_ = nullptr;
+  bool showCursor_ = true;
   QPoint windowPosition_;
   Qt::MouseButtons pressedButtons_ = Qt::NoButton;
   QPointer<QObject> lastReceiver_;
+  QPointer<QObject> lastButtonReceiver_;
   int injectionDepth_ = 0;
   int deliveredEvents_ = 0;
 };
@@ -642,11 +668,11 @@ public:
                              mouse->modifiers());
       const bool handled = QApplication::notify(grabber, &redirected);
       event->setAccepted(redirected.isAccepted());
-      input->noteDelivered(grabber);
+      input->noteDelivered(grabber, mouse->type());
       return handled;
     }
     const bool handled = QApplication::notify(receiver, event);
-    input->noteDelivered(receiver);
+    input->noteDelivered(receiver, event->type());
     return handled;
   }
 };
@@ -9843,6 +9869,181 @@ int Artifact::runApplication(int argc, char *argv[]) {
   }
 
   if (uiTestExecutable &&
+      qEnvironmentVariableIsSet("ARTIFACT_UI_TEST_COMPONENTS")) {
+    QTimer::singleShot(0, mw, [mw, projectService]() {
+      const QString component = qEnvironmentVariable(
+          "ARTIFACT_UI_TEST_COMPONENT").trimmed().toLower();
+      const bool noWindow = qEnvironmentVariableIsSet(
+          "ARTIFACT_UI_TEST_COMPONENTS_NO_WINDOW");
+      const QString resultPath = qEnvironmentVariable(
+          "ARTIFACT_UI_TEST_COMPONENTS_RESULT_PATH");
+      const auto writeResult = [&resultPath](const QByteArray &report) {
+        QFile resultFile(resultPath);
+        if (!resultPath.isEmpty() &&
+            resultFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+          resultFile.write(report);
+          resultFile.close();
+        }
+      };
+      const auto failFixture = [&](const QString &reason) {
+        writeResult(QStringLiteral("fail component=%1 reason=%2\n")
+                        .arg(component, reason)
+                        .toUtf8());
+        qWarning() << "[LayerComponentsUiFixture]" << reason;
+        if (noWindow) {
+          QCoreApplication::quit();
+        }
+      };
+      if (!mw || !projectService) {
+        failFixture(QStringLiteral("application services unavailable"));
+        return;
+      }
+
+      if (component != QStringLiteral("cloner")) {
+        failFixture(QStringLiteral("unsupported component"));
+        return;
+      }
+      const QString buttonObjectName =
+          QStringLiteral("inspectorComponentClonerButton");
+      const QString propertyPath = QStringLiteral("component.cloner.enabled");
+
+      auto &projectManager = ArtifactProjectManager::getInstance();
+      if (projectManager.isProjectCreated()) {
+        failFixture(QStringLiteral("refusing to replace an existing project"));
+        return;
+      }
+      projectManager.createProject(
+          QStringLiteral("LayerComponentsUiFixture_%1")
+              .arg(QCoreApplication::applicationPid()), false);
+      if (!projectManager.isProjectCreated()) {
+        failFixture(QStringLiteral("temporary project creation failed"));
+        return;
+      }
+
+      auto compositionParams = ArtifactCompositionInitParams::hdPreset();
+      compositionParams.setDurationSeconds(4.0);
+      projectService->createComposition(compositionParams);
+      const auto composition = projectService->currentComposition().lock();
+      if (!composition) {
+        failFixture(QStringLiteral("composition creation failed"));
+        return;
+      }
+      ArtifactSolidLayerInitParams layerParams(
+          QStringLiteral("Component UI Fixture"));
+      layerParams.setWidth(640);
+      layerParams.setHeight(360);
+      layerParams.setColor(ArtifactCore::FloatColor(0.24f, 0.42f, 0.68f, 1.0f));
+      projectService->addLayerToCurrentComposition(layerParams);
+      const auto layer = composition->frontMostLayer();
+      if (!layer) {
+        failFixture(QStringLiteral("fixture layer setup failed"));
+        return;
+      }
+      if (!layer->setLayerPropertyValue(propertyPath, false)) {
+        failFixture(QStringLiteral("fixture component property unavailable: %1")
+                        .arg(propertyPath));
+        return;
+      }
+      if (auto *app = ArtifactApplicationManager::instance()) {
+        if (auto *selectionManager = app->layerSelectionManager()) {
+          selectionManager->selectLayer(layer);
+        }
+      }
+
+      if (!noWindow) {
+        mw->setDockVisible(QStringLiteral("Components"), true);
+        mw->activateDock(QStringLiteral("Components"));
+        mw->showNormal();
+        mw->resize(1280, 800);
+      }
+
+      if (!mw->findChild<QWidget *>(
+              QStringLiteral("inspectorComponentsSurface"))) {
+        failFixture(QStringLiteral("component editor widgets unavailable"));
+        return;
+      }
+      QWidget *surface = mw->findChild<QWidget *>(
+          QStringLiteral("inspectorComponentsSurface"));
+      auto *body = surface ? surface->findChild<QWidget *>(
+                                 QStringLiteral("inspectorComponentSettingsBody"))
+                           : nullptr;
+      const auto widgetName = [](const QWidget *widget) {
+        if (!widget) return QStringLiteral("none");
+        return widget->objectName().isEmpty()
+            ? QString::fromLatin1(widget->metaObject()->className())
+            : widget->objectName();
+      };
+      if (!surface || !body) {
+        failFixture(QStringLiteral("component surface or settings body missing"));
+        return;
+      }
+
+      ArtifactVirtualInput virtualInput(surface, false);
+      auto *button = surface->findChild<QAbstractButton *>(buttonObjectName);
+      if (!button) {
+        failFixture(QStringLiteral("Cloner component button missing"));
+        return;
+      }
+
+      QCoreApplication::processEvents();
+      const QPoint hitPosition = button->mapTo(
+          surface, button->rect().center());
+      QWidget *rootHit = surface->childAt(hitPosition);
+      const int eventsBefore = virtualInput.deliveredEvents();
+      QString inputError;
+      bool clicked = virtualInput.press(hitPosition, Qt::LeftButton,
+                                        Qt::NoModifier, &inputError);
+      if (clicked) {
+        clicked = virtualInput.release(hitPosition, Qt::LeftButton,
+                                       Qt::NoModifier, &inputError);
+      }
+      QCoreApplication::processEvents();
+      const auto enabledProperty = layer->getProperty(propertyPath);
+      const bool enabled = enabledProperty &&
+                           enabledProperty->getValue().toBool();
+      const bool selected = button->isChecked();
+      const bool settingsVisible = !body->isHidden();
+      const int deliveredEvents =
+          virtualInput.deliveredEvents() - eventsBefore;
+      const QString receiver = virtualInput.lastButtonReceiverName();
+      const bool passed = clicked && enabled && selected && settingsVisible &&
+                          deliveredEvents >= 3 &&
+                          receiver == buttonObjectName && rootHit == button;
+      const QByteArray report =
+          QStringLiteral("%1 component=cloner enabled=%2 selected=%3 settings_visible=%4 virtual_events=%5 receiver=%6 root_hit=%7\n")
+              .arg(passed ? QStringLiteral("pass") : QStringLiteral("fail"))
+              .arg(enabled ? 1 : 0)
+              .arg(selected ? 1 : 0)
+              .arg(settingsVisible ? 1 : 0)
+              .arg(deliveredEvents)
+              .arg(receiver)
+              .arg(widgetName(rootHit))
+              .toUtf8();
+      writeResult(report);
+      qInfo().noquote() << "[LayerComponentsUiFixture] result:"
+                        << report.trimmed();
+      if (!passed) {
+        qWarning() << "[LayerComponentsUiFixture] virtual Cloner click failed"
+                   << inputError;
+        if (qEnvironmentVariableIsSet(
+                "ARTIFACT_UI_TEST_COMPONENTS_NO_WINDOW")) {
+          QCoreApplication::quit();
+        }
+        return;
+      }
+      virtualInput.hideCursor();
+      if (qEnvironmentVariableIsSet(
+              "ARTIFACT_UI_TEST_COMPONENTS_NO_WINDOW")) {
+        QCoreApplication::quit();
+      } else {
+        QTimer::singleShot(250, mw, [mw]() {
+          if (mw) captureStartupScreenshot(mw);
+        });
+      }
+    });
+  }
+
+  if (uiTestExecutable &&
       qEnvironmentVariableIsSet("ARTIFACT_UI_TEST_CONTENTS_VIEWER")) {
     QTimer::singleShot(0, mw, [mw]() {
       if (!mw) {
@@ -10037,9 +10238,10 @@ int Artifact::runApplication(int argc, char *argv[]) {
     });
   }
 
-  QTimer::singleShot(0, mw, [mw]() {
-    mw->show();
-  });
+  if (!qEnvironmentVariableIsSet(
+          "ARTIFACT_UI_TEST_COMPONENTS_NO_WINDOW")) {
+    QTimer::singleShot(0, mw, [mw]() { mw->show(); });
+  }
   std::unique_ptr<ArtifactUiControlMcpServer> uiControlMcpServer;
   if (uiControlMcpPort > 0) {
     uiControlMcpServer = std::make_unique<ArtifactUiControlMcpServer>(
