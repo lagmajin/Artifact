@@ -414,6 +414,8 @@ bool ArtifactAudioLayer::loadFromPath(const QString& path)
     impl_->sharedPcm_.reset();
     impl_->sourceSampleRate_ = 0;
     impl_->sourceChannelCount_ = 0;
+    impl_->totalFrames_ = 0;
+    impl_->duration_ = 0.0;
     impl_->deClickRanges_.clear();
     ++impl_->deClickRevision_;
     impl_->resetResampledCache();
@@ -422,15 +424,41 @@ bool ArtifactAudioLayer::loadFromPath(const QString& path)
   }
 
   if (!impl_->wav_.loadFromFile(trimmed)) {
+    ArtifactCore::AssetManager::instance().releaseSource(impl_->sourceAssetId_);
+    impl_->sourceAssetId_ = QUuid{};
+    impl_->cachedSourceVersion_ = 0;
     impl_->isLoaded_ = false;
+    impl_->sourcePath_ = templatePath;
+    impl_->sharedPcm_.reset();
+    impl_->sourceSampleRate_ = 0;
+    impl_->sourceChannelCount_ = 0;
+    impl_->totalFrames_ = 0;
+    impl_->duration_ = 0.0;
+    impl_->deClickRanges_.clear();
+    ++impl_->deClickRevision_;
+    impl_->resetResampledCache();
     qWarning() << "[AudioLayer] load failed path=" << trimmed;
+    Q_EMIT changed();
     return false;
   }
 
    const QUuid nextAssetId = ArtifactCore::AssetManager::instance().acquireSource(
        trimmed, ArtifactCore::AssetType::Audio);
    if (nextAssetId.isNull()) {
+     ArtifactCore::AssetManager::instance().releaseSource(impl_->sourceAssetId_);
+     impl_->sourceAssetId_ = QUuid{};
+     impl_->cachedSourceVersion_ = 0;
      impl_->isLoaded_ = false;
+     impl_->sourcePath_ = templatePath;
+     impl_->sharedPcm_.reset();
+     impl_->sourceSampleRate_ = 0;
+     impl_->sourceChannelCount_ = 0;
+     impl_->totalFrames_ = 0;
+     impl_->duration_ = 0.0;
+     impl_->deClickRanges_.clear();
+     ++impl_->deClickRevision_;
+     impl_->resetResampledCache();
+     Q_EMIT changed();
      return false;
    }
    ArtifactCore::AssetManager::instance().releaseSource(impl_->sourceAssetId_);
