@@ -9899,13 +9899,38 @@ int Artifact::runApplication(int argc, char *argv[]) {
         return;
       }
 
-      if (component != QStringLiteral("cloner")) {
+      const auto componentButtonName = [](const QString &name) {
+        if (name == QStringLiteral("physics"))
+          return QStringLiteral("inspectorComponentPhysicsButton");
+        if (name == QStringLiteral("script"))
+          return QStringLiteral("inspectorComponentScriptButton");
+        if (name == QStringLiteral("layout"))
+          return QStringLiteral("inspectorComponentLayoutButton");
+        if (name == QStringLiteral("cloner"))
+          return QStringLiteral("inspectorComponentClonerButton");
+        if (name == QStringLiteral("fluid"))
+          return QStringLiteral("inspectorComponentFluidButton");
+        return QString();
+      };
+      const auto componentPropertyPath = [](const QString &name) {
+        if (name == QStringLiteral("physics"))
+          return QStringLiteral("physics.enabled");
+        if (name == QStringLiteral("script"))
+          return QStringLiteral("component.script.enabled");
+        if (name == QStringLiteral("layout"))
+          return QStringLiteral("component.layout.enabled");
+        if (name == QStringLiteral("cloner"))
+          return QStringLiteral("component.cloner.enabled");
+        if (name == QStringLiteral("fluid"))
+          return QStringLiteral("component.fluid.enabled");
+        return QString();
+      };
+      const QString buttonObjectName = componentButtonName(component);
+      const QString propertyPath = componentPropertyPath(component);
+      if (buttonObjectName.isEmpty() || propertyPath.isEmpty()) {
         failFixture(QStringLiteral("unsupported component"));
         return;
       }
-      const QString buttonObjectName =
-          QStringLiteral("inspectorComponentClonerButton");
-      const QString propertyPath = QStringLiteral("component.cloner.enabled");
 
       auto &projectManager = ArtifactProjectManager::getInstance();
       if (projectManager.isProjectCreated()) {
@@ -9939,6 +9964,8 @@ int Artifact::runApplication(int argc, char *argv[]) {
         failFixture(QStringLiteral("fixture layer setup failed"));
         return;
       }
+      const auto componentGroups = layer->getComponentPropertyGroups();
+      Q_UNUSED(componentGroups);
       if (!layer->setLayerPropertyValue(propertyPath, false)) {
         failFixture(QStringLiteral("fixture component property unavailable: %1")
                         .arg(propertyPath));
@@ -9950,11 +9977,16 @@ int Artifact::runApplication(int argc, char *argv[]) {
         }
       }
 
-      if (!noWindow) {
-        mw->setDockVisible(QStringLiteral("Components"), true);
-        mw->activateDock(QStringLiteral("Components"));
+      if (noWindow) {
+        mw->setAttribute(Qt::WA_DontShowOnScreen, true);
+      }
+      mw->setDockVisible(QStringLiteral("Components"), true);
+      mw->activateDock(QStringLiteral("Components"));
+      mw->resize(1280, 800);
+      if (noWindow) {
+        mw->show();
+      } else {
         mw->showNormal();
-        mw->resize(1280, 800);
       }
 
       if (!mw->findChild<QWidget *>(
@@ -9981,13 +10013,25 @@ int Artifact::runApplication(int argc, char *argv[]) {
       ArtifactVirtualInput virtualInput(surface, false);
       auto *button = surface->findChild<QAbstractButton *>(buttonObjectName);
       if (!button) {
-        failFixture(QStringLiteral("Cloner component button missing"));
+        failFixture(QStringLiteral("component button missing: %1")
+                        .arg(buttonObjectName));
         return;
       }
 
-      QCoreApplication::processEvents();
-      const QPoint hitPosition = button->mapTo(
-          surface, button->rect().center());
+      const auto processUiUpdates = []() {
+        QElapsedTimer timer;
+        timer.start();
+        while (timer.elapsed() < 300) {
+          QCoreApplication::processEvents();
+          QThread::msleep(5);
+        }
+      };
+      processUiUpdates();
+      const auto initialProperty = layer->getProperty(propertyPath);
+      const bool enabledBeforeClick = initialProperty &&
+                                      initialProperty->getValue().toBool();
+      const QPoint hitPosition = button->mapTo(surface,
+                                               button->rect().center());
       QWidget *rootHit = surface->childAt(hitPosition);
       const int eventsBefore = virtualInput.deliveredEvents();
       QString inputError;
@@ -9997,7 +10041,7 @@ int Artifact::runApplication(int argc, char *argv[]) {
         clicked = virtualInput.release(hitPosition, Qt::LeftButton,
                                        Qt::NoModifier, &inputError);
       }
-      QCoreApplication::processEvents();
+      processUiUpdates();
       const auto enabledProperty = layer->getProperty(propertyPath);
       const bool enabled = enabledProperty &&
                            enabledProperty->getValue().toBool();
@@ -10010,8 +10054,10 @@ int Artifact::runApplication(int argc, char *argv[]) {
                           deliveredEvents >= 3 &&
                           receiver == buttonObjectName && rootHit == button;
       const QByteArray report =
-          QStringLiteral("%1 component=cloner enabled=%2 selected=%3 settings_visible=%4 virtual_events=%5 receiver=%6 root_hit=%7\n")
-              .arg(passed ? QStringLiteral("pass") : QStringLiteral("fail"))
+          QStringLiteral("%1 component=%2 enabled_before=%3 enabled=%4 selected=%5 settings_visible=%6 virtual_events=%7 receiver=%8 root_hit=%9\n")
+              .arg(passed ? QStringLiteral("pass") : QStringLiteral("fail"),
+                   component)
+              .arg(enabledBeforeClick ? 1 : 0)
               .arg(enabled ? 1 : 0)
               .arg(selected ? 1 : 0)
               .arg(settingsVisible ? 1 : 0)
@@ -10023,7 +10069,8 @@ int Artifact::runApplication(int argc, char *argv[]) {
       qInfo().noquote() << "[LayerComponentsUiFixture] result:"
                         << report.trimmed();
       if (!passed) {
-        qWarning() << "[LayerComponentsUiFixture] virtual Cloner click failed"
+        qWarning() << "[LayerComponentsUiFixture] virtual component click failed"
+                   << component
                    << inputError;
         if (qEnvironmentVariableIsSet(
                 "ARTIFACT_UI_TEST_COMPONENTS_NO_WINDOW")) {

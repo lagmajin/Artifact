@@ -1160,6 +1160,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactAbstractLayer::getComponentProp
   };
   PropertyGroup componentGroup(QStringLiteral("Components"));
   componentGroup.addProperty(makeProp(QStringLiteral("component.script.enabled"), PropertyType::Boolean, impl_->scriptComponentEnabled_, -100));
+  componentGroup.addProperty(makeProp(QStringLiteral("component.layout.enabled"), PropertyType::Boolean, impl_->layoutComponentEnabled_, -95));
   componentGroup.addProperty(makeProp(QStringLiteral("component.cloner.enabled"), PropertyType::Boolean, impl_->clonerComponentEnabled_, -90));
   componentGroup.addProperty(makeProp(QStringLiteral("component.collision.enabled"), PropertyType::Boolean, impl_->collisionComponentEnabled_, -89));
   componentGroup.addProperty(makeProp(QStringLiteral("component.collision.displayColor"), PropertyType::Color, impl_->collisionDisplayColor_, -88));

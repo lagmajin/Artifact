@@ -5448,8 +5448,16 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   impl_->layoutComponentButton = new InspectorActionButton("Layout");
   impl_->cloneComponentButton = new InspectorActionButton("Cloner");
   impl_->fluidComponentButton = new InspectorActionButton("Fluid");
+  impl_->physicsComponentButton->setObjectName(
+      QStringLiteral("inspectorComponentPhysicsButton"));
+  impl_->scriptComponentButton->setObjectName(
+      QStringLiteral("inspectorComponentScriptButton"));
+  impl_->layoutComponentButton->setObjectName(
+      QStringLiteral("inspectorComponentLayoutButton"));
   impl_->cloneComponentButton->setObjectName(
       QStringLiteral("inspectorComponentClonerButton"));
+  impl_->fluidComponentButton->setObjectName(
+      QStringLiteral("inspectorComponentFluidButton"));
   impl_->generatorComponentButton = new InspectorActionButton("+ Generator");
   impl_->removeGeneratorComponentButton = new InspectorActionButton("Remove");
   impl_->generatorMoveUpButton = new InspectorActionButton("Up");

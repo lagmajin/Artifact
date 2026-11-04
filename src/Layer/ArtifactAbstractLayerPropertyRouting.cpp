@@ -578,6 +578,11 @@ const QHash<QString, RoutedPropertyMeta>& routedPropertyMetaTable() {
         [](const ArtifactAbstractLayerImpl& i) {
           return QVariant(i.scriptComponentEnabled_);
         }}},
+      {QStringLiteral("component.layout.enabled"),
+       {PropertyType::Boolean, -95,
+        [](const ArtifactAbstractLayerImpl& i) {
+          return QVariant(i.layoutComponentEnabled_);
+        }}},
       {QStringLiteral("component.cloner.enabled"),
        {PropertyType::Boolean, -90,
         [](const ArtifactAbstractLayerImpl& i) {
