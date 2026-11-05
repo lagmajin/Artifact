@@ -83,6 +83,12 @@ ArtifactAnimatorCountPropertyEditor::ArtifactAnimatorCountPropertyEditor(
         QAction *positionAct = animateMenu->addAction(
             text(QStringLiteral("property.animator.position"),
                  QStringLiteral("Position")));
+        QAction *baselineShiftAct = animateMenu->addAction(
+            text(QStringLiteral("property.animator.baseline_shift"),
+                 QStringLiteral("Baseline Shift")));
+        QAction *anchorPointAct = animateMenu->addAction(
+            text(QStringLiteral("property.animator.anchor_point"),
+                 QStringLiteral("Anchor Point")));
         QAction *scaleAct = animateMenu->addAction(
             text(QStringLiteral("property.animator.scale"),
                  QStringLiteral("Scale")));
@@ -98,6 +104,9 @@ ArtifactAnimatorCountPropertyEditor::ArtifactAnimatorCountPropertyEditor(
         QAction *strokeColorAct = animateMenu->addAction(
             text(QStringLiteral("property.animator.stroke_color"),
                  QStringLiteral("Stroke Color")));
+        QAction *strokeWidthAct = animateMenu->addAction(
+            text(QStringLiteral("property.animator.stroke_width"),
+                 QStringLiteral("Stroke Width")));
         QAction *trackingAct = animateMenu->addAction(
             text(QStringLiteral("property.animator.tracking"),
                  QStringLiteral("Tracking")));
@@ -107,6 +116,9 @@ ArtifactAnimatorCountPropertyEditor::ArtifactAnimatorCountPropertyEditor(
         QAction *blurAct = animateMenu->addAction(
             text(QStringLiteral("property.animator.blur"),
                  QStringLiteral("Blur")));
+        QAction *zAct = animateMenu->addAction(
+            text(QStringLiteral("property.animator.z"),
+                 QStringLiteral("Z")));
         menu.addSeparator();
         QMenu *presetsMenu = menu.addMenu(
             text(QStringLiteral("property.animator.presets"),
@@ -142,14 +154,18 @@ ArtifactAnimatorCountPropertyEditor::ArtifactAnimatorCountPropertyEditor(
         QString requestId;
         if (chosen == defaultAct) requestId = QStringLiteral("default");
         else if (chosen == positionAct) requestId = QStringLiteral("property.position");
+        else if (chosen == baselineShiftAct) requestId = QStringLiteral("property.baselineShift");
+        else if (chosen == anchorPointAct) requestId = QStringLiteral("property.anchorPoint");
         else if (chosen == scaleAct) requestId = QStringLiteral("property.scale");
         else if (chosen == rotationAct) requestId = QStringLiteral("property.rotation");
         else if (chosen == opacityAct) requestId = QStringLiteral("property.opacity");
         else if (chosen == fillColorAct) requestId = QStringLiteral("property.fillColor");
         else if (chosen == strokeColorAct) requestId = QStringLiteral("property.strokeColor");
+        else if (chosen == strokeWidthAct) requestId = QStringLiteral("property.strokeWidth");
         else if (chosen == trackingAct) requestId = QStringLiteral("property.tracking");
         else if (chosen == skewAct) requestId = QStringLiteral("property.skew");
         else if (chosen == blurAct) requestId = QStringLiteral("property.blur");
+        else if (chosen == zAct) requestId = QStringLiteral("property.z");
         else if (chosen == typewriterAct) requestId = QStringLiteral("preset.1");
         else if (chosen == slideUpAct) requestId = QStringLiteral("preset.2");
         else if (chosen == scaleInAct) requestId = QStringLiteral("preset.3");
