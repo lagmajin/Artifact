@@ -186,8 +186,9 @@ public:
 
      void addAnimator();
      // Append one AE-style animator property with a visible, editable default
-     // amount. Supported ids: position, scale, rotation, opacity, fillColor,
-     // strokeColor, tracking, skew, blur.
+     // amount. Supported ids: position, baselineShift, anchorPoint, scale,
+     // rotation, opacity, fillColor, strokeColor, tracking, skew, blur,
+     // strokeWidth, z.
      bool addAnimatorProperty(const QString& propertyId);
      bool addAnimatorPreset(int presetId);
      void removeAnimator(int index);

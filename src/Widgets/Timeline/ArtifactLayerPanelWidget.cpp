@@ -5718,14 +5718,18 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       };
       const AnimatorPropertyMenuEntry animatorProperties[] = {
           {"property.animator.position", "Position", "position"},
+          {"property.animator.baseline_shift", "Baseline Shift", "baselineShift"},
+          {"property.animator.anchor_point", "Anchor Point", "anchorPoint"},
           {"property.animator.scale", "Scale", "scale"},
           {"property.animator.rotation", "Rotation", "rotation"},
           {"property.animator.opacity", "Opacity", "opacity"},
           {"property.animator.fill_color", "Fill Color", "fillColor"},
           {"property.animator.stroke_color", "Stroke Color", "strokeColor"},
+          {"property.animator.stroke_width", "Stroke Width", "strokeWidth"},
           {"property.animator.tracking", "Tracking", "tracking"},
           {"property.animator.skew", "Skew", "skew"},
-          {"property.animator.blur", "Blur", "blur"}};
+          {"property.animator.blur", "Blur", "blur"},
+          {"property.animator.z", "Z", "z"}};
       for (const auto& property : animatorProperties) {
         const QString propertyLabel =
             tt(property.translationKey, property.fallbackLabel);
