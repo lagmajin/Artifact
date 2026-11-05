@@ -4,10 +4,15 @@ module;
 #include <QByteArray>
 #include <QDebug>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QImage>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QProcess>
 #include <QRegularExpression>
+#include <QSaveFile>
 #include <QStandardPaths>
 #include <QStringList>
 #include <QThread>
@@ -875,6 +880,7 @@ namespace Artifact {
                 args << QStringLiteral("-threads") << QString::number(threadCount);
             }
             args << job.outputPath;
+            processArguments_ = args;
 
             if ((preferHardware_ || preferVulkan_) &&
                 !hardwareEncoderSlot_.tryAcquire()) {
@@ -990,6 +996,9 @@ namespace Artifact {
                 return false;
             }
 
+            ++writtenFrameCount_;
+            writtenFrameBytes_ += expectedBytes;
+
             return true;
         }
 
@@ -1016,6 +1025,22 @@ namespace Artifact {
             const QProcess::ExitStatus exitStatus = process_->exitStatus();
             const QString processOutput =
                 QString::fromUtf8(process_->readAll()).right(4096);
+            const QString diagnosticPath = qEnvironmentVariable(
+                "ARTIFACT_UI_TEST_TEXT_ANIMATION_VIDEO_ENCODER_REPORT").trimmed();
+            if (!diagnosticPath.isEmpty()) {
+                QSaveFile diagnostic(diagnosticPath);
+                if (diagnostic.open(QIODevice::WriteOnly)) {
+                    const QJsonObject object{
+                        {QStringLiteral("backend"), QStringLiteral("pipe")},
+                        {QStringLiteral("frameWrites"), writtenFrameCount_},
+                        {QStringLiteral("frameBytes"), writtenFrameBytes_},
+                        {QStringLiteral("arguments"), QJsonArray::fromStringList(processArguments_)},
+                        {QStringLiteral("processOutput"), processOutput},
+                    };
+                    diagnostic.write(QJsonDocument(object).toJson(QJsonDocument::Indented));
+                    diagnostic.commit();
+                }
+            }
             const bool success = finished &&
                                  exitStatus == QProcess::NormalExit &&
                                  exitCode == 0;
@@ -1047,6 +1072,9 @@ namespace Artifact {
         XpuHardwareEncoderSlot hardwareEncoderSlot_;
         std::unique_ptr<QProcess> process_;
         QString lastError_;
+        QStringList processArguments_;
+        qint64 writtenFrameCount_ = 0;
+        qint64 writtenFrameBytes_ = 0;
         bool preferHardware_ = false;
         bool preferVulkan_ = false;
     };

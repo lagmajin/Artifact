@@ -158,6 +158,7 @@ import Artifact.Layer.Video;
 import Artifact.Layer.Camera;
 import Artifact.Layer.Shape;
 import Artifact.Layer.Solid2D;
+import Artifact.Layer.Text;
 import Artifact.Layers.SolidImage;
 import Transform;
 import Draw;
@@ -1768,6 +1769,7 @@ import Artifact.Widgets.PerformanceHUD;
 import Artifact.Widgets.ContextShortcutHelperWidget;
 import Artifact.Widgets.Render.QueueManager;
 import Artifact.Render.Queue.Service;
+import Utils.String.UniString;
 import Core.Diagnostics.SessionLedger;
 import Core.Diagnostics.Trace;
 import Frame.Debug;
@@ -8946,6 +8948,254 @@ int Artifact::runApplication(int argc, char *argv[]) {
     });
   }
 
+  if (uiTestExecutable && qEnvironmentVariableIsSet(
+                              "ARTIFACT_UI_TEST_TEXT_ANIMATION_VIDEO")) {
+    QTimer::singleShot(0, mw, [mw, projectService]() {
+      const QString outputPath = qEnvironmentVariable(
+          "ARTIFACT_UI_TEST_TEXT_ANIMATION_VIDEO_OUTPUT").trimmed();
+      const QString resultPath = qEnvironmentVariable(
+          "ARTIFACT_UI_TEST_TEXT_ANIMATION_VIDEO_RESULT").trimmed();
+      const auto finish = [mw, resultPath](
+                              const bool passed, const QString& reason,
+                              QJsonObject details = {}) {
+        QJsonObject result;
+        for (auto it = details.constBegin(); it != details.constEnd(); ++it) {
+          result.insert(it.key(), it.value());
+        }
+        result[QStringLiteral("status")] = passed
+            ? QStringLiteral("passed") : QStringLiteral("failed");
+        result[QStringLiteral("reason")] = reason;
+        if (!resultPath.isEmpty()) {
+          QSaveFile file(resultPath);
+          if (file.open(QIODevice::WriteOnly)) {
+            file.write(QJsonDocument(result).toJson(QJsonDocument::Indented));
+            file.commit();
+          }
+        }
+        qInfo().noquote() << "[TextAnimationVideoFixture]"
+                          << (passed ? "passed:" : "failed:") << reason;
+        if (mw) mw->hide();
+        QCoreApplication::exit(passed ? 0 : 1);
+      };
+      if (!mw || !projectService || outputPath.isEmpty() || resultPath.isEmpty()) {
+        finish(false, QStringLiteral("fixture services or output paths are missing"));
+        return;
+      }
+
+      auto& projectManager = ArtifactProjectManager::getInstance();
+      if (projectManager.isProjectCreated()) {
+        finish(false, QStringLiteral("refusing to replace an existing project"));
+        return;
+      }
+      projectManager.createProject(
+          QStringLiteral("TextAnimationVideoFixture_%1")
+              .arg(QCoreApplication::applicationPid()), false);
+      if (!projectManager.isProjectCreated()) {
+        finish(false, QStringLiteral("temporary project creation failed"));
+        return;
+      }
+
+      const ArtifactCore::FloatColor background(0.025f, 0.035f, 0.06f, 1.0f);
+      ArtifactCompositionInitParams compositionParams(
+          ArtifactCore::UniString(QStringLiteral("Text animation export")),
+          background);
+      compositionParams.setResolution(960, 540);
+      compositionParams.setFrameRate(12.0);
+      compositionParams.setDurationSeconds(2.0);
+      projectService->createComposition(compositionParams);
+      const auto composition = projectService->currentComposition().lock();
+      if (!composition) {
+        finish(false, QStringLiteral("composition creation failed"));
+        return;
+      }
+      composition->setFrameRange(ArtifactCore::FrameRange(0, 24));
+
+      ArtifactTextLayerInitParams textParams(QStringLiteral("Complex script title"));
+      projectService->addLayerToCurrentComposition(textParams);
+      const auto textLayer = ArtifactCore::dynamicPointerCast<ArtifactTextLayer>(
+          composition->frontMostLayer());
+      if (!textLayer) {
+        finish(false, QStringLiteral("text layer creation failed"));
+        return;
+      }
+      textLayer->setText(ArtifactCore::UniString(QStringLiteral(
+          "<p>office ffi</p><p>日本語 العربية עברית</p>"
+          "<p>नमस्ते 👩🏽‍🚀</p>")));
+      textLayer->setFontSize(40.0f);
+      textLayer->setTextColor(ArtifactCore::FloatColor(0.94f, 0.97f, 1.0f, 1.0f));
+      textLayer->setLayoutMode(TextLayoutMode::Box);
+      textLayer->setMaxWidth(900.0f);
+      textLayer->setBoxHeight(450.0f);
+      textLayer->setPosition3D({0.0f, 0.0f, 0.0f});
+
+      const auto configureAnimator = [
+          &textLayer](const QString& propertyId, const int index,
+                      const QString& expression) {
+        if (!textLayer->addAnimatorProperty(propertyId)) return false;
+        const QString prefix = QStringLiteral("text.animators.%1.").arg(index);
+        return textLayer->setLayerPropertyValue(
+                   prefix + QStringLiteral("expression"), expression) &&
+               textLayer->setLayerPropertyValue(
+                   prefix + QStringLiteral("expressionEnabled"), true);
+      };
+      const auto setAnimatorValue = [&textLayer](const int index,
+                                                  const QString& property,
+                                                  const QVariant& value) {
+        return textLayer->setLayerPropertyValue(
+            QStringLiteral("text.animators.%1.%2").arg(index).arg(property),
+            value);
+      };
+      const QString perGlyphMotion = QStringLiteral(
+          "0.55 + 0.45 * (0.5 + 0.5 * sin(time * 6.2831853 + textIndex * 0.73))");
+      const bool animatorsConfigured =
+          configureAnimator(QStringLiteral("position"), 0, perGlyphMotion) &&
+          setAnimatorValue(0, QStringLiteral("positionX"), 12.0) &&
+          setAnimatorValue(0, QStringLiteral("positionY"), 8.0) &&
+          setAnimatorValue(0, QStringLiteral("units"), 2) &&
+          setAnimatorValue(0, QStringLiteral("shape"), 5) &&
+          setAnimatorValue(0, QStringLiteral("order"), 3) &&
+          setAnimatorValue(0, QStringLiteral("anchorGrouping"), 1) &&
+          configureAnimator(QStringLiteral("rotation"), 1, perGlyphMotion) &&
+          setAnimatorValue(1, QStringLiteral("rotation"), 10.0) &&
+          setAnimatorValue(1, QStringLiteral("units"), 2) &&
+          setAnimatorValue(1, QStringLiteral("shape"), 3) &&
+          setAnimatorValue(1, QStringLiteral("wigglyEnabled"), true) &&
+          setAnimatorValue(1, QStringLiteral("wigglesPerSecond"), 1.7) &&
+          setAnimatorValue(1, QStringLiteral("correlation"), 58.0) &&
+          setAnimatorValue(1, QStringLiteral("phase"), 0.25) &&
+          setAnimatorValue(1, QStringLiteral("seed"), 17) &&
+          configureAnimator(QStringLiteral("opacity"), 2, perGlyphMotion) &&
+          setAnimatorValue(2, QStringLiteral("opacity"), 0.55) &&
+          setAnimatorValue(2, QStringLiteral("regexEnabled"), true) &&
+          setAnimatorValue(2, QStringLiteral("selectorPattern"),
+                           QStringLiteral("[A-Za-z]")) &&
+          textLayer->addAnimatorProperty(QStringLiteral("scale")) &&
+          setAnimatorValue(3, QStringLiteral("scale"), 1.12) &&
+          setAnimatorValue(3, QStringLiteral("units"), 3) &&
+          setAnimatorValue(3, QStringLiteral("shape"), 5) &&
+          setAnimatorValue(3, QStringLiteral("order"), 1) &&
+          setAnimatorValue(3, QStringLiteral("anchorGrouping"), 3) &&
+          setAnimatorValue(3, QStringLiteral("wigglyEnabled"), true) &&
+          setAnimatorValue(3, QStringLiteral("wigglesPerSecond"), 0.85) &&
+          setAnimatorValue(3, QStringLiteral("correlation"), 82.0) &&
+          setAnimatorValue(3, QStringLiteral("seed"), 29) &&
+          textLayer->addAnimatorProperty(QStringLiteral("tracking")) &&
+          setAnimatorValue(4, QStringLiteral("tracking"), 1.5) &&
+          setAnimatorValue(4, QStringLiteral("units"), 4) &&
+          setAnimatorValue(4, QStringLiteral("order"), 2) &&
+          setAnimatorValue(4, QStringLiteral("anchorGrouping"), 2) &&
+          setAnimatorValue(4, QStringLiteral("expressionEnabled"), true) &&
+          setAnimatorValue(4, QStringLiteral("expression"),
+                           QStringLiteral(
+                               "0.5 + 0.5 * sin(time * 3.14159265 + textIndex * 0.37)")) &&
+          textLayer->addAnimatorProperty(QStringLiteral("skew")) &&
+          setAnimatorValue(5, QStringLiteral("skew"), 3.0) &&
+          setAnimatorValue(5, QStringLiteral("units"), 2) &&
+          setAnimatorValue(5, QStringLiteral("shape"), 1) &&
+          setAnimatorValue(5, QStringLiteral("wigglyEnabled"), true) &&
+          setAnimatorValue(5, QStringLiteral("wigglesPerSecond"), 1.1) &&
+          setAnimatorValue(5, QStringLiteral("correlation"), 70.0) &&
+          setAnimatorValue(5, QStringLiteral("seed"), 43);
+      if (!animatorsConfigured) {
+        finish(false, QStringLiteral("text animator configuration failed"));
+        return;
+      }
+      textLayer->updateImage();
+      const QJsonArray animationStack{
+          QStringLiteral("position"), QStringLiteral("rotation"),
+          QStringLiteral("opacity"), QStringLiteral("scale"),
+          QStringLiteral("tracking"), QStringLiteral("skew")};
+      const QJsonObject fixtureDetails{
+          {QStringLiteral("animator_count"), textLayer->animatorCount()},
+          {QStringLiteral("animation_stack"), animationStack},
+          {QStringLiteral("selector_overview"),
+           textLayer->selectorOverviewSummary()},
+          {QStringLiteral("selector_boundaries"),
+           textLayer->selectorBoundarySummary()}};
+
+      auto* queueService = ArtifactRenderQueueService::instance();
+      if (!queueService) {
+        finish(false, QStringLiteral("render queue service unavailable"));
+        return;
+      }
+      queueService->removeAllRenderQueues();
+      queueService->addRenderQueueForComposition(
+          composition->id(), QStringLiteral("Text animation video test"));
+      const int jobIndex = queueService->jobCount() - 1;
+      if (jobIndex < 0) {
+        finish(false, QStringLiteral("render queue job creation failed"));
+        return;
+      }
+      queueService->setJobNameAt(jobIndex,
+                                 QStringLiteral("Complex script animation"));
+      queueService->setJobOutputPathAt(jobIndex, outputPath);
+      queueService->setJobTimeoutMsAt(jobIndex, 180000);
+      queueService->setJobFrameTimeoutMsAt(jobIndex, 30000);
+      queueService->setJobOutputSettingsAt(
+          jobIndex, QStringLiteral("MP4"), QStringLiteral("H.264"),
+          QStringLiteral("high"), 640, 360, 12.0, 1200);
+      queueService->setJobRenderBackendAt(
+          jobIndex, qEnvironmentVariable(
+                        "ARTIFACT_UI_TEST_TEXT_ANIMATION_VIDEO_BACKEND",
+                        QStringLiteral("gpu")));
+      queueService->setJobEncoderBackendAt(
+          jobIndex, qEnvironmentVariable(
+                        "ARTIFACT_UI_TEST_TEXT_ANIMATION_VIDEO_ENCODER",
+                        QStringLiteral("auto")));
+      if (!queueService->setJobSelectiveSettingsAt(
+              jobIndex,
+              {{QStringLiteral("frameRangeMode"), 2},
+               {QStringLiteral("resolutionPreset"), 0}})) {
+        finish(false, QStringLiteral("custom frame range mode could not be set"));
+        return;
+      }
+      queueService->setJobFrameRangeAt(jobIndex, 0, 24);
+      int configuredStartFrame = -1;
+      int configuredEndFrame = -1;
+      queueService->jobFrameRangeAt(jobIndex, &configuredStartFrame,
+                                    &configuredEndFrame);
+      const auto configuredRangeMode = queueService->jobSelectiveSettingsAt(
+          jobIndex).value(QStringLiteral("frameRangeMode")).toInt();
+      qWarning() << "[TextAnimationVideoFixture] configured range"
+                 << configuredStartFrame << configuredEndFrame
+                 << "mode=" << configuredRangeMode;
+      if (configuredStartFrame != 0 || configuredEndFrame != 24 ||
+          configuredRangeMode != 2) {
+        finish(false, QStringLiteral("custom 24-frame range was not retained"));
+        return;
+      }
+      queueService->setAllJobsCompletedCallback(
+          [queueService, jobIndex, outputPath, finish,
+           fixtureDetails]() {
+            const QString status = queueService->jobStatusAt(jobIndex);
+            const QFileInfo outputInfo(outputPath);
+            const bool passed = status == QStringLiteral("Completed") &&
+                                outputInfo.isFile() && outputInfo.size() > 0;
+            finish(passed,
+                   passed ? QStringLiteral("render queue produced an MP4")
+                          : QStringLiteral("render queue %1: %2")
+                                .arg(status,
+                                     queueService->jobErrorMessageAt(jobIndex)),
+                   fixtureDetails);
+          });
+      QTimer::singleShot(240000, mw,
+                         [queueService, jobIndex, finish]() {
+        const QString status = queueService->jobStatusAt(jobIndex);
+        if (status == QStringLiteral("Completed")) return;
+        if (status == QStringLiteral("Pending") ||
+            status == QStringLiteral("Rendering")) {
+          queueService->cancelRenderQueueAt(jobIndex);
+        }
+        finish(false, QStringLiteral("render queue watchdog expired: %1")
+                          .arg(status));
+      });
+      mw->hide();
+      queueService->startRenderQueueAt(jobIndex);
+      qInfo() << "[TextAnimationVideoFixture] rendering 24 frames to"
+              << outputPath;
+    });
+  }
+
   if (uiTestExecutable &&
       qEnvironmentVariableIsSet("ARTIFACT_UI_TEST_CLONER")) {
     QTimer::singleShot(0, mw, [mw, projectService, compositionEditor]() {
@@ -10286,7 +10536,9 @@ int Artifact::runApplication(int argc, char *argv[]) {
   }
 
   if (!qEnvironmentVariableIsSet(
-          "ARTIFACT_UI_TEST_COMPONENTS_NO_WINDOW")) {
+          "ARTIFACT_UI_TEST_COMPONENTS_NO_WINDOW") &&
+      !qEnvironmentVariableIsSet(
+          "ARTIFACT_UI_TEST_TEXT_ANIMATION_VIDEO")) {
     QTimer::singleShot(0, mw, [mw]() { mw->show(); });
   }
   std::unique_ptr<ArtifactUiControlMcpServer> uiControlMcpServer;

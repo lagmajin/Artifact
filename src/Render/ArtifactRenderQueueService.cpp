@@ -8819,6 +8819,17 @@ namespace Artifact
                     << "size=" << qimg.size()
                     << "pipeline=off";
                 const bool encodeOk = videoBackend->addFrame(qimg, f, &failureReason);
+                if (qEnvironmentVariableIsSet(
+                        "ARTIFACT_UI_TEST_TEXT_ANIMATION_VIDEO")) {
+                    const QString reportPath = qEnvironmentVariable(
+                        "ARTIFACT_UI_TEST_TEXT_ANIMATION_VIDEO_FRAME_LOG").trimmed();
+                    if (!reportPath.isEmpty()) {
+                        QFile frameLog(reportPath);
+                        if (frameLog.open(QIODevice::WriteOnly | QIODevice::Append)) {
+                            frameLog.write(QByteArray::number(f) + '\n');
+                        }
+                    }
+                }
                 if (!encodeOk) {
                     qWarning() << "[EncodeSession][Frame] encoder rejected frame"
                                << "job=" << jobIndex
@@ -9406,6 +9417,33 @@ namespace Artifact
                     endF = std::clamp(endF, minimumEnd, maximumEnd);
                 }
                 const int totalFrames = std::max(1, endF - startF);
+                if (qEnvironmentVariableIsSet(
+                        "ARTIFACT_UI_TEST_TEXT_ANIMATION_VIDEO")) {
+                    qWarning() << "[TextAnimationVideoFixture] resolved render range"
+                               << "job=" << i << "mode="
+                               << static_cast<int>(job.frameRangeMode)
+                               << "stored=" << job.startFrame << job.endFrame
+                               << "resolved=" << startF << endF
+                               << "total=" << totalFrames;
+                    const QString reportPath = qEnvironmentVariable(
+                        "ARTIFACT_UI_TEST_TEXT_ANIMATION_VIDEO_RANGE_REPORT").trimmed();
+                    if (!reportPath.isEmpty()) {
+                        QSaveFile reportFile(reportPath);
+                        if (reportFile.open(QIODevice::WriteOnly)) {
+                            const QJsonObject report{
+                                {QStringLiteral("jobIndex"), i},
+                                {QStringLiteral("mode"), static_cast<int>(job.frameRangeMode)},
+                                {QStringLiteral("storedStart"), job.startFrame},
+                                {QStringLiteral("storedEnd"), job.endFrame},
+                                {QStringLiteral("resolvedStart"), startF},
+                                {QStringLiteral("resolvedEnd"), endF},
+                                {QStringLiteral("totalFrames"), totalFrames},
+                            };
+                            reportFile.write(QJsonDocument(report).toJson());
+                            reportFile.commit();
+                        }
+                    }
+                }
                 ArtifactRenderJob effectiveJob = job;
                 effectiveJob.startFrame = startF;
                 effectiveJob.endFrame = endF;
