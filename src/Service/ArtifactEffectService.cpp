@@ -638,6 +638,13 @@ W_OBJECT_IMPL(ArtifactEffectService)
    effect->setDisplayName(QStringLiteral("Glow"));
    return effect;
   }
+  if (effectId == QStringLiteral("still_light_leak") ||
+      effectId == QStringLiteral("light_leak")) {
+   auto effect = std::make_unique<StillLightLeakEffect>();
+   effect->setEffectID(UniString::fromQString(QStringLiteral("still_light_leak")));
+   effect->setDisplayName(QStringLiteral("Still Light Leak"));
+   return effect;
+  }
   if (effectId == QStringLiteral("edge_bloom") ||
       effectId == QStringLiteral("effect.glow.edgebloom")) {
    auto effect = std::make_unique<EdgeBloomEffect>();
@@ -1286,6 +1293,7 @@ W_OBJECT_IMPL(ArtifactEffectService)
   effects.push_back({EffectID("builtin.atmospheric_depth"), "Atmospheric Depth"});
   effects.push_back({EffectID("builtin.edge_color_composite"), "Edge Color Composite"});
   effects.push_back({EffectID("edge_bloom"), "Edge Bloom"});
+  effects.push_back({EffectID("still_light_leak"), "Still Light Leak"});
   effects.push_back({EffectID("chromatic_glow"), "Chromatic Glow"});
   effects.push_back({EffectID("reactive_glow"), "Reactive Glow"});
   effects.push_back({EffectID("liquid_glow"), "Liquid Glow"});

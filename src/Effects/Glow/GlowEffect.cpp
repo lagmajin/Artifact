@@ -30,6 +30,8 @@ import Property.Abstract;
 import Utils.String.UniString;
 import Memory.SharedPtr;
 import ArtifactCore.ImageProcessing.VolumetricShine;
+import Image.SurfacePixelConversion;
+import Glow;
 
 namespace Artifact {
 
@@ -98,6 +100,66 @@ public:
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override;
     void applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override;
+};
+
+class StillLightLeakCPUImpl : public ArtifactEffectImplBase {
+public:
+    float look_ = 0.0f;
+    float strength_ = 0.55f;
+    float streakSourceX_ = 0.01f;
+    float streakSourceY_ = 0.105f;
+    float streakAngleDegrees_ = 2.5783101f;
+    float alphaPolicy_ = 0.0f;
+    ArtifactCore::SurfacePixelBuffer linearPremultipliedInput_;
+    ArtifactCore::SurfacePixelBuffer hostDescriptorOutput_;
+    cv::Mat linearPremultipliedResult_;
+
+    void applyCPU(const ImageF32x4RGBAWithCache& src,
+                  ImageF32x4RGBAWithCache& dst) override {
+        const auto& image = src.image();
+        ArtifactCore::convertSurfacePixelsInto(
+            linearPremultipliedInput_, image.rgba32fData(), image.rgba8Data(),
+            image.width(), image.height(), image.colorDescriptor(),
+            ArtifactCore::SurfacePixelTarget::Rgba32LinearPremultiplied);
+        if (!linearPremultipliedInput_.isValid()) {
+            dst = src;
+            return;
+        }
+
+        cv::Mat source(image.height(), image.width(), CV_32FC4,
+                       linearPremultipliedInput_.bytes.data());
+        linearPremultipliedResult_.create(image.height(), image.width(), CV_32FC4);
+        ArtifactCore::LightLeakParameters parameters;
+        parameters.look = static_cast<ArtifactCore::LightLeakLook>(
+            std::clamp(static_cast<int>(look_ + 0.5f), 0, 2));
+        parameters.strength = strength_;
+        parameters.streakSourceX = streakSourceX_;
+        parameters.streakSourceY = streakSourceY_;
+        parameters.streakAngleDegrees = streakAngleDegrees_;
+        parameters.alphaPolicy = static_cast<ArtifactCore::LightLeakAlphaPolicy>(
+            std::clamp(static_cast<int>(alphaPolicy_ + 0.5f), 0, 2));
+        if (!ArtifactCore::applyStillLightLeak(source, linearPremultipliedResult_, parameters)) {
+            dst = src;
+            return;
+        }
+
+        auto outputDescriptor = image.colorDescriptor();
+        outputDescriptor.storage = ArtifactCore::SurfacePixelStorage::RGBA32Float;
+        outputDescriptor.channelOrder = ArtifactCore::SurfaceChannelOrder::BGRA;
+        if (!ArtifactCore::convertSurfacePixelsToDescriptorInto(
+                hostDescriptorOutput_, linearPremultipliedResult_.ptr<float>(), nullptr,
+                image.width(), image.height(),
+                ArtifactCore::SurfaceColorDescriptor::canonicalLinearPremultiplied(),
+                outputDescriptor) ||
+            !hostDescriptorOutput_.isValid()) {
+            dst = src;
+            return;
+        }
+
+        dst.image().setFromBGRA32F(
+            reinterpret_cast<const float*>(hostDescriptorOutput_.bytes.data()),
+            image.width(), image.height(), outputDescriptor);
+    }
 };
 
 namespace {
@@ -289,6 +351,106 @@ void main(uint3 dtid : SV_DispatchThreadID) {
     float3 contribution = accum / max(alphaSum, 0.0001f);
     float3 result = g_P6 > 0.5f ? contribution : center.rgb + contribution;
     g_OutputTexture[dtid.xy] = (float4(saturate(result), center.a)).bgra;
+}
+)";
+
+// Analytic one-pass variant of ArtifactCore::applyStillLightLeak. P0 selects
+// the look; P1 is strength; P2 is alpha policy; P3/P4 are streak source coordinates;
+// P5 is streak angle in degrees.
+static constexpr const char* kStillLightLeakResidentHlsl = R"(
+Texture2D<float4> g_InputTexture : register(t0);
+RWTexture2D<float4> g_OutputTexture : register(u0);
+
+float3 lightLeakField(float2 uv)
+{
+    if (g_P0 < 0.5)
+    {
+        float topLeft = exp(-((uv.x / 0.34) * (uv.x / 0.34) +
+                              (uv.y / 0.82) * (uv.y / 0.82)) * 1.7);
+        float topEdge = exp(-((uv.y / 0.19) * (uv.y / 0.19) +
+                              ((uv.x - 0.24) / 0.56) * ((uv.x - 0.24) / 0.56)) * 1.5);
+        float sideX = (1.0 - uv.x) / 0.16;
+        float sideY = (uv.y - 0.23) / 0.58;
+        float side = exp(-(sideX * sideX + sideY * sideY) * 1.4);
+        float warm = topLeft * 0.85 + topEdge * 0.46;
+        return float3(warm * 0.80 + side * 0.12,
+                      warm * 0.36 + side * 0.12,
+                      warm * 0.10 + side * 0.32);
+    }
+
+    if (g_P0 >= 1.5)
+    {
+        float edge = exp(-pow((1.0 - uv.y) / 0.30, 2.0));
+        float pooling = 0.30 + 0.70 * sin(6.2831853 * (uv.x * 0.72 + 0.08));
+        float amber = edge * pooling * 0.50;
+        float2 d0 = (uv - float2(0.91, 0.78)) / float2(0.23, 0.30);
+        float2 d1 = (uv - float2(0.60, 0.98)) / float2(0.33, 0.12);
+        float2 d2 = (uv - float2(0.06, 0.66)) / float2(0.12, 0.36);
+        amber += 0.65 * exp(-0.5 * dot(d0, d0)) +
+                 0.40 * exp(-0.5 * dot(d1, d1)) +
+                 0.42 * exp(-0.5 * dot(d2, d2));
+        float2 m0 = (uv - float2(0.06, 0.48)) / float2(0.20, 0.34);
+        float2 m1 = (uv - float2(0.28, 0.92)) / float2(0.25, 0.13);
+        float magenta = 0.70 * exp(-0.5 * dot(m0, m0)) +
+                        0.18 * exp(-0.5 * dot(m1, m1));
+        float2 b0 = (uv - float2(0.98, 0.38)) / float2(0.08, 0.27);
+        float blue = 0.35 * exp(-0.5 * dot(b0, b0));
+        return float3(amber * 0.92 + magenta * 0.46,
+                      amber * 0.48 + magenta * 0.16 + blue * 0.10,
+                      amber * 0.20 + magenta * 0.58 + blue * 0.48);
+    }
+
+    const float theta = radians(clamp(g_P5, -45.0, 45.0));
+    float2 sourcePosition = float2(saturate(g_P3), saturate(g_P4));
+    float2 d = float2(uv.x - sourcePosition.x + 0.03,
+                      uv.y - sourcePosition.y);
+    float along = cos(theta) * d.x + sin(theta) * d.y;
+    float across = -sin(theta) * d.x + cos(theta) * d.y;
+    float alongTerm = (along / 0.78) * (along / 0.78);
+    float beam = exp(-0.5 * (alongTerm + (across / 0.018) * (across / 0.018)));
+    float2 sourceDelta = float2((uv.x - sourcePosition.x) / 0.11,
+                                (uv.y - sourcePosition.y) / 0.15);
+    float source = exp(-0.5 * dot(sourceDelta, sourceDelta));
+    float redAcross = (across + 0.008) / 0.022;
+    float redStreak = exp(-0.5 * (alongTerm + redAcross * redAcross));
+    float blueAcross = (across - 0.010) / 0.026;
+    float blueStreak = exp(-0.5 * (alongTerm + blueAcross * blueAcross));
+    return float3(beam * 0.86 + redStreak * 0.30 + source * 0.86,
+                  beam * 0.68 + source * 0.58,
+                  beam * 0.50 + blueStreak * 0.38 + source * 0.38);
+}
+
+[numthreads(8, 8, 1)]
+void main(uint3 id : SV_DispatchThreadID)
+{
+    uint width, height;
+    g_OutputTexture.GetDimensions(width, height);
+    if (id.x >= width || id.y >= height) return;
+
+    float2 uv = float2(id.x, id.y) / float2(max(width - 1, 1), max(height - 1, 1));
+    if (g_P0 >= 0.5 && g_P0 < 1.5)
+        uv = float2(id.x, id.y) / float2(max(width, 1), max(height, 1));
+    float4 base = (g_InputTexture[id.xy]).bgra;
+    float alpha = saturate(base.a);
+    float3 straightBase = alpha > 1.0e-6 ? base.rgb / alpha : 0.0;
+    float3 leak = max(lightLeakField(uv), 0.0);
+    float screenAmount = g_P0 >= 1.5 ? 0.34 : 0.8;
+    float3 straightResult = 1.0 - (1.0 - straightBase) *
+                            exp(-leak * (screenAmount * max(g_P1, 0.0)));
+    float3 delta = max(straightResult - straightBase, 0.0);
+
+    float outputAlpha = alpha;
+    float3 outputRgb = straightResult * alpha;
+    if (g_P2 >= 0.5 && g_P2 < 1.5)
+        outputRgb = (straightBase + delta * alpha) * alpha;
+    else if (g_P2 >= 1.5)
+    {
+        float leakLuma = dot(delta, float3(0.2126, 0.7152, 0.0722));
+        float coverage = min(0.82, 1.0 - exp(-1.1 * leakLuma));
+        outputAlpha = alpha + (1.0 - alpha) * coverage;
+        outputRgb = straightResult * outputAlpha;
+    }
+    g_OutputTexture[id.xy] = float4(outputRgb, outputAlpha).bgra;
 }
 )";
 
@@ -795,6 +957,123 @@ EffectROIHint GlowEffect::roiHint() const {
         .expansionPixels = sigmaMax * 3.0f,
         .requiresFullFrame = false
     };
+}
+
+class StillLightLeakEffect::Impl {
+public:
+    ArtifactCore::SharedPtr<StillLightLeakCPUImpl> cpuImpl_;
+
+    Impl() : cpuImpl_(ArtifactCore::makeShared<StillLightLeakCPUImpl>()) {}
+};
+
+StillLightLeakEffect::StillLightLeakEffect() : impl_(new Impl()) {
+    setEffectID(ArtifactCore::UniString("still_light_leak"));
+    setDisplayName(ArtifactCore::UniString("Still Light Leak"));
+    setPipelineStage(EffectPipelineStage::Rasterizer);
+    setCPUImpl(impl_->cpuImpl_);
+    setComputeMode(ComputeMode::AUTO);
+    registerGpuGenericShader(
+        StillLightLeakEffect::kGpuGenericKey,
+        GpuGenericShaderRecord{
+            kStillLightLeakResidentHlsl, "main", GpuGenericResourceKind::Filter});
+}
+
+StillLightLeakEffect::~StillLightLeakEffect() {
+    delete impl_;
+}
+
+void StillLightLeakEffect::syncImpls() {
+    if (impl_ && impl_->cpuImpl_) {
+        impl_->cpuImpl_->look_ = look_;
+        impl_->cpuImpl_->strength_ = strength_;
+        impl_->cpuImpl_->streakSourceX_ = streakSourceX_;
+        impl_->cpuImpl_->streakSourceY_ = streakSourceY_;
+        impl_->cpuImpl_->streakAngleDegrees_ = streakAngleDegrees_;
+        impl_->cpuImpl_->alphaPolicy_ = alphaPolicy_;
+    }
+}
+
+std::vector<ArtifactCore::AbstractProperty> StillLightLeakEffect::getProperties() const {
+    std::vector<ArtifactCore::AbstractProperty> properties;
+    properties.reserve(6);
+
+    auto& look = properties.emplace_back();
+    look.setName("Look");
+    look.setDisplayLabel(QStringLiteral("Look (0 Edge Wash, 1 Streak, 2 Organic)"));
+    look.setType(ArtifactCore::PropertyType::Integer);
+    look.setValue(static_cast<int>(look_));
+    look.setMinValue(QVariant(0));
+    look.setMaxValue(QVariant(2));
+    look.setStep(1);
+    look.setTooltip(QStringLiteral("Choose the broad edge wash or anamorphic streak field."));
+
+    auto& strength = properties.emplace_back();
+    strength.setName("Strength");
+    strength.setDisplayLabel(QStringLiteral("Strength"));
+    strength.setType(ArtifactCore::PropertyType::Float);
+    strength.setValue(strength_);
+    strength.setMinValue(QVariant(0.0));
+    strength.setMaxValue(QVariant(4.0));
+    strength.setStep(0.01);
+
+    auto& sourceX = properties.emplace_back();
+    sourceX.setName("Streak Source X");
+    sourceX.setDisplayLabel(QStringLiteral("Streak Source X"));
+    sourceX.setType(ArtifactCore::PropertyType::Float);
+    sourceX.setValue(streakSourceX_);
+    sourceX.setMinValue(QVariant(0.0));
+    sourceX.setMaxValue(QVariant(1.0));
+    sourceX.setStep(0.01);
+    sourceX.setTooltip(QStringLiteral("Normalized horizontal source position for the anamorphic streak look."));
+
+    auto& sourceY = properties.emplace_back();
+    sourceY.setName("Streak Source Y");
+    sourceY.setDisplayLabel(QStringLiteral("Streak Source Y"));
+    sourceY.setType(ArtifactCore::PropertyType::Float);
+    sourceY.setValue(streakSourceY_);
+    sourceY.setMinValue(QVariant(0.0));
+    sourceY.setMaxValue(QVariant(1.0));
+    sourceY.setStep(0.01);
+    sourceY.setTooltip(QStringLiteral("Normalized vertical source position for the anamorphic streak look."));
+
+    auto& angle = properties.emplace_back();
+    angle.setName("Streak Angle");
+    angle.setDisplayLabel(QStringLiteral("Streak Angle"));
+    angle.setType(ArtifactCore::PropertyType::Float);
+    angle.setValue(streakAngleDegrees_);
+    angle.setMinValue(QVariant(-45.0));
+    angle.setMaxValue(QVariant(45.0));
+    angle.setStep(0.1);
+    angle.setTooltip(QStringLiteral("Angle in degrees for the anamorphic streak axis."));
+
+    auto& alpha = properties.emplace_back();
+    alpha.setName("Alpha Policy");
+    alpha.setDisplayLabel(QStringLiteral("Alpha Policy (0 Preserve, 1 Clip, 2 Expand)"));
+    alpha.setType(ArtifactCore::PropertyType::Integer);
+    alpha.setValue(static_cast<int>(alphaPolicy_));
+    alpha.setMinValue(QVariant(0));
+    alpha.setMaxValue(QVariant(2));
+    alpha.setStep(1);
+    alpha.setTooltip(QStringLiteral("Preserve source coverage, restrict leak to the source matte, or let the leak expand coverage."));
+    return properties;
+}
+
+void StillLightLeakEffect::setPropertyValue(
+    const ArtifactCore::UniString& name, const QVariant& value) {
+    const QString propertyName = name.toQString();
+    if (propertyName == QStringLiteral("Look")) {
+        setLook(static_cast<Look>(value.toInt()));
+    } else if (propertyName == QStringLiteral("Strength")) {
+        setStrength(static_cast<float>(value.toDouble()));
+    } else if (propertyName == QStringLiteral("Streak Source X")) {
+        setStreakSourceX(static_cast<float>(value.toDouble()));
+    } else if (propertyName == QStringLiteral("Streak Source Y")) {
+        setStreakSourceY(static_cast<float>(value.toDouble()));
+    } else if (propertyName == QStringLiteral("Streak Angle")) {
+        setStreakAngleDegrees(static_cast<float>(value.toDouble()));
+    } else if (propertyName == QStringLiteral("Alpha Policy")) {
+        setAlphaPolicy(static_cast<AlphaPolicy>(value.toInt()));
+    }
 }
 
 class OpticalGlowEffect::Impl {

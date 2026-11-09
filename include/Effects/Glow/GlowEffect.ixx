@@ -123,6 +123,119 @@ public:
     EffectROIHint roiHint() const override;
 };
 
+class StillLightLeakEffect : public ArtifactAbstractEffect {
+private:
+    class Impl;
+    Impl* impl_;
+    std::uint8_t look_ = 0;
+    float strength_ = 0.55f;
+    float streakSourceX_ = 0.01f;
+    float streakSourceY_ = 0.105f;
+    float streakAngleDegrees_ = 2.5783101f;
+    std::uint8_t alphaPolicy_ = 0;
+
+    void syncImpls();
+
+public:
+    static constexpr const char* kGpuGenericKeyString = "still_light_leak";
+    static constexpr std::uint32_t kGpuGenericKey =
+        gpuGenericKeyFromString(kGpuGenericKeyString);
+
+    StillLightLeakEffect();
+    ~StillLightLeakEffect() override;
+    StillLightLeakEffect(const StillLightLeakEffect&) = delete;
+    StillLightLeakEffect& operator=(const StillLightLeakEffect&) = delete;
+    StillLightLeakEffect(StillLightLeakEffect&&) = delete;
+    StillLightLeakEffect& operator=(StillLightLeakEffect&&) = delete;
+
+    enum class Look : std::uint8_t {
+        EdgeWash = 0,
+        AnamorphicStreak = 1,
+        OrganicGateLeak = 2,
+    };
+    enum class AlphaPolicy : std::uint8_t {
+        PreserveSourceCoverage = 0,
+        ClipLeakToSourceCoverage = 1,
+        ExpandFromLeakEnergy = 2,
+    };
+
+    Look look() const { return static_cast<Look>(look_); }
+    void setLook(Look value) {
+        switch (value) {
+        case Look::EdgeWash:
+        case Look::AnamorphicStreak:
+        case Look::OrganicGateLeak:
+            look_ = static_cast<std::uint8_t>(value);
+            break;
+        default:
+            look_ = static_cast<std::uint8_t>(Look::EdgeWash);
+            break;
+        }
+        syncImpls();
+    }
+
+    float strength() const { return strength_; }
+    void setStrength(float value) {
+        strength_ = std::isfinite(value) ? std::clamp(value, 0.0f, 4.0f) : 0.55f;
+        syncImpls();
+    }
+
+    float streakSourceX() const { return streakSourceX_; }
+    void setStreakSourceX(float value) {
+        streakSourceX_ = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 0.01f;
+        syncImpls();
+    }
+
+    float streakSourceY() const { return streakSourceY_; }
+    void setStreakSourceY(float value) {
+        streakSourceY_ = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 0.105f;
+        syncImpls();
+    }
+
+    float streakAngleDegrees() const { return streakAngleDegrees_; }
+    void setStreakAngleDegrees(float value) {
+        streakAngleDegrees_ = std::isfinite(value)
+            ? std::clamp(value, -45.0f, 45.0f) : 2.5783101f;
+        syncImpls();
+    }
+
+    AlphaPolicy alphaPolicy() const { return static_cast<AlphaPolicy>(alphaPolicy_); }
+    void setAlphaPolicy(AlphaPolicy value) {
+        switch (value) {
+        case AlphaPolicy::PreserveSourceCoverage:
+        case AlphaPolicy::ClipLeakToSourceCoverage:
+        case AlphaPolicy::ExpandFromLeakEnergy:
+            alphaPolicy_ = static_cast<std::uint8_t>(value);
+            break;
+        default:
+            alphaPolicy_ = static_cast<std::uint8_t>(AlphaPolicy::PreserveSourceCoverage);
+            break;
+        }
+        syncImpls();
+    }
+
+    std::vector<ArtifactCore::AbstractProperty> getProperties() const override;
+    void setPropertyValue(const ArtifactCore::UniString& name,
+                          const QVariant& value) override;
+    std::uint32_t gpuGenericKey() const override { return kGpuGenericKey; }
+    GpuRasterEffectDomain gpuRasterEffectDomain() const override {
+        return GpuRasterEffectDomain::Spatial;
+    }
+    bool appendGpuSpatialNodes(GpuSpatialEffectStack& stack) const override {
+        GpuSpatialEffectNode node;
+        node.kind = GpuSpatialEffectKind::Generic;
+        node.genericKey = kGpuGenericKey;
+        node.parameters[0] = static_cast<float>(look_);
+        node.parameters[1] = strength_;
+        node.parameters[2] = static_cast<float>(alphaPolicy_);
+        node.parameters[3] = streakSourceX_;
+        node.parameters[4] = streakSourceY_;
+        node.parameters[5] = streakAngleDegrees_;
+        return stack.append(node);
+    }
+    bool supportsGPU() const override { return true; }
+};
+
 class OpticalGlowEffect : public ArtifactAbstractEffect {
 private:
     class Impl;
