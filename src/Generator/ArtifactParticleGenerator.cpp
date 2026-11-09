@@ -1787,6 +1787,7 @@ ParticleRenderData ParticleSystem::captureRenderData() const
     
     for (const auto& emitter : emitters_) {
         if (!emitter) continue;
+        const bool texturedEmitter = !emitter->params().texturePath.isEmpty();
         for (const auto& p : emitter->particles()) {
             if (p.alive) {
                 const auto finiteVector = [](const QVector3D& value) {
@@ -1827,6 +1828,7 @@ ParticleRenderData ParticleSystem::captureRenderData() const
                 v.spriteCols = std::clamp(p.spriteCols, 1, 1024);
                 v.spriteFrame = std::clamp(
                     p.spriteFrame, 0, v.spriteRows * v.spriteCols - 1);
+                v.textureWeight = texturedEmitter ? 1.0f : 0.0f;
                 data.particles.push_back(v);
             }
         }

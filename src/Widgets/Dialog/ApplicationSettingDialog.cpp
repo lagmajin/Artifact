@@ -815,6 +815,8 @@ public:
   QComboBox *antiAliasingModeCombo_;
   QDoubleSpinBox *shutterPhaseSpinBox_;
   QDoubleSpinBox *shutterAngleSpinBox_;
+  QComboBox *shutterShapeCombo_;
+  QDoubleSpinBox *shutterPlateauSpinBox_;
   QComboBox *gpuDeviceCombo_;
 };
 
@@ -916,6 +918,32 @@ PreviewSettingPage::PreviewSettingPage(QWidget *parent)
   qualityLayout->addLayout(aaLayout);
 
   // Motion blur shutter
+  auto *shutterShapeLayout = new QHBoxLayout();
+  shutterShapeLayout->addWidget(
+      makePreviewFieldLabel(QStringLiteral("Motion Blur Shutter Shape"), this));
+  impl_->shutterShapeCombo_ = new QComboBox(this);
+  impl_->shutterShapeCombo_->setAccessibleName(
+      QStringLiteral("Motion blur shutter shape"));
+  impl_->shutterShapeCombo_->setAccessibleDescription(
+      QStringLiteral("Choose the temporal weight profile for motion blur samples"));
+  impl_->shutterShapeCombo_->addItem(QStringLiteral("Rectangular"), 0);
+  impl_->shutterShapeCombo_->addItem(QStringLiteral("Triangle"), 1);
+  impl_->shutterShapeCombo_->addItem(QStringLiteral("Trapezoid"), 2);
+  impl_->shutterShapeCombo_->setMinimumSize(180, 28);
+  shutterShapeLayout->addWidget(impl_->shutterShapeCombo_);
+  shutterShapeLayout->addWidget(new QLabel(QStringLiteral("Plateau:"), this));
+  impl_->shutterPlateauSpinBox_ = new QDoubleSpinBox(this);
+  impl_->shutterPlateauSpinBox_->setAccessibleName(
+      QStringLiteral("Motion blur trapezoid plateau"));
+  impl_->shutterPlateauSpinBox_->setAccessibleDescription(
+      QStringLiteral("Set the full-weight center width of the trapezoid shutter profile"));
+  impl_->shutterPlateauSpinBox_->setRange(0.0, 99.99);
+  impl_->shutterPlateauSpinBox_->setSuffix(QStringLiteral("%"));
+  impl_->shutterPlateauSpinBox_->setMinimumSize(110, 28);
+  shutterShapeLayout->addWidget(impl_->shutterPlateauSpinBox_);
+  shutterShapeLayout->addStretch();
+  qualityLayout->addLayout(shutterShapeLayout);
+
   auto *shutterLayout = new QHBoxLayout();
   shutterLayout->addWidget(makePreviewFieldLabel(QStringLiteral("Motion Blur Shutter Angle"), this));
   impl_->shutterAngleSpinBox_ = new QDoubleSpinBox(this);
@@ -1713,6 +1741,13 @@ void PreviewSettingPage::loadSettings() {
         settings->compositionAntiAliasingMode());
     impl_->antiAliasingModeCombo_->setCurrentIndex(aaIndex < 0 ? 1 : aaIndex);
   }
+  const int shutterShapeIndex = impl_->shutterShapeCombo_->findData(
+      settings->timelineMotionBlurShutterShape());
+  impl_->shutterShapeCombo_->setCurrentIndex(shutterShapeIndex < 0
+                                                ? 0
+                                                : shutterShapeIndex);
+  impl_->shutterPlateauSpinBox_->setValue(
+      settings->timelineMotionBlurTrapezoidPlateau() * 100.0);
   impl_->shutterAngleSpinBox_->setValue(settings->timelineMotionBlurShutterAngle());
   impl_->shutterPhaseSpinBox_->setValue(settings->timelineMotionBlurShutterPhase());
 }
@@ -1734,6 +1769,12 @@ void PreviewSettingPage::saveSettings() {
   if (const QVariant aaData = impl_->antiAliasingModeCombo_->currentData(); aaData.isValid()) {
     settings->setCompositionAntiAliasingMode(aaData.toInt());
   }
+  if (const QVariant shapeData = impl_->shutterShapeCombo_->currentData();
+      shapeData.isValid()) {
+    settings->setTimelineMotionBlurShutterShape(shapeData.toInt());
+  }
+  settings->setTimelineMotionBlurTrapezoidPlateau(
+      impl_->shutterPlateauSpinBox_->value() / 100.0);
   settings->setTimelineMotionBlurShutterAngle(impl_->shutterAngleSpinBox_->value());
   settings->setTimelineMotionBlurShutterPhase(impl_->shutterPhaseSpinBox_->value());
 }
@@ -1749,6 +1790,8 @@ QList<SettingItemInfo> PreviewSettingPage::searchableItems() const {
       {QStringLiteral("Thumbnail quality"), QStringLiteral("Quality used for generated thumbnails"), QStringLiteral("Preview"), impl_->thumbnailQualityCombo_, "Preview/ThumbnailQualityText"},
       {QStringLiteral("GPU acceleration"), QStringLiteral("Use GPU acceleration for previews"), QStringLiteral("Preview"), impl_->enableGPUCheckBox_, "Preview/EnableGpuAcceleration"},
       {QStringLiteral("Anti-aliasing mode"), QStringLiteral("Viewport anti-aliasing mode for 3D content"), QStringLiteral("Preview"), impl_->antiAliasingModeCombo_, "UI/Composition/AntiAliasingMode"},
+      {QStringLiteral("Motion blur shutter shape"), QStringLiteral("Temporal sample weight profile used by motion blur"), QStringLiteral("Preview"), impl_->shutterShapeCombo_, "UI/Timeline/MotionBlurShutterShape"},
+      {QStringLiteral("Motion blur trapezoid plateau"), QStringLiteral("Full-weight center width of the trapezoid shutter profile"), QStringLiteral("Preview"), impl_->shutterPlateauSpinBox_, "UI/Timeline/MotionBlurTrapezoidPlateau"},
       {QStringLiteral("Motion blur shutter angle"), QStringLiteral("Shutter angle in degrees used by timeline motion blur"), QStringLiteral("Preview"), impl_->shutterAngleSpinBox_, "UI/Timeline/MotionBlurShutterAngle"},
       {QStringLiteral("Motion blur shutter phase"), QStringLiteral("Shutter phase offset in degrees for motion blur samples"), QStringLiteral("Preview"), impl_->shutterPhaseSpinBox_, "UI/Timeline/MotionBlurShutterPhase"},
       {QStringLiteral("GPU device"), QStringLiteral("GPU device selected for preview rendering"), QStringLiteral("Preview"), impl_->gpuDeviceCombo_, "Preview/GpuDeviceText"},

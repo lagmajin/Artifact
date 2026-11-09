@@ -126,6 +126,7 @@ import Image.ExportOptions;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Render.Pipeline;
+import Artifact.Render.MotionBlurPass;
 import Artifact.Effect.Abstract;
 import Artifact.Layer.Matte;
 import Artifact.Layer.Image;
@@ -142,6 +143,7 @@ import Artifact.Layer.Procedural3D;
 import Artifact.Layers.Model3D;
 import Artifact.Layer.MpmSand2D;
 import Artifact.Layer.Camera;
+import Core.Camera;
 import Artifact.Layer.Light;
 import Math.Vec;
 import Layer.Blend;
@@ -2674,6 +2676,7 @@ namespace Artifact
 
         std::unique_ptr<ArtifactIRenderer> gpuRenderer_;
         RenderPipeline gpuRevealPipeline_;
+        MotionBlurPass gpuMotionBlurPass_;
         std::unique_ptr<ArtifactCore::LayerBlendPipeline> gpuMattePipeline_;
         int gpuRendererWidth_ = 0;
         int gpuRendererHeight_ = 0;
@@ -2787,6 +2790,9 @@ namespace Artifact
             QString compositionId;
             bool compositionIsIsolated = false;
             ArtifactRenderJob job;
+            // Freeze application-wide shutter controls at job dispatch so all
+            // sequential and MFR frames in this export share one exposure.
+            MotionBlurSettings timelineMotionBlur;
             bool useGpuBackend = false;
             bool isVideo = false;
             bool isHtmlPlayer = false;
@@ -2798,6 +2804,7 @@ namespace Artifact
             GPUTextureCacheManager* gpuTextureCacheManager = nullptr;
             GpuMatteResourcePool* gpuMatteResourcePool = nullptr;
             RenderPipeline* gpuRevealPipeline = nullptr;
+            MotionBlurPass* gpuMotionBlurPass = nullptr;
             QStringList* htmlFrameFiles = nullptr;
         };
 
@@ -2846,6 +2853,7 @@ namespace Artifact
             std::unique_ptr<ArtifactCore::LayerBlendPipeline> mattePipeline;
             std::unique_ptr<GpuMatteResourcePool> matteResourcePool;
             RenderPipeline revealPipeline;
+            MotionBlurPass motionBlurPass;
             int rendererWidth = 0;
             int rendererHeight = 0;
             int adapterId = -1;
@@ -4112,6 +4120,7 @@ namespace Artifact
             snap.gpuTextureCacheManager = worker.textureCache.get();
             snap.gpuMatteResourcePool = worker.matteResourcePool.get();
             snap.gpuRevealPipeline = &worker.revealPipeline;
+            snap.gpuMotionBlurPass = &worker.motionBlurPass;
             return renderSingleFrameNoLock(
                 worker.renderer.get(), &worker.mattePipeline,
                 worker.rendererWidth, worker.rendererHeight,
@@ -7036,17 +7045,116 @@ namespace Artifact
                 return true;
             };
             auto& revealPipeline = snap.gpuRevealPipeline ? *snap.gpuRevealPipeline : gpuRevealPipeline_;
-            if (hasReveal) {
+            const bool timelineMotionBlurRequested =
+                snap.timelineMotionBlur.enabled;
+            const ArtifactCameraLayer* activeCamera = nullptr;
+            for (const auto& layer : gpuLayers) {
+                const auto camera = ArtifactCore::dynamicPointerCast<ArtifactCameraLayer>(layer);
+                if (camera && camera->isVisible() &&
+                    camera->isActiveAt(gpuPos) && camera->isActiveCamera() &&
+                    (!activeCamera || camera->cameraPriority() > activeCamera->cameraPriority())) {
+                    activeCamera = camera.get();
+                }
+            }
+            const bool cameraMotionBlurRequested = activeCamera &&
+                activeCamera->motionBlur() && activeCamera->blurAmount().value > 0.0f;
+            // Deep samples describe per-surface depth and cannot be reconstructed
+            // from a flattened, motion-blurred beauty image. Keep their beauty
+            // and depth contract unmodified.
+            const bool beautyMotionBlurRequested = !snap.job.deepExportEnabled &&
+                (timelineMotionBlurRequested || cameraMotionBlurRequested);
+            const bool velocityChannelRequested =
+                renderer->isChannelEnabled(ArtifactIRenderer::ChannelType::VelocityX) ||
+                renderer->isChannelEnabled(ArtifactIRenderer::ChannelType::VelocityY);
+            const bool velocityTargetRequested =
+                beautyMotionBlurRequested || velocityChannelRequested;
+            bool has3DCamera = false;
+            QMatrix4x4 cameraView;
+            QMatrix4x4 cameraProjection;
+            QMatrix4x4 previousCameraView;
+            QMatrix4x4 previousCameraProjection;
+            if (activeCamera && activeCamera->isVisible() &&
+                activeCamera->isActiveAt(gpuPos)) {
+                const QSize compositionSize =
+                    snap.composition->effectiveCompositionSize();
+                const float aspect = std::max(
+                    0.001f, static_cast<float>(compositionSize.width()) /
+                                std::max(1.0f, static_cast<float>(compositionSize.height())));
+                const double fps = snap.composition->frameRate().framerate() > 0.0
+                    ? snap.composition->frameRate().framerate() : 30.0;
+                const double frameDelta = 1.0 / fps;
+                const double currentTime =
+                    static_cast<double>(snap.frameNumber) / fps;
+                activeCamera->advanceShake(currentTime, frameDelta);
+                cameraView = activeCamera->viewMatrix();
+                cameraProjection = activeCamera->projectionMatrix(aspect);
+                previousCameraView = cameraView;
+                previousCameraProjection = cameraProjection;
+                if (snap.frameNumber > 0 &&
+                    (beautyMotionBlurRequested || velocityChannelRequested)) {
+                    snap.composition->goToFrame(snap.frameNumber - 1);
+                    activeCamera->advanceShake(currentTime - frameDelta, 0.0);
+                    previousCameraView = activeCamera->viewMatrix();
+                    previousCameraProjection = activeCamera->projectionMatrix(aspect);
+                    snap.composition->goToFrame(snap.frameNumber);
+                    activeCamera->advanceShake(currentTime, 0.0);
+                }
+                if (activeCamera->stereoMode() != StereoMode::Mono) {
+                    const auto stereo = ArtifactCore::StereoCamera::fromHmd(
+                        cameraView.inverted(), activeCamera->ipd(),
+                        activeCamera->nearClipPlane(), activeCamera->farClipPlane());
+                    const auto previousStereo = ArtifactCore::StereoCamera::fromHmd(
+                        previousCameraView.inverted(), activeCamera->ipd(),
+                        activeCamera->nearClipPlane(), activeCamera->farClipPlane());
+                    cameraView = stereo.leftEyeView;
+                    previousCameraView = previousStereo.leftEyeView;
+                }
+                has3DCamera = true;
+            }
+            if (hasReveal || velocityTargetRequested) {
                 const auto context = renderer->immediateContext();
+                RenderPipeline::AuxiliaryTargetRequest auxiliaryTargets;
+                auxiliaryTargets.velocity = velocityTargetRequested;
+                auxiliaryTargets.motionBlurScratch =
+                    beautyMotionBlurRequested;
                 if (!context || !revealPipeline.initialize(renderer->device(),
                     static_cast<Diligent::Uint32>(rendererWidth), static_cast<Diligent::Uint32>(rendererHeight),
-                    Diligent::TEX_FORMAT_RGBA16_FLOAT) || !revealPipeline.prepareReveal(context.RawPtr())) {
-                    failureReason = QStringLiteral("Reveal GPU resources could not be prepared");
+                    Diligent::TEX_FORMAT_RGBA16_FLOAT, auxiliaryTargets) ||
+                    (hasReveal && !revealPipeline.prepareReveal(context.RawPtr()))) {
+                    failureReason = hasReveal
+                        ? QStringLiteral("Reveal GPU resources could not be prepared")
+                        : QStringLiteral("Motion blur velocity resources could not be prepared");
                     return false;
                 }
-                revealPipeline.prepareRevealMaps(context.RawPtr(), gpuLayers);
+                if (hasReveal) {
+                    revealPipeline.prepareRevealMaps(context.RawPtr(), gpuLayers);
+                }
+                if (revealPipeline.hasVelocityTarget()) {
+                    renderer->setAuxiliaryChannelSource(
+                        ArtifactIRenderer::ChannelType::VelocityX,
+                        revealPipeline.velocitySRV());
+                    renderer->setAuxiliaryChannelSource(
+                        ArtifactIRenderer::ChannelType::VelocityY,
+                        revealPipeline.velocitySRV());
+                }
             }
             QHash<ArtifactCore::Id, QImage> matteSourceImages;
+            const auto drawQueueGpuLayer = [&](
+                ArtifactAbstractLayer* layer,
+                const QHash<ArtifactCore::Id, QImage>* matteImages) {
+                if (!layer) return;
+                if (has3DCamera) {
+                    renderer->set3DCameraMatrices(cameraView, cameraProjection);
+                    renderer->setPrevious3DCameraMatrices(
+                        previousCameraView, previousCameraProjection);
+                }
+                drawLayerForCompositionView(
+                    layer, renderer, 1.0f, nullptr,
+                    snap.gpuSurfaceCache, snap.gpuTextureCacheManager,
+                    snap.frameNumber, true, DetailLevel::High, nullptr,
+                    matteImages);
+                if (has3DCamera) renderer->reset3DCameraMatrices();
+            };
             for (const auto& layer : gpuLayers) {
                 if (!layer) {
                     continue;
@@ -7160,10 +7268,7 @@ namespace Artifact
                         renderer->setClearColor(FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
                         renderer->clear();
                         sourceLayer->goToFrame(snap.frameNumber);
-                        drawLayerForCompositionView(
-                            sourceLayer.get(), renderer, 1.0f, nullptr,
-                            snap.gpuSurfaceCache, snap.gpuTextureCacheManager,
-                            snap.frameNumber, true, DetailLevel::High, nullptr, nullptr);
+                        drawQueueGpuLayer(sourceLayer.get(), nullptr);
                         renderer->flush();
                         renderer->popRenderTarget();
                         matteSourceGpuViews.insert(matteRef.sourceLayerId, sourceSRV);
@@ -7230,10 +7335,7 @@ namespace Artifact
                         renderer->pushRenderTarget(layerTarget, layerDepth);
                         renderer->setClearColor(FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
                         renderer->clear();
-                        drawLayerForCompositionView(
-                            layer.get(), renderer, 1.0f, nullptr,
-                            snap.gpuSurfaceCache, snap.gpuTextureCacheManager,
-                            snap.frameNumber, true, DetailLevel::High, nullptr, nullptr);
+                        drawQueueGpuLayer(layer.get(), nullptr);
                         renderer->flush();
                         renderer->popRenderTarget();
 
@@ -7320,9 +7422,7 @@ namespace Artifact
                     renderer->flush();
                     renderer->pushRenderTarget(revealPipeline.layerRTV(), nullptr);
                     renderer->setClearColor(FloatColor{0,0,0,0}); renderer->clear();
-                    drawLayerForCompositionView(layer.get(), renderer, 1.0f, nullptr,
-                        snap.gpuSurfaceCache, snap.gpuTextureCacheManager, snap.frameNumber,
-                        true, DetailLevel::High, nullptr, &matteSourceImages);
+                    drawQueueGpuLayer(layer.get(), &matteSourceImages);
                     renderer->flush(); renderer->popRenderTarget();
                     renderer->unbindColorTargetsForCompute();
                     const QRectF bounds = layer->localBounds();
@@ -7361,12 +7461,132 @@ namespace Artifact
                     renderer->flush();
                     continue;
                 }
-                drawLayerForCompositionView(layer.get(), renderer, 1.0f, nullptr,
-                                            snap.gpuSurfaceCache, snap.gpuTextureCacheManager,
-                                            snap.frameNumber, true, DetailLevel::High, nullptr,
-                                            &matteSourceImages);
+                drawQueueGpuLayer(layer.get(), &matteSourceImages);
             }
             renderer->flush();
+            if (velocityTargetRequested) {
+                auto* velocityRTV = revealPipeline.velocityRTV();
+                auto* depthDSV = renderer->liveDepthStencilView();
+                if (!revealPipeline.hasVelocityTarget() || !velocityRTV ||
+                    !depthDSV) {
+                    failureReason = QStringLiteral(
+                        "Motion blur velocity or depth target is unavailable");
+                    return false;
+                }
+                renderer->clearRenderTarget(
+                    velocityRTV, FloatColor{0.5f, 0.5f, 0.5f, 0.0f});
+                for (const auto& layer : gpuLayers) {
+                    if (!shouldRenderGpuLayer(layer) || !layer->isVisible() ||
+                        !layer->isActiveAt(gpuPos) || !layer->is3D()) {
+                        continue;
+                    }
+                    layer->goToFrame(snap.frameNumber);
+                    if (has3DCamera) {
+                        renderer->set3DCameraMatrices(cameraView, cameraProjection);
+                        renderer->setPrevious3DCameraMatrices(
+                            previousCameraView, previousCameraProjection);
+                    }
+                    renderer->setOverrideRTV(velocityRTV);
+                    renderer->setOverrideDSV(depthDSV);
+                    renderer->setMeshVelocityOnlyPass(true);
+                    layer->draw(renderer);
+                    renderer->setMeshVelocityOnlyPass(false);
+                    renderer->setOverrideDSV(nullptr);
+                    renderer->setOverrideRTV(nullptr);
+                    if (has3DCamera) {
+                        renderer->reset3DCameraMatrices();
+                    }
+                }
+                renderer->flush();
+            }
+            if (beautyMotionBlurRequested) {
+                MotionBlurPass* motionBlurPass = snap.gpuMotionBlurPass
+                    ? snap.gpuMotionBlurPass : &gpuMotionBlurPass_;
+                auto context = renderer->immediateContext();
+                auto* colorSRV = renderer->layerTextureView();
+                auto* velocitySRV = revealPipeline.velocitySRV();
+                auto* depthSRV = renderer->liveDepthShaderResourceView();
+                if (!motionBlurPass || !context || !colorSRV || !velocitySRV ||
+                    !depthSRV ||
+                    !motionBlurPass->initialize(renderer->device(), context.RawPtr())) {
+                    failureReason = QStringLiteral(
+                        "Motion blur GPU resources could not be prepared");
+                    return false;
+                }
+
+                MotionBlurSettings timelineSettings;
+                timelineSettings = snap.timelineMotionBlur;
+
+                MotionBlurSettings cameraSettings;
+                cameraSettings.enabled = cameraMotionBlurRequested;
+                cameraSettings.shutterAngle = cameraMotionBlurRequested
+                    ? 360.0f * std::clamp(
+                          activeCamera->blurAmount().value / 100.0f, 0.0f, 1.0f)
+                    : 180.0f;
+                cameraSettings.shutterPhase = 0.0f;
+                cameraSettings.sampleCount = 8;
+                cameraSettings.shutterShape = timelineSettings.shutterShape;
+                cameraSettings.trapezoidPlateau =
+                    timelineSettings.trapezoidPlateau;
+
+                renderer->unbindColorTargetsForCompute();
+                bool applied = false;
+                Diligent::ITextureView* blurredSRV = nullptr;
+                if (timelineMotionBlurRequested) {
+                    applied = motionBlurPass->applyWithCandidates(
+                        context.RawPtr(), colorSRV, velocitySRV, depthSRV,
+                        revealPipeline.tempUAV(),
+                        revealPipeline.motionBlurScratchSRV(0),
+                        revealPipeline.motionBlurScratchUAV(0),
+                        revealPipeline.motionBlurScratchSRV(1),
+                        revealPipeline.motionBlurScratchUAV(1),
+                        static_cast<unsigned>(rendererWidth),
+                        static_cast<unsigned>(rendererHeight), timelineSettings);
+                    if (!applied) {
+                        failureReason = QStringLiteral(
+                            "Timeline motion blur GPU dispatch failed");
+                        return false;
+                    }
+                    blurredSRV = revealPipeline.tempSRV();
+                }
+                if (cameraMotionBlurRequested) {
+                    applied = motionBlurPass->applyWithCandidates(
+                        context.RawPtr(),
+                        timelineMotionBlurRequested ? blurredSRV : colorSRV,
+                        velocitySRV, depthSRV,
+                        timelineMotionBlurRequested
+                            ? revealPipeline.accumUAV()
+                            : revealPipeline.tempUAV(),
+                        revealPipeline.motionBlurScratchSRV(0),
+                        revealPipeline.motionBlurScratchUAV(0),
+                        revealPipeline.motionBlurScratchSRV(1),
+                        revealPipeline.motionBlurScratchUAV(1),
+                        static_cast<unsigned>(rendererWidth),
+                        static_cast<unsigned>(rendererHeight), cameraSettings);
+                    if (!applied) {
+                        failureReason = QStringLiteral(
+                            "Camera motion blur GPU dispatch failed");
+                        return false;
+                    }
+                    blurredSRV = timelineMotionBlurRequested
+                        ? revealPipeline.accumSRV() : revealPipeline.tempSRV();
+                }
+                if (!applied || !blurredSRV) {
+                    failureReason = QStringLiteral(
+                        "Motion blur GPU dispatch produced no output");
+                    return false;
+                }
+
+                renderer->clearRenderTarget(FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
+                const auto topLeft = renderer->viewportToCanvas({0.0f, 0.0f});
+                const auto bottomRight = renderer->viewportToCanvas(
+                    {static_cast<float>(rendererWidth),
+                     static_cast<float>(rendererHeight)});
+                renderer->drawSprite(
+                    topLeft.x, topLeft.y, bottomRight.x - topLeft.x,
+                    bottomRight.y - topLeft.y, blurredSRV, 1.0f);
+                renderer->flush();
+            }
             const bool requiresChannels = snap.job.multiChannelExportEnabled ||
                 snap.job.deepExportEnabled;
             if (requiresChannels) {
@@ -7596,6 +7816,22 @@ namespace Artifact
         baseSnap.composition = compositionForRender;
         baseSnap.compositionId = job.compositionId.toString();
         baseSnap.job = job;
+        if (const auto appSettings =
+                ArtifactCore::ArtifactAppSettings::instance()) {
+            baseSnap.timelineMotionBlur.enabled =
+                appSettings->timelineMotionBlurActive();
+            baseSnap.timelineMotionBlur.shutterAngle = static_cast<float>(
+                appSettings->timelineMotionBlurShutterAngle());
+            baseSnap.timelineMotionBlur.shutterPhase = static_cast<float>(
+                appSettings->timelineMotionBlurShutterPhase() / 360.0);
+            baseSnap.timelineMotionBlur.sampleCount = static_cast<unsigned>(
+                appSettings->timelineMotionBlurSampleCount());
+            baseSnap.timelineMotionBlur.shutterShape =
+                static_cast<MotionBlurShutterShape>(
+                    appSettings->timelineMotionBlurShutterShape());
+            baseSnap.timelineMotionBlur.trapezoidPlateau = static_cast<float>(
+                appSettings->timelineMotionBlurTrapezoidPlateau());
+        }
         baseSnap.useGpuBackend = useGpuBackend;
         baseSnap.isVideo = isVideo;
         baseSnap.isHtmlPlayer = isHtmlPlayer;
@@ -7606,6 +7842,7 @@ namespace Artifact
         baseSnap.gpuSurfaceCache = &gpuSurfaceCache;
         baseSnap.gpuTextureCacheManager = gpuTextureCacheManager;
         baseSnap.gpuRevealPipeline = useGpuBackend ? &gpuRevealPipeline_ : nullptr;
+        baseSnap.gpuMotionBlurPass = useGpuBackend ? &gpuMotionBlurPass_ : nullptr;
         baseSnap.gpuMatteResourcePool = useGpuBackend
             ? &gpuMatteResourcePool : nullptr;
         baseSnap.htmlFrameFiles = &htmlFrameFiles;

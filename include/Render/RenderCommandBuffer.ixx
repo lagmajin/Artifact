@@ -354,6 +354,9 @@ struct ParticlePkt {
     QMatrix4x4                       projMatrix;
     ITextureView*                    depthDSV = nullptr;
     RefCntAutoPtr<ITextureView>      retainedDepthDSV;
+    // Keeps a registered particle atlas alive until deferred submission runs.
+    // The renderer is only asked to bind it during submitParticles().
+    RefCntAutoPtr<ITextureView>      retainedParticleTexture;
 };
 
 struct GlyphTextPkt {

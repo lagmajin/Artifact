@@ -492,6 +492,18 @@ public:
   void drawParticles(const ArtifactCore::ParticleRenderData &data);
   // Accepted rvalue packets take ownership; rejected draws leave data intact.
   void drawParticles(ArtifactCore::ParticleRenderData &&data);
+  // Register a straight-alpha RGBA8 image atlas for GPU particle sampling.
+  // Returns an opaque id to store in ParticleRenderData::textureId, or 0 when
+  // the GPU particle renderer is unavailable. The pixel data is copied during
+  // this call. Call from the render/GUI thread.
+  ArtifactCore::ParticleTextureId registerParticleTexture(
+      const ArtifactCore::ParticleTextureUpload &upload);
+  // Drops a registered atlas. Draws queued before the call keep their own
+  // texture reference; later draws that still carry the id render procedurally.
+  void releaseParticleTexture(ArtifactCore::ParticleTextureId id);
+  // Changes whenever the underlying particle renderer is recreated, so callers
+  // know their cached ids must be re-registered.
+  std::uint64_t particleTextureGeneration() const;
   // Queue one bounded solid mesh using reusable triangle-batch storage.
   // Vertices are composition-space coordinates and remain caller-owned if rejected.
   bool acquireMpmSurfaceBuffer(ArtifactCore::ArtifactArray<MpmSurfaceVertex> &vertices,

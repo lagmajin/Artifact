@@ -1,6 +1,9 @@
 module;
 #include <QApplication>
+#include <QColor>
 #include <QMessageBox>
+#include <QPalette>
+#include <QPushButton>
 #include <QScreen>
 #include <QString>
 
@@ -34,6 +37,14 @@ QMessageBox::StandardButton centeredQuestion(QWidget* parent,
   box.setText(text);
   box.setStandardButtons(QMessageBox::Yes | QMessageBox::No);
   box.setDefaultButton(QMessageBox::No);
+
+  if (auto* deleteButton = box.button(QMessageBox::Yes)) {
+    QPalette deletePalette = deleteButton->palette();
+    deletePalette.setColor(QPalette::ButtonText, QColor(QStringLiteral("#D84A4A")));
+    deletePalette.setColor(QPalette::Button, QColor(QStringLiteral("#3A2024")));
+    deleteButton->setPalette(deletePalette);
+  }
+
   box.adjustSize();
 
   if (const QScreen* screen = QApplication::primaryScreen()) {

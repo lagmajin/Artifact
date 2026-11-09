@@ -1974,6 +1974,9 @@ void DiligentImmediateSubmitter::submitParticles(const ParticlePkt& p, IDeviceCo
     m_particleRenderer_->setProjectionMatrix(particleProjRows.constData());
     m_particleRenderer_->setFrameCostStats(m_frameCostStats_);
     m_particleRenderer_->updateBuffer(ctx, p.data);
+    // The packet retains its own atlas view, so a worker-thread submit never
+    // touches the renderer's GUI-thread registry.
+    m_particleRenderer_->setCurrentTexture(p.retainedParticleTexture.RawPtr());
     const size_t uploadedCount = m_particleRenderer_->lastUploadedParticleCount();
     if (uploadedCount == 0) {
         qWarning() << "[ParticleRenderer] submitParticles skipped: uploaded count is zero"

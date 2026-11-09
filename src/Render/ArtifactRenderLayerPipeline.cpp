@@ -1296,6 +1296,7 @@ void ScreenSpaceGIResolveCS(uint3 dispatchId : SV_DispatchThreadID)
   TextureBundle emission_;
   TextureBundle normal_;
   TextureBundle velocity_;
+  std::array<TextureBundle, 2> motionBlurScratch_;
   TextureBundle objectId_;
   TextureBundle materialId_;
   TextureBundle albedo_;
@@ -1586,6 +1587,9 @@ bool RenderPipeline::initialize(IRenderDevice* device,
   impl_->emission_ = {};
   impl_->normal_ = {};
   impl_->velocity_ = {};
+  for (auto& scratch : impl_->motionBlurScratch_) {
+   scratch = {};
+  }
   impl_->objectId_ = {};
   impl_->materialId_ = {};
   impl_->albedo_ = {};
@@ -2915,6 +2919,14 @@ bool RenderPipeline::applyEffectMaskComposite(
         (!impl_->auxiliaryRequest_.velocity ||
          (impl_->velocity_.texture && impl_->velocity_.srv &&
           impl_->velocity_.rtv)) &&
+        (!impl_->auxiliaryRequest_.motionBlurScratch ||
+         (impl_->auxiliaryRequest_.velocity &&
+          impl_->motionBlurScratch_[0].texture &&
+          impl_->motionBlurScratch_[0].srv &&
+          impl_->motionBlurScratch_[0].uav &&
+          impl_->motionBlurScratch_[1].texture &&
+          impl_->motionBlurScratch_[1].srv &&
+          impl_->motionBlurScratch_[1].uav)) &&
         (!impl_->auxiliaryRequest_.objectId ||
          (impl_->objectId_.texture && impl_->objectId_.srv &&
           impl_->objectId_.rtv)) &&
@@ -2998,6 +3010,19 @@ bool RenderPipeline::hasNormalTarget() const { return impl_->auxiliaryRequest_.n
 ITextureView* RenderPipeline::velocitySRV() const { return impl_->velocity_.srv; }
 ITextureView* RenderPipeline::velocityRTV() const { return impl_->velocity_.rtv; }
 bool RenderPipeline::hasVelocityTarget() const { return impl_->auxiliaryRequest_.velocity && impl_->velocity_.texture; }
+ITextureView* RenderPipeline::motionBlurScratchSRV(unsigned index) const {
+  return impl_->auxiliaryRequest_.motionBlurScratch && index < 2
+      ? impl_->motionBlurScratch_[index].srv : nullptr;
+}
+ITextureView* RenderPipeline::motionBlurScratchUAV(unsigned index) const {
+  return impl_->auxiliaryRequest_.motionBlurScratch && index < 2
+      ? impl_->motionBlurScratch_[index].uav : nullptr;
+}
+bool RenderPipeline::hasMotionBlurScratch() const {
+  return impl_->auxiliaryRequest_.motionBlurScratch &&
+      impl_->motionBlurScratch_[0].texture &&
+      impl_->motionBlurScratch_[1].texture;
+}
 ITextureView* RenderPipeline::objectIdSRV() const { return impl_->objectId_.srv; }
 ITextureView* RenderPipeline::objectIdRTV() const { return impl_->objectId_.rtv; }
 bool RenderPipeline::hasObjectIdTarget() const { return impl_->auxiliaryRequest_.objectId && impl_->objectId_.texture; }
@@ -3655,6 +3680,24 @@ bool RenderPipeline::createTextures(IRenderDevice* device,
                            "RenderPipeline.Velocity", impl_->velocity_))
   {
    return false;
+  }
+  if (request.motionBlurScratch) {
+   for (size_t index = 0; index < impl_->motionBlurScratch_.size(); ++index) {
+    const char* name = index == 0
+        ? "RenderPipeline.MotionBlurCandidateA"
+        : "RenderPipeline.MotionBlurCandidateB";
+    constexpr Uint32 candidateTileSize = 8;
+    const Uint32 candidateWidth = width / candidateTileSize +
+        (width % candidateTileSize != 0 ? 1u : 0u);
+    const Uint32 candidateHeight = height / candidateTileSize +
+        (height % candidateTileSize != 0 ? 1u : 0u);
+    if (!createTextureBundle(device, candidateWidth, candidateHeight,
+                             TEX_FORMAT_RGBA32_UINT,
+                             BIND_SHADER_RESOURCE | BIND_UNORDERED_ACCESS,
+                             name, impl_->motionBlurScratch_[index])) {
+     return false;
+    }
+   }
   }
   // Cryptomatte IDs are encoded as full uint32 payloads in float bits.
   // RGBA16F would quantize those payloads, so keep these AOVs at 32-bit
