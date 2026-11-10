@@ -487,6 +487,83 @@ EffectROIHint ArtifactHeatwaveEffect::roiHint() const {
     };
 }
 
+// Resident-path HLSL. Manual-position mode is analytic and reproduces the CPU
+// core/halo/streak/rays/ghost loop per pixel. Auto highlight detection cannot
+// run in a single resident pass, so appendGpuSpatialNodes declines it.
+// Mapping: P0 positionX, P1 positionY, P2 threshold (unused in manual mode),
+// P3 intensity, P4 haloSize, P5 streakLength, P6 streakStrength,
+// P7 ghostCount, P8 ghostSpacing, P9 chromatic.
+static constexpr const char* kLensFlareResidentHlsl = R"(
+Texture2D<float4> g_InputTexture : register(t0);
+RWTexture2D<float4> g_OutputTexture : register(u0);
+
+[numthreads(8,8,1)]
+void main(uint3 dtid : SV_DispatchThreadID)
+{
+    uint w, h;
+    g_OutputTexture.GetDimensions(w, h);
+    if (dtid.x >= w || dtid.y >= h) return;
+    float4 src = (g_InputTexture[dtid.xy]).bgra;
+    float flareX = g_P0 * (float)max(1, (int)w - 1);
+    float flareY = g_P1 * (float)max(1, (int)h - 1);
+    float minDim = (float)min(w, h);
+    float haloRadius = max(2.0f, g_P4 * minDim);
+    float centerX = (float)w * 0.5f;
+    float centerY = (float)h * 0.5f;
+    float axisX = centerX - flareX;
+    float axisY = centerY - flareY;
+    float overall = g_P3;
+    float x = (float)dtid.x;
+    float y = (float)dtid.y;
+    float dx = x - flareX;
+    float dy = y - flareY;
+    float radius2 = dx * dx + dy * dy;
+    float core = exp(-radius2 / max(1.0f, haloRadius * haloRadius * 0.055f));
+    float haloDistance = sqrt(radius2) / haloRadius;
+    float haloDelta = haloDistance - 0.72f;
+    float halo = exp(-haloDelta * haloDelta * 7.0f);
+    float streakWidth = max(1.0f, haloRadius * 0.035f);
+    float streak = exp(-abs(dy) / streakWidth) *
+                   exp(-abs(dx) / max(1.0f, (float)w * g_P5));
+    float angle = atan2(dy, dx);
+    float rayPattern = pow(max(0.0f, cos(angle * 6.0f)), 18.0f);
+    float rays = rayPattern * exp(-sqrt(radius2) / max(1.0f, haloRadius * 2.8f));
+
+    float ghostR = 0.0f;
+    float ghostG = 0.0f;
+    float ghostB = 0.0f;
+    int ghostCount = clamp((int)(g_P7 + 0.5f), 0, 16);
+    [loop] for (int gi = 1; gi <= 16; ++gi)
+    {
+        if (gi > ghostCount) break;
+        float t = ((float)gi / ((float)ghostCount + 1.0f)) * g_P8 * 1.8f;
+        float gx = flareX + axisX * t;
+        float gy = flareY + axisY * t;
+        float ghostRadius = haloRadius * (0.10f + 0.045f * (float)gi);
+        float gdx = x - gx;
+        float gdy = y - gy;
+        float normalized = sqrt(gdx * gdx + gdy * gdy) / max(1.0f, ghostRadius);
+        float ringDelta = normalized - 0.72f;
+        float ring = exp(-ringDelta * ringDelta * 18.0f);
+        float disk = exp(-normalized * normalized * 3.5f);
+        float ghost = (ring * 0.55f + disk * 0.22f) / (1.0f + (float)gi * 0.24f);
+        float spectral = g_P9 * ((float)gi / (float)max(1, ghostCount));
+        ghostR += ghost * (0.65f + spectral);
+        ghostG += ghost * 0.72f;
+        ghostB += ghost * (0.88f - spectral * 0.35f);
+    }
+
+    float baseGlow = core * 1.45f + halo * 0.22f +
+                     streak * g_P6 + rays * 0.35f;
+    float3 flareColor = float3(
+        baseGlow * 1.05f + ghostR,
+        baseGlow * 0.88f + ghostG,
+        baseGlow * (0.68f + g_P9 * 0.22f) + ghostB);
+    float3 result = src.rgb + flareColor * overall;
+    g_OutputTexture[dtid.xy] = float4(result, src.a).bgra;
+}
+)";
+
 class ArtifactCinematicLensFlareEffect::Impl {
 public:
     bool autoPosition = true;
@@ -508,11 +585,37 @@ ArtifactCinematicLensFlareEffect::ArtifactCinematicLensFlareEffect()
     setDisplayName(ArtifactCore::UniString("Cinematic Lens Flare"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
     setAllowOverscan(true);
+    registerGpuGenericShader(
+        ArtifactCinematicLensFlareEffect::kGpuGenericKey,
+        GpuGenericShaderRecord{
+            kLensFlareResidentHlsl, "main", GpuGenericResourceKind::Filter});
 }
 
 ArtifactCinematicLensFlareEffect::~ArtifactCinematicLensFlareEffect() {
     delete impl_;
     impl_ = nullptr;
+}
+
+bool ArtifactCinematicLensFlareEffect::appendGpuSpatialNodes(
+    GpuSpatialEffectStack& stack) const {
+    if (!impl_ || impl_->autoPosition) return false;
+    GpuSpatialEffectNode node;
+    node.kind = GpuSpatialEffectKind::Generic;
+    node.genericKey = kGpuGenericKey;
+    node.parameters[0] = impl_->positionX;
+    node.parameters[1] = impl_->positionY;
+    node.parameters[2] = impl_->threshold;
+    node.parameters[3] = impl_->intensity;
+    node.parameters[4] = impl_->haloSize;
+    node.parameters[5] = impl_->streakLength;
+    node.parameters[6] = impl_->streakStrength;
+    node.parameters[7] = static_cast<float>(impl_->ghostCount);
+    node.parameters[8] = impl_->ghostSpacing;
+    node.parameters[9] = impl_->chromatic;
+    // Halo size, streak length and ghost spacing are normalized to the image,
+    // so nothing here is resolution-scaled.
+    node.resolutionScaledParameterMask = 0;
+    return stack.append(node);
 }
 
 void ArtifactCinematicLensFlareEffect::apply(

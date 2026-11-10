@@ -164,12 +164,27 @@ protected:
                ImageF32x4RGBAWithCache& dst) override;
 
 public:
+    static constexpr const char* kGpuGenericKeyString = "builtin.cinematic_lens_flare";
+    static constexpr std::uint32_t kGpuGenericKey =
+        gpuGenericKeyFromString(kGpuGenericKeyString);
+
     ArtifactCinematicLensFlareEffect();
     ~ArtifactCinematicLensFlareEffect() override;
     std::vector<ArtifactCore::AbstractProperty> getProperties() const override;
     void setPropertyValue(const ArtifactCore::UniString& name,
                           const QVariant& value) override;
     EffectROIHint roiHint() const override;
+
+    bool supportsGPU() const override { return true; }
+    std::uint32_t gpuGenericKey() const override { return kGpuGenericKey; }
+
+    GpuRasterEffectDomain gpuRasterEffectDomain() const override {
+        return GpuRasterEffectDomain::Spatial;
+    }
+
+    // Auto highlight detection scans the whole image and cannot be folded into
+    // a single resident pass, so auto mode stays on the CPU path.
+    bool appendGpuSpatialNodes(GpuSpatialEffectStack& stack) const override;
 };
 
 class ArtifactTexturizeMotionEffect : public ArtifactAbstractEffect {

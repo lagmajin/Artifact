@@ -1426,6 +1426,90 @@ EffectROIHint VolumetricShineEffect::roiHint() const {
                          .requiresFullFrame = true};
 }
 
+// Resident-path HLSL. The CPU version rotates the image per ray and applies an
+// anisotropic gaussian; this version keeps the same look with a directional
+// gaussian accumulation plus a 3-tap perpendicular spread. Pixel-exact parity
+// with warpAffine is not attempted (see EFFECT_MAP parity notes).
+// Mapping: P0 threshold, P1 intensity, P2 length, P3 width, P4 rays,
+// P5 rotation, P6 chromatic, P7 softness.
+static constexpr const char* kGlintResidentHlsl = R"(
+Texture2D<float4> g_InputTexture : register(t0);
+RWTexture2D<float4> g_OutputTexture : register(u0);
+
+float3 glintHighlight(int2 p, uint w, uint h, float threshold)
+{
+    p.x = clamp(p.x, 0, (int)w - 1);
+    p.y = clamp(p.y, 0, (int)h - 1);
+    float4 s = (g_InputTexture[uint2(p)]).bgra;
+    float lum = dot(s.rgb, float3(0.2126f, 0.7152f, 0.0722f));
+    float selection = max(0.0f, lum - threshold) / max(lum, 0.0001f);
+    return s.rgb * selection;
+}
+
+float3 glintRay(int2 p, uint w, uint h, float angle, float sigmaX, float sigmaY,
+                float threshold, int step, int radius)
+{
+    float2 d = float2(cos(angle), sin(angle));
+    float2 spread = float2(-d.y, d.x) * max(1.0f, sigmaY);
+    int2 spreadOffset = int2(round(spread));
+    float3 sum = 0.0f;
+    float total = 0.0f;
+    [loop] for (int s = 0; s <= 256; ++s)
+    {
+        if (s > radius) break;
+        if ((s % step) != 0 && s != radius) continue;
+        float wgt = exp(-0.5f * (float)(s * s) / max(0.25f, sigmaX * sigmaX));
+        int2 offset = int2(round(d * (float)s));
+        int2 q = p + offset;
+        float3 forwardSample = glintHighlight(q, w, h, threshold)
+            + (glintHighlight(q + spreadOffset, w, h, threshold)
+               + glintHighlight(q - spreadOffset, w, h, threshold)) * 0.5f;
+        sum += forwardSample * wgt;
+        total += wgt;
+        if (s > 0)
+        {
+            int2 qn = p - offset;
+            float3 backwardSample = glintHighlight(qn, w, h, threshold)
+                + (glintHighlight(qn + spreadOffset, w, h, threshold)
+                   + glintHighlight(qn - spreadOffset, w, h, threshold)) * 0.5f;
+            sum += backwardSample * wgt;
+            total += wgt;
+        }
+    }
+    // Each sample is centre + 0.5 * (sideA + sideB), which sums to 2.
+    return total > 0.0f ? sum / (total * 2.0f) : 0.0f;
+}
+
+[numthreads(8,8,1)]
+void main(uint3 dtid : SV_DispatchThreadID)
+{
+    uint w, h;
+    g_OutputTexture.GetDimensions(w, h);
+    if (dtid.x >= w || dtid.y >= h) return;
+    int2 p = int2(dtid.xy);
+    float4 src = (g_InputTexture[dtid.xy]).bgra;
+    int rayCount = clamp((int)(g_P4 + 0.5f), 2, 12);
+    float sigmaX = max(0.5f, g_P2 * (0.22f + (1.0f - g_P7) * 0.18f));
+    float sigmaY = max(0.1f, g_P3);
+    int radius = clamp((int)ceil(sigmaX * 2.5f), 1, 256);
+    // Bound the total tap count so the cost stays roughly constant per pixel.
+    int tapsPerSide = max(6, 72 / rayCount);
+    int step = max(1, radius / tapsPerSide);
+    float3 acc = 0.0f;
+    [loop] for (int ray = 0; ray < 12; ++ray)
+    {
+        if (ray >= rayCount) break;
+        float angle = (g_P5 + 180.0f * (float)ray / (float)rayCount) * 0.0174532925f;
+        acc += glintRay(p, w, h, angle, sigmaX, sigmaY, g_P0, step, radius);
+    }
+    acc *= g_P1 / (float)rayCount;
+    float3 result = float3(src.r + acc.r * (1.0f - g_P6 * 0.15f),
+                           src.g + acc.g,
+                           src.b + acc.b * (1.0f + g_P6 * 0.2f));
+    g_OutputTexture[dtid.xy] = float4(result, src.a).bgra;
+}
+)";
+
 class GlintStarFilterEffect::Impl {
 public:
     float threshold = 0.78f;
@@ -1443,10 +1527,32 @@ GlintStarFilterEffect::GlintStarFilterEffect() : impl_(new Impl()) {
     setDisplayName(ArtifactCore::UniString("Glint / Star Filter"));
     setPipelineStage(EffectPipelineStage::Rasterizer);
     setAllowOverscan(true);
+    registerGpuGenericShader(
+        GlintStarFilterEffect::kGpuGenericKey,
+        GpuGenericShaderRecord{
+            kGlintResidentHlsl, "main", GpuGenericResourceKind::Filter});
 }
 
 GlintStarFilterEffect::~GlintStarFilterEffect() {
     delete impl_; impl_ = nullptr;
+}
+
+bool GlintStarFilterEffect::appendGpuSpatialNodes(GpuSpatialEffectStack& stack) const {
+    if (!impl_) return false;
+    GpuSpatialEffectNode node;
+    node.kind = GpuSpatialEffectKind::Generic;
+    node.genericKey = kGpuGenericKey;
+    node.parameters[0] = impl_->threshold;
+    node.parameters[1] = impl_->intensity;
+    node.parameters[2] = impl_->length;
+    node.parameters[3] = impl_->width;
+    node.parameters[4] = static_cast<float>(impl_->rays);
+    node.parameters[5] = impl_->rotation;
+    node.parameters[6] = impl_->chromatic;
+    node.parameters[7] = impl_->softness;
+    // Ray length and width are pixel-space quantities.
+    node.resolutionScaledParameterMask = (1u << 2) | (1u << 3);
+    return stack.append(node);
 }
 
 void GlintStarFilterEffect::apply(const ImageF32x4RGBAWithCache& src,
