@@ -60,6 +60,7 @@ module;
 #include <QPolygonF>
 
 #include <QPointer>
+#include <QPointF>
 
 #include <QRect>
 
@@ -12958,10 +12959,69 @@ public:
 
 
     GpuRasterEffectPlan rasterEffectPlan;
-    const bool deferRasterizerEffectsToGpu =
+    bool deferRasterizerEffectsToGpu =
         blendPipeline_ && renderer_->immediateContext() &&
         buildGpuRasterEffectPlan(layer, &rasterEffectPlan);
     if (deferRasterizerEffectsToGpu) {
+      constexpr std::uint32_t kStillLightLeakGenericKey =
+          gpuGenericKeyFromString("still_light_leak");
+      bool hasStillLightLeak = false;
+      for (std::size_t index = 0; index < rasterEffectPlan.count; ++index) {
+        const auto& pass = rasterEffectPlan.passes[index];
+        hasStillLightLeak = hasStillLightLeak ||
+            (pass.kind == GpuRasterPassKind::Spatial &&
+             pass.spatial.kind == GpuSpatialEffectKind::Generic &&
+             pass.spatial.genericKey == kStillLightLeakGenericKey);
+      }
+      if (hasStillLightLeak) {
+        const auto sourceSize = layer->sourceSize();
+        bool invertible = false;
+        const QTransform viewportToLayer =
+            layer->getGlobalTransform().inverted(&invertible);
+        const float targetWidth = static_cast<float>(renderPipeline->width());
+        const float targetHeight = static_cast<float>(renderPipeline->height());
+        if (layer->is3D() || !invertible || sourceSize.width <= 0 ||
+            sourceSize.height <= 0 || targetWidth <= 1.0f ||
+            targetHeight <= 1.0f) {
+          // The 2D affine mapping below cannot reproduce a perspective-projected
+          // 3D layer. Keep that case on its established CPU effect path.
+          rasterEffectPlan.count = 0;
+          deferRasterizerEffectsToGpu = false;
+        } else {
+          const auto viewportToLayerUv = [&](float viewportX, float viewportY) {
+            const auto canvasPoint = renderer_->viewportToCanvas(
+                {viewportX, viewportY});
+            const QPointF layerPoint = viewportToLayer.map(
+                QPointF(canvasPoint.x, canvasPoint.y));
+            return QPointF(layerPoint.x() / sourceSize.width,
+                            layerPoint.y() / sourceSize.height);
+          };
+          const QPointF origin = viewportToLayerUv(0.0f, 0.0f);
+          const QPointF across = viewportToLayerUv(targetWidth - 1.0f, 0.0f);
+          const QPointF down = viewportToLayerUv(0.0f, targetHeight - 1.0f);
+          const std::array<float, 6> uvTransform{
+              static_cast<float>(origin.x()),
+              static_cast<float>(origin.y()),
+              static_cast<float>(across.x() - origin.x()),
+              static_cast<float>(across.y() - origin.y()),
+              static_cast<float>(down.x() - origin.x()),
+              static_cast<float>(down.y() - origin.y())};
+          for (std::size_t index = 0; index < rasterEffectPlan.count; ++index) {
+            auto& pass = rasterEffectPlan.passes[index];
+            if (pass.kind != GpuRasterPassKind::Spatial ||
+                pass.spatial.kind != GpuSpatialEffectKind::Generic ||
+                pass.spatial.genericKey != kStillLightLeakGenericKey) {
+              continue;
+            }
+            for (std::size_t parameterIndex = 0;
+                 parameterIndex < uvTransform.size(); ++parameterIndex) {
+              pass.spatial.parameters[6 + parameterIndex] =
+                  uvTransform[parameterIndex];
+            }
+            pass.spatial.parameters[12] = 1.0f;
+          }
+        }
+      }
       const bool interactiveDraft =
           viewportInteracting_ ||
           previewDownsample_ >= interactivePreviewDownsampleFloor_;
