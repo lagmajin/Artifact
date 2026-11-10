@@ -356,7 +356,7 @@ void main(uint3 dtid : SV_DispatchThreadID) {
 
 // Analytic one-pass variant of ArtifactCore::applyStillLightLeak. P0 selects
 // the look; P1 is strength; P2 is alpha policy; P3/P4 are streak source coordinates;
-// P5 is streak angle in degrees.
+// P5 is streak angle; P6-P11 map viewport UV into source-image UV; P12 enables it.
 static constexpr const char* kStillLightLeakResidentHlsl = R"(
 Texture2D<float4> g_InputTexture : register(t0);
 RWTexture2D<float4> g_OutputTexture : register(u0);
@@ -430,6 +430,9 @@ void main(uint3 id : SV_DispatchThreadID)
     float2 uv = float2(id.x, id.y) / float2(max(width - 1, 1), max(height - 1, 1));
     if (g_P0 >= 0.5 && g_P0 < 1.5)
         uv = float2(id.x, id.y) / float2(max(width, 1), max(height, 1));
+    if (g_P12 > 0.5)
+        uv = float2(g_P6, g_P7) + uv.x * float2(g_P8, g_P9) +
+             uv.y * float2(g_P10, g_P11);
     float4 base = (g_InputTexture[id.xy]).bgra;
     float alpha = saturate(base.a);
     float3 straightBase = alpha > 1.0e-6 ? base.rgb / alpha : 0.0;
