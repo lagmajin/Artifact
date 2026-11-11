@@ -4,6 +4,8 @@ module;
 #include <cmath>
 #include <memory>
 #include <QVariant>
+#include <QString>
+#include <QStringList>
 #include <vector>
 #include <opencv2/opencv.hpp>
 #include <cstring>
@@ -29,12 +31,14 @@ import Memory.SharedPtr;
 
 namespace Artifact {
 
-static cv::Mat directionalBlur1D(const cv::Mat& src, float angleDeg, float length) {
+static cv::Mat directionalBlur1D(const cv::Mat& src, float angleDeg, float length,
+                                  int sampleStep) {
     if (src.empty()) {
         return src;
     }
 
     const int radius = std::max(1, static_cast<int>(length * 0.5f));
+    const int step = std::max(1, sampleStep);
     const float angleRad = angleDeg * (3.14159265f / 180.0f);
     const float dx = std::cos(angleRad);
     const float dy = std::sin(angleRad);
@@ -47,7 +51,7 @@ static cv::Mat directionalBlur1D(const cv::Mat& src, float angleDeg, float lengt
             cv::Vec4f sum(0, 0, 0, 0);
             float totalWeight = 0.0f;
 
-            for (int s = -radius; s <= radius; ++s) {
+            for (int s = -radius; s <= radius; s += step) {
                 float sx = x + dx * s;
                 float sy = y + dy * s;
                 sx = std::clamp(sx, 0.0f, static_cast<float>(src.cols - 1));
@@ -100,6 +104,11 @@ static QVector<float> getAnglesForPattern(StreakPattern pattern, float angleOffs
         break;
     case StreakPattern::Custom:
         break;
+    case StreakPattern::Star6:
+        for (int index = 0; index < 6; ++index) {
+            angles.append(30.0f * static_cast<float>(index) + angleOffset);
+        }
+        break;
     }
     return angles;
 }
@@ -110,8 +119,11 @@ public:
     float intensity_ = 1.0f;
     float length1_ = 64.0f;
     float length2_ = 128.0f;
+    float length3_ = 256.0f;
     float weight1_ = 0.6f;
     float weight2_ = 0.4f;
+    float weight3_ = 0.15f;
+    bool halfSampling_ = false;
     StreakPattern pattern_ = StreakPattern::Horizontal;
     QVector<float> customAngles_;
     float angleOffset_ = 0.0f;
@@ -140,19 +152,27 @@ public:
             }
         });
 
-        const QVector<float> angles = customAngles_.isEmpty()
-            ? getAnglesForPattern(pattern_, angleOffset_)
-            : customAngles_;
+        QVector<float> angles;
+        if (pattern_ == StreakPattern::Custom) {
+            angles.reserve(customAngles_.size());
+            for (float angle : customAngles_) {
+                angles.append(angle + angleOffset_);
+            }
+        } else {
+            angles = getAnglesForPattern(pattern_, angleOffset_);
+        }
         if (angles.isEmpty()) {
             dst = src;
             return;
         }
 
+        const int sampleStep = halfSampling_ ? 2 : 1;
         cv::Mat streaks = cv::Mat::zeros(mat.size(), CV_32FC4);
         for (float angle : angles) {
-            const cv::Mat s1 = directionalBlur1D(bright, angle, length1_);
-            const cv::Mat s2 = directionalBlur1D(bright, angle, length2_);
-            streaks += s1 * weight1_ + s2 * weight2_;
+            const cv::Mat s1 = directionalBlur1D(bright, angle, length1_, sampleStep);
+            const cv::Mat s2 = directionalBlur1D(bright, angle, length2_, sampleStep);
+            const cv::Mat s3 = directionalBlur1D(bright, angle, length3_, sampleStep);
+            streaks += s1 * weight1_ + s2 * weight2_ + s3 * weight3_;
         }
 
         cv::Mat result = mat.clone();
@@ -181,8 +201,11 @@ public:
     float intensity_ = 1.0f;
     float length1_ = 64.0f;
     float length2_ = 128.0f;
+    float length3_ = 256.0f;
     float weight1_ = 0.6f;
     float weight2_ = 0.4f;
+    float weight3_ = 0.15f;
+    bool halfSampling_ = false;
     StreakPattern pattern_ = StreakPattern::Horizontal;
     QVector<float> customAngles_;
     float angleOffset_ = 0.0f;
@@ -199,7 +222,7 @@ public:
     }
 
     void applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
-        if (!customAngles_.isEmpty()) { applyCPU(src,dst); return; }
+        if (pattern_ == StreakPattern::Custom) { applyCPU(src,dst); return; }
         if (!acquireSharedRenderDeviceForCurrentBackend(device_,context_)) { applyCPU(src,dst); return; }
         if (!gpuContext_) { gpuContext_ = std::make_unique<ArtifactCore::GpuContext>(device_, context_); executor_ = std::make_unique<ArtifactCore::ComputeExecutor>(*gpuContext_); }
         if (!executor_) { applyCPU(src, dst); return; }
@@ -207,16 +230,171 @@ public:
         static Diligent::ShaderResourceVariableDesc vars[]={{Diligent::SHADER_TYPE_COMPUTE,"DirectionalGlowParams",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},{Diligent::SHADER_TYPE_COMPUTE,"g_InputTexture",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},{Diligent::SHADER_TYPE_COMPUTE,"g_OutputTexture",Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC}};
         if(!pipelineReady_){ArtifactCore::ComputePipelineDesc d;d.name="DirectionalGlow/PSO";d.shaderSource=kHlsl;d.entryPoint="main";d.sourceLanguage=Diligent::SHADER_SOURCE_LANGUAGE_HLSL;d.variables=vars;d.variableCount=3;d.defaultVariableType=Diligent::SHADER_RESOURCE_VARIABLE_TYPE_STATIC;if(!executor_->build(d)||!executor_->createShaderResourceBinding(true)||!executor_->setBuffer("DirectionalGlowParams",paramsCB_)){applyCPU(src,dst);return;}pipelineReady_=true;}
         Diligent::RefCntAutoPtr<Diligent::ITexture> input;if(!createTexture(src,&input,"DirectionalGlow/Input")){applyCPU(src,dst);return;}auto od=input->GetDesc();od.Usage=Diligent::USAGE_DEFAULT;od.BindFlags=Diligent::BIND_UNORDERED_ACCESS|Diligent::BIND_SHADER_RESOURCE;od.Name="DirectionalGlow/Output";if(!outputTex_||outputTex_->GetDesc().Width!=od.Width||outputTex_->GetDesc().Height!=od.Height||outputTex_->GetDesc().Format!=od.Format||outputTex_->GetDesc().BindFlags!=od.BindFlags){outputTex_.Release();device_->CreateTexture(od,nullptr,&outputTex_);}if(!outputTex_){applyCPU(src,dst);return;}
-        ParamsCB p{threshold_,intensity_,length1_,length2_,weight1_,weight2_,static_cast<float>(static_cast<int>(pattern_)),angleOffset_};void*mapped=nullptr;context_->MapBuffer(paramsCB_,Diligent::MAP_WRITE,Diligent::MAP_FLAG_DISCARD,mapped);if(!mapped){applyCPU(src,dst);return;}std::memcpy(mapped,&p,sizeof(p));context_->UnmapBuffer(paramsCB_,Diligent::MAP_WRITE);if(!executor_->setTextureView("g_InputTexture",input->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE))||!executor_->setTextureView("g_OutputTexture",outputTex_->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))){applyCPU(src,dst);return;}executor_->dispatch(context_,ArtifactCore::ComputeExecutor::makeDispatchAttribs(od.Width,od.Height,1,8,8,1),Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);if(!readback(device_,context_,outputTex_,dst,src.image().colorDescriptor(),"DirectionalGlow/Readback")){applyCPU(src,dst);}
+        ParamsCB p{threshold_,intensity_,length1_,length2_,weight1_,weight2_,static_cast<float>(static_cast<int>(pattern_)),length3_,angleOffset_,weight3_,halfSampling_?1.0f:0.0f,0.0f};void*mapped=nullptr;context_->MapBuffer(paramsCB_,Diligent::MAP_WRITE,Diligent::MAP_FLAG_DISCARD,mapped);if(!mapped){applyCPU(src,dst);return;}std::memcpy(mapped,&p,sizeof(p));context_->UnmapBuffer(paramsCB_,Diligent::MAP_WRITE);if(!executor_->setTextureView("g_InputTexture",input->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE))||!executor_->setTextureView("g_OutputTexture",outputTex_->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))){applyCPU(src,dst);return;}executor_->dispatch(context_,ArtifactCore::ComputeExecutor::makeDispatchAttribs(od.Width,od.Height,1,8,8,1),Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);if(!readback(device_,context_,outputTex_,dst,src.image().colorDescriptor(),"DirectionalGlow/Readback")){applyCPU(src,dst);}
     }
 
 private:
-    struct ParamsCB{float threshold,intensity,length1,length2,weight1,weight2,pattern,angleOffset;};
-    static constexpr const char* kHlsl=R"(Texture2D<float4> g_InputTexture:register(t0);RWTexture2D<float4> g_OutputTexture:register(u0);cbuffer DirectionalGlowParams:register(b0){float g_Threshold;float g_Intensity;float g_Length1;float g_Length2;float g_Weight1;float g_Weight2;float g_Pattern;float g_AngleOffset;}float4 sampleBright(int2 p,uint2 size){p=clamp(p,int2(0,0),int2(size)-1);float4 v=(g_InputTexture[p]).bgra;float lum=dot(v.rgb,float3(0.299,0.587,0.114));return lum>g_Threshold?v*((lum-g_Threshold)/max(0.001,1.0-g_Threshold)):0;}float4 streak(int2 p,uint2 size,float angle,float len){float2 d=float2(cos(angle),sin(angle));int radius=(int)max(1.0,len*.5);float4 sum=0;float total=0;for(int s=-128;s<=128;++s){if(abs(s)>radius)continue;int2 q=p+int2(round(d*s));float w=exp(-.5*s*s/max(1.0,radius*radius*.25));sum+=sampleBright(q,size)*w;total+=w;}return total>0?sum/total:0;}[numthreads(8,8,1)]void main(uint3 id:SV_DispatchThreadID){uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;int2 p=int2(id.xy);float a=g_AngleOffset*0.0174532925;float4 s=streak(p,uint2(w,h),a,g_Length1)*g_Weight1+streak(p,uint2(w,h),a,g_Length2)*g_Weight2;if(g_Pattern>0.5&&g_Pattern<1.5)s+=streak(p,uint2(w,h),a+1.5707963,g_Length1)*g_Weight1+streak(p,uint2(w,h),a+1.5707963,g_Length2)*g_Weight2;if(g_Pattern>1.5&&g_Pattern<2.5)for(int k=1;k<4;k+=1){float ang=a+1.5707963*k*.5;s+=streak(p,uint2(w,h),ang,g_Length1)*g_Weight1+streak(p,uint2(w,h),ang,g_Length2)*g_Weight2;}float4 px=(g_InputTexture[id.xy]).bgra;px.rgb=saturate(px.rgb+s.rgb*g_Intensity);px.a=saturate(px.a+s.a*g_Intensity);g_OutputTexture[id.xy]=(px).bgra;})";
+    // 12 floats (48 bytes) keeps the dynamic constant buffer 16-byte aligned.
+    struct ParamsCB{float threshold,intensity,length1,length2,weight1,weight2,pattern,length3,angleOffset,weight3,halfSampling,pad;};
+    static constexpr const char* kHlsl=R"(
+Texture2D<float4> g_InputTexture : register(t0);
+RWTexture2D<float4> g_OutputTexture : register(u0);
+cbuffer DirectionalGlowParams : register(b0)
+{
+    float g_Threshold;
+    float g_Intensity;
+    float g_Length1;
+    float g_Length2;
+    float g_Weight1;
+    float g_Weight2;
+    float g_Pattern;
+    float g_Length3;
+    float g_AngleOffset;
+    float g_Weight3;
+    float g_HalfSampling;
+    float g_Pad;
+}
+float4 sampleBright(int2 p, uint2 size)
+{
+    p = clamp(p, int2(0, 0), int2(size) - 1);
+    float4 v = (g_InputTexture[p]).bgra;
+    float lum = dot(v.rgb, float3(0.299, 0.587, 0.114));
+    return lum > g_Threshold ? v * ((lum - g_Threshold) / max(0.001, 1.0 - g_Threshold)) : 0;
+}
+float4 streak(int2 p, uint2 size, float angle, float len)
+{
+    float2 d = float2(cos(angle), sin(angle));
+    int radius = (int)max(1.0, len * 0.5);
+    int sampleStep = g_HalfSampling > 0.5 ? 2 : 1;
+    float4 sum = 0;
+    float total = 0;
+    [loop] for (int s = -128; s <= 128; s += sampleStep)
+    {
+        if (abs(s) > radius) continue;
+        int2 q = p + int2(round(d * s));
+        float w = exp(-.5 * s * s / max(1.0, radius * radius * .25));
+        sum += sampleBright(q, size) * w;
+        total += w;
+    }
+    return total > 0 ? sum / total : 0;
+}
+[numthreads(8,8,1)]
+void main(uint3 id : SV_DispatchThreadID)
+{
+    uint w, h;
+    g_OutputTexture.GetDimensions(w, h);
+    if (id.x >= w || id.y >= h) return;
+    int2 p = int2(id.xy);
+    float a = g_AngleOffset * 0.0174532925;
+    float4 s = streak(p, uint2(w,h), a, g_Length1) * g_Weight1
+             + streak(p, uint2(w,h), a, g_Length2) * g_Weight2
+             + streak(p, uint2(w,h), a, g_Length3) * g_Weight3;
+    if (g_Pattern > 0.5 && g_Pattern < 1.5)
+    {
+        float b = a + 1.5707963;
+        s += streak(p, uint2(w,h), b, g_Length1) * g_Weight1
+           + streak(p, uint2(w,h), b, g_Length2) * g_Weight2
+           + streak(p, uint2(w,h), b, g_Length3) * g_Weight3;
+    }
+    if (g_Pattern > 1.5 && g_Pattern < 2.5)
+    {
+        [loop] for (int k = 1; k < 4; k += 1)
+        {
+            float ang = a + 1.5707963 * k * .5;
+            s += streak(p, uint2(w,h), ang, g_Length1) * g_Weight1
+               + streak(p, uint2(w,h), ang, g_Length2) * g_Weight2
+               + streak(p, uint2(w,h), ang, g_Length3) * g_Weight3;
+        }
+    }
+    if (g_Pattern > 3.5 && g_Pattern < 4.5)
+    {
+        [loop] for (int k = 1; k < 6; k += 1)
+        {
+            float ang = a + 0.5235988 * k;
+            s += streak(p, uint2(w,h), ang, g_Length1) * g_Weight1
+               + streak(p, uint2(w,h), ang, g_Length2) * g_Weight2
+               + streak(p, uint2(w,h), ang, g_Length3) * g_Weight3;
+        }
+    }
+    float4 px = (g_InputTexture[id.xy]).bgra;
+    px.rgb = saturate(px.rgb + s.rgb * g_Intensity);
+     px.a = saturate(px.a + s.a * g_Intensity);
+    g_OutputTexture[id.xy] = (px).bgra;
+})";
 // Resident-path variant: no own b0 cbuffer (the pipeline prepends
 // ResidentGenericParams). Mapping: P0 threshold, P1 intensity, P2 length1,
-// P3 length2, P4 weight1, P5 weight2, P6 pattern, P7 angleOffset.
-    static constexpr const char* kDirectionalGlowResidentHlsl=R"(Texture2D<float4> g_InputTexture:register(t0);RWTexture2D<float4> g_OutputTexture:register(u0);float4 sampleBright(int2 p,uint2 size){p=clamp(p,int2(0,0),int2(size)-1);float4 v=(g_InputTexture[p]).bgra;float lum=dot(v.rgb,float3(0.299,0.587,0.114));return lum>g_P0?v*((lum-g_P0)/max(0.001,1.0-g_P0)):0;}float4 streak(int2 p,uint2 size,float angle,float len){float2 d=float2(cos(angle),sin(angle));int radius=(int)max(1.0,len*.5);float4 sum=0;float total=0;for(int s=-128;s<=128;++s){if(abs(s)>radius)continue;int2 q=p+int2(round(d*s));float w=exp(-.5*s*s/max(1.0,radius*radius*.25));sum+=sampleBright(q,size)*w;total+=w;}return total>0?sum/total:0;}[numthreads(8,8,1)]void main(uint3 id:SV_DispatchThreadID){uint w,h;g_OutputTexture.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;int2 p=int2(id.xy);float a=g_P7*0.0174532925;float4 s=streak(p,uint2(w,h),a,g_P2)*g_P4+streak(p,uint2(w,h),a,g_P3)*g_P5;if(g_P6>0.5&&g_P6<1.5)s+=streak(p,uint2(w,h),a+1.5707963,g_P2)*g_P4+streak(p,uint2(w,h),a+1.5707963,g_P3)*g_P5;if(g_P6>1.5&&g_P6<2.5)for(int k=1;k<4;k+=1){float ang=a+1.5707963*k*.5;s+=streak(p,uint2(w,h),ang,g_P2)*g_P4+streak(p,uint2(w,h),ang,g_P3)*g_P5;}float4 px=(g_InputTexture[id.xy]).bgra;px.rgb=saturate(px.rgb+s.rgb*g_P1);px.a=saturate(px.a+s.a*g_P1);g_OutputTexture[id.xy]=(px).bgra;})";
+// P3 length2, P4 weight1, P5 weight2, P6 pattern, P7 length3,
+// P8 angleOffset, P9 weight3, P10 halfSampling.
+    static constexpr const char* kDirectionalGlowResidentHlsl=R"(
+Texture2D<float4> g_InputTexture : register(t0);
+RWTexture2D<float4> g_OutputTexture : register(u0);
+float4 sampleBright(int2 p, uint2 size)
+{
+    p = clamp(p, int2(0, 0), int2(size) - 1);
+    float4 v = (g_InputTexture[p]).bgra;
+    float lum = dot(v.rgb, float3(0.299, 0.587, 0.114));
+    return lum > g_P0 ? v * ((lum - g_P0) / max(0.001, 1.0 - g_P0)) : 0;
+}
+float4 streak(int2 p, uint2 size, float angle, float len)
+{
+    float2 d = float2(cos(angle), sin(angle));
+    int radius = (int)max(1.0, len * 0.5);
+    int sampleStep = g_P10 > 0.5 ? 2 : 1;
+    float4 sum = 0;
+    float total = 0;
+    [loop] for (int s = -128; s <= 128; s += sampleStep)
+    {
+        if (abs(s) > radius) continue;
+        int2 q = p + int2(round(d * s));
+        float w = exp(-.5 * s * s / max(1.0, radius * radius * .25));
+        sum += sampleBright(q, size) * w;
+        total += w;
+    }
+    return total > 0 ? sum / total : 0;
+}
+[numthreads(8,8,1)]
+void main(uint3 id : SV_DispatchThreadID)
+{
+    uint w, h;
+    g_OutputTexture.GetDimensions(w, h);
+    if (id.x >= w || id.y >= h) return;
+    int2 p = int2(id.xy);
+    float a = g_P8 * 0.0174532925;
+    float4 s = streak(p, uint2(w,h), a, g_P2) * g_P4
+             + streak(p, uint2(w,h), a, g_P3) * g_P5
+             + streak(p, uint2(w,h), a, g_P7) * g_P9;
+    if (g_P6 > 0.5 && g_P6 < 1.5)
+    {
+        float b = a + 1.5707963;
+        s += streak(p, uint2(w,h), b, g_P2) * g_P4
+           + streak(p, uint2(w,h), b, g_P3) * g_P5
+           + streak(p, uint2(w,h), b, g_P7) * g_P9;
+    }
+    if (g_P6 > 1.5 && g_P6 < 2.5)
+    {
+        [loop] for (int k = 1; k < 4; k += 1)
+        {
+            float ang = a + 1.5707963 * k * .5;
+            s += streak(p, uint2(w,h), ang, g_P2) * g_P4
+               + streak(p, uint2(w,h), ang, g_P3) * g_P5
+               + streak(p, uint2(w,h), ang, g_P7) * g_P9;
+        }
+    }
+    if (g_P6 > 3.5 && g_P6 < 4.5)
+    {
+        [loop] for (int k = 1; k < 6; k += 1)
+        {
+            float ang = a + 0.5235988 * k;
+            s += streak(p, uint2(w,h), ang, g_P2) * g_P4
+               + streak(p, uint2(w,h), ang, g_P3) * g_P5
+               + streak(p, uint2(w,h), ang, g_P7) * g_P9;
+        }
+    }
+    float4 px = (g_InputTexture[id.xy]).bgra;
+    px.rgb = saturate(px.rgb + s.rgb * g_P1);
+     px.a = saturate(px.a + s.a * g_P1);
+    g_OutputTexture[id.xy] = (px).bgra;
+})";
 public:
     static constexpr const char* residentHlsl() { return kDirectionalGlowResidentHlsl; }
 private:
@@ -245,8 +423,11 @@ void DirectionalGlowEffect::syncImpls() {
         cpu->intensity_ = intensity_;
         cpu->length1_ = length1_;
         cpu->length2_ = length2_;
+        cpu->length3_ = length3_;
         cpu->weight1_ = weight1_;
         cpu->weight2_ = weight2_;
+        cpu->weight3_ = weight3_;
+        cpu->halfSampling_ = halfSampling_;
         cpu->pattern_ = pattern_;
         cpu->customAngles_ = customAngles_;
         cpu->angleOffset_ = angleOffset_;
@@ -256,16 +437,135 @@ void DirectionalGlowEffect::syncImpls() {
         gpu->intensity_ = intensity_;
         gpu->length1_ = length1_;
         gpu->length2_ = length2_;
+        gpu->length3_ = length3_;
         gpu->weight1_ = weight1_;
         gpu->weight2_ = weight2_;
+        gpu->weight3_ = weight3_;
+        gpu->halfSampling_ = halfSampling_;
         gpu->pattern_ = pattern_;
         gpu->customAngles_ = customAngles_;
         gpu->angleOffset_ = angleOffset_;
     }
 }
 
+static QString formatAngles(const QVector<float>& angles) {
+    QStringList parts;
+    parts.reserve(angles.size());
+    for (float angle : angles) {
+        parts.append(QString::number(angle, 'g', 7));
+    }
+    return parts.join(QStringLiteral(", "));
+}
+
+static QVector<float> parseAngles(const QString& text) {
+    QString normalized = text;
+    normalized.replace(QLatin1Char(';'), QLatin1Char(' '));
+    normalized.replace(QLatin1Char(','), QLatin1Char(' '));
+    const QStringList tokens = normalized.simplified().split(QLatin1Char(' '), Qt::SkipEmptyParts);
+    QVector<float> angles;
+    angles.reserve(std::min(static_cast<int>(tokens.size()), 12));
+    for (const QString& token : tokens) {
+        bool ok = false;
+        const float angle = token.toFloat(&ok);
+        if (!ok || !std::isfinite(angle)) continue;
+        angles.append(angle);
+        if (angles.size() >= 12) break;
+    }
+    return angles;
+}
+
+void DirectionalGlowEffect::applyPreset(int preset) {
+    switch (preset) {
+    case 1: // Anamorphic 2.39
+        pattern_ = StreakPattern::Horizontal;
+        threshold_ = 0.82f;
+        intensity_ = 1.15f;
+        length1_ = 80.0f;
+        length2_ = 200.0f;
+        length3_ = 256.0f;
+        weight1_ = 0.55f;
+        weight2_ = 0.32f;
+        weight3_ = 0.18f;
+        angleOffset_ = 0.0f;
+        preset_ = 1;
+        break;
+    case 2: // Star 6
+        pattern_ = StreakPattern::Star6;
+        threshold_ = 0.85f;
+        intensity_ = 1.10f;
+        length1_ = 48.0f;
+        length2_ = 112.0f;
+        length3_ = 208.0f;
+        weight1_ = 0.50f;
+        weight2_ = 0.32f;
+        weight3_ = 0.16f;
+        angleOffset_ = 0.0f;
+        preset_ = 2;
+        break;
+    case 3: // Neon
+        pattern_ = StreakPattern::Cross;
+        threshold_ = 0.60f;
+        intensity_ = 1.55f;
+        length1_ = 32.0f;
+        length2_ = 96.0f;
+        length3_ = 192.0f;
+        weight1_ = 0.50f;
+        weight2_ = 0.30f;
+        weight3_ = 0.20f;
+        angleOffset_ = 0.0f;
+        preset_ = 3;
+        break;
+    case 4: // Dreamy
+        pattern_ = StreakPattern::Horizontal;
+        threshold_ = 0.55f;
+        intensity_ = 0.95f;
+        length1_ = 64.0f;
+        length2_ = 192.0f;
+        length3_ = 256.0f;
+        weight1_ = 0.35f;
+        weight2_ = 0.35f;
+        weight3_ = 0.30f;
+        angleOffset_ = 0.0f;
+        preset_ = 4;
+        break;
+    default:
+        preset_ = 0;
+        syncImpls();
+        return;
+    }
+    syncImpls();
+}
+
 std::vector<AbstractProperty> DirectionalGlowEffect::getProperties() const {
     std::vector<AbstractProperty> props;
+
+    AbstractProperty presetProp;
+    presetProp.setName("Preset");
+    presetProp.setType(PropertyType::Integer);
+    presetProp.setValue(preset_);
+    presetProp.setTooltip(QStringLiteral(
+        "0=Custom,1=Anamorphic 2.39,2=Star 6,3=Neon,4=Dreamy"));
+    props.push_back(presetProp);
+
+    AbstractProperty anglesProp;
+    anglesProp.setName("Custom Angles");
+    anglesProp.setType(PropertyType::String);
+    anglesProp.setValue(formatAngles(customAngles_));
+    props.push_back(anglesProp);
+
+    AbstractProperty patternProp;
+    patternProp.setName("Pattern");
+    patternProp.setType(PropertyType::Integer);
+    patternProp.setValue(static_cast<int>(pattern_));
+    patternProp.setTooltip(QStringLiteral(
+        "0=Horizontal,1=Cross,2=Star,3=Custom,4=Star 6"));
+    props.push_back(patternProp);
+
+    AbstractProperty angleProp;
+    angleProp.setName("Angle Offset");
+    angleProp.setType(PropertyType::Float);
+    angleProp.setValue(angleOffset_);
+    props.push_back(angleProp);
 
     AbstractProperty threshProp;
     threshProp.setName("Threshold");
@@ -291,6 +591,12 @@ std::vector<AbstractProperty> DirectionalGlowEffect::getProperties() const {
     len2Prop.setValue(length2_);
     props.push_back(len2Prop);
 
+    AbstractProperty len3Prop;
+    len3Prop.setName("Length 3 (Tail)");
+    len3Prop.setType(PropertyType::Float);
+    len3Prop.setValue(length3_);
+    props.push_back(len3Prop);
+
     AbstractProperty w1Prop;
     w1Prop.setName("Weight 1");
     w1Prop.setType(PropertyType::Float);
@@ -303,31 +609,73 @@ std::vector<AbstractProperty> DirectionalGlowEffect::getProperties() const {
     w2Prop.setValue(weight2_);
     props.push_back(w2Prop);
 
-    AbstractProperty patternProp;
-    patternProp.setName("Pattern");
-    patternProp.setType(PropertyType::Integer);
-    patternProp.setValue(static_cast<int>(pattern_));
-    props.push_back(patternProp);
+    AbstractProperty w3Prop;
+    w3Prop.setName("Weight 3");
+    w3Prop.setType(PropertyType::Float);
+    w3Prop.setValue(weight3_);
+    props.push_back(w3Prop);
 
-    AbstractProperty angleProp;
-    angleProp.setName("Angle Offset");
-    angleProp.setType(PropertyType::Float);
-    angleProp.setValue(angleOffset_);
-    props.push_back(angleProp);
+    AbstractProperty halfSamplingProp;
+    halfSamplingProp.setName("Half Sampling");
+    halfSamplingProp.setType(PropertyType::Boolean);
+    halfSamplingProp.setValue(halfSampling_);
+    props.push_back(halfSamplingProp);
 
     return props;
 }
 
 void DirectionalGlowEffect::setPropertyValue(const UniString& name, const QVariant& value) {
     const QString key = name.toQString();
-    if (key == QStringLiteral("Threshold")) setThreshold(value.toFloat());
-    else if (key == QStringLiteral("Intensity")) setIntensity(value.toFloat());
-    else if (key == QStringLiteral("Length 1 (Inner)")) setLength1(value.toFloat());
-    else if (key == QStringLiteral("Length 2 (Outer)")) setLength2(value.toFloat());
-    else if (key == QStringLiteral("Weight 1")) setWeight1(value.toFloat());
-    else if (key == QStringLiteral("Weight 2")) setWeight2(value.toFloat());
-    else if (key == QStringLiteral("Pattern")) setPattern(static_cast<StreakPattern>(value.toInt()));
-    else if (key == QStringLiteral("Angle Offset")) setAngleOffset(value.toFloat());
+    if (key == QStringLiteral("Preset")) {
+        bool ok = false;
+        const int preset = value.toInt(&ok);
+        applyPreset(ok ? preset : 0);
+        return;
+    }
+    // Sampling quality does not change the look preset.
+    if (key == QStringLiteral("Half Sampling")) {
+        setHalfSampling(value.toBool());
+        return;
+    }
+    bool lookChanged = false;
+    if (key == QStringLiteral("Custom Angles")) {
+        setCustomAngles(parseAngles(value.toString()));
+        lookChanged = true;
+    } else if (key == QStringLiteral("Pattern")) {
+        setPattern(static_cast<StreakPattern>(std::clamp(value.toInt(), 0, 4)));
+        lookChanged = true;
+    } else if (key == QStringLiteral("Angle Offset")) {
+        setAngleOffset(value.toFloat());
+        lookChanged = true;
+    } else if (key == QStringLiteral("Threshold")) {
+        setThreshold(value.toFloat());
+        lookChanged = true;
+    } else if (key == QStringLiteral("Intensity")) {
+        setIntensity(value.toFloat());
+        lookChanged = true;
+    } else if (key == QStringLiteral("Length 1 (Inner)")) {
+        setLength1(value.toFloat());
+        lookChanged = true;
+    } else if (key == QStringLiteral("Length 2 (Outer)")) {
+        setLength2(value.toFloat());
+        lookChanged = true;
+    } else if (key == QStringLiteral("Length 3 (Tail)")) {
+        setLength3(value.toFloat());
+        lookChanged = true;
+    } else if (key == QStringLiteral("Weight 1")) {
+        setWeight1(value.toFloat());
+        lookChanged = true;
+    } else if (key == QStringLiteral("Weight 2")) {
+        setWeight2(value.toFloat());
+        lookChanged = true;
+    } else if (key == QStringLiteral("Weight 3")) {
+        setWeight3(value.toFloat());
+        lookChanged = true;
+    } else {
+        ArtifactAbstractEffect::setPropertyValue(name, value);
+    }
+    // Any hand edit of a look parameter leaves the named preset behind.
+    if (lookChanged) preset_ = 0;
 }
 
 } // namespace Artifact

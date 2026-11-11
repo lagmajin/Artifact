@@ -7,6 +7,7 @@ module;
 #include <QPainter>
 #include <QTransform>
 #include <QSizeF>
+#include <QFileInfo>
 #include <QVariant>
 #include <QDebug>
 #include <wobjectimpl.h>
@@ -98,19 +99,6 @@ ParticleEmitter* firstEmitterOrCreate(ParticleSystem* system)
         return emitters.front().get();
     }
     return system->createEmitter();
-}
-
-bool hasParticleImageSource(const ParticleSystem* system)
-{
-    if (!system) {
-        return false;
-    }
-    for (const auto& emitter : system->emitters()) {
-        if (emitter && !emitter->params().texturePath.isEmpty()) {
-            return true;
-        }
-    }
-    return false;
 }
 
 float safeParticleFps(float value)
@@ -347,6 +335,10 @@ ArtifactCore::ParticleRenderData toCoreParticleRenderData(
         vertex.spriteCols = std::clamp(particle.spriteCols, 1, 1024);
         vertex.spriteFrame = std::clamp(
             particle.spriteFrame, 0, vertex.spriteRows * vertex.spriteCols - 1);
+        // Per-particle texture flag for the GPU shader (position.w lane). Only
+        // particles from the layer's single image emitter may sample the atlas;
+        // procedural emitters keep the analytic falloff shape.
+        vertex.pad0 = finiteClamped(particle.textureWeight, 0.0f, 0.0f, 1.0f);
     });
     // The OCIO manager owns mutable working-space state without a snapshot
     // API. Keep its conversion on the caller thread while the independent
@@ -586,6 +578,146 @@ public:
     int width = 1920;
     int height = 1080;
     int selectedEffectorIndex = -1;
+
+    // GPU atlas registration cache. Phase 1 keeps one atlas per layer; the
+    // texture stays owned by the renderer for its lifetime.
+    struct GpuAtlasBinding {
+        QString path;
+        ArtifactCore::ParticleTextureId textureId = 0;
+        std::uint64_t generation = 0;
+        bool failed = false;
+    };
+    GpuAtlasBinding gpuAtlas;
+
+    // Cached filesystem classification for emitter texture paths. A small
+    // fixed-size ring keeps a steady frame from calling QFileInfo::isDir()
+    // (a filesystem stat) once per emitter per draw.
+    struct PathKindCache {
+        QString path;
+        bool directory = false;
+        bool valid = false;
+    };
+    std::array<PathKindCache, 4> pathKindCache{};
+    std::size_t pathKindCursor = 0;
+
+    bool isSequencePath(const QString& path)
+    {
+        if (path.isEmpty()) {
+            return false;
+        }
+        for (const auto& entry : pathKindCache) {
+            if (entry.valid && entry.path == path) {
+                return entry.directory;
+            }
+        }
+        PathKindCache& entry = pathKindCache[pathKindCursor];
+        pathKindCursor = (pathKindCursor + 1) % pathKindCache.size();
+        entry.path = path;
+        entry.directory = QFileInfo(path).isDir();
+        entry.valid = true;
+        return entry.directory;
+    }
+
+    // The GPU particle shader samples exactly one atlas per draw. A layer that
+    // needs a per-frame sequence or several distinct atlases keeps the existing
+    // CPU flipbook path, which already handles those cases.
+    bool requiresCpuFlipbookPath()
+    {
+        if (!particleSystem) {
+            return false;
+        }
+        int singleImageAtlasCount = 0;
+        for (const auto& emitter : particleSystem->emitters()) {
+            if (!emitter) {
+                continue;
+            }
+            const QString& path = emitter->params().texturePath;
+            if (path.isEmpty()) {
+                continue;
+            }
+            if (isSequencePath(path)) {
+                return true;
+            }
+            ++singleImageAtlasCount;
+        }
+        return singleImageAtlasCount > 1;
+    }
+
+    // Phase 1 limitation: one GPU atlas per particle layer. Exactly one
+    // single-image emitter is supported; other emitters keep procedural shapes.
+    const EmitterParams* firstGpuAtlasParams()
+    {
+        if (!particleSystem) {
+            return nullptr;
+        }
+        for (const auto& emitter : particleSystem->emitters()) {
+            if (!emitter) {
+                continue;
+            }
+            const EmitterParams& params = emitter->params();
+            if (!params.texturePath.isEmpty() &&
+                !isSequencePath(params.texturePath)) {
+                return &params;
+            }
+        }
+        return nullptr;
+    }
+
+    ArtifactCore::ParticleTextureId resolveParticleTextureId(
+        ArtifactIRenderer* renderer)
+    {
+        if (!renderer || !particleSystem) {
+            return 0;
+        }
+        const EmitterParams* params = firstGpuAtlasParams();
+        if (!params) {
+            return 0;
+        }
+        const std::uint64_t generation = renderer->particleTextureGeneration();
+        if (gpuAtlas.generation == generation &&
+            gpuAtlas.path == params->texturePath) {
+            return gpuAtlas.failed ? 0 : gpuAtlas.textureId;
+        }
+
+        // Cold path: path changed or the renderer was recreated.
+        if (gpuAtlas.textureId != 0 && gpuAtlas.generation == generation) {
+            // Same renderer, different atlas: drop the previous registration.
+            // Queued packets hold their own view reference, so this cannot pull
+            // a texture out from under an in-flight submission.
+            renderer->releaseParticleTexture(gpuAtlas.textureId);
+        }
+        gpuAtlas = GpuAtlasBinding{};
+        gpuAtlas.path = params->texturePath;
+        gpuAtlas.generation = generation;
+
+        QImage image(gpuAtlas.path);
+        if (image.isNull()) {
+            gpuAtlas.failed = true;
+            return 0;
+        }
+        if (image.format() != QImage::Format_RGBA8888) {
+            image = image.convertToFormat(QImage::Format_RGBA8888);
+        }
+        if (image.isNull() || image.width() <= 0 || image.height() <= 0) {
+            gpuAtlas.failed = true;
+            return 0;
+        }
+        ArtifactCore::ParticleTextureUpload upload;
+        upload.rgba8 = image.constBits();
+        upload.width = image.width();
+        upload.height = image.height();
+        upload.rowStride = static_cast<int>(image.bytesPerLine());
+        gpuAtlas.textureId = renderer->registerParticleTexture(upload);
+        // registerParticleTexture() may have lazily created the particle
+        // renderer, so re-read the generation it now reports. Otherwise the
+        // next frame would see a generation mismatch and upload again.
+        gpuAtlas.generation = renderer->particleTextureGeneration();
+        if (gpuAtlas.textureId == 0) {
+            gpuAtlas.failed = true;
+            return 0;
+        }
+        return gpuAtlas.textureId;
+    }
     
     Impl() {
         particleSystem = std::make_unique<ParticleSystem>();
@@ -680,11 +812,11 @@ void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
 
     const int64_t frameNumber = currentFrame();
     const bool rendererReady = renderer->isInitialized();
-    // The GPU particle shader has no image SRV/flipbook binding yet. Keep
-    // textured 2D emitters on the existing cached image path so sequence and
-    // atlas sources remain visible in the regular composition viewport.
+    // Sequence directories and multiple distinct atlases still need the CPU
+    // flipbook path; a single image atlas is uploaded once and sampled by the
+    // GPU particle shader.
     const bool useImageFlipbookPath = !is3D() &&
-        hasParticleImageSource(impl_->particleSystem.get());
+        impl_->requiresCpuFlipbookPath();
     // 1. 決定論的なシミュレーション状態の更新
     // ※ goToFrame は内部で reset() と forward simulation を行う
     float fps = 30.0f;
@@ -719,6 +851,13 @@ void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
         auto lodData = impl_->particleSystem->renderSettings().fullParticleDensity
             ? std::move(coreData)
             : applyParticleRenderLOD(std::move(coreData), screenScale);
+        // Single-image atlases are sampled on the GPU in the 2D billboard path.
+        // The 3D camera path keeps procedural shapes: it was procedural before
+        // Phase 1 and its view-space billboard flips UV.y. An unloadable file or
+        // a stale renderer generation also leaves the id at 0.
+        lodData.textureId = is3D()
+            ? 0
+            : impl_->resolveParticleTextureId(renderer);
         // GPU path parity: captureRenderData() is emitter-ordered, so apply
         // the layer SortMode here like the software path does. Depth-aware
         // soft particles need a scene-depth SRV and stay software-only;
@@ -828,9 +967,9 @@ bool ArtifactParticleLayer::drawSurfaceGPU(ArtifactIRenderer* renderer,
     if (!renderer->isInitialized()) {
         return false;
     }
-    if (hasParticleImageSource(impl_->particleSystem.get())) {
-        // The offscreen GPU particle shader cannot sample emitter images;
-        // callers already fall back to renderFrame() when this returns false.
+    if (impl_->requiresCpuFlipbookPath()) {
+        // Sequence directories and multi-atlas layers are decoded per frame on
+        // the CPU path; callers fall back to renderFrame() when this is false.
         return false;
     }
 
@@ -859,6 +998,7 @@ bool ArtifactParticleLayer::drawSurfaceGPU(ArtifactIRenderer* renderer,
     auto lodData = impl_->particleSystem->renderSettings().fullParticleDensity
         ? std::move(coreData)
         : applyParticleRenderLOD(std::move(coreData), surfaceScale);
+    lodData.textureId = impl_->resolveParticleTextureId(renderer);
     sortCoreParticleRenderData(
         lodData,
         impl_->particleSystem->renderSettings().sortMode,
@@ -909,7 +1049,7 @@ QString ArtifactParticleLayer::debugState() const
     const auto& rs = impl_->particleSystem->renderSettings();
     const auto sourceData = impl_->particleSystem->captureRenderData();
     const int emitterCount = impl_->particleSystem->emitterCount();
-    return QStringLiteral("playing=%1 emitters=%2 alive=%3 blend=%4 billboard=%5 sort=%6 depthTest=%7 depthWrite=%8 cachedFrame=%9 timeScale=%10 bounds={%11} soft=%12")
+    return QStringLiteral("playing=%1 emitters=%2 alive=%3 blend=%4 billboard=%5 sort=%6 depthTest=%7 depthWrite=%8 cachedFrame=%9 timeScale=%10 bounds={%11} soft=%12 texture=%13")
         .arg(impl_->playing ? QStringLiteral("true") : QStringLiteral("false"))
         .arg(emitterCount)
         .arg(sourceData.particles.size())
@@ -922,7 +1062,11 @@ QString ArtifactParticleLayer::debugState() const
         .arg(QString::number(impl_->particleSystem->timeScale(), 'f', 3))
         .arg(contentBoundsSummary())
         .arg(rs.softParticles ? QStringLiteral("true(software-only)")
-                              : QStringLiteral("false"));
+                              : QStringLiteral("false"))
+        .arg(impl_->gpuAtlas.textureId != 0
+                 ? QStringLiteral("gpu:%1").arg(impl_->gpuAtlas.textureId)
+                 : (impl_->gpuAtlas.failed ? QStringLiteral("unavailable")
+                                           : QStringLiteral("none")));
 }
 
 QJsonObject ArtifactParticleLayer::toJson() const
@@ -4216,6 +4360,7 @@ ArtifactCore::ParticleRenderData applyParticleRenderLOD(
     ArtifactCore::ParticleRenderData reduced;
     reduced.frameNumber = source.frameNumber;
     reduced.options = source.options;
+    reduced.textureId = source.textureId;
     const std::size_t stride = std::max<std::size_t>(1,
         static_cast<std::size_t>(std::ceil(static_cast<float>(source.particles.size()) /
                                            static_cast<float>(targetCount))));

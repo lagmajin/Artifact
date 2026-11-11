@@ -57,6 +57,10 @@ export namespace Artifact
     bool emission = false;
     bool normal = false;
     bool velocity = false;
+    // Two RGBA32_UINT ping/pong maps; each 8x8 tile carries one source ID per
+    // screen-space velocity quadrant.
+    // Requested only for beauty motion blur, not for a raw Velocity AOV export.
+    bool motionBlurScratch = false;
     bool objectId = false;
     bool materialId = false;
     bool albedo = false;
@@ -209,6 +213,11 @@ export namespace Artifact
   ITextureView* velocitySRV() const;
   ITextureView* velocityRTV() const;
   bool hasVelocityTarget() const;
+  // Candidate source-pixel index maps. The caller alternates read/write index;
+  // map dimensions are ceil(renderWidth/8) by ceil(renderHeight/8).
+  ITextureView* motionBlurScratchSRV(unsigned index) const;
+  ITextureView* motionBlurScratchUAV(unsigned index) const;
+  bool hasMotionBlurScratch() const;
   ITextureView* objectIdSRV() const;
   ITextureView* objectIdRTV() const;
   bool hasObjectIdTarget() const;

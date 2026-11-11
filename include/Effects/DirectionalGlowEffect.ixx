@@ -28,7 +28,8 @@ enum class StreakPattern {
     Horizontal,   // 水平のみ (anamorphic)
     Cross,        // 十字 (0°, 90°)
     Star,         // 星型 (0°, 45°, 90°, 135°)
-    Custom        // カスタム角度
+    Custom,       // カスタム角度
+    Star6         // 6方向 (0°, 30°, 60°, 90°, 120°, 150°)
 };
 
 class DirectionalGlowEffect : public ArtifactAbstractEffect {
@@ -37,8 +38,12 @@ private:
     float intensity_ = 1.0f;
     float length1_ = 64.0f;
     float length2_ = 128.0f;
+    float length3_ = 256.0f;
     float weight1_ = 0.6f;
     float weight2_ = 0.4f;
+    float weight3_ = 0.15f;
+    bool halfSampling_ = false;
+    int preset_ = 0; // 0=Custom, 1=Anamorphic 2.39, 2=Star 6, 3=Neon, 4=Dreamy
     StreakPattern pattern_ = StreakPattern::Horizontal;
     QVector<float> customAngles_; // カスタム角度（度）
     float angleOffset_ = 0.0f;    // 全体回転
@@ -61,17 +66,36 @@ public:
     float length2() const { return length2_; }
     void setLength2(float l) { length2_ = std::isfinite(l) ? std::max(1.0f, l) : 128.0f; syncImpls(); }
 
+    float length3() const { return length3_; }
+    void setLength3(float l) { length3_ = std::isfinite(l) ? std::clamp(l, 1.0f, 256.0f) : 256.0f; syncImpls(); }
+
     float weight1() const { return weight1_; }
     void setWeight1(float w) { weight1_ = std::isfinite(w) ? std::clamp(w, 0.0f, 1.0f) : 0.6f; syncImpls(); }
 
     float weight2() const { return weight2_; }
     void setWeight2(float w) { weight2_ = std::isfinite(w) ? std::clamp(w, 0.0f, 1.0f) : 0.4f; syncImpls(); }
 
+    float weight3() const { return weight3_; }
+    void setWeight3(float w) { weight3_ = std::isfinite(w) ? std::clamp(w, 0.0f, 1.0f) : 0.15f; syncImpls(); }
+
+    bool halfSampling() const { return halfSampling_; }
+    void setHalfSampling(bool enabled) { halfSampling_ = enabled; syncImpls(); }
+
+    int preset() const { return preset_; }
+    void applyPreset(int preset);
+
     StreakPattern pattern() const { return pattern_; }
     void setPattern(StreakPattern p) { pattern_ = p; syncImpls(); }
 
     const QVector<float>& customAngles() const { return customAngles_; }
-    void setCustomAngles(const QVector<float>& angles) { customAngles_ = angles; syncImpls(); }
+    void setCustomAngles(const QVector<float>& angles) {
+        customAngles_.clear();
+        for (float angle : angles) {
+            if (std::isfinite(angle)) customAngles_.append(angle);
+        }
+        if (!customAngles_.isEmpty()) pattern_ = StreakPattern::Custom;
+        syncImpls();
+    }
 
     float angleOffset() const { return angleOffset_; }
     void setAngleOffset(float a) { angleOffset_ = std::isfinite(a) ? a : 0.0f; syncImpls(); }
@@ -89,7 +113,7 @@ public:
     }
 
     bool appendGpuSpatialNodes(GpuSpatialEffectStack& stack) const override {
-        // Custom angles cannot travel in the 8-float node payload.
+        // Custom angles cannot travel in the fixed parameter payload.
         if (pattern_ == StreakPattern::Custom) return false;
         GpuSpatialEffectNode node;
         node.kind = GpuSpatialEffectKind::Generic;
@@ -101,8 +125,13 @@ public:
         node.parameters[4] = weight1_;
         node.parameters[5] = weight2_;
         node.parameters[6] = static_cast<float>(pattern_);
-        node.parameters[7] = angleOffset_;
-        node.resolutionScaledParameterMask = (1u << 2) | (1u << 3);
+        node.parameters[7] = length3_;
+        node.parameters[8] = angleOffset_;
+        node.parameters[9] = weight3_;
+        node.parameters[10] = halfSampling_ ? 1.0f : 0.0f;
+        // length1/2/3 are the only pixel-space parameters; the 8-bit mask
+        // covers up to parameter index 7, which is why length3 rides at 7.
+        node.resolutionScaledParameterMask = (1u << 2) | (1u << 3) | (1u << 7);
         return stack.append(node);
     }
 

@@ -3258,13 +3258,18 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
               impl_->meshUsesSingleInstanceForMaterialSlots_
                   ? modelMatrix
                   : modelMatrix * impl_->meshLocalTransforms_[meshIndex];
+          const QMatrix4x4 previousCombined =
+              impl_->meshUsesSingleInstanceForMaterialSlots_
+                  ? previousModelMatrix
+                  : previousModelMatrix * impl_->meshLocalTransforms_[meshIndex];
           ArtifactCore::InstanceData instance{};
           const float* modelData = combined.constData();
+          const float* previousModelData = previousCombined.constData();
           for (int row = 0; row < 4; ++row) {
             for (int col = 0; col < 4; ++col) {
               instance.transform[row * 4 + col] = modelData[col * 4 + row];
               instance.previousTransform[row * 4 + col] =
-                  instance.transform[row * 4 + col];
+                  previousModelData[col * 4 + row];
             }
           }
           instance.color[0] = impl_->material_.baseColor().redF();

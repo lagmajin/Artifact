@@ -43697,6 +43697,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         normalChannelRequested || postPassMask.screenSpaceGi;
     auxiliaryRequest.velocity = postPassMask.motionBlurVelocity ||
         postPassMask.cameraMotionBlur || velocityChannelRequested;
+    auxiliaryRequest.motionBlurScratch = postPassMask.motionBlurVelocity ||
+        postPassMask.cameraMotionBlur;
     auxiliaryRequest.objectId = objectIdChannelRequested;
     auxiliaryRequest.materialId = materialIdChannelRequested;
     auxiliaryRequest.albedo =
@@ -45791,9 +45793,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                 renderer_->immediateContext()) {
               if (!motionBlurPass_) {
                 motionBlurPass_ = std::make_unique<MotionBlurPass>();
-                motionBlurPass_->initialize(renderer_->device(),
-                                            renderer_->immediateContext());
               }
+              const bool motionBlurPassReady = motionBlurPass_->initialize(
+                  renderer_->device(), renderer_->immediateContext());
               const auto depthSRV = renderer_->offscreenTextureShaderResourceView(
                   previewRenderSlot.depthTargetView);
               MotionBlurSettings motionBlurSettings;
@@ -45803,15 +45805,31 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               motionBlurSettings.shutterAngle = appSettings
                   ? static_cast<float>(appSettings->timelineMotionBlurShutterAngle())
                   : 180.0f;
-              motionBlurSettings.shutterPhase = 0.0f;
+              motionBlurSettings.shutterPhase = appSettings
+                  ? static_cast<float>(
+                        appSettings->timelineMotionBlurShutterPhase() / 360.0)
+                  : 0.0f;
+              motionBlurSettings.shutterShape = appSettings
+                  ? static_cast<MotionBlurShutterShape>(
+                        appSettings->timelineMotionBlurShutterShape())
+                  : MotionBlurShutterShape::Rectangular;
+              motionBlurSettings.trapezoidPlateau = appSettings
+                  ? static_cast<float>(
+                        appSettings->timelineMotionBlurTrapezoidPlateau())
+                  : 0.5f;
               motionBlurSettings.sampleCount = appSettings
                   ? static_cast<unsigned>(appSettings->timelineMotionBlurSampleCount())
                   : static_cast<unsigned>(previewDownsample_ > 1 ? 4 : 8);
-              if (motionBlurPass_->apply(renderer_->immediateContext(),
+              if (motionBlurPassReady && motionBlurPass_->applyWithCandidates(
+                                         renderer_->immediateContext(),
                                          resources.accumSRV,
                                          resources.pipeline->velocitySRV(),
                                          depthSRV,
                                          resources.pipeline->tempUAV(),
+                                         resources.pipeline->motionBlurScratchSRV(0),
+                                         resources.pipeline->motionBlurScratchUAV(0),
+                                         resources.pipeline->motionBlurScratchSRV(1),
+                                         resources.pipeline->motionBlurScratchUAV(1),
                                          passResolution.renderWidthU(),
                                          passResolution.renderHeightU(),
                                          motionBlurSettings)) {
@@ -45842,13 +45860,29 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                   360.0f * std::clamp(activeCamera->blurAmount().value / 100.0f,
                                       0.0f, 1.0f);
               cameraMotionBlurSettings.shutterPhase = 0.0f;
+              cameraMotionBlurSettings.shutterShape = appSettings
+                  ? static_cast<MotionBlurShutterShape>(
+                        appSettings->timelineMotionBlurShutterShape())
+                  : MotionBlurShutterShape::Rectangular;
+              cameraMotionBlurSettings.trapezoidPlateau = appSettings
+                  ? static_cast<float>(
+                        appSettings->timelineMotionBlurTrapezoidPlateau())
+                  : 0.5f;
               cameraMotionBlurSettings.sampleCount =
                   static_cast<unsigned>(previewDownsample_ > 1 ? 4 : 8);
-              if (cameraMotionBlurSettings.shutterAngle > 0.0f &&
-                  motionBlurPass_->apply(
+              const bool motionBlurPassReady = motionBlurPass_ &&
+                  motionBlurPass_->initialize(
+                      renderer_->device(), renderer_->immediateContext());
+              if (motionBlurPassReady &&
+                  cameraMotionBlurSettings.shutterAngle > 0.0f &&
+                  motionBlurPass_->applyWithCandidates(
                       renderer_->immediateContext(), resources.accumSRV,
                       resources.pipeline->velocitySRV(), cameraPostDepthSRV,
                       resources.pipeline->tempUAV(),
+                      resources.pipeline->motionBlurScratchSRV(0),
+                      resources.pipeline->motionBlurScratchUAV(0),
+                      resources.pipeline->motionBlurScratchSRV(1),
+                      resources.pipeline->motionBlurScratchUAV(1),
                       passResolution.renderWidthU(),
                       passResolution.renderHeightU(),
                       cameraMotionBlurSettings)) {

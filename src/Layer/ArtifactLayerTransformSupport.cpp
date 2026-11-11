@@ -3,6 +3,7 @@ module;
 #include <array>
 #include <cstddef>
 #include <cmath>
+#include <cstdint>
 
 #include <QMatrix4x4>
 #include <QPointF>
@@ -19,6 +20,8 @@ import Frame.Rate;
 import Transform.Hlper;
 
 namespace Artifact {
+
+int64_t currentTimelineFrame(const ArtifactAbstractLayer* layer);
 
 double effectiveLayerFrameRate(const ArtifactAbstractLayer* layer);
 
@@ -54,9 +57,10 @@ buildTwoPointFiveDRenderPasses(const ArtifactAbstractLayer* layer,
   const int motionSamples = motionBlurEnabled && shutterAngle > 0.0f
       ? configuredMotionSamples : 1;
   QPointF previousDelta;
-  if (motionSamples > 1 && layer->currentFrame() > 0) {
-    previousDelta = layer->getGlobalTransformAt(layer->currentFrame() - 1).map(center) -
-                    layer->getGlobalTransformAt(layer->currentFrame()).map(center);
+  const int64_t timelineFrame = currentTimelineFrame(layer);
+  if (motionSamples > 1 && timelineFrame > 0) {
+    previousDelta = layer->getGlobalTransformAt(timelineFrame - 1).map(center) -
+                    layer->getGlobalTransformAt(timelineFrame).map(center);
     previousDelta *= std::clamp(shutterAngle / 360.0f, 0.0f, 2.0f);
   }
   const float focusBlur = depthOfFieldEnabled

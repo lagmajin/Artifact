@@ -30,6 +30,9 @@ bool isAnimatorPropertyAnimatable(const QString &suffix) {
          suffix == QStringLiteral("skew") ||
          suffix == QStringLiteral("tracking") ||
          suffix == QStringLiteral("z") ||
+         suffix == QStringLiteral("baselineShift") ||
+         suffix == QStringLiteral("anchorPointX") ||
+         suffix == QStringLiteral("anchorPointY") ||
          suffix == QStringLiteral("fillColor") ||
          suffix == QStringLiteral("strokeColor") ||
          suffix == QStringLiteral("strokeWidth") ||
@@ -38,8 +41,8 @@ bool isAnimatorPropertyAnimatable(const QString &suffix) {
          suffix == QStringLiteral("blur");
 }
 
-const std::array<QString, 23> &animatableTextAnimatorPropertySuffixes() {
-  static const std::array<QString, 23> suffixes{
+const std::array<QString, 26> &animatableTextAnimatorPropertySuffixes() {
+  static const std::array<QString, 26> suffixes{
       QStringLiteral("start"), QStringLiteral("end"),
       QStringLiteral("offset"), QStringLiteral("wigglesPerSecond"),
       QStringLiteral("correlation"), QStringLiteral("phase"),
@@ -48,7 +51,9 @@ const std::array<QString, 23> &animatableTextAnimatorPropertySuffixes() {
       QStringLiteral("scaleX"), QStringLiteral("scaleY"),
       QStringLiteral("rotation"), QStringLiteral("opacity"),
       QStringLiteral("skew"), QStringLiteral("tracking"),
-      QStringLiteral("z"), QStringLiteral("fillColor"),
+      QStringLiteral("z"), QStringLiteral("baselineShift"),
+      QStringLiteral("anchorPointX"), QStringLiteral("anchorPointY"),
+      QStringLiteral("fillColor"),
       QStringLiteral("strokeColor"), QStringLiteral("strokeWidth"),
       QStringLiteral("strokeEnabled"), QStringLiteral("colorEnabled"),
       QStringLiteral("blur")};

@@ -1292,6 +1292,9 @@ QJsonObject textAnimatorToJson(const TextAnimatorState &animator) {
   propsObj["skew"] = animator.properties.skew;
   propsObj["tracking"] = animator.properties.tracking;
   propsObj["z"] = animator.properties.z;
+  propsObj["baselineShift"] = animator.properties.baselineShift;
+  propsObj["anchorPointX"] = animator.properties.anchorPoint.x();
+  propsObj["anchorPointY"] = animator.properties.anchorPoint.y();
   propsObj["colorEnabled"] = animator.properties.colorEnabled;
   propsObj["fillColor"] = colorToJson(animator.properties.fillColor);
   propsObj["strokeEnabled"] = animator.properties.strokeEnabled;
@@ -1402,6 +1405,9 @@ TextAnimatorState textAnimatorFromJson(const QJsonObject &obj, const int index) 
     animator.properties.skew = safeFloat(propsObj.value("skew").toDouble(animator.properties.skew), animator.properties.skew, -360000.0f, 360000.0f);
     animator.properties.tracking = safeFloat(propsObj.value("tracking").toDouble(animator.properties.tracking), animator.properties.tracking, -100000.0f, 100000.0f);
     animator.properties.z = safeFloat(propsObj.value("z").toDouble(animator.properties.z), animator.properties.z, -100000.0f, 100000.0f);
+    animator.properties.baselineShift = safeFloat(propsObj.value("baselineShift").toDouble(animator.properties.baselineShift), animator.properties.baselineShift, -100000.0f, 100000.0f);
+    animator.properties.anchorPoint.setX(safeFloat(propsObj.value("anchorPointX").toDouble(animator.properties.anchorPoint.x()), animator.properties.anchorPoint.x(), -100000.0f, 100000.0f));
+    animator.properties.anchorPoint.setY(safeFloat(propsObj.value("anchorPointY").toDouble(animator.properties.anchorPoint.y()), animator.properties.anchorPoint.y(), -100000.0f, 100000.0f));
     animator.properties.colorEnabled = propsObj.value("colorEnabled").toBool(animator.properties.colorEnabled);
     animator.properties.fillColor = colorFromJsonValue(propsObj.value("fillColor"), animator.properties.fillColor);
     animator.properties.strokeEnabled = propsObj.value("strokeEnabled").toBool(animator.properties.strokeEnabled);
@@ -2148,6 +2154,23 @@ bool ArtifactTextLayer::addAnimatorProperty(const QString& propertyId) {
   } else if (id == QStringLiteral("blur")) {
     animator.name = QStringLiteral("Blur");
     animator.properties.blur = 0.0f;
+  } else if (id == QStringLiteral("strokeWidth")) {
+    animator.name = QStringLiteral("Stroke Width");
+    // Stroke width only accumulates while the stroke channel is enabled, so
+    // this animator seeds it from the authored text stroke and starts at the
+    // neutral amount.
+    animator.properties.strokeEnabled = true;
+    animator.properties.strokeColor = impl_->textStyle_.strokeColor;
+    animator.properties.strokeWidth = 0.0f;
+  } else if (id == QStringLiteral("z")) {
+    animator.name = QStringLiteral("Z");
+    animator.properties.z = 0.0f;
+  } else if (id == QStringLiteral("baselineShift")) {
+    animator.name = QStringLiteral("Baseline Shift");
+    animator.properties.baselineShift = 0.0f;
+  } else if (id == QStringLiteral("anchorPoint")) {
+    animator.name = QStringLiteral("Anchor Point");
+    animator.properties.anchorPoint = QPointF(0.0, 0.0);
   } else {
     return false;
   }
@@ -4154,6 +4177,36 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
     posYProp->setSoftRange(-500.0, 500.0);
     animatorGroup.addProperty(posYProp);
 
+    auto baselineProp = makeAnimatorProp(
+        QStringLiteral("baselineShift"), ArtifactCore::PropertyType::Float,
+        animator.properties.baselineShift, -104);
+    baselineProp->setDisplayLabel(QStringLiteral("Baseline Shift"));
+    baselineProp->setHardRange(-100000.0, 100000.0);
+    baselineProp->setSoftRange(-500.0, 500.0);
+    baselineProp->setTooltip(
+        QStringLiteral("Shifts the selected glyphs vertically without changing their layout."));
+    animatorGroup.addProperty(baselineProp);
+
+    auto anchorXProp = makeAnimatorProp(
+        QStringLiteral("anchorPointX"), ArtifactCore::PropertyType::Float,
+        animator.properties.anchorPoint.x(), -104);
+    anchorXProp->setDisplayLabel(QStringLiteral("Anchor Point X"));
+    anchorXProp->setHardRange(-100000.0, 100000.0);
+    anchorXProp->setSoftRange(-500.0, 500.0);
+    anchorXProp->setTooltip(
+        QStringLiteral("Moves the rotation/scale pivot horizontally from the grouping anchor."));
+    animatorGroup.addProperty(anchorXProp);
+
+    auto anchorYProp = makeAnimatorProp(
+        QStringLiteral("anchorPointY"), ArtifactCore::PropertyType::Float,
+        animator.properties.anchorPoint.y(), -104);
+    anchorYProp->setDisplayLabel(QStringLiteral("Anchor Point Y"));
+    anchorYProp->setHardRange(-100000.0, 100000.0);
+    anchorYProp->setSoftRange(-500.0, 500.0);
+    anchorYProp->setTooltip(
+        QStringLiteral("Moves the rotation/scale pivot vertically from the grouping anchor."));
+    animatorGroup.addProperty(anchorYProp);
+
     auto scaleProp = makeAnimatorProp(QStringLiteral("scale"),
                                       ArtifactCore::PropertyType::Float,
                                       animator.properties.scale, -106);
@@ -4706,6 +4759,15 @@ bool ArtifactTextLayer::setLayerPropertyValue(const QString &propertyPath,
           std::clamp(numericValue, -100000.0f, 100000.0f));
     } else if (field == QStringLiteral("positionY")) {
       animator.properties.position.setY(
+          std::clamp(numericValue, -100000.0f, 100000.0f));
+    } else if (field == QStringLiteral("baselineShift")) {
+      animator.properties.baselineShift =
+          std::clamp(numericValue, -100000.0f, 100000.0f);
+    } else if (field == QStringLiteral("anchorPointX")) {
+      animator.properties.anchorPoint.setX(
+          std::clamp(numericValue, -100000.0f, 100000.0f));
+    } else if (field == QStringLiteral("anchorPointY")) {
+      animator.properties.anchorPoint.setY(
           std::clamp(numericValue, -100000.0f, 100000.0f));
     } else if (field == QStringLiteral("scale")) {
       animator.properties.scale =

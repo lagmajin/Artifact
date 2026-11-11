@@ -292,12 +292,25 @@ protected:
     void apply(const ImageF32x4RGBAWithCache& src,
                ImageF32x4RGBAWithCache& dst) override;
 public:
+    static constexpr const char* kGpuGenericKeyString = "builtin.glint_star_filter";
+    static constexpr std::uint32_t kGpuGenericKey =
+        gpuGenericKeyFromString(kGpuGenericKeyString);
+
     GlintStarFilterEffect();
     ~GlintStarFilterEffect() override;
     std::vector<ArtifactCore::AbstractProperty> getProperties() const override;
     void setPropertyValue(const ArtifactCore::UniString& name,
                           const QVariant& value) override;
     EffectROIHint roiHint() const override;
+
+    bool supportsGPU() const override { return true; }
+    std::uint32_t gpuGenericKey() const override { return kGpuGenericKey; }
+
+    GpuRasterEffectDomain gpuRasterEffectDomain() const override {
+        return GpuRasterEffectDomain::Spatial;
+    }
+
+    bool appendGpuSpatialNodes(GpuSpatialEffectStack& stack) const override;
 };
 
 };

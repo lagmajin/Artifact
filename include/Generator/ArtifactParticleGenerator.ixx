@@ -120,6 +120,10 @@ struct ParticleRenderData {
         int spriteFrame = 0;
         int spriteRows = 1;
         int spriteCols = 1;
+        // 1 when the particle comes from an emitter with an image source. The
+        // GPU path uses this per-particle flag to sample the layer atlas only
+        // for textured emitters and keep procedural shapes for the others.
+        float textureWeight = 0.0f;
     };
     std::vector<Vertex> particles;
     int64_t frameNumber = 0;

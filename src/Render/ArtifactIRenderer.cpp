@@ -110,6 +110,10 @@ namespace Artifact
 
  Q_LOGGING_CATEGORY(particleRendererLog, "artifact.render.particles", QtInfoMsg)
 
+ // Process-unique particle texture generation: renderer re-creation must never
+ // let a cached layer id alias a texture owned by a different renderer.
+ std::atomic<std::uint64_t> g_particleTextureGeneration{1};
+
 namespace {
 void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
 {
@@ -1104,6 +1108,9 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
   bool viewportDisplayLutEnabled_ = false;
   bool viewportDisplayLutNeedsUpload_ = false;
   std::unique_ptr<ArtifactCore::ParticleRenderer> particleRenderer_;
+  // Process-unique token for the current particle renderer instance. Layer
+  // caches compare it to know when registered texture ids are stale.
+  std::uint64_t particleTextureGeneration_ = 0;
   QString lastParticleDebug_;
   bool lastParticleDrawQueued_ = false;
   std::size_t lastParticleDrawCount_ = 0;
@@ -3545,6 +3552,26 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
                 float spacing, float thickness, const FloatColor& color)
   { primitiveRenderer_.drawGrid(x, y, w, h, spacing, thickness, color); }
 
+  bool ensureParticleRenderer() {
+    if (particleRenderer_) {
+      return true;
+    }
+    if (!deviceManager_.device()) {
+      return false;
+    }
+    if (!gpuContext_) {
+      gpuContext_ = std::make_unique<ArtifactCore::GpuContext>(
+          deviceManager_.device(), deviceManager_.immediateContext());
+    }
+    particleRenderer_ = std::make_unique<ArtifactCore::ParticleRenderer>(*gpuContext_);
+    particleRenderer_->setFrameCostStats(nullptr);
+    particleRenderer_->initialize(100000); // Support up to 100k particles
+    submitter_.setParticleRenderer(particleRenderer_.get());
+    particleTextureGeneration_ = g_particleTextureGeneration.fetch_add(1);
+    qCInfo(particleRendererLog) << "[ParticleRenderer] Initialized (max 100k particles)";
+    return true;
+  }
+
   void drawParticles(const ArtifactCore::ParticleRenderData& data,
                      ArtifactCore::ParticleRenderData* transferableData = nullptr) {
     lastParticleDrawQueued_ = false;
@@ -3556,7 +3583,7 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
     }
 
     if (!particleRenderer_) {
-      if (!deviceManager_.device()) {
+      if (!ensureParticleRenderer()) {
         lastParticleDebug_ =
             QStringLiteral("state=device-null skipped=device-null count=%1 path=particle")
                 .arg(data.particles.size());
@@ -3564,15 +3591,6 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
                    << "count=" << data.particles.size();
         return;
       }
-      // Lazy initialization of particle renderer
-      if (!gpuContext_) {
-        gpuContext_ = std::make_unique<ArtifactCore::GpuContext>(deviceManager_.device(), deviceManager_.immediateContext());
-      }
-      particleRenderer_ = std::make_unique<ArtifactCore::ParticleRenderer>(*gpuContext_);
-      particleRenderer_->setFrameCostStats(nullptr);
-      particleRenderer_->initialize(100000); // Support up to 100k particles
-      submitter_.setParticleRenderer(particleRenderer_.get());
-      qCInfo(particleRendererLog) << "[ParticleRenderer] Initialized (max 100k particles)";
     }
 
     // Offline/headless export must know whether the PSO is usable before the
@@ -3706,6 +3724,19 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
       transferableData->particles = cmdBuf_.takeRecycledParticleBuffer();
     } else {
       pkt.data = data;
+    }
+    // Resolve the renderer-owned atlas on the GUI thread and let the packet
+    // hold the view: deferred submission may run on a worker thread and must
+    // not touch the registry map. An unknown/stale id degrades to procedural.
+    if (pkt.data.textureId != 0) {
+      pkt.retainedParticleTexture =
+          particleRenderer_ ? particleRenderer_->textureView(pkt.data.textureId)
+                            : nullptr;
+      if (!pkt.retainedParticleTexture) {
+        qCDebug(particleRendererLog)
+            << "[ParticleRenderer] stale particle texture id" << pkt.data.textureId
+            << "— rendering procedurally";
+      }
     }
     // 2D particle targets do not participate in scene depth. For 3D particles,
     // capture the active DSV with the packet so deferred submission uses the
@@ -5184,12 +5215,7 @@ void ArtifactIRenderer::Impl::setRenderTargetOverrides(ITextureView* colorRTV,
    // particle draw pays synchronous dxc compiles on the GUI thread (the
    // layer-addition freeze). Enqueuing here only schedules background work;
    // layers arriving later find the common pipelines already built.
-   if (!particleRenderer_ && gpuContext_) {
-     particleRenderer_ = std::make_unique<ArtifactCore::ParticleRenderer>(*gpuContext_);
-     particleRenderer_->setFrameCostStats(nullptr);
-     particleRenderer_->initialize(100000); // Support up to 100k particles
-     submitter_.setParticleRenderer(particleRenderer_.get());
-   }
+   ensureParticleRenderer();
    if (particleRenderer_) {
      particleRenderer_->prewarmCommonPipelines();
    }
@@ -5582,6 +5608,10 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
   primitiveRenderer_.destroy();
   primitiveRenderer3D_.destroy();
   particleRenderer_.reset();
+  // Registered particle atlas ids die with the renderer. Bump the generation
+  // so a layer cache re-registers instead of handing a dead id to the next
+  // draw (ensureParticleRenderer() assigns a fresh token on re-creation).
+  particleTextureGeneration_ = g_particleTextureGeneration.fetch_add(1);
   viewportDisplayPostProcess_.reset();
   viewportDisplayLutNeedsUpload_ = viewportDisplayLutEnabled_;
   gpuContext_.reset();
@@ -7521,6 +7551,22 @@ void ArtifactIRenderer::drawParticles(const ArtifactCore::ParticleRenderData& da
 }
 void ArtifactIRenderer::drawParticles(ArtifactCore::ParticleRenderData&& data) {
   impl_->drawParticles(data, &data);
+}
+ArtifactCore::ParticleTextureId ArtifactIRenderer::registerParticleTexture(
+    const ArtifactCore::ParticleTextureUpload& upload) {
+  if (!impl_->ensureParticleRenderer()) {
+    return 0;
+  }
+  return impl_->particleRenderer_->createTexture(upload);
+}
+void ArtifactIRenderer::releaseParticleTexture(
+    ArtifactCore::ParticleTextureId id) {
+  if (impl_->particleRenderer_) {
+    impl_->particleRenderer_->releaseTexture(id);
+  }
+}
+std::uint64_t ArtifactIRenderer::particleTextureGeneration() const {
+  return impl_->particleTextureGeneration_;
 }
 bool ArtifactIRenderer::drawMpmSurface(
     ArtifactArray<MpmSurfaceVertex>& vertices, const FloatColor& color) {
