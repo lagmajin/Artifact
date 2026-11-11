@@ -9716,13 +9716,20 @@ int Artifact::runApplication(int argc, char *argv[]) {
       qEnvironmentVariableIsSet("ARTIFACT_UI_TEST_GLOW");
   const bool uiTestLightLeakFixture =
       qEnvironmentVariableIsSet("ARTIFACT_UI_TEST_LIGHT_LEAK");
-  if (uiTestExecutable && (uiTestLightLeakFixture || uiTestGlowFixture)) {
+  const bool uiTestEffectSuiteFixture =
+      qEnvironmentVariableIsSet("ARTIFACT_UI_TEST_EFFECT_SUITE_ID");
+  if (uiTestExecutable && (uiTestLightLeakFixture || uiTestGlowFixture ||
+                           uiTestEffectSuiteFixture)) {
     QTimer::singleShot(0, mw, [mw, projectService, compositionEditor]() {
       const bool glowFixture =
           qEnvironmentVariableIsSet("ARTIFACT_UI_TEST_GLOW");
-      const QString fixtureName = glowFixture
-          ? QStringLiteral("GlowUiFixture")
-          : QStringLiteral("LightLeakUiFixture");
+      const bool effectSuiteFixture =
+          qEnvironmentVariableIsSet("ARTIFACT_UI_TEST_EFFECT_SUITE_ID");
+      const bool lightLeakFixture = !glowFixture && !effectSuiteFixture;
+      const QString fixtureName = effectSuiteFixture
+          ? QStringLiteral("GlowSuiteUiFixture")
+          : (glowFixture ? QStringLiteral("GlowUiFixture")
+                         : QStringLiteral("LightLeakUiFixture"));
       const auto failFixture = [fixtureName](const QString& reason) {
         qCritical().noquote() << "[" + fixtureName + "] failed:" << reason;
       };
@@ -9733,18 +9740,22 @@ int Artifact::runApplication(int argc, char *argv[]) {
       mw->setProperty("artifactUnsavedCloseGuardSatisfied", true);
       qInfo().noquote() << "[" + fixtureName + "] initialization begin";
 
-      const QString outputPattern = glowFixture
-          ? qEnvironmentVariable("ARTIFACT_UI_TEST_GLOW_OUTPUT_PATTERN").trimmed()
-          : qEnvironmentVariable("ARTIFACT_UI_TEST_LIGHT_LEAK_OUTPUT_PATTERN").trimmed();
+      const QString outputPattern = effectSuiteFixture
+          ? qEnvironmentVariable("ARTIFACT_UI_TEST_EFFECT_SUITE_OUTPUT").trimmed()
+          : (glowFixture
+                 ? qEnvironmentVariable("ARTIFACT_UI_TEST_GLOW_OUTPUT_PATTERN").trimmed()
+                 : qEnvironmentVariable("ARTIFACT_UI_TEST_LIGHT_LEAK_OUTPUT_PATTERN").trimmed());
       if (outputPattern.isEmpty()) {
         failFixture(QStringLiteral("output pattern unavailable"));
         return;
       }
 
       QImage sourceImage;
-      const QString inputImagePath = glowFixture
-          ? qEnvironmentVariable("ARTIFACT_UI_TEST_GLOW_INPUT").trimmed()
-          : qEnvironmentVariable("ARTIFACT_UI_TEST_LIGHT_LEAK_INPUT").trimmed();
+      const QString inputImagePath = effectSuiteFixture
+          ? qEnvironmentVariable("ARTIFACT_UI_TEST_EFFECT_SUITE_INPUT").trimmed()
+          : (glowFixture
+                 ? qEnvironmentVariable("ARTIFACT_UI_TEST_GLOW_INPUT").trimmed()
+                 : qEnvironmentVariable("ARTIFACT_UI_TEST_LIGHT_LEAK_INPUT").trimmed());
       if (!inputImagePath.isEmpty()) {
         if (!sourceImage.load(inputImagePath) || sourceImage.width() < 2 ||
             sourceImage.height() < 2 || sourceImage.width() > 16384 ||
@@ -9766,7 +9777,7 @@ int Artifact::runApplication(int argc, char *argv[]) {
         return;
       }
       projectManager.createProject(
-          QStringLiteral("LightLeakUiFixture_%1")
+          QStringLiteral("ImageEffectUiFixture_%1")
               .arg(QCoreApplication::applicationPid()), false);
       if (!projectManager.isProjectCreated()) {
         failFixture(QStringLiteral("temporary project creation failed"));
@@ -9824,13 +9835,19 @@ int Artifact::runApplication(int argc, char *argv[]) {
         failFixture(QStringLiteral("source image save failed"));
         return;
       }
-      const QString capturedSourcePath = outputPattern.arg(
-          QStringLiteral("fixture-input"));
+      const QFileInfo outputInfo(outputPattern);
+      const QString capturedSourcePath = outputPattern.contains(QStringLiteral("%1"))
+          ? outputPattern.arg(QStringLiteral("fixture-input"))
+          : QDir(outputInfo.path()).filePath(
+                outputInfo.completeBaseName() + QStringLiteral("-fixture-input.") +
+                outputInfo.suffix());
       if (!sourceImage.save(capturedSourcePath, "PNG")) {
         failFixture(QStringLiteral("source capture save failed"));
         return;
       }
-      ArtifactImageInitParams sourceParams(QStringLiteral("Light Leak Source"));
+      ArtifactImageInitParams sourceParams(
+          effectSuiteFixture ? QStringLiteral("Effect Suite Source")
+                             : QStringLiteral("Light Leak Source"));
       sourceParams.setImagePath(sourcePath);
       projectService->addLayerToCurrentComposition(sourceParams);
       const auto layer = composition->frontMostLayer();
@@ -9844,8 +9861,9 @@ int Artifact::runApplication(int argc, char *argv[]) {
       layer->setLayerPropertyValue(QStringLiteral("transform.position.y"), 0.0);
 
       const QString requestedCompute = qEnvironmentVariable(
-          glowFixture ? "ARTIFACT_UI_TEST_GLOW_COMPUTE"
-                      : "ARTIFACT_UI_TEST_LIGHT_LEAK_COMPUTE",
+          effectSuiteFixture ? "ARTIFACT_UI_TEST_EFFECT_SUITE_COMPUTE"
+              : (glowFixture ? "ARTIFACT_UI_TEST_GLOW_COMPUTE"
+                             : "ARTIFACT_UI_TEST_LIGHT_LEAK_COMPUTE"),
           QStringLiteral("cpu"))
           .trimmed().toLower();
       if (requestedCompute != QStringLiteral("cpu") &&
@@ -9854,18 +9872,28 @@ int Artifact::runApplication(int argc, char *argv[]) {
         return;
       }
 
-      const QString requestedEffectId = glowFixture
-          ? QStringLiteral("glow") : QStringLiteral("still_light_leak");
+      const QString requestedEffectId = effectSuiteFixture
+          ? qEnvironmentVariable("ARTIFACT_UI_TEST_EFFECT_SUITE_ID").trimmed()
+          : (glowFixture ? QStringLiteral("glow")
+                         : QStringLiteral("still_light_leak"));
+      if (requestedEffectId.isEmpty()) {
+        failFixture(QStringLiteral("effect ID is empty"));
+        return;
+      }
       auto effect = ArtifactEffectService::instance()->createEffect(
           EffectID(requestedEffectId));
       auto* leakEffect = effect
           ? dynamic_cast<StillLightLeakEffect*>(effect.get()) : nullptr;
       auto* glowEffect = effect
           ? dynamic_cast<GlowEffect*>(effect.get()) : nullptr;
-      if ((glowFixture && !glowEffect) || (!glowFixture && !leakEffect)) {
+      if (!effect || (glowFixture && !glowEffect) ||
+          (lightLeakFixture && !leakEffect)) {
         failFixture(glowFixture
             ? QStringLiteral("registered Glow effect unavailable")
-            : QStringLiteral("registered Still Light Leak effect unavailable"));
+            : (lightLeakFixture
+                   ? QStringLiteral("registered Still Light Leak effect unavailable")
+                   : QStringLiteral("registered effect ID unavailable: ") +
+                         requestedEffectId));
         return;
       }
       int look = 0;
@@ -9873,8 +9901,10 @@ int Artifact::runApplication(int argc, char *argv[]) {
       double sourceX = 0.50;
       double sourceY = 0.25;
       double angle = 12.0;
-      QString lookName = QStringLiteral("glow");
-      if (!glowFixture) {
+      QString lookName = effectSuiteFixture
+          ? requestedEffectId : (glowFixture ? QStringLiteral("glow")
+                                             : QStringLiteral("edge-wash"));
+      if (lightLeakFixture) {
         bool lookOk = false;
         look = qEnvironmentVariable(
             "ARTIFACT_UI_TEST_LIGHT_LEAK_LOOK", QStringLiteral("0"))
@@ -9922,9 +9952,65 @@ int Artifact::runApplication(int argc, char *argv[]) {
         leakEffect->setPropertyValue(
             ArtifactCore::UniString(QStringLiteral("Alpha Policy")), 0);
       }
+      QJsonObject suiteProperties;
+      if (effectSuiteFixture) {
+        QJsonParseError parseError;
+        const QByteArray propertiesJson = qEnvironmentVariable(
+            "ARTIFACT_UI_TEST_EFFECT_SUITE_PROPERTIES").toUtf8();
+        const QJsonDocument propertiesDocument =
+            QJsonDocument::fromJson(propertiesJson, &parseError);
+        if (parseError.error != QJsonParseError::NoError ||
+            !propertiesDocument.isObject()) {
+          failFixture(QStringLiteral("effect properties must be a JSON object"));
+          return;
+        }
+        suiteProperties = propertiesDocument.object();
+      }
+      const auto applySuiteProperties = [&](auto* target) {
+        if (!effectSuiteFixture || suiteProperties.isEmpty()) return true;
+        for (auto it = suiteProperties.constBegin();
+             it != suiteProperties.constEnd(); ++it) {
+          if (!it.value().isDouble()) {
+            failFixture(QStringLiteral("effect property override must be numeric: ") +
+                        it.key());
+            return false;
+          }
+          bool propertyFound = false;
+          for (const auto& property : target->getProperties()) {
+            if (property.getName() == it.key()) {
+              propertyFound = true;
+              break;
+            }
+          }
+          if (!propertyFound) {
+            failFixture(QStringLiteral("unknown effect property: ") + it.key());
+            return false;
+          }
+          target->setPropertyValue(
+              ArtifactCore::UniString(it.key()), it.value().toVariant());
+          bool applied = false;
+          const double actual = [&]() {
+            for (const auto& property : target->getProperties()) {
+              if (property.getName() == it.key()) {
+                return property.getValue().toDouble(&applied);
+              }
+            }
+            return 0.0;
+          }();
+          if (!applied || !std::isfinite(actual) ||
+              std::abs(actual - it.value().toDouble()) > 0.00001) {
+            failFixture(QStringLiteral("effect property override was not applied: ") +
+                        it.key());
+            return false;
+          }
+        }
+        return true;
+      };
+      if (!applySuiteProperties(effect.get())) return;
       effect->setComputeMode(requestedCompute == QStringLiteral("gpu")
           ? ComputeMode::GPU : ComputeMode::CPU);
-      const QString capturePath = outputPattern.arg(lookName);
+      const QString capturePath = outputPattern.contains(QStringLiteral("%1"))
+          ? outputPattern.arg(lookName) : outputPattern;
       const auto addResult = ArtifactEffectService::instance()->addEffectToLayer(
           layer->id(), EffectID(requestedEffectId));
       if (!addResult.success) {
@@ -9951,6 +10037,7 @@ int Artifact::runApplication(int argc, char *argv[]) {
         installed->setPropertyValue(
             ArtifactCore::UniString(QStringLiteral("Alpha Policy")), 0);
       }
+      if (!applySuiteProperties(installed.get())) return;
       installed->setComputeMode(requestedCompute == QStringLiteral("gpu")
           ? ComputeMode::GPU : ComputeMode::CPU);
       if (auto* app = ArtifactApplicationManager::instance()) {
@@ -9966,7 +10053,8 @@ int Artifact::runApplication(int argc, char *argv[]) {
       mw->resize(1774, 950);
       mw->showNormal();
       mw->activateDock(QStringLiteral("Properties"));
-      qInfo() << "[LightLeakUiFixture] configured look=" << lookName
+      qInfo().noquote() << "[" + fixtureName + "] configured effect="
+              << requestedEffectId << "look=" << lookName
               << "compute=" << requestedCompute
               << "capture=" << capturePath;
       QTimer::singleShot(300, mw, [mw, compositionEditor]() {
@@ -9980,9 +10068,10 @@ int Artifact::runApplication(int argc, char *argv[]) {
       });
       QTimer::singleShot(3500, mw, [mw, compositionEditor, composition, imageLayer,
                                     installed, capturePath, lookName,
-                                    requestedCompute]() {
-        const auto failOutput = [lookName](const QString& reason) {
-          qCritical().noquote() << "[LightLeakUiFixture] failed:"
+                                    fixtureName, requestedCompute, requestedEffectId,
+                                    suiteProperties, effectSuiteFixture]() {
+        const auto failOutput = [fixtureName, lookName](const QString& reason) {
+          qCritical().noquote() << "[" + fixtureName + "] failed:"
                                 << lookName << reason;
         };
         const QString outputPath = QDir::cleanPath(capturePath);
@@ -10095,7 +10184,8 @@ int Artifact::runApplication(int argc, char *argv[]) {
               "compute=%23 supportsGPU=%24 domain=%25 genericKey=%26 "
               "gpuNodes=%27 gpuNodeCount=%28 cacheDiagnostics=%29\n"
               "look=%30 layerRtSaved=%31 accumRtSaved=%32 "
-              "gpuBlendEnabled=%33 captureSource=%34\n")
+              "gpuBlendEnabled=%33 captureSource=%34\n"
+              "effectId=%35 propertyOverrides=%36\n")
               .arg(renderedComposition == composition ? 1 : 0)
               .arg(composition->allLayerRef().size())
               .arg(sourceSize.width).arg(sourceSize.height)
@@ -10134,11 +10224,17 @@ int Artifact::runApplication(int argc, char *argv[]) {
               .arg(controller->isGpuBlendEnabled() ? 1 : 0)
               .arg(requestedCompute == QStringLiteral("gpu")
                        ? QStringLiteral("Accum RT")
-                       : QStringLiteral("Installed CPU reference"));
+                       : QStringLiteral("Installed CPU reference"))
+              .arg(requestedEffectId)
+              .arg(effectSuiteFixture
+                       ? QString::fromUtf8(QJsonDocument(suiteProperties)
+                                               .toJson(QJsonDocument::Compact))
+                       : QStringLiteral("{}"));
           stateFile.write(state.toUtf8());
         }
-        qInfo().noquote() << "[LightLeakUiFixture] passed look="
-                          << lookName << "compute=" << requestedCompute
+        qInfo().noquote() << "[" + fixtureName + "] passed effect="
+                          << requestedEffectId << "look=" << lookName
+                          << "compute=" << requestedCompute
                           << "size=" << effectImage.size()
                           << "output=" << outputPath;
         if (mw) QTimer::singleShot(500, mw, [mw]() { mw->close(); });
