@@ -1924,6 +1924,13 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
       const float values[] = {color.x(), color.y(), color.z(), color.w()};
       hashBytes(values, sizeof(values));
     }
+      for (const auto materialIndex : data.triangleMaterialIndices) {
+        hashBytes(&materialIndex, sizeof(materialIndex));
+        if (rayTracingGeometryTracking) {
+          hashBytesInto(rayTracingGeometryRevision, &materialIndex,
+                        sizeof(materialIndex));
+        }
+      }
     for (const auto index : data.indices) {
       hashBytes(&index, sizeof(index));
       if (rayTracingGeometryTracking) {
@@ -2047,23 +2054,11 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
       }
       const bool hasRayTracingMaterialSlots =
           multiMaterials && multiMaterials->size() > 1 &&
-          mesh.materialSlotCount() > 0;
+          data.triangleMaterialIndices.size() == indexCount / 3u;
       if (hasRayTracingMaterialSlots) {
-        rayTracingMaterialIndices.assign(indexCount / 3u, 0u);
-        for (const auto& slot : mesh.materialSlots()) {
-          if (slot.firstIndex < 0 || slot.indexCount <= 0 ||
-              slot.materialIndex < 0 ||
-              (slot.firstIndex % 3) != 0 || (slot.indexCount % 3) != 0 ||
-              static_cast<size_t>(slot.materialIndex) >= multiMaterials->size()) {
-            continue;
-          }
-          const size_t firstIndex = static_cast<size_t>(slot.firstIndex);
-          const size_t endIndex = std::min(
-              indexCount, firstIndex + static_cast<size_t>(slot.indexCount));
-          for (size_t first = firstIndex; first + 2u < endIndex; first += 3u) {
-            rayTracingMaterialIndices[first / 3u] =
-                static_cast<uint32_t>(slot.materialIndex);
-          }
+        rayTracingMaterialIndices.reserve(data.triangleMaterialIndices.size());
+        for (const auto materialIndex : data.triangleMaterialIndices) {
+          rayTracingMaterialIndices.push_back(materialIndex);
         }
       }
       renderer->updateMeshGeometry(positions.data(), normals.data(), uvs.data(),
