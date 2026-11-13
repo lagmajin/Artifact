@@ -7047,7 +7047,7 @@ namespace Artifact
             auto& revealPipeline = snap.gpuRevealPipeline ? *snap.gpuRevealPipeline : gpuRevealPipeline_;
             const bool timelineMotionBlurRequested =
                 snap.timelineMotionBlur.enabled;
-            const ArtifactCameraLayer* activeCamera = nullptr;
+            ArtifactCameraLayer* activeCamera = nullptr;
             for (const auto& layer : gpuLayers) {
                 const auto camera = ArtifactCore::dynamicPointerCast<ArtifactCameraLayer>(layer);
                 if (camera && camera->isVisible() &&

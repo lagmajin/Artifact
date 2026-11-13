@@ -27299,14 +27299,14 @@ bool CompositionRenderController::setSelectedCropRect(
   }
   const auto before = imageLayer->sourceCrop();
   imageLayer->setLayerPropertyValue(QStringLiteral("sourceCrop.enabled"), true);
-  imageLayer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropX"),
-                                     sourceRect.x());
-  imageLayer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropY"),
-                                     sourceRect.y());
   imageLayer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropWidth"),
                                      sourceRect.width());
   imageLayer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropHeight"),
                                      sourceRect.height());
+  imageLayer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropX"),
+                                     sourceRect.x());
+  imageLayer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropY"),
+                                     sourceRect.y());
   const auto after = imageLayer->sourceCrop();
   if (before.enabled() == after.enabled() &&
       before.cropRect() == after.cropRect()) {
@@ -27322,14 +27322,14 @@ bool CompositionRenderController::setSelectedCropRect(
     imageLayer->setLayerPropertyValue(QStringLiteral("sourceCrop.enabled"),
                                        before.enabled());
     const QRectF rect = before.cropRect();
-    imageLayer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropX"),
-                                       rect.x());
-    imageLayer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropY"),
-                                       rect.y());
     imageLayer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropWidth"),
                                        rect.width());
     imageLayer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropHeight"),
                                        rect.height());
+    imageLayer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropX"),
+                                       rect.x());
+    imageLayer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropY"),
+                                       rect.y());
     return false;
   }
   impl_->publishLayerModified(imageLayer);
@@ -45925,6 +45925,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                   360.0f * std::clamp(activeCamera->blurAmount().value / 100.0f,
                                       0.0f, 1.0f);
               cameraMotionBlurSettings.shutterPhase = 0.0f;
+              const auto appSettings =
+                  ArtifactCore::ArtifactAppSettings::instance();
               cameraMotionBlurSettings.shutterShape = appSettings
                   ? static_cast<MotionBlurShutterShape>(
                         appSettings->timelineMotionBlurShutterShape())

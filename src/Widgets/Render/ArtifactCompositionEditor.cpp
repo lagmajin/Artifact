@@ -14160,7 +14160,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
       slider->setValue(35);
     }
     valueLabel->setText(QStringLiteral("%1%").arg(slider->value()));
-    auto *updateValueLabel = [slider, valueLabel]() {
+    const auto updateValueLabel = [slider, valueLabel]() {
       valueLabel->setText(QStringLiteral("%1%").arg(slider->value()));
     };
     QObject::connect(slider, &QSlider::valueChanged, this,
@@ -14179,7 +14179,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
       });
       impl_->refreshViewportStateLabels();
     });
-    QAction *xRayOpacityAction = new QWidgetAction(shadingMenu);
+    QWidgetAction *xRayOpacityAction = new QWidgetAction(shadingMenu);
     xRayOpacityAction->setDefaultWidget(xRayOpacityPanel);
     shadingMenu->addAction(xRayOpacityAction);
     impl_->xRayOpacitySlider_ = slider;

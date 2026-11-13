@@ -176,6 +176,8 @@ import Artifact.Workspace.Modes;
 import Artifact.AI.WorkspaceAutomation;
 
 import Artifact.TestRunner;
+import Artifact.Widgets.CompositionEditor;
+import Artifact.Widgets.CompositionRenderController;
 
 import ImageProcessing.SpectralGlow;
 
@@ -643,9 +645,20 @@ private:
 // scope owned by ArtifactVirtualInput.
 class ArtifactApplication final : public QApplication {
 public:
-  ArtifactApplication(int& argc, char** argv) : QApplication(argc, argv) {}
+  ArtifactApplication(int& argc, char** argv, bool headlessUi)
+      : QApplication(argc, argv), headlessUi_(headlessUi) {}
 
   bool notify(QObject* receiver, QEvent* event) override {
+    // Transient dialogs and popups must follow the same hidden-screen
+    // contract as the main window during offline UI automation.
+    if (headlessUi_ && event &&
+        (event->type() == QEvent::Polish || event->type() == QEvent::Show)) {
+      if (auto* widget = qobject_cast<QWidget*>(receiver);
+          widget && widget->isWindow()) {
+        widget->setAttribute(Qt::WA_DontShowOnScreen, true);
+        widget->setAttribute(Qt::WA_ShowWithoutActivating, true);
+      }
+    }
     ArtifactVirtualInput* input = ArtifactVirtualInput::active();
     if (!input || !event || !input->isInjecting()) {
       return QApplication::notify(receiver, event);
@@ -676,6 +689,9 @@ public:
     input->noteDelivered(receiver, event->type());
     return handled;
   }
+
+private:
+  bool headlessUi_ = false;
 };
 
 // MCP endpoint for driving the running application.
@@ -685,8 +701,8 @@ public:
 // connections to the application.
 class ArtifactUiControlMcpServer final : public QObject {
 public:
-  ArtifactUiControlMcpServer(QWidget* root, quint16 port)
-      : root_(root), virtualInput_(root) {
+  ArtifactUiControlMcpServer(QWidget* root, quint16 port, bool headlessUi)
+      : root_(root), virtualInput_(root), headlessUi_(headlessUi) {
     if (!root_ || !server_.listen(QHostAddress::LocalHost, port)) {
       error_ = root_ ? server_.errorString()
                      : QStringLiteral("UI control root window is unavailable");
@@ -968,8 +984,13 @@ private:
           tool(QStringLiteral("ui.screenshot"),
                QStringLiteral("Capture a PNG of the window or a named widget"),
                screenshotSchema),
+          tool(QStringLiteral("ui.compositionCapture"),
+               QStringLiteral("Read back the last completed GPU Composition Viewer frame; never uses desktop capture"),
+               {}),
           tool(QStringLiteral("ui.hideCursor"),
-               QStringLiteral("Hide the in-app virtual pointer"), {})}}});
+               QStringLiteral("Hide the in-app virtual pointer"), {}),
+          tool(QStringLiteral("ui.quit"),
+               QStringLiteral("Close the controlled application cleanly"), {})}}});
     }
     if (method != QStringLiteral("tools/call")) {
       return makeError(id, -32601, QStringLiteral("Method not found"));
@@ -1251,19 +1272,64 @@ private:
         result.insert(QStringLiteral("characters"), text.size());
       }
     } else if (name == QStringLiteral("ui.screenshot")) {
-      const QJsonObject capture = captureScreenshot(arguments, &error);
+      if (headlessUi_ && arguments.value(QStringLiteral("native")).toBool()) {
+        error = QStringLiteral("Native desktop capture is disabled in headless UI mode");
+      }
       if (error.isEmpty()) {
-        result = capture;
-        // Keep the human readable summary small; the PNG itself only travels
-        // once, in structuredContent.
-        textOverride = QStringLiteral("screenshot %1x%2 png %3 bytes")
-                           .arg(result.value(QStringLiteral("width")).toInt())
-                           .arg(result.value(QStringLiteral("height")).toInt())
-                           .arg(result.value(QStringLiteral("byteCount")).toInt());
+        const QJsonObject capture = captureScreenshot(arguments, &error);
+        if (error.isEmpty()) {
+          result = capture;
+          // Keep the human readable summary small; the PNG itself only travels
+          // once, in structuredContent.
+          textOverride = QStringLiteral("screenshot %1x%2 png %3 bytes")
+                             .arg(result.value(QStringLiteral("width")).toInt())
+                             .arg(result.value(QStringLiteral("height")).toInt())
+                             .arg(result.value(QStringLiteral("byteCount")).toInt());
+        }
+      }
+    } else if (name == QStringLiteral("ui.compositionCapture")) {
+      auto* editor = root_ ? root_->findChild<Artifact::ArtifactCompositionEditor*>()
+                           : nullptr;
+      auto* controller = editor ? editor->renderController() : nullptr;
+      // This endpoint is an explicit diagnostic action, outside the render
+      // loop. The synchronous readback must never be called per frame.
+      const QImage image = controller
+                               ? controller->readbackPresentedFrameImage()
+                               : QImage();
+      if (image.isNull()) {
+        error = QStringLiteral(
+            "No completed GPU Composition Viewer frame is available");
+      } else {
+        QByteArray png;
+        QBuffer buffer(&png);
+        if (!buffer.open(QIODevice::WriteOnly) || !image.save(&buffer, "PNG")) {
+          error = QStringLiteral(
+              "Failed to encode the completed Composition frame as PNG");
+        } else {
+          buffer.close();
+          result = QJsonObject{
+              {QStringLiteral("target"),
+               QStringLiteral("compositionRendererOutput")},
+              {QStringLiteral("width"), image.width()},
+              {QStringLiteral("height"), image.height()},
+              {QStringLiteral("devicePixelRatio"), image.devicePixelRatio()},
+              {QStringLiteral("byteCount"), static_cast<qint64>(png.size())},
+              {QStringLiteral("format"), QStringLiteral("png")},
+              {QStringLiteral("imageBase64"),
+               QString::fromLatin1(png.toBase64())}};
+          textOverride =
+              QStringLiteral("composition frame %1x%2 png %3 bytes")
+                  .arg(image.width())
+                  .arg(image.height())
+                  .arg(png.size());
+        }
       }
     } else if (name == QStringLiteral("ui.hideCursor")) {
       virtualInput_.hideCursor();
       result.insert(QStringLiteral("visible"), false);
+    } else if (name == QStringLiteral("ui.quit")) {
+      result.insert(QStringLiteral("quitting"), true);
+      QTimer::singleShot(100, []() { QCoreApplication::quit(); });
     } else {
       error = QStringLiteral("Unknown UI control tool: %1").arg(name);
     }
@@ -1371,6 +1437,7 @@ private:
   QJsonObject stateSnapshot() const {
     const QPoint pointer = virtualInput_.windowPosition();
     QJsonObject result{
+        {QStringLiteral("headless"), headlessUi_},
         {QStringLiteral("pointerX"), pointer.x()},
         {QStringLiteral("pointerY"), pointer.y()},
         {QStringLiteral("buttons"), buttonSummary(virtualInput_.pressedButtons())}};
@@ -1406,6 +1473,26 @@ private:
                         {QStringLiteral("height"), root_->height()},
                         {QStringLiteral("devicePixelRatio"),
                          root_->devicePixelRatioF()}});
+      auto* editor = root_->findChild<Artifact::ArtifactCompositionEditor*>();
+      auto* controller = editor ? editor->renderController() : nullptr;
+      result.insert(
+          QStringLiteral("compositionViewport"),
+          QJsonObject{
+              {QStringLiteral("editorPresent"), editor != nullptr},
+              {QStringLiteral("rendererInitialized"),
+               controller && controller->isInitialized()},
+              {QStringLiteral("frameSerial"),
+               controller ? static_cast<qint64>(controller->currentFrameSerial())
+                          : qint64(0)},
+              {QStringLiteral("lastFrameMs"),
+               controller ? controller->lastFrameTimeMs() : 0.0},
+              {QStringLiteral("averageFrameMs"),
+               controller ? controller->averageFrameTimeMs() : 0.0},
+              {QStringLiteral("lastFrameThreadId"),
+               controller
+                   ? QString::number(
+                         controller->lastFrameExecutionThreadId(), 16)
+                   : QString()}});
     }
     return result;
   }
@@ -1700,6 +1787,7 @@ private:
   QTcpSocket* client_ = nullptr;
   QByteArray inputBuffer_;
   QString error_;
+  bool headlessUi_ = false;
   int timerId_ = 0;
   int dispatchDepth_ = 0;
 };
@@ -1757,8 +1845,8 @@ import Artifact.Widgets.AudioMiniWidget;
 import Artifact.Widgets.HistoryTimelineWidget;
 import Artifact.Widgets.AI.ArtifactAICloudWidget;
 import Artifact.Widgets.CompositionEditor;
-import Artifact.Widgets.StartupScreenshot;
 import Artifact.Widgets.CompositionRenderController;
+import Artifact.Widgets.StartupScreenshot;
 import Artifact.Tool.CameraTracker;
 import Artifact.Widgets.RenderLayerEditor;
 import Artifact.Widgets.SoftwareRenderInspectors;
@@ -6465,21 +6553,38 @@ int Artifact::runApplication(int argc, char *argv[]) {
   }
   QStringList commandLineArgs = appArgs;
   quint16 uiControlMcpPort = 0;
+  bool uiHeadless = false;
   {
-    const int optionIndex = appArgs.indexOf(QStringLiteral("--ui-mcp-port"));
+    const int headlessIndex =
+        appArgs.indexOf(QStringLiteral("--ui-headless"));
+    if (headlessIndex >= 0) {
+      if (appArgs.lastIndexOf(QStringLiteral("--ui-headless")) != headlessIndex) {
+        fprintf(stderr, "--ui-headless may only be specified once\n");
+        return 2;
+      }
+      uiHeadless = true;
+      commandLineArgs.removeAt(headlessIndex);
+    }
+    const int optionIndex =
+        commandLineArgs.indexOf(QStringLiteral("--ui-mcp-port"));
     if (optionIndex >= 0) {
       bool portOk = false;
-      const int requestedPort = optionIndex + 1 < appArgs.size()
-                                    ? appArgs[optionIndex + 1].toInt(&portOk)
+      const int requestedPort = optionIndex + 1 < commandLineArgs.size()
+                                    ? commandLineArgs[optionIndex + 1].toInt(&portOk)
                                     : 0;
       if (!portOk || requestedPort <= 0 || requestedPort > 65535 ||
-          appArgs.lastIndexOf(QStringLiteral("--ui-mcp-port")) != optionIndex) {
+          commandLineArgs.lastIndexOf(QStringLiteral("--ui-mcp-port")) !=
+              optionIndex) {
         fprintf(stderr, "Invalid --ui-mcp-port value\n");
         return 2;
       }
       uiControlMcpPort = static_cast<quint16>(requestedPort);
       commandLineArgs.removeAt(optionIndex + 1);
       commandLineArgs.removeAt(optionIndex);
+    }
+    if (uiHeadless && uiControlMcpPort == 0) {
+      fprintf(stderr, "--ui-headless requires --ui-mcp-port <port>\n");
+      return 2;
     }
   }
   const Artifact::CommandLine parsedCommandLine =
@@ -6524,6 +6629,7 @@ int Artifact::runApplication(int argc, char *argv[]) {
     printf("  --mcp-debug         Run in MCP debug server mode (stdio unless --mcp-port is set)\n");
     printf("  --mcp-port <port>   Listen on localhost TCP for MCP debug requests\n");
     printf("  --ui-mcp-port <port> Listen on localhost TCP for in-app UI control (virtual input)\n");
+    printf("  --ui-headless       Keep the UI off the desktop; requires --ui-mcp-port\n");
     printf("  --plugin-list       List all registered plugins and exit\n");
     printf("  --plugin-info <id>  Show details for a specific plugin and exit\n");
     printf("\nEnvironment:\n");
@@ -6646,7 +6752,7 @@ int Artifact::runApplication(int argc, char *argv[]) {
   }
 
   QApplication::setAttribute(Qt::AA_DontShowIconsInMenus, false);
-  ArtifactApplication a(argc, argv);
+  ArtifactApplication a(argc, argv, uiHeadless);
   if (uiTestExecutable) {
     QCoreApplication::setApplicationName(
         QStringLiteral("ArtifactStudioUiTest"));
@@ -7032,6 +7138,10 @@ int Artifact::runApplication(int argc, char *argv[]) {
   QApplication::setWindowIcon(appIcon);
   using namespace Artifact;
   auto *mw = new ArtifactMainWindow();
+  if (uiHeadless) {
+    mw->setAttribute(Qt::WA_DontShowOnScreen, true);
+    mw->setAttribute(Qt::WA_ShowWithoutActivating, true);
+  }
   if (uiTestExecutable &&
       qEnvironmentVariableIsSet("ARTIFACT_UI_TEST_FORCE_SHUTDOWN")) {
     // UI capture fixtures may dirty their temporary project while seeding
@@ -10038,6 +10148,154 @@ int Artifact::runApplication(int argc, char *argv[]) {
             ArtifactCore::UniString(QStringLiteral("Alpha Policy")), 0);
       }
       if (!applySuiteProperties(installed.get())) return;
+      installed->setComputeMode(requestedCompute == QStringLiteral("gpu")
+          ? ComputeMode::GPU : ComputeMode::CPU);
+      if (auto* app = ArtifactApplicationManager::instance()) {
+        if (auto* selectionManager = app->layerSelectionManager()) {
+          selectionManager->clearSelection();
+        }
+      }
+      compositionEditor->setComposition(composition);
+      ArtifactPlaybackService::instance()->setCurrentFrame(
+          ArtifactCore::FramePosition(0));
+      mw->setDockVisible(QStringLiteral("Composition Viewer"), true);
+      mw->activateDock(QStringLiteral("Composition Viewer"));
+      mw->resize(1774, 950);
+      mw->showNormal();
+      mw->activateDock(QStringLiteral("Properties"));
+      qInfo().noquote() << "[" + fixtureName + "] configured effect="
+              << requestedEffectId << "look=" << lookName
+              << "compute=" << requestedCompute
+              << "capture=" << capturePath;
+      QTimer::singleShot(300, mw, [mw, compositionEditor]() {
+        if (compositionEditor) {
+          if (auto* controller = compositionEditor->renderController()) {
+            controller->setLayerSurfaceCacheDiagnosticsEnabled(true);
+            controller->zoomFit();
+            controller->renderOneFrame();
+          }
+        }
+      });
+      QTimer::singleShot(3500, mw, [mw, compositionEditor, composition, imageLayer,
+                                    installed, capturePath, lookName,
+                                    fixtureName, requestedCompute, requestedEffectId,
+                                    suiteProperties, effectSuiteFixture]() {
+        const auto failOutput = [fixtureName, lookName](const QString& reason) {
+          qCritical().noquote() << "[" + fixtureName + "] failed:"
+                                << lookName << reason;
+        };
+        const QString outputPath = QDir::cleanPath(capturePath);
+        if (!imageLayer || !installed || !installed->isEnabled()) {
+          failOutput(QStringLiteral("effect was not active"));
+          return;
+        }
+        auto* controller = compositionEditor->renderController();
+        if (!controller) {
+          failOutput(QStringLiteral("render controller unavailable"));
+          return;
+        }
+        // The composition controller defers expensive blend PSO creation to
+        // a startup QTimer. Pump that bounded cold-start work before capturing
+        // GPU fixtures so they do not silently measure the direct fallback.
+        QElapsedTimer blendInitializationWait;
+        blendInitializationWait.start();
+        while (blendInitializationWait.elapsed() < 2500) {
+          QCoreApplication::processEvents(QEventLoop::AllEvents, 25);
+          QThread::msleep(5);
+        }
+        controller->zoomFit();
+        controller->setShowGrid(false);
+        controller->renderOneFrame();
+        controller->renderOneFrame();
+        const auto renderDebug = controller->frameDebugSnapshot(true);
+        QFile debugSnapshotFile(outputPath + QStringLiteral(".frame-debug.json"));
+        if (debugSnapshotFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+          debugSnapshotFile.write(
+              QJsonDocument(renderDebug.toJson()).toJson(QJsonDocument::Indented));
+        }
+        bool layerRtSaved = false;
+        bool accumRtSaved = false;
+        QImage accumulationImage;
+        for (const auto& preview : renderDebug.previews) {
+          if (preview.key == QStringLiteral("Layer RT") &&
+              !preview.afterImage.isNull()) {
+            layerRtSaved = preview.afterImage.save(
+                outputPath + QStringLiteral(".layer-rt.png"), "PNG");
+          } else if (preview.key == QStringLiteral("Accum RT") &&
+                     !preview.afterImage.isNull()) {
+            accumulationImage = preview.afterImage;
+            accumRtSaved = preview.afterImage.save(
+                outputPath + QStringLiteral(".accum-rt.png"), "PNG");
+          }
+        }
+        captureStartupScreenshot(mw);
+        QImage effectImage;
+        if (requestedCompute == QStringLiteral("cpu")) {
+          ArtifactCore::ImageF32x4RGBAWithCache cpuInput(
+              imageLayer->currentFrameBuffer());
+          ArtifactCore::ImageF32x4RGBAWithCache cpuOutput;
+          installed->applyToCpuSurface(cpuInput, cpuOutput);
+          effectImage = cpuOutput.image().toQImage();
+        } else if (!accumulationImage.isNull()) {
+          const auto sourceSize = imageLayer->sourceSize();
+          if (sourceSize.width > 0 && sourceSize.height > 0) {
+            const QImage rgbaAccumulation =
+                accumulationImage.convertToFormat(QImage::Format_RGBA8888);
+            int left = rgbaAccumulation.width();
+            int top = rgbaAccumulation.height();
+            int right = -1;
+            int bottom = -1;
+            for (int y = 0; y < rgbaAccumulation.height(); ++y) {
+              const auto* row = rgbaAccumulation.constScanLine(y);
+              for (int x = 0; x < rgbaAccumulation.width(); ++x) {
+                if (row[x * 4 + 3] == 0) continue;
+                left = std::min(left, x);
+                top = std::min(top, y);
+                right = std::max(right, x);
+                bottom = std::max(bottom, y);
+              }
+            }
+            if (right >= left && bottom >= top) {
+              const QRect contentRect(left, top, right - left + 1,
+                                      bottom - top + 1);
+              effectImage = rgbaAccumulation.copy(contentRect).scaled(
+                  QSize(sourceSize.width, sourceSize.height),
+                  Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+                                 .convertToFormat(QImage::Format_RGB32);
+            }
+          }
+        }
+        if (effectImage.isNull()) {
+          failOutput(QStringLiteral("effect output capture unavailable"));
+          return;
+        }
+        const QString viewportPath = outputPath + QStringLiteral(".viewport.png");
+        if (!effectImage.save(viewportPath, "PNG")) {
+          failOutput(QStringLiteral("effect viewport PNG save failed"));
+          return;
+        }
+        if (effectImage.isNull() || !effectImage.save(outputPath, "PNG")) {
+          failOutput(QStringLiteral("effect result PNG save failed"));
+          return;
+        }
+        QFile stateFile(outputPath + QStringLiteral(".state.txt"));
+        if (stateFile.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+          const auto renderedComposition = controller->composition();
+          const auto sourceSize = imageLayer->sourceSize();
+          GpuSpatialEffectStack gpuSpatialNodes;
+          const bool hasGpuSpatialNodes =
+              installed->appendGpuSpatialNodes(gpuSpatialNodes);
+          const auto cacheDiagnostics = controller->layerSurfaceCacheDiagnostics();
+          const QString state = QStringLiteral(
+              "compositionMatch=%1 layers=%2 sourceSize=%3x%4 visible=%5 "
+              "active=%6 imageBuffer=%7 effects=%8 effectRevision=%9 "
+              "rasterizer=%10 stage=%11 frame=%12 outputSize=%13x%14 "
+              "corner=%15,%16,%17,%18 center=%19,%20,%21,%22\n"
+              "compute=%23 supportsGPU=%24 domain=%25 genericKey=%26 "
+              "gpuNodes=%27 gpuNodeCount=%28 cacheDiagnostics=%29\n"
+              "look=%30 layerRtSaved=%31 accumRtSaved=%32 "
+              "gpuBlendEnabled=%33 captureSource=%34\n"
+              "effectId=%35 propertyOverrides=%36\n")
               .arg(renderedComposition == composition ? 1 : 0)
               .arg(composition->allLayerRef().size())
               .arg(sourceSize.width).arg(sourceSize.height)
@@ -10931,10 +11189,13 @@ int Artifact::runApplication(int argc, char *argv[]) {
   std::unique_ptr<ArtifactUiControlMcpServer> uiControlMcpServer;
   if (uiControlMcpPort > 0) {
     uiControlMcpServer = std::make_unique<ArtifactUiControlMcpServer>(
-        mw, uiControlMcpPort);
+        mw, uiControlMcpPort, uiHeadless);
     if (!uiControlMcpServer->isListening()) {
       qCritical() << "[UiMcp] Failed to start UI control MCP endpoint:"
                   << uiControlMcpServer->errorString();
+      if (uiHeadless) {
+        QTimer::singleShot(0, []() { QCoreApplication::exit(2); });
+      }
     }
   }
   const int exitCode = a.exec();
