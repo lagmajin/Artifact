@@ -65,6 +65,17 @@ enum class CompositionViewportPresentationLayout {
   SelectedOnly
  };
 
+ // P1-4: viewport-wide shading mode for 3D mesh layer draws. Viewport-only
+ // override: the layer's serialized ModelRenderMode and the Render Queue
+ // output are never modified. BoundingBox is reserved for the later step
+ // (bounds overlay generalization) and is not exposed in the UI yet.
+ enum class CompositionViewportShadingMode {
+  Shaded,
+  Wireframe,
+  WireframeOnShaded,
+  BoundingBox,
+ };
+
  // P0-4: per-viewport visibility mask for layer categories. Independent
  // from CompositionLayerRenderFilter (which is render-queue-scoped) so
  // changing the mask never affects queued output. Categories are encoded
@@ -367,6 +378,15 @@ void setShowGizmoOverlay(bool show);
 bool isShowGizmoOverlay() const;
 void setShowXRayOverlay(bool show);
 bool isShowXRayOverlay() const;
+// P1-4: attenuation applied to non-selected layers while X-Ray is enabled.
+// 0.0-1.0; the default keeps the previous hardcoded 0.35 behavior.
+void setXRayOverlayOpacity(float opacity);
+float xRayOverlayOpacity() const;
+// P1-4: viewport-wide shading mode for 3D mesh layers. Viewport-only
+// override; the layer's serialized render mode and the Render Queue output
+// are never modified.
+void setViewportShadingMode(CompositionViewportShadingMode mode);
+CompositionViewportShadingMode viewportShadingMode() const;
 void setShowIsolationOverlay(bool show);
 bool isShowIsolationOverlay() const;
 int isolatedLayerCount() const;

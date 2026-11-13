@@ -14956,6 +14956,15 @@ public:
 
   bool showXRayOverlay_ = false;
 
+  // P1-4: attenuation applied to non-selected layers while X-Ray is on.
+  // Default keeps the previous hardcoded 0.35 behavior.
+  float xRayOverlayOpacity_ = 0.35f;
+
+  // P1-4: viewport-wide shading mode for 3D mesh layers. Viewport-only
+  // override; never persisted and never applied to Render Queue instances.
+  CompositionViewportShadingMode viewportShadingMode_ =
+      CompositionViewportShadingMode::Shaded;
+
   bool showIsolationOverlay_ = false;
   // P1-1: viewport-only isolate set captured at enter. Layer.visible is
   // never mutated, so disabling isolation restores the previous draw set.
@@ -18373,6 +18382,17 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
           : 1.0f;
   impl_->showRigOverlay_ = config.valueBool(
       QStringLiteral("Viewport/RigOverlayVisible"), false);
+  // P1-4: X-Ray toggle and its attenuation. Default opacity keeps the
+  // previous hardcoded 0.35 behavior.
+  impl_->showXRayOverlay_ = config.valueBool(
+      QStringLiteral("Viewport/XRay/Enabled"), false);
+  {
+    const float xRayOpacity = static_cast<float>(config.valueDouble(
+        std::string_view("Viewport/XRay/Opacity"), 0.35));
+    impl_->xRayOverlayOpacity_ = std::isfinite(xRayOpacity)
+        ? std::clamp(xRayOpacity, 0.0f, 1.0f)
+        : 0.35f;
+  }
   impl_->rigWeightRadius_ = static_cast<float>(config.valueDouble(
       std::string_view("Viewport/RigWeight/Radius"), 36.0));
   impl_->rigWeightOpacity_ = static_cast<float>(config.valueDouble(
@@ -21211,6 +21231,8 @@ void CompositionRenderController::setShowXRayOverlay(bool show) {
 
   if (!impl_ || impl_->showXRayOverlay_ == show) return;
   impl_->showXRayOverlay_ = show;
+  ArtifactCore::LayeredConfigStore::instance().setValue(
+      QStringLiteral("Viewport/XRay/Enabled"), show);
   markRenderDirty();
 
 }
@@ -21218,6 +21240,48 @@ void CompositionRenderController::setShowXRayOverlay(bool show) {
 bool CompositionRenderController::isShowXRayOverlay() const {
 
   return impl_ ? impl_->showXRayOverlay_ : false;
+
+}
+
+void CompositionRenderController::setXRayOverlayOpacity(float opacity) {
+
+  if (!impl_) return;
+  const float clamped = std::clamp(opacity, 0.0f, 1.0f);
+  if (impl_->xRayOverlayOpacity_ == clamped) return;
+  impl_->xRayOverlayOpacity_ = clamped;
+  ArtifactCore::LayeredConfigStore::instance().setValue(
+      QStringLiteral("Viewport/XRay/Opacity"), clamped);
+  markRenderDirty();
+
+}
+
+float CompositionRenderController::xRayOverlayOpacity() const {
+
+  return impl_ ? impl_->xRayOverlayOpacity_ : 0.35f;
+
+}
+
+void CompositionRenderController::setViewportShadingMode(
+    CompositionViewportShadingMode mode) {
+
+  if (!impl_ || impl_->viewportShadingMode_ == mode) return;
+  impl_->viewportShadingMode_ = mode;
+  if (impl_->renderer_) {
+    // BoundingBox maps to Shaded until the bounds overlay step wires it up.
+    impl_->renderer_->setMeshViewportShadingMode(
+        mode == CompositionViewportShadingMode::Wireframe ? 1 :
+        mode == CompositionViewportShadingMode::WireframeOnShaded ? 2 : 0);
+  }
+  impl_->invalidateBaseComposite();
+  markRenderDirty();
+
+}
+
+CompositionViewportShadingMode
+CompositionRenderController::viewportShadingMode() const {
+
+  return impl_ ? impl_->viewportShadingMode_
+               : CompositionViewportShadingMode::Shaded;
 
 }
 
@@ -45328,7 +45392,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               showXRayOverlay_ && !selectedLayerId_.isNil() &&
               layer->id() != selectedLayerId_;
           float opacity =
-              layer->opacity() * (xRayDimThisLayer ? 0.35f : 1.0f);
+              layer->opacity() *
+              (xRayDimThisLayer ? xRayOverlayOpacity_ : 1.0f);
 
           // Crossfade/Dissolve transitions are represented by the existing
           // layer compositor as complementary opacities. More complex
@@ -46425,7 +46490,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               showXRayOverlay_ && !selectedLayerId_.isNil() &&
               layer->id() != selectedLayerId_;
           const float opacity =
-              layer->opacity() * (xRayDimThisLayer ? 0.35f : 1.0f);
+              layer->opacity() *
+              (xRayDimThisLayer ? xRayOverlayOpacity_ : 1.0f);
 
           if (opacity <= 0.0f) {
 

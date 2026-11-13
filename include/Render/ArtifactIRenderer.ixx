@@ -406,6 +406,14 @@ public:
   bool isMeshPositionOnlyPass() const;
   void setMeshUvOnlyPass(bool enabled);
   bool isMeshUvOnlyPass() const;
+  // P1-4: viewport-wide mesh shading mode for 3D model layer draws.
+  // 0 = Shaded (the layer's own shading request applies), 1 = Wireframe,
+  // 2 = Wireframe on Shaded. Auxiliary mesh passes (emission / id / normal /
+  // velocity / albedo / position / uv) always resolve to 0 so AOV semantics
+  // are unchanged. Viewport-only display state: the Render Queue owns its
+  // own ArtifactIRenderer instances and never sees this value.
+  void setMeshViewportShadingMode(int mode);
+  int meshViewportShadingMode() const;
   void setCanvasSize(float w, float h);
   void setPan(float x, float y);
   void getPan(float &x, float &y) const;

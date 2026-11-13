@@ -3066,8 +3066,17 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
   }
 
   const bool isPointCloud = impl_->mesh_.polygonCount() == 0 && !positions->data().isEmpty();
+  // P1-4: viewport-wide mesh shading override. The renderer resolves 0
+  // (Shaded) while an auxiliary mesh pass is active, so AOV semantics are
+  // unchanged; see ArtifactIRenderer::meshViewportShadingMode().
+  const int viewportShadingMode =
+      renderer ? renderer->meshViewportShadingMode() : 0;
+  const bool viewportWireframeOnly = viewportShadingMode == 1;
+  const bool viewportWireOnShaded = viewportShadingMode == 2;
   const bool needsWireOverlay =
-      impl_->renderMode_ == ModelRenderMode::Wireframe || impl_->wireOverlay_;
+      viewportWireframeOnly ||
+      impl_->renderMode_ == ModelRenderMode::Wireframe || impl_->wireOverlay_ ||
+      viewportWireOnShaded;
   // The solid path hands the mesh to the GPU renderer as-is; world-space overlay
   // vertices are only needed for the wire/point/normal overlays. Populate the
   // scratch buffer on demand so the common solid-without-overlay case does no
@@ -3215,7 +3224,7 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
     }
   };
 
-  if (impl_->renderMode_ == ModelRenderMode::Solid) {
+  if (impl_->renderMode_ == ModelRenderMode::Solid && !viewportWireframeOnly) {
     if (isPointCloud) {
       const int drawnPoints = drawPoints();
       traceResult(
@@ -3287,7 +3296,7 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
             QStringLiteral("meshes=%1 shading=%2")
                 .arg(static_cast<qulonglong>(meshCount))
                 .arg(solidShadingMode));
-        if (impl_->wireOverlay_) {
+        if (impl_->wireOverlay_ || viewportWireOnShaded) {
           drawEdges(FloatColor{0.04f, 0.05f, 0.06f, opacity() * 0.72f}, 1.0f);
         }
         // Normals are an independent overlay: they must stay visible even when
@@ -3312,7 +3321,7 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
             .arg(snapshot.scaleX, 0, 'f', 3)
             .arg(snapshot.scaleY, 0, 'f', 3)
             .arg(solidShadingMode));
-    if (impl_->wireOverlay_) {
+    if (impl_->wireOverlay_ || viewportWireOnShaded) {
       drawEdges(FloatColor{0.04f, 0.05f, 0.06f, opacity() * 0.72f}, 1.0f);
     }
     // Normals are an independent overlay: they must stay visible even when

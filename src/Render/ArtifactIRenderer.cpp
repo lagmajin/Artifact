@@ -1316,6 +1316,10 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
   ArtifactIRenderer::ChannelType meshIdPassChannel_ =
       ArtifactIRenderer::ChannelType::Custom;
   float meshIdPassEncodedValue_ = 0.0f;
+  // P1-4: viewport-wide mesh shading mode (0=Shaded, 1=Wireframe,
+  // 2=Wireframe on Shaded). Viewport-only display state; Render Queue
+  // jobs render through their own ArtifactIRenderer instances.
+  int meshViewportShadingMode_ = 0;
   quint64 presentAttemptCount_ = 0;
   quint64 presentSuccessCount_ = 0;
   quint64 flushCount_ = 0;
@@ -3220,6 +3224,20 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
   bool isMeshPositionOnlyPass() const { return meshPositionOnlyPass_; }
   void setMeshUvOnlyPass(bool enabled) { meshUvOnlyPass_ = enabled; }
   bool isMeshUvOnlyPass() const { return meshUvOnlyPass_; }
+  void setMeshViewportShadingMode(int mode) {
+    meshViewportShadingMode_ = std::clamp(mode, 0, 2);
+  }
+  int meshViewportShadingMode() const {
+    // Auxiliary mesh passes (AOV channel passes) keep the layer's own solid
+    // request so the pass data stays valid while a viewport shading mode is
+    // active.
+    const bool auxiliaryMeshPass =
+        meshEmissionOnlyPass_ || meshNormalOnlyPass_ || meshVelocityOnlyPass_ ||
+        meshAlbedoOnlyPass_ || meshPositionOnlyPass_ || meshUvOnlyPass_ ||
+        meshIdPassChannel_ == ArtifactIRenderer::ChannelType::ObjectId ||
+        meshIdPassChannel_ == ArtifactIRenderer::ChannelType::MaterialId;
+    return auxiliaryMeshPass ? 0 : meshViewportShadingMode_;
+  }
   FloatColor getClearColor() const { return clearColor_; }
   void reserveRenderCommandPackets(std::size_t totalCapacity);
   bool prepareParallelGeometryRecording();
@@ -6593,6 +6611,12 @@ void ArtifactIRenderer::setMeshUvOnlyPass(bool enabled) {
 }
 bool ArtifactIRenderer::isMeshUvOnlyPass() const {
   return impl_->isMeshUvOnlyPass();
+}
+void ArtifactIRenderer::setMeshViewportShadingMode(int mode) {
+  impl_->setMeshViewportShadingMode(mode);
+}
+int ArtifactIRenderer::meshViewportShadingMode() const {
+  return impl_->meshViewportShadingMode();
 }
   FloatColor ArtifactIRenderer::getClearColor() const { return impl_->getClearColor(); }
   void ArtifactIRenderer::setViewportSize(float w, float h) { impl_->setViewportSize(w, h); }

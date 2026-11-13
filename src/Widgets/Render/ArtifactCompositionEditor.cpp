@@ -92,6 +92,7 @@ module;
 #include <QDoubleSpinBox>
 #include <QWidget>
 #include <QWidgetAction>
+#include <QSlider>
 #include <QtSVG/QSvgRenderer>
 #include <algorithm>
 #include <cmath>
@@ -8881,6 +8882,7 @@ public:
   QAction *densityHeatmapAction_ = nullptr;
   QAction *gizmoVisibleAction_ = nullptr;
   QAction *xRayAction_ = nullptr;
+  QSlider *xRayOpacitySlider_ = nullptr;
   QAction *isolationAction_ = nullptr;
   QToolButton *shadingButton_ = nullptr;
   QToolButton *viewPresetButton_ = nullptr;
@@ -14028,6 +14030,42 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
       addQualityAction(QStringLiteral("Half"), PreviewQualityPreset::Preview, false);
   QAction *qualityQuarterAct =
       addQualityAction(QStringLiteral("Quarter"), PreviewQualityPreset::Draft, false);
+  // P1-4: viewport-wide shading mode for 3D mesh layers. Viewport-only
+  // override; the checked state is initialized from the controller below.
+  shadingMenu->addSeparator();
+  auto *meshShadingGroup = new QActionGroup(shadingMenu);
+  meshShadingGroup->setExclusive(true);
+  const auto addMeshShadingAction = [this, shadingMenu, meshShadingGroup](
+                                        const QString &text,
+                                        CompositionViewportShadingMode mode,
+                                        bool checked) {
+    QAction *action = shadingMenu->addAction(text);
+    action->setCheckable(true);
+    action->setChecked(checked);
+    meshShadingGroup->addAction(action);
+    QObject::connect(action, &QAction::triggered, this, [this, mode]() {
+      if (!impl_) {
+        return;
+      }
+      if (auto *controller = impl_->renderController_) {
+        controller->setViewportShadingMode(mode);
+      }
+      impl_->forEachActiveSecondaryController(
+          [mode](CompositionRenderController *controller) {
+            controller->setViewportShadingMode(mode);
+      });
+      impl_->refreshViewportStateLabels();
+    });
+    return action;
+  };
+  QAction *meshShadingShadedAct = addMeshShadingAction(
+      QStringLiteral("Shaded"), CompositionViewportShadingMode::Shaded, true);
+  QAction *meshShadingWireframeAct = addMeshShadingAction(
+      QStringLiteral("Wireframe"), CompositionViewportShadingMode::Wireframe,
+      false);
+  QAction *meshShadingWireOnShadedAct = addMeshShadingAction(
+      QStringLiteral("Wireframe on Shaded"),
+      CompositionViewportShadingMode::WireframeOnShaded, false);
   shadingMenu->addSeparator();
   QAction *shadeGridAct = shadingMenu->addAction(QStringLiteral("Grid"));
   QAction *shadeGuidesAct = shadingMenu->addAction(QStringLiteral("Guides"));
@@ -14090,6 +14128,62 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   shadeXRayAct->setToolTip(QStringLiteral("Toggle the X-Ray overlay for the selected layer (%1)")
                                .arg(ArtifactCore::ShortcutBindings::instance().shortcutText(
                                    ArtifactCore::ShortcutId::ViewToggleXRay)));
+  // P1-4: X-Ray attenuation slider. Viewport-only display state stored on
+  // the controller; the default keeps the previous 0.35 attenuation.
+  {
+    QWidget *xRayOpacityPanel = new QWidget(shadingMenu);
+    xRayOpacityPanel->setObjectName(QStringLiteral("xRayOpacityPanel"));
+    auto *row = new QHBoxLayout(xRayOpacityPanel);
+    row->setContentsMargins(8, 2, 8, 2);
+    auto *label = new QLabel(QStringLiteral("X-Ray Opacity"), xRayOpacityPanel);
+    label->setMinimumWidth(72);
+    row->addWidget(label);
+    auto *slider = new QSlider(Qt::Horizontal, xRayOpacityPanel);
+    slider->setRange(5, 100);
+    slider->setSingleStep(1);
+    slider->setPageStep(10);
+    slider->setAccessibleName(QStringLiteral("X-Ray opacity"));
+    slider->setAccessibleDescription(
+        QStringLiteral("Opacity of non-selected layers while X-Ray is enabled"));
+    slider->setToolTip(slider->accessibleDescription());
+    auto *valueLabel = new QLabel(xRayOpacityPanel);
+    valueLabel->setMinimumWidth(44);
+    valueLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    row->addWidget(slider, 1);
+    row->addWidget(valueLabel);
+    if (impl_->renderController_) {
+      const float initialOpacity = impl_->renderController_->xRayOverlayOpacity();
+      const int initialPercent =
+          static_cast<int>(initialOpacity * 100.0f + 0.5f);
+      slider->setValue(std::clamp(initialPercent, 5, 100));
+    } else {
+      slider->setValue(35);
+    }
+    valueLabel->setText(QStringLiteral("%1%").arg(slider->value()));
+    auto *updateValueLabel = [slider, valueLabel]() {
+      valueLabel->setText(QStringLiteral("%1%").arg(slider->value()));
+    };
+    QObject::connect(slider, &QSlider::valueChanged, this,
+                     [this, updateValueLabel](int value) {
+      updateValueLabel();
+      if (!impl_) {
+        return;
+      }
+      const float opacity = static_cast<float>(value) / 100.0f;
+      if (auto *controller = impl_->renderController_) {
+        controller->setXRayOverlayOpacity(opacity);
+      }
+      impl_->forEachActiveSecondaryController(
+          [opacity](CompositionRenderController *controller) {
+            controller->setXRayOverlayOpacity(opacity);
+      });
+      impl_->refreshViewportStateLabels();
+    });
+    QAction *xRayOpacityAction = new QWidgetAction(shadingMenu);
+    xRayOpacityAction->setDefaultWidget(xRayOpacityPanel);
+    shadingMenu->addAction(xRayOpacityAction);
+    impl_->xRayOpacitySlider_ = slider;
+  }
   QObject::connect(shadeIsolationAct, &QAction::toggled, this,
                    [this](bool checked) {
                      if (!impl_) {
@@ -14240,6 +14334,22 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
       shadeGizmoAct->setChecked(impl_->gizmoVisibleAction_->isChecked());
     }
     shadeXRayAct->setChecked(impl_->renderController_->isShowXRayOverlay());
+    if (impl_->xRayOpacitySlider_) {
+      const float initialOpacity =
+          impl_->renderController_->xRayOverlayOpacity();
+      impl_->xRayOpacitySlider_->setValue(
+          std::clamp(static_cast<int>(initialOpacity * 100.0f + 0.5f), 5, 100));
+    }
+    {
+      const auto viewportShadingMode =
+          impl_->renderController_->viewportShadingMode();
+      meshShadingShadedAct->setChecked(
+          viewportShadingMode == CompositionViewportShadingMode::Shaded);
+      meshShadingWireframeAct->setChecked(
+          viewportShadingMode == CompositionViewportShadingMode::Wireframe);
+      meshShadingWireOnShadedAct->setChecked(
+          viewportShadingMode == CompositionViewportShadingMode::WireframeOnShaded);
+    }
     shadeIsolationAct->setChecked(
         impl_->renderController_->isShowIsolationOverlay());
     impl_->refreshViewportStateLabels();
