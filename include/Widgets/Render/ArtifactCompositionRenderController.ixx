@@ -837,6 +837,20 @@ QQuaternion viewportOrientationQuaternion() const;
 void setViewportOrientationQuaternion(const QQuaternion& orientation);
 void setPreviewOrbitActive(bool active);
 bool isPreviewOrbitActive() const;
+// Experimental viewport Fly / Walk navigation. A viewport-only free camera:
+// WASD drives movement (Q/E lifts in Fly, Walk keeps the entry elevation) and
+// mouse look rotates the camera. Nothing here is written to the composition
+// or to a camera layer; ending the mode restores the pan / zoom / orientation
+// the viewport had on entry. Fly and Walk are the same camera with a different
+// movement constraint, so switching between them keeps the current view.
+enum class ViewportNavigationMode { Off, Fly, Walk };
+ViewportNavigationMode viewportNavigationMode() const;
+bool beginViewportNavigation(ViewportNavigationMode mode);
+void endViewportNavigation();
+void setViewportNavigationMoveInput(float forward, float strafe, float lift);
+void addViewportNavigationLook(float yawDegrees, float pitchDegrees);
+void setViewportNavigationSpeedScale(float scale);
+float viewportNavigationSpeedScale() const;
 void pushViewHistory();
 WorldRay createPickingRay(
     ArtifactCore::Coordinates::ScreenPhysicalPoint2 viewportPos) const;

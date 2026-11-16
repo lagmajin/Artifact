@@ -15052,6 +15052,13 @@ public:
   // Every Composition Viewer state has an orientation. Front is its 2D,
   // orthographic presentation; all other orientations are spatial views.
   bool isFrontOrthographicViewport() const {
+    // Fly / Walk drives a free perspective camera, so the front orthographic
+    // presentation (and the 2D-only overlays keyed off it) stays off while the
+    // mode is active.
+    if (viewportNavigationMode_ !=
+        CompositionRenderController::ViewportNavigationMode::Off) {
+      return false;
+    }
     return viewportOrientationNavigator_.activeHotspot() ==
                ArtifactCore::ViewOrientationHotspot::Front &&
            !viewportOrientationNavigator_.isAnimating();
@@ -15068,6 +15075,184 @@ public:
   bool gizmo3DCameraMatricesValid_ = false;
   QMatrix4x4 gizmo3DViewMatrix_;
   QMatrix4x4 gizmo3DProjectionMatrix_;
+
+  // Experimental viewport Fly / Walk navigation state. All of it is
+  // viewport-only and cleared when the mode ends.
+  CompositionRenderController::ViewportNavigationMode
+      viewportNavigationMode_ =
+          CompositionRenderController::ViewportNavigationMode::Off;
+  QVector3D viewportNavigationEye_;
+  float viewportNavigationYawDeg_ = 0.0f;
+  float viewportNavigationPitchDeg_ = 0.0f;
+  float viewportNavigationForward_ = 0.0f;
+  float viewportNavigationStrafe_ = 0.0f;
+  float viewportNavigationLift_ = 0.0f;
+  float viewportNavigationBaseSpeed_ = 600.0f;
+  float viewportNavigationSpeedScale_ = 1.0f;
+  // Walk keeps a constant offset along the ground-plane normal chosen at
+  // entry: world Y for a normal view, world Z for a (near) top view so an XY
+  // canvas can be walked on instead of hovered above.
+  QVector3D viewportNavigationWalkUp_ = QVector3D(0.0f, 1.0f, 0.0f);
+  float viewportNavigationWalkHeight_ = 0.0f;
+  std::chrono::steady_clock::time_point viewportNavigationLastTick_{};
+  bool viewportNavigationSavedViewValid_ = false;
+  float viewportNavigationSavedPanX_ = 0.0f;
+  float viewportNavigationSavedPanY_ = 0.0f;
+  float viewportNavigationSavedZoom_ = 1.0f;
+  QQuaternion viewportNavigationSavedOrientation_;
+
+  static QVector3D viewportNavigationForwardVector(const float yawDegrees,
+                                                   const float pitchDegrees) {
+    constexpr float kPi = 3.14159265358979323846f;
+    constexpr float kRadiansPerDegree = kPi / 180.0f;
+    const float yaw = yawDegrees * kRadiansPerDegree;
+    const float pitch =
+        std::clamp(pitchDegrees, -89.0f, 89.0f) * kRadiansPerDegree;
+    const float cosPitch = std::cos(pitch);
+    return QVector3D(std::sin(yaw) * cosPitch, std::sin(pitch),
+                     -std::cos(yaw) * cosPitch);
+  }
+
+  static QMatrix4x4 viewportNavigationViewMatrixFor(
+      const QVector3D& eye, const float yawDegrees,
+      const float pitchDegrees) {
+    const QVector3D forward =
+        viewportNavigationForwardVector(yawDegrees, pitchDegrees);
+    QVector3D up(0.0f, 1.0f, 0.0f);
+    if (std::abs(QVector3D::dotProduct(forward, up)) > 0.999f) {
+      up = QVector3D(0.0f, 0.0f, forward.y() >= 0.0f ? -1.0f : 1.0f);
+    }
+    QMatrix4x4 view;
+    view.lookAt(eye, eye + forward, up.normalized());
+    return view;
+  }
+
+  static QVector3D viewportNavigationWalkUpFor(const QVector3D& forward) {
+    if (std::abs(forward.y()) > 0.9f) {
+      return QVector3D(0.0f, 0.0f, forward.y() < 0.0f ? 1.0f : -1.0f);
+    }
+    return QVector3D(0.0f, 1.0f, 0.0f);
+  }
+
+  QMatrix4x4 viewportNavigationViewMatrix() const {
+    return viewportNavigationViewMatrixFor(
+        viewportNavigationEye_, viewportNavigationYawDeg_,
+        viewportNavigationPitchDeg_);
+  }
+
+  // Seeds the free camera from the view the viewport is showing so entering
+  // the mode does not jump the image. The derivation matches the pan / zoom /
+  // orientation math used for the regular viewport camera.
+  void beginViewportNavigationState(
+      const CompositionRenderController::ViewportNavigationMode mode) {
+    constexpr float kPi = 3.14159265358979323846f;
+    constexpr float kFovDegrees = 45.0f;
+    const float viewportW = std::max(1.0f, hostWidth_);
+    const float viewportH = std::max(1.0f, hostHeight_);
+    float zoom = 1.0f;
+    float panX = 0.0f;
+    float panY = 0.0f;
+    if (renderer_) {
+      zoom = std::max(0.001f, renderer_->getZoom());
+      renderer_->getPan(panX, panY);
+    }
+    const float distance = (viewportH * 0.5f) /
+        (zoom * std::tan(kFovDegrees * 0.5f * (kPi / 180.0f)));
+    const float targetX = (viewportW * 0.5f - panX) / zoom;
+    const float targetY = (viewportH * 0.5f - panY) / zoom;
+    const QQuaternion cameraOrientation =
+        viewportOrientationNavigator_.currentOrientation().conjugated();
+    viewportNavigationEye_ =
+        QVector3D(targetX, targetY, 0.0f) +
+        cameraOrientation.rotatedVector(QVector3D(0.0f, 0.0f, 1.0f)) *
+            std::max(1.0f, distance);
+    const QVector3D forward =
+        cameraOrientation.rotatedVector(QVector3D(0.0f, 0.0f, -1.0f));
+    viewportNavigationYawDeg_ =
+        std::atan2(forward.x(), -forward.z()) * (180.0f / kPi);
+    viewportNavigationPitchDeg_ =
+        std::asin(std::clamp(forward.y(), -1.0f, 1.0f)) * (180.0f / kPi);
+    viewportNavigationWalkUp_ = viewportNavigationWalkUpFor(forward);
+    viewportNavigationWalkHeight_ =
+        QVector3D::dotProduct(viewportNavigationEye_, viewportNavigationWalkUp_);
+    viewportNavigationBaseSpeed_ = std::max(1.0f, distance) * 0.6f;
+    viewportNavigationForward_ = 0.0f;
+    viewportNavigationStrafe_ = 0.0f;
+    viewportNavigationLift_ = 0.0f;
+    viewportNavigationLastTick_ = std::chrono::steady_clock::now();
+    viewportNavigationMode_ = mode;
+  }
+
+  // Frame-rate independent movement. Called from the GUI render tick with the
+  // elapsed tick time; returns true when the camera actually moved.
+  bool advanceViewportNavigation(const double deltaSeconds) {
+    if (viewportNavigationMode_ ==
+            CompositionRenderController::ViewportNavigationMode::Off ||
+        deltaSeconds <= 0.0) {
+      return false;
+    }
+    if (viewportNavigationForward_ == 0.0f &&
+        viewportNavigationStrafe_ == 0.0f &&
+        viewportNavigationLift_ == 0.0f) {
+      return false;
+    }
+    const QVector3D forward = viewportNavigationForwardVector(
+        viewportNavigationYawDeg_, viewportNavigationPitchDeg_);
+    QVector3D right =
+        QVector3D::crossProduct(forward, QVector3D(0.0f, 1.0f, 0.0f));
+    if (right.lengthSquared() < 1.0e-6f) {
+      right = QVector3D(1.0f, 0.0f, 0.0f);
+    }
+    right.normalize();
+    QVector3D move;
+    if (viewportNavigationMode_ ==
+        CompositionRenderController::ViewportNavigationMode::Walk) {
+      // Walk along the ground plane using the screen axes as the heading, so
+      // W/S always mean "toward the top of the image" and strafing matches the
+      // screen even when the view is pitched straight down onto the canvas.
+      const QVector3D walkUp = viewportNavigationWalkUp_;
+      const QMatrix4x4 view = viewportNavigationViewMatrix();
+      QVector3D walkForward(view(0, 1), view(1, 1), view(2, 1));
+      QVector3D walkRight(view(0, 0), view(1, 0), view(2, 0));
+      walkForward -= walkUp * QVector3D::dotProduct(walkForward, walkUp);
+      walkRight -= walkUp * QVector3D::dotProduct(walkRight, walkUp);
+      if (walkForward.lengthSquared() > 1.0e-6f) {
+        walkForward.normalize();
+      }
+      if (walkRight.lengthSquared() > 1.0e-6f) {
+        walkRight.normalize();
+      }
+      if (walkForward.lengthSquared() <= 1.0e-6f &&
+          walkRight.lengthSquared() <= 1.0e-6f) {
+        return false;
+      }
+      move = walkForward * viewportNavigationForward_ +
+             walkRight * viewportNavigationStrafe_;
+    } else {
+      move = forward * viewportNavigationForward_ +
+             right * viewportNavigationStrafe_ +
+             QVector3D(0.0f, 1.0f, 0.0f) * viewportNavigationLift_;
+    }
+    if (move.lengthSquared() < 1.0e-8f) {
+      return false;
+    }
+    if (move.lengthSquared() > 1.0f) {
+      move.normalize();
+    }
+    const float speed = viewportNavigationBaseSpeed_ *
+        std::clamp(viewportNavigationSpeedScale_, 0.05f, 10.0f);
+    viewportNavigationEye_ +=
+        move * (speed * static_cast<float>(deltaSeconds));
+    if (viewportNavigationMode_ ==
+        CompositionRenderController::ViewportNavigationMode::Walk) {
+      const float height = QVector3D::dotProduct(
+          viewportNavigationEye_, viewportNavigationWalkUp_);
+      viewportNavigationEye_ +=
+          viewportNavigationWalkUp_ *
+          (viewportNavigationWalkHeight_ - height);
+    }
+    return true;
+  }
 
   int currentFrameForOverlay_ = 0;
 
@@ -16192,6 +16377,14 @@ public:
 
   void pushViewHistory() {
     if (!renderer_ || restoringViewState_) {
+      return;
+    }
+    // Fly / Walk owns a viewport-only camera. View-cube snaps, pans and zooms
+    // that arrive while it is active must not append entries to the shared
+    // view history: the visible camera ignores them and the entry would only
+    // undo to an identical-looking state.
+    if (viewportNavigationMode_ !=
+        CompositionRenderController::ViewportNavigationMode::Off) {
       return;
     }
     viewUndoStack_.push_back(captureViewState());
@@ -19165,6 +19358,26 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
 
           }
 
+          // Experimental Fly / Walk navigation advances on the GUI tick so
+          // movement speed is frame-rate independent. A moving camera keeps
+          // the frame dirty, which keeps the tick alive until it stops.
+          if (impl_->viewportNavigationMode_ !=
+              CompositionRenderController::ViewportNavigationMode::Off) {
+            const auto navigationNow = std::chrono::steady_clock::now();
+            double navigationDelta = 0.0;
+            if (impl_->viewportNavigationLastTick_.time_since_epoch().count() !=
+                0) {
+              navigationDelta = std::chrono::duration<double>(
+                  navigationNow - impl_->viewportNavigationLastTick_)
+                  .count();
+            }
+            impl_->viewportNavigationLastTick_ = navigationNow;
+            if (impl_->advanceViewportNavigation(
+                    std::clamp(navigationDelta, 0.0, 0.1))) {
+              impl_->renderDirty_.store(true, std::memory_order_release);
+            }
+          }
+
           if (!impl_->renderDirty_.exchange(false, std::memory_order_acq_rel)) {
 
             const auto* idlePlayback = ArtifactPlaybackService::instance();
@@ -19841,6 +20054,12 @@ void CompositionRenderController::panBy(
 
     return;
 
+  }
+
+  // Fly / Walk owns a viewport-only camera; panning would only mutate the
+  // state the mode restores on exit.
+  if (impl_->viewportNavigationMode_ != ViewportNavigationMode::Off) {
+    return;
   }
 
   if (!std::isfinite(viewportDelta.x) ||
@@ -23922,6 +24141,12 @@ void CompositionRenderController::redoView() {
 
 void CompositionRenderController::resetView() {
 
+  // A full reset is a deliberate return to the composition view, so leave
+  // Fly / Walk first instead of resetting state the mode would restore.
+  if (impl_->viewportNavigationMode_ != ViewportNavigationMode::Off) {
+    endViewportNavigation();
+  }
+
   if (impl_->renderer_) {
     ++impl_->smoothZoomGeneration_;
     impl_->smoothZoomActive_ = false;
@@ -24396,6 +24621,9 @@ void CompositionRenderController::zoomAtFactor(
   }
   if (!std::isfinite(viewportPos.x) ||
       !std::isfinite(viewportPos.y)) {
+    return;
+  }
+  if (impl_->viewportNavigationMode_ != ViewportNavigationMode::Off) {
     return;
   }
 
@@ -41035,6 +41263,10 @@ void CompositionRenderController::clearViewportOrientation() {
   if (!impl_) {
     return;
   }
+  if (impl_->viewportNavigationMode_ !=
+      CompositionRenderController::ViewportNavigationMode::Off) {
+    return;
+  }
   // "2D" is the front orthographic view of the same spatial viewport.
   impl_->viewportOrientationNavigator_.snapTo(
       ArtifactCore::ViewOrientationHotspot::Front, true);
@@ -41057,6 +41289,13 @@ void CompositionRenderController::setViewportOrientation(
 
   if (impl_->maskViewNavigationLocked() &&
       hotspot != ArtifactCore::ViewOrientationHotspot::Front) {
+    return;
+  }
+
+  // Fly / Walk renders a free camera, so a hotspot snap would be invisible
+  // and would still move the stored orientation the mode restores on exit.
+  if (impl_->viewportNavigationMode_ !=
+      ViewportNavigationMode::Off) {
     return;
   }
 
@@ -41117,6 +41356,12 @@ void CompositionRenderController::setViewportOrientationQuaternion(
     return;
   }
 
+  // View-cube / orbit drags are ignored while the free camera owns the view.
+  if (impl_->viewportNavigationMode_ !=
+      ViewportNavigationMode::Off) {
+    return;
+  }
+
   const QQuaternion normalized = orientation.normalized();
   const QQuaternion current =
       impl_->viewportOrientationNavigator_.currentOrientation();
@@ -41148,6 +41393,129 @@ void CompositionRenderController::setPreviewOrbitActive(bool active) {
 
 bool CompositionRenderController::isPreviewOrbitActive() const {
   return impl_ && impl_->previewOrbitActive_;
+}
+
+CompositionRenderController::ViewportNavigationMode
+CompositionRenderController::viewportNavigationMode() const {
+  return impl_ ? impl_->viewportNavigationMode_
+               : ViewportNavigationMode::Off;
+}
+
+bool CompositionRenderController::beginViewportNavigation(
+    const ViewportNavigationMode mode) {
+  if (!impl_ || !impl_->renderer_ || mode == ViewportNavigationMode::Off) {
+    return false;
+  }
+  // Mask editing owns the pointer and the camera; do not steal it.
+  if (impl_->maskViewNavigationLocked()) {
+    return false;
+  }
+  if (impl_->viewportNavigationMode_ == mode) {
+    return true;
+  }
+  if (impl_->viewportNavigationMode_ != ViewportNavigationMode::Off) {
+    // Fly <-> Walk keeps the free camera where it is. Walk starts from the
+    // elevation it currently has so the switch does not jump the view.
+    if (mode == ViewportNavigationMode::Walk) {
+      const QVector3D forward = impl_->viewportNavigationForwardVector(
+          impl_->viewportNavigationYawDeg_, impl_->viewportNavigationPitchDeg_);
+      impl_->viewportNavigationWalkUp_ =
+          Impl::viewportNavigationWalkUpFor(forward);
+      impl_->viewportNavigationWalkHeight_ = QVector3D::dotProduct(
+          impl_->viewportNavigationEye_, impl_->viewportNavigationWalkUp_);
+    }
+    impl_->viewportNavigationMode_ = mode;
+    impl_->invalidateOverlayComposite();
+    markRenderDirty();
+    return true;
+  }
+
+  float panX = 0.0f;
+  float panY = 0.0f;
+  impl_->renderer_->getPan(panX, panY);
+  impl_->viewportNavigationSavedPanX_ = panX;
+  impl_->viewportNavigationSavedPanY_ = panY;
+  impl_->viewportNavigationSavedZoom_ = impl_->renderer_->getZoom();
+  impl_->viewportNavigationSavedOrientation_ =
+      impl_->viewportOrientationNavigator_.currentOrientation();
+  impl_->viewportNavigationSavedViewValid_ = true;
+  impl_->beginViewportNavigationState(mode);
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+  return true;
+}
+
+void CompositionRenderController::endViewportNavigation() {
+  if (!impl_ ||
+      impl_->viewportNavigationMode_ == ViewportNavigationMode::Off) {
+    return;
+  }
+  impl_->viewportNavigationMode_ = ViewportNavigationMode::Off;
+  impl_->viewportNavigationForward_ = 0.0f;
+  impl_->viewportNavigationStrafe_ = 0.0f;
+  impl_->viewportNavigationLift_ = 0.0f;
+  if (impl_->renderer_ && impl_->viewportNavigationSavedViewValid_) {
+    impl_->renderer_->setPan(impl_->viewportNavigationSavedPanX_,
+                             impl_->viewportNavigationSavedPanY_);
+    impl_->renderer_->setZoom(impl_->viewportNavigationSavedZoom_);
+  }
+  if (impl_->viewportNavigationSavedViewValid_) {
+    impl_->viewportOrientationNavigator_.setCurrentOrientation(
+        impl_->viewportNavigationSavedOrientation_);
+  }
+  impl_->viewportNavigationSavedViewValid_ = false;
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+}
+
+void CompositionRenderController::setViewportNavigationMoveInput(
+    const float forward, const float strafe, const float lift) {
+  if (!impl_ ||
+      impl_->viewportNavigationMode_ == ViewportNavigationMode::Off) {
+    return;
+  }
+  const float nextForward = std::clamp(forward, -1.0f, 1.0f);
+  const float nextStrafe = std::clamp(strafe, -1.0f, 1.0f);
+  const float nextLift = std::clamp(lift, -1.0f, 1.0f);
+  if (nextForward == impl_->viewportNavigationForward_ &&
+      nextStrafe == impl_->viewportNavigationStrafe_ &&
+      nextLift == impl_->viewportNavigationLift_) {
+    return;
+  }
+  impl_->viewportNavigationForward_ = nextForward;
+  impl_->viewportNavigationStrafe_ = nextStrafe;
+  impl_->viewportNavigationLift_ = nextLift;
+  markRenderDirty();
+}
+
+void CompositionRenderController::addViewportNavigationLook(
+    const float yawDegrees, const float pitchDegrees) {
+  if (!impl_ ||
+      impl_->viewportNavigationMode_ == ViewportNavigationMode::Off) {
+    return;
+  }
+  float yaw = impl_->viewportNavigationYawDeg_ + yawDegrees;
+  while (yaw > 180.0f) yaw -= 360.0f;
+  while (yaw < -180.0f) yaw += 360.0f;
+  impl_->viewportNavigationYawDeg_ = yaw;
+  impl_->viewportNavigationPitchDeg_ =
+      std::clamp(impl_->viewportNavigationPitchDeg_ + pitchDegrees, -89.0f,
+                 89.0f);
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+}
+
+void CompositionRenderController::setViewportNavigationSpeedScale(
+    const float scale) {
+  if (!impl_ ||
+      impl_->viewportNavigationMode_ == ViewportNavigationMode::Off) {
+    return;
+  }
+  impl_->viewportNavigationSpeedScale_ = std::clamp(scale, 0.05f, 10.0f);
+}
+
+float CompositionRenderController::viewportNavigationSpeedScale() const {
+  return impl_ ? impl_->viewportNavigationSpeedScale_ : 1.0f;
 }
 
 
@@ -43120,8 +43488,13 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             ? ArtifactCore::Coordinates::toQPointF(tumblePivotCanvasPos_)
             : orientationTarget;
 
-    cameraViewMatrix = viewportOrientationViewMatrix(
-        orientation, effectiveTarget, orientationDistance);
+    if (viewportNavigationMode_ !=
+        CompositionRenderController::ViewportNavigationMode::Off) {
+      cameraViewMatrix = viewportNavigationViewMatrix();
+    } else {
+      cameraViewMatrix = viewportOrientationViewMatrix(
+          orientation, effectiveTarget, orientationDistance);
+    }
 
     const bool frontOrthographic = isFrontOrthographicViewport();
     if (frontOrthographic) {

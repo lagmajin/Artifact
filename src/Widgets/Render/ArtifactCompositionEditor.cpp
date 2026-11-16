@@ -1283,6 +1283,19 @@ public:
   }
   bool isResizePending() const { return resizePending_; }
   QString navigationFeedbackLabel() const {
+    // Fly / Walk shows its own control hint and live speed in the same chip.
+    if (viewportNavigationActive()) {
+      const auto mode = controller_ ? controller_->viewportNavigationMode()
+                                    : CompositionRenderController::ViewportNavigationMode::Off;
+      const bool fly =
+          mode == CompositionRenderController::ViewportNavigationMode::Fly;
+      const float speedScale =
+          controller_ ? controller_->viewportNavigationSpeedScale() : 1.0f;
+      return QStringLiteral("%1 x%2 | WASD Move | LMB/RMB Drag Look%3 | Wheel Speed | Shift 4x | Esc Exit")
+          .arg(fly ? QStringLiteral("FLY") : QStringLiteral("WALK"))
+          .arg(static_cast<double>(speedScale), 0, 'f', 2)
+          .arg(fly ? QStringLiteral(" | Q/E Up/Down") : QString());
+    }
     switch (navigationFeedbackMode_) {
     case NavigationFeedbackMode::Orbit:
       return QStringLiteral("ORBIT");
@@ -1471,6 +1484,28 @@ public:
     // the palette action is the no-op clear path; UI handlers drive set.
     add(QStringLiteral("View: Clear Tumble Pivot"), [this]() {
       if (controller_) controller_->clearTumblePivot();
+    });
+    // Experimental Fly / Walk navigation. Viewport-only free camera; the
+    // palette entry is the entry point so it never competes with an existing
+    // viewport shortcut. Escape while focused on the viewport exits.
+    add(QStringLiteral("View: Fly Navigation"), [this]() {
+      if (!controller_) return;
+      resetViewportNavigationInput();
+      controller_->beginViewportNavigation(
+          CompositionRenderController::ViewportNavigationMode::Fly);
+      focusViewportAfterPalette();
+    });
+    add(QStringLiteral("View: Walk Navigation"), [this]() {
+      if (!controller_) return;
+      resetViewportNavigationInput();
+      controller_->beginViewportNavigation(
+          CompositionRenderController::ViewportNavigationMode::Walk);
+      focusViewportAfterPalette();
+    });
+    add(QStringLiteral("View: Exit Fly / Walk Navigation"), [this]() {
+      if (!controller_) return;
+      resetViewportNavigationInput();
+      controller_->endViewportNavigation();
     });
     // P0-3a Interactive Render Region toggle / clear.
     add(QStringLiteral("View: Toggle Interactive Render Region"), [this]() {
@@ -5061,6 +5096,9 @@ protected:
     isAltZooming_ = false;
     nativePointerCaptureActive_ = false;
     nativeControllerDragActive_ = false;
+    // A lost focus or hidden viewport must not leave the look drag latched.
+    viewportNavigationLooking_ = false;
+    viewportNavigationLookSampleValid_ = false;
     panMomentumActive_ = false;
     panVelocityPerMs_ = {};
     if (controller_) {
@@ -5088,6 +5126,9 @@ protected:
     isAltZooming_ = false;
     nativePointerCaptureActive_ = false;
     nativeControllerDragActive_ = false;
+    // A lost focus or hidden viewport must not leave the look drag latched.
+    viewportNavigationLooking_ = false;
+    viewportNavigationLookSampleValid_ = false;
     panMomentumActive_ = false;
     panVelocityPerMs_ = {};
     if (controller_) {
@@ -5227,6 +5268,24 @@ protected:
       return; // Block while menu open
 
     if (!controller_) {
+      return;
+    }
+
+    // Fly / Walk: the wheel is the speed control. Viewport zoom is not
+    // visible while the free camera owns the view, so repurposing it here
+    // gives the gesture a meaning instead of silently changing restore state.
+    if (viewportNavigationActive() && event->angleDelta().y() != 0) {
+      const float steps =
+          static_cast<float>(event->angleDelta().y()) / 120.0f;
+      const float next = std::clamp(
+          controller_->viewportNavigationSpeedScale() *
+              std::pow(1.25f, steps),
+          0.1f, 8.0f);
+      controller_->setViewportNavigationSpeedScale(next);
+      // Repaint the shared navigation chip; it reads the speed live instead of
+      // borrowing the controller info overlay (which other features own).
+      setNavigationFeedback(NavigationFeedbackMode::None);
+      event->accept();
       return;
     }
 
@@ -5420,6 +5479,10 @@ protected:
   }
 
   void contextMenuEvent(QContextMenuEvent *event) override {
+    if (viewportNavigationActive()) {
+      event->accept();
+      return;
+    }
     if (controller_) {
       controller_->handleMouseMove(
           ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
@@ -5660,6 +5723,20 @@ protected:
   }
 
   void mousePressEvent(QMouseEvent *event) override {
+    if (viewportNavigationActive() && event &&
+        (event->button() == Qt::LeftButton ||
+         event->button() == Qt::RightButton ||
+         event->button() == Qt::MiddleButton)) {
+      viewportNavigationLooking_ = true;
+      viewportNavigationLookSampleValid_ = true;
+      viewportNavigationLookLastPos_ = event->position();
+      setCursor(Qt::SizeAllCursor);
+      if (QWidget::mouseGrabber() != this) {
+        grabMouse();
+      }
+      event->accept();
+      return;
+    }
     if (event && event->button() == Qt::LeftButton && controller_ &&
         !controller_->isModalGizmoInteractionActive()) {
       const int frameDimension =
@@ -5872,6 +5949,11 @@ protected:
   }
 
   void mouseMoveEvent(QMouseEvent *event) override {
+    if (event && handleViewportNavigationMouseLook(event->position())) {
+      updateViewportCursor(event->position());
+      event->accept();
+      return;
+    }
     if (controller_ && controller_->isPieMenuOverlayVisible()) {
       controller_->updatePieMenuOverlayMousePos(
           ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
@@ -5980,6 +6062,25 @@ protected:
   }
 
   void mouseReleaseEvent(QMouseEvent *event) override {
+    if (viewportNavigationLooking_ && event &&
+        (event->button() == Qt::LeftButton ||
+         event->button() == Qt::RightButton ||
+         event->button() == Qt::MiddleButton)) {
+      viewportNavigationLooking_ = false;
+      viewportNavigationLookSampleValid_ = false;
+      if (QWidget::mouseGrabber() == this) {
+        releaseMouse();
+      }
+      if (controller_) {
+        setCursor(controller_->cursorShapeForViewportPos(
+            ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
+                event->position())));
+      } else {
+        unsetCursor();
+      }
+      event->accept();
+      return;
+    }
     if (controller_ && controller_->isPieMenuOverlayVisible()) {
       if (event->button() != Qt::LeftButton) {
         controller_->cancelPieMenuOverlay();
@@ -6189,6 +6290,15 @@ protected:
 
     switch (msg->message) {
     case WM_RBUTTONDOWN:
+      if (viewportNavigationActive()) {
+        viewportNavigationLooking_ = true;
+        viewportNavigationLookSampleValid_ = true;
+        viewportNavigationLookLastPos_ = logPos;
+        SetCapture(msg->hwnd);
+        nativePointerCaptureActive_ = true;
+        setCursor(Qt::SizeAllCursor);
+        return true;
+      }
       if (controller_ && controller_->cancelGizmoInteraction()) {
         nativePointerCaptureActive_ = false;
         nativeControllerDragActive_ = false;
@@ -6220,6 +6330,15 @@ protected:
       return true;
 
     case WM_LBUTTONDOWN:
+      if (viewportNavigationActive()) {
+        viewportNavigationLooking_ = true;
+        viewportNavigationLookSampleValid_ = true;
+        viewportNavigationLookLastPos_ = logPos;
+        SetCapture(msg->hwnd);
+        nativePointerCaptureActive_ = true;
+        setCursor(Qt::SizeAllCursor);
+        return true;
+      }
       if (controller_ && controller_->isPieMenuOverlayVisible()) {
         controller_->confirmPieMenuOverlaySelection();
         return true;
@@ -6274,6 +6393,16 @@ protected:
       return true;
 
     case WM_LBUTTONUP:
+      if (viewportNavigationLooking_) {
+        viewportNavigationLooking_ = false;
+        viewportNavigationLookSampleValid_ = false;
+        nativePointerCaptureActive_ = false;
+        if (GetCapture() == msg->hwnd) {
+          ReleaseCapture();
+        }
+        unsetCursor();
+        return true;
+      }
       if (isAltOrbiting_) {
         isAltOrbiting_ = false;
         clearNavigationFeedback();
@@ -6302,6 +6431,15 @@ protected:
       return true;
 
     case WM_MBUTTONDOWN:
+      if (viewportNavigationActive()) {
+        viewportNavigationLooking_ = true;
+        viewportNavigationLookSampleValid_ = true;
+        viewportNavigationLookLastPos_ = logPos;
+        SetCapture(msg->hwnd);
+        nativePointerCaptureActive_ = true;
+        setCursor(Qt::SizeAllCursor);
+        return true;
+      }
       isPanning_ = true;
       setNavigationFeedback(NavigationFeedbackMode::Pan);
       isPanningWithMiddle_ = true;
@@ -6314,6 +6452,16 @@ protected:
       return true;
 
     case WM_MBUTTONUP:
+      if (viewportNavigationLooking_) {
+        viewportNavigationLooking_ = false;
+        viewportNavigationLookSampleValid_ = false;
+        nativePointerCaptureActive_ = false;
+        if (GetCapture() == msg->hwnd) {
+          ReleaseCapture();
+        }
+        updateViewportCursor(logPos);
+        return true;
+      }
       if (isPanning_ && isPanningWithMiddle_) {
         isPanning_ = false;
         isPanningWithMiddle_ = false;
@@ -6329,6 +6477,16 @@ protected:
       return true;
 
     case WM_RBUTTONUP:
+      if (viewportNavigationLooking_) {
+        viewportNavigationLooking_ = false;
+        viewportNavigationLookSampleValid_ = false;
+        nativePointerCaptureActive_ = false;
+        if (GetCapture() == msg->hwnd) {
+          ReleaseCapture();
+        }
+        updateViewportCursor(logPos);
+        return true;
+      }
       if (isAltZooming_) {
         isAltZooming_ = false;
         clearNavigationFeedback();
@@ -6344,6 +6502,10 @@ protected:
       break;
 
     case WM_MOUSEMOVE:
+      if (handleViewportNavigationMouseLook(logPos)) {
+        updateViewportCursor(logPos);
+        return true;
+      }
       if (controller_ && controller_->isPieMenuOverlayVisible()) {
         controller_->updatePieMenuOverlayMousePos(
             ArtifactCore::Coordinates::screenLogicalPointFromQPointF(logPos));
@@ -6432,6 +6594,9 @@ protected:
 #endif
 
   void keyPressEvent(QKeyEvent *event) override {
+    if (viewportNavigationActive() && handleViewportNavigationKeyPress(event)) {
+      return;
+    }
     if (event && event->key() == Qt::Key_Escape && !event->isAutoRepeat()) {
       const bool hadPanInteraction =
           isPanning_ || panMomentumActive_ ||
@@ -7649,6 +7814,10 @@ protected:
   }
 
    void keyReleaseEvent(QKeyEvent *event) override {
+     if (viewportNavigationActive() &&
+         handleViewportNavigationKeyRelease(event)) {
+       return;
+     }
      if (event->key() == Qt::Key_Escape && !event->isAutoRepeat() &&
          controller_ && controller_->isPieMenuOverlayVisible()) {
        controller_->cancelPieMenuOverlay();
@@ -8141,6 +8310,156 @@ protected:
   QPointF lastMousePos_;
   QPointF orbitDragStartPos_;
   QQuaternion orbitDragStartOrientation_;
+
+  // Experimental Fly / Walk navigation input state. The movement keys are
+  // tracked as held bits so the controller can advance the camera on its
+  // render tick instead of once per key event.
+  unsigned viewportNavigationKeys_ = 0;
+  // Looking is a deliberate left-button drag so plain hover keeps driving the
+  // regular gizmo / overlay hit-testing path.
+  bool viewportNavigationLooking_ = false;
+  bool viewportNavigationLookSampleValid_ = false;
+  QPointF viewportNavigationLookLastPos_;
+
+  enum ViewportNavigationKey : unsigned {
+    ViewportNavigationForwardKey = 1u << 0,
+    ViewportNavigationBackKey = 1u << 1,
+    ViewportNavigationLeftKey = 1u << 2,
+    ViewportNavigationRightKey = 1u << 3,
+    ViewportNavigationUpKey = 1u << 4,
+    ViewportNavigationDownKey = 1u << 5,
+  };
+
+  bool viewportNavigationActive() const {
+    return controller_ &&
+           controller_->viewportNavigationMode() !=
+               CompositionRenderController::ViewportNavigationMode::Off;
+  }
+
+  // The command palette takes keyboard focus to close, so restoring focus to
+  // the viewport has to happen after the palette's own close handling. The
+  // immediate setFocus() covers the case where the palette keeps the
+  // viewport focused (or the command is run from another surface).
+  void focusViewportAfterPalette() {
+    setFocus(Qt::OtherFocusReason);
+    QTimer::singleShot(0, this, [this]() {
+      setFocus(Qt::OtherFocusReason);
+    });
+  }
+
+  void applyViewportNavigationInput(const Qt::KeyboardModifiers &modifiers) {
+    if (!controller_) {
+      return;
+    }
+    const float forward =
+        (viewportNavigationKeys_ & ViewportNavigationForwardKey ? 1.0f : 0.0f) -
+        (viewportNavigationKeys_ & ViewportNavigationBackKey ? 1.0f : 0.0f);
+    const float strafe =
+        (viewportNavigationKeys_ & ViewportNavigationRightKey ? 1.0f : 0.0f) -
+        (viewportNavigationKeys_ & ViewportNavigationLeftKey ? 1.0f : 0.0f);
+    const float lift =
+        (viewportNavigationKeys_ & ViewportNavigationUpKey ? 1.0f : 0.0f) -
+        (viewportNavigationKeys_ & ViewportNavigationDownKey ? 1.0f : 0.0f);
+    controller_->setViewportNavigationMoveInput(forward, strafe, lift);
+    controller_->setViewportNavigationSpeedScale(
+        modifiers.testFlag(Qt::ShiftModifier) ? 4.0f : 1.0f);
+    controller_->markRenderDirty();
+  }
+
+  void resetViewportNavigationInput() {
+    viewportNavigationKeys_ = 0;
+    viewportNavigationLooking_ = false;
+    viewportNavigationLookSampleValid_ = false;
+    if (QWidget::mouseGrabber() == this) {
+      releaseMouse();
+    }
+    if (controller_) {
+      controller_->setViewportNavigationMoveInput(0.0f, 0.0f, 0.0f);
+      controller_->setViewportNavigationSpeedScale(1.0f);
+    }
+  }
+
+  static unsigned viewportNavigationKeyBit(const int key) {
+    switch (key) {
+    case Qt::Key_W: return ViewportNavigationForwardKey;
+    case Qt::Key_S: return ViewportNavigationBackKey;
+    case Qt::Key_A: return ViewportNavigationLeftKey;
+    case Qt::Key_D: return ViewportNavigationRightKey;
+    case Qt::Key_E: return ViewportNavigationUpKey;
+    case Qt::Key_Q: return ViewportNavigationDownKey;
+    default: return 0u;
+    }
+  }
+
+  bool handleViewportNavigationKeyPress(QKeyEvent *event) {
+    if (!event || !controller_) {
+      return false;
+    }
+    if (event->isAutoRepeat()) {
+      return true;
+    }
+    if (event->key() == Qt::Key_Escape) {
+      resetViewportNavigationInput();
+      controller_->endViewportNavigation();
+      unsetCursor();
+      event->accept();
+      return true;
+    }
+    if (event->key() == Qt::Key_Shift) {
+      applyViewportNavigationInput(event->modifiers());
+      event->accept();
+      return true;
+    }
+    const unsigned keyBit = viewportNavigationKeyBit(event->key());
+    if (keyBit == 0u) {
+      return false;
+    }
+    viewportNavigationKeys_ |= keyBit;
+    applyViewportNavigationInput(event->modifiers());
+    event->accept();
+    return true;
+  }
+
+  bool handleViewportNavigationKeyRelease(QKeyEvent *event) {
+    if (!event || !controller_) {
+      return false;
+    }
+    if (event->isAutoRepeat()) {
+      return true;
+    }
+    if (event->key() == Qt::Key_Shift) {
+      applyViewportNavigationInput(event->modifiers());
+      event->accept();
+      return true;
+    }
+    const unsigned keyBit = viewportNavigationKeyBit(event->key());
+    if (keyBit == 0u) {
+      return false;
+    }
+    viewportNavigationKeys_ &= ~keyBit;
+    applyViewportNavigationInput(event->modifiers());
+    event->accept();
+    return true;
+  }
+
+  // Look only while the left button is held; a plain move must fall through so
+  // hover, gizmo highlighting and overlay hit-testing keep working.
+  bool handleViewportNavigationMouseLook(const QPointF &position) {
+    if (!viewportNavigationActive() || !viewportNavigationLooking_) {
+      return false;
+    }
+    if (viewportNavigationLookSampleValid_) {
+      const QPointF delta = position - viewportNavigationLookLastPos_;
+      if (!delta.isNull()) {
+        controller_->addViewportNavigationLook(
+            static_cast<float>(delta.x()) * 0.25f,
+            static_cast<float>(-delta.y()) * 0.25f);
+      }
+    }
+    viewportNavigationLookLastPos_ = position;
+    viewportNavigationLookSampleValid_ = true;
+    return true;
+  }
   // D&D オーバーレイ
   bool dropOverlayVisible_ = false;
   QString dropCandidateLabel_;
