@@ -1432,6 +1432,37 @@ bool togglePropertyKeyframeAtCurrentTime(const ArtifactCompositionPtr& compositi
     return false;
    }
 
+   // Shape path keyframes are stored as a JSON document on a String
+   // property. Capture the current shape path at the playhead rather than
+   // writing a generic KeyFrame whose value would be the whole document.
+   if (trimmedPropertyPath == QStringLiteral("shape.path.keyframes")) {
+    auto* shape = dynamic_cast<ArtifactShapeLayer*>(layer.get());
+    if (!shape) {
+     return false;
+    }
+    const double fpsValue = composition->frameRate().framerate();
+    const int64_t fps =
+        std::max<int64_t>(1, static_cast<int64_t>(std::lround(fpsValue)));
+    const int64_t frame = currentTime.toFrameCount(fps);
+    const auto frames = shape->pathKeyframeFrames();
+    const bool exists =
+        std::find(frames.begin(), frames.end(), frame) != frames.end();
+    const QString before = property->getValue().toString();
+    const QString after =
+        exists ? shape->pathKeyframeDocumentWithout(frame)
+               : shape->pathKeyframeDocumentWith(frame,
+                                                 shape->customPathVertices());
+    if (before == after) {
+     return false;
+    }
+    if (auto* mgr = UndoManager::instance()) {
+     return mgr->push(std::make_unique<SetLayerPropertyValueCommand>(
+         layer, trimmedPropertyPath, before, after,
+         QStringLiteral("Toggle Path Keyframe")));
+    }
+    return false;
+   }
+
    if (trimmedPropertyPath.startsWith(QStringLiteral("deformation2D."))) {
     const auto keyframes = model.getKeyframesFor(
         composition->id(), layer->id(), trimmedPropertyPath);
@@ -3507,6 +3538,30 @@ public:
           }
         }
       }
+    }
+
+    // Shape path keyframes are not a standard animatable group: the standard
+    // policy keeps only Transform visible in the left pane. Expose them as a
+    // dedicated synthetic row so the keyframe diamond can capture the path.
+    if (ArtifactCore::dynamicPointerCast<ArtifactShapeLayer>(node) &&
+        propertyChannelFilter == ArtifactLayerPanelWidget::PropertyChannelFilter::All &&
+        displayMode != TimelineLayerDisplayMode::AudioOnly &&
+        displayMode != TimelineLayerDisplayMode::VideoOnly &&
+        (displayMode != TimelineLayerDisplayMode::SelectedOnly ||
+         node->id() == selectedLayerId)) {
+     const QString pathGroupKey = nodeId + QStringLiteral("::shapePath");
+     const bool pathExpanded = expandedByGroupKey.value(pathGroupKey, false);
+     visibleRows.push_back(VisibleRow{
+         node, depth + 1, true, pathExpanded, RowKind::Group,
+         QStringLiteral("Path"), QString(), pathGroupKey,
+         QStringLiteral("Pth"), LayerPresentationBadgeTone::Special});
+     if (pathExpanded) {
+      visibleRows.push_back(VisibleRow{
+          node, depth + 2, false, false, RowKind::Property,
+          QStringLiteral("Path Keyframes"),
+          QStringLiteral("shape.path.keyframes"), QString(),
+          QStringLiteral("Prp"), LayerPresentationBadgeTone::Neutral});
+     }
     }
 
     if (hasMaskStack) {
@@ -8540,7 +8595,18 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
                                           Qt::CaseInsensitive) == 0;
     const auto property = isPropertyRow ? l->getProperty(row.propertyPath) : nullptr;
     const bool propertyAnimatable = property && property->isAnimatable();
-    const bool propertyKeyframed = propertyAnimatable && property->hasKeyFrameAt(currentTime);
+    bool propertyKeyframed = propertyAnimatable && property->hasKeyFrameAt(currentTime);
+    // Path keyframes live in a JSON document, not in AbstractProperty keys.
+    // The panel constructs currentTime with the frame number as its value.
+    if (isPropertyRow &&
+        row.propertyPath == QStringLiteral("shape.path.keyframes")) {
+     if (auto* shape = dynamic_cast<ArtifactShapeLayer*>(l.get())) {
+      const auto frames = shape->pathKeyframeFrames();
+      propertyKeyframed =
+          std::find(frames.begin(), frames.end(), currentTime.value()) !=
+          frames.end();
+     }
+    }
 
     const QColor rowBase = background;
     const QColor rowHover = mixColor(background, text, 0.08);

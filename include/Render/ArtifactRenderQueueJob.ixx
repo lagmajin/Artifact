@@ -49,6 +49,13 @@ public:
         LayerFilterMode layerFilter = LayerFilterMode::All;
         QList<ArtifactCore::LayerID> layerIds;
         bool enabled = true;
+
+        // Per-pass AOV / Deep export overrides. Defaults keep the inherited
+        // job-level settings so existing jobs and saved queues are unchanged.
+        bool overrideChannels = false;
+        QStringList channels;
+        bool overrideDeepExport = false;
+        bool deepExport = false;
     };
 
     enum class Status {

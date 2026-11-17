@@ -66,8 +66,12 @@ propertyPresentationProfile(const ArtifactAbstractLayerPtr &layer) {
             {QStringLiteral("Transform"), QStringLiteral("Initial"),
              QStringLiteral("Geometry")}};
   }
+  // "Path" is only present on shape layers, so admitting it in the basic
+  // profile does not widen any other layer type. The shape groups themselves
+  // stay hidden; only the path morphing channel is exposed here.
   return {QStringLiteral("basic"),
-          {QStringLiteral("Initial"), QStringLiteral("Transform")}};
+          {QStringLiteral("Initial"), QStringLiteral("Transform"),
+           QStringLiteral("Path")}};
 }
 
 bool presentationAllowsGroup(const PropertyPresentationProfile &profile,

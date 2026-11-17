@@ -8,6 +8,9 @@ module;
 #include <QLabel>
 #include <QLineF>
 #include <QLinearGradient>
+#include <QListWidget>
+#include <QListWidgetItem>
+#include <QSpinBox>
 #include <QLocale>
 #include <QPainter>
 #include <QPainterPath>
@@ -313,6 +316,123 @@ private:
     const int count = gradientStopsFromJson(value_).size();
     summary_->setText(count == 0 ? QStringLiteral("2-color default")
                                  : QStringLiteral("%1 stops").arg(count));
+  }
+
+  QString value_;
+  QLabel* summary_ = nullptr;
+};
+
+// Read-only overview of the path keyframe document plus duplicate/remove
+// operations. Adding a key at the current frame is done by the keyframe
+// diamond (which has access to the layer and the current time); this editor
+// only rearranges existing snapshots, so it needs no layer reference.
+class ArtifactShapePathKeyframesPropertyEditor final : public ArtifactAbstractPropertyEditor {
+public:
+  explicit ArtifactShapePathKeyframesPropertyEditor(
+      const ArtifactCore::AbstractProperty& property, QWidget* parent = nullptr)
+      : ArtifactAbstractPropertyEditor(parent),
+        value_(property.getValue().toString()) {
+    setObjectName(QStringLiteral("propertyShapePathKeyframesEditor"));
+    setAccessibleName(QStringLiteral("Shape path keyframes editor"));
+    auto* layout = new QHBoxLayout(this);
+    layout->setContentsMargins(0, 0, 0, 0);
+    summary_ = new QLabel(this);
+    auto* button = new GradientActionButton(QStringLiteral("Edit Keys..."), this);
+    button->setAccessibleName(QStringLiteral("Edit shape path keyframes"));
+    applyPropertyFieldPalette(summary_);
+    applyPropertyButtonPalette(button, true);
+    layout->addWidget(summary_, 1);
+    layout->addWidget(button);
+    button->setCallback([this]() { editKeys(); });
+    updateSummary();
+  }
+
+  QVariant value() const override { return value_; }
+  void setValueFromVariant(const QVariant& value) override {
+    value_ = value.toString();
+    updateSummary();
+  }
+
+private:
+  static QJsonObject document(const QString& json) {
+    return QJsonDocument::fromJson(json.toUtf8()).object();
+  }
+
+  void updateSummary() {
+    const int count = document(value_).size();
+    summary_->setText(count == 0 ? QStringLiteral("No path keys")
+                                 : QStringLiteral("%1 path keys").arg(count));
+  }
+
+  void editKeys() {
+    QDialog dialog(this);
+    dialog.setWindowTitle(QStringLiteral("Path Keyframes"));
+    auto* root = new QVBoxLayout(&dialog);
+    auto* list = new QListWidget(&dialog);
+    root->addWidget(list);
+
+    const auto rebuild = [list, this]() {
+      list->clear();
+      const QJsonObject doc = document(value_);
+      QStringList keys = doc.keys();
+      std::sort(keys.begin(), keys.end(), [](const QString& a, const QString& b) {
+        return a.toLongLong() < b.toLongLong();
+      });
+      for (const auto& key : keys) {
+        const int vertices = doc.value(key).toArray().size();
+        auto* item = new QListWidgetItem(
+            QStringLiteral("Frame %1 (%2 vertices)").arg(key).arg(vertices), list);
+        item->setData(Qt::UserRole, key.toLongLong());
+      }
+    };
+    rebuild();
+
+    auto* frameRow = new QHBoxLayout();
+    frameRow->addWidget(new QLabel(QStringLiteral("Target frame"), &dialog));
+    auto* frameSpin = new QSpinBox(&dialog);
+    frameSpin->setRange(-1000000, 1000000);
+    frameRow->addWidget(frameSpin, 1);
+    root->addLayout(frameRow);
+
+    bool changed = false;
+    auto* actionRow = new QHBoxLayout();
+    auto* duplicate = new GradientActionButton(
+        QStringLiteral("Duplicate Selected Here"), &dialog);
+    duplicate->setCallback([&]() {
+      auto* item = list->currentItem();
+      if (!item) return;
+      QJsonObject doc = document(value_);
+      const QString sourceKey = QString::number(item->data(Qt::UserRole).toLongLong());
+      if (!doc.contains(sourceKey)) return;
+      doc[QString::number(static_cast<qint64>(frameSpin->value()))] =
+          doc.value(sourceKey);
+      value_ = QString::fromUtf8(QJsonDocument(doc).toJson(QJsonDocument::Compact));
+      rebuild();
+      updateSummary();
+      changed = true;
+    });
+    auto* remove = new GradientActionButton(QStringLiteral("Remove Selected"), &dialog);
+    remove->setCallback([&]() {
+      auto* item = list->currentItem();
+      if (!item) return;
+      QJsonObject doc = document(value_);
+      doc.remove(QString::number(item->data(Qt::UserRole).toLongLong()));
+      value_ = QString::fromUtf8(QJsonDocument(doc).toJson(QJsonDocument::Compact));
+      rebuild();
+      updateSummary();
+      changed = true;
+    });
+    auto* close = new GradientActionButton(QStringLiteral("Close"), &dialog);
+    close->setCallback([&dialog]() { dialog.accept(); });
+    actionRow->addWidget(duplicate);
+    actionRow->addWidget(remove);
+    actionRow->addWidget(close);
+    root->addLayout(actionRow);
+
+    dialog.exec();
+    if (changed) {
+      commitValue(value_);
+    }
   }
 
   QString value_;
@@ -787,6 +907,9 @@ createPropertyEditorWidget(const ArtifactCore::AbstractProperty &property,
   }
   if (property.getName() == QStringLiteral("shape.dashPattern")) {
     return new ArtifactDashPatternPropertyEditor(property, parent);
+  }
+  if (property.getName() == QStringLiteral("shape.path.keyframes")) {
+    return new ArtifactShapePathKeyframesPropertyEditor(property, parent);
   }
 
   switch (property.getType()) {

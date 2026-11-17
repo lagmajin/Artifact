@@ -5969,6 +5969,10 @@ namespace Artifact
             value.insert(QStringLiteral("layerFilter"), static_cast<int>(pass.layerFilter));
             value.insert(QStringLiteral("layerIds"), idsToStrings(pass.layerIds));
             value.insert(QStringLiteral("enabled"), pass.enabled);
+            value.insert(QStringLiteral("overrideChannels"), pass.overrideChannels);
+            value.insert(QStringLiteral("channels"), pass.channels);
+            value.insert(QStringLiteral("overrideDeepExport"), pass.overrideDeepExport);
+            value.insert(QStringLiteral("deepExport"), pass.deepExport);
             passes.append(value);
         }
         settings.insert(QStringLiteral("renderPasses"), passes);
@@ -6038,7 +6042,9 @@ namespace Artifact
                         static_cast<int>(ArtifactRenderJob::ResolutionPreset::Composition)));
         if (settings.contains(QStringLiteral("renderPasses"))) {
             job.renderPasses.clear();
+            qsizetype passCount = 0;
             for (const auto& raw : settings.value(QStringLiteral("renderPasses")).toList()) {
+                if (passCount++ >= 256) break;
                 const QVariantMap value = raw.toMap();
                 ArtifactRenderJob::RenderPassConfig pass;
                 pass.name = value.value(QStringLiteral("name")).toString().trimmed();
@@ -6047,6 +6053,14 @@ namespace Artifact
                                 static_cast<int>(ArtifactRenderJob::LayerFilterMode::Custom), 0));
                 pass.layerIds = stringsToIds(value.value(QStringLiteral("layerIds")));
                 pass.enabled = value.value(QStringLiteral("enabled"), true).toBool();
+                pass.overrideChannels = value.value(QStringLiteral("overrideChannels"), false).toBool();
+                qsizetype channelCount = 0;
+                for (const auto& channel : value.value(QStringLiteral("channels")).toStringList()) {
+                    if (channelCount++ >= 128) break;
+                    pass.channels.append(channel);
+                }
+                pass.overrideDeepExport = value.value(QStringLiteral("overrideDeepExport"), false).toBool();
+                pass.deepExport = value.value(QStringLiteral("deepExport"), false).toBool();
                 if (!pass.name.isEmpty()) job.renderPasses.append(pass);
             }
         }
@@ -6120,6 +6134,18 @@ namespace Artifact
                     passJob.renderPasses.clear();
                     passJob.layerFilterMode = pass.layerFilter;
                     passJob.layerWhitelist = pass.layerIds;
+                    if (pass.overrideChannels) {
+                        passJob.multiChannelExportEnabled = !pass.channels.isEmpty();
+                        passJob.multiChannelExportChannels = pass.channels;
+                    }
+                    if (pass.overrideDeepExport) {
+                        passJob.deepExportEnabled = pass.deepExport;
+                        // Deep EXR implies the Beauty/RGBA/Depth AOVs, same as
+                        // the job-level setter.
+                        if (pass.deepExport) {
+                            passJob.multiChannelExportEnabled = true;
+                        }
+                    }
                     passJob.status = ArtifactRenderJob::Status::Pending;
                     passJob.progress = 0;
                     expanded.append(passJob);
@@ -6590,9 +6616,22 @@ namespace Artifact
 
         if (job.splitPasses) {
             int enabledPassCount = 0;
+            QStringList seenPassNames;
             for (const auto& pass : job.renderPasses) {
                 if (pass.enabled && !pass.name.trimmed().isEmpty()) {
                     ++enabledPassCount;
+                    const QString trimmedName = pass.name.trimmed();
+                    if (seenPassNames.contains(trimmedName, Qt::CaseInsensitive)) {
+                        result.addDiagnostic(makePreflightDiagnostic(
+                            ArtifactCore::DiagnosticSeverity::Error,
+                            ArtifactCore::DiagnosticCategory::Configuration,
+                            QStringLiteral("Duplicate render pass name"),
+                            QStringLiteral("Pass '%1' appears more than once; output paths would collide.")
+                                .arg(trimmedName),
+                            QStringLiteral("Give every enabled pass a unique name"),
+                            compId));
+                    }
+                    seenPassNames.append(trimmedName);
                     if (pass.layerFilter == ArtifactRenderJob::LayerFilterMode::Selected &&
                         pass.layerIds.isEmpty()) {
                         result.addDiagnostic(makePreflightDiagnostic(
@@ -6602,6 +6641,44 @@ namespace Artifact
                             QStringLiteral("Pass '%1' uses Selected filtering but has no layer IDs.")
                                 .arg(pass.name),
                             QStringLiteral("Add layer IDs to the pass or choose another filter"),
+                            compId));
+                    }
+                    if (pass.overrideChannels) {
+                        if (pass.channels.isEmpty()) {
+                            result.addDiagnostic(makePreflightDiagnostic(
+                                ArtifactCore::DiagnosticSeverity::Warning,
+                                ArtifactCore::DiagnosticCategory::Configuration,
+                                QStringLiteral("Empty channel override on render pass"),
+                                QStringLiteral("Pass '%1' overrides channels but lists none; "
+                                               "it will inherit no AOVs.")
+                                    .arg(trimmedName),
+                                QStringLiteral("Add channels or clear the channel override"),
+                                compId));
+                        } else {
+                            for (const auto& channelKey : pass.channels) {
+                                if (!rendererChannelFromKey(channelKey).has_value()) {
+                                    result.addDiagnostic(makePreflightDiagnostic(
+                                        ArtifactCore::DiagnosticSeverity::Error,
+                                        ArtifactCore::DiagnosticCategory::Configuration,
+                                        QStringLiteral("Unknown render pass channel"),
+                                        QStringLiteral("Pass '%1' requests unknown channel '%2'.")
+                                            .arg(trimmedName, channelKey),
+                                        QStringLiteral("Use a channel key from the renderer channel list"),
+                                        compId));
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if (pass.overrideDeepExport && pass.deepExport &&
+                        outputFormat != QStringLiteral("exr")) {
+                        result.addDiagnostic(makePreflightDiagnostic(
+                            ArtifactCore::DiagnosticSeverity::Error,
+                            ArtifactCore::DiagnosticCategory::Configuration,
+                            QStringLiteral("Deep render pass requires EXR"),
+                            QStringLiteral("Pass '%1' requests Deep EXR but the job resolves to '%2'.")
+                                .arg(trimmedName, outputFormat),
+                            QStringLiteral("Choose an EXR image-sequence output"),
                             compId));
                     }
                 }
@@ -10223,6 +10300,10 @@ namespace Artifact
                 passObject["layerFilter"] = filterToInt(pass.layerFilter);
                 passObject["layerIds"] = idsToJson(pass.layerIds);
                 passObject["enabled"] = pass.enabled;
+                passObject["overrideChannels"] = pass.overrideChannels;
+                passObject["channels"] = QJsonArray::fromStringList(pass.channels);
+                passObject["overrideDeepExport"] = pass.overrideDeepExport;
+                passObject["deepExport"] = pass.deepExport;
                 passArray.append(passObject);
             }
             obj["renderPasses"] = passArray;
@@ -10470,6 +10551,14 @@ namespace Artifact
                 pass.layerFilter = intToFilter(passObject["layerFilter"].toInt(0));
                 pass.layerIds = jsonToIds(passObject["layerIds"].toArray());
                 pass.enabled = passObject["enabled"].toBool(true);
+                pass.overrideChannels = passObject["overrideChannels"].toBool(false);
+                qsizetype passChannelCount = 0;
+                for (const auto& channelValue : passObject["channels"].toArray()) {
+                    if (passChannelCount++ >= 128) break;
+                    pass.channels.append(channelValue.toString());
+                }
+                pass.overrideDeepExport = passObject["overrideDeepExport"].toBool(false);
+                pass.deepExport = passObject["deepExport"].toBool(false);
                 job.renderPasses.append(pass);
             }
             const double overlayOffsetX = obj["overlayOffsetX"].toDouble(0.0);
