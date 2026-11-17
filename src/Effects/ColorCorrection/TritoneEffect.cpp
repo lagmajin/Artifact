@@ -2,6 +2,7 @@ module;
 #include <algorithm>
 #include <memory>
 #include <vector>
+#include <QString>
 #include <QColor>
 #include <QVariant>
 #include <cstring>
@@ -22,6 +23,7 @@ import Property.Abstract;
 import Utils.String.UniString;
 import Graphics.Compute;
 import Graphics.GPUcomputeContext;
+import Graphics.SurfaceColorContract;
 import Artifact.Render.DiligentDeviceManager;
 import Core.Parallel;
 import Memory.SharedPtr;
@@ -39,15 +41,25 @@ public:
         if (!pixels) {
             return;
         }
+        const bool premultiplied = src.image().colorDescriptor().alphaMode ==
+            ArtifactCore::SurfaceAlphaMode::Premultiplied;
         const int width = dst.image().width();
         const int height = dst.image().height();
-        ArtifactCore::withMutableColorFloat4View(
+        (void)ArtifactCore::withMutableColorFloat4View(
             dst.image().surfaceView(), pixels, [&](auto& view) {
                 ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
                     auto row = view.row(y);
                     for (int x = 0; x < width; ++x) {
                         auto pixel = row[x];
-                        processor_.applyPixel(pixel.r, pixel.g, pixel.b);
+                        if (premultiplied && pixel.a <= 0.0f) continue;
+                        const float alpha = premultiplied ? pixel.a : 1.0f;
+                        float r = pixel.r / alpha;
+                        float g = pixel.g / alpha;
+                        float b = pixel.b / alpha;
+                        processor_.applyPixel(r, g, b);
+                        pixel.r = r * alpha;
+                        pixel.g = g * alpha;
+                        pixel.b = b * alpha;
                     }
                 });
         });
@@ -72,15 +84,25 @@ public:
         if (!pixels) {
             return;
         }
+        const bool premultiplied = src.image().colorDescriptor().alphaMode ==
+            ArtifactCore::SurfaceAlphaMode::Premultiplied;
         const int width = dst.image().width();
         const int height = dst.image().height();
-        ArtifactCore::withMutableColorFloat4View(
+        (void)ArtifactCore::withMutableColorFloat4View(
             dst.image().surfaceView(), pixels, [&](auto& view) {
                 ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
                     auto row = view.row(y);
                     for (int x = 0; x < width; ++x) {
                         auto pixel = row[x];
-                        processor_.applyPixel(pixel.r, pixel.g, pixel.b);
+                        if (premultiplied && pixel.a <= 0.0f) continue;
+                        const float alpha = premultiplied ? pixel.a : 1.0f;
+                        float r = pixel.r / alpha;
+                        float g = pixel.g / alpha;
+                        float b = pixel.b / alpha;
+                        processor_.applyPixel(r, g, b);
+                        pixel.r = r * alpha;
+                        pixel.g = g * alpha;
+                        pixel.b = b * alpha;
                     }
                 });
         });
@@ -104,20 +126,22 @@ public:
         Diligent::RefCntAutoPtr<Diligent::ITexture> inputTex; if (!createTextureFromImage(src, device_, &inputTex, "Tritone/InputTexture")) { applyCPU(src,dst); return; }
         Diligent::TextureDesc outDesc = inputTex->GetDesc(); outDesc.Usage = Diligent::USAGE_DEFAULT; outDesc.BindFlags = Diligent::BIND_UNORDERED_ACCESS | Diligent::BIND_SHADER_RESOURCE; outDesc.Name = "Tritone/OutputTexture"; if (!outputTex_ || outputTex_->GetDesc().Width != outDesc.Width || outputTex_->GetDesc().Height != outDesc.Height || outputTex_->GetDesc().Format != outDesc.Format || outputTex_->GetDesc().BindFlags != outDesc.BindFlags) { outputTex_.Release(); device_->CreateTexture(outDesc,nullptr,&outputTex_); } if (!outputTex_) { applyCPU(src,dst); return; }
         void* mapped=nullptr; context_->MapBuffer(paramsCB_, Diligent::MAP_WRITE, Diligent::MAP_FLAG_DISCARD, mapped); if (!mapped) { applyCPU(src,dst); return; }
-        ParamsCB params{}; params.shadowColor[0]=settings_.shadowColor.r; params.shadowColor[1]=settings_.shadowColor.g; params.shadowColor[2]=settings_.shadowColor.b; params.midtoneColor[0]=settings_.midtoneColor.r; params.midtoneColor[1]=settings_.midtoneColor.g; params.midtoneColor[2]=settings_.midtoneColor.b; params.highlightColor[0]=settings_.highlightColor.r; params.highlightColor[1]=settings_.highlightColor.g; params.highlightColor[2]=settings_.highlightColor.b; params.balance=settings_.balance; params.softness=settings_.softness; params.shadowStrength=settings_.shadowStrength; params.midtoneStrength=settings_.midtoneStrength; params.highlightStrength=settings_.highlightStrength; params.masterStrength=settings_.masterStrength; params.colorMix=settings_.colorMix; params.preserveLuma=settings_.preserveLuma ? 1.0f : 0.0f; std::memcpy(mapped,&params,sizeof(params)); context_->UnmapBuffer(paramsCB_, Diligent::MAP_WRITE);
+        ParamsCB params{}; params.shadowColor[0]=settings_.shadowColor.r; params.shadowColor[1]=settings_.shadowColor.g; params.shadowColor[2]=settings_.shadowColor.b; params.midtoneColor[0]=settings_.midtoneColor.r; params.midtoneColor[1]=settings_.midtoneColor.g; params.midtoneColor[2]=settings_.midtoneColor.b; params.highlightColor[0]=settings_.highlightColor.r; params.highlightColor[1]=settings_.highlightColor.g; params.highlightColor[2]=settings_.highlightColor.b; params.balance=settings_.balance; params.softness=settings_.softness; params.shadowStrength=settings_.shadowStrength; params.midtoneStrength=settings_.midtoneStrength; params.highlightStrength=settings_.highlightStrength; params.masterStrength=settings_.masterStrength; params.colorMix=settings_.colorMix; params.preserveLuma=settings_.preserveLuma ? 1.0f : 0.0f; params.premultiplied=src.image().colorDescriptor().alphaMode == ArtifactCore::SurfaceAlphaMode::Premultiplied ? 1.0f : 0.0f; std::memcpy(mapped,&params,sizeof(params)); context_->UnmapBuffer(paramsCB_, Diligent::MAP_WRITE);
         if (!executor_->setTextureView("g_InputTexture", inputTex->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) || !executor_->setTextureView("g_OutputTexture", outputTex_->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))) { applyCPU(src,dst); return; }
         auto attribs = ArtifactCore::ComputeExecutor::makeDispatchAttribs(outDesc.Width, outDesc.Height, 1, 8, 8, 1); executor_->dispatch(context_, attribs, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
         if (!readbackTexture(device_, context_, outputTex_, dst, "Tritone/StagingTexture", src.image().colorDescriptor())) { applyCPU(src,dst); return; }
     }
 
 private:
-    struct ParamsCB { float shadowColor[3]{}; float balance=0.5f; float midtoneColor[3]{}; float softness=0.55f; float highlightColor[3]{}; float shadowStrength=1.0f; float midtoneStrength=1.0f; float highlightStrength=1.0f; float masterStrength=1.0f; float colorMix=0.85f; float preserveLuma=1.0f; float pad[2]{}; };
+    struct ParamsCB { float shadowColor[3]{}; float balance=0.5f; float midtoneColor[3]{}; float softness=0.55f; float highlightColor[3]{}; float shadowStrength=1.0f; float midtoneStrength=1.0f; float highlightStrength=1.0f; float masterStrength=1.0f; float colorMix=0.85f; float preserveLuma=1.0f; float premultiplied=0.0f; float pad[2]{}; };
+    static_assert(sizeof(ParamsCB) == 80);
     static constexpr const char* kTritoneHlsl = R"(
 Texture2D<float4> g_InputTexture : register(t0); RWTexture2D<float4> g_OutputTexture : register(u0);
-cbuffer TritoneParams : register(b0){ float3 g_ShadowColor; float g_Balance; float3 g_MidtoneColor; float g_Softness; float3 g_HighlightColor; float g_ShadowStrength; float g_MidtoneStrength; float g_HighlightStrength; float g_MasterStrength; float g_ColorMix; float g_PreserveLuma; float2 g_Pad; };
-float luma(float3 c){ return dot(c,float3(0.299f,0.587f,0.114f)); }
-float smoothstep01(float e0,float e1,float x){ float t=saturate((x-e0)/max(0.0001f,e1-e0)); return t*t*(3.0f-2.0f*t); }
-[numthreads(8,8,1)] void main(uint3 dtid:SV_DispatchThreadID){ uint w,h; g_OutputTexture.GetDimensions(w,h); if(dtid.x>=w||dtid.y>=h) return; float4 px=(g_InputTexture[dtid.xy]).bgra; float3 c=px.rgb; float lum=luma(c); float s=smoothstep01(g_Balance-g_Softness*0.5f, g_Balance, lum); float hW=smoothstep01(g_Balance, g_Balance+g_Softness*0.5f, lum); float mW=saturate(1.0f-s-hW); float3 tritone=(g_ShadowColor*g_ShadowStrength*s + g_MidtoneColor*g_MidtoneStrength*mW + g_HighlightColor*g_HighlightStrength*hW) * g_MasterStrength; float3 mixed=lerp(c, tritone, saturate(g_ColorMix)); if(g_PreserveLuma>0.5f){ float mixedLum=luma(mixed); mixed += (lum-mixedLum).xxx; } px.rgb=saturate(mixed); g_OutputTexture[dtid.xy]=(px).bgra; }
+cbuffer TritoneParams : register(b0){ float3 g_ShadowColor; float g_Balance; float3 g_MidtoneColor; float g_Softness; float3 g_HighlightColor; float g_ShadowStrength; float g_MidtoneStrength; float g_HighlightStrength; float g_MasterStrength; float g_ColorMix; float g_PreserveLuma; float g_Premultiplied; float g_Pad; };
+float luma(float3 c){ return dot(c,float3(0.2126f,0.7152f,0.0722f)); }
+float smoothstep01(float e0,float e1,float x){ if(e0==e1) return x<e0 ? 0.0f : 1.0f; float t=saturate((x-e0)/(e1-e0)); return t*t*(3.0f-2.0f*t); }
+float3 preserveLuma(float sourceLuma,float3 color,float preserveAmount){ float targetLuma=luma(color); if(targetLuma<=1.0e-6f) return color; float scale=sourceLuma/targetLuma; float3 preserved=saturate(color*scale); return lerp(color,preserved,preserveAmount); }
+[numthreads(8,8,1)] void main(uint3 dtid:SV_DispatchThreadID){ uint w,h; g_OutputTexture.GetDimensions(w,h); if(dtid.x>=w||dtid.y>=h) return; float4 px=(g_InputTexture[dtid.xy]).bgra; if(g_Premultiplied>0.5f&&px.a<=0.0f){g_OutputTexture[dtid.xy]=(px).bgra;return;} float alpha=g_Premultiplied>0.5f?px.a:1.0f; float3 c=px.rgb/alpha; float lum=luma(c); float shadowWeight=1.0f-smoothstep01(g_Balance-g_Softness,g_Balance,lum); float highlightWeight=smoothstep01(g_Balance,g_Balance+g_Softness,lum); float midWeight=saturate(1.0f-shadowWeight-highlightWeight); float3 target=g_ShadowColor*shadowWeight*g_ShadowStrength + g_MidtoneColor*midWeight*g_MidtoneStrength + g_HighlightColor*highlightWeight*g_HighlightStrength; target=saturate(target); float mixAmount=saturate(g_MasterStrength*g_ColorMix); float3 mixed=lerp(c,target,mixAmount); if(g_PreserveLuma>0.5f) mixed=preserveLuma(lum,mixed,saturate(g_MasterStrength)); px.rgb=saturate(mixed)*alpha; g_OutputTexture[dtid.xy]=(px).bgra; }
 )";
     static bool createTextureFromImage(const ImageF32x4RGBAWithCache& src, Diligent::IRenderDevice* device, Diligent::ITexture** outTex, const char* name){ const auto& img=src.image(); if(!device||!outTex||img.width()<=0||img.height()<=0) return false; const auto upload=ArtifactCore::makeGpuImageUploadBuffer(img.surfaceView(), ArtifactCore::GpuImageChannelOrder::Bgra); if(!upload.isValid()) return false; Diligent::TextureDesc desc; desc.Type=Diligent::RESOURCE_DIM_TEX_2D; desc.Width=img.width(); desc.Height=img.height(); desc.Format=Diligent::TEX_FORMAT_RGBA32_FLOAT; desc.ArraySize=1; desc.MipLevels=1; desc.SampleCount=1; desc.Usage=Diligent::USAGE_IMMUTABLE; desc.BindFlags=Diligent::BIND_SHADER_RESOURCE; desc.Name=name; Diligent::TextureSubResData sub{}; sub.pData=upload.data(); sub.Stride=static_cast<Diligent::Uint64>(upload.rowStride); Diligent::TextureData init{}; init.pSubResources=&sub; init.NumSubresources=1; device->CreateTexture(desc,&init,outTex); return *outTex!=nullptr; }
     static bool readbackTexture(Diligent::IRenderDevice* device, Diligent::IDeviceContext* ctx, Diligent::ITexture* src, ImageF32x4RGBAWithCache& dst, const char* name, const auto& colorDescriptor){ if(!device||!ctx||!src) return false; const auto desc=src->GetDesc(); Diligent::TextureDesc stagingDesc; stagingDesc.Type=Diligent::RESOURCE_DIM_TEX_2D; stagingDesc.Width=desc.Width; stagingDesc.Height=desc.Height; stagingDesc.Format=desc.Format; stagingDesc.ArraySize=1; stagingDesc.MipLevels=1; stagingDesc.SampleCount=1; stagingDesc.Usage=Diligent::USAGE_STAGING; stagingDesc.CPUAccessFlags=Diligent::CPU_ACCESS_READ; stagingDesc.Name=name; Diligent::RefCntAutoPtr<Diligent::ITexture> staging; device->CreateTexture(stagingDesc,nullptr,&staging); if(!staging) return false; Diligent::CopyTextureAttribs copy(src,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,staging,Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION); ctx->CopyTexture(copy); Diligent::MappedTextureSubresource mapped{}; ctx->Flush(); ctx->WaitForIdle(); ctx->MapTextureSubresource(staging,0,0,Diligent::MAP_READ,Diligent::MAP_FLAG_NONE,nullptr,mapped); if(!mapped.pData||mapped.Stride==0) return false; const bool copied=dst.image().setFromGpuBGRA32F(static_cast<const float*>(mapped.pData),static_cast<int>(desc.Width),static_cast<int>(desc.Height),static_cast<std::size_t>(mapped.Stride),colorDescriptor); ctx->UnmapTextureSubresource(staging,0,0); return copied; }
@@ -282,6 +306,8 @@ std::vector<AbstractProperty> TritoneEffect::getProperties() const {
     presetProp.setType(PropertyType::Integer);
     presetProp.setValue(preset());
     presetProp.setDisplayPriority(-20);
+    presetProp.setTooltip(QStringLiteral(
+        "0=Custom,1=Cinematic,2=Teal and Orange,3=Warm Gold,4=Cold Blue"));
     props.push_back(presetProp);
 
     addColor("Shadow Color", toQColor(settings_.shadowColor));

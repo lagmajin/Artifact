@@ -4,6 +4,7 @@ module;
 #include <string>
 #include <memory>
 #include <vector>
+#include <QString>
 #include <QVariant>
 #include <cstring>
 #include <opencv2/opencv.hpp>
@@ -504,6 +505,8 @@ std::vector<AbstractProperty> ColorBalanceEffect::getProperties() const {
     presetProp.setType(PropertyType::Integer);
     presetProp.setValue(preset());
     presetProp.setDisplayPriority(-30);
+    presetProp.setTooltip(QStringLiteral(
+        "0=Custom,1=Neutral,2=Cool Shadows,3=Warm Highlights,4=Cinematic"));
     props.push_back(presetProp);
 
     auto addFloat = [&props](const char* name, float value, int priority) {

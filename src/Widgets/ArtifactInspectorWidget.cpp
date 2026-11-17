@@ -138,6 +138,7 @@ import Artifact.Widgets.Inspector.ComponentTabSurface;
 import Artifact.Widgets.InspectorEffectCatalog;
 import Artifact.Widgets.InspectorEffectPicker;
 import Artifact.Widgets.InspectorEffectRackPresentation;
+import Artifact.Widgets.LooksPresetBrowser;
 import Artifact.Effect.SurfaceFX;
 import Graphics.Effect.SurfaceFX;
 import Settings.Accessibility;
@@ -5178,14 +5179,32 @@ void ArtifactInspectorWidget::Impl::handleAddEffectClicked(int rackIndex) {
                       .arg(comp->settings().compositionName().toQString());
   }
 
+  auto catalogEntries = buildEffectCatalogEntries();
+  constexpr auto kLooksBrowserPickerId =
+      "artifact.browser.cinematic_looks";
+  catalogEntries.push_back({
+      stageFromRackIndex(rackIndex), QString::fromLatin1(kLooksBrowserPickerId),
+      QStringLiteral("Cinematic Looks"), QStringLiteral("Color"),
+      QStringLiteral("Apply a supported cinematic look preset."),
+      QStringLiteral("looks cinematic preset color grading")});
+
   auto* dialog = createInspectorEffectPickerDialog(
-      buildEffectCatalogEntries(), stageFromRackIndex(rackIndex), targetLabel,
+      catalogEntries, stageFromRackIndex(rackIndex), targetLabel,
       containerWidget ? containerWidget : tabWidget);
   if (!dialog || dialog->exec() != QDialog::Accepted) {
     return;
   }
-  addSelectedEffectToCurrentTarget(
-      inspectorEffectPickerSelectedEffectId(dialog));
+  const QString selectedId = inspectorEffectPickerSelectedEffectId(dialog);
+  if (selectedId == QLatin1String(kLooksBrowserPickerId)) {
+    LooksPresetBrowserDialog looksDialog(
+        containerWidget ? containerWidget : tabWidget);
+    looksDialog.setTargetLayerId(editingCompositionEffects()
+                                     ? QString()
+                                     : currentLayerId_.toString());
+    looksDialog.exec();
+    return;
+  }
+  addSelectedEffectToCurrentTarget(selectedId);
 }
 
 

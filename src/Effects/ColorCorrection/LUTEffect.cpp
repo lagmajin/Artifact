@@ -13,6 +13,7 @@ import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
 import Image.ImageSurfaceView;
+import Graphics.SurfaceColorContract;
 import Property.Abstract;
 import Utils.String.UniString;
 import Color.LUT;
@@ -37,6 +38,9 @@ public:
         if (!lut_.isValid()) {
             return;
         }
+        if (intensity_ <= 0.0001f) {
+            return;
+        }
 
         float* pixels = dst.image().rgba32fData();
         if (!pixels) {
@@ -46,31 +50,41 @@ public:
         const int width = dst.image().width();
         const int height = dst.image().height();
         const float intensity = intensity_;
+        const bool premultiplied = src.image().colorDescriptor().alphaMode ==
+            ArtifactCore::SurfaceAlphaMode::Premultiplied;
         const auto& lut = lut_;
 
-        ArtifactCore::withMutableColorFloat4View(dst.image().surfaceView(), pixels, [&](auto& view) {
+        (void)ArtifactCore::withMutableColorFloat4View(dst.image().surfaceView(), pixels, [&](auto& view) {
             ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
             auto row = view.row(y);
             for (int x = 0; x < width; ++x) {
                 auto pixel = row[x];
-                const float origR = pixel.r;
-                const float origG = pixel.g;
-                const float origB = pixel.b;
+                float origR = pixel.r;
+                float origG = pixel.g;
+                float origB = pixel.b;
+                if (premultiplied) {
+                    if (pixel.a <= 0.0f) continue;
+                    origR /= pixel.a;
+                    origG /= pixel.a;
+                    origB /= pixel.a;
+                }
 
                 float r = origR;
                 float g = origG;
                 float b = origB;
                 lut.apply(r, g, b);
 
-                if (intensity >= 0.9999f) {
-                    pixel.r = r;
-                    pixel.g = g;
-                    pixel.b = b;
-                } else if (intensity > 0.0001f) {
-                    pixel.r = lerp(origR, r, intensity);
-                    pixel.g = lerp(origG, g, intensity);
-                    pixel.b = lerp(origB, b, intensity);
+                float outputR = intensity >= 0.9999f ? r : lerp(origR, r, intensity);
+                float outputG = intensity >= 0.9999f ? g : lerp(origG, g, intensity);
+                float outputB = intensity >= 0.9999f ? b : lerp(origB, b, intensity);
+                if (premultiplied) {
+                    outputR *= pixel.a;
+                    outputG *= pixel.a;
+                    outputB *= pixel.a;
                 }
+                pixel.r = outputR;
+                pixel.g = outputG;
+                pixel.b = outputB;
             }
             });
         });
@@ -155,6 +169,9 @@ std::vector<AbstractProperty> LUTEffect::getProperties() const {
     props[0].setName("Preset");
     props[0].setType(ArtifactCore::PropertyType::Integer);
     props[0].setValue(QVariant(static_cast<int>(preset_)));
+    props[0].setTooltip(QStringLiteral(
+        "0=Custom,1=Cinematic,2=Vintage,3=Cold,4=Warm,5=High Contrast,"
+        "6=Low Contrast,7=Desaturated,8=Kodak 2383,9=Fuji 3510"));
 
     props[1].setName("LUT File");
     props[1].setType(ArtifactCore::PropertyType::String);

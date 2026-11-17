@@ -43,6 +43,9 @@ public:
     // Sets the "before" image shown in the preview panel.
     void setPreviewImage(const QPixmap& before);
 
+    // An empty ID targets the current composition; otherwise apply to this layer.
+    void setTargetLayerId(const QString& layerId);
+
     // Returns the id of the currently applied preset, or empty string.
     QString appliedPresetId() const;
 

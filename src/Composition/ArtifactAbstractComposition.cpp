@@ -65,6 +65,9 @@ import Artifact.Layer.Abstract;
 import Artifact.Layer.CloneEffectSupport;
 import Artifact.Layer.Factory;
 import Artifact.Effect.Abstract;
+import LUTEffect;
+import ColorBalanceEffect;
+import TritoneEffect;
 import Artifact.Effect.SurfaceFX;
 import Artifact.Effect.Keying.ChromaKey;
 import Artifact.Effect.Keying.LumaKey;
@@ -1996,6 +1999,25 @@ void restoreModulationRouter(const QJsonObject& object,
 
 namespace {
 
+bool matchesSerializedEffectTypeId(const QString& serializedId,
+                                  const QString& effectTypeId)
+{
+  if (serializedId == effectTypeId) {
+    return true;
+  }
+
+  const QString suffixPrefix = effectTypeId + QLatin1Char('-');
+  if (!serializedId.startsWith(suffixPrefix)) {
+    return false;
+  }
+
+  const QString suffix = serializedId.mid(suffixPrefix.size());
+  bool isNumber = false;
+  const int instanceNumber = suffix.toInt(&isNumber);
+  return isNumber && instanceNumber >= 2 &&
+         suffix == QString::number(instanceNumber);
+}
+
 QJsonObject serializeEffect(const SharedPtr<ArtifactAbstractEffect>& effect)
 {
   QJsonObject eobj;
@@ -2099,6 +2121,15 @@ SharedPtr<ArtifactAbstractEffect> deserializeEffect(const QJsonObject& eobj)
   } else if (effectId == QStringLiteral("ibk_keyer") ||
              effectId == QStringLiteral("Effect.Keying.IBKKeyer")) {
     effect = makeShared<IBKKeyerEffect>();
+  } else if (matchesSerializedEffectTypeId(
+                 effectId, QStringLiteral("effect.colorcorrection.lut"))) {
+    effect = makeShared<LUTEffect>();
+  } else if (matchesSerializedEffectTypeId(
+                 effectId, QStringLiteral("effect.colorcorrection.colorbalance"))) {
+    effect = makeShared<ColorBalanceEffect>();
+  } else if (matchesSerializedEffectTypeId(
+                 effectId, QStringLiteral("effect.colorcorrection.tritone"))) {
+    effect = makeShared<TritoneEffect>();
   } else {
     effect = makeShared<ArtifactAbstractEffect>();
   }

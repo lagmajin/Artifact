@@ -41,6 +41,12 @@ module;
 module Artifact.Widgets.LooksPresetBrowser;
 
 import Widgets.Utils.CSS;
+import Artifact.Service.Effect;
+import Artifact.Service.Project;
+import Artifact.Effect.Abstract;
+import Memory.SharedPtr;
+import Utils.Id;
+import Utils.String.UniString;
 
 // ---------------------------------------------------------------------------
 //  Helpers
@@ -91,6 +97,12 @@ QPixmap makePlaceholderThumbnail(const QString &name, const QColor &tint,
 // ---------------------------------------------------------------------------
 //  Built-in preset data
 // ---------------------------------------------------------------------------
+struct EffectMapping {
+  const char *effectId;
+  const char *presetProperty;
+  int presetValue;
+};
+
 struct PresetDef {
   const char *id;
   const char *name;
@@ -98,7 +110,12 @@ struct PresetDef {
   const char *pack;
   int score;
   QColor tint;
+  const EffectMapping *effectMapping{nullptr};
 };
+
+// Provisional name match from the R&D follow-up; not an approved look spec.
+static const EffectMapping kTealOrangeMapping{
+    "effect.colorcorrection.tritone", "Preset", 2};
 
 static const PresetDef kBuiltinPresets[] = {
     {"amber_dusk",
@@ -217,7 +234,8 @@ static const PresetDef kBuiltinPresets[] = {
      "Film",
      "カスタム",
      75,
-     {0x00, 0x80, 0x80}},
+     {0x00, 0x80, 0x80},
+     &kTealOrangeMapping},
     {"vintage_70s",
      "Vintage 70s",
      "Creative",
@@ -226,6 +244,14 @@ static const PresetDef kBuiltinPresets[] = {
      {0xb0, 0x80, 0x40}},
     {"washed_out", "Washed Out", "Photo", "Cinematic", 70, {0xa0, 0xa0, 0xb0}},
 };
+
+const PresetDef *findPresetDefinition(const QString &id) {
+  for (const auto &preset : kBuiltinPresets) {
+    if (id == QLatin1String(preset.id))
+      return &preset;
+  }
+  return nullptr;
+}
 
 } // anonymous namespace
 
@@ -500,6 +526,7 @@ public:
   QVector<LooksPreset> allPresets_;
   QString selectedId_;
   QString appliedId_;
+  QString targetLayerId_;
   QString activeCategory_{"All"};
   QString activeLibrary_{"すべて"};
   QString searchText_;
@@ -514,6 +541,7 @@ public:
 
   // UI – applied badge
   AppliedBadge *appliedBadge_{nullptr};
+  QLabel *applyStatus_{nullptr};
 
   // UI – preview
   ThumbnailLabel *beforeLabel_{nullptr};
@@ -782,7 +810,7 @@ public:
     auto *avl = new QVBoxLayout(afterWrap);
     avl->setContentsMargins(0, 0, 0, 0);
     avl->setSpacing(2);
-    auto *aLbl = new QLabel("AFTER", panel);
+    auto *aLbl = new QLabel("SAMPLE PREVIEW", panel);
     QFont aFont = aLbl->font();
     aFont.setPointSize(9);
     aLbl->setFont(aFont);
@@ -809,20 +837,26 @@ public:
     hl->addStretch();
 
     // Sliders
-    hl->addWidget(buildSliderBlock(panel, "INTENSITY", -100, 100, 80,
+    hl->addWidget(buildSliderBlock(panel, "INTENSITY", 0, 100, 80,
                                    &intensitySlider_, &intensityVal_));
+    intensitySlider_->setEnabled(false);
     hl->addWidget(buildSliderBlock(panel, "EXPOSURE", -100, 100, 0,
                                    &exposureSlider_, &exposureVal_));
+    exposureSlider_->setEnabled(false);
     hl->addWidget(buildSliderBlock(panel, "CONTRAST", -100, 100, 0,
                                    &contrastSlider_, &contrastVal_));
+    contrastSlider_->setEnabled(false);
     hl->addWidget(
         buildSliderBlock(panel, "TEMP", -100, 100, 0, &tempSlider_, &tempVal_));
+    tempSlider_->setEnabled(false);
 
     hl->addStretch();
 
     // Apply / Favorite
     applyBtn_ = new PresetButton("適用  ►", QColor(0x1a, 0x3a, 0x1a), QColor(0x2a, 0x6a, 0x2a), QColor(0x55, 0xcc, 0x55), panel);
     applyBtn_->setFixedHeight(32);
+    applyBtn_->setEnabled(false);
+    applyBtn_->setToolTip(QStringLiteral("対応するLook presetを選択してください"));
     QFont applyFont = applyBtn_->font();
     applyFont.setPointSize(12);
     applyBtn_->setFont(applyFont);
@@ -837,6 +871,12 @@ public:
                      [this]() { onFavorite(); });
 
     hl->addWidget(applyBtn_);
+    applyStatus_ = new QLabel(QStringLiteral("対応presetを選択してください"), panel);
+    applyStatus_->setForegroundRole(QPalette::PlaceholderText);
+    applyStatus_->setWordWrap(true);
+    applyStatus_->setMaximumWidth(120);
+    applyStatus_->setAccessibleName(QStringLiteral("Preset application status"));
+    hl->addWidget(applyStatus_);
     hl->addWidget(favBtn_);
 
     return panel;
@@ -991,20 +1031,80 @@ public:
       if (!p->thumbnail.isNull())
         afterLabel_->setPixmap(p->thumbnail);
     }
+
+    // Only explicitly registered provisional mappings enable Apply; unmapped
+    // inventory entries remain browseable without an invented mapping.
+    const PresetDef *definition = findPresetDefinition(selectedId_);
+    const bool hasEffectMapping = definition && definition->effectMapping;
+    applyBtn_->setEnabled(hasEffectMapping);
+    intensitySlider_->setEnabled(hasEffectMapping);
+    exposureSlider_->setEnabled(false);
+    contrastSlider_->setEnabled(false);
+    tempSlider_->setEnabled(false);
+    applyStatus_->setText(
+        hasEffectMapping
+            ? QStringLiteral("仮mapping（正式表待ち）")
+            : QStringLiteral("このpresetのeffect mappingは未設定です"));
+    applyStatus_->setToolTip(
+        hasEffectMapping
+            ? QStringLiteral("%1を%2へ仮適用します。正式なLook対応表は未確認です。")
+                  .arg(p ? p->name : QString())
+                  .arg(targetLayerId_.isEmpty()
+                           ? QStringLiteral("Composition")
+                           : QStringLiteral("Layer"))
+            : QStringLiteral("正式なLook対応表が確定するまで適用できません。"));
   }
 
   // -----------------------------------------------------------------------
   void onApply() {
-    if (selectedId_.isEmpty())
+    const PresetDef *definition = findPresetDefinition(selectedId_);
+    if (!definition || !definition->effectMapping)
       return;
-    appliedId_ = selectedId_;
+    const EffectMapping &mapping = *definition->effectMapping;
 
-    const LooksPreset *p = findPreset(appliedId_);
-    if (p) {
-      appliedBadge_->setText(p->name);
-      appliedBadge_->setBadgeStyle(QColor(0x1a, 0x4a, 0x2a), QColor(0x55, 0xcc, 0x88), QColor(0x2a, 0x7a, 0x4a));
+    auto *effectService = ArtifactEffectService::instance();
+    auto *projectService = ArtifactProjectService::instance();
+    if (!effectService || !projectService) {
+      applyStatus_->setText(QStringLiteral("Effect Serviceを利用できません"));
+      return;
     }
 
+    auto effect = effectService->createEffect(
+        EffectID(QString::fromLatin1(mapping.effectId)));
+    if (!effect) {
+      applyStatus_->setText(QStringLiteral("対応effectを生成できません"));
+      return;
+    }
+
+    effect->setPropertyValue(
+        UniString::fromQString(QString::fromLatin1(mapping.presetProperty)),
+        mapping.presetValue);
+    effect->setMix(static_cast<float>(intensitySlider_->value()) / 100.0f);
+    auto effectPtr = ArtifactCore::makeShared(
+        effect.release(), [](ArtifactAbstractEffect *item) { delete item; });
+    const bool added = targetLayerId_.isEmpty()
+        ? projectService->addEffectToCurrentComposition(effectPtr)
+        : projectService->addEffectToLayerWithUndo(
+              LayerID(targetLayerId_), effectPtr);
+    if (!added) {
+      applyStatus_->setText(QStringLiteral("対象へ追加できません"));
+      return;
+    }
+
+    appliedId_ = selectedId_;
+    if (const LooksPreset *preset = findPreset(appliedId_)) {
+      appliedBadge_->setText(preset->name);
+      appliedBadge_->setBadgeStyle(
+          QColor(0x1a, 0x4a, 0x2a), QColor(0x55, 0xcc, 0x88),
+          QColor(0x2a, 0x7a, 0x4a));
+    }
+    applyStatus_->setText(QStringLiteral("仮対応を追加しました"));
+    applyStatus_->setToolTip(
+        QStringLiteral("%1へ仮適用しました。正式なLook対応表は未確認です。")
+            .arg(targetLayerId_.isEmpty()
+                     ? QStringLiteral("Composition")
+                     : QStringLiteral("Layer")));
+    q->accept();
   }
 
   // -----------------------------------------------------------------------
@@ -1048,6 +1148,10 @@ void LooksPresetBrowserDialog::setPreviewImage(const QPixmap &before) {
                                                  Qt::KeepAspectRatioByExpanding,
                                                  Qt::SmoothTransformation));
   }
+}
+
+void LooksPresetBrowserDialog::setTargetLayerId(const QString& layerId) {
+  impl_->targetLayerId_ = layerId.trimmed();
 }
 
 QString LooksPresetBrowserDialog::appliedPresetId() const {
