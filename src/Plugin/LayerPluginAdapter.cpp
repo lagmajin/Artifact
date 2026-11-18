@@ -2,6 +2,7 @@ module;
 #include <cstdlib>
 #include <unordered_set>
 #include <QByteArray>
+#include <QString>
 #include <QJsonDocument>
 #include <QJsonParseError>
 #include "Plugin/ArtifactPluginABI.h"

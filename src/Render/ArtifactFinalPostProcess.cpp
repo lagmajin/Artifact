@@ -1,4 +1,5 @@
 module;
+#include <array>
 #include <vector>
 #include <cstring>
 #include <memory>

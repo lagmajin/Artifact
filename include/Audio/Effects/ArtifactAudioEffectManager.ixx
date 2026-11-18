@@ -39,9 +39,12 @@ export module Artifact.Audio.Effects.Manager;
 
 
 import Artifact.Audio.Effects.Base;
+import Core.ArtifactString;
 import Memory.SharedPtr;
 
 export namespace Artifact {
+
+using ArtifactCore::String;
 
 class ArtifactAudioEffectManager {
 public:
