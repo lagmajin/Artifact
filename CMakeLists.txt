@@ -975,7 +975,8 @@ else()
     set_property(TARGET ArtifactRender PROPERTY CXX_MODULE_STD OFF)
 endif()
 if(ARTIFACT_COMPILER_MSVC_CL)
-    target_compile_options(ArtifactRender PRIVATE /Zf /Zc:__cplusplus /utf-8 /openmp /wd5050 /EHsc)
+    target_compile_options(ArtifactRender PRIVATE /Zf /Zc:__cplusplus /utf-8 /openmp /wd5050 /EHsc
+        "/FI${CMAKE_CURRENT_SOURCE_DIR}/../ArtifactCore/include/Compat/QtListForward.h")
     target_compile_definitions(ArtifactRender PRIVATE
         PLATFORM_WIN32
         _GUARDOVERFLOW_CRT_ALLOCATORS=1
@@ -2687,6 +2688,13 @@ if(WIN32)
     target_sources(Artifact PRIVATE App/ArtifactAppIcon.rc)
 endif()
 add_library(ArtifactAppRuntime OBJECT)
+# Qt's QList global test friend is not visible when Qt headers are imported as
+# external headers inside C++ module units on MSVC. Apply the existing
+# compatibility declaration to this target as ArtifactCore already does.
+if(ARTIFACT_FRONTEND_MSVC AND ARTIFACT_COMPILER_MSVC_CL)
+    target_compile_options(ArtifactAppRuntime PRIVATE
+        "/FI${CMAKE_CURRENT_SOURCE_DIR}/../ArtifactCore/include/Compat/QtListForward.h")
+endif()
 if(ARTIFACT_BUILD_TESTS)
     target_compile_definitions(ArtifactAppRuntime PRIVATE
         ARTIFACT_RENDER_QUEUE_ENABLE_TEST_HOOKS=1)
