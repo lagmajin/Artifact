@@ -68,3 +68,5 @@ CMakeLists.txt text eol=lf
 #*.PDF   diff=astextplain
 #*.rtf   diff=astextplain
 #*.RTF   diff=astextplain
+*.hlsl text eol=lf
+*.hpp text eol=lf
