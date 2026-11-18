@@ -414,6 +414,11 @@ public:
   // own ArtifactIRenderer instances and never sees this value.
   void setMeshViewportShadingMode(int mode);
   int meshViewportShadingMode() const;
+  // P1-4: viewport-only backface culling. Applied to the mesh renderer used
+  // for viewport draws; Render Queue uses its own renderer instance and is
+  // not affected.
+  void setMeshBackfaceCulling(bool enabled);
+  bool isMeshBackfaceCulling() const;
   void setCanvasSize(float w, float h);
   void setPan(float x, float y);
   void getPan(float &x, float &y) const;

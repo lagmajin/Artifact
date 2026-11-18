@@ -113,4 +113,36 @@ void drawCompositionBoundary(ArtifactIRenderer *renderer, float canvasWidth,
                                  {0.98f, 0.72f, 0.20f, 0.92f});
 }
 
+void drawAspectMask(ArtifactIRenderer *renderer, float canvasWidth,
+                    float canvasHeight, float aspectRatio) {
+  if (!renderer || !std::isfinite(aspectRatio) || aspectRatio <= 0.0f ||
+      canvasWidth <= 0.0f || canvasHeight <= 0.0f)
+    return;
+
+  const float canvasAspect = canvasWidth / canvasHeight;
+  const float maskWidth = canvasAspect > aspectRatio
+      ? canvasHeight * aspectRatio : canvasWidth;
+  const float maskHeight = canvasAspect > aspectRatio
+      ? canvasHeight : canvasWidth / aspectRatio;
+  const float left = (canvasWidth - maskWidth) * 0.5f;
+  const float top = (canvasHeight - maskHeight) * 0.5f;
+  const float right = left + maskWidth;
+  const float bottom = top + maskHeight;
+
+  // Four canvas-space quads keep the mask correct under pan / zoom / canvas
+  // rotation, unlike screen-space rectangles.
+  const FloatColor shade{0.02f, 0.03f, 0.05f, 0.72f};
+  const auto shadeQuad = [&](float ax, float ay, float bx, float by,
+                             float cx, float cy, float dx, float dy) {
+    renderer->drawQuadLocal({ax, ay}, {bx, by}, {cx, cy}, {dx, dy}, shade);
+  };
+  shadeQuad(0.0f, 0.0f, canvasWidth, 0.0f, canvasWidth, top, 0.0f, top);
+  shadeQuad(0.0f, bottom, canvasWidth, bottom,
+            canvasWidth, canvasHeight, 0.0f, canvasHeight);
+  shadeQuad(0.0f, top, left, top, left, bottom, 0.0f, bottom);
+  shadeQuad(right, top, canvasWidth, top, canvasWidth, bottom, right, bottom);
+  renderer->drawRectOutlineLocal(left, top, maskWidth, maskHeight,
+                                 {0.95f, 0.75f, 0.25f, 0.85f});
+}
+
 } // namespace Artifact::ViewportOverlay

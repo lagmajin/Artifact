@@ -18,5 +18,8 @@ void drawPixelGrid(ArtifactIRenderer *renderer, float canvasWidth,
                    float canvasHeight, float zoom, bool visible);
 void drawCompositionBoundary(ArtifactIRenderer *renderer, float canvasWidth,
                              float canvasHeight, bool visible);
+// P1-14: display-only aspect mask. aspectRatio <= 0 disables it.
+void drawAspectMask(ArtifactIRenderer *renderer, float canvasWidth,
+                    float canvasHeight, float aspectRatio);
 } // namespace ViewportOverlay
 } // namespace Artifact

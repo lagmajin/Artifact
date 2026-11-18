@@ -67,13 +67,23 @@ enum class CompositionViewportPresentationLayout {
 
  // P1-4: viewport-wide shading mode for 3D mesh layer draws. Viewport-only
  // override: the layer's serialized ModelRenderMode and the Render Queue
- // output are never modified. BoundingBox is reserved for the later step
- // (bounds overlay generalization) and is not exposed in the UI yet.
+ // output are never modified. BoundingBox draws the existing 3D bounds
+ // overlay for every visible 3D layer (S3); the mesh itself stays shaded.
  enum class CompositionViewportShadingMode {
   Shaded,
   Wireframe,
   WireframeOnShaded,
   BoundingBox,
+ };
+
+ // P1-14: display-only aspect mask drawn over the canvas. Never changes
+ // composition size, serialized data or Render Queue output.
+ enum class CompositionViewportAspectMask : uint8_t {
+  Off,
+  Square,
+  FourByThree,
+  SixteenByNine,
+  Cinemascope, // 2.39:1
  };
 
  // P0-4: per-viewport visibility mask for layer categories. Independent
@@ -387,6 +397,13 @@ float xRayOverlayOpacity() const;
 // are never modified.
 void setViewportShadingMode(CompositionViewportShadingMode mode);
 CompositionViewportShadingMode viewportShadingMode() const;
+// P1-4: viewport-only backface culling toggle. Does not touch layer data,
+// serialization or Render Queue output.
+void setViewportBackfaceCulling(bool enabled);
+bool isViewportBackfaceCulling() const;
+// P1-14: viewport-only aspect mask. Display-only; no composition data change.
+void setViewportAspectMask(CompositionViewportAspectMask mask);
+CompositionViewportAspectMask viewportAspectMask() const;
 void setShowIsolationOverlay(bool show);
 bool isShowIsolationOverlay() const;
 int isolatedLayerCount() const;

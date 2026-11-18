@@ -1320,6 +1320,8 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
   // 2=Wireframe on Shaded). Viewport-only display state; Render Queue
   // jobs render through their own ArtifactIRenderer instances.
   int meshViewportShadingMode_ = 0;
+  // P1-4: viewport-only backface culling flag forwarded to MeshRenderer.
+  bool meshBackfaceCulling_ = false;
   quint64 presentAttemptCount_ = 0;
   quint64 presentSuccessCount_ = 0;
   quint64 flushCount_ = 0;
@@ -2856,6 +2858,9 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
         material.alphaMode() == ArtifactCore::MaterialAlphaMode::Masked;
     renderer->setAlphaMasked(alphaMasked);
     renderer->setAlphaCutoff(material.alphaCutoff());
+    // P1-4: viewport-only flag; MeshRenderer switches to prebuilt PSO
+    // variants without rebuilding pipelines in the frame loop.
+    renderer->setBackfaceCulling(meshBackfaceCulling_);
     const QColor color = material.baseColor();
     const int effectiveShadingMode =
         meshIdPassChannel_ == ArtifactIRenderer::ChannelType::ObjectId ? 5 :
@@ -3227,6 +3232,10 @@ void waitForFenceCompletion(Diligent::IFence* fence, Diligent::Uint64 value)
   void setMeshViewportShadingMode(int mode) {
     meshViewportShadingMode_ = std::clamp(mode, 0, 2);
   }
+  void setMeshBackfaceCulling(bool enabled) {
+    meshBackfaceCulling_ = enabled;
+  }
+  bool isMeshBackfaceCulling() const { return meshBackfaceCulling_; }
   int meshViewportShadingMode() const {
     // Auxiliary mesh passes (AOV channel passes) keep the layer's own solid
     // request so the pass data stays valid while a viewport shading mode is
@@ -5646,50 +5655,59 @@ void ArtifactIRenderer::Impl::setAuxiliaryChannelSource(
     ++presentAttemptCount_;
     if (auto sc = deviceManager_.swapChain())
     {
-     std::size_t solidRectCount = 0;
-     std::size_t transformedSolidRectCount = 0;
-     std::size_t spriteCount = 0;
-     std::size_t transformedSpriteCount = 0;
-     for (const auto& packet : cmdBuf_.packets()) {
-      if (std::holds_alternative<SolidRectPkt>(packet)) {
-       ++solidRectCount;
-      } else if (std::holds_alternative<SolidRectXformPkt>(packet)) {
-       ++transformedSolidRectCount;
-      } else if (std::holds_alternative<SpritePkt>(packet)) {
-       ++spriteCount;
-      } else if (std::holds_alternative<SpriteXformPkt>(packet)) {
-       ++transformedSpriteCount;
+     // [RendererSubmitReport] walks every queued packet to derive its
+     // signature. Keep that steady-state scan off unless continuous render
+     // diagnostics were explicitly requested, matching the gate used for
+     // frameDebugPasses() in beginFrameCostCapture().
+     static const bool submitDiagnosticEnabled =
+         qEnvironmentVariableIsSet("ARTIFACT_ENABLE_CONTINUOUS_RENDER_DIAGNOSTICS") &&
+         qEnvironmentVariable("ARTIFACT_ENABLE_CONTINUOUS_RENDER_DIAGNOSTICS") != QStringLiteral("0");
+     if (submitDiagnosticEnabled) {
+      std::size_t solidRectCount = 0;
+      std::size_t transformedSolidRectCount = 0;
+      std::size_t spriteCount = 0;
+      std::size_t transformedSpriteCount = 0;
+      for (const auto& packet : cmdBuf_.packets()) {
+       if (std::holds_alternative<SolidRectPkt>(packet)) {
+        ++solidRectCount;
+       } else if (std::holds_alternative<SolidRectXformPkt>(packet)) {
+        ++transformedSolidRectCount;
+       } else if (std::holds_alternative<SpritePkt>(packet)) {
+        ++spriteCount;
+       } else if (std::holds_alternative<SpriteXformPkt>(packet)) {
+        ++transformedSpriteCount;
+       }
       }
-     }
-     auto* const queuedTarget = cmdBuf_.targetRTV();
-     auto* const backBufferTarget = sc->GetCurrentBackBufferRTV();
-     auto* const activeTarget = activeColorView();
-     // Compare the cheap integer tuple first: the diagnostic string is only
-     // built when something actually changed, so the steady-state frame does
-     // not pay for nine QString::arg() calls that would be discarded.
-     const SubmitDiagnosticKey submitKey{
-      cmdBuf_.packets().size(), solidRectCount, transformedSolidRectCount,
-      spriteCount, transformedSpriteCount, queuedTarget ? 1u : 0u,
-      queuedTarget == backBufferTarget ? 1u : 0u,
-      queuedTarget == activeTarget ? 1u : 0u,
-      activeTarget == backBufferTarget ? 1u : 0u};
-     if (submitKey != lastSubmitDiagnosticKey_) {
-      const QString submitSignature =
-          QStringLiteral("packets=%1 targetNull=%2 targetIsBackBuffer=%3 "
-                         "targetIsActive=%4 activeIsBackBuffer=%5 "
-                         "solid=%6 solidXform=%7 sprite=%8 spriteXform=%9")
-              .arg(cmdBuf_.packets().size())
-              .arg(queuedTarget ? 0 : 1)
-              .arg(queuedTarget == backBufferTarget ? 1 : 0)
-              .arg(queuedTarget == activeTarget ? 1 : 0)
-              .arg(activeTarget == backBufferTarget ? 1 : 0)
-              .arg(solidRectCount)
-              .arg(transformedSolidRectCount)
-              .arg(spriteCount)
-              .arg(transformedSpriteCount);
-      lastSubmitDiagnosticKey_ = submitKey;
-      qWarning().noquote()
-          << "[CompositionView][RendererSubmitReport]" << submitSignature;
+      auto* const queuedTarget = cmdBuf_.targetRTV();
+      auto* const backBufferTarget = sc->GetCurrentBackBufferRTV();
+      auto* const activeTarget = activeColorView();
+      // Compare the cheap integer tuple first: the diagnostic string is only
+      // built when something actually changed, so the steady-state frame does
+      // not pay for nine QString::arg() calls that would be discarded.
+      const SubmitDiagnosticKey submitKey{
+       cmdBuf_.packets().size(), solidRectCount, transformedSolidRectCount,
+       spriteCount, transformedSpriteCount, queuedTarget ? 1u : 0u,
+       queuedTarget == backBufferTarget ? 1u : 0u,
+       queuedTarget == activeTarget ? 1u : 0u,
+       activeTarget == backBufferTarget ? 1u : 0u};
+      if (submitKey != lastSubmitDiagnosticKey_) {
+       const QString submitSignature =
+           QStringLiteral("packets=%1 targetNull=%2 targetIsBackBuffer=%3 "
+                          "targetIsActive=%4 activeIsBackBuffer=%5 "
+                          "solid=%6 solidXform=%7 sprite=%8 spriteXform=%9")
+               .arg(cmdBuf_.packets().size())
+               .arg(queuedTarget ? 0 : 1)
+               .arg(queuedTarget == backBufferTarget ? 1 : 0)
+               .arg(queuedTarget == activeTarget ? 1 : 0)
+               .arg(activeTarget == backBufferTarget ? 1 : 0)
+               .arg(solidRectCount)
+               .arg(transformedSolidRectCount)
+               .arg(spriteCount)
+               .arg(transformedSpriteCount);
+       lastSubmitDiagnosticKey_ = submitKey;
+       qWarning().noquote()
+           << "[CompositionView][RendererSubmitReport]" << submitSignature;
+      }
      }
      submitQueuedDraws(deviceManager_.immediateContext());
       try {
@@ -6617,6 +6635,12 @@ void ArtifactIRenderer::setMeshViewportShadingMode(int mode) {
 }
 int ArtifactIRenderer::meshViewportShadingMode() const {
   return impl_->meshViewportShadingMode();
+}
+void ArtifactIRenderer::setMeshBackfaceCulling(bool enabled) {
+  impl_->setMeshBackfaceCulling(enabled);
+}
+bool ArtifactIRenderer::isMeshBackfaceCulling() const {
+  return impl_->isMeshBackfaceCulling();
 }
   FloatColor ArtifactIRenderer::getClearColor() const { return impl_->getClearColor(); }
   void ArtifactIRenderer::setViewportSize(float w, float h) { impl_->setViewportSize(w, h); }

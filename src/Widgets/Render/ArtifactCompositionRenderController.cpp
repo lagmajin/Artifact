@@ -14156,6 +14156,9 @@ public:
 
     Diligent::ITextureView* channelComponentSource = nullptr;
     Diligent::Uint32 channelComponent = 0;
+    // P1-6: Straight is produced directly from the beauty SRV below; the
+    // other two variants go through displayComposite channels 7 / 8.
+    bool straightDisplayReady = false;
     switch (viewportChannelDisplayMode_) {
     case ViewportChannelDisplayMode::Red:
       channelComponentSource = finalPresentSRV;
@@ -14246,6 +14249,26 @@ public:
       channelComponentSource = renderPipeline.uvSRV();
       channelComponent = 4;
       break;
+    // P1-6: Autograph-style variants. Straight reuses the existing
+    // BGRA-accumulator conversion (no new shader); Luminance / Matte use
+    // displayComposite modes 4 / 5 from LayerBlendComputeShader.
+    case ViewportChannelDisplayMode::Unpremultiplied: {
+      straightDisplayReady = renderer_->convertBgraAccumulatorToStraightRgba(
+          blendPipeline_.get(), finalPresentSRV, renderPipeline.tempUAV(),
+          renderPipeline.width(), renderPipeline.height());
+      if (straightDisplayReady) {
+        viewportChannelDisplaySRV_ = renderPipeline.tempSRV();
+      }
+      break;
+    }
+    case ViewportChannelDisplayMode::Luminance:
+      channelComponentSource = finalPresentSRV;
+      channelComponent = 7;
+      break;
+    case ViewportChannelDisplayMode::Matte:
+      channelComponentSource = finalPresentSRV;
+      channelComponent = 8;
+      break;
     default:
       break;
     }
@@ -14254,7 +14277,7 @@ public:
         viewportChannelDisplayMode_ == ViewportChannelDisplayMode::Green ||
         viewportChannelDisplayMode_ == ViewportChannelDisplayMode::Blue ||
         viewportChannelDisplayMode_ == ViewportChannelDisplayMode::Alpha;
-    bool channelDisplayReady = false;
+    bool channelDisplayReady = straightDisplayReady;
     if (channelComponentSource && blendPipeline_) {
       if (channelComponent <= 3) {
         channelDisplayReady = renderer_->displayTextureComponent(
@@ -14262,7 +14285,9 @@ public:
             renderPipeline.tempUAV(), channelComponent,
             renderPipeline.width(), renderPipeline.height());
       } else {
-        const Diligent::Uint32 mode = channelComponent == 4 ? 1u : channelComponent == 5 ? 2u : 3u;
+        const Diligent::Uint32 mode = channelComponent == 4 ? 1u :
+            channelComponent == 5 ? 2u : channelComponent == 6 ? 3u :
+            channelComponent == 7 ? 4u : 5u;
         channelDisplayReady = renderer_->displayCompositeChannel(
             blendPipeline_.get(), channelComponentSource,
             renderPipeline.tempUAV(), mode, 0u, 1u,
@@ -14964,6 +14989,14 @@ public:
   // override; never persisted and never applied to Render Queue instances.
   CompositionViewportShadingMode viewportShadingMode_ =
       CompositionViewportShadingMode::Shaded;
+
+  // P1-4: viewport-only backface culling. Default off preserves the existing
+  // CULL_MODE_NONE behavior for assets with mismatched winding.
+  bool viewportBackfaceCulling_ = false;
+
+  // P1-14: display-only aspect mask; default off, not persisted.
+  CompositionViewportAspectMask viewportAspectMask_ =
+      CompositionViewportAspectMask::Off;
 
   bool showIsolationOverlay_ = false;
   // P1-1: viewport-only isolate set captured at enter. Layer.visible is
@@ -21486,7 +21519,8 @@ void CompositionRenderController::setViewportShadingMode(
   if (!impl_ || impl_->viewportShadingMode_ == mode) return;
   impl_->viewportShadingMode_ = mode;
   if (impl_->renderer_) {
-    // BoundingBox maps to Shaded until the bounds overlay step wires it up.
+    // BoundingBox intentionally keeps the shaded mesh; its bounds are drawn
+    // by the overlay pass (S3) instead of changing the mesh pipeline.
     impl_->renderer_->setMeshViewportShadingMode(
         mode == CompositionViewportShadingMode::Wireframe ? 1 :
         mode == CompositionViewportShadingMode::WireframeOnShaded ? 2 : 0);
@@ -21501,6 +21535,41 @@ CompositionRenderController::viewportShadingMode() const {
 
   return impl_ ? impl_->viewportShadingMode_
                : CompositionViewportShadingMode::Shaded;
+
+}
+
+void CompositionRenderController::setViewportBackfaceCulling(bool enabled) {
+
+  if (!impl_ || impl_->viewportBackfaceCulling_ == enabled) return;
+  impl_->viewportBackfaceCulling_ = enabled;
+  if (impl_->renderer_) {
+    impl_->renderer_->setMeshBackfaceCulling(enabled);
+  }
+  impl_->invalidateBaseComposite();
+  markRenderDirty();
+
+}
+
+bool CompositionRenderController::isViewportBackfaceCulling() const {
+
+  return impl_ ? impl_->viewportBackfaceCulling_ : false;
+
+}
+
+void CompositionRenderController::setViewportAspectMask(
+    CompositionViewportAspectMask mask) {
+
+  if (!impl_ || impl_->viewportAspectMask_ == mask) return;
+  impl_->viewportAspectMask_ = mask;
+  markRenderDirty();
+
+}
+
+CompositionViewportAspectMask
+CompositionRenderController::viewportAspectMask() const {
+
+  return impl_ ? impl_->viewportAspectMask_
+               : CompositionViewportAspectMask::Off;
 
 }
 
@@ -50212,6 +50281,33 @@ void CompositionRenderController::Impl::drawViewportOverlayPass(
     renderer_->reset3DCameraMatrices();
   }
 
+  // P1-4 / S3: Bounding Box shading mode draws the existing 3D bounds
+  // overlay for every visible 3D layer. Viewport-only presentation: layer
+  // render modes, serialization and Render Queue output stay untouched.
+  if (viewportShadingMode_ == CompositionViewportShadingMode::BoundingBox &&
+      renderer_) {
+    const QMatrix4x4 boundsView = viewportOrientationMatricesValid_
+        ? viewportOrientationViewForOverlay_
+        : has3DCamera ? cameraViewMatrix : renderer_->getViewMatrix();
+    const QMatrix4x4 boundsProjection = viewportOrientationMatricesValid_
+        ? viewportOrientationProjectionForOverlay_
+        : has3DCamera ? cameraProjMatrix : renderer_->getProjectionMatrix();
+    for (const auto &layer : layers) {
+      if (!layer || !isLayerEffectivelyVisible(layer) ||
+          !layer->isActiveAt(currentFrame) ||
+          !passesLayerRenderFilter(layerRenderFilter_, selectedIds,
+                                   selectedLayerId_, layer) ||
+          !passesLayerCategoryMask(viewportLayerCategoryMask_, layer,
+                                   CompositionViewportLayerCategory::Model3D)) {
+        continue;
+      }
+      if (!dynamic_cast<Artifact3DLayer *>(layer.get())) {
+        continue;
+      }
+      ::Artifact::draw3DSelectionBoundsOverlay(
+          renderer_.get(), layer, &boundsView, &boundsProjection);
+    }
+  }
   if (showAudioWaveformOverlay_ || showAudioSpectrumOverlay_) {
     if (auto *audioLayer = selectedLayer
                                 ? dynamic_cast<ArtifactAudioLayer *>(selectedLayer.get())
@@ -51335,8 +51431,9 @@ void CompositionRenderController::Impl::syncViewportChannelReadbackConfiguration
   case ViewportChannelDisplayMode::Blue:
   // P1-6: Autograph-style channel variants consume only the RGB and
   // Alpha SRVs (no auxiliary channel). The post-process step that turns
-  // RGB into unpremultiplied / luminance / matte runs in the readback
-  // overlay pass instead of here.
+  // RGB into unpremultiplied / luminance / matte runs in the presenter
+  // (finalizeGpuRenderToViewport) into tempUAV, using the existing straight
+  // conversion and displayComposite modes 4 / 5.
   case ViewportChannelDisplayMode::Unpremultiplied:
   case ViewportChannelDisplayMode::Luminance:
   case ViewportChannelDisplayMode::Matte:
@@ -52719,6 +52816,26 @@ void CompositionRenderController::Impl::drawViewportCanvasOverlay(
 
   ViewportOverlay::drawSafeAreaAndOrigin(
       renderer_.get(), cw, ch, showSafeMargins_, showOriginOverlay_);
+  // P1-14: display-only aspect mask, applied in canvas space so pan / zoom /
+  // canvas rotation keep the mask aligned with the composition.
+  {
+    const float aspectMaskRatio = [this]() -> float {
+      switch (viewportAspectMask_) {
+      case CompositionViewportAspectMask::Square:
+        return 1.0f;
+      case CompositionViewportAspectMask::FourByThree:
+        return 4.0f / 3.0f;
+      case CompositionViewportAspectMask::SixteenByNine:
+        return 16.0f / 9.0f;
+      case CompositionViewportAspectMask::Cinemascope:
+        return 2.39f;
+      case CompositionViewportAspectMask::Off:
+      default:
+        return 0.0f;
+      }
+    }();
+    ViewportOverlay::drawAspectMask(renderer_.get(), cw, ch, aspectMaskRatio);
+  }
   ViewportOverlay::drawPixelGrid(renderer_.get(), cw, ch, zoom,
                                  showPixelGrid_);
   ViewportOverlay::drawCompositionBoundary(renderer_.get(), cw, ch,
