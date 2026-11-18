@@ -209,6 +209,30 @@ W_OBJECT_IMPL(ArtifactCompositionEditor)
 Q_LOGGING_CATEGORY(compositionViewLog, "artifact.compositionview");
 
 namespace {
+class ViewportStateMenu final : public QMenu {
+public:
+  using HideHandler = std::function<void()>;
+
+  explicit ViewportStateMenu(QWidget *parent = nullptr) : QMenu(parent) {}
+  explicit ViewportStateMenu(const QString &title, QWidget *parent = nullptr)
+      : QMenu(title, parent) {}
+
+  void setHideHandler(HideHandler handler) {
+    hideHandler_ = std::move(handler);
+  }
+
+protected:
+  void hideEvent(QHideEvent *event) override {
+    QMenu::hideEvent(event);
+    if (hideHandler_) {
+      hideHandler_();
+    }
+  }
+
+private:
+  HideHandler hideHandler_;
+};
+
 QString trackerPanelText(const QString& key, const QString& fallback) {
   return TranslationManager::instance().tr(
       QStringLiteral("tracker.panel.") + key, fallback);
@@ -1543,11 +1567,10 @@ public:
             static_cast<CompositionViewportLayerCategoryMask>(
                 CompositionViewportLayerCategory::All));
     });
-    // P1-6: Autograph-style channel display variants. The post-process
-    // step that turns the RGB SRV into unpremultiplied / luminance /
-    // matte is owned by the readback overlay pass; the controller just
-    // stores the selected mode and the sync helper decides which SRV is
-    // active.
+    // P1-6: Autograph-style channel display variants. The presenter turns
+    // the RGB SRV into unpremultiplied / luminance / matte and exposes the
+    // result as the channel display SRV; the controller stores the mode and
+    // the sync helper decides which SRV is active.
     add(QStringLiteral("View: Channel Straight (Unpremultiplied)"), [this]() {
       if (controller_)
         controller_->setViewportChannelDisplayMode(
@@ -14219,7 +14242,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     pal.setColor(QPalette::ButtonText, QColor(theme.textColor));
     impl_->shadingButton_->setPalette(pal);
   }
-  auto *shadingMenu = new QMenu(this);
+  auto *shadingMenu = new ViewportStateMenu(this);
   polishEditorMenu(shadingMenu, this);
   auto *channelGroup = new QActionGroup(shadingMenu);
   channelGroup->setExclusive(true);
@@ -14361,6 +14384,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     QAction *action = shadingMenu->addAction(text);
     action->setCheckable(true);
     action->setChecked(checked);
+    action->setData(static_cast<int>(mode));
     meshShadingGroup->addAction(action);
     QObject::connect(action, &QAction::triggered, this, [this, mode]() {
       if (!impl_) {
@@ -14385,7 +14409,41 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   QAction *meshShadingWireOnShadedAct = addMeshShadingAction(
       QStringLiteral("Wireframe on Shaded"),
       CompositionViewportShadingMode::WireframeOnShaded, false);
+  QAction *meshShadingBoundsAct = shadingMenu->addAction(
+      QStringLiteral("Bounding Box"));
+  meshShadingBoundsAct->setCheckable(true);
+  meshShadingBoundsAct->setData(
+      static_cast<int>(CompositionViewportShadingMode::BoundingBox));
+  meshShadingGroup->addAction(meshShadingBoundsAct);
   shadingMenu->addSeparator();
+  // P1-14: display-only aspect mask presets. The menu applies its checked
+  // preset from ViewportStateMenu::hideEvent without a signal connection.
+  auto *aspectMaskMenu = new ViewportStateMenu(QStringLiteral("Aspect Mask"),
+                                               shadingMenu);
+  shadingMenu->addMenu(aspectMaskMenu);
+  auto *aspectMaskGroup = new QActionGroup(aspectMaskMenu);
+  aspectMaskGroup->setExclusive(true);
+  const auto addAspectMaskAction = [this, aspectMaskMenu, aspectMaskGroup](
+                                       const QString &text,
+                                       CompositionViewportAspectMask mask,
+                                       bool checked) {
+    QAction *action = aspectMaskMenu->addAction(text);
+    action->setCheckable(true);
+    action->setChecked(checked);
+    action->setData(static_cast<int>(mask));
+    aspectMaskGroup->addAction(action);
+    return action;
+  };
+  QAction *aspectMaskOffAct = addAspectMaskAction(
+      QStringLiteral("Off"), CompositionViewportAspectMask::Off, true);
+  QAction *aspectMaskSquareAct = addAspectMaskAction(
+      QStringLiteral("1:1"), CompositionViewportAspectMask::Square, false);
+  QAction *aspectMask43Act = addAspectMaskAction(
+      QStringLiteral("4:3"), CompositionViewportAspectMask::FourByThree, false);
+  QAction *aspectMask169Act = addAspectMaskAction(
+      QStringLiteral("16:9"), CompositionViewportAspectMask::SixteenByNine, false);
+  QAction *aspectMaskCineAct = addAspectMaskAction(
+      QStringLiteral("2.39:1"), CompositionViewportAspectMask::Cinemascope, false);
   QAction *shadeGridAct = shadingMenu->addAction(QStringLiteral("Grid"));
   QAction *shadeGuidesAct = shadingMenu->addAction(QStringLiteral("Guides"));
   QAction *shadeSafeAreaAct = shadingMenu->addAction(QStringLiteral("Safe Area"));
@@ -14402,11 +14460,15 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   QAction *shadeXRayAct = shadingMenu->addAction(QStringLiteral("X-Ray"));
   QAction *shadeIsolationAct =
       shadingMenu->addAction(QStringLiteral("Isolate Selected"));
+  // P1-4: viewport-only backface culling. No ShortcutId yet (would require an
+  // ArtifactCore interface change); the menu is the sole toggle for now.
+  QAction *shadeBackfaceCullingAct =
+      shadingMenu->addAction(QStringLiteral("Backface Culling"));
   for (QAction *action : {shadeGridAct, shadeGuidesAct, shadeSafeAreaAct,
                           shadeMotionPathAct, shadeEffectHitboxAct,
                           shadeAnchorCenterAct, shadeCameraFrustumAct,
                           shadeDensityHeatmapAct, shadeGizmoAct, shadeXRayAct,
-                          shadeIsolationAct}) {
+                          shadeIsolationAct, shadeBackfaceCullingAct}) {
     action->setCheckable(true);
   }
   impl_->xRayAction_ = shadeXRayAct;
@@ -14525,6 +14587,53 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
       QStringLiteral("Toggle isolation mode to show only the selected layer (%1)")
           .arg(ArtifactCore::ShortcutBindings::instance().shortcutText(
               ArtifactCore::ShortcutId::ViewToggleIsolation)));
+  shadeBackfaceCullingAct->setToolTip(
+      QStringLiteral("Cull back faces of 3D meshes in this viewport only"));
+  aspectMaskMenu->setHideHandler([this, aspectMaskGroup]() {
+    if (!impl_) {
+      return;
+    }
+    QAction *action = aspectMaskGroup->checkedAction();
+    if (!action) {
+      return;
+    }
+    const auto mask = static_cast<CompositionViewportAspectMask>(
+        action->data().toInt());
+    if (auto *controller = impl_->renderController_) {
+      controller->setViewportAspectMask(mask);
+    }
+    impl_->forEachActiveSecondaryController(
+        [mask](CompositionRenderController *controller) {
+          controller->setViewportAspectMask(mask);
+        });
+    impl_->refreshViewportStateLabels();
+  });
+  shadingMenu->setHideHandler(
+      [this, meshShadingGroup, shadeBackfaceCullingAct]() {
+        if (!impl_) {
+          return;
+        }
+        if (QAction *action = meshShadingGroup->checkedAction()) {
+          const auto mode = static_cast<CompositionViewportShadingMode>(
+              action->data().toInt());
+          if (auto *controller = impl_->renderController_) {
+            controller->setViewportShadingMode(mode);
+          }
+          impl_->forEachActiveSecondaryController(
+              [mode](CompositionRenderController *controller) {
+                controller->setViewportShadingMode(mode);
+              });
+        }
+        const bool cullingEnabled = shadeBackfaceCullingAct->isChecked();
+        if (auto *controller = impl_->renderController_) {
+          controller->setViewportBackfaceCulling(cullingEnabled);
+        }
+        impl_->forEachActiveSecondaryController(
+            [cullingEnabled](CompositionRenderController *controller) {
+              controller->setViewportBackfaceCulling(cullingEnabled);
+            });
+        impl_->refreshViewportStateLabels();
+      });
   QObject::connect(gridAct, &QAction::toggled, shadeGridAct, &QAction::setChecked);
   QObject::connect(guidesAct, &QAction::toggled, shadeGuidesAct,
                    &QAction::setChecked);
@@ -14668,9 +14777,21 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
           viewportShadingMode == CompositionViewportShadingMode::Wireframe);
       meshShadingWireOnShadedAct->setChecked(
           viewportShadingMode == CompositionViewportShadingMode::WireframeOnShaded);
+      meshShadingBoundsAct->setChecked(
+          viewportShadingMode == CompositionViewportShadingMode::BoundingBox);
     }
     shadeIsolationAct->setChecked(
         impl_->renderController_->isShowIsolationOverlay());
+    shadeBackfaceCullingAct->setChecked(
+        impl_->renderController_->isViewportBackfaceCulling());
+    {
+      const auto mask = impl_->renderController_->viewportAspectMask();
+      aspectMaskOffAct->setChecked(mask == CompositionViewportAspectMask::Off);
+      aspectMaskSquareAct->setChecked(mask == CompositionViewportAspectMask::Square);
+      aspectMask43Act->setChecked(mask == CompositionViewportAspectMask::FourByThree);
+      aspectMask169Act->setChecked(mask == CompositionViewportAspectMask::SixteenByNine);
+      aspectMaskCineAct->setChecked(mask == CompositionViewportAspectMask::Cinemascope);
+    }
     impl_->refreshViewportStateLabels();
   }
 
