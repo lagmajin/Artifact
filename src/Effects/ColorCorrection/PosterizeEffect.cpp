@@ -9,6 +9,7 @@ module;
 #include <QDebug>
 #include <QtGlobal>
 #include <vector>
+#include "ExperimentalContourPosterShader.hpp"
 #include <opencv2/opencv.hpp>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
@@ -32,6 +33,104 @@ import Memory.SharedPtr;
 
 namespace Artifact {
 
+namespace {
+void applyContourPoster(const ImageF32x4RGBAWithCache& src,
+                        ImageF32x4RGBAWithCache& dst, float levels,
+                        float lineStrength, float lineRadiusPx) {
+    float* pixels = dst.image().rgba32fData();
+    if (!pixels) return;
+    const int width = dst.image().width();
+    const int height = dst.image().height();
+    if (width <= 0 || height <= 0) return;
+    const float count = std::clamp(levels, 2.0f, 64.0f);
+    const float strength = std::clamp(lineStrength, 0.0f, 1.0f);
+    const float radius = std::clamp(lineRadiusPx, 0.5f, 1.5f);
+    const bool processed = ArtifactCore::withColorFloat4View(
+        src.image().surfaceView(), [&](const auto& sourceView) {
+        const bool written = ArtifactCore::withMutableColorFloat4View(
+            dst.image().surfaceView(), pixels, [&](auto& view) {
+            ArtifactCore::Parallel::ForPixels(0, height, width, height,
+                [&](int y) {
+                    const auto sourceRow = [&](int sy) {
+                        return sourceView.row(std::clamp(sy, 0, height - 1));
+                    };
+                    const auto logicalPixel = [&](int sx, int sy) {
+                        return sourceRow(sy)[std::clamp(sx, 0, width - 1)];
+                    };
+                    const auto domainAt = [&](int sx, int sy) {
+                        const auto sample = logicalPixel(sx, sy);
+                        if (sample.a <= 1.0e-6f) return 0.0f;
+                        const float inverseAlpha = 1.0f / sample.a;
+                        const float luminance = std::max(0.0f,
+                            (sample.r * 0.2126f + sample.g * 0.7152f +
+                             sample.b * 0.0722f) * inverseAlpha);
+                        return std::sqrt(luminance);
+                    };
+                    const auto weightedDelta = [&](int sx, int sy, float centerDomain) {
+                        const auto sample = logicalPixel(sx, sy);
+                        const float alpha = std::clamp(sample.a, 0.0f, 1.0f);
+                        if (alpha <= 1.0e-6f) return 0.0f;
+                        const float u = std::clamp(
+                            (alpha - 1.0e-6f) / 1.0e-6f, 0.0f, 1.0f);
+                        const float confidence = u * u * (3.0f - 2.0f * u);
+                        return alpha * confidence * (domainAt(sx, sy) - centerDomain);
+                    };
+                    auto row = view.row(y);
+                    for (int x = 0; x < width; ++x) {
+                        const auto center = row[x];
+                        const float alpha = std::clamp(center.a, 0.0f, 1.0f);
+                        if (alpha <= 1.0e-6f) continue;
+                        const float inverseAlpha = 1.0f / alpha;
+                        const float r = center.r * inverseAlpha;
+                        const float g = center.g * inverseAlpha;
+                        const float b = center.b * inverseAlpha;
+                        const float luminance = std::max(0.0f,
+                            r * 0.2126f + g * 0.7152f + b * 0.0722f);
+                        const float domain = std::sqrt(luminance);
+                        const float quantized = std::floor(domain * count + 0.5f) / count;
+                        const float quantizedLuminance = quantized * quantized;
+                        const float ratio = luminance > 1.0e-8f
+                            ? quantizedLuminance / luminance : 0.0f;
+                        const float gx = 0.5f * (
+                            weightedDelta(x + 1, y, domain) -
+                            weightedDelta(x - 1, y, domain));
+                        const float gy = 0.5f * (
+                            weightedDelta(x, y + 1, domain) -
+                            weightedDelta(x, y - 1, domain));
+                        const float gradient = std::sqrt(gx * gx + gy * gy);
+                        const float phase = std::abs(std::fmod(domain * count + 0.5f, 1.0f) - 0.5f);
+                        const float distance = gradient > 1.0e-6f
+                            ? (phase / count) / gradient : 1.0e20f;
+                        const float line = std::clamp(
+                            (radius - distance) / (radius * 0.5f), 0.0f, 1.0f);
+                        const float u = std::clamp((alpha - 1.0e-6f) / 1.0e-6f, 0.0f, 1.0f);
+                        const float confidence = u * u * (3.0f - 2.0f * u);
+                        const float processed = ratio * (1.0f - strength * line);
+                        const float output = (1.0f - confidence) + confidence * processed;
+                        row[x].r = center.r * output;
+                        row[x].g = center.g * output;
+                        row[x].b = center.b * output;
+                    }
+                });
+            });
+        (void)written;
+    });
+    (void)processed;
+}
+} // namespace
+
+class ExperimentalContourPosterCPUImpl final : public ArtifactEffectImplBase {
+public:
+    float levels_ = 6.0f;
+    float lineStrength_ = 0.8f;
+    float lineRadiusPx_ = 1.0f;
+    void applyCPU(const ImageF32x4RGBAWithCache& src,
+                  ImageF32x4RGBAWithCache& dst) override {
+        dst = src;
+        applyContourPoster(src, dst, levels_, lineStrength_, lineRadiusPx_);
+    }
+};
+
 class PosterizeEffectCPUImpl : public ArtifactEffectImplBase {
 public:
     float levels_ = 4.0f;
@@ -48,7 +147,8 @@ public:
         const float n = std::max(2.0f, levels_);
         const float denom = n - 1.0f;
 
-        ArtifactCore::withMutableColorFloat4View(dst.image().surfaceView(), pixels, [&](auto& view) {
+        const bool processed = ArtifactCore::withMutableColorFloat4View(
+            dst.image().surfaceView(), pixels, [&](auto& view) {
             ArtifactCore::Parallel::ForPixels(0, height, width, height, [&](int y) {
             auto row = view.row(y);
             for (int x = 0; x < width; ++x) {
@@ -60,6 +160,7 @@ public:
             }
             });
         });
+        (void)processed;
     }
 };
 
@@ -334,12 +435,87 @@ std::vector<AbstractProperty> PosterizeEffect::getProperties() const {
     props[0].setName("Levels");
     props[0].setType(ArtifactCore::PropertyType::Float);
     props[0].setValue(QVariant(static_cast<double>(levels_)));
-
     return props;
 }
 
 void PosterizeEffect::setPropertyValue(const UniString& name, const QVariant& value) {
     if (name == "Levels") setLevels(value.toFloat());
+}
+
+ExperimentalContourPosterEffect::ExperimentalContourPosterEffect() {
+    setEffectID(UniString("effect.colorcorrection.contour_poster"));
+    setDisplayName(UniString("Contour Poster"));
+    setPipelineStage(EffectPipelineStage::Rasterizer);
+    setCPUImpl(ArtifactCore::makeShared<ExperimentalContourPosterCPUImpl>());
+    setComputeMode(ComputeMode::AUTO);
+    registerGpuGenericShader(kGpuGenericKey,
+        GpuGenericShaderRecord{kExperimentalContourPosterResidentShader,
+                               "main", GpuGenericResourceKind::Filter});
+}
+
+ExperimentalContourPosterEffect::~ExperimentalContourPosterEffect() = default;
+
+void ExperimentalContourPosterEffect::setLevels(float value) {
+    levels_ = std::isfinite(value) ? std::clamp(value, 2.0f, 64.0f) : 6.0f;
+    syncImpls();
+}
+
+void ExperimentalContourPosterEffect::setLineStrength(float value) {
+    lineStrength_ = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 0.8f;
+    syncImpls();
+}
+
+void ExperimentalContourPosterEffect::setLineRadiusPx(float value) {
+    lineRadiusPx_ = std::isfinite(value) ? std::clamp(value, 0.5f, 1.5f) : 1.0f;
+    syncImpls();
+}
+
+void ExperimentalContourPosterEffect::syncImpls() {
+    if (auto cpu = ArtifactCore::dynamicPointerCast<ExperimentalContourPosterCPUImpl>(cpuImpl()))
+    {
+        cpu->levels_ = levels_;
+        cpu->lineStrength_ = lineStrength_;
+        cpu->lineRadiusPx_ = lineRadiusPx_;
+    }
+}
+
+std::vector<AbstractProperty> ExperimentalContourPosterEffect::getProperties() const {
+    std::vector<AbstractProperty> props(3);
+    props[0].setName("Levels");
+    props[0].setType(ArtifactCore::PropertyType::Float);
+    props[0].setValue(QVariant(static_cast<double>(levels_)));
+    props[0].setDefaultValue(QVariant(6.0));
+    props[0].setMinValue(QVariant(2.0));
+    props[0].setMaxValue(QVariant(64.0));
+    props[0].setHardRange(QVariant(2.0), QVariant(64.0));
+    props[1].setName("Line Strength");
+    props[1].setType(ArtifactCore::PropertyType::Float);
+    props[1].setValue(QVariant(static_cast<double>(lineStrength_)));
+    props[1].setDefaultValue(QVariant(0.8));
+    props[1].setMinValue(QVariant(0.0));
+    props[1].setMaxValue(QVariant(1.0));
+    props[1].setHardRange(QVariant(0.0), QVariant(1.0));
+    props[2].setName("Line Radius");
+    props[2].setType(ArtifactCore::PropertyType::Float);
+    props[2].setValue(QVariant(static_cast<double>(lineRadiusPx_)));
+    props[2].setDefaultValue(QVariant(1.0));
+    props[2].setMinValue(QVariant(0.5));
+    props[2].setMaxValue(QVariant(1.5));
+    props[2].setHardRange(QVariant(0.5), QVariant(1.5));
+    return props;
+}
+
+void ExperimentalContourPosterEffect::setPropertyValue(
+    const UniString& name, const QVariant& value) {
+    if (name == "Levels") {
+        setLevels(value.toFloat());
+    } else if (name == "Line Strength") {
+        setLineStrength(value.toFloat());
+    } else if (name == "Line Radius") {
+        setLineRadiusPx(value.toFloat());
+    } else {
+        ArtifactAbstractEffect::setPropertyValue(name, value);
+    }
 }
 
 } // namespace Artifact

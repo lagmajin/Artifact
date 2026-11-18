@@ -384,6 +384,9 @@ W_OBJECT_IMPL(ArtifactEffectService)
   if (effectId == QStringLiteral("effect.colorcorrection.posterize")) {
    return std::make_unique<PosterizeEffect>();
   }
+  if (effectId == QStringLiteral("effect.colorcorrection.contour_poster")) {
+   return std::make_unique<ExperimentalContourPosterEffect>();
+  }
   if (effectId == QStringLiteral("effect.colorcorrection.threshold") ||
       effectId == QStringLiteral("threshold")) {
    return std::make_unique<ThresholdEffect>();
@@ -1363,6 +1366,7 @@ W_OBJECT_IMPL(ArtifactEffectService)
   effects.push_back({EffectID("effect.colorcorrection.invert"), "Invert"});
   effects.push_back({EffectID("effect.colorcorrection.vibrance"), "Vibrance"});
   effects.push_back({EffectID("effect.colorcorrection.posterize"), "Posterize"});
+  effects.push_back({EffectID("effect.colorcorrection.contour_poster"), "Experimental Contour Poster"});
   effects.push_back({EffectID("effect.colorcorrection.threshold"), "Threshold"});
   effects.push_back({EffectID("effect.colorcorrection.colortint"), "Color Tint"});
   effects.push_back({EffectID("effect.colorcorrection.lut"), "Apply LUT"});

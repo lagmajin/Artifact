@@ -7,6 +7,7 @@ module;
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <typeindex>
 #include <utility>
 #include <QByteArray>
 #include <QChar>
@@ -65,6 +66,7 @@ import Artifact.Layer.Abstract;
 import Artifact.Layer.CloneEffectSupport;
 import Artifact.Layer.Factory;
 import Artifact.Effect.Abstract;
+import PosterizeEffect;
 import LUTEffect;
 import ColorBalanceEffect;
 import TritoneEffect;
@@ -2127,6 +2129,8 @@ SharedPtr<ArtifactAbstractEffect> deserializeEffect(const QJsonObject& eobj)
   } else if (matchesSerializedEffectTypeId(
                  effectId, QStringLiteral("effect.colorcorrection.colorbalance"))) {
     effect = makeShared<ColorBalanceEffect>();
+  } else if (effectId == QStringLiteral("effect.colorcorrection.contour_poster")) {
+    effect = makeShared<ExperimentalContourPosterEffect>();
   } else if (matchesSerializedEffectTypeId(
                  effectId, QStringLiteral("effect.colorcorrection.tritone"))) {
     effect = makeShared<TritoneEffect>();
