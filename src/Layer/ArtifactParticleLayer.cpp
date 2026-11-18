@@ -895,17 +895,12 @@ public:
                     const QPointF point(
                         triangle.p0.x() * w0 + triangle.p1.x() * w1 + triangle.p2.x() * w2,
                         triangle.p0.y() * w0 + triangle.p1.y() * w1 + triangle.p2.y() * w2);
-                    bool visibleShapePoint = shapeFillPaths.empty() &&
-                        dynamic_cast<const ArtifactShapeLayer*>(target) == nullptr;
-                    for (const auto& path : shapeFillPaths) {
-                        if (path.contains(point)) {
-                            visibleShapePoint = true;
-                            break;
-                        }
-                    }
-                    if (visibleShapePoint) {
-                        localShapeTargetPoints.append(point);
-                    }
+                    // Shape triangles come from the normalized visible-fill
+                    // path, whose triangulation already honors fill rules and
+                    // holes. ShapePath::contains() flattens that same geometry
+                    // on every call, so repeating it for up to 4096 samples
+                    // adds work without changing the accepted region.
+                    localShapeTargetPoints.append(point);
                 }
             }
         }
