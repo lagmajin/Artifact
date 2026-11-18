@@ -5491,6 +5491,112 @@ void ArtifactTimelineWidget::applyAnimationPreset(
   }
 }
 
+void ArtifactTimelineWidget::applyQuickMotion(QuickMotionRecipe recipe)
+{
+  if (!impl_) {
+    return;
+  }
+
+  ArtifactCompositionPtr composition;
+  if (auto *svc = ArtifactProjectService::instance()) {
+    composition = svc->currentComposition().lock();
+  }
+  if (!composition || !impl_->layerTimelinePanel_) {
+    return;
+  }
+
+  ArtifactLayerSelectionManager *selectionManager = nullptr;
+  if (auto *app = ArtifactApplicationManager::instance()) {
+    selectionManager = app->layerSelectionManager();
+  }
+
+  const auto selectedLayers = selectedTimelineLayers(selectionManager);
+  const auto selectedMarkers =
+      impl_->painterTrackView_ ? impl_->painterTrackView_->selectedKeyframeMarkers()
+                               : QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>();
+  QString propertyPath = selectedPropertyPathForKeyPattern(
+      impl_->layerTimelinePanel_, impl_->painterTrackView_->keyframeMarkersView(),
+      selectedMarkers);
+  // Unlike applyAnimationPreset(), a recipe still works when no timeline
+  // property is focused. Position is the most common motion target.
+  if (propertyPath.isEmpty()) {
+    propertyPath = QStringLiteral("transform.position.x");
+  }
+
+  const auto targets = collectKeyPatternTargets(selectedLayers, propertyPath);
+  if (targets.isEmpty()) {
+    timelineDebugMessage(
+        QStringLiteral("Quick Motion needs at least one selected layer."));
+    return;
+  }
+
+  const double compositionFps = safeTimelineFrameRate(
+      static_cast<double>(composition->frameRate().framerate()), 60.0);
+  ArtifactCore::KeyframePatternRequest request;
+  request.startFrame = std::max(0.0, impl_->currentFrame_);
+  request.phase = 0.0;
+  request.frameScale = static_cast<int>(timelineFrameRateScale(composition));
+  request.seed = static_cast<quint32>(
+      std::max(1.0, std::round(impl_->currentFrame_)));
+  request.bpm = compositionFps * 2.0;
+
+  switch (recipe) {
+  case QuickMotionRecipe::PopIn:
+    request.preset = ArtifactCore::KeyframePatternPreset::Overshoot;
+    request.endFrame = request.startFrame + 14.0;
+    request.amplitude = 48.0;
+    request.sampleCount = 8;
+    break;
+  case QuickMotionRecipe::SnapBack:
+    request.preset = ArtifactCore::KeyframePatternPreset::Settle;
+    request.endFrame = request.startFrame + 18.0;
+    request.amplitude = 32.0;
+    request.damping = 6.0;
+    request.settleOscillation = 2.0;
+    request.sampleCount = 10;
+    break;
+  case QuickMotionRecipe::StaggerWave:
+  default:
+    request.preset = ArtifactCore::KeyframePatternPreset::Stagger;
+    request.endFrame = request.startFrame + 24.0;
+    request.amplitude = 72.0;
+    request.delayFrames = 4.0;
+    break;
+  }
+
+  if (const auto firstLayer = targets.front().layer) {
+    if (const auto property = firstLayer->getProperty(propertyPath)) {
+      request.baseValue = property->getValue();
+      bool ok = false;
+      const double baseNumeric = request.baseValue.toDouble(&ok);
+      if (ok) {
+        request.targetValue = QVariant(baseNumeric + std::max(1.0, request.amplitude));
+      } else {
+        request.targetValue = request.baseValue;
+      }
+    }
+  }
+
+  QString message;
+  QPointer<ArtifactTimelineWidget> self(this);
+  if (applyKeyPatternToTargets(
+          composition, targets, request, &message,
+          [self]() {
+            if (!self) {
+              return;
+            }
+            self->refreshTracks();
+            self->updateKeyframeState();
+            self->updateSelectionState();
+          })) {
+    if (!message.isEmpty()) {
+      timelineDebugMessage(message);
+    }
+  } else if (!message.isEmpty()) {
+    timelineDebugMessage(message);
+  }
+}
+
 void ArtifactTimelineWidget::applyKeyPattern(
     const ArtifactCore::KeyframePatternRequest &request)
 {

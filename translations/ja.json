@@ -363,6 +363,10 @@
       "bake_live": "現在PropertyをキーフレームにBake...",
       "preset_menu": "アニメーションプリセット(&P)",
       "preset_library": "プリセットライブラリ",
+      "quick_motion_menu": "クイックモーション",
+      "quick_motion_pop_in": "ポップイン",
+      "quick_motion_snap_back": "スナップバック",
+      "quick_motion_stagger_wave": "スタッガーウェーブ",
       "preset_save": "アニメーションプリセットを保存...",
       "preset_apply": "アニメーションプリセットを適用..."
     },

@@ -116,6 +116,15 @@ class ArtifactTimelineWidget :public QWidget {
   void showSpeedGraph();
   void showKeyPatternDialog();
   void applyAnimationPreset(const ArtifactCore::KeyframePatternPreset preset);
+  // Curated one-click recipes: a tuned keyframe pattern applied to every
+  // selected layer, recorded as a single undo step. Uses the focused timeline
+  // property, or transform.position.x when no property is focused.
+  enum class QuickMotionRecipe {
+    PopIn,
+    SnapBack,
+    StaggerWave
+  };
+  void applyQuickMotion(QuickMotionRecipe recipe);
   void applyKeyPattern(const ArtifactCore::KeyframePatternRequest& request);
   bool applyTrajectoryToProperty(const LayerID& layerId,
                                  const QString& propertyPath,

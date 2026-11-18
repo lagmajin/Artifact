@@ -363,6 +363,10 @@
       "bake_live": "Bake Current Property to Keyframes...",
       "preset_menu": "Animation Preset(&P)",
       "preset_library": "Preset Library",
+      "quick_motion_menu": "Quick Motion",
+      "quick_motion_pop_in": "Pop In",
+      "quick_motion_snap_back": "Snap Back",
+      "quick_motion_stagger_wave": "Stagger Wave",
       "preset_save": "Save Animation Preset...",
       "preset_apply": "Apply Animation Preset..."
     },

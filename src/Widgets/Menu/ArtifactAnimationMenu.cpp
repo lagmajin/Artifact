@@ -960,6 +960,8 @@ bool hasActiveExpressionTarget(QWidget* root)
   QMenu* presetMenu = nullptr;
   QMenu* presetLibraryMenu = nullptr;
   QHash<QAction*, ArtifactCore::KeyframePatternPreset> presetLibraryActions_;
+  QMenu* quickMotionMenu = nullptr;
+  QHash<QAction*, ArtifactTimelineWidget::QuickMotionRecipe> quickMotionActions_;
 
   void refreshEnabledState();
   void requestRefreshEnabledState();
@@ -1119,6 +1121,9 @@ bool hasActiveExpressionTarget(QWidget* root)
   }
   if (presetLibraryMenu) {
    presetLibraryMenu->setEnabled(hasLayer);
+  }
+  if (quickMotionMenu) {
+   quickMotionMenu->setEnabled(hasLayer);
   }
 }
 
@@ -1511,6 +1516,31 @@ bool hasActiveExpressionTarget(QWidget* root)
 
   impl_->presetMenu->addSeparator();
 
+  impl_->quickMotionMenu = impl_->presetMenu->addMenu(TranslationManager::instance().tr(QStringLiteral("menu.animation.quick_motion_menu"), QStringLiteral("クイックモーション")));
+  impl_->quickMotionMenu->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_animation.svg")));
+  impl_->quickMotionMenu->setAccessibleName(QStringLiteral("Quick Motion"));
+  impl_->quickMotionMenu->setAccessibleDescription(QStringLiteral("Apply a tuned motion recipe to all selected layers"));
+  const auto addQuickMotionAction = [this](const QString& label,
+                                           const ArtifactTimelineWidget::QuickMotionRecipe recipe) {
+    QAction* action = impl_->quickMotionMenu->addAction(label);
+    action->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_animation.svg")));
+    action->setToolTip(QStringLiteral("Quick Motion: %1").arg(label));
+    action->setStatusTip(QStringLiteral("Apply a tuned motion recipe to selected layers"));
+    impl_->quickMotionActions_.insert(action, recipe);
+    return action;
+  };
+  addQuickMotionAction(
+      TranslationManager::instance().tr(QStringLiteral("menu.animation.quick_motion_pop_in"), QStringLiteral("ポップイン")),
+      ArtifactTimelineWidget::QuickMotionRecipe::PopIn);
+  addQuickMotionAction(
+      TranslationManager::instance().tr(QStringLiteral("menu.animation.quick_motion_snap_back"), QStringLiteral("スナップバック")),
+      ArtifactTimelineWidget::QuickMotionRecipe::SnapBack);
+  addQuickMotionAction(
+      TranslationManager::instance().tr(QStringLiteral("menu.animation.quick_motion_stagger_wave"), QStringLiteral("スタッガーウェーブ")),
+      ArtifactTimelineWidget::QuickMotionRecipe::StaggerWave);
+
+  impl_->presetMenu->addSeparator();
+
   impl_->saveAnimationPresetAction = impl_->presetMenu->addAction(TranslationManager::instance().tr(QStringLiteral("menu.animation.preset_save"), QStringLiteral("アニメーションプリセットを保存...")));
   impl_->saveAnimationPresetAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_save.svg")));
   impl_->saveAnimationPresetAction->setToolTip(QStringLiteral("Save Animation Preset"));
@@ -1730,6 +1760,12 @@ bool hasActiveExpressionTarget(QWidget* root)
   if (impl_->presetLibraryActions_.contains(action)) {
     if (auto* timeline = activeTimelineWidget(impl_ && impl_->menu_ ? impl_->menu_->window() : nullptr)) {
       timeline->applyAnimationPreset(impl_->presetLibraryActions_.value(action));
+    }
+    return;
+  }
+  if (impl_->quickMotionActions_.contains(action)) {
+    if (auto* timeline = activeTimelineWidget(impl_ && impl_->menu_ ? impl_->menu_->window() : nullptr)) {
+      timeline->applyQuickMotion(impl_->quickMotionActions_.value(action));
     }
     return;
   }
