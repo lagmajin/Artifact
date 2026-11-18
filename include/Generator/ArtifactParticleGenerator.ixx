@@ -1,4 +1,5 @@
 ﻿module;
+#include <cstddef>
 #include <memory>
 #include <vector>
 #include <cstdint>
@@ -45,6 +46,7 @@ export module Artifact.Generator.Particle;
 
 
 import Graphics.ParticleData;
+import Core.ArtifactArray;
 
 W_REGISTER_ARGTYPE(QVector2D)
 W_REGISTER_ARGTYPE(QVector3D)
@@ -470,6 +472,10 @@ private:
     EmitterParams params_;
     std::vector<Particle> particles_;
     std::vector<std::unique_ptr<ParticleEffector>> effectors_;
+    // Optional 2D layer-owned shape target. Points are prepared on the layer
+    // evaluation boundary; the fixed-step loop only reads this bounded array.
+    ArtifactCore::ArtifactArray<QVector3D> shapeTargetPoints_;
+    float shapeTargetStrength_ = 0.0f;
     std::vector<QVector3D> emissionTriangleVertices_;
     std::vector<float> emissionCumulativeAreas_;
     float emissionTotalArea_ = 0.0f;
@@ -494,6 +500,11 @@ public:
     bool hasEmissionTriangles() const noexcept {
         return emissionTotalArea_ > 0.0f;
     }
+    // Replaces the optional deterministic shape target used by the 2D layer.
+    // Call only at a layer evaluation boundary; the simulation step reads the
+    // prepared points without allocating or querying layer geometry.
+    void setShapeTargetPoints(const QVector3D* points, std::size_t pointCount,
+                              float strength);
     void setParams(const EmitterParams& p) {
         params_ = p;
         params_.shape = static_cast<EmitterShape>(

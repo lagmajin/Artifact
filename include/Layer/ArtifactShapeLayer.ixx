@@ -386,6 +386,8 @@ public:
 
   // Backend-neutral geometry after applying the current operator stack.
   std::vector<ArtifactCore::ShapePath> nativeShapePaths() const;
+  std::vector<ArtifactCore::ShapePath> nativeShapeFillPathsForParticleTarget() const;
+  bool hasAnimatedGeometryForParticleTarget() const;
 
   // Convert the currently evaluated shape geometry into editable mask paths.
   // The shape layer itself remains unchanged; callers decide whether to add

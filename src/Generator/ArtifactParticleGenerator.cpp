@@ -66,6 +66,7 @@
 #include <random>
 module Artifact.Generator.Particle;
 
+import Core.ArtifactArray;
 
 
 
@@ -1155,6 +1156,26 @@ void ParticleEmitter::updateParticle(Particle& p, float deltaTime)
         p.velocity += QVector3D(noiseX, noiseY, noiseZ) * params_.turbulenceAmplitude * deltaTime * inverseMass;
     }
     p.velocity += p.acceleration * deltaTime;
+
+    if (shapeTargetStrength_ > 0.0f && !shapeTargetPoints_.isEmpty()) {
+        std::uint32_t destinationKey =
+            static_cast<std::uint32_t>(p.id) ^ params_.randomSeed;
+        destinationKey ^= destinationKey >> 16;
+        destinationKey *= 0x7feb352du;
+        destinationKey ^= destinationKey >> 15;
+        destinationKey *= 0x846ca68bu;
+        destinationKey ^= destinationKey >> 16;
+        const std::size_t targetIndex = destinationKey % shapeTargetPoints_.size();
+        const QVector3D offset = shapeTargetPoints_[targetIndex] - p.position;
+        const float distanceSquared = offset.lengthSquared();
+        const float acceleration = std::clamp(
+            shapeTargetStrength_, 0.0f, 100000.0f);
+        p.velocity -= p.velocity * std::min(1.5f * deltaTime, 1.0f);
+        if (std::isfinite(distanceSquared) && distanceSquared > 0.000001f) {
+            const float inverseDistance = 1.0f / std::sqrt(distanceSquared);
+            p.velocity += offset * (inverseDistance * acceleration * deltaTime);
+        }
+    }
     
     // Apply exponential drag. A linear factor such as (1 - drag * dt) can
     // reverse velocity at larger drag values; exp(-drag * dt) stays bounded
@@ -1251,6 +1272,24 @@ void ParticleEmitter::updateParticle(Particle& p, float deltaTime)
             emitAuxParticlesFromParticle(source, std::max(0, params_.auxCount));
         }
     }
+}
+
+void ParticleEmitter::setShapeTargetPoints(
+    const QVector3D* points, const std::size_t pointCount,
+    const float strength)
+{
+    constexpr std::size_t kMaxShapeTargetPoints = 4096;
+    const std::size_t count = points
+        ? std::min(pointCount, kMaxShapeTargetPoints)
+        : 0;
+    while (!shapeTargetPoints_.isEmpty()) shapeTargetPoints_.removeLast();
+    shapeTargetPoints_.reserve(count);
+    for (std::size_t i = 0; i < count; ++i) {
+        shapeTargetPoints_.append(points[i]);
+    }
+    shapeTargetStrength_ = std::isfinite(strength)
+        ? std::clamp(strength, 0.0f, 100000.0f)
+        : 0.0f;
 }
 
 void ParticleEmitter::applyEffectors(Particle& p, float deltaTime)

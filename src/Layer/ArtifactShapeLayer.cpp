@@ -3624,6 +3624,25 @@ std::vector<ArtifactCore::ShapePath> ArtifactShapeLayer::nativeShapePaths() cons
      impl_->shapeOperators_);
 }
 
+bool ArtifactShapeLayer::hasAnimatedGeometryForParticleTarget() const
+{
+  if (hasPathKeyframes() || hasAnimatedShapeGeometry(this) ||
+      hasAnimatedShapeOperators(this)) {
+    return true;
+  }
+  for (const auto& group : getLayerPropertyGroups()) {
+    for (const auto& property : group.allProperties()) {
+      if (!property || !property->hasKeyFrames()) continue;
+      const QString path = property->getName();
+      if (path.startsWith(QStringLiteral("shape.content.")) ||
+          path.startsWith(QStringLiteral("shape.operator."))) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 LayerMask ArtifactShapeLayer::createMaskFromShape() const
 {
   LayerMask mask;
@@ -5261,6 +5280,49 @@ static std::vector<GpuPaintItem> evaluateShapeStack(
     items.push_back(std::move(item));
   }
   return items;
+}
+
+std::vector<ArtifactCore::ShapePath>
+ArtifactShapeLayer::nativeShapeFillPathsForParticleTarget() const {
+  std::vector<ArtifactCore::ShapePath> paths;
+  if (!impl_) return paths;
+  QPainterPath visibleFillGeometry;
+  const auto appendPaths = [&visibleFillGeometry](
+      const std::vector<ArtifactCore::ShapePath>& sourcePaths) {
+    for (const auto& path : sourcePaths) {
+      visibleFillGeometry.addPath(path.toPainterPath());
+    }
+  };
+  if (impl_->shapeContents_.empty()) {
+    if (impl_->fillEnabled_) appendPaths(nativeShapePaths());
+  } else if (!impl_->shapeStackNodes_.empty()) {
+    const auto paintItems = evaluateShapeStack(
+        impl_->shapeStackNodes_, impl_->shapeContents_, impl_->shapeOperators_);
+    for (const auto& item : paintItems) {
+      if (!item.fill.enabled || item.itemOpacity <= 0.0f) continue;
+      appendPaths(item.fillPaths);
+    }
+  } else {
+    ensureContentVisPaths();
+    for (std::size_t contentIndex = 0;
+         contentIndex < impl_->shapeContents_.size(); ++contentIndex) {
+      const auto& content = impl_->shapeContents_[contentIndex];
+      if (!content.visible || content.opacity <= 0.0f || !content.fill.enabled ||
+          contentIndex >= impl_->contentCache_.visPaths.size()) {
+        continue;
+      }
+      appendPaths(impl_->contentCache_.visPaths[contentIndex]);
+    }
+  }
+
+  if (visibleFillGeometry.isEmpty()) return paths;
+  // Content caches expose separate contours. Recombine them before returning
+  // so ShapePath::triangulate can classify nested contours as holes instead
+  // of sampling each contour as an independent filled polygon.
+  const auto normalized = ArtifactCore::ShapePath::fromPainterPath(
+      visibleFillGeometry.simplified());
+  if (!normalized.isEmpty()) paths.push_back(normalized);
+  return paths;
 }
 
 // Unified GPU painter for gradient fills, Inside/Outside strokes and

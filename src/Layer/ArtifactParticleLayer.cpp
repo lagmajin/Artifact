@@ -59,6 +59,11 @@ import Artifact.Color.OCIOManager;
 import Artifact.Composition.Abstract;
 import Artifact.Render.IRenderer;
 import Artifact.Generator.Particle;
+import Artifact.Layer.Shape;
+import Artifact.Layer.Text;
+import Shape.Types;
+import Shape.Path;
+import Core.ArtifactArray;
 import Graphics.ParticleData;
 import Animation.Transform2D;
 import Animation.Transform3D;
@@ -138,6 +143,16 @@ QVector3D safeEffectorVector(const QVector3D& value)
         safeEffectorValue(value.x(), 0.0f, -1000000.0f, 1000000.0f),
         safeEffectorValue(value.y(), 0.0f, -1000000.0f, 1000000.0f),
         safeEffectorValue(value.z(), 0.0f, -1000000.0f, 1000000.0f));
+}
+
+std::uint32_t particleShapeTargetSeed(const QString& layerId)
+{
+    std::uint32_t hash = 2166136261u;
+    for (const QChar character : layerId) {
+        hash ^= character.unicode();
+        hash *= 16777619u;
+    }
+    return hash;
 }
 
 ArtifactCore::ParticleRenderData transformParticleRenderData(
@@ -578,6 +593,352 @@ public:
     int width = 1920;
     int height = 1080;
     int selectedEffectorIndex = -1;
+    bool shapeTargetEnabled = false;
+    ArtifactCore::LayerID shapeTargetLayerId;
+    float shapeTargetStrength = 180.0f;
+    ArtifactCore::ArtifactArray<QVector3D> shapeTargetPoints;
+    ArtifactCore::ArtifactArray<QPointF> localShapeTargetPoints;
+    ArtifactCore::ArtifactArray<ArtifactCore::PathTriangle> shapeTargetTriangles;
+    ArtifactCore::ArtifactArray<double> shapeTargetCumulativeAreas;
+    ArtifactCore::LayerID shapeTargetTriangleCacheLayerId;
+    std::uint64_t shapeTargetTriangleCacheRevision = 0;
+    bool shapeTargetTriangleCacheValid = false;
+    ArtifactCore::LayerID cachedShapeTargetLayerId;
+    std::uint64_t cachedShapeTargetRevision = 0;
+    ArtifactCore::LayerID unsupportedShapeTargetLayerId;
+    std::uint64_t unsupportedShapeTargetRevision = 0;
+    QTransform cachedShapeTargetGlobal;
+    QTransform cachedParticleGlobal;
+    float cachedShapeTargetStrength = -1.0f;
+    std::size_t cachedShapeTargetEmitterCount = 0;
+    bool shapeTargetCacheValid = false;
+
+    void invalidateSimulationForShapeTargetChange()
+    {
+        if (particleSystem) particleSystem->clear();
+        simulationReusable = false;
+        lastTime = 0.0f;
+        cachedFrame = QImage();
+        cachedFrameNumber = -1;
+    }
+
+    void clearEmitterShapeTargets()
+    {
+        if (!particleSystem) return;
+        for (const auto& emitter : particleSystem->emitters()) {
+            if (emitter) emitter->setShapeTargetPoints(nullptr, 0, 0.0f);
+        }
+        cachedShapeTargetEmitterCount = particleSystem->emitters().size();
+    }
+
+    void applyShapeTargetPointsToEmitters()
+    {
+        if (!particleSystem) return;
+        // Keep emitter-owned copies bounded across the persisted 1024-emitter
+        // limit; each emitter still receives at least one deterministic sample.
+        constexpr std::size_t kMaxEmitterShapeTargetPointCopies = 65536;
+        const auto& emitters = particleSystem->emitters();
+        const std::size_t emitterCount = emitters.size();
+        const std::size_t pointsPerEmitter = emitterCount == 0
+            ? 0
+            : std::min(shapeTargetPoints.size(), std::max<std::size_t>(
+                  1, kMaxEmitterShapeTargetPointCopies / emitterCount));
+        for (const auto& emitter : emitters) {
+            if (emitter) emitter->setShapeTargetPoints(
+                shapeTargetPoints.data(), pointsPerEmitter, shapeTargetStrength);
+        }
+        cachedShapeTargetEmitterCount = emitterCount;
+    }
+
+    void refreshShapeTarget(ArtifactParticleLayer* owner)
+    {
+        const auto clearTarget = [this]() {
+            const bool hadTarget = shapeTargetCacheValid || !shapeTargetPoints.isEmpty();
+            shapeTargetPoints.removeAll();
+            localShapeTargetPoints.removeAll();
+            shapeTargetCacheValid = false;
+            if (hadTarget) invalidateSimulationForShapeTargetChange();
+            clearEmitterShapeTargets();
+        };
+        if (!owner) return;
+        if (!shapeTargetCacheValid && shapeTargetPoints.isEmpty() &&
+            (owner->is3D() || !shapeTargetEnabled || shapeTargetLayerId.isNil())) {
+            return;
+        }
+        if (owner->is3D()) {
+            if (shapeTargetCacheValid || !shapeTargetPoints.isEmpty()) {
+                clearTarget();
+            }
+            return;
+        }
+        if (!shapeTargetEnabled || shapeTargetLayerId.isNil()) {
+            if (shapeTargetCacheValid || !shapeTargetPoints.isEmpty()) {
+                clearTarget();
+            }
+            return;
+        }
+
+        auto* composition = owner->composition();
+        if (!composition) { clearTarget(); return; }
+        auto* comp = static_cast<ArtifactAbstractComposition*>(composition);
+        const ArtifactCore::LayerID& targetId = shapeTargetLayerId;
+        if (targetId == owner->id()) {
+            if (unsupportedShapeTargetLayerId == targetId &&
+                unsupportedShapeTargetRevision == 0 && !shapeTargetCacheValid) {
+                return;
+            }
+            clearTarget();
+            unsupportedShapeTargetLayerId = targetId;
+            unsupportedShapeTargetRevision = 0;
+            return;
+        }
+        const auto targetRef = comp->layerById(targetId);
+        auto* target = targetRef.get();
+        if (!target) {
+            if (unsupportedShapeTargetLayerId == shapeTargetLayerId &&
+                unsupportedShapeTargetRevision == 0 && !shapeTargetCacheValid) {
+                return;
+            }
+            clearTarget();
+            unsupportedShapeTargetLayerId = shapeTargetLayerId;
+            unsupportedShapeTargetRevision = 0;
+            return;
+        }
+
+        std::uint64_t revision = 0;
+        const auto* shapeTarget = dynamic_cast<const ArtifactShapeLayer*>(target);
+        const auto* textTarget = dynamic_cast<const ArtifactTextLayer*>(target);
+        if (shapeTarget) {
+            revision = shapeTarget->contentRevision();
+        } else if (textTarget) {
+            revision = textTarget->contentRevision();
+        } else {
+            clearTarget();
+            unsupportedShapeTargetLayerId = ArtifactCore::LayerID();
+            unsupportedShapeTargetRevision = 0;
+            return;
+        }
+
+        if (unsupportedShapeTargetLayerId == shapeTargetLayerId &&
+            unsupportedShapeTargetRevision == revision &&
+            !shapeTargetCacheValid) {
+            return;
+        }
+
+        const QTransform targetGlobal = target->getGlobalTransformAt(0);
+        const QTransform particleGlobal = owner->getGlobalTransformAt(0);
+        // The initial feature contract is a static target. Resolve both
+        // coordinate frames at simulation origin so direct seeks and forward
+        // playback cannot bind an entire replay to different animated poses.
+        if (shapeTargetCacheValid && cachedShapeTargetLayerId == targetId &&
+            cachedShapeTargetRevision == revision &&
+            cachedShapeTargetStrength == shapeTargetStrength &&
+            cachedShapeTargetGlobal == targetGlobal &&
+            cachedParticleGlobal == particleGlobal &&
+            cachedShapeTargetEmitterCount == particleSystem->emitters().size()) {
+            return;
+        }
+        const bool geometryChanged = !shapeTargetCacheValid ||
+            cachedShapeTargetLayerId != shapeTargetLayerId ||
+            cachedShapeTargetRevision != revision;
+        const bool transformChanged = !shapeTargetCacheValid ||
+            cachedShapeTargetGlobal != targetGlobal ||
+            cachedParticleGlobal != particleGlobal;
+        if (geometryChanged || transformChanged) {
+            const auto hasAnimatedTransform = [comp](
+                const ArtifactAbstractLayer* sourceLayer) {
+                static const std::array<QString, 9> transformPaths = {
+                    QStringLiteral("transform.position.x"),
+                    QStringLiteral("transform.position.y"),
+                    QStringLiteral("transform.scale.x"),
+                    QStringLiteral("transform.scale.y"),
+                    QStringLiteral("transform.rotation"),
+                    QStringLiteral("transform.anchor.x"),
+                    QStringLiteral("transform.anchor.y"),
+                    QStringLiteral("transform.initialRotation"),
+                    QStringLiteral("transform.autoOrient")};
+                const ArtifactAbstractLayer* cursor = sourceLayer;
+                for (int depth = 0; cursor && depth < 32; ++depth) {
+                    for (const QString& path : transformPaths) {
+                        const auto property = cursor->getProperty(path);
+                        if (property && property->hasKeyFrames()) return true;
+                    }
+                    const ArtifactCore::LayerID parentId = cursor->parentLayerId();
+                    if (parentId.isNil()) break;
+                    const auto parent = comp->layerById(parentId);
+                    cursor = parent.get();
+                }
+                return false;
+            };
+            if (hasAnimatedTransform(owner) || hasAnimatedTransform(target)) {
+                clearTarget();
+                unsupportedShapeTargetLayerId = shapeTargetLayerId;
+                unsupportedShapeTargetRevision = revision;
+                return;
+            }
+        }
+        if (geometryChanged) {
+            bool unsupportedGeometry = false;
+            if (const auto* shape = dynamic_cast<const ArtifactShapeLayer*>(target)) {
+                unsupportedGeometry =
+                    shape->hasAnimatedGeometryForParticleTarget();
+            } else if (const auto* text = dynamic_cast<const ArtifactTextLayer*>(target)) {
+                unsupportedGeometry =
+                    !text->supportsStaticShapeTargetSampling();
+            }
+            if (unsupportedGeometry) {
+                clearTarget();
+                unsupportedShapeTargetLayerId = shapeTargetLayerId;
+                unsupportedShapeTargetRevision = revision;
+                return;
+            }
+            unsupportedShapeTargetLayerId = ArtifactCore::LayerID();
+        }
+        bool invertible = false;
+        const QTransform compositionToParticle = particleGlobal.inverted(&invertible);
+        if (!invertible) { clearTarget(); return; }
+
+        const bool targetSnapshotChanged = !shapeTargetCacheValid ||
+            cachedShapeTargetLayerId != shapeTargetLayerId ||
+            cachedShapeTargetRevision != revision ||
+            cachedShapeTargetGlobal != targetGlobal ||
+            cachedParticleGlobal != particleGlobal ||
+            cachedShapeTargetStrength != shapeTargetStrength;
+        if (targetSnapshotChanged) {
+            invalidateSimulationForShapeTargetChange();
+        }
+
+        if (geometryChanged) {
+            localShapeTargetPoints.removeAll();
+            std::vector<ArtifactCore::ShapePath> shapeFillPaths;
+            if (const auto* shape =
+                    dynamic_cast<const ArtifactShapeLayer*>(target)) {
+                shapeFillPaths = shape->nativeShapeFillPathsForParticleTarget();
+            }
+            if (!shapeTargetTriangleCacheValid ||
+                shapeTargetTriangleCacheLayerId != shapeTargetLayerId ||
+                shapeTargetTriangleCacheRevision != revision) {
+                shapeTargetTriangles.removeAll();
+                shapeTargetCumulativeAreas.removeAll();
+                shapeTargetTriangleCacheValid = false;
+            }
+            double totalArea = shapeTargetTriangleCacheValid &&
+                    !shapeTargetCumulativeAreas.isEmpty()
+                ? shapeTargetCumulativeAreas[shapeTargetCumulativeAreas.size() - 1]
+                : 0.0;
+            if (!shapeTargetTriangleCacheValid) {
+                if (!shapeFillPaths.empty()) {
+                    for (const auto& path : shapeFillPaths) {
+                        for (const auto& triangle : path.triangulate(0.25)) {
+                            const double area = std::abs(
+                                (triangle.p1.x() - triangle.p0.x()) *
+                                    (triangle.p2.y() - triangle.p0.y()) -
+                                (triangle.p1.y() - triangle.p0.y()) *
+                                    (triangle.p2.x() - triangle.p0.x())) * 0.5;
+                            if (!std::isfinite(area) || area <= 1.0e-9 ||
+                                !std::isfinite(totalArea + area)) continue;
+                            totalArea += area;
+                            shapeTargetTriangles.append(triangle);
+                            shapeTargetCumulativeAreas.append(totalArea);
+                        }
+                    }
+                }
+                shapeTargetTriangleCacheLayerId = shapeTargetLayerId;
+                shapeTargetTriangleCacheRevision = revision;
+                shapeTargetTriangleCacheValid = true;
+            }
+
+            if (shapeTargetTriangles.isEmpty()) {
+                if (const auto* text = dynamic_cast<const ArtifactTextLayer*>(target)) {
+                    const auto seed = particleShapeTargetSeed(shapeTargetLayerId.toString());
+                    localShapeTargetPoints.reserve(4096);
+                    localShapeTargetPoints.resize(4096);
+                    std::size_t sampledCount = 0;
+                    if (!text->sampleFillPoints(localShapeTargetPoints.data(),
+                                                localShapeTargetPoints.size(),
+                                                sampledCount, seed)) {
+                        sampledCount = 0;
+                    }
+                    localShapeTargetPoints.resize(sampledCount);
+                }
+            } else if (totalArea > 1.0e-9) {
+                localShapeTargetPoints.reserve(4096);
+                std::uint32_t state = particleShapeTargetSeed(shapeTargetLayerId.toString());
+                if (state == 0) state = 0x85ebca6bu;
+                const auto nextUnit = [&state]() {
+                    state ^= state << 13;
+                    state ^= state >> 17;
+                    state ^= state << 5;
+                    return static_cast<double>(state) / 4294967296.0;
+                };
+                constexpr std::size_t kTargetPointCount = 4096;
+                constexpr std::size_t kMaxSampleAttempts =
+                    kTargetPointCount * 64;
+                std::size_t attempts = 0;
+                while (localShapeTargetPoints.size() < kTargetPointCount &&
+                       attempts++ < kMaxSampleAttempts) {
+                    const double sample = nextUnit() * totalArea;
+                    const auto found = std::lower_bound(
+                        shapeTargetCumulativeAreas.begin(),
+                        shapeTargetCumulativeAreas.end(), sample);
+                    const std::size_t triangleIndex =
+                        found == shapeTargetCumulativeAreas.end()
+                        ? shapeTargetTriangles.size() - 1
+                        : static_cast<std::size_t>(found -
+                            shapeTargetCumulativeAreas.begin());
+                    const auto& triangle = shapeTargetTriangles[triangleIndex];
+                    const double root = std::sqrt(nextUnit());
+                    const double v = nextUnit();
+                    const double w0 = 1.0 - root;
+                    const double w1 = root * (1.0 - v);
+                    const double w2 = root * v;
+                    const QPointF point(
+                        triangle.p0.x() * w0 + triangle.p1.x() * w1 + triangle.p2.x() * w2,
+                        triangle.p0.y() * w0 + triangle.p1.y() * w1 + triangle.p2.y() * w2);
+                    bool visibleShapePoint = shapeFillPaths.empty() &&
+                        dynamic_cast<const ArtifactShapeLayer*>(target) == nullptr;
+                    for (const auto& path : shapeFillPaths) {
+                        if (path.contains(point)) {
+                            visibleShapePoint = true;
+                            break;
+                        }
+                    }
+                    if (visibleShapePoint) {
+                        localShapeTargetPoints.append(point);
+                    }
+                }
+            }
+        }
+
+        if (!geometryChanged && !transformChanged &&
+            cachedShapeTargetStrength == shapeTargetStrength) {
+            if (particleSystem && cachedShapeTargetEmitterCount !=
+                    particleSystem->emitters().size()) {
+                applyShapeTargetPointsToEmitters();
+            }
+            return;
+        }
+
+        shapeTargetPoints.removeAll();
+        shapeTargetPoints.reserve(localShapeTargetPoints.size());
+        for (const QPointF& point : localShapeTargetPoints) {
+            const QPointF compositionPoint = targetGlobal.map(point);
+            const QPointF localPoint = compositionToParticle.map(compositionPoint);
+            if (!std::isfinite(localPoint.x()) || !std::isfinite(localPoint.y())) continue;
+            shapeTargetPoints.append(QVector3D(
+                static_cast<float>(std::clamp(localPoint.x(), -10000000.0, 10000000.0)),
+                static_cast<float>(std::clamp(localPoint.y(), -10000000.0, 10000000.0)),
+                0.0f));
+        }
+
+        cachedShapeTargetLayerId = shapeTargetLayerId;
+        cachedShapeTargetRevision = revision;
+        cachedShapeTargetGlobal = targetGlobal;
+        cachedParticleGlobal = particleGlobal;
+        cachedShapeTargetStrength = shapeTargetStrength;
+        shapeTargetCacheValid = true;
+        applyShapeTargetPointsToEmitters();
+    }
 
     // GPU atlas registration cache. Phase 1 keeps one atlas per layer; the
     // texture stays owned by the renderer for its lifetime.
@@ -817,6 +1178,7 @@ void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
     // GPU particle shader.
     const bool useImageFlipbookPath = !is3D() &&
         impl_->requiresCpuFlipbookPath();
+    impl_->refreshShapeTarget(this);
     // 1. 決定論的なシミュレーション状態の更新
     // ※ goToFrame は内部で reset() と forward simulation を行う
     float fps = 30.0f;
@@ -980,6 +1342,7 @@ bool ArtifactParticleLayer::drawSurfaceGPU(ArtifactIRenderer* renderer,
     }
     const float simulatedFrameTime = safeParticleFrameTime(
         std::max(int64_t{1}, frameNumber), fps);
+    impl_->refreshShapeTarget(this);
     impl_->particleSystem->goToFrame(std::max(int64_t{1}, frameNumber), fps,
                                      impl_->simulationReusable);
     impl_->simulationReusable = true;
@@ -1074,6 +1437,15 @@ QJsonObject ArtifactParticleLayer::toJson() const
     QJsonObject json = ArtifactAbstractLayer::toJson();
     json["type"] = static_cast<int>(LayerType::Particle);
     json["presetName"] = impl_->presetName;
+    if (!is3D()) {
+        QJsonObject shapeTargetJson;
+        shapeTargetJson["enabled"] = impl_->shapeTargetEnabled;
+        shapeTargetJson["layerId"] = impl_->shapeTargetLayerId.isNil()
+            ? QString() : impl_->shapeTargetLayerId.toString();
+        shapeTargetJson["strength"] = std::isfinite(impl_->shapeTargetStrength)
+            ? std::clamp(impl_->shapeTargetStrength, 0.0f, 100000.0f) : 180.0f;
+        json["shapeTarget"] = shapeTargetJson;
+    }
     
     // Save render settings
     const auto& rs = renderSettings();
@@ -1426,6 +1798,27 @@ void ArtifactParticleLayer::applyPropertiesFromJson(const QJsonObject& obj)
     if (impl_->presetName.trimmed().isEmpty()) {
         impl_->presetName = QStringLiteral("Custom");
     }
+    const QJsonObject shapeTargetJson = obj.value(QStringLiteral("shapeTarget")).toObject();
+    impl_->shapeTargetEnabled = shapeTargetJson.value(QStringLiteral("enabled")).toBool(false);
+    impl_->shapeTargetLayerId = ArtifactCore::LayerID(
+        shapeTargetJson.value(QStringLiteral("layerId"))
+            .toString().trimmed().left(1024));
+    const double shapeTargetStrength = shapeTargetJson.value(QStringLiteral("strength"))
+                                          .toDouble(180.0);
+    impl_->shapeTargetStrength = std::isfinite(shapeTargetStrength)
+        ? static_cast<float>(std::clamp(shapeTargetStrength, 0.0, 100000.0))
+        : 180.0f;
+    impl_->unsupportedShapeTargetLayerId = ArtifactCore::LayerID();
+    impl_->shapeTargetCacheValid = false;
+    impl_->shapeTargetPoints.removeAll();
+    impl_->localShapeTargetPoints.removeAll();
+    impl_->shapeTargetTriangles.removeAll();
+    impl_->shapeTargetCumulativeAreas.removeAll();
+    impl_->shapeTargetTriangleCacheLayerId = ArtifactCore::LayerID();
+    impl_->shapeTargetTriangleCacheRevision = 0;
+    impl_->shapeTargetTriangleCacheValid = false;
+    impl_->clearEmitterShapeTargets();
+    impl_->invalidateSimulationForShapeTargetChange();
     if (obj.contains("name")) {
         setLayerName(obj["name"].toString());
     }
@@ -2476,6 +2869,7 @@ float ArtifactParticleLayer::timeScale() const
 
 void ArtifactParticleLayer::preWarm(float duration)
 {
+    impl_->refreshShapeTarget(this);
     impl_->particleSystem->preWarm(duration);
     clearFrameCache();
 }
@@ -2532,6 +2926,7 @@ void ArtifactParticleLayer::renderToImage(QImage& target, float time)
     } else {
         time = std::clamp(time, -1000000.0f, 1000000.0f);
     }
+    impl_->refreshShapeTarget(this);
     // Update particle system to this time
     const float currentTime = std::isfinite(impl_->lastTime) ? impl_->lastTime : 0.0f;
     if (impl_->playing && time < currentTime) {
@@ -2710,6 +3105,36 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactParticleLayer::getLayerProperty
         "Pre-simulate the current emitter so smoke, trails, and bursts are visible immediately."));
     quickSetupGroup.addProperty(preWarmQuickProp);
     groups.push_back(quickSetupGroup);
+
+    ArtifactCore::PropertyGroup shapeTargetGroup(QStringLiteral("Shape Target"));
+    auto shapeTargetEnabledProp = makeProp(
+        QStringLiteral("particle.shapeTarget.enabled"),
+        ArtifactCore::PropertyType::Boolean, impl_->shapeTargetEnabled, -260);
+    shapeTargetEnabledProp->setDisplayLabel(QStringLiteral("Enable Shape Target"));
+    shapeTargetGroup.addProperty(shapeTargetEnabledProp);
+    auto shapeTargetLayerProp = makeProp(
+        QStringLiteral("particle.shapeTarget.layerId"),
+        ArtifactCore::PropertyType::ObjectReference,
+        impl_->shapeTargetLayerId.isNil()
+            ? QString() : impl_->shapeTargetLayerId.toString(), -259);
+    shapeTargetLayerProp->setDisplayLabel(QStringLiteral("Target Layer"));
+    shapeTargetLayerProp->setTooltip(QStringLiteral(
+        "Choose a static Shape or Text layer. Animated geometry or transforms are not supported."));
+    ArtifactCore::PropertyMetadata shapeTargetMetadata;
+    shapeTargetMetadata.referenceTypeName = QStringLiteral("LayerID");
+    shapeTargetLayerProp->setMetadata(shapeTargetMetadata);
+    shapeTargetGroup.addProperty(shapeTargetLayerProp);
+    auto shapeTargetStrengthProp = makeProp(
+        QStringLiteral("particle.shapeTarget.strength"),
+        ArtifactCore::PropertyType::Float, impl_->shapeTargetStrength, -258);
+    shapeTargetStrengthProp->setDisplayLabel(QStringLiteral("Attraction Strength"));
+    shapeTargetStrengthProp->setUnit(QStringLiteral("px/s²"));
+    shapeTargetStrengthProp->setHardRange(0.0, 100000.0);
+    shapeTargetStrengthProp->setSoftRange(0.0, 2000.0);
+    shapeTargetGroup.addProperty(shapeTargetStrengthProp);
+    if (!is3D()) {
+        groups.push_back(shapeTargetGroup);
+    }
 
     particleGroup.addProperty(makeProp(QStringLiteral("particle.playing"), ArtifactCore::PropertyType::Boolean, isPlaying(), -140));
     auto timeScaleProp = makeProp(QStringLiteral("particle.timeScale"), ArtifactCore::PropertyType::Float, timeScale(), -130);
@@ -3549,6 +3974,43 @@ bool ArtifactParticleLayer::setLayerPropertyValue(const QString& propertyPath, c
         const float raw = static_cast<float>(input.toDouble());
         return std::isfinite(raw) ? std::clamp(raw, minimum, maximum) : fallback;
     };
+
+    if (propertyPath.startsWith(QStringLiteral("particle.shapeTarget.")) && is3D()) {
+        return false;
+    }
+    if (propertyPath == QStringLiteral("particle.shapeTarget.enabled")) {
+        impl_->shapeTargetEnabled = value.toBool();
+        if (impl_->shapeTargetEnabled) {
+            impl_->unsupportedShapeTargetLayerId = ArtifactCore::LayerID();
+        }
+        impl_->invalidateSimulationForShapeTargetChange();
+        impl_->shapeTargetCacheValid = false;
+        impl_->clearEmitterShapeTargets();
+        clearFrameCache();
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("particle.shapeTarget.layerId")) {
+        impl_->shapeTargetLayerId = ArtifactCore::LayerID(
+            value.toString().trimmed().left(1024));
+        impl_->unsupportedShapeTargetLayerId = ArtifactCore::LayerID();
+        impl_->invalidateSimulationForShapeTargetChange();
+        impl_->shapeTargetCacheValid = false;
+        impl_->clearEmitterShapeTargets();
+        clearFrameCache();
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("particle.shapeTarget.strength")) {
+        impl_->shapeTargetStrength = safeParticleFloat(
+            value, impl_->shapeTargetStrength, 0.0f, 100000.0f);
+        impl_->invalidateSimulationForShapeTargetChange();
+        impl_->shapeTargetCacheValid = false;
+        impl_->clearEmitterShapeTargets();
+        clearFrameCache();
+        Q_EMIT changed();
+        return true;
+    }
 
     if (propertyPath == QStringLiteral("particle.effectors.selectedIndex")) {
         const int count = effectorCount();

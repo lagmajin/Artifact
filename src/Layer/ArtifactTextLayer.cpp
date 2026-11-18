@@ -13,6 +13,7 @@ module;
 #include <QMatrix4x4>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPainterPathStroker>
 #include <QRect>
 #include <QRegularExpression>
 #include <QScopeGuard>
@@ -68,6 +69,7 @@ module;
 
 module Artifact.Layer.Text;
 
+import Shape.Path;
 import Artifact.Layer.CloneEffectSupport;
 import Artifact.Color.OCIOManager;
 
@@ -1708,6 +1710,15 @@ bool ArtifactTextLayer::hasAnimatedTextProperties() const {
   return hasCachedAnimatedPropertiesWithPrefix(QStringLiteral("text."));
 }
 
+bool ArtifactTextLayer::supportsStaticShapeTargetSampling() const {
+  if (!impl_) return false;
+  const QString displayText = resolvedSourceTextAtTime(this);
+  return impl_->layoutMode_ == TextLayoutMode::Point &&
+      impl_->writingMode_ == TextWritingMode::Horizontal &&
+      impl_->rubyText_.isEmpty() &&
+      !Qt::mightBeRichText(displayText) && !hasAnimatedTextProperties();
+}
+
 void ArtifactTextLayer::setFontSize(float size) {
   if (!std::isfinite(size) || size <= 0.0f)
     size = 1.0f;
@@ -2789,6 +2800,132 @@ TextGlyphGeometrySnapshot ArtifactTextLayer::textGlyphGeometry() const {
                                     impl_->glyphDrawOrigin_,
                                 impl_->glyphBounds_.size());
   return snapshot;
+}
+
+bool ArtifactTextLayer::sampleFillPoints(QPointF* output,
+                                        const std::size_t capacity,
+                                        std::size_t& written,
+                                        std::uint32_t seed) const {
+  written = 0;
+  if (!impl_ || !output || capacity == 0) {
+    return false;
+  }
+  const_cast<ArtifactTextLayer*>(this)->updateGlyphEvaluation(false);
+  if (impl_->glyphs_.empty()) return false;
+
+  QPainterPath outlines;
+  for (const auto& glyph : impl_->glyphs_) {
+    if (glyph.offsetOpacity <= 0.0f || glyph.isEmojiSequence ||
+        glyph.renderMode != ArtifactCore::GlyphRenderMode::MonochromeCoverage) {
+      continue;
+    }
+    const QPainterPath glyphPath = glyphPathForCode(glyph.charCode,
+                                                    impl_->textStyle_);
+    if (glyphPath.isEmpty()) {
+      continue;
+    }
+    const QTransform transform = glyphTransform(
+        glyph, glyphPath, impl_->glyphDrawOrigin_);
+    outlines.addPath(transform.map(glyphPath));
+    const qreal strokeWidth = std::max<qreal>(
+        0.0, (impl_->textStyle_.strokeEnabled
+                  ? impl_->textStyle_.strokeWidth : 0.0f) +
+                 glyph.offsetStrokeWidth);
+    if ((impl_->textStyle_.strokeEnabled || glyph.hasStrokeOverride) &&
+        strokeWidth > 0.01) {
+      QPainterPathStroker stroker;
+      stroker.setWidth(strokeWidth);
+      stroker.setCapStyle(Qt::RoundCap);
+      stroker.setJoinStyle(Qt::RoundJoin);
+      outlines.addPath(transform.map(stroker.createStroke(glyphPath)));
+    }
+  }
+  if (outlines.isEmpty()) {
+    return false;
+  }
+
+  const std::size_t count = std::min(capacity, std::size_t{4096});
+  const auto sampleFromOutline = [&]() {
+    const QRectF bounds = outlines.boundingRect();
+    if (!bounds.isValid() || bounds.isEmpty() ||
+        !std::isfinite(bounds.left()) || !std::isfinite(bounds.top()) ||
+        !std::isfinite(bounds.width()) || !std::isfinite(bounds.height())) {
+      return false;
+    }
+    std::uint32_t state = seed == 0 ? 0x9e3779b9u : seed;
+    const auto unitRandom = [&state]() {
+      state ^= state << 13;
+      state ^= state >> 17;
+      state ^= state << 5;
+      return static_cast<double>(state) / 4294967296.0;
+    };
+    const std::size_t maxAttempts = count * 64;
+    for (std::size_t attempt = 0;
+         attempt < maxAttempts && written < count; ++attempt) {
+      const QPointF point(
+          bounds.left() + unitRandom() * bounds.width(),
+          bounds.top() + unitRandom() * bounds.height());
+      if (outlines.contains(point)) {
+        output[written++] = point;
+      }
+    }
+    return written > 0;
+  };
+
+  const auto triangulated = ArtifactCore::ShapePath::fromPainterPath(
+      outlines.simplified()).triangulate(0.25);
+  if (triangulated.empty()) {
+    return sampleFromOutline();
+  }
+  std::vector<ArtifactCore::PathTriangle> triangles;
+  triangles.reserve(triangulated.size());
+  std::vector<double> cumulativeAreas;
+  cumulativeAreas.reserve(triangulated.size());
+  double totalArea = 0.0;
+  for (const auto& triangle : triangulated) {
+    const double area = std::abs(
+        (triangle.p1.x() - triangle.p0.x()) *
+            (triangle.p2.y() - triangle.p0.y()) -
+        (triangle.p1.y() - triangle.p0.y()) *
+            (triangle.p2.x() - triangle.p0.x())) * 0.5;
+    if (!std::isfinite(area) || area <= 1.0e-9 ||
+        !std::isfinite(totalArea + area)) {
+      continue;
+    }
+    totalArea += area;
+    triangles.push_back(triangle);
+    cumulativeAreas.push_back(totalArea);
+  }
+  if (triangles.empty() || !std::isfinite(totalArea) || totalArea <= 1.0e-9) {
+    return sampleFromOutline();
+  }
+
+  std::uint32_t state = seed == 0 ? 0x9e3779b9u : seed;
+  auto unitRandom = [&state]() {
+    state ^= state << 13;
+    state ^= state >> 17;
+    state ^= state << 5;
+    return static_cast<double>(state) / 4294967296.0;
+  };
+  for (std::size_t i = 0; i < count; ++i) {
+    const double areaSample = unitRandom() * totalArea;
+    const auto found = std::lower_bound(cumulativeAreas.begin(),
+                                        cumulativeAreas.end(), areaSample);
+    const std::size_t index = std::min<std::size_t>(
+        static_cast<std::size_t>(found - cumulativeAreas.begin()),
+        triangles.size() - 1);
+    const auto& triangle = triangles[index];
+    const double root = std::sqrt(unitRandom());
+    const double v = unitRandom();
+    const double w0 = 1.0 - root;
+    const double w1 = root * (1.0 - v);
+    const double w2 = root * v;
+    output[i] = QPointF(
+        triangle.p0.x() * w0 + triangle.p1.x() * w1 + triangle.p2.x() * w2,
+        triangle.p0.y() * w0 + triangle.p1.y() * w1 + triangle.p2.y() * w2);
+    ++written;
+  }
+  return written > 0;
 }
 
 QString ArtifactTextLayer::selectorDebugSummary() const {

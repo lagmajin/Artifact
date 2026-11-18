@@ -1,5 +1,6 @@
 module;
 #include <iostream>
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 #include <string>
@@ -91,6 +92,7 @@ public:
     QList<qint64> sourceTextKeyframeFrames() const;
     bool hasSourceTextKeyframes() const;
     bool hasAnimatedTextProperties() const;
+    bool supportsStaticShapeTargetSampling() const;
 
     void setFontSize(float size);
     float fontSize() const;
@@ -216,6 +218,10 @@ public:
     QVector<float> selectorClusterBoundaryPreview() const;
     QVector<float> selectorLineBoundaryPreview() const;
     TextGlyphGeometrySnapshot textGlyphGeometry() const;
+    // Cold-path target sampling from the same per-glyph paths used by the
+    // current text layer renderer. Output stays in text-layer local space.
+    bool sampleFillPoints(QPointF* output, std::size_t capacity,
+                          std::size_t& written, std::uint32_t seed) const;
     QString selectorDebugSummary() const;
     QString selectorBoundarySummary() const;
     QString selectorOverviewSummary() const;
