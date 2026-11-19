@@ -586,6 +586,136 @@ namespace Artifact {
         return QStringLiteral("yuv420p");
     }
 
+    QString alphaStateName(ArtifactRenderJob::AlphaState state)
+    {
+        switch (state) {
+        case ArtifactRenderJob::AlphaState::Opaque:
+            return QStringLiteral("opaque");
+        case ArtifactRenderJob::AlphaState::Straight:
+            return QStringLiteral("straight");
+        case ArtifactRenderJob::AlphaState::Premultiplied:
+            return QStringLiteral("premultiplied");
+        case ArtifactRenderJob::AlphaState::AlphaOnly:
+            return QStringLiteral("alpha-only");
+        case ArtifactRenderJob::AlphaState::Auto:
+        default:
+            return QStringLiteral("auto");
+        }
+    }
+
+    ArtifactRenderJob::AlphaState alphaStateFromName(const QString& name, bool* ok)
+    {
+        const QString value = name.trimmed().toLower();
+        if (ok) *ok = true;
+        if (value == QStringLiteral("opaque") || value == QStringLiteral("rgb")) {
+            return ArtifactRenderJob::AlphaState::Opaque;
+        }
+        if (value == QStringLiteral("straight") || value == QStringLiteral("unpremultiplied")) {
+            return ArtifactRenderJob::AlphaState::Straight;
+        }
+        if (value == QStringLiteral("premultiplied")) {
+            return ArtifactRenderJob::AlphaState::Premultiplied;
+        }
+        if (value == QStringLiteral("alpha-only") || value == QStringLiteral("alpha_only") ||
+            value == QStringLiteral("alphaonly") || value == QStringLiteral("alpha")) {
+            return ArtifactRenderJob::AlphaState::AlphaOnly;
+        }
+        if (value.isEmpty() || value == QStringLiteral("auto")) {
+            return ArtifactRenderJob::AlphaState::Auto;
+        }
+        if (ok) *ok = false;
+        return ArtifactRenderJob::AlphaState::Auto;
+    }
+
+    bool alphaStateCarriesAlpha(ArtifactRenderJob::AlphaState state)
+    {
+        return state == ArtifactRenderJob::AlphaState::Straight ||
+               state == ArtifactRenderJob::AlphaState::Premultiplied ||
+               state == ArtifactRenderJob::AlphaState::AlphaOnly;
+    }
+
+    bool outputFormatCarriesAlpha(const ArtifactRenderJob& job)
+    {
+        const QString format = Artifact::deriveContainerFromJob(job);
+        if (format == QStringLiteral("png") || format == QStringLiteral("exr") ||
+            format == QStringLiteral("tiff") || format == QStringLiteral("apng") ||
+            format == QStringLiteral("webp")) {
+            return true;
+        }
+        const QString codec = normalizeCodecName(job.codec);
+        if (codec == QStringLiteral("prores")) {
+            return normalizeProresProfile(job.codecProfile) == QStringLiteral("4444");
+        }
+        return codec == QStringLiteral("png") || codec == QStringLiteral("apng") ||
+               codec == QStringLiteral("webp") || codec == QStringLiteral("vp9");
+    }
+
+    ArtifactRenderJob::AlphaState effectiveAlphaStateForJob(const ArtifactRenderJob& job)
+    {
+        if (job.alphaState != ArtifactRenderJob::AlphaState::Auto) {
+            return job.alphaState;
+        }
+        // Auto resolves only the combinations that already carried alpha
+        // before the contract existed, so old jobs keep their old output.
+        const QString codec = normalizeCodecName(job.codec);
+        if (codec == QStringLiteral("png") || codec == QStringLiteral("apng") ||
+            codec == QStringLiteral("webp")) {
+            return ArtifactRenderJob::AlphaState::Straight;
+        }
+        if (codec == QStringLiteral("prores") &&
+            normalizeProresProfile(job.codecProfile) == QStringLiteral("4444")) {
+            return ArtifactRenderJob::AlphaState::Straight;
+        }
+        return ArtifactRenderJob::AlphaState::Opaque;
+    }
+
+    QString ffmpegPixelFormatForJob(const ArtifactRenderJob& job)
+    {
+        const QString legacy = ffmpegPipePixelFormat(job.codec, job.codecProfile);
+        const ArtifactRenderJob::AlphaState state = effectiveAlphaStateForJob(job);
+        if (!alphaStateCarriesAlpha(state)) {
+            // An explicit Opaque request must also remove alpha from formats
+            // whose profile would otherwise imply it (e.g. ProRes 4444).
+            if (job.alphaState == ArtifactRenderJob::AlphaState::Opaque &&
+                normalizeCodecName(job.codec) == QStringLiteral("prores") &&
+                normalizeProresProfile(job.codecProfile) == QStringLiteral("4444")) {
+                return QStringLiteral("yuv422p10le");
+            }
+            const QString codec = normalizeCodecName(job.codec);
+            if (job.alphaState == ArtifactRenderJob::AlphaState::Opaque &&
+                (codec == QStringLiteral("png") || codec == QStringLiteral("apng") ||
+                 codec == QStringLiteral("webp"))) {
+                return QStringLiteral("rgb24");
+            }
+            return legacy;
+        }
+        // Auto is handled by the legacy table above. An explicit state is a
+        // deliberate request, so honour it at the codec level even when the
+        // container is a poor fit; preflight reports that mismatch separately.
+        if (job.alphaState == ArtifactRenderJob::AlphaState::Auto) {
+            return legacy;
+        }
+        // AlphaOnly is rejected by preflight; keep a valid format here so an
+        // accidental run still produces a playable file instead of failing late.
+        if (state == ArtifactRenderJob::AlphaState::AlphaOnly) {
+            return legacy;
+        }
+        const QString codec = normalizeCodecName(job.codec);
+        if (codec == QStringLiteral("prores")) {
+            return normalizeProresProfile(job.codecProfile) == QStringLiteral("4444")
+                ? QStringLiteral("yuva444p10le") : legacy;
+        }
+        if (codec == QStringLiteral("png") || codec == QStringLiteral("apng") ||
+            codec == QStringLiteral("webp")) {
+            return QStringLiteral("rgba");
+        }
+        if (codec == QStringLiteral("h264") || codec == QStringLiteral("h265") ||
+            codec == QStringLiteral("vp9")) {
+            return QStringLiteral("yuva420p");
+        }
+        return legacy;
+    }
+
     static QStringList ffmpegPipeQualityArgs(const ArtifactRenderJob& job, bool preferHardware = false)
     {
         const QString value = normalizeCodecName(job.codec);
@@ -753,6 +883,11 @@ namespace Artifact {
             settings.preset = presetOverride;
         }
         settings.container = Artifact::deriveContainerFromJob(job);
+        // Any explicit state overrides the codec default; Auto keeps the
+        // previous behaviour of the native backend.
+        if (job.alphaState != ArtifactRenderJob::AlphaState::Auto) {
+            settings.pixelFormat = ffmpegPixelFormatForJob(job);
+        }
         return settings;
     }
 
@@ -777,6 +912,8 @@ namespace Artifact {
         settings.videoCodec = encoderName;
         settings.encoderName = encoderName;
         settings.preferHardware = true;
+        // Hardware encoders only accept their own fixed pixel formats.
+        settings.pixelFormat.clear();
         // XPU P3: preset override for bench. Unset = "p4" (現行).
         const QString presetOverride = xpuPresetOverride();
         settings.preset = presetOverride.isEmpty() ? QStringLiteral("p4") : presetOverride;
@@ -873,7 +1010,12 @@ namespace Artifact {
                 args << QStringLiteral("-vf") << QStringLiteral("format=rgba,hwupload")
                      << QStringLiteral("-b:v") << QString::number(std::max(1, job.bitrate) * 1000);
             } else {
-                args << QStringLiteral("-pix_fmt") << ffmpegPipePixelFormat(codec, job.codecProfile);
+                // Hardware encoders (NVENC/Vulkan) only accept their fixed
+                // pixel formats; the alpha-aware choices are software-only.
+                const QString pixelFormat = (preferHardware_ || preferVulkan_)
+                    ? ffmpegPipePixelFormat(codec, job.codecProfile)
+                    : ffmpegPixelFormatForJob(job);
+                args << QStringLiteral("-pix_fmt") << pixelFormat;
             }
             const int threadCount = xpuEncoderThreadCount();
             if (threadCount > 0) {
@@ -1260,6 +1402,24 @@ namespace Artifact {
             if (errorMessage) *errorMessage = localError;
             return nullptr;
         };
+
+        // Hardware FFmpeg backends pick their pixel format internally and
+        // would silently drop alpha. Native now accepts an explicit pixel
+        // format through FFmpegEncoderSettings, so it can keep the job's alpha
+        // state; all other requests fall back to the software pipe encoder.
+        const bool alphaVideoJob =
+            isVideoContainer(deriveContainerFromJob(job)) &&
+            job.alphaState != ArtifactRenderJob::AlphaState::Auto &&
+            alphaStateCarriesAlpha(effectiveAlphaStateForJob(job));
+        if (alphaVideoJob && requested != VideoEncodeBackendKind::Native) {
+            if (requested != VideoEncodeBackendKind::Pipe) {
+                qInfo() << "[RenderQueue] alpha video job routed to software pipe encoder"
+                        << "jobId=" << job.compositionId.toString()
+                        << "alphaState=" << alphaStateName(effectiveAlphaStateForJob(job))
+                        << "requestedBackend=" << normalizeVideoEncodeBackendName(job.encoderBackend);
+            }
+            return tryPipe();
+        }
 
         switch (requested) {
         case VideoEncodeBackendKind::Pipe:

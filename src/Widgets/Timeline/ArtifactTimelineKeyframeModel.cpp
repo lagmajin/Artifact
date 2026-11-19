@@ -215,6 +215,9 @@ QString ArtifactTimelineKeyframeModel::displayLabelForPropertyPath(
   if (propertyPath == QStringLiteral("transform.anchor.y")) {
     return QStringLiteral("Transform / Anchor Y");
   }
+  if (propertyPath == QStringLiteral("shape.path.keyframes")) {
+    return QStringLiteral("Path / Path Keyframes");
+  }
   if (propertyPath == QStringLiteral("text.value")) {
     return QStringLiteral("Source Text");
   }

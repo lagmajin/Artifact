@@ -1773,9 +1773,24 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
     QVariantList passes;
     for (const QString& name : names) {
       QVariantMap pass;
+      // The dialog only edits names. Keep per-pass layer filters and AOV /
+      // Deep overrides for passes whose name is unchanged, otherwise a rename
+      // would silently drop settings authored through JSON import or API.
+      for (const auto& rawPass : current.value(QStringLiteral("renderPasses")).toList()) {
+        const QVariantMap existing = rawPass.toMap();
+        if (existing.value(QStringLiteral("name")).toString().trimmed()
+                .compare(name, Qt::CaseInsensitive) == 0) {
+          pass = existing;
+          break;
+        }
+      }
       pass.insert(QStringLiteral("name"), name);
-      pass.insert(QStringLiteral("layerFilter"), 0);
-      pass.insert(QStringLiteral("enabled"), true);
+      if (!pass.contains(QStringLiteral("layerFilter"))) {
+        pass.insert(QStringLiteral("layerFilter"), 0);
+      }
+      if (!pass.contains(QStringLiteral("enabled"))) {
+        pass.insert(QStringLiteral("enabled"), true);
+      }
       passes.append(pass);
     }
     QVariantMap settings = current;
@@ -2329,6 +2344,7 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
     dialog.setCodecProfile(codecProfile);
     dialog.setEncoderBackend(impl_->service->jobEncoderBackendAt(index));
     dialog.setRenderBackend(impl_->service->jobRenderBackendAt(index));
+    dialog.setAlphaState(impl_->service->jobAlphaStateAt(index));
     dialog.setResolution(width, height);
     dialog.setFrameRate(fps);
     dialog.setBitrateKbps(bitrateKbps);
@@ -2362,6 +2378,7 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
           dialog.bitrateKbps());
       impl_->service->setJobEncoderBackendAt(index, dialog.encoderBackend());
       impl_->service->setJobRenderBackendAt(index, dialog.renderBackend());
+      impl_->service->setJobAlphaStateAt(index, dialog.alphaState());
       impl_->service->setJobIntegratedRenderEnabledAt(index, dialog.includeAudio());
       impl_->service->setJobMultiChannelEnabledAt(index, dialog.multiChannelEnabled());
       impl_->service->setJobMultiChannelChannelsAt(index, dialog.multiChannelChannels());

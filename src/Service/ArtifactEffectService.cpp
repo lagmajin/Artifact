@@ -429,6 +429,13 @@ W_OBJECT_IMPL(ArtifactEffectService)
    effect->setDisplayName(QStringLiteral("Difference Key"));
     return effect;
   }
+  if (effectId == QStringLiteral("inpaint") ||
+      effectId == QStringLiteral("effect.keying.inpaint")) {
+    auto effect = std::make_unique<ArtifactInpaintEffect>();
+    effect->setEffectID(UniString::fromQString(effectId));
+    effect->setDisplayName(QStringLiteral("Inpaint / Content-Aware Fill"));
+    return effect;
+  }
   if (effectId == QStringLiteral("difference_matte") ||
       effectId == QStringLiteral("Effect.Rasterizer.DifferenceMatte")) {
     auto effect = std::make_unique<DifferenceMatteEffect>();
@@ -1238,6 +1245,7 @@ W_OBJECT_IMPL(ArtifactEffectService)
   effects.push_back({EffectID("chroma_key"), "Chroma Key"});
   effects.push_back({EffectID("luma_key"), "Luma Key"});
   effects.push_back({EffectID("difference_key"), "Difference Key"});
+  effects.push_back({EffectID("inpaint"), "Inpaint / Content-Aware Fill"});
   effects.push_back({EffectID("difference_matte"), "Difference Matte"});
   effects.push_back({EffectID("drop_shadow"), "Drop Shadow"});
   effects.push_back({EffectID("inner_shadow"), "Inner Shadow"});

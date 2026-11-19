@@ -282,6 +282,14 @@ public:
                        const std::vector<CustomPathVertex>& verts);
   bool hasPathKeyframes() const;
   std::vector<CustomPathVertex> evaluatePathAt(int64_t frame) const;
+
+  // Path keyframe document helpers used by the Inspector and Timeline UI.
+  // They are pure: an updated JSON document is returned and the layer is not
+  // mutated, so callers can wrap the change in an Undo command.
+  std::vector<int64_t> pathKeyframeFrames() const;
+  QString pathKeyframeDocumentWith(int64_t frame,
+                                   const std::vector<CustomPathVertex>& verts) const;
+  QString pathKeyframeDocumentWithout(int64_t frame) const;
   bool hasCustomPath() const;
   void setCustomPathVertices(const std::vector<CustomPathVertex>& vertices, bool closed = true);
   void clearCustomPath();

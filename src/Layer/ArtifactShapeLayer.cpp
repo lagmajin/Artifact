@@ -824,19 +824,22 @@ std::vector<CustomPathVertex> ArtifactShapeLayer::evaluatePathAt(int64_t frame) 
  if (!property) {
   return customPathVertices();
  }
- QJsonDocument doc =
-     QJsonDocument::fromJson(
-         property->getValue().toString().toUtf8());
- const QJsonObject root = doc.object();
- if (root.isEmpty()) {
-  return customPathVertices();
+ // Parse the document only when the content changes. Keyframe edits go
+ // through markDirty(), so the cached sample map cannot become stale while
+ // the layer is being scrubbed or rendered.
+ if (impl_->parsedPathKeyframes_.revision != impl_->contentRevision_) {
+  auto& parsed = impl_->parsedPathKeyframes_;
+  parsed.samples.clear();
+  const QJsonObject root = QJsonDocument::fromJson(
+      property->getValue().toString().toUtf8()).object();
+  for (auto it = root.begin(); it != root.end(); ++it) {
+   const int64_t sampleFrame = static_cast<int64_t>(it.key().toLongLong());
+   parsed.samples[sampleFrame] =
+       deserializePathVertices(it.value().toArray());
+  }
+  parsed.revision = impl_->contentRevision_;
  }
- std::map<int64_t, std::vector<CustomPathVertex>> samples;
- for (auto it = root.begin(); it != root.end(); ++it) {
-  const int64_t sampleFrame = static_cast<int64_t>(it.key().toLongLong());
-  samples[sampleFrame] =
-      deserializePathVertices(it.value().toArray());
- }
+ const auto& samples = impl_->parsedPathKeyframes_.samples;
  if (samples.empty()) {
   return customPathVertices();
  }
@@ -862,34 +865,89 @@ std::vector<CustomPathVertex> ArtifactShapeLayer::evaluatePathAt(int64_t frame) 
   const auto& a = lower->second;
   const auto& b = upper->second;
   if (a.size() != b.size()) {
-    // F13a: topology change between keys. Resample both sides through
-    // ShapePath::interpolate so star->heart style morphs glide instead of
-    // snapping, then convert the equidistant samples back to corner
-    // vertices. Falls back to snap when either side cannot form a path.
+    // F13a: topology change between keys. Star->heart style morphs glide by
+    // resampling both endpoints at 64 equidistant points and lerping the
+    // resulting polygon. The expensive endpoint sampling is cached per key
+    // interval; the per-frame part uses fixed-capacity scratch only.
     if (a.size() >= 2 && b.size() >= 2) {
-      const bool closed = customPathClosed();
-      ArtifactCore::ShapePath pathA = buildCustomShapePath(a, closed);
-      ArtifactCore::ShapePath pathB = buildCustomShapePath(b, closed);
-      if (!pathA.isEmpty() && !pathB.isEmpty()) {
-        constexpr int kMorphSamples = 64;
-        ArtifactCore::ShapePath morphed =
-            ArtifactCore::ShapePath::interpolate(pathA, pathB, t,
-                                                 kMorphSamples);
-        const auto sampled = morphed.sampleEquidistant(kMorphSamples);
-        if (sampled.size() >= 2) {
-          std::vector<CustomPathVertex> morphedVerts;
-          morphedVerts.reserve(sampled.size());
-          for (const auto& point : sampled) {
-            CustomPathVertex v;
-            v.pos = point;
-            v.inTangent = QPointF(0, 0);
-            v.outTangent = QPointF(0, 0);
-            v.smooth = false;
-            morphedVerts.push_back(v);
-          }
-          return morphedVerts;
+      constexpr int kSamples = Impl::kMorphSampleCount;
+      auto& basis = impl_->morphIntervalBasis_;
+      if (basis.revision != impl_->contentRevision_ ||
+          basis.fromFrame != f0 || basis.toFrame != f1) {
+        const bool closed = customPathClosed();
+        ArtifactCore::ShapePath pathA = buildCustomShapePath(a, closed);
+        ArtifactCore::ShapePath pathB = buildCustomShapePath(b, closed);
+        if (pathA.isEmpty() || pathB.isEmpty()) {
+          return t < 0.5 ? a : b;
         }
+        const auto ptsA = pathA.sampleEquidistant(kSamples);
+        const auto ptsB = pathB.sampleEquidistant(kSamples);
+        if (ptsA.size() < static_cast<size_t>(kSamples) ||
+            ptsB.size() < static_cast<size_t>(kSamples)) {
+          return t < 0.5 ? a : b;
+        }
+        for (int i = 0; i < kSamples; ++i) {
+          basis.from[static_cast<size_t>(i)] = ptsA[static_cast<size_t>(i)];
+          basis.to[static_cast<size_t>(i)] = ptsB[static_cast<size_t>(i)];
+        }
+        basis.closed = closed;
+        basis.fromFrame = f0;
+        basis.toFrame = f1;
+        basis.revision = impl_->contentRevision_;
       }
+
+      std::array<QPointF, kSamples> lerped{};
+      for (int i = 0; i < kSamples; ++i) {
+        lerped[static_cast<size_t>(i)] =
+            basis.from[static_cast<size_t>(i)] +
+            (basis.to[static_cast<size_t>(i)] -
+             basis.from[static_cast<size_t>(i)]) * t;
+      }
+      // ShapePath::interpolate closes the lerped polygon only when either
+      // endpoint path is closed. Mirror that so resampling stays identical.
+      const int segmentCount = basis.closed ? kSamples : kSamples - 1;
+      std::array<double, kSamples> lengths{};
+      double total = 0.0;
+      for (int i = 0; i < segmentCount; ++i) {
+        const QPointF& p0 = lerped[static_cast<size_t>(i)];
+        const QPointF& p1 = lerped[static_cast<size_t>((i + 1) % kSamples)];
+        const double length = std::hypot(p1.x() - p0.x(), p1.y() - p0.y());
+        lengths[static_cast<size_t>(i)] = length;
+        total += length;
+      }
+      // Bounded exception (HOT_PATH_RULES): the public API returns a vector,
+      // so one 64-element allocation remains per evaluation. Capacity is
+      // fixed and tiny; all variable-size work above uses preallocated arrays.
+      std::vector<CustomPathVertex> morphedVerts;
+      morphedVerts.reserve(kSamples);
+      if (total <= 0.0) {
+        for (int i = 0; i < kSamples; ++i) {
+          CustomPathVertex v;
+          v.pos = lerped[0];
+          morphedVerts.push_back(v);
+        }
+        return morphedVerts;
+      }
+      int segment = 0;
+      double traversed = 0.0;
+      for (int i = 0; i < kSamples; ++i) {
+        const double target = static_cast<double>(i) /
+                              static_cast<double>(kSamples - 1) * total;
+        while (segment < segmentCount - 1 &&
+               traversed + lengths[static_cast<size_t>(segment)] < target) {
+          traversed += lengths[static_cast<size_t>(segment)];
+          ++segment;
+        }
+        const double length = lengths[static_cast<size_t>(segment)];
+        const double ratio = length > 0.0 ? (target - traversed) / length : 0.0;
+        const QPointF& p0 = lerped[static_cast<size_t>(segment)];
+        const QPointF& p1 =
+            lerped[static_cast<size_t>((segment + 1) % kSamples)];
+        CustomPathVertex v;
+        v.pos = p0 + (p1 - p0) * ratio;
+        morphedVerts.push_back(v);
+      }
+      return morphedVerts;
     }
     return t < 0.5 ? a : b;
   }
@@ -899,6 +957,47 @@ std::vector<CustomPathVertex> ArtifactShapeLayer::evaluatePathAt(int64_t frame) 
   blended.push_back(lerpPathVertex(a[i], b[i], t));
  }
  return blended;
+}
+
+std::vector<int64_t> ArtifactShapeLayer::pathKeyframeFrames() const {
+  std::vector<int64_t> frames;
+  auto property = getProperty(QStringLiteral("shape.path.keyframes"));
+  if (!property) {
+    return frames;
+  }
+  const QJsonObject root = QJsonDocument::fromJson(
+      property->getValue().toString().toUtf8()).object();
+  frames.reserve(static_cast<size_t>(root.size()));
+  for (auto it = root.constBegin(); it != root.constEnd(); ++it) {
+    bool ok = false;
+    const qlonglong frame = it.key().toLongLong(&ok);
+    if (ok) {
+      frames.push_back(static_cast<int64_t>(frame));
+    }
+  }
+  std::sort(frames.begin(), frames.end());
+  return frames;
+}
+
+QString ArtifactShapeLayer::pathKeyframeDocumentWith(
+    int64_t frame, const std::vector<CustomPathVertex>& verts) const {
+  QJsonObject root;
+  if (auto property = getProperty(QStringLiteral("shape.path.keyframes"))) {
+    root = QJsonDocument::fromJson(
+        property->getValue().toString().toUtf8()).object();
+  }
+  root[QString::number(static_cast<qint64>(frame))] = serializePathVertices(verts);
+  return QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact));
+}
+
+QString ArtifactShapeLayer::pathKeyframeDocumentWithout(int64_t frame) const {
+  QJsonObject root;
+  if (auto property = getProperty(QStringLiteral("shape.path.keyframes"))) {
+    root = QJsonDocument::fromJson(
+        property->getValue().toString().toUtf8()).object();
+  }
+  root.remove(QString::number(static_cast<qint64>(frame)));
+  return QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact));
 }
 
 // True when any shape operator parameter has keyframes. Animated operator
@@ -2594,6 +2693,28 @@ public:
     bool cachedShapeGeometryDimsValid_ = false;
     double cachedShapeTolerance_ = -1.0;
     bool shapeGeometryCacheDirty_ = true;
+
+    // Path morph hot path. The keyframe JSON is parsed once per content
+    // revision, and the two equidistant sample sets for the active key
+    // interval are cached once per revision/interval. Both are bounded to one
+    // entry and invalidated by contentRevision_, which markDirty() bumps on
+    // every keyframe or path edit.
+    struct ParsedPathKeyframes {
+      std::uint64_t revision = 0;
+      std::map<std::int64_t, std::vector<CustomPathVertex>> samples;
+    };
+    ParsedPathKeyframes parsedPathKeyframes_;
+
+    static constexpr int kMorphSampleCount = 64;
+    struct MorphIntervalBasis {
+      std::uint64_t revision = 0;
+      std::int64_t fromFrame = std::numeric_limits<std::int64_t>::min();
+      std::int64_t toFrame = std::numeric_limits<std::int64_t>::min();
+      bool closed = false;
+      std::array<QPointF, kMorphSampleCount> from{};
+      std::array<QPointF, kMorphSampleCount> to{};
+    };
+    MorphIntervalBasis morphIntervalBasis_;
 
    Impl() = default;
  ~Impl() = default;
@@ -6287,6 +6408,27 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactShapeLayer::getLayerPropertyGro
 
   groups.push_back(paramsGroup);
 
+  // Path morphing group. The JSON document lives on a dedicated animatable
+  // String property; UI writes it through Undo commands so the diamond button
+  // and Timeline can share one representation.
+  {
+    ArtifactCore::PropertyGroup pathGroup;
+    pathGroup.setName(QStringLiteral("Path"));
+    const QString kPath = QStringLiteral("shape.path.keyframes");
+    QVariant currentValue{QString{}};
+    if (auto existing = getProperty(kPath)) {
+      currentValue = existing->getValue();
+    }
+    auto pathProp = makeProp(kPath, ArtifactCore::PropertyType::String,
+                             currentValue, -190, true);
+    pathProp->setDisplayLabel(QStringLiteral("Path Keyframes"));
+    pathProp->setTooltip(QStringLiteral(
+        "Per-frame bezier path snapshots. Toggle the keyframe button at a "
+        "frame to capture the current shape path there."));
+    pathGroup.addProperty(pathProp);
+    groups.push_back(std::move(pathGroup));
+  }
+
   // Multi-content group (gap 1): per-content paint/visibility/merge.
   // Geometry editing stays on the ShapeContent API for now.
   if (!impl_->shapeContents_.empty()) {
@@ -6727,6 +6869,18 @@ auto countProp = makeProp(QStringLiteral("shape.contents.count"),
 }
 
 bool ArtifactShapeLayer::setLayerPropertyValue(const QString& propertyPath, const QVariant& value) {
+ if (propertyPath == QStringLiteral("shape.path.keyframes")) {
+   auto property = getProperty(propertyPath);
+   if (!property) {
+     property = persistentLayerProperty(propertyPath,
+         ArtifactCore::PropertyType::String, QString{}, -190);
+   }
+   property->setAnimatable(true);
+   property->setValue(value.toString());
+   impl_->markDirty();
+   Q_EMIT changed();
+   return true;
+  }
 if (propertyPath == "shape.type") {
   setShapeType(static_cast<Artifact::ShapeType>(value.toInt()));
   return true;

@@ -2166,6 +2166,136 @@ EffectROIHint ArtifactWireObjectRemoverEffect::roiHint() const {
             .requiresFullFrame = job.temporalOffset != 0 || job.method >= 3};
 }
 
+// Content-aware fill. The R&D candidate is per-channel 32-bit float
+// Navier-Stokes inpaint at radius 1 (see
+// docs/planned/MILESTONE_INPAINT_CONTENT_AWARE_FILL_RD_2026-11-17.md, section 16).
+// The 8-bit sRGB path is deliberately not used: its round trip changes pixels
+// outside the mask and violates the mask-out invariance gate.
+struct InpaintJob {
+    float radius = 1.0f;
+    QString maskInput = QStringLiteral("inpaint_mask");
+};
+
+bool runInpaintCPU(const ArtifactCore::ImageF32x4_RGBA& srcImage,
+                   ArtifactCore::ImageF32x4_RGBA& resultImage,
+                   const InpaintJob& job,
+                   IEffectFrameSampler* sampler,
+                   std::int64_t frame) {
+    const int width = srcImage.width();
+    const int height = srcImage.height();
+    if (!srcImage.rgba32fData() || width <= 0 || height <= 0) return false;
+
+    cv::Mat maskStorage;
+    const float* namedMask = sampleWireAuxPlane(maskStorage, sampler,
+                                                job.maskInput, frame,
+                                                width, height, true);
+    if (!namedMask) return false;
+
+    cv::Mat maskFloat(height, width, CV_32F, const_cast<float*>(namedMask));
+    if (!maskFloat.isContinuous()) return false;
+    cv::Mat mask8;
+    cv::compare(maskFloat, cv::Scalar(0.5f), mask8, cv::CMP_GT);
+    if (mask8.empty() || cv::countNonZero(mask8) == 0) return false;
+
+    resultImage = srcImage;
+    float* dstData = resultImage.rgba32fData();
+    if (!dstData) return false;
+    cv::Mat rgba(height, width, CV_32FC4, dstData);
+    if (!rgba.isContinuous()) return false;
+
+    std::vector<cv::Mat> channels;
+    cv::split(rgba, channels);
+    if (channels.size() != 4) return false;
+    for (int channel = 0; channel < 3; ++channel) {
+        cv::Mat source = channels[channel];
+        if (!source.isContinuous()) source = source.clone();
+        cv::Mat filled;
+        cv::inpaint(source, mask8, filled, static_cast<double>(job.radius),
+                    cv::INPAINT_NS);
+        channels[channel] = filled;
+    }
+    // Alpha is copied from the source unchanged; its expected value inside
+    // the fill region is still an open contract question in the R&D plan.
+    cv::merge(channels, rgba);
+    resultImage.setColorDescriptor(srcImage.colorDescriptor());
+    return true;
+}
+
+class ArtifactInpaintEffect::Impl {
+public:
+    InpaintJob job;
+};
+
+class InpaintCPUImpl final : public ArtifactEffectImplBase {
+public:
+    InpaintJob job_{};
+
+    void applyCPU(const ImageF32x4RGBAWithCache& src,
+                  ImageF32x4RGBAWithCache& dst) override {
+        ArtifactCore::ImageF32x4_RGBA result;
+        if (!runInpaintCPU(src.image(), result, job_,
+                           ArtifactEffectImplBase::context_.sampler,
+                           ArtifactEffectImplBase::context_.compositionFrame)) {
+            dst = src;
+            return;
+        }
+        dst = ImageF32x4RGBAWithCache(result);
+    }
+};
+
+ArtifactInpaintEffect::ArtifactInpaintEffect()
+    : impl_(new Impl()) {
+    setEffectID(ArtifactCore::UniString("effect.keying.inpaint"));
+    setDisplayName(ArtifactCore::UniString("Inpaint / Content-Aware Fill"));
+    setPipelineStage(EffectPipelineStage::Rasterizer);
+    setAllowOverscan(true);
+    setCPUImpl(ArtifactCore::makeShared<InpaintCPUImpl>());
+    syncImpls();
+    setComputeMode(ComputeMode::CPU);
+}
+
+ArtifactInpaintEffect::~ArtifactInpaintEffect() {
+    delete impl_;
+    impl_ = nullptr;
+}
+
+void ArtifactInpaintEffect::syncImpls() {
+    if (auto* cpu = dynamic_cast<InpaintCPUImpl*>(cpuImpl().get()))
+        cpu->job_ = impl_->job;
+}
+
+std::vector<ArtifactCore::AbstractProperty>
+ArtifactInpaintEffect::getProperties() const {
+    std::vector<ArtifactCore::AbstractProperty> properties;
+    addCreativeFloat(properties, "radius", "Inpaint Radius",
+                     impl_->job.radius, 1.0f, 16.0f);
+    addCreativeString(properties, "maskInput", "Fill Mask Input",
+                      impl_->job.maskInput);
+    return properties;
+}
+
+void ArtifactInpaintEffect::setPropertyValue(
+    const ArtifactCore::UniString& name, const QVariant& value) {
+    const QString key = name.toQString();
+    auto& job = impl_->job;
+    if (key == QStringLiteral("radius")) {
+        const float raw = value.toFloat();
+        job.radius = std::isfinite(raw) ? std::clamp(raw, 1.0f, 16.0f) : 1.0f;
+    } else if (key == QStringLiteral("maskInput")) {
+        job.maskInput = value.toString();
+    } else {
+        ArtifactAbstractEffect::setPropertyValue(name, value);
+        return;
+    }
+    syncImpls();
+}
+
+EffectROIHint ArtifactInpaintEffect::roiHint() const {
+    return {.kind = EffectROIHintKind::Mask,
+            .expansionPixels = impl_->job.radius * 3.0f + 4.0f,
+            .requiresFullFrame = false};
+}
+
 class ArtifactDepthRelightEffect::Impl {
 public:
     float lightX = 0.35f;

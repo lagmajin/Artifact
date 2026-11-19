@@ -29,6 +29,18 @@ bool isVideoContainer(const QString& format);
 bool isAudioContainer(const QString& format);
 QString normalizeCodecName(const QString& codec);
 
+// Alpha contract helpers. The canonical names are stable enough to be used
+// in job JSON, service APIs and UI item data.
+QString alphaStateName(ArtifactRenderJob::AlphaState state);
+ArtifactRenderJob::AlphaState alphaStateFromName(const QString& name, bool* ok = nullptr);
+bool alphaStateCarriesAlpha(ArtifactRenderJob::AlphaState state);
+ArtifactRenderJob::AlphaState effectiveAlphaStateForJob(const ArtifactRenderJob& job);
+// Single source of truth for the encoder pixel format. Video backends and the
+// PNG-sequence-to-video fallback must pick the same format for a given job.
+QString ffmpegPixelFormatForJob(const ArtifactRenderJob& job);
+// True when the container/codec pair is capable of carrying an alpha channel.
+bool outputFormatCarriesAlpha(const ArtifactRenderJob& job);
+
 std::unique_ptr<IVideoEncodeBackend> createVideoEncodeBackend(
     const ArtifactRenderJob& job,
     QString* backendName,

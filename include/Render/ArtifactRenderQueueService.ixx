@@ -125,6 +125,10 @@ public:
   void setJobBitDepthAt(int index, int bitDepth);
   QString jobExrCompressionAt(int index) const;
   void setJobExrCompressionAt(int index, const QString& compression);
+  // Alpha contract: canonical names are "auto", "opaque", "straight",
+  // "premultiplied" and "alpha-only". Unknown names fall back to "auto".
+  QString jobAlphaStateAt(int index) const;
+  void setJobAlphaStateAt(int index, const QString& state);
   QString jobAudioSourcePathAt(int index) const;
   void setJobAudioSourcePathAt(int index, const QString &path);
   QString jobAudioCodecAt(int index) const;
