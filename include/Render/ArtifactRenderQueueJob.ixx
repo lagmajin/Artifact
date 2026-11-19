@@ -44,6 +44,18 @@ public:
         Quarter
     };
 
+    // Alpha contract shared by the render queue, encoder and preflight.
+    // Auto keeps the legacy format/codec-derived behaviour so saved jobs and
+    // existing presets are unchanged. The explicit states let a job request a
+    // specific alpha treatment instead of relying on the container.
+    enum class AlphaState {
+        Auto,
+        Opaque,
+        Straight,
+        Premultiplied,
+        AlphaOnly
+    };
+
     struct RenderPassConfig {
         QString name;
         LayerFilterMode layerFilter = LayerFilterMode::All;
@@ -136,6 +148,9 @@ public:
     // This is intentionally separate from regular multi-channel EXR output.
     bool deepExportEnabled = false;
     int framePadding = 4;
+    // See AlphaState above. Auto means "derive from format/codec" and keeps
+    // the pre-contract behaviour of existing jobs.
+    AlphaState alphaState = AlphaState::Auto;
 
     ArtifactRenderJob()
         : resolutionWidth(1920)

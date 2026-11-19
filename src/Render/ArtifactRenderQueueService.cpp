@@ -516,6 +516,50 @@ namespace Artifact
             return diag;
         }
 
+        struct AlphaEdgeStats {
+            qint64 sampledPixels = 0;
+            qint64 edgePixels = 0;
+            qint64 brighterThanAlpha = 0;
+            qint64 darkerThanAlpha = 0;
+            qint64 hiddenColorPixels = 0;
+        };
+
+        // Samples a rendered frame for the classic straight/premultiplied
+        // mismatch signals. Fully transparent pixels that still carry colour
+        // are the main source of fringes after resampling; on partial-coverage
+        // pixels, premultiplied RGB can never exceed alpha, while straight RGB
+        // normally does.
+        AlphaEdgeStats inspectAlphaEdges(const QImage& image, int sampleStep)
+        {
+            AlphaEdgeStats stats;
+            if (image.isNull() || image.format() != QImage::Format_RGBA8888 ||
+                sampleStep < 1) {
+                return stats;
+            }
+            const int step = std::max(1, sampleStep);
+            for (int y = 0; y < image.height(); y += step) {
+                const uchar* row = image.constScanLine(y);
+                if (!row) continue;
+                for (int x = 0; x < image.width(); x += step) {
+                    const uchar* pixel = row + static_cast<qsizetype>(x) * 4;
+                    const int r = pixel[0];
+                    const int g = pixel[1];
+                    const int b = pixel[2];
+                    const int a = pixel[3];
+                    const int maxChannel = std::max({r, g, b});
+                    ++stats.sampledPixels;
+                    if (a == 0) {
+                        if (maxChannel > 16) ++stats.hiddenColorPixels;
+                    } else if (a < 255) {
+                        ++stats.edgePixels;
+                        if (maxChannel > a + 8) ++stats.brighterThanAlpha;
+                        if (maxChannel + 8 < a) ++stats.darkerThanAlpha;
+                    }
+                }
+            }
+            return stats;
+        }
+
         QString summarizePreflightDiagnostics(const ArtifactCore::DiagnosticResult& result)
         {
             const auto diagnostics = result.getDiagnostics();
@@ -1957,6 +2001,21 @@ namespace Artifact
             const QString normalized = compression.trimmed().toLower();
             jobs[index].exrCompression =
                 kSupported.contains(normalized) ? normalized : QStringLiteral("zip");
+            if (jobUpdated) jobUpdated(index);
+        }
+
+        QString jobAlphaStateAt(int index) const {
+            if (index < 0 || index >= jobs.size()) {
+                return QStringLiteral("auto");
+            }
+            return Artifact::alphaStateName(jobs[index].alphaState);
+        }
+
+        void setJobAlphaState(int index, const QString& state) {
+            if (index < 0 || index >= jobs.size()) return;
+            bool known = false;
+            const auto parsed = Artifact::alphaStateFromName(state, &known);
+            jobs[index].alphaState = known ? parsed : ArtifactRenderJob::AlphaState::Auto;
             if (jobUpdated) jobUpdated(index);
         }
 
@@ -3787,12 +3846,18 @@ namespace Artifact
                  << QStringLiteral("-i") << inputPattern;
 
             const QString format = Artifact::deriveContainerFromJob(job);
+            // The fallback encoder chooses its codec from the container rather
+            // than from job.codec, so mirror that choice before resolving the
+            // alpha-aware pixel format.
+            ArtifactRenderJob encodeJob = job;
             if (format == QStringLiteral("mp4") || format == QStringLiteral("mov") || format == QStringLiteral("mkv")) {
+                encodeJob.codec = QStringLiteral("h264");
                 args << QStringLiteral("-c:v") << QStringLiteral("libx264")
-                     << QStringLiteral("-pix_fmt") << QStringLiteral("yuv420p");
+                     << QStringLiteral("-pix_fmt") << ffmpegPixelFormatForJob(encodeJob);
             } else if (format == QStringLiteral("webm")) {
+                encodeJob.codec = QStringLiteral("vp9");
                 args << QStringLiteral("-c:v") << QStringLiteral("libvpx-vp9")
-                     << QStringLiteral("-pix_fmt") << QStringLiteral("yuv420p");
+                     << QStringLiteral("-pix_fmt") << ffmpegPixelFormatForJob(encodeJob);
             } else if (format == QStringLiteral("gif")) {
                 // GIF is palette based. Generate the palette from the complete
                 // sequence before paletteuse so gradients do not collapse to
@@ -3809,8 +3874,9 @@ namespace Artifact
                      << QStringLiteral("-loop") << QStringLiteral("0")
                      << QStringLiteral("-pix_fmt") << QStringLiteral("yuva420p");
             } else {
+                encodeJob.codec = QStringLiteral("h264");
                 args << QStringLiteral("-c:v") << QStringLiteral("libx264")
-                     << QStringLiteral("-pix_fmt") << QStringLiteral("yuv420p");
+                     << QStringLiteral("-pix_fmt") << ffmpegPixelFormatForJob(encodeJob);
             }
 
             args << finalOutputPath;
@@ -5861,6 +5927,17 @@ namespace Artifact
         impl_->syncCoreQueueModel();
     }
 
+    QString ArtifactRenderQueueService::jobAlphaStateAt(int index) const
+    {
+        return impl_->queueManager.jobAlphaStateAt(index);
+    }
+
+    void ArtifactRenderQueueService::setJobAlphaStateAt(int index, const QString& state)
+    {
+        impl_->queueManager.setJobAlphaState(index, state);
+        impl_->syncCoreQueueModel();
+    }
+
     QString ArtifactRenderQueueService::jobAudioSourcePathAt(int index) const
     {
         return impl_->queueManager.jobAudioSourcePathAt(index);
@@ -6451,6 +6528,58 @@ namespace Artifact
                 QStringLiteral("Choose a supported codec"),
                 compId));
         }
+        // Alpha contract preflight: an explicit alpha request must survive the
+        // chosen container/codec pair, otherwise the encoder silently drops it.
+        const auto effectiveAlphaState = Artifact::effectiveAlphaStateForJob(job);
+        const QString alphaStateLabel = Artifact::alphaStateName(effectiveAlphaState);
+        if (job.alphaState != ArtifactRenderJob::AlphaState::Auto &&
+            effectiveAlphaState == ArtifactRenderJob::AlphaState::AlphaOnly) {
+            result.addDiagnostic(makePreflightDiagnostic(
+                ArtifactCore::DiagnosticSeverity::Error,
+                ArtifactCore::DiagnosticCategory::Configuration,
+                QStringLiteral("Alpha-only export is not supported"),
+                QStringLiteral("Job '%1' requests alpha-only output, but the current encoder pipeline can only write RGB or RGB+Alpha.")
+                    .arg(jobName),
+                QStringLiteral("Choose opaque, straight or premultiplied alpha"),
+                compId));
+        }
+        const bool alphaVideoJob =
+            isVideoContainer(outputFormat) &&
+            job.alphaState != ArtifactRenderJob::AlphaState::Auto &&
+            Artifact::alphaStateCarriesAlpha(effectiveAlphaState);
+        if (alphaVideoJob) {
+            result.addDiagnostic(makePreflightDiagnostic(
+                ArtifactCore::DiagnosticSeverity::Info,
+                ArtifactCore::DiagnosticCategory::Configuration,
+                QStringLiteral("Alpha-capable encoder selected"),
+                QStringLiteral("Job '%1' requests '%2' alpha; hardware/GPU backends are replaced by the software pipe encoder because they cannot carry alpha. The 'native' backend now applies the alpha pixel format directly.")
+                    .arg(jobName, alphaStateLabel),
+                QStringLiteral("Choose 'pipe' or 'native' as the encoder backend to make this explicit"),
+                compId));
+        }
+        if (Artifact::alphaStateCarriesAlpha(effectiveAlphaState) &&
+            isVideoContainer(outputFormat) &&
+            !Artifact::outputFormatCarriesAlpha(job)) {
+            result.addDiagnostic(makePreflightDiagnostic(
+                ArtifactCore::DiagnosticSeverity::Warning,
+                ArtifactCore::DiagnosticCategory::Configuration,
+                QStringLiteral("Alpha channel will be dropped"),
+                QStringLiteral("Job '%1' requests '%2' alpha, but codec '%3' in a '%4' container cannot carry it.")
+                    .arg(jobName, alphaStateLabel, normalizedCodec, outputFormat),
+                QStringLiteral("Use WebM/VP9, MOV/ProRes 4444, WebP or a PNG sequence to keep transparency"),
+                compId));
+        }
+        if (effectiveAlphaState == ArtifactRenderJob::AlphaState::Premultiplied) {
+            result.addDiagnostic(makePreflightDiagnostic(
+                ArtifactCore::DiagnosticSeverity::Warning,
+                ArtifactCore::DiagnosticCategory::Configuration,
+                QStringLiteral("Premultiplied alpha needs an explicit boundary conversion"),
+                QStringLiteral("Job '%1' requests premultiplied alpha; most video encoders expect straight alpha and may show bright edges.")
+                    .arg(jobName),
+                QStringLiteral("Use straight alpha for video output, or keep premultiplied material as an EXR sequence"),
+                compId));
+        }
+
         if (isAudioContainer(outputFormat) &&
             normalizedCodec != QStringLiteral("pcm_s16le") &&
             normalizedCodec != QStringLiteral("pcm_s24le") &&
@@ -6842,6 +6971,65 @@ namespace Artifact
         appendCompositionMismatchWarnings(job, composition, compId, result);
         appendTemplateLockDiagnostics(composition, compId, result);
         appendUnsupportedAovWarnings(job, compId, result);
+
+        // Alpha edge check on one sampled frame. Render a detached composition
+        // snapshot so preflight never moves the live composition's playhead.
+        if (Artifact::alphaStateCarriesAlpha(effectiveAlphaState) &&
+            effectiveAlphaState != ArtifactRenderJob::AlphaState::AlphaOnly &&
+            !isAudioContainer(outputFormat)) {
+            const QJsonDocument snapshot = composition->toJson();
+            auto probeComposition = ArtifactAbstractComposition::fromJson(snapshot);
+            if (probeComposition) {
+                const int probeFrame =
+                    job.frameRangeMode == ArtifactRenderJob::FrameRangeMode::SingleFrame
+                        ? job.startFrame
+                        : job.startFrame + (job.endFrame - job.startFrame) / 2;
+                const QImage probeImage =
+                    impl_->renderSingleFrameComposition(job, probeComposition, probeFrame);
+                if (!probeImage.isNull()) {
+                    const AlphaEdgeStats stats = inspectAlphaEdges(probeImage, 2);
+                    if (stats.sampledPixels > 0 &&
+                        stats.hiddenColorPixels * 1000 >= stats.sampledPixels * 5) {
+                        result.addDiagnostic(makePreflightDiagnostic(
+                            ArtifactCore::DiagnosticSeverity::Warning,
+                            ArtifactCore::DiagnosticCategory::Matte,
+                            QStringLiteral("Transparent pixels carry hidden color"),
+                            QStringLiteral("Job '%1' has fully transparent pixels with non-black RGB; resampling can bleed that hidden color into the matte edge.")
+                                .arg(jobName),
+                            QStringLiteral("Clear RGB under fully transparent areas or pre-multiply the source"),
+                            compId));
+                    }
+                    const bool looksStraight = stats.edgePixels > 0 &&
+                        stats.brighterThanAlpha > stats.darkerThanAlpha * 2 &&
+                        stats.brighterThanAlpha * 4 >= stats.edgePixels;
+                    const bool looksPremultiplied = stats.edgePixels > 0 &&
+                        stats.darkerThanAlpha > stats.brighterThanAlpha * 2 &&
+                        stats.darkerThanAlpha * 4 >= stats.edgePixels;
+                    if (effectiveAlphaState == ArtifactRenderJob::AlphaState::Straight &&
+                        looksPremultiplied) {
+                        result.addDiagnostic(makePreflightDiagnostic(
+                            ArtifactCore::DiagnosticSeverity::Warning,
+                            ArtifactCore::DiagnosticCategory::Matte,
+                            QStringLiteral("Frame looks premultiplied but straight alpha was requested"),
+                            QStringLiteral("Job '%1' requests straight alpha, yet most partial-coverage pixels have RGB below alpha; expect dark fringes.")
+                                .arg(jobName),
+                            QStringLiteral("Use premultiplied alpha or unpremultiply at the export boundary"),
+                            compId));
+                    }
+                    if (effectiveAlphaState == ArtifactRenderJob::AlphaState::Premultiplied &&
+                        looksStraight) {
+                        result.addDiagnostic(makePreflightDiagnostic(
+                            ArtifactCore::DiagnosticSeverity::Warning,
+                            ArtifactCore::DiagnosticCategory::Matte,
+                            QStringLiteral("Frame looks straight but premultiplied alpha was requested"),
+                            QStringLiteral("Job '%1' requests premultiplied alpha, yet most partial-coverage pixels have RGB above alpha; expect bright fringes.")
+                                .arg(jobName),
+                            QStringLiteral("Use straight alpha or premultiply at the export boundary"),
+                            compId));
+                    }
+                }
+            }
+        }
         return result;
     }
 
@@ -10269,6 +10457,7 @@ namespace Artifact
             obj["dropFrame"] = job.dropFrame;
             obj["bitDepth"] = job.bitDepth;
             obj["exrCompression"] = job.exrCompression;
+            obj["alphaState"] = Artifact::alphaStateName(job.alphaState);
             obj["bitrate"] = job.bitrate;
             obj["startFrame"] = job.startFrame;
             obj["endFrame"] = job.endFrame;
@@ -10514,6 +10703,12 @@ namespace Artifact
             job.dropFrame = obj["dropFrame"].toBool(false);
             job.bitDepth = obj["bitDepth"].toInt(8);
             job.exrCompression = obj["exrCompression"].toString(QStringLiteral("zip"));
+            bool alphaStateKnown = false;
+            job.alphaState = Artifact::alphaStateFromName(
+                obj["alphaState"].toString(QStringLiteral("auto")), &alphaStateKnown);
+            if (!alphaStateKnown) {
+                job.alphaState = ArtifactRenderJob::AlphaState::Auto;
+            }
             job.bitrate = std::clamp(obj["bitrate"].toInt(8000), 0, 1000000);
             job.startFrame = std::max(0, obj["startFrame"].toInt(0));
             job.endFrame = std::max(job.startFrame, obj["endFrame"].toInt(100));

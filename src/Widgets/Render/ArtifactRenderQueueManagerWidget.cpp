@@ -2344,6 +2344,7 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
     dialog.setCodecProfile(codecProfile);
     dialog.setEncoderBackend(impl_->service->jobEncoderBackendAt(index));
     dialog.setRenderBackend(impl_->service->jobRenderBackendAt(index));
+    dialog.setAlphaState(impl_->service->jobAlphaStateAt(index));
     dialog.setResolution(width, height);
     dialog.setFrameRate(fps);
     dialog.setBitrateKbps(bitrateKbps);
@@ -2377,6 +2378,7 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
           dialog.bitrateKbps());
       impl_->service->setJobEncoderBackendAt(index, dialog.encoderBackend());
       impl_->service->setJobRenderBackendAt(index, dialog.renderBackend());
+      impl_->service->setJobAlphaStateAt(index, dialog.alphaState());
       impl_->service->setJobIntegratedRenderEnabledAt(index, dialog.includeAudio());
       impl_->service->setJobMultiChannelEnabledAt(index, dialog.multiChannelEnabled());
       impl_->service->setJobMultiChannelChannelsAt(index, dialog.multiChannelChannels());

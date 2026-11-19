@@ -31,6 +31,9 @@ export namespace Artifact
   [[nodiscard]] QString encoderBackend() const;
   void setRenderBackend(const QString& backend);
   [[nodiscard]] QString renderBackend() const;
+  // Alpha contract: auto / opaque / straight / premultiplied / alpha-only.
+  void setAlphaState(const QString& state);
+  [[nodiscard]] QString alphaState() const;
   void setMultiChannelEnabled(bool enabled);
   [[nodiscard]] bool multiChannelEnabled() const;
   void setMultiChannelChannels(const QStringList& channels);
