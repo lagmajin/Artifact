@@ -7,6 +7,7 @@ module;
 #include <limits>
 #include <QProcessEnvironment>
 #include <QString>
+#include <QVariant>
 #include <QVector>
 #include <QChar>
 #include <QJsonDocument>
@@ -51,6 +52,13 @@ int toInt(const std::string& value, int fallback)
 {
     bool ok = false;
     const int parsed = QString::fromStdString(value).trimmed().toInt(&ok);
+    return ok ? parsed : fallback;
+}
+
+double toDouble(const std::string& value, double fallback)
+{
+    bool ok = false;
+    const double parsed = QString::fromStdString(value).trimmed().toDouble(&ok);
     return ok ? parsed : fallback;
 }
 
@@ -268,13 +276,24 @@ void ArtifactPythonAPI::registerLayerAPI() {
         for (const auto& layer : comp->allLayer()) {
             if (!layer || layer->layerName().compare(toQString(args[0]), Qt::CaseInsensitive) != 0) continue;
             const QString property = toQString(args[1]).trimmed().toLower();
-            const bool value = toBool(args[2]);
+            const QString rawValue = toQString(args[2]);
+            const bool value = toBool(rawValue);
             bool ok = false;
             if (property == QStringLiteral("visible")) ok = service->setLayerVisibleInCurrentComposition(layer->id(), value);
             else if (property == QStringLiteral("locked")) ok = service->setLayerLockedInCurrentComposition(layer->id(), value);
             else if (property == QStringLiteral("solo")) ok = service->setLayerSoloInCurrentComposition(layer->id(), value);
             else if (property == QStringLiteral("shy")) ok = service->setLayerShyInCurrentComposition(layer->id(), value);
-            else if (property == QStringLiteral("name")) ok = service->renameLayerInCurrentComposition(layer->id(), toQString(args[2]));
+            else if (property == QStringLiteral("name")) ok = service->renameLayerInCurrentComposition(layer->id(), rawValue);
+            else if (property == QStringLiteral("opacity")) {
+                layer->setOpacity(static_cast<float>(toDouble(rawValue, 100.0)));
+                ok = true;
+            }
+            // Dotted names are generic layer property paths (for example
+            // "transform.position.x"). Numeric values are passed through as
+            // double so set_layer_property is no longer restricted to bools.
+            else if (property.contains('.')) {
+                ok = layer->setLayerPropertyValue(property, QVariant(toDouble(rawValue, 0.0)));
+            }
             else return "ERROR: unsupported layer property";
             return ok ? "OK" : "ERROR: property update failed";
         }
@@ -293,12 +312,17 @@ void ArtifactPythonAPI::registerLayerAPI() {
             if (property == QStringLiteral("solo")) return layer->isSolo() ? "true" : "false";
             if (property == QStringLiteral("shy")) return layer->isShy() ? "true" : "false";
             if (property == QStringLiteral("name")) return QJsonDocument(QJsonObject{{QStringLiteral("value"), layer->layerName()}}).toJson(QJsonDocument::Compact).toStdString();
+            if (property == QStringLiteral("opacity")) {
+                QJsonObject value;
+                value.insert(QStringLiteral("value"), static_cast<double>(layer->opacity()));
+                return QJsonDocument(value).toJson(QJsonDocument::Compact).toStdString();
+            }
             return "null";
         }
         return "null";
     });
 
-    py.registerFunction("rename_selected_layers", [](const std::vector<std::string>& args) -> std::string {
+    py.registerFunction("_native_rename_selected_layers", [](const std::vector<std::string>& args) -> std::string {
         const QString prefix = args.size() > 0 ? toQString(args[0]) : QString();
         const QString baseName = args.size() > 1 ? toQString(args[1]) : QStringLiteral("Layer");
         const QString suffix = args.size() > 2 ? toQString(args[2]) : QString();
@@ -358,7 +382,7 @@ void ArtifactPythonAPI::registerLayerAPI() {
         return "OK";
     });
 
-    py.registerFunction("clean_selected_layers", [](const std::vector<std::string>& args) -> std::string {
+    py.registerFunction("_native_clean_selected_layers", [](const std::vector<std::string>& args) -> std::string {
         const bool clearParent = args.size() > 0 ? toBool(args[0]) : true;
         const bool clearEffects = args.size() > 1 ? toBool(args[1]) : true;
         const bool clearMarkers = args.size() > 2 ? toBool(args[2]) : true;
@@ -457,7 +481,7 @@ void ArtifactPythonAPI::registerLayerAPI() {
         return std::string("OK: cleaned ") + std::to_string(clearedCount) + " layer(s)";
     });
 
-    py.registerFunction("trim_comp_to_content", [](const std::vector<std::string>& args) -> std::string {
+    py.registerFunction("_native_trim_comp_to_content", [](const std::vector<std::string>& args) -> std::string {
         const QString trimMode = args.size() > 0 ? toQString(args[0]).trimmed() : QStringLiteral("selectedLayers");
         const int paddingFrames = args.size() > 1 ? std::max(0, toInt(args[1], 0)) : 0;
         const bool setWorkArea = args.size() > 2 ? toBool(args[2]) : true;
@@ -575,19 +599,19 @@ def _move_layer(layer_name, index):
 def _clean_selected_layers(clear_parent=True, clear_effects=True, clear_markers=True,
                            clear_expressions=True, clear_labels=True,
                            preserve_locked_layers=True):
-    return artifact.clean_selected_layers(clear_parent, clear_effects, clear_markers,
-                                          clear_expressions, clear_labels,
-                                          preserve_locked_layers)
+    return artifact._native_clean_selected_layers(clear_parent, clear_effects, clear_markers,
+                                                  clear_expressions, clear_labels,
+                                                  preserve_locked_layers)
 
 def _rename_selected_layers(prefix="", base_name="Layer", suffix="", start_index=1, padding=0,
                            rename_selected_only=True):
-    return artifact.rename_selected_layers(prefix, base_name, suffix, start_index, padding,
-                                           rename_selected_only)
+    return artifact._native_rename_selected_layers(prefix, base_name, suffix, start_index, padding,
+                                                   rename_selected_only)
 
 def _trim_comp_to_content(trim_mode="selectedLayers", padding_frames=0, sync_work_area=True,
                           respect_locked_layers=True):
-    return artifact.trim_comp_to_content(trim_mode, padding_frames, sync_work_area,
-                                         respect_locked_layers)
+    return artifact._native_trim_comp_to_content(trim_mode, padding_frames, sync_work_area,
+                                                 respect_locked_layers)
 
 artifact.get_layers = _get_layers
 artifact.get_selected_layers = _get_selected_layers

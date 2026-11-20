@@ -284,6 +284,22 @@ public:
     EffectROIHint roiHint() const override;
 };
 
+// CPU-only content-aware fill. The fill region comes from a named auxiliary
+// mask input; alpha of the main image is never modified. HDR values above 1.0
+// are preserved numerically but cannot be reconstructed by the inpaint kernel.
+class ArtifactInpaintEffect : public ArtifactAbstractEffect {
+private: class Impl; Impl* impl_;
+    void syncImpls();
+public:
+    ArtifactInpaintEffect();
+    ~ArtifactInpaintEffect() override;
+    bool supportsCPU() const override { return true; }
+    bool supportsGPU() const override { return false; }
+    std::vector<ArtifactCore::AbstractProperty> getProperties() const override;
+    void setPropertyValue(const ArtifactCore::UniString&, const QVariant&) override;
+    EffectROIHint roiHint() const override;
+};
+
 class ArtifactDepthRelightEffect : public ArtifactAbstractEffect {
 private: class Impl; Impl* impl_;
 protected:

@@ -40,6 +40,7 @@ import Artifact.Layer.Abstract;
 import Artifact.Composition.Abstract;
 import Artifact.Composition.InOutPoints;
 import Artifact.Layer.Text;
+import Artifact.Layer.Shape;
 import Artifact.Layer.InitParams;
 import Artifact.Layers.Selection.Manager;
 import Application.AppSettings;
@@ -1697,6 +1698,43 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
           const auto nowTime = currentTimeProvider
                                    ? currentTimeProvider()
                                    : currentPlaybackTime(playback);
+
+          // Path keyframes live in a JSON document on a String property
+          // rather than in AbstractProperty::KeyFrame objects. Capture the
+          // current shape path at the playhead instead of storing editor
+          // text as a normal keyframe value.
+          if (propertyName == QStringLiteral("shape.path.keyframes")) {
+            auto* shape = dynamic_cast<ArtifactShapeLayer*>(layer.get());
+            if (!shape) return;
+            const double fpsValue = playback
+                                        ? playback->frameRate().framerate()
+                                        : 30.0;
+            const int64_t fps =
+                std::max<int64_t>(1, static_cast<int64_t>(std::lround(fpsValue)));
+            const int64_t frame = nowTime.toFrameCount(fps);
+            const QString before = propertyPtr->getValue().toString();
+            const QString after =
+                checked ? shape->pathKeyframeDocumentWith(
+                              frame, shape->customPathVertices())
+                        : shape->pathKeyframeDocumentWithout(frame);
+            if (before == after) {
+              return;
+            }
+            if (auto* mgr = UndoManager::instance()) {
+              mgr->push(std::make_unique<SetLayerPropertyValueCommand>(
+                  layer, propertyName, before, after,
+                  QStringLiteral("Toggle Path Keyframe")));
+            }
+            const auto frames = shape->pathKeyframeFrames();
+            row->setKeyframeModeEnabled(!frames.empty());
+            row->setKeyframeChecked(std::find(frames.begin(), frames.end(), frame) !=
+                                    frames.end());
+            row->setNavigationEnabled(true);
+            if (keyframeChanged) {
+              keyframeChanged(propertyName);
+            }
+            return;
+          }
 
           const auto beforeKeyframes = propertyPtr->getKeyFrames();
           const bool beforeAnimatable = propertyPtr->isAnimatable();

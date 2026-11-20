@@ -17,6 +17,7 @@ module;
 #include <QLabel>
 #include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QVariant>
 #include <QCheckBox>
 #include <QGroupBox>
 #include <QSignalBlocker>
@@ -528,6 +529,8 @@ bool resolveRenderMatrixComposition(
   QLabel* outputPackageLabel = nullptr;
   double compositionFrameRate = 30.0;
     QComboBox* renderBackendCombo = nullptr;
+  // Alpha contract selection shown next to the backends.
+  QComboBox* alphaStateCombo = nullptr;
     QComboBox* resolutionCombo = nullptr;
   QSpinBox* widthSpin = nullptr;
   QSpinBox* heightSpin = nullptr;
@@ -1577,6 +1580,32 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
     });
     formLayout->addRow("Render Backend:", impl_->renderBackendCombo);
 
+    impl_->alphaStateCombo = new QComboBox();
+    impl_->alphaStateCombo->addItem(
+        TranslationManager::instance().tr(QStringLiteral("dialog.render_output.alpha_auto"), QStringLiteral("Auto (format default)")),
+        QStringLiteral("auto"));
+    impl_->alphaStateCombo->addItem(
+        TranslationManager::instance().tr(QStringLiteral("dialog.render_output.alpha_opaque"), QStringLiteral("Opaque (no alpha)")),
+        QStringLiteral("opaque"));
+    impl_->alphaStateCombo->addItem(
+        TranslationManager::instance().tr(QStringLiteral("dialog.render_output.alpha_straight"), QStringLiteral("Straight alpha")),
+        QStringLiteral("straight"));
+    impl_->alphaStateCombo->addItem(
+        TranslationManager::instance().tr(QStringLiteral("dialog.render_output.alpha_premultiplied"), QStringLiteral("Premultiplied alpha")),
+        QStringLiteral("premultiplied"));
+    impl_->alphaStateCombo->addItem(
+        TranslationManager::instance().tr(QStringLiteral("dialog.render_output.alpha_only"), QStringLiteral("Alpha only (unsupported)")),
+        QStringLiteral("alpha-only"));
+    impl_->alphaStateCombo->setCurrentIndex(0);
+    impl_->alphaStateCombo->setToolTip(TranslationManager::instance().tr(
+        QStringLiteral("dialog.render_output.alpha_state_tip"),
+        QStringLiteral("Alpha の扱いを明示します。Auto は形式・コーデックの既定に従います")));
+    impl_->alphaStateCombo->setAccessibleName(QStringLiteral("Alpha state"));
+    impl_->alphaStateCombo->setAccessibleDescription(QStringLiteral("Choose how alpha is written to the output"));
+    formLayout->addRow(
+        TranslationManager::instance().tr(QStringLiteral("dialog.render_output.alpha_state"), QStringLiteral("Alpha state:")),
+        impl_->alphaStateCombo);
+
     impl_->preflightSummaryLabel = new QLabel(QStringLiteral("Preflight: not checked yet"), this);
     impl_->preflightSummaryLabel->setTextFormat(Qt::PlainText);
     impl_->preflightSummaryLabel->setWordWrap(true);
@@ -2085,6 +2114,23 @@ void ArtifactRenderOutputSettingDialog::setRenderBackend(const QString& backend)
 QString ArtifactRenderOutputSettingDialog::renderBackend() const
 {
   return impl_->renderBackendCombo ? Impl::normalizeRenderBackend(impl_->renderBackendCombo->currentText()) : QStringLiteral("auto");
+}
+
+void ArtifactRenderOutputSettingDialog::setAlphaState(const QString& state)
+{
+  if (!impl_->alphaStateCombo) {
+    return;
+  }
+  const QString value = state.trimmed().toLower();
+  const int index = impl_->alphaStateCombo->findData(value);
+  impl_->alphaStateCombo->setCurrentIndex(index >= 0 ? index : 0);
+}
+
+QString ArtifactRenderOutputSettingDialog::alphaState() const
+{
+  return impl_->alphaStateCombo && impl_->alphaStateCombo->currentIndex() >= 0
+      ? impl_->alphaStateCombo->currentData().toString()
+      : QStringLiteral("auto");
 }
 
 void ArtifactRenderOutputSettingDialog::setMultiChannelEnabled(bool enabled)
