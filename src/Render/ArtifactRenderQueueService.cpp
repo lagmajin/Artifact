@@ -4574,6 +4574,15 @@ namespace Artifact
             painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
 
             const ArtifactCore::FramePosition currentPos(frameNumber);
+            static thread_local ArtifactCore::ArtifactArray<
+                CompositionTimelineTransitionEvaluation> transitionEvaluations;
+            const auto requiredTransitionCapacity = static_cast<std::size_t>(
+                composition->timelineTransitionCount());
+            if (transitionEvaluations.capacity() < requiredTransitionCapacity) {
+                transitionEvaluations.reserve(requiredTransitionCapacity);
+            }
+            composition->evaluateTimelineTransitionsAtFrame(
+                frameNumber, transitionEvaluations);
             const auto& layers = composition->allLayerRef();
             const ArtifactCameraLayer* activeCamera = nullptr;
             for (const auto& layer : layers) {
@@ -4689,7 +4698,12 @@ namespace Artifact
                     surfaceLocalBounds = QRectF(
                         0.0, 0.0, layerSize.width(), layerSize.height());
                 }
-                const qreal opacity = std::clamp(static_cast<qreal>(layer->opacity()), 0.0, 1.0);
+                const qreal opacity = std::clamp(
+                    static_cast<qreal>(layer->opacity()) *
+                        CompositionTimelineTransitionEvaluation::
+                            combinedOpacityMultiplierForLayer(
+                                transitionEvaluations, layer->idView()),
+                    0.0, 1.0);
                 const auto blendMode = ArtifactCore::toBlendMode(
                     layer ? layer->layerBlendType() : LAYER_BLEND_TYPE::BLEND_NORMAL);
                 if (!SoftwareRender::qPainterSupportsBlendMode(blendMode)) {

@@ -71,5 +71,14 @@
     "queue_running": "작업 %2개 중 %1개 렌더링 중",
     "queue_empty": "대기열이 비어 있습니다",
     "queue_ready": "대기열 준비 완료"
+  },
+  "layer_panel": {
+    "menu_trans_stack_position": "합성 위치 변경...",
+    "menu_trans_stack_position_title": "트랜지션 스택",
+    "menu_trans_stack_position_prompt": "레이어 위치 (-1은 소스 A 위치 사용)",
+    "menu_trans_sources": "소스 변경...",
+    "menu_trans_sources_title": "트랜지션 소스",
+    "menu_trans_source_a": "소스 A",
+    "menu_trans_source_b": "소스 B"
   }
 }

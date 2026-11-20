@@ -71,5 +71,14 @@
     "queue_running": "جارٍ تصيير %1 من %2 من المهام",
     "queue_empty": "قائمة الانتظار فارغة",
     "queue_ready": "قائمة الانتظار جاهزة"
+  },
+  "layer_panel": {
+    "menu_trans_stack_position": "تغيير موضع التركيب...",
+    "menu_trans_stack_position_title": "مكدس الانتقالات",
+    "menu_trans_stack_position_prompt": "موضع الطبقة (-1 يستخدم موضع المصدر A)",
+    "menu_trans_sources": "تغيير المصادر...",
+    "menu_trans_sources_title": "مصادر الانتقال",
+    "menu_trans_source_a": "المصدر A",
+    "menu_trans_source_b": "المصدر B"
   }
 }

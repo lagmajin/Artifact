@@ -71,5 +71,14 @@
     "queue_running": "Renderizando %1 de %2 trabajos",
     "queue_empty": "La cola está vacía",
     "queue_ready": "Cola lista"
+  },
+  "layer_panel": {
+    "menu_trans_stack_position": "Cambiar posición de composición...",
+    "menu_trans_stack_position_title": "Pila de transiciones",
+    "menu_trans_stack_position_prompt": "Posición de capa (-1 usa la posición de la fuente A)",
+    "menu_trans_sources": "Cambiar fuentes...",
+    "menu_trans_sources_title": "Fuentes de transición",
+    "menu_trans_source_a": "Fuente A",
+    "menu_trans_source_b": "Fuente B"
   }
 }

@@ -169,6 +169,13 @@ namespace Artifact {
 
 namespace {
 
+bool sameTransitionSource(const LayerID& leftId, const QString& leftName,
+                          const LayerID& rightId, const QString& rightName)
+{
+    if (!leftId.isNil() && !rightId.isNil()) return leftId == rightId;
+    return !leftName.isEmpty() && leftName == rightName;
+}
+
 const Artifact::CompositionStateVariant* findStateVariantById(
     const QVector<Artifact::CompositionStateVariant>& states,
     const QString& stateId)
@@ -2291,6 +2298,19 @@ class ArtifactAbstractComposition::Impl {
   QString stateComparisonBId_;
   QVector<CompositionAudioReactiveBinding> audioReactiveBindings_;
   QVector<CompositionTimelineTransition> timelineTransitions_;
+  int layerStackIndex(const LayerID& id) const
+  {
+    if (id.isNil()) return -1;
+    const auto layer = layerMultiIndex_.findById(id);
+    return layer ? layerMultiIndex_.indexOf(layer) : -1;
+  }
+  void refreshTimelineTransitionLayerStackIndices()
+  {
+    for (auto& transition : timelineTransitions_) {
+      transition.leftLayerStackIndex = layerStackIndex(transition.leftLayerId);
+      transition.rightLayerStackIndex = layerStackIndex(transition.rightLayerId);
+    }
+  }
   QHash<QString, double> audioReactiveSmoothedValues_;
   QHash<QString, double> audioReactiveEnvelopeValues_;
   QHash<QString, CompositionAudioReactiveMonitor> audioReactiveMonitors_;
@@ -2738,6 +2758,9 @@ void ArtifactAbstractComposition::Impl::invalidateThumbnailCache()
   }
   
   layerMultiIndex_.add(layer,id,layer->type_index());
+  if (!suppressLayerChangedEvents_) {
+    refreshTimelineTransitionLayerStackIndices();
+  }
   CompositionNode node;
   node.id = id.toString();
   node.order = layerMultiIndex_.indexOf(layer);
@@ -2791,6 +2814,7 @@ void ArtifactAbstractComposition::Impl::invalidateThumbnailCache()
    }
   }
    layerMultiIndex_.clear();
+   refreshTimelineTransitionLayerStackIndices();
    collisionLayersScratch_.removeAll();
    nodeStore_ = CompositionNodeStore{};
    invalidateThumbnailCache();
@@ -2826,6 +2850,7 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
        }
    }
     layerMultiIndex_.removeById(id);
+    refreshTimelineTransitionLayerStackIndices();
     collisionLayersScratch_.removeAll();
     nodeStore_.removeNode(id.toString());
     if (removedLayer) {
@@ -4199,6 +4224,9 @@ void ArtifactAbstractComposition::Impl::evaluateLayerComponentSimulation(
       }
       
       layerMultiIndex_.insertAt(0, layer, layer->id(), layer->type_index());
+      if (!suppressLayerChangedEvents_) {
+          refreshTimelineTransitionLayerStackIndices();
+      }
       CompositionNode node;
       node.id = layer->id().toString();
       node.order = layerMultiIndex_.indexOf(layer);
@@ -4232,6 +4260,7 @@ void ArtifactAbstractComposition::Impl::evaluateLayerComponentSimulation(
       int oldIndex = layerMultiIndex_.indexOf(layer);
       if (oldIndex == -1) return;
       layerMultiIndex_.move(oldIndex, newIndex);
+      refreshTimelineTransitionLayerStackIndices();
       nodeStore_.setOrder(id.toString(), layerMultiIndex_.indexOf(layer));
       invalidateThumbnailCache();
       owner_->changed();
@@ -4247,6 +4276,7 @@ void ArtifactAbstractComposition::Impl::evaluateLayerComponentSimulation(
       int oldIndex = layerMultiIndex_.indexOf(layer);
       if (oldIndex == -1) return;
       layerMultiIndex_.move(oldIndex, layerMultiIndex_.all().size() - 1);
+      refreshTimelineTransitionLayerStackIndices();
       nodeStore_.setOrder(id.toString(), layerMultiIndex_.indexOf(layer));
       invalidateThumbnailCache();
       owner_->changed();
@@ -4262,6 +4292,7 @@ void ArtifactAbstractComposition::Impl::evaluateLayerComponentSimulation(
       int oldIndex = layerMultiIndex_.indexOf(layer);
       if (oldIndex == -1) return;
       layerMultiIndex_.move(oldIndex, 0);
+      refreshTimelineTransitionLayerStackIndices();
       nodeStore_.setOrder(id.toString(), layerMultiIndex_.indexOf(layer));
       invalidateThumbnailCache();
       owner_->changed();
@@ -4599,6 +4630,9 @@ QJsonObject CompositionTimelineTransition::toJson() const
     object.insert(QStringLiteral("easing"), easing);
     object.insert(QStringLiteral("leftClipName"), leftClipName);
     object.insert(QStringLiteral("rightClipName"), rightClipName);
+    object.insert(QStringLiteral("leftLayerId"), leftLayerId.toString());
+    object.insert(QStringLiteral("rightLayerId"), rightLayerId.toString());
+    object.insert(QStringLiteral("stackPosition"), stackPosition);
     object.insert(QStringLiteral("range"), range.toJson());
     object.insert(QStringLiteral("enabled"), enabled);
     return object;
@@ -4620,6 +4654,11 @@ CompositionTimelineTransition CompositionTimelineTransition::fromJson(
                          .toString(QStringLiteral("Crossfade"));
     transition.leftClipName = object.value(QStringLiteral("leftClipName")).toString();
     transition.rightClipName = object.value(QStringLiteral("rightClipName")).toString();
+    transition.leftLayerId = LayerID(
+        object.value(QStringLiteral("leftLayerId")).toString());
+    transition.rightLayerId = LayerID(
+        object.value(QStringLiteral("rightLayerId")).toString());
+    transition.stackPosition = object.value(QStringLiteral("stackPosition")).toInt(-1);
     if (object.value(QStringLiteral("range")).isObject()) {
         transition.range = FrameRange::fromJson(object.value(QStringLiteral("range")).toObject());
     }
@@ -4632,6 +4671,52 @@ bool CompositionTimelineTransition::isOpacityOnly() const
     return kind.compare(QStringLiteral("Cut"), Qt::CaseInsensitive) == 0 ||
            kind.compare(QStringLiteral("Crossfade"), Qt::CaseInsensitive) == 0 ||
            kind.compare(QStringLiteral("Dissolve"), Qt::CaseInsensitive) == 0;
+}
+
+bool CompositionTimelineTransitionEvaluation::isSourceLayer(
+    const LayerID& layerId) const noexcept
+{
+    if (!active) return false;
+    const auto& uuid = layerId.getUuid();
+    return std::equal(leftLayerUuid.cbegin(), leftLayerUuid.cend(),
+                      uuid.data) ||
+           std::equal(rightLayerUuid.cbegin(), rightLayerUuid.cend(),
+                      uuid.data);
+}
+
+double CompositionTimelineTransitionEvaluation::opacityMultiplierForLayer(
+    const LayerID& layerId) const noexcept
+{
+    if (!isSourceLayer(layerId)) return 1.0;
+    const auto& uuid = layerId.getUuid();
+    const bool leftSource = std::equal(
+        leftLayerUuid.cbegin(), leftLayerUuid.cend(), uuid.data);
+    if (leftSource) {
+        return hardCut ? (progress >= 0.5 ? 0.0 : 1.0) : 1.0 - progress;
+    }
+    return hardCut ? (progress < 0.5 ? 0.0 : 1.0) : progress;
+}
+
+double CompositionTimelineTransitionEvaluation::combinedOpacityMultiplierForLayer(
+    const ArtifactCore::ArtifactArray<CompositionTimelineTransitionEvaluation>& evaluations,
+    const LayerID& layerId) noexcept
+{
+    double multiplier = 1.0;
+    for (const auto& evaluation : evaluations) {
+        multiplier *= evaluation.opacityMultiplierForLayer(layerId);
+        if (multiplier <= 0.0) return 0.0;
+    }
+    return multiplier;
+}
+
+bool CompositionTimelineTransitionEvaluation::containsSourceLayer(
+    const ArtifactCore::ArtifactArray<CompositionTimelineTransitionEvaluation>& evaluations,
+    const LayerID& layerId) noexcept
+{
+    for (const auto& evaluation : evaluations) {
+        if (evaluation.isSourceLayer(layerId)) return true;
+    }
+    return false;
 }
 
 CompositionAudioReactiveBinding CompositionAudioReactiveBinding::fromJson(
@@ -6048,6 +6133,7 @@ AppendLayerToCompositionResult ArtifactAbstractComposition::insertLayerAt(
     }
     
     impl_->layerMultiIndex_.insertAt(index, layer, layer->id(), layer->type_index());
+    impl_->refreshTimelineTransitionLayerStackIndices();
     impl_->recalculateFrameRange();
     Q_EMIT changed();
     result.success = true;
@@ -6972,7 +7058,12 @@ void ArtifactAbstractComposition::addTimelineTransition(
 {
     if (transition.range.duration() <= 0 ||
         transition.leftClipName.trimmed().isEmpty() ||
-        transition.rightClipName.trimmed().isEmpty()) {
+        transition.rightClipName.trimmed().isEmpty() ||
+        sameTransitionSource(transition.leftLayerId,
+                             transition.leftClipName.trimmed(),
+                             transition.rightLayerId,
+                             transition.rightClipName.trimmed()) ||
+        transition.stackPosition < -1) {
         return;
     }
     CompositionTimelineTransition normalized = transition;
@@ -6985,12 +7076,33 @@ void ArtifactAbstractComposition::addTimelineTransition(
     }
     normalized.leftClipName = normalized.leftClipName.trimmed();
     normalized.rightClipName = normalized.rightClipName.trimmed();
+    if (normalized.leftLayerId.isNil()) {
+        if (const auto source = resolveTimelineTransitionSource(normalized, true)) {
+            normalized.leftLayerId = source->id();
+        }
+    }
+    if (normalized.rightLayerId.isNil()) {
+        if (const auto source = resolveTimelineTransitionSource(normalized, false)) {
+            normalized.rightLayerId = source->id();
+        }
+    }
+    normalized.leftLayerStackIndex =
+        impl_->layerStackIndex(normalized.leftLayerId);
+    normalized.rightLayerStackIndex =
+        impl_->layerStackIndex(normalized.rightLayerId);
     for (const auto& existing : impl_->timelineTransitions_) {
-        const bool samePair = existing.leftClipName == normalized.leftClipName &&
-                              existing.rightClipName == normalized.rightClipName;
-        const bool overlaps = existing.range.start() < normalized.range.end() &&
-                              normalized.range.start() < existing.range.end();
-        if (samePair && overlaps) return;
+        const bool sharesSource =
+            sameTransitionSource(existing.leftLayerId, existing.leftClipName,
+                                 normalized.leftLayerId, normalized.leftClipName) ||
+            sameTransitionSource(existing.leftLayerId, existing.leftClipName,
+                                 normalized.rightLayerId, normalized.rightClipName) ||
+            sameTransitionSource(existing.rightLayerId, existing.rightClipName,
+                                 normalized.leftLayerId, normalized.leftClipName) ||
+            sameTransitionSource(existing.rightLayerId, existing.rightClipName,
+                                 normalized.rightLayerId, normalized.rightClipName);
+        const bool overlaps = existing.range.start() <= normalized.range.end() &&
+                              normalized.range.start() <= existing.range.end();
+        if (sharesSource && overlaps) return;
     }
     impl_->timelineTransitions_.append(std::move(normalized));
     Q_EMIT changed();
@@ -7002,6 +7114,11 @@ ArtifactAbstractComposition::timelineTransitions() const
     return impl_->timelineTransitions_;
 }
 
+qsizetype ArtifactAbstractComposition::timelineTransitionCount() const noexcept
+{
+    return impl_->timelineTransitions_.size();
+}
+
 void ArtifactAbstractComposition::setTimelineTransitions(
     const QVector<CompositionTimelineTransition>& transitions)
 {
@@ -7010,17 +7127,52 @@ void ArtifactAbstractComposition::setTimelineTransitions(
     for (const auto& transition : transitions) {
         if (transition.range.duration() <= 0 ||
             transition.leftClipName.trimmed().isEmpty() ||
-            transition.rightClipName.trimmed().isEmpty()) continue;
+            transition.rightClipName.trimmed().isEmpty() ||
+            sameTransitionSource(transition.leftLayerId,
+                                 transition.leftClipName.trimmed(),
+                                 transition.rightLayerId,
+                                 transition.rightClipName.trimmed()) ||
+            transition.stackPosition < -1) continue;
         auto value = transition;
+        value.leftClipName = value.leftClipName.trimmed();
+        value.rightClipName = value.rightClipName.trimmed();
+        if (value.leftLayerId.isNil()) {
+            if (const auto source = resolveTimelineTransitionSource(value, true)) {
+                value.leftLayerId = source->id();
+            }
+        }
+        if (value.rightLayerId.isNil()) {
+            if (const auto source = resolveTimelineTransitionSource(value, false)) {
+                value.rightLayerId = source->id();
+            }
+        }
         if (value.id.trimmed().isEmpty()) {
             value.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
         }
         if (value.name.trimmed().isEmpty()) value.name = QStringLiteral("Transition");
         if (value.kind.trimmed().isEmpty()) value.kind = QStringLiteral("Crossfade");
         if (value.easing.trimmed().isEmpty()) value.easing = QStringLiteral("Linear");
+        const bool conflicts = std::any_of(
+            normalized.cbegin(), normalized.cend(),
+            [&value](const CompositionTimelineTransition& other) {
+                const bool sharesSource =
+                    sameTransitionSource(other.leftLayerId, other.leftClipName,
+                                         value.leftLayerId, value.leftClipName) ||
+                    sameTransitionSource(other.leftLayerId, other.leftClipName,
+                                         value.rightLayerId, value.rightClipName) ||
+                    sameTransitionSource(other.rightLayerId, other.rightClipName,
+                                         value.leftLayerId, value.leftClipName) ||
+                    sameTransitionSource(other.rightLayerId, other.rightClipName,
+                                         value.rightLayerId, value.rightClipName);
+                const bool overlaps = other.range.start() <= value.range.end() &&
+                                      value.range.start() <= other.range.end();
+                return sharesSource && overlaps;
+            });
+        if (conflicts) continue;
         normalized.append(std::move(value));
     }
     impl_->timelineTransitions_ = std::move(normalized);
+    impl_->refreshTimelineTransitionLayerStackIndices();
     Q_EMIT changed();
 }
 
@@ -7033,6 +7185,25 @@ ArtifactAbstractComposition::timelineTransitionById(const QString& transitionId)
         if (transition.id == normalizedId) return transition;
     }
     return std::nullopt;
+}
+
+ArtifactAbstractLayerPtr ArtifactAbstractComposition::resolveTimelineTransitionSource(
+    const CompositionTimelineTransition& transition, bool leftSource) const
+{
+    const LayerID& sourceId = leftSource ? transition.leftLayerId
+                                         : transition.rightLayerId;
+    if (!sourceId.isNil()) {
+        return layerById(sourceId);
+    }
+    const QString& sourceName = leftSource ? transition.leftClipName
+                                           : transition.rightClipName;
+    ArtifactAbstractLayerPtr match;
+    for (const auto& layer : allLayerRef()) {
+        if (!layer || layer->layerName() != sourceName) continue;
+        if (match) return {};
+        match = layer;
+    }
+    return match;
 }
 
 bool ArtifactAbstractComposition::removeTimelineTransition(const QString& transitionId)
@@ -7071,11 +7242,19 @@ bool ArtifactAbstractComposition::setTimelineTransitionRange(
     for (auto& transition : impl_->timelineTransitions_) {
         if (transition.id != normalizedId) continue;
         for (const auto& other : impl_->timelineTransitions_) {
-            if (other.id == normalizedId ||
-                other.leftClipName != transition.leftClipName ||
-                other.rightClipName != transition.rightClipName) continue;
-            const bool overlaps = other.range.start() < range.end() &&
-                                  range.start() < other.range.end();
+            if (other.id == normalizedId) continue;
+            const bool sharesSource =
+                sameTransitionSource(other.leftLayerId, other.leftClipName,
+                                     transition.leftLayerId, transition.leftClipName) ||
+                sameTransitionSource(other.leftLayerId, other.leftClipName,
+                                     transition.rightLayerId, transition.rightClipName) ||
+                sameTransitionSource(other.rightLayerId, other.rightClipName,
+                                     transition.leftLayerId, transition.leftClipName) ||
+                sameTransitionSource(other.rightLayerId, other.rightClipName,
+                                     transition.rightLayerId, transition.rightClipName);
+            if (!sharesSource) continue;
+            const bool overlaps = other.range.start() <= range.end() &&
+                                  range.start() <= other.range.end();
             if (overlaps) return false;
         }
         transition.range = range;
@@ -7095,6 +7274,55 @@ bool ArtifactAbstractComposition::setTimelineTransitionName(
         if (transition.id != normalizedId) continue;
         if (transition.name == normalizedName) return true;
         transition.name = normalizedName;
+        Q_EMIT changed();
+        return true;
+    }
+    return false;
+}
+
+bool ArtifactAbstractComposition::setTimelineTransitionSources(
+    const QString& transitionId, const LayerID& leftLayerId,
+    const LayerID& rightLayerId)
+{
+    const QString normalizedId = transitionId.trimmed();
+    if (normalizedId.isEmpty() || leftLayerId.isNil() || rightLayerId.isNil() ||
+        leftLayerId == rightLayerId) {
+        return false;
+    }
+    const auto leftLayer = layerById(leftLayerId);
+    const auto rightLayer = layerById(rightLayerId);
+    if (!leftLayer || !rightLayer) return false;
+
+    for (auto& transition : impl_->timelineTransitions_) {
+        if (transition.id != normalizedId) continue;
+        for (const auto& other : impl_->timelineTransitions_) {
+            if (other.id == normalizedId) continue;
+            const bool sharesSource =
+                sameTransitionSource(other.leftLayerId, other.leftClipName,
+                                     leftLayerId, leftLayer->layerName()) ||
+                sameTransitionSource(other.leftLayerId, other.leftClipName,
+                                     rightLayerId, rightLayer->layerName()) ||
+                sameTransitionSource(other.rightLayerId, other.rightClipName,
+                                     leftLayerId, leftLayer->layerName()) ||
+                sameTransitionSource(other.rightLayerId, other.rightClipName,
+                                     rightLayerId, rightLayer->layerName());
+            const bool overlaps =
+                other.range.start() <= transition.range.end() &&
+                transition.range.start() <= other.range.end();
+            if (sharesSource && overlaps) return false;
+        }
+        if (transition.leftLayerId == leftLayerId &&
+            transition.rightLayerId == rightLayerId &&
+            transition.leftClipName == leftLayer->layerName() &&
+            transition.rightClipName == rightLayer->layerName()) {
+            return true;
+        }
+        transition.leftLayerId = leftLayerId;
+        transition.rightLayerId = rightLayerId;
+        transition.leftLayerStackIndex = impl_->layerStackIndex(leftLayerId);
+        transition.rightLayerStackIndex = impl_->layerStackIndex(rightLayerId);
+        transition.leftClipName = leftLayer->layerName();
+        transition.rightClipName = rightLayer->layerName();
         Q_EMIT changed();
         return true;
     }
@@ -7133,6 +7361,21 @@ bool ArtifactAbstractComposition::setTimelineTransitionEasing(
     return false;
 }
 
+bool ArtifactAbstractComposition::setTimelineTransitionStackPosition(
+    const QString& transitionId, qint32 stackPosition)
+{
+    const QString normalizedId = transitionId.trimmed();
+    if (normalizedId.isEmpty() || stackPosition < -1) return false;
+    for (auto& transition : impl_->timelineTransitions_) {
+        if (transition.id != normalizedId) continue;
+        if (transition.stackPosition == stackPosition) return true;
+        transition.stackPosition = stackPosition;
+        Q_EMIT changed();
+        return true;
+    }
+    return false;
+}
+
 bool ArtifactAbstractComposition::duplicateTimelineTransition(
     const QString& transitionId, CompositionTimelineTransition* outDuplicate)
 {
@@ -7143,7 +7386,7 @@ bool ArtifactAbstractComposition::duplicateTimelineTransition(
         CompositionTimelineTransition duplicate = transition;
         duplicate.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
         duplicate.name = transition.name + QStringLiteral(" Copy");
-        const qint64 offset = std::max<qint64>(1, transition.range.duration());
+        const qint64 offset = std::max<qint64>(1, transition.range.frameCount());
         duplicate.range = FrameRange(transition.range.start() + offset,
                                      transition.range.end() + offset);
         impl_->timelineTransitions_.append(duplicate);
@@ -7170,27 +7413,147 @@ bool ArtifactAbstractComposition::timelineTransitionAtFrame(
 double ArtifactAbstractComposition::timelineTransitionProgressAtFrame(
     qint64 frame, CompositionTimelineTransition* outTransition) const
 {
-    CompositionTimelineTransition transition;
-    if (!timelineTransitionAtFrame(frame, &transition)) return -1.0;
-    if (outTransition) *outTransition = transition;
-    const qint64 duration = transition.range.duration();
-    if (duration <= 1) return 1.0;
+    const CompositionTimelineTransition* transition = nullptr;
+    for (const auto& candidate : impl_->timelineTransitions_) {
+        if (candidate.enabled && candidate.range.contains(frame)) {
+            transition = &candidate;
+            break;
+        }
+    }
+    if (!transition) return -1.0;
+    if (outTransition) *outTransition = *transition;
+    const qint64 frameCount = transition->range.frameCount();
+    if (frameCount <= 1) return 1.0;
     const double linearProgress = std::clamp(
-        static_cast<double>(frame - transition.range.start()) /
-            static_cast<double>(duration - 1),
+        static_cast<double>(frame - transition->range.start()) /
+            static_cast<double>(frameCount - 1),
         0.0, 1.0);
-    if (transition.easing.compare(QStringLiteral("Ease In"), Qt::CaseInsensitive) == 0) {
+    if (transition->easing.compare(QStringLiteral("Ease In"), Qt::CaseInsensitive) == 0) {
         return linearProgress * linearProgress;
     }
-    if (transition.easing.compare(QStringLiteral("Ease Out"), Qt::CaseInsensitive) == 0) {
+    if (transition->easing.compare(QStringLiteral("Ease Out"), Qt::CaseInsensitive) == 0) {
         return 1.0 - (1.0 - linearProgress) * (1.0 - linearProgress);
     }
-    if (transition.easing.compare(QStringLiteral("Ease In-Out"), Qt::CaseInsensitive) == 0) {
+    if (transition->easing.compare(QStringLiteral("Ease In-Out"), Qt::CaseInsensitive) == 0) {
         return linearProgress < 0.5
             ? 2.0 * linearProgress * linearProgress
             : 1.0 - std::pow(-2.0 * linearProgress + 2.0, 2.0) / 2.0;
     }
     return linearProgress;
+}
+
+CompositionTimelineTransitionEvaluation
+ArtifactAbstractComposition::evaluateTimelineTransitionAtFrame(qint64 frame) const
+{
+    CompositionTimelineTransitionEvaluation evaluation;
+    for (const auto& transition : impl_->timelineTransitions_) {
+        if (!transition.enabled || !transition.range.contains(frame)) continue;
+        if (!transition.isOpacityOnly() || transition.leftLayerId.isNil() ||
+            transition.rightLayerId.isNil() ||
+            transition.leftLayerId == transition.rightLayerId) {
+            return evaluation;
+        }
+        const qint64 frameCount = transition.range.frameCount();
+        const double linearProgress = frameCount <= 1
+            ? 1.0
+            : std::clamp(
+                  static_cast<double>(frame - transition.range.start()) /
+                      static_cast<double>(frameCount - 1),
+                  0.0, 1.0);
+        evaluation.progress = linearProgress;
+        if (transition.easing.compare(QStringLiteral("Ease In"),
+                                      Qt::CaseInsensitive) == 0) {
+            evaluation.progress = linearProgress * linearProgress;
+        } else if (transition.easing.compare(QStringLiteral("Ease Out"),
+                                             Qt::CaseInsensitive) == 0) {
+            evaluation.progress =
+                1.0 - (1.0 - linearProgress) * (1.0 - linearProgress);
+        } else if (transition.easing.compare(QStringLiteral("Ease In-Out"),
+                                             Qt::CaseInsensitive) == 0) {
+            evaluation.progress = linearProgress < 0.5
+                ? 2.0 * linearProgress * linearProgress
+                : 1.0 - std::pow(-2.0 * linearProgress + 2.0, 2.0) / 2.0;
+        }
+        std::copy(transition.leftLayerId.getUuid().data,
+                  transition.leftLayerId.getUuid().data + 16,
+                  evaluation.leftLayerUuid.begin());
+        std::copy(transition.rightLayerId.getUuid().data,
+                  transition.rightLayerId.getUuid().data + 16,
+                  evaluation.rightLayerUuid.begin());
+        evaluation.hardCut = transition.kind.compare(
+            QStringLiteral("Cut"), Qt::CaseInsensitive) == 0;
+        evaluation.stackPosition = transition.stackPosition;
+        evaluation.leftLayerStackIndex = transition.leftLayerStackIndex;
+        evaluation.rightLayerStackIndex = transition.rightLayerStackIndex;
+        const int layerCount = static_cast<int>(impl_->layerMultiIndex_.all().size());
+        if (layerCount > 0 && transition.leftLayerStackIndex >= 0) {
+            evaluation.insertionIndex = transition.stackPosition < 0
+                ? transition.leftLayerStackIndex
+                : std::min<int>(transition.stackPosition, layerCount - 1);
+        }
+        evaluation.active = true;
+        return evaluation;
+    }
+    return evaluation;
+}
+
+void ArtifactAbstractComposition::evaluateTimelineTransitionsAtFrame(
+    qint64 frame,
+    ArtifactCore::ArtifactArray<CompositionTimelineTransitionEvaluation>& outEvaluations) const
+{
+    // removeAll retains the caller-owned capacity; render callers should reuse
+    // this buffer and reserve it when transition metadata changes, outside the
+    // frame loop.
+    outEvaluations.removeAll();
+    const int layerCount = static_cast<int>(impl_->layerMultiIndex_.all().size());
+    for (const auto& transition : impl_->timelineTransitions_) {
+        if (!transition.enabled || !transition.range.contains(frame) ||
+            !transition.isOpacityOnly() || transition.leftLayerId.isNil() ||
+            transition.rightLayerId.isNil() ||
+            transition.leftLayerId == transition.rightLayerId ||
+            transition.leftLayerStackIndex < 0 || layerCount <= 0) {
+            continue;
+        }
+
+        CompositionTimelineTransitionEvaluation evaluation;
+        const qint64 frameCount = transition.range.frameCount();
+        const double linearProgress = frameCount <= 1
+            ? 1.0
+            : std::clamp(
+                  static_cast<double>(frame - transition.range.start()) /
+                      static_cast<double>(frameCount - 1),
+                  0.0, 1.0);
+        evaluation.progress = linearProgress;
+        if (transition.easing.compare(QStringLiteral("Ease In"),
+                                      Qt::CaseInsensitive) == 0) {
+            evaluation.progress = linearProgress * linearProgress;
+        } else if (transition.easing.compare(QStringLiteral("Ease Out"),
+                                             Qt::CaseInsensitive) == 0) {
+            evaluation.progress =
+                1.0 - (1.0 - linearProgress) * (1.0 - linearProgress);
+        } else if (transition.easing.compare(QStringLiteral("Ease In-Out"),
+                                             Qt::CaseInsensitive) == 0) {
+            evaluation.progress = linearProgress < 0.5
+                ? 2.0 * linearProgress * linearProgress
+                : 1.0 - std::pow(-2.0 * linearProgress + 2.0, 2.0) / 2.0;
+        }
+        std::copy(transition.leftLayerId.getUuid().data,
+                  transition.leftLayerId.getUuid().data + 16,
+                  evaluation.leftLayerUuid.begin());
+        std::copy(transition.rightLayerId.getUuid().data,
+                  transition.rightLayerId.getUuid().data + 16,
+                  evaluation.rightLayerUuid.begin());
+        evaluation.hardCut = transition.kind.compare(
+            QStringLiteral("Cut"), Qt::CaseInsensitive) == 0;
+        evaluation.stackPosition = transition.stackPosition;
+        evaluation.leftLayerStackIndex = transition.leftLayerStackIndex;
+        evaluation.rightLayerStackIndex = transition.rightLayerStackIndex;
+        evaluation.insertionIndex = transition.stackPosition < 0
+            ? transition.leftLayerStackIndex
+            : std::min<int>(transition.stackPosition, layerCount - 1);
+        evaluation.active = true;
+        outEvaluations.append(std::move(evaluation));
+    }
 }
 
 void ArtifactAbstractComposition::clearTimelineTransitions()
@@ -7895,6 +8258,23 @@ ArtifactCompositionPtr ArtifactAbstractComposition::fromJson(const QJsonDocument
         }
     }
     comp->impl_->suppressLayerChangedEvents_ = false;
+    // Legacy transitions are read before layers. Resolve their name-based
+    // sources once after layer restoration so frame evaluation stays O(1).
+    for (auto& transition : comp->impl_->timelineTransitions_) {
+        if (transition.leftLayerId.isNil()) {
+            if (const auto source =
+                    comp->resolveTimelineTransitionSource(transition, true)) {
+                transition.leftLayerId = source->id();
+            }
+        }
+        if (transition.rightLayerId.isNil()) {
+            if (const auto source =
+                    comp->resolveTimelineTransitionSource(transition, false)) {
+                transition.rightLayerId = source->id();
+            }
+        }
+    }
+    comp->impl_->refreshTimelineTransitionLayerStackIndices();
     const int64_t restoredFrame = obj.contains("currentFrame")
         ? obj["currentFrame"].toVariant().toLongLong()
         : comp->frameRange().start();

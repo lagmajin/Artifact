@@ -123,7 +123,14 @@
     "null_layer": "空对象",
     "adjustment_layer": "调整图层",
     "text_layer": "文本层",
-    "replace_layer_source": "替换图层源"
+    "replace_layer_source": "替换图层源",
+    "menu_trans_stack_position": "更改合成位置...",
+    "menu_trans_stack_position_title": "转场堆栈",
+    "menu_trans_stack_position_prompt": "图层位置（-1 使用源 A 的位置）",
+    "menu_trans_sources": "更改来源...",
+    "menu_trans_sources_title": "转场来源",
+    "menu_trans_source_a": "来源 A",
+    "menu_trans_source_b": "来源 B"
   },
   "blend_mode": {
     "normal": "正常",

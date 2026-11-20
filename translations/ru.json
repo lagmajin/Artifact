@@ -71,5 +71,14 @@
     "queue_running": "Рендеринг: задач %1 из %2",
     "queue_empty": "Очередь пуста",
     "queue_ready": "Очередь готова"
+  },
+  "layer_panel": {
+    "menu_trans_stack_position": "Изменить позицию композиции...",
+    "menu_trans_stack_position_title": "Стек переходов",
+    "menu_trans_stack_position_prompt": "Позиция слоя (-1 использует позицию источника A)",
+    "menu_trans_sources": "Изменить источники...",
+    "menu_trans_sources_title": "Источники перехода",
+    "menu_trans_source_a": "Источник A",
+    "menu_trans_source_b": "Источник B"
   }
 }

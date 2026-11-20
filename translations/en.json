@@ -1116,7 +1116,14 @@
     "matte_fit": "Matte fit",
     "matte_opacity": "Matte opacity",
     "keyframe_value_hint": "Double-click the value to edit. The clock indicates animation; the diamond toggles a key at the current frame.",
-    "matte_list_hint": "Track Mattes: %1"
+    "matte_list_hint": "Track Mattes: %1",
+    "menu_trans_stack_position": "Change Compositing Position...",
+    "menu_trans_stack_position_title": "Transition Stack",
+    "menu_trans_stack_position_prompt": "Layer position (-1 uses source A position)",
+    "menu_trans_sources": "Change Sources...",
+    "menu_trans_sources_title": "Transition Sources",
+    "menu_trans_source_a": "Source A",
+    "menu_trans_source_b": "Source B"
   },
   "blend_mode": {
     "normal": "Normal",

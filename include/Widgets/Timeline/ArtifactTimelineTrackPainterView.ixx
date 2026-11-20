@@ -91,8 +91,9 @@ export namespace Artifact
    Audio,
    Video,
    GroupContainer,
-   // A composition transition is a compact relationship bar, never a layer
-   // clip. Its LayerID remains nil so layer selection/move paths cannot own it.
+   // A composition transition is a virtual marker over its outgoing source
+   // row, never a layer clip. Its LayerID remains nil so layer selection/move
+   // paths cannot own it; selecting it reveals its range bar.
    Transition
    };
    enum class SourceState { Ready, Missing, Proxy, Unreadable, SequenceGap };
@@ -106,6 +107,7 @@ export namespace Artifact
 
    QString clipId;
    LayerID layerId;
+   QVector<LayerID> transitionSourceLayerIds;
    int trackIndex = -1;
    double startFrame = 0.0;
    double durationFrame = 1.0;
@@ -244,6 +246,7 @@ export namespace Artifact
                           bool forceRefresh = false);
   QVector<TrackClipVisual> clips() const;
   const QVector<TrackClipVisual>& clipsView() const;
+  TrackClipVisual hoveredClip() const;
   // Borrowed UI-thread geometry for display snapshot construction. The view
   // owns the storage; callers must not retain the reference across mutations.
   const QVector<int>& trackTopsView() const;

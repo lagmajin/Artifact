@@ -4857,6 +4857,7 @@ public:
   ArtifactTimelineNavigatorWidget *navigator_ = nullptr;
   ArtifactTimelineGlobalSwitches *globalSwitches_ = nullptr;
   CompositionID compositionId_;
+  QString selectedTimelineTransitionId_;
   bool shyActive_ = false;
   QString filterText_;
   QStringList recentLayerNames_;
@@ -7763,6 +7764,14 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
         if (impl_->syncingLayerSelection_) {
           return;
         }
+        if (auto composition = safeCompositionLookup(impl_->compositionId_)) {
+          if (composition->timelineTransitionById(event.clipId)) {
+            impl_->selectedTimelineTransitionId_ = event.clipId;
+            refreshTracks();
+            return;
+          }
+        }
+        impl_->selectedTimelineTransitionId_.clear();
         if (auto* svc = ArtifactProjectService::instance()) {
           svc->selectLayer(LayerID(event.layerId));
         }
@@ -8993,6 +9002,7 @@ void ArtifactTimelineWidget::timelineDebugMessage(const QString& message) {
 
 void ArtifactTimelineWidget::setComposition(const CompositionID &id) {
   impl_->compositionId_ = id;
+  impl_->selectedTimelineTransitionId_.clear();
   if (impl_->timelineLabel_) {
     impl_->timelineLabel_->setCompositionSummary(QStringLiteral("Composition"), 24.0);
     impl_->timelineLabel_->setCurrentFrame(0);
@@ -9964,6 +9974,49 @@ void ArtifactTimelineWidget::refreshTracks() {
           }
         }
       }
+      painterClips.push_back(std::move(visual));
+    }
+  }
+
+  if (composition && impl_->painterTrackView_) {
+    const auto compositionLayers = composition->allLayer();
+    for (const auto& transition : composition->timelineTransitions()) {
+      if (!transition.enabled || transition.range.duration() <= 0) continue;
+      int sourceTrackIndex = -1;
+      QVector<LayerID> sourceLayerIds;
+      const auto sourceA = composition->resolveTimelineTransitionSource(
+          transition, true);
+      const auto sourceB = composition->resolveTimelineTransitionSource(
+          transition, false);
+      if (sourceA) sourceLayerIds.push_back(sourceA->id());
+      if (sourceB && (!sourceA || sourceB->id() != sourceA->id())) {
+        sourceLayerIds.push_back(sourceB->id());
+      }
+      if (sourceA) {
+        for (int rowIndex = 0; rowIndex < visibleRows.size(); ++rowIndex) {
+          const auto& row = visibleRows[rowIndex];
+          if (row.kind == TimelineRowKind::Layer && row.layerId == sourceA->id()) {
+            sourceTrackIndex = rowIndex;
+            break;
+          }
+        }
+      }
+      if (sourceTrackIndex < 0) continue;
+      ArtifactTimelineTrackPainterView::TrackClipVisual visual;
+      visual.clipId = transition.id;
+      visual.trackIndex = sourceTrackIndex;
+      visual.startFrame = static_cast<double>(transition.range.start());
+      visual.durationFrame = static_cast<double>(transition.range.frameCount());
+      visual.trimMinStartFrame = visual.startFrame;
+      visual.trimMaxEndFrame = visual.startFrame + visual.durationFrame;
+      const QString sourceBName = sourceB ? sourceB->layerName()
+                                          : transition.rightClipName;
+      visual.title = QStringLiteral("%1 → %2")
+                         .arg(transition.kind, sourceBName);
+      visual.fillColor = QColor(245, 174, 32);
+      visual.kind = ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Transition;
+      visual.transitionSourceLayerIds = std::move(sourceLayerIds);
+      visual.selected = transition.id == impl_->selectedTimelineTransitionId_;
       painterClips.push_back(std::move(visual));
     }
   }
@@ -11611,6 +11664,7 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
   const auto& clips = view->clipsView();
   const auto& keyframeMarkers = view->keyframeMarkersView();
   const auto& compositionMarkers = view->compositionMarkersView();
+  const auto hoveredClip = view->hoveredClip();
   const quint64 visualRevision = view->timelineVisualRevision();
   ArtifactTimelineTrackPainterView::TrackClipVisual dragClip;
   const bool hasDragClip = view->activeDragClip(dragClip);
@@ -11672,10 +11726,17 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
   // snapshot construction O(trackCount * clipCount), which becomes visible
   // while scrubbing or editing projects with many clips.
   QVector<quint8> selectedRows(view->trackCount(), 0);
+  QSet<LayerID> highlightedTransitionSources;
   for (const auto& clip : clips) {
     if (clip.selected && clip.trackIndex >= 0 &&
         clip.trackIndex < selectedRows.size()) {
       selectedRows[clip.trackIndex] = 1;
+    }
+    if (clip.kind == ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Transition &&
+        (clip.selected || clip.clipId == hoveredClip.clipId)) {
+      for (const LayerID& sourceId : clip.transitionSourceLayerIds) {
+        highlightedTransitionSources.insert(sourceId);
+      }
     }
   }
 
@@ -11738,8 +11799,56 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
     }
     const double x = clip.startFrame * ppf - horizontalOffset;
     const double width = std::max(1.0, clip.durationFrame * ppf);
+    if (clip.kind == ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Transition) {
+      const bool isHovered = clip.clipId == hoveredClip.clipId;
+      const bool showRange = clip.selected;
+      const double markerWidth = 18.0;
+      const double visualX = showRange ? x : x + width * 0.5 - markerWidth * 0.5;
+      const double visualWidth = showRange ? width : markerWidth;
+      const double trackHeight =
+          static_cast<double>(view->trackHeight(clip.trackIndex));
+      const double height = std::min(16.0, std::max(10.0, trackHeight - 8.0));
+      const double top = trackTop(clip.trackIndex) +
+          (trackHeight - height) * 0.5;
+      if (visualX + visualWidth < 0.0 || visualX > viewportWidth ||
+          top + height < 0.0 || top > viewportHeight) {
+        continue;
+      }
+      const QColor transitionFill = clip.selected
+          ? QColor(245, 174, 32)
+          : (isHovered ? QColor(255, 193, 67) : clip.fillColor);
+      snapshot.rects.push_back(
+          {QRectF(visualX, top, visualWidth, height), transitionFill});
+      QColor transitionEdge = clip.selected ? selectionEdge
+                                             : transitionFill.lighter(135);
+      transitionEdge.setAlpha(clip.selected || isHovered ? 235 : 185);
+      snapshot.lines.push_back({QPointF(visualX, top),
+                                QPointF(visualX + visualWidth, top),
+                                transitionEdge, clip.selected ? 1.8f : 1.0f});
+      snapshot.lines.push_back({QPointF(visualX, top + height),
+                                QPointF(visualX + visualWidth, top + height),
+                                transitionEdge, clip.selected ? 1.8f : 1.0f});
+      if (clip.selected) {
+        snapshot.lines.push_back({QPointF(visualX + 1.0, top + 1.0),
+                                  QPointF(visualX + 1.0, top + height - 1.0),
+                                  selectionEdge, 1.6f});
+        snapshot.lines.push_back({QPointF(visualX + visualWidth - 1.0, top + 1.0),
+                                  QPointF(visualX + visualWidth - 1.0, top + height - 1.0),
+                                  selectionEdge, 1.6f});
+      }
+      if (!clip.selected) {
+        snapshot.texts.push_back(
+            {QPointF(visualX + 6.0, top + height * 0.72),
+             ArtifactCore::UniString(QStringLiteral("T")),
+             QColor(28, 31, 36), 9.5f});
+      } else if (visualWidth >= 34.0) {
+        snapshot.texts.push_back(
+            {QPointF(visualX + 7.0, top + height * 0.70),
+             ArtifactCore::UniString(clip.title), QColor(35, 39, 43), 9.5f});
+      }
+      continue;
+    }
     const bool isRelationship =
-        clip.kind == ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Transition ||
         clip.kind == ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::GroupContainer;
     const double trackHeight =
         static_cast<double>(view->trackHeight(clip.trackIndex));
@@ -11969,6 +12078,38 @@ void ArtifactTimelineWidget::buildGpuTimelineSnapshot()
       snapshot.lines.push_back({QPointF(x - radius, y),
                                 QPointF(x, y - radius), outline, 1.0f});
     }
+  }
+
+  for (const auto& sourceClip : clips) {
+    if (sourceClip.kind == ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Transition ||
+        !highlightedTransitionSources.contains(sourceClip.layerId) ||
+        sourceClip.trackIndex < 0 || sourceClip.trackIndex >= view->trackCount()) {
+      continue;
+    }
+    const double x = sourceClip.startFrame * ppf - horizontalOffset;
+    const double width = std::max(1.0, sourceClip.durationFrame * ppf);
+    const double trackHeight =
+        static_cast<double>(view->trackHeight(sourceClip.trackIndex));
+    const double height = std::max(14.0, trackHeight - 6.0);
+    const double top = trackTop(sourceClip.trackIndex) +
+        (trackHeight - height) * 0.5;
+    if (x + width < 0.0 || x > viewportWidth ||
+        top + height < 0.0 || top > viewportHeight) {
+      continue;
+    }
+    QColor sourceHighlight(171, 211, 238, 225);
+    snapshot.lines.push_back({QPointF(x + 1.0, top + 1.0),
+                              QPointF(x + width - 1.0, top + 1.0),
+                              sourceHighlight, 2.0f});
+    snapshot.lines.push_back({QPointF(x + 1.0, top + height - 1.0),
+                              QPointF(x + width - 1.0, top + height - 1.0),
+                              sourceHighlight, 2.0f});
+    snapshot.lines.push_back({QPointF(x + 1.0, top + 1.0),
+                              QPointF(x + 1.0, top + height - 1.0),
+                              sourceHighlight, 2.0f});
+    snapshot.lines.push_back({QPointF(x + width - 1.0, top + 1.0),
+                              QPointF(x + width - 1.0, top + height - 1.0),
+                              sourceHighlight, 2.0f});
   }
 
   // Composition markers are read-only guides, mirroring the Qt painter path:

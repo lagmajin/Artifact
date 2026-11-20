@@ -810,6 +810,11 @@ public:
                    Diligent::ITextureView *outUAV,
                    ArtifactCore::BlendMode mode, float opacity,
                    const ArtifactCore::ComputeRegion &region) const;
+  bool crossfadeLayers(ArtifactCore::LayerBlendPipeline *pipeline,
+                       Diligent::ITextureView *leftSRV,
+                       Diligent::ITextureView *rightSRV,
+                       Diligent::ITextureView *outUAV, float progress,
+                       const ArtifactCore::ComputeRegion &region) const;
   bool convertBgraAccumulatorToStraightRgba(
       ArtifactCore::LayerBlendPipeline *pipeline,
       Diligent::ITextureView *sourceSRV,

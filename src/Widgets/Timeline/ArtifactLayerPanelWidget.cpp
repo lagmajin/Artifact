@@ -5237,8 +5237,9 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         return;
       }
       const auto sourceFilter = QStringLiteral(
-          "Image Files (*.png *.jpg *.jpeg *.bmp *.gif *.tga *.tif *.tiff *.dpx *.webp *.hdr *.exr *.ico *.dds *.ktx *.psd *.psb);;"
-          "All Files (*.*)");
+          "Image Files (%1);;All Files (*.*)").arg(
+              ArtifactCore::FileTypeDetector::suffixPatterns(
+                  ArtifactCore::FileCapability::StillImage));
       const QString currentPath = [&]() -> QString {
         if (auto imageLayer = ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(layer)) {
           return imageLayer->sourcePath();
@@ -6115,6 +6116,20 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     // so they remain timeline metadata rather than introducing another layer.
     // The current frame is the cut center and the default span is one second.
     if (comp) {
+      const auto addStackPositionEditor = [this](
+          QMenu* itemMenu, const CompositionTimelineTransition& existing) {
+        QAction* sourceAction = itemMenu->addAction(
+            tt("layer_panel.menu_trans_sources", "Change Sources..."));
+        sourceAction->setData(QVariantMap{
+            {QStringLiteral("kind"), QStringLiteral("transition_sources")},
+            {QStringLiteral("transitionId"), existing.id}});
+        QAction* action = itemMenu->addAction(
+            tt("layer_panel.menu_trans_stack_position",
+               "Change Compositing Position..."));
+        action->setData(QVariantMap{
+            {QStringLiteral("kind"), QStringLiteral("transition_stack_position")},
+            {QStringLiteral("transitionId"), existing.id}});
+      };
       const auto selectedForTransition = currentLayerSelectionManager()
           ? currentLayerSelectionManager()->selectedLayersInOrder()
           : QVector<ArtifactAbstractLayerPtr>{};
@@ -6126,11 +6141,17 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
          const qint64 endFrame = std::min<qint64>(comp->frameRange().end(), centerFrame + halfSpan);
         const QString leftName = selectedForTransition[0]->layerName();
         const QString rightName = selectedForTransition[1]->layerName();
-        const auto addTransition = [comp, leftName, rightName, startFrame, endFrame](const QString& kind) {
+        const LayerID leftLayerId = selectedForTransition[0]->id();
+        const LayerID rightLayerId = selectedForTransition[1]->id();
+        const auto addTransition = [comp, leftName, rightName, leftLayerId,
+                                    rightLayerId, startFrame, endFrame](
+                                       const QString& kind) {
           CompositionTimelineTransition transition;
           transition.kind = kind;
           transition.leftClipName = leftName;
           transition.rightClipName = rightName;
+          transition.leftLayerId = leftLayerId;
+          transition.rightLayerId = rightLayerId;
           transition.range = FrameRange(FramePosition(startFrame), FramePosition(endFrame));
           comp->addTimelineTransition(transition);
         };
@@ -6186,6 +6207,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
                   qMax(0, static_cast<int>(easings.indexOf(existing.easing))), false, &accepted);
               if (accepted) comp->setTimelineTransitionEasing(existing.id, easing);
             });
+            addStackPositionEditor(itemMenu, existing);
             itemMenu->addAction(tt("layer_panel.menu_trans_range", "Edit Range..."), [this, comp, existing]() {
               bool accepted = false;
               const int start = QInputDialog::getInt(
@@ -6252,6 +6274,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
                 qMax(0, static_cast<int>(easings.indexOf(existing.easing))), false, &accepted);
             if (accepted) comp->setTimelineTransitionEasing(existing.id, easing);
           });
+          addStackPositionEditor(itemMenu, existing);
           itemMenu->addAction(tt("layer_panel.menu_trans_range", "Edit Range..."), [this, comp, existing]() {
             bool accepted = false;
             const int start = QInputDialog::getInt(
@@ -6867,6 +6890,81 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     if (chosenAction) {
       const QVariantMap data = chosenAction->data().toMap();
       const QString kind = data.value(QStringLiteral("kind")).toString();
+      if (kind == QStringLiteral("transition_sources")) {
+        if (!comp) return;
+        const QString transitionId =
+            data.value(QStringLiteral("transitionId")).toString();
+        const auto existing = comp->timelineTransitionById(transitionId);
+        if (!existing) return;
+        const auto layers = comp->allLayer();
+        QStringList choices;
+        QVector<LayerID> choiceLayerIds;
+        choices.reserve(layers.size());
+        choiceLayerIds.reserve(layers.size());
+        int currentLeftIndex = -1;
+        int currentRightIndex = -1;
+        const auto currentLeft =
+            comp->resolveTimelineTransitionSource(*existing, true);
+        const auto currentRight =
+            comp->resolveTimelineTransitionSource(*existing, false);
+        for (const auto& candidate : layers) {
+          if (!candidate) continue;
+          const int choiceIndex = choices.size();
+          choices.push_back(QStringLiteral("%1  [%2]")
+                                .arg(candidate->layerName(),
+                                     candidate->id().toString().left(8)));
+          choiceLayerIds.push_back(candidate->id());
+          if (currentLeft && candidate->id() == currentLeft->id()) {
+            currentLeftIndex = choiceIndex;
+          }
+          if (currentRight && candidate->id() == currentRight->id()) {
+            currentRightIndex = choiceIndex;
+          }
+        }
+        if (choices.size() < 2) return;
+        bool accepted = false;
+        const QString selectedLeft = QInputDialog::getItem(
+            this,
+            tt("layer_panel.menu_trans_sources_title", "Transition Sources"),
+            tt("layer_panel.menu_trans_source_a", "Source A"), choices,
+            std::max(0, currentLeftIndex), false, &accepted);
+        if (!accepted) return;
+        const int leftIndex = choices.indexOf(selectedLeft);
+        if (leftIndex < 0) return;
+        const QString selectedRight = QInputDialog::getItem(
+            this,
+            tt("layer_panel.menu_trans_sources_title", "Transition Sources"),
+            tt("layer_panel.menu_trans_source_b", "Source B"), choices,
+            std::max(0, currentRightIndex), false, &accepted);
+        if (!accepted) return;
+        const int rightIndex = choices.indexOf(selectedRight);
+        if (rightIndex < 0 || leftIndex == rightIndex) return;
+        comp->setTimelineTransitionSources(
+            transitionId, choiceLayerIds.at(leftIndex),
+            choiceLayerIds.at(rightIndex));
+        return;
+      }
+      if (kind == QStringLiteral("transition_stack_position")) {
+        if (!comp) return;
+        const QString transitionId =
+            data.value(QStringLiteral("transitionId")).toString();
+        const auto existing = comp->timelineTransitionById(transitionId);
+        if (!existing) return;
+        const int maximumPosition = std::max(
+            0, static_cast<int>(comp->allLayer().size()) - 1);
+        bool accepted = false;
+        const int position = QInputDialog::getInt(
+            this,
+            tt("layer_panel.menu_trans_stack_position_title", "Transition Stack"),
+            tt("layer_panel.menu_trans_stack_position_prompt",
+               "Layer position (-1 uses source A position)"),
+            std::clamp(existing->stackPosition, -1, maximumPosition),
+            -1, maximumPosition, 1, &accepted);
+        if (accepted) {
+          comp->setTimelineTransitionStackPosition(transitionId, position);
+        }
+        return;
+      }
       if (kind == QStringLiteral("material_preset_browser")) {
         const QStringList presetNames = {
             QStringLiteral("Matte"), QStringLiteral("Metal"),

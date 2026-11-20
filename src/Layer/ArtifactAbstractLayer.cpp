@@ -902,6 +902,7 @@ void ArtifactAbstractLayer::setBlendMode(LAYER_BLEND_TYPE type) {
 }
 
 LayerID ArtifactAbstractLayer::id() const { return impl_->id; }
+const LayerID& ArtifactAbstractLayer::idView() const noexcept { return impl_->id; }
 
 void ArtifactAbstractLayer::setId(const LayerID& id) {
   // IDs are restored before a layer is attached to a composition. Changing

@@ -71,5 +71,14 @@
     "queue_running": "%1 von %2 Aufträgen werden gerendert",
     "queue_empty": "Warteschlange ist leer",
     "queue_ready": "Warteschlange bereit"
+  },
+  "layer_panel": {
+    "menu_trans_stack_position": "Kompositionsposition ändern...",
+    "menu_trans_stack_position_title": "Übergangsstapel",
+    "menu_trans_stack_position_prompt": "Ebenenposition (-1 verwendet die Position von Quelle A)",
+    "menu_trans_sources": "Quellen ändern...",
+    "menu_trans_sources_title": "Übergangsquellen",
+    "menu_trans_source_a": "Quelle A",
+    "menu_trans_source_b": "Quelle B"
   }
 }

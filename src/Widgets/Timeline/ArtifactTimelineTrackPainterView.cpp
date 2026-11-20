@@ -1951,6 +1951,7 @@ bool sameTrackClipVisual(
   const bool sameImageThumbnail =
       lhs.imageThumbnail.cacheKey() == rhs.imageThumbnail.cacheKey();
   return lhs.clipId == rhs.clipId && lhs.layerId == rhs.layerId &&
+         lhs.transitionSourceLayerIds == rhs.transitionSourceLayerIds &&
          lhs.trackIndex == rhs.trackIndex &&
          std::abs(lhs.startFrame - rhs.startFrame) < 0.0001 &&
          std::abs(lhs.durationFrame - rhs.durationFrame) < 0.0001 &&
@@ -3746,9 +3747,38 @@ HitResult hitTestClips(
     const double xOffset, const double yOffset,
     const DragMode bodyMode = DragMode::MoveBody) {
   const double localMouseY = mouseY + yOffset;
-  for (int i = 0; i < clips.size(); ++i) {
+  for (int i = clips.size() - 1; i >= 0; --i) {
     const auto &clip = clips[i];
     if (clip.trackIndex < 0 || clip.trackIndex >= heights.size())
+      continue;
+    const int trackTop = trackTopAt(trackTops, heights, clip.trackIndex);
+    const int trackH = heights[clip.trackIndex];
+    if (localMouseY < trackTop || localMouseY > trackTop + trackH)
+      continue;
+    const double clipX = clip.startFrame * ppf - xOffset;
+    const double clipW = std::max(2.0, clip.durationFrame * ppf);
+    if (clip.kind == ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Transition) {
+      if (clip.selected) {
+        if (mouseX >= clipX - edgeHitZone() &&
+            mouseX <= clipX + edgeHitZone())
+          return {DragMode::ResizeLeft, i};
+        if (mouseX >= clipX + clipW - edgeHitZone() &&
+            mouseX <= clipX + clipW + edgeHitZone())
+          return {DragMode::ResizeRight, i};
+        if (mouseX > clipX && mouseX < clipX + clipW)
+          return {bodyMode, i};
+      } else {
+        const double markerCenter = clipX + clipW * 0.5;
+        if (std::abs(mouseX - markerCenter) <= 10.0)
+          return {DragMode::MoveBody, i};
+      }
+      continue;
+    }
+  }
+  for (int i = 0; i < clips.size(); ++i) {
+    const auto &clip = clips[i];
+    if (clip.kind == ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Transition ||
+        clip.trackIndex < 0 || clip.trackIndex >= heights.size())
       continue;
     const int trackTop = trackTopAt(trackTops, heights, clip.trackIndex);
     const int trackH = heights[clip.trackIndex];
@@ -6821,6 +6851,9 @@ void ArtifactTimelineTrackPainterView::syncSelectionState(
   bool hasDirty = false;
   bool changed = false;
   for (auto &clip : impl_->clips_) {
+    if (clip.kind == TrackClipVisual::Kind::Transition) {
+      continue;
+    }
     const bool selected = selectedLayerIds.contains(clip.layerId);
     if (clip.selected != selected) {
       const QRectF rect =
@@ -6882,6 +6915,15 @@ ArtifactTimelineTrackPainterView::clips() const {
 const QVector<ArtifactTimelineTrackPainterView::TrackClipVisual>&
 ArtifactTimelineTrackPainterView::clipsView() const {
   return impl_->clips_;
+}
+
+ArtifactTimelineTrackPainterView::TrackClipVisual
+ArtifactTimelineTrackPainterView::hoveredClip() const {
+  if (impl_->hoverClipIndex_ < 0 ||
+      impl_->hoverClipIndex_ >= impl_->clips_.size()) {
+    return {};
+  }
+  return impl_->clips_[impl_->hoverClipIndex_];
 }
 
 const QVector<int>& ArtifactTimelineTrackPainterView::trackTopsView() const {
@@ -7081,14 +7123,24 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
     const int trackH = impl_->trackHeights_[clip.trackIndex];
     const double x = clip.startFrame * ppf - xOffset;
     const double w = std::max(2.0, clip.durationFrame * ppf);
+    const bool isHovered = (i == impl_->hoverClipIndex_);
+    const bool isSelected = clip.selected;
+    const bool isTransition =
+        clip.kind == TrackClipVisual::Kind::Transition;
     const bool isRelationship =
-        clip.kind == TrackClipVisual::Kind::Transition ||
-        clip.kind == TrackClipVisual::Kind::GroupContainer;
+        clip.kind == TrackClipVisual::Kind::GroupContainer || isTransition;
     const double barHeight = isRelationship
         ? std::min(16.0, std::max(10.0, trackH - 8.0))
         : std::max(8, trackH - 4);
-    QRectF clipRect(x, trackTop + (trackH - barHeight) * 0.5 - yOffset, w,
-                    barHeight);
+    const double transitionMarkerWidth = 18.0;
+    const double visualX = isTransition && !isSelected
+        ? x + w * 0.5 - transitionMarkerWidth * 0.5
+        : x;
+    const double visualWidth = isTransition && !isSelected
+        ? transitionMarkerWidth
+        : w;
+    QRectF clipRect(visualX, trackTop + (trackH - barHeight) * 0.5 - yOffset,
+                    visualWidth, barHeight);
     if (!clipRect.intersects(QRectF(fullRect))) {
       continue;
     }
@@ -7107,8 +7159,6 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
       }
     }
 
-    const bool isHovered = (i == impl_->hoverClipIndex_);
-    const bool isSelected = clip.selected;
     QColor fill = clip.fillColor;
     fill.setAlpha(255);
     if (isHovered && !isSelected) {
@@ -7118,8 +7168,41 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
     const QColor border = isSelected ? theme.accent.lighter(130)
                                      : fill.lighter(132);
     drawClipBar(p, clipRect, impl_->clipBarStyle_,
-                isSelected ? selectedFill : fill,
+                isSelected && !isTransition ? selectedFill : fill,
                 QPen(border, isSelected ? 2 : 1));
+
+    if (isTransition) {
+      if (!isSelected) {
+        p.save();
+        QFont markerFont = p.font();
+        markerFont.setBold(true);
+        p.setFont(markerFont);
+        p.setPen(QColor(28, 31, 36));
+        p.drawText(clipRect, Qt::AlignCenter, QStringLiteral("T"));
+        p.restore();
+      } else if (clipRect.width() >= 34.0) {
+        p.setPen(theme.text);
+        p.drawText(clipRect.adjusted(7.0, 0.0, -7.0, 0.0),
+                   Qt::AlignVCenter | Qt::AlignLeft,
+                   metrics.elidedText(clip.title, Qt::ElideRight,
+                                      std::max(0, qRound(clipRect.width() - 14.0))));
+      }
+      if (isSelected) {
+        p.setPen(QPen(theme.accent.lighter(145), 1.5));
+        p.drawLine(QPointF(clipRect.left() + 1.0, clipRect.top() + 2.0),
+                   QPointF(clipRect.left() + 1.0, clipRect.bottom() - 2.0));
+        p.drawLine(QPointF(clipRect.right() - 1.0, clipRect.top() + 2.0),
+                   QPointF(clipRect.right() - 1.0, clipRect.bottom() - 2.0));
+      }
+      if (isSelected || isHovered) {
+        const QColor rim = isSelected ? theme.accent.lighter(135)
+                                      : QColor(255, 255, 255, 110);
+        drawClipBar(p, clipRect.adjusted(1.0, 1.0, -1.0, -1.0),
+                    impl_->clipBarStyle_, QColor(),
+                    QPen(rim, isSelected ? 2.0 : 1.2), false);
+      }
+      continue;
+    }
 
     if (clip.kind == TrackClipVisual::Kind::Video &&
         !clip.videoThumbnails.isEmpty() && clipRect.width() > 36.0 &&
@@ -7393,6 +7476,38 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
         p.drawEllipse(QPointF(left + fadeInWidth, high), 4.0, 4.0);
         p.drawEllipse(QPointF(right - fadeOutWidth, high), 4.0, 4.0);
       }
+    }
+  }
+
+  QSet<LayerID> highlightedTransitionSources;
+  for (int clipIndex = 0; clipIndex < impl_->clips_.size(); ++clipIndex) {
+    const auto& transition = impl_->clips_[clipIndex];
+    if (transition.kind != TrackClipVisual::Kind::Transition ||
+        (!transition.selected && clipIndex != impl_->hoverClipIndex_)) {
+      continue;
+    }
+    for (const LayerID& sourceLayerId : transition.transitionSourceLayerIds) {
+      highlightedTransitionSources.insert(sourceLayerId);
+    }
+  }
+  if (!highlightedTransitionSources.isEmpty()) {
+    for (const int clipIndex : visibleClipIndices) {
+      if (clipIndex < 0 || clipIndex >= impl_->clips_.size()) continue;
+      const auto& sourceClip = impl_->clips_[clipIndex];
+      if (sourceClip.kind == TrackClipVisual::Kind::Transition ||
+          !highlightedTransitionSources.contains(sourceClip.layerId)) {
+        continue;
+      }
+      const QRectF sourceRect = clipRectFor(
+          sourceClip, impl_->trackHeights_, impl_->trackTops_, ppf,
+          xOffset, yOffset);
+      if (!sourceRect.isValid() ||
+          !sourceRect.intersects(QRectF(fullRect))) continue;
+      QColor highlight = theme.accent.lighter(145);
+      highlight.setAlpha(225);
+      p.setPen(QPen(highlight, 2.0));
+      p.setBrush(Qt::NoBrush);
+      p.drawRoundedRect(sourceRect.adjusted(1.0, 1.0, -1.0, -1.0), 3.0, 3.0);
     }
   }
 
@@ -8509,11 +8624,13 @@ void ArtifactTimelineTrackPainterView::mousePressEvent(QMouseEvent *event) {
         setCursor(Qt::ClosedHandCursor);
       }
       else if (clip.kind == TrackClipVisual::Kind::Transition) {
-        // Transition editing is composition-owned. Keep the existing clip
-        // drag state, but skip layer selection; release reuses the existing
-        // timeline move/resize event with the transition ID.
+        // Select the transition through the existing timeline selection
+        // request. Its nil LayerID prevents it from changing layer selection.
         updateHoverToolTip(this, event->globalPosition().toPoint(),
                            formatClipTooltip(clip), impl_->hoverToolTipText_);
+        if (!clip.selected) {
+          clipSelected(clip.clipId, LayerID::Nil());
+        }
         setCursor(hit.mode == DragMode::MoveBody ? Qt::ClosedHandCursor
                                                   : Qt::SizeHorCursor);
       } else {
@@ -9108,6 +9225,15 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent *event) {
   const bool clipHoverChanged = (hit.clipIndex != impl_->hoverClipIndex_ ||
                                  hit.mode != impl_->hoverEdge_);
   const auto oldHoverClipIndex = impl_->hoverClipIndex_;
+  const auto isTransitionClipAt = [this](const int index) {
+    return index >= 0 && index < impl_->clips_.size() &&
+           impl_->clips_[index].kind == TrackClipVisual::Kind::Transition;
+  };
+  const bool transitionHoverChanged =
+      (isTransitionClipAt(oldHoverClipIndex) ||
+       (hit.clipIndex >= 0 && hit.clipIndex < impl_->clips_.size() &&
+        impl_->clips_[hit.clipIndex].kind == TrackClipVisual::Kind::Transition)) &&
+      oldHoverClipIndex != hit.clipIndex;
   const auto oldHoverEdge = impl_->hoverEdge_;
   const int oldHoverMarkerIndex = impl_->hoverMarkerIndex_;
   const int oldHoverAreaIndex = impl_->hoverAreaIndex_;
@@ -9256,6 +9382,9 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent *event) {
   }
   if (hasDirty) {
     update(dirtyRect.adjusted(-2.0, -2.0, 2.0, 2.0).toAlignedRect());
+  }
+  if (transitionHoverChanged) {
+    touchTimelineVisuals();
   }
   if (impl_->panning_ && (event->buttons() & Qt::MiddleButton)) {
     const QPoint current = event->position().toPoint();
@@ -12592,6 +12721,11 @@ void ArtifactTimelineTrackPainterView::leaveEvent(QEvent *event) {
 
   const bool hadHover =
       impl_->hoverClipIndex_ >= 0 || impl_->hoverEdge_ != DragMode::None;
+  const bool hadTransitionHover =
+      impl_->hoverClipIndex_ >= 0 &&
+      impl_->hoverClipIndex_ < impl_->clips_.size() &&
+      impl_->clips_[impl_->hoverClipIndex_].kind ==
+          TrackClipVisual::Kind::Transition;
   const bool hadMarkerHover = impl_->hoverMarkerIndex_ >= 0;
   const bool hadHoverReadout = impl_->hoverReadoutVisible_;
   impl_->hoverClipIndex_ = -1;
@@ -12631,6 +12765,9 @@ void ArtifactTimelineTrackPainterView::leaveEvent(QEvent *event) {
 
   if (hadHover || hadMarkerHover || hadHoverReadout) {
     update();
+  }
+  if (hadTransitionHover) {
+    touchTimelineVisuals();
   }
   Q_UNUSED(event);
 }

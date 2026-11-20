@@ -11923,6 +11923,8 @@ public:
 
   ArtifactCore::EventBus::Subscription compositionChangedSubscription_;
   ArtifactCore::EventBus::Subscription trackerUndoSubscription_;
+  ArtifactCore::ArtifactArray<CompositionTimelineTransitionEvaluation>
+      transitionEvaluationWorkspace_;
 
 
 
@@ -18123,6 +18125,17 @@ public:
 
     }
 
+    const auto reserveTransitionWorkspace = [this](
+        const ArtifactCompositionPtr& target) {
+      if (!target) return;
+      const auto required = static_cast<std::size_t>(
+          target->timelineTransitionCount());
+      if (transitionEvaluationWorkspace_.capacity() < required) {
+        transitionEvaluationWorkspace_.reserve(required);
+      }
+    };
+    reserveTransitionWorkspace(composition);
+
     {
 
       const QString compositionId = composition->id().toString();
@@ -18145,6 +18158,12 @@ public:
 
                   return;
 
+                }
+
+                const auto required = static_cast<std::size_t>(
+                    composition->timelineTransitionCount());
+                if (transitionEvaluationWorkspace_.capacity() < required) {
+                  transitionEvaluationWorkspace_.reserve(required);
                 }
 
                 sceneMutationGeneration_.fetch_add(
@@ -45624,16 +45643,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
             lod)); // Pass LOD to renderer/effects
 
-        CompositionTimelineTransition activeTransition;
-        const double transitionProgress =
-            comp->timelineTransitionProgressAtFrame(
-                currentFrame.framePosition(), &activeTransition);
-        const bool opacityTransition =
-            transitionProgress >= 0.0 && activeTransition.isOpacityOnly();
-        const bool hardCutTransition =
-            opacityTransition && activeTransition.kind.compare(
-                                     QStringLiteral("Cut"),
-                                     Qt::CaseInsensitive) == 0;
+        comp->evaluateTimelineTransitionsAtFrame(
+            currentFrame.framePosition(), transitionEvaluationWorkspace_);
 
         bool shared3DSceneDepthOpen = false;
 
@@ -45837,30 +45848,12 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               layer->opacity() *
               (xRayDimThisLayer ? xRayOverlayOpacity_ : 1.0f);
 
-          // Crossfade/Dissolve transitions are represented by the existing
-          // layer compositor as complementary opacities. More complex
-          // transition kinds remain metadata until their dedicated GPU
-          // transition pass is available.
-          if (opacityTransition) {
-            if (layer->layerName() == activeTransition.leftClipName) {
-              if (hardCutTransition && transitionProgress >= 0.5) {
-                opacity = 0.0f;
-              } else if (hardCutTransition) {
-                // Keep the outgoing layer fully opaque before the cut.
-                opacity *= 1.0f;
-              } else {
-                opacity *= static_cast<float>(1.0 - transitionProgress);
-              }
-            } else if (layer->layerName() == activeTransition.rightClipName) {
-              if (hardCutTransition && transitionProgress < 0.5) {
-                opacity = 0.0f;
-              } else if (hardCutTransition) {
-                opacity *= 1.0f;
-              } else {
-                opacity *= static_cast<float>(transitionProgress);
-              }
-            }
-          }
+          // Opacity-only transitions share the same immutable frame
+          // evaluation as the offline CPU/GPU render queue paths.
+          opacity *= static_cast<float>(
+              CompositionTimelineTransitionEvaluation::
+                  combinedOpacityMultiplierForLayer(
+                      transitionEvaluationWorkspace_, layer->idView()));
 
           if (opacity <= 0.0f) {
 

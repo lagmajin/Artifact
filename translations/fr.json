@@ -71,5 +71,14 @@
     "queue_running": "Rendu de %1 tâches sur %2",
     "queue_empty": "La file est vide",
     "queue_ready": "File prête"
+  },
+  "layer_panel": {
+    "menu_trans_stack_position": "Changer la position de composition...",
+    "menu_trans_stack_position_title": "Pile de transitions",
+    "menu_trans_stack_position_prompt": "Position du calque (-1 utilise celle de la source A)",
+    "menu_trans_sources": "Changer les sources...",
+    "menu_trans_sources_title": "Sources de transition",
+    "menu_trans_source_a": "Source A",
+    "menu_trans_source_b": "Source B"
   }
 }

@@ -1116,7 +1116,14 @@
     "matte_fit": "マットフィット",
     "matte_opacity": "マット不透明度",
     "keyframe_value_hint": "値をダブルクリックで編集。時計はアニメーションの有無、ダイヤは現在のフレームへのキー打刻の有無を示す",
-    "matte_list_hint": "トラックマット: %1"
+    "matte_list_hint": "トラックマット: %1",
+    "menu_trans_stack_position": "合成位置を変更...",
+    "menu_trans_stack_position_title": "トランジションスタック",
+    "menu_trans_stack_position_prompt": "レイヤー位置（-1 は入力元 A の位置）",
+    "menu_trans_sources": "ソースを変更...",
+    "menu_trans_sources_title": "トランジションソース",
+    "menu_trans_source_a": "ソース A",
+    "menu_trans_source_b": "ソース B"
   },
   "blend_mode": {
     "normal": "通常",

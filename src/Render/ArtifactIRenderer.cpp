@@ -8181,6 +8181,19 @@ bool ArtifactIRenderer::blendLayers(ArtifactCore::LayerBlendPipeline *pipeline,
   impl_->submitQueuedDraws(ctx.RawPtr());
   return pipeline->blend(ctx, srcSRV, dstSRV, outUAV, mode, opacity, region);
  }
+bool ArtifactIRenderer::crossfadeLayers(
+    ArtifactCore::LayerBlendPipeline *pipeline,
+    Diligent::ITextureView *leftSRV,
+    Diligent::ITextureView *rightSRV,
+    Diligent::ITextureView *outUAV,
+    float progress,
+    const ArtifactCore::ComputeRegion &region) const {
+  auto ctx = impl_->deviceManager_.immediateContext();
+  if (!pipeline || !ctx) return false;
+  impl_->submitQueuedDraws(ctx.RawPtr());
+  return pipeline->crossfade(ctx.RawPtr(), leftSRV, rightSRV, outUAV,
+                             progress, region);
+}
 bool ArtifactIRenderer::convertBgraAccumulatorToStraightRgba(
     ArtifactCore::LayerBlendPipeline *pipeline,
     Diligent::ITextureView *sourceSRV,

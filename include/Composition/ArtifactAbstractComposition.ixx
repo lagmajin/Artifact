@@ -1,5 +1,6 @@
 module;
 #include <utility>
+#include <array>
 #include <memory>
 #include <cstdint>
 #include <string>
@@ -31,6 +32,7 @@ import Frame.Position;
 import Time.Code;
 import Container.MultiIndex;
 import Composition.Context;
+import Core.ArtifactArray;
 import Artifact.Composition.Access;
 import Artifact.Composition.InitParams;
 import Composition.Settings;
@@ -232,12 +234,45 @@ export namespace Artifact {
   QString easing = QStringLiteral("Linear");
   QString leftClipName;
   QString rightClipName;
+  LayerID leftLayerId = LayerID::Nil();
+  LayerID rightLayerId = LayerID::Nil();
+  // Runtime-only indices refreshed on source or composition stack changes.
+  // They are deliberately excluded from JSON; stable LayerIDs are the source
+  // of truth and the indices keep frame evaluation out of linear searches.
+  qint32 leftLayerStackIndex = -1;
+  qint32 rightLayerStackIndex = -1;
+  // Insertion point in the composition layer stack. -1 follows source A's
+  // current stack index; runtime indices are refreshed from stable LayerIDs.
+  qint32 stackPosition = -1;
   FrameRange range = FrameRange::zero();
   bool enabled = true;
 
   QJsonObject toJson() const;
   static CompositionTimelineTransition fromJson(const QJsonObject& object);
   bool isOpacityOnly() const;
+};
+
+struct CompositionTimelineTransitionEvaluation {
+  bool active = false;
+  bool hardCut = false;
+  double progress = -1.0;
+  qint32 stackPosition = -1;
+  qint32 leftLayerStackIndex = -1;
+  qint32 rightLayerStackIndex = -1;
+  qint32 insertionIndex = -1;
+  // LayerID is PImpl-backed; fixed-size UUID bytes keep frame evaluation
+  // allocation-free when the result is copied through render loops.
+  std::array<std::uint8_t, 16> leftLayerUuid{};
+  std::array<std::uint8_t, 16> rightLayerUuid{};
+
+  bool isSourceLayer(const LayerID& layerId) const noexcept;
+  double opacityMultiplierForLayer(const LayerID& layerId) const noexcept;
+  static double combinedOpacityMultiplierForLayer(
+      const ArtifactCore::ArtifactArray<CompositionTimelineTransitionEvaluation>& evaluations,
+      const LayerID& layerId) noexcept;
+  static bool containsSourceLayer(
+      const ArtifactCore::ArtifactArray<CompositionTimelineTransitionEvaluation>& evaluations,
+      const LayerID& layerId) noexcept;
 };
 
  class ArtifactAbstractComposition:public QObject, public ArtifactAbstractCompositionAccess {
@@ -391,14 +426,20 @@ export namespace Artifact {
       const QVector<CompositionAudioReactiveBinding>& bindings);
   void addTimelineTransition(const CompositionTimelineTransition& transition);
   QVector<CompositionTimelineTransition> timelineTransitions() const;
+  qsizetype timelineTransitionCount() const noexcept;
   void setTimelineTransitions(const QVector<CompositionTimelineTransition>& transitions);
   std::optional<CompositionTimelineTransition> timelineTransitionById(const QString& transitionId) const;
   bool removeTimelineTransition(const QString& transitionId);
   bool setTimelineTransitionEnabled(const QString& transitionId, bool enabled);
   bool setTimelineTransitionRange(const QString& transitionId, const FrameRange& range);
   bool setTimelineTransitionName(const QString& transitionId, const QString& name);
+  bool setTimelineTransitionSources(const QString& transitionId,
+                                    const LayerID& leftLayerId,
+                                    const LayerID& rightLayerId);
   bool setTimelineTransitionKind(const QString& transitionId, const QString& kind);
   bool setTimelineTransitionEasing(const QString& transitionId, const QString& easing);
+  bool setTimelineTransitionStackPosition(const QString& transitionId,
+                                          qint32 stackPosition);
   bool duplicateTimelineTransition(const QString& transitionId,
                                    CompositionTimelineTransition* outDuplicate = nullptr);
   bool timelineTransitionAtFrame(qint64 frame,
@@ -406,6 +447,15 @@ export namespace Artifact {
   double timelineTransitionProgressAtFrame(
       qint64 frame,
       CompositionTimelineTransition* outTransition = nullptr) const;
+  CompositionTimelineTransitionEvaluation evaluateTimelineTransitionAtFrame(
+      qint64 frame) const;
+  // Reuse the caller's capacity across frames. Reserve/update this workspace
+  // outside the render loop when transition metadata changes.
+  void evaluateTimelineTransitionsAtFrame(
+      qint64 frame,
+      ArtifactCore::ArtifactArray<CompositionTimelineTransitionEvaluation>& outEvaluations) const;
+  ArtifactAbstractLayerPtr resolveTimelineTransitionSource(
+      const CompositionTimelineTransition& transition, bool leftSource) const;
   void clearTimelineTransitions();
   void addAudioReactiveBinding(const CompositionAudioReactiveBinding& binding);
   bool removeAudioReactiveBinding(const QString& bindingId);

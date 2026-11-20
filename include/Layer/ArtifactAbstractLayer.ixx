@@ -406,6 +406,7 @@ public:
   bool isVisible() const;
   virtual void draw(ArtifactIRenderer *renderer) = 0;
   LayerID id() const;
+  const LayerID& idView() const noexcept;
   void setId(const LayerID& id);
   void setVisible(bool visible = true);
   QString layerName() const;
