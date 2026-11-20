@@ -63,6 +63,12 @@
       },
       "pre_compose": "預合成"
     },
+    "animation": {
+      "quick_motion_menu": "快速動效",
+      "quick_motion_pop_in": "彈入",
+      "quick_motion_snap_back": "回彈",
+      "quick_motion_stagger_wave": "交錯波浪"
+    },
     "help": {
       "label": "說明",
       "about": "關於本軟體"

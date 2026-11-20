@@ -39,6 +39,7 @@ import Artifact.Effect.Rasterizer.RadialShadow;
 import Artifact.Effect.Rasterizer.OpticsCompensation;
 import Artifact.Effect.Rasterizer.Mosaic;
 import Artifact.Effect.Rasterizer.TurbulentDisplace;
+import Artifact.Effect.BurnAway;
 import Artifact.Effect.Rasterizer.Bevel;
 import Artifact.Effect.Rasterizer.LinearWipe;
 import Artifact.Effect.Glow;
@@ -959,6 +960,12 @@ W_OBJECT_IMPL(ArtifactEffectService)
    effect->setDisplayName(QStringLiteral("Turbulent Displace"));
    return effect;
   }
+  if (effectId == QStringLiteral("burn_away")) {
+   auto effect = std::make_unique<BurnAwayEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Burn Away"));
+   return effect;
+  }
   if (effectId == QStringLiteral("bevel")) {
    auto effect = std::make_unique<BevelEffect>();
    effect->setEffectID(UniString::fromQString(effectId));
@@ -1335,6 +1342,7 @@ W_OBJECT_IMPL(ArtifactEffectService)
   effects.push_back({EffectID("builtin.pixelate"), "Pixelate"});
   effects.push_back({EffectID("builtin.posterize"), "Posterize"});
   effects.push_back({EffectID("turbulent_displace"), "Turbulent Displace"});
+  effects.push_back({EffectID("burn_away"), "Burn Away"});
   effects.push_back({EffectID("bevel"), "Bevel"});
   effects.push_back({EffectID("linear_wipe"), "Linear Wipe"});
   effects.push_back({EffectID("displacement_map"), "Displacement Map"});

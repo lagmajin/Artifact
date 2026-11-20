@@ -6919,14 +6919,12 @@ int Artifact::runApplication(int argc, char *argv[]) {
           .arg(verboseVideoLog ? QStringLiteral("true")
                                : QStringLiteral("false")));
   auto *settings = ArtifactCore::ArtifactAppSettings::instance();
-  // Prefer the built-in Modo palette for this launch without rewriting saved
-  // theme preferences. The settings UI can still change these session values.
+  // Use Modo as the built-in startup theme. An explicit external preset
+  // can supply its own palette without rewriting saved theme preferences.
   {
     auto &themeStore = ArtifactCore::LayeredConfigStore::instance();
     themeStore.setValue(ArtifactCore::ConfigLayer::Session, "UI/ThemeName",
                         QStringLiteral("Modo"));
-    themeStore.setValue(ArtifactCore::ConfigLayer::Session, "UI/ThemePresetPath",
-                        QString());
     themeStore.setValue(ArtifactCore::ConfigLayer::Session, "UI/AccentColor",
                         QString());
   }

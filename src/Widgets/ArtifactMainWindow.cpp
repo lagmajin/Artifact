@@ -2493,6 +2493,9 @@ void ArtifactMainWindow::applyApplicationSettings() {
     return;
   }
   applyUiFontSettings();
+  if (impl_->dockStyleManager) {
+    impl_->dockStyleManager->applyStyle();
+  }
 
   // —— accessibility ——
   if (impl_->toolBar) {

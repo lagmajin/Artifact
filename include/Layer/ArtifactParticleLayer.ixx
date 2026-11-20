@@ -57,6 +57,15 @@ import Utils.String.UniString;
 
 export namespace Artifact {
 
+// The canonical 2D particle preset names, in the order the "Preset" property
+// indexes them.  The list is the single source of truth for the layer, the
+// property editor labels and the saved documents.
+const QStringList& particlePresetNames();
+
+// Human readable labels for the same order, used by editors that show the
+// preset as a named choice instead of a raw index.
+QStringList particlePresetDisplayNames();
+
 /**
  * @brief 2D particle layer rendered in composition space
  */

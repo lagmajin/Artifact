@@ -3095,6 +3095,78 @@ EmitterParams ParticlePresets::bubbles()
     return params;
 }
 
+EmitterParams ParticlePresets::ash()
+{
+    // Paper ash: light flakes that drift upward slowly, keep fluttering and
+    // fade out instead of falling like debris.  The wide, thin emitter band
+    // is meant to sit on the burn front of a burning layer.
+    EmitterParams params;
+    params.shape = EmitterShape::Rectangle;
+    params.width = 960.0f;
+    params.height = 16.0f;
+    params.mode = EmissionMode::Continuous;
+    params.rate = 55.0f;
+    params.lifeMin = 3.5f;
+    params.lifeMax = 7.0f;
+    params.speedMin = 14.0f;
+    params.speedMax = 42.0f;
+    params.direction = QVector3D(0, -1, 0);
+    params.directionSpread = 35.0f;
+    params.scaleMin = 5.0f;
+    params.scaleMax = 10.0f;
+    params.scaleEndMin = 2.0f;
+    params.scaleEndMax = 5.0f;
+    params.colorStart = QColor(132, 126, 116, 230);
+    params.colorMid = QColor(98, 92, 84, 175);
+    params.colorEnd = QColor(78, 73, 66, 0);
+    params.opacityEndMin = 0.0f;
+    params.opacityEndMax = 0.0f;
+    params.drag = 0.7f;
+    params.gravity = QVector3D(0, 34, 0);
+    params.windDirection = QVector3D(1, 0, 0);
+    params.windStrength = 26.0f;
+    params.turbulenceFrequency = 0.35f;
+    params.turbulenceAmplitude = 34.0f;
+    params.rotationSpeedMin = -70.0f;
+    params.rotationSpeedMax = 70.0f;
+    params.maxParticles = 2400;
+    return params;
+}
+
+EmitterParams ParticlePresets::ember()
+{
+    // Embers: hot sparks that shoot up from the burn front, cool down and
+    // shrink to nothing.  The additive look comes from the layer blend mode,
+    // not from the particle data.
+    EmitterParams params;
+    params.shape = EmitterShape::Rectangle;
+    params.width = 960.0f;
+    params.height = 10.0f;
+    params.mode = EmissionMode::Continuous;
+    params.rate = 80.0f;
+    params.lifeMin = 1.0f;
+    params.lifeMax = 2.6f;
+    params.speedMin = 90.0f;
+    params.speedMax = 280.0f;
+    params.direction = QVector3D(0, -1, 0);
+    params.directionSpread = 28.0f;
+    params.scaleMin = 2.5f;
+    params.scaleMax = 6.5f;
+    params.scaleEndMin = 0.0f;
+    params.scaleEndMax = 1.5f;
+    params.colorStart = QColor(255, 186, 92, 255);
+    params.colorMid = QColor(255, 118, 30, 220);
+    params.colorEnd = QColor(170, 40, 0, 0);
+    params.opacityEndMin = 0.0f;
+    params.opacityEndMax = 0.0f;
+    params.drag = 1.0f;
+    params.gravity = QVector3D(0, 95, 0);
+    params.turbulenceFrequency = 0.7f;
+    params.turbulenceAmplitude = 34.0f;
+    params.maxParticles = 1800;
+    return params;
+}
+
 // ==================== ParticleManager::Impl ====================
 
 class ParticleManager::Impl {

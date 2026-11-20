@@ -52,11 +52,11 @@ public:
 
 namespace {
 
-QColor visualStudioDockFrameColor()
+QColor dockFocusFrameColor()
 {
     // This is a dock-focus cue, kept separate from the document/content
     // selection color so it can frame the complete active panel.
-    return QColor(QStringLiteral("#A371F7"));
+    return QColor(ArtifactCore::currentDCCTheme().dockFocusFrameColor);
 }
 
 void repolishWidget(QWidget* widget) {
@@ -213,7 +213,7 @@ DockStyleManager::DockStyleManager(QWidget* dockSurface, QObject* parent)
     : QObject(parent), impl_(new Impl()) {
     auto* dockManager = qobject_cast<ads::CDockManager*>(dockSurface);
     impl_->dockManager_ = dockManager;
-    impl_->glowColor_ = visualStudioDockFrameColor();
+    impl_->glowColor_ = dockFocusFrameColor();
 
     if (!impl_->dockManager_) {
         // NativeDockSurface intentionally does not expose a QADS manager.
@@ -272,9 +272,18 @@ void DockStyleManager::setGlowEnabled(bool enabled) {
 }
 
 void DockStyleManager::setGlowColor(const QColor& color) {
-    if (impl_->glowStyle_) {
+    if (impl_->glowStyle_ && impl_->glowColor_ != color) {
         impl_->glowColor_ = color;
         impl_->glowStyle_->setGlowColor(color);
+        if (auto* dock = resolveActiveDock(impl_->dockManager_, impl_->focusedDockWidget_)) {
+            dock->update();
+            if (auto* area = dock->dockAreaWidget()) {
+                area->update();
+            }
+            if (auto* tab = dock->tabWidget()) {
+                tab->update();
+            }
+        }
         scheduleRefresh();
     }
 }
@@ -297,6 +306,7 @@ void DockStyleManager::setGlowIntensity(float intensity) {
 
 void DockStyleManager::applyStyle() {
     if (impl_->dockManager_) {
+        setGlowColor(dockFocusFrameColor());
         scheduleRefresh();
     }
 }
@@ -308,7 +318,7 @@ bool DockStyleManager::eventFilter(QObject* watched, QEvent* event) {
 
     if (event->type() == QEvent::ApplicationPaletteChange ||
         event->type() == QEvent::PaletteChange) {
-        setGlowColor(visualStudioDockFrameColor());
+        setGlowColor(dockFocusFrameColor());
         scheduleRefresh();
         return QObject::eventFilter(watched, event);
     }

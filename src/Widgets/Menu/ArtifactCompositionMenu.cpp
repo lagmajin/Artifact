@@ -196,6 +196,11 @@ QString responsiveVariantLabel(const ResponsiveLayoutVariant& variant)
  return QStringLiteral("%1  (%2, %3)").arg(name, sizeLabel, ratioLabel);
 }
 
+// uniqueCompositionStateId and ChangeCompositionStatesCommand are declared in
+// the module interface, so their definitions have to live in the Artifact
+// namespace and not inside the anonymous namespace above.
+}  // namespace
+
 QString uniqueCompositionStateId(const QVector<CompositionStateVariant>& states,
                                  const QString& requestedName)
 {
@@ -215,18 +220,17 @@ QString uniqueCompositionStateId(const QVector<CompositionStateVariant>& states,
  return candidate;
 }
 
-class ChangeCompositionStatesCommand final : public UndoCommand {
-public:
- ChangeCompositionStatesCommand(ArtifactCompositionWeakPtr composition,
-                                QVector<CompositionStateVariant> beforeStates,
-                                QString beforeActiveId,
-                                QVector<CompositionStateVariant> afterStates,
-                                QString afterActiveId,
-                                QString beforeComparisonAId,
-                                QString beforeComparisonBId,
-                                QString afterComparisonAId,
-                                QString afterComparisonBId,
-                                QString label)
+ChangeCompositionStatesCommand::ChangeCompositionStatesCommand(
+   ArtifactCompositionWeakPtr composition,
+   QVector<CompositionStateVariant> beforeStates,
+   QString beforeActiveId,
+   QVector<CompositionStateVariant> afterStates,
+   QString afterActiveId,
+   QString beforeComparisonAId,
+   QString beforeComparisonBId,
+   QString afterComparisonAId,
+   QString afterComparisonBId,
+   QString label)
   : composition_(std::move(composition)),
     beforeStates_(std::move(beforeStates)),
     beforeActiveId_(std::move(beforeActiveId)),
@@ -237,25 +241,33 @@ public:
     afterComparisonAId_(std::move(afterComparisonAId)),
     afterComparisonBId_(std::move(afterComparisonBId)),
     label_(std::move(label))
- {
- }
+{
+}
 
- void undo() override {
+void ChangeCompositionStatesCommand::undo()
+{
   lastOperationSucceeded_ = apply(beforeStates_, beforeActiveId_,
                                   beforeComparisonAId_, beforeComparisonBId_);
- }
- void redo() override {
+}
+
+void ChangeCompositionStatesCommand::redo()
+{
   lastOperationSucceeded_ = apply(afterStates_, afterActiveId_,
                                   afterComparisonAId_, afterComparisonBId_);
- }
- QString label() const override { return label_; }
- bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+}
 
-private:
- bool apply(const QVector<CompositionStateVariant>& states,
-            const QString& activeId, const QString& comparisonAId,
-            const QString& comparisonBId)
- {
+QString ChangeCompositionStatesCommand::label() const { return label_; }
+
+bool ChangeCompositionStatesCommand::lastOperationSucceeded() const
+{
+  return lastOperationSucceeded_;
+}
+
+bool ChangeCompositionStatesCommand::apply(
+  const QVector<CompositionStateVariant>& states,
+  const QString& activeId, const QString& comparisonAId,
+  const QString& comparisonBId)
+{
   const auto composition = composition_.lock();
   if (!composition) return false;
   composition->setActiveStateVariantId(QString());
@@ -274,20 +286,9 @@ private:
    manager->notifyAnythingChanged();
   }
   return true;
- }
+}
 
- ArtifactCompositionWeakPtr composition_;
- QVector<CompositionStateVariant> beforeStates_;
- QString beforeActiveId_;
- QVector<CompositionStateVariant> afterStates_;
- QString afterActiveId_;
- QString beforeComparisonAId_;
- QString beforeComparisonBId_;
- QString afterComparisonAId_;
- QString afterComparisonBId_;
- QString label_;
- bool lastOperationSucceeded_ = true;
-};
+namespace {
 
 struct MasterPropertyRegistryChange {
  CompositionID parentCompositionId;

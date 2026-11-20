@@ -3022,6 +3022,10 @@ void ArtifactParticleLayer::loadPreset(const QString& presetName)
         params = ParticlePresets::confetti();
     } else if (presetName == "bubbles") {
         params = ParticlePresets::bubbles();
+    } else if (presetName == "ash") {
+        params = ParticlePresets::ash();
+    } else if (presetName == "ember") {
+        params = ParticlePresets::ember();
     } else {
         // Default fallback
         params = ParticlePresets::fire();
@@ -3038,9 +3042,9 @@ void ArtifactParticleLayer::loadPreset(const QString& presetName)
     emit particleSystemChanged();
 }
 
-QStringList ArtifactParticleLayer::availablePresets() const
+const QStringList& particlePresetNames()
 {
-    return {
+    static const QStringList presets = {
         "fire",
         "campfire",
         "torch",
@@ -3060,8 +3064,40 @@ QStringList ArtifactParticleLayer::availablePresets() const
         "sparkles",
         "energyField",
         "confetti",
-        "bubbles"
+        "bubbles",
+        "ash",
+        "ember"
     };
+    return presets;
+}
+
+QStringList particlePresetDisplayNames()
+{
+    QStringList labels;
+    labels.reserve(particlePresetNames().size());
+    for (const QString& name : particlePresetNames()) {
+        // Split camelCase into words so "energyField" reads as
+        // "Energy Field" next to the single word presets.
+        QString spaced;
+        spaced.reserve(name.size() + 4);
+        for (int index = 0; index < name.size(); ++index) {
+            const QChar character = name.at(index);
+            if (character.isUpper() && index > 0) {
+                spaced.append(QLatin1Char(' '));
+            }
+            spaced.append(character);
+        }
+        if (!spaced.isEmpty()) {
+            spaced[0] = spaced.at(0).toUpper();
+        }
+        labels.append(spaced);
+    }
+    return labels;
+}
+
+QStringList ArtifactParticleLayer::availablePresets() const
+{
+    return particlePresetNames();
 }
 
 QString ArtifactParticleLayer::presetName() const
@@ -3087,8 +3123,8 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactParticleLayer::getLayerProperty
     auto presetProp = makeProp(QStringLiteral("particle.quick.preset"),
                                ArtifactCore::PropertyType::Integer, 0, -300);
     presetProp->setDisplayLabel(QStringLiteral("Preset"));
-    presetProp->setHardRange(0, 19);
-    presetProp->setSoftRange(0, 19);
+    presetProp->setHardRange(0, 21);
+    presetProp->setSoftRange(0, 21);
     presetProp->setTooltip(QStringLiteral(
         "Select a 2D starter preset. Applying a preset replaces the emitter settings."));
     quickSetupGroup.addProperty(presetProp);
@@ -4076,14 +4112,7 @@ bool ArtifactParticleLayer::setLayerPropertyValue(const QString& propertyPath, c
     }
 
     if (propertyPath == QStringLiteral("particle.quick.preset")) {
-        static const QStringList presets = {
-            QStringLiteral("fire"), QStringLiteral("campfire"), QStringLiteral("torch"),
-            QStringLiteral("smoke"), QStringLiteral("steam"), QStringLiteral("dust"),
-            QStringLiteral("rain"), QStringLiteral("splash"), QStringLiteral("fountain"),
-            QStringLiteral("explosion"), QStringLiteral("debris"), QStringLiteral("sparks"),
-            QStringLiteral("leaves"), QStringLiteral("snow"), QStringLiteral("pollen"),
-            QStringLiteral("magic"), QStringLiteral("sparkles"), QStringLiteral("energyField"),
-            QStringLiteral("confetti"), QStringLiteral("bubbles")};
+        const QStringList presets = particlePresetNames();
         const int index = std::clamp(value.toInt(), 0, static_cast<int>(presets.size()) - 1);
         loadPreset(presets.at(index));
         return true;

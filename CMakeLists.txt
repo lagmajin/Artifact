@@ -1140,6 +1140,7 @@ set(ARTIFACT_EFFECTS_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Distort/PinchBulgeEffect.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Distort/PolarCoordinatesEffect.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/TurbulentDisplace/TurbulentDisplaceEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/BurnAway/BurnAwayEffect.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Generate/SimpleRainEffect.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Generate/RadioWavesEffect.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/LensDistortion/LensDistortionEffect.ixx"
@@ -1249,6 +1250,7 @@ set(ARTIFACT_EFFECTS_IMPL
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Distort/PinchBulgeEffect.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Distort/PolarCoordinatesEffect.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/TurbulentDisplace/TurbulentDisplaceEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/BurnAway/BurnAwayEffect.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Generate/SimpleRainEffect.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Generate/RadioWavesEffect.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/LensDistortion/LensDistortionEffect.cpp"
@@ -1651,12 +1653,14 @@ set(ARTIFACT_EFFECTS_STYLIZE_MODULES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Dithering/DitheringEffect.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Kuwahara/KuwaharaEffect.ixx"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Bevel/BevelEffect.ixx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/BurnAway/BurnAwayEffect.ixx"
 )
 set(ARTIFACT_EFFECTS_STYLIZE_IMPL
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Kaleidoscope/KaleidoscopeEffect.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Dithering/DitheringEffect.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Kuwahara/KuwaharaEffect.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Bevel/BevelEffect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/BurnAway/BurnAwayEffect.cpp"
 )
 
 add_library(ArtifactEffectsStylize STATIC)

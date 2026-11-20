@@ -881,6 +881,10 @@ public:
     
     // Bubbles
     static EmitterParams bubbles();
+
+    // Burning paper
+    static EmitterParams ash();
+    static EmitterParams ember();
 };
 
 /**

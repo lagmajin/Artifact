@@ -70,6 +70,7 @@ import FloatColorPickerDialog;
 import Artifact.Widgets.Dialog.FloatColorPickerHooks;
 import Widgets.Utils.CSS;
 import Artifact.Layer.Text;
+import Artifact.Layer.Particle;
 import Property.Abstract;
 
 namespace Artifact {
@@ -558,6 +559,19 @@ enumOptionsForProperty(const ArtifactCore::AbstractProperty &property) {
   }
 
   const QString name = property.getName();
+  if (name == QStringLiteral("particle.quick.preset")) {
+    // The particle presets are stored as an index, so the editor shows the
+    // canonical preset names instead of a bare number.
+    const QStringList labels = particlePresetDisplayNames();
+    ArtifactEnumPropertyEditor::OptionList options;
+    options.reserve(labels.size());
+    for (int index = 0; index < labels.size(); ++index) {
+        options.emplace_back(index, labels.at(index));
+    }
+    if (!options.empty()) {
+        return options;
+    }
+  }
   if (name == QStringLiteral("waveType")) {
     return ArtifactEnumPropertyEditor::OptionList{
         {0, QStringLiteral("Sine")}, {1, QStringLiteral("Cosine")}};

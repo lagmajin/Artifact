@@ -285,8 +285,8 @@ inline void drawViewportContextMenuOverlay(ArtifactIRenderer *renderer,
                              static_cast<float>(panel.top()),
                              static_cast<float>(panel.width()),
                              static_cast<float>(panel.height()),
-                             FloatColor{0.060f, 0.068f, 0.078f, 0.97f},
-                             FloatColor{0.30f, 0.34f, 0.40f, 0.96f});
+                             FloatColor{0.173f, 0.188f, 0.208f, 0.98f},
+                             FloatColor{0.318f, 0.349f, 0.388f, 1.0f});
 
   QFont itemFont = QApplication::font();
   itemFont.setPointSizeF(std::max(9.0, static_cast<double>(itemFont.pointSizeF())));
@@ -324,19 +324,18 @@ inline void drawViewportContextMenuOverlay(ArtifactIRenderer *renderer,
                               FloatColor{0.20f, 0.24f, 0.29f, 0.95f}, 1.0f);
       continue;
     }
-    if (i == selectedIndex) {
+    if (i == selectedIndex && enabled) {
       renderer->drawSolidRect(static_cast<float>(row.left()),
                               static_cast<float>(row.top()),
                               static_cast<float>(row.width()),
                               static_cast<float>(row.height()),
-                              enabled ? FloatColor{0.15f, 0.22f, 0.31f, 0.80f}
-                                      : FloatColor{0.12f, 0.16f, 0.22f, 0.62f},
+                              FloatColor{0.345f, 0.278f, 0.208f, 1.0f},
                               1.0f);
     }
     renderer->drawText(row.adjusted(10.0, 0.0, -8.0, 0.0), items.at(i),
                        itemFont,
-                       enabled ? FloatColor{0.88f, 0.90f, 0.92f, 1.0f}
-                               : FloatColor{0.52f, 0.56f, 0.62f, 1.0f},
+                       enabled ? FloatColor{0.906f, 0.918f, 0.933f, 1.0f}
+                               : FloatColor{0.522f, 0.561f, 0.604f, 1.0f},
                        Qt::AlignLeft | Qt::AlignVCenter);
   }
 }
@@ -370,7 +369,7 @@ inline void drawViewportPieMenuOverlay(ArtifactIRenderer *renderer,
                           FloatColor{0.0f, 0.0f, 0.0f, 0.16f}, 1.0f);
   renderer->drawCircle(static_cast<float>(center.x()),
                        static_cast<float>(center.y()), outerRadius + 8.0f,
-                       FloatColor{0.08f, 0.10f, 0.13f, 0.94f}, 1.0f, true);
+                       FloatColor{0.13f, 0.15f, 0.17f, 0.96f}, 1.0f, true);
   renderer->drawCircle(static_cast<float>(center.x()),
                        static_cast<float>(center.y()), innerRadius - 2.0f,
                        FloatColor{0.05f, 0.06f, 0.08f, 0.98f}, 1.0f, true);
@@ -378,10 +377,6 @@ inline void drawViewportPieMenuOverlay(ArtifactIRenderer *renderer,
   QFont labelFont = QApplication::font();
   labelFont.setPointSizeF(std::max(9.0, static_cast<double>(labelFont.pointSizeF())));
   labelFont.setWeight(QFont::DemiBold);
-  QFont titleFont = QApplication::font();
-  titleFont.setPointSizeF(std::max(10.0, static_cast<double>(titleFont.pointSizeF()) + 1.0));
-  titleFont.setWeight(QFont::DemiBold);
-
   for (int i = 0; i < count; ++i) {
     const auto &item = model.items[static_cast<size_t>(i)];
     const float startAngle = 90.0f - (i + 1) * sectorSize + sectorSize * 0.5f;
@@ -400,10 +395,10 @@ inline void drawViewportPieMenuOverlay(ArtifactIRenderer *renderer,
           static_cast<float>(center.x() + std::cos(ang) * outerRadius),
           static_cast<float>(center.y() - std::sin(ang) * outerRadius)});
     }
-    const bool selected = (i == selectedIndex);
+    const bool selected = (i == selectedIndex && item.enabled);
     renderer->drawSolidPolygonLocal(
-        polygon, selected ? FloatColor{0.18f, 0.34f, 0.52f, 0.95f}
-                          : FloatColor{0.10f, 0.12f, 0.15f, 0.88f});
+        polygon, selected ? FloatColor{0.345f, 0.278f, 0.208f, 1.0f}
+                          : FloatColor{0.173f, 0.188f, 0.208f, 0.96f});
 
     std::vector<Detail::float2> innerEdge;
     innerEdge.reserve(static_cast<size_t>(steps + 3));
@@ -418,6 +413,14 @@ inline void drawViewportPieMenuOverlay(ArtifactIRenderer *renderer,
     }
     renderer->drawSolidPolygonLocal(innerEdge,
                                     FloatColor{0.04f, 0.05f, 0.07f, 0.98f});
+    if (selected) {
+      const FloatColor rim{0.941f, 0.718f, 0.424f, 1.0f};
+      for (int s = 1; s <= steps; ++s) {
+        const auto &from = polygon[s];
+        const auto &to = polygon[s + 1];
+        renderer->drawSolidLine({from.x, from.y}, {to.x, to.y}, rim, 1.5f);
+      }
+    }
 
     const float midAngle =
         (startAngle + sectorSize * 0.5f) * static_cast<float>(M_PI) / 180.0f;
@@ -430,17 +433,26 @@ inline void drawViewportPieMenuOverlay(ArtifactIRenderer *renderer,
                        item.enabled ? FloatColor{0.92f, 0.95f, 0.98f, 1.0f}
                                     : FloatColor{0.55f, 0.58f, 0.62f, 1.0f},
                        Qt::AlignCenter);
+    if (item.checked) {
+      const float x = static_cast<float>(labelPos.x());
+      const float y = static_cast<float>(textRect.bottom()) + 3.0f;
+      const FloatColor check{0.647f, 0.800f, 1.0f, 1.0f};
+      renderer->drawSolidLine({x - 4.0f, y}, {x - 1.0f, y + 3.0f}, check, 1.5f);
+      renderer->drawSolidLine({x - 1.0f, y + 3.0f}, {x + 5.0f, y - 3.0f}, check, 1.5f);
+    }
   }
 
   renderer->drawCircle(static_cast<float>(center.x()),
                        static_cast<float>(center.y()), innerRadius - 4.0f,
                        FloatColor{0.03f, 0.04f, 0.06f, 1.0f}, 1.0f, true);
-  renderer->drawText(QRectF(center.x() - innerRadius, center.y() - innerRadius,
+  if (!model.title.isEmpty()) {
+    QFont titleFont = labelFont;
+    titleFont.setPointSizeF(std::max(10.0, static_cast<double>(labelFont.pointSizeF()) + 1.0));
+    renderer->drawText(QRectF(center.x() - innerRadius, center.y() - innerRadius,
                             innerRadius * 2.0f, innerRadius * 2.0f),
-                     model.title.isEmpty() ? QStringLiteral("Menu")
-                                           : model.title,
-                     titleFont, FloatColor{0.95f, 0.97f, 0.99f, 1.0f},
-                     Qt::AlignCenter);
+                       model.title, titleFont,
+                       FloatColor{0.95f, 0.97f, 0.99f, 1.0f}, Qt::AlignCenter);
+  }
 
   renderer->setZoom(prevZoom);
   renderer->setPan(prevPanX, prevPanY);
