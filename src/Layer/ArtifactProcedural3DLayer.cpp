@@ -1371,16 +1371,16 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactProcedural3DLayer::getLayerProp
         }
         if (impl_->textFontIdentityChanged) {
             fontNotes.push_back(QStringLiteral(
-                "The resolved font file differs from the saved project snapshot."));
+                "The resolved font identity differs from the saved project snapshot."));
         } else if (impl_->textFontIdentityUnverified) {
             fontNotes.push_back(QStringLiteral(
-                "The resolved font file identity could not be verified."));
+                "The resolved font identity could not be verified."));
         } else if (impl_->textExtrudeDiagnostics.fontIdentityComplete) {
             fontNotes.push_back(QStringLiteral(
-                "Resolved font file SHA-256 fingerprints are recorded."));
+                "Resolved font-table SHA-256 fingerprints are recorded."));
         } else if (!impl_->textExtrudeDiagnostics.resolvedFontFamilies.isEmpty()) {
             fontNotes.push_back(QStringLiteral(
-                "Resolved font file SHA-256 fingerprints are unavailable."));
+                "Resolved font-table SHA-256 fingerprints are unavailable."));
         }
         if (fontNotes.isEmpty()) {
             fontNotes.push_back(QStringLiteral(
