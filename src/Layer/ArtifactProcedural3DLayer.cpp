@@ -11,6 +11,7 @@ module;
 #include <QFileInfo>
 #include <QFont>
 #include <QFontMetrics>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QMatrix4x4>
@@ -196,6 +197,12 @@ public:
     ArtifactCore::TerrainSettings terrain;
     ArtifactCore::PathTubeSettings pathTube;
     ArtifactCore::TextExtrudeSettings textExtrude;
+    ArtifactCore::TextExtrudeDiagnostics textExtrudeDiagnostics;
+    QStringList textFontFingerprints;
+    QStringList expectedTextFontFingerprints;
+    bool compareTextFontFingerprints = false;
+    bool textFontIdentityChanged = false;
+    bool textFontIdentityUnverified = false;
     DeformSettings deform;
     ArtifactCore::Procedural3DShading shading = ArtifactCore::Procedural3DShading::Solid;
     QColor baseColor = QColor(86, 205, 179);
@@ -484,7 +491,8 @@ public:
     void regenerate(qint64 frame, float timeSeconds, int qualityOverride)
     {
         refreshTerrainHeightSource();
-        if (cachedFrame == frame &&
+        const bool frameDependent = kind != Procedural3DLayerKind::TextExtrude;
+        if ((!frameDependent || cachedFrame == frame) &&
             cachedRevision == revision &&
             cachedQuality == qualityOverride) {
             return;
@@ -500,9 +508,28 @@ public:
                 resolved,
                 timeSeconds);
         } else if (kind == Procedural3DLayerKind::TextExtrude) {
+            auto resolved = textExtrude;
+            if (qualityOverride >= 0) {
+                resolved.quality = static_cast<ArtifactCore::Procedural3DQuality>(
+                    std::clamp(qualityOverride, 0, 2));
+            }
             generated = ArtifactCore::Procedural3DGenerators::generateTextExtrude(
-                textExtrude,
-                timeSeconds);
+                resolved,
+                timeSeconds,
+                &textExtrudeDiagnostics);
+            if (compareTextFontFingerprints) {
+                textFontIdentityUnverified =
+                    !textExtrudeDiagnostics.fontIdentityComplete;
+                textFontIdentityChanged = textExtrudeDiagnostics.fontIdentityComplete
+                    && expectedTextFontFingerprints
+                           != textExtrudeDiagnostics.resolvedFontFingerprints;
+                textFontFingerprints = textFontIdentityUnverified
+                    ? expectedTextFontFingerprints
+                    : textExtrudeDiagnostics.resolvedFontFingerprints;
+                compareTextFontFingerprints = false;
+            } else {
+                textFontFingerprints = textExtrudeDiagnostics.resolvedFontFingerprints;
+            }
         } else {
             auto resolved = pathTube;
             if (qualityOverride >= 0) {
@@ -684,9 +711,35 @@ public:
             {QStringLiteral("fontSize"), textExtrude.fontSize},
             {QStringLiteral("bold"), textExtrude.bold},
             {QStringLiteral("italic"), textExtrude.italic},
+            {QStringLiteral("letterSpacing"), textExtrude.letterSpacing},
+            {QStringLiteral("lineSpacing"), textExtrude.lineSpacing},
+            {QStringLiteral("alignment"), static_cast<int>(textExtrude.alignment)},
             {QStringLiteral("depth"), textExtrude.depth},
             {QStringLiteral("bevelWidth"), textExtrude.bevelWidth},
             {QStringLiteral("bevelSegments"), textExtrude.bevelSegments},
+            {QStringLiteral("maxGlyphCount"), static_cast<int>(textExtrude.maxGlyphCount)},
+            {QStringLiteral("resolvedFontFamilies"),
+             QJsonArray::fromStringList(textExtrudeDiagnostics.resolvedFontFamilies)},
+            {QStringLiteral("resolvedFontFingerprints"),
+             QJsonArray::fromStringList(textFontFingerprints)},
+            {QStringLiteral("expectedFontFingerprints"),
+             QJsonArray::fromStringList(expectedTextFontFingerprints.isEmpty()
+                                            ? textFontFingerprints
+                                            : expectedTextFontFingerprints)},
+            {QStringLiteral("fontIdentityComplete"),
+             textExtrudeDiagnostics.fontIdentityComplete},
+            {QStringLiteral("fontIdentityChanged"), textFontIdentityChanged},
+            {QStringLiteral("fontIdentityUnverified"), textFontIdentityUnverified},
+            {QStringLiteral("missingGlyphCount"),
+             static_cast<int>(textExtrudeDiagnostics.missingGlyphCount)},
+            {QStringLiteral("missingGlyphLocations"),
+             QJsonArray::fromStringList(textExtrudeDiagnostics.missingGlyphLocations)},
+            {QStringLiteral("missingGlyphLocationsComplete"),
+             textExtrudeDiagnostics.missingGlyphLocationsComplete},
+            {QStringLiteral("generationStatus"),
+             static_cast<int>(textExtrudeDiagnostics.status)},
+            {QStringLiteral("generationMessage"),
+             textExtrudeDiagnostics.message},
             {QStringLiteral("quality"), static_cast<int>(textExtrude.quality)}
         };
         QJsonObject deformJson {
@@ -787,14 +840,100 @@ public:
             std::clamp(pathJson.value(QStringLiteral("quality")).toInt(static_cast<int>(pathTube.quality)), 0, 2));
 
         const auto textJson = object.value(QStringLiteral("textExtrude")).toObject();
-        textExtrude.text = textJson.value(QStringLiteral("text")).toString(textExtrude.text).left(1024);
+        textExtrude.text = textJson.value(QStringLiteral("text"))
+            .toString(textExtrude.text).left(65536);
         textExtrude.fontFamily = textJson.value(QStringLiteral("fontFamily")).toString(textExtrude.fontFamily).trimmed().left(256);
         textExtrude.fontSize = std::clamp(textJson.value(QStringLiteral("fontSize")).toInt(textExtrude.fontSize), 1, 1000);
         textExtrude.bold = textJson.value(QStringLiteral("bold")).toBool(textExtrude.bold);
         textExtrude.italic = textJson.value(QStringLiteral("italic")).toBool(textExtrude.italic);
+        textExtrude.letterSpacing = safeFinite(
+            textJson.value(QStringLiteral("letterSpacing")).toDouble(textExtrude.letterSpacing),
+            textExtrude.letterSpacing, -1000.0f, 1000.0f);
+        textExtrude.lineSpacing = safeFinite(
+            textJson.value(QStringLiteral("lineSpacing")).toDouble(textExtrude.lineSpacing),
+            textExtrude.lineSpacing, 0.25f, 4.0f);
+        textExtrude.alignment = static_cast<ArtifactCore::TextExtrudeAlignment>(
+            std::clamp(textJson.value(QStringLiteral("alignment")).toInt(
+                           static_cast<int>(textExtrude.alignment)),
+                       0, 2));
         textExtrude.depth = safeFinite(textJson.value(QStringLiteral("depth")).toDouble(textExtrude.depth), textExtrude.depth, 0.0f, 100000.0f);
         textExtrude.bevelWidth = safeFinite(textJson.value(QStringLiteral("bevelWidth")).toDouble(textExtrude.bevelWidth), textExtrude.bevelWidth, 0.0f, 100000.0f);
         textExtrude.bevelSegments = std::clamp(textJson.value(QStringLiteral("bevelSegments")).toInt(textExtrude.bevelSegments), 1, 8);
+        textExtrude.maxGlyphCount = static_cast<std::uint32_t>(std::clamp(
+            textJson.value(QStringLiteral("maxGlyphCount")).toInt(
+                static_cast<int>(textExtrude.maxGlyphCount)),
+            1, 16384));
+        bool fontMetadataTruncated = false;
+        const auto readBoundedStringArray = [&textJson](
+            const QString& key, const qsizetype maxCount, const qsizetype maxLength,
+            bool* wasTruncated) {
+            QStringList strings;
+            const QJsonValue arrayValue = textJson.value(key);
+            if (!arrayValue.isArray()) {
+                if (!arrayValue.isUndefined()) *wasTruncated = true;
+                return strings;
+            }
+            const QJsonArray values = arrayValue.toArray();
+            if (values.size() > maxCount) *wasTruncated = true;
+            const qsizetype count = std::min(values.size(), maxCount);
+            strings.reserve(count);
+            for (qsizetype index = 0; index < count; ++index) {
+                const QJsonValue value = values.at(index);
+                if (!value.isString()) {
+                    *wasTruncated = true;
+                    continue;
+                }
+                QString string = value.toString();
+                if (string.size() > maxLength) {
+                    string = string.left(maxLength);
+                    *wasTruncated = true;
+                }
+                strings.push_back(std::move(string));
+            }
+            return strings;
+        };
+        textExtrudeDiagnostics.resolvedFontFamilies = readBoundedStringArray(
+            QStringLiteral("resolvedFontFamilies"), 64, 256,
+            &fontMetadataTruncated);
+        textExtrudeDiagnostics.fontIdentityComplete = textJson.value(
+            QStringLiteral("fontIdentityComplete")).toBool(false)
+            && !fontMetadataTruncated;
+        textExtrudeDiagnostics.missingGlyphCount = static_cast<std::uint32_t>(
+            std::clamp(textJson.value(QStringLiteral("missingGlyphCount")).toInt(0),
+                       0, 16384));
+        bool missingGlyphLocationsTruncated = false;
+        textExtrudeDiagnostics.missingGlyphLocations = readBoundedStringArray(
+            QStringLiteral("missingGlyphLocations"), 128, 128,
+            &missingGlyphLocationsTruncated);
+        textExtrudeDiagnostics.missingGlyphLocationsComplete = textJson.value(
+            QStringLiteral("missingGlyphLocationsComplete")).toBool(true)
+            && !missingGlyphLocationsTruncated;
+        textExtrudeDiagnostics.status = static_cast<ArtifactCore::Procedural3DGenerationStatus>(
+            std::clamp(textJson.value(QStringLiteral("generationStatus")).toInt(0), 0, 6));
+        textExtrudeDiagnostics.message = textJson.value(
+            QStringLiteral("generationMessage")).toString().left(2048);
+        textFontFingerprints = readBoundedStringArray(
+            QStringLiteral("resolvedFontFingerprints"), 64, 512,
+            &fontMetadataTruncated);
+        expectedTextFontFingerprints = readBoundedStringArray(
+            QStringLiteral("expectedFontFingerprints"), 64, 512,
+            &fontMetadataTruncated);
+        if (fontMetadataTruncated) {
+            textExtrudeDiagnostics.fontIdentityComplete = false;
+        }
+        if (expectedTextFontFingerprints.isEmpty()) {
+            expectedTextFontFingerprints = textFontFingerprints;
+        }
+        compareTextFontFingerprints = !expectedTextFontFingerprints.isEmpty()
+            && !fontMetadataTruncated;
+        textFontIdentityChanged = !fontMetadataTruncated && textJson.value(
+            QStringLiteral("fontIdentityChanged")).toBool(false);
+        textFontIdentityUnverified = fontMetadataTruncated || textJson.value(
+            QStringLiteral("fontIdentityUnverified")).toBool(false);
+        textExtrudeDiagnostics.missingGlyphLocationsComplete =
+            textExtrudeDiagnostics.missingGlyphLocationsComplete
+            && textExtrudeDiagnostics.missingGlyphLocations.size()
+                >= static_cast<qsizetype>(textExtrudeDiagnostics.missingGlyphCount);
         textExtrude.quality = static_cast<ArtifactCore::Procedural3DQuality>(
             std::clamp(textJson.value(QStringLiteral("quality")).toInt(static_cast<int>(textExtrude.quality)), 0, 2));
 
@@ -998,9 +1137,18 @@ QString ArtifactProcedural3DLayer::debugState() const
                               : QStringLiteral("audio-missing:fallback-noise"))
                        : QStringLiteral("noise")))
         : (impl_->kind == Procedural3DLayerKind::TextExtrude
-                ? (impl_->textExtrude.text.trimmed().isEmpty()
-                       ? QStringLiteral("text-missing")
-                       : QStringLiteral("text-ready"))
+                ? QStringLiteral("text-status:%1;font:%2;missing-glyphs:%3;font-identity:%4")
+                      .arg(static_cast<int>(impl_->textExtrudeDiagnostics.status))
+                      .arg(impl_->textExtrudeDiagnostics.resolvedFontFamilies.join(
+                          QStringLiteral(", ")))
+                      .arg(impl_->textExtrudeDiagnostics.missingGlyphCount)
+                      .arg(impl_->textFontIdentityChanged
+                               ? QStringLiteral("changed")
+                               : (impl_->textFontIdentityUnverified
+                                      ? QStringLiteral("unverified")
+                                      : (impl_->textExtrudeDiagnostics.fontIdentityComplete
+                                             ? QStringLiteral("verified")
+                                             : QStringLiteral("pending"))))
                 : (impl_->pathTube.pathSource == ArtifactCore::ProceduralPathSource::ControlPoints
                        ? (impl_->pathTube.pathPoints.size() >= 2u
                               ? QStringLiteral("layer-path-loaded")
@@ -1181,13 +1329,106 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactProcedural3DLayer::getLayerProp
         generator.addProperty(property(QStringLiteral("terrain.uvMode"), ArtifactCore::PropertyType::Integer, static_cast<int>(impl_->terrain.uvMode), -240));
     } else if (impl_->kind == Procedural3DLayerKind::TextExtrude) {
         generator.addProperty(property(QStringLiteral("text.value"), ArtifactCore::PropertyType::String, impl_->textExtrude.text, -249));
-        generator.addProperty(property(QStringLiteral("text.fontFamily"), ArtifactCore::PropertyType::String, impl_->textExtrude.fontFamily, -248));
+        auto fontFamilyProperty = property(
+            QStringLiteral("text.fontFamily"),
+            ArtifactCore::PropertyType::String,
+            impl_->textExtrude.fontFamily,
+            -248);
+        QStringList fontNotes;
+        if (impl_->textExtrudeDiagnostics.status
+            != ArtifactCore::Procedural3DGenerationStatus::Success) {
+            fontNotes.push_back(impl_->textExtrudeDiagnostics.message.isEmpty()
+                ? QStringLiteral("Text mesh generation reported a problem.")
+                : impl_->textExtrudeDiagnostics.message);
+        }
+        if (impl_->textExtrudeDiagnostics.missingGlyphCount > 0u) {
+            constexpr qsizetype kVisibleMissingGlyphs = 8;
+            QStringList missingGlyphSummary =
+                impl_->textExtrudeDiagnostics.missingGlyphLocations.mid(
+                    0, kVisibleMissingGlyphs);
+            if (!impl_->textExtrudeDiagnostics.missingGlyphLocationsComplete) {
+                missingGlyphSummary.push_back(QStringLiteral("some source positions unavailable"));
+            }
+            if (impl_->textExtrudeDiagnostics.missingGlyphCount
+                > static_cast<std::uint32_t>(kVisibleMissingGlyphs)) {
+                missingGlyphSummary.push_back(QStringLiteral("and %1 more")
+                    .arg(impl_->textExtrudeDiagnostics.missingGlyphCount
+                         - static_cast<std::uint32_t>(kVisibleMissingGlyphs)));
+            }
+            fontNotes.push_back(QStringLiteral("Missing glyphs (%1): %2")
+                .arg(impl_->textExtrudeDiagnostics.missingGlyphCount)
+                .arg(missingGlyphSummary.join(QStringLiteral(", "))));
+        }
+        if (!impl_->textExtrudeDiagnostics.resolvedFontFamilies.isEmpty()) {
+            fontNotes.push_back(QStringLiteral("Resolved fonts: %1")
+                .arg(impl_->textExtrudeDiagnostics.resolvedFontFamilies.join(
+                    QStringLiteral(", "))));
+        }
+        if (impl_->textFontIdentityChanged) {
+            fontNotes.push_back(QStringLiteral(
+                "The resolved font file differs from the saved project snapshot."));
+        } else if (impl_->textFontIdentityUnverified) {
+            fontNotes.push_back(QStringLiteral(
+                "The resolved font file identity could not be verified."));
+        } else if (impl_->textExtrudeDiagnostics.fontIdentityComplete) {
+            fontNotes.push_back(QStringLiteral(
+                "Resolved font file SHA-256 fingerprints are recorded."));
+        } else if (!impl_->textExtrudeDiagnostics.resolvedFontFamilies.isEmpty()) {
+            fontNotes.push_back(QStringLiteral(
+                "Resolved font file SHA-256 fingerprints are unavailable."));
+        }
+        if (fontNotes.isEmpty()) {
+            fontNotes.push_back(QStringLiteral(
+                "Generate the text mesh to inspect resolved fonts and glyph coverage."));
+        }
+        fontFamilyProperty->setInlineHelp(fontNotes.join(QStringLiteral(" · ")));
+        fontFamilyProperty->setTooltip(fontNotes.join(QLatin1Char('\n')));
+        generator.addProperty(fontFamilyProperty);
         generator.addProperty(property(QStringLiteral("text.fontSize"), ArtifactCore::PropertyType::Integer, impl_->textExtrude.fontSize, -247));
         generator.addProperty(property(QStringLiteral("text.bold"), ArtifactCore::PropertyType::Boolean, impl_->textExtrude.bold, -246));
         generator.addProperty(property(QStringLiteral("text.italic"), ArtifactCore::PropertyType::Boolean, impl_->textExtrude.italic, -245));
-        generator.addProperty(property(QStringLiteral("text.depth"), ArtifactCore::PropertyType::Float, impl_->textExtrude.depth, -244));
-        generator.addProperty(property(QStringLiteral("text.bevelWidth"), ArtifactCore::PropertyType::Float, impl_->textExtrude.bevelWidth, -243));
-        generator.addProperty(property(QStringLiteral("text.bevelSegments"), ArtifactCore::PropertyType::Integer, impl_->textExtrude.bevelSegments, -242));
+        auto letterSpacingProperty = property(
+            QStringLiteral("text.letterSpacing"),
+            ArtifactCore::PropertyType::Float,
+            impl_->textExtrude.letterSpacing,
+            -244);
+        letterSpacingProperty->setDisplayLabel(QStringLiteral("Letter Spacing"));
+        letterSpacingProperty->setUnit(QStringLiteral("px"));
+        letterSpacingProperty->setTooltip(QStringLiteral("Additional spacing applied between shaped glyphs."));
+        letterSpacingProperty->setHardRange(-1000.0, 1000.0);
+        generator.addProperty(letterSpacingProperty);
+        auto lineSpacingProperty = property(
+            QStringLiteral("text.lineSpacing"),
+            ArtifactCore::PropertyType::Float,
+            impl_->textExtrude.lineSpacing,
+            -243);
+        lineSpacingProperty->setDisplayLabel(QStringLiteral("Line Spacing"));
+        lineSpacingProperty->setUnit(QStringLiteral("×"));
+        lineSpacingProperty->setTooltip(QStringLiteral("Multiplier applied to the font's natural line spacing."));
+        lineSpacingProperty->setHardRange(0.25, 4.0);
+        generator.addProperty(lineSpacingProperty);
+        auto alignmentProperty = property(
+            QStringLiteral("text.alignment"),
+            ArtifactCore::PropertyType::Integer,
+            static_cast<int>(impl_->textExtrude.alignment),
+            -242);
+        alignmentProperty->setDisplayLabel(QStringLiteral("Alignment"));
+        alignmentProperty->setTooltip(QStringLiteral("0=Left, 1=Center, 2=Right"));
+        alignmentProperty->setHardRange(0, 2);
+        generator.addProperty(alignmentProperty);
+        generator.addProperty(property(QStringLiteral("text.depth"), ArtifactCore::PropertyType::Float, impl_->textExtrude.depth, -241));
+        generator.addProperty(property(QStringLiteral("text.bevelWidth"), ArtifactCore::PropertyType::Float, impl_->textExtrude.bevelWidth, -240));
+        generator.addProperty(property(QStringLiteral("text.bevelSegments"), ArtifactCore::PropertyType::Integer, impl_->textExtrude.bevelSegments, -239));
+        auto maxGlyphCountProperty = property(
+            QStringLiteral("text.maxGlyphCount"),
+            ArtifactCore::PropertyType::Integer,
+            static_cast<int>(impl_->textExtrude.maxGlyphCount),
+            -238);
+        maxGlyphCountProperty->setDisplayLabel(QStringLiteral("Maximum Glyphs"));
+        maxGlyphCountProperty->setTooltip(QStringLiteral(
+            "Upper bound for shaped glyphs in this extrusion (1–16,384)."));
+        maxGlyphCountProperty->setHardRange(1, 16384);
+        generator.addProperty(maxGlyphCountProperty);
     } else {
         auto pathSourceProperty = property(
             QStringLiteral("path.source"),
@@ -1330,6 +1571,14 @@ bool ArtifactProcedural3DLayer::setLayerPropertyValue(const QString& path, const
         const float raw = static_cast<float>(input.toDouble());
         return std::isfinite(raw) ? std::clamp(raw, minimum, maximum) : fallback;
     };
+    const auto clearFontIdentitySnapshot = [this]() {
+        impl_->textFontFingerprints.clear();
+        impl_->expectedTextFontFingerprints.clear();
+        impl_->textExtrudeDiagnostics = {};
+        impl_->compareTextFontFingerprints = false;
+        impl_->textFontIdentityChanged = false;
+        impl_->textFontIdentityUnverified = false;
+    };
     if (path == QStringLiteral("procedural.kind")) {
         impl_->kind = static_cast<Procedural3DLayerKind>(std::clamp(value.toInt(), 0, 2));
         return commitChange();
@@ -1422,11 +1671,23 @@ bool ArtifactProcedural3DLayer::setLayerPropertyValue(const QString& path, const
     if (path == QStringLiteral("path.seed")) { impl_->pathTube.seed = static_cast<std::uint32_t>(std::max(0, value.toInt())); return commitChange(); }
     if (path == QStringLiteral("path.noiseScale")) { impl_->pathTube.noiseScale = safeValue(value, 1.0f, 0.0001f, 100000.0f); return commitChange(); }
     if (path == QStringLiteral("path.noiseAmplitude")) { impl_->pathTube.noiseAmplitude = safeValue(value, 0.0f, 0.0f, 100000.0f); return commitChange(); }
-    if (path == QStringLiteral("text.value")) { impl_->textExtrude.text = value.toString().left(1024); return commitChange(); }
-    if (path == QStringLiteral("text.fontFamily")) { impl_->textExtrude.fontFamily = value.toString().trimmed().left(256); return commitChange(); }
-    if (path == QStringLiteral("text.fontSize")) { impl_->textExtrude.fontSize = std::clamp(value.toInt(), 1, 1000); return commitChange(); }
-    if (path == QStringLiteral("text.bold")) { impl_->textExtrude.bold = value.toBool(); return commitChange(); }
-    if (path == QStringLiteral("text.italic")) { impl_->textExtrude.italic = value.toBool(); return commitChange(); }
+    if (path == QStringLiteral("text.value")) { clearFontIdentitySnapshot(); impl_->textExtrude.text = value.toString().left(65536); return commitChange(); }
+    if (path == QStringLiteral("text.fontFamily")) { clearFontIdentitySnapshot(); impl_->textExtrude.fontFamily = value.toString().trimmed().left(256); return commitChange(); }
+    if (path == QStringLiteral("text.fontSize")) { clearFontIdentitySnapshot(); impl_->textExtrude.fontSize = std::clamp(value.toInt(), 1, 1000); return commitChange(); }
+    if (path == QStringLiteral("text.bold")) { clearFontIdentitySnapshot(); impl_->textExtrude.bold = value.toBool(); return commitChange(); }
+    if (path == QStringLiteral("text.italic")) { clearFontIdentitySnapshot(); impl_->textExtrude.italic = value.toBool(); return commitChange(); }
+    if (path == QStringLiteral("text.letterSpacing")) { impl_->textExtrude.letterSpacing = safeValue(value, 0.0f, -1000.0f, 1000.0f); return commitChange(); }
+    if (path == QStringLiteral("text.lineSpacing")) { impl_->textExtrude.lineSpacing = safeValue(value, 1.0f, 0.25f, 4.0f); return commitChange(); }
+    if (path == QStringLiteral("text.alignment")) {
+        impl_->textExtrude.alignment = static_cast<ArtifactCore::TextExtrudeAlignment>(
+            std::clamp(value.toInt(), 0, 2));
+        return commitChange();
+    }
+    if (path == QStringLiteral("text.maxGlyphCount")) {
+        impl_->textExtrude.maxGlyphCount = static_cast<std::uint32_t>(
+            std::clamp(value.toInt(), 1, 16384));
+        return commitChange();
+    }
     if (path == QStringLiteral("text.depth")) { impl_->textExtrude.depth = safeValue(value, 40.0f, 0.0f, 100000.0f); return commitChange(); }
     if (path == QStringLiteral("text.bevelWidth")) { impl_->textExtrude.bevelWidth = safeValue(value, 4.0f, 0.0f, 100000.0f); return commitChange(); }
     if (path == QStringLiteral("text.bevelSegments")) { impl_->textExtrude.bevelSegments = std::clamp(value.toInt(), 1, 8); return commitChange(); }
