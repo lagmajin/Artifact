@@ -11925,6 +11925,8 @@ public:
   ArtifactCore::EventBus::Subscription trackerUndoSubscription_;
   ArtifactCore::ArtifactArray<CompositionTimelineTransitionEvaluation>
       transitionEvaluationWorkspace_;
+  ArtifactCore::ArtifactArray<CompositionTimelineTransitionDrawStep>
+      transitionDrawStepWorkspace_;
 
 
 
@@ -18133,6 +18135,11 @@ public:
       if (transitionEvaluationWorkspace_.capacity() < required) {
         transitionEvaluationWorkspace_.reserve(required);
       }
+      const auto requiredSteps = required +
+          static_cast<std::size_t>(target->allLayerRef().size());
+      if (transitionDrawStepWorkspace_.capacity() < requiredSteps) {
+        transitionDrawStepWorkspace_.reserve(requiredSteps);
+      }
     };
     reserveTransitionWorkspace(composition);
 
@@ -18164,6 +18171,11 @@ public:
                     composition->timelineTransitionCount());
                 if (transitionEvaluationWorkspace_.capacity() < required) {
                   transitionEvaluationWorkspace_.reserve(required);
+                }
+                const auto requiredSteps = required +
+                    static_cast<std::size_t>(composition->allLayerRef().size());
+                if (transitionDrawStepWorkspace_.capacity() < requiredSteps) {
+                  transitionDrawStepWorkspace_.reserve(requiredSteps);
                 }
 
                 sceneMutationGeneration_.fetch_add(
@@ -45643,12 +45655,21 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
             lod)); // Pass LOD to renderer/effects
 
-        comp->evaluateTimelineTransitionsAtFrame(
-            currentFrame.framePosition(), transitionEvaluationWorkspace_);
+        comp->buildTimelineTransitionDrawPlan(
+            currentFrame.framePosition(), transitionEvaluationWorkspace_,
+            transitionDrawStepWorkspace_);
 
         bool shared3DSceneDepthOpen = false;
 
-        for (const auto &layer : layers) {
+        for (const auto &drawStep : transitionDrawStepWorkspace_) {
+          if (drawStep.kind != CompositionTimelineTransitionDrawStep::Kind::Layer) {
+            // Reserved for the A/B temporary composite (P2/P3).
+            continue;
+          }
+          if (drawStep.layerIndex < 0 || drawStep.layerIndex >= layers.size()) {
+            continue;
+          }
+          const auto &layer = layers[drawStep.layerIndex];
 
           if (layerRenderFilter_ == CompositionLayerRenderFilter::SelectedOnly) {
             if (!passesLayerRenderFilter(layerRenderFilter_, selectedIds,

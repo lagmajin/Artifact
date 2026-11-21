@@ -1,5 +1,9 @@
 module;
 #include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <QList>
 #include <QString>
 #include <QStringList>
@@ -17,6 +21,12 @@ import Memory.SharedPtr;
 import Audio.Modulation.Modulator;
 import Audio.Modulation.Router;
 import Artifact.Effect.Abstract;
+import Artifact.Effect.Context;
+import Artifact.Effect.ImplBase;
+import Image.ImageF32x4RGBAWithCache;
+import Image.ImageF32x4_RGBA;
+import Property.Abstract;
+import Core.Parallel;
 import Artifact.Effects.Manager;
 import Artifact.Effect.Ofx.Host;
 import Artifact.Effect.Ofx.Impl;
@@ -150,6 +160,615 @@ namespace Artifact
  using namespace ArtifactCore;
 
 namespace {
+class NeonIgnitionCPU final : public ArtifactEffectImplBase {
+public:
+  float progress = .85f, width = 8.f, intensity = 4.f;
+  std::array<float, 3> color{.12f, .62f, 1.f};
+  // Normalized cubic controls in order from start to end.
+  std::array<float, 8> path{.12f, .65f, .30f, -.15f,
+                           .65f, 1.15f, .88f, .35f};
+
+  void applyCPU(const ImageF32x4RGBAWithCache& src,
+                ImageF32x4RGBAWithCache& dst) override {
+    const int w = src.width(), h = src.height();
+    if (!src.image().rgba32fData() || w <= 0 || h <= 0 ||
+        progress <= 0.f || intensity <= 0.f) {
+      dst = src;
+      return;
+    }
+    struct Point { float x, y; };
+    constexpr int segments = 64;
+    std::array<Point, segments + 1> points{};
+    std::array<float, segments> lengths{};
+    float length = 0.f;
+    for (int i = 0; i <= segments; ++i) {
+      const float t = float(i) / segments, s = 1.f - t;
+      auto component = [&](int axis) {
+        return s*s*s*path[axis] + 3*s*s*t*path[axis+2] +
+               3*s*t*t*path[axis+4] + t*t*t*path[axis+6];
+      };
+      points[i] = {component(0) * (w - 1), component(1) * (h - 1)};
+      if (i > 0) {
+        lengths[i-1] = std::hypot(points[i].x - points[i-1].x,
+                                  points[i].y - points[i-1].y);
+        length += lengths[i-1];
+      }
+    }
+    if (length <= 0.f) {
+      dst = src;
+      return;
+    }
+    float remaining = progress * length;
+    int count = 0;
+    for (; count < segments && remaining > 0.f; ++count) {
+      if (lengths[count] > remaining) {
+        const auto a = points[count], b = points[count + 1];
+        const float ratio = remaining / lengths[count];
+        points[count + 1] = {a.x + (b.x-a.x)*ratio, a.y + (b.y-a.y)*ratio};
+      }
+      remaining -= lengths[count];
+    }
+    const auto tip = points[count];
+    const float tube = std::max(.5f, width * context_.resolutionScale);
+    const float reach = 5.f * tube;
+    const float fullDistance = reach * reach;
+    const float falloff = .5f / (tube * tube);
+    const float tipStrength = .65f * std::min(1.f, (1.f-progress)*20.f);
+    dst = src.DeepCopy();
+    auto* output = dst.image().rgba32fData();
+    if (!output) {
+      dst = src;
+      return;
+    }
+    struct Segment {
+      Point start;
+      float dx, dy, inverseLength;
+      float left, right, top, bottom;
+    };
+    std::array<Segment, segments> lit{};
+    for (int i = 0; i < count; ++i) {
+      const auto a = points[i], b = points[i+1];
+      const float dx = b.x-a.x, dy = b.y-a.y;
+      const float squared = dx*dx + dy*dy;
+      lit[i] = {a, dx, dy, squared > 0.f ? 1.f/squared : 0.f,
+                std::min(a.x, b.x) - reach, std::max(a.x, b.x) + reach,
+                std::min(a.y, b.y) - reach, std::max(a.y, b.y) + reach};
+    }
+    Parallel::ForPixels(0, h, w, h, [&](int y) {
+      std::array<const Segment*, segments> active{};
+      int activeCount = 0;
+      int left = w, right = -1;
+      for (int i = 0; i < count; ++i) {
+        const auto& part = lit[i];
+        if (y < part.top || y > part.bottom ||
+            part.right < 0 || part.left > w - 1)
+          continue;
+        active[activeCount++] = &part;
+        left = std::min(left, static_cast<int>(std::ceil(std::max(0.f, part.left))));
+        right = std::max(right, static_cast<int>(
+            std::floor(std::min(float(w - 1), part.right))));
+      }
+      for (int x = left; x <= right; ++x) {
+        float nearest = fullDistance;
+        for (int i = 0; i < activeCount; ++i) {
+          const auto& part = *active[i];
+          if (x < part.left || x > part.right)
+            continue;
+          const float px = x-part.start.x, py = y-part.start.y;
+          const float t = std::clamp((px*part.dx + py*part.dy)
+                                     * part.inverseLength, 0.f, 1.f);
+          const float ex = px-t*part.dx, ey = py-t*part.dy;
+          nearest = std::min(nearest, ex*ex + ey*ey);
+        }
+        if (nearest >= fullDistance)
+          continue;
+        auto* pixel = output + (std::size_t(y)*w+x)*4;
+        auto over = [&](float coverage, float gain) {
+          const float keep = pixel[3] * (1.f-coverage);
+          const float alpha = coverage + keep;
+          if (alpha <= 0.f)
+            return;
+          for (int channel = 0; channel < 3; ++channel)
+            pixel[channel] = (color[channel]*intensity*gain*coverage +
+                              pixel[channel]*keep)/alpha;
+          pixel[3] = alpha;
+        };
+        over(.55f * std::exp(-nearest*falloff), 1.f);
+        over(std::clamp(tube*.5f + .5f - std::sqrt(nearest), 0.f, 1.f), 2.f);
+        const float tx = x-tip.x, ty = y-tip.y;
+        if (tipStrength > 0.f)
+          over(tipStrength * std::exp(-(tx*tx+ty*ty)*falloff), 3.f);
+      }
+    });
+  }
+};
+
+class NeonIgnitionEffect final : public ArtifactAbstractEffect {
+public:
+  NeonIgnitionEffect() {
+    setPipelineStage(EffectPipelineStage::Rasterizer);
+    sync();
+  }
+  bool supportsGPU() const override { return false; }
+
+  std::vector<AbstractProperty> getProperties() const override {
+    std::vector<AbstractProperty> result;
+    for (std::size_t i = 0; i < controls_.size(); ++i) {
+      const auto& control = controls_[i];
+      auto& property = result.emplace_back();
+      property.setName(QString::fromLatin1(control.name));
+      property.setDisplayLabel(QString::fromLatin1(control.label));
+      property.setType(PropertyType::Float);
+      property.setValue(values_[i]);
+      property.setDefaultValue(control.initial);
+      property.setHardRange(control.low, control.high);
+    }
+    return result;
+  }
+  void setPropertyValue(const UniString& name, const QVariant& value) override {
+    bool ok = false;
+    const float number = value.toFloat(&ok);
+    if (!ok || !std::isfinite(number))
+      return;
+    const auto key = name.toQString();
+    for (std::size_t i = 0; i < controls_.size(); ++i) {
+      const auto& control = controls_[i];
+      if (key == QString::fromLatin1(control.name)) {
+        values_[i] = std::clamp(number, control.low, control.high);
+        sync();
+        return;
+      }
+    }
+  }
+
+private:
+  struct Control { const char* name; const char* label; float initial, low, high; };
+  static constexpr std::array<Control, 14> controls_{{
+      {"progress","Ignition Progress",.85f,0.f,1.f},
+      {"width","Tube Width",8.f,1.f,48.f},
+      {"intensity","Intensity",4.f,0.f,16.f},
+      {"red","Red",.12f,0.f,1.f}, {"green","Green",.62f,0.f,1.f},
+      {"blue","Blue",1.f,0.f,1.f},
+      {"startX","Start X",.12f,0.f,1.f}, {"startY","Start Y",.65f,0.f,1.f},
+      {"control1X","Control 1 X",.30f,-1.f,2.f},
+      {"control1Y","Control 1 Y",-.15f,-1.f,2.f},
+      {"control2X","Control 2 X",.65f,-1.f,2.f},
+      {"control2Y","Control 2 Y",1.15f,-1.f,2.f},
+      {"endX","End X",.88f,0.f,1.f}, {"endY","End Y",.35f,0.f,1.f}}};
+  std::array<float, controls_.size()> values_ = [] {
+    std::array<float, controls_.size()> values{};
+    for (std::size_t i = 0; i < controls_.size(); ++i)
+      values[i] = controls_[i].initial;
+    return values;
+  }();
+
+  void sync() {
+    auto cpu = ArtifactCore::makeShared<NeonIgnitionCPU>();
+    cpu->progress = values_[0];
+    cpu->width = values_[1];
+    cpu->intensity = values_[2];
+    std::copy_n(values_.begin() + 3, cpu->color.size(), cpu->color.begin());
+    std::copy_n(values_.begin() + 6, cpu->path.size(), cpu->path.begin());
+    setCPUImpl(cpu);
+  }
+};
+
+class SplitColorShadowCPU final : public ArtifactEffectImplBase {
+public:
+  static constexpr int maxDistance = 32;
+  int distance = 18;
+  float opacity = .65f;
+  float rotation = 0.f;
+
+  void applyCPU(const ImageF32x4RGBAWithCache& src,
+                ImageF32x4RGBAWithCache& dst) override {
+    const int width = src.width(), height = src.height();
+    const auto* input = src.image().rgba32fData();
+    const int length = static_cast<int>(std::lround(
+        distance * std::clamp(context_.resolutionScale, 0.f, 1.f)));
+    if (!input || width <= 0 || height <= 0 || length == 0 || opacity == 0) {
+      dst = src;
+      return;
+    }
+    dst = src.DeepCopy();
+    auto* output = dst.image().rgba32fData();
+    if (!output) {
+      dst = src;
+      return;
+    }
+    constexpr int directions[][2] = {{-1, 1}, {1, 1}, {0, 1}};
+    const float radians = rotation * .017453292519943295f;
+    const float sine = std::sin(radians), cosine = std::cos(radians);
+    struct Offset { int x, y; };
+    std::array<std::array<Offset, maxDistance>, 3> offsets{};
+    for (int layer = 0; layer < 3; ++layer) {
+      const float dx = directions[layer][0]*cosine - directions[layer][1]*sine;
+      const float dy = directions[layer][0]*sine + directions[layer][1]*cosine;
+      for (int step = 1; step <= length; ++step) {
+        offsets[layer][step - 1] = {int(std::lround(dx*step)),
+                                    int(std::lround(dy*step))};
+      }
+    }
+    constexpr float colors[][3] = {{1.f, .04f, .03f}, {.04f, .19f, 1.f},
+                                   {1.f, .78f, .03f}};
+    auto offset = [&](int x, int y) { return (std::size_t(y) * width + x) * 4; };
+    Parallel::ForPixels(0, height, width, height, [&](int y) {
+      for (int x = 0; x < width; ++x) {
+        const auto* face = input + offset(x, y);
+        if (face[3] >= 1.f)
+          continue;
+        float ink[3]{}, alpha = 0.f;
+        for (int layer = 0; layer < 3; ++layer) {
+          float coverage = 0.f;
+          for (int step = 0; step < length; ++step) {
+            const auto shift = offsets[layer][step];
+            const int sx = x - shift.x, sy = y - shift.y;
+            if (sy < 0 || sy >= height || sx < 0 || sx >= width)
+              break;
+            coverage = std::max(coverage, input[offset(sx, sy) + 3]);
+          }
+          const float weight = std::min(coverage, 1.f) * opacity;
+          for (int channel = 0; channel < 3; ++channel)
+            ink[channel] += colors[layer][channel] * weight;
+          alpha += weight * (1.f - alpha);
+        }
+        if (alpha == 0.f)
+          continue;
+        auto* pixel = output + offset(x, y);
+        const float faceAlpha = std::clamp(face[3], 0.f, 1.f);
+        pixel[3] = faceAlpha + alpha * (1.f - faceAlpha);
+        for (int channel = 0; channel < 3; ++channel)
+          pixel[channel] = (face[channel] * faceAlpha +
+                            ink[channel] * (1.f - faceAlpha)) / pixel[3];
+      }
+    });
+  }
+};
+
+class SplitColorShadowEffect final : public ArtifactAbstractEffect {
+public:
+  SplitColorShadowEffect() {
+    setPipelineStage(EffectPipelineStage::Rasterizer);
+    sync();
+  }
+  bool supportsGPU() const override { return false; }
+
+  std::vector<AbstractProperty> getProperties() const override {
+    std::vector<AbstractProperty> properties;
+    auto& distance = properties.emplace_back();
+    distance.setName(QStringLiteral("distance"));
+    distance.setDisplayLabel(QStringLiteral("Shadow Length"));
+    distance.setType(PropertyType::Integer);
+    distance.setValue(distance_);
+    distance.setDefaultValue(18);
+    distance.setHardRange(0, 32);
+    auto& opacity = properties.emplace_back();
+    opacity.setName(QStringLiteral("opacity"));
+    opacity.setDisplayLabel(QStringLiteral("Shadow Opacity"));
+    opacity.setType(PropertyType::Float);
+    opacity.setValue(opacity_);
+    opacity.setDefaultValue(.65f);
+    opacity.setHardRange(0.f, 1.f);
+    auto& rotation = properties.emplace_back();
+    rotation.setName(QStringLiteral("rotation"));
+    rotation.setDisplayLabel(QStringLiteral("Shadow Rotation (Degrees)"));
+    rotation.setType(PropertyType::Float);
+    rotation.setValue(rotation_);
+    rotation.setDefaultValue(0.f);
+    rotation.setHardRange(-180.f, 180.f);
+    return properties;
+  }
+
+  void setPropertyValue(const UniString& name, const QVariant& value) override {
+    bool ok = false;
+    const auto key = name.toQString();
+    if (key == QStringLiteral("distance")) {
+      const int number = value.toInt(&ok);
+      if (!ok)
+        return;
+      distance_ = std::clamp(number, 0, 32);
+    } else if (key == QStringLiteral("opacity")) {
+      const float number = value.toFloat(&ok);
+      if (!ok || !std::isfinite(number))
+        return;
+      opacity_ = std::clamp(number, 0.f, 1.f);
+    } else if (key == QStringLiteral("rotation")) {
+      const float number = value.toFloat(&ok);
+      if (!ok || !std::isfinite(number))
+        return;
+      rotation_ = std::clamp(number, -180.f, 180.f);
+    } else {
+      return;
+    }
+    sync();
+  }
+
+private:
+  int distance_ = 18;
+  float opacity_ = .65f;
+  float rotation_ = 0.f;
+
+  void sync() {
+    auto cpu = ArtifactCore::makeShared<SplitColorShadowCPU>();
+    cpu->distance = distance_;
+    cpu->opacity = opacity_;
+    cpu->rotation = rotation_;
+    setCPUImpl(cpu);
+  }
+};
+
+class PaperCutoutCPU final : public ArtifactEffectImplBase {
+public:
+  int colors = 3, thickness = 4, shadowX = 7, shadowY = 8;
+
+  void applyCPU(const ImageF32x4RGBAWithCache& src,
+                ImageF32x4RGBAWithCache& dst) override {
+    using RGB = std::array<float, 3>;
+    constexpr std::array<RGB, 5> palette{{
+        {{1.f, .49f, .24f}}, {{.14f, .44f, .41f}}, {{1.f, .92f, .74f}},
+        {{.20f, .13f, .27f}}, {{.58f, .64f, .84f}}}};
+    const int width = src.width(), height = src.height();
+    const auto* input = src.image().rgba32fData();
+    if (!input || width <= 0 || height <= 0) {
+      dst = src;
+      return;
+    }
+    dst = src.DeepCopy();
+    auto* output = dst.image().rgba32fData();
+    if (!output) {
+      dst = src;
+      return;
+    }
+    auto classify = [&](int x, int y, int& label) {
+      label = -1;
+      if (x < 0 || y < 0 || x >= width || y >= height)
+        return 0.f;
+      const auto* pixel = input + (std::size_t(y) * width + x) * 4;
+      if (!(pixel[3] > 0))
+        return 0.f;
+      float best = 0.f;
+      for (int index = 0; index < colors; ++index) {
+        float error = 0.f;
+        for (int channel = 0; channel < 3; ++channel) {
+          const float delta = pixel[channel] - palette[index][channel];
+          error += delta * delta;
+        }
+        if (index == 0 || error < best) {
+          best = error;
+          label = index;
+        }
+      }
+      return std::min(pixel[3], 1.f);
+    };
+    auto backing = [&](int x, int y, int& label) {
+      float alpha = classify(x, y, label);
+      if (!alpha)
+        return 0.f;
+      constexpr int offsets[][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+      for (const auto& offset : offsets) {
+        int neighbor;
+        const float support = classify(x + offset[0], y + offset[1], neighbor);
+        if (neighbor != label)
+          return 0.f;
+        alpha = std::min(alpha, support);
+      }
+      return alpha;
+    };
+    const float scale = std::clamp(context_.resolutionScale, 0.f, 1.f);
+    const int depth = static_cast<int>(std::lround(thickness * scale));
+    const int dx = static_cast<int>(std::lround(shadowX * scale));
+    const int dy = static_cast<int>(std::lround(shadowY * scale));
+    Parallel::ForPixels(0, height, width, height, [&](int y) {
+      for (int x = 0; x < width; ++x) {
+        int face;
+        const float faceAlpha = classify(x, y, face);
+        auto* pixel = output + (std::size_t(y) * width + x) * 4;
+        std::fill_n(pixel, 4, 0.f);
+        auto over = [&](const RGB& color, float alpha, float shade) {
+          for (int channel = 0; channel < 3; ++channel)
+            pixel[channel] = color[channel] * shade * alpha +
+                             pixel[channel] * (1.f - alpha);
+          pixel[3] = alpha + pixel[3] * (1.f - alpha);
+        };
+        std::array<float, 5> edges{};
+        int shadow = -1;
+        float shadowAlpha = 0.f;
+        if (depth > 0) {
+          shadowAlpha = backing(x - dx, y - dy, shadow);
+          for (int step = 1; step <= depth; ++step) {
+            int label;
+            const float alpha = backing(x, y - step, label);
+            if (alpha > 0)
+              edges[label] = std::max(edges[label], alpha);
+          }
+        }
+        for (int index = 0; index < colors; ++index) {
+          if (index == shadow)
+            over(palette[index], shadowAlpha * .32f, 0.f);
+          if (edges[index] > 0)
+            over(palette[index], edges[index], .65f);
+          if (index == face)
+            over(palette[index], faceAlpha, 1.f);
+        }
+        if (pixel[3] > 0)
+          for (int channel = 0; channel < 3; ++channel)
+            pixel[channel] /= pixel[3];
+      }
+    });
+  }
+};
+
+class PaperCutoutEffect final : public ArtifactAbstractEffect {
+public:
+  PaperCutoutEffect() {
+    setPipelineStage(EffectPipelineStage::Rasterizer);
+    sync();
+  }
+  bool supportsGPU() const override { return false; }
+
+  std::vector<AbstractProperty> getProperties() const override {
+    std::vector<AbstractProperty> properties;
+    auto add = [&](const char* name, const char* label, int value,
+                   int initial, int min, int max) {
+      auto& property = properties.emplace_back();
+      property.setName(QString::fromLatin1(name));
+      property.setDisplayLabel(QString::fromLatin1(label));
+      property.setType(PropertyType::Integer);
+      property.setValue(value);
+      property.setDefaultValue(initial);
+      property.setHardRange(min, max);
+    };
+    add("colors", "Paper Colors", colors_, 3, 3, 5);
+    add("thickness", "Paper Thickness", thickness_, 4, 0, 8);
+    add("shadowX", "Shadow Horizontal", shadowX_, 7, -32, 32);
+    add("shadowY", "Shadow Vertical", shadowY_, 8, -32, 32);
+    return properties;
+  }
+  void setPropertyValue(const UniString& name, const QVariant& value) override {
+    bool ok = false;
+    const int number = value.toInt(&ok);
+    if (!ok)
+      return;
+    const auto key = name.toQString();
+    if (key == QStringLiteral("colors"))
+      colors_ = std::clamp(number, 3, 5);
+    else if (key == QStringLiteral("thickness"))
+      thickness_ = std::clamp(number, 0, 8);
+    else if (key == QStringLiteral("shadowX"))
+      shadowX_ = std::clamp(number, -32, 32);
+    else if (key == QStringLiteral("shadowY"))
+      shadowY_ = std::clamp(number, -32, 32);
+    else
+      return;
+    sync();
+  }
+
+private:
+  int colors_ = 3, thickness_ = 4, shadowX_ = 7, shadowY_ = 8;
+
+  void sync() {
+    auto cpu = ArtifactCore::makeShared<PaperCutoutCPU>();
+    cpu->colors = colors_;
+    cpu->thickness = thickness_;
+    cpu->shadowX = shadowX_;
+    cpu->shadowY = shadowY_;
+    setCPUImpl(cpu);
+  }
+};
+
+class TimeMosaicCPU final : public ArtifactEffectImplBase {
+public:
+  int rows = 3, columns = 3, delay = 1, order = 0;
+
+  void applyCPU(const ImageF32x4RGBAWithCache& src,
+                ImageF32x4RGBAWithCache& dst) override {
+    const int width = src.width(), height = src.height();
+    if (!context_.sampler || delay == 0 || width < columns || height < rows ||
+        !src.image().rgba32fData()) {
+      dst = src;
+      return;
+    }
+    dst = src.DeepCopy();
+    auto* output = dst.image().rgba32fData();
+    if (!output) {
+      dst = src;
+      return;
+    }
+    // Visit tiles in delay order, so repeated requests for frame zero share
+    // one sampled image and no per-tile history needs to be retained.
+    std::int64_t previousTarget = -1;
+    ImageF32x4RGBAWithCache sampled;
+    for (int index = 1; index < rows * columns; ++index) {
+      const int row = order == 1 ? index % rows : index / columns;
+      int column = order == 1 ? index / rows : index % columns;
+      if (order == 2 && row % 2)
+        column = columns - 1 - column;
+      const auto target = std::max<std::int64_t>(
+          0, context_.compositionFrame - std::int64_t(index) * delay);
+      if (target == context_.compositionFrame)
+        continue;
+      if (target != previousTarget) {
+        if (!context_.sampler->sampleCurrentLayerFrame(target, sampled) ||
+            sampled.width() != width || sampled.height() != height ||
+            !sampled.image().rgba32fData()) {
+          dst = src;
+          return;
+        }
+        previousTarget = target;
+      }
+      const auto* input = sampled.image().rgba32fData();
+      const int x0 = column * width / columns;
+      const int x1 = (column + 1) * width / columns;
+      const int y0 = row * height / rows;
+      const int y1 = (row + 1) * height / rows;
+      for (int y = y0; y < y1; ++y) {
+        const auto offset = (static_cast<std::size_t>(y) * width + x0) * 4;
+        std::memcpy(output + offset, input + offset,
+                    static_cast<std::size_t>(x1 - x0) * 4 * sizeof(float));
+      }
+    }
+  }
+};
+
+class TimeMosaicEffect final : public ArtifactAbstractEffect {
+public:
+  TimeMosaicEffect() {
+    setPipelineStage(EffectPipelineStage::Rasterizer);
+    sync();
+  }
+  bool supportsGPU() const override { return false; }
+
+  std::vector<AbstractProperty> getProperties() const override {
+    std::vector<AbstractProperty> properties;
+    auto add = [&](const char* name, int value, int initial, int min, int max) {
+      AbstractProperty property;
+      property.setName(QString::fromLatin1(name));
+      property.setType(PropertyType::Float);
+      property.setValue(QVariant(double(value)));
+      property.setDefaultValue(QVariant(double(initial)));
+      property.setMinValue(QVariant(double(min)));
+      property.setMaxValue(QVariant(double(max)));
+      properties.push_back(std::move(property));
+    };
+    add("rows", rows_, 3, 1, 8);
+    add("columns", columns_, 3, 1, 8);
+    add("delayFrames", delay_, 1, 0, 30);
+    add("order", order_, 0, 0, 2);
+    return properties;
+  }
+
+  void setPropertyValue(const UniString& name, const QVariant& value) override {
+    const auto key = name.toQString();
+    bool ok = false;
+    const int number = value.toInt(&ok);
+    if (!ok)
+      return;
+    if (key == QStringLiteral("rows"))
+      rows_ = std::clamp(number, 1, 8);
+    else if (key == QStringLiteral("columns"))
+      columns_ = std::clamp(number, 1, 8);
+    else if (key == QStringLiteral("delayFrames"))
+      delay_ = std::clamp(number, 0, 30);
+    else if (key == QStringLiteral("order"))
+      order_ = std::clamp(number, 0, 2);
+    else
+      return;
+    sync();
+  }
+
+private:
+  int rows_ = 3, columns_ = 3, delay_ = 1, order_ = 0;
+
+  void sync() {
+    auto cpu = ArtifactCore::makeShared<TimeMosaicCPU>();
+    cpu->rows = rows_;
+    cpu->columns = columns_;
+    cpu->delay = delay_;
+    cpu->order = order_;
+    setCPUImpl(cpu);
+  }
+};
+
 template <typename Predicate>
 bool pushUndoCommandAndVerify(std::unique_ptr<UndoCommand> command,
                               Predicate&& predicate) {
@@ -617,6 +1236,30 @@ W_OBJECT_IMPL(ArtifactEffectService)
    auto effect = std::make_unique<PosterizeTimeEffect>();
    effect->setEffectID(UniString::fromQString(effectId));
    effect->setDisplayName(QStringLiteral("Posterize Time"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("neon_ignition")) {
+   auto effect = std::make_unique<NeonIgnitionEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Neon Ignition"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("split_color_shadow")) {
+   auto effect = std::make_unique<SplitColorShadowEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Split Color Shadow"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("paper_cutout")) {
+   auto effect = std::make_unique<PaperCutoutEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Paper Cutout"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("time_mosaic")) {
+   auto effect = std::make_unique<TimeMosaicEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Time Mosaic"));
    return effect;
   }
   if (effectId == QStringLiteral("slit_scan")) {
@@ -1281,6 +1924,10 @@ W_OBJECT_IMPL(ArtifactEffectService)
   effects.push_back({EffectID("builtin.pixel_sort_pro"), "Pixel Sort Pro"});
   effects.push_back({EffectID("posterize_time"), "Posterize Time"});
   effects.push_back({EffectID("slit_scan"), "Slit Scan"});
+  effects.push_back({EffectID("time_mosaic"), "Time Mosaic"});
+  effects.push_back({EffectID("paper_cutout"), "Paper Cutout"});
+  effects.push_back({EffectID("split_color_shadow"), "Split Color Shadow"});
+  effects.push_back({EffectID("neon_ignition"), "Neon Ignition"});
   effects.push_back({EffectID("strobe"), "Strobe"});
   effects.push_back({EffectID("time_warp"), "Time Warp"});
   effects.push_back({EffectID("vector_blur"), "Vector Blur"});

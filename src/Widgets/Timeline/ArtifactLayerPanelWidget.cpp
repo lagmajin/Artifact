@@ -1589,7 +1589,8 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   shyButton->setToolTip("Master Shy Switch");
   applyLayerPanelButtonPalette(shyButton);
 
-  auto layerNameButton = impl_->layerNameButton = new QPushButton("Layer / Property");
+  auto layerNameButton = impl_->layerNameButton =
+      new QPushButton(tt("layer_panel.header_layer_property", "Layer / Property"));
   layerNameButton->setFocusPolicy(Qt::NoFocus);
   layerNameButton->setAttribute(Qt::WA_TransparentForMouseEvents, true);
   applyLayerPanelButtonPalette(layerNameButton);
@@ -5292,9 +5293,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         return;
       }
       const auto sourceFilter = QStringLiteral(
-          "Image Files (%1);;All Files (*.*)").arg(
-              ArtifactCore::FileTypeDetector::suffixPatterns(
-                  ArtifactCore::FileCapability::StillImage));
+          "Image Files (*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.exr *.hdr *.webp);;All Files (*.*)");
       const QString currentPath = [&]() -> QString {
         if (auto imageLayer = ArtifactCore::dynamicPointerCast<ArtifactImageLayer>(layer)) {
           return imageLayer->sourcePath();

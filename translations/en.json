@@ -6,7 +6,7 @@
     "translators": [
       "Artifact Team"
     ],
-    "lastUpdated": "2026-10-12"
+    "lastUpdated": "2026-11-21"
   },
   "app": {
     "name": "Artifact",
@@ -915,7 +915,20 @@
     "set_keyframe_value_title": "Set Keyframe Value",
     "set_area_value_title": "Set Area Value",
     "edit_audio_fades_title": "Set Audio Fades",
-    "linear_word": "linear"
+    "linear_word": "linear",
+    "display_mode_all_layers": "All Layers",
+    "display_mode_selected": "Selected",
+    "display_mode_animated": "Animated",
+    "display_mode_keyframes_important": "Keyframes + Important",
+    "display_mode_keyframes_only": "Keyframes Only",
+    "display_mode_audio": "Audio",
+    "display_mode_video": "Video",
+    "display_mode_tip": "Choose which layer properties are shown in the timeline",
+    "snippet_button": "Snippet",
+    "snippet_tip": "Save or apply named keyframe snippets",
+    "snippet_save_selected": "Save Selected As...",
+    "snippet_apply": "Apply: %1",
+    "snippet_delete": "Delete: %1"
   },
   "layer_panel": {
     "focus_source": "Focus source",
@@ -936,6 +949,7 @@
     "name": "Layer Name",
     "parent": "Parent",
     "blend": "Blend",
+    "header_layer_property": "Layer / Property",
     "transform": "Transform",
     "rename": "Rename Layer...",
     "duplicate": "Duplicate Layer",

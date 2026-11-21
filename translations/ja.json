@@ -6,7 +6,7 @@
     "translators": [
       "Artifact Team"
     ],
-    "lastUpdated": "2026-10-12"
+    "lastUpdated": "2026-11-21"
   },
   "app": {
     "name": "Artifact",
@@ -915,7 +915,20 @@
     "set_keyframe_value_title": "キーフレーム値を設定",
     "set_area_value_title": "エリア値を設定",
     "edit_audio_fades_title": "オーディオフェードを設定",
-    "linear_word": "リニア"
+    "linear_word": "リニア",
+    "display_mode_all_layers": "すべてのレイヤー",
+    "display_mode_selected": "選択中",
+    "display_mode_animated": "アニメーション",
+    "display_mode_keyframes_important": "キーフレーム＋重要",
+    "display_mode_keyframes_only": "キーフレームのみ",
+    "display_mode_audio": "オーディオ",
+    "display_mode_video": "ビデオ",
+    "display_mode_tip": "タイムラインに表示するレイヤープロパティを選択",
+    "snippet_button": "スニペット",
+    "snippet_tip": "名前付きキーフレームスニペットを保存または適用",
+    "snippet_save_selected": "選択範囲を保存...",
+    "snippet_apply": "適用: %1",
+    "snippet_delete": "削除: %1"
   },
   "layer_panel": {
     "focus_source": "ソースにフォーカス",
@@ -936,6 +949,7 @@
     "name": "レイヤー名",
     "parent": "親",
     "blend": "ブレンド",
+    "header_layer_property": "レイヤー / プロパティ",
     "transform": "トランスフォーム",
     "rename": "レイヤー名を変更...",
     "duplicate": "レイヤーを複製",

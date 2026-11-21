@@ -277,7 +277,7 @@ void ArtifactPythonAPI::registerLayerAPI() {
             if (!layer || layer->layerName().compare(toQString(args[0]), Qt::CaseInsensitive) != 0) continue;
             const QString property = toQString(args[1]).trimmed().toLower();
             const QString rawValue = toQString(args[2]);
-            const bool value = toBool(rawValue);
+            const bool value = toBool(rawValue.toStdString());
             bool ok = false;
             if (property == QStringLiteral("visible")) ok = service->setLayerVisibleInCurrentComposition(layer->id(), value);
             else if (property == QStringLiteral("locked")) ok = service->setLayerLockedInCurrentComposition(layer->id(), value);
@@ -285,14 +285,14 @@ void ArtifactPythonAPI::registerLayerAPI() {
             else if (property == QStringLiteral("shy")) ok = service->setLayerShyInCurrentComposition(layer->id(), value);
             else if (property == QStringLiteral("name")) ok = service->renameLayerInCurrentComposition(layer->id(), rawValue);
             else if (property == QStringLiteral("opacity")) {
-                layer->setOpacity(static_cast<float>(toDouble(rawValue, 100.0)));
+                layer->setOpacity(static_cast<float>(toDouble(rawValue.toStdString(), 100.0)));
                 ok = true;
             }
             // Dotted names are generic layer property paths (for example
             // "transform.position.x"). Numeric values are passed through as
             // double so set_layer_property is no longer restricted to bools.
             else if (property.contains('.')) {
-                ok = layer->setLayerPropertyValue(property, QVariant(toDouble(rawValue, 0.0)));
+                ok = layer->setLayerPropertyValue(property, QVariant(toDouble(rawValue.toStdString(), 0.0)));
             }
             else return "ERROR: unsupported layer property";
             return ok ? "OK" : "ERROR: property update failed";

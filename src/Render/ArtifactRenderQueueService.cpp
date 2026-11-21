@@ -4647,8 +4647,16 @@ namespace Artifact
             if (transitionEvaluations.capacity() < requiredTransitionCapacity) {
                 transitionEvaluations.reserve(requiredTransitionCapacity);
             }
-            composition->evaluateTimelineTransitionsAtFrame(
-                frameNumber, transitionEvaluations);
+            static thread_local ArtifactCore::ArtifactArray<
+                CompositionTimelineTransitionDrawStep> transitionDrawSteps;
+            const auto requiredDrawStepCapacity =
+                static_cast<std::size_t>(composition->allLayerRef().size()) +
+                requiredTransitionCapacity;
+            if (transitionDrawSteps.capacity() < requiredDrawStepCapacity) {
+                transitionDrawSteps.reserve(requiredDrawStepCapacity);
+            }
+            composition->buildTimelineTransitionDrawPlan(
+                frameNumber, transitionEvaluations, transitionDrawSteps);
             const auto& layers = composition->allLayerRef();
             const ArtifactCameraLayer* activeCamera = nullptr;
             for (const auto& layer : layers) {
@@ -4730,7 +4738,16 @@ namespace Artifact
                 }
             }
 
-            for (const auto& layer : layers) {
+            for (const auto& drawStep : transitionDrawSteps) {
+                if (drawStep.kind != CompositionTimelineTransitionDrawStep::Kind::Layer) {
+                    // Reserved for the A/B temporary composite (P2/P3).
+                    continue;
+                }
+                if (drawStep.layerIndex < 0 ||
+                    drawStep.layerIndex >= layers.size()) {
+                    continue;
+                }
+                const auto& layer = layers[drawStep.layerIndex];
                 if (!shouldRenderLayer(layer) || !layer->isVisible() ||
                     !layer->isActiveAt(currentPos)) {
                     continue;
@@ -4922,7 +4939,23 @@ namespace Artifact
             configureRendererChannelsForRenderQueueJob(*gpuRenderer_, job);
             gpuRenderer_->setClearColor(comp->backgroundColor());
             gpuRenderer_->clear();
+            static thread_local ArtifactCore::ArtifactArray<
+                CompositionTimelineTransitionEvaluation> legacyGpuEvaluations;
+            static thread_local ArtifactCore::ArtifactArray<
+                CompositionTimelineTransitionDrawStep> legacyGpuDrawSteps;
             const auto& layers = comp->allLayerRef();
+            const auto legacyRequiredCapacity = static_cast<std::size_t>(
+                comp->timelineTransitionCount());
+            const auto legacyRequiredSteps = legacyRequiredCapacity +
+                static_cast<std::size_t>(layers.size());
+            if (legacyGpuEvaluations.capacity() < legacyRequiredCapacity) {
+                legacyGpuEvaluations.reserve(legacyRequiredCapacity);
+            }
+            if (legacyGpuDrawSteps.capacity() < legacyRequiredSteps) {
+                legacyGpuDrawSteps.reserve(legacyRequiredSteps);
+            }
+            comp->buildTimelineTransitionDrawPlan(
+                job.startFrame, legacyGpuEvaluations, legacyGpuDrawSteps);
             const ArtifactCore::FramePosition currentPos(job.startFrame);
             const bool hasSoloLayer = std::any_of(
                 layers.begin(), layers.end(), [](const auto& layer) {
@@ -4987,7 +5020,16 @@ namespace Artifact
                 }
             }
 
-            for (const auto& layer : layers) {
+            for (const auto& drawStep : legacyGpuDrawSteps) {
+                    if (drawStep.kind != CompositionTimelineTransitionDrawStep::Kind::Layer) {
+                        // Reserved for the A/B temporary composite (P2/P3).
+                        continue;
+                    }
+                    if (drawStep.layerIndex < 0 ||
+                        drawStep.layerIndex >= layers.size()) {
+                        continue;
+                    }
+                    const auto& layer = layers[drawStep.layerIndex];
                     if (!shouldRenderLayer(layer) || !layer->isVisible() ||
                         !layer->isActiveAt(currentPos)) {
                         continue;
@@ -7294,7 +7336,23 @@ namespace Artifact
                 snap.composition->evaluateLayerComponentSimulation(
                     ArtifactCore::FramePosition(snap.frameNumber), false);
             }
+            static thread_local ArtifactCore::ArtifactArray<
+                CompositionTimelineTransitionEvaluation> gpuTransitionEvaluations;
+            static thread_local ArtifactCore::ArtifactArray<
+                CompositionTimelineTransitionDrawStep> gpuTransitionDrawSteps;
             const auto& gpuLayers = snap.composition->allLayerRef();
+            const auto gpuRequiredCapacity = static_cast<std::size_t>(
+                snap.composition->timelineTransitionCount());
+            const auto gpuRequiredSteps = gpuRequiredCapacity +
+                static_cast<std::size_t>(gpuLayers.size());
+            if (gpuTransitionEvaluations.capacity() < gpuRequiredCapacity) {
+                gpuTransitionEvaluations.reserve(gpuRequiredCapacity);
+            }
+            if (gpuTransitionDrawSteps.capacity() < gpuRequiredSteps) {
+                gpuTransitionDrawSteps.reserve(gpuRequiredSteps);
+            }
+            snap.composition->buildTimelineTransitionDrawPlan(
+                snap.frameNumber, gpuTransitionEvaluations, gpuTransitionDrawSteps);
             const ArtifactCore::FramePosition gpuPos(snap.frameNumber);
             const bool hasSoloGpuLayer = std::any_of(
                 gpuLayers.begin(), gpuLayers.end(), [](const auto& layer) {
@@ -7434,7 +7492,16 @@ namespace Artifact
                     matteImages);
                 if (has3DCamera) renderer->reset3DCameraMatrices();
             };
-            for (const auto& layer : gpuLayers) {
+            for (const auto& drawStep : gpuTransitionDrawSteps) {
+                if (drawStep.kind != CompositionTimelineTransitionDrawStep::Kind::Layer) {
+                    // Reserved for the A/B temporary composite (P2/P3).
+                    continue;
+                }
+                if (drawStep.layerIndex < 0 ||
+                    drawStep.layerIndex >= gpuLayers.size()) {
+                    continue;
+                }
+                const auto& layer = gpuLayers[drawStep.layerIndex];
                 if (!layer) {
                     continue;
                 }

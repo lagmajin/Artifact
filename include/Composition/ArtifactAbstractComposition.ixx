@@ -246,6 +246,9 @@ export namespace Artifact {
   qint32 stackPosition = -1;
   FrameRange range = FrameRange::zero();
   bool enabled = true;
+  // Runtime-only cache of the stable id bytes. Filled once when the transition
+  // enters a composition so frame evaluation never has to parse the id string.
+  std::array<std::uint8_t, 16> stableUuid{};
 
   QJsonObject toJson() const;
   static CompositionTimelineTransition fromJson(const QJsonObject& object);
@@ -264,6 +267,7 @@ struct CompositionTimelineTransitionEvaluation {
   // allocation-free when the result is copied through render loops.
   std::array<std::uint8_t, 16> leftLayerUuid{};
   std::array<std::uint8_t, 16> rightLayerUuid{};
+  std::array<std::uint8_t, 16> transitionUuid{};
 
   bool isSourceLayer(const LayerID& layerId) const noexcept;
   double opacityMultiplierForLayer(const LayerID& layerId) const noexcept;
@@ -273,6 +277,17 @@ struct CompositionTimelineTransitionEvaluation {
   static bool containsSourceLayer(
       const ArtifactCore::ArtifactArray<CompositionTimelineTransitionEvaluation>& evaluations,
       const LayerID& layerId) noexcept;
+};
+
+// A transition-aware draw order for one frame. TransitionComposite steps carry
+// an index into the evaluation workspace and are emitted immediately before
+// the layer at insertionIndex. Render paths consume Layer steps as usual;
+// TransitionComposite steps are reserved for the A/B temporary composite.
+struct CompositionTimelineTransitionDrawStep {
+  enum class Kind : quint8 { Layer, TransitionComposite };
+  Kind kind = Kind::Layer;
+  qint32 layerIndex = -1;
+  qint32 evaluationIndex = -1;
 };
 
  class ArtifactAbstractComposition:public QObject, public ArtifactAbstractCompositionAccess {
@@ -454,6 +469,14 @@ struct CompositionTimelineTransitionEvaluation {
   void evaluateTimelineTransitionsAtFrame(
       qint64 frame,
       ArtifactCore::ArtifactArray<CompositionTimelineTransitionEvaluation>& outEvaluations) const;
+  // Frame draw order: one Layer step per composition layer plus one
+  // TransitionComposite step per active transition at its insertion index.
+  // Steps with the same insertion index are ordered by stable transition id.
+  // Both workspaces are caller-owned; reserve them outside the render loop.
+  void buildTimelineTransitionDrawPlan(
+      qint64 frame,
+      ArtifactCore::ArtifactArray<CompositionTimelineTransitionEvaluation>& evaluations,
+      ArtifactCore::ArtifactArray<CompositionTimelineTransitionDrawStep>& outSteps) const;
   ArtifactAbstractLayerPtr resolveTimelineTransitionSource(
       const CompositionTimelineTransition& transition, bool leftSource) const;
   void clearTimelineTransitions();

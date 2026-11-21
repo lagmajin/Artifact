@@ -134,6 +134,7 @@ import Artifact.Effect.Abstract;
 import Frame.Position;
 import Undo.UndoManager;
 import Time.Rational;
+import Translation.Manager;
 import UI.ShortcutBindings;
 import Artifact.Audio.ScrubController;
 import Utils.Path;
@@ -145,6 +146,11 @@ using namespace ArtifactCore;
 using namespace ArtifactWidgets;
 
 namespace {
+QString tt(const char* key, const char* fallback)
+{
+  return Artifact::TranslationManager::instance().tr(QString::fromUtf8(key), QString::fromUtf8(fallback));
+}
+
 QVector<ArtifactTimelineTrackPainterView::CompositionMarkerVisual>
 compositionMarkerVisuals(const ArtifactCompositionPtr& composition) {
   QVector<ArtifactTimelineTrackPainterView::CompositionMarkerVisual> visuals;
@@ -5997,8 +6003,8 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   keyframeEasePasteButton->setObjectName(QStringLiteral("timelineKeyframeEasePasteButton"));
   auto keyframeSnippetButton = new QToolButton();
   keyframeSnippetButton->setObjectName(QStringLiteral("timelineKeyframeSnippetButton"));
-  keyframeSnippetButton->setText(QStringLiteral("Snippet"));
-  keyframeSnippetButton->setToolTip(QStringLiteral("Save or apply named keyframe snippets"));
+  keyframeSnippetButton->setText(tt("timeline.snippet_button", "Snippet"));
+  keyframeSnippetButton->setToolTip(tt("timeline.snippet_tip", "Save or apply named keyframe snippets"));
   styleTimelineToolButton(keyframeSnippetButton);
   auto keyframeEaseInButton = new QToolButton();
   keyframeEaseInButton->setObjectName(QStringLiteral("timelineKeyframeEaseInButton"));
@@ -6278,18 +6284,18 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   searchModeCombo->setVisible(false);
   searchModeCombo->setMaximumWidth(0);
   searchModeCombo->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-  displayModeCombo->addItem(QStringLiteral("All Layers"), static_cast<int>(TimelineLayerDisplayMode::AllLayers));
-  displayModeCombo->addItem(QStringLiteral("Selected"), static_cast<int>(TimelineLayerDisplayMode::SelectedOnly));
-  displayModeCombo->addItem(QStringLiteral("Animated"), static_cast<int>(TimelineLayerDisplayMode::AnimatedOnly));
-  displayModeCombo->addItem(QStringLiteral("Keyframes + Important"), static_cast<int>(TimelineLayerDisplayMode::ImportantAndKeyframed));
-  displayModeCombo->addItem(QStringLiteral("Keyframes Only"), static_cast<int>(TimelineLayerDisplayMode::KeyframesOnly));
-  displayModeCombo->addItem(QStringLiteral("Audio"), static_cast<int>(TimelineLayerDisplayMode::AudioOnly));
-  displayModeCombo->addItem(QStringLiteral("Video"), static_cast<int>(TimelineLayerDisplayMode::VideoOnly));
+  displayModeCombo->addItem(tt("timeline.display_mode_all_layers", "All Layers"), static_cast<int>(TimelineLayerDisplayMode::AllLayers));
+  displayModeCombo->addItem(tt("timeline.display_mode_selected", "Selected"), static_cast<int>(TimelineLayerDisplayMode::SelectedOnly));
+  displayModeCombo->addItem(tt("timeline.display_mode_animated", "Animated"), static_cast<int>(TimelineLayerDisplayMode::AnimatedOnly));
+  displayModeCombo->addItem(tt("timeline.display_mode_keyframes_important", "Keyframes + Important"), static_cast<int>(TimelineLayerDisplayMode::ImportantAndKeyframed));
+  displayModeCombo->addItem(tt("timeline.display_mode_keyframes_only", "Keyframes Only"), static_cast<int>(TimelineLayerDisplayMode::KeyframesOnly));
+  displayModeCombo->addItem(tt("timeline.display_mode_audio", "Audio"), static_cast<int>(TimelineLayerDisplayMode::AudioOnly));
+  displayModeCombo->addItem(tt("timeline.display_mode_video", "Video"), static_cast<int>(TimelineLayerDisplayMode::VideoOnly));
   displayModeCombo->setItemIcon(
       0, QIcon(ArtifactCore::resolveIconPath(
              QStringLiteral("Studio/photo_filter.svg"))));
   displayModeCombo->setCurrentIndex(0);
-  displayModeCombo->setToolTip(QStringLiteral("Choose which layer properties are shown in the timeline"));
+  displayModeCombo->setToolTip(tt("timeline.display_mode_tip", "Choose which layer properties are shown in the timeline"));
   densityCombo->addItem(QStringLiteral("Compact"), 24);
   densityCombo->addItem(QStringLiteral("Normal"), 28);
   densityCombo->addItem(QStringLiteral("Comfortable"), 36);
@@ -6919,13 +6925,16 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   QObject::connect(keyframeSnippetButton, &QToolButton::clicked, this,
                    [this, keyframeSnippetButton]() {
                      QMenu menu(keyframeSnippetButton);
-                     QAction *save = menu.addAction(QStringLiteral("Save Selected As..."));
+                     QAction *save = menu.addAction(
+                         tt("timeline.snippet_save_selected", "Save Selected As..."));
                      menu.addSeparator();
                      for (const auto &name : impl_->keyframeSnippets_.keys()) {
-                       QAction *apply = menu.addAction(QStringLiteral("Apply: %1").arg(name));
+                       QAction *apply = menu.addAction(
+                           tt("timeline.snippet_apply", "Apply: %1").arg(name));
                        QObject::connect(apply, &QAction::triggered, this,
                                         [this, name]() { applyKeyframeSnippet(name); });
-                       QAction *remove = menu.addAction(QStringLiteral("Delete: %1").arg(name));
+                       QAction *remove = menu.addAction(
+                           tt("timeline.snippet_delete", "Delete: %1").arg(name));
                        QObject::connect(remove, &QAction::triggered, this,
                                         [this, name]() { removeKeyframeSnippet(name); });
                      }

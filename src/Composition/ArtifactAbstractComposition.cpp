@@ -176,6 +176,25 @@ bool sameTransitionSource(const LayerID& leftId, const QString& leftName,
     return !leftName.isEmpty() && leftName == rightName;
 }
 
+// Cold-path only: cache the stable id bytes once when a transition enters the
+// composition so the per-frame draw-plan builder never parses a string.
+std::array<std::uint8_t, 16> transitionIdBytes(const QString& id)
+{
+    std::array<std::uint8_t, 16> bytes{};
+    const QByteArray rfc = QUuid::fromString(id).toRfc4122();
+    if (rfc.size() == 16) {
+        std::copy(rfc.cbegin(), rfc.cend(), bytes.begin());
+    }
+    return bytes;
+}
+
+bool uuidBytesLess(const std::array<std::uint8_t, 16>& left,
+                   const std::array<std::uint8_t, 16>& right) noexcept
+{
+    return std::lexicographical_compare(left.cbegin(), left.cend(),
+                                        right.cbegin(), right.cend());
+}
+
 const Artifact::CompositionStateVariant* findStateVariantById(
     const QVector<Artifact::CompositionStateVariant>& states,
     const QString& stateId)
@@ -4679,9 +4698,9 @@ bool CompositionTimelineTransitionEvaluation::isSourceLayer(
     if (!active) return false;
     const auto& uuid = layerId.getUuid();
     return std::equal(leftLayerUuid.cbegin(), leftLayerUuid.cend(),
-                      uuid.data) ||
+                      uuid.data()) ||
            std::equal(rightLayerUuid.cbegin(), rightLayerUuid.cend(),
-                      uuid.data);
+                      uuid.data());
 }
 
 double CompositionTimelineTransitionEvaluation::opacityMultiplierForLayer(
@@ -4690,7 +4709,7 @@ double CompositionTimelineTransitionEvaluation::opacityMultiplierForLayer(
     if (!isSourceLayer(layerId)) return 1.0;
     const auto& uuid = layerId.getUuid();
     const bool leftSource = std::equal(
-        leftLayerUuid.cbegin(), leftLayerUuid.cend(), uuid.data);
+        leftLayerUuid.cbegin(), leftLayerUuid.cend(), uuid.data());
     if (leftSource) {
         return hardCut ? (progress >= 0.5 ? 0.0 : 1.0) : 1.0 - progress;
     }
@@ -7070,6 +7089,7 @@ void ArtifactAbstractComposition::addTimelineTransition(
     if (normalized.id.trimmed().isEmpty()) {
         normalized.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     }
+    normalized.stableUuid = transitionIdBytes(normalized.id);
     normalized.kind = normalized.kind.trimmed();
     if (normalized.kind.isEmpty()) {
         normalized.kind = QStringLiteral("Crossfade");
@@ -7149,6 +7169,7 @@ void ArtifactAbstractComposition::setTimelineTransitions(
         if (value.id.trimmed().isEmpty()) {
             value.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
         }
+        value.stableUuid = transitionIdBytes(value.id);
         if (value.name.trimmed().isEmpty()) value.name = QStringLiteral("Transition");
         if (value.kind.trimmed().isEmpty()) value.kind = QStringLiteral("Crossfade");
         if (value.easing.trimmed().isEmpty()) value.easing = QStringLiteral("Linear");
@@ -7385,6 +7406,7 @@ bool ArtifactAbstractComposition::duplicateTimelineTransition(
         if (transition.id != normalizedId) continue;
         CompositionTimelineTransition duplicate = transition;
         duplicate.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        duplicate.stableUuid = transitionIdBytes(duplicate.id);
         duplicate.name = transition.name + QStringLiteral(" Copy");
         const qint64 offset = std::max<qint64>(1, transition.range.frameCount());
         duplicate.range = FrameRange(transition.range.start() + offset,
@@ -7474,12 +7496,13 @@ ArtifactAbstractComposition::evaluateTimelineTransitionAtFrame(qint64 frame) con
                 ? 2.0 * linearProgress * linearProgress
                 : 1.0 - std::pow(-2.0 * linearProgress + 2.0, 2.0) / 2.0;
         }
-        std::copy(transition.leftLayerId.getUuid().data,
-                  transition.leftLayerId.getUuid().data + 16,
+        std::copy(transition.leftLayerId.getUuid().data(),
+                  transition.leftLayerId.getUuid().data() + 16,
                   evaluation.leftLayerUuid.begin());
-        std::copy(transition.rightLayerId.getUuid().data,
-                  transition.rightLayerId.getUuid().data + 16,
+        std::copy(transition.rightLayerId.getUuid().data(),
+                  transition.rightLayerId.getUuid().data() + 16,
                   evaluation.rightLayerUuid.begin());
+        evaluation.transitionUuid = transition.stableUuid;
         evaluation.hardCut = transition.kind.compare(
             QStringLiteral("Cut"), Qt::CaseInsensitive) == 0;
         evaluation.stackPosition = transition.stackPosition;
@@ -7537,12 +7560,13 @@ void ArtifactAbstractComposition::evaluateTimelineTransitionsAtFrame(
                 ? 2.0 * linearProgress * linearProgress
                 : 1.0 - std::pow(-2.0 * linearProgress + 2.0, 2.0) / 2.0;
         }
-        std::copy(transition.leftLayerId.getUuid().data,
-                  transition.leftLayerId.getUuid().data + 16,
+        std::copy(transition.leftLayerId.getUuid().data(),
+                  transition.leftLayerId.getUuid().data() + 16,
                   evaluation.leftLayerUuid.begin());
-        std::copy(transition.rightLayerId.getUuid().data,
-                  transition.rightLayerId.getUuid().data + 16,
+        std::copy(transition.rightLayerId.getUuid().data(),
+                  transition.rightLayerId.getUuid().data() + 16,
                   evaluation.rightLayerUuid.begin());
+        evaluation.transitionUuid = transition.stableUuid;
         evaluation.hardCut = transition.kind.compare(
             QStringLiteral("Cut"), Qt::CaseInsensitive) == 0;
         evaluation.stackPosition = transition.stackPosition;
@@ -7553,6 +7577,122 @@ void ArtifactAbstractComposition::evaluateTimelineTransitionsAtFrame(
             : std::min<int>(transition.stackPosition, layerCount - 1);
         evaluation.active = true;
         outEvaluations.append(std::move(evaluation));
+    }
+}
+
+void ArtifactAbstractComposition::buildTimelineTransitionDrawPlan(
+    qint64 frame,
+    ArtifactCore::ArtifactArray<CompositionTimelineTransitionEvaluation>& evaluations,
+    ArtifactCore::ArtifactArray<CompositionTimelineTransitionDrawStep>& outSteps) const
+{
+    outSteps.removeAll();
+    evaluateTimelineTransitionsAtFrame(frame, evaluations);
+    const int layerCount = static_cast<int>(impl_->layerMultiIndex_.all().size());
+    if (layerCount <= 0) return;
+
+    // Order active evaluations by (insertionIndex, stable transition id) using
+    // a fixed-capacity index list so the frame loop performs no allocation.
+    // Above 64 active transitions the model's list order is a deterministic
+    // fallback; that many disjoint transitions is already pathological.
+    std::array<int, 64> ordered{};
+    int orderedCount = 0;
+    const bool useStableOrder = evaluations.size() <= ordered.size();
+    if (useStableOrder) {
+        for (qsizetype i = 0; i < static_cast<qsizetype>(evaluations.size()); ++i) {
+            ordered[orderedCount++] = static_cast<int>(i);
+        }
+        for (int a = 0; a < orderedCount; ++a) {
+            int best = a;
+            for (int b = a + 1; b < orderedCount; ++b) {
+                const auto& candidate = evaluations[ordered[b]];
+                const auto& current = evaluations[ordered[best]];
+                if (candidate.insertionIndex < current.insertionIndex ||
+                    (candidate.insertionIndex == current.insertionIndex &&
+                     uuidBytesLess(candidate.transitionUuid, current.transitionUuid))) {
+                    best = b;
+                }
+            }
+            std::swap(ordered[a], ordered[best]);
+        }
+    }
+
+    // Move each active transition's sources to its insertion position. Drawing
+    // them there instead of at their natural stack index both suppresses the
+    // ordinary double draw and makes stackPosition affect pixel order. The
+    // TransitionComposite marker stays for the dedicated A/B composite in P3.
+    std::array<int, 256> movedTarget{};
+    std::array<bool, 256> movedEmitted{};
+    movedTarget.fill(-1);
+    const bool canMoveSources = layerCount <= static_cast<int>(movedTarget.size());
+    if (canMoveSources) {
+        for (int k = 0; k < orderedCount; ++k) {
+            const auto& evaluation = evaluations[ordered[k]];
+            const int sources[2] = {evaluation.leftLayerStackIndex,
+                                    evaluation.rightLayerStackIndex};
+            for (int s = 0; s < 2; ++s) {
+                if (sources[s] < 0 || sources[s] >= layerCount) continue;
+                movedTarget[sources[s]] = evaluation.insertionIndex;
+            }
+        }
+    }
+
+    int cursor = 0;
+    for (int layerIndex = 0; layerIndex < layerCount; ++layerIndex) {
+        if (useStableOrder) {
+            while (cursor < orderedCount &&
+                   evaluations[ordered[cursor]].insertionIndex < layerIndex) {
+                ++cursor;
+            }
+            while (cursor < orderedCount &&
+                   evaluations[ordered[cursor]].insertionIndex == layerIndex) {
+                CompositionTimelineTransitionDrawStep step;
+                step.kind = CompositionTimelineTransitionDrawStep::Kind::TransitionComposite;
+                step.layerIndex = layerIndex;
+                step.evaluationIndex = ordered[cursor++];
+                outSteps.append(step);
+            }
+        } else {
+            for (qsizetype i = 0; i < static_cast<qsizetype>(evaluations.size()); ++i) {
+                if (evaluations[i].insertionIndex != layerIndex) continue;
+                CompositionTimelineTransitionDrawStep step;
+                step.kind = CompositionTimelineTransitionDrawStep::Kind::TransitionComposite;
+                step.layerIndex = layerIndex;
+                step.evaluationIndex = static_cast<int>(i);
+                outSteps.append(step);
+            }
+        }
+
+        if (canMoveSources) {
+            for (int k = 0; k < orderedCount; ++k) {
+                const auto& evaluation = evaluations[ordered[k]];
+                if (evaluation.insertionIndex != layerIndex) continue;
+                const int sources[2] = {evaluation.leftLayerStackIndex,
+                                        evaluation.rightLayerStackIndex};
+                for (int s = 0; s < 2; ++s) {
+                    const int sourceIndex = sources[s];
+                    if (sourceIndex < 0 || sourceIndex >= layerCount ||
+                        sourceIndex == layerIndex ||
+                        movedTarget[sourceIndex] != layerIndex ||
+                        movedEmitted[sourceIndex]) {
+                        continue;
+                    }
+                    movedEmitted[sourceIndex] = true;
+                    CompositionTimelineTransitionDrawStep step;
+                    step.kind = CompositionTimelineTransitionDrawStep::Kind::Layer;
+                    step.layerIndex = sourceIndex;
+                    step.evaluationIndex = ordered[k];
+                    outSteps.append(step);
+                }
+            }
+        }
+
+        if (!canMoveSources || movedTarget[layerIndex] < 0 ||
+            movedTarget[layerIndex] == layerIndex) {
+            CompositionTimelineTransitionDrawStep step;
+            step.kind = CompositionTimelineTransitionDrawStep::Kind::Layer;
+            step.layerIndex = layerIndex;
+            outSteps.append(step);
+        }
     }
 }
 
