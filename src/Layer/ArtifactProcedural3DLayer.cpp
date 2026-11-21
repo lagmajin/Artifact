@@ -895,6 +895,8 @@ public:
         textExtrudeDiagnostics.resolvedFontFamilies = readBoundedStringArray(
             QStringLiteral("resolvedFontFamilies"), 64, 256,
             &fontMetadataTruncated);
+        std::sort(textExtrudeDiagnostics.resolvedFontFamilies.begin(),
+                  textExtrudeDiagnostics.resolvedFontFamilies.end());
         textExtrudeDiagnostics.fontIdentityComplete = textJson.value(
             QStringLiteral("fontIdentityComplete")).toBool(false)
             && !fontMetadataTruncated;
@@ -918,6 +920,9 @@ public:
         expectedTextFontFingerprints = readBoundedStringArray(
             QStringLiteral("expectedFontFingerprints"), 64, 512,
             &fontMetadataTruncated);
+        std::sort(textFontFingerprints.begin(), textFontFingerprints.end());
+        std::sort(expectedTextFontFingerprints.begin(),
+                  expectedTextFontFingerprints.end());
         if (fontMetadataTruncated) {
             textExtrudeDiagnostics.fontIdentityComplete = false;
         }
