@@ -65,8 +65,8 @@ public:
 class ExperimentalContourPosterEffect : public ArtifactAbstractEffect {
 private:
     float levels_ = 6.0f;
-    float lineStrength_ = 0.8f;
-    float lineRadiusPx_ = 1.0f;
+    float lineStrength_ = 0.35f;
+    float lineRadiusPx_ = 0.5f;
     void syncImpls();
 
 public:

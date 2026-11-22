@@ -122,8 +122,8 @@ void applyContourPoster(const ImageF32x4RGBAWithCache& src,
 class ExperimentalContourPosterCPUImpl final : public ArtifactEffectImplBase {
 public:
     float levels_ = 6.0f;
-    float lineStrength_ = 0.8f;
-    float lineRadiusPx_ = 1.0f;
+    float lineStrength_ = 0.35f;
+    float lineRadiusPx_ = 0.5f;
     void applyCPU(const ImageF32x4RGBAWithCache& src,
                   ImageF32x4RGBAWithCache& dst) override {
         dst = src;
@@ -461,12 +461,12 @@ void ExperimentalContourPosterEffect::setLevels(float value) {
 }
 
 void ExperimentalContourPosterEffect::setLineStrength(float value) {
-    lineStrength_ = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 0.8f;
+    lineStrength_ = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 0.35f;
     syncImpls();
 }
 
 void ExperimentalContourPosterEffect::setLineRadiusPx(float value) {
-    lineRadiusPx_ = std::isfinite(value) ? std::clamp(value, 0.5f, 1.5f) : 1.0f;
+    lineRadiusPx_ = std::isfinite(value) ? std::clamp(value, 0.5f, 1.5f) : 0.5f;
     syncImpls();
 }
 
@@ -491,14 +491,14 @@ std::vector<AbstractProperty> ExperimentalContourPosterEffect::getProperties() c
     props[1].setName("Line Strength");
     props[1].setType(ArtifactCore::PropertyType::Float);
     props[1].setValue(QVariant(static_cast<double>(lineStrength_)));
-    props[1].setDefaultValue(QVariant(0.8));
+    props[1].setDefaultValue(QVariant(0.35));
     props[1].setMinValue(QVariant(0.0));
     props[1].setMaxValue(QVariant(1.0));
     props[1].setHardRange(QVariant(0.0), QVariant(1.0));
     props[2].setName("Line Radius");
     props[2].setType(ArtifactCore::PropertyType::Float);
     props[2].setValue(QVariant(static_cast<double>(lineRadiusPx_)));
-    props[2].setDefaultValue(QVariant(1.0));
+    props[2].setDefaultValue(QVariant(0.5));
     props[2].setMinValue(QVariant(0.5));
     props[2].setMaxValue(QVariant(1.5));
     props[2].setHardRange(QVariant(0.5), QVariant(1.5));
