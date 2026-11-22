@@ -137,6 +137,154 @@ QMessageBox::StandardButton centeredQuestion(QWidget* parent,
 namespace {
 constexpr auto kLayerPanelContext = "Panel.LayerTree";
 
+class TimelineTransitionSnapshotUndoCommand final : public UndoCommand {
+public:
+  TimelineTransitionSnapshotUndoCommand(
+      const ArtifactCompositionPtr& composition,
+      QVector<CompositionTimelineTransition> before,
+      QVector<CompositionTimelineTransition> after,
+      QString label)
+      : composition_(composition), before_(std::move(before)),
+        after_(std::move(after)), label_(std::move(label)) {}
+
+  void undo() override { apply(before_); }
+  void redo() override { apply(after_); }
+  bool lastOperationSucceeded() const override { return lastOperationSucceeded_; }
+  QString label() const override { return label_; }
+  QStringList collaborationTargetLayerIds() const override {
+    QStringList ids;
+    const auto appendSources = [&ids](
+        const QVector<CompositionTimelineTransition>& snapshot) {
+      for (const auto& transition : snapshot) {
+        const QString left = transition.leftLayerId.toString();
+        const QString right = transition.rightLayerId.toString();
+        if (!left.isEmpty() && !ids.contains(left)) ids.append(left);
+        if (!right.isEmpty() && !ids.contains(right)) ids.append(right);
+      }
+    };
+    appendSources(before_);
+    appendSources(after_);
+    return ids;
+  }
+  bool collaborationTargetScopeResolved() const override {
+    return !collaborationTargetLayerIds().isEmpty();
+  }
+  size_t estimatedMemoryBytes() const override {
+    size_t bytes = sizeof(*this);
+    const auto accountSnapshot = [&bytes](
+        const QVector<CompositionTimelineTransition>& snapshot) {
+      bytes += static_cast<size_t>(snapshot.capacity()) *
+               sizeof(CompositionTimelineTransition);
+      for (const auto& transition : snapshot) {
+        const auto textUnits = transition.id.size() + transition.name.size() +
+                               transition.kind.size() + transition.easing.size() +
+                               transition.leftClipName.size() +
+                               transition.rightClipName.size();
+        bytes += static_cast<size_t>(textUnits) * sizeof(QChar);
+        bytes += 2 * sizeof(void*);  // PImpl-backed LayerID storage estimate.
+      }
+    };
+    accountSnapshot(before_);
+    accountSnapshot(after_);
+    bytes += static_cast<size_t>(label_.size()) * sizeof(QChar);
+    return bytes;
+  }
+
+private:
+  void apply(const QVector<CompositionTimelineTransition>& snapshot) {
+    if (auto composition = composition_.lock()) {
+      composition->setTimelineTransitions(snapshot);
+      lastOperationSucceeded_ =
+          composition->timelineTransitionCount() == snapshot.size();
+    } else {
+      lastOperationSucceeded_ = false;
+    }
+  }
+
+  ArtifactCompositionWeakPtr composition_;
+  QVector<CompositionTimelineTransition> before_;
+  QVector<CompositionTimelineTransition> after_;
+  QString label_;
+  bool lastOperationSucceeded_ = true;
+};
+
+FramePosition timelineFramePosition(qint64 frame) {
+  FramePosition position;
+  position = frame;
+  return position;
+}
+
+bool pushTimelineTransitionSnapshot(
+    const ArtifactCompositionPtr& composition,
+    const QVector<CompositionTimelineTransition>& after,
+    const QString& label) {
+  if (!composition) return false;
+  const auto before = composition->timelineTransitions();
+  if (before.size() == after.size()) {
+    bool same = true;
+    for (qsizetype i = 0; i < before.size(); ++i) {
+      if (before[i].id != after[i].id || before[i].name != after[i].name ||
+          before[i].kind != after[i].kind || before[i].easing != after[i].easing ||
+          before[i].leftClipName != after[i].leftClipName ||
+          before[i].rightClipName != after[i].rightClipName ||
+          before[i].leftLayerId != after[i].leftLayerId ||
+          before[i].rightLayerId != after[i].rightLayerId ||
+          before[i].stackPosition != after[i].stackPosition ||
+          before[i].range.start() != after[i].range.start() ||
+          before[i].range.end() != after[i].range.end() ||
+          before[i].enabled != after[i].enabled) {
+        same = false;
+        break;
+      }
+    }
+    if (same) return true;
+  }
+
+  auto command = std::make_unique<TimelineTransitionSnapshotUndoCommand>(
+      composition, before, after, label);
+  if (auto* undo = UndoManager::instance()) {
+    return undo->push(std::move(command));
+  }
+  command->redo();
+  return command->lastOperationSucceeded();
+}
+
+template <typename Edit>
+bool editTimelineTransition(const ArtifactCompositionPtr& composition,
+                            const QString& transitionId,
+                            const QString& label,
+                            Edit&& edit) {
+  if (!composition) return false;
+  auto after = composition->timelineTransitions();
+  const auto it = std::find_if(after.begin(), after.end(),
+      [&transitionId](const CompositionTimelineTransition& transition) {
+        return transition.id == transitionId;
+      });
+  if (it == after.end()) return false;
+  edit(*it);
+  return pushTimelineTransitionSnapshot(composition, after, label);
+}
+
+bool duplicateTimelineTransitionWithUndo(
+    const ArtifactCompositionPtr& composition, const QString& transitionId) {
+  if (!composition) return false;
+  auto after = composition->timelineTransitions();
+  const auto it = std::find_if(after.begin(), after.end(),
+      [&transitionId](const CompositionTimelineTransition& value) {
+        return value.id == transitionId;
+      });
+  if (it == after.end()) return false;
+  auto duplicate = *it;
+  duplicate.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+  duplicate.name += QStringLiteral(" Copy");
+  const qint64 offset = std::max<qint64>(1, duplicate.range.frameCount());
+  duplicate.range = FrameRange(duplicate.range.start() + offset,
+                               duplicate.range.end() + offset);
+  after.append(duplicate);
+  return pushTimelineTransitionSnapshot(
+      composition, after, QStringLiteral("Duplicate Timeline Transition"));
+}
+
 class ValueEditButton final : public QPushButton {
 public:
   explicit ValueEditButton(const QString& text, QWidget* parent) : QPushButton(text, parent) {}
@@ -266,6 +414,347 @@ private:
 QString tt(const char* key, const char* fallback)
 {
   return Artifact::TranslationManager::instance().tr(QString::fromUtf8(key), QString::fromUtf8(fallback));
+}
+
+class DirectActionButton final : public QPushButton {
+public:
+  using QPushButton::QPushButton;
+  std::function<void()> action;
+
+protected:
+  void mouseReleaseEvent(QMouseEvent* event) override {
+    const bool activate = isDown() && rect().contains(event->pos());
+    QPushButton::mouseReleaseEvent(event);
+    if (activate && action) action();
+  }
+  void keyPressEvent(QKeyEvent* event) override {
+    if ((event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter ||
+         event->key() == Qt::Key_Space) && action) {
+      action();
+      event->accept();
+      return;
+    }
+    QPushButton::keyPressEvent(event);
+  }
+};
+
+class TimelineTransitionStackPreview final : public QWidget {
+public:
+  TimelineTransitionStackPreview(
+      const ArtifactCompositionPtr& composition,
+      const CompositionTimelineTransition& transition,
+      QWidget* parent = nullptr)
+      : QWidget(parent), transition_(transition) {
+    const auto sourceA = composition
+                             ? composition->resolveTimelineTransitionSource(
+                                   transition, true)
+                             : ArtifactAbstractLayerPtr{};
+    const auto sourceB = composition
+                             ? composition->resolveTimelineTransitionSource(
+                                   transition, false)
+                             : ArtifactAbstractLayerPtr{};
+    sourceAName_ = sourceA ? sourceA->layerName() : transition.leftClipName;
+    sourceBName_ = sourceB ? sourceB->layerName() : transition.rightClipName;
+    setMinimumHeight(142);
+    setAccessibleName(tt("layer_panel.menu_trans_stack_editor_title",
+                          "Transition Stack Editor"));
+    setAccessibleDescription(
+        QStringLiteral("%1: %2 to %3, %4 frames")
+            .arg(transition.kind, sourceAName_, sourceBName_)
+            .arg(transition.range.frameCount()));
+  }
+
+protected:
+  void paintEvent(QPaintEvent*) override {
+    const auto& theme = ArtifactCore::currentDCCTheme();
+    const QColor background(theme.secondaryBackgroundColor);
+    const QColor foreground(theme.textColor);
+    const QColor muted(theme.textMutedColor);
+    const QColor accent(theme.accentColor);
+    const QColor edge(theme.borderColor);
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.fillRect(rect(), palette().color(QPalette::Window));
+
+    const QRect panel = rect().adjusted(1, 1, -1, -1);
+    QPen outline(edge);
+    outline.setWidthF(1.0);
+    painter.setPen(outline);
+    painter.setBrush(background);
+    painter.drawRoundedRect(panel, 8.0, 8.0);
+
+    const int cardWidth = std::min(142, std::max(104, (width() - 170) / 2));
+    const int cardHeight = 46;
+    const int top = 45;
+    const int leftX = 18;
+    const int rightX = width() - cardWidth - 18;
+    QFont headerFont = font();
+    headerFont.setBold(true);
+    painter.setFont(headerFont);
+    painter.setPen(foreground);
+    painter.drawText(QRect(18, 9, width() - 36, 24),
+                     Qt::AlignVCenter | Qt::AlignLeft,
+                     QStringLiteral("%1  ·  %2")
+                         .arg(transition_.name, transition_.kind));
+
+    const auto drawLayerCard = [&](int x, const QString& tag,
+                                   const QString& layerName, QColor faceColor) {
+      const QRect face(x, top, cardWidth, cardHeight);
+      QPolygon topFace{{x, top}, {x + 10, top - 8},
+                       {x + cardWidth + 10, top - 8},
+                       {x + cardWidth, top}};
+      QPolygon sideFace{{x + cardWidth, top},
+                        {x + cardWidth + 10, top - 8},
+                        {x + cardWidth + 10, top + cardHeight - 8},
+                        {x + cardWidth, top + cardHeight}};
+      painter.setPen(Qt::NoPen);
+      painter.setBrush(faceColor.lighter(116));
+      painter.drawPolygon(topFace);
+      painter.setBrush(faceColor.darker(125));
+      painter.drawPolygon(sideFace);
+      painter.setPen(outline);
+      painter.setBrush(faceColor);
+      painter.drawRoundedRect(face, 5.0, 5.0);
+      QRect tagRect(x + 8, top + 9, 26, 26);
+      painter.setPen(Qt::NoPen);
+      painter.setBrush(accent);
+      painter.drawRoundedRect(tagRect, 4.0, 4.0);
+      painter.setPen(Qt::white);
+      painter.drawText(tagRect, Qt::AlignCenter, tag);
+      painter.setPen(foreground);
+      const QRect nameRect(x + 41, top + 5, cardWidth - 48, cardHeight - 10);
+      const QString elided = fontMetrics().elidedText(
+          layerName, Qt::ElideRight, nameRect.width());
+      painter.drawText(nameRect, Qt::AlignVCenter | Qt::AlignLeft, elided);
+    };
+
+    drawLayerCard(leftX, QStringLiteral("A"), sourceAName_,
+                  background.lighter(110));
+    drawLayerCard(rightX, QStringLiteral("B"), sourceBName_,
+                  background.darker(108));
+
+    const int arrowStart = leftX + cardWidth + 16;
+    const int arrowEnd = rightX - 16;
+    const int centerY = top + cardHeight / 2;
+    QPen transitionPen(accent, 2.0);
+    painter.setPen(transitionPen);
+    painter.drawLine(arrowStart, centerY, arrowEnd, centerY);
+    painter.drawLine(arrowStart, centerY, arrowStart + 7, centerY - 5);
+    painter.drawLine(arrowStart, centerY, arrowStart + 7, centerY + 5);
+    painter.drawLine(arrowEnd, centerY, arrowEnd - 7, centerY - 5);
+    painter.drawLine(arrowEnd, centerY, arrowEnd - 7, centerY + 5);
+
+    painter.setPen(muted);
+    const QString position = transition_.stackPosition < 0
+                                 ? tt("layer_panel.menu_trans_stack_source_a_position",
+                                      "Source A position")
+                                 : QString::number(transition_.stackPosition);
+    const QString detail = QStringLiteral("%1  ·  %2 frames  ·  %3")
+                               .arg(position)
+                               .arg(transition_.range.frameCount())
+                               .arg(transition_.easing);
+    painter.drawText(QRect(18, top + cardHeight + 17, width() - 36, 22),
+                     Qt::AlignVCenter | Qt::AlignLeft, detail);
+  }
+
+private:
+  CompositionTimelineTransition transition_;
+  QString sourceAName_;
+  QString sourceBName_;
+};
+
+bool showTimelineTransitionEditor(
+    QWidget* parent, const ArtifactCompositionPtr& composition,
+    const CompositionTimelineTransition& transition) {
+  if (!composition) return false;
+  QDialog dialog(parent);
+  dialog.setWindowTitle(tt("layer_panel.menu_trans_stack_editor_title",
+                           "Transition Stack Editor"));
+  dialog.setModal(true);
+  dialog.setMinimumWidth(440);
+  const auto& theme = ArtifactCore::currentDCCTheme();
+  const QColor background(theme.backgroundColor);
+  const QColor secondary(theme.secondaryBackgroundColor);
+  const QColor foreground(theme.textColor);
+  QPalette dialogPalette = dialog.palette();
+  dialogPalette.setColor(QPalette::Window, background);
+  dialogPalette.setColor(QPalette::Base, secondary.darker(112));
+  dialogPalette.setColor(QPalette::Text, foreground);
+  dialogPalette.setColor(QPalette::WindowText, foreground);
+  dialogPalette.setColor(QPalette::Button, secondary.lighter(106));
+  dialogPalette.setColor(QPalette::ButtonText, foreground);
+  dialogPalette.setColor(QPalette::Highlight, QColor(theme.accentColor));
+  dialogPalette.setColor(QPalette::HighlightedText, Qt::white);
+  dialog.setPalette(dialogPalette);
+  dialog.setAutoFillBackground(true);
+  auto* root = new QVBoxLayout(&dialog);
+  root->setContentsMargins(20, 18, 20, 18);
+  root->setSpacing(12);
+  root->addWidget(new TimelineTransitionStackPreview(
+      composition, transition, &dialog));
+  auto* form = new QFormLayout();
+  form->setHorizontalSpacing(14);
+  form->setVerticalSpacing(9);
+  root->addLayout(form);
+
+  auto* name = new QLineEdit(transition.name, &dialog);
+  auto* sourceA = new QComboBox(&dialog);
+  auto* sourceB = new QComboBox(&dialog);
+  const auto layers = composition->allLayer();
+  for (const auto& layer : layers) {
+    if (!layer) continue;
+    const QString label = QStringLiteral("%1  [%2]")
+                              .arg(layer->layerName(), layer->id().toString().left(8));
+    const QString id = layer->id().toString();
+    sourceA->addItem(label, id);
+    sourceB->addItem(label, id);
+  }
+  const auto resolvedA = composition->resolveTimelineTransitionSource(transition, true);
+  const auto resolvedB = composition->resolveTimelineTransitionSource(transition, false);
+  if (resolvedA) {
+    sourceA->setCurrentIndex(sourceA->findData(resolvedA->id().toString()));
+  } else {
+    const QString missing = !transition.leftClipName.trimmed().isEmpty()
+                                ? transition.leftClipName
+                                : transition.leftLayerId.toString();
+    sourceA->insertItem(0, tt("layer_panel.menu_trans_editor_missing_layer",
+                              "Missing source: %1").arg(missing), QString{});
+    sourceA->setCurrentIndex(0);
+  }
+  if (resolvedB) {
+    sourceB->setCurrentIndex(sourceB->findData(resolvedB->id().toString()));
+  } else {
+    const QString missing = !transition.rightClipName.trimmed().isEmpty()
+                                ? transition.rightClipName
+                                : transition.rightLayerId.toString();
+    sourceB->insertItem(0, tt("layer_panel.menu_trans_editor_missing_layer",
+                              "Missing source: %1").arg(missing), QString{});
+    sourceB->setCurrentIndex(0);
+  }
+
+  auto* kind = new QComboBox(&dialog);
+  for (const QString& supportedKind :
+       {QStringLiteral("Crossfade"), QStringLiteral("Dissolve")}) {
+    kind->addItem(supportedKind, supportedKind);
+  }
+  int kindIndex = kind->findData(transition.kind);
+  if (kindIndex < 0) {
+    kind->addItem(transition.kind, transition.kind);
+    kindIndex = kind->count() - 1;
+    if (auto* model = qobject_cast<QStandardItemModel*>(kind->model())) {
+      if (auto* item = model->item(kindIndex)) {
+        item->setFlags(item->flags() & ~Qt::ItemIsEnabled);
+      }
+    }
+  }
+  kind->setCurrentIndex(kindIndex);
+  auto* easing = new QComboBox(&dialog);
+  for (const QString& supportedEasing :
+       {QStringLiteral("Linear"), QStringLiteral("Ease In"),
+        QStringLiteral("Ease Out"), QStringLiteral("Ease In-Out")}) {
+    easing->addItem(supportedEasing, supportedEasing);
+  }
+  int easingIndex = easing->findData(transition.easing);
+  if (easingIndex < 0) {
+    easing->addItem(transition.easing, transition.easing);
+    easingIndex = easing->count() - 1;
+    if (auto* model = qobject_cast<QStandardItemModel*>(easing->model())) {
+      if (auto* item = model->item(easingIndex)) {
+        item->setFlags(item->flags() & ~Qt::ItemIsEnabled);
+      }
+    }
+  }
+  easing->setCurrentIndex(easingIndex);
+  auto* start = new QLineEdit(QString::number(transition.range.start()), &dialog);
+  auto* end = new QLineEdit(QString::number(transition.range.end()), &dialog);
+  auto* stackPosition = new QSpinBox(&dialog);
+  stackPosition->setRange(
+      -1, std::max(transition.stackPosition,
+                   std::max(0, static_cast<int>(layers.size()) - 1)));
+  stackPosition->setSpecialValueText(tt(
+      "layer_panel.menu_trans_stack_source_a_position", "Source A position"));
+  stackPosition->setValue(transition.stackPosition);
+  auto* enabled = new QCheckBox(&dialog);
+  enabled->setChecked(transition.enabled);
+
+  form->addRow(tt("layer_panel.menu_trans_editor_name", "Name"), name);
+  form->addRow(tt("layer_panel.menu_trans_source_a", "Source A"), sourceA);
+  form->addRow(tt("layer_panel.menu_trans_source_b", "Source B"), sourceB);
+  form->addRow(tt("layer_panel.menu_trans_editor_type", "Type"), kind);
+  form->addRow(tt("layer_panel.menu_trans_editor_easing", "Easing"), easing);
+  form->addRow(tt("layer_panel.menu_trans_start_frame", "Start Frame"), start);
+  form->addRow(tt("layer_panel.menu_trans_end_frame", "End Frame"), end);
+  form->addRow(tt("layer_panel.menu_trans_editor_stack_position", "Stack Position"), stackPosition);
+  form->addRow(tt("layer_panel.menu_trans_enabled", "Enabled"), enabled);
+
+  auto* error = new QLabel(&dialog);
+  error->setWordWrap(true);
+  QPalette errorPalette = error->palette();
+  errorPalette.setColor(QPalette::WindowText, foreground);
+  error->setPalette(errorPalette);
+  root->addWidget(error);
+  auto* buttons = new QHBoxLayout();
+  buttons->addStretch(1);
+  auto* cancel = new DirectActionButton(
+      tt("layer_panel.menu_trans_editor_cancel", "Cancel"), &dialog);
+  auto* apply = new DirectActionButton(
+      tt("layer_panel.menu_trans_editor_apply", "Apply"), &dialog);
+  cancel->action = [&dialog]() { dialog.reject(); };
+  apply->action = [composition, &dialog, transition, name, sourceA, sourceB,
+                   kind, easing, start, end, stackPosition, enabled, error]() {
+    bool validStart = false;
+    bool validEnd = false;
+    const qint64 startFrame = start->text().trimmed().toLongLong(&validStart);
+    const qint64 endFrame = end->text().trimmed().toLongLong(&validEnd);
+    const QString leftId = sourceA->currentData().toString();
+    const QString rightId = sourceB->currentData().toString();
+    if (!validStart || !validEnd || endFrame <= startFrame ||
+        leftId.isEmpty() || rightId.isEmpty() ||
+        leftId == rightId) {
+      error->setText(tt("layer_panel.menu_trans_editor_invalid",
+                        "Choose two different sources and an end frame after the start frame."));
+      return;
+    }
+    const LayerID leftLayerId(leftId);
+    const LayerID rightLayerId(rightId);
+    const auto leftLayer = composition->layerById(leftLayerId);
+    const auto rightLayer = composition->layerById(rightLayerId);
+    if (!leftLayer || !rightLayer) {
+      error->setText(tt("layer_panel.menu_trans_editor_missing_source",
+                        "Both transition sources must exist in this composition."));
+      return;
+    }
+    const QString transitionId = transition.id;
+    const bool applied = editTimelineTransition(
+        composition, transitionId, QStringLiteral("Edit Transition Stack"),
+        [name, leftLayerId, rightLayerId, leftLayer, rightLayer, kind, easing,
+         startFrame, endFrame, stackPosition, enabled](
+            CompositionTimelineTransition& value) {
+          value.name = name->text().trimmed();
+          value.leftLayerId = leftLayerId;
+          value.rightLayerId = rightLayerId;
+          value.leftClipName = leftLayer->layerName();
+          value.rightClipName = rightLayer->layerName();
+          value.kind = kind->currentData().toString();
+          value.easing = easing->currentData().toString();
+          value.range = FrameRange(timelineFramePosition(startFrame),
+                                   timelineFramePosition(endFrame));
+          value.stackPosition = stackPosition->value();
+          value.enabled = enabled->isChecked();
+        });
+    if (!applied) {
+      error->setText(tt("layer_panel.menu_trans_editor_rejected",
+                        "The edit was not applied. Check the values, source overlap, and editing permissions."));
+      return;
+    }
+    dialog.accept();
+  };
+  buttons->addWidget(cancel);
+  buttons->addWidget(apply);
+  root->addLayout(buttons);
+  apply->setDefault(false);
+  name->setFocus();
+  return dialog.exec() == QDialog::Accepted;
 }
 
 enum class MultiEditCycleMode {
@@ -6206,50 +6695,81 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
           transition.rightClipName = rightName;
           transition.leftLayerId = leftLayerId;
           transition.rightLayerId = rightLayerId;
-          transition.range = FrameRange(FramePosition(startFrame), FramePosition(endFrame));
-          comp->addTimelineTransition(transition);
+        transition.range = FrameRange(timelineFramePosition(startFrame),
+                                     timelineFramePosition(endFrame));
+          auto after = comp->timelineTransitions();
+          after.append(transition);
+          pushTimelineTransitionSnapshot(
+              comp, after, QStringLiteral("Add Timeline Transition"));
         };
         transitionMenu->addAction(tt("layer_panel.menu_trans_crossfade", "Crossfade (1s)"), [addTransition]() {
           addTransition(QStringLiteral("Crossfade"));
         });
-        transitionMenu->addAction(tt("layer_panel.menu_trans_wipe", "Wipe (1s)"), [addTransition]() {
-          addTransition(QStringLiteral("Wipe"));
-        });
-        transitionMenu->addAction(tt("layer_panel.menu_trans_slide", "Slide (1s)"), [addTransition]() {
-          addTransition(QStringLiteral("Slide"));
-        });
+        QAction* dissolveAction = transitionMenu->addAction(
+            tt("layer_panel.menu_trans_dissolve", "Dissolve (1s)"));
+        dissolveAction->setData(QVariantMap{
+            {QStringLiteral("kind"), QStringLiteral("transition_add")},
+            {QStringLiteral("transitionKind"), QStringLiteral("Dissolve")},
+            {QStringLiteral("leftName"), leftName},
+            {QStringLiteral("rightName"), rightName},
+            {QStringLiteral("leftLayerId"), leftLayerId.toString()},
+            {QStringLiteral("rightLayerId"), rightLayerId.toString()},
+            {QStringLiteral("startFrame"), startFrame},
+            {QStringLiteral("endFrame"), endFrame}});
         const auto existingTransitions = comp->timelineTransitions();
         if (!existingTransitions.isEmpty()) {
           transitionMenu->addSeparator();
-          QMenu* manageMenu = transitionMenu->addMenu(tt("layer_panel.menu_trans_existing", "Existing Transitions"));
+          QMenu* manageMenu = transitionMenu->addMenu(
+              tt("layer_panel.menu_trans_stack_editor", "Transition Stack"));
           for (const auto& existing : existingTransitions) {
+            const auto sourceA = comp->resolveTimelineTransitionSource(existing, true);
+            const auto sourceB = comp->resolveTimelineTransitionSource(existing, false);
             QMenu* itemMenu = manageMenu->addMenu(
-                QStringLiteral("%1 — %2  [%3-%4]")
+                QStringLiteral("%1 — %2  [%3-%4]  A: %5 → B: %6")
                     .arg(existing.name)
                     .arg(existing.kind)
                      .arg(existing.range.start())
-                     .arg(existing.range.end()));
+                     .arg(existing.range.end())
+                     .arg(sourceA ? sourceA->layerName() : existing.leftClipName)
+                     .arg(sourceB ? sourceB->layerName() : existing.rightClipName));
+            QAction* editInStackAction = itemMenu->addAction(
+                tt("layer_panel.menu_trans_editor_open", "Edit in Transition Stack..."));
+            editInStackAction->setData(QVariantMap{
+                {QStringLiteral("kind"), QStringLiteral("transition_stack_edit")},
+                {QStringLiteral("transitionId"), existing.id}});
             itemMenu->addAction(
                 existing.enabled ? tt("layer_panel.menu_disable", "Disable") : tt("layer_panel.menu_enable", "Enable"),
                 [comp, id = existing.id, enabled = existing.enabled]() {
-                  comp->setTimelineTransitionEnabled(id, !enabled);
+                  editTimelineTransition(comp, id,
+                      QStringLiteral("Toggle Timeline Transition"),
+                      [enabled](CompositionTimelineTransition& value) {
+                        value.enabled = !enabled;
+                      });
                 });
             itemMenu->addAction(tt("layer_panel.menu_trans_rename", "Rename..."), [this, comp, existing]() {
               bool accepted = false;
               const QString name = QInputDialog::getText(
                   this, QStringLiteral("トランジション名"), QStringLiteral("名前"),
                   QLineEdit::Normal, existing.name, &accepted);
-              if (accepted) comp->setTimelineTransitionName(existing.id, name);
+              if (accepted) editTimelineTransition(comp, existing.id,
+                  QStringLiteral("Rename Timeline Transition"),
+                  [&name](CompositionTimelineTransition& value) {
+                    value.name = name.trimmed();
+                  });
             });
             itemMenu->addAction(tt("layer_panel.menu_trans_kind", "Change Type..."), [this, comp, existing]() {
-              const QStringList kinds = {QStringLiteral("Crossfade"), QStringLiteral("Dissolve"),
-                                         QStringLiteral("Wipe"), QStringLiteral("Slide")};
+              const QStringList kinds = {QStringLiteral("Crossfade"),
+                                         QStringLiteral("Dissolve")};
               bool accepted = false;
               const QString kind = QInputDialog::getItem(
                   this, QStringLiteral("トランジション種類"), QStringLiteral("種類"), kinds,
                   qMax(0, static_cast<int>(kinds.indexOf(existing.kind))), false, &accepted);
               if (accepted && !kind.isEmpty()) {
-                comp->setTimelineTransitionKind(existing.id, kind);
+                editTimelineTransition(comp, existing.id,
+                    QStringLiteral("Change Timeline Transition Type"),
+                    [&kind](CompositionTimelineTransition& value) {
+                      value.kind = kind;
+                    });
               }
             });
             itemMenu->addAction(tt("layer_panel.menu_trans_easing", "Change Easing..."), [this, comp, existing]() {
@@ -6259,7 +6779,11 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
               const QString easing = QInputDialog::getItem(
                   this, QStringLiteral("イージング"), QStringLiteral("カーブ"), easings,
                   qMax(0, static_cast<int>(easings.indexOf(existing.easing))), false, &accepted);
-              if (accepted) comp->setTimelineTransitionEasing(existing.id, easing);
+              if (accepted) editTimelineTransition(comp, existing.id,
+                  QStringLiteral("Change Timeline Transition Easing"),
+                  [&easing](CompositionTimelineTransition& value) {
+                    value.easing = easing;
+                  });
             });
             addStackPositionEditor(itemMenu, existing);
             itemMenu->addAction(tt("layer_panel.menu_trans_range", "Edit Range..."), [this, comp, existing]() {
@@ -6271,52 +6795,84 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
               const int end = QInputDialog::getInt(
                   this, QStringLiteral("トランジション範囲"), QStringLiteral("終了フレーム"),
                  static_cast<int>(existing.range.end()), start + 1, 1000000, 1, &accepted);
-              if (accepted) comp->setTimelineTransitionRange(
-                  existing.id, FrameRange(FramePosition(start), FramePosition(end)));
+              if (accepted) editTimelineTransition(comp, existing.id,
+                  QStringLiteral("Change Timeline Transition Range"),
+                  [start, end](CompositionTimelineTransition& value) {
+                    value.range = FrameRange(FramePosition(start), FramePosition(end));
+                  });
             });
             itemMenu->addAction(tt("layer_panel.menu_delete", "Delete"), [comp, id = existing.id]() {
-              comp->removeTimelineTransition(id);
+              auto after = comp->timelineTransitions();
+              after.erase(std::remove_if(after.begin(), after.end(),
+                  [&id](const CompositionTimelineTransition& value) {
+                    return value.id == id;
+                  }), after.end());
+              pushTimelineTransitionSnapshot(
+                  comp, after, QStringLiteral("Delete Timeline Transition"));
             });
             itemMenu->addAction(tt("layer_panel.menu_duplicate", "Duplicate"), [comp, id = existing.id]() {
-              comp->duplicateTimelineTransition(id);
+              duplicateTimelineTransitionWithUndo(comp, id);
             });
           }
           manageMenu->addSeparator();
           manageMenu->addAction(tt("layer_panel.menu_delete_all", "Delete All"), [comp]() {
-            comp->clearTimelineTransitions();
+            pushTimelineTransitionSnapshot(
+                comp, {}, QStringLiteral("Clear Timeline Transitions"));
           });
         }
       }
       if (selectedForTransition.size() < 2 && !comp->timelineTransitions().isEmpty()) {
-        QMenu* manageMenu = menu.addMenu(tt("layer_panel.menu_trans_manage", "Manage Transitions"));
+        QMenu* manageMenu = menu.addMenu(
+            tt("layer_panel.menu_trans_stack_editor", "Transition Stack"));
         for (const auto& existing : comp->timelineTransitions()) {
+          const auto sourceA = comp->resolveTimelineTransitionSource(existing, true);
+          const auto sourceB = comp->resolveTimelineTransitionSource(existing, false);
           QMenu* itemMenu = manageMenu->addMenu(
-              QStringLiteral("%1 — %2  [%3-%4]")
+              QStringLiteral("%1 — %2  [%3-%4]  A: %5 → B: %6")
                   .arg(existing.name)
                   .arg(existing.kind)
                    .arg(existing.range.start())
-                   .arg(existing.range.end()));
+                   .arg(existing.range.end())
+                   .arg(sourceA ? sourceA->layerName() : existing.leftClipName)
+                   .arg(sourceB ? sourceB->layerName() : existing.rightClipName));
+          QAction* editInStackAction = itemMenu->addAction(
+              tt("layer_panel.menu_trans_editor_open", "Edit in Transition Stack..."));
+          editInStackAction->setData(QVariantMap{
+              {QStringLiteral("kind"), QStringLiteral("transition_stack_edit")},
+              {QStringLiteral("transitionId"), existing.id}});
           itemMenu->addAction(
               existing.enabled ? tt("layer_panel.menu_disable", "Disable") : tt("layer_panel.menu_enable", "Enable"),
               [comp, id = existing.id, enabled = existing.enabled]() {
-                comp->setTimelineTransitionEnabled(id, !enabled);
+                editTimelineTransition(comp, id,
+                    QStringLiteral("Toggle Timeline Transition"),
+                    [enabled](CompositionTimelineTransition& value) {
+                      value.enabled = !enabled;
+                    });
               });
           itemMenu->addAction(tt("layer_panel.menu_trans_rename", "Rename..."), [this, comp, existing]() {
             bool accepted = false;
             const QString name = QInputDialog::getText(
                 this, QStringLiteral("トランジション名"), QStringLiteral("名前"),
                 QLineEdit::Normal, existing.name, &accepted);
-            if (accepted) comp->setTimelineTransitionName(existing.id, name);
+            if (accepted) editTimelineTransition(comp, existing.id,
+                QStringLiteral("Rename Timeline Transition"),
+                [&name](CompositionTimelineTransition& value) {
+                  value.name = name.trimmed();
+                });
           });
           itemMenu->addAction(tt("layer_panel.menu_trans_kind", "Change Type..."), [this, comp, existing]() {
-            const QStringList kinds = {QStringLiteral("Crossfade"), QStringLiteral("Dissolve"),
-                                       QStringLiteral("Wipe"), QStringLiteral("Slide")};
+            const QStringList kinds = {QStringLiteral("Crossfade"),
+                                       QStringLiteral("Dissolve")};
             bool accepted = false;
             const QString kind = QInputDialog::getItem(
                 this, QStringLiteral("トランジション種類"), QStringLiteral("種類"), kinds,
                 qMax(0, static_cast<int>(kinds.indexOf(existing.kind))), false, &accepted);
             if (accepted && !kind.isEmpty()) {
-              comp->setTimelineTransitionKind(existing.id, kind);
+              editTimelineTransition(comp, existing.id,
+                  QStringLiteral("Change Timeline Transition Type"),
+                  [&kind](CompositionTimelineTransition& value) {
+                    value.kind = kind;
+                  });
             }
           });
           itemMenu->addAction(tt("layer_panel.menu_trans_easing", "Change Easing..."), [this, comp, existing]() {
