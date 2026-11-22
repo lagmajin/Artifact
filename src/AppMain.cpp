@@ -5922,9 +5922,12 @@ static int runMcpTcpServerMode(int argc, char *argv[], quint16 port) {
         }
         QJsonObject request;
         while (ArtifactCore::McpBridge::tryPopFrame(buffer, &request)) {
-          const QByteArray response = ArtifactCore::McpBridge::encodeFrame(
-              ArtifactCore::McpBridge::handleRequest(request, ArtifactCore::AIContext()));
-          socket->write(response);
+          const QJsonObject reply = ArtifactCore::McpBridge::handleRequest(
+              request, ArtifactCore::AIContext());
+          if (reply.isEmpty()) {
+            continue;
+          }
+          socket->write(ArtifactCore::McpBridge::encodeFrame(reply));
         }
         socket->flush();
       });
@@ -5958,6 +5961,9 @@ static int runMcpServerMode(int argc, char *argv[], quint16 tcpPort = 0) {
     while (ArtifactCore::McpBridge::tryPopFrame(&inputBuffer, &request)) {
       const QJsonObject response = ArtifactCore::McpBridge::handleRequest(
           request, ArtifactCore::AIContext());
+      if (response.isEmpty()) {
+        continue;
+      }
       const QByteArray frame = ArtifactCore::McpBridge::encodeFrame(response);
       std::cout.write(frame.constData(),
                       static_cast<std::streamsize>(frame.size()));
