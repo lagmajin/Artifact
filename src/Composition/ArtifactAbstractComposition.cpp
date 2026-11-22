@@ -67,6 +67,7 @@ import Artifact.Layer.CloneEffectSupport;
 import Artifact.Layer.Factory;
 import Artifact.Effect.Abstract;
 import PosterizeEffect;
+import SurfaceMemoryEffect;
 import LUTEffect;
 import ColorBalanceEffect;
 import TritoneEffect;
@@ -2157,6 +2158,8 @@ SharedPtr<ArtifactAbstractEffect> deserializeEffect(const QJsonObject& eobj)
     effect = makeShared<ColorBalanceEffect>();
   } else if (effectId == QStringLiteral("effect.colorcorrection.contour_poster")) {
     effect = makeShared<ExperimentalContourPosterEffect>();
+  } else if (effectId == QStringLiteral("effect.surface.memory")) {
+    effect = makeShared<SurfaceMemoryEffect>();
   } else if (matchesSerializedEffectTypeId(
                  effectId, QStringLiteral("effect.colorcorrection.tritone"))) {
     effect = makeShared<TritoneEffect>();

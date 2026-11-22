@@ -2549,3 +2549,8 @@ W_OBJECT_IMPL(ArtifactEffectService)
  }
 
 }; // namespace Artifact
+import SurfaceMemoryEffect;
+  if (effectId == QStringLiteral("effect.surface.memory")) {
+   return std::make_unique<SurfaceMemoryEffect>();
+  }
+  effects.push_back({EffectID("effect.surface.memory"), "Surface Memory"});
