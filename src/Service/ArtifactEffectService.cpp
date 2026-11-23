@@ -126,6 +126,7 @@ import ColorWheelsEffect;
 import CurvesEffect;
 import VibranceEffect;
 import PosterizeEffect;
+import SurfaceMemoryEffect;
 import ThresholdEffect;
 import LUTEffect;
 import BlackAndWhiteEffect;
@@ -1006,6 +1007,9 @@ W_OBJECT_IMPL(ArtifactEffectService)
   }
   if (effectId == QStringLiteral("effect.colorcorrection.contour_poster")) {
    return std::make_unique<ExperimentalContourPosterEffect>();
+  }
+  if (effectId == QStringLiteral("effect.surface.memory")) {
+   return std::make_unique<SurfaceMemoryEffect>();
   }
   if (effectId == QStringLiteral("effect.colorcorrection.threshold") ||
       effectId == QStringLiteral("threshold")) {
@@ -2030,6 +2034,7 @@ W_OBJECT_IMPL(ArtifactEffectService)
   effects.push_back({EffectID("effect.colorcorrection.vibrance"), "Vibrance"});
   effects.push_back({EffectID("effect.colorcorrection.posterize"), "Posterize"});
   effects.push_back({EffectID("effect.colorcorrection.contour_poster"), "Experimental Contour Poster"});
+  effects.push_back({EffectID("effect.surface.memory"), "Surface Memory"});
   effects.push_back({EffectID("effect.colorcorrection.threshold"), "Threshold"});
   effects.push_back({EffectID("effect.colorcorrection.colortint"), "Color Tint"});
   effects.push_back({EffectID("effect.colorcorrection.lut"), "Apply LUT"});
@@ -2549,8 +2554,3 @@ W_OBJECT_IMPL(ArtifactEffectService)
  }
 
 }; // namespace Artifact
-import SurfaceMemoryEffect;
-  if (effectId == QStringLiteral("effect.surface.memory")) {
-   return std::make_unique<SurfaceMemoryEffect>();
-  }
-  effects.push_back({EffectID("effect.surface.memory"), "Surface Memory"});
