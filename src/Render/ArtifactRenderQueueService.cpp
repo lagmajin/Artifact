@@ -2778,6 +2778,12 @@ namespace Artifact
                 }
             }
 
+            size_t mark() const noexcept { return cursor; }
+
+            void rewind(const size_t savedCursor) noexcept {
+                cursor = std::min(savedCursor, resourceSlots.size());
+            }
+
             GpuMatteResourceSlot* acquire(bool requireComputeTarget) {
                 if (!renderer || size.isEmpty()) {
                     return nullptr;
@@ -4658,6 +4664,18 @@ namespace Artifact
             composition->buildTimelineTransitionDrawPlan(
                 frameNumber, transitionEvaluations, transitionDrawSteps);
             const auto& layers = composition->allLayerRef();
+            struct TransitionSourceSurface {
+                QImage image;
+                QRectF localBounds;
+                ArtifactAbstractLayer* layer = nullptr;
+            };
+            std::array<TransitionSourceSurface, 2> transitionSourceSurfaces;
+            int capturedTransitionIndex = -1;
+            constexpr int transitionTileSize = 256;
+            static thread_local cv::Mat transitionLeftTile;
+            static thread_local cv::Mat transitionRightTile;
+            transitionLeftTile.create(transitionTileSize, transitionTileSize, CV_8UC4);
+            transitionRightTile.create(transitionTileSize, transitionTileSize, CV_8UC4);
             const ArtifactCameraLayer* activeCamera = nullptr;
             for (const auto& layer : layers) {
                 const auto camera = ArtifactCore::dynamicPointerCast<ArtifactCameraLayer>(layer);
@@ -4739,8 +4757,118 @@ namespace Artifact
             }
 
             for (const auto& drawStep : transitionDrawSteps) {
+                if (drawStep.kind ==
+                    CompositionTimelineTransitionDrawStep::Kind::TransitionComposite) {
+                    if (drawStep.evaluationIndex < 0 ||
+                        drawStep.evaluationIndex >=
+                            static_cast<qint32>(transitionEvaluations.size()) ||
+                        capturedTransitionIndex != drawStep.evaluationIndex) {
+                        continue;
+                    }
+                    const auto& evaluation =
+                        transitionEvaluations[drawStep.evaluationIndex];
+                    const auto& leftSource = transitionSourceSurfaces[0];
+                    const auto& rightSource = transitionSourceSurfaces[1];
+                    if (!leftSource.layer || !rightSource.layer) {
+                        transitionSourceSurfaces = {};
+                        capturedTransitionIndex = -1;
+                        continue;
+                    }
+
+                    const auto makeSourceToComposition = [](
+                        const TransitionSourceSurface& source) {
+                        const auto bounds = source.localBounds;
+                        const auto& transform = source.layer->getGlobalTransform();
+                        const double scaleX = source.image.width() > 0
+                            ? bounds.width() / source.image.width() : 1.0;
+                        const double scaleY = source.image.height() > 0
+                            ? bounds.height() / source.image.height() : 1.0;
+                        const cv::Matx23d sourceToComposition(
+                            transform.m11() * scaleX,
+                            transform.m21() * scaleY,
+                            transform.m11() * bounds.x() +
+                                transform.m21() * bounds.y() + transform.m31(),
+                            transform.m12() * scaleX,
+                            transform.m22() * scaleY,
+                            transform.m12() * bounds.x() +
+                                transform.m22() * bounds.y() + transform.m32());
+                        return sourceToComposition;
+                    };
+
+                    const auto leftTransform = makeSourceToComposition(leftSource);
+                    const auto rightTransform = makeSourceToComposition(rightSource);
+                    const auto leftImage = !leftSource.image.isNull() &&
+                            leftSource.image.format() == QImage::Format_ARGB32_Premultiplied
+                        ? leftSource.image
+                        : leftSource.image.convertToFormat(
+                              QImage::Format_ARGB32_Premultiplied);
+                    const auto rightImage = !rightSource.image.isNull() &&
+                            rightSource.image.format() == QImage::Format_ARGB32_Premultiplied
+                        ? rightSource.image
+                        : rightSource.image.convertToFormat(
+                              QImage::Format_ARGB32_Premultiplied);
+                    const float progress = evaluation.hardCut
+                        ? (evaluation.progress < 0.5 ? 0.0f : 1.0f)
+                        : static_cast<float>(evaluation.progress);
+                    const auto blendMode = ArtifactCore::toBlendMode(
+                        leftSource.layer->layerBlendType());
+                    bool compositeSucceeded = true;
+                    painter.end();
+                    for (int tileY = 0; tileY < compH && compositeSucceeded;
+                         tileY += transitionTileSize) {
+                        for (int tileX = 0; tileX < compW; tileX += transitionTileSize) {
+                            const int tileWidth = std::min(
+                                transitionTileSize, compW - tileX);
+                            const int tileHeight = std::min(
+                                transitionTileSize, compH - tileY);
+                            transitionLeftTile.setTo(cv::Scalar(0, 0, 0, 0));
+                            transitionRightTile.setTo(cv::Scalar(0, 0, 0, 0));
+                            const auto renderTile = [tileX, tileY, tileWidth,
+                                                     tileHeight,
+                                                     tileSide = transitionTileSize](
+                                const QImage& sourceImage,
+                                const cv::Matx23d& sourceTransform,
+                                cv::Mat& output) {
+                                if (sourceImage.isNull()) return;
+                                cv::Mat sourceView(
+                                    sourceImage.height(), sourceImage.width(),
+                                    CV_8UC4,
+                                    const_cast<uchar*>(sourceImage.constBits()),
+                                    static_cast<std::size_t>(
+                                        sourceImage.bytesPerLine()));
+                                cv::Matx23d tileTransform = sourceTransform;
+                                tileTransform(0, 2) -= tileX;
+                                tileTransform(1, 2) -= tileY;
+                                cv::warpAffine(
+                                    sourceView, output, tileTransform,
+                                    cv::Size(tileSide, tileSide), cv::INTER_LINEAR,
+                                    cv::BORDER_CONSTANT, cv::Scalar(0, 0, 0, 0));
+                            };
+                            renderTile(leftImage, leftTransform, transitionLeftTile);
+                            renderTile(rightImage, rightTransform, transitionRightTile);
+                            compositeSucceeded = SoftwareRender::blendCrossfadeTile(
+                                canvas, transitionLeftTile.ptr<std::uint8_t>(),
+                                transitionLeftTile.step,
+                                transitionRightTile.ptr<std::uint8_t>(),
+                                transitionRightTile.step, tileX, tileY,
+                                tileWidth, tileHeight, progress,
+                                leftSource.layer->opacity(),
+                                rightSource.layer->opacity(), blendMode);
+                        }
+                    }
+                    painter.begin(&canvas);
+                    painter.setRenderHint(QPainter::Antialiasing, true);
+                    painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+                    transitionSourceSurfaces = {};
+                    capturedTransitionIndex = -1;
+                    if (!compositeSucceeded) {
+                        // Keep the frame deterministic if a tile contract fails.
+                        // The source layers stay omitted rather than being
+                        // composited twice at their natural stack positions.
+                    }
+                    continue;
+                }
                 if (drawStep.kind != CompositionTimelineTransitionDrawStep::Kind::Layer) {
-                    // Reserved for the A/B temporary composite (P2/P3).
                     continue;
                 }
                 if (drawStep.layerIndex < 0 ||
@@ -4748,6 +4876,15 @@ namespace Artifact
                     continue;
                 }
                 const auto& layer = layers[drawStep.layerIndex];
+                const bool transitionSourceStep =
+                    drawStep.evaluationIndex >= 0 &&
+                    drawStep.evaluationIndex <
+                        static_cast<qint32>(transitionEvaluations.size());
+                if (transitionSourceStep &&
+                    capturedTransitionIndex != drawStep.evaluationIndex) {
+                    transitionSourceSurfaces = {};
+                    capturedTransitionIndex = drawStep.evaluationIndex;
+                }
                 if (!shouldRenderLayer(layer) || !layer->isVisible() ||
                     !layer->isActiveAt(currentPos)) {
                     continue;
@@ -4774,6 +4911,22 @@ namespace Artifact
                     matteReferences.end());
                 surface = applyLayerMatteReferencesToSurface(
                     surface, matteReferences, softwareMatteSources);
+
+                if (transitionSourceStep) {
+                    const auto& evaluation =
+                        transitionEvaluations[drawStep.evaluationIndex];
+                    const int sourceIndex = drawStep.layerIndex ==
+                            evaluation.leftLayerStackIndex ? 0 :
+                        drawStep.layerIndex == evaluation.rightLayerStackIndex ? 1 : -1;
+                    if (sourceIndex >= 0) {
+                        transitionSourceSurfaces[sourceIndex].image =
+                            std::move(surface);
+                        transitionSourceSurfaces[sourceIndex].localBounds =
+                            surfaceLocalBounds;
+                        transitionSourceSurfaces[sourceIndex].layer = layer.get();
+                    }
+                    continue;
+                }
 
                 const QSize layerSize(surface.size());
                 if (!surfaceLocalBounds.isValid() ||
@@ -7353,6 +7506,37 @@ namespace Artifact
             }
             snap.composition->buildTimelineTransitionDrawPlan(
                 snap.frameNumber, gpuTransitionEvaluations, gpuTransitionDrawSteps);
+            if (!gpuTransitionEvaluations.isEmpty()) {
+                bool hasTransitionSourceMatte = false;
+                for (const auto& evaluation : gpuTransitionEvaluations) {
+                    for (const qint32 sourceIndex : {
+                             evaluation.leftLayerStackIndex,
+                             evaluation.rightLayerStackIndex}) {
+                        if (sourceIndex >= 0 && sourceIndex < gpuLayers.size() &&
+                            gpuLayers[sourceIndex]) {
+                            const auto references =
+                                gpuLayers[sourceIndex]->matteReferences();
+                            hasTransitionSourceMatte = hasTransitionSourceMatte ||
+                                std::any_of(
+                                    references.begin(), references.end(),
+                                    [](const LayerMatteReference& reference) {
+                                        return reference.enabled &&
+                                            !reference.sourceLayerId.isNil();
+                                    });
+                        }
+                    }
+                }
+                if (snap.job.multiChannelExportEnabled ||
+                    snap.job.deepExportEnabled || hasReveal ||
+                    hasTransitionSourceMatte) {
+                    failureReason = QStringLiteral(
+                        "GPU final transition compositing currently requires "
+                        "Beauty output without AOV/Deep, Reveal, or source mattes");
+                    return false;
+                }
+            }
+            const bool hasTimelineTransitions =
+                !gpuTransitionEvaluations.isEmpty();
             const ArtifactCore::FramePosition gpuPos(snap.frameNumber);
             const bool hasSoloGpuLayer = std::any_of(
                 gpuLayers.begin(), gpuLayers.end(), [](const auto& layer) {
@@ -7448,12 +7632,15 @@ namespace Artifact
                 }
                 has3DCamera = true;
             }
-            if (hasReveal || velocityTargetRequested) {
+            if (hasReveal || velocityTargetRequested ||
+                hasTimelineTransitions) {
                 const auto context = renderer->immediateContext();
                 RenderPipeline::AuxiliaryTargetRequest auxiliaryTargets;
                 auxiliaryTargets.velocity = velocityTargetRequested;
                 auxiliaryTargets.motionBlurScratch =
                     beautyMotionBlurRequested;
+                auxiliaryTargets.timelineTransition =
+                    hasTimelineTransitions;
                 if (!context || !revealPipeline.initialize(renderer->device(),
                     static_cast<Diligent::Uint32>(rendererWidth), static_cast<Diligent::Uint32>(rendererHeight),
                     Diligent::TEX_FORMAT_RGBA16_FLOAT, auxiliaryTargets) ||
@@ -7622,10 +7809,195 @@ namespace Artifact
                 }
             }
 
-            for (const auto& layer : gpuLayers) {
+            auto* mainRenderTarget = renderer->layerRenderTargetView();
+            if (hasTimelineTransitions && !mainRenderTarget) {
+                failureReason = QStringLiteral(
+                    "GPU render target is unavailable for timeline transitions");
+                return false;
+            }
+            std::array<Diligent::ITextureView*, 2> transitionSourceViews{};
+            std::array<float, 2> transitionSourceOpacities{1.0f, 1.0f};
+            size_t transitionResourceMark = 0;
+            for (const auto& drawStep : gpuTransitionDrawSteps) {
+                if (drawStep.kind ==
+                    CompositionTimelineTransitionDrawStep::Kind::TransitionComposite) {
+                    if (drawStep.evaluationIndex < 0 ||
+                        drawStep.evaluationIndex >= static_cast<qint32>(
+                            gpuTransitionEvaluations.size())) {
+                        continue;
+                    }
+                    const auto& evaluation =
+                        gpuTransitionEvaluations[drawStep.evaluationIndex];
+                    const int leftIndex = evaluation.leftLayerStackIndex;
+                    if (leftIndex < 0 || leftIndex >= gpuLayers.size() ||
+                        !gpuLayers[leftIndex]) {
+                        transitionSourceViews = {};
+                        continue;
+                    }
+                    if (!revealPipeline.hasTimelineTransitionTargets() ||
+                        !gpuMattePipelineReady ||
+                        !revealPipeline.transitionLeftUAV() ||
+                        !revealPipeline.transitionRightUAV() ||
+                        !revealPipeline.transitionLeftSRV() ||
+                        !revealPipeline.transitionRightSRV() ||
+                        !revealPipeline.transitionOutputUAV() ||
+                        !revealPipeline.transitionOutputSRV() ||
+                        !revealPipeline.accumSRV() ||
+                        !revealPipeline.tempUAV()) {
+                        failureReason = QStringLiteral(
+                            "GPU timeline transition targets are unavailable");
+                        return false;
+                    }
+                    if (!transitionSourceViews[0] ||
+                        !transitionSourceViews[1]) {
+                        if (snap.gpuMatteResourcePool) {
+                            snap.gpuMatteResourcePool->rewind(
+                                transitionResourceMark);
+                        }
+                        continue;
+                    }
+
+                    const float progress = evaluation.hardCut
+                        ? (evaluation.progress < 0.5 ? 0.0f : 1.0f)
+                        : static_cast<float>(evaluation.progress);
+                    ArtifactCore::ComputeRegion transitionRegion;
+                    transitionRegion.width = static_cast<Diligent::Uint32>(
+                        rendererWidth);
+                    transitionRegion.height = static_cast<Diligent::Uint32>(
+                        rendererHeight);
+                    renderer->flush();
+                    renderer->unbindColorTargetsForCompute();
+                    if (!renderer->convertLayerToFloat(
+                            gpuMattePipeline, transitionSourceViews[0],
+                            revealPipeline.transitionLeftUAV(),
+                            static_cast<Diligent::Uint32>(rendererWidth),
+                            static_cast<Diligent::Uint32>(rendererHeight)) ||
+                        !renderer->convertLayerToFloat(
+                            gpuMattePipeline, transitionSourceViews[1],
+                            revealPipeline.transitionRightUAV(),
+                            static_cast<Diligent::Uint32>(rendererWidth),
+                            static_cast<Diligent::Uint32>(rendererHeight)) ||
+                        !renderer->crossfadeLayers(
+                            gpuMattePipeline,
+                            revealPipeline.transitionLeftSRV(),
+                            revealPipeline.transitionRightSRV(),
+                            revealPipeline.transitionOutputUAV(), progress,
+                            transitionRegion,
+                            transitionSourceOpacities[0],
+                            transitionSourceOpacities[1])) {
+                        failureReason = QStringLiteral(
+                            "GPU timeline transition crossfade dispatch failed");
+                        return false;
+                    }
+
+                    auto* destinationSRV = renderer->layerTextureView();
+                    if (!destinationSRV) {
+                        failureReason = QStringLiteral(
+                            "GPU timeline transition destination is not sampleable");
+                        return false;
+                    }
+                    const auto topLeft = renderer->viewportToCanvas({0.0f, 0.0f});
+                    const auto bottomRight = renderer->viewportToCanvas(
+                        {static_cast<float>(rendererWidth),
+                         static_cast<float>(rendererHeight)});
+                    if (!renderer->convertLayerToFloat(
+                            gpuMattePipeline, destinationSRV,
+                            revealPipeline.accumUAV(),
+                            static_cast<Diligent::Uint32>(rendererWidth),
+                            static_cast<Diligent::Uint32>(rendererHeight)) ||
+                        !renderer->blendLayers(
+                            gpuMattePipeline,
+                            revealPipeline.transitionOutputSRV(),
+                            revealPipeline.accumSRV(),
+                            revealPipeline.tempUAV(),
+                            ArtifactCore::toBlendMode(
+                                gpuLayers[leftIndex]->layerBlendType()),
+                            1.0f, transitionRegion)) {
+                        renderer->setOverrideRTV(mainRenderTarget);
+                        failureReason = QStringLiteral(
+                            "GPU timeline transition stack blend failed");
+                        return false;
+                    }
+                    revealPipeline.swapAccumAndTemp();
+
+                    renderer->setOverrideRTV(mainRenderTarget);
+                    renderer->clearRenderTarget(
+                        mainRenderTarget,
+                        FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
+                    renderer->drawSprite(
+                        topLeft.x, topLeft.y, bottomRight.x - topLeft.x,
+                        bottomRight.y - topLeft.y,
+                        revealPipeline.accumSRV(), 1.0f);
+                    renderer->flush();
+                    if (snap.gpuMatteResourcePool) {
+                        snap.gpuMatteResourcePool->rewind(
+                            transitionResourceMark);
+                    }
+                    transitionSourceViews = {};
+                    continue;
+                }
+                if (drawStep.kind !=
+                        CompositionTimelineTransitionDrawStep::Kind::Layer ||
+                    drawStep.layerIndex < 0 ||
+                    drawStep.layerIndex >= gpuLayers.size()) {
+                    continue;
+                }
+                const auto& layer = gpuLayers[drawStep.layerIndex];
                 if (!shouldRenderGpuLayer(layer) || !layer->isVisible() ||
                     !layer->isActiveAt(gpuPos)) continue;
                 layer->goToFrame(snap.frameNumber);
+                const bool transitionSourceStep =
+                    drawStep.evaluationIndex >= 0 &&
+                    drawStep.evaluationIndex < static_cast<qint32>(
+                        gpuTransitionEvaluations.size());
+                if (transitionSourceStep) {
+                    const auto& evaluation =
+                        gpuTransitionEvaluations[drawStep.evaluationIndex];
+                    const bool isLeft = drawStep.layerIndex ==
+                        evaluation.leftLayerStackIndex;
+                    const bool isRight = drawStep.layerIndex ==
+                        evaluation.rightLayerStackIndex;
+                    if (!isLeft && !isRight) {
+                        continue;
+                    }
+                    if (!revealPipeline.hasTimelineTransitionTargets()) {
+                        failureReason = QStringLiteral(
+                            "GPU timeline transition targets were not initialized");
+                        return false;
+                    }
+                    if (isLeft) {
+                        transitionSourceViews = {};
+                        transitionSourceOpacities = {1.0f, 1.0f};
+                        transitionResourceMark = snap.gpuMatteResourcePool
+                            ? snap.gpuMatteResourcePool->mark() : 0;
+                    }
+                    auto* sourceResources = snap.gpuMatteResourcePool
+                        ? snap.gpuMatteResourcePool->acquire(false)
+                        : nullptr;
+                    void* sourceTarget = sourceResources
+                        ? sourceResources->colorTarget : nullptr;
+                    void* sourceDepth = sourceResources
+                        ? sourceResources->depthTarget : nullptr;
+                    auto* sourceSRV = renderer->offscreenTextureShaderResourceView(
+                        sourceTarget);
+                    if (!sourceTarget || !sourceDepth || !sourceSRV) {
+                        failureReason = QStringLiteral(
+                            "GPU timeline transition source target is unavailable");
+                        return false;
+                    }
+                    renderer->flush();
+                    renderer->pushRenderTarget(sourceTarget, sourceDepth);
+                    renderer->setClearColor(
+                        FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
+                    renderer->clear();
+                    drawQueueGpuLayer(layer.get(), nullptr);
+                    renderer->flush();
+                    renderer->popRenderTarget();
+                    const int sourceIndex = isLeft ? 0 : 1;
+                    transitionSourceViews[sourceIndex] = sourceSRV;
+                    transitionSourceOpacities[sourceIndex] = layer->opacity();
+                    continue;
+                }
                 std::vector<LayerMatteReference> gpuMatteRefs;
                 const auto matteReferences = layer->matteReferences();
                 gpuMatteRefs.reserve(matteReferences.size());

@@ -7641,56 +7641,42 @@ void ArtifactAbstractComposition::buildTimelineTransitionDrawPlan(
 
     int cursor = 0;
     for (int layerIndex = 0; layerIndex < layerCount; ++layerIndex) {
-        if (useStableOrder) {
+        if (useStableOrder && canMoveSources) {
             while (cursor < orderedCount &&
                    evaluations[ordered[cursor]].insertionIndex < layerIndex) {
                 ++cursor;
             }
             while (cursor < orderedCount &&
                    evaluations[ordered[cursor]].insertionIndex == layerIndex) {
-                CompositionTimelineTransitionDrawStep step;
-                step.kind = CompositionTimelineTransitionDrawStep::Kind::TransitionComposite;
-                step.layerIndex = layerIndex;
-                step.evaluationIndex = ordered[cursor++];
-                outSteps.append(step);
-            }
-        } else {
-            for (qsizetype i = 0; i < static_cast<qsizetype>(evaluations.size()); ++i) {
-                if (evaluations[i].insertionIndex != layerIndex) continue;
-                CompositionTimelineTransitionDrawStep step;
-                step.kind = CompositionTimelineTransitionDrawStep::Kind::TransitionComposite;
-                step.layerIndex = layerIndex;
-                step.evaluationIndex = static_cast<int>(i);
-                outSteps.append(step);
-            }
-        }
-
-        if (canMoveSources) {
-            for (int k = 0; k < orderedCount; ++k) {
-                const auto& evaluation = evaluations[ordered[k]];
-                if (evaluation.insertionIndex != layerIndex) continue;
+                const int evaluationIndex = ordered[cursor++];
+                const auto& evaluation = evaluations[evaluationIndex];
                 const int sources[2] = {evaluation.leftLayerStackIndex,
                                         evaluation.rightLayerStackIndex};
-                for (int s = 0; s < 2; ++s) {
-                    const int sourceIndex = sources[s];
+                for (const int sourceIndex : sources) {
                     if (sourceIndex < 0 || sourceIndex >= layerCount ||
-                        sourceIndex == layerIndex ||
                         movedTarget[sourceIndex] != layerIndex ||
                         movedEmitted[sourceIndex]) {
                         continue;
                     }
                     movedEmitted[sourceIndex] = true;
-                    CompositionTimelineTransitionDrawStep step;
-                    step.kind = CompositionTimelineTransitionDrawStep::Kind::Layer;
-                    step.layerIndex = sourceIndex;
-                    step.evaluationIndex = ordered[k];
-                    outSteps.append(step);
+                    CompositionTimelineTransitionDrawStep sourceStep;
+                    sourceStep.kind = CompositionTimelineTransitionDrawStep::Kind::Layer;
+                    sourceStep.layerIndex = sourceIndex;
+                    sourceStep.evaluationIndex = evaluationIndex;
+                    outSteps.append(sourceStep);
                 }
+                CompositionTimelineTransitionDrawStep compositeStep;
+                compositeStep.kind = CompositionTimelineTransitionDrawStep::Kind::TransitionComposite;
+                compositeStep.layerIndex = layerIndex;
+                compositeStep.evaluationIndex = evaluationIndex;
+                outSteps.append(compositeStep);
             }
+        } else {
+            // Above the fixed ordering capacity, retain the ordinary stable
+            // layer walk. The transition composite is intentionally omitted.
         }
 
-        if (!canMoveSources || movedTarget[layerIndex] < 0 ||
-            movedTarget[layerIndex] == layerIndex) {
+        if (!canMoveSources || movedTarget[layerIndex] < 0) {
             CompositionTimelineTransitionDrawStep step;
             step.kind = CompositionTimelineTransitionDrawStep::Kind::Layer;
             step.layerIndex = layerIndex;

@@ -814,7 +814,9 @@ public:
                        Diligent::ITextureView *leftSRV,
                        Diligent::ITextureView *rightSRV,
                        Diligent::ITextureView *outUAV, float progress,
-                       const ArtifactCore::ComputeRegion &region) const;
+                       const ArtifactCore::ComputeRegion &region,
+                       float leftOpacity = 1.0f,
+                       float rightOpacity = 1.0f) const;
   bool convertBgraAccumulatorToStraightRgba(
       ArtifactCore::LayerBlendPipeline *pipeline,
       Diligent::ITextureView *sourceSRV,

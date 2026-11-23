@@ -1851,9 +1851,22 @@ void ArtifactProject::setExtensionData(const QJsonObject& data)
     }
     
     const auto sourceLayers = compositionPtr->allLayer();
+    struct LayerCopyMapping {
+      LayerID sourceId;
+      LayerID destinationId;
+      QString destinationName;
+      int sourceStackIndex = -1;
+      int destinationStackIndex = -1;
+    };
+    QVector<LayerCopyMapping> layerCopyMappings;
+    layerCopyMappings.reserve(static_cast<qsizetype>(sourceLayers.size()));
     int copiedCount = 0;
+    int sourceStackIndex = 0;
     for (const auto& sourceLayer : sourceLayers) {
-      if (!sourceLayer) continue;
+      if (!sourceLayer) {
+        ++sourceStackIndex;
+        continue;
+      }
       QString layerName = sourceLayer->layerName();
       if (layerName.isEmpty()) {
         layerName = QStringLiteral("Layer");
@@ -1874,15 +1887,60 @@ void ArtifactProject::setExtensionData(const QJsonObject& data)
       }
       if (layerCreate.success) {
         copyArtifactLayerProperties(sourceLayer, layerCreate.layer, layerName);
+        layerCopyMappings.append(LayerCopyMapping{
+            sourceLayer->id(), layerCreate.layer->id(),
+            layerCreate.layer->layerName(), sourceStackIndex, copiedCount});
         ++copiedCount;
       }
+      ++sourceStackIndex;
     }
+
+    const auto sourceTransitions = compositionPtr->timelineTransitions();
+    QVector<CompositionTimelineTransition> duplicatedTransitions;
+    duplicatedTransitions.reserve(sourceTransitions.size());
+    const auto copiedLayerForId = [&layerCopyMappings](const LayerID& id)
+        -> const LayerCopyMapping* {
+      const auto found = std::find_if(
+          layerCopyMappings.cbegin(), layerCopyMappings.cend(),
+          [&id](const LayerCopyMapping& mapping) {
+            return mapping.sourceId == id;
+          });
+      return found == layerCopyMappings.cend() ? nullptr : &*found;
+    };
+    for (auto transition : sourceTransitions) {
+      const auto* copiedLeft = copiedLayerForId(transition.leftLayerId);
+      const auto* copiedRight = copiedLayerForId(transition.rightLayerId);
+      if (!copiedLeft || !copiedRight) {
+        continue;
+      }
+      if (transition.stackPosition >= 0) {
+        const auto copiedPosition = std::find_if(
+            layerCopyMappings.cbegin(), layerCopyMappings.cend(),
+            [&transition](const LayerCopyMapping& mapping) {
+              return mapping.sourceStackIndex == transition.stackPosition;
+            });
+        if (copiedPosition == layerCopyMappings.cend()) {
+          continue;
+        }
+        transition.stackPosition = copiedPosition->destinationStackIndex;
+      }
+      transition.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+      transition.leftLayerId = copiedLeft->destinationId;
+      transition.rightLayerId = copiedRight->destinationId;
+      transition.leftClipName = copiedLeft->destinationName;
+      transition.rightClipName = copiedRight->destinationName;
+      duplicatedTransitions.append(std::move(transition));
+    }
+    newCompPtr->setTimelineTransitions(duplicatedTransitions);
 
     result.success = true;
     result.id = newCompResult.id;
-    result.message.setQString(QStringLiteral("Composition duplicated (%1 layers copied)").arg(copiedCount));
+    result.message.setQString(QStringLiteral(
+        "Composition duplicated (%1 layers and %2 transitions copied)")
+        .arg(copiedCount).arg(duplicatedTransitions.size()));
     qDebug() << "Impl::duplicateComposition succeeded: new id=" << newCompResult.id.toString()
-             << " copiedLayers=" << copiedCount;
+             << " copiedLayers=" << copiedCount
+             << " copiedTransitions=" << duplicatedTransitions.size();
     
     return result;
   }

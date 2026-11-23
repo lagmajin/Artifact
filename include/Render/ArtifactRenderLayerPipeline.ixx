@@ -66,6 +66,9 @@ export namespace Artifact
     bool albedo = false;
     bool position = false;
     bool uv = false;
+    // Three reusable RGBA16F targets for one transition composite at a time.
+    // They are provisioned only for compositions that contain transitions.
+    bool timelineTransition = false;
     bool operator==(const AuxiliaryTargetRequest&) const = default;
   };
 
@@ -233,6 +236,16 @@ export namespace Artifact
   ITextureView* uvSRV() const;
   ITextureView* uvRTV() const;
   bool hasUvTarget() const;
+  ITextureView* transitionLeftSRV() const;
+  ITextureView* transitionLeftUAV() const;
+  ITextureView* transitionLeftRTV() const;
+  ITextureView* transitionRightSRV() const;
+  ITextureView* transitionRightUAV() const;
+  ITextureView* transitionRightRTV() const;
+  ITextureView* transitionOutputSRV() const;
+  ITextureView* transitionOutputUAV() const;
+  ITextureView* transitionOutputRTV() const;
+  bool hasTimelineTransitionTargets() const;
   GlobalIlluminationInputs globalIlluminationInputs(
       ITextureView* depthSRV) const;
   bool dispatchScreenSpaceGlobalIllumination(

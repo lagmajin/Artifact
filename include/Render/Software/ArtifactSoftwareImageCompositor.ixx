@@ -1,4 +1,6 @@
 ﻿module;
+#include <cstddef>
+#include <cstdint>
 #include <utility>
 #include <QImage>
 #include <QPainter>
@@ -71,6 +73,23 @@ bool blendSurface(QImage& canvas,
                   const QImage& surface,
                   float opacity,
                   ArtifactCore::BlendMode mode);
+
+// Crossfades two premultiplied BGRA8 tile buffers and composites the result
+// over an RGBA8888 output canvas. The caller owns and reuses both tile buffers;
+// this function performs no image or GPU resource allocation.
+bool blendCrossfadeTile(QImage& canvas,
+                        const std::uint8_t* leftPremultipliedBgra,
+                        std::size_t leftRowStride,
+                        const std::uint8_t* rightPremultipliedBgra,
+                        std::size_t rightRowStride,
+                        int destinationX,
+                        int destinationY,
+                        int width,
+                        int height,
+                        float progress,
+                        float leftOpacity,
+                        float rightOpacity,
+                        ArtifactCore::BlendMode blendMode);
 
 /// Minimal CPU fallback for opaque, flat-shaded mesh previews. This is kept
 /// outside the hot GPU path and intentionally does not attempt to reproduce

@@ -1290,6 +1290,7 @@ void ScreenSpaceGIResolveCS(uint3 dispatchId : SV_DispatchThreadID)
   TextureBundle effectMaskSource_;
  TextureBundle layer_;
  TextureBundle layerFloat_;
+ std::array<TextureBundle, 3> timelineTransitionTargets_;
  // Persistent scratch for batched multi-matte accumulation.
  TextureBundle matteAccum_;
   std::array<TextureBundle, 3> matteSources_;
@@ -1580,6 +1581,7 @@ bool RenderPipeline::initialize(IRenderDevice* device,
   impl_->effectAdditionalMaskCoverage_ = {};
   impl_->layer_ = {};
   impl_->layerFloat_ = {};
+  for (auto& target : impl_->timelineTransitionTargets_) target = {};
   impl_->matteAccum_ = {};
   for (auto& matteSource : impl_->matteSources_) {
    matteSource = {};
@@ -3038,6 +3040,39 @@ bool RenderPipeline::hasMaterialIdTarget() const { return impl_->auxiliaryReques
  ITextureView* RenderPipeline::uvSRV() const { return impl_->uv_.srv; }
  ITextureView* RenderPipeline::uvRTV() const { return impl_->uv_.rtv; }
  bool RenderPipeline::hasUvTarget() const { return impl_->auxiliaryRequest_.uv && impl_->uv_.texture; }
+ITextureView* RenderPipeline::transitionLeftSRV() const {
+ return impl_->timelineTransitionTargets_[0].srv;
+}
+ITextureView* RenderPipeline::transitionLeftUAV() const {
+ return impl_->timelineTransitionTargets_[0].uav;
+}
+ITextureView* RenderPipeline::transitionLeftRTV() const {
+ return impl_->timelineTransitionTargets_[0].rtv;
+}
+ITextureView* RenderPipeline::transitionRightSRV() const {
+ return impl_->timelineTransitionTargets_[1].srv;
+}
+ITextureView* RenderPipeline::transitionRightUAV() const {
+ return impl_->timelineTransitionTargets_[1].uav;
+}
+ITextureView* RenderPipeline::transitionRightRTV() const {
+ return impl_->timelineTransitionTargets_[1].rtv;
+}
+ITextureView* RenderPipeline::transitionOutputSRV() const {
+ return impl_->timelineTransitionTargets_[2].srv;
+}
+ITextureView* RenderPipeline::transitionOutputUAV() const {
+ return impl_->timelineTransitionTargets_[2].uav;
+}
+ITextureView* RenderPipeline::transitionOutputRTV() const {
+ return impl_->timelineTransitionTargets_[2].rtv;
+}
+bool RenderPipeline::hasTimelineTransitionTargets() const {
+ return impl_->auxiliaryRequest_.timelineTransition &&
+        impl_->timelineTransitionTargets_[0].texture &&
+        impl_->timelineTransitionTargets_[1].texture &&
+        impl_->timelineTransitionTargets_[2].texture;
+}
 GlobalIlluminationInputs RenderPipeline::globalIlluminationInputs(
     ITextureView* depthSRV) const
 {
@@ -3640,6 +3675,21 @@ bool RenderPipeline::createTextures(IRenderDevice* device,
                            "RenderPipeline.LayerFloat", impl_->layerFloat_))
   {
    return false;
+  }
+  if (request.timelineTransition) {
+   constexpr const char* targetNames[] = {
+       "RenderPipeline.TimelineTransitionLeft",
+       "RenderPipeline.TimelineTransitionRight",
+       "RenderPipeline.TimelineTransitionOutput"};
+   for (size_t index = 0;
+        index < impl_->timelineTransitionTargets_.size(); ++index) {
+    if (!createTextureBundle(
+            device, width, height, format,
+            BIND_RENDER_TARGET | BIND_SHADER_RESOURCE | BIND_UNORDERED_ACCESS,
+            targetNames[index], impl_->timelineTransitionTargets_[index])) {
+     return false;
+    }
+   }
   }
   if (!createTextureBundle(device, width, height, format,
                            BIND_SHADER_RESOURCE | BIND_UNORDERED_ACCESS,

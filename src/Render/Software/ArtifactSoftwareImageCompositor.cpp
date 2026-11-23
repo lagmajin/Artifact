@@ -1,4 +1,6 @@
 module;
+#include <cstddef>
+#include <cstdint>
 #include <utility>
 #include <QImage>
 #include <QPainter>
@@ -25,6 +27,18 @@ namespace {
 
 inline float clamp01(const float value) {
  return std::clamp(value, 0.0f, 1.0f);
+}
+
+inline float srgbToLinear(const float value) {
+ const float c = clamp01(value);
+ return c <= 0.04045f ? c / 12.92f
+                       : std::pow((c + 0.055f) / 1.055f, 2.4f);
+}
+
+inline float linearToSrgb(const float value) {
+ const float c = clamp01(value);
+ return c <= 0.0031308f ? c * 12.92f
+                         : 1.055f * std::pow(c, 1.0f / 2.4f) - 0.055f;
 }
 
 inline float outAlpha(const float srcAlpha, const float dstAlpha) {
@@ -721,6 +735,86 @@ bool blendSurface(QImage& canvas,
    dstRow[i + 3] = static_cast<uchar>(std::round(clamp01(result.a()) * 255.0f));
   }
  });
+ return true;
+}
+
+bool blendCrossfadeTile(QImage& canvas,
+                        const std::uint8_t* leftPremultipliedBgra,
+                        const std::size_t leftRowStride,
+                        const std::uint8_t* rightPremultipliedBgra,
+                        const std::size_t rightRowStride,
+                        const int destinationX,
+                        const int destinationY,
+                        const int width,
+                        const int height,
+                        const float progress,
+                        const float leftOpacity,
+                        const float rightOpacity,
+                        const ArtifactCore::BlendMode blendMode)
+{
+ if (canvas.isNull() || canvas.format() != QImage::Format_RGBA8888 ||
+     !leftPremultipliedBgra || !rightPremultipliedBgra || width <= 0 || height <= 0 ||
+     destinationX < 0 || destinationY < 0 ||
+     destinationX + width > canvas.width() || destinationY + height > canvas.height() ||
+     leftRowStride < static_cast<std::size_t>(width) * 4u ||
+     rightRowStride < static_cast<std::size_t>(width) * 4u) {
+  return false;
+ }
+
+ const float t = clamp01(progress);
+ const float leftOpacityClamped = clamp01(leftOpacity);
+ const float rightOpacityClamped = clamp01(rightOpacity);
+ for (int y = 0; y < height; ++y) {
+  const auto* leftRow = leftPremultipliedBgra +
+      static_cast<std::size_t>(y) * leftRowStride;
+  const auto* rightRow = rightPremultipliedBgra +
+      static_cast<std::size_t>(y) * rightRowStride;
+  auto* destinationRow = canvas.bits() +
+      static_cast<qsizetype>(destinationY + y) * canvas.bytesPerLine() +
+      static_cast<qsizetype>(destinationX) * 4;
+  for (int x = 0; x < width; ++x) {
+   const int sourceOffset = x * 4;
+   const int destinationOffset = sourceOffset;
+   const float leftAlpha = leftRow[sourceOffset + 3] / 255.0f * leftOpacityClamped;
+   const float rightAlpha = rightRow[sourceOffset + 3] / 255.0f * rightOpacityClamped;
+   const float leftSourceAlpha = leftRow[sourceOffset + 3] / 255.0f;
+   const float rightSourceAlpha = rightRow[sourceOffset + 3] / 255.0f;
+   const float outputAlpha = leftAlpha * (1.0f - t) + rightAlpha * t;
+   if (outputAlpha <= 1.0e-6f) {
+    continue;
+   }
+
+   const auto straightChannel = [t, leftAlpha, rightAlpha,
+                                 leftSourceAlpha, rightSourceAlpha,
+                                 outputAlpha](
+       const std::uint8_t leftPremultiplied,
+       const std::uint8_t rightPremultiplied) {
+    const float leftStraightSrgb = leftSourceAlpha > 1.0e-6f
+        ? clamp01((leftPremultiplied / 255.0f) / leftSourceAlpha) : 0.0f;
+    const float rightStraightSrgb = rightSourceAlpha > 1.0e-6f
+        ? clamp01((rightPremultiplied / 255.0f) / rightSourceAlpha) : 0.0f;
+    const float premultipliedLinear =
+        srgbToLinear(leftStraightSrgb) * leftAlpha * (1.0f - t) +
+        srgbToLinear(rightStraightSrgb) * rightAlpha * t;
+    return linearToSrgb(premultipliedLinear / outputAlpha);
+   };
+
+   // QImage's RGBA8888 byte order differs from the source tile's BGRA order.
+   const ArtifactCore::FloatColor source(
+       straightChannel(leftRow[sourceOffset + 2], rightRow[sourceOffset + 2]),
+       straightChannel(leftRow[sourceOffset + 1], rightRow[sourceOffset + 1]),
+       straightChannel(leftRow[sourceOffset + 0], rightRow[sourceOffset + 0]),
+       outputAlpha);
+   auto* dst = destinationRow + destinationOffset;
+   const ArtifactCore::FloatColor base(dst[0] / 255.0f, dst[1] / 255.0f,
+                                       dst[2] / 255.0f, dst[3] / 255.0f);
+   const auto result = blendColor(base, source, blendMode, outputAlpha);
+   dst[0] = static_cast<uchar>(std::round(clamp01(result.r()) * 255.0f));
+   dst[1] = static_cast<uchar>(std::round(clamp01(result.g()) * 255.0f));
+   dst[2] = static_cast<uchar>(std::round(clamp01(result.b()) * 255.0f));
+   dst[3] = static_cast<uchar>(std::round(clamp01(result.a()) * 255.0f));
+  }
+ }
  return true;
 }
 
