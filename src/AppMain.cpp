@@ -82,8 +82,10 @@ module;
 #include <QPainter>
 #include <QPixmap>
 #include <QPushButton>
+#include <QRect>
 #include <QRectF>
 #include <QScreen>
+#include <QScrollBar>
 #include <QSizePolicy>
 #include <QSize>
 #include <QEvent>
@@ -225,24 +227,29 @@ public:
   ArtifactVirtualInput(const ArtifactVirtualInput&) = delete;
   ArtifactVirtualInput& operator=(const ArtifactVirtualInput&) = delete;
 
-  // Marks the events produced by this service so ArtifactApplication::notify()
-  // can tell injected input apart from real OS input.
-  class ScopedInjection final {
+  // Marks one synthetic event while QApplication::notify() is delivering it.
+  // Keep the marker event-specific because a widget can enter a nested event
+  // loop before sendEvent() returns.
+  class ScopedEventDispatch final {
   public:
-    explicit ScopedInjection(ArtifactVirtualInput* owner) : owner_(owner) {
-      ++owner_->injectionDepth_;
+    ScopedEventDispatch(ArtifactVirtualInput* owner, QEvent* event)
+        : owner_(owner), previous_(owner_->injectedEvent_) {
+      owner_->injectedEvent_ = event;
     }
-    ~ScopedInjection() { --owner_->injectionDepth_; }
-    ScopedInjection(const ScopedInjection&) = delete;
-    ScopedInjection& operator=(const ScopedInjection&) = delete;
+    ~ScopedEventDispatch() { owner_->injectedEvent_ = previous_; }
+    ScopedEventDispatch(const ScopedEventDispatch&) = delete;
+    ScopedEventDispatch& operator=(const ScopedEventDispatch&) = delete;
 
   private:
     ArtifactVirtualInput* owner_;
+    QEvent* previous_;
   };
 
   [[nodiscard]] static ArtifactVirtualInput* active() { return active_; }
   [[nodiscard]] QWidget* root() const { return root_.data(); }
-  [[nodiscard]] bool isInjecting() const { return injectionDepth_ > 0; }
+  [[nodiscard]] bool isInjectedEvent(const QEvent* event) const {
+    return event && event == injectedEvent_;
+  }
   [[nodiscard]] int deliveredEvents() const { return deliveredEvents_; }
   [[nodiscard]] QPoint windowPosition() const { return windowPosition_; }
   [[nodiscard]] Qt::MouseButtons pressedButtons() const { return pressedButtons_; }
@@ -278,7 +285,6 @@ public:
 
   bool moveTo(const QPoint& windowPosition, Qt::KeyboardModifiers modifiers,
               QString* error) {
-    [[maybe_unused]] ScopedInjection injection(this);
     QWidget* receiver = nullptr;
     if (!resolvePointer(windowPosition, &receiver, error)) {
       return false;
@@ -295,7 +301,6 @@ public:
 
   bool press(const QPoint& windowPosition, Qt::MouseButton button,
              Qt::KeyboardModifiers modifiers, QString* error) {
-    [[maybe_unused]] ScopedInjection injection(this);
     if (!moveTo(windowPosition, modifiers, error)) {
       return false;
     }
@@ -317,7 +322,6 @@ public:
 
   bool release(const QPoint& windowPosition, Qt::MouseButton button,
                Qt::KeyboardModifiers modifiers, QString* error) {
-    [[maybe_unused]] ScopedInjection injection(this);
     QWidget* receiver = nullptr;
     if (!resolvePointer(windowPosition, &receiver, error)) {
       return false;
@@ -369,7 +373,6 @@ public:
     if (!release(windowPosition, button, modifiers, error)) {
       return false;
     }
-    [[maybe_unused]] ScopedInjection injection(this);
     QWidget* receiver = nullptr;
     if (!resolvePointer(windowPosition, &receiver, error)) {
       return false;
@@ -383,7 +386,6 @@ public:
 
   bool wheel(const QPoint& windowPosition, int angleDeltaY, int angleDeltaX,
              Qt::KeyboardModifiers modifiers, QString* error) {
-    [[maybe_unused]] ScopedInjection injection(this);
     if (!moveTo(windowPosition, modifiers, error)) {
       return false;
     }
@@ -397,6 +399,7 @@ public:
     QWheelEvent event(localF, globalF, QPoint(0, 0),
                       QPoint(angleDeltaX, angleDeltaY), pressedButtons_,
                       modifiers, Qt::NoScrollPhase, false);
+    ScopedEventDispatch dispatch(this, &event);
     QApplication::sendEvent(receiver, &event);
     return true;
   }
@@ -418,13 +421,18 @@ public:
       return false;
     }
     const QKeyCombination combination = parsed[0];
-    [[maybe_unused]] ScopedInjection injection(this);
     QKeyEvent pressEvent(QEvent::KeyPress, combination.key(),
                          combination.keyboardModifiers(), text, false);
-    QApplication::sendEvent(receiver, &pressEvent);
+    {
+      ScopedEventDispatch dispatch(this, &pressEvent);
+      QApplication::sendEvent(receiver, &pressEvent);
+    }
     QKeyEvent releaseEvent(QEvent::KeyRelease, combination.key(),
                            combination.keyboardModifiers(), text, false);
-    QApplication::sendEvent(receiver, &releaseEvent);
+    {
+      ScopedEventDispatch dispatch(this, &releaseEvent);
+      QApplication::sendEvent(receiver, &releaseEvent);
+    }
     return true;
   }
 
@@ -444,17 +452,22 @@ public:
       *error = QStringLiteral("UI window is unavailable");
       return false;
     }
-    [[maybe_unused]] ScopedInjection injection(this);
     for (const QChar character : text) {
       const int key = character.isLetter() ? character.toUpper().unicode()
                                            : character.unicode();
       const QString characterText(1, character);
       QKeyEvent pressEvent(QEvent::KeyPress, key, modifiers, characterText,
                            false);
-      QApplication::sendEvent(receiver, &pressEvent);
+      {
+        ScopedEventDispatch dispatch(this, &pressEvent);
+        QApplication::sendEvent(receiver, &pressEvent);
+      }
       QKeyEvent releaseEvent(QEvent::KeyRelease, key, modifiers,
                              characterText, false);
-      QApplication::sendEvent(receiver, &releaseEvent);
+      {
+        ScopedEventDispatch dispatch(this, &releaseEvent);
+        QApplication::sendEvent(receiver, &releaseEvent);
+      }
     }
     return true;
   }
@@ -462,7 +475,6 @@ public:
   // Qt builds ContextMenu events in the platform layer, so a synthesized right
   // click never produces one. Callers that want a context menu ask for it.
   bool contextMenu(const QPoint& windowPosition, QString* error) {
-    [[maybe_unused]] ScopedInjection injection(this);
     if (!moveTo(windowPosition, Qt::NoModifier, error)) {
       return false;
     }
@@ -473,6 +485,7 @@ public:
     const QPoint local = receiver->mapFrom(root_.data(), windowPosition);
     QContextMenuEvent event(QContextMenuEvent::Mouse, local,
                             receiver->mapToGlobal(local));
+    ScopedEventDispatch dispatch(this, &event);
     QApplication::sendEvent(receiver, &event);
     return true;
   }
@@ -502,6 +515,49 @@ private:
       *error = QStringLiteral("UI window is unavailable");
       return false;
     }
+    // A modal dialog is an independent top-level widget. Resolve it before
+    // stale popup mouse grabs so modal input cannot leak to a menu or the main
+    // window behind it.
+    if (QWidget* modal = QApplication::activeModalWidget()) {
+      const QPoint modalOrigin = modal->mapTo(root_, QPoint(0, 0));
+      const QPoint modalLocal = windowPosition - modalOrigin;
+      if (!modal->rect().contains(modalLocal)) {
+        *error = QStringLiteral("The requested point is outside the active modal dialog");
+        return false;
+      }
+      QWidget* target = modal->childAt(modalLocal);
+      if (!target) {
+        target = modal;
+      }
+      if (!target->isEnabled()) {
+        *error = QStringLiteral("The widget at the requested point is disabled");
+        return false;
+      }
+      *receiver = target;
+      return true;
+    }
+    const QPoint globalPosition = root_->mapToGlobal(windowPosition);
+    if (QWidget* popup = QApplication::activePopupWidget()) {
+      // A context menu may enter a nested event loop while the triggering
+      // right-button press is still captured by its originating widget. Let
+      // subsequent coordinates inside the popup reach the menu first, or the
+      // stale capture prevents MCP clients from selecting any menu action.
+      const QPoint popupOrigin =
+          root_->mapFromGlobal(popup->mapToGlobal(QPoint(0, 0)));
+      const QPoint popupLocal = windowPosition - popupOrigin;
+      if (popup->isVisible() && popup->rect().contains(popupLocal)) {
+        QWidget* target = popup->childAt(popupLocal);
+        *receiver = target ? target : popup;
+        return true;
+      }
+    }
+    // Some Qt menu-bar popups are visible top-level overlays without being
+    // reported as the current activePopupWidget. Hit-test those before the
+    // originating widget's implicit mouse grab as well.
+    if (QWidget* overlay = overlayAt(windowPosition)) {
+      *receiver = overlay;
+      return true;
+    }
     if (auto* grabber = QWidget::mouseGrabber()) {
       *receiver = grabber;
       return true;
@@ -510,7 +566,6 @@ private:
       *receiver = pressedWidget_.data();
       return true;
     }
-    const QPoint globalPosition = root_->mapToGlobal(windowPosition);
     QWidget* target = nullptr;
     // A widget subtree can itself be the input surface (for example, an
     // isolated editor fixture). Keep its hit testing local so an unrelated
@@ -522,7 +577,12 @@ private:
       }
     }
     if (QWidget* popup = QApplication::activePopupWidget()) {
-      const QPoint popupLocal = popup->mapFromGlobal(globalPosition);
+      // Keep popup hit testing in the same main-window coordinate space used
+      // by ui.listActions. Platform-global coordinates can be stale for a
+      // hidden/offscreen root window, even though the popup is visible.
+      const QPoint popupOrigin =
+          root_->mapFromGlobal(popup->mapToGlobal(QPoint(0, 0)));
+      const QPoint popupLocal = windowPosition - popupOrigin;
       if (!target && popup->isVisible() && popup->rect().contains(popupLocal)) {
         target = popup->childAt(popupLocal);
         if (!target) {
@@ -531,7 +591,7 @@ private:
       }
     }
     if (!target) {
-      target = overlayAt(globalPosition);
+      target = overlayAt(windowPosition);
     }
     if (!target && root_->rect().contains(windowPosition)) {
       target = root_->childAt(windowPosition);
@@ -558,7 +618,7 @@ private:
 
   // Dialogs are separate top-level windows that can sit on top of the main
   // window, so they have to win the hit test before its children.
-  QWidget* overlayAt(const QPoint& globalPosition) const {
+  QWidget* overlayAt(const QPoint& windowPosition) const {
     const auto tops = QApplication::topLevelWidgets();
     for (qsizetype index = tops.size() - 1; index >= 0; --index) {
       QWidget* top = tops.at(index);
@@ -573,7 +633,11 @@ private:
           type == Qt::Desktop) {
         continue;
       }
-      const QPoint local = top->mapFromGlobal(globalPosition);
+      // Match listActions' main-window coordinate conversion for popups and
+      // other independent top-level widgets.
+      const QPoint topOrigin =
+          root_->mapFromGlobal(top->mapToGlobal(QPoint(0, 0)));
+      const QPoint local = windowPosition - topOrigin;
       if (!top->rect().contains(local)) {
         continue;
       }
@@ -589,12 +653,14 @@ private:
     }
     if (hovered_) {
       QEvent leaveEvent(QEvent::Leave);
+      ScopedEventDispatch dispatch(this, &leaveEvent);
       QApplication::sendEvent(hovered_, &leaveEvent);
     }
     if (receiver && root_) {
-      const QPoint local = receiver->mapFrom(root_.data(), windowPosition);
+      const QPoint local = localPosition(receiver, windowPosition);
       QEnterEvent enterEvent(QPointF(local), QPointF(windowPosition),
                              QPointF(receiver->mapToGlobal(local)));
+      ScopedEventDispatch dispatch(this, &enterEvent);
       QApplication::sendEvent(receiver, &enterEvent);
     }
     hovered_ = receiver;
@@ -606,11 +672,34 @@ private:
     if (!receiver || !root_) {
       return;
     }
-    const QPoint local = receiver->mapFrom(root_.data(), windowPosition);
+    const QPoint local = localPosition(receiver, windowPosition);
     QMouseEvent event(type, QPointF(local),
                       QPointF(receiver->mapToGlobal(local)), button, buttons,
                       modifiers);
+    ScopedEventDispatch dispatch(this, &event);
     QApplication::sendEvent(receiver, &event);
+  }
+
+  QPoint localPosition(QWidget* receiver, const QPoint& windowPosition) const {
+    if (!receiver || !root_) {
+      return {};
+    }
+    QWidget* top = receiver->window();
+    QPoint topOrigin;
+    if (top == root_.data()) {
+      topOrigin = QPoint(0, 0);
+    } else if (qobject_cast<QMenu*>(top)) {
+      // QAction rectangles are reported in root coordinates through this
+      // same global-to-root conversion in listMenuActions().
+      topOrigin = root_->mapFromGlobal(top->mapToGlobal(QPoint(0, 0)));
+    } else {
+      // Dialog children are reported with QWidget::mapTo(root) in
+      // ui.listWidgets and must use the matching inverse here.
+      topOrigin = top->mapTo(root_, QPoint(0, 0));
+    }
+    const QPoint receiverOrigin =
+        receiver == top ? QPoint(0, 0) : receiver->mapTo(top, QPoint(0, 0));
+    return windowPosition - topOrigin - receiverOrigin;
   }
 
   void updateCursorLabel(const QPoint& windowPosition) {
@@ -628,11 +717,11 @@ private:
   QPointer<QWidget> pressedWidget_;
   QLabel* cursor_ = nullptr;
   bool showCursor_ = true;
+  QEvent* injectedEvent_ = nullptr;
   QPoint windowPosition_;
   Qt::MouseButtons pressedButtons_ = Qt::NoButton;
   QPointer<QObject> lastReceiver_;
   QPointer<QObject> lastButtonReceiver_;
-  int injectionDepth_ = 0;
   int deliveredEvents_ = 0;
 };
 
@@ -660,7 +749,7 @@ public:
       }
     }
     ArtifactVirtualInput* input = ArtifactVirtualInput::active();
-    if (!input || !event || !input->isInjecting()) {
+    if (!input || !event || !input->isInjectedEvent(event)) {
       return QApplication::notify(receiver, event);
     }
     auto* widget = qobject_cast<QWidget*>(receiver);
@@ -737,10 +826,18 @@ protected:
     if (dispatchDepth_ > 8) {
       return;
     }
-    // Queued input runs before this tick's socket reads. Its response was
-    // already flushed on a previous tick, so a widget that blocks here cannot
-    // stall the caller.
-    runPendingInputs();
+    // Run injected input after this timer event returns. A click can enter a
+    // nested event loop (for example QDialog::exec); keeping the repeating
+    // timerEvent on the stack would prevent this poller from servicing MCP
+    // requests while that loop is active.
+    if (!pendingInputs_.isEmpty() && !inputDispatchScheduled_) {
+      inputDispatchScheduled_ = true;
+      QTimer::singleShot(0, this, [this]() {
+        inputDispatchScheduled_ = false;
+        runPendingInputs();
+      });
+      return;
+    }
     if (!client_ && server_.hasPendingConnections()) {
       client_ = server_.nextPendingConnection();
       if (client_) {
@@ -940,6 +1037,15 @@ private:
                {QStringLiteral("type"), QStringLiteral("string")},
                {QStringLiteral("description"), QStringLiteral(
                     "optional menu objectName or title substring")}}}};
+      const QJsonObject invokeActionSchema{
+          {QStringLiteral("menu"), QJsonObject{
+               {QStringLiteral("type"), QStringLiteral("string")},
+               {QStringLiteral("description"), QStringLiteral(
+                    "visible menu objectName or title")}}},
+          {QStringLiteral("path"), QJsonObject{
+               {QStringLiteral("type"), QStringLiteral("string")},
+               {QStringLiteral("description"), QStringLiteral(
+                    "exact action path, with submenu levels separated by >")}}}};
       const QJsonObject targetOnlySchema{
           {QStringLiteral("target"), targetSchema}};
       return makeResponse(id, QJsonObject{{QStringLiteral("tools"), QJsonArray{
@@ -949,6 +1055,10 @@ private:
           tool(QStringLiteral("ui.listActions"),
                QStringLiteral("List items of open menus with window coordinates"),
                actionListSchema),
+          tool(QStringLiteral("ui.invokeMenuAction"),
+               QStringLiteral("Activate an existing visible QAction by its exact submenu path"),
+               invokeActionSchema,
+               QJsonArray{QStringLiteral("menu"), QStringLiteral("path")}),
           tool(QStringLiteral("ui.state"),
                QStringLiteral("Report the virtual pointer, buttons, focus and open dialogs"),
                {}),
@@ -1074,6 +1184,8 @@ private:
       result.insert(QStringLiteral("truncated"), ordered.size() > widgets.size());
     } else if (name == QStringLiteral("ui.listActions")) {
       result = listMenuActions(arguments);
+    } else if (name == QStringLiteral("ui.invokeMenuAction")) {
+      result = invokeMenuAction(arguments, &error);
     } else if (name == QStringLiteral("ui.state")) {
       result = stateSnapshot();
     } else if (name == QStringLiteral("ui.focus")) {
@@ -1554,8 +1666,166 @@ private:
     return result;
   }
 
-  // Resolves a widget by objectName. Menus and dialogs are top-level windows,
-  // so they are searched alongside the main window's child hierarchy.
+  QJsonObject invokeMenuAction(const QJsonObject& arguments,
+                               QString* error) const {
+    const QString requestedMenu =
+        arguments.value(QStringLiteral("menu")).toString().trimmed();
+    QStringList path;
+    for (const QString& part :
+         arguments.value(QStringLiteral("path")).toString().split(
+             QLatin1Char('>'), Qt::SkipEmptyParts)) {
+      const QString label = part.trimmed();
+      if (!label.isEmpty()) {
+        path.push_back(label);
+      }
+    }
+    if (requestedMenu.isEmpty() || path.isEmpty()) {
+      *error = QStringLiteral("menu and a non-empty action path are required");
+      return {};
+    }
+
+    QSet<QMenu*> menus;
+    for (QWidget* top : QApplication::topLevelWidgets()) {
+      if (auto* menu = qobject_cast<QMenu*>(top); menu && menu->isVisible()) {
+        menus.insert(menu);
+      }
+    }
+    if (root_) {
+      for (QMenu* menu : root_->findChildren<QMenu*>()) {
+        if (menu->isVisible()) {
+          menus.insert(menu);
+        }
+      }
+    }
+    QMenu* current = nullptr;
+    QAction* selected = nullptr;
+    QMenu* activePopup =
+        qobject_cast<QMenu*>(QApplication::activePopupWidget());
+    QMenu* fallbackMenu = nullptr;
+    QMenu* fallbackLeafMenu = nullptr;
+    QAction* fallbackAction = nullptr;
+    QMenu* leafMenu = nullptr;
+    int matchingMenus = 0;
+    int matchingPaths = 0;
+    for (QMenu* menu : menus) {
+      const QString name = menu->objectName().isEmpty()
+                               ? menu->title()
+                               : menu->objectName();
+      if (name != requestedMenu) {
+        continue;
+      }
+      ++matchingMenus;
+      QMenu* candidateMenu = menu;
+      QAction* candidateAction = nullptr;
+      bool pathMatches = true;
+      for (qsizetype index = 0; index < path.size(); ++index) {
+        candidateAction = nullptr;
+        for (QAction* action : candidateMenu->actions()) {
+          if (action && action->text().trimmed() == path[index]) {
+            if (candidateAction) {
+              pathMatches = false;
+              break;
+            }
+            candidateAction = action;
+          }
+        }
+        if (!pathMatches || !candidateAction) {
+          pathMatches = false;
+          break;
+        }
+        if (index + 1 < path.size()) {
+          candidateMenu = candidateAction->menu();
+          if (!candidateMenu) {
+            pathMatches = false;
+            break;
+          }
+        }
+      }
+      if (!pathMatches || !candidateAction) {
+        continue;
+      }
+      ++matchingPaths;
+      fallbackMenu = menu;
+      fallbackLeafMenu = candidateMenu;
+      fallbackAction = candidateAction;
+      if (menu == activePopup) {
+        current = menu;
+        leafMenu = candidateMenu;
+        selected = candidateAction;
+        break;
+      }
+    }
+    if (!current && matchingPaths > 0) {
+      current = fallbackMenu;
+      leafMenu = fallbackLeafMenu;
+      selected = fallbackAction;
+    }
+    if (!current) {
+      if (matchingPaths == 0 && matchingMenus > 1) {
+        *error = QStringLiteral("Visible menu name is ambiguous and none is active: %1")
+                     .arg(requestedMenu);
+        return {};
+      }
+      *error = matchingMenus == 0
+                   ? QStringLiteral("Visible menu not found: %1").arg(requestedMenu)
+                   : QStringLiteral("Menu action path not found: %1")
+                         .arg(path.join(QStringLiteral(" > ")));
+      return {};
+    }
+    if (!selected->isEnabled()) {
+      *error = QStringLiteral("Menu action is disabled: %1")
+                   .arg(path.back());
+      return {};
+    }
+
+    // Activate the item through QMenu's normal key handler so QMenu::exec()
+    // returns the selected QAction to its existing caller. Triggering the
+    // QAction directly skips that established dispatch path in some menus.
+    if (!leafMenu) {
+      *error = QStringLiteral("Menu action has no owning menu");
+      return {};
+    }
+    QMenu* navigationMenu = current;
+    for (qsizetype index = 0; index + 1 < path.size(); ++index) {
+      QAction* parentAction = nullptr;
+      for (QAction* action : navigationMenu->actions()) {
+        if (action && action->text().trimmed() == path[index]) {
+          parentAction = action;
+          break;
+        }
+      }
+      if (!parentAction || !parentAction->menu()) {
+        *error = QStringLiteral("Menu action path changed while opening: %1")
+                     .arg(path[index]);
+        return {};
+      }
+      navigationMenu->setActiveAction(parentAction);
+      QKeyEvent openSubmenu(QEvent::KeyPress, Qt::Key_Right, Qt::NoModifier);
+      QApplication::sendEvent(navigationMenu, &openSubmenu);
+      QKeyEvent releaseSubmenu(QEvent::KeyRelease, Qt::Key_Right,
+                               Qt::NoModifier);
+      QApplication::sendEvent(navigationMenu, &releaseSubmenu);
+      navigationMenu = parentAction->menu();
+    }
+    if (navigationMenu != leafMenu) {
+      *error = QStringLiteral("Menu hierarchy changed while opening action");
+      return {};
+    }
+    leafMenu->setActiveAction(selected);
+    QKeyEvent pressEvent(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+    QApplication::sendEvent(leafMenu, &pressEvent);
+    QKeyEvent releaseEvent(QEvent::KeyRelease, Qt::Key_Return, Qt::NoModifier);
+    QApplication::sendEvent(leafMenu, &releaseEvent);
+    return QJsonObject{
+        {QStringLiteral("activated"), true},
+        {QStringLiteral("menu"), requestedMenu},
+        {QStringLiteral("path"), path.join(QStringLiteral(" > "))},
+        {QStringLiteral("actionText"), selected->text()}};
+  }
+
+  // Resolves by objectName or an exact visible label/class name. Menus and
+  // dialogs are top-level windows, so they are searched alongside the main
+  // window's child hierarchy.
   QWidget* resolveTarget(const QJsonObject& arguments, QString* error) const {
     if (!root_) {
       *error = QStringLiteral("UI window is unavailable");
@@ -10981,10 +11251,312 @@ int Artifact::runApplication(int argc, char *argv[]) {
               "ARTIFACT_UI_TEST_COMPONENTS_NO_WINDOW")) {
         QCoreApplication::quit();
       } else {
-        QTimer::singleShot(250, mw, [mw]() {
-          if (mw) captureStartupScreenshot(mw);
-        });
+        virtualInput.hideCursor();
       }
+    });
+  }
+
+  if (uiTestExecutable &&
+      qEnvironmentVariableIsSet("ARTIFACT_UI_TEST_COLOR_WHEEL_EDITOR")) {
+    QTimer::singleShot(0, mw, [mw, projectService]() {
+      const QString resultPath = qEnvironmentVariable(
+          "ARTIFACT_UI_TEST_COLOR_WHEEL_RESULT_PATH");
+      const auto writeResult = [&resultPath](const QByteArray& report) {
+        QFile resultFile(resultPath);
+        if (!resultPath.isEmpty() &&
+            resultFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+          resultFile.write(report);
+          resultFile.close();
+        }
+      };
+      const auto failFixture = [&writeResult](const QString& reason) {
+        const QByteArray report =
+            QStringLiteral("fail reason=%1\n").arg(reason).toUtf8();
+        writeResult(report);
+        qWarning() << "[ColorWheelUiFixture]" << reason;
+      };
+      if (!mw || !projectService) {
+        failFixture(QStringLiteral("application services unavailable"));
+        return;
+      }
+
+      auto& projectManager = ArtifactProjectManager::getInstance();
+      if (projectManager.isProjectCreated()) {
+        failFixture(QStringLiteral("refusing to replace an existing project"));
+        return;
+      }
+      projectManager.createProject(
+          QStringLiteral("ColorWheelUiFixture_%1")
+              .arg(QCoreApplication::applicationPid()), false);
+      if (!projectManager.isProjectCreated()) {
+        failFixture(QStringLiteral("temporary project creation failed"));
+        return;
+      }
+
+      auto compositionParams = ArtifactCompositionInitParams::hdPreset();
+      compositionParams.setDurationSeconds(4.0);
+      projectService->createComposition(compositionParams);
+      const auto composition = projectService->currentComposition().lock();
+      if (!composition) {
+        failFixture(QStringLiteral("composition creation failed"));
+        return;
+      }
+      ArtifactSolidLayerInitParams layerParams(
+          QStringLiteral("Color Wheel UI Fixture"));
+      layerParams.setWidth(640);
+      layerParams.setHeight(360);
+      layerParams.setColor(ArtifactCore::FloatColor(0.48f, 0.42f, 0.34f, 1.0f));
+      projectService->addLayerToCurrentComposition(layerParams);
+      const auto layer = composition->frontMostLayer();
+      if (!layer) {
+        failFixture(QStringLiteral("fixture layer setup failed"));
+        return;
+      }
+      projectService->selectLayer(layer->id());
+      if (auto* app = ArtifactApplicationManager::instance()) {
+        if (auto* selectionManager = app->layerSelectionManager()) {
+          selectionManager->selectLayer(layer);
+        }
+      }
+      const auto effectResult = ArtifactEffectService::instance()
+          ? ArtifactEffectService::instance()->addEffectToLayer(
+                layer->id(), EffectID(QStringLiteral(
+                    "effect.colorcorrection.colorwheels")))
+          : EffectServiceResult::fail(
+                QStringLiteral("effect service unavailable"));
+      if (!effectResult.success) {
+        failFixture(QStringLiteral("Color Wheels effect insertion failed: %1")
+                        .arg(effectResult.message));
+        return;
+      }
+      const auto effect = layer->getEffect(
+          ArtifactCore::UniString::fromQString(effectResult.effectId));
+      if (!effect) {
+        failFixture(QStringLiteral("Color Wheels effect missing after insertion"));
+        return;
+      }
+      mw->setDockVisible(QStringLiteral("Effects"), true);
+      mw->activateDock(QStringLiteral("Effects"));
+      mw->resize(1280, 800);
+      mw->showNormal();
+      auto* inspectorTabs = mw->findChild<QTabWidget*>(
+          QStringLiteral("inspectorTabWidget"));
+      auto* propertySurface = mw->findChild<QWidget*>(
+          QStringLiteral("inspectorEffectPropertySurface"));
+      auto* detailPanel = mw->findChild<QWidget*>(
+          QStringLiteral("inspectorEffectsDetailPanel"));
+      auto* propertyWidget = propertySurface
+          ? propertySurface->findChild<ArtifactPropertyWidget*>() : nullptr;
+      if (!inspectorTabs || !propertySurface || !detailPanel) {
+        failFixture(QStringLiteral(
+            "effect editor surfaces unavailable: tabs=%1 property=%2 detail=%3")
+                        .arg(inspectorTabs ? 1 : 0)
+                        .arg(propertySurface ? 1 : 0)
+                        .arg(detailPanel ? 1 : 0));
+        return;
+      }
+      const auto processUiUpdates = []() {
+        QElapsedTimer timer;
+        timer.start();
+        while (timer.elapsed() < 300) {
+          QCoreApplication::processEvents();
+          QThread::msleep(5);
+        }
+      };
+      inspectorTabs->setCurrentIndex(3);
+      detailPanel->setVisible(true);
+      propertySurface->setVisible(true);
+      if (auto* inspector = mw->findChild<ArtifactInspectorWidget*>()) {
+        inspector->clear();
+      }
+      processUiUpdates();
+      inspectorTabs->setCurrentIndex(3);
+      processUiUpdates();
+      QListWidget* effectRack = nullptr;
+      QListWidgetItem* effectItem = nullptr;
+      for (auto* list : mw->findChildren<QListWidget*>()) {
+        for (int row = 0; row < list->count(); ++row) {
+          auto* item = list->item(row);
+          if (item && item->data(Qt::UserRole).toString() ==
+                          effectResult.effectId) {
+            effectRack = list;
+            effectItem = item;
+            break;
+          }
+        }
+        if (effectItem) break;
+      }
+      if (!effectRack || !effectItem) {
+        failFixture(QStringLiteral("Color Wheels rack item unavailable"));
+        return;
+      }
+      effectRack->scrollToItem(effectItem);
+      effectRack->setCurrentItem(effectItem);
+      processUiUpdates();
+      propertyWidget = propertySurface->findChild<ArtifactPropertyWidget*>();
+      if (!propertyWidget) {
+        failFixture(QStringLiteral("effect selection did not create property editor"));
+        return;
+      }
+      QAbstractButton* wheelButton = nullptr;
+      for (auto* button : QApplication::allWidgets()) {
+        auto* abstractButton = qobject_cast<QAbstractButton*>(button);
+        if (abstractButton &&
+            abstractButton->accessibleName() == QStringLiteral("Lift Wheel")) {
+          wheelButton = abstractButton;
+          break;
+        }
+      }
+      if (!wheelButton) {
+        QStringList diagnostics;
+        const int propertyRows = propertyWidget
+            ? propertyWidget->findChildren<QWidget *>(
+                  QStringLiteral("propertyRow")).size()
+            : 0;
+        const int propertyGroups = propertyWidget
+            ? propertyWidget->findChildren<QGroupBox *>().size()
+            : 0;
+        QStringList effectProperties;
+        for (const auto &property : effect->getProperties()) {
+          effectProperties.append(
+              QStringLiteral("%1:%2")
+                  .arg(property.getName())
+                  .arg(static_cast<int>(property.getType())));
+        }
+        for (auto* button : QApplication::allWidgets()) {
+          if (auto* abstractButton = qobject_cast<QAbstractButton*>(button)) {
+            diagnostics.append(abstractButton->accessibleName());
+          }
+        }
+        failFixture(QStringLiteral("Lift Wheel editor button unavailable; widget=%1 rows=%2 groups=%3 properties=%4 buttons=%5")
+                        .arg(propertyWidget ? 1 : 0)
+                        .arg(propertyRows)
+                        .arg(propertyGroups)
+                        .arg(effectProperties.join(QLatin1Char('|')))
+                        .arg(QStringLiteral("receiver=%1 current=%2 names=%3")
+                                 .arg(QStringLiteral("programmatic rack selection"),
+                                      effectRack->currentItem()
+                                          ? effectRack->currentItem()->text()
+                                          : QStringLiteral("<none>"),
+                                      diagnostics.join(QLatin1Char('|')))));
+        return;
+      }
+
+      ArtifactVirtualInput wheelOpenInput(wheelButton, false);
+      const QPoint buttonPosition = wheelButton->rect().center();
+      bool dialogFlowPassed = false;
+      int dialogEvents = 0;
+      QString dialogFailure;
+      QTimer::singleShot(100, mw, [mw, &dialogFlowPassed, &dialogEvents,
+                                   &dialogFailure]() {
+        auto* dialog = mw->findChild<QDialog*>(
+            QStringLiteral("propertyGradingWheelDialog"));
+        auto* canvas = dialog ? dialog->findChild<QWidget*>(
+                                   QStringLiteral("propertyGradingWheelCanvas"))
+                             : nullptr;
+        if (!dialog || !canvas) {
+          dialogFailure = QStringLiteral("grading wheel dialog or canvas missing");
+          if (auto* modal = qobject_cast<QDialog*>(
+                  QApplication::activeModalWidget())) {
+            modal->reject();
+          }
+          return;
+        }
+
+        ArtifactVirtualInput wheelInput(dialog, false);
+        const QRect bounds = canvas->rect();
+        const QPoint center = bounds.center();
+        const QPoint target(center.x() + qRound(bounds.width() * 0.22),
+                            center.y() - qRound(bounds.height() * 0.14));
+        const QPoint fromInDialog = canvas->mapTo(dialog, center);
+        const QPoint toInDialog = canvas->mapTo(dialog, target);
+        QString wheelError;
+        const bool dragged = wheelInput.drag(
+            fromInDialog, toInDialog, 8, Qt::LeftButton, Qt::NoModifier,
+            &wheelError);
+        if (!dragged) {
+          dialogFailure = QStringLiteral("wheel drag failed: %1")
+                              .arg(wheelError);
+          dialog->reject();
+          return;
+        }
+        QAbstractButton* applyButton = nullptr;
+        for (auto* button : dialog->findChildren<QAbstractButton*>()) {
+          if (button->accessibleName() ==
+              QStringLiteral("Apply color balance edit")) {
+            applyButton = button;
+            break;
+          }
+        }
+        if (!applyButton) {
+          dialogFailure = QStringLiteral("Apply button unavailable");
+          dialog->reject();
+          return;
+        }
+
+        captureStartupScreenshot(mw);
+        const QPoint applyPosition = applyButton->mapTo(
+            dialog, applyButton->rect().center());
+        const bool applied = wheelInput.press(
+                                 applyPosition, Qt::LeftButton,
+                                 Qt::NoModifier, &wheelError) &&
+                             wheelInput.release(
+                                 applyPosition, Qt::LeftButton,
+                                 Qt::NoModifier, &wheelError);
+        dialogEvents = wheelInput.deliveredEvents();
+        if (!applied) {
+          dialogFailure = QStringLiteral("Apply button input failed: %1")
+                              .arg(wheelError);
+          dialog->reject();
+          return;
+        }
+        wheelInput.hideCursor();
+        dialogFlowPassed = true;
+      });
+
+      QString inputError;
+      const bool opened = wheelOpenInput.press(
+                              buttonPosition, Qt::LeftButton, Qt::NoModifier,
+                              &inputError) &&
+                          wheelOpenInput.release(
+                              buttonPosition, Qt::LeftButton, Qt::NoModifier,
+                              &inputError);
+      if (!opened) {
+        failFixture(QStringLiteral("wheel button input failed: %1")
+                        .arg(inputError));
+        return;
+      }
+      wheelOpenInput.hideCursor();
+      const auto updatedEffect = layer->getEffect(
+          ArtifactCore::UniString::fromQString(effectResult.effectId));
+      QPointF appliedWheel;
+      bool foundWheelValue = false;
+      if (updatedEffect) {
+        for (const auto& property : updatedEffect->getProperties()) {
+          if (property.getName() == QStringLiteral("Lift Wheel") &&
+              property.getValue().canConvert<QPointF>()) {
+            appliedWheel = property.getValue().toPointF();
+            foundWheelValue = true;
+            break;
+          }
+        }
+      }
+      const bool nonNeutral = std::hypot(appliedWheel.x(), appliedWheel.y()) > 0.05;
+      const bool passed = dialogFlowPassed && dialogFailure.isEmpty() &&
+                          foundWheelValue && nonNeutral && dialogEvents >= 3;
+      const QByteArray report =
+          QStringLiteral("%1 dialog=1 drag=1 apply=1 value=%2,%3 events=%4\n")
+              .arg(passed ? QStringLiteral("pass") : QStringLiteral("fail"))
+              .arg(appliedWheel.x(), 0, 'f', 3)
+              .arg(appliedWheel.y(), 0, 'f', 3)
+              .arg(dialogEvents)
+              .toUtf8();
+      writeResult(passed ? report
+                         : QStringLiteral("fail reason=%1 %2")
+                               .arg(dialogFailure,
+                                    QString::fromUtf8(report))
+                               .toUtf8());
+      qInfo().noquote() << "[ColorWheelUiFixture] result:" << report.trimmed();
     });
   }
 

@@ -33,6 +33,7 @@ module;
 #include <QIcon>
 #include <QtSVG/QSvgRenderer>
 #include <QComboBox>
+#include <QCheckBox>
 #include <QAbstractItemView>
 #include <QDesktopServices>
 #include <QMessageBox>
@@ -44,6 +45,9 @@ module;
 #include <QWheelEvent>
 #include <QInputDialog>
 #include <QDialog>
+#include <QFormLayout>
+#include <QSpinBox>
+#include <QStandardItemModel>
 #include <QLabel>
 #include <QFrame>
 #include <QVBoxLayout>
@@ -6129,6 +6133,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
 
     auto comp = safeCompositionLookup(impl_->compositionId);
     QMenu menu(this);
+    menu.setObjectName(QStringLiteral("timelineLayerContextMenu"));
     if (auto* lightLayer = dynamic_cast<ArtifactLightLayer*>(layer.get())) {
       QMenu* lightLinkMenu = menu.addMenu(tt("layer_panel.menu_light_linking", "Light Linking"));
       const auto selectedIds = selectedLayerIdsSnapshot();
@@ -6882,7 +6887,11 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
             const QString easing = QInputDialog::getItem(
                 this, QStringLiteral("イージング"), QStringLiteral("カーブ"), easings,
                 qMax(0, static_cast<int>(easings.indexOf(existing.easing))), false, &accepted);
-            if (accepted) comp->setTimelineTransitionEasing(existing.id, easing);
+            if (accepted) editTimelineTransition(comp, existing.id,
+                QStringLiteral("Change Timeline Transition Easing"),
+                [&easing](CompositionTimelineTransition& value) {
+                  value.easing = easing;
+                });
           });
           addStackPositionEditor(itemMenu, existing);
           itemMenu->addAction(tt("layer_panel.menu_trans_range", "Edit Range..."), [this, comp, existing]() {
@@ -6894,19 +6903,29 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
             const int end = QInputDialog::getInt(
                 this, QStringLiteral("トランジション範囲"), QStringLiteral("終了フレーム"),
                  static_cast<int>(existing.range.end()), start + 1, 1000000, 1, &accepted);
-            if (accepted) comp->setTimelineTransitionRange(
-                existing.id, FrameRange(FramePosition(start), FramePosition(end)));
+            if (accepted) editTimelineTransition(comp, existing.id,
+                QStringLiteral("Change Timeline Transition Range"),
+                [start, end](CompositionTimelineTransition& value) {
+                  value.range = FrameRange(FramePosition(start), FramePosition(end));
+                });
           });
           itemMenu->addAction(tt("layer_panel.menu_delete", "Delete"), [comp, id = existing.id]() {
-            comp->removeTimelineTransition(id);
+            auto after = comp->timelineTransitions();
+            after.erase(std::remove_if(after.begin(), after.end(),
+                [&id](const CompositionTimelineTransition& value) {
+                  return value.id == id;
+                }), after.end());
+            pushTimelineTransitionSnapshot(
+                comp, after, QStringLiteral("Delete Timeline Transition"));
           });
           itemMenu->addAction(tt("layer_panel.menu_duplicate", "Duplicate"), [comp, id = existing.id]() {
-            comp->duplicateTimelineTransition(id);
+            duplicateTimelineTransitionWithUndo(comp, id);
           });
         }
         manageMenu->addSeparator();
         manageMenu->addAction(tt("layer_panel.menu_delete_all", "Delete All"), [comp]() {
-          comp->clearTimelineTransitions();
+          pushTimelineTransitionSnapshot(
+              comp, {}, QStringLiteral("Clear Timeline Transitions"));
         });
       }
     }
@@ -7500,6 +7519,33 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     if (chosenAction) {
       const QVariantMap data = chosenAction->data().toMap();
       const QString kind = data.value(QStringLiteral("kind")).toString();
+      if (kind == QStringLiteral("transition_add")) {
+        if (!comp) return;
+        CompositionTimelineTransition transition;
+        transition.kind = data.value(QStringLiteral("transitionKind")).toString();
+        transition.leftClipName = data.value(QStringLiteral("leftName")).toString();
+        transition.rightClipName = data.value(QStringLiteral("rightName")).toString();
+        transition.leftLayerId = LayerID(data.value(QStringLiteral("leftLayerId")).toString());
+        transition.rightLayerId = LayerID(data.value(QStringLiteral("rightLayerId")).toString());
+        transition.range = FrameRange(
+            timelineFramePosition(
+                data.value(QStringLiteral("startFrame")).toLongLong()),
+            timelineFramePosition(
+                data.value(QStringLiteral("endFrame")).toLongLong()));
+        auto after = comp->timelineTransitions();
+        after.append(transition);
+        pushTimelineTransitionSnapshot(
+            comp, after, QStringLiteral("Add Timeline Transition"));
+        return;
+      }
+      if (kind == QStringLiteral("transition_stack_edit")) {
+        if (!comp) return;
+        const QString transitionId =
+            data.value(QStringLiteral("transitionId")).toString();
+        const auto existing = comp->timelineTransitionById(transitionId);
+        if (existing) showTimelineTransitionEditor(this, comp, *existing);
+        return;
+      }
       if (kind == QStringLiteral("transition_sources")) {
         if (!comp) return;
         const QString transitionId =
@@ -7549,9 +7595,22 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         if (!accepted) return;
         const int rightIndex = choices.indexOf(selectedRight);
         if (rightIndex < 0 || leftIndex == rightIndex) return;
-        comp->setTimelineTransitionSources(
-            transitionId, choiceLayerIds.at(leftIndex),
-            choiceLayerIds.at(rightIndex));
+        const LayerID leftLayerId = choiceLayerIds.at(leftIndex);
+        const LayerID rightLayerId = choiceLayerIds.at(rightIndex);
+        const auto leftLayer = comp->layerById(leftLayerId);
+        const auto rightLayer = comp->layerById(rightLayerId);
+        if (!leftLayer || !rightLayer) return;
+        const QString leftLayerName = leftLayer->layerName();
+        const QString rightLayerName = rightLayer->layerName();
+        editTimelineTransition(comp, transitionId,
+            QStringLiteral("Change Timeline Transition Sources"),
+            [leftLayerId, rightLayerId, leftLayerName, rightLayerName](
+                CompositionTimelineTransition& value) {
+              value.leftLayerId = leftLayerId;
+              value.rightLayerId = rightLayerId;
+              value.leftClipName = leftLayerName;
+              value.rightClipName = rightLayerName;
+            });
         return;
       }
       if (kind == QStringLiteral("transition_stack_position")) {
@@ -7571,7 +7630,11 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
             std::clamp(existing->stackPosition, -1, maximumPosition),
             -1, maximumPosition, 1, &accepted);
         if (accepted) {
-          comp->setTimelineTransitionStackPosition(transitionId, position);
+          editTimelineTransition(comp, transitionId,
+              QStringLiteral("Change Timeline Transition Stack Position"),
+              [position](CompositionTimelineTransition& value) {
+                value.stackPosition = position;
+              });
         }
         return;
       }
