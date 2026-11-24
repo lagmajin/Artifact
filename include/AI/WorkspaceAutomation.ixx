@@ -8090,17 +8090,24 @@ private:
     }
 
     // Get list of supported export formats.
-    // Returns: ["mp4", "mov", "avi", "png", "jpg", "exr", "tiff"]
+    // Render Output ダイアログと同じ連番形式を含む。
     static QVariant getSupportedExportFormats()
     {
         return QStringList{
             QStringLiteral("mp4"),
             QStringLiteral("mov"),
             QStringLiteral("avi"),
+            QStringLiteral("webm"),
+            QStringLiteral("mkv"),
             QStringLiteral("png"),
             QStringLiteral("jpg"),
+            QStringLiteral("tiff"),
+            QStringLiteral("bmp"),
             QStringLiteral("exr"),
-            QStringLiteral("tiff")
+            QStringLiteral("dpx"),
+            QStringLiteral("hdr"),
+            QStringLiteral("tga"),
+            QStringLiteral("webp")
         };
     }
 
@@ -8117,6 +8124,10 @@ private:
             return QStringLiteral("image");
         } else if (fmt == QStringLiteral("exr")) {
             return QStringLiteral("exr");
+        } else if (fmt == QStringLiteral("bmp") || fmt == QStringLiteral("tif") ||
+                   fmt == QStringLiteral("dpx") || fmt == QStringLiteral("hdr") ||
+                   fmt == QStringLiteral("tga") || fmt == QStringLiteral("webp")) {
+            return fmt;
         }
         return QStringLiteral("h264");  // Default fallback
     }

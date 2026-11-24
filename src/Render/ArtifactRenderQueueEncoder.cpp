@@ -321,20 +321,31 @@ namespace Artifact {
             return suffix;
         }
         const QString fmt = job.outputFormat.trimmed().toLower();
-        if (fmt.contains(QStringLiteral("sequence")) || fmt == QStringLiteral("png")) {
-            return QStringLiteral("png");
-        }
+        // 固有形式を先に見る。"XXX Sequence" 一律で png に落とすと
+        // EXR/DPX などの連番ジョブが黙って PNG になるため。
         if (fmt.contains(QStringLiteral("exr"))) {
             return QStringLiteral("exr");
         }
         if (fmt.contains(QStringLiteral("tiff")) || fmt.contains(QStringLiteral("tif"))) {
             return QStringLiteral("tiff");
         }
+        if (fmt.contains(QStringLiteral("dpx"))) {
+            return QStringLiteral("dpx");
+        }
+        if (fmt.contains(QStringLiteral("hdr"))) {
+            return QStringLiteral("hdr");
+        }
+        if (fmt.contains(QStringLiteral("tga"))) {
+            return QStringLiteral("tga");
+        }
         if (fmt.contains(QStringLiteral("jpeg")) || fmt.contains(QStringLiteral("jpg"))) {
             return QStringLiteral("jpeg");
         }
         if (fmt.contains(QStringLiteral("bmp"))) {
             return QStringLiteral("bmp");
+        }
+        if (fmt.contains(QStringLiteral("sequence")) || fmt == QStringLiteral("png")) {
+            return QStringLiteral("png");
         }
         if (fmt.contains(QStringLiteral("webm"))) {
             return QStringLiteral("webm");
@@ -411,7 +422,10 @@ namespace Artifact {
             format == QStringLiteral("tif") ||
             format == QStringLiteral("jpeg") ||
             format == QStringLiteral("jpg") ||
-            format == QStringLiteral("bmp")) {
+            format == QStringLiteral("bmp") ||
+            format == QStringLiteral("dpx") ||
+            format == QStringLiteral("hdr") ||
+            format == QStringLiteral("tga")) {
             return baseDir.filePath(QStringLiteral("%1_sequence").arg(stem));
         }
 
@@ -430,6 +444,9 @@ namespace Artifact {
                value == QStringLiteral("jpeg") ||
                value == QStringLiteral("jpg") ||
                value == QStringLiteral("bmp") ||
+               value == QStringLiteral("dpx") ||
+               value == QStringLiteral("hdr") ||
+               value == QStringLiteral("tga") ||
                value == QStringLiteral("svg");
     }
 
@@ -441,7 +458,11 @@ namespace Artifact {
         for (const auto& s : {cdc, fmt}) {
             if (s.contains("exr"))  return QStringLiteral("exr");
             if (s.contains("tiff") || s.contains("tif")) return QStringLiteral("tiff");
+            if (s.contains("dpx"))  return QStringLiteral("dpx");
+            if (s.contains("hdr"))  return QStringLiteral("hdr");
+            if (s.contains("tga"))  return QStringLiteral("tga");
             if (s.contains("jpeg") || s.contains("jpg")) return QStringLiteral("jpg");
+            if (s.contains("webp")) return QStringLiteral("webp");
             if (s.contains("bmp"))  return QStringLiteral("bmp");
             if (s.contains("png"))  return QStringLiteral("png");
             if (s.contains("svg"))  return QStringLiteral("svg");
@@ -1292,6 +1313,10 @@ namespace Artifact {
             }
             return true;
         }
+
+        // FFmpegEncoder is plain CPU state with no QObject affinity, so the
+        // XPU bounded lookahead may call addFrame() from its encode thread.
+        bool encodeOnWorkerThread() const override { return true; }
 
         bool close(QString* errorMessage) override
         {

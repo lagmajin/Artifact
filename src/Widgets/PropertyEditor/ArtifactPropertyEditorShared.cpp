@@ -54,6 +54,7 @@ module;
 
 module Artifact.Widgets.PropertyEditor;
 
+import File.TypeDetector;
 import Utils.Path;
 import Color.Float;
 import Font.FreeFont;
@@ -425,22 +426,30 @@ QString fileDialogFilterForProperty(const QString &propertyName) {
   if (propertyName.startsWith(QStringLiteral("material.slots.")) &&
       propertyName.endsWith(QStringLiteral("Texture"),
                             Qt::CaseInsensitive)) {
-    return QStringLiteral("Image Files (*.png *.jpg *.jpeg *.bmp *.gif *.tga *.tif *.tiff *.dpx "
-                          "*.webp *.hdr *.exr *.ico *.dds *.ktx *.psd *.psb);;All Files (*.*)");
+    return QStringLiteral("Image Files (%1);;All Files (*.*)").arg(
+        ArtifactCore::FileTypeDetector::suffixPatterns(
+            ArtifactCore::FileCapability::StillImage));
   }
   if (propertyName.contains(QStringLiteral("model"), Qt::CaseInsensitive) ||
       propertyName.contains(QStringLiteral("3d"), Qt::CaseInsensitive)) {
-    return QStringLiteral(
-        "3D Models (*.obj *.fbx *.gltf *.glb *.ply *.las *.stl *.dae *.abc *.usd *.usda *.usdc *.usdz *.pmd);;All Files (*.*)");
+    return QStringLiteral("3D Models (%1);;All Files (*.*)").arg(
+        ArtifactCore::FileTypeDetector::suffixPatterns(
+            ArtifactCore::FileCapability::Model3D));
   }
   if (propertyName.contains(QStringLiteral("video"), Qt::CaseInsensitive) ||
       propertyName.contains(QStringLiteral("media"), Qt::CaseInsensitive)) {
-    return QStringLiteral("Media Files (*.mp4 *.mov *.avi *.mkv *.webm *.mp3 "
-                          "*.wav *.flac);;All Files (*.*)");
+    const QString patterns =
+        ArtifactCore::FileTypeDetector::suffixPatterns(
+            ArtifactCore::FileCapability::VideoImport) +
+        QLatin1Char(' ') +
+        ArtifactCore::FileTypeDetector::suffixPatterns(
+            ArtifactCore::FileCapability::AudioImport);
+    return QStringLiteral("Media Files (%1);;All Files (*.*)").arg(patterns);
   }
   if (propertyName.contains(QStringLiteral("audio"), Qt::CaseInsensitive)) {
-    return QStringLiteral(
-        "Audio Files (*.wav *.mp3 *.flac *.ogg *.m4a);;All Files (*.*)");
+    return QStringLiteral("Audio Files (%1);;All Files (*.*)").arg(
+        ArtifactCore::FileTypeDetector::suffixPatterns(
+            ArtifactCore::FileCapability::AudioImport));
   }
   if (propertyName.contains(QStringLiteral("image"), Qt::CaseInsensitive) ||
       propertyName.compare(QStringLiteral("cleanPlatePath"),

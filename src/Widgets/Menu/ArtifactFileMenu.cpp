@@ -28,6 +28,7 @@ module;
 
 module Artifact.Menu.File;
 
+import File.TypeDetector;
 import Artifact.Project.Manager;
 import Event.Bus;
 import Artifact.Event.Types;
@@ -75,9 +76,10 @@ QString menuText(const QString& key, const QString& fallback)
 QString pathWithExportSuffix(const QString& path, const QString& format)
 {
     const QString suffix = format == QStringLiteral("mp4") ? QStringLiteral("mp4")
-        : format == QStringLiteral("jpg") ? QStringLiteral("jpg")
-        : format == QStringLiteral("exr") ? QStringLiteral("exr")
-        : QStringLiteral("png");
+        : ArtifactCore::FileTypeDetector::supports(
+              format, ArtifactCore::FileCapability::ImageExport)
+            ? format
+            : QStringLiteral("png");
     const QFileInfo info(path);
     if (info.suffix().compare(suffix, Qt::CaseInsensitive) == 0) {
         return path;
@@ -921,23 +923,31 @@ void ArtifactFileMenu::Impl::handleExportCurrentFrame()
         return;
     }
 
-const QString filePath = QFileDialog::getSaveFileName(menu_, menuText(QStringLiteral("menu.file.export_current_frame_title"), QStringLiteral("現在のフレームを書き出し")),
-        QString(), "PNG Image (*.png);;JPEG Image (*.jpg *.jpeg);;OpenEXR Image (*.exr);;All Files (*.*)");
+const QString imagePatterns = ArtifactCore::FileTypeDetector::suffixPatterns(
+        ArtifactCore::FileCapability::ImageExport);
+    const QString filePath = QFileDialog::getSaveFileName(menu_, menuText(QStringLiteral("menu.file.export_current_frame_title"), QStringLiteral("現在のフレームを書き出し")),
+        QString(), QStringLiteral("Images (%1);;All Files (*.*)").arg(imagePatterns));
     if (filePath.isEmpty()) return;
 
     // 現在フレームの書き出しはスクショ経路（GPU readback + ImageExporter）に統一する。
     // QPainter による CPU 再合成は GPU レンダリング・エフェクト・カラーグレードを
     // 全てバイパスし 8bit に落としていたため使用しない。
     const QString suffix = QFileInfo(filePath).suffix().toLower();
-    QString format = QStringLiteral("png");
-    QString presetId = QStringLiteral("png_sequence");
-    if (suffix == QStringLiteral("jpg") || suffix == QStringLiteral("jpeg")) {
-        format = QStringLiteral("jpg");
-        presetId = QStringLiteral("jpeg_sequence");
-    } else if (suffix == QStringLiteral("exr")) {
-        format = QStringLiteral("exr");
-        presetId = QStringLiteral("exr_sequence");
-    }
+    // 未知の拡張子は PNG に差し替えず、能力表で受理された形式だけを使う。
+    const QString format = ArtifactCore::FileTypeDetector::supports(
+        suffix, ArtifactCore::FileCapability::ImageExport)
+            ? suffix
+            : QStringLiteral("png");
+    const QString presetId = format == QStringLiteral("jpg") ||
+            format == QStringLiteral("jpeg")
+        ? QStringLiteral("jpeg_sequence")
+        : format == QStringLiteral("exr")
+            ? QStringLiteral("exr_sequence")
+            : format == QStringLiteral("tiff") || format == QStringLiteral("tif")
+                ? QStringLiteral("tiff_sequence")
+                : format == QStringLiteral("bmp")
+                    ? QStringLiteral("bmp_sequence")
+                    : QStringLiteral("png_sequence");
 
     // Composition の最終フレームをレンダーキューに 1 フレームだけ投入して書き出す。
     // これによりワークエリア書き出しと同一の GPU 経路・AOV・final effects が通る。
@@ -985,15 +995,18 @@ void ArtifactFileMenu::Impl::handleExportWorkArea()
     }
 
     // 書き出し形式を先に確定させる（プリセット選択に使うため拡張子ベースで選ぶ）。
+    const QString workAreaImages = ArtifactCore::FileTypeDetector::suffixPatterns(
+        ArtifactCore::FileCapability::ImageExport);
     const QString proposed = QFileDialog::getSaveFileName(menu_, menuText(QStringLiteral("dialog.render.work_area"), QStringLiteral("ワークエリアをレンダリング")),
-        QString(), "H.264 MP4 (*.mp4);;PNG Sequence (*.png);;JPEG Sequence (*.jpg);;OpenEXR Sequence (*.exr);;All Files (*.*)");
+        QString(), QStringLiteral("H.264 MP4 (*.mp4);;Images (%1);;All Files (*.*)").arg(workAreaImages));
     if (proposed.isEmpty()) return;
 
     const QString proposedSuffix = QFileInfo(proposed).suffix().toLower();
     const QString workAreaFormat = proposedSuffix == QStringLiteral("mp4") ? QStringLiteral("mp4")
-        : proposedSuffix == QStringLiteral("jpg") || proposedSuffix == QStringLiteral("jpeg") ? QStringLiteral("jpg")
-        : proposedSuffix == QStringLiteral("exr") ? QStringLiteral("exr")
-        : QStringLiteral("png");
+        : ArtifactCore::FileTypeDetector::supports(
+              proposedSuffix, ArtifactCore::FileCapability::ImageExport)
+            ? proposedSuffix
+            : QStringLiteral("png");
 
     const QString filePath = pathWithExportSuffix(proposed,
         workAreaFormat == QStringLiteral("mp4") ? QStringLiteral("mp4") : workAreaFormat);
@@ -1009,11 +1022,15 @@ void ArtifactFileMenu::Impl::handleExportWorkArea()
 
     const QString presetId = workAreaFormat == QStringLiteral("mp4")
         ? QStringLiteral("h264_mp4_standard")
-        : workAreaFormat == QStringLiteral("jpg")
+        : workAreaFormat == QStringLiteral("jpg") || workAreaFormat == QStringLiteral("jpeg")
             ? QStringLiteral("jpeg_sequence")
             : workAreaFormat == QStringLiteral("exr")
                 ? QStringLiteral("exr_sequence")
-                : QStringLiteral("png_sequence");
+                : workAreaFormat == QStringLiteral("tiff") || workAreaFormat == QStringLiteral("tif")
+                    ? QStringLiteral("tiff_sequence")
+                    : workAreaFormat == QStringLiteral("bmp")
+                        ? QStringLiteral("bmp_sequence")
+                        : QStringLiteral("png_sequence");
 
     const int beforeCount = queue->jobCount();
     queue->addRenderQueueWithPreset(comp->id(),

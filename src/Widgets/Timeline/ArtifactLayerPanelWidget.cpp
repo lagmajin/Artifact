@@ -3837,28 +3837,6 @@ public:
         ? LayerPresentationBadgeTone::Motion
         : summarizeLayerStateTone(node)
    });
-   // A transition belongs directly below its source clip, but deliberately
-   // remains a virtual row. Keeping it in the same row list aligns both
-   // timeline panes without lending it layer switches or selection semantics.
-   for (const auto& transition : comp->timelineTransitions()) {
-    if (!transition.enabled || transition.leftClipName != node->layerName()) {
-     continue;
-    }
-    visibleRows.push_back(VisibleRow{
-        nullptr,
-        depth + 1,
-        false,
-        false,
-        RowKind::Transition,
-        QStringLiteral("%1 \\u2192 %2").arg(transition.kind, transition.rightClipName),
-        QString(),
-        QString(),
-        QStringLiteral("Transition"),
-        LayerPresentationBadgeTone::Motion,
-        QString(),
-        LayerPresentationBadgeTone::Neutral,
-        transition.id});
-   }
    emitted.insert(nodeId);
 
    if (!hasChildren || !expanded) return;

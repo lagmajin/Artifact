@@ -43,6 +43,7 @@ module;
 #include <wobjectimpl.h>
 
 module Artifact.Menu.Layer;
+import File.TypeDetector;
 import Memory.SharedPtr;
 import Translation.Manager;
 
@@ -3257,7 +3258,9 @@ void ArtifactLayerMenu::Impl::handleCreateModel3D()
         menu_ ? menu_->window() : nullptr,
         TranslationManager::instance().tr(QStringLiteral("dialog.layer.select_3d_model"), QStringLiteral("3Dモデルを選択")),
         QString(),
-        QStringLiteral("3D Models (*.obj *.fbx *.gltf *.glb *.ply *.las *.stl *.dae *.abc *.usd *.usda *.usdc *.usdz *.pmd);;All Files (*.*)"));
+        QStringLiteral("3D Models (%1);;All Files (*.*)").arg(
+            ArtifactCore::FileTypeDetector::suffixPatterns(
+                ArtifactCore::FileCapability::Model3D)));
     if (filePath.isEmpty()) {
         return;
     }

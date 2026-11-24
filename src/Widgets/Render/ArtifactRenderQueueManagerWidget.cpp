@@ -60,6 +60,7 @@ module;
 
 module Artifact.Widgets.Render.QueueManager;
 
+import File.TypeDetector;
 import Widgets.Utils.CSS;
 import Artifact.Widgets.RenderQueuePresentation;
 import Artifact.Event.Types;
@@ -1472,10 +1473,12 @@ W_OBJECT_IMPL(RenderQueueManagerWidget)
     const int index = impl_->selectedSourceIndex();
     if (index < 0 || index >= impl_->service->jobCount()) return;
     const QString currentPath = impl_->service->jobOutputPathAt(index);
+    const QString imagePatterns = ArtifactCore::FileTypeDetector::suffixPatterns(
+        ArtifactCore::FileCapability::ImageExport);
     const QString path = QFileDialog::getSaveFileName(
         this, QStringLiteral("Select render output"),
         currentPath.isEmpty() ? QDir::homePath() : currentPath,
-        QStringLiteral("Video and image files (*.mp4 *.mov *.png *.exr);;All files (*)"));
+        QStringLiteral("Video and image files (*.mp4 *.mov *.avi *.mkv *.webm %1);;All files (*)").arg(imagePatterns));
     if (path.isEmpty()) return;
     impl_->outputPathEdit->setText(path);
     impl_->outputPathEdit->committed(path);

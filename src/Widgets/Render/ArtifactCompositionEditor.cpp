@@ -601,14 +601,29 @@ QImage selectedLayerDebugImage(const ArtifactAbstractLayerPtr& layer) {
 
 QString screenshotDefaultExtensionForFilter(const QString& selectedFilter)
 {
-  const QString filter = selectedFilter.toLower();
-  if (filter.contains(QStringLiteral("exr"))) {
-    return QStringLiteral("exr");
-  }
-  if (filter.contains(QStringLiteral("jpg")) || filter.contains(QStringLiteral("jpeg"))) {
-    return QStringLiteral("jpg");
+  // フィルタのパターンを能力表と突き合わせ、選択された形式の拡張子を返す。
+  const QString patterns = ArtifactCore::FileTypeDetector::suffixPatterns(
+      ArtifactCore::FileCapability::ImageExport);
+  for (const QString& pattern : patterns.split(QLatin1Char(' '), Qt::SkipEmptyParts)) {
+    if (selectedFilter.contains(pattern, Qt::CaseInsensitive)) {
+      return pattern.mid(2);
+    }
   }
   return QStringLiteral("png");
+}
+
+QString screenshotImageFilter()
+{
+  const QString patterns = ArtifactCore::FileTypeDetector::suffixPatterns(
+      ArtifactCore::FileCapability::ImageExport);
+  QStringList filters;
+  for (const QString& pattern : patterns.split(QLatin1Char(' '), Qt::SkipEmptyParts)) {
+    const QString extension = pattern.mid(2);
+    filters.append(QStringLiteral("%1 Image (*.%2)")
+                       .arg(extension.toUpper(), extension));
+  }
+  filters.append(QStringLiteral("All Files (*.*)"));
+  return filters.join(QStringLiteral(";;"));
 }
 
 QString ensureScreenshotSuffix(QString path, const QString& selectedFilter)
@@ -4247,8 +4262,8 @@ public:
           return;
         }
         const QString path = QFileDialog::getOpenFileName(
-            this, QStringLiteral("Import SRT/WebVTT as Text Keyframes"), QString(),
-            QStringLiteral("Subtitles (*.srt *.vtt);;SubRip subtitles (*.srt);;WebVTT (*.vtt);;All Files (*.*)"));
+            this, QStringLiteral("Import Subtitles as Text Keyframes"), QString(),
+            QStringLiteral("Subtitles (*.srt *.vtt *.ass);;SubRip (*.srt);;WebVTT (*.vtt);;ASS/SSA (*.ass);;All Files (*.*)"));
         if (path.isEmpty()) {
           return;
         }
@@ -4267,12 +4282,15 @@ public:
         const auto subtitleText = QString::fromUtf8(subtitleFile.readAll());
         const auto timeBase = ArtifactCore::NLE::TimeBase{
             1, static_cast<int32_t>(compositionFrameRateScale(compNow)), false};
-        const auto cues = QFileInfo(path).suffix().compare(QStringLiteral("vtt"),
-                                                            Qt::CaseInsensitive) == 0
+        const QString subtitleSuffix = QFileInfo(path).suffix().toLower();
+        const auto cues = subtitleSuffix == QStringLiteral("vtt")
                               ? ArtifactCore::NLE::OtioAdapter::importWebVtt(
                                     subtitleText, timeBase, &warnings)
-                              : ArtifactCore::NLE::OtioAdapter::importSrt(
-                                    subtitleText, timeBase, &warnings);
+                              : subtitleSuffix == QStringLiteral("ass")
+                                  ? ArtifactCore::NLE::OtioAdapter::importAss(
+                                        subtitleText, timeBase, &warnings)
+                                  : ArtifactCore::NLE::OtioAdapter::importSrt(
+                                        subtitleText, timeBase, &warnings);
         if (cues.isEmpty()) {
           QMessageBox::warning(this, QStringLiteral("Subtitle Import"),
                                warnings.isEmpty()
@@ -4632,14 +4650,19 @@ public:
         if (!service) {
           return;
         }
+        // 単体画像は OIIO 経由で EXR/DPX/PSD も読めるため、QImageReader の
+        // canRead() で弾かず、Core の能力表を受理条件にする。
+        const QString imagePatterns = ArtifactCore::FileTypeDetector::suffixPatterns(
+            ArtifactCore::FileCapability::StillImage);
         const QString filePath = QFileDialog::getOpenFileName(
             this, QStringLiteral("画像を選択"), QString(),
-            QStringLiteral("Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.tif *.tiff);;All Files (*.*)"));
+            QStringLiteral("Images (%1);;All Files (*.*)").arg(imagePatterns));
         if (filePath.isEmpty()) {
           return;
         }
-        QImageReader reader(filePath);
-        if (!reader.canRead()) {
+        if (!ArtifactCore::FileTypeDetector::supports(
+                QFileInfo(filePath).suffix(),
+                ArtifactCore::FileCapability::StillImage)) {
           QMessageBox::warning(this, QStringLiteral("Layer"),
                                QStringLiteral("画像を読み込めませんでした。"));
           return;
@@ -11712,7 +11735,7 @@ public:
         owner,
         QStringLiteral("スクリーンショットを保存"),
         QStringLiteral("composition_screenshot.png"),
-        QStringLiteral("PNG Image (*.png);;JPEG Image (*.jpg *.jpeg);;OpenEXR (*.exr);;All Files (*.*)"),
+        screenshotImageFilter(),
         &selectedFilter);
     if (rawPath.isEmpty()) {
       return false;

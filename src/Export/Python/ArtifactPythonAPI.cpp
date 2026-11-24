@@ -258,7 +258,7 @@ void ArtifactPythonAPI::registerLayerAPI() {
         auto* service = ArtifactProjectService::instance();
         const auto comp = service ? service->currentComposition().lock() : ArtifactCompositionPtr{};
         if (!service || !comp || args.size() < 2) return "ERROR: invalid arguments";
-        const int index = std::max(0, toInt(args[1], -1));
+        const int index = toInt(args[1], -1);
         if (index < 0) return "ERROR: invalid index";
         for (const auto& layer : comp->allLayer()) {
             if (layer && layer->layerName().compare(toQString(args[0]), Qt::CaseInsensitive) == 0) {

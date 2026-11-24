@@ -799,7 +799,7 @@ bool resolveRenderMatrixComposition(
       ? QStringLiteral("Web player")
       : (container == QStringLiteral("WebM") || codec == QStringLiteral("VP9")
              ? QStringLiteral("Web video")
-             : (container == QStringLiteral("PNG Sequence")
+             : (container.endsWith(QStringLiteral(" Sequence"))
                     ? QStringLiteral("Image sequence")
                     : QStringLiteral("Standard export")));
    QStringList lines;
@@ -1553,6 +1553,7 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
     impl_->formatCombo->addItems(QStringList{
       "MP4", "MOV", "AVI", "WebM", "MKV",
       "PNG Sequence", "JPEG Sequence", "TIFF Sequence", "BMP Sequence", "EXR Sequence",
+      "DPX Sequence", "HDR Sequence", "TGA Sequence",
       "HTML"
     });
     formLayout->addRow("Container:", impl_->formatCombo);
@@ -1939,6 +1940,9 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
         else if (format == QStringLiteral("TIFF Sequence")) ext = QStringLiteral("tiff");
         else if (format == QStringLiteral("BMP Sequence")) ext = QStringLiteral("bmp");
         else if (format == QStringLiteral("EXR Sequence")) ext = QStringLiteral("exr");
+        else if (format == QStringLiteral("DPX Sequence")) ext = QStringLiteral("dpx");
+        else if (format == QStringLiteral("HDR Sequence")) ext = QStringLiteral("hdr");
+        else if (format == QStringLiteral("TGA Sequence")) ext = QStringLiteral("tga");
         else ext = QStringLiteral("mp4");
 
         // 拡張子を置換

@@ -17,6 +17,10 @@ public:
     virtual bool open(const ArtifactRenderJob& job, QString* errorMessage) = 0;
     virtual bool addFrame(const QImage& frame, int frameIndex, QString* errorMessage) = 0;
     virtual bool close(QString* errorMessage) = 0;
+    // True when addFrame() may be called from a dedicated encode thread.
+    // Backends that own thread-affine Qt objects (for example QProcess) must
+    // keep the default false so the caller stays on the consumer thread.
+    virtual bool encodeOnWorkerThread() const { return false; }
 };
 
 QString normalizeVideoEncodeBackendName(const QString& backend);

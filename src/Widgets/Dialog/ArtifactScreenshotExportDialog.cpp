@@ -24,10 +24,12 @@ module;
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSpinBox>
+#include <QStringList>
 #include <QVBoxLayout>
 #include <wobjectimpl.h>
 
 module Artifact.Widget.Dialog.ScreenshotExport;
+import File.TypeDetector;
 import Core.ArtifactMath;
 
 namespace Artifact
@@ -174,10 +176,11 @@ QString normalizedScreenshotFormat(const QString& format)
  if (value == QStringLiteral("jpg") || value == QStringLiteral("jpeg")) {
   return QStringLiteral("jpg");
  }
- if (value == QStringLiteral("exr")) {
-  return QStringLiteral("exr");
- }
- return QStringLiteral("png");
+ // 未知の形式は PNG に落とさず、能力表で受理された形式だけを使う。
+ return ArtifactCore::FileTypeDetector::supports(
+            value, ArtifactCore::FileCapability::ImageExport)
+            ? value
+            : QStringLiteral("png");
 }
 
 QString pathWithScreenshotSuffix(const QString& path, const QString& format)
@@ -195,19 +198,37 @@ QString pathWithScreenshotSuffix(const QString& path, const QString& format)
 
 QString inferFormatFromPath(const QString& path)
 {
- const QString suffix = QFileInfo(path).suffix().trimmed().toLower();
- if (suffix == QStringLiteral("jpg") || suffix == QStringLiteral("jpeg")) {
-  return QStringLiteral("jpg");
- }
- if (suffix == QStringLiteral("exr")) {
-  return QStringLiteral("exr");
- }
- return QStringLiteral("png");
+ return normalizedScreenshotFormat(QFileInfo(path).suffix());
 }
 
 QString screenshotSaveFilter()
 {
- return QStringLiteral("PNG Image (*.png);;JPEG Image (*.jpg *.jpeg);;OpenEXR (*.exr);;All Files (*.*)");
+ const QString patterns = ArtifactCore::FileTypeDetector::suffixPatterns(
+     ArtifactCore::FileCapability::ImageExport);
+ return QStringLiteral("Images (%1);;All Files (*.*)").arg(patterns);
+}
+
+QStringList screenshotImageFormats()
+{
+ const QString patterns = ArtifactCore::FileTypeDetector::suffixPatterns(
+     ArtifactCore::FileCapability::ImageExport);
+ QStringList formats;
+ for (const QString& pattern : patterns.split(QLatin1Char(' '), Qt::SkipEmptyParts)) {
+  const QString format = normalizedScreenshotFormat(pattern.mid(2));
+  const QString key = format == QStringLiteral("tif") ? QStringLiteral("tiff") : format;
+  if (!formats.contains(key)) {
+   formats.append(key);
+  }
+ }
+ return formats;
+}
+
+QString screenshotFormatLabel(const QString& format)
+{
+ if (format == QStringLiteral("jpg")) return QStringLiteral("JPEG");
+ if (format == QStringLiteral("tif")) return QStringLiteral("TIFF");
+ if (format == QStringLiteral("exr")) return QStringLiteral("OpenEXR");
+ return format.toUpper();
 }
 
 QString screenshotBrowseTitle()
@@ -357,9 +378,10 @@ ArtifactScreenshotExportDialog::ArtifactScreenshotExportDialog(QWidget* parent)
  formatLabel->setBuddy(impl_->formatCombo);
  impl_->formatCombo->setAccessibleName(QStringLiteral("Screenshot format"));
  impl_->formatCombo->setAccessibleDescription(QStringLiteral("Image format for the screenshot"));
- impl_->formatCombo->addItem(QStringLiteral("PNG"), QStringLiteral("png"));
- impl_->formatCombo->addItem(QStringLiteral("JPEG"), QStringLiteral("jpg"));
- impl_->formatCombo->addItem(QStringLiteral("EXR"), QStringLiteral("exr"));
+ const QStringList formats = screenshotImageFormats();
+ for (const QString& format : formats) {
+   impl_->formatCombo->addItem(screenshotFormatLabel(format), format);
+ }
  formatGrid->addWidget(formatLabel, 0, 0);
  formatGrid->addWidget(impl_->formatCombo, 0, 1);
 

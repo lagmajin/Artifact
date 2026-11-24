@@ -4250,9 +4250,9 @@ if (!item.isFolder) {
     QString fileFilter = QStringLiteral("All Files (*.*)");
     if (ArtifactCore::AssetImporter::detectType(filePath) ==
         ArtifactCore::AssetType::Model) {
-      fileFilter = QStringLiteral(
-          "3D Models (*.obj *.fbx *.abc *.glb *.gltf *.stl *.ply *.pmd *.las *.usd *.usda);;"
-          "All Files (*.*)");
+      fileFilter = QStringLiteral("3D Models (%1);;All Files (*.*)").arg(
+          ArtifactCore::FileTypeDetector::suffixPatterns(
+              ArtifactCore::FileCapability::Model3D));
     }
     QString newPath = QFileDialog::getOpenFileName(
         nullptr, QStringLiteral("Relink Asset"), QDir::homePath(), fileFilter);

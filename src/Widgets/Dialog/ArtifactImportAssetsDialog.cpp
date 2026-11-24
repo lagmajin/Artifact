@@ -672,9 +672,14 @@ bool ArtifactMediaImportPickerDialog::eventFilter(QObject* watched, QEvent* even
     navigate(property("mediaPickerPreviousPath").toString());
     return true;
   } else if (name == QStringLiteral("mediaPickerSystem") && activate) {
+    // フィルタは File.TypeDetector の能力表から生成し、取り込みゲートと
+    // 同じ拡張子集合を使う（個別リストの drift を防ぐ）。
+    const QString mediaFilter = QStringLiteral("Supported media (%1)").arg(
+        ArtifactCore::FileTypeDetector::suffixPatterns(
+            ArtifactCore::FileCapability::Import));
     const QStringList files = QFileDialog::getOpenFileNames(
         this, QStringLiteral("Select media"), pathEdit ? pathEdit->text() : QString(),
-        QStringLiteral("Supported media (*.png *.jpg *.jpeg *.bmp *.gif *.tga *.tif *.tiff *.dpx *.webp *.hdr *.exr *.ico *.dds *.ktx *.psd *.psb *.svg *.mp4 *.mov *.mkv *.avi *.webm *.m4v *.mpg *.mpeg *.mxf *.wmv *.flv *.3gp *.ts *.mp3 *.wav *.flac *.ogg *.opus *.aac *.aiff *.wma *.m4a *.obj *.fbx *.gltf *.glb *.pmd *.usd *.usda *.usdc *.usdz)"));
+        mediaFilter);
     if (!files.isEmpty()) { setProperty("systemPickerPaths", files); accept(); }
     return true;
   } else if (name == QStringLiteral("mediaPickerCancel") && activate) {

@@ -124,6 +124,7 @@ import IO.ImageExporter;
 import IO.VectorExport;
 import Image.ExportOptions;
 import Artifact.Composition.Abstract;
+import Core.ArtifactArray;
 import Artifact.Layer.Abstract;
 import Artifact.Render.Pipeline;
 import Artifact.Render.MotionBlurPass;
@@ -1590,7 +1591,8 @@ namespace Artifact
                                         ext == QLatin1String("png") || ext == QLatin1String("exr") ||
                                         ext == QLatin1String("tiff") || ext == QLatin1String("tif") ||
                                         ext == QLatin1String("jpg") || ext == QLatin1String("jpeg") ||
-                                        ext == QLatin1String("bmp");
+                                        ext == QLatin1String("bmp") || ext == QLatin1String("dpx") ||
+                                        ext == QLatin1String("hdr") || ext == QLatin1String("tga");
                 
                 if (isSequence) {
                     // シーケンスの場合、各フレームの存在をチェック
@@ -3372,8 +3374,9 @@ namespace Artifact
                 QStringLiteral("parity=on"));
         }
 
-        // Reserved until conversion can overlap encoding with bounded buffers.
-        // Do not launch a per-frame async task and immediately wait for it.
+        // XPU P3: bounded video encode lookahead (opt-in, output-invariant).
+        // Omit the per-frame async task that is awaited immediately in the same
+        // iteration; the encode handoff below uses one dedicated thread instead.
         static bool xpuPipelineEnabled()
         {
             static const QVariant direct = xpuStartupOverride(
@@ -3384,6 +3387,179 @@ namespace Artifact
             return xpuSpecString().toLower().contains(
                 QStringLiteral("pipeline=on"));
         }
+
+        // XPU P3: bounded, order-preserving video encode lookahead.
+        // The consumer hands a finished frame to one dedicated encode thread and
+        // continues with the next frame, so RGBA conversion, sws scaling and
+        // encoding overlap the consumer's preview/progress work and the next
+        // frame handoff. Submission order stays identical to the sequential path
+        // and the queue depth is fixed, so memory does not grow with the range.
+        // Only backends that do not own thread-affine Qt objects may be used;
+        // see IVideoEncodeBackend::encodeOnWorkerThread().
+        class XpuVideoEncodePipeline {
+        public:
+            XpuVideoEncodePipeline(IVideoEncodeBackend* backend, int depth)
+                : backend_(backend),
+                  capacity_(static_cast<size_t>(
+                      std::clamp(depth, 1, kMaxSlots)))
+            {
+                worker_ = std::thread([this]() { run(); });
+            }
+
+            ~XpuVideoEncodePipeline()
+            {
+                abort();
+            }
+
+            XpuVideoEncodePipeline(const XpuVideoEncodePipeline&) = delete;
+            XpuVideoEncodePipeline& operator=(const XpuVideoEncodePipeline&) = delete;
+
+            // Blocks while the bounded queue is full. Returns false once the
+            // encode thread has reported a failure; no frame is accepted then.
+            bool submit(QImage&& image, int frame)
+            {
+                std::unique_lock<std::mutex> lock(mutex_);
+                spaceCv_.wait(lock, [this]() {
+                    return failed_.load(std::memory_order_relaxed) ||
+                           stopping_ || queued_ < capacity_;
+                });
+                if (failed_.load(std::memory_order_relaxed) || stopping_) {
+                    return false;
+                }
+                Slot& slot = slots_[tail_];
+                slot.image = std::move(image);
+                slot.frame = frame;
+                tail_ = (tail_ + 1) % capacity_;
+                ++queued_;
+                dataCv_.notify_one();
+                return true;
+            }
+
+            // Drains every queued frame in order and joins the encode thread.
+            // Returns false and fills failureReason when an encode failed.
+            bool finish(QString* failureReason)
+            {
+                {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    stopping_ = true;
+                }
+                dataCv_.notify_all();
+                if (worker_.joinable()) {
+                    worker_.join();
+                }
+                if (!failed_.load(std::memory_order_relaxed)) {
+                    return true;
+                }
+                if (failureReason) {
+                    std::lock_guard<std::mutex> lock(failureMutex_);
+                    *failureReason = failure_;
+                }
+                return false;
+            }
+
+            // Records the reason the encode thread stopped, for the consumer's
+            // early-exit path (abort() discards the queue but keeps the reason).
+            QString failureMessage() const
+            {
+                std::lock_guard<std::mutex> lock(failureMutex_);
+                return failure_;
+            }
+
+            // Discards queued frames and joins; used on cancel or when the
+            // consumer already failed, so no extra encoding work is done.
+            void abort()
+            {
+                {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    stopping_ = true;
+                    aborting_ = true;
+                    for (Slot& slot : slots_) {
+                        slot.image = QImage();
+                        slot.frame = 0;
+                    }
+                    head_ = 0;
+                    tail_ = 0;
+                    queued_ = 0;
+                }
+                dataCv_.notify_all();
+                spaceCv_.notify_all();
+                if (worker_.joinable()) {
+                    worker_.join();
+                }
+            }
+
+        private:
+            static constexpr int kMaxSlots = 4;
+
+            struct Slot {
+                QImage image;
+                int frame = 0;
+            };
+
+            void run()
+            {
+                for (;;) {
+                    QImage image;
+                    int frame = 0;
+                    {
+                        std::unique_lock<std::mutex> lock(mutex_);
+                        dataCv_.wait(lock, [this]() {
+                            return queued_ > 0 || stopping_;
+                        });
+                        if (aborting_ || queued_ == 0) {
+                            return;
+                        }
+                        Slot& slot = slots_[head_];
+                        image = std::move(slot.image);
+                        frame = slot.frame;
+                        slot.image = QImage();
+                        head_ = (head_ + 1) % capacity_;
+                        --queued_;
+                    }
+                    spaceCv_.notify_one();
+
+                    QString message;
+                    bool encoded = false;
+                    try {
+                        encoded = backend_ && backend_->addFrame(
+                            image, frame, &message);
+                    } catch (...) {
+                        message = QStringLiteral(
+                            "Video encode threw (frame %1)").arg(frame);
+                    }
+                    if (encoded) {
+                        continue;
+                    }
+                    {
+                        std::lock_guard<std::mutex> lock(failureMutex_);
+                        if (!failed_.exchange(true, std::memory_order_relaxed)) {
+                            failure_ = message.trimmed().isEmpty()
+                                ? QStringLiteral(
+                                      "Video encoder rejected frame %1").arg(frame)
+                                : message;
+                        }
+                    }
+                    spaceCv_.notify_all();
+                    return;
+                }
+            }
+
+            IVideoEncodeBackend* backend_ = nullptr;
+            std::array<Slot, kMaxSlots> slots_{};
+            size_t capacity_ = 1;
+            size_t head_ = 0;
+            size_t tail_ = 0;
+            size_t queued_ = 0;
+            std::mutex mutex_;
+            mutable std::mutex failureMutex_;
+            std::condition_variable dataCv_;
+            std::condition_variable spaceCv_;
+            std::thread worker_;
+            std::atomic<bool> failed_{false};
+            bool stopping_ = false;
+            bool aborting_ = false;
+            QString failure_;
+        };
 
         // XPU P5: bench JSON（出力不変・opt-in）。ARTIFACT_XPU_BENCH=on で
         // temp/ArtifactStudio/xpu-bench/ に job summary を JSON で残す。
@@ -3408,6 +3584,7 @@ namespace Artifact
             int primaryGpuFrames, double primaryGpuMs,
             double primaryGpuAvgMs,
             bool mixed, bool asyncSeq, bool useGpuBackend,
+            bool videoPipelineActive,
             size_t parityCombined, bool parityOn,
             const QString& primaryGpuBackend,
             const std::vector<XpuGpuWorkerFrameCount>& gpuWorkerFrameCounts,
@@ -3449,6 +3626,9 @@ namespace Artifact
             obj.insert(QStringLiteral("primaryGpuAvgMs"), primaryGpuAvgMs);
             obj.insert(QStringLiteral("mixed"), mixed);
             obj.insert(QStringLiteral("asyncSeq"), asyncSeq);
+            obj.insert(QStringLiteral("videoPipeline"),
+                       videoPipelineActive ? QStringLiteral("lookahead")
+                                          : QStringLiteral("off"));
             obj.insert(QStringLiteral("backend"), useGpuBackend ? QStringLiteral("gpu") : QStringLiteral("cpu"));
             obj.insert(QStringLiteral("parity"), parityOn
                 ? QString::number(parityCombined, 16) : QStringLiteral("off"));
@@ -5110,6 +5290,15 @@ namespace Artifact
             comp->buildTimelineTransitionDrawPlan(
                 job.startFrame, legacyGpuEvaluations, legacyGpuDrawSteps);
             const ArtifactCore::FramePosition currentPos(job.startFrame);
+            static thread_local ArtifactCore::ArtifactArray<
+                CompositionTimelineTransitionEvaluation> transitionEvaluations;
+            const auto requiredTransitionCapacity = static_cast<std::size_t>(
+                comp->timelineTransitionCount());
+            if (transitionEvaluations.capacity() < requiredTransitionCapacity) {
+                transitionEvaluations.reserve(requiredTransitionCapacity);
+            }
+            comp->evaluateTimelineTransitionsAtFrame(
+                job.startFrame, transitionEvaluations);
             const bool hasSoloLayer = std::any_of(
                 layers.begin(), layers.end(), [](const auto& layer) {
                     return layer && layer->isSolo();
@@ -5188,7 +5377,19 @@ namespace Artifact
                         continue;
                     }
                     layer->goToFrame(job.startFrame);
-                    drawLayerForCompositionView(layer.get(), gpuRenderer_.get(), 1.0f, nullptr,
+                    const bool transitionSource =
+                        CompositionTimelineTransitionEvaluation::
+                            containsSourceLayer(transitionEvaluations,
+                                                layer->idView());
+                    const float opacity = transitionSource
+                        ? static_cast<float>(layer->opacity()) *
+                              static_cast<float>(
+                                  CompositionTimelineTransitionEvaluation::
+                                      combinedOpacityMultiplierForLayer(
+                                          transitionEvaluations,
+                                          layer->idView()))
+                        : 1.0f;
+                    drawLayerForCompositionView(layer.get(), gpuRenderer_.get(), opacity, nullptr,
                                             &surfaceCache, &gpuTextureCacheManager,
                                             job.startFrame, true, DetailLevel::High,
                                             nullptr, &matteSourceImages);
@@ -6722,7 +6923,13 @@ namespace Artifact
             normalizedCodec == QStringLiteral("pcm_s24le") ||
             normalizedCodec == QStringLiteral("aac") ||
             normalizedCodec == QStringLiteral("mp3");
-        const bool codecAllowed = supportedCodec || supportedAudioCodec;
+        // 画像連番はコーデック名をコンテナ名から自動設定するため、
+        // コーデック一覧での検証は動画・音声ジョブに限定する。
+        const bool imageSequenceOutput =
+            isImageSequenceContainer(outputFormat) ||
+            outputFormat == QStringLiteral("svg");
+        const bool codecAllowed = imageSequenceOutput || supportedCodec ||
+            supportedAudioCodec;
         if (!codecAllowed && !externalRendererConfigured) {
             result.addDiagnostic(makePreflightDiagnostic(
                 ArtifactCore::DiagnosticSeverity::Error,
@@ -7659,17 +7866,37 @@ namespace Artifact
                 }
             }
             QHash<ArtifactCore::Id, QImage> matteSourceImages;
+            static thread_local ArtifactCore::ArtifactArray<
+                CompositionTimelineTransitionEvaluation> transitionEvaluations;
+            const auto requiredTransitionCapacity = static_cast<std::size_t>(
+                snap.composition->timelineTransitionCount());
+            if (transitionEvaluations.capacity() < requiredTransitionCapacity) {
+                transitionEvaluations.reserve(requiredTransitionCapacity);
+            }
+            snap.composition->evaluateTimelineTransitionsAtFrame(
+                snap.frameNumber, transitionEvaluations);
             const auto drawQueueGpuLayer = [&](
                 ArtifactAbstractLayer* layer,
-                const QHash<ArtifactCore::Id, QImage>* matteImages) {
+                const QHash<ArtifactCore::Id, QImage>* matteImages,
+                bool applyTransitionOpacity) {
                 if (!layer) return;
                 if (has3DCamera) {
                     renderer->set3DCameraMatrices(cameraView, cameraProjection);
                     renderer->setPrevious3DCameraMatrices(
                         previousCameraView, previousCameraProjection);
                 }
+                const bool transitionSource = applyTransitionOpacity &&
+                    CompositionTimelineTransitionEvaluation::containsSourceLayer(
+                        transitionEvaluations, layer->idView());
+                const float opacity = transitionSource
+                    ? static_cast<float>(layer->opacity()) *
+                          static_cast<float>(
+                              CompositionTimelineTransitionEvaluation::
+                                  combinedOpacityMultiplierForLayer(
+                                      transitionEvaluations, layer->idView()))
+                    : 1.0f;
                 drawLayerForCompositionView(
-                    layer, renderer, 1.0f, nullptr,
+                    layer, renderer, opacity, nullptr,
                     snap.gpuSurfaceCache, snap.gpuTextureCacheManager,
                     snap.frameNumber, true, DetailLevel::High, nullptr,
                     matteImages);
@@ -7797,7 +8024,7 @@ namespace Artifact
                         renderer->setClearColor(FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
                         renderer->clear();
                         sourceLayer->goToFrame(snap.frameNumber);
-                        drawQueueGpuLayer(sourceLayer.get(), nullptr);
+                        drawQueueGpuLayer(sourceLayer.get(), nullptr, false);
                         renderer->flush();
                         renderer->popRenderTarget();
                         matteSourceGpuViews.insert(matteRef.sourceLayerId, sourceSRV);
@@ -8049,7 +8276,7 @@ namespace Artifact
                         renderer->pushRenderTarget(layerTarget, layerDepth);
                         renderer->setClearColor(FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
                         renderer->clear();
-                        drawQueueGpuLayer(layer.get(), nullptr);
+                        drawQueueGpuLayer(layer.get(), nullptr, false);
                         renderer->flush();
                         renderer->popRenderTarget();
 
@@ -8136,7 +8363,7 @@ namespace Artifact
                     renderer->flush();
                     renderer->pushRenderTarget(revealPipeline.layerRTV(), nullptr);
                     renderer->setClearColor(FloatColor{0,0,0,0}); renderer->clear();
-                    drawQueueGpuLayer(layer.get(), &matteSourceImages);
+                    drawQueueGpuLayer(layer.get(), &matteSourceImages, true);
                     renderer->flush(); renderer->popRenderTarget();
                     renderer->unbindColorTargetsForCompute();
                     const QRectF bounds = layer->localBounds();
@@ -8175,7 +8402,7 @@ namespace Artifact
                     renderer->flush();
                     continue;
                 }
-                drawQueueGpuLayer(layer.get(), &matteSourceImages);
+                drawQueueGpuLayer(layer.get(), &matteSourceImages, true);
             }
             renderer->flush();
             if (velocityTargetRequested) {
@@ -9599,10 +9826,28 @@ namespace Artifact
         };
 
         // Consumer loop (shared by both paths; start may be checkpoint-adjusted)
+        // XPU P3: bounded encode lookahead (opt-in). Only backends that do not
+        // own thread-affine Qt objects may encode on the dedicated worker; the
+        // ffmpeg.exe pipe backend keeps the synchronous path because QProcess
+        // belongs to the thread that created it.
         const bool xpuPipelineRequested = isVideo && xpuPipelineEnabled();
+        std::unique_ptr<XpuVideoEncodePipeline> xpuEncodePipeline;
         if (xpuPipelineRequested) {
-            qWarning() << "[RenderQueue] XPU video pipeline requested but not active; "
-                          "the current consumer has no overlapped conversion stage";
+            if (!videoBackend) {
+                qWarning() << "[RenderQueue] XPU video pipeline requested without "
+                              "an encoder backend; using the synchronous path";
+            } else if (!videoBackend->encodeOnWorkerThread()) {
+                qWarning() << "[RenderQueue] XPU video pipeline requested but the "
+                              "selected encoder backend is thread-affine; using "
+                              "synchronous encode";
+            } else {
+                constexpr int kXpuPipelineDepth = 2;
+                xpuEncodePipeline = std::make_unique<XpuVideoEncodePipeline>(
+                    videoBackend, kXpuPipelineDepth);
+                qInfo() << "[RenderQueue] XPU video pipeline active"
+                        << "job=" << jobIndex
+                        << "depth=" << kXpuPipelineDepth;
+            }
         }
         for (int f = consumerStartF; f < endF; ++f) {
             FrameRenderOutput frameOutput;
@@ -9763,13 +10008,24 @@ namespace Artifact
             }
 
             if (isVideo) {
+                const QSize encodeSize = qimg.size();
+                const int encodeFormat = static_cast<int>(qimg.format());
+                const char* encodePipelineLabel = xpuEncodePipeline
+                    ? "lookahead" : "off";
                 qCDebug(renderQueueFrameLog)
                     << "[EncodeSession][Frame] encode begin"
                     << "job=" << jobIndex
                     << "frame=" << f
-                    << "size=" << qimg.size()
-                    << "pipeline=off";
-                const bool encodeOk = videoBackend->addFrame(qimg, f, &failureReason);
+                    << "size=" << encodeSize
+                    << "pipeline=" << encodePipelineLabel;
+                bool encodeOk = true;
+                if (xpuEncodePipeline) {
+                    // Handoff only. The encode thread reports the failure in
+                    // finish(); submit() returns false once it has failed.
+                    encodeOk = xpuEncodePipeline->submit(std::move(qimg), f);
+                } else {
+                    encodeOk = videoBackend->addFrame(qimg, f, &failureReason);
+                }
                 if (qEnvironmentVariableIsSet(
                         "ARTIFACT_UI_TEST_TEXT_ANIMATION_VIDEO")) {
                     const QString reportPath = qEnvironmentVariable(
@@ -9782,12 +10038,19 @@ namespace Artifact
                     }
                 }
                 if (!encodeOk) {
+                    if (xpuEncodePipeline) {
+                        const QString pipelineError =
+                            xpuEncodePipeline->failureMessage();
+                        if (!pipelineError.trimmed().isEmpty()) {
+                            failureReason = pipelineError;
+                        }
+                    }
                     qWarning() << "[EncodeSession][Frame] encoder rejected frame"
                                << "job=" << jobIndex
                                << "frame=" << f
-                               << "size=" << qimg.size()
-                               << "format=" << static_cast<int>(qimg.format())
-                               << "pipeline=off"
+                               << "size=" << encodeSize
+                               << "format=" << encodeFormat
+                               << "pipeline=" << encodePipelineLabel
                                << "reason=" << failureReason;
                     ArtifactCore::Logger::instance()->flushFile();
                     success.store(false, std::memory_order_relaxed);
@@ -9976,6 +10239,22 @@ namespace Artifact
             }, Qt::QueuedConnection);
         }
 
+        // XPU P3: stop the encode lookahead before producers are released.
+        // A successful run drains every queued frame in order; an early exit
+        // (cancel/encoder/consumer failure) discards them instead of encoding
+        // frames the job no longer needs.
+        if (xpuEncodePipeline) {
+            if (success.load(std::memory_order_relaxed)) {
+                QString pipelineFailure;
+                if (!xpuEncodePipeline->finish(&pipelineFailure)) {
+                    success.store(false, std::memory_order_relaxed);
+                    failureReason = pipelineFailure;
+                }
+            } else {
+                xpuEncodePipeline->abort();
+            }
+        }
+
         // 消費者ループが早期終了（エンコード失敗・キャンセル等）した場合、
         // 出力バッファ満杯で待機しているプロデューサを解放する。これが無いと
         // worker.join() が返らず、ジョブが進行しないまま shutdown まで固まる。
@@ -10139,6 +10418,8 @@ namespace Artifact
                      << "cpuScheduler="
                      << (useXpuMixed ? "sharedTbbArena" : "none")
                      << "asyncSeq=" << xpuAsyncSequence
+                     << "videoPipeline="
+                     << (xpuEncodePipeline ? "lookahead" : "off")
                      << "backend=" << (useGpuBackend ? "gpu" : "cpu")
                      << "parity=" << (xpuDoParity
                          ? QString::number(xpuParityCombined, 16)
@@ -10152,6 +10433,7 @@ namespace Artifact
                     primaryGpuAdapterId, primaryGpuN,
                     primaryGpuMs, primaryGpuAvgMs,
                     useXpuMixed, xpuAsyncSequence, useGpuBackend,
+                    xpuEncodePipeline != nullptr,
                     xpuParityCombined, xpuDoParity, primaryGpuBackend,
                     gpuWorkerFrameCounts, xpuPlan);
             }

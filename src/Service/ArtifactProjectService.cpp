@@ -60,6 +60,7 @@ import Asset;
 import Artifact.Diagnostics.AppValidationRules;
 import Core.Diagnostics.DiagnosticEngine;
 import Image.PSDDocument;
+import ImageAsset;
 import File.TypeDetector;
 import Artifact.Layers.Selection.Manager;
 import Event.Bus;
@@ -278,8 +279,11 @@ struct SequenceImportGroup {
 
 bool isImageImportCandidate(const QString &path)
 {
-  ArtifactCore::FileTypeDetector detector;
-  return detector.detectByExtension(path) == ArtifactCore::FileType::Image;
+  // 連番は QImageReader でデコードするため、能力表の ImageSequence だけを
+  // グループ化対象にする。EXR/DPX/PSD は単体画像としては読めるが、
+  // 連番としては読めないのでここでは除外する。
+  return ArtifactCore::FileTypeDetector::supports(
+      QFileInfo(path).suffix(), ArtifactCore::FileCapability::ImageSequence);
 }
 
 QVector<SequenceImportGroup> detectSequenceImportGroups(
@@ -372,6 +376,16 @@ QSize imageSizeForPath(const QString &path) {
       const auto &header = doc.header();
       return QSize(static_cast<int>(header.width),
                    static_cast<int>(header.height));
+    }
+  }
+
+  // EXR/DPX/HDR など QImageReader が読めない単体画像は Core の OIIO 経路で
+  // メタデータを取得する（インポート時のコールドパス専用）。
+  if (ArtifactCore::FileTypeDetector::supports(
+          suffix, ArtifactCore::FileCapability::StillImage)) {
+    ArtifactCore::ImageAssetFile image(path);
+    if (image.refreshMetadata() && image.isImageMetadataValid()) {
+      return QSize(image.imageMeta().width, image.imageMeta().height);
     }
   }
 
