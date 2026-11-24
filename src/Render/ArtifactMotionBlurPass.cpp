@@ -63,13 +63,13 @@ Texture2D<float> InputDepth : register(t2);
 Texture2D<uint4> InputCandidate : register(t3);
 RWTexture2D<float4> OutputColor : register(u0);
 
-float pointSegmentDistanceSquared(float2 point, float2 start, float2 end) {
+float pointSegmentDistanceSquared(float2 samplePosition, float2 start, float2 end) {
   const float2 segment = end - start;
   const float segmentLengthSquared = dot(segment, segment);
   const float t = segmentLengthSquared > 0.000001
-      ? saturate(dot(point - start, segment) / segmentLengthSquared)
+      ? saturate(dot(samplePosition - start, segment) / segmentLengthSquared)
       : 0.0;
-  const float2 delta = point - (start + segment * t);
+  const float2 delta = samplePosition - (start + segment * t);
   return dot(delta, delta);
 }
 
