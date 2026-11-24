@@ -95,6 +95,7 @@ module;
 #include <QSlider>
 #include <QtSVG/QSvgRenderer>
 #include <algorithm>
+#include <optional>
 #include <cmath>
 #include <array>
 #include <atomic>
@@ -155,6 +156,9 @@ import Artifact.Tool.Brush;
 import Artifact.Tool.MotionSketchTool;
 import Artifact.Service.ActiveContext;
 import Artifact.Service.Project;
+import Artifact.Service.Effect;
+import Artifact.Effect.Abstract;
+import Property.Abstract;
 import Artifact.Template.Document;
 import Artifact.Service.Playback;
 
@@ -3104,6 +3108,44 @@ public:
     const auto paintLayer = layer
                                 ? ArtifactCore::dynamicPointerCast<ArtifactPaintLayer>(layer)
                                 : ArtifactCore::SharedPtr<ArtifactPaintLayer>{};
+    if (layer) {
+      for (const auto &effect : layer->getEffects()) {
+        if (!effect || !effect->isEnabled()) continue;
+        for (unsigned int index = 0;; ++index) {
+          const auto parameter = effect->scalarGizmoParameter(index);
+          if (!parameter) break;
+          const auto property = effect->editableProperty(parameter->editablePropertyName);
+          if (!property || property->hasKeyFrames() || property->hasExpression()) continue;
+          add(tr("Drag %1 · %2")
+                  .arg(effect->displayName().toQString(), parameter->editablePropertyName),
+              [this, comp, layer, effect, viewportPos, parameter = *parameter]() {
+                finishEffectDrag(false);
+                effectDrag_ = EffectDrag{comp, layer, effect, parameter,
+                                         effect->effectID(),
+                                         ArtifactCore::UniString::fromQString(
+                                             parameter.editablePropertyName)};
+                if (!effectDragHandle_) {
+                  effectDragHandle_ = new QLabel(this);
+                  effectDragHandle_->setTextFormat(Qt::PlainText);
+                  effectDragHandle_->setMargin(6);
+                  effectDragHandle_->setFrameStyle(QFrame::StyledPanel);
+                  effectDragHandle_->setAutoFillBackground(true);
+                  effectDragHandle_->setAttribute(Qt::WA_TransparentForMouseEvents);
+                }
+                effectDragHandle_->setText(tr("← %1 · %2 →")
+                    .arg(effect->displayName().toQString(), parameter.editablePropertyName));
+                effectDragHandle_->adjustSize();
+                effectDragHandle_->move(
+                    std::clamp(qRound(viewportPos.x()), 0,
+                               std::max(0, width() - effectDragHandle_->width())),
+                    std::clamp(qRound(viewportPos.y()), 0,
+                               std::max(0, height() - effectDragHandle_->height())));
+                effectDragHandle_->raise();
+                effectDragHandle_->show();
+              });
+        }
+      }
+    }
     if (layer && comp && ArtifactRenderQueueService::instance()) {
       addSeparator();
       const auto addLayerRenderQueueAction =
@@ -5163,6 +5205,7 @@ protected:
 
   void focusOutEvent(QFocusEvent *event) override {
     restoreTemporarySolo();
+    finishEffectDrag(false);
     restoreTemporaryPlayback();
     const bool controllerDragActive =
         isSpatialGizmoDragging() || nativeControllerDragActive_;
@@ -5221,6 +5264,12 @@ protected:
   }
 
   bool event(QEvent *event) override {
+    if (event && effectDrag_ &&
+        (event->type() == QEvent::WindowDeactivate ||
+         event->type() == QEvent::Hide ||
+         event->type() == QEvent::UngrabMouse)) {
+      finishEffectDrag(false);
+    }
     if (event &&
         (event->type() == QEvent::WindowDeactivate ||
          event->type() == QEvent::ApplicationDeactivate ||
@@ -5768,7 +5817,85 @@ protected:
     event->accept();
   }
 
+  struct EffectDrag {
+    ArtifactCompositionPtr composition;
+    ArtifactAbstractLayerPtr layer;
+    ArtifactAbstractEffectPtr effect;
+    EffectScalarGizmoParameter parameter;
+    ArtifactCore::UniString effectId;
+    ArtifactCore::UniString propertyName;
+    ArtifactCore::SharedPtr<ArtifactCore::AbstractProperty> property;
+    QVariant baseline;
+    QVariant previewValue;
+    double x = 0.0;
+  };
+  std::optional<EffectDrag> effectDrag_;
+  QLabel *effectDragHandle_ = nullptr;
+
+  bool effectDragTargetIsCurrent() const {
+    const auto &drag = *effectDrag_;
+    const auto composition = currentComposition();
+    if (!composition || composition != drag.composition ||
+        composition->layerById(drag.layer->id()) != drag.layer ||
+        !drag.effect->isEnabled()) return false;
+    return drag.layer->getEffect(drag.effectId) == drag.effect;
+  }
+
+  void writeEffectDragPreview(const EffectDrag &drag, const QVariant &value) {
+    drag.effect->setPropertyValue(drag.propertyName, value);
+    drag.property->setValue(value);
+    drag.layer->setDirty(LayerDirtyFlag::Effect);
+    if (controller_) controller_->markRenderDirty();
+    update();
+  }
+
+  void finishEffectDrag(bool commit) {
+    if (!effectDrag_) return;
+    const bool targetIsCurrent = effectDragTargetIsCurrent();
+    auto drag = std::move(*effectDrag_);
+    effectDrag_.reset();
+    if (effectDragHandle_) effectDragHandle_->hide();
+    unsetCursor();
+    if (!drag.property) return;
+    const auto finalValue = drag.property->getValue();
+    if (finalValue != drag.previewValue || finalValue == drag.baseline) return;
+    writeEffectDragPreview(drag, drag.baseline);
+    if (commit && targetIsCurrent) {
+      if (auto *service = ArtifactEffectService::instance()) {
+        service->setEffectProperty(drag.layer->id(), drag.effectId.toQString(),
+                                   drag.parameter.editablePropertyName, finalValue);
+      }
+    }
+  }
+
   void mousePressEvent(QMouseEvent *event) override {
+    if (effectDrag_) {
+      if (event->button() != Qt::LeftButton || event->modifiers() != Qt::NoModifier ||
+          !effectDragHandle_ || !effectDragHandle_->geometry().contains(event->position().toPoint()) ||
+          viewportNavigationActive() || isSpatialGizmoDragging() ||
+          (controller_ && controller_->isModalGizmoInteractionActive()) ||
+          !effectDragTargetIsCurrent()) {
+        finishEffectDrag(false);
+      } else {
+        auto &drag = *effectDrag_;
+        const auto property = drag.effect->editableProperty(drag.parameter.editablePropertyName);
+        const QStringList layerIds{drag.layer->id().toQString()};
+        auto *undo = UndoManager::instance();
+        if (!property || property->hasKeyFrames() || property->hasExpression() ||
+            !undo || !undo->areLayerMutationsAllowed(layerIds)) {
+          finishEffectDrag(false);
+        } else {
+          drag.property = property;
+          drag.baseline = property->getValue();
+          drag.previewValue = drag.baseline;
+          drag.x = event->position().x();
+          setFocus(Qt::MouseFocusReason);
+          setCursor(Qt::SizeHorCursor);
+        }
+        event->accept();
+        return;
+      }
+    }
     if (viewportNavigationActive() && event &&
         (event->button() == Qt::LeftButton ||
          event->button() == Qt::RightButton ||
@@ -5995,6 +6122,26 @@ protected:
   }
 
   void mouseMoveEvent(QMouseEvent *event) override {
+    if (effectDrag_ && effectDrag_->property) {
+      if (!effectDragTargetIsCurrent() ||
+          effectDrag_->property->getValue() != effectDrag_->previewValue ||
+          effectDrag_->property->hasKeyFrames() ||
+          effectDrag_->property->hasExpression()) {
+        finishEffectDrag(false);
+      } else {
+        auto &drag = *effectDrag_;
+        const double delta = event->position().x() - drag.x;
+        const QVariant value = delta == 0.0
+            ? drag.baseline
+            : QVariant(drag.parameter.valueForDrag(drag.baseline.toDouble(), delta));
+        if (value != drag.previewValue) {
+          writeEffectDragPreview(drag, value);
+          drag.previewValue = drag.property->getValue();
+        }
+      }
+      event->accept();
+      return;
+    }
     if (event && handleViewportNavigationMouseLook(event->position())) {
       updateViewportCursor(event->position());
       event->accept();
@@ -6108,6 +6255,12 @@ protected:
   }
 
   void mouseReleaseEvent(QMouseEvent *event) override {
+    if (effectDrag_ && effectDrag_->property && event->button() == Qt::LeftButton) {
+      mouseMoveEvent(event);
+      finishEffectDrag(true);
+      event->accept();
+      return;
+    }
     if (viewportNavigationLooking_ && event &&
         (event->button() == Qt::LeftButton ||
          event->button() == Qt::RightButton ||
@@ -6641,6 +6794,11 @@ protected:
 
   void keyPressEvent(QKeyEvent *event) override {
     if (viewportNavigationActive() && handleViewportNavigationKeyPress(event)) {
+      return;
+    }
+    if (effectDrag_ && event->key() == Qt::Key_Escape) {
+      finishEffectDrag(false);
+      event->accept();
       return;
     }
     if (event && event->key() == Qt::Key_Escape && !event->isAutoRepeat()) {

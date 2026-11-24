@@ -53,6 +53,31 @@ import Audio.Modulation.Router;
 
 export namespace Artifact {
 
+struct EffectScalarGizmoParameter {
+    QString id;
+    QString editablePropertyName;
+    double minimum;
+    double maximum;
+    double step;
+    double unitsPerScreenPixel;
+    double displayScale;
+    QString displayUnit;
+
+    // Use total displacement from press so clamping does not accumulate error.
+    double valueForDrag(double initialValue, double screenDelta) const noexcept {
+        if (!std::isfinite(initialValue) || !std::isfinite(screenDelta) ||
+            !std::isfinite(minimum) || !std::isfinite(maximum) ||
+            !std::isfinite(step) || !std::isfinite(unitsPerScreenPixel) ||
+            step <= 0.0 || minimum > maximum || screenDelta == 0.0) {
+            return initialValue;
+        }
+        const double value = std::clamp(initialValue + screenDelta * unitsPerScreenPixel,
+                                        minimum, maximum);
+        return std::clamp(minimum + std::round((value - minimum) / step) * step,
+                          minimum, maximum);
+    }
+};
+
 using namespace ArtifactCore;
 
 class ArtifactAbstractEffect;
@@ -330,6 +355,13 @@ public:
     // 新規Effectは editableProperties() を正として実装し、getProperties() は互換のためのビューとする。
     virtual std::vector<ArtifactCore::AbstractProperty> getProperties() const;
     virtual void setPropertyValue(const ArtifactCore::UniString& name, const QVariant& value);
+
+    // Enumerate from index zero when preparing the viewport controls.
+    // The ID is stable across locales; the edit name bridges legacy properties.
+    virtual std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int /*index*/) const {
+        return std::nullopt;
+    }
     // Handles controls shared by every effect. Derived implementations should
     // call this before routing their own properties.
     bool setCommonPropertyValue(const QString& name, const QVariant& value);

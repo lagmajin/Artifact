@@ -61,6 +61,23 @@ public:
     float edgeThreshold() const { return edgeThreshold_; }
     void setEdgeThreshold(float t) { edgeThreshold_ = std::isfinite(t) ? std::clamp(t, 0.0f, 1.0f) : 0.1f; syncImpls(); }
 
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.blur.strength"),
+                TranslationManager::instance().tr("effect.blur.strength", "Strength"),
+                0.0, 1.0, 0.01, 0.0025, 100.0, QStringLiteral("%")};
+        }
+        if (index == 1) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.blur.radius"),
+                TranslationManager::instance().tr("effect.blur.radius", "Radius"),
+                0.1, 2048.0, 0.1, 0.25, 1.0, QStringLiteral("px")};
+        }
+        return std::nullopt;
+    }
+
     std::vector<AbstractProperty> getProperties() const override {
         std::vector<AbstractProperty> props;
 
