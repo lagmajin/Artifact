@@ -6447,6 +6447,7 @@ namespace Artifact
             const int count = queueManager.jobCount();
             QList<ArtifactRenderJob> expanded;
             expanded.reserve(count);
+            bool replacedSelectedRanges = false;
             const auto rangeOutputPath = [](const QString& path, int start, int end) {
                 const QFileInfo info(path);
                 const QString base = info.completeBaseName().isEmpty()
@@ -6471,13 +6472,7 @@ namespace Artifact
                     // frame zero. Validate the half-open interval itself and
                     // let the composition range clamp it later.
                     if (range.second <= range.first) continue;
-                    if (!normalizedRanges.isEmpty() &&
-                        range.first <= normalizedRanges.last().second) {
-                        normalizedRanges.last().second = std::max(
-                            normalizedRanges.last().second, range.second);
-                    } else {
-                        normalizedRanges.append(range);
-                    }
+                    normalizedRanges.append(range);
                 }
                 std::sort(normalizedRanges.begin(), normalizedRanges.end(),
                           [](const auto& left, const auto& right) {
@@ -6509,13 +6504,14 @@ namespace Artifact
                     rangeJob.progress = 0;
                     expanded.append(rangeJob);
                     ++appendedRanges;
+                    replacedSelectedRanges = true;
                 }
                 if (appendedRanges == 0) {
                     expanded.append(job);
                 }
             }
 
-            if (expanded.size() == count) return;
+            if (!replacedSelectedRanges) return;
             queueManager.removeAllJobs();
             for (const auto& job : expanded) queueManager.addJob(job);
         }

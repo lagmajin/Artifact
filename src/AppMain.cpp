@@ -2053,6 +2053,7 @@ private:
   };
   InputOutcome lastInput_;
   QList<std::function<void()>> pendingInputs_;
+  bool inputDispatchScheduled_ = false;
   QTcpServer server_;
   QTcpSocket* client_ = nullptr;
   QByteArray inputBuffer_;
