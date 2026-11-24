@@ -79,6 +79,7 @@ module;
 #include <QVBoxLayout>
 #include <QVariant>
 #include <QLabel>
+#include <QLocale>
 #include <QVector>
 #include <QPair>
 #include <QVector3D>
@@ -3120,6 +3121,8 @@ public:
                   .arg(effect->displayName().toQString(), parameter->editablePropertyName),
               [this, comp, layer, effect, viewportPos, parameter = *parameter]() {
                 finishEffectDrag(false);
+                const auto property = effect->editableProperty(parameter.editablePropertyName);
+                if (!property || property->hasKeyFrames() || property->hasExpression()) return;
                 effectDrag_ = EffectDrag{comp, layer, effect, parameter,
                                          effect->effectID(),
                                          ArtifactCore::UniString::fromQString(
@@ -3132,9 +3135,9 @@ public:
                   effectDragHandle_->setAutoFillBackground(true);
                   effectDragHandle_->setAttribute(Qt::WA_TransparentForMouseEvents);
                 }
-                effectDragHandle_->setText(tr("← %1 · %2 →")
-                    .arg(effect->displayName().toQString(), parameter.editablePropertyName));
-                effectDragHandle_->adjustSize();
+                effectDrag_->label = tr("← %1 · %2 →")
+                    .arg(effect->displayName().toQString(), parameter.editablePropertyName);
+                updateEffectDragHandle(property->getValue());
                 effectDragHandle_->move(
                     std::clamp(qRound(viewportPos.x()), 0,
                                std::max(0, width() - effectDragHandle_->width())),
@@ -5828,12 +5831,25 @@ protected:
     QVariant baseline;
     QVariant previewValue;
     double x = 0.0;
+    QString label;
   };
   std::optional<EffectDrag> effectDrag_;
   QLabel *effectDragHandle_ = nullptr;
 
-  bool effectDragTargetIsCurrent() const {
+  void updateEffectDragHandle(const QVariant &value) {
     const auto &drag = *effectDrag_;
+    const double displayValue = value.toDouble() * drag.parameter.displayScale;
+    effectDragHandle_->setText(QStringLiteral("%1  %2 %3")
+        .arg(drag.label, locale().toString(displayValue, 'g', 12), drag.parameter.displayUnit));
+    effectDragHandle_->adjustSize();
+    if (effectDragHandle_->isVisible()) {
+      effectDragHandle_->move(
+          std::min(effectDragHandle_->x(), std::max(0, width() - effectDragHandle_->width())),
+          effectDragHandle_->y());
+    }
+  }
+
+  bool effectDragTargetIsCurrent(const EffectDrag &drag) const {
     const auto composition = currentComposition();
     if (!composition || composition != drag.composition ||
         composition->layerById(drag.layer->id()) != drag.layer ||
@@ -5851,16 +5867,22 @@ protected:
 
   void finishEffectDrag(bool commit) {
     if (!effectDrag_) return;
-    const bool targetIsCurrent = effectDragTargetIsCurrent();
     auto drag = std::move(*effectDrag_);
     effectDrag_.reset();
     if (effectDragHandle_) effectDragHandle_->hide();
     unsetCursor();
     if (!drag.property) return;
+    const auto currentProperty =
+        drag.effect->editableProperty(drag.parameter.editablePropertyName);
+    if (currentProperty != drag.property) return;
     const auto finalValue = drag.property->getValue();
     if (finalValue != drag.previewValue || finalValue == drag.baseline) return;
     writeEffectDragPreview(drag, drag.baseline);
-    if (commit && targetIsCurrent) {
+    if (commit && effectDragTargetIsCurrent(drag) &&
+        !currentProperty->hasKeyFrames() && !currentProperty->hasExpression()) {
+      auto *projectService = ArtifactProjectService::instance();
+      if (!projectService ||
+          projectService->currentComposition().lock() != drag.composition) return;
       if (auto *service = ArtifactEffectService::instance()) {
         service->setEffectProperty(drag.layer->id(), drag.effectId.toQString(),
                                    drag.parameter.editablePropertyName, finalValue);
@@ -5874,7 +5896,7 @@ protected:
           !effectDragHandle_ || !effectDragHandle_->geometry().contains(event->position().toPoint()) ||
           viewportNavigationActive() || isSpatialGizmoDragging() ||
           (controller_ && controller_->isModalGizmoInteractionActive()) ||
-          !effectDragTargetIsCurrent()) {
+          !effectDragTargetIsCurrent(*effectDrag_)) {
         finishEffectDrag(false);
       } else {
         auto &drag = *effectDrag_;
@@ -5888,6 +5910,7 @@ protected:
           drag.property = property;
           drag.baseline = property->getValue();
           drag.previewValue = drag.baseline;
+          updateEffectDragHandle(drag.baseline);
           drag.x = event->position().x();
           setFocus(Qt::MouseFocusReason);
           setCursor(Qt::SizeHorCursor);
@@ -6123,7 +6146,7 @@ protected:
 
   void mouseMoveEvent(QMouseEvent *event) override {
     if (effectDrag_ && effectDrag_->property) {
-      if (!effectDragTargetIsCurrent() ||
+      if (!effectDragTargetIsCurrent(*effectDrag_) ||
           effectDrag_->property->getValue() != effectDrag_->previewValue ||
           effectDrag_->property->hasKeyFrames() ||
           effectDrag_->property->hasExpression()) {
@@ -6135,8 +6158,12 @@ protected:
             ? drag.baseline
             : QVariant(drag.parameter.valueForDrag(drag.baseline.toDouble(), delta));
         if (value != drag.previewValue) {
+          const auto previousPreview = drag.previewValue;
           writeEffectDragPreview(drag, value);
           drag.previewValue = drag.property->getValue();
+          if (drag.previewValue != previousPreview) {
+            updateEffectDragHandle(drag.previewValue);
+          }
         }
       }
       event->accept();
