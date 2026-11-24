@@ -8213,7 +8213,7 @@ namespace Artifact
                     renderer->setClearColor(
                         FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
                     renderer->clear();
-                    drawQueueGpuLayer(layer.get(), nullptr);
+                    drawQueueGpuLayer(layer.get(), nullptr, false);
                     renderer->flush();
                     renderer->popRenderTarget();
                     const int sourceIndex = isLeft ? 0 : 1;

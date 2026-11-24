@@ -62,6 +62,20 @@ namespace Artifact {
 
 using namespace ArtifactCore;
 
+double EffectScalarGizmoParameter::valueForDrag(
+    double initialValue, double screenDelta) const noexcept {
+  if (!std::isfinite(initialValue) || !std::isfinite(screenDelta) ||
+      !std::isfinite(minimum) || !std::isfinite(maximum) ||
+      !std::isfinite(step) || !std::isfinite(unitsPerScreenPixel) ||
+      step <= 0.0 || minimum > maximum || screenDelta == 0.0) {
+    return initialValue;
+  }
+  const double value = std::clamp(initialValue + screenDelta * unitsPerScreenPixel,
+                                  minimum, maximum);
+  return std::clamp(minimum + std::round((value - minimum) / step) * step,
+                    minimum, maximum);
+}
+
 bool GpuSpatialEffectStack::append(const GpuSpatialEffectNode& node) {
     if (count >= nodes.size()) return false;
     nodes[count++] = node;

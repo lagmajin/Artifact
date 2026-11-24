@@ -1,4 +1,5 @@
 module;
+#include <stop_token>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QJsonValue>

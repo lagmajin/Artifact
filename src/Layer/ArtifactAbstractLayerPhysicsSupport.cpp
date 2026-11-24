@@ -1,4 +1,5 @@
 module;
+#include <stop_token>
 #include <algorithm>
 #include <cstddef>
 #include <compare>

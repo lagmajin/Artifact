@@ -1,4 +1,5 @@
 module;
+#include <stop_token>
 #include <QString>
 
 module Artifact.Layer.Abstract;
