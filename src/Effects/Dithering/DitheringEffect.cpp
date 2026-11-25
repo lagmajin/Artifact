@@ -236,6 +236,13 @@ public:
     }
 
     void applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
+        if (cpuImpl_.algorithm_ != DitherAlgorithm::Bayer2x2 &&
+            cpuImpl_.algorithm_ != DitherAlgorithm::Bayer4x4) {
+            // The direct shader only implements the two ordered Bayer modes.
+            // Preserve the CPU reference result for all other algorithms.
+            applyCPU(src, dst);
+            return;
+        }
         if (!acquireSharedRenderDeviceForCurrentBackend(device_, context_)) { applyCPU(src, dst); return; }
         if (!gpuContext_) { gpuContext_ = std::make_unique<ArtifactCore::GpuContext>(device_, context_); executor_ = std::make_unique<ArtifactCore::ComputeExecutor>(*gpuContext_); }
         if (!executor_) { applyCPU(src, dst); return; }
@@ -320,6 +327,7 @@ static const float bayer4[16] = {
     3, 11, 1, 9,
     15, 7, 13, 5
 };
+static const float bayer2[4] = {0, 2, 3, 1};
 [numthreads(8, 8, 1)]
 void main(uint3 dtid : SV_DispatchThreadID) {
     uint w, h;
@@ -332,10 +340,13 @@ void main(uint3 dtid : SV_DispatchThreadID) {
         int bayerN = (algo == 0) ? 2 : 4;
         float scale = 1.0 / float(bayerN * bayerN);
         float offset = 0.5 / float(bayerN * bayerN);
-        int bx = int(dtid.x) % bayerN;
-        int by = int(dtid.y) % bayerN;
-        int bi = (algo == 0) ? ((by & 1) * 2 + (bx & 1)) : (by * 4 + bx);
-        float threshold = bayer4[bi % 16] * scale + offset;
+        int bx = int((float(dtid.x) * g_PatternScale) /
+                     max(1.0, float(w) * 0.01) * float(bayerN)) % bayerN;
+        int by = int((float(dtid.y) * g_PatternScale) /
+                     max(1.0, float(h) * 0.01) * float(bayerN)) % bayerN;
+        int bi = by * bayerN + bx;
+        float matrixValue = (algo == 0) ? bayer2[bi] : bayer4[bi];
+        float threshold = matrixValue * scale + offset;
         threshold = (threshold - 0.5) * (1.0 - g_Amount) * 2.0 + 0.5;
         color.r = floor(color.r * levels + threshold) / levels;
         color.g = floor(color.g * levels + threshold) / levels;

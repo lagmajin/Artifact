@@ -377,16 +377,33 @@ std::vector<AbstractProperty> ColorTintEffect::getProperties() const {
     std::vector<AbstractProperty> props(3);
 
     props[0].setName("Map Black To");
+    props[0].setDisplayLabel(QStringLiteral("Map Black To"));
     props[0].setType(ArtifactCore::PropertyType::Color);
     props[0].setValue(QVariant(mapBlackTo_));
+    props[0].setDefaultValue(QVariant(QColor(0, 0, 0)));
+    props[0].setTooltip(QStringLiteral("Target color for black input values."));
 
     props[1].setName("Map White To");
+    props[1].setDisplayLabel(QStringLiteral("Map White To"));
     props[1].setType(ArtifactCore::PropertyType::Color);
     props[1].setValue(QVariant(mapWhiteTo_));
+    props[1].setDefaultValue(QVariant(QColor(255, 255, 255)));
+    props[1].setTooltip(QStringLiteral("Target color for white input values."));
 
     props[2].setName("Amount to Tint");
+    props[2].setDisplayLabel(QStringLiteral("Amount"));
     props[2].setType(ArtifactCore::PropertyType::Float);
     props[2].setValue(QVariant(static_cast<double>(amountToTint_)));
+    props[2].setDefaultValue(1.0);
+    props[2].setMinValue(QVariant(0.0));
+    props[2].setMaxValue(QVariant(1.0));
+    props[2].setHardRange(0.0, 1.0);
+    props[2].setSoftRange(0.0, 1.0);
+    props[2].setStep(0.01);
+    props[2].setUnit(QStringLiteral("%"));
+    props[2].setTooltip(QStringLiteral(
+        "Blend between the original image and the two-color luminance tint."));
+    props[2].setAnimatable(true);
 
     return props;
 }

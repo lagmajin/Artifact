@@ -268,18 +268,44 @@ void LiftGammaGainEffect::syncImpls() {
 
 std::vector<AbstractProperty> LiftGammaGainEffect::getProperties() const {
     std::vector<AbstractProperty> props;
+    props.reserve(9);
+    auto addFloat = [&props](const QString& name, float value, float defaultValue,
+                             double minimum, double maximum,
+                             const QString& tooltip) {
+        AbstractProperty property;
+        property.setName(name);
+        property.setDisplayLabel(name);
+        property.setType(PropertyType::Float);
+        property.setValue(QVariant(static_cast<double>(value)));
+        property.setDefaultValue(static_cast<double>(defaultValue));
+        property.setHardRange(minimum, maximum);
+        property.setSoftRange(minimum, maximum);
+        property.setStep(0.01);
+        property.setTooltip(tooltip);
+        property.setAnimatable(true);
+        props.push_back(std::move(property));
+    };
 
-    props.push_back({}); props.back().setName("Lift R"); props.back().setType(PropertyType::Float); props.back().setValue(liftR_);
-    props.push_back({}); props.back().setName("Lift G"); props.back().setType(PropertyType::Float); props.back().setValue(liftG_);
-    props.push_back({}); props.back().setName("Lift B"); props.back().setType(PropertyType::Float); props.back().setValue(liftB_);
+    addFloat(QStringLiteral("Lift R"), liftR_, 0.0f, -1.0, 1.0,
+             QStringLiteral("Adjust red lift in the shadow range."));
+    addFloat(QStringLiteral("Lift G"), liftG_, 0.0f, -1.0, 1.0,
+             QStringLiteral("Adjust green lift in the shadow range."));
+    addFloat(QStringLiteral("Lift B"), liftB_, 0.0f, -1.0, 1.0,
+             QStringLiteral("Adjust blue lift in the shadow range."));
 
-    props.push_back({}); props.back().setName("Gamma R"); props.back().setType(PropertyType::Float); props.back().setValue(gammaR_);
-    props.push_back({}); props.back().setName("Gamma G"); props.back().setType(PropertyType::Float); props.back().setValue(gammaG_);
-    props.push_back({}); props.back().setName("Gamma B"); props.back().setType(PropertyType::Float); props.back().setValue(gammaB_);
+    addFloat(QStringLiteral("Gamma R"), gammaR_, 1.0f, 0.1, 5.0,
+             QStringLiteral("Adjust red midtone gamma; 1.0 is neutral."));
+    addFloat(QStringLiteral("Gamma G"), gammaG_, 1.0f, 0.1, 5.0,
+             QStringLiteral("Adjust green midtone gamma; 1.0 is neutral."));
+    addFloat(QStringLiteral("Gamma B"), gammaB_, 1.0f, 0.1, 5.0,
+             QStringLiteral("Adjust blue midtone gamma; 1.0 is neutral."));
 
-    props.push_back({}); props.back().setName("Gain R"); props.back().setType(PropertyType::Float); props.back().setValue(gainR_);
-    props.push_back({}); props.back().setName("Gain G"); props.back().setType(PropertyType::Float); props.back().setValue(gainG_);
-    props.push_back({}); props.back().setName("Gain B"); props.back().setType(PropertyType::Float); props.back().setValue(gainB_);
+    addFloat(QStringLiteral("Gain R"), gainR_, 1.0f, 0.0, 4.0,
+             QStringLiteral("Adjust red gain in the highlight range."));
+    addFloat(QStringLiteral("Gain G"), gainG_, 1.0f, 0.0, 4.0,
+             QStringLiteral("Adjust green gain in the highlight range."));
+    addFloat(QStringLiteral("Gain B"), gainB_, 1.0f, 0.0, 4.0,
+             QStringLiteral("Adjust blue gain in the highlight range."));
 
     return props;
 }

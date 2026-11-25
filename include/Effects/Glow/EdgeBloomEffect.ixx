@@ -3,6 +3,7 @@ module;
 #include <cmath>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -56,6 +57,20 @@ public:
 
     float tintMix() const { return tintMix_; }
     void setTintMix(float v) { tintMix_ = std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.35f; syncImpls(); }
+
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        if (index == 1) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.bloom.intensity"),
+                QStringLiteral("Amount"), 0.0, 4.0, 0.01, 0.01, 1.0,
+                QString()};
+        }
+        return std::nullopt;
+    }
 
     std::vector<AbstractProperty> getProperties() const override;
     void setPropertyValue(const UniString& name, const QVariant& value) override;

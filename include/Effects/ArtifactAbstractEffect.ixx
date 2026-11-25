@@ -62,9 +62,16 @@ struct EffectScalarGizmoParameter {
     double unitsPerScreenPixel;
     double displayScale;
     QString displayUnit;
+    // Choice i maps to minimum + i * step; labels resolve from id at menu creation.
+    std::uint8_t choiceCount = 0;
 
     // Use total displacement from press so clamping does not accumulate error.
     LIBRARY_DLL_API double valueForDrag(double initialValue, double screenDelta) const noexcept;
+};
+
+struct EffectViewportToggleParameter {
+    QString id;
+    QString editablePropertyName;
 };
 
 using namespace ArtifactCore;
@@ -348,8 +355,19 @@ public:
     // Enumerate from index zero when preparing the viewport controls.
     // The ID is stable across locales; the edit name bridges legacy properties.
     virtual std::optional<EffectScalarGizmoParameter>
-    scalarGizmoParameter(unsigned int /*index*/) const {
-        return std::nullopt;
+    scalarGizmoParameter(unsigned int index) const {
+        if (index != 0) return std::nullopt;
+        return EffectScalarGizmoParameter{
+            QStringLiteral("effect.common.mix"),
+            QStringLiteral("Effect Mix"),
+            0.0, 1.0, 0.01, 0.0025, 100.0, QStringLiteral("%")};
+    }
+    virtual std::optional<EffectViewportToggleParameter>
+    viewportToggleParameter(unsigned int index) const {
+        if (index != 0) return std::nullopt;
+        return EffectViewportToggleParameter{
+            QStringLiteral("effect.common.enabled"),
+            QStringLiteral("Effect Enabled")};
     }
     // Handles controls shared by every effect. Derived implementations should
     // call this before routing their own properties.

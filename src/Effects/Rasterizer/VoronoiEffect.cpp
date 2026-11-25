@@ -95,6 +95,9 @@ std::vector<AbstractProperty> VoronoiEffect::getProperties()const{
     addFloat("scale", scale_, 1.0f, 200.0f);
     addFloat("jitter", jitter_, 0.0f, 2.0f);
     addInt("mode", mode_, 0, 3);
+    props.back().setDisplayLabel(QStringLiteral("Mode"));
+    props.back().setTooltip(QStringLiteral(
+        "0 = Nearest Distance; 1 = Edge Gap; 2 = Second Distance; 3 = Cell Value"));
     addInt("seed", seed_, 0, 9999);
     return props;
 }

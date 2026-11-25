@@ -1,4 +1,5 @@
 module;
+#include <optional>
 #include <utility>
 #include <vector>
 #include <QString>
@@ -21,6 +22,33 @@ private:
 public:
     FindEdgesEffect();
     ~FindEdgesEffect() override;
+
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        if (index == 1) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.find_edges.amount"),
+                QStringLiteral("Amount"),
+                0.0, 5.0, 0.05, 0.01, 1.0, QStringLiteral("×")};
+        }
+        return std::nullopt;
+    }
+
+    std::optional<EffectViewportToggleParameter>
+    viewportToggleParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::viewportToggleParameter(index);
+        }
+        if (index == 1) {
+            return EffectViewportToggleParameter{
+                QStringLiteral("effect.find_edges.invert"),
+                QStringLiteral("Invert")};
+        }
+        return std::nullopt;
+    }
 
     float amount() const;
     void setAmount(float v);

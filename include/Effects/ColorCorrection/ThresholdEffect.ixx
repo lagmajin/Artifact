@@ -1,4 +1,5 @@
 module;
+#include <optional>
 #include <utility>
 #include <algorithm>
 #include <memory>
@@ -31,6 +32,20 @@ private:
 public:
     ThresholdEffect();
     ~ThresholdEffect() override;
+
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        if (index == 1) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.colorcorrection.threshold.threshold"),
+                QStringLiteral("Threshold"),
+                0.0, 1.0, 0.01, 0.0025, 100.0, QStringLiteral("%")};
+        }
+        return std::nullopt;
+    }
 
     void setThreshold(float value) {
         threshold_ = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 0.5f;

@@ -77,6 +77,15 @@ import Artifact.Composition.Abstract;
 import Artifact.Project.Manager;
 import Artifact.Project.Items;
 import Artifact.Project.PresetManager;
+import ColorBalanceEffect;
+import ChannelMixerEffect;
+import LevelsEffect;
+import ColoramaEffect;
+import SelectiveColorEffect;
+import PhotoFilterEffect;
+import TritoneEffect;
+import GradientRampEffect;
+import FillEffect;
 import Tracking.MotionTracker;
 import Artifact.Layer.Video;
 import Artifact.Undo.ProjectItemSupport;
@@ -235,10 +244,19 @@ bool applyEffectScalarSnapshot(const ArtifactAbstractEffectPtr& effect,
     }
     const auto property = effect->editableProperty(propertyName.toQString());
     const auto previousValue = property ? property->getValue() : QVariant{};
-    effect->setPropertyValue(propertyName, value);
-    if (property && property->getValue() != value) {
-        effect->setPropertyValue(propertyName, previousValue);
-        return false;
+    const QString propertyKey = propertyName.toQString();
+    if (!effect->setCommonPropertyValue(propertyKey, value)) {
+        effect->setPropertyValue(propertyName, value);
+    }
+    if (property) {
+        const auto appliedProperty = effect->editableProperty(propertyKey);
+        if (!appliedProperty || appliedProperty->getValue() != value) {
+            if (!effect->setCommonPropertyValue(propertyKey, previousValue)) {
+                effect->setPropertyValue(propertyName, previousValue);
+            }
+            effect->editableProperty(propertyKey);
+            return false;
+        }
     }
     return true;
 }
@@ -1036,20 +1054,141 @@ QStringList EffectPresetSnapshotCommand::collaborationTargetLayerIds() const {
 }
 
 namespace {
+const QString kColorBalancePresetPinSnapshotKey =
+    QStringLiteral("_artifact_undo_color_balance_custom_preset_pinned");
+const QString kChannelMixerPresetPinSnapshotKey =
+    QStringLiteral("_artifact_undo_channel_mixer_custom_preset_pinned");
+const QString kLevelsPresetPinSnapshotKey =
+    QStringLiteral("_artifact_undo_levels_custom_preset_pinned");
+const QString kColoramaPresetPinSnapshotKey =
+    QStringLiteral("_artifact_undo_colorama_custom_preset_pinned");
+const QString kSelectiveColorPresetPinSnapshotKey =
+    QStringLiteral("_artifact_undo_selective_color_custom_preset_pinned");
+const QString kPhotoFilterPresetPinSnapshotKey =
+    QStringLiteral("_artifact_undo_photo_filter_custom_preset_pinned");
+const QString kTritonePresetPinSnapshotKey =
+    QStringLiteral("_artifact_undo_tritone_custom_preset_pinned");
+const QString kGradientRampPresetPinSnapshotKey =
+    QStringLiteral("_artifact_undo_gradient_ramp_custom_preset_pinned");
+const QString kFillPresetPinSnapshotKey =
+    QStringLiteral("_artifact_undo_fill_custom_preset_pinned");
+
 bool applyEffectPresetSnapshot(const ArtifactAbstractEffectPtr& effect,
                                const QJsonObject& snapshot,
                                const QJsonObject& compensation) {
     if (!effect || snapshot.isEmpty()) return false;
-    auto target = effect;
-    if (!ArtifactPresetManager::applyPresetJsonToEffect(target, snapshot)) {
-        return false;
-    }
-    if (ArtifactPresetManager::effectToPresetJson(effect) == snapshot) {
+    const auto applySnapshot = [&](const QJsonObject& sourceSnapshot) {
+        QJsonObject targetSnapshot = sourceSnapshot;
+        const bool tracksColorBalanceCustomPresetPinned =
+            targetSnapshot.contains(kColorBalancePresetPinSnapshotKey);
+        const bool targetCustomPresetPinned =
+            targetSnapshot.value(kColorBalancePresetPinSnapshotKey).toBool();
+        const bool tracksChannelMixerCustomPresetPinned =
+            targetSnapshot.contains(kChannelMixerPresetPinSnapshotKey);
+        const bool targetChannelMixerCustomPresetPinned =
+            targetSnapshot.value(kChannelMixerPresetPinSnapshotKey).toBool();
+        const bool tracksLevelsCustomPresetPinned =
+            targetSnapshot.contains(kLevelsPresetPinSnapshotKey);
+        const bool targetLevelsCustomPresetPinned =
+            targetSnapshot.value(kLevelsPresetPinSnapshotKey).toBool();
+        const bool tracksColoramaCustomPresetPinned =
+            targetSnapshot.contains(kColoramaPresetPinSnapshotKey);
+        const bool targetColoramaCustomPresetPinned =
+            targetSnapshot.value(kColoramaPresetPinSnapshotKey).toBool();
+        const bool tracksSelectiveColorPresetPin =
+            targetSnapshot.contains(kSelectiveColorPresetPinSnapshotKey);
+        const bool targetSelectiveColorCustomPresetPinned =
+            targetSnapshot.value(kSelectiveColorPresetPinSnapshotKey).toBool();
+        const bool tracksPhotoFilterCustomPresetPinned =
+            targetSnapshot.contains(kPhotoFilterPresetPinSnapshotKey);
+        const bool targetPhotoFilterCustomPresetPinned =
+            targetSnapshot.value(kPhotoFilterPresetPinSnapshotKey).toBool();
+        const bool tracksTritoneCustomPresetPinned =
+            targetSnapshot.contains(kTritonePresetPinSnapshotKey);
+        const bool targetTritoneCustomPresetPinned =
+            targetSnapshot.value(kTritonePresetPinSnapshotKey).toBool();
+        const bool tracksGradientRampCustomPresetPinned =
+            targetSnapshot.contains(kGradientRampPresetPinSnapshotKey);
+        const bool targetGradientRampCustomPresetPinned =
+            targetSnapshot.value(kGradientRampPresetPinSnapshotKey).toBool();
+        const bool tracksFillCustomPresetPinned =
+            targetSnapshot.contains(kFillPresetPinSnapshotKey);
+        const bool targetFillCustomPresetPinned =
+            targetSnapshot.value(kFillPresetPinSnapshotKey).toBool();
+        targetSnapshot.remove(kColorBalancePresetPinSnapshotKey);
+        targetSnapshot.remove(kChannelMixerPresetPinSnapshotKey);
+        targetSnapshot.remove(kLevelsPresetPinSnapshotKey);
+        targetSnapshot.remove(kColoramaPresetPinSnapshotKey);
+        targetSnapshot.remove(kSelectiveColorPresetPinSnapshotKey);
+        targetSnapshot.remove(kPhotoFilterPresetPinSnapshotKey);
+        targetSnapshot.remove(kTritonePresetPinSnapshotKey);
+        targetSnapshot.remove(kGradientRampPresetPinSnapshotKey);
+        targetSnapshot.remove(kFillPresetPinSnapshotKey);
+        auto target = effect;
+        if (!ArtifactPresetManager::applyPresetJsonToEffect(target, targetSnapshot)) {
+            return false;
+        }
+        if (tracksColorBalanceCustomPresetPinned) {
+            auto* colorBalance = dynamic_cast<ColorBalanceEffect*>(target.get());
+            if (!colorBalance) return false;
+            colorBalance->restoreCustomPresetPinnedForSnapshot(
+                targetCustomPresetPinned);
+        }
+        if (tracksChannelMixerCustomPresetPinned) {
+            auto* channelMixer = dynamic_cast<ChannelMixerEffect*>(target.get());
+            if (!channelMixer) return false;
+            channelMixer->restoreCustomPresetPinnedForSnapshot(
+                targetChannelMixerCustomPresetPinned);
+        }
+        if (tracksLevelsCustomPresetPinned) {
+            auto* levels = dynamic_cast<LevelsEffect*>(target.get());
+            if (!levels) return false;
+            levels->restoreCustomPresetPinnedForSnapshot(
+                targetLevelsCustomPresetPinned);
+        }
+        if (tracksSelectiveColorPresetPin) {
+            auto* selectiveColor = dynamic_cast<SelectiveColorEffect*>(target.get());
+            if (!selectiveColor) return false;
+            selectiveColor->restoreCustomPresetPinnedForSnapshot(
+                targetSelectiveColorCustomPresetPinned);
+        }
+        if (tracksPhotoFilterCustomPresetPinned) {
+            auto* photoFilter = dynamic_cast<PhotoFilterEffect*>(target.get());
+            if (!photoFilter) return false;
+            photoFilter->restoreCustomPresetPinnedForSnapshot(
+                targetPhotoFilterCustomPresetPinned);
+        }
+        if (tracksTritoneCustomPresetPinned) {
+            auto* tritone = dynamic_cast<TritoneEffect*>(target.get());
+            if (!tritone) return false;
+            tritone->restoreCustomPresetPinnedForSnapshot(
+                targetTritoneCustomPresetPinned);
+        }
+        if (tracksGradientRampCustomPresetPinned) {
+            auto* gradientRamp = dynamic_cast<GradientRampEffect*>(target.get());
+            if (!gradientRamp) return false;
+            gradientRamp->restoreCustomPresetPinnedForSnapshot(
+                targetGradientRampCustomPresetPinned);
+        }
+        if (tracksFillCustomPresetPinned) {
+            auto* fillEffect = dynamic_cast<FillEffect*>(target.get());
+            if (!fillEffect) return false;
+            fillEffect->restoreCustomPresetPinnedForSnapshot(
+                targetFillCustomPresetPinned);
+        }
+        if (tracksColoramaCustomPresetPinned) {
+            auto* colorama = dynamic_cast<ColoramaEffect*>(target.get());
+            if (!colorama) return false;
+            colorama->restoreCustomPresetPinnedForSnapshot(
+                targetColoramaCustomPresetPinned);
+        }
+        return ArtifactPresetManager::effectToPresetJson(effect) == targetSnapshot;
+    };
+    if (applySnapshot(snapshot)) {
         return true;
     }
     if (!compensation.isEmpty()) {
-        auto restoreTarget = effect;
-        ArtifactPresetManager::applyPresetJsonToEffect(restoreTarget, compensation);
+        applySnapshot(compensation);
     }
     return false;
 }
@@ -1089,7 +1228,107 @@ size_t EffectPresetSnapshotCommand::estimatedMemoryBytes() const {
 }
 
 bool EffectPresetSnapshotCommand::canSerialize() const {
-    return !effectId_.isEmpty() && !effect_.expired() &&
+    const auto effect = effect_.lock();
+    const bool beforeTracksColorBalancePresetPin =
+        before_.contains(kColorBalancePresetPinSnapshotKey);
+    const bool afterTracksColorBalancePresetPin =
+        after_.contains(kColorBalancePresetPinSnapshotKey);
+    const bool tracksColorBalancePresetPin =
+        beforeTracksColorBalancePresetPin || afterTracksColorBalancePresetPin;
+    const bool beforeTracksChannelMixerPresetPin =
+        before_.contains(kChannelMixerPresetPinSnapshotKey);
+    const bool afterTracksChannelMixerPresetPin =
+        after_.contains(kChannelMixerPresetPinSnapshotKey);
+    const bool tracksChannelMixerPresetPin =
+        beforeTracksChannelMixerPresetPin || afterTracksChannelMixerPresetPin;
+    const bool beforeTracksLevelsPresetPin =
+        before_.contains(kLevelsPresetPinSnapshotKey);
+    const bool afterTracksLevelsPresetPin =
+        after_.contains(kLevelsPresetPinSnapshotKey);
+    const bool tracksLevelsPresetPin =
+        beforeTracksLevelsPresetPin || afterTracksLevelsPresetPin;
+    const bool beforeTracksColoramaPresetPin =
+        before_.contains(kColoramaPresetPinSnapshotKey);
+    const bool afterTracksColoramaPresetPin =
+        after_.contains(kColoramaPresetPinSnapshotKey);
+    const bool tracksColoramaPresetPin =
+        beforeTracksColoramaPresetPin || afterTracksColoramaPresetPin;
+    const bool beforeTracksSelectiveColorPresetPin =
+        before_.contains(kSelectiveColorPresetPinSnapshotKey);
+    const bool afterTracksSelectiveColorPresetPin =
+        after_.contains(kSelectiveColorPresetPinSnapshotKey);
+    const bool tracksSelectiveColorPresetPin =
+        beforeTracksSelectiveColorPresetPin || afterTracksSelectiveColorPresetPin;
+    const bool beforeTracksPhotoFilterPresetPin =
+        before_.contains(kPhotoFilterPresetPinSnapshotKey);
+    const bool afterTracksPhotoFilterPresetPin =
+        after_.contains(kPhotoFilterPresetPinSnapshotKey);
+    const bool tracksPhotoFilterPresetPin =
+        beforeTracksPhotoFilterPresetPin || afterTracksPhotoFilterPresetPin;
+    const bool beforeTracksTritonePresetPin =
+        before_.contains(kTritonePresetPinSnapshotKey);
+    const bool afterTracksTritonePresetPin =
+        after_.contains(kTritonePresetPinSnapshotKey);
+    const bool tracksTritonePresetPin =
+        beforeTracksTritonePresetPin || afterTracksTritonePresetPin;
+    const bool beforeTracksGradientRampPresetPin =
+        before_.contains(kGradientRampPresetPinSnapshotKey);
+    const bool afterTracksGradientRampPresetPin =
+        after_.contains(kGradientRampPresetPinSnapshotKey);
+    const bool tracksGradientRampPresetPin =
+        beforeTracksGradientRampPresetPin || afterTracksGradientRampPresetPin;
+    const bool beforeTracksFillPresetPin =
+        before_.contains(kFillPresetPinSnapshotKey);
+    const bool afterTracksFillPresetPin =
+        after_.contains(kFillPresetPinSnapshotKey);
+    const bool tracksFillPresetPin =
+        beforeTracksFillPresetPin || afterTracksFillPresetPin;
+    return !effectId_.isEmpty() && effect &&
+           (!tracksColorBalancePresetPin ||
+            (beforeTracksColorBalancePresetPin && afterTracksColorBalancePresetPin &&
+             before_.value(kColorBalancePresetPinSnapshotKey).isBool() &&
+             after_.value(kColorBalancePresetPinSnapshotKey).isBool() &&
+             dynamic_cast<ColorBalanceEffect*>(effect.get()) != nullptr)) &&
+           (!tracksChannelMixerPresetPin ||
+            (beforeTracksChannelMixerPresetPin && afterTracksChannelMixerPresetPin &&
+             before_.value(kChannelMixerPresetPinSnapshotKey).isBool() &&
+             after_.value(kChannelMixerPresetPinSnapshotKey).isBool() &&
+             dynamic_cast<ChannelMixerEffect*>(effect.get()) != nullptr)) &&
+           (!tracksLevelsPresetPin ||
+            (beforeTracksLevelsPresetPin && afterTracksLevelsPresetPin &&
+             before_.value(kLevelsPresetPinSnapshotKey).isBool() &&
+             after_.value(kLevelsPresetPinSnapshotKey).isBool() &&
+             dynamic_cast<LevelsEffect*>(effect.get()) != nullptr)) &&
+           (!tracksColoramaPresetPin ||
+            (beforeTracksColoramaPresetPin && afterTracksColoramaPresetPin &&
+             before_.value(kColoramaPresetPinSnapshotKey).isBool() &&
+             after_.value(kColoramaPresetPinSnapshotKey).isBool() &&
+             dynamic_cast<ColoramaEffect*>(effect.get()) != nullptr)) &&
+           (!tracksSelectiveColorPresetPin ||
+            (beforeTracksSelectiveColorPresetPin && afterTracksSelectiveColorPresetPin &&
+             before_.value(kSelectiveColorPresetPinSnapshotKey).isBool() &&
+             after_.value(kSelectiveColorPresetPinSnapshotKey).isBool() &&
+             dynamic_cast<SelectiveColorEffect*>(effect.get()) != nullptr)) &&
+           (!tracksPhotoFilterPresetPin ||
+            (beforeTracksPhotoFilterPresetPin && afterTracksPhotoFilterPresetPin &&
+             before_.value(kPhotoFilterPresetPinSnapshotKey).isBool() &&
+             after_.value(kPhotoFilterPresetPinSnapshotKey).isBool() &&
+             dynamic_cast<PhotoFilterEffect*>(effect.get()) != nullptr)) &&
+           (!tracksTritonePresetPin ||
+            (beforeTracksTritonePresetPin && afterTracksTritonePresetPin &&
+             before_.value(kTritonePresetPinSnapshotKey).isBool() &&
+             after_.value(kTritonePresetPinSnapshotKey).isBool() &&
+             dynamic_cast<TritoneEffect*>(effect.get()) != nullptr)) &&
+           (!tracksGradientRampPresetPin ||
+            (beforeTracksGradientRampPresetPin && afterTracksGradientRampPresetPin &&
+             before_.value(kGradientRampPresetPinSnapshotKey).isBool() &&
+             after_.value(kGradientRampPresetPinSnapshotKey).isBool() &&
+             dynamic_cast<GradientRampEffect*>(effect.get()) != nullptr)) &&
+           (!tracksFillPresetPin ||
+            (beforeTracksFillPresetPin && afterTracksFillPresetPin &&
+             before_.value(kFillPresetPinSnapshotKey).isBool() &&
+             after_.value(kFillPresetPinSnapshotKey).isBool() &&
+             dynamic_cast<FillEffect*>(effect.get()) != nullptr)) &&
            !before_.isEmpty() && !after_.isEmpty() && !label_.isEmpty();
 }
 

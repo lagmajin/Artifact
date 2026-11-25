@@ -190,12 +190,91 @@ void RippleEffect::syncImpls() {
 
 std::vector<AbstractProperty> RippleEffect::getProperties() const {
     std::vector<AbstractProperty> props;
-    auto& cx = props.emplace_back(); cx.setName("Center X"); cx.setType(PropertyType::Float); cx.setValue(centerX_); cx.setMinValue(QVariant(0.0)); cx.setMaxValue(QVariant(1.0));
-    auto& cy = props.emplace_back(); cy.setName("Center Y"); cy.setType(PropertyType::Float); cy.setValue(centerY_); cy.setMinValue(QVariant(0.0)); cy.setMaxValue(QVariant(1.0));
-    auto& a = props.emplace_back(); a.setName("Amplitude"); a.setType(PropertyType::Float); a.setValue(amplitude_); a.setMinValue(QVariant(0.0)); a.setMaxValue(QVariant(4096.0));
-    auto& f = props.emplace_back(); f.setName("Frequency"); f.setType(PropertyType::Float); f.setValue(frequency_); f.setMinValue(QVariant(-1.0)); f.setMaxValue(QVariant(1.0));
-    auto& d = props.emplace_back(); d.setName("Decay"); d.setType(PropertyType::Float); d.setValue(decay_); d.setMinValue(QVariant(0.0)); d.setMaxValue(QVariant(1.0));
-    auto& p = props.emplace_back(); p.setName("Phase"); p.setType(PropertyType::Float); p.setValue(phase_); p.setMinValue(QVariant(-1000.0)); p.setMaxValue(QVariant(1000.0));
+    props.reserve(6);
+    const auto configureFloat = [](AbstractProperty& property,
+                                   const QString& label,
+                                   const double hardMinimum,
+                                   const double hardMaximum,
+                                   const double softMinimum,
+                                   const double softMaximum,
+                                   const double step,
+                                   const QString& unit,
+                                   const QString& tooltip) {
+        property.setDisplayLabel(label);
+        property.setHardRange(hardMinimum, hardMaximum);
+        property.setSoftRange(softMinimum, softMaximum);
+        property.setStep(step);
+        property.setUnit(unit);
+        property.setTooltip(tooltip);
+        property.setAnimatable(true);
+    };
+
+    auto& cx = props.emplace_back();
+    cx.setName(QStringLiteral("Center X"));
+    cx.setType(PropertyType::Float);
+    cx.setValue(centerX_);
+    cx.setDefaultValue(0.5);
+    cx.setMinValue(QVariant(0.0));
+    cx.setMaxValue(QVariant(1.0));
+    configureFloat(cx, QStringLiteral("Center X"), 0.0, 1.0, 0.1, 0.9,
+                   0.005, QStringLiteral("%"),
+                   QStringLiteral("Horizontal ripple center as a fraction of image width."));
+
+    auto& cy = props.emplace_back();
+    cy.setName(QStringLiteral("Center Y"));
+    cy.setType(PropertyType::Float);
+    cy.setValue(centerY_);
+    cy.setDefaultValue(0.5);
+    cy.setMinValue(QVariant(0.0));
+    cy.setMaxValue(QVariant(1.0));
+    configureFloat(cy, QStringLiteral("Center Y"), 0.0, 1.0, 0.1, 0.9,
+                   0.005, QStringLiteral("%"),
+                   QStringLiteral("Vertical ripple center as a fraction of image height."));
+
+    auto& a = props.emplace_back();
+    a.setName(QStringLiteral("Amplitude"));
+    a.setType(PropertyType::Float);
+    a.setValue(amplitude_);
+    a.setDefaultValue(10.0);
+    a.setMinValue(QVariant(0.0));
+    a.setMaxValue(QVariant(4096.0));
+    configureFloat(a, QStringLiteral("Amplitude"), 0.0, 4096.0, 0.0, 256.0,
+                   0.25, QStringLiteral("px"),
+                   QStringLiteral("Maximum radial displacement in pixels."));
+
+    auto& f = props.emplace_back();
+    f.setName(QStringLiteral("Frequency"));
+    f.setType(PropertyType::Float);
+    f.setValue(frequency_);
+    f.setDefaultValue(0.01);
+    f.setMinValue(QVariant(-1.0));
+    f.setMaxValue(QVariant(1.0));
+    configureFloat(f, QStringLiteral("Frequency"), -1.0, 1.0, -0.1, 0.1,
+                   0.001, QStringLiteral("cycles/px"),
+                   QStringLiteral("Radial wave cycles per source pixel."));
+
+    auto& d = props.emplace_back();
+    d.setName(QStringLiteral("Decay"));
+    d.setType(PropertyType::Float);
+    d.setValue(decay_);
+    d.setDefaultValue(0.005);
+    d.setMinValue(QVariant(0.0));
+    d.setMaxValue(QVariant(1.0));
+    configureFloat(d, QStringLiteral("Decay"), 0.0, 1.0, 0.0, 0.05,
+                   0.0005, QStringLiteral("1/px"),
+                   QStringLiteral("Exponential attenuation per source pixel."));
+
+    auto& p = props.emplace_back();
+    p.setName(QStringLiteral("Phase"));
+    p.setType(PropertyType::Float);
+    p.setValue(phase_);
+    p.setDefaultValue(0.0);
+    p.setMinValue(QVariant(-1000.0));
+    p.setMaxValue(QVariant(1000.0));
+    configureFloat(p, QStringLiteral("Phase"), -1000.0, 1000.0,
+                   -3.141592653589793, 3.141592653589793,
+                   0.01, QStringLiteral("rad"),
+                   QStringLiteral("Radial ripple phase offset."));
     return props;
 }
 

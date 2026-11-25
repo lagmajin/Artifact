@@ -1,5 +1,6 @@
 module;
 #include <utility>
+#include <optional>
 #include <vector>
 #include <QString>
 #include <QVariant>
@@ -25,6 +26,20 @@ private:
 public:
     SharpenEffect();
     ~SharpenEffect() override;
+
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        if (index == 1) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.sharpen.amount"),
+                QStringLiteral("Amount"),
+                0.0, 10.0, 0.01, 0.0125, 1.0, QString()};
+        }
+        return std::nullopt;
+    }
 
     float amount() const;
     void setAmount(float v);
@@ -61,6 +76,21 @@ protected:
 public:
     MagicSharpEffect();
     ~MagicSharpEffect() override;
+
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        if (index == 1) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.magic_sharp.amount"),
+                QStringLiteral("amount"),
+                0.0, 5.0, 0.01, 0.0125, 1.0, QString()};
+        }
+        return std::nullopt;
+    }
+
     std::vector<ArtifactCore::AbstractProperty> getProperties() const override;
     void setPropertyValue(const UniString& name, const QVariant& value) override;
     EffectROIHint roiHint() const override;

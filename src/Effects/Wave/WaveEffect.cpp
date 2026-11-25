@@ -255,32 +255,63 @@ std::vector<ArtifactCore::AbstractProperty> WaveEffect::getProperties() const {
     ampProp.setType(ArtifactCore::PropertyType::Float);
     ampProp.setDefaultValue(QVariant(static_cast<double>(amplitude())));
     ampProp.setValue(QVariant(static_cast<double>(amplitude())));
+    ampProp.setDisplayLabel(QStringLiteral("Amplitude"));
+    ampProp.setTooltip(QStringLiteral("Maximum displacement of the wave in pixels."));
+    ampProp.setHardRange(-4096.0, 4096.0);
+    ampProp.setSoftRange(-256.0, 256.0);
+    ampProp.setStep(1.0);
+    ampProp.setUnit(QStringLiteral("px"));
+    ampProp.setAnimatable(true);
 
     auto& freqProp = props.emplace_back();
     freqProp.setName("frequency");
     freqProp.setType(ArtifactCore::PropertyType::Float);
     freqProp.setDefaultValue(QVariant(static_cast<double>(frequency())));
     freqProp.setValue(QVariant(static_cast<double>(frequency())));
+    freqProp.setDisplayLabel(QStringLiteral("Frequency"));
+    freqProp.setTooltip(QStringLiteral("Wave cycles per pixel along the selected orientation."));
+    freqProp.setHardRange(-10.0, 10.0);
+    freqProp.setSoftRange(-0.5, 0.5);
+    freqProp.setStep(0.001);
+    freqProp.setUnit(QStringLiteral("cycles/px"));
+    freqProp.setAnimatable(true);
 
     auto& phaseProp = props.emplace_back();
     phaseProp.setName("phase");
     phaseProp.setType(ArtifactCore::PropertyType::Float);
     phaseProp.setDefaultValue(QVariant(static_cast<double>(phase())));
     phaseProp.setValue(QVariant(static_cast<double>(phase())));
+    phaseProp.setDisplayLabel(QStringLiteral("Phase"));
+    phaseProp.setTooltip(QStringLiteral("Wave phase offset."));
+    phaseProp.setHardRange(-3.141592653589793, 3.141592653589793);
+    phaseProp.setSoftRange(-3.141592653589793, 3.141592653589793);
+    phaseProp.setStep(0.01);
+    phaseProp.setUnit(QStringLiteral("rad"));
+    phaseProp.setAnimatable(true);
 
     auto& waveTypeProp = props.emplace_back();
     waveTypeProp.setName("waveType");
     waveTypeProp.setType(ArtifactCore::PropertyType::Integer);
     waveTypeProp.setDefaultValue(QVariant(waveType()));
     waveTypeProp.setValue(QVariant(waveType()));
-    waveTypeProp.setTooltip(QStringLiteral("0=Sine, 1=Cosine"));
+    waveTypeProp.setDisplayLabel(QStringLiteral("Wave Type"));
+    waveTypeProp.setTooltip(QStringLiteral("Select the sine or cosine wave profile."));
+    waveTypeProp.setHardRange(0.0, 1.0);
+    waveTypeProp.setSoftRange(0.0, 1.0);
+    waveTypeProp.setStep(1.0);
+    waveTypeProp.setAnimatable(false);
 
     auto& orientProp = props.emplace_back();
     orientProp.setName("orientation");
     orientProp.setType(ArtifactCore::PropertyType::Integer);
     orientProp.setDefaultValue(QVariant(orientation()));
     orientProp.setValue(QVariant(orientation()));
-    orientProp.setTooltip(QStringLiteral("0=Horizontal, 1=Vertical"));
+    orientProp.setDisplayLabel(QStringLiteral("Orientation"));
+    orientProp.setTooltip(QStringLiteral("Choose the direction used to evaluate the wave."));
+    orientProp.setHardRange(0.0, 1.0);
+    orientProp.setSoftRange(0.0, 1.0);
+    orientProp.setStep(1.0);
+    orientProp.setAnimatable(false);
 
     return props;
 }

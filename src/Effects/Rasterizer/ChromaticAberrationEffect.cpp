@@ -3,6 +3,7 @@ module;
 #include <cmath>
 #include <cstdint>
 #include <memory>
+#include <utility>
 #include <QString>
 #include <QVariant>
 #include <opencv2/opencv.hpp>
@@ -105,24 +106,60 @@ std::vector<AbstractProperty> ChromaticAberrationEffect::getProperties()const{
     std::vector<AbstractProperty> props;
     props.reserve(4);
 
-    auto addFloat = [&props](const char* name, float value, float minValue, float maxValue) {
+    auto addFloat = [&props](const char* name, const char* label, float value,
+                             float defaultValue, double minValue, double maxValue,
+                             double softMinimum, double softMaximum, double step,
+                             const QString& unit, const QString& tooltip) {
         AbstractProperty prop;
         prop.setName(QString::fromLatin1(name));
+        prop.setDisplayLabel(QString::fromLatin1(label));
         prop.setType(PropertyType::Float);
         const QVariant variantValue(static_cast<double>(value));
         prop.setValue(variantValue);
-        prop.setDefaultValue(variantValue);
-        prop.setMinValue(QVariant(static_cast<double>(minValue)));
-        prop.setMaxValue(QVariant(static_cast<double>(maxValue)));
+        prop.setDefaultValue(QVariant(static_cast<double>(defaultValue)));
+        prop.setHardRange(QVariant(minValue), QVariant(maxValue));
+        prop.setSoftRange(QVariant(softMinimum), QVariant(softMaximum));
+        prop.setStep(QVariant(step));
+        prop.setUnit(unit);
+        prop.setTooltip(tooltip);
+        prop.setAnimatable(true);
         props.push_back(std::move(prop));
     };
 
-    addFloat("redShift", redShift_, 0.0f, 50.0f);
-    addFloat("blueShift", blueShift_, 0.0f, 50.0f);
-    addFloat("centerX", cx_, 0.0f, 1.0f);
-    addFloat("centerY", cy_, 0.0f, 1.0f);
+    addFloat("redShift", "Red Shift", redShift_, 2.0f,
+             0.0, 50.0, 0.0, 12.0, 0.1, QStringLiteral("px"),
+             QStringLiteral("Radial displacement of the red channel."));
+    addFloat("blueShift", "Blue Shift", blueShift_, 2.0f,
+             0.0, 50.0, 0.0, 12.0, 0.1, QStringLiteral("px"),
+             QStringLiteral("Radial displacement of the blue channel."));
+    addFloat("centerX", "Center X", cx_, 0.5f,
+             0.0, 1.0, 0.2, 0.8, 0.001, QStringLiteral("%"),
+             QStringLiteral("Horizontal origin of the radial channel split."));
+    addFloat("centerY", "Center Y", cy_, 0.5f,
+             0.0, 1.0, 0.2, 0.8, 0.001, QStringLiteral("%"),
+             QStringLiteral("Vertical origin of the radial channel split."));
     return props;
 }
 void ChromaticAberrationEffect::setPropertyValue(const UniString& n,const QVariant& v){const QString k=n.toQString();if(k=="redShift")setRedShift(v.toFloat());else if(k=="blueShift")setBlueShift(v.toFloat());else if(k=="centerX")setCenterX(v.toFloat());else if(k=="centerY")setCenterY(v.toFloat());}
-void ChromaticAberrationEffect::syncImpls(){auto c=ArtifactCore::makeShared<ChromaticAberrationCPUImpl>();c->redShift_=redShift_;c->blueShift_=blueShift_;c->cx_=cx_;c->cy_=cy_;setCPUImpl(c);if(auto* g=dynamic_cast<ChromaticAberrationGPUImpl*>(gpuImpl().get())){g->redShift_=redShift_;g->blueShift_=blueShift_;g->cx_=cx_;g->cy_=cy_;}}
+void ChromaticAberrationEffect::syncImpls() {
+    if (auto* cpu = dynamic_cast<ChromaticAberrationCPUImpl*>(cpuImpl().get())) {
+        cpu->redShift_ = redShift_;
+        cpu->blueShift_ = blueShift_;
+        cpu->cx_ = cx_;
+        cpu->cy_ = cy_;
+    } else {
+        auto cpu = ArtifactCore::makeShared<ChromaticAberrationCPUImpl>();
+        cpu->redShift_ = redShift_;
+        cpu->blueShift_ = blueShift_;
+        cpu->cx_ = cx_;
+        cpu->cy_ = cy_;
+        setCPUImpl(cpu);
+    }
+    if (auto* gpu = dynamic_cast<ChromaticAberrationGPUImpl*>(gpuImpl().get())) {
+        gpu->redShift_ = redShift_;
+        gpu->blueShift_ = blueShift_;
+        gpu->cx_ = cx_;
+        gpu->cy_ = cy_;
+    }
+}
 } // namespace Artifact

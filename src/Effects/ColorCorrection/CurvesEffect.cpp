@@ -564,6 +564,8 @@ std::vector<AbstractProperty> CurvesEffect::getProperties() const {
     strengthProp.setHardRange(0.0, 1.0);
     strengthProp.setSoftRange(0.0, 1.0);
     strengthProp.setStep(0.01);
+    strengthProp.setUnit(QStringLiteral("%"));
+    strengthProp.setAnimatable(true);
     strengthProp.setDisplayLabel(QStringLiteral("S-Curve Strength"));
     strengthProp.setTooltip(QStringLiteral("Controls the contrast of the S-Curve preset."));
     strengthProp.setDisplayPriority(-10);
@@ -571,12 +573,14 @@ std::vector<AbstractProperty> CurvesEffect::getProperties() const {
 
     AbstractProperty posterizeProp;
     posterizeProp.setName("Posterize Levels");
+    posterizeProp.setDisplayLabel(QStringLiteral("Posterize Levels"));
     posterizeProp.setType(PropertyType::Integer);
     posterizeProp.setValue(posterizeLevels_);
     posterizeProp.setDefaultValue(4);
     posterizeProp.setHardRange(2, 256);
     posterizeProp.setSoftRange(2, 32);
     posterizeProp.setStep(1);
+    posterizeProp.setUnit(QStringLiteral("levels"));
     posterizeProp.setTooltip(QStringLiteral("Number of tonal steps used by the Posterize preset."));
     props.push_back(posterizeProp);
 

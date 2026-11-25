@@ -4,6 +4,7 @@ module;
 #include <algorithm>
 #include <cmath>
 #include <memory>
+#include <QString>
 #include <QVariant>
 #include <cstring>
 #include <vector>
@@ -379,32 +380,48 @@ std::vector<AbstractProperty> BrightnessEffect::getProperties() const {
     std::vector<AbstractProperty> props(4);
 
     props[0].setName("Brightness");
+    props[0].setDisplayLabel(QStringLiteral("Brightness"));
     props[0].setType(ArtifactCore::PropertyType::Float);
     props[0].setValue(QVariant(static_cast<double>(brightness_)));
+    props[0].setDefaultValue(0.0);
     props[0].setHardRange(-1.0, 1.0);
     props[0].setSoftRange(-0.5, 0.5);
     props[0].setStep(0.01);
+    props[0].setTooltip(QStringLiteral("Adjust the overall image brightness."));
+    props[0].setAnimatable(true);
 
     props[1].setName("Contrast");
+    props[1].setDisplayLabel(QStringLiteral("Contrast"));
     props[1].setType(ArtifactCore::PropertyType::Float);
     props[1].setValue(QVariant(static_cast<double>(contrast_)));
+    props[1].setDefaultValue(0.0);
     props[1].setHardRange(-1.0, 1.0);
     props[1].setSoftRange(-0.5, 0.5);
     props[1].setStep(0.01);
+    props[1].setTooltip(QStringLiteral("Increase or reduce tonal contrast."));
+    props[1].setAnimatable(true);
 
     props[2].setName("Highlights");
+    props[2].setDisplayLabel(QStringLiteral("Highlights"));
     props[2].setType(ArtifactCore::PropertyType::Float);
     props[2].setValue(QVariant(static_cast<double>(highlights_)));
+    props[2].setDefaultValue(0.0);
     props[2].setHardRange(-1.0, 1.0);
     props[2].setSoftRange(-0.5, 0.5);
     props[2].setStep(0.01);
+    props[2].setTooltip(QStringLiteral("Adjust brighter image regions."));
+    props[2].setAnimatable(true);
 
     props[3].setName("Shadows");
+    props[3].setDisplayLabel(QStringLiteral("Shadows"));
     props[3].setType(ArtifactCore::PropertyType::Float);
     props[3].setValue(QVariant(static_cast<double>(shadows_)));
+    props[3].setDefaultValue(0.0);
     props[3].setHardRange(-1.0, 1.0);
     props[3].setSoftRange(-0.5, 0.5);
     props[3].setStep(0.01);
+    props[3].setTooltip(QStringLiteral("Adjust darker image regions."));
+    props[3].setAnimatable(true);
 
     return props;
 }

@@ -347,9 +347,38 @@ void KuwaharaEffect::syncImpls() {
 
 std::vector<AbstractProperty> KuwaharaEffect::getProperties() const {
     std::vector<AbstractProperty> props;
-    auto& r = props.emplace_back(); r.setName("Radius"); r.setType(PropertyType::Float); r.setValue(radius_);
-    auto& s = props.emplace_back(); s.setName("Sharpness"); s.setType(PropertyType::Float); s.setValue(sharpness_);
-    auto& a = props.emplace_back(); a.setName("Anisotropic"); a.setType(PropertyType::Boolean); a.setValue(anisotropic_);
+
+    auto& r = props.emplace_back();
+    r.setName("Radius");
+    r.setDisplayLabel(QStringLiteral("Radius"));
+    r.setType(PropertyType::Float);
+    r.setValue(radius_);
+    r.setDefaultValue(5.0);
+    r.setHardRange(1.0, 50.0);
+    r.setSoftRange(1.0, 16.0);
+    r.setStep(1.0);
+    r.setUnit(QStringLiteral("px"));
+    r.setTooltip(QStringLiteral("Radius of the Kuwahara neighborhood."));
+    r.setAnimatable(true);
+
+    auto& s = props.emplace_back();
+    s.setName("Sharpness");
+    s.setDisplayLabel(QStringLiteral("Sharpness"));
+    s.setType(PropertyType::Float);
+    s.setValue(sharpness_);
+    s.setDefaultValue(0.5);
+    s.setHardRange(0.0, 1.0);
+    s.setSoftRange(0.0, 0.5);
+    s.setStep(0.01);
+    s.setUnit(QStringLiteral("%"));
+    s.setTooltip(QStringLiteral("Higher values reduce the influence of variance when choosing a quadrant."));
+    s.setAnimatable(true);
+
+    auto& a = props.emplace_back();
+    a.setName("Anisotropic");
+    a.setType(PropertyType::Boolean);
+    a.setValue(anisotropic_);
+
     return props;
 }
 

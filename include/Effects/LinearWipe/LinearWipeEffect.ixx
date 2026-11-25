@@ -1,5 +1,6 @@
 module;
 #include <cstdint>
+#include <optional>
 #include <utility>
 #include <vector>
 #include <QString>
@@ -30,6 +31,20 @@ public:
     void setSoftness(float v);
     float feather() const;
     void setFeather(float v);
+
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        if (index == 1) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.linear_wipe.angle"),
+                QStringLiteral("Angle"), 0.0, 359.0, 1.0, 0.8975, 1.0,
+                QStringLiteral("°")};
+        }
+        return std::nullopt;
+    }
 
     std::vector<ArtifactCore::AbstractProperty> getProperties() const override;
     void setPropertyValue(const UniString& name, const QVariant& value) override;

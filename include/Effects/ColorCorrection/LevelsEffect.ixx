@@ -1,5 +1,6 @@
 module;
 #include <utility>
+#include <optional>
 #include <vector>
 #include <QString>
 #include <QVariant>
@@ -29,9 +30,11 @@ private:
 
     ArtifactCore::LevelsSettings settings_;
     Preset preset_ = Preset::Normal;
+    bool customPresetPinned_ = false;
 
     void syncImpls();
     void applyPreset(Preset preset);
+    void updatePresetFromSettings();
 
 public:
     LevelsEffect();
@@ -39,6 +42,45 @@ public:
 
     void setPreset(int preset);
     int preset() const { return static_cast<int>(preset_); }
+    bool customPresetPinnedForSnapshot() const { return customPresetPinned_; }
+    void restoreCustomPresetPinnedForSnapshot(bool pinned) {
+        customPresetPinned_ = pinned;
+    }
+
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        if (index == 1) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.levels.input_black"),
+                QStringLiteral("Input Black"), 0.0, 255.0, 1.0,
+                255.0 / 400.0, 1.0, QString()};
+        }
+        if (index == 2) {
+            EffectScalarGizmoParameter parameter{
+                QStringLiteral("effect.color.levels.preset"),
+                QStringLiteral("Preset"), 0.0, 5.0, 1.0, 0.05,
+                1.0, QString()};
+            parameter.choiceCount = 6;
+            return parameter;
+        }
+        return std::nullopt;
+    }
+
+    std::optional<EffectViewportToggleParameter>
+    viewportToggleParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::viewportToggleParameter(index);
+        }
+        if (index == 1) {
+            return EffectViewportToggleParameter{
+                QStringLiteral("effect.levels.per_channel"),
+                QStringLiteral("Per Channel")};
+        }
+        return std::nullopt;
+    }
 
     void setInputBlack(float value);
     void setInputWhite(float value);

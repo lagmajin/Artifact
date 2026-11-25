@@ -1,5 +1,6 @@
 module;
 #include <memory>
+#include <optional>
 #include <vector>
 #include <QString>
 #include <QVariant>
@@ -19,6 +20,20 @@ class ChromaticAberrationEffect : public ArtifactAbstractEffect {
 public:
     ChromaticAberrationEffect();
     ~ChromaticAberrationEffect() override;
+
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        if (index == 1) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.chromatic_aberration.red_shift"),
+                QStringLiteral("Red Shift"), 0.0, 50.0, 0.1, 0.125,
+                1.0, QStringLiteral("px")};
+        }
+        return std::nullopt;
+    }
 
     float redShift() const;
     void  setRedShift(float v);

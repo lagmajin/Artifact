@@ -1,4 +1,5 @@
 module;
+#include <optional>
 #include <utility>
 #include <algorithm>
 #include <memory>
@@ -31,6 +32,20 @@ private:
 public:
     PosterizeEffect();
     ~PosterizeEffect() override;
+
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        if (index == 1) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.colorcorrection.posterize.levels"),
+                QStringLiteral("Levels"),
+                2.0, 64.0, 1.0, 0.25, 1.0, QStringLiteral("levels")};
+        }
+        return std::nullopt;
+    }
 
     void setLevels(float value) {
         levels_ = std::isfinite(value) ? std::clamp(value, 2.0f, 64.0f) : 4.0f;

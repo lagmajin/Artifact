@@ -87,6 +87,43 @@ public:
     StreakPattern pattern() const { return pattern_; }
     void setPattern(StreakPattern p) { pattern_ = p; syncImpls(); }
 
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        if (index == 1) {
+            EffectScalarGizmoParameter parameter{
+                QStringLiteral("effect.directional_glow.preset"),
+                QStringLiteral("Preset"), 0.0, 4.0, 1.0, 0.05, 1.0,
+                QString()};
+            parameter.choiceCount = 5;
+            return parameter;
+        }
+        if (index == 2) {
+            EffectScalarGizmoParameter parameter{
+                QStringLiteral("effect.directional_glow.pattern"),
+                QStringLiteral("Pattern"), 0.0, 4.0, 1.0, 0.05, 1.0,
+                QString()};
+            parameter.choiceCount = 5;
+            return parameter;
+        }
+        return std::nullopt;
+    }
+
+    std::optional<EffectViewportToggleParameter>
+    viewportToggleParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::viewportToggleParameter(index);
+        }
+        if (index == 1) {
+            return EffectViewportToggleParameter{
+                QStringLiteral("effect.directional_glow.half_sampling"),
+                QStringLiteral("Half Sampling")};
+        }
+        return std::nullopt;
+    }
+
     const QVector<float>& customAngles() const { return customAngles_; }
     void setCustomAngles(const QVector<float>& angles) {
         customAngles_.clear();

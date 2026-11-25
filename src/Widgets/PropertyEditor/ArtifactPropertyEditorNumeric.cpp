@@ -70,11 +70,29 @@ constexpr qint64 kSliderPreviewIntervalMs = 16;
 
 bool isScalePercentProperty(const ArtifactCore::AbstractProperty &property) {
   const QString name = property.getName();
-  return name.compare(QStringLiteral("reveal.progress"), Qt::CaseInsensitive) == 0 ||
-         name.compare(QStringLiteral("transform.scale.x"),
-                      Qt::CaseInsensitive) == 0 ||
-         name.compare(QStringLiteral("transform.scale.y"),
-                      Qt::CaseInsensitive) == 0;
+  if (name.compare(QStringLiteral("reveal.progress"), Qt::CaseInsensitive) == 0 ||
+      name.compare(QStringLiteral("transform.scale.x"),
+                   Qt::CaseInsensitive) == 0 ||
+      name.compare(QStringLiteral("transform.scale.y"),
+                   Qt::CaseInsensitive) == 0) {
+    return true;
+  }
+
+  const auto metadata = property.metadata();
+  if (metadata.unit.compare(QStringLiteral("%"), Qt::CaseInsensitive) != 0) {
+    return false;
+  }
+  const QVariant minimumValue = metadata.hardMin.isValid()
+      ? metadata.hardMin : property.getMinValue();
+  const QVariant maximumValue = metadata.hardMax.isValid()
+      ? metadata.hardMax : property.getMaxValue();
+  bool minimumIsNumeric = false;
+  bool maximumIsNumeric = false;
+  const double minimum = minimumValue.toDouble(&minimumIsNumeric);
+  const double maximum = maximumValue.toDouble(&maximumIsNumeric);
+  return minimumIsNumeric && maximumIsNumeric &&
+         std::isfinite(minimum) && std::isfinite(maximum) &&
+         minimum < maximum && minimum >= -1.0 && maximum <= 1.0;
 }
 
 double storageToDisplayValue(const double value, const bool displayAsPercent) {

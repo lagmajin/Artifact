@@ -4,6 +4,7 @@ module;
 #include <cmath>
 #include <memory>
 #include <QColor>
+#include <QString>
 #include <QVariant>
 #include <QElapsedTimer>
 #include <QSettings>
@@ -468,37 +469,50 @@ void BlackAndWhiteEffect::syncImpls() {
 std::vector<AbstractProperty> BlackAndWhiteEffect::getProperties() const {
     std::vector<AbstractProperty> props(8);
 
-    props[0].setName("Reds");
-    props[0].setType(ArtifactCore::PropertyType::Float);
-    props[0].setValue(QVariant(static_cast<double>(reds_)));
+    const auto configureWeight = [](AbstractProperty& property,
+                                    const char* name,
+                                    double value,
+                                    double defaultValue,
+                                    int priority) {
+        property.setName(name);
+        property.setDisplayLabel(QString::fromLatin1(name));
+        property.setType(ArtifactCore::PropertyType::Float);
+        property.setValue(QVariant(value));
+        property.setDefaultValue(QVariant(defaultValue));
+        property.setHardRange(-2.0, 3.0);
+        property.setSoftRange(-2.0, 3.0);
+        property.setStep(0.01);
+        property.setTooltip(QStringLiteral(
+            "Luminance weight for pixels in this hue range."));
+        property.setAnimatable(true);
+        property.setDisplayPriority(priority);
+    };
 
-    props[1].setName("Yellows");
-    props[1].setType(ArtifactCore::PropertyType::Float);
-    props[1].setValue(QVariant(static_cast<double>(yellows_)));
-
-    props[2].setName("Greens");
-    props[2].setType(ArtifactCore::PropertyType::Float);
-    props[2].setValue(QVariant(static_cast<double>(greens_)));
-
-    props[3].setName("Cyans");
-    props[3].setType(ArtifactCore::PropertyType::Float);
-    props[3].setValue(QVariant(static_cast<double>(cyans_)));
-
-    props[4].setName("Blues");
-    props[4].setType(ArtifactCore::PropertyType::Float);
-    props[4].setValue(QVariant(static_cast<double>(blues_)));
-
-    props[5].setName("Magentas");
-    props[5].setType(ArtifactCore::PropertyType::Float);
-    props[5].setValue(QVariant(static_cast<double>(magentas_)));
+    configureWeight(props[0], "Reds", reds_, 0.40, 0);
+    configureWeight(props[1], "Yellows", yellows_, 0.60, 1);
+    configureWeight(props[2], "Greens", greens_, 0.40, 2);
+    configureWeight(props[3], "Cyans", cyans_, 0.60, 3);
+    configureWeight(props[4], "Blues", blues_, 0.20, 4);
+    configureWeight(props[5], "Magentas", magentas_, 0.80, 5);
 
     props[6].setName("Tint Color");
+    props[6].setDisplayLabel(QStringLiteral("Tint Color"));
     props[6].setType(ArtifactCore::PropertyType::Color);
     props[6].setValue(QVariant(tintColor_));
 
     props[7].setName("Tint Amount");
+    props[7].setDisplayLabel(QStringLiteral("Tint Amount"));
     props[7].setType(ArtifactCore::PropertyType::Float);
     props[7].setValue(QVariant(static_cast<double>(tintAmount_)));
+    props[7].setDefaultValue(QVariant(0.0));
+    props[7].setHardRange(0.0, 1.0);
+    props[7].setSoftRange(0.0, 1.0);
+    props[7].setStep(0.01);
+    props[7].setUnit(QStringLiteral("%"));
+    props[7].setTooltip(QStringLiteral(
+        "Blend between grayscale and the selected tint color."));
+    props[7].setAnimatable(true);
+    props[7].setDisplayPriority(6);
 
     return props;
 }

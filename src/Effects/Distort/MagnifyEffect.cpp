@@ -175,10 +175,68 @@ void MagnifyEffect::syncImpls() {
 
 std::vector<AbstractProperty> MagnifyEffect::getProperties() const {
     std::vector<AbstractProperty> props;
-    auto& cx = props.emplace_back(); cx.setName("Center X"); cx.setType(PropertyType::Float); cx.setValue(centerX_); cx.setMinValue(QVariant(0.0)); cx.setMaxValue(QVariant(1.0));
-    auto& cy = props.emplace_back(); cy.setName("Center Y"); cy.setType(PropertyType::Float); cy.setValue(centerY_); cy.setMinValue(QVariant(0.0)); cy.setMaxValue(QVariant(1.0));
-    auto& r = props.emplace_back(); r.setName("Radius"); r.setType(PropertyType::Float); r.setValue(radius_); r.setMinValue(QVariant(0.0)); r.setMaxValue(QVariant(1.0));
-    auto& a = props.emplace_back(); a.setName("Amount"); a.setType(PropertyType::Float); a.setValue(amount_); a.setMinValue(QVariant(-100.0)); a.setMaxValue(QVariant(100.0));
+    props.reserve(4);
+    const auto configureFloat = [](AbstractProperty& property,
+                                   const QString& label,
+                                   const double hardMinimum,
+                                   const double hardMaximum,
+                                   const double softMinimum,
+                                   const double softMaximum,
+                                   const double step,
+                                   const QString& unit,
+                                   const QString& tooltip) {
+        property.setDisplayLabel(label);
+        property.setHardRange(hardMinimum, hardMaximum);
+        property.setSoftRange(softMinimum, softMaximum);
+        property.setStep(step);
+        property.setUnit(unit);
+        property.setTooltip(tooltip);
+        property.setAnimatable(true);
+    };
+
+    auto& cx = props.emplace_back();
+    cx.setName(QStringLiteral("Center X"));
+    cx.setType(PropertyType::Float);
+    cx.setValue(centerX_);
+    cx.setDefaultValue(0.5);
+    cx.setMinValue(QVariant(0.0));
+    cx.setMaxValue(QVariant(1.0));
+    configureFloat(cx, QStringLiteral("Center X"), 0.0, 1.0, 0.1, 0.9,
+                   0.005, QStringLiteral("%"),
+                   QStringLiteral("Horizontal magnification center as a fraction of image width."));
+
+    auto& cy = props.emplace_back();
+    cy.setName(QStringLiteral("Center Y"));
+    cy.setType(PropertyType::Float);
+    cy.setValue(centerY_);
+    cy.setDefaultValue(0.5);
+    cy.setMinValue(QVariant(0.0));
+    cy.setMaxValue(QVariant(1.0));
+    configureFloat(cy, QStringLiteral("Center Y"), 0.0, 1.0, 0.1, 0.9,
+                   0.005, QStringLiteral("%"),
+                   QStringLiteral("Vertical magnification center as a fraction of image height."));
+
+    auto& r = props.emplace_back();
+    r.setName(QStringLiteral("Radius"));
+    r.setType(PropertyType::Float);
+    r.setValue(radius_);
+    r.setDefaultValue(0.5);
+    r.setMinValue(QVariant(0.0));
+    r.setMaxValue(QVariant(1.0));
+    configureFloat(r, QStringLiteral("Radius"), 0.0, 1.0, 0.1, 0.75,
+                   0.005, QStringLiteral("%"),
+                   QStringLiteral("Magnification radius as a fraction of the shorter image dimension."));
+
+    auto& a = props.emplace_back();
+    a.setName(QStringLiteral("Amount"));
+    a.setType(PropertyType::Float);
+    a.setValue(amount_);
+    a.setDefaultValue(50.0);
+    a.setMinValue(QVariant(-100.0));
+    a.setMaxValue(QVariant(100.0));
+    configureFloat(a, QStringLiteral("Amount"), -100.0, 100.0, -50.0, 50.0,
+                   1.0, QStringLiteral("%"),
+                   QStringLiteral("Strength and direction of the radial magnification."));
     return props;
 }
 

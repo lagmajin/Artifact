@@ -237,9 +237,37 @@ void BevelEffect::syncImpls() {
 
 std::vector<AbstractProperty> BevelEffect::getProperties() const {
     std::vector<AbstractProperty> props;
-    auto& a = props.emplace_back(); a.setName("Strength"); a.setType(PropertyType::Float); a.setValue(strength_);
-    auto& s = props.emplace_back(); s.setName("Softness"); s.setType(PropertyType::Float); s.setValue(softness_);
-    auto& e = props.emplace_back(); e.setName("Edge Mode"); e.setType(PropertyType::Boolean); e.setValue(edgeMode_);
+
+    auto& a = props.emplace_back();
+    a.setName("Strength");
+    a.setDisplayLabel(QStringLiteral("Strength"));
+    a.setType(PropertyType::Float);
+    a.setValue(strength_);
+    a.setDefaultValue(1.0);
+    a.setHardRange(0.0, 5.0);
+    a.setSoftRange(0.0, 2.0);
+    a.setStep(0.01);
+    a.setUnit(QStringLiteral("x"));
+    a.setTooltip(QStringLiteral("Scales the bevel highlight and shadow response."));
+    a.setAnimatable(true);
+
+    auto& s = props.emplace_back();
+    s.setName("Softness");
+    s.setDisplayLabel(QStringLiteral("Softness"));
+    s.setType(PropertyType::Float);
+    s.setValue(softness_);
+    s.setDefaultValue(2.0);
+    s.setHardRange(0.0, 64.0);
+    s.setSoftRange(0.0, 16.0);
+    s.setStep(0.25);
+    s.setTooltip(QStringLiteral("Controls the softness of the bevel response."));
+    s.setAnimatable(true);
+
+    auto& e = props.emplace_back();
+    e.setName("Edge Mode");
+    e.setType(PropertyType::Boolean);
+    e.setValue(edgeMode_);
+
     return props;
 }
 

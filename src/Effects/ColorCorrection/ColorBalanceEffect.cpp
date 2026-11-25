@@ -388,7 +388,7 @@ ColorBalanceEffect::ColorBalanceEffect() {
     setComputeMode(ComputeMode::AUTO);
     registerGpuGenericShader(kColorBalanceKey,
         GpuGenericShaderRecord{kColorBalanceResidentHlsl.c_str(), "main", GpuGenericResourceKind::Filter});
-    applyPreset(preset_);
+    applyPreset(Preset::Cinematic);
     syncImpls();
 }
 
@@ -411,8 +411,8 @@ bool ColorBalanceEffect::appendGpuSpatialNodes(GpuSpatialEffectStack& stack) con
 }
 
 void ColorBalanceEffect::applyPreset(Preset preset) {
-    preset_ = preset;
-    switch (preset_) {
+    customPresetPinned_ = preset == Preset::Custom;
+    switch (preset) {
     case Preset::Neutral:
         settings_ = ColorBalanceSettings::neutral();
         break;
@@ -431,6 +431,46 @@ void ColorBalanceEffect::applyPreset(Preset preset) {
     }
 }
 
+int ColorBalanceEffect::preset() const {
+    if (customPresetPinned_) {
+        return static_cast<int>(Preset::Custom);
+    }
+
+    const auto matches = [this](const ColorBalanceSettings& candidate) {
+        constexpr float kTolerance = 0.000001f;
+        const auto close = [kTolerance](float lhs, float rhs) {
+            return std::abs(lhs - rhs) <= kTolerance;
+        };
+        return close(settings_.shadowR, candidate.shadowR) &&
+               close(settings_.shadowG, candidate.shadowG) &&
+               close(settings_.shadowB, candidate.shadowB) &&
+               close(settings_.midtoneR, candidate.midtoneR) &&
+               close(settings_.midtoneG, candidate.midtoneG) &&
+               close(settings_.midtoneB, candidate.midtoneB) &&
+               close(settings_.highlightR, candidate.highlightR) &&
+               close(settings_.highlightG, candidate.highlightG) &&
+               close(settings_.highlightB, candidate.highlightB) &&
+               close(settings_.shadowRange, candidate.shadowRange) &&
+               close(settings_.highlightRange, candidate.highlightRange) &&
+               close(settings_.masterStrength, candidate.masterStrength) &&
+               settings_.preserveLuma == candidate.preserveLuma;
+    };
+
+    if (matches(ColorBalanceSettings::neutral())) {
+        return static_cast<int>(Preset::Neutral);
+    }
+    if (matches(ColorBalanceSettings::coolShadows())) {
+        return static_cast<int>(Preset::CoolShadows);
+    }
+    if (matches(ColorBalanceSettings::warmHighlights())) {
+        return static_cast<int>(Preset::WarmHighlights);
+    }
+    if (matches(ColorBalanceSettings::cinematic())) {
+        return static_cast<int>(Preset::Cinematic);
+    }
+    return static_cast<int>(Preset::Custom);
+}
+
 void ColorBalanceEffect::setPreset(int preset) {
     const int clamped = std::clamp(preset, 0, 4);
     applyPreset(static_cast<Preset>(clamped));
@@ -438,7 +478,6 @@ void ColorBalanceEffect::setPreset(int preset) {
 }
 
 void ColorBalanceEffect::setShadowBalance(float r, float g, float b) {
-    preset_ = Preset::Custom;
     settings_.shadowR = std::isfinite(r) ? std::clamp(r, -1.0f, 1.0f) : 0.0f;
     settings_.shadowG = std::isfinite(g) ? std::clamp(g, -1.0f, 1.0f) : 0.0f;
     settings_.shadowB = std::isfinite(b) ? std::clamp(b, -1.0f, 1.0f) : 0.0f;
@@ -446,7 +485,6 @@ void ColorBalanceEffect::setShadowBalance(float r, float g, float b) {
 }
 
 void ColorBalanceEffect::setMidtoneBalance(float r, float g, float b) {
-    preset_ = Preset::Custom;
     settings_.midtoneR = std::isfinite(r) ? std::clamp(r, -1.0f, 1.0f) : 0.0f;
     settings_.midtoneG = std::isfinite(g) ? std::clamp(g, -1.0f, 1.0f) : 0.0f;
     settings_.midtoneB = std::isfinite(b) ? std::clamp(b, -1.0f, 1.0f) : 0.0f;
@@ -454,7 +492,6 @@ void ColorBalanceEffect::setMidtoneBalance(float r, float g, float b) {
 }
 
 void ColorBalanceEffect::setHighlightBalance(float r, float g, float b) {
-    preset_ = Preset::Custom;
     settings_.highlightR = std::isfinite(r) ? std::clamp(r, -1.0f, 1.0f) : 0.0f;
     settings_.highlightG = std::isfinite(g) ? std::clamp(g, -1.0f, 1.0f) : 0.0f;
     settings_.highlightB = std::isfinite(b) ? std::clamp(b, -1.0f, 1.0f) : 0.0f;
@@ -462,25 +499,21 @@ void ColorBalanceEffect::setHighlightBalance(float r, float g, float b) {
 }
 
 void ColorBalanceEffect::setShadowRange(float value) {
-    preset_ = Preset::Custom;
     settings_.shadowRange = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 0.33f;
     syncImpls();
 }
 
 void ColorBalanceEffect::setHighlightRange(float value) {
-    preset_ = Preset::Custom;
     settings_.highlightRange = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 0.66f;
     syncImpls();
 }
 
 void ColorBalanceEffect::setMasterStrength(float value) {
-    preset_ = Preset::Custom;
     settings_.masterStrength = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 1.0f;
     syncImpls();
 }
 
 void ColorBalanceEffect::setPreserveLuma(bool value) {
-    preset_ = Preset::Custom;
     settings_.preserveLuma = value;
     syncImpls();
 }
@@ -530,11 +563,26 @@ std::vector<AbstractProperty> ColorBalanceEffect::getProperties() const {
     addFloat("Shadow Range", settings_.shadowRange, 10);
     addFloat("Highlight Range", settings_.highlightRange, 11);
     addFloat("Strength", settings_.masterStrength, 20);
+    props.back().setDisplayLabel(QStringLiteral("Strength"));
+    props.back().setDefaultValue(1.0);
+    props.back().setMinValue(QVariant(0.0));
+    props.back().setMaxValue(QVariant(1.0));
+    props.back().setHardRange(0.0, 1.0);
+    props.back().setSoftRange(0.0, 1.0);
+    props.back().setStep(0.01);
+    props.back().setUnit(QStringLiteral("%"));
+    props.back().setTooltip(QStringLiteral(
+        "Overall strength applied to the shadow, midtone, and highlight balances."));
+    props.back().setAnimatable(true);
 
     AbstractProperty preserveProp;
     preserveProp.setName("Preserve Luma");
+    preserveProp.setDisplayLabel(QStringLiteral("Preserve Luma"));
     preserveProp.setType(PropertyType::Boolean);
     preserveProp.setValue(settings_.preserveLuma);
+    preserveProp.setDefaultValue(false);
+    preserveProp.setTooltip(QStringLiteral(
+        "Preserve the source luminance while applying the color balance."));
     preserveProp.setDisplayPriority(30);
     props.push_back(preserveProp);
 

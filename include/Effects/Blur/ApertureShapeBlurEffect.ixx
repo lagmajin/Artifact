@@ -1,4 +1,5 @@
 module;
+#include <optional>
 #include <vector>
 #include <QString>
 #include <QVariant>
@@ -28,6 +29,20 @@ public:
     ApertureShapeBlurEffect();
     ~ApertureShapeBlurEffect() override;
 
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        if (index == 1) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.aperture_shape_blur.radius"),
+                QStringLiteral("Radius"),
+                0.0, 256.0, 0.1, 0.1, 1.0, QStringLiteral("px")};
+        }
+        return std::nullopt;
+    }
+
     std::vector<ArtifactCore::AbstractProperty> getProperties() const override;
     void setPropertyValue(const UniString& name, const QVariant& value) override;
 };
@@ -43,6 +58,21 @@ protected:
 public:
     DepthBokehEffect();
     ~DepthBokehEffect() override;
+
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        if (index == 1) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.depth_bokeh.focus_distance"),
+                QStringLiteral("focusDistance"),
+                0.0, 1.0, 0.001, 0.0025, 1.0, QString()};
+        }
+        return std::nullopt;
+    }
+
     std::vector<ArtifactCore::AbstractProperty> getProperties() const override;
     void setPropertyValue(const UniString& name, const QVariant& value) override;
     EffectROIHint roiHint() const override;

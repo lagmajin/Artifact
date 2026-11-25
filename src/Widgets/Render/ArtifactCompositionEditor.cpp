@@ -98,6 +98,7 @@ module;
 #include <algorithm>
 #include <optional>
 #include <cmath>
+#include <limits>
 #include <array>
 #include <atomic>
 #include <deque>
@@ -3087,6 +3088,10 @@ public:
         enabledStates.push_back(false);
       }
     };
+    const auto toggleLabel = [](const QString &label, bool checked) {
+      return QStringLiteral("%1  %2")
+          .arg(checked ? QStringLiteral("\u2713") : QStringLiteral(" "), label);
+    };
 
     const LayerID layerId = controller_->layerAtViewportPos(
         ArtifactCore::Coordinates::screenLogicalPointFromQPointF(
@@ -3111,18 +3116,193 @@ public:
                                 : ArtifactCore::SharedPtr<ArtifactPaintLayer>{};
     if (layer) {
       for (const auto &effect : layer->getEffects()) {
-        if (!effect || !effect->isEnabled()) continue;
-        for (unsigned int index = 0;; ++index) {
-          const auto parameter = effect->scalarGizmoParameter(index);
-          if (!parameter) break;
-          const auto property = effect->editableProperty(parameter->editablePropertyName);
-          if (!property || property->hasKeyFrames() || property->hasExpression()) continue;
-          add(tr("Drag %1 · %2")
-                  .arg(effect->displayName().toQString(), parameter->editablePropertyName),
-              [this, comp, layer, effect, viewportPos, parameter = *parameter]() {
+        if (!effect) continue;
+        const bool effectEnabled = effect->isEnabled();
+        const auto properties = effect->editableProperties();
+        const auto findProperty = [&properties](const QString &name) {
+          const auto found = std::find_if(
+              properties.begin(), properties.end(), [&name](const auto &property) {
+                return property && property->getName().compare(
+                    name, Qt::CaseInsensitive) == 0;
+              });
+          if (found != properties.end()) return *found;
+          return ArtifactCore::SharedPtr<ArtifactCore::AbstractProperty>{};
+        };
+        bool effectHasControls = false;
+        const auto addEffectControl =
+            [&](const EffectScalarGizmoParameter &parameter,
+                const QString &propertyLabel) {
+          const auto property = findProperty(parameter.editablePropertyName);
+          if (!property || property->hasKeyFrames() || property->hasExpression() ||
+              property->hasEnvelopes()) {
+            return;
+          }
+          const auto propertyType = property->getType();
+          if (propertyType != ArtifactCore::PropertyType::Float &&
+              propertyType != ArtifactCore::PropertyType::Integer) {
+            return;
+          }
+          if (!std::isfinite(parameter.minimum) ||
+              !std::isfinite(parameter.maximum) ||
+              !std::isfinite(parameter.step) ||
+              !std::isfinite(parameter.unitsPerScreenPixel) ||
+              !std::isfinite(parameter.displayScale) ||
+              parameter.minimum > parameter.maximum || parameter.step <= 0.0 ||
+              parameter.unitsPerScreenPixel == 0.0 ||
+              parameter.displayScale == 0.0) {
+            return;
+          }
+          if (propertyType == ArtifactCore::PropertyType::Integer &&
+              (parameter.minimum < std::numeric_limits<int>::lowest() ||
+               parameter.maximum > std::numeric_limits<int>::max() ||
+               std::trunc(parameter.minimum) != parameter.minimum ||
+               std::trunc(parameter.maximum) != parameter.maximum ||
+               parameter.step < 1.0 || std::trunc(parameter.step) != parameter.step)) {
+            return;
+          }
+          const QVariant initialValue = property->getValue();
+          bool currentValueIsNumeric = false;
+          const double currentValue = initialValue.toDouble(&currentValueIsNumeric);
+          const double displayValue = currentValue * parameter.displayScale;
+          if (!currentValueIsNumeric || !std::isfinite(currentValue) ||
+              !std::isfinite(displayValue)) {
+            return;
+          }
+          const QString currentValueText = locale().toString(displayValue, 'g', 12);
+          const QString formattedCurrentValue = parameter.displayUnit.isEmpty()
+              ? currentValueText
+              : QStringLiteral("%1 %2").arg(currentValueText,
+                                            parameter.displayUnit);
+          const auto choiceCount = static_cast<std::size_t>(parameter.choiceCount);
+          constexpr std::size_t choiceCapacity = 10;
+          std::array<QString, choiceCapacity> localizedChoiceLabels{};
+          bool hasNamedChoices = choiceCount >= 2 && choiceCount <= choiceCapacity;
+          if (hasNamedChoices) {
+            const double expectedMaximum = parameter.minimum +
+                static_cast<double>(choiceCount - 1) * parameter.step;
+            const double maximumTolerance = parameter.step * 1e-6;
+            hasNamedChoices = std::isfinite(expectedMaximum) &&
+                std::abs(expectedMaximum - parameter.maximum) <= maximumTolerance;
+            for (std::size_t choiceIndex = 0;
+                 hasNamedChoices && choiceIndex < choiceCount; ++choiceIndex) {
+              const QString choiceTranslationKey = parameter.id +
+                  QStringLiteral(".choice.") +
+                  QString::number(static_cast<int>(choiceIndex));
+              localizedChoiceLabels[choiceIndex] =
+                  TranslationManager::instance().tr(choiceTranslationKey);
+              hasNamedChoices = !localizedChoiceLabels[choiceIndex].trimmed().isEmpty() &&
+                  localizedChoiceLabels[choiceIndex] != choiceTranslationKey;
+            }
+          }
+          if (hasNamedChoices) {
+            if (!effectHasControls) {
+              addSeparator();
+              effectHasControls = true;
+            }
+            const QString effectName = effect->displayName().toQString();
+            for (std::size_t choiceIndex = 0;
+                 choiceIndex < choiceCount; ++choiceIndex) {
+              const double choiceValue = parameter.minimum +
+                  static_cast<double>(choiceIndex) * parameter.step;
+              const bool selected = std::abs(currentValue - choiceValue) <=
+                  parameter.step * 1e-6;
+              const QVariant targetValue = propertyType == ArtifactCore::PropertyType::Integer
+                  ? QVariant(static_cast<int>(choiceValue))
+                  : QVariant(choiceValue);
+              const QString choicePropertyLabelKey = parameter.id +
+                  QStringLiteral(".label");
+              const QString localizedChoicePropertyLabel =
+                  TranslationManager::instance().tr(choicePropertyLabelKey,
+                                                    propertyLabel);
+              const QString choiceText = TranslationManager::instance().tr(
+                  QStringLiteral("viewport.effect_choice.option_label"),
+                  QStringLiteral("%1 (%2)"))
+                  .arg(localizedChoiceLabels[choiceIndex],
+                       locale().toString(choiceValue, 'g', 12));
+              const QString actionLabel = TranslationManager::instance().tr(
+                  QStringLiteral("viewport.effect_choice.action_label"),
+                  QStringLiteral("%1 · %2: %3"))
+                  .arg(effectName, localizedChoicePropertyLabel, choiceText);
+              add(toggleLabel(actionLabel, selected),
+                  [this, comp, layer, effect, property, initialValue,
+                   targetValue, propertyName = parameter.editablePropertyName]() {
+                    finishEffectDrag(false);
+                    const auto currentProperty = effect->editableProperty(propertyName);
+                    if (!currentProperty || currentProperty != property ||
+                        currentProperty->getValue() != initialValue ||
+                        currentProperty->hasKeyFrames() ||
+                        currentProperty->hasExpression() ||
+                        currentProperty->hasEnvelopes() || !effect->isEnabled() ||
+                        currentComposition() != comp ||
+                        comp->layerById(layer->id()) != layer ||
+                        layer->getEffect(effect->effectID()) != effect) {
+                      return;
+                    }
+                    if (auto *service = ArtifactEffectService::instance()) {
+                      service->setEffectProperty(
+                          layer->id(), effect->effectID().toQString(),
+                          propertyName, targetValue);
+                    }
+                  });
+            }
+            return;
+          }
+          const bool isBinaryChoice = parameter.step == 1.0 &&
+              parameter.maximum - parameter.minimum == 1.0 &&
+              (currentValue == parameter.minimum ||
+               currentValue == parameter.maximum);
+          if (isBinaryChoice) {
+            if (!effectHasControls) {
+              addSeparator();
+              effectHasControls = true;
+            }
+            const bool isMaximumSelected = currentValue == parameter.maximum;
+            const QVariant alternateValue = propertyType == ArtifactCore::PropertyType::Integer
+                ? QVariant(static_cast<int>(isMaximumSelected
+                                                ? parameter.minimum
+                                                : parameter.maximum))
+                : QVariant(isMaximumSelected ? parameter.minimum
+                                             : parameter.maximum);
+            const QString choiceLabel = tr("%1 · %2 (%3)")
+                .arg(effect->displayName().toQString(), propertyLabel,
+                     formattedCurrentValue);
+            add(toggleLabel(choiceLabel, isMaximumSelected),
+                [this, comp, layer, effect, property, initialValue,
+                 alternateValue, propertyName = parameter.editablePropertyName]() {
+                  finishEffectDrag(false);
+                  const auto currentProperty = effect->editableProperty(propertyName);
+                  if (!currentProperty || currentProperty != property ||
+                      currentProperty->getValue() != initialValue ||
+                      currentProperty->hasKeyFrames() ||
+                      currentProperty->hasExpression() ||
+                      currentProperty->hasEnvelopes() || !effect->isEnabled() ||
+                      currentComposition() != comp ||
+                      comp->layerById(layer->id()) != layer ||
+                      layer->getEffect(effect->effectID()) != effect) {
+                    return;
+                  }
+                  if (auto *service = ArtifactEffectService::instance()) {
+                    service->setEffectProperty(
+                        layer->id(), effect->effectID().toQString(),
+                        propertyName, alternateValue);
+                  }
+                });
+            return;
+          }
+          const QString actionLabel = tr("Drag %1 · %2 (%3)")
+              .arg(effect->displayName().toQString(), propertyLabel,
+                   formattedCurrentValue);
+          if (!effectHasControls) {
+            addSeparator();
+            effectHasControls = true;
+          }
+          add(actionLabel,
+              [this, comp, layer, effect, viewportPos, parameter, propertyLabel]() {
                 finishEffectDrag(false);
-                const auto property = effect->editableProperty(parameter.editablePropertyName);
-                if (!property || property->hasKeyFrames() || property->hasExpression()) return;
+                const auto property = effect->editableProperty(
+                    parameter.editablePropertyName);
+                if (!property || property->hasKeyFrames() ||
+                    property->hasExpression() || property->hasEnvelopes()) return;
                 effectDrag_ = EffectDrag{comp, layer, effect, parameter,
                                          effect->effectID(),
                                          ArtifactCore::UniString::fromQString(
@@ -3135,8 +3315,8 @@ public:
                   effectDragHandle_->setAutoFillBackground(true);
                   effectDragHandle_->setAttribute(Qt::WA_TransparentForMouseEvents);
                 }
-                effectDrag_->label = tr("← %1 · %2 →")
-                    .arg(effect->displayName().toQString(), parameter.editablePropertyName);
+                effectDrag_->label = tr("← %1 · %2 → · Shift × 0.1 / Ctrl × 10")
+                    .arg(effect->displayName().toQString(), propertyLabel);
                 updateEffectDragHandle(property->getValue());
                 effectDragHandle_->move(
                     std::clamp(qRound(viewportPos.x()), 0,
@@ -3146,6 +3326,272 @@ public:
                 effectDragHandle_->raise();
                 effectDragHandle_->show();
               });
+        };
+
+        bool hasEffectSpecificDescriptor = false;
+        for (unsigned int index = 0;; ++index) {
+          const auto parameter = effect->scalarGizmoParameter(index);
+          if (!parameter) break;
+          if (!effectEnabled) continue;
+          if (index > 0) hasEffectSpecificDescriptor = true;
+          const auto property = findProperty(parameter->editablePropertyName);
+          if (!property) continue;
+          const auto metadata = property->metadata();
+          const QString propertyLabel =
+              parameter->id == QStringLiteral("effect.common.mix")
+                  ? tr("Effect Mix")
+                  : metadata.displayLabel.isEmpty()
+                      ? parameter->editablePropertyName
+                      : metadata.displayLabel;
+          const QString localizedPropertyLabel = TranslationManager::instance().tr(
+              parameter->id + QStringLiteral(".label"), propertyLabel);
+          addEffectControl(*parameter, localizedPropertyLabel);
+        }
+
+        for (unsigned int index = 0;; ++index) {
+          const auto parameter = effect->viewportToggleParameter(index);
+          if (!parameter) break;
+          const auto property = findProperty(parameter->editablePropertyName);
+          if (!property ||
+              property->getType() != ArtifactCore::PropertyType::Boolean ||
+              property->hasKeyFrames() || property->hasExpression() ||
+              property->hasEnvelopes()) {
+            continue;
+          }
+          const bool isEffectEnabledToggle =
+              parameter->id == QStringLiteral("effect.common.enabled");
+          if (!isEffectEnabledToggle && !effectEnabled) continue;
+          const QVariant initialValue = property->getValue();
+          if (!initialValue.isValid()) continue;
+          if (!effectHasControls) {
+            addSeparator();
+            effectHasControls = true;
+          }
+
+          const auto metadata = property->metadata();
+          const QString effectName = effect->displayName().toQString();
+          const QString propertyLabel = metadata.displayLabel.isEmpty()
+              ? parameter->editablePropertyName : metadata.displayLabel;
+          const QString localizedPropertyLabel = TranslationManager::instance().tr(
+              parameter->id + QStringLiteral(".label"), propertyLabel);
+          add(toggleLabel(tr("%1 · %2").arg(effectName, localizedPropertyLabel),
+                          initialValue.toBool()),
+              [this, comp, layer, effect, property, propertyName =
+                   parameter->editablePropertyName, initialValue,
+               isEffectEnabledToggle]() {
+                finishEffectDrag(false);
+                const auto currentProperty = effect->editableProperty(propertyName);
+                if (!currentProperty || currentProperty != property ||
+                    currentProperty->getValue() != initialValue ||
+                    currentProperty->hasKeyFrames() ||
+                    currentProperty->hasExpression() ||
+                    currentProperty->hasEnvelopes() ||
+                    (!isEffectEnabledToggle && !effect->isEnabled()) ||
+                    currentComposition() != comp ||
+                    comp->layerById(layer->id()) != layer ||
+                    layer->getEffect(effect->effectID()) != effect) {
+                  return;
+                }
+                if (auto *service = ArtifactEffectService::instance()) {
+                  service->setEffectProperty(
+                      layer->id(), effect->effectID().toQString(), propertyName,
+                      QVariant(!initialValue.toBool()));
+                }
+              });
+        }
+
+        if (effectEnabled) {
+          const QString overscanPropertyName = QStringLiteral("Allow Overscan");
+          const auto overscanProperty = findProperty(overscanPropertyName);
+          if (overscanProperty &&
+              overscanProperty->getType() == ArtifactCore::PropertyType::Boolean &&
+              !overscanProperty->hasKeyFrames() &&
+              !overscanProperty->hasExpression() &&
+              !overscanProperty->hasEnvelopes()) {
+            const QVariant initialOverscanValue = overscanProperty->getValue();
+            if (initialOverscanValue.isValid()) {
+              const QString overscanLabel = TranslationManager::instance().tr(
+                  QStringLiteral("effect.common.allow_overscan.label"),
+                  overscanPropertyName);
+              add(toggleLabel(tr("%1 · %2").arg(effect->displayName().toQString(),
+                                                 overscanLabel),
+                              initialOverscanValue.toBool()),
+                  [this, comp, layer, effect, overscanProperty,
+                   overscanPropertyName, initialOverscanValue]() {
+                    finishEffectDrag(false);
+                    const auto currentProperty =
+                        effect->editableProperty(overscanPropertyName);
+                    if (!currentProperty || currentProperty != overscanProperty ||
+                        currentProperty->getValue() != initialOverscanValue ||
+                        currentProperty->hasKeyFrames() ||
+                        currentProperty->hasExpression() ||
+                        currentProperty->hasEnvelopes() || !effect->isEnabled() ||
+                        currentComposition() != comp ||
+                        comp->layerById(layer->id()) != layer ||
+                        layer->getEffect(effect->effectID()) != effect) {
+                      return;
+                    }
+                    if (auto *service = ArtifactEffectService::instance()) {
+                      service->setEffectProperty(
+                          layer->id(), effect->effectID().toQString(),
+                          overscanPropertyName,
+                          QVariant(!initialOverscanValue.toBool()));
+                    }
+                  });
+            }
+          }
+        }
+
+        if (hasEffectSpecificDescriptor) {
+          for (const auto &property : properties) {
+            if (!property || property->getType() != ArtifactCore::PropertyType::Float ||
+                property->hasKeyFrames() || property->hasExpression() ||
+                property->hasEnvelopes()) {
+              continue;
+            }
+
+            const QString propertyName = property->getName();
+            bool hasExplicitControl = false;
+            for (unsigned int index = 0;; ++index) {
+              const auto parameter = effect->scalarGizmoParameter(index);
+              if (!parameter) break;
+              if (parameter->editablePropertyName.compare(
+                      propertyName, Qt::CaseInsensitive) == 0) {
+                hasExplicitControl = true;
+                break;
+              }
+            }
+            if (hasExplicitControl) continue;
+
+            const auto metadata = property->metadata();
+            const QVariant minimumValue = metadata.hardMin.isValid()
+                ? metadata.hardMin : property->getMinValue();
+            const QVariant maximumValue = metadata.hardMax.isValid()
+                ? metadata.hardMax : property->getMaxValue();
+            bool minimumIsNumeric = false;
+            bool maximumIsNumeric = false;
+            const double minimum = minimumValue.toDouble(&minimumIsNumeric);
+            const double maximum = maximumValue.toDouble(&maximumIsNumeric);
+            const double hardRange = maximum - minimum;
+            if (!minimumIsNumeric || !maximumIsNumeric ||
+                !std::isfinite(minimum) || !std::isfinite(maximum) ||
+                !std::isfinite(hardRange) || hardRange <= 0.0) {
+              continue;
+            }
+
+            double dragMinimum = minimum;
+            double dragMaximum = maximum;
+            bool softMinimumIsNumeric = false;
+            bool softMaximumIsNumeric = false;
+            const double softMinimum = metadata.softMin.toDouble(&softMinimumIsNumeric);
+            const double softMaximum = metadata.softMax.toDouble(&softMaximumIsNumeric);
+            if (softMinimumIsNumeric && softMaximumIsNumeric &&
+                std::isfinite(softMinimum) && std::isfinite(softMaximum)) {
+              const double boundedSoftMinimum = std::clamp(softMinimum, minimum, maximum);
+              const double boundedSoftMaximum = std::clamp(softMaximum, minimum, maximum);
+              if (boundedSoftMinimum < boundedSoftMaximum) {
+                dragMinimum = boundedSoftMinimum;
+                dragMaximum = boundedSoftMaximum;
+              }
+            }
+
+            bool stepIsNumeric = false;
+            double step = metadata.step.toDouble(&stepIsNumeric);
+            if (!stepIsNumeric || !std::isfinite(step) || step <= 0.0) {
+              step = hardRange / 1000.0;
+            }
+            const double dragSpan = dragMaximum - dragMinimum;
+            if (!std::isfinite(dragSpan) || dragSpan <= 0.0 ||
+                !std::isfinite(step) || step <= 0.0) {
+              continue;
+            }
+
+            const double displayScale = metadata.unit == QStringLiteral("%") &&
+                    minimum >= -1.0 && maximum <= 1.0
+                ? 100.0 : 1.0;
+            const EffectScalarGizmoParameter parameter{
+                QStringLiteral("effect.property.%1.%2")
+                    .arg(effect->effectID().toQString(), propertyName),
+                propertyName, minimum, maximum, step, dragSpan / 400.0,
+                displayScale, metadata.unit};
+            const QString propertyLabel = metadata.displayLabel.isEmpty()
+                ? propertyName : metadata.displayLabel;
+            addEffectControl(parameter, propertyLabel);
+          }
+
+          for (const auto &property : properties) {
+            if (!property || property->getType() != ArtifactCore::PropertyType::Color ||
+                property->hasKeyFrames() || property->hasExpression() ||
+                property->hasEnvelopes()) {
+              continue;
+            }
+            const QVariant initialValue = property->getValue();
+            const QColor initialColor = property->getColorValue();
+            if (!initialColor.isValid()) continue;
+
+            const auto metadata = property->metadata();
+            const QString propertyName = property->getName();
+            const QString propertyLabel = metadata.displayLabel.isEmpty()
+                ? propertyName : metadata.displayLabel;
+            const QString effectName = effect->displayName().toQString();
+            add(tr("Edit %1 · %2 (%3)")
+                    .arg(effectName, propertyLabel,
+                         initialColor.name(QColor::HexArgb)),
+                [this, comp, layer, effect, property, propertyName, propertyLabel,
+                 effectName, initialValue]() {
+                  finishEffectDrag(false);
+                  if (!effect->isEnabled() || currentComposition() != comp ||
+                      comp->layerById(layer->id()) != layer ||
+                      layer->getEffect(effect->effectID()) != effect) {
+                    return;
+                  }
+                  const auto currentProperty = effect->editableProperty(propertyName);
+                  if (!currentProperty || currentProperty != property ||
+                      currentProperty->getValue() != initialValue ||
+                      currentProperty->hasKeyFrames() ||
+                      currentProperty->hasExpression() ||
+                      currentProperty->hasEnvelopes()) {
+                    return;
+                  }
+
+                  const ArtifactCore::FloatColor pickerInitialColor(
+                      initialColor.redF(), initialColor.greenF(),
+                      initialColor.blueF(), initialColor.alphaF());
+                  ArtifactWidgets::FloatColorPicker picker(this);
+                  picker.setWindowTitle(tr("%1 · %2")
+                                            .arg(effectName, propertyLabel));
+                  picker.setColor(pickerInitialColor);
+                  picker.setInitialColor(pickerInitialColor);
+                  Artifact::configureFloatColorPicker(
+                      &picker, Artifact::ColorSelectionPurpose::Edit);
+                  if (picker.exec() != QDialog::Accepted) return;
+
+                  const ArtifactCore::FloatColor selected = picker.getColor();
+                  const QVariant selectedValue = QVariant::fromValue(
+                      QColor::fromRgbF(selected.r(), selected.g(),
+                                       selected.b(), selected.a()));
+                  const auto finalProperty = effect->editableProperty(propertyName);
+                  if (!finalProperty || finalProperty != property ||
+                      finalProperty->getValue() != initialValue ||
+                      finalProperty->hasKeyFrames() ||
+                      finalProperty->hasExpression() ||
+                      finalProperty->hasEnvelopes() ||
+                      !effect->isEnabled() || currentComposition() != comp ||
+                      comp->layerById(layer->id()) != layer ||
+                      layer->getEffect(effect->effectID()) != effect) {
+                    return;
+                  }
+                  if (auto *service = ArtifactEffectService::instance()) {
+                    service->setEffectProperty(
+                        layer->id(), effect->effectID().toQString(),
+                        propertyName, selectedValue);
+                  }
+                });
+          }
+        }
+
+        if (effectHasControls) {
+          addSeparator();
         }
       }
     }
@@ -5830,11 +6276,14 @@ protected:
     ArtifactCore::SharedPtr<ArtifactCore::AbstractProperty> property;
     QVariant baseline;
     QVariant previewValue;
-    double x = 0.0;
+    QVariant presetBaseline;
+    double lastX = 0.0;
+    double accumulatedDelta = 0.0; // Pointer deltas with per-segment sensitivity applied.
     QString label;
   };
   std::optional<EffectDrag> effectDrag_;
   QLabel *effectDragHandle_ = nullptr;
+  QElapsedTimer effectDragReadoutClock_;
 
   void updateEffectDragHandle(const QVariant &value) {
     const auto &drag = *effectDrag_;
@@ -5858,8 +6307,20 @@ protected:
   }
 
   void writeEffectDragPreview(const EffectDrag &drag, const QVariant &value) {
-    drag.effect->setPropertyValue(drag.propertyName, value);
+    if (!drag.effect->setCommonPropertyValue(
+            drag.parameter.editablePropertyName, value)) {
+      drag.effect->setPropertyValue(drag.propertyName, value);
+    }
     drag.property->setValue(value);
+    const QString effectId = drag.effectId.toQString();
+    if (value == drag.baseline && drag.presetBaseline.isValid() &&
+        (effectId == QStringLiteral("directional_glow") ||
+         effectId == QStringLiteral("white_balance") ||
+         effectId == QStringLiteral("effect.colorcorrection.tint"))) {
+      drag.effect->setPropertyValue(
+          ArtifactCore::UniString::fromQString(QStringLiteral("Preset")),
+          drag.presetBaseline);
+    }
     drag.layer->setDirty(LayerDirtyFlag::Effect);
     if (controller_) controller_->markRenderDirty();
     update();
@@ -5879,7 +6340,8 @@ protected:
     if (finalValue != drag.previewValue || finalValue == drag.baseline) return;
     writeEffectDragPreview(drag, drag.baseline);
     if (commit && effectDragTargetIsCurrent(drag) &&
-        !currentProperty->hasKeyFrames() && !currentProperty->hasExpression()) {
+        !currentProperty->hasKeyFrames() && !currentProperty->hasExpression() &&
+        !currentProperty->hasEnvelopes()) {
       auto *projectService = ArtifactProjectService::instance();
       if (!projectService ||
           projectService->currentComposition().lock() != drag.composition) return;
@@ -5892,7 +6354,10 @@ protected:
 
   void mousePressEvent(QMouseEvent *event) override {
     if (effectDrag_) {
-      if (event->button() != Qt::LeftButton || event->modifiers() != Qt::NoModifier ||
+      const auto unsupportedModifiers =
+          event->modifiers() & ~(Qt::ShiftModifier | Qt::ControlModifier);
+      if (event->button() != Qt::LeftButton ||
+          unsupportedModifiers != Qt::NoModifier ||
           !effectDragHandle_ || !effectDragHandle_->geometry().contains(event->position().toPoint()) ||
           viewportNavigationActive() || isSpatialGizmoDragging() ||
           (controller_ && controller_->isModalGizmoInteractionActive()) ||
@@ -5904,14 +6369,26 @@ protected:
         const QStringList layerIds{drag.layer->id().toQString()};
         auto *undo = UndoManager::instance();
         if (!property || property->hasKeyFrames() || property->hasExpression() ||
+            property->hasEnvelopes() ||
             !undo || !undo->areLayerMutationsAllowed(layerIds)) {
           finishEffectDrag(false);
         } else {
           drag.property = property;
           drag.baseline = property->getValue();
+          const QString effectId = drag.effectId.toQString();
+          if (effectId == QStringLiteral("directional_glow") ||
+              effectId == QStringLiteral("white_balance") ||
+              effectId == QStringLiteral("effect.colorcorrection.tint")) {
+            if (const auto preset =
+                    drag.effect->editableProperty(QStringLiteral("Preset"))) {
+              drag.presetBaseline = preset->getValue();
+            }
+          }
           drag.previewValue = drag.baseline;
           updateEffectDragHandle(drag.baseline);
-          drag.x = event->position().x();
+          drag.lastX = event->position().x();
+          drag.accumulatedDelta = 0.0;
+          effectDragReadoutClock_.restart();
           setFocus(Qt::MouseFocusReason);
           setCursor(Qt::SizeHorCursor);
         }
@@ -6149,20 +6626,40 @@ protected:
       if (!effectDragTargetIsCurrent(*effectDrag_) ||
           effectDrag_->property->getValue() != effectDrag_->previewValue ||
           effectDrag_->property->hasKeyFrames() ||
-          effectDrag_->property->hasExpression()) {
+          effectDrag_->property->hasExpression() ||
+          effectDrag_->property->hasEnvelopes()) {
         finishEffectDrag(false);
       } else {
         auto &drag = *effectDrag_;
-        const double delta = event->position().x() - drag.x;
-        const QVariant value = delta == 0.0
-            ? drag.baseline
-            : QVariant(drag.parameter.valueForDrag(drag.baseline.toDouble(), delta));
+        const double currentX = event->position().x();
+        const double delta = currentX - drag.lastX;
+        drag.lastX = currentX;
+        double sensitivity = 1.0;
+        if (event->modifiers().testFlag(Qt::ShiftModifier)) {
+          sensitivity *= 0.1;
+        }
+        if (event->modifiers().testFlag(Qt::ControlModifier)) {
+          sensitivity *= 10.0;
+        }
+        drag.accumulatedDelta += delta * sensitivity;
+        QVariant value = drag.baseline;
+        if (drag.accumulatedDelta != 0.0) {
+          const double draggedValue = drag.parameter.valueForDrag(
+              drag.baseline.toDouble(), drag.accumulatedDelta);
+          value = drag.property->getType() == ArtifactCore::PropertyType::Integer
+              ? QVariant(static_cast<int>(std::round(draggedValue)))
+              : QVariant(draggedValue);
+        }
         if (value != drag.previewValue) {
           const auto previousPreview = drag.previewValue;
           writeEffectDragPreview(drag, value);
           drag.previewValue = drag.property->getValue();
-          if (drag.previewValue != previousPreview) {
+          if (drag.previewValue != previousPreview &&
+              effectDragReadoutClock_.elapsed() >= 100) {
+            // Keep the live numeric readout at 10 Hz. The property and image
+            // preview still update for every changed pointer value.
             updateEffectDragHandle(drag.previewValue);
+            effectDragReadoutClock_.restart();
           }
         }
       }

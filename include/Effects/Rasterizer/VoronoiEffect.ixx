@@ -1,5 +1,6 @@
 module;
 #include <memory>
+#include <optional>
 #include <vector>
 #include <QString>
 #include <QVariant>
@@ -20,6 +21,39 @@ class VoronoiEffect : public ArtifactAbstractEffect {
 public:
     VoronoiEffect();
     ~VoronoiEffect() override;
+
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        switch (index) {
+        case 1:
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.voronoi.scale"),
+                QStringLiteral("Cell Scale"), 1.0, 200.0, 0.25, 0.125,
+                1.0, QStringLiteral("px")};
+        case 2:
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.voronoi.jitter"),
+                QStringLiteral("Jitter"), 0.0, 2.0, 0.01, 0.005,
+                1.0, QStringLiteral("cells")};
+        case 3:
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.voronoi.seed"),
+                QStringLiteral("Seed"), 0.0, 9999.0, 1.0, 1.0,
+                1.0, QString()};
+        case 4: {
+            EffectScalarGizmoParameter parameter{
+                QStringLiteral("effect.voronoi.mode"), QStringLiteral("mode"),
+                0.0, 3.0, 1.0, 0.05, 1.0, QString()};
+            parameter.choiceCount = 4;
+            return parameter;
+        }
+        default:
+            return std::nullopt;
+        }
+    }
 
     float scale() const;
     void  setScale(float v);

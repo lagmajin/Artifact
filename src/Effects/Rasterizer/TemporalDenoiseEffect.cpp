@@ -217,12 +217,15 @@ void TemporalDenoiseEffect::setPropertyValue(const UniString& n, const QVariant&
     else setCommonPropertyValue(k, v);
 }
 void TemporalDenoiseEffect::syncImpls() {
-    auto c = ArtifactCore::makeShared<TemporalDenoiseCPUImpl>();
+    auto c = ArtifactCore::dynamicPointerCast<TemporalDenoiseCPUImpl>(cpuImpl());
+    if (!c) {
+        c = ArtifactCore::makeShared<TemporalDenoiseCPUImpl>();
+        setCPUImpl(c);
+    }
     c->strength_ = strength_; c->frameCount_ = frameCount_; c->varianceThreshold_ = varianceThreshold_;
     c->motionAdaptive_ = motionAdaptive_;
     c->ghostSuppression_ = ghostSuppression_;
     c->rejectSceneCuts_ = rejectSceneCuts_; c->sceneCutThreshold_ = sceneCutThreshold_;
-    setCPUImpl(c);
 }
 
 } // namespace Artifact

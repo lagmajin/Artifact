@@ -1,5 +1,6 @@
 module;
 #include <cstdint>
+#include <optional>
 #include <utility>
 #include <vector>
 #include <QString>
@@ -47,6 +48,34 @@ public:
 
     std::vector<ArtifactCore::AbstractProperty> getProperties() const override;
     void setPropertyValue(const UniString& name, const QVariant& value) override;
+
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        if (index == 1) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.dithering.color_count"),
+                QStringLiteral("Color Count"),
+                2.0, 256.0, 1.0, 1.0, 1.0, QStringLiteral("colors")};
+        }
+        if (index == 2) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.dithering.amount"),
+                QStringLiteral("Amount"),
+                0.0, 1.0, 0.01, 0.0025, 100.0, QStringLiteral("%")};
+        }
+        if (index == 3) {
+            EffectScalarGizmoParameter parameter{
+                QStringLiteral("effect.dithering.algorithm"),
+                QStringLiteral("Algorithm"),
+                0.0, 7.0, 1.0, 0.05, 1.0, QString()};
+            parameter.choiceCount = 8;
+            return parameter;
+        }
+        return std::nullopt;
+    }
 
     static constexpr const char* kGpuGenericKeyString = "ordered_dither";
     static constexpr std::uint32_t kGpuGenericKey =

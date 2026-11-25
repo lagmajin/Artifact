@@ -194,8 +194,28 @@ void MosaicEffect::syncImpls() {
 
 std::vector<AbstractProperty> MosaicEffect::getProperties() const {
     std::vector<AbstractProperty> props;
-    auto& c = props.emplace_back(); c.setName("Cell Size"); c.setType(PropertyType::Float); c.setValue(cellSize_);
-    auto& s = props.emplace_back(); s.setName("Shape Mode"); s.setType(PropertyType::Boolean); s.setValue(shapeMode_);
+
+    auto& c = props.emplace_back();
+    c.setName("Cell Size");
+    c.setDisplayLabel(QStringLiteral("Cell Size"));
+    c.setType(PropertyType::Float);
+    c.setValue(cellSize_);
+    c.setDefaultValue(8.0);
+    c.setHardRange(1.0, 512.0);
+    c.setSoftRange(1.0, 32.0);
+    c.setStep(1.0);
+    c.setUnit(QStringLiteral("px"));
+    c.setTooltip(QStringLiteral("Width and height of each mosaic cell."));
+    c.setAnimatable(true);
+
+    auto& s = props.emplace_back();
+    s.setName("Shape Mode");
+    s.setDisplayLabel(QStringLiteral("Shape Mode"));
+    s.setType(PropertyType::Boolean);
+    s.setValue(shapeMode_);
+    s.setDefaultValue(false);
+    s.setTooltip(QStringLiteral("Use diamond-shaped cells instead of square blocks."));
+
     return props;
 }
 

@@ -425,8 +425,54 @@ void LevelsEffect::applyPreset(Preset preset) {
     }
 }
 
+void LevelsEffect::updatePresetFromSettings() {
+    if (customPresetPinned_) {
+        preset_ = Preset::Custom;
+        return;
+    }
+    const auto matches = [this](const ArtifactCore::LevelsSettings& candidate) {
+        const auto close = [](double lhs, double rhs) {
+            constexpr double kTolerance = 1.0e-6;
+            return std::abs(lhs - rhs) <= kTolerance;
+        };
+        const auto channelMatches = [&close](
+            const ArtifactCore::ChannelLevelsSettings& lhs,
+            const ArtifactCore::ChannelLevelsSettings& rhs) {
+            return close(lhs.inputBlack, rhs.inputBlack) &&
+                   close(lhs.inputWhite, rhs.inputWhite) &&
+                   close(lhs.inputGamma, rhs.inputGamma) &&
+                   close(lhs.outputBlack, rhs.outputBlack) &&
+                   close(lhs.outputWhite, rhs.outputWhite);
+        };
+        return close(settings_.inputBlack, candidate.inputBlack) &&
+               close(settings_.inputWhite, candidate.inputWhite) &&
+               close(settings_.inputGamma, candidate.inputGamma) &&
+               close(settings_.outputBlack, candidate.outputBlack) &&
+               close(settings_.outputWhite, candidate.outputWhite) &&
+               settings_.perChannel == candidate.perChannel &&
+               channelMatches(settings_.red, candidate.red) &&
+               channelMatches(settings_.green, candidate.green) &&
+               channelMatches(settings_.blue, candidate.blue);
+    };
+
+    if (matches(ArtifactCore::LevelsSettings::normal())) {
+        preset_ = Preset::Normal;
+    } else if (matches(ArtifactCore::LevelsSettings::highContrast())) {
+        preset_ = Preset::HighContrast;
+    } else if (matches(ArtifactCore::LevelsSettings::lowContrast())) {
+        preset_ = Preset::LowContrast;
+    } else if (matches(ArtifactCore::LevelsSettings::brighten())) {
+        preset_ = Preset::Brighten;
+    } else if (matches(ArtifactCore::LevelsSettings::darken())) {
+        preset_ = Preset::Darken;
+    } else {
+        preset_ = Preset::Custom;
+    }
+}
+
 void LevelsEffect::setPreset(int preset) {
     const int clamped = std::clamp(preset, 0, 5);
+    customPresetPinned_ = clamped == static_cast<int>(Preset::Custom);
     applyPreset(static_cast<Preset>(clamped));
     syncImpls();
 }
@@ -521,6 +567,8 @@ std::vector<AbstractProperty> LevelsEffect::getProperties() const {
         prop.setSoftRange(gamma ? QVariant(0.1) : QVariant(0.0),
                           gamma ? QVariant(4.0) : QVariant(255.0));
         prop.setStep(gamma ? QVariant(0.01) : QVariant(1.0));
+        prop.setDisplayLabel(propertyName);
+        prop.setUnit(gamma ? QStringLiteral("×") : QString());
         prop.setTooltip(gamma
             ? QStringLiteral("Midtone gamma; 1.0 is neutral.")
             : QStringLiteral("Level value in the 0–255 signal range."));
@@ -649,6 +697,9 @@ void LevelsEffect::setPropertyValue(const UniString& name, const QVariant& value
         preset_ = Preset::Custom;
         settings_.blue.outputWhite = value.toDouble();
         syncImpls();
+    }
+    if (key != QStringLiteral("Preset")) {
+        updatePresetFromSettings();
     }
 }
 

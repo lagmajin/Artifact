@@ -5,6 +5,7 @@ module;
 #include <cmath>
 #include <memory>
 #include <QVariant>
+#include <QString>
 #include <QElapsedTimer>
 #include <QSettings>
 #include <QDebug>
@@ -378,16 +379,38 @@ std::vector<AbstractProperty> ExposureEffect::getProperties() const {
     std::vector<AbstractProperty> props(3);
 
     props[0].setName("Exposure");
+    props[0].setDisplayLabel(QStringLiteral("Exposure"));
     props[0].setType(ArtifactCore::PropertyType::Float);
     props[0].setValue(QVariant(static_cast<double>(exposure_)));
+    props[0].setDefaultValue(0.0);
+    props[0].setHardRange(-5.0, 5.0);
+    props[0].setSoftRange(-5.0, 5.0);
+    props[0].setStep(0.01);
+    props[0].setUnit(QStringLiteral("EV"));
+    props[0].setTooltip(QStringLiteral("Exposure compensation in stops."));
+    props[0].setAnimatable(true);
 
     props[1].setName("Offset");
+    props[1].setDisplayLabel(QStringLiteral("Offset"));
     props[1].setType(ArtifactCore::PropertyType::Float);
     props[1].setValue(QVariant(static_cast<double>(offset_)));
+    props[1].setDefaultValue(0.0);
+    props[1].setHardRange(-0.5, 0.5);
+    props[1].setSoftRange(-0.5, 0.5);
+    props[1].setStep(0.001);
+    props[1].setTooltip(QStringLiteral("Additive RGB offset before gamma correction."));
+    props[1].setAnimatable(true);
 
     props[2].setName("Gamma");
+    props[2].setDisplayLabel(QStringLiteral("Gamma"));
     props[2].setType(ArtifactCore::PropertyType::Float);
     props[2].setValue(QVariant(static_cast<double>(gammaCorrection_)));
+    props[2].setDefaultValue(1.0);
+    props[2].setHardRange(0.2, 5.0);
+    props[2].setSoftRange(0.2, 5.0);
+    props[2].setStep(0.01);
+    props[2].setTooltip(QStringLiteral("Gamma correction; 1.0 leaves the signal unchanged."));
+    props[2].setAnimatable(true);
 
     return props;
 }

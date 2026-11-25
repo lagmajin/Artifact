@@ -5,6 +5,7 @@ module;
 #include <vector>
 #include <cmath>
 #include <cstdint>
+#include <optional>
 #include <QString>
 #include <QVariant>
 
@@ -61,6 +62,28 @@ public:
         syncImpls();
     }
     float intensity() const { return intensity_; }
+
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        if (index == 1) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.lut.intensity"),
+                QStringLiteral("Intensity"), 0.0, 1.0, 0.01, 0.0025,
+                100.0, QStringLiteral("%")};
+        }
+        if (index == 2) {
+            EffectScalarGizmoParameter parameter{
+                QStringLiteral("effect.color.lut.preset"),
+                QStringLiteral("Preset"), 0.0, 9.0, 1.0, 0.05,
+                1.0, QString()};
+            parameter.choiceCount = 10;
+            return parameter;
+        }
+        return std::nullopt;
+    }
 
     std::vector<AbstractProperty> getProperties() const override;
     void setPropertyValue(const UniString& name, const QVariant& value) override;

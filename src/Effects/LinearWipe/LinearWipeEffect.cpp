@@ -74,7 +74,7 @@ void main(uint3 dispatchId : SV_DispatchThreadID)
 class LinearWipeEffectCPUImpl : public ArtifactEffectImplBase {
 public:
     float angle_ = 0.0f;
-    float softness_ = 10.0f;
+    float softness_ = 0.1f;
     float feather_ = 0.0f;
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
@@ -181,9 +181,37 @@ void LinearWipeEffect::syncImpls() {
 
 std::vector<AbstractProperty> LinearWipeEffect::getProperties() const {
     std::vector<AbstractProperty> props;
-    auto& a = props.emplace_back(); a.setName("Angle"); a.setType(PropertyType::Float); a.setValue(angle_);
-    auto& s = props.emplace_back(); s.setName("Softness"); s.setType(PropertyType::Float); s.setValue(softness_);
-    auto& f = props.emplace_back(); f.setName("Feather"); f.setType(PropertyType::Float); f.setValue(feather_);
+    props.reserve(3);
+
+    auto addFloat = [&props](const QString& name, float value, float defaultValue,
+                             double minimum, double maximum,
+                             double softMinimum, double softMaximum, double step,
+                             const QString& unit, const QString& tooltip,
+                             int priority) {
+        AbstractProperty prop;
+        prop.setName(name);
+        prop.setDisplayLabel(name);
+        prop.setType(PropertyType::Float);
+        prop.setValue(QVariant(static_cast<double>(value)));
+        prop.setDefaultValue(QVariant(static_cast<double>(defaultValue)));
+        prop.setHardRange(minimum, maximum);
+        prop.setSoftRange(softMinimum, softMaximum);
+        prop.setStep(step);
+        prop.setUnit(unit);
+        prop.setTooltip(tooltip);
+        prop.setDisplayPriority(priority);
+        props.push_back(prop);
+    };
+
+    addFloat(QStringLiteral("Angle"), angle_, 0.0f,
+             0.0, 359.0, 0.0, 359.0, 1.0, QStringLiteral("°"),
+             QStringLiteral("Set the wipe direction in degrees; one full turn wraps to zero."), 0);
+    addFloat(QStringLiteral("Softness"), softness_, 0.1f,
+             0.0, 1.0, 0.0, 0.5, 0.01, QStringLiteral("%"),
+             QStringLiteral("Set the normalized width of the wipe transition."), 5);
+    addFloat(QStringLiteral("Feather"), feather_, 0.0f,
+             0.0, 1.0, 0.0, 0.5, 0.01, QStringLiteral("%"),
+             QStringLiteral("Scale the wipe alpha after edge smoothing; zero disables this adjustment."), 10);
     return props;
 }
 

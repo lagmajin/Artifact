@@ -5,6 +5,7 @@ module;
 #include <vector>
 #include <algorithm>
 #include <cmath>
+#include <optional>
 #include <QString>
 #include <QVariant>
 #include <QVector>
@@ -49,6 +50,52 @@ private:
 public:
     LiftGammaGainEffect();
     ~LiftGammaGainEffect() override;
+
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        switch (index) {
+        case 1:
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.color.lift.r"), QStringLiteral("Lift R"),
+                -1.0, 1.0, 0.01, 0.005, 1.0, QString()};
+        case 2:
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.color.lift.g"), QStringLiteral("Lift G"),
+                -1.0, 1.0, 0.01, 0.005, 1.0, QString()};
+        case 3:
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.color.lift.b"), QStringLiteral("Lift B"),
+                -1.0, 1.0, 0.01, 0.005, 1.0, QString()};
+        case 4:
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.color.gamma.r"), QStringLiteral("Gamma R"),
+                0.1, 5.0, 0.01, 0.01225, 1.0, QString()};
+        case 5:
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.color.gamma.g"), QStringLiteral("Gamma G"),
+                0.1, 5.0, 0.01, 0.01225, 1.0, QString()};
+        case 6:
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.color.gamma.b"), QStringLiteral("Gamma B"),
+                0.1, 5.0, 0.01, 0.01225, 1.0, QString()};
+        case 7:
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.color.gain.r"), QStringLiteral("Gain R"),
+                0.0, 4.0, 0.01, 0.01, 1.0, QString()};
+        case 8:
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.color.gain.g"), QStringLiteral("Gain G"),
+                0.0, 4.0, 0.01, 0.01, 1.0, QString()};
+        case 9:
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.color.gain.b"), QStringLiteral("Gain B"),
+                0.0, 4.0, 0.01, 0.01, 1.0, QString()};
+        default: return std::nullopt;
+        }
+    }
 
     // Lift
     void setLift(float r, float g, float b) {

@@ -1,4 +1,5 @@
 module;
+#include <QString>
 #include <QVariant>
 #include <iostream>
 #include <vector>
@@ -101,6 +102,20 @@ private:
 public:
     SpherizeEffect();
     ~SpherizeEffect();
+
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        if (index == 1) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.spherize.amount"),
+                QStringLiteral("Amount"),
+                -100.0, 100.0, 1.0, 0.25, 1.0, QStringLiteral("%")};
+        }
+        return std::nullopt;
+    }
 
     // Expose properties via AbstractProperty API
     std::vector<ArtifactCore::AbstractProperty> getProperties() const override;

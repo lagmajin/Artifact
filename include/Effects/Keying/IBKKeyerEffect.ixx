@@ -2,6 +2,7 @@ module;
 #include <cmath>
 #include <algorithm>
 #include <memory>
+#include <optional>
 #include <QString>
 #include <QVariant>
 #include <utility>
@@ -77,6 +78,29 @@ class IBKKeyerEffect final : public ArtifactAbstractEffect {
     int previewMode_ = 0;
 public:
     IBKKeyerEffect();
+
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        if (index == 1) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.keying.ibk.screen_correction"),
+                QStringLiteral("screenCorrection"), 0.0, 4.0, 0.01, 0.01,
+                1.0, QStringLiteral("x")};
+        }
+        if (index == 2) {
+            EffectScalarGizmoParameter parameter{
+                QStringLiteral("effect.keying.ibk.preview_mode"),
+                QStringLiteral("previewMode"), 0.0, 2.0, 1.0, 0.05,
+                1.0, QString()};
+            parameter.choiceCount = 3;
+            return parameter;
+        }
+        return std::nullopt;
+    }
+
     std::vector<ArtifactCore::AbstractProperty> getProperties() const override;
     void setPropertyValue(const ArtifactCore::UniString& name,
                           const QVariant& value) override;

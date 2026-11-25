@@ -1,5 +1,6 @@
 module;
 #include <cstdint>
+#include <optional>
 #include <utility>
 #include <vector>
 #include <QString>
@@ -30,9 +31,11 @@ private:
 
     ArtifactCore::SolidFillSettings settings_;
     Preset preset_ = Preset::White;
+    bool customPresetPinned_ = false;
 
     void syncImpls();
     void applyPreset(Preset preset);
+    void updatePresetFromSettings();
 
 public:
     FillEffect();
@@ -40,10 +43,54 @@ public:
 
     void setPreset(int preset);
     int preset() const { return static_cast<int>(preset_); }
+    bool customPresetPinnedForSnapshot() const { return customPresetPinned_; }
+    void restoreCustomPresetPinnedForSnapshot(bool pinned) {
+        customPresetPinned_ = pinned;
+        if (pinned) {
+            preset_ = Preset::Custom;
+        } else {
+            updatePresetFromSettings();
+        }
+    }
 
     void setColor(const QColor& color);
     void setOpacity(float value);
     void setPreserveAlpha(bool value);
+
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        if (index == 1) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.colorcorrection.fill.opacity"),
+                QStringLiteral("Opacity"), 0.0, 1.0, 0.01, 0.0025,
+                100.0, QStringLiteral("%")};
+        }
+        if (index == 2) {
+            EffectScalarGizmoParameter parameter{
+                QStringLiteral("effect.fill.preset"),
+                QStringLiteral("Preset"), 0.0, 5.0, 1.0, 0.05, 1.0,
+                QString()};
+            parameter.choiceCount = 6;
+            return parameter;
+        }
+        return std::nullopt;
+    }
+
+    std::optional<EffectViewportToggleParameter>
+    viewportToggleParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::viewportToggleParameter(index);
+        }
+        if (index == 1) {
+            return EffectViewportToggleParameter{
+                QStringLiteral("effect.colorcorrection.fill.preserve_alpha"),
+                QStringLiteral("Preserve Alpha")};
+        }
+        return std::nullopt;
+    }
 
     const ArtifactCore::SolidFillSettings& settings() const { return settings_; }
 

@@ -1,4 +1,5 @@
 module;
+#include <QString>
 #include <QVariant>
 #include <iostream>
 #include <vector>
@@ -109,6 +110,36 @@ private:
 public:
     WaveEffect();
     ~WaveEffect();
+
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        if (index == 1) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.wave.amplitude"),
+                QStringLiteral("Amplitude"),
+                -4096.0, 4096.0, 1.0, 0.25, 1.0, QStringLiteral("px")};
+        }
+        if (index == 2) {
+            EffectScalarGizmoParameter parameter{
+                QStringLiteral("effect.wave.wave_type"),
+                QStringLiteral("waveType"), 0.0, 1.0, 1.0, 0.05,
+                1.0, QString()};
+            parameter.choiceCount = 2;
+            return parameter;
+        }
+        if (index == 3) {
+            EffectScalarGizmoParameter parameter{
+                QStringLiteral("effect.wave.orientation"),
+                QStringLiteral("orientation"), 0.0, 1.0, 1.0, 0.05,
+                1.0, QString()};
+            parameter.choiceCount = 2;
+            return parameter;
+        }
+        return std::nullopt;
+    }
 
     // Expose properties via AbstractProperty API
     std::vector<ArtifactCore::AbstractProperty> getProperties() const override;

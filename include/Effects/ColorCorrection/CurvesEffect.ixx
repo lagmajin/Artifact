@@ -1,6 +1,7 @@
 module;
 #include <utility>
 #include <cstdint>
+#include <optional>
 #include <vector>
 #include <QString>
 #include <QVariant>
@@ -41,6 +42,34 @@ private:
 public:
     CurvesEffect();
     ~CurvesEffect() override;
+
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        if (index == 1) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.colorcorrection.curves.strength"),
+                QStringLiteral("Strength"), 0.0, 1.0, 0.01, 0.0025,
+                100.0, QStringLiteral("%")};
+        }
+        if (index == 2) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.colorcorrection.curves.posterize_levels"),
+                QStringLiteral("Posterize Levels"), 2.0, 256.0, 1.0, 0.635,
+                1.0, QStringLiteral("levels")};
+        }
+        if (index == 3) {
+            EffectScalarGizmoParameter parameter{
+                QStringLiteral("effect.color.curves.preset"),
+                QStringLiteral("Preset"), 0.0, 6.0, 1.0, 0.05,
+                1.0, QString()};
+            parameter.choiceCount = 7;
+            return parameter;
+        }
+        return std::nullopt;
+    }
 
     void setPreset(int preset);
     int preset() const { return static_cast<int>(preset_); }

@@ -1,5 +1,6 @@
 module;
 #include <cstdint>
+#include <optional>
 #include <utility>
 #include <vector>
 #include <QString>
@@ -31,7 +32,7 @@ private:
     };
 
     PhotoFilterSettings settings_;
-    Preset preset_ = Preset::Warm;
+    bool customPresetPinned_ = false;
 
     void syncImpls();
     void applyPreset(Preset preset);
@@ -40,8 +41,47 @@ public:
     PhotoFilterEffect();
     ~PhotoFilterEffect() override;
 
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        if (index == 1) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.photo_filter.density"),
+                QStringLiteral("Density"),
+                0.0, 1.0, 0.01, 0.0025, 100.0, QStringLiteral("%")};
+        }
+        if (index == 2) {
+            EffectScalarGizmoParameter parameter{
+                QStringLiteral("effect.photo_filter.preset"),
+                QStringLiteral("Preset"), 0.0, 5.0, 1.0, 0.05, 1.0,
+                QString()};
+            parameter.choiceCount = 6;
+            return parameter;
+        }
+        return std::nullopt;
+    }
+
+    std::optional<EffectViewportToggleParameter>
+    viewportToggleParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::viewportToggleParameter(index);
+        }
+        if (index == 1) {
+            return EffectViewportToggleParameter{
+                QStringLiteral("effect.photo_filter.preserve_luma"),
+                QStringLiteral("Preserve Luma")};
+        }
+        return std::nullopt;
+    }
+
     void setPreset(int preset);
-    int preset() const { return static_cast<int>(preset_); }
+    int preset() const;
+    bool customPresetPinnedForSnapshot() const { return customPresetPinned_; }
+    void restoreCustomPresetPinnedForSnapshot(bool pinned) {
+        customPresetPinned_ = pinned;
+    }
 
     void setColor(const QColor& color);
     void setDensity(float value);

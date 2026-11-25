@@ -35,6 +35,20 @@ public:
     ColorTintEffect();
     ~ColorTintEffect() override;
 
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        if (index == 1) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.color.tint.amount"),
+                QStringLiteral("Amount to Tint"), 0.0, 1.0, 0.01, 0.0025,
+                100.0, QStringLiteral("%")};
+        }
+        return std::nullopt;
+    }
+
     void setMapBlackTo(const QColor& color) {
         mapBlackTo_ = color;
         syncImpls();

@@ -240,24 +240,52 @@ std::vector<ArtifactCore::AbstractProperty> SpherizeEffect::getProperties() cons
     amountProp.setType(ArtifactCore::PropertyType::Float);
     amountProp.setDefaultValue(QVariant(static_cast<double>(amount())));
     amountProp.setValue(QVariant(static_cast<double>(amount())));
+    amountProp.setDisplayLabel(QStringLiteral("Amount"));
+    amountProp.setTooltip(QStringLiteral("Strength and direction of the spherical distortion."));
+    amountProp.setHardRange(-100.0, 100.0);
+    amountProp.setSoftRange(-50.0, 50.0);
+    amountProp.setStep(1.0);
+    amountProp.setUnit(QStringLiteral("%"));
+    amountProp.setAnimatable(true);
 
     auto& radiusProp = props.emplace_back();
     radiusProp.setName("radius");
     radiusProp.setType(ArtifactCore::PropertyType::Float);
     radiusProp.setDefaultValue(QVariant(static_cast<double>(radius())));
     radiusProp.setValue(QVariant(static_cast<double>(radius())));
+    radiusProp.setDisplayLabel(QStringLiteral("Radius"));
+    radiusProp.setTooltip(QStringLiteral("Effect radius as a fraction of the shorter image dimension."));
+    radiusProp.setHardRange(0.0, 1.0);
+    radiusProp.setSoftRange(0.0, 0.75);
+    radiusProp.setStep(0.005);
+    radiusProp.setUnit(QStringLiteral("%"));
+    radiusProp.setAnimatable(true);
 
     auto& cxProp = props.emplace_back();
     cxProp.setName("centerX");
     cxProp.setType(ArtifactCore::PropertyType::Float);
     cxProp.setDefaultValue(QVariant(static_cast<double>(centerX())));
     cxProp.setValue(QVariant(static_cast<double>(centerX())));
+    cxProp.setDisplayLabel(QStringLiteral("Center X"));
+    cxProp.setTooltip(QStringLiteral("Horizontal distortion center as a fraction of image width."));
+    cxProp.setHardRange(0.0, 1.0);
+    cxProp.setSoftRange(0.1, 0.9);
+    cxProp.setStep(0.005);
+    cxProp.setUnit(QStringLiteral("%"));
+    cxProp.setAnimatable(true);
 
     auto& cyProp = props.emplace_back();
     cyProp.setName("centerY");
     cyProp.setType(ArtifactCore::PropertyType::Float);
     cyProp.setDefaultValue(QVariant(static_cast<double>(centerY())));
     cyProp.setValue(QVariant(static_cast<double>(centerY())));
+    cyProp.setDisplayLabel(QStringLiteral("Center Y"));
+    cyProp.setTooltip(QStringLiteral("Vertical distortion center as a fraction of image height."));
+    cyProp.setHardRange(0.0, 1.0);
+    cyProp.setSoftRange(0.1, 0.9);
+    cyProp.setStep(0.005);
+    cyProp.setUnit(QStringLiteral("%"));
+    cyProp.setAnimatable(true);
 
     return props;
 }

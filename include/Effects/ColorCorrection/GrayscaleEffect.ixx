@@ -1,6 +1,7 @@
 module;
 #include <utility>
 #include <vector>
+#include <optional>
 #include <QString>
 #include <QVariant>
 
@@ -33,6 +34,28 @@ private:
 public:
     GrayscaleEffect();
     ~GrayscaleEffect() override;
+
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        if (index == 1) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.colorcorrection.grayscale.strength"),
+                QStringLiteral("Strength"), 0.0, 1.0, 0.01, 0.0025, 100.0,
+                QStringLiteral("%")};
+        }
+        if (index == 2) {
+            EffectScalarGizmoParameter parameter{
+                QStringLiteral("effect.colorcorrection.grayscale.mode"),
+                QStringLiteral("Mode"), 0.0, 2.0, 1.0, 0.05, 1.0,
+                QString()};
+            parameter.choiceCount = 3;
+            return parameter;
+        }
+        return std::nullopt;
+    }
 
     void setMode(int value);
     int mode() const { return static_cast<int>(mode_); }

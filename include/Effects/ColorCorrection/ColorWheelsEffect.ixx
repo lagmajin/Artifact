@@ -1,6 +1,7 @@
 module;
 #include <utility>
 #include <cstdint>
+#include <optional>
 #include <vector>
 #include <QString>
 #include <QVariant>
@@ -28,6 +29,28 @@ private:
 public:
     ColorWheelsEffect();
     ~ColorWheelsEffect() override;
+
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        if (index == 1) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.colorcorrection.colorwheels.lift_master"),
+                QStringLiteral("Lift Master"), -2.0, 2.0, 0.01, 0.01,
+                1.0, QStringLiteral("linear")};
+        }
+        if (index == 2) {
+            EffectScalarGizmoParameter parameter{
+                QStringLiteral("effect.color.wheels.wheel_model"),
+                QStringLiteral("Wheel Type"), 0.0, 3.0, 1.0, 0.05,
+                1.0, QString()};
+            parameter.choiceCount = 4;
+            return parameter;
+        }
+        return std::nullopt;
+    }
 
     void setWheelType(ColorWheelType type) { wheelType_ = type; syncImpls(); }
     ColorWheelType wheelType() const { return wheelType_; }

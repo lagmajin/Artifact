@@ -435,6 +435,12 @@ std::vector<AbstractProperty> PosterizeEffect::getProperties() const {
     props[0].setName("Levels");
     props[0].setType(ArtifactCore::PropertyType::Float);
     props[0].setValue(QVariant(static_cast<double>(levels_)));
+    props[0].setDefaultValue(QVariant(4.0));
+    props[0].setHardRange(QVariant(2.0), QVariant(64.0));
+    props[0].setStep(QVariant(1.0));
+    props[0].setUnit(QStringLiteral("levels"));
+    props[0].setTooltip(QStringLiteral(
+        "Sets the number of output tonal steps per color channel."));
     return props;
 }
 

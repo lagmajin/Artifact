@@ -1,5 +1,6 @@
 module;
 #include <utility>
+#include <optional>
 #include <vector>
 #include <QString>
 #include <QVariant>
@@ -44,6 +45,33 @@ public:
 
     std::vector<ArtifactCore::AbstractProperty> getProperties() const override;
     void setPropertyValue(const UniString& name, const QVariant& value) override;
+
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        if (index == 1) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.kaleidoscope.segments"),
+                QStringLiteral("Segments"),
+                2.0, 64.0, 1.0, 0.035, 1.0, QString()};
+        }
+        return std::nullopt;
+    }
+
+    std::optional<EffectViewportToggleParameter>
+    viewportToggleParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::viewportToggleParameter(index);
+        }
+        if (index == 1) {
+            return EffectViewportToggleParameter{
+                QStringLiteral("effect.kaleidoscope.mirror"),
+                QStringLiteral("Mirror")};
+        }
+        return std::nullopt;
+    }
 
     GpuRasterEffectDomain gpuRasterEffectDomain() const override {
         return GpuRasterEffectDomain::Spatial;

@@ -352,6 +352,7 @@ std::vector<AbstractProperty> DropShadowEffect::getProperties() const {
     angleProp.setSoftRange(0.0, 360.0);
     angleProp.setStep(0.1);
     angleProp.setUnit(QStringLiteral("deg"));
+    angleProp.setTooltip(QStringLiteral("Direction that the shadow is cast."));
 
     auto& softProp = props.emplace_back();
     softProp.setName("Softness");

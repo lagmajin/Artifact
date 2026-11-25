@@ -66,9 +66,11 @@ std::vector<AbstractProperty> RadialBlurEffect::getProperties()const{
     std::vector<AbstractProperty> props;
     props.reserve(5);
 
-    auto addInt = [&props](const char* name, int value, int minValue, int maxValue) {
+    auto addInt = [&props](const char* name, const char* displayLabel,
+                           int value, int minValue, int maxValue) {
         AbstractProperty prop;
         prop.setName(QString::fromLatin1(name));
+        prop.setDisplayLabel(QString::fromLatin1(displayLabel));
         prop.setType(PropertyType::Integer);
         const QVariant variantValue(value);
         prop.setValue(variantValue);
@@ -78,9 +80,11 @@ std::vector<AbstractProperty> RadialBlurEffect::getProperties()const{
         props.push_back(std::move(prop));
     };
 
-    auto addFloat = [&props](const char* name, float value, float minValue, float maxValue) {
+    auto addFloat = [&props](const char* name, const char* displayLabel,
+                             float value, float minValue, float maxValue) {
         AbstractProperty prop;
         prop.setName(QString::fromLatin1(name));
+        prop.setDisplayLabel(QString::fromLatin1(displayLabel));
         prop.setType(PropertyType::Float);
         const QVariant variantValue(static_cast<double>(value));
         prop.setValue(variantValue);
@@ -90,11 +94,11 @@ std::vector<AbstractProperty> RadialBlurEffect::getProperties()const{
         props.push_back(std::move(prop));
     };
 
-    addFloat("amount", amount_, 0.0f, 2.0f);
-    addInt("quality", quality_, 2, 32);
-    addFloat("centerX", cx_, 0.0f, 1.0f);
-    addFloat("centerY", cy_, 0.0f, 1.0f);
-    addFloat("mode", mode_, 0.0f, 1.0f);
+    addFloat("amount", "Amount", amount_, 0.0f, 2.0f);
+    addInt("quality", "Quality", quality_, 2, 32);
+    addFloat("centerX", "Center X", cx_, 0.0f, 1.0f);
+    addFloat("centerY", "Center Y", cy_, 0.0f, 1.0f);
+    addFloat("mode", "Mode (0 Zoom / 1 Spin)", mode_, 0.0f, 1.0f);
     return props;
 }
 void RadialBlurEffect::setPropertyValue(const UniString& n,const QVariant& v){const QString k=n.toQString();if(k=="amount")setAmount(v.toFloat());else if(k=="quality")setQuality(v.toInt());else if(k=="centerX")setCenterX(v.toFloat());else if(k=="centerY")setCenterY(v.toFloat());else if(k=="mode")setMode(v.toFloat());}

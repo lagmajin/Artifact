@@ -396,6 +396,7 @@ FillEffect::~FillEffect() = default;
 
 void FillEffect::applyPreset(Preset preset) {
     preset_ = preset;
+    customPresetPinned_ = preset == Preset::Custom;
     switch (preset_) {
     case Preset::White:
         settings_ = ArtifactCore::SolidFillSettings::white();
@@ -419,27 +420,54 @@ void FillEffect::applyPreset(Preset preset) {
 }
 
 void FillEffect::setPreset(int preset) {
-    const int clamped = std::clamp(preset, 0, 4);
+    const int clamped = std::clamp(preset, 0, 5);
     applyPreset(static_cast<Preset>(clamped));
     syncImpls();
 }
 
 void FillEffect::setColor(const QColor& color) {
-    preset_ = Preset::Custom;
     settings_.color = color;
+    updatePresetFromSettings();
     syncImpls();
 }
 
 void FillEffect::setOpacity(float value) {
-    preset_ = Preset::Custom;
     settings_.opacity = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 1.0f;
+    updatePresetFromSettings();
     syncImpls();
 }
 
 void FillEffect::setPreserveAlpha(bool value) {
-    preset_ = Preset::Custom;
     settings_.preserveAlpha = value;
+    updatePresetFromSettings();
     syncImpls();
+}
+
+void FillEffect::updatePresetFromSettings() {
+    if (customPresetPinned_) {
+        preset_ = Preset::Custom;
+        return;
+    }
+
+    const auto matchesPreset = [this](const ArtifactCore::SolidFillSettings& candidate) {
+        return settings_.color == candidate.color &&
+               settings_.opacity == candidate.opacity &&
+               settings_.preserveAlpha == candidate.preserveAlpha;
+    };
+
+    if (matchesPreset(ArtifactCore::SolidFillSettings::white())) {
+        preset_ = Preset::White;
+    } else if (matchesPreset(ArtifactCore::SolidFillSettings::black())) {
+        preset_ = Preset::Black;
+    } else if (matchesPreset(ArtifactCore::SolidFillSettings::red())) {
+        preset_ = Preset::Red;
+    } else if (matchesPreset(ArtifactCore::SolidFillSettings::blue())) {
+        preset_ = Preset::Blue;
+    } else if (matchesPreset(ArtifactCore::SolidFillSettings::green())) {
+        preset_ = Preset::Green;
+    } else {
+        preset_ = Preset::Custom;
+    }
 }
 
 void FillEffect::syncImpls() {
@@ -457,30 +485,52 @@ std::vector<AbstractProperty> FillEffect::getProperties() const {
 
     AbstractProperty presetProp;
     presetProp.setName("Preset");
+    presetProp.setDisplayLabel(QStringLiteral("Preset"));
     presetProp.setType(PropertyType::Integer);
     presetProp.setValue(preset());
+    presetProp.setDefaultValue(static_cast<int>(Preset::White));
+    presetProp.setHardRange(0, 5);
+    presetProp.setSoftRange(0, 5);
+    presetProp.setStep(1);
+    presetProp.setAnimatable(false);
+    presetProp.setTooltip(QStringLiteral("Choose a solid fill preset."));
     presetProp.setDisplayPriority(-30);
     props.push_back(presetProp);
 
     AbstractProperty colorProp;
     colorProp.setName("Color");
+    colorProp.setDisplayLabel(QStringLiteral("Color"));
     colorProp.setType(PropertyType::Color);
     colorProp.setColorValue(settings_.color);
     colorProp.setValue(settings_.color);
+    colorProp.setDefaultValue(QColor(255, 255, 255));
+    colorProp.setTooltip(QStringLiteral("Color blended over the source image."));
     colorProp.setDisplayPriority(-20);
     props.push_back(colorProp);
 
     AbstractProperty opacityProp;
     opacityProp.setName("Opacity");
+    opacityProp.setDisplayLabel(QStringLiteral("Opacity"));
     opacityProp.setType(PropertyType::Float);
     opacityProp.setValue(QVariant(static_cast<double>(settings_.opacity)));
+    opacityProp.setDefaultValue(QVariant(1.0));
+    opacityProp.setHardRange(QVariant(0.0), QVariant(1.0));
+    opacityProp.setSoftRange(QVariant(0.0), QVariant(1.0));
+    opacityProp.setStep(QVariant(0.01));
+    opacityProp.setUnit(QStringLiteral("%"));
+    opacityProp.setTooltip(QStringLiteral("Blend amount of the solid fill."));
+    opacityProp.setAnimatable(false);
     opacityProp.setDisplayPriority(0);
     props.push_back(opacityProp);
 
     AbstractProperty preserveProp;
     preserveProp.setName("Preserve Alpha");
+    preserveProp.setDisplayLabel(QStringLiteral("Preserve Alpha"));
     preserveProp.setType(PropertyType::Boolean);
     preserveProp.setValue(settings_.preserveAlpha);
+    preserveProp.setDefaultValue(true);
+    preserveProp.setTooltip(QStringLiteral(
+        "Keep the source alpha unchanged while blending the fill color."));
     preserveProp.setDisplayPriority(10);
     props.push_back(preserveProp);
 

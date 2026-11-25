@@ -1,5 +1,6 @@
 module;
 #include <cstdint>
+#include <optional>
 #include <utility>
 #include <vector>
 #include <QString>
@@ -29,6 +30,20 @@ private:
 public:
     RippleEffect();
     ~RippleEffect() override;
+
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        if (index == 1) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.ripple.amplitude"),
+                QStringLiteral("Amplitude"),
+                0.0, 4096.0, 0.25, 0.25, 1.0, QStringLiteral("px")};
+        }
+        return std::nullopt;
+    }
 
     float centerX() const;
     void setCenterX(float v);

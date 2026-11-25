@@ -151,28 +151,50 @@ std::vector<AbstractProperty> VignetteEffect::getProperties()const{
     std::vector<AbstractProperty> props;
     props.reserve(5);
 
-    auto addFloat = [&props](const char* name, float value, float minValue, float maxValue) {
+    auto addFloat = [&props](const char* name, const char* label, const char* tooltip,
+                             float value, float defaultValue, float minValue,
+                             float maxValue, double step, const QString& unit) {
         AbstractProperty prop;
         prop.setName(QString::fromLatin1(name));
+        prop.setDisplayLabel(QString::fromLatin1(label));
         prop.setType(PropertyType::Float);
-        const QVariant variantValue(static_cast<double>(value));
-        prop.setValue(variantValue);
-        prop.setDefaultValue(variantValue);
+        prop.setValue(QVariant(static_cast<double>(value)));
+        prop.setDefaultValue(QVariant(static_cast<double>(defaultValue)));
         prop.setMinValue(QVariant(static_cast<double>(minValue)));
         prop.setMaxValue(QVariant(static_cast<double>(maxValue)));
+        prop.setHardRange(minValue, maxValue);
+        prop.setSoftRange(minValue, maxValue);
+        prop.setStep(step);
+        prop.setUnit(unit);
+        prop.setTooltip(QString::fromLatin1(tooltip));
+        prop.setAnimatable(true);
         props.push_back(std::move(prop));
     };
 
-    addFloat("amount", amount_, 0.0f, 1.0f);
-    addFloat("radius", radius_, 0.0f, 2.0f);
-    addFloat("feather", feather_, 0.01f, 2.0f);
-    addFloat("centerX", cx_, 0.0f, 1.0f);
-    addFloat("centerY", cy_, 0.0f, 1.0f);
+    addFloat("amount", "Amount", "Darkening applied to the vignette edge.",
+             amount_, 0.7f, 0.0f, 1.0f, 0.01, QStringLiteral("%"));
+    addFloat("radius", "Radius", "Radius of the vignette relative to the frame.",
+             radius_, 0.8f, 0.0f, 2.0f, 0.01, QString());
+    addFloat("feather", "Feather", "Width of the transition from the vignette to the center.",
+             feather_, 0.4f, 0.01f, 2.0f, 0.01, QString());
+    addFloat("centerX", "Center X", "Horizontal vignette center as a fraction of frame width.",
+             cx_, 0.5f, 0.0f, 1.0f, 0.001, QStringLiteral("%"));
+    addFloat("centerY", "Center Y", "Vertical vignette center as a fraction of frame height.",
+             cy_, 0.5f, 0.0f, 1.0f, 0.001, QStringLiteral("%"));
     return props;
 }
 void VignetteEffect::setPropertyValue(const UniString& n,const QVariant& v){const QString k=n.toQString();if(k=="amount")setAmount(v.toFloat());else if(k=="radius")setRadius(v.toFloat());else if(k=="feather")setFeather(v.toFloat());else if(k=="centerX")setCenterX(v.toFloat());else if(k=="centerY")setCenterY(v.toFloat());}
 void VignetteEffect::syncImpls(){
-    auto c=ArtifactCore::makeShared<VignetteCPUImpl>();c->amount_=amount_;c->radius_=radius_;c->feather_=feather_;c->cx_=cx_;c->cy_=cy_;setCPUImpl(c);
+    auto c = ArtifactCore::dynamicPointerCast<VignetteCPUImpl>(cpuImpl());
+    if (!c) {
+        c = ArtifactCore::makeShared<VignetteCPUImpl>();
+        setCPUImpl(c);
+    }
+    c->amount_ = amount_;
+    c->radius_ = radius_;
+    c->feather_ = feather_;
+    c->cx_ = cx_;
+    c->cy_ = cy_;
     if(auto* g=dynamic_cast<VignetteGPUImpl*>(gpuImpl().get())){g->amount_=amount_;g->radius_=radius_;g->feather_=feather_;g->cx_=cx_;g->cy_=cy_;}
 }
 } // namespace Artifact

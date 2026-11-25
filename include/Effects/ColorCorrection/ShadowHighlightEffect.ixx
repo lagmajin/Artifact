@@ -2,6 +2,7 @@ module;
 #include <algorithm>
 #include <cmath>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include <QVariant>
@@ -33,21 +34,35 @@ export namespace Artifact {
 
         // ── Shadows ──
         float shadowAmount()    const;  void setShadowAmount(float v);    // 0-100 %
-        float shadowTonalWidth() const; void setShadowTonalWidth(float v);// 0-100 %
+        float shadowTonalWidth() const; void setShadowTonalWidth(float v);// 1-100 %
         Units::Pixels shadowRadius() const;
         void setShadowRadius(Units::Pixels v);
 
         // ── Highlights ──
         float highlightAmount()    const;  void setHighlightAmount(float v);    // 0-100 %
-        float highlightTonalWidth() const; void setHighlightTonalWidth(float v);// 0-100 %
+        float highlightTonalWidth() const; void setHighlightTonalWidth(float v);// 1-100 %
         Units::Pixels highlightRadius() const;
         void setHighlightRadius(Units::Pixels v);
 
         // ── Adjustments ──
         float colorCorrection() const; void setColorCorrection(float v); // -100..100
         float midtoneContrast() const; void setMidtoneContrast(float v); // -100..100
-        float blackClip()       const; void setBlackClip(float v);       // 0..1
-        float whiteClip()       const; void setWhiteClip(float v);       // 0..1
+        float blackClip()       const; void setBlackClip(float v);       // 0..0.5
+        float whiteClip()       const; void setWhiteClip(float v);       // 0..0.5
+
+        std::optional<EffectScalarGizmoParameter>
+        scalarGizmoParameter(unsigned int index) const override {
+            if (index == 0) {
+                return ArtifactAbstractEffect::scalarGizmoParameter(index);
+            }
+            if (index == 1) {
+                return EffectScalarGizmoParameter{
+                    QStringLiteral("effect.colorcorrection.shadowhighlight.shadow_amount"),
+                    QStringLiteral("Shadow Amount"), 0.0, 100.0, 0.1, 0.25,
+                    1.0, QStringLiteral("%")};
+            }
+            return std::nullopt;
+        }
 
         // ── Properties API ──
         std::vector<AbstractProperty> getProperties() const override;

@@ -1,5 +1,6 @@
 module;
 #include <vector>
+#include <optional>
 #include <QString>
 #include <QVariant>
 
@@ -28,6 +29,28 @@ private:
 public:
     InvertEffect();
     ~InvertEffect() override;
+
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        if (index == 1) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.colorcorrection.invert.strength"),
+                QStringLiteral("Strength"), 0.0, 1.0, 0.01, 0.0025, 100.0,
+                QStringLiteral("%")};
+        }
+        if (index == 2) {
+            EffectScalarGizmoParameter parameter{
+                QStringLiteral("effect.colorcorrection.invert.channel"),
+                QStringLiteral("Channel"), 0.0, 4.0, 1.0, 0.05, 1.0,
+                QString()};
+            parameter.choiceCount = 5;
+            return parameter;
+        }
+        return std::nullopt;
+    }
 
     void setChannel(int value);
     int channel() const { return channel_; }

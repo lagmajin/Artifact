@@ -1,9 +1,11 @@
 module;
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <vector>
 #include <algorithm>
 #include <cmath>
+#include <QString>
 #include <QVariant>
 
 export module Artifact.Effect.Keying.DifferenceKey;
@@ -66,6 +68,45 @@ public:
   static constexpr const char* kGpuGenericKeyString = "difference_key";
   static constexpr std::uint32_t kGpuGenericKey =
       gpuGenericKeyFromString(kGpuGenericKeyString);
+  std::optional<EffectScalarGizmoParameter>
+  scalarGizmoParameter(unsigned int index) const override {
+    if (index == 0) {
+      return ArtifactAbstractEffect::scalarGizmoParameter(index);
+    }
+    if (index == 1) {
+      return EffectScalarGizmoParameter{
+          QStringLiteral("effect.keying.difference_key.threshold"),
+          QStringLiteral("threshold"), 0.0, 1.732, 0.01, 0.00433,
+          1.0, QString()};
+    }
+    if (index == 2) {
+      return EffectScalarGizmoParameter{
+          QStringLiteral("effect.keying.difference_key.softness"),
+          QStringLiteral("softness"), 0.001, 1.0, 0.001, 0.0025,
+          100.0, QStringLiteral("%")};
+    }
+    if (index == 3) {
+      return EffectScalarGizmoParameter{
+          QStringLiteral("effect.keying.difference_key.choke"),
+          QStringLiteral("choke"), -1.0, 1.0, 0.01, 0.005,
+          100.0, QStringLiteral("%")};
+    }
+    if (index == 4) {
+      return EffectScalarGizmoParameter{
+          QStringLiteral("effect.keying.difference_key.matte_blur"),
+          QStringLiteral("matteBlur"), 0.0, 2.0, 0.01, 0.005,
+          1.0, QStringLiteral("x")};
+    }
+    if (index == 5) {
+      EffectScalarGizmoParameter parameter{
+          QStringLiteral("effect.keying.difference_key.view_mode"),
+          QStringLiteral("viewMode"), 0.0, 1.0, 1.0, 0.05,
+          1.0, QString()};
+      parameter.choiceCount = 2;
+      return parameter;
+    }
+    return std::nullopt;
+  }
   std::uint32_t gpuGenericKey() const override { return kGpuGenericKey; }
   GpuRasterEffectDomain gpuRasterEffectDomain() const override {
     return GpuRasterEffectDomain::Spatial;

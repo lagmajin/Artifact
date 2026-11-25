@@ -31,9 +31,12 @@ private:
 
     ColoramaSettings settings_;
     Preset preset_ = Preset::Rainbow;
+    bool customPresetPinned_ = false;
 
     void syncImpls();
     void applyPreset(Preset preset);
+    void updatePresetFromSettings();
+    static ColoramaSettings settingsForPreset(Preset preset);
 
 public:
     ColoramaEffect();
@@ -41,6 +44,10 @@ public:
 
     void setPreset(int preset);
     int preset() const { return static_cast<int>(preset_); }
+    bool customPresetPinnedForSnapshot() const { return customPresetPinned_; }
+    void restoreCustomPresetPinnedForSnapshot(bool pinned) {
+        customPresetPinned_ = pinned;
+    }
 
     void setSourceMode(ColoramaSourceMode mode);
     void setPalette(ColoramaPalette palette);
@@ -50,6 +57,57 @@ public:
     void setSaturationBoost(float value);
     void setContrast(float value);
     void setPreserveLuma(bool value);
+
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        if (index == 1) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.colorcorrection.colorama.phase"),
+                QStringLiteral("Phase"), 0.0, 1.0, 0.01, 0.0025, 1.0,
+                QStringLiteral("cycle")};
+        }
+        if (index == 2) {
+            EffectScalarGizmoParameter parameter{
+                QStringLiteral("effect.color.colorama.source_mode"),
+                QStringLiteral("Source Mode"), 0.0, 1.0, 1.0, 0.05, 1.0,
+                QString()};
+            parameter.choiceCount = 2;
+            return parameter;
+        }
+        if (index == 3) {
+            EffectScalarGizmoParameter parameter{
+                QStringLiteral("effect.color.colorama.palette"),
+                QStringLiteral("Palette"), 0.0, 4.0, 1.0, 0.05, 1.0,
+                QString()};
+            parameter.choiceCount = 5;
+            return parameter;
+        }
+        if (index == 4) {
+            EffectScalarGizmoParameter parameter{
+                QStringLiteral("effect.color.colorama.preset"),
+                QStringLiteral("Preset"), 0.0, 5.0, 1.0, 0.05, 1.0,
+                QString()};
+            parameter.choiceCount = 6;
+            return parameter;
+        }
+        return std::nullopt;
+    }
+
+    std::optional<EffectViewportToggleParameter>
+    viewportToggleParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::viewportToggleParameter(index);
+        }
+        if (index == 1) {
+            return EffectViewportToggleParameter{
+                QStringLiteral("effect.colorcorrection.colorama.preserve_luma"),
+                QStringLiteral("Preserve Luma")};
+        }
+        return std::nullopt;
+    }
 
     const ColoramaSettings& settings() const { return settings_; }
 

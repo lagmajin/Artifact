@@ -380,9 +380,10 @@ std::vector<AbstractProperty> ColorWheelsEffect::getProperties() const {
     auto addFloat = [&props](const char* name, float value) {
         AbstractProperty prop;
         prop.setName(name);
+        const QString key = QString::fromLatin1(name);
+        prop.setDisplayLabel(key);
         prop.setType(PropertyType::Float);
         prop.setValue(QVariant(static_cast<double>(value)));
-        const QString key = QString::fromLatin1(name);
         const bool gamma = key.startsWith(QStringLiteral("Gamma"));
         const bool gain = key.startsWith(QStringLiteral("Gain"));
         const bool offset = key.startsWith(QStringLiteral("Offset"));
@@ -394,6 +395,9 @@ std::vector<AbstractProperty> ColorWheelsEffect::getProperties() const {
         prop.setSoftRange(gamma ? 0.5 : gain ? 0.0 : -1.0,
                           gamma ? 2.0 : gain ? 2.0 : 1.0);
         prop.setStep(0.01);
+        prop.setUnit(gamma || gain ? QStringLiteral("x")
+                                   : QStringLiteral("linear"));
+        prop.setAnimatable(true);
         prop.setTooltip(gamma
             ? QStringLiteral("Midtone multiplier; 1.0 is neutral.")
             : gain ? QStringLiteral("Highlight multiplier; 1.0 is neutral.")

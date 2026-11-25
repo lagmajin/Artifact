@@ -284,33 +284,59 @@ std::vector<AbstractProperty> InnerShadowEffect::getProperties() const {
 
     auto& colorProp = props.emplace_back();
     colorProp.setName("Shadow Color");
+    colorProp.setDisplayLabel(QStringLiteral("Shadow Color"));
     colorProp.setType(PropertyType::Color);
     colorProp.setValue(shadowColor_);
+    colorProp.setDefaultValue(QColor(0, 0, 0, 180));
+    colorProp.setTooltip(QStringLiteral("Tint used for the generated inner shadow."));
 
     auto& distProp = props.emplace_back();
     distProp.setName("Distance");
+    distProp.setDisplayLabel(QStringLiteral("Distance"));
     distProp.setType(PropertyType::Float);
     distProp.setValue(distance_);
+    distProp.setDefaultValue(5.0);
+    distProp.setHardRange(0.0, 4096.0);
+    distProp.setSoftRange(0.0, 256.0);
+    distProp.setStep(0.1);
+    distProp.setUnit(QStringLiteral("px"));
+    distProp.setTooltip(QStringLiteral("Offset magnitude from the source alpha."));
 
     auto& angleProp = props.emplace_back();
     angleProp.setName("Angle");
+    angleProp.setDisplayLabel(QStringLiteral("Angle"));
     angleProp.setType(PropertyType::Float);
     angleProp.setValue(angle_);
-    angleProp.setDefaultValue(120.0);
+    angleProp.setDefaultValue(135.0);
     angleProp.setHardRange(0.0, 360.0);
     angleProp.setSoftRange(0.0, 360.0);
     angleProp.setStep(0.1);
     angleProp.setUnit(QStringLiteral("deg"));
+    angleProp.setTooltip(QStringLiteral("Direction that the inner shadow is cast."));
 
     auto& softProp = props.emplace_back();
     softProp.setName("Softness");
+    softProp.setDisplayLabel(QStringLiteral("Softness"));
     softProp.setType(PropertyType::Float);
     softProp.setValue(softness_);
+    softProp.setDefaultValue(8.0);
+    softProp.setHardRange(0.0, 2048.0);
+    softProp.setSoftRange(0.0, 128.0);
+    softProp.setStep(0.1);
+    softProp.setUnit(QStringLiteral("px"));
+    softProp.setTooltip(QStringLiteral("Blur radius applied to the inner shadow alpha."));
 
     auto& opacProp = props.emplace_back();
     opacProp.setName("Opacity");
+    opacProp.setDisplayLabel(QStringLiteral("Opacity"));
     opacProp.setType(PropertyType::Float);
     opacProp.setValue(opacity_);
+    opacProp.setDefaultValue(75.0);
+    opacProp.setHardRange(0.0, 100.0);
+    opacProp.setSoftRange(0.0, 100.0);
+    opacProp.setStep(0.1);
+    opacProp.setUnit(QStringLiteral("%"));
+    opacProp.setTooltip(QStringLiteral("Opacity of the generated inner shadow."));
 
     return props;
 }

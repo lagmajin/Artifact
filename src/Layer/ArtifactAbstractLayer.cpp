@@ -2776,7 +2776,8 @@ bool ArtifactAbstractLayerImpl::hasEnabledFullFrameEffect() const {
 float ArtifactAbstractLayerImpl::enabledRasterizerOverscanPixels() const {
   float expansion = 0.0f;
   for (const auto &effect : effects_) {
-    if (!effect || !effect->isEnabled() || !effect->allowOverscan() ||
+    if (!effect || !effect->isEnabled() || effect->mix() <= 0.0f ||
+        !effect->allowOverscan() ||
         effect->pipelineStage() != EffectPipelineStage::Rasterizer) {
       continue;
     }

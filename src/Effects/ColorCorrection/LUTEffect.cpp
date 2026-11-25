@@ -178,8 +178,16 @@ std::vector<AbstractProperty> LUTEffect::getProperties() const {
     props[1].setValue(QVariant(filePath_));
 
     props[2].setName("Intensity");
+    props[2].setDisplayLabel(QStringLiteral("Intensity"));
     props[2].setType(ArtifactCore::PropertyType::Float);
     props[2].setValue(QVariant(static_cast<double>(intensity_)));
+    props[2].setDefaultValue(QVariant(1.0));
+    props[2].setHardRange(0.0, 1.0);
+    props[2].setSoftRange(0.0, 1.0);
+    props[2].setStep(0.01);
+    props[2].setUnit(QStringLiteral("%"));
+    props[2].setTooltip(QStringLiteral(
+        "Blend the selected LUT result with the source color."));
 
     return props;
 }

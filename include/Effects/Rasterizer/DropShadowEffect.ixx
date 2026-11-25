@@ -58,6 +58,33 @@ export namespace Artifact {
         DropShadowEffect();
         ~DropShadowEffect();
 
+        std::optional<EffectScalarGizmoParameter>
+        scalarGizmoParameter(unsigned int index) const override {
+            if (index == 0) {
+                return ArtifactAbstractEffect::scalarGizmoParameter(index);
+            }
+            if (index == 1) {
+                return EffectScalarGizmoParameter{
+                    QStringLiteral("effect.drop_shadow.distance"),
+                    QStringLiteral("Distance"),
+                    0.0, 4096.0, 0.1, 0.64, 1.0, QStringLiteral("px")};
+            }
+            return std::nullopt;
+        }
+
+        std::optional<EffectViewportToggleParameter>
+        viewportToggleParameter(unsigned int index) const override {
+            if (index == 0) {
+                return ArtifactAbstractEffect::viewportToggleParameter(index);
+            }
+            if (index == 1) {
+                return EffectViewportToggleParameter{
+                    QStringLiteral("effect.drop_shadow.shadow_only"),
+                    QStringLiteral("Shadow Only")};
+            }
+            return std::nullopt;
+        }
+
         // ── アクセサ ──
         QColor shadowColor() const;
         void   setShadowColor(const QColor& c);

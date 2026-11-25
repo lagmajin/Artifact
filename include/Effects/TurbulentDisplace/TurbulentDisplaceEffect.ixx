@@ -1,5 +1,6 @@
 module;
 #include <cstdint>
+#include <optional>
 #include <utility>
 #include <vector>
 #include <QString>
@@ -25,6 +26,37 @@ private:
 public:
     TurbulentDisplaceEffect();
     ~TurbulentDisplaceEffect() override;
+
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        switch (index) {
+        case 1:
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.turbulent_displace.amount"), QStringLiteral("Amount"),
+                0.0, 1000.0, 0.25, 1.0, 1.0, QStringLiteral("px")};
+        case 2:
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.turbulent_displace.size"), QStringLiteral("Size"),
+                1.0, 1024.0, 0.25, 1.0, 1.0, QStringLiteral("px")};
+        case 3:
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.turbulent_displace.octaves"), QStringLiteral("Octaves"),
+                1.0, 12.0, 1.0, 1.0, 1.0, QString()};
+        case 4:
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.turbulent_displace.seed"), QStringLiteral("Seed"),
+                0.0, 9999.0, 1.0, 1.0, 1.0, QString()};
+        case 5:
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.turbulent_displace.domain_warp"), QStringLiteral("Domain Warp"),
+                0.0, 100.0, 0.01, 0.1, 1.0, QString()};
+        default:
+            return std::nullopt;
+        }
+    }
 
     float amount() const;
     void setAmount(float v);

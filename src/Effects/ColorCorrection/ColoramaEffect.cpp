@@ -1,7 +1,9 @@
 module;
 #include <algorithm>
+#include <cmath>
 #include <memory>
 #include <vector>
+#include <QString>
 #include <QVariant>
 #include <cstring>
 #include <opencv2/opencv.hpp>
@@ -231,40 +233,75 @@ ColoramaEffect::~ColoramaEffect() = default;
 
 void ColoramaEffect::applyPreset(Preset preset) {
     preset_ = preset;
-    switch (preset_) {
+    customPresetPinned_ = preset == Preset::Custom;
+    if (!customPresetPinned_) {
+        settings_ = settingsForPreset(preset_);
+    }
+}
+
+ColoramaSettings ColoramaEffect::settingsForPreset(Preset preset) {
+    switch (preset) {
     case Preset::Rainbow:
-        settings_ = ColoramaSettings::rainbow();
-        break;
+        return ColoramaSettings::rainbow();
     case Preset::Fire:
-        settings_ = ColoramaSettings::fire();
-        break;
+        return ColoramaSettings::fire();
     case Preset::Ocean:
-        settings_ = ColoramaSettings::ocean();
-        break;
+        return ColoramaSettings::ocean();
     case Preset::Neon:
-        settings_.sourceMode = ColoramaSourceMode::Hue;
-        settings_.palette = ColoramaPalette::Neon;
-        settings_.phase = 0.0f;
-        settings_.spread = 1.0f;
-        settings_.strength = 1.0f;
-        settings_.saturationBoost = 1.4f;
-        settings_.contrast = 1.15f;
-        settings_.preserveLuma = false;
-        break;
+    {
+        ColoramaSettings settings;
+        settings.sourceMode = ColoramaSourceMode::Hue;
+        settings.palette = ColoramaPalette::Neon;
+        settings.saturationBoost = 1.4f;
+        settings.contrast = 1.15f;
+        settings.preserveLuma = false;
+        return settings;
+    }
     case Preset::Sunset:
-        settings_.sourceMode = ColoramaSourceMode::Luma;
-        settings_.palette = ColoramaPalette::Sunset;
-        settings_.phase = 0.05f;
-        settings_.spread = 1.0f;
-        settings_.strength = 1.0f;
-        settings_.saturationBoost = 1.1f;
-        settings_.contrast = 1.05f;
-        settings_.preserveLuma = true;
-        break;
+    {
+        ColoramaSettings settings;
+        settings.palette = ColoramaPalette::Sunset;
+        settings.phase = 0.05f;
+        settings.saturationBoost = 1.1f;
+        settings.contrast = 1.05f;
+        return settings;
+    }
     case Preset::Custom:
     default:
-        break;
+        return ColoramaSettings{};
     }
+}
+
+void ColoramaEffect::updatePresetFromSettings() {
+    if (customPresetPinned_) {
+        preset_ = Preset::Custom;
+        return;
+    }
+
+    const auto matches = [this](const ColoramaSettings& candidate) {
+        constexpr float kTolerance = 0.000001f;
+        const auto close = [kTolerance](float lhs, float rhs) {
+            return std::abs(lhs - rhs) <= kTolerance;
+        };
+        return settings_.sourceMode == candidate.sourceMode &&
+               settings_.palette == candidate.palette &&
+               close(settings_.phase, candidate.phase) &&
+               close(settings_.spread, candidate.spread) &&
+               close(settings_.strength, candidate.strength) &&
+               close(settings_.saturationBoost, candidate.saturationBoost) &&
+               close(settings_.contrast, candidate.contrast) &&
+               settings_.preserveLuma == candidate.preserveLuma;
+    };
+
+    for (int value = static_cast<int>(Preset::Rainbow);
+         value <= static_cast<int>(Preset::Sunset); ++value) {
+        const auto candidate = static_cast<Preset>(value);
+        if (matches(settingsForPreset(candidate))) {
+            preset_ = candidate;
+            return;
+        }
+    }
+    preset_ = Preset::Custom;
 }
 
 void ColoramaEffect::setPreset(int preset) {
@@ -274,50 +311,50 @@ void ColoramaEffect::setPreset(int preset) {
 }
 
 void ColoramaEffect::setSourceMode(ColoramaSourceMode mode) {
-    preset_ = Preset::Custom;
     settings_.sourceMode = mode;
+    updatePresetFromSettings();
     syncImpls();
 }
 
 void ColoramaEffect::setPalette(ColoramaPalette palette) {
-    preset_ = Preset::Custom;
     settings_.palette = palette;
+    updatePresetFromSettings();
     syncImpls();
 }
 
 void ColoramaEffect::setPhase(float value) {
-    preset_ = Preset::Custom;
     settings_.phase = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 0.0f;
+    updatePresetFromSettings();
     syncImpls();
 }
 
 void ColoramaEffect::setSpread(float value) {
-    preset_ = Preset::Custom;
     settings_.spread = std::isfinite(value) ? std::max(0.0f, value) : 1.0f;
+    updatePresetFromSettings();
     syncImpls();
 }
 
 void ColoramaEffect::setStrength(float value) {
-    preset_ = Preset::Custom;
     settings_.strength = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 1.0f;
+    updatePresetFromSettings();
     syncImpls();
 }
 
 void ColoramaEffect::setSaturationBoost(float value) {
-    preset_ = Preset::Custom;
     settings_.saturationBoost = std::isfinite(value) ? std::clamp(value, 0.0f, 2.5f) : 1.4f;
+    updatePresetFromSettings();
     syncImpls();
 }
 
 void ColoramaEffect::setContrast(float value) {
-    preset_ = Preset::Custom;
     settings_.contrast = std::isfinite(value) ? std::clamp(value, 0.0f, 2.5f) : 1.15f;
+    updatePresetFromSettings();
     syncImpls();
 }
 
 void ColoramaEffect::setPreserveLuma(bool value) {
-    preset_ = Preset::Custom;
     settings_.preserveLuma = value;
+    updatePresetFromSettings();
     syncImpls();
 }
 
@@ -332,55 +369,94 @@ void ColoramaEffect::syncImpls() {
 
 std::vector<AbstractProperty> ColoramaEffect::getProperties() const {
     std::vector<AbstractProperty> props;
-    props.reserve(8);
+    props.reserve(9);
 
     AbstractProperty sourceModeProp;
     sourceModeProp.setName("Source Mode");
+    sourceModeProp.setDisplayLabel(QStringLiteral("Source Mode"));
     sourceModeProp.setType(PropertyType::Integer);
     sourceModeProp.setValue(static_cast<int>(settings_.sourceMode));
+    sourceModeProp.setDefaultValue(static_cast<int>(ColoramaSourceMode::Luma));
+    sourceModeProp.setHardRange(0, 1);
+    sourceModeProp.setSoftRange(0, 1);
+    sourceModeProp.setStep(1);
+    sourceModeProp.setTooltip(QStringLiteral(
+        "Choose luminance or source hue as the palette lookup value."));
     sourceModeProp.setDisplayPriority(-20);
     props.push_back(sourceModeProp);
 
     AbstractProperty paletteProp;
     paletteProp.setName("Palette");
+    paletteProp.setDisplayLabel(QStringLiteral("Palette"));
     paletteProp.setType(PropertyType::Integer);
     paletteProp.setValue(static_cast<int>(settings_.palette));
+    paletteProp.setDefaultValue(static_cast<int>(ColoramaPalette::Rainbow));
+    paletteProp.setHardRange(0, 4);
+    paletteProp.setSoftRange(0, 4);
+    paletteProp.setStep(1);
+    paletteProp.setTooltip(QStringLiteral(
+        "Choose the color ramp sampled by the source value."));
     paletteProp.setDisplayPriority(-15);
     props.push_back(paletteProp);
 
     AbstractProperty presetProp;
     presetProp.setName("Preset");
+    presetProp.setDisplayLabel(QStringLiteral("Preset"));
     presetProp.setType(PropertyType::Integer);
     presetProp.setValue(preset());
+    presetProp.setDefaultValue(static_cast<int>(Preset::Rainbow));
+    presetProp.setHardRange(0, 5);
+    presetProp.setSoftRange(0, 5);
+    presetProp.setStep(1);
+    presetProp.setTooltip(QStringLiteral(
+        "Choose Custom, Rainbow, Fire, Ocean, Neon, or Sunset."));
     presetProp.setDisplayPriority(-30);
     props.push_back(presetProp);
 
-    auto addFloat = [&props](const char* name, float value) {
+    auto addFloat = [&props](const QString& name, float value, float defaultValue,
+                             double minimum, double maximum,
+                             double softMinimum, double softMaximum, double step,
+                             const QString& unit, const QString& tooltip,
+                             int priority) {
         AbstractProperty prop;
         prop.setName(name);
+        prop.setDisplayLabel(name);
         prop.setType(PropertyType::Float);
         prop.setValue(QVariant(static_cast<double>(value)));
+        prop.setDefaultValue(QVariant(static_cast<double>(defaultValue)));
+        prop.setHardRange(minimum, maximum);
+        prop.setSoftRange(softMinimum, softMaximum);
+        prop.setStep(step);
+        prop.setUnit(unit);
+        prop.setTooltip(tooltip);
+        prop.setDisplayPriority(priority);
         props.push_back(prop);
     };
 
-    addFloat("Phase", settings_.phase);
-    addFloat("Spread", settings_.spread);
-    addFloat("Strength", settings_.strength);
-    addFloat("Saturation Boost", settings_.saturationBoost);
-    addFloat("Contrast", settings_.contrast);
-
-    if (props.size() >= 8) {
-        props[3].setDisplayPriority(0);
-        props[4].setDisplayPriority(5);
-        props[5].setDisplayPriority(10);
-        props[6].setDisplayPriority(15);
-        props[7].setDisplayPriority(20);
-    }
+    addFloat(QStringLiteral("Phase"), settings_.phase, 0.0f,
+             0.0, 1.0, 0.0, 1.0, 0.01, QStringLiteral("cycle"),
+             QStringLiteral("Offset the source value along the palette cycle."), 0);
+    addFloat(QStringLiteral("Spread"), settings_.spread, 1.0f,
+             0.0, 16.0, 0.0, 4.0, 0.05, QStringLiteral("cycles"),
+             QStringLiteral("Repeat the palette across the source value range."), 5);
+    addFloat(QStringLiteral("Strength"), settings_.strength, 1.0f,
+             0.0, 1.0, 0.0, 1.0, 0.01, QStringLiteral("%"),
+             QStringLiteral("Blend the palette result with the source color."), 10);
+    addFloat(QStringLiteral("Saturation Boost"), settings_.saturationBoost, 1.0f,
+             0.0, 2.5, 0.0, 1.5, 0.01, QStringLiteral("x"),
+             QStringLiteral("Scale the sampled palette color saturation."), 15);
+    addFloat(QStringLiteral("Contrast"), settings_.contrast, 1.0f,
+             0.0, 2.5, 0.0, 1.5, 0.01, QStringLiteral("x"),
+             QStringLiteral("Adjust contrast around the palette midpoint."), 20);
 
     AbstractProperty preserveProp;
     preserveProp.setName("Preserve Luma");
+    preserveProp.setDisplayLabel(QStringLiteral("Preserve Luma"));
     preserveProp.setType(PropertyType::Boolean);
     preserveProp.setValue(settings_.preserveLuma);
+    preserveProp.setDefaultValue(true);
+    preserveProp.setTooltip(QStringLiteral(
+        "Scale the result to retain the source luminance."));
     preserveProp.setDisplayPriority(25);
     props.push_back(preserveProp);
 

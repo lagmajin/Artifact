@@ -6,6 +6,7 @@ module;
 #include <memory>
 #include <limits>
 #include <mutex>
+#include <QString>
 #include <QVariant>
 #include <QDebug>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
@@ -343,15 +344,30 @@ void InvertEffect::syncImpls() {
 std::vector<AbstractProperty> InvertEffect::getProperties() const {
     std::vector<AbstractProperty> props(2);
     props[0].setName("Channel");
+    props[0].setDisplayLabel(QStringLiteral("Channel"));
     props[0].setType(PropertyType::Integer);
     props[0].setValue(QVariant(channel()));
     props[0].setMinValue(0);
     props[0].setMaxValue(4);
+    props[0].setHardRange(0.0, 4.0);
+    props[0].setSoftRange(0.0, 4.0);
+    props[0].setStep(1.0);
+    props[0].setTooltip(QStringLiteral("Select which channel or channels to invert."));
+    props[0].setAnimatable(false);
     props[1].setName("Strength");
+    props[1].setDisplayLabel(QStringLiteral("Strength"));
     props[1].setType(PropertyType::Float);
     props[1].setValue(QVariant(static_cast<double>(strength_)));
     props[1].setMinValue(0.0);
     props[1].setMaxValue(1.0);
+    props[1].setDefaultValue(QVariant(1.0));
+    props[1].setHardRange(0.0, 1.0);
+    props[1].setSoftRange(0.0, 1.0);
+    props[1].setStep(0.01);
+    props[1].setUnit(QStringLiteral("%"));
+    props[1].setTooltip(QStringLiteral(
+        "Blend between the source channel and its inverse."));
+    props[1].setAnimatable(true);
     return props;
 }
 

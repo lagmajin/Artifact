@@ -360,13 +360,91 @@ void KaleidoscopeEffect::syncImpls() {
 
 std::vector<AbstractProperty> KaleidoscopeEffect::getProperties() const {
     std::vector<AbstractProperty> props;
-    auto& s = props.emplace_back(); s.setName("Segments"); s.setType(PropertyType::Integer); s.setValue(segments_);
-    auto& cx = props.emplace_back(); cx.setName("Center X"); cx.setType(PropertyType::Float); cx.setValue(centerX_);
-    auto& cy = props.emplace_back(); cy.setName("Center Y"); cy.setType(PropertyType::Float); cy.setValue(centerY_);
-    auto& r = props.emplace_back(); r.setName("Rotation"); r.setType(PropertyType::Float); r.setValue(rotation_);
-    auto& z = props.emplace_back(); z.setName("Zoom"); z.setType(PropertyType::Float); z.setValue(zoom_);
-    auto& f = props.emplace_back(); f.setName("Feather"); f.setType(PropertyType::Float); f.setValue(feather_);
-    auto& m = props.emplace_back(); m.setName("Mirror"); m.setType(PropertyType::Boolean); m.setValue(mirror_);
+
+    auto& s = props.emplace_back();
+    s.setName("Segments");
+    s.setDisplayLabel(QStringLiteral("Segments"));
+    s.setType(PropertyType::Integer);
+    s.setValue(segments_);
+    s.setDefaultValue(6);
+    s.setHardRange(2.0, 64.0);
+    s.setSoftRange(2.0, 16.0);
+    s.setStep(1.0);
+    s.setTooltip(QStringLiteral("Number of repeated radial sectors."));
+
+    auto& cx = props.emplace_back();
+    cx.setName("Center X");
+    cx.setDisplayLabel(QStringLiteral("Center X"));
+    cx.setType(PropertyType::Float);
+    cx.setValue(centerX_);
+    cx.setDefaultValue(0.5);
+    cx.setHardRange(0.0, 1.0);
+    cx.setSoftRange(0.0, 1.0);
+    cx.setStep(0.001);
+    cx.setUnit(QStringLiteral("%"));
+    cx.setTooltip(QStringLiteral("Horizontal center position as a fraction of image width."));
+    cx.setAnimatable(true);
+
+    auto& cy = props.emplace_back();
+    cy.setName("Center Y");
+    cy.setDisplayLabel(QStringLiteral("Center Y"));
+    cy.setType(PropertyType::Float);
+    cy.setValue(centerY_);
+    cy.setDefaultValue(0.5);
+    cy.setHardRange(0.0, 1.0);
+    cy.setSoftRange(0.0, 1.0);
+    cy.setStep(0.001);
+    cy.setUnit(QStringLiteral("%"));
+    cy.setTooltip(QStringLiteral("Vertical center position as a fraction of image height."));
+    cy.setAnimatable(true);
+
+    auto& r = props.emplace_back();
+    r.setName("Rotation");
+    r.setDisplayLabel(QStringLiteral("Rotation"));
+    r.setType(PropertyType::Float);
+    r.setValue(rotation_);
+    r.setDefaultValue(0.0);
+    r.setHardRange(0.0, 359.9);
+    r.setSoftRange(0.0, 180.0);
+    r.setStep(0.1);
+    r.setUnit(QStringLiteral("°"));
+    r.setTooltip(QStringLiteral("Rotates the repeated sector pattern."));
+    r.setAnimatable(true);
+
+    auto& z = props.emplace_back();
+    z.setName("Zoom");
+    z.setDisplayLabel(QStringLiteral("Zoom"));
+    z.setType(PropertyType::Float);
+    z.setValue(zoom_);
+    z.setDefaultValue(1.0);
+    z.setHardRange(0.01, 16.0);
+    z.setSoftRange(0.25, 4.0);
+    z.setStep(0.01);
+    z.setUnit(QStringLiteral("x"));
+    z.setTooltip(QStringLiteral("Scales the sampled radius around the pattern center."));
+    z.setAnimatable(true);
+
+    auto& f = props.emplace_back();
+    f.setName("Feather");
+    f.setDisplayLabel(QStringLiteral("Feather"));
+    f.setType(PropertyType::Float);
+    f.setValue(feather_);
+    f.setDefaultValue(0.0);
+    f.setHardRange(0.0, 1.0);
+    f.setSoftRange(0.0, 0.5);
+    f.setStep(0.01);
+    f.setUnit(QStringLiteral("%"));
+    f.setTooltip(QStringLiteral("Blends toward the original image near the outer boundary."));
+    f.setAnimatable(true);
+
+    auto& m = props.emplace_back();
+    m.setName("Mirror");
+    m.setDisplayLabel(QStringLiteral("Mirror"));
+    m.setType(PropertyType::Boolean);
+    m.setValue(mirror_);
+    m.setDefaultValue(true);
+    m.setTooltip(QStringLiteral("Reflects alternating sectors around each wedge axis."));
+
     return props;
 }
 

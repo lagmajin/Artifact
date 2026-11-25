@@ -1,5 +1,6 @@
 module;
 #include <cstdint>
+#include <optional>
 #include <utility>
 #include <vector>
 #include <QString>
@@ -26,6 +27,50 @@ private:
 public:
     AddNoiseEffect();
     ~AddNoiseEffect() override;
+
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        if (index == 1) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.add_noise.amount"),
+                QStringLiteral("Amount"), 0.0, 1.0, 0.01, 0.0025,
+                100.0, QStringLiteral("%")};
+        }
+        if (index == 2) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.add_noise.size"),
+                QStringLiteral("Size"), 0.1, 64.0, 0.1, 0.16,
+                1.0, QStringLiteral("px")};
+        }
+        if (index == 3) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.add_noise.seed"),
+                QStringLiteral("Seed"), 0.0, 9999.0, 1.0, 1.0,
+                1.0, QString()};
+        }
+        return std::nullopt;
+    }
+
+    std::optional<EffectViewportToggleParameter>
+    viewportToggleParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::viewportToggleParameter(index);
+        }
+        if (index == 1) {
+            return EffectViewportToggleParameter{
+                QStringLiteral("effect.add_noise.color_noise"),
+                QStringLiteral("Color Noise")};
+        }
+        if (index == 2) {
+            return EffectViewportToggleParameter{
+                QStringLiteral("effect.add_noise.monochrome"),
+                QStringLiteral("Monochrome")};
+        }
+        return std::nullopt;
+    }
 
     float amount() const;
     void setAmount(float v);

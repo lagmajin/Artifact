@@ -1,5 +1,6 @@
 module;
 #include <algorithm>
+#include <cmath>
 #include <memory>
 #include <vector>
 #include <QString>
@@ -168,51 +169,101 @@ TritoneEffect::TritoneEffect() {
     setCPUImpl(ArtifactCore::makeShared<TritoneEffectCPUImpl>());
     setGPUImpl(ArtifactCore::makeShared<TritoneEffectGPUImpl>());
     setComputeMode(ComputeMode::AUTO);
-    applyPreset(preset_);
+    applyPreset(Preset::Cinematic);
     syncImpls();
 }
 
 TritoneEffect::~TritoneEffect() = default;
 
-void TritoneEffect::applyPreset(Preset preset) {
-    preset_ = preset;
-    switch (preset_) {
+TritoneSettings TritoneEffect::settingsForPreset(Preset preset) {
+    switch (preset) {
     case Preset::Cinematic:
-        settings_ = TritoneSettings::cinematic();
-        break;
+        return TritoneSettings::cinematic();
     case Preset::TealAndOrange:
-        settings_ = TritoneSettings::tealAndOrange();
-        break;
+        return TritoneSettings::tealAndOrange();
     case Preset::WarmGold:
-        settings_.shadowColor = {0.12f, 0.18f, 0.24f};
-        settings_.midtoneColor = {0.52f, 0.47f, 0.38f};
-        settings_.highlightColor = {0.98f, 0.86f, 0.56f};
-        settings_.balance = 0.50f;
-        settings_.softness = 0.60f;
-        settings_.shadowStrength = 0.85f;
-        settings_.midtoneStrength = 0.90f;
-        settings_.highlightStrength = 1.00f;
-        settings_.masterStrength = 1.0f;
-        settings_.colorMix = 0.88f;
-        settings_.preserveLuma = true;
-        break;
+    {
+        TritoneSettings settings;
+        settings.shadowColor = {0.12f, 0.18f, 0.24f};
+        settings.midtoneColor = {0.52f, 0.47f, 0.38f};
+        settings.highlightColor = {0.98f, 0.86f, 0.56f};
+        settings.balance = 0.50f;
+        settings.softness = 0.60f;
+        settings.shadowStrength = 0.85f;
+        settings.midtoneStrength = 0.90f;
+        settings.highlightStrength = 1.00f;
+        settings.masterStrength = 1.0f;
+        settings.colorMix = 0.88f;
+        settings.preserveLuma = true;
+        return settings;
+    }
     case Preset::ColdBlue:
-        settings_.shadowColor = {0.06f, 0.14f, 0.28f};
-        settings_.midtoneColor = {0.42f, 0.50f, 0.58f};
-        settings_.highlightColor = {0.82f, 0.92f, 1.00f};
-        settings_.balance = 0.47f;
-        settings_.softness = 0.58f;
-        settings_.shadowStrength = 1.00f;
-        settings_.midtoneStrength = 0.88f;
-        settings_.highlightStrength = 0.92f;
-        settings_.masterStrength = 1.0f;
-        settings_.colorMix = 0.82f;
-        settings_.preserveLuma = true;
-        break;
+    {
+        TritoneSettings settings;
+        settings.shadowColor = {0.06f, 0.14f, 0.28f};
+        settings.midtoneColor = {0.42f, 0.50f, 0.58f};
+        settings.highlightColor = {0.82f, 0.92f, 1.00f};
+        settings.balance = 0.47f;
+        settings.softness = 0.58f;
+        settings.shadowStrength = 1.00f;
+        settings.midtoneStrength = 0.88f;
+        settings.highlightStrength = 0.92f;
+        settings.masterStrength = 1.0f;
+        settings.colorMix = 0.82f;
+        settings.preserveLuma = true;
+        return settings;
+    }
     case Preset::Custom:
     default:
-        break;
+        return TritoneSettings{};
     }
+}
+
+void TritoneEffect::applyPreset(Preset preset) {
+    customPresetPinned_ = preset == Preset::Custom;
+    if (customPresetPinned_) {
+        return;
+    }
+    settings_ = settingsForPreset(preset);
+}
+
+int TritoneEffect::preset() const {
+    if (customPresetPinned_) {
+        return static_cast<int>(Preset::Custom);
+    }
+
+    constexpr float kTolerance = 0.00002f;
+    const auto close = [kTolerance](float lhs, float rhs) {
+        return std::abs(lhs - rhs) <= kTolerance;
+    };
+    const auto matches = [this, &close](const TritoneSettings& candidate) {
+        return close(settings_.shadowColor.r, candidate.shadowColor.r) &&
+               close(settings_.shadowColor.g, candidate.shadowColor.g) &&
+               close(settings_.shadowColor.b, candidate.shadowColor.b) &&
+               close(settings_.midtoneColor.r, candidate.midtoneColor.r) &&
+               close(settings_.midtoneColor.g, candidate.midtoneColor.g) &&
+               close(settings_.midtoneColor.b, candidate.midtoneColor.b) &&
+               close(settings_.highlightColor.r, candidate.highlightColor.r) &&
+               close(settings_.highlightColor.g, candidate.highlightColor.g) &&
+               close(settings_.highlightColor.b, candidate.highlightColor.b) &&
+               close(settings_.balance, candidate.balance) &&
+               close(settings_.softness, candidate.softness) &&
+               close(settings_.shadowStrength, candidate.shadowStrength) &&
+               close(settings_.midtoneStrength, candidate.midtoneStrength) &&
+               close(settings_.highlightStrength, candidate.highlightStrength) &&
+               close(settings_.masterStrength, candidate.masterStrength) &&
+               close(settings_.colorMix, candidate.colorMix) &&
+               settings_.preserveLuma == candidate.preserveLuma;
+    };
+
+    for (int presetValue = static_cast<int>(Preset::Cinematic);
+         presetValue <= static_cast<int>(Preset::ColdBlue); ++presetValue) {
+        const auto candidate = settingsForPreset(static_cast<Preset>(presetValue));
+        if (matches(candidate)) {
+            return presetValue;
+        }
+    }
+    return static_cast<int>(Preset::Custom);
 }
 
 void TritoneEffect::setPreset(int preset) {
@@ -222,49 +273,41 @@ void TritoneEffect::setPreset(int preset) {
 }
 
 void TritoneEffect::setShadowColor(const QColor& color) {
-    preset_ = Preset::Custom;
     settings_.shadowColor = toColor(color);
     syncImpls();
 }
 
 void TritoneEffect::setMidtoneColor(const QColor& color) {
-    preset_ = Preset::Custom;
     settings_.midtoneColor = toColor(color);
     syncImpls();
 }
 
 void TritoneEffect::setHighlightColor(const QColor& color) {
-    preset_ = Preset::Custom;
     settings_.highlightColor = toColor(color);
     syncImpls();
 }
 
 void TritoneEffect::setBalance(float value) {
-    preset_ = Preset::Custom;
     settings_.balance = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 0.5f;
     syncImpls();
 }
 
 void TritoneEffect::setSoftness(float value) {
-    preset_ = Preset::Custom;
     settings_.softness = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 0.55f;
     syncImpls();
 }
 
 void TritoneEffect::setMasterStrength(float value) {
-    preset_ = Preset::Custom;
     settings_.masterStrength = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 1.0f;
     syncImpls();
 }
 
 void TritoneEffect::setColorMix(float value) {
-    preset_ = Preset::Custom;
     settings_.colorMix = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 0.85f;
     syncImpls();
 }
 
 void TritoneEffect::setPreserveLuma(bool value) {
-    preset_ = Preset::Custom;
     settings_.preserveLuma = value;
     syncImpls();
 }
@@ -282,22 +325,38 @@ void TritoneEffect::syncImpls() {
 
 std::vector<AbstractProperty> TritoneEffect::getProperties() const {
     std::vector<AbstractProperty> props;
-    props.reserve(8);
+    props.reserve(9);
+    const TritoneSettings defaultSettings = TritoneSettings::cinematic();
 
-    auto addColor = [&props](const char* name, const QColor& color) {
+    auto addColor = [&props](const char* name, const QColor& color,
+                             const QColor& defaultColor) {
         AbstractProperty prop;
         prop.setName(name);
+        prop.setDisplayLabel(QString::fromLatin1(name));
         prop.setType(PropertyType::Color);
         prop.setColorValue(color);
         prop.setValue(color);
+        prop.setDefaultValue(defaultColor);
+        prop.setTooltip(QStringLiteral("Target color for this tonal range."));
         props.push_back(prop);
     };
 
-    auto addFloat = [&props](const char* name, float value) {
+    auto addFloat = [&props](const char* name, float value, float defaultValue,
+                             const QString& tooltip) {
         AbstractProperty prop;
         prop.setName(name);
+        prop.setDisplayLabel(QString::fromLatin1(name));
         prop.setType(PropertyType::Float);
         prop.setValue(QVariant(static_cast<double>(value)));
+        prop.setDefaultValue(static_cast<double>(defaultValue));
+        prop.setMinValue(QVariant(0.0));
+        prop.setMaxValue(QVariant(1.0));
+        prop.setHardRange(0.0, 1.0);
+        prop.setSoftRange(0.0, 1.0);
+        prop.setStep(0.01);
+        prop.setUnit(QStringLiteral("%"));
+        prop.setTooltip(tooltip);
+        prop.setAnimatable(true);
         props.push_back(prop);
     };
 
@@ -305,23 +364,36 @@ std::vector<AbstractProperty> TritoneEffect::getProperties() const {
     presetProp.setName("Preset");
     presetProp.setType(PropertyType::Integer);
     presetProp.setValue(preset());
-    presetProp.setDisplayPriority(-20);
-    presetProp.setTooltip(QStringLiteral(
-        "0=Custom,1=Cinematic,2=Teal and Orange,3=Warm Gold,4=Cold Blue"));
+    presetProp.setDefaultValue(static_cast<int>(Preset::Cinematic));
+    presetProp.setDisplayLabel(QStringLiteral("Preset"));
+    presetProp.setHardRange(0.0, 4.0);
+    presetProp.setSoftRange(0.0, 4.0);
+    presetProp.setStep(1.0);
+    presetProp.setDisplayPriority(-30);
+    presetProp.setAnimatable(false);
+    presetProp.setTooltip(QStringLiteral("Choose a built-in Tritone preset."));
     props.push_back(presetProp);
 
-    addColor("Shadow Color", toQColor(settings_.shadowColor));
-    addColor("Midtone Color", toQColor(settings_.midtoneColor));
-    addColor("Highlight Color", toQColor(settings_.highlightColor));
+    addColor("Shadow Color", toQColor(settings_.shadowColor),
+             toQColor(defaultSettings.shadowColor));
+    addColor("Midtone Color", toQColor(settings_.midtoneColor),
+             toQColor(defaultSettings.midtoneColor));
+    addColor("Highlight Color", toQColor(settings_.highlightColor),
+             toQColor(defaultSettings.highlightColor));
     if (!props.empty()) {
         props[1].setDisplayPriority(-10);
         props[2].setDisplayPriority(-9);
         props[3].setDisplayPriority(-8);
     }
-    addFloat("Balance", settings_.balance);
-    addFloat("Softness", settings_.softness);
-    addFloat("Master Strength", settings_.masterStrength);
-    addFloat("Color Mix", settings_.colorMix);
+    addFloat("Balance", settings_.balance, defaultSettings.balance,
+             QStringLiteral("Position of the tonal balance point."));
+    addFloat("Softness", settings_.softness, defaultSettings.softness,
+             QStringLiteral("Blend width between shadow, midtone, and highlight ranges."));
+    addFloat("Master Strength", settings_.masterStrength,
+             defaultSettings.masterStrength,
+             QStringLiteral("Overall strength of the Tritone grade."));
+    addFloat("Color Mix", settings_.colorMix, defaultSettings.colorMix,
+             QStringLiteral("Blend between the original and colorized result."));
 
     if (props.size() >= 8) {
         props[4].setDisplayPriority(0);
@@ -332,8 +404,12 @@ std::vector<AbstractProperty> TritoneEffect::getProperties() const {
 
     AbstractProperty preserveProp;
     preserveProp.setName("Preserve Luma");
+    preserveProp.setDisplayLabel(QStringLiteral("Preserve Luma"));
     preserveProp.setType(PropertyType::Boolean);
     preserveProp.setValue(settings_.preserveLuma);
+    preserveProp.setDefaultValue(defaultSettings.preserveLuma);
+    preserveProp.setTooltip(QStringLiteral(
+        "Preserve source luminance while applying the Tritone colors."));
     preserveProp.setDisplayPriority(20);
     props.push_back(preserveProp);
 

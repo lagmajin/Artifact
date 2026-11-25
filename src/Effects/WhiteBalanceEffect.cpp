@@ -227,12 +227,27 @@ void WhiteBalanceEffect::syncImpls() {
 }
 
 void WhiteBalanceEffect::setPreset(const QString& preset) {
-    if (preset == QStringLiteral("Daylight")) setTemperature(5500.0f);
-    else if (preset == QStringLiteral("Cloudy")) setTemperature(6500.0f);
-    else if (preset == QStringLiteral("Shade")) setTemperature(7500.0f);
-    else if (preset == QStringLiteral("Tungsten")) setTemperature(3200.0f);
-    else if (preset == QStringLiteral("Fluorescent")) setTemperature(4000.0f);
-    else if (preset == QStringLiteral("Flash")) setTemperature(6000.0f);
+    if (preset == QStringLiteral("Custom")) {
+        preset_ = 0;
+    } else if (preset == QStringLiteral("Daylight")) {
+        setTemperature(5500.0f);
+        preset_ = 1;
+    } else if (preset == QStringLiteral("Cloudy")) {
+        setTemperature(6500.0f);
+        preset_ = 2;
+    } else if (preset == QStringLiteral("Shade")) {
+        setTemperature(7500.0f);
+        preset_ = 3;
+    } else if (preset == QStringLiteral("Tungsten")) {
+        setTemperature(3200.0f);
+        preset_ = 4;
+    } else if (preset == QStringLiteral("Fluorescent")) {
+        setTemperature(4000.0f);
+        preset_ = 5;
+    } else if (preset == QStringLiteral("Flash")) {
+        setTemperature(6000.0f);
+        preset_ = 6;
+    }
 }
 
 std::vector<AbstractProperty> WhiteBalanceEffect::getProperties() const {
@@ -240,37 +255,65 @@ std::vector<AbstractProperty> WhiteBalanceEffect::getProperties() const {
 
     AbstractProperty tempProp;
     tempProp.setName("Temperature (K)");
+    tempProp.setDisplayLabel(QStringLiteral("Temperature"));
     tempProp.setType(PropertyType::Float);
     tempProp.setValue(temperature_);
+    tempProp.setDefaultValue(6500.0);
     tempProp.setMinValue(QVariant(1000.0));
     tempProp.setMaxValue(QVariant(20000.0));
+    tempProp.setHardRange(1000.0, 20000.0);
+    tempProp.setSoftRange(2500.0, 10000.0);
+    tempProp.setStep(10.0);
+    tempProp.setUnit(QStringLiteral("K"));
+    tempProp.setTooltip(QStringLiteral("White point color temperature."));
+    tempProp.setAnimatable(true);
     tempProp.setDisplayPriority(-10);
     props.push_back(tempProp);
 
     AbstractProperty tintProp;
     tintProp.setName("Tint");
+    tintProp.setDisplayLabel(QStringLiteral("Tint"));
     tintProp.setType(PropertyType::Float);
     tintProp.setValue(tint_);
+    tintProp.setDefaultValue(0.0);
     tintProp.setMinValue(QVariant(-1.0));
     tintProp.setMaxValue(QVariant(1.0));
+    tintProp.setHardRange(-1.0, 1.0);
+    tintProp.setSoftRange(-1.0, 1.0);
+    tintProp.setStep(0.01);
+    tintProp.setTooltip(QStringLiteral("Shift the white point between green and magenta."));
+    tintProp.setAnimatable(true);
     tintProp.setDisplayPriority(0);
     props.push_back(tintProp);
 
     AbstractProperty brightnessProp;
     brightnessProp.setName("Brightness");
+    brightnessProp.setDisplayLabel(QStringLiteral("Brightness"));
     brightnessProp.setType(PropertyType::Float);
     brightnessProp.setValue(brightness_);
+    brightnessProp.setDefaultValue(0.0);
     brightnessProp.setMinValue(QVariant(-1.0));
     brightnessProp.setMaxValue(QVariant(1.0));
+    brightnessProp.setHardRange(-1.0, 1.0);
+    brightnessProp.setSoftRange(-1.0, 1.0);
+    brightnessProp.setStep(0.01);
+    brightnessProp.setTooltip(QStringLiteral("Adjust brightness after white point correction."));
+    brightnessProp.setAnimatable(true);
     brightnessProp.setDisplayPriority(10);
     props.push_back(brightnessProp);
 
     AbstractProperty presetProp;
     presetProp.setName("Preset");
+    presetProp.setDisplayLabel(QStringLiteral("Preset"));
     presetProp.setType(PropertyType::Integer);
-    presetProp.setValue(0);
+    presetProp.setValue(preset_);
     presetProp.setMinValue(QVariant(0));
     presetProp.setMaxValue(QVariant(6));
+    presetProp.setHardRange(0.0, 6.0);
+    presetProp.setSoftRange(0.0, 6.0);
+    presetProp.setStep(1.0);
+    presetProp.setAnimatable(false);
+    presetProp.setTooltip(QStringLiteral("Choose a built-in white balance temperature."));
     presetProp.setDisplayPriority(-20);
     props.push_back(presetProp);
 
@@ -283,19 +326,17 @@ void WhiteBalanceEffect::setPropertyValue(const UniString& name, const QVariant&
     else if (key == QStringLiteral("Tint")) setTint(value.toFloat());
     else if (key == QStringLiteral("Brightness")) setBrightness(value.toFloat());
     else if (key == QStringLiteral("Preset")) {
-        const QStringList presets = {
-            QStringLiteral("Custom"),
-            QStringLiteral("Daylight"),
-            QStringLiteral("Cloudy"),
-            QStringLiteral("Shade"),
-            QStringLiteral("Tungsten"),
-            QStringLiteral("Fluorescent"),
-            QStringLiteral("Flash")
-        };
-        const int idx = value.toInt();
-        if (idx > 0 && idx < presets.size()) {
-            setPreset(presets[idx]);
+        switch (value.toInt()) {
+        case 0: setPreset(QStringLiteral("Custom")); break;
+        case 1: setPreset(QStringLiteral("Daylight")); break;
+        case 2: setPreset(QStringLiteral("Cloudy")); break;
+        case 3: setPreset(QStringLiteral("Shade")); break;
+        case 4: setPreset(QStringLiteral("Tungsten")); break;
+        case 5: setPreset(QStringLiteral("Fluorescent")); break;
+        case 6: setPreset(QStringLiteral("Flash")); break;
         }
+    } else {
+        ArtifactAbstractEffect::setPropertyValue(name, value);
     }
 }
 

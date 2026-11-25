@@ -294,11 +294,73 @@ void AddNoiseEffect::syncImpls() {
 
 std::vector<AbstractProperty> AddNoiseEffect::getProperties() const {
     std::vector<AbstractProperty> props;
-    auto& a = props.emplace_back(); a.setName("Amount"); a.setType(PropertyType::Float); a.setValue(amount_);
-    auto& s = props.emplace_back(); s.setName("Size"); s.setType(PropertyType::Float); s.setValue(size_);
-    auto& c = props.emplace_back(); c.setName("Color Noise"); c.setType(PropertyType::Boolean); c.setValue(colorNoise_);
-    auto& m = props.emplace_back(); m.setName("Monochrome"); m.setType(PropertyType::Boolean); m.setValue(monochrome_);
-    auto& sd = props.emplace_back(); sd.setName("Seed"); sd.setType(PropertyType::Integer); sd.setValue(seed_);
+    props.reserve(5);
+
+    AbstractProperty amount;
+    amount.setName(QStringLiteral("Amount"));
+    amount.setDisplayLabel(QStringLiteral("Amount"));
+    amount.setType(PropertyType::Float);
+    amount.setValue(QVariant(static_cast<double>(amount_)));
+    amount.setDefaultValue(QVariant(0.15));
+    amount.setHardRange(QVariant(0.0), QVariant(1.0));
+    amount.setSoftRange(QVariant(0.0), QVariant(0.25));
+    amount.setStep(QVariant(0.01));
+    amount.setUnit(QStringLiteral("%"));
+    amount.setTooltip(QStringLiteral("Maximum signed noise offset applied to RGB."));
+    amount.setAnimatable(false);
+    amount.setDisplayPriority(0);
+    props.push_back(std::move(amount));
+
+    AbstractProperty size;
+    size.setName(QStringLiteral("Size"));
+    size.setDisplayLabel(QStringLiteral("Size"));
+    size.setType(PropertyType::Float);
+    size.setValue(QVariant(static_cast<double>(size_)));
+    size.setDefaultValue(QVariant(1.0));
+    size.setHardRange(QVariant(0.1), QVariant(64.0));
+    size.setSoftRange(QVariant(0.1), QVariant(12.0));
+    size.setStep(QVariant(0.1));
+    size.setUnit(QStringLiteral("px"));
+    size.setTooltip(QStringLiteral("Noise cell size; larger values create coarser grain."));
+    size.setAnimatable(false);
+    size.setDisplayPriority(1);
+    props.push_back(std::move(size));
+
+    AbstractProperty colorNoise;
+    colorNoise.setName(QStringLiteral("Color Noise"));
+    colorNoise.setDisplayLabel(QStringLiteral("Color Noise"));
+    colorNoise.setType(PropertyType::Boolean);
+    colorNoise.setValue(colorNoise_);
+    colorNoise.setDefaultValue(true);
+    colorNoise.setTooltip(QStringLiteral(
+        "Use independently seeded noise for each color channel."));
+    colorNoise.setDisplayPriority(2);
+    props.push_back(std::move(colorNoise));
+
+    AbstractProperty monochrome;
+    monochrome.setName(QStringLiteral("Monochrome"));
+    monochrome.setDisplayLabel(QStringLiteral("Monochrome"));
+    monochrome.setType(PropertyType::Boolean);
+    monochrome.setValue(monochrome_);
+    monochrome.setDefaultValue(false);
+    monochrome.setTooltip(QStringLiteral(
+        "Use one shared noise value for all channels; this takes priority over Color Noise."));
+    monochrome.setDisplayPriority(3);
+    props.push_back(std::move(monochrome));
+
+    AbstractProperty seed;
+    seed.setName(QStringLiteral("Seed"));
+    seed.setDisplayLabel(QStringLiteral("Seed"));
+    seed.setType(PropertyType::Integer);
+    seed.setValue(seed_);
+    seed.setDefaultValue(0);
+    seed.setHardRange(QVariant(0), QVariant(9999));
+    seed.setSoftRange(QVariant(0), QVariant(9999));
+    seed.setStep(QVariant(1));
+    seed.setTooltip(QStringLiteral("Deterministic noise pattern seed."));
+    seed.setAnimatable(false);
+    seed.setDisplayPriority(4);
+    props.push_back(std::move(seed));
     return props;
 }
 

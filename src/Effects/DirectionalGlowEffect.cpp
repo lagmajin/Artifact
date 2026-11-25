@@ -538,11 +538,26 @@ void DirectionalGlowEffect::applyPreset(int preset) {
 
 std::vector<AbstractProperty> DirectionalGlowEffect::getProperties() const {
     std::vector<AbstractProperty> props;
+    const auto setFloatRange = [](AbstractProperty& property, double minimum,
+                                  double maximum, double step,
+                                  const QString& unit) {
+        property.setMinValue(QVariant(minimum));
+        property.setMaxValue(QVariant(maximum));
+        property.setHardRange(minimum, maximum);
+        property.setSoftRange(minimum, maximum);
+        property.setStep(step);
+        property.setUnit(unit);
+    };
 
     AbstractProperty presetProp;
     presetProp.setName("Preset");
     presetProp.setType(PropertyType::Integer);
     presetProp.setValue(preset_);
+    presetProp.setDisplayLabel(QStringLiteral("Preset"));
+    presetProp.setHardRange(0.0, 4.0);
+    presetProp.setSoftRange(0.0, 4.0);
+    presetProp.setStep(1.0);
+    presetProp.setAnimatable(false);
     presetProp.setTooltip(QStringLiteral(
         "0=Custom,1=Anamorphic 2.39,2=Star 6,3=Neon,4=Dreamy"));
     props.push_back(presetProp);
@@ -557,68 +572,93 @@ std::vector<AbstractProperty> DirectionalGlowEffect::getProperties() const {
     patternProp.setName("Pattern");
     patternProp.setType(PropertyType::Integer);
     patternProp.setValue(static_cast<int>(pattern_));
+    patternProp.setDisplayLabel(QStringLiteral("Pattern"));
+    patternProp.setHardRange(0.0, 4.0);
+    patternProp.setSoftRange(0.0, 4.0);
+    patternProp.setStep(1.0);
+    patternProp.setAnimatable(false);
     patternProp.setTooltip(QStringLiteral(
         "0=Horizontal,1=Cross,2=Star,3=Custom,4=Star 6"));
     props.push_back(patternProp);
 
     AbstractProperty angleProp;
     angleProp.setName("Angle Offset");
+    angleProp.setDisplayLabel(QStringLiteral("Angle Offset"));
     angleProp.setType(PropertyType::Float);
     angleProp.setValue(angleOffset_);
+    setFloatRange(angleProp, -180.0, 180.0, 0.1, QStringLiteral("°"));
     props.push_back(angleProp);
 
     AbstractProperty threshProp;
     threshProp.setName("Threshold");
+    threshProp.setDisplayLabel(QStringLiteral("Threshold"));
     threshProp.setType(PropertyType::Float);
     threshProp.setValue(threshold_);
+    setFloatRange(threshProp, 0.0, 1.0, 0.01, QStringLiteral("%"));
     props.push_back(threshProp);
 
     AbstractProperty intensityProp;
     intensityProp.setName("Intensity");
+    intensityProp.setDisplayLabel(QStringLiteral("Intensity"));
     intensityProp.setType(PropertyType::Float);
     intensityProp.setValue(intensity_);
+    setFloatRange(intensityProp, 0.0, 4.0, 0.01, QStringLiteral("x"));
     props.push_back(intensityProp);
 
     AbstractProperty len1Prop;
     len1Prop.setName("Length 1 (Inner)");
+    len1Prop.setDisplayLabel(QStringLiteral("Length 1 (Inner)"));
     len1Prop.setType(PropertyType::Float);
     len1Prop.setValue(length1_);
+    setFloatRange(len1Prop, 1.0, 256.0, 0.1, QStringLiteral("px"));
     props.push_back(len1Prop);
 
     AbstractProperty len2Prop;
     len2Prop.setName("Length 2 (Outer)");
+    len2Prop.setDisplayLabel(QStringLiteral("Length 2 (Outer)"));
     len2Prop.setType(PropertyType::Float);
     len2Prop.setValue(length2_);
+    setFloatRange(len2Prop, 1.0, 256.0, 0.1, QStringLiteral("px"));
     props.push_back(len2Prop);
 
     AbstractProperty len3Prop;
     len3Prop.setName("Length 3 (Tail)");
+    len3Prop.setDisplayLabel(QStringLiteral("Length 3 (Tail)"));
     len3Prop.setType(PropertyType::Float);
     len3Prop.setValue(length3_);
+    setFloatRange(len3Prop, 1.0, 256.0, 0.1, QStringLiteral("px"));
     props.push_back(len3Prop);
 
     AbstractProperty w1Prop;
     w1Prop.setName("Weight 1");
+    w1Prop.setDisplayLabel(QStringLiteral("Weight 1"));
     w1Prop.setType(PropertyType::Float);
     w1Prop.setValue(weight1_);
+    setFloatRange(w1Prop, 0.0, 1.0, 0.01, QStringLiteral("%"));
     props.push_back(w1Prop);
 
     AbstractProperty w2Prop;
     w2Prop.setName("Weight 2");
+    w2Prop.setDisplayLabel(QStringLiteral("Weight 2"));
     w2Prop.setType(PropertyType::Float);
     w2Prop.setValue(weight2_);
+    setFloatRange(w2Prop, 0.0, 1.0, 0.01, QStringLiteral("%"));
     props.push_back(w2Prop);
 
     AbstractProperty w3Prop;
     w3Prop.setName("Weight 3");
+    w3Prop.setDisplayLabel(QStringLiteral("Weight 3"));
     w3Prop.setType(PropertyType::Float);
     w3Prop.setValue(weight3_);
+    setFloatRange(w3Prop, 0.0, 1.0, 0.01, QStringLiteral("%"));
     props.push_back(w3Prop);
 
     AbstractProperty halfSamplingProp;
     halfSamplingProp.setName("Half Sampling");
+    halfSamplingProp.setDisplayLabel(QStringLiteral("Half Sampling"));
     halfSamplingProp.setType(PropertyType::Boolean);
     halfSamplingProp.setValue(halfSampling_);
+    halfSamplingProp.setAnimatable(false);
     props.push_back(halfSamplingProp);
 
     return props;

@@ -155,6 +155,7 @@ GradientRampEffect::~GradientRampEffect() = default;
 
 void GradientRampEffect::applyPreset(Preset preset) {
     preset_ = preset;
+    customPresetPinned_ = preset == Preset::Custom;
     switch (preset_) {
     case Preset::Sunrise:
         settings_ = ArtifactCore::GradientRampSettings::sunrise();
@@ -175,47 +176,77 @@ void GradientRampEffect::applyPreset(Preset preset) {
 }
 
 void GradientRampEffect::setPreset(int preset) {
-    const int clamped = std::clamp(preset, 0, 3);
+    const int clamped = std::clamp(preset, 0, 4);
     applyPreset(static_cast<Preset>(clamped));
     syncImpls();
 }
 
 void GradientRampEffect::setStartColor(const QColor& color) {
-    preset_ = Preset::Custom;
     settings_.startColor = color;
+    updatePresetFromSettings();
     syncImpls();
 }
 
 void GradientRampEffect::setEndColor(const QColor& color) {
-    preset_ = Preset::Custom;
     settings_.endColor = color;
+    updatePresetFromSettings();
     syncImpls();
 }
 
 void GradientRampEffect::setStartPoint(float x, float y) {
-    preset_ = Preset::Custom;
     settings_.startX = std::isfinite(x) ? std::clamp(x, 0.0f, 1.0f) : 0.0f;
     settings_.startY = std::isfinite(y) ? std::clamp(y, 0.0f, 1.0f) : 0.0f;
+    updatePresetFromSettings();
     syncImpls();
 }
 
 void GradientRampEffect::setEndPoint(float x, float y) {
-    preset_ = Preset::Custom;
     settings_.endX = std::isfinite(x) ? std::clamp(x, 0.0f, 1.0f) : 1.0f;
     settings_.endY = std::isfinite(y) ? std::clamp(y, 0.0f, 1.0f) : 1.0f;
+    updatePresetFromSettings();
     syncImpls();
 }
 
 void GradientRampEffect::setOpacity(float value) {
-    preset_ = Preset::Custom;
     settings_.opacity = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 1.0f;
+    updatePresetFromSettings();
     syncImpls();
 }
 
 void GradientRampEffect::setPreserveAlpha(bool value) {
-    preset_ = Preset::Custom;
     settings_.preserveAlpha = value;
+    updatePresetFromSettings();
     syncImpls();
+}
+
+void GradientRampEffect::updatePresetFromSettings() {
+    if (customPresetPinned_) {
+        preset_ = Preset::Custom;
+        return;
+    }
+
+    const auto matchesPreset = [this](const ArtifactCore::GradientRampSettings& candidate) {
+        return settings_.startColor == candidate.startColor &&
+               settings_.endColor == candidate.endColor &&
+               settings_.startX == candidate.startX &&
+               settings_.startY == candidate.startY &&
+               settings_.endX == candidate.endX &&
+               settings_.endY == candidate.endY &&
+               settings_.opacity == candidate.opacity &&
+               settings_.preserveAlpha == candidate.preserveAlpha;
+    };
+
+    if (matchesPreset(ArtifactCore::GradientRampSettings::sunrise())) {
+        preset_ = Preset::Sunrise;
+    } else if (matchesPreset(ArtifactCore::GradientRampSettings::ocean())) {
+        preset_ = Preset::Ocean;
+    } else if (matchesPreset(ArtifactCore::GradientRampSettings::neon())) {
+        preset_ = Preset::Neon;
+    } else if (matchesPreset(ArtifactCore::GradientRampSettings::mono())) {
+        preset_ = Preset::Mono;
+    } else {
+        preset_ = Preset::Custom;
+    }
 }
 
 void GradientRampEffect::syncImpls() {
@@ -229,45 +260,87 @@ void GradientRampEffect::syncImpls() {
 
 std::vector<AbstractProperty> GradientRampEffect::getProperties() const {
     std::vector<AbstractProperty> props;
-    props.reserve(8);
+    props.reserve(9);
+
+    const auto defaultSettings = ArtifactCore::GradientRampSettings::sunrise();
 
     AbstractProperty presetProp;
     presetProp.setName("Preset");
+    presetProp.setDisplayLabel(QStringLiteral("Preset"));
     presetProp.setType(PropertyType::Integer);
     presetProp.setValue(preset());
+    presetProp.setDefaultValue(0);
+    presetProp.setHardRange(0, 4);
+    presetProp.setSoftRange(0, 4);
+    presetProp.setStep(1);
+    presetProp.setAnimatable(false);
+    presetProp.setTooltip(QStringLiteral("Choose a starting gradient color scheme."));
     presetProp.setDisplayPriority(-30);
     props.push_back(presetProp);
 
-    auto addColor = [&props](const char* name, const QColor& color, int priority) {
+    auto addColor = [&props](const QString& name, const QColor& color,
+                             const QColor& defaultColor, const QString& tooltip,
+                             int priority) {
         AbstractProperty prop;
         prop.setName(name);
+        prop.setDisplayLabel(name);
         prop.setType(PropertyType::Color);
         prop.setColorValue(color);
         prop.setValue(color);
+        prop.setDefaultValue(defaultColor);
+        prop.setTooltip(tooltip);
         prop.setDisplayPriority(priority);
         props.push_back(prop);
     };
-    auto addFloat = [&props](const char* name, float value, int priority) {
+    auto addFloat = [&props](const QString& name, float value, float defaultValue,
+                             double minimum, double maximum,
+                             double softMinimum, double softMaximum, double step,
+                             const QString& unit, const QString& tooltip, int priority) {
         AbstractProperty prop;
         prop.setName(name);
+        prop.setDisplayLabel(name);
         prop.setType(PropertyType::Float);
         prop.setValue(QVariant(static_cast<double>(value)));
+        prop.setDefaultValue(QVariant(static_cast<double>(defaultValue)));
+        prop.setHardRange(QVariant(minimum), QVariant(maximum));
+        prop.setSoftRange(QVariant(softMinimum), QVariant(softMaximum));
+        prop.setStep(QVariant(step));
+        prop.setUnit(unit);
+        prop.setTooltip(tooltip);
         prop.setDisplayPriority(priority);
         props.push_back(prop);
     };
 
-    addColor("Start Color", settings_.startColor, -20);
-    addColor("End Color", settings_.endColor, -19);
-    addFloat("Start X", settings_.startX, -10);
-    addFloat("Start Y", settings_.startY, -9);
-    addFloat("End X", settings_.endX, -8);
-    addFloat("End Y", settings_.endY, -7);
-    addFloat("Opacity", settings_.opacity, 0);
+    addColor(QStringLiteral("Start Color"), settings_.startColor,
+             defaultSettings.startColor,
+             QStringLiteral("Color at the gradient start point."), -20);
+    addColor(QStringLiteral("End Color"), settings_.endColor,
+             defaultSettings.endColor,
+             QStringLiteral("Color at the gradient end point."), -19);
+    addFloat(QStringLiteral("Start X"), settings_.startX, defaultSettings.startX,
+             0.0, 1.0, 0.0, 1.0, 0.01, QStringLiteral("%"),
+             QStringLiteral("Normalized horizontal start position."), -10);
+    addFloat(QStringLiteral("Start Y"), settings_.startY, defaultSettings.startY,
+             0.0, 1.0, 0.0, 1.0, 0.01, QStringLiteral("%"),
+             QStringLiteral("Normalized vertical start position."), -9);
+    addFloat(QStringLiteral("End X"), settings_.endX, defaultSettings.endX,
+             0.0, 1.0, 0.0, 1.0, 0.01, QStringLiteral("%"),
+             QStringLiteral("Normalized horizontal end position."), -8);
+    addFloat(QStringLiteral("End Y"), settings_.endY, defaultSettings.endY,
+             0.0, 1.0, 0.0, 1.0, 0.01, QStringLiteral("%"),
+             QStringLiteral("Normalized vertical end position."), -7);
+    addFloat(QStringLiteral("Opacity"), settings_.opacity, defaultSettings.opacity,
+             0.0, 1.0, 0.0, 1.0, 0.01, QStringLiteral("%"),
+             QStringLiteral("Blend amount of the gradient ramp."), 0);
 
     AbstractProperty preserveProp;
     preserveProp.setName("Preserve Alpha");
+    preserveProp.setDisplayLabel(QStringLiteral("Preserve Alpha"));
     preserveProp.setType(PropertyType::Boolean);
     preserveProp.setValue(settings_.preserveAlpha);
+    preserveProp.setDefaultValue(defaultSettings.preserveAlpha);
+    preserveProp.setTooltip(QStringLiteral(
+        "Keep the source alpha unchanged while blending the gradient."));
     preserveProp.setDisplayPriority(10);
     props.push_back(preserveProp);
 

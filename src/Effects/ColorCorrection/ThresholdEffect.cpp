@@ -343,6 +343,12 @@ std::vector<AbstractProperty> ThresholdEffect::getProperties() const {
     props[0].setName("Threshold");
     props[0].setType(ArtifactCore::PropertyType::Float);
     props[0].setValue(QVariant(static_cast<double>(threshold_)));
+    props[0].setDefaultValue(QVariant(0.5));
+    props[0].setHardRange(QVariant(0.0), QVariant(1.0));
+    props[0].setStep(QVariant(0.01));
+    props[0].setUnit(QStringLiteral("%"));
+    props[0].setTooltip(QStringLiteral(
+        "Luminance at or above this value becomes white; lower values become black."));
 
     return props;
 }

@@ -5,6 +5,7 @@ module;
 #include <vector>
 #include <cmath>
 #include <cstdint>
+#include <optional>
 #include <QString>
 #include <QVariant>
 #include <QColor>
@@ -51,6 +52,20 @@ private:
 public:
     BlackAndWhiteEffect();
     ~BlackAndWhiteEffect() override;
+
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        if (index == 1) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.colorcorrection.blackandwhite.reds"),
+                QStringLiteral("Reds"), -2.0, 3.0, 0.01, 0.0125, 1.0,
+                QString()};
+        }
+        return std::nullopt;
+    }
 
     void setPreset(int preset);
     int preset() const { return static_cast<int>(preset_); }

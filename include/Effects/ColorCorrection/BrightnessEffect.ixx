@@ -1,6 +1,7 @@
 module;
 #include <utility>
 #include <algorithm>
+#include <optional>
 #include <vector>
 #include <QString>
 #include <QVariant>
@@ -33,6 +34,20 @@ private:
 public:
     BrightnessEffect();
     ~BrightnessEffect() override;
+
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        if (index == 1) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.color.brightness"),
+                QStringLiteral("Brightness"),
+                -1.0, 1.0, 0.01, 0.0025, 1.0, QString()};
+        }
+        return std::nullopt;
+    }
 
     void setBrightness(float v) { brightness_ = std::isfinite(v) ? std::clamp(v, -1.0f, 1.0f) : 0.0f; syncImpls(); }
     float brightness() const { return brightness_; }

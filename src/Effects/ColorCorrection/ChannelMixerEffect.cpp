@@ -1,5 +1,6 @@
 module;
 #include <algorithm>
+#include <cmath>
 #include <memory>
 #include <vector>
 #include <QVariant>
@@ -354,8 +355,50 @@ void ChannelMixerEffect::applyPreset(Preset preset) {
     }
 }
 
+void ChannelMixerEffect::updatePresetFromSettings() {
+    if (customPresetPinned_) {
+        preset_ = Preset::Custom;
+        return;
+    }
+    const auto matches = [this](const ArtifactCore::ChannelMixerSettings& candidate) {
+        const auto close = [](float lhs, float rhs) {
+            constexpr float kTolerance = 1.0e-6f;
+            return std::abs(lhs - rhs) <= kTolerance;
+        };
+        if (!close(settings_.strength, candidate.strength) ||
+            settings_.monochrome != candidate.monochrome ||
+            settings_.preserveLuma != candidate.preserveLuma) {
+            return false;
+        }
+        for (std::size_t row = 0; row < 3; ++row) {
+            for (std::size_t column = 0; column < 3; ++column) {
+                if (!close(settings_.matrix[row][column],
+                           candidate.matrix[row][column])) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    };
+
+    if (matches(ArtifactCore::ChannelMixerSettings::identityMix())) {
+        preset_ = Preset::Identity;
+    } else if (matches(ArtifactCore::ChannelMixerSettings::warm())) {
+        preset_ = Preset::Warm;
+    } else if (matches(ArtifactCore::ChannelMixerSettings::cool())) {
+        preset_ = Preset::Cool;
+    } else if (matches(ArtifactCore::ChannelMixerSettings::crossProcess())) {
+        preset_ = Preset::CrossProcess;
+    } else if (matches(ArtifactCore::ChannelMixerSettings::monochromeMix())) {
+        preset_ = Preset::Monochrome;
+    } else {
+        preset_ = Preset::Custom;
+    }
+}
+
 void ChannelMixerEffect::setPreset(int preset) {
     const int clamped = std::clamp(preset, 0, 5);
+    customPresetPinned_ = clamped == static_cast<int>(Preset::Custom);
     applyPreset(static_cast<Preset>(clamped));
     syncImpls();
 }
@@ -418,39 +461,63 @@ std::vector<AbstractProperty> ChannelMixerEffect::getProperties() const {
     strengthProp.setName("Strength");
     strengthProp.setType(PropertyType::Float);
     strengthProp.setValue(QVariant(static_cast<double>(settings_.strength)));
+    strengthProp.setDefaultValue(QVariant(1.0));
+    strengthProp.setHardRange(QVariant(0.0), QVariant(1.0));
+    strengthProp.setSoftRange(QVariant(0.0), QVariant(1.0));
+    strengthProp.setStep(QVariant(0.01));
+    strengthProp.setUnit(QStringLiteral("%"));
+    strengthProp.setTooltip(QStringLiteral("Mix amount of the channel matrix."));
+    strengthProp.setAnimatable(false);
+    strengthProp.setDisplayLabel(QStringLiteral("Strength"));
     strengthProp.setDisplayPriority(-25);
     props.push_back(strengthProp);
 
-    auto addFloat = [&props](const char* name, float value, int priority) {
+    auto addFloat = [&props](const char* name, float value, double defaultValue,
+                             int priority) {
         AbstractProperty prop;
         prop.setName(name);
+        prop.setDisplayLabel(QString::fromLatin1(name));
         prop.setType(PropertyType::Float);
         prop.setValue(QVariant(static_cast<double>(value)));
+        prop.setDefaultValue(QVariant(defaultValue));
+        prop.setHardRange(QVariant(-2.0), QVariant(2.0));
+        prop.setSoftRange(QVariant(-0.5), QVariant(0.5));
+        prop.setStep(QVariant(0.01));
+        prop.setUnit(QStringLiteral("linear"));
+        prop.setTooltip(QStringLiteral(
+            "Linear contribution of the named input channel to this output channel."));
+        prop.setAnimatable(false);
         prop.setDisplayPriority(priority);
         props.push_back(prop);
     };
 
-    addFloat("Red From Red", settings_.matrix[0][0], -20);
-    addFloat("Red From Green", settings_.matrix[0][1], -19);
-    addFloat("Red From Blue", settings_.matrix[0][2], -18);
-    addFloat("Green From Red", settings_.matrix[1][0], -10);
-    addFloat("Green From Green", settings_.matrix[1][1], -9);
-    addFloat("Green From Blue", settings_.matrix[1][2], -8);
-    addFloat("Blue From Red", settings_.matrix[2][0], 0);
-    addFloat("Blue From Green", settings_.matrix[2][1], 1);
-    addFloat("Blue From Blue", settings_.matrix[2][2], 2);
+    addFloat("Red From Red", settings_.matrix[0][0], 1.0, -20);
+    addFloat("Red From Green", settings_.matrix[0][1], 0.0, -19);
+    addFloat("Red From Blue", settings_.matrix[0][2], 0.0, -18);
+    addFloat("Green From Red", settings_.matrix[1][0], 0.0, -10);
+    addFloat("Green From Green", settings_.matrix[1][1], 1.0, -9);
+    addFloat("Green From Blue", settings_.matrix[1][2], 0.0, -8);
+    addFloat("Blue From Red", settings_.matrix[2][0], 0.0, 0);
+    addFloat("Blue From Green", settings_.matrix[2][1], 0.0, 1);
+    addFloat("Blue From Blue", settings_.matrix[2][2], 1.0, 2);
 
     AbstractProperty monoProp;
     monoProp.setName("Monochrome");
+    monoProp.setDisplayLabel(QStringLiteral("Monochrome"));
     monoProp.setType(PropertyType::Boolean);
     monoProp.setValue(settings_.monochrome);
+    monoProp.setDefaultValue(false);
+    monoProp.setTooltip(QStringLiteral("Use the matrix output as a monochrome result."));
     monoProp.setDisplayPriority(10);
     props.push_back(monoProp);
 
     AbstractProperty lumaProp;
     lumaProp.setName("Preserve Luma");
+    lumaProp.setDisplayLabel(QStringLiteral("Preserve Luma"));
     lumaProp.setType(PropertyType::Boolean);
     lumaProp.setValue(settings_.preserveLuma);
+    lumaProp.setDefaultValue(false);
+    lumaProp.setTooltip(QStringLiteral("Preserve the source luminance after mixing."));
     lumaProp.setDisplayPriority(11);
     props.push_back(lumaProp);
 
@@ -503,6 +570,9 @@ void ChannelMixerEffect::setPropertyValue(const UniString& name, const QVariant&
         setMatrix(settings_.matrix[0][0], settings_.matrix[0][1], settings_.matrix[0][2],
                   settings_.matrix[1][0], settings_.matrix[1][1], settings_.matrix[1][2],
                   settings_.matrix[2][0], settings_.matrix[2][1], value.toFloat());
+    }
+    if (key != QStringLiteral("Preset")) {
+        updatePresetFromSettings();
     }
 }
 

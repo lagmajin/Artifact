@@ -64,16 +64,25 @@ public:
     std::optional<EffectScalarGizmoParameter>
     scalarGizmoParameter(unsigned int index) const override {
         if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        if (index == 1) {
             return EffectScalarGizmoParameter{
                 QStringLiteral("effect.blur.strength"),
                 TranslationManager::instance().tr("effect.blur.strength", "Strength"),
                 0.0, 1.0, 0.01, 0.0025, 100.0, QStringLiteral("%")};
         }
-        if (index == 1) {
+        if (index == 2) {
             return EffectScalarGizmoParameter{
                 QStringLiteral("effect.blur.radius"),
                 TranslationManager::instance().tr("effect.blur.radius", "Radius"),
                 0.1, 2048.0, 0.1, 0.25, 1.0, QStringLiteral("px")};
+        }
+        if (index == 3) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.blur.iterations"),
+                QStringLiteral("Iterations"),
+                1.0, 16.0, 1.0, 0.025, 1.0, QStringLiteral("passes")};
         }
         return std::nullopt;
     }

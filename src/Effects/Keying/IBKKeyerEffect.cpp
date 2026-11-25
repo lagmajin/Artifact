@@ -313,7 +313,8 @@ std::vector<AbstractProperty> IBKKeyerEffect::getProperties() const {
     const auto& p = typedCpuImpl_->params();
     std::vector<AbstractProperty> result;
     const auto addFloat = [&result](const char* name, const char* label, float value,
-                                    double min, double max, const char* tooltip) {
+                                    double defaultValue, double min, double max,
+                                    const char* unit, const char* tooltip) {
         auto& property = result.emplace_back();
         property.setName(name);
         property.setDisplayLabel(QString::fromUtf8(label));
@@ -321,21 +322,28 @@ std::vector<AbstractProperty> IBKKeyerEffect::getProperties() const {
         property.setSoftRange(min, max);
         property.setHardRange(min, max);
         property.setStep(0.01);
-        property.setDefaultValue(QVariant(static_cast<double>(value)));
+        property.setUnit(QString::fromUtf8(unit));
+        property.setAnimatable(true);
+        property.setDefaultValue(QVariant(defaultValue));
         property.setValue(QVariant(static_cast<double>(value)));
         property.setTooltip(QString::fromUtf8(tooltip));
     };
-    addFloat("screenCorrection", "Screen Correction", p.screenCorrection, 0.0, 4.0,
+    addFloat("screenCorrection", "Screen Correction", p.screenCorrection,
+             1.0, 0.0, 4.0, "x",
              "Scales the foreground before it is compared with the clean plate.");
-    addFloat("coreMatteClip", "Core Matte Clip", p.coreMatteClip, 0.0, 1.0,
-             "Sets the opaque core threshold of the matte.");
+    addFloat("coreMatteClip", "Core Matte Clip", p.coreMatteClip,
+             0.5, 0.0, 1.0, "%", "Sets the opaque core threshold of the matte.");
     addFloat("edgeMatteSoftness", "Edge Matte Softness", p.edgeMatteSoftness,
-             0.00001, 1.0, "Softens the transition around the matte edge.");
-    addFloat("despillStrength", "Despill Strength", p.despillStrength, 0.0, 1.0,
+             0.2, 0.00001, 1.0, "%",
+             "Softens the transition around the matte edge.");
+    addFloat("despillStrength", "Despill Strength", p.despillStrength,
+             0.5, 0.0, 1.0, "%",
              "Reduces clean-plate color in retained foreground pixels.");
     addFloat("garbageMatteGamma", "Matte Gamma", p.garbageMatteGamma,
-             0.00001, 4.0, "Shapes the generated alpha matte with a gamma curve.");
-    addFloat("detailRecovery", "Detail Recovery", p.detailRecovery, 0.0, 1.0,
+             1.0, 0.00001, 4.0, "x",
+             "Shapes the generated alpha matte with a gamma curve.");
+    addFloat("detailRecovery", "Detail Recovery", p.detailRecovery,
+             0.3, 0.0, 1.0, "%",
              "Restores partial coverage around fine foreground edges.");
     const auto addInteger = [&result](const char* name, const char* label, int value,
                                       int minimum, int maximum, const char* tooltip) {

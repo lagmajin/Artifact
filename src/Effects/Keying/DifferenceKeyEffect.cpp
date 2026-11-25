@@ -3,6 +3,7 @@ module;
 #include <cmath>
 #include <cstring>
 #include <QColor>
+#include <QString>
 #include <QVariant>
 #include <opencv2/opencv.hpp>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
@@ -352,30 +353,52 @@ std::vector<AbstractProperty> DifferenceKeyEffect::getProperties() const {
   std::vector<AbstractProperty> result;
   auto& color = result.emplace_back();
   color.setName("referenceColor");
+  color.setDisplayLabel(QStringLiteral("Reference Color"));
   color.setType(PropertyType::Color);
+  color.setTooltip(QStringLiteral(
+      "RGB color to remove; pixels within the threshold distance become transparent."));
   const QColor current = QColor::fromRgbF(typedCpuImpl_->referenceColor().r(),
                                           typedCpuImpl_->referenceColor().g(),
                                           typedCpuImpl_->referenceColor().b(), 1.0);
   color.setDefaultValue(QVariant::fromValue(QColor(Qt::black)));
   color.setValue(QVariant::fromValue(current));
-  const auto addFloat = [&](const char* name, float value, double softMax, double hardMax, double hardMin) {
+  const auto addFloat = [&](const char* name, float value, double defaultValue,
+                            double hardMin, double hardMax, double step,
+                            const QString& unit, const QString& label,
+                            const QString& tooltip) {
     auto& property = result.emplace_back();
     property.setName(name);
+    property.setDisplayLabel(label);
     property.setType(PropertyType::Float);
-    property.setSoftRange(hardMin, softMax);
+    property.setSoftRange(hardMin, hardMax);
     property.setHardRange(hardMin, hardMax);
-    property.setDefaultValue(QVariant(static_cast<double>(value)));
+    property.setStep(step);
+    property.setUnit(unit);
+    property.setTooltip(tooltip);
+    property.setAnimatable(true);
+    property.setDefaultValue(QVariant(defaultValue));
     property.setValue(QVariant(static_cast<double>(value)));
   };
-  addFloat("threshold", typedCpuImpl_->threshold(), 1.732, 1.732, 0.0);
-  addFloat("softness", typedCpuImpl_->softness(), 1.0, 1.0, 0.001);
-  addFloat("choke", typedCpuImpl_->choke(), 1.0, 1.0, -1.0);
-  addFloat("matteBlur", typedCpuImpl_->matteBlur(), 2.0, 2.0, 0.0);
+  addFloat("threshold", typedCpuImpl_->threshold(), 0.1, 0.0, 1.732, 0.01,
+           QString(), QStringLiteral("Threshold"),
+           QStringLiteral("RGB distance from Reference Color where the matte transition begins."));
+  addFloat("softness", typedCpuImpl_->softness(), 0.08, 0.001, 1.0, 0.001,
+           QStringLiteral("%"), QStringLiteral("Softness"),
+           QStringLiteral("Width of the transition from removed pixels to fully retained pixels."));
+  addFloat("choke", typedCpuImpl_->choke(), 0.0, -1.0, 1.0, 0.01,
+           QStringLiteral("%"), QStringLiteral("Choke"),
+           QStringLiteral("Negative values dilate the matte; positive values erode it, up to about 3 px."));
+  addFloat("matteBlur", typedCpuImpl_->matteBlur(), 0.0, 0.0, 2.0, 0.01,
+           QStringLiteral("x"), QStringLiteral("Matte Blur"),
+           QStringLiteral("Blend toward a 3x3 box-filtered matte; 0–2x maps to 0–100% blend."));
   auto& view = result.emplace_back();
   view.setName("viewMode");
+  view.setDisplayLabel(QStringLiteral("View Mode"));
   view.setType(PropertyType::Integer);
   view.setSoftRange(0, 1);
   view.setHardRange(0, 1);
+  view.setTooltip(QStringLiteral("Show the keyed result or the generated matte."));
+  view.setAnimatable(false);
   view.setDefaultValue(QVariant(0));
   view.setValue(QVariant(typedCpuImpl_->viewMode()));
   return result;

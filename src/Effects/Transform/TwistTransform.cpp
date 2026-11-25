@@ -162,6 +162,7 @@ std::vector<ArtifactCore::AbstractProperty> TwistTransform::getProperties() cons
 
     auto& angleProp = props.emplace_back();
     angleProp.setName("angle");
+    angleProp.setDisplayLabel(QStringLiteral("Angle"));
     angleProp.setType(ArtifactCore::PropertyType::Float);
     angleProp.setDefaultValue(QVariant(static_cast<double>(angle())));
     angleProp.setValue(QVariant(static_cast<double>(angle())));
@@ -170,6 +171,7 @@ std::vector<ArtifactCore::AbstractProperty> TwistTransform::getProperties() cons
 
     auto& cxProp = props.emplace_back();
     cxProp.setName("centerX");
+    cxProp.setDisplayLabel(QStringLiteral("Center X"));
     cxProp.setType(ArtifactCore::PropertyType::Float);
     cxProp.setDefaultValue(QVariant(static_cast<double>(centerX())));
     cxProp.setValue(QVariant(static_cast<double>(centerX())));
@@ -178,6 +180,7 @@ std::vector<ArtifactCore::AbstractProperty> TwistTransform::getProperties() cons
 
     auto& cyProp = props.emplace_back();
     cyProp.setName("centerY");
+    cyProp.setDisplayLabel(QStringLiteral("Center Y"));
     cyProp.setType(ArtifactCore::PropertyType::Float);
     cyProp.setDefaultValue(QVariant(static_cast<double>(centerY())));
     cyProp.setValue(QVariant(static_cast<double>(centerY())));

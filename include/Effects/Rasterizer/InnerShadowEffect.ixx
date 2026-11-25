@@ -5,6 +5,7 @@ module;
 #include <QString>
 #include <QColor>
 #include <QVariant>
+#include <optional>
 #include <vector>
 export module Artifact.Effect.Rasterizer.InnerShadow;
 import Artifact.Render.ROI;
@@ -16,6 +17,21 @@ class InnerShadowEffect : public ArtifactAbstractEffect {
 public:
     InnerShadowEffect();
     ~InnerShadowEffect() override;
+
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        if (index == 1) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.inner_shadow.distance"),
+                QStringLiteral("Distance"),
+                0.0, 4096.0, 0.1, 0.64, 1.0, QStringLiteral("px")};
+        }
+        return std::nullopt;
+    }
+
     QColor shadowColor() const;
     void setShadowColor(const QColor& c);
     float distance() const;

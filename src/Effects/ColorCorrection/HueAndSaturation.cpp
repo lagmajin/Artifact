@@ -2,6 +2,7 @@ module;
 #include <utility>
 #include <cmath>
 #include <memory>
+#include <QString>
 #include <vector>
 #include <QList>
 #include <opencv2/opencv.hpp>
@@ -363,16 +364,38 @@ std::vector<AbstractProperty> HueAndSaturation::getProperties() const {
     std::vector<AbstractProperty> props(4);
 
     props[0].setName("Hue");
+    props[0].setDisplayLabel(QStringLiteral("Hue"));
     props[0].setType(PropertyType::Float);
     props[0].setValue(QVariant(static_cast<double>(hueShift_)));
+    props[0].setDefaultValue(0.0);
+    props[0].setHardRange(-180.0, 180.0);
+    props[0].setSoftRange(-180.0, 180.0);
+    props[0].setStep(0.1);
+    props[0].setUnit(QStringLiteral("deg"));
+    props[0].setTooltip(QStringLiteral("Rotate hue in degrees."));
+    props[0].setAnimatable(true);
 
     props[1].setName("Saturation");
+    props[1].setDisplayLabel(QStringLiteral("Saturation"));
     props[1].setType(PropertyType::Float);
     props[1].setValue(QVariant(static_cast<double>(saturationScale_)));
+    props[1].setDefaultValue(1.0);
+    props[1].setHardRange(0.0, 2.0);
+    props[1].setSoftRange(0.0, 2.0);
+    props[1].setStep(0.01);
+    props[1].setTooltip(QStringLiteral("Scale color saturation; 1.0 preserves the input."));
+    props[1].setAnimatable(true);
 
     props[2].setName("Lightness");
+    props[2].setDisplayLabel(QStringLiteral("Lightness"));
     props[2].setType(PropertyType::Float);
     props[2].setValue(QVariant(static_cast<double>(lightnessShift_)));
+    props[2].setDefaultValue(0.0);
+    props[2].setHardRange(-1.0, 1.0);
+    props[2].setSoftRange(-1.0, 1.0);
+    props[2].setStep(0.01);
+    props[2].setTooltip(QStringLiteral("Shift image lightness."));
+    props[2].setAnimatable(true);
 
     props[3].setName("Colorize");
     props[3].setType(PropertyType::Boolean);

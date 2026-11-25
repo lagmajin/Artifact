@@ -1,4 +1,5 @@
 module;
+#include <optional>
 #include <utility>
 #include <vector>
 #include <QString>
@@ -31,6 +32,32 @@ private:
 public:
     HueAndSaturation();
     ~HueAndSaturation() override;
+
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        if (index == 1) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.color.hue"),
+                QStringLiteral("Hue"),
+                -180.0, 180.0, 0.1, 0.9, 1.0, QStringLiteral("deg")};
+        }
+        if (index == 2) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.color.saturation"),
+                QStringLiteral("Saturation"),
+                0.0, 2.0, 0.01, 0.005, 1.0, QString()};
+        }
+        if (index == 3) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.color.lightness"),
+                QStringLiteral("Lightness"),
+                -1.0, 1.0, 0.01, 0.005, 1.0, QString()};
+        }
+        return std::nullopt;
+    }
 
     void setHue(float v) { hueShift_ = std::isfinite(v) ? std::clamp(v, -180.0f, 180.0f) : 0.0f; syncImpls(); }
     float hue() const { return hueShift_; }

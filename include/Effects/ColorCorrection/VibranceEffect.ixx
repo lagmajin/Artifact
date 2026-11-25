@@ -2,6 +2,7 @@ module;
 #include <utility>
 #include <algorithm>
 #include <memory>
+#include <optional>
 #include <vector>
 #include <cmath>
 #include <cstdint>
@@ -44,6 +45,20 @@ public:
         syncImpls();
     }
     float saturation() const { return saturation_; }
+
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        if (index == 1) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.color.vibrance"),
+                QStringLiteral("Vibrance"),
+                -1.0, 1.0, 0.01, 0.005, 1.0, QString()};
+        }
+        return std::nullopt;
+    }
 
     std::vector<AbstractProperty> getProperties() const override;
     void setPropertyValue(const UniString& name, const QVariant& value) override;

@@ -1,5 +1,6 @@
 module;
 #include <memory>
+#include <optional>
 #include <vector>
 #include <QString>
 #include <QVariant>
@@ -18,6 +19,37 @@ class BricksEffect : public ArtifactAbstractEffect {
 public:
     BricksEffect();
     ~BricksEffect() override;
+
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        switch (index) {
+        case 1:
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.bricks.brick_width"),
+                QStringLiteral("Brick Width"), 8.0, 500.0, 0.25, 0.125,
+                1.0, QStringLiteral("px")};
+        case 2:
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.bricks.brick_height"),
+                QStringLiteral("Brick Height"), 4.0, 500.0, 0.25, 0.125,
+                1.0, QStringLiteral("px")};
+        case 3:
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.bricks.mortar_width"),
+                QStringLiteral("Mortar Width"), 0.0, 50.0, 0.25, 0.0625,
+                1.0, QStringLiteral("px")};
+        case 4:
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.bricks.offset"),
+                QStringLiteral("Row Offset"), 0.0, 1.0, 0.01, 0.0025,
+                100.0, QStringLiteral("%")};
+        default:
+            return std::nullopt;
+        }
+    }
 
     float brickWidth() const;
     void  setBrickWidth(float v);

@@ -254,44 +254,84 @@ void ShadowHighlightEffect::syncImpls() {
 std::vector<AbstractProperty> ShadowHighlightEffect::getProperties() const {
     std::vector<AbstractProperty> props(10);
     props[0].setName("Shadow Amount");        props[0].setType(PropertyType::Float);
+    props[0].setDisplayLabel(QStringLiteral("Shadow Amount"));
     props[0].setValue(QVariant(static_cast<double>(shadowAmount_)));
     props[0].setDefaultValue(50.0);  props[0].setHardRange(0.0, 100.0);
+    props[0].setSoftRange(0.0, 75.0); props[0].setStep(0.1);
+    props[0].setUnit(QStringLiteral("%"));
+    props[0].setTooltip(QStringLiteral("Strength of the shadow lift."));
 
     props[1].setName("Shadow Tonal Width");   props[1].setType(PropertyType::Float);
+    props[1].setDisplayLabel(QStringLiteral("Shadow Tonal Width"));
     props[1].setValue(QVariant(static_cast<double>(shadowTonalWidth_)));
     props[1].setDefaultValue(50.0);  props[1].setHardRange(1.0, 100.0);
+    props[1].setSoftRange(5.0, 80.0); props[1].setStep(0.1);
+    props[1].setUnit(QStringLiteral("%"));
+    props[1].setTooltip(QStringLiteral("Luminance range affected by the shadow adjustment."));
 
     props[2].setName("Shadow Radius");        props[2].setType(PropertyType::Float);
+    props[2].setDisplayLabel(QStringLiteral("Shadow Radius"));
     props[2].setValue(QVariant(static_cast<double>(shadowRadius_.value)));
     props[2].setDefaultValue(30.0);  props[2].setHardRange(0.0, 200.0);
+    props[2].setSoftRange(0.0, 60.0); props[2].setStep(0.1);
+    props[2].setUnit(QStringLiteral("px"));
+    props[2].setTooltip(QStringLiteral("Radius used to separate shadow detail from surrounding tones."));
 
     props[3].setName("Highlight Amount");     props[3].setType(PropertyType::Float);
+    props[3].setDisplayLabel(QStringLiteral("Highlight Amount"));
     props[3].setValue(QVariant(static_cast<double>(highlightAmount_)));
     props[3].setDefaultValue(0.0);   props[3].setHardRange(0.0, 100.0);
+    props[3].setSoftRange(0.0, 75.0); props[3].setStep(0.1);
+    props[3].setUnit(QStringLiteral("%"));
+    props[3].setTooltip(QStringLiteral("Strength of the highlight recovery."));
 
     props[4].setName("Highlight Tonal Width");props[4].setType(PropertyType::Float);
+    props[4].setDisplayLabel(QStringLiteral("Highlight Tonal Width"));
     props[4].setValue(QVariant(static_cast<double>(highlightTonalWidth_)));
     props[4].setDefaultValue(50.0);  props[4].setHardRange(1.0, 100.0);
+    props[4].setSoftRange(5.0, 80.0); props[4].setStep(0.1);
+    props[4].setUnit(QStringLiteral("%"));
+    props[4].setTooltip(QStringLiteral("Luminance range affected by highlight recovery."));
 
     props[5].setName("Highlight Radius");     props[5].setType(PropertyType::Float);
+    props[5].setDisplayLabel(QStringLiteral("Highlight Radius"));
     props[5].setValue(QVariant(static_cast<double>(highlightRadius_.value)));
     props[5].setDefaultValue(30.0);  props[5].setHardRange(0.0, 200.0);
+    props[5].setSoftRange(0.0, 60.0); props[5].setStep(0.1);
+    props[5].setUnit(QStringLiteral("px"));
+    props[5].setTooltip(QStringLiteral("Radius used to separate highlight detail from surrounding tones."));
 
     props[6].setName("Color Correction");     props[6].setType(PropertyType::Float);
+    props[6].setDisplayLabel(QStringLiteral("Color Correction"));
     props[6].setValue(QVariant(static_cast<double>(colorCorrection_)));
     props[6].setDefaultValue(20.0);  props[6].setHardRange(-100.0, 100.0);
+    props[6].setSoftRange(-50.0, 50.0); props[6].setStep(0.1);
+    props[6].setUnit(QStringLiteral("%"));
+    props[6].setTooltip(QStringLiteral("Color correction applied to adjusted shadow and highlight regions."));
 
     props[7].setName("Midtone Contrast");     props[7].setType(PropertyType::Float);
+    props[7].setDisplayLabel(QStringLiteral("Midtone Contrast"));
     props[7].setValue(QVariant(static_cast<double>(midtoneContrast_)));
     props[7].setDefaultValue(0.0);   props[7].setHardRange(-100.0, 100.0);
+    props[7].setSoftRange(-50.0, 50.0); props[7].setStep(0.1);
+    props[7].setUnit(QStringLiteral("%"));
+    props[7].setTooltip(QStringLiteral("Contrast adjustment around the image midtones."));
 
     props[8].setName("Black Clip");           props[8].setType(PropertyType::Float);
+    props[8].setDisplayLabel(QStringLiteral("Black Clip"));
     props[8].setValue(QVariant(static_cast<double>(blackClip_)));
     props[8].setDefaultValue(0.01);  props[8].setHardRange(0.0, 0.5);
+    props[8].setSoftRange(0.0, 0.1); props[8].setStep(0.001);
+    props[8].setUnit(QStringLiteral("fraction"));
+    props[8].setTooltip(QStringLiteral("Fraction of the darkest values clipped to black."));
 
     props[9].setName("White Clip");           props[9].setType(PropertyType::Float);
+    props[9].setDisplayLabel(QStringLiteral("White Clip"));
     props[9].setValue(QVariant(static_cast<double>(whiteClip_)));
     props[9].setDefaultValue(0.01);  props[9].setHardRange(0.0, 0.5);
+    props[9].setSoftRange(0.0, 0.1); props[9].setStep(0.001);
+    props[9].setUnit(QStringLiteral("fraction"));
+    props[9].setTooltip(QStringLiteral("Fraction of the brightest values clipped to white."));
 
     return props;
 }

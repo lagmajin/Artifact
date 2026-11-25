@@ -1,8 +1,10 @@
 module;
 #include <algorithm>
+#include <cmath>
 #include <memory>
 #include <vector>
 #include <QColor>
+#include <QString>
 #include <QVariant>
 #include <cstring>
 #include <opencv2/opencv.hpp>
@@ -218,15 +220,18 @@ PhotoFilterEffect::PhotoFilterEffect() {
         PhotoFilterEffect::kGpuGenericKey,
         GpuGenericShaderRecord{
             kPhotoFilterResidentHlsl, "main", GpuGenericResourceKind::Filter});
-    applyPreset(preset_);
+    applyPreset(Preset::Warm);
     syncImpls();
 }
 
 PhotoFilterEffect::~PhotoFilterEffect() = default;
 
 void PhotoFilterEffect::applyPreset(Preset preset) {
-    preset_ = preset;
-    switch (preset_) {
+    customPresetPinned_ = preset == Preset::Custom;
+    if (customPresetPinned_) {
+        return;
+    }
+    switch (preset) {
     case Preset::Warm:
         settings_ = PhotoFilterSettings::warm();
         break;
@@ -248,6 +253,44 @@ void PhotoFilterEffect::applyPreset(Preset preset) {
     }
 }
 
+int PhotoFilterEffect::preset() const {
+    if (customPresetPinned_) {
+        return static_cast<int>(Preset::Custom);
+    }
+
+    constexpr float kTolerance = 0.00002f;
+    const auto close = [kTolerance](float lhs, float rhs) {
+        return std::abs(lhs - rhs) <= kTolerance;
+    };
+    const auto matches = [this, &close](const PhotoFilterSettings& candidate) {
+        return close(settings_.color.r, candidate.color.r) &&
+               close(settings_.color.g, candidate.color.g) &&
+               close(settings_.color.b, candidate.color.b) &&
+               close(settings_.density, candidate.density) &&
+               close(settings_.brightness, candidate.brightness) &&
+               close(settings_.contrast, candidate.contrast) &&
+               close(settings_.saturationBoost, candidate.saturationBoost) &&
+               settings_.preserveLuma == candidate.preserveLuma;
+    };
+
+    if (matches(PhotoFilterSettings::warm())) {
+        return static_cast<int>(Preset::Warm);
+    }
+    if (matches(PhotoFilterSettings::cool())) {
+        return static_cast<int>(Preset::Cool);
+    }
+    if (matches(PhotoFilterSettings::sepia())) {
+        return static_cast<int>(Preset::Sepia);
+    }
+    if (matches(PhotoFilterSettings::cyan())) {
+        return static_cast<int>(Preset::Cyan);
+    }
+    if (matches(PhotoFilterSettings::rose())) {
+        return static_cast<int>(Preset::Rose);
+    }
+    return static_cast<int>(Preset::Custom);
+}
+
 void PhotoFilterEffect::setPreset(int preset) {
     const int clamped = std::clamp(preset, 0, 5);
     applyPreset(static_cast<Preset>(clamped));
@@ -255,37 +298,31 @@ void PhotoFilterEffect::setPreset(int preset) {
 }
 
 void PhotoFilterEffect::setColor(const QColor& color) {
-    preset_ = Preset::Custom;
     settings_.color = toColor(color);
     syncImpls();
 }
 
 void PhotoFilterEffect::setDensity(float value) {
-    preset_ = Preset::Custom;
     settings_.density = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 0.35f;
     syncImpls();
 }
 
 void PhotoFilterEffect::setBrightness(float value) {
-    preset_ = Preset::Custom;
     settings_.brightness = std::isfinite(value) ? std::clamp(value, -1.0f, 1.0f) : 0.0f;
     syncImpls();
 }
 
 void PhotoFilterEffect::setContrast(float value) {
-    preset_ = Preset::Custom;
     settings_.contrast = std::isfinite(value) ? std::clamp(value, 0.0f, 2.0f) : 1.0f;
     syncImpls();
 }
 
 void PhotoFilterEffect::setSaturationBoost(float value) {
-    preset_ = Preset::Custom;
     settings_.saturationBoost = std::isfinite(value) ? std::clamp(value, 0.0f, 2.5f) : 1.0f;
     syncImpls();
 }
 
 void PhotoFilterEffect::setPreserveLuma(bool value) {
-    preset_ = Preset::Custom;
     settings_.preserveLuma = value;
     syncImpls();
 }
@@ -302,11 +339,19 @@ void PhotoFilterEffect::syncImpls() {
 std::vector<AbstractProperty> PhotoFilterEffect::getProperties() const {
     std::vector<AbstractProperty> props;
     props.reserve(8);
+    const auto defaultSettings = PhotoFilterSettings::warm();
 
     AbstractProperty presetProp;
     presetProp.setName("Preset");
     presetProp.setType(PropertyType::Integer);
     presetProp.setValue(preset());
+    presetProp.setDefaultValue(static_cast<int>(Preset::Warm));
+    presetProp.setDisplayLabel(QStringLiteral("Preset"));
+    presetProp.setHardRange(0.0, 5.0);
+    presetProp.setSoftRange(0.0, 5.0);
+    presetProp.setStep(1.0);
+    presetProp.setTooltip(QStringLiteral("Choose a built-in photo filter preset."));
+    presetProp.setAnimatable(false);
     presetProp.setDisplayPriority(-30);
     props.push_back(presetProp);
 
@@ -315,27 +360,53 @@ std::vector<AbstractProperty> PhotoFilterEffect::getProperties() const {
     colorProp.setType(PropertyType::Color);
     colorProp.setColorValue(toQColor(settings_.color));
     colorProp.setValue(toQColor(settings_.color));
+    colorProp.setDefaultValue(QVariant(toQColor(defaultSettings.color)));
+    colorProp.setDisplayLabel(QStringLiteral("Filter Color"));
+    colorProp.setTooltip(QStringLiteral("Color mixed into the image by the filter."));
     colorProp.setDisplayPriority(-20);
     props.push_back(colorProp);
 
-    auto addFloat = [&props](const char* name, float value, int priority) {
+    auto addFloat = [&props](const char* name, float value, float defaultValue,
+                             double minimum, double maximum,
+                             double softMinimum, double softMaximum,
+                             double step, const QString& unit,
+                             const QString& tooltip, int priority) {
         AbstractProperty prop;
         prop.setName(name);
         prop.setType(PropertyType::Float);
         prop.setValue(QVariant(static_cast<double>(value)));
+        prop.setDefaultValue(QVariant(static_cast<double>(defaultValue)));
+        prop.setHardRange(QVariant(minimum), QVariant(maximum));
+        prop.setSoftRange(QVariant(softMinimum), QVariant(softMaximum));
+        prop.setStep(QVariant(step));
+        prop.setUnit(unit);
+        prop.setTooltip(tooltip);
+        prop.setAnimatable(true);
         prop.setDisplayPriority(priority);
         props.push_back(prop);
     };
 
-    addFloat("Density", settings_.density, 0);
-    addFloat("Brightness", settings_.brightness, 10);
-    addFloat("Contrast", settings_.contrast, 20);
-    addFloat("Saturation Boost", settings_.saturationBoost, 30);
+    addFloat("Density", settings_.density, defaultSettings.density,
+             0.0, 1.0, 0.0, 1.0, 0.01, QStringLiteral("%"),
+             QStringLiteral("Mix amount of the filter color."), 0);
+    addFloat("Brightness", settings_.brightness, defaultSettings.brightness,
+             -1.0, 1.0, -0.25, 0.25, 0.01, QStringLiteral("%"),
+             QStringLiteral("Additive brightness offset."), 10);
+    addFloat("Contrast", settings_.contrast, defaultSettings.contrast,
+             0.0, 2.0, 0.5, 1.5, 0.01, QStringLiteral("×"),
+             QStringLiteral("Contrast multiplier."), 20);
+    addFloat("Saturation Boost", settings_.saturationBoost,
+             defaultSettings.saturationBoost, 0.0, 2.5, 0.5, 1.5, 0.01,
+             QStringLiteral("×"), QStringLiteral("Saturation multiplier."), 30);
 
     AbstractProperty preserveProp;
     preserveProp.setName("Preserve Luma");
     preserveProp.setType(PropertyType::Boolean);
     preserveProp.setValue(settings_.preserveLuma);
+    preserveProp.setDefaultValue(defaultSettings.preserveLuma);
+    preserveProp.setDisplayLabel(QStringLiteral("Preserve Luma"));
+    preserveProp.setTooltip(QStringLiteral(
+        "Adjusts the filtered result to preserve the source luminance."));
     preserveProp.setDisplayPriority(40);
     props.push_back(preserveProp);
 

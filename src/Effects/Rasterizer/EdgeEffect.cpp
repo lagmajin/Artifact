@@ -175,9 +175,11 @@ std::vector<AbstractProperty> EdgeEffect::getProperties()const{
     std::vector<AbstractProperty> props;
     props.reserve(4);
 
-    auto addFloat = [&props](const char* name, float value, float minValue, float maxValue) {
+    auto addFloat = [&props](const char* name, const char* displayLabel,
+                             float value, float minValue, float maxValue) {
         AbstractProperty prop;
         prop.setName(QString::fromLatin1(name));
+        prop.setDisplayLabel(QString::fromLatin1(displayLabel));
         prop.setType(PropertyType::Float);
         const QVariant variantValue(static_cast<double>(value));
         prop.setValue(variantValue);
@@ -187,10 +189,10 @@ std::vector<AbstractProperty> EdgeEffect::getProperties()const{
         props.push_back(std::move(prop));
     };
 
-    addFloat("mode", mode_, 0.0f, 1.0f);
-    addFloat("intensity", intensity_, 0.0f, 10.0f);
-    addFloat("threshold", threshold_, 0.0f, 1.0f);
-    addFloat("invert", invert_, 0.0f, 1.0f);
+    addFloat("mode", "Mode (0 Sobel / 1 Motion)", mode_, 0.0f, 1.0f);
+    addFloat("intensity", "Intensity", intensity_, 0.0f, 10.0f);
+    addFloat("threshold", "Threshold", threshold_, 0.0f, 1.0f);
+    addFloat("invert", "Invert (0 Off / 1 On)", invert_, 0.0f, 1.0f);
     return props;
 }
 void EdgeEffect::setPropertyValue(const UniString& n,const QVariant& v){

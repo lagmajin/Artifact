@@ -4,6 +4,7 @@ module;
 #include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Buffer.h>
 #include <QVariant>
+#include <QString>
 #include <cstdint>
 #include <iostream>
 #include <vector>
@@ -61,6 +62,39 @@ public:
 
     GlowEffect();
     ~GlowEffect();
+
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        if (index == 1) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.glow.intensity"),
+                QStringLiteral("glowGain"),
+                0.0, 10.0, 0.01, 0.0075, 1.0, QString()};
+        }
+        if (index == 2) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.glow.quality_layers"),
+                QStringLiteral("layerCount"),
+                1.0, 16.0, 1.0, 0.025, 1.0, QStringLiteral("passes")};
+        }
+        return std::nullopt;
+    }
+
+    std::optional<EffectViewportToggleParameter>
+    viewportToggleParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::viewportToggleParameter(index);
+        }
+        if (index == 1) {
+            return EffectViewportToggleParameter{
+                QStringLiteral("effect.glow.contribution_only"),
+                QStringLiteral("preview.contributionOnly")};
+        }
+        return std::nullopt;
+    }
 
     // Expose properties via AbstractProperty API
     std::vector<ArtifactCore::AbstractProperty> getProperties() const override;

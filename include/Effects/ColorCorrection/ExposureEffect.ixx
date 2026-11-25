@@ -2,6 +2,7 @@ module;
 #include <utility>
 #include <algorithm>
 #include <memory>
+#include <optional>
 #include <vector>
 #include <QString>
 #include <QVariant>
@@ -42,6 +43,32 @@ public:
 
     void setGammaCorrection(float gamma) { gammaCorrection_ = std::isfinite(gamma) ? std::clamp(gamma, 0.2f, 5.0f) : 1.0f; syncImpls(); }
     float gammaCorrection() const { return gammaCorrection_; }
+
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        if (index == 1) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.color.exposure"),
+                QStringLiteral("Exposure"), -5.0, 5.0, 0.01, 0.025, 1.0,
+                QStringLiteral("EV")};
+        }
+        if (index == 2) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.color.offset"),
+                QStringLiteral("Offset"), -0.5, 0.5, 0.001, 0.0025, 1.0,
+                QString()};
+        }
+        if (index == 3) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.color.gamma"),
+                QStringLiteral("Gamma"), 0.2, 5.0, 0.01, 0.012, 1.0,
+                QString()};
+        }
+        return std::nullopt;
+    }
 
     std::vector<AbstractProperty> getProperties() const override;
     void setPropertyValue(const UniString& name, const QVariant& value) override;

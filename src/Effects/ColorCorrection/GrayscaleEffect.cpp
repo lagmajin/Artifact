@@ -4,6 +4,7 @@ module;
 #include <cstring>
 #include <opencv2/opencv.hpp>
 #include <memory>
+#include <QString>
 #include <QVariant>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
@@ -203,11 +204,26 @@ void GrayscaleEffect::syncImpls() {
 std::vector<AbstractProperty> GrayscaleEffect::getProperties() const {
     std::vector<AbstractProperty> props(2);
     props[0].setName("Mode");
+    props[0].setDisplayLabel(QStringLiteral("Mode"));
     props[0].setType(PropertyType::Integer);
     props[0].setValue(QVariant(mode()));
+    props[0].setHardRange(0.0, 2.0);
+    props[0].setSoftRange(0.0, 2.0);
+    props[0].setStep(1.0);
+    props[0].setTooltip(QStringLiteral("Choose how RGB is mapped to grayscale."));
+    props[0].setAnimatable(false);
     props[1].setName("Strength");
+    props[1].setDisplayLabel(QStringLiteral("Strength"));
     props[1].setType(PropertyType::Float);
     props[1].setValue(QVariant(static_cast<double>(strength_)));
+    props[1].setDefaultValue(QVariant(1.0));
+    props[1].setHardRange(0.0, 1.0);
+    props[1].setSoftRange(0.0, 1.0);
+    props[1].setStep(0.01);
+    props[1].setUnit(QStringLiteral("%"));
+    props[1].setTooltip(QStringLiteral(
+        "Blend from the source color to the selected grayscale mode."));
+    props[1].setAnimatable(true);
     return props;
 }
 

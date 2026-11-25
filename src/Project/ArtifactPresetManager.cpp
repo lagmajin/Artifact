@@ -451,6 +451,15 @@ bool ArtifactPresetManager::applyPresetJsonToEffect(ArtifactAbstractEffectPtr& e
         }
     }
 
+    QVariant deferredPresetValue;
+    bool hasDeferredPreset = false;
+    const bool deferPresetAfterProperties =
+        targetEffectId == QStringLiteral("directional_glow") ||
+        serializedEffectId == QStringLiteral("directional_glow") ||
+        targetEffectId == QStringLiteral("white_balance") ||
+        serializedEffectId == QStringLiteral("white_balance") ||
+        targetEffectId == QStringLiteral("effect.colorcorrection.tint") ||
+        serializedEffectId == QStringLiteral("effect.colorcorrection.tint");
     for (int i = 0; i < propsArray.size(); ++i) {
         QJsonObject propObj = propsArray[i].toObject();
         QString name = propObj.value(QStringLiteral("parameter_id")).toString(
@@ -465,8 +474,20 @@ bool ArtifactPresetManager::applyPresetJsonToEffect(ArtifactAbstractEffectPtr& e
         else if (valueType == QStringLiteral("string")) value = jsonValue.toString();
         else if (valueType == QStringLiteral("color")) value = QColor(jsonValue.toString());
         else value = jsonValue.toVariant();
+
+        if (deferPresetAfterProperties &&
+            name.compare(QStringLiteral("Preset"), Qt::CaseInsensitive) == 0) {
+            deferredPresetValue = value;
+            hasDeferredPreset = true;
+            continue;
+        }
         
         effect->setPropertyValue(UniString(name.toStdString()), value);
+    }
+    if (hasDeferredPreset) {
+        effect->setPropertyValue(
+            UniString::fromQString(QStringLiteral("Preset")),
+            deferredPresetValue);
     }
     return true;
 }

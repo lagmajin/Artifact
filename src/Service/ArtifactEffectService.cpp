@@ -2338,7 +2338,248 @@ W_OBJECT_IMPL(ArtifactEffectService)
      if (oldValue == value) {
        return EffectServiceResult::ok(effectId);
      }
-     if (auto* undo = UndoManager::instance()) {
+     auto* colorBalance = dynamic_cast<ColorBalanceEffect*>(effect.get());
+     auto* channelMixer = dynamic_cast<ChannelMixerEffect*>(effect.get());
+     auto* levels = dynamic_cast<LevelsEffect*>(effect.get());
+     auto* colorama = dynamic_cast<ColoramaEffect*>(effect.get());
+     auto* fillEffect = dynamic_cast<FillEffect*>(effect.get());
+     auto* gradientRamp = dynamic_cast<GradientRampEffect*>(effect.get());
+     auto* photoFilter = dynamic_cast<PhotoFilterEffect*>(effect.get());
+     auto* tritone = dynamic_cast<TritoneEffect*>(effect.get());
+     auto* directionalGlow = dynamic_cast<DirectionalGlowEffect*>(effect.get());
+     auto* whiteBalance = dynamic_cast<WhiteBalanceEffect*>(effect.get());
+     auto* selectiveColor = dynamic_cast<SelectiveColorEffect*>(effect.get());
+     const bool isPresetProperty =
+         normalizedPropertyName.compare(QStringLiteral("Preset"), Qt::CaseInsensitive) == 0;
+     bool isSelectiveColorProperty = false;
+     if (selectiveColor) {
+       const auto selectiveColorProperties = selectiveColor->getProperties();
+       for (const auto& selectiveProperty : selectiveColorProperties) {
+         if (selectiveProperty.getName().compare(
+                 normalizedPropertyName, Qt::CaseInsensitive) == 0) {
+           isSelectiveColorProperty = true;
+           break;
+         }
+       }
+     }
+     bool isWhiteBalanceProperty = false;
+     if (whiteBalance) {
+       for (const auto& whiteBalanceProperty : whiteBalance->getProperties()) {
+         if (whiteBalanceProperty.getName().compare(
+                 normalizedPropertyName, Qt::CaseInsensitive) == 0) {
+           isWhiteBalanceProperty = true;
+           break;
+         }
+       }
+     }
+     if (isSelectiveColorProperty) {
+       const QString selectiveColorPresetPinSnapshotKey =
+          QStringLiteral("_artifact_undo_selective_color_custom_preset_pinned");
+       const bool beforeSelectiveColorCustomPresetPinned =
+          selectiveColor->customPresetPinnedForSnapshot();
+       const auto beforeSnapshot = ArtifactPresetManager::effectToPresetJson(effect);
+       if (beforeSnapshot.isEmpty()) {
+         return EffectServiceResult::fail(
+             "Could not capture Selective Color state");
+       }
+       effect->setPropertyValue(
+           UniString::fromQString(normalizedPropertyName), value);
+       const auto restoreBeforeSnapshot = [&]() {
+         auto restoreTarget = effect;
+         if (!ArtifactPresetManager::applyPresetJsonToEffect(
+                 restoreTarget, beforeSnapshot)) {
+           return false;
+         }
+         selectiveColor->restoreCustomPresetPinnedForSnapshot(
+             beforeSelectiveColorCustomPresetPinned);
+         return ArtifactPresetManager::effectToPresetJson(effect) == beforeSnapshot;
+       };
+       const auto failureMessage = [&](bool restored) {
+         return restored
+             ? QStringLiteral("Selective Color property change was not applied")
+             : QStringLiteral("Selective Color property change failed and could not be restored");
+       };
+       if (property->getValue() != value) {
+         const bool restored = restoreBeforeSnapshot();
+         return EffectServiceResult::fail(failureMessage(restored));
+       }
+       if (UndoManager::instance()) {
+         auto beforeUndoSnapshot = beforeSnapshot;
+         beforeUndoSnapshot.insert(selectiveColorPresetPinSnapshotKey,
+                                  beforeSelectiveColorCustomPresetPinned);
+         const auto afterSnapshot =
+             ArtifactPresetManager::effectToPresetJson(effect);
+         if (afterSnapshot.isEmpty()) {
+           const bool restored = restoreBeforeSnapshot();
+           return EffectServiceResult::fail(failureMessage(restored));
+         }
+         auto afterUndoSnapshot = afterSnapshot;
+         afterUndoSnapshot.insert(
+             selectiveColorPresetPinSnapshotKey,
+             selectiveColor->customPresetPinnedForSnapshot());
+         const bool applied = pushUndoCommandAndVerify(
+             std::make_unique<EffectPresetSnapshotCommand>(
+                 effect, beforeUndoSnapshot, afterUndoSnapshot,
+                 QStringLiteral("Set Selective Color %1")
+                     .arg(normalizedPropertyName)),
+             [&]() { return property->getValue() == value; });
+         if (!applied) {
+           const bool restored = restoreBeforeSnapshot();
+           return EffectServiceResult::fail(failureMessage(restored));
+         }
+       }
+     } else if (directionalGlow || isWhiteBalanceProperty) {
+       const QString presetEffectName = directionalGlow
+           ? QStringLiteral("Directional Glow")
+           : whiteBalance->displayName().toQString();
+       const auto beforeSnapshot = ArtifactPresetManager::effectToPresetJson(effect);
+       if (beforeSnapshot.isEmpty()) {
+         return EffectServiceResult::fail(
+             QStringLiteral("Could not capture %1 property state")
+                 .arg(presetEffectName));
+       }
+       effect->setPropertyValue(
+           UniString::fromQString(normalizedPropertyName), value);
+       effect->editableProperties();
+       const auto restoreBeforeSnapshot = [&]() {
+         auto restoreTarget = effect;
+         if (!ArtifactPresetManager::applyPresetJsonToEffect(
+                 restoreTarget, beforeSnapshot)) {
+           return false;
+         }
+         effect->editableProperties();
+         return ArtifactPresetManager::effectToPresetJson(effect) == beforeSnapshot;
+       };
+       const auto failureMessage = [&](bool restored) {
+         return restored
+             ? QStringLiteral("%1 property change was not applied")
+                   .arg(presetEffectName)
+             : QStringLiteral("%1 property change failed and could not be restored")
+                   .arg(presetEffectName);
+       };
+       if (property->getValue() != value) {
+         const bool restored = restoreBeforeSnapshot();
+         return EffectServiceResult::fail(failureMessage(restored));
+       }
+       if (UndoManager::instance()) {
+         const auto afterSnapshot = ArtifactPresetManager::effectToPresetJson(effect);
+         if (afterSnapshot.isEmpty()) {
+           const bool restored = restoreBeforeSnapshot();
+           return EffectServiceResult::fail(failureMessage(restored));
+         }
+         const bool applied = pushUndoCommandAndVerify(
+             std::make_unique<EffectPresetSnapshotCommand>(
+                 effect, beforeSnapshot, afterSnapshot,
+                 QStringLiteral("Set %1 %2")
+                     .arg(presetEffectName, normalizedPropertyName)),
+             [&]() { return property->getValue() == value; });
+         if (!applied) {
+           const bool restored = restoreBeforeSnapshot();
+           return EffectServiceResult::fail(failureMessage(restored));
+         }
+       }
+     } else if (isPresetProperty &&
+         (colorBalance || channelMixer || levels || colorama || fillEffect ||
+          gradientRamp || photoFilter || tritone)) {
+       const QString presetEffectName = [&]() {
+         if (colorBalance) return QStringLiteral("Color Balance");
+         if (channelMixer) return QStringLiteral("Channel Mixer");
+         if (levels) return QStringLiteral("Levels");
+         if (colorama) return QStringLiteral("Colorama");
+         if (fillEffect) return QStringLiteral("Fill");
+         if (gradientRamp) return QStringLiteral("Gradient Ramp");
+         if (photoFilter) return QStringLiteral("Photo Filter");
+         return QStringLiteral("Tritone");
+       }();
+       const QString customPresetPinSnapshotKey = [&]() {
+         if (colorBalance) return QStringLiteral("_artifact_undo_color_balance_custom_preset_pinned");
+         if (channelMixer) return QStringLiteral("_artifact_undo_channel_mixer_custom_preset_pinned");
+         if (levels) return QStringLiteral("_artifact_undo_levels_custom_preset_pinned");
+         if (colorama) return QStringLiteral("_artifact_undo_colorama_custom_preset_pinned");
+         if (fillEffect) return QStringLiteral("_artifact_undo_fill_custom_preset_pinned");
+         if (gradientRamp) return QStringLiteral("_artifact_undo_gradient_ramp_custom_preset_pinned");
+         if (photoFilter) return QStringLiteral("_artifact_undo_photo_filter_custom_preset_pinned");
+         return QStringLiteral("_artifact_undo_tritone_custom_preset_pinned");
+       }();
+       const auto isCustomPresetPinned = [&]() {
+         if (colorBalance) return colorBalance->customPresetPinnedForSnapshot();
+         if (channelMixer) return channelMixer->customPresetPinnedForSnapshot();
+         if (levels) return levels->customPresetPinnedForSnapshot();
+         if (colorama) return colorama->customPresetPinnedForSnapshot();
+         if (fillEffect) return fillEffect->customPresetPinnedForSnapshot();
+         if (gradientRamp) return gradientRamp->customPresetPinnedForSnapshot();
+         if (tritone) return tritone->customPresetPinnedForSnapshot();
+         return photoFilter->customPresetPinnedForSnapshot();
+       };
+       const auto restoreCustomPresetPinned = [&](bool pinned) {
+         if (colorBalance) {
+           colorBalance->restoreCustomPresetPinnedForSnapshot(pinned);
+         } else if (channelMixer) {
+           channelMixer->restoreCustomPresetPinnedForSnapshot(pinned);
+         } else if (levels) {
+           levels->restoreCustomPresetPinnedForSnapshot(pinned);
+         } else if (colorama) {
+           colorama->restoreCustomPresetPinnedForSnapshot(pinned);
+         } else if (fillEffect) {
+           fillEffect->restoreCustomPresetPinnedForSnapshot(pinned);
+         } else if (gradientRamp) {
+           gradientRamp->restoreCustomPresetPinnedForSnapshot(pinned);
+         } else if (tritone) {
+           tritone->restoreCustomPresetPinnedForSnapshot(pinned);
+         } else {
+           photoFilter->restoreCustomPresetPinnedForSnapshot(pinned);
+         }
+       };
+       const bool beforeCustomPresetPinned = isCustomPresetPinned();
+       const auto beforeSnapshot = ArtifactPresetManager::effectToPresetJson(effect);
+       if (beforeSnapshot.isEmpty()) {
+         return EffectServiceResult::fail(
+             QStringLiteral("Could not capture %1 preset state").arg(presetEffectName));
+       }
+       effect->setPropertyValue(
+           UniString::fromQString(normalizedPropertyName), value);
+       const auto restoreBeforeSnapshot = [&]() {
+         auto restoreTarget = effect;
+         if (!ArtifactPresetManager::applyPresetJsonToEffect(
+                 restoreTarget, beforeSnapshot)) {
+           return false;
+         }
+         restoreCustomPresetPinned(beforeCustomPresetPinned);
+         return ArtifactPresetManager::effectToPresetJson(effect) == beforeSnapshot;
+       };
+       const auto failureMessage = [&](bool restored) {
+         return restored
+             ? QStringLiteral("%1 preset change was not applied").arg(presetEffectName)
+             : QStringLiteral("%1 preset change failed and could not be restored")
+                   .arg(presetEffectName);
+       };
+       if (property->getValue() != value) {
+         const bool restored = restoreBeforeSnapshot();
+         return EffectServiceResult::fail(failureMessage(restored));
+       }
+       if (UndoManager::instance()) {
+         auto beforeUndoSnapshot = beforeSnapshot;
+         beforeUndoSnapshot.insert(customPresetPinSnapshotKey,
+                                   beforeCustomPresetPinned);
+         const auto afterSnapshot = ArtifactPresetManager::effectToPresetJson(effect);
+         if (afterSnapshot.isEmpty()) {
+           const bool restored = restoreBeforeSnapshot();
+           return EffectServiceResult::fail(failureMessage(restored));
+         }
+         auto afterUndoSnapshot = afterSnapshot;
+         afterUndoSnapshot.insert(customPresetPinSnapshotKey,
+                                  isCustomPresetPinned());
+         const bool applied = !afterUndoSnapshot.isEmpty() && pushUndoCommandAndVerify(
+             std::make_unique<EffectPresetSnapshotCommand>(
+                 effect, beforeUndoSnapshot, afterUndoSnapshot,
+                 QStringLiteral("Set %1 Preset").arg(presetEffectName)),
+             [&]() { return property->getValue() == value; });
+         if (!applied) {
+           const bool restored = restoreBeforeSnapshot();
+           return EffectServiceResult::fail(failureMessage(restored));
+         }
+       }
+     } else if (auto* undo = UndoManager::instance()) {
        const bool applied = pushUndoCommandAndVerify(
            std::make_unique<SetPropertyCommand>(
                effect, UniString::fromQString(normalizedPropertyName), oldValue,

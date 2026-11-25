@@ -3,6 +3,7 @@ module;
 #include <QString>
 #include <QVariant>
 #include <QVector>
+#include <optional>
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -30,6 +31,7 @@ private:
     float temperature_ = 6500.0f;  // 色温度 (Kelvin)
     float tint_ = 0.0f;            // 色調 (-1.0 ~ 1.0, 緑←→マゼンタ)
     float brightness_ = 0.0f;      // 明度補正
+    int preset_ = 0;
 
     void syncImpls();
 
@@ -37,8 +39,30 @@ public:
     WhiteBalanceEffect();
     ~WhiteBalanceEffect() override;
 
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        if (index == 1) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.white_balance.temperature"),
+                QStringLiteral("Temperature (K)"),
+                1000.0, 20000.0, 10.0, 18.75, 1.0, QStringLiteral("K")};
+        }
+        if (index == 2) {
+            EffectScalarGizmoParameter parameter{
+                QStringLiteral("effect.white_balance.preset"),
+                QStringLiteral("Preset"), 0.0, 6.0, 1.0, 0.05, 1.0,
+                QString()};
+            parameter.choiceCount = 7;
+            return parameter;
+        }
+        return std::nullopt;
+    }
+
     float temperature() const { return temperature_; }
-    void setTemperature(float t) { temperature_ = std::isfinite(t) ? std::clamp(t, 1000.0f, 20000.0f) : 6500.0f; syncImpls(); }
+    void setTemperature(float t) { temperature_ = std::isfinite(t) ? std::clamp(t, 1000.0f, 20000.0f) : 6500.0f; preset_ = 0; syncImpls(); }
 
     float tint() const { return tint_; }
     void setTint(float t) { tint_ = std::isfinite(t) ? std::clamp(t, -1.0f, 1.0f) : 0.0f; syncImpls(); }
@@ -48,6 +72,7 @@ public:
 
     // プリセット
     void setPreset(const QString& preset);
+    int preset() const { return preset_; }
 
     std::vector<AbstractProperty> getProperties() const override;
     void setPropertyValue(const UniString& name, const QVariant& value) override;

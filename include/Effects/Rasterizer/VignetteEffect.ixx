@@ -1,5 +1,6 @@
 module;
 #include <memory>
+#include <optional>
 #include <vector>
 #include <QString>
 #include <QVariant>
@@ -19,6 +20,20 @@ class VignetteEffect : public ArtifactAbstractEffect {
 public:
     VignetteEffect();
     ~VignetteEffect() override;
+
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        if (index == 1) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.vignette.amount"),
+                QStringLiteral("amount"),
+                0.0, 1.0, 0.01, 0.0025, 100.0, QStringLiteral("%")};
+        }
+        return std::nullopt;
+    }
 
     float amount() const;
     void  setAmount(float v);

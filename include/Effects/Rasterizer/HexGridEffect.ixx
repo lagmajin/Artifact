@@ -1,5 +1,6 @@
 module;
 #include <memory>
+#include <optional>
 #include <vector>
 #include <QString>
 #include <QVariant>
@@ -18,6 +19,32 @@ class HexGridEffect : public ArtifactAbstractEffect {
 public:
     HexGridEffect();
     ~HexGridEffect() override;
+
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        switch (index) {
+        case 1:
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.hex_grid.cell_size"),
+                QStringLiteral("Cell Size"), 4.0, 200.0, 0.25, 0.125,
+                1.0, QStringLiteral("px")};
+        case 2:
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.hex_grid.line_width"),
+                QStringLiteral("Line Width"), 0.5, 20.0, 0.1, 0.05,
+                1.0, QStringLiteral("px")};
+        case 3:
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.hex_grid.angle"),
+                QStringLiteral("Angle"), 0.0, 359.9, 0.1, 0.25,
+                1.0, QStringLiteral("°")};
+        default:
+            return std::nullopt;
+        }
+    }
 
     float cellSize() const;
     void  setCellSize(float v);

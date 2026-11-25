@@ -1,5 +1,6 @@
 module;
 #include <utility>
+#include <optional>
 #include <vector>
 #include <QString>
 #include <QVariant>
@@ -29,9 +30,11 @@ private:
 
     ArtifactCore::ChannelMixerSettings settings_;
     Preset preset_ = Preset::Identity;
+    bool customPresetPinned_ = false;
 
     void syncImpls();
     void applyPreset(Preset preset);
+    void updatePresetFromSettings();
 
 public:
     ChannelMixerEffect();
@@ -39,6 +42,66 @@ public:
 
     void setPreset(int preset);
     int preset() const { return static_cast<int>(preset_); }
+    bool customPresetPinnedForSnapshot() const { return customPresetPinned_; }
+    void restoreCustomPresetPinnedForSnapshot(bool pinned) {
+        customPresetPinned_ = pinned;
+    }
+
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        if (index == 1) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.channel_mixer.strength"),
+                QStringLiteral("Strength"), 0.0, 1.0, 0.01, 0.0025,
+                100.0, QStringLiteral("%")};
+        }
+        if (index >= 2 && index <= 10) {
+            constexpr const char* kProperties[] = {
+                "Red From Red", "Red From Green", "Red From Blue",
+                "Green From Red", "Green From Green", "Green From Blue",
+                "Blue From Red", "Blue From Green", "Blue From Blue"};
+            constexpr const char* kIds[] = {
+                "red_from_red", "red_from_green", "red_from_blue",
+                "green_from_red", "green_from_green", "green_from_blue",
+                "blue_from_red", "blue_from_green", "blue_from_blue"};
+            const auto matrixIndex = index - 2;
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.channel_mixer.%1")
+                    .arg(QString::fromLatin1(kIds[matrixIndex])),
+                QString::fromLatin1(kProperties[matrixIndex]),
+                -2.0, 2.0, 0.01, 0.01, 1.0, QStringLiteral("linear")};
+        }
+        if (index == 11) {
+            EffectScalarGizmoParameter parameter{
+                QStringLiteral("effect.color.channel_mixer.preset"),
+                QStringLiteral("Preset"), 0.0, 5.0, 1.0, 0.05,
+                1.0, QString()};
+            parameter.choiceCount = 6;
+            return parameter;
+        }
+        return std::nullopt;
+    }
+
+    std::optional<EffectViewportToggleParameter>
+    viewportToggleParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::viewportToggleParameter(index);
+        }
+        if (index == 1) {
+            return EffectViewportToggleParameter{
+                QStringLiteral("effect.channel_mixer.monochrome"),
+                QStringLiteral("Monochrome")};
+        }
+        if (index == 2) {
+            return EffectViewportToggleParameter{
+                QStringLiteral("effect.channel_mixer.preserve_luma"),
+                QStringLiteral("Preserve Luma")};
+        }
+        return std::nullopt;
+    }
 
     void setStrength(float value);
     void setMonochrome(bool value);

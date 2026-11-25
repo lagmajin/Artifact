@@ -29,6 +29,7 @@ module;
 #include <numeric>
 #include <regex>
 #include <random>
+#include <QString>
 #include <QVariant>
 export module Artifact.Effect.Keying.ChromaKey;
 
@@ -121,6 +122,28 @@ private:
 public:
     ChromaKeyEffect();
     ~ChromaKeyEffect() = default;
+
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        if (index == 1) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.keying.screen_tolerance"),
+                QStringLiteral("hueTolerance"),
+                0.0, 1.0, 0.01, 0.0025, 1.0, QString()};
+        }
+        if (index == 2) {
+            EffectScalarGizmoParameter parameter{
+                QStringLiteral("effect.keying.chroma_key.view_mode"),
+                QStringLiteral("viewMode"), 0.0, 3.0, 1.0, 0.05,
+                1.0, QString()};
+            parameter.choiceCount = 4;
+            return parameter;
+        }
+        return std::nullopt;
+    }
 
     // Expose properties via AbstractProperty API
     std::vector<ArtifactCore::AbstractProperty> getProperties() const override;

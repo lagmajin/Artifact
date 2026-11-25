@@ -1,5 +1,6 @@
 module;
 #include <cstdint>
+#include <optional>
 #include <utility>
 #include <vector>
 #include <QString>
@@ -26,6 +27,20 @@ private:
 public:
     PinchBulgeEffect();
     ~PinchBulgeEffect() override;
+
+    std::optional<EffectScalarGizmoParameter>
+    scalarGizmoParameter(unsigned int index) const override {
+        if (index == 0) {
+            return ArtifactAbstractEffect::scalarGizmoParameter(index);
+        }
+        if (index == 1) {
+            return EffectScalarGizmoParameter{
+                QStringLiteral("effect.pinch_bulge.amount"),
+                QStringLiteral("Amount"),
+                -100.0, 100.0, 1.0, 0.5, 1.0, QStringLiteral("%")};
+        }
+        return std::nullopt;
+    }
 
     float centerX() const;
     void setCenterX(float v);

@@ -3,6 +3,7 @@ module;
 #include <cmath>
 #include <cstring>
 #include <QVariant>
+#include <QString>
 #include <opencv2/opencv.hpp>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
@@ -354,23 +355,47 @@ std::vector<AbstractProperty> LumaKeyEffect::getProperties() const {
                            std::pair{"matteBlur", typedCpuImpl_->matteBlur()}}) {
     auto& property = properties.emplace_back();
     const QString itemName = QString::fromLatin1(item.first);
-    property.setName(item.first);
-    property.setType(PropertyType::Float);
+    const bool isLow = itemName == QStringLiteral("lowThreshold");
+    const bool isHigh = itemName == QStringLiteral("highThreshold");
     const bool isChoke = itemName == QStringLiteral("choke");
     const bool isBlur = itemName == QStringLiteral("matteBlur");
     const bool isSoftness = itemName == QStringLiteral("softness");
-    const double lo = isChoke ? -1.0 : 0.0;
+    const double lo = isChoke ? -1.0 : (isSoftness ? 0.001 : 0.0);
     const double hi = isChoke ? 1.0 : (isBlur ? 2.0 : 1.0);
+    const double defaultValue = isLow ? 0.15 : isHigh ? 0.85 :
+        isSoftness ? 0.08 : 0.0;
+    property.setName(item.first);
+    property.setDisplayLabel(
+        isLow ? QStringLiteral("Low Threshold") :
+        isHigh ? QStringLiteral("High Threshold") :
+        isSoftness ? QStringLiteral("Softness") :
+        isChoke ? QStringLiteral("Choke") : QStringLiteral("Matte Blur"));
+    property.setType(PropertyType::Float);
     property.setSoftRange(lo, hi);
-    property.setHardRange(isSoftness ? 0.001 : lo, hi);
-    property.setDefaultValue(QVariant(static_cast<double>(item.second)));
+    property.setHardRange(lo, hi);
+    property.setStep(isSoftness ? 0.001 : 0.01);
+    property.setUnit(isBlur ? QStringLiteral("x") : QStringLiteral("%"));
+    property.setTooltip(
+        isLow ? QStringLiteral("Luma at or below this threshold is removed.") :
+        isHigh ? QStringLiteral("Luma at or above this threshold is removed.") :
+        isSoftness ? QStringLiteral(
+            "Width of the matte transition around the low and high thresholds.") :
+        isChoke ? QStringLiteral(
+            "Negative values dilate the matte; positive values erode it, up to about 3 px.") :
+        QStringLiteral(
+            "Blend toward a 3x3 box-filtered matte; 0–2x maps to 0–100% blend."));
+    property.setAnimatable(true);
+    property.setDefaultValue(QVariant(defaultValue));
     property.setValue(QVariant(static_cast<double>(item.second)));
   }
   auto& view = properties.emplace_back();
   view.setName("viewMode");
+  view.setDisplayLabel(QStringLiteral("View Mode"));
   view.setType(PropertyType::Integer);
   view.setSoftRange(0, 1);
   view.setHardRange(0, 1);
+  view.setTooltip(QStringLiteral("Show the keyed result or the generated matte."));
+  view.setAnimatable(false);
   view.setDefaultValue(QVariant(0));
   view.setValue(QVariant(typedCpuImpl_->viewMode()));
   return properties;

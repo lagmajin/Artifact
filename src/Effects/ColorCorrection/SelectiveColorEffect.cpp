@@ -1,5 +1,7 @@
 module;
 #include <algorithm>
+#include <cmath>
+#include <cstddef>
 #include <memory>
 #include <vector>
 #include <QVariant>
@@ -149,30 +151,73 @@ SelectiveColorEffect::SelectiveColorEffect() {
 
 SelectiveColorEffect::~SelectiveColorEffect() = default;
 
-void SelectiveColorEffect::applyPreset(Preset preset) {
-    preset_ = preset;
-    switch (preset_) {
+ArtifactCore::SelectiveColorSettings
+SelectiveColorEffect::settingsForPreset(Preset preset) {
+    switch (preset) {
     case Preset::Neutral:
-        settings_ = ArtifactCore::SelectiveColorSettings::neutral();
-        break;
+        return ArtifactCore::SelectiveColorSettings::neutral();
     case Preset::Warm:
-        settings_ = ArtifactCore::SelectiveColorSettings::warm();
-        break;
+        return ArtifactCore::SelectiveColorSettings::warm();
     case Preset::Cool:
-        settings_ = ArtifactCore::SelectiveColorSettings::cool();
-        break;
+        return ArtifactCore::SelectiveColorSettings::cool();
     case Preset::Vivid:
-        settings_ = ArtifactCore::SelectiveColorSettings::vivid();
-        break;
+        return ArtifactCore::SelectiveColorSettings::vivid();
     case Preset::Film:
-        settings_ = ArtifactCore::SelectiveColorSettings::film();
-        break;
+        return ArtifactCore::SelectiveColorSettings::film();
     case Preset::Custom:
     default:
-        break;
+        return ArtifactCore::SelectiveColorSettings{};
     }
 }
 
+void SelectiveColorEffect::applyPreset(Preset preset) {
+    preset_ = preset;
+    customPresetPinned_ = preset == Preset::Custom;
+    if (!customPresetPinned_) {
+        settings_ = settingsForPreset(preset);
+    }
+}
+
+void SelectiveColorEffect::updatePresetFromSettings() {
+    if (customPresetPinned_) {
+        preset_ = Preset::Custom;
+        return;
+    }
+
+    const auto matches = [this](
+        const ArtifactCore::SelectiveColorSettings& candidate) {
+        constexpr float kTolerance = 0.000001f;
+        const auto close = [kTolerance](float lhs, float rhs) {
+            return std::abs(lhs - rhs) <= kTolerance;
+        };
+        if (!close(settings_.strength, candidate.strength) ||
+            settings_.relativeMode != candidate.relativeMode ||
+            settings_.preserveLuma != candidate.preserveLuma) {
+            return false;
+        }
+        for (std::size_t index = 0; index < settings_.groups.size(); ++index) {
+            const auto& current = settings_.groups[index];
+            const auto& expected = candidate.groups[index];
+            if (!close(current.cyan, expected.cyan) ||
+                !close(current.magenta, expected.magenta) ||
+                !close(current.yellow, expected.yellow) ||
+                !close(current.black, expected.black)) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    for (int value = static_cast<int>(Preset::Neutral);
+         value <= static_cast<int>(Preset::Film); ++value) {
+        const auto candidate = static_cast<Preset>(value);
+        if (matches(settingsForPreset(candidate))) {
+            preset_ = candidate;
+            return;
+        }
+    }
+    preset_ = Preset::Custom;
+}
 void SelectiveColorEffect::setPreset(int preset) {
     const int clamped = std::clamp(preset, 0, 5);
     applyPreset(static_cast<Preset>(clamped));
@@ -180,30 +225,30 @@ void SelectiveColorEffect::setPreset(int preset) {
 }
 
 void SelectiveColorEffect::setStrength(float value) {
-    preset_ = Preset::Custom;
     settings_.strength = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 1.0f;
+    updatePresetFromSettings();
     syncImpls();
 }
 
 void SelectiveColorEffect::setRelativeMode(bool value) {
-    preset_ = Preset::Custom;
     settings_.relativeMode = value;
+    updatePresetFromSettings();
     syncImpls();
 }
 
 void SelectiveColorEffect::setPreserveLuma(bool value) {
-    preset_ = Preset::Custom;
     settings_.preserveLuma = value;
+    updatePresetFromSettings();
     syncImpls();
 }
 
 void SelectiveColorEffect::setAdjustment(ArtifactCore::SelectiveColorGroup group, float c, float m, float y, float k) {
-    preset_ = Preset::Custom;
     auto& adj = settings_.groups[static_cast<size_t>(group)];
     adj.cyan = std::isfinite(c) ? std::clamp(c, -1.0f, 1.0f) : 0.0f;
     adj.magenta = std::isfinite(m) ? std::clamp(m, -1.0f, 1.0f) : 0.0f;
     adj.yellow = std::isfinite(y) ? std::clamp(y, -1.0f, 1.0f) : 0.0f;
     adj.black = std::isfinite(k) ? std::clamp(k, -1.0f, 1.0f) : 0.0f;
+    updatePresetFromSettings();
     syncImpls();
 }
 
@@ -224,37 +269,66 @@ std::vector<AbstractProperty> SelectiveColorEffect::getProperties() const {
 
     AbstractProperty presetProp;
     presetProp.setName("Preset");
+    presetProp.setDisplayLabel(QStringLiteral("Preset"));
     presetProp.setType(PropertyType::Integer);
     presetProp.setValue(preset());
+    presetProp.setDefaultValue(static_cast<int>(Preset::Neutral));
+    presetProp.setHardRange(0, 5);
+    presetProp.setSoftRange(0, 5);
+    presetProp.setStep(1);
+    presetProp.setTooltip(QStringLiteral(
+        "Choose Custom, Neutral, Warm, Cool, Vivid, or Film."));
     presetProp.setDisplayPriority(-40);
     props.push_back(presetProp);
 
     AbstractProperty strengthProp;
     strengthProp.setName("Strength");
+    strengthProp.setDisplayLabel(QStringLiteral("Strength"));
     strengthProp.setType(PropertyType::Float);
     strengthProp.setValue(QVariant(static_cast<double>(settings_.strength)));
+    strengthProp.setDefaultValue(1.0);
+    strengthProp.setHardRange(0.0, 1.0);
+    strengthProp.setSoftRange(0.0, 1.0);
+    strengthProp.setStep(0.01);
+    strengthProp.setTooltip(QStringLiteral(
+        "Blend the selective color adjustments with the source color."));
     strengthProp.setDisplayPriority(-30);
     props.push_back(strengthProp);
 
     AbstractProperty relativeProp;
     relativeProp.setName("Relative Mode");
+    relativeProp.setDisplayLabel(QStringLiteral("Relative Mode"));
     relativeProp.setType(PropertyType::Boolean);
     relativeProp.setValue(settings_.relativeMode);
+    relativeProp.setDefaultValue(true);
+    relativeProp.setTooltip(QStringLiteral(
+        "Apply CMYK adjustments relative to each color channel."));
     relativeProp.setDisplayPriority(-20);
     props.push_back(relativeProp);
 
     AbstractProperty preserveProp;
     preserveProp.setName("Preserve Luma");
+    preserveProp.setDisplayLabel(QStringLiteral("Preserve Luma"));
     preserveProp.setType(PropertyType::Boolean);
     preserveProp.setValue(settings_.preserveLuma);
+    preserveProp.setDefaultValue(false);
+    preserveProp.setTooltip(QStringLiteral(
+        "Compensate the result to retain the source luminance."));
     preserveProp.setDisplayPriority(-10);
     props.push_back(preserveProp);
 
     auto addFloat = [&props](const QString& name, float value, int priority) {
         AbstractProperty prop;
         prop.setName(name);
+        prop.setDisplayLabel(name);
         prop.setType(PropertyType::Float);
         prop.setValue(QVariant(static_cast<double>(value)));
+        prop.setDefaultValue(0.0);
+        prop.setHardRange(-1.0, 1.0);
+        prop.setSoftRange(-0.5, 0.5);
+        prop.setStep(0.01);
+        prop.setTooltip(QStringLiteral(
+            "Adjust the selected CMYK channel for this color range."));
         prop.setDisplayPriority(priority);
         props.push_back(prop);
     };

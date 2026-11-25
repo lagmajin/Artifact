@@ -94,6 +94,29 @@ export namespace Artifact {
         TwistTransform();
         ~TwistTransform();
 
+        std::optional<EffectScalarGizmoParameter>
+        scalarGizmoParameter(unsigned int index) const override {
+            if (index == 0) {
+                return ArtifactAbstractEffect::scalarGizmoParameter(index);
+            }
+            switch (index) {
+            case 1:
+                return EffectScalarGizmoParameter{
+                    QStringLiteral("effect.twist.angle"), QStringLiteral("angle"),
+                    -720.0, 720.0, 0.1, 0.5, 1.0, QStringLiteral("°")};
+            case 2:
+                return EffectScalarGizmoParameter{
+                    QStringLiteral("effect.twist.center_x"), QStringLiteral("centerX"),
+                    0.0, 1.0, 0.001, 0.0025, 100.0, QStringLiteral("%")};
+            case 3:
+                return EffectScalarGizmoParameter{
+                    QStringLiteral("effect.twist.center_y"), QStringLiteral("centerY"),
+                    0.0, 1.0, 0.001, 0.0025, 100.0, QStringLiteral("%")};
+            default:
+                return std::nullopt;
+            }
+        }
+
         std::vector<ArtifactCore::AbstractProperty> getProperties() const override;
         void setPropertyValue(const ArtifactCore::UniString& name, const QVariant& value) override;
 
