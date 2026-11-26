@@ -3114,8 +3114,9 @@ public:
     const auto paintLayer = layer
                                 ? ArtifactCore::dynamicPointerCast<ArtifactPaintLayer>(layer)
                                 : ArtifactCore::SharedPtr<ArtifactPaintLayer>{};
-    if (layer) {
-      for (const auto &effect : layer->getEffects()) {
+    const auto appendEffectControls = [&](const auto &effects,
+                                          const bool compositionEffectTarget) {
+      for (const auto &effect : effects) {
         if (!effect) continue;
         const bool effectEnabled = effect->isEnabled();
         const auto properties = effect->editableProperties();
@@ -3127,6 +3128,31 @@ public:
               });
           if (found != properties.end()) return *found;
           return ArtifactCore::SharedPtr<ArtifactCore::AbstractProperty>{};
+        };
+        const auto effectTargetIsCurrent =
+            [this, comp, layer, effect, compositionEffectTarget]() {
+          if (!comp || currentComposition() != comp) return false;
+          if (compositionEffectTarget) {
+            const auto compositionEffects = comp->getEffects();
+            return std::find(compositionEffects.begin(), compositionEffects.end(),
+                             effect) != compositionEffects.end();
+          }
+          return layer && comp->layerById(layer->id()) == layer &&
+              layer->getEffect(effect->effectID()) == effect;
+        };
+        const auto commitEffectProperty =
+            [layer, effect, compositionEffectTarget](
+                const QString &propertyName, const QVariant &value) {
+          if (auto *service = ArtifactEffectService::instance()) {
+            if (compositionEffectTarget) {
+              service->setCompositionEffectProperty(
+                  effect->effectID().toQString(), propertyName, value);
+            } else if (layer) {
+              service->setEffectProperty(
+                  layer->id(), effect->effectID().toQString(),
+                  propertyName, value);
+            }
+          }
         };
         bool effectHasControls = false;
         const auto addEffectControl =
@@ -3224,8 +3250,9 @@ public:
                   QStringLiteral("%1 · %2: %3"))
                   .arg(effectName, localizedChoicePropertyLabel, choiceText);
               add(toggleLabel(actionLabel, selected),
-                  [this, comp, layer, effect, property, initialValue,
-                   targetValue, propertyName = parameter.editablePropertyName]() {
+                  [this, effect, property, initialValue, targetValue,
+                   effectTargetIsCurrent, commitEffectProperty,
+                   propertyName = parameter.editablePropertyName]() {
                     finishEffectDrag(false);
                     const auto currentProperty = effect->editableProperty(propertyName);
                     if (!currentProperty || currentProperty != property ||
@@ -3233,16 +3260,10 @@ public:
                         currentProperty->hasKeyFrames() ||
                         currentProperty->hasExpression() ||
                         currentProperty->hasEnvelopes() || !effect->isEnabled() ||
-                        currentComposition() != comp ||
-                        comp->layerById(layer->id()) != layer ||
-                        layer->getEffect(effect->effectID()) != effect) {
+                        !effectTargetIsCurrent()) {
                       return;
                     }
-                    if (auto *service = ArtifactEffectService::instance()) {
-                      service->setEffectProperty(
-                          layer->id(), effect->effectID().toQString(),
-                          propertyName, targetValue);
-                    }
+                    commitEffectProperty(propertyName, targetValue);
                   });
             }
             return;
@@ -3267,8 +3288,9 @@ public:
                 .arg(effect->displayName().toQString(), propertyLabel,
                      formattedCurrentValue);
             add(toggleLabel(choiceLabel, isMaximumSelected),
-                [this, comp, layer, effect, property, initialValue,
-                 alternateValue, propertyName = parameter.editablePropertyName]() {
+                [this, effect, property, initialValue, alternateValue,
+                 effectTargetIsCurrent, commitEffectProperty,
+                 propertyName = parameter.editablePropertyName]() {
                   finishEffectDrag(false);
                   const auto currentProperty = effect->editableProperty(propertyName);
                   if (!currentProperty || currentProperty != property ||
@@ -3276,16 +3298,10 @@ public:
                       currentProperty->hasKeyFrames() ||
                       currentProperty->hasExpression() ||
                       currentProperty->hasEnvelopes() || !effect->isEnabled() ||
-                      currentComposition() != comp ||
-                      comp->layerById(layer->id()) != layer ||
-                      layer->getEffect(effect->effectID()) != effect) {
+                      !effectTargetIsCurrent()) {
                     return;
                   }
-                  if (auto *service = ArtifactEffectService::instance()) {
-                    service->setEffectProperty(
-                        layer->id(), effect->effectID().toQString(),
-                        propertyName, alternateValue);
-                  }
+                  commitEffectProperty(propertyName, alternateValue);
                 });
             return;
           }
@@ -3297,13 +3313,16 @@ public:
             effectHasControls = true;
           }
           add(actionLabel,
-              [this, comp, layer, effect, viewportPos, parameter, propertyLabel]() {
+              [this, comp, layer, effect, viewportPos, parameter, propertyLabel,
+               compositionEffectTarget, effectTargetIsCurrent]() {
                 finishEffectDrag(false);
+                if (!effectTargetIsCurrent()) return;
                 const auto property = effect->editableProperty(
                     parameter.editablePropertyName);
                 if (!property || property->hasKeyFrames() ||
                     property->hasExpression() || property->hasEnvelopes()) return;
-                effectDrag_ = EffectDrag{comp, layer, effect, parameter,
+                effectDrag_ = EffectDrag{comp, layer, effect,
+                                         compositionEffectTarget, parameter,
                                          effect->effectID(),
                                          ArtifactCore::UniString::fromQString(
                                              parameter.editablePropertyName)};
@@ -3376,9 +3395,10 @@ public:
               parameter->id + QStringLiteral(".label"), propertyLabel);
           add(toggleLabel(tr("%1 · %2").arg(effectName, localizedPropertyLabel),
                           initialValue.toBool()),
-              [this, comp, layer, effect, property, propertyName =
+              [this, effect, property, propertyName =
                    parameter->editablePropertyName, initialValue,
-               isEffectEnabledToggle]() {
+               isEffectEnabledToggle, effectTargetIsCurrent,
+               commitEffectProperty]() {
                 finishEffectDrag(false);
                 const auto currentProperty = effect->editableProperty(propertyName);
                 if (!currentProperty || currentProperty != property ||
@@ -3387,16 +3407,11 @@ public:
                     currentProperty->hasExpression() ||
                     currentProperty->hasEnvelopes() ||
                     (!isEffectEnabledToggle && !effect->isEnabled()) ||
-                    currentComposition() != comp ||
-                    comp->layerById(layer->id()) != layer ||
-                    layer->getEffect(effect->effectID()) != effect) {
+                    !effectTargetIsCurrent()) {
                   return;
                 }
-                if (auto *service = ArtifactEffectService::instance()) {
-                  service->setEffectProperty(
-                      layer->id(), effect->effectID().toQString(), propertyName,
-                      QVariant(!initialValue.toBool()));
-                }
+                commitEffectProperty(
+                    propertyName, QVariant(!initialValue.toBool()));
               });
         }
 
@@ -3416,8 +3431,9 @@ public:
               add(toggleLabel(tr("%1 · %2").arg(effect->displayName().toQString(),
                                                  overscanLabel),
                               initialOverscanValue.toBool()),
-                  [this, comp, layer, effect, overscanProperty,
-                   overscanPropertyName, initialOverscanValue]() {
+                  [this, effect, overscanProperty, overscanPropertyName,
+                   initialOverscanValue, effectTargetIsCurrent,
+                   commitEffectProperty]() {
                     finishEffectDrag(false);
                     const auto currentProperty =
                         effect->editableProperty(overscanPropertyName);
@@ -3426,17 +3442,12 @@ public:
                         currentProperty->hasKeyFrames() ||
                         currentProperty->hasExpression() ||
                         currentProperty->hasEnvelopes() || !effect->isEnabled() ||
-                        currentComposition() != comp ||
-                        comp->layerById(layer->id()) != layer ||
-                        layer->getEffect(effect->effectID()) != effect) {
+                        !effectTargetIsCurrent()) {
                       return;
                     }
-                    if (auto *service = ArtifactEffectService::instance()) {
-                      service->setEffectProperty(
-                          layer->id(), effect->effectID().toQString(),
-                          overscanPropertyName,
-                          QVariant(!initialOverscanValue.toBool()));
-                    }
+                    commitEffectProperty(
+                        overscanPropertyName,
+                        QVariant(!initialOverscanValue.toBool()));
                   });
             }
           }
@@ -3537,12 +3548,11 @@ public:
             add(tr("Edit %1 · %2 (%3)")
                     .arg(effectName, propertyLabel,
                          initialColor.name(QColor::HexArgb)),
-                [this, comp, layer, effect, property, propertyName, propertyLabel,
-                 effectName, initialValue]() {
+                [this, effect, property, propertyName, propertyLabel,
+                 effectName, initialValue, effectTargetIsCurrent,
+                 commitEffectProperty]() {
                   finishEffectDrag(false);
-                  if (!effect->isEnabled() || currentComposition() != comp ||
-                      comp->layerById(layer->id()) != layer ||
-                      layer->getEffect(effect->effectID()) != effect) {
+                  if (!effect->isEnabled() || !effectTargetIsCurrent()) {
                     return;
                   }
                   const auto currentProperty = effect->editableProperty(propertyName);
@@ -3576,16 +3586,10 @@ public:
                       finalProperty->hasKeyFrames() ||
                       finalProperty->hasExpression() ||
                       finalProperty->hasEnvelopes() ||
-                      !effect->isEnabled() || currentComposition() != comp ||
-                      comp->layerById(layer->id()) != layer ||
-                      layer->getEffect(effect->effectID()) != effect) {
+                      !effect->isEnabled() || !effectTargetIsCurrent()) {
                     return;
                   }
-                  if (auto *service = ArtifactEffectService::instance()) {
-                    service->setEffectProperty(
-                        layer->id(), effect->effectID().toQString(),
-                        propertyName, selectedValue);
-                  }
+                  commitEffectProperty(propertyName, selectedValue);
                 });
           }
         }
@@ -3594,6 +3598,11 @@ public:
           addSeparator();
         }
       }
+    };
+    if (layer) {
+      appendEffectControls(layer->getEffects(), false);
+    } else if (comp) {
+      appendEffectControls(comp->getEffects(), true);
     }
     if (layer && comp && ArtifactRenderQueueService::instance()) {
       addSeparator();
@@ -6270,6 +6279,7 @@ protected:
     ArtifactCompositionPtr composition;
     ArtifactAbstractLayerPtr layer;
     ArtifactAbstractEffectPtr effect;
+    bool compositionEffect = false;
     EffectScalarGizmoParameter parameter;
     ArtifactCore::UniString effectId;
     ArtifactCore::UniString propertyName;
@@ -6300,10 +6310,18 @@ protected:
 
   bool effectDragTargetIsCurrent(const EffectDrag &drag) const {
     const auto composition = currentComposition();
-    if (!composition || composition != drag.composition ||
-        composition->layerById(drag.layer->id()) != drag.layer ||
+    if (!composition || composition != drag.composition || !drag.effect ||
         !drag.effect->isEnabled()) return false;
-    return drag.layer->getEffect(drag.effectId) == drag.effect;
+    if (drag.compositionEffect) return true;
+    return drag.layer && composition->layerById(drag.layer->id()) == drag.layer &&
+        drag.layer->getEffect(drag.effectId) == drag.effect;
+  }
+
+  bool effectDragTargetIsAttached(const EffectDrag &drag) const {
+    if (!effectDragTargetIsCurrent(drag)) return false;
+    if (!drag.compositionEffect) return true;
+    const auto effects = drag.composition->getEffects();
+    return std::find(effects.begin(), effects.end(), drag.effect) != effects.end();
   }
 
   void writeEffectDragPreview(const EffectDrag &drag, const QVariant &value) {
@@ -6321,7 +6339,7 @@ protected:
           ArtifactCore::UniString::fromQString(QStringLiteral("Preset")),
           drag.presetBaseline);
     }
-    drag.layer->setDirty(LayerDirtyFlag::Effect);
+    if (drag.layer) drag.layer->setDirty(LayerDirtyFlag::Effect);
     if (controller_) controller_->markRenderDirty();
     update();
   }
@@ -6339,15 +6357,22 @@ protected:
     const auto finalValue = drag.property->getValue();
     if (finalValue != drag.previewValue || finalValue == drag.baseline) return;
     writeEffectDragPreview(drag, drag.baseline);
-    if (commit && effectDragTargetIsCurrent(drag) &&
+    if (commit && effectDragTargetIsAttached(drag) &&
         !currentProperty->hasKeyFrames() && !currentProperty->hasExpression() &&
         !currentProperty->hasEnvelopes()) {
       auto *projectService = ArtifactProjectService::instance();
       if (!projectService ||
           projectService->currentComposition().lock() != drag.composition) return;
       if (auto *service = ArtifactEffectService::instance()) {
-        service->setEffectProperty(drag.layer->id(), drag.effectId.toQString(),
-                                   drag.parameter.editablePropertyName, finalValue);
+        if (drag.compositionEffect) {
+          service->setCompositionEffectProperty(
+              drag.effectId.toQString(),
+              drag.parameter.editablePropertyName, finalValue);
+        } else if (drag.layer) {
+          service->setEffectProperty(
+              drag.layer->id(), drag.effectId.toQString(),
+              drag.parameter.editablePropertyName, finalValue);
+        }
       }
     }
   }
@@ -6366,11 +6391,12 @@ protected:
       } else {
         auto &drag = *effectDrag_;
         const auto property = drag.effect->editableProperty(drag.parameter.editablePropertyName);
-        const QStringList layerIds{drag.layer->id().toQString()};
         auto *undo = UndoManager::instance();
+        const bool mutationAllowed = drag.compositionEffect ||
+            (undo && drag.layer && undo->areLayerMutationsAllowed(
+                QStringList{drag.layer->id().toQString()}));
         if (!property || property->hasKeyFrames() || property->hasExpression() ||
-            property->hasEnvelopes() ||
-            !undo || !undo->areLayerMutationsAllowed(layerIds)) {
+            property->hasEnvelopes() || !mutationAllowed) {
           finishEffectDrag(false);
         } else {
           drag.property = property;
@@ -16609,3 +16635,4 @@ void ArtifactCompositionEditor::toggleViewportToolboxes() {
 }
 
 } // namespace Artifact
+
