@@ -23,7 +23,6 @@ module;
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <cstring>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -37,6 +36,7 @@ import Artifact.Layer.CloneEffectSupport;
 
 import Artifact.Render.IRenderer;
 import Artifact.Render.Context;
+import Artifact.Render.CompositionMatteSurface;
 import Artifact.Render.GPUTextureCacheManager;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Matte;
@@ -1599,57 +1599,6 @@ QImage applyMatteStackToSurface(
                              std::clamp(a, 0, 255));
       }
   });
-  return result;
-}
-
-static QImage fitMatteSourceToTarget(const QImage& source,
-                                     const QSize& targetSize,
-                                     MatteFitMode fitMode)
-{
-  if (source.isNull() || targetSize.width() <= 0 || targetSize.height() <= 0) {
-    return {};
-  }
-  const QImage rgbaSource = source.convertToFormat(QImage::Format_RGBA8888);
-  if (fitMode == MatteFitMode::Stretch) {
-    return rgbaSource.scaled(targetSize, Qt::IgnoreAspectRatio,
-                             Qt::SmoothTransformation);
-  }
-
-  const float sourceAspect = static_cast<float>(rgbaSource.width()) /
-                             static_cast<float>(std::max(1, rgbaSource.height()));
-  const float targetAspect = static_cast<float>(targetSize.width()) /
-                             static_cast<float>(std::max(1, targetSize.height()));
-  int scaledWidth = rgbaSource.width();
-  int scaledHeight = rgbaSource.height();
-  if (fitMode == MatteFitMode::Fit || fitMode == MatteFitMode::Fill) {
-    const bool fitInside = fitMode == MatteFitMode::Fit;
-    const float scale = fitInside
-        ? (sourceAspect > targetAspect
-               ? static_cast<float>(targetSize.width()) / rgbaSource.width()
-               : static_cast<float>(targetSize.height()) / rgbaSource.height())
-        : (sourceAspect > targetAspect
-               ? static_cast<float>(targetSize.height()) / rgbaSource.height()
-               : static_cast<float>(targetSize.width()) / rgbaSource.width());
-    scaledWidth = std::max(1, qRound(rgbaSource.width() * scale));
-    scaledHeight = std::max(1, qRound(rgbaSource.height() * scale));
-  }
-
-  const QImage scaled = rgbaSource.scaled(scaledWidth, scaledHeight,
-                                          Qt::IgnoreAspectRatio,
-                                          Qt::SmoothTransformation);
-  QImage result(targetSize, QImage::Format_RGBA8888);
-  result.fill(Qt::transparent);
-  const int copyWidth = std::min(targetSize.width(), scaled.width());
-  const int copyHeight = std::min(targetSize.height(), scaled.height());
-  const int sourceX = std::max(0, (scaled.width() - copyWidth) / 2);
-  const int sourceY = std::max(0, (scaled.height() - copyHeight) / 2);
-  const int targetX = std::max(0, (targetSize.width() - copyWidth) / 2);
-  const int targetY = std::max(0, (targetSize.height() - copyHeight) / 2);
-  for (int y = 0; y < copyHeight; ++y) {
-    const auto* sourceBits = scaled.constScanLine(sourceY + y) + sourceX * 4;
-    auto* targetBits = result.scanLine(targetY + y) + targetX * 4;
-    std::memcpy(targetBits, sourceBits, static_cast<size_t>(copyWidth) * 4u);
-  }
   return result;
 }
 
